@@ -206,7 +206,7 @@
 ## Фаза 4 — Напреднало моделиране и обмен
 
 - STEP **внос** (7.7).
-- Sweep, Loft, Coil (5.1–5.3).
+- Sweep 🟡 и Loft 🟡 (2026-10-19: път от скица или ръбове, Guide Rail, Parallel, Taper, Twist; сечения от скици, стени и точка, дупки; [spec](spec/5.1-sweep.md), [spec](spec/5.2-loft.md); предстоят Guide Surface, Solid Sweep, Rails, Center Line, Area Loft, гранични условия), Coil (5.1–5.3).
 - Материали и външен вид 🟡 (2026-10-19: библиотеки в CSV, override-и Face > Feature > Body > Part > Material, QAT списъци, браузъри, Adjust, Clear, Styles Editor, прозрачност, цветове в GLB/STEP; [spec](spec/2.15-materials.md)) и Physical Properties 🟡 (маса, център на тежестта, инерция; [spec](spec/0.10-physical.md)) (2.15, 0.10).
 - Shell 🟡 (2026-10-19: Inside/Outside/Center, Sharp/Rounded Corners, Remove Faces, затворена кухина; [spec](spec/2.6-shell.md)), Face Draft 🟡 (2026-10-19: Fixed Edge, Fixed Plane, Parting Line, Symmetric/Asymmetric, Move Parting Line, Automatic Blending; [spec](spec/2.8-draft.md)), Rib (2.6–2.8).
 - Rectangular / Circular Pattern и Mirror на операции и тела 🟡 (2026-10-19: копие на инструментите на Extrude/Revolve с една булева операция, тела Join / New Solid / Remove Original; [spec](spec/2.11-patterns.md), [spec](spec/2.12-mirror.md)); предстоят Suppress на копия, по крива, Sketch Driven.

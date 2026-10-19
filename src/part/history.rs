@@ -234,10 +234,11 @@ impl PartDocument {
         let mut s = Vec::new();
         strings(&fj, &["id", "name", "type", "sketch"], &mut s);
         let sk: Vec<serde_json::Value> = f
-            .sketch()
-            .and_then(|id| self.sketches.iter().find(|p| p.id == id))
-            .map(sketch_json)
-            .unwrap_or_default();
+            .sketch_ids()
+            .into_iter()
+            .filter_map(|id| self.sketches.iter().find(|p| p.id == id))
+            .flat_map(sketch_json)
+            .collect();
         for v in &sk {
             strings(v, &[], &mut s);
         }
@@ -315,16 +316,18 @@ impl PartDocument {
                     ));
                 }
             }
-            if let Some(ps) = f
-                .sketch()
-                .and_then(|id| self.sketches.iter().find(|p| p.id == id))
-                && ps.after_features.is_some_and(|p| p > k)
+            for ps in f
+                .sketch_ids()
+                .into_iter()
+                .filter_map(|id| self.sketches.iter().find(|p| p.id == id))
             {
-                out.insert(format!(
-                    "{} uses {}, which would come after it",
-                    f.name(),
-                    ps.name
-                ));
+                if ps.after_features.is_some_and(|p| p > k) {
+                    out.insert(format!(
+                        "{} uses {}, which would come after it",
+                        f.name(),
+                        ps.name
+                    ));
+                }
             }
         }
         for (i, ps) in self.sketches.iter().enumerate() {
@@ -370,13 +373,13 @@ impl PartDocument {
         let health = self.health_snapshot();
         let moved_id = self.features[from].id().to_owned();
         let own: HashSet<String> = self.features[from]
-            .sketch()
+            .sketch_ids()
+            .into_iter()
             .filter(|s| {
                 let c = self.consumers(s);
                 c == [from] && !self.sketches.iter().any(|p| p.id == *s && p.shared)
             })
             .map(str::to_owned)
-            .into_iter()
             .collect();
         let on_moved: Vec<bool> = (0..self.sketches.len())
             .map(|i| self.sketch_refs(i).contains(&from))
@@ -661,6 +664,8 @@ impl Feature {
             Feature::Pattern(p) => &mut p.name,
             Feature::Hole(h) => &mut h.name,
             Feature::Thread(t) => &mut t.name,
+            Feature::Sweep(s) => &mut s.name,
+            Feature::Loft(l) => &mut l.name,
         }
     }
 }

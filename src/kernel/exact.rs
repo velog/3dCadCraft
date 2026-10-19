@@ -1990,9 +1990,18 @@ fn key(p: &Point3) -> Key {
 /// Our B-rep of the solids: named topology, exact analytic surfaces where
 /// the kernel reports them, and its display triangles per face.
 pub fn to_brep(solids: &[ExactSolid]) -> Result<BRep, String> {
+    to_brep_with(solids, false)
+}
+
+/// [`to_brep`]; `lenient`: an edge whose fitted line or circle misses an
+/// end takes the polyline through its samples instead of failing (a
+/// twisted sweep cut leaves nearly circular intersection curves). Only for
+/// Sweep / Loft steps: elsewhere the strict failure sends the part to the
+/// faceted kernel, which some blends still need.
+pub fn to_brep_with(solids: &[ExactSolid], lenient: bool) -> Result<BRep, String> {
     let mut out = BRep::new();
     for s in solids {
-        add_solid(&mut out, s)?;
+        add_solid(&mut out, s, lenient)?;
     }
     Ok(out)
 }
@@ -2084,6 +2093,12 @@ fn curve_of(pts: &[Point3]) -> Curve {
             return Curve::Circle(c);
         }
     }
+    polyline_curve(pts)
+}
+
+/// The degree-1 B-spline through `pts` (passes through every sample).
+fn polyline_curve(pts: &[Point3]) -> Curve {
+    let n = pts.len();
     let k = n.max(2);
     let mut knots = vec![0.0; 2];
     for i in 1..k - 1 {
@@ -2185,7 +2200,7 @@ fn sense_by_geometry(
     })
 }
 
-fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
+fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String> {
     let body = &s.body;
     let mesh = guarded("display mesh", || body.display_mesh(DISPLAY_TOL))?;
     let nf = body.face_count();
@@ -2252,7 +2267,19 @@ fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
             _ => {
                 let range = curve_range(&curve, &pts)?;
                 let cid = out.add_curve(curve);
-                out.add_edge(cid, a, b, range).map_err(|e| e.to_string())?
+                match out.add_edge(cid, a, b, range) {
+                    Ok(e) => e,
+                    // A line or circle fitted to the samples that misses an
+                    // end (an intersection curve of a lofted face, nearly
+                    // circular): the polyline through them.
+                    Err(_) if lenient => {
+                        let poly = polyline_curve(&pts);
+                        let range = curve_range(&poly, &pts)?;
+                        let cid = out.add_curve(poly);
+                        out.add_edge(cid, a, b, range).map_err(|e| e.to_string())?
+                    }
+                    Err(e) => return Err(e.to_string()),
+                }
             }
         };
         edges.push((e, pts.clone()));
@@ -3482,3 +3509,8 @@ mod sphere_tests {
 
 #[cfg(test)]
 mod hole_tests;
+
+mod sweep;
+pub use sweep::{
+    Frame, PathPiece, frame_point, loft, loft_frames, loft_to_point, path_points, sweep,
+};

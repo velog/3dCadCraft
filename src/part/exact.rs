@@ -34,7 +34,7 @@ pub(super) fn enabled() -> bool {
 }
 
 /// The prefix of region `n` of a feature (`Extrusion1`, `Extrusion1#2`).
-fn prefix(id: &str, n: usize) -> String {
+pub(super) fn prefix(id: &str, n: usize) -> String {
     if n == 0 {
         id.to_owned()
     } else {
@@ -403,7 +403,7 @@ pub(super) fn combine(
 
 /// A kernel failure of a pattern is the feature's health (a faceted
 /// rebuild could not build a pattern either).
-fn as_user(f: Fail) -> Fail {
+pub(super) fn as_user(f: Fail) -> Fail {
     match f {
         Kernel(e) => User(format!("the geometry kernel cannot build it ({e})")),
         u => u,

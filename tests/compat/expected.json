@@ -48,6 +48,13 @@
     "sketches": 1,
     "exact": true
   },
+  "r12/sweep_loft_r12.3dcadcraft": {
+    "volume": 7030.4725455597845,
+    "faces": 11,
+    "features": 3,
+    "sketches": 4,
+    "exact": true
+  },
   "r2/partial_chamfer_r2.3dcadcraft": {
     "volume": 47970.00000000001,
     "faces": 9,

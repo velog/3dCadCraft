@@ -65,6 +65,8 @@
 | [2.5-chamfer.md](2.5-chamfer.md) | Chamfer (фаска) |
 | [2.8-draft.md](2.8-draft.md) | Face Draft: Fixed Edge, Fixed Plane, посока на изваждане |
 | [2.6-shell.md](2.6-shell.md) | Shell (черупка): Remove Faces, Inside / Outside / Both, затворена кухина |
+| [5.1-sweep.md](5.1-sweep.md) | Sweep: профил по път (скица или ръбове), Guide Rail, Parallel, Taper, Twist |
+| [5.2-loft.md](5.2-loft.md) | Loft: сечения (скици, стени, точка), Closed Loop, условия, преход |
 | [2.11-patterns.md](2.11-patterns.md) | Rectangular Pattern и Circular Pattern на операции и тела |
 | [2.12-mirror.md](2.12-mirror.md) | Mirror на операции и тела |
 | [2.9-thread.md](2.9-thread.md) | Thread: козметична или моделирана резба, хлабина за 3D печат |

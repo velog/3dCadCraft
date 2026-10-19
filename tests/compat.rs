@@ -412,6 +412,85 @@ fn history_r7() -> PartDocument {
     part.set_eop(3).unwrap();
     part
 }
+/// Revision 12: a Sweep (a circle along an arc on XZ) and a Loft (a square
+/// to a smaller square) joined to it.
+fn sweep_loft_r12() -> PartDocument {
+    use cadcraft3d::part::{
+        LoftFeature, LoftSection, Operation, PathRef, PlaneRef, SweepFeature, WorkDef, WorkFeature,
+        WorkPlaneDef,
+    };
+    let mut part = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let a = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    part.sketches[a]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 4.0)
+        .unwrap();
+    let b = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .unwrap();
+    {
+        let s = &mut part.sketches[b].sketch;
+        let c = s.add_point(Point2::new(30.0, 0.0));
+        let t = s.add_point(Point2::new(30.0, 30.0));
+        let z = s.add_point(Point2::new(0.0, 0.0));
+        s.add_arc(c, t, z).unwrap();
+    }
+    let r = part.sketches[a].sketch.regions();
+    let path = PathRef::Sketch {
+        sketch: part.sketches[b].id.clone(),
+        curves: part.sketches[b]
+            .sketch
+            .entities()
+            .map(|(id, _)| id)
+            .collect(),
+    };
+    let def = SweepFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], path);
+    part.add_sweep(a, def).unwrap();
+    let wp = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: -20.0,
+        })))
+        .unwrap();
+    let c = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    part.sketches[c]
+        .sketch
+        .add_rectangle_two_point(Point2::new(-10.0, -10.0), Point2::new(10.0, 10.0))
+        .unwrap();
+    let d = part
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(wp),
+                ..Default::default()
+            },
+            &o,
+        )
+        .unwrap();
+    part.sketches[d]
+        .sketch
+        .add_rectangle_two_point(Point2::new(-5.0, -5.0), Point2::new(5.0, 5.0))
+        .unwrap();
+    let sec = |part: &PartDocument, k: usize| {
+        let r = part.sketches[k].sketch.regions();
+        LoftSection::Profile {
+            sketch: part.sketches[k].id.clone(),
+            profile: ProfileRef::of(&r[0], r[0].interior_point()),
+        }
+    };
+    let mut loft = LoftFeature::new(vec![sec(&part, c), sec(&part, d)]);
+    loft.operation = Operation::Join;
+    part.add_loft(loft).unwrap();
+    part
+}
+
 /// Revision 8: work features on curved faces and a UCS: a cylinder, a
 /// tangent work plane parallel to YZ, an axis through the cylinder face, a
 /// UCS lifted to the top with a boss sketched on its XY plane.
@@ -688,6 +767,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("WorkR8");
             project.add_document("Part1", DocumentData::Part(work_r8()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r12/sweep_loft_r12.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("SweepLoftR12");
+            project.add_document("Part1", DocumentData::Part(sweep_loft_r12()));
             project.save(&f).unwrap();
         }
         let f = root().join("r9/draft_r9.3dcadcraft");
