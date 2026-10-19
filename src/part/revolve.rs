@@ -8,10 +8,11 @@ use std::f64::consts::TAU;
 
 use serde::{Deserialize, Serialize};
 
-use crate::kernel::{BRep, Real, RevolveAxis, Vector3};
+use crate::kernel::{BRep, Plane, Point3, Real, RevolveAxis, Vector3};
 use crate::sketch::{Entity, EntityId, Sketch, Style};
 
-use super::extrude::{ExtentDirection, ProfileRef, kernel_profile};
+use super::extrude::{ExtentDirection, ProfileRef, TargetRef, kernel_profile};
+use super::placement::WorkGeom;
 use super::params::FeatureParams;
 use super::{Operation, Output};
 
@@ -32,6 +33,9 @@ pub enum RevolveExtent {
     Full,
     /// By an angle (with direction).
     Angle,
+    /// Up to a face, plane or point ([`RevolveFeature::to`]; format
+    /// revision 7).
+    To,
 }
 
 /// A revolve of sketch regions.
@@ -77,6 +81,15 @@ pub struct RevolveFeature {
     /// feature's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
+    /// The termination of [`RevolveExtent::To`]: a planar face or plane
+    /// through the axis, or a point / vertex (the half-plane through it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<TargetRef>,
+    /// **Minimum Solution**: when the termination is ambiguous (a plane
+    /// through the axis has two half-planes), stop at the nearer one; off,
+    /// the farther one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub minimum: bool,
 }
 
 fn quarter() -> Real {
@@ -102,13 +115,148 @@ impl RevolveFeature {
             solids: Vec::new(),
             params: FeatureParams::default(),
             preset: None,
+            to: None,
+            minimum: false,
         }
+    }
+
+    /// **Predict Boolean Operation**: New Solid without a body; Cut when
+    /// the first profile lies in the material (a groove on a shaft), else
+    /// Join.
+    pub fn predict_operation(&self, body: &BRep, sketch: &Sketch) -> Operation {
+        if !body.solids().any(|(_, s)| !s.open) {
+            return Operation::NewSolid;
+        }
+        let regions = sketch.regions();
+        let inside = self
+            .profiles
+            .first()
+            .and_then(|pr| pr.resolve(&regions))
+            .is_some_and(|r| {
+                let p = r.interior_point();
+                body.contains_point(&sketch.plane.point_at(p.x, p.y))
+            });
+        if inside { Operation::Cut } else { Operation::Join }
+    }
+
+    /// Start angle and signed sweep, with To resolved against the model.
+    pub(super) fn sweep_in(
+        &self,
+        body: &BRep,
+        works: &WorkGeom,
+        sketch: &Sketch,
+    ) -> Result<(Real, Real), String> {
+        if self.extent != RevolveExtent::To {
+            return self.sweep();
+        }
+        let flipped = match self.direction {
+            ExtentDirection::Default => false,
+            ExtentDirection::Flipped => true,
+            _ => return Err("To: use the Default or Flipped direction".into()),
+        };
+        let target = self
+            .to
+            .as_ref()
+            .ok_or("To: pick the face, plane or point the revolve ends at")?;
+        let (o, a) = self.world_axis(sketch)?;
+        let perp = |v: Vector3| v - a * v.dot(&a);
+        // The profile's own half-plane.
+        let regions = sketch.regions();
+        let p = self
+            .profiles
+            .first()
+            .and_then(|pr| pr.resolve(&regions))
+            .map(|r| r.interior_point())
+            .ok_or("profile #1 no longer exists in the sketch")?;
+        let u0 = perp(sketch.plane.point_at(p.x, p.y) - o)
+            .try_normalize(1e-12)
+            .ok_or("To: the profile lies on the axis")?;
+        // Half-planes (directions from the axis) the revolve may end at.
+        let mut dirs: Vec<Vector3> = Vec::new();
+        let point = |q: Point3, dirs: &mut Vec<Vector3>| -> Result<(), String> {
+            dirs.push(
+                perp(q - o)
+                    .try_normalize(1e-9)
+                    .ok_or("To: the point lies on the axis")?,
+            );
+            Ok(())
+        };
+        let through_axis = |pl: &Plane, what: &str| -> Result<Vector3, String> {
+            let m = pl.normal.into_inner();
+            if m.dot(&a).abs() > 1e-6 || (o - pl.origin).dot(&m).abs() > 1e-6 {
+                return Err(format!(
+                    "To: {what} must contain the revolve axis (other planes are not supported yet)"
+                ));
+            }
+            Ok(m.cross(&a).normalize())
+        };
+        match target {
+            TargetRef::Vertex(name) => {
+                let q = body
+                    .find_vertex(name)
+                    .and_then(|v| body.vertex(v))
+                    .map(|v| v.point)
+                    .ok_or_else(|| format!("To: vertex {name} not found"))?;
+                point(q, &mut dirs)?;
+            }
+            TargetRef::Point(pr) => {
+                let q = super::placement::point_of(pr, body, works).map_err(|e| e.to_string())?;
+                point(q, &mut dirs)?;
+            }
+            TargetRef::Plane(pr) => {
+                let pl = super::placement::plane_of(pr, body, works).map_err(|e| e.to_string())?;
+                let d = through_axis(&pl, "the plane")?;
+                dirs.extend([d, -d]);
+            }
+            TargetRef::Face(name) => {
+                let f = body
+                    .find_face(name)
+                    .ok_or_else(|| format!("To: face {name} not found"))?;
+                let pl = body
+                    .face_plane(f)
+                    .ok_or_else(|| format!("To: face {name} is not planar (not supported yet)"))?;
+                let d = through_axis(&pl, "the face")?;
+                // The half-plane(s) the face lies in.
+                let vs: Vec<Point3> = body
+                    .face_vertices(f)
+                    .into_iter()
+                    .filter_map(|v| body.vertex(v).map(|v| v.point))
+                    .collect();
+                let side = |s: Real| vs.iter().any(|q| perp(q - o).dot(&(d * s)) > 1e-6);
+                for s in [1.0, -1.0] {
+                    if side(s) {
+                        dirs.push(d * s);
+                    }
+                }
+                if dirs.is_empty() {
+                    dirs.extend([d, -d]);
+                }
+            }
+        }
+        // Angles in the revolve's direction, (0, 2π).
+        let angles: Vec<Real> = dirs
+            .iter()
+            .map(|u| {
+                let ccw = u0.cross(u).dot(&a).atan2(u0.dot(u)).rem_euclid(TAU);
+                if flipped { (TAU - ccw).rem_euclid(TAU) } else { ccw }
+            })
+            .filter(|&t| t > 1e-9)
+            .collect();
+        let pick = if self.minimum {
+            angles.iter().copied().reduce(Real::min)
+        } else {
+            angles.iter().copied().reduce(Real::max)
+        };
+        let t = pick.ok_or("To: the termination lies in the plane of the profile")?;
+        Ok((0.0, if flipped { -t } else { t }))
     }
 
     /// Start angle and signed sweep.
     pub(super) fn sweep(&self) -> Result<(Real, Real), String> {
-        if self.extent == RevolveExtent::Full {
-            return Ok((0.0, TAU));
+        match self.extent {
+            RevolveExtent::Full => return Ok((0.0, TAU)),
+            RevolveExtent::To => return Err("To: the termination is resolved against the model".into()),
+            RevolveExtent::Angle => {}
         }
         let pos = |v: Real, what: &str| {
             if v.is_finite() && v > 1e-9 && v <= TAU + 1e-9 {
@@ -131,8 +279,14 @@ impl RevolveFeature {
 
     /// Builds the revolve into `body`.
     pub fn build(&self, body: &mut BRep, sketch: &Sketch) -> Result<(), String> {
+        self.build_in(body, &WorkGeom::new(), sketch)
+    }
+
+    /// [`Self::build`] with the part's work geometry (To a work plane or
+    /// point).
+    pub fn build_in(&self, body: &mut BRep, works: &WorkGeom, sketch: &Sketch) -> Result<(), String> {
         let axis = resolve_axis(&self.axis, sketch)?;
-        let (start, sweep) = self.sweep()?;
+        let (start, sweep) = self.sweep_in(body, works, sketch)?;
         let regions = sketch.regions();
         for (n, pr) in self.profiles.iter().enumerate() {
             let region = pr
