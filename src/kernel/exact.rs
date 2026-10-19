@@ -2367,7 +2367,12 @@ mod tests {
         check_shell(&s, outer - inner);
         // Every face named (rule 2), also walls the history does not trace.
         assert!(s.names().iter().all(Option::is_some), "{:?}", s.names());
-        assert!(s.names().iter().flatten().any(|n| n.starts_with("Shell1:Inner")));
+        assert!(
+            s.names()
+                .iter()
+                .flatten()
+                .any(|n| n.starts_with("Shell1:Inner"))
+        );
     }
 
     #[test]
