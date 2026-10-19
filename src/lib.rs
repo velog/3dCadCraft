@@ -36,4 +36,5 @@ pub mod document;
 pub mod gui;
 pub mod kernel;
 pub mod part;
+pub mod presets;
 pub mod sketch;

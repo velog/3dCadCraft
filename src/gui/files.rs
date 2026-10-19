@@ -267,17 +267,7 @@ pub(super) fn home_dir() -> Option<PathBuf> {
 /// `settings.json`: `%APPDATA%\3dcadcraft` on Windows, else
 /// `~/.config/3dcadcraft`.
 pub(super) fn settings_path() -> Option<PathBuf> {
-    if cfg!(windows)
-        && let Some(app) = std::env::var_os("APPDATA")
-    {
-        return Some(Path::new(&app).join("3dcadcraft").join("settings.json"));
-    }
-    Some(
-        home_dir()?
-            .join(".config")
-            .join("3dcadcraft")
-            .join("settings.json"),
-    )
+    Some(crate::presets::config_dir()?.join("settings.json"))
 }
 
 /// The recent files (newest first, at most 10, existing ones only).

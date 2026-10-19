@@ -775,6 +775,7 @@ impl CadCraftApp {
         };
         let title = d.def.command();
         self.panel_header(ui, icon, title);
+        self.extrude_preset_row(ui);
         let Some(d) = self.extrude.as_ref() else {
             return;
         };
@@ -1819,6 +1820,7 @@ impl CadCraftApp {
             BlendKind::Chamfer { .. } => (Icon::ChamferEdge, "Chamfer"),
         };
         self.panel_header(ui, icon, cmd);
+        self.preset_row(ui, cmd, &mut d.def);
         use super::blend::EdgeMode;
         use crate::part::select::SolidEdges;
         use crate::part::{FilletSet, FilletType};
@@ -2237,6 +2239,7 @@ impl CadCraftApp {
             return;
         };
         self.panel_header(ui, Icon::Shell, "Shell");
+        self.preset_row(ui, "Shell", &mut d.def);
         let bodies = self
             .part()
             .bodies_before(d.edit.unwrap_or(self.part().features.len()));
@@ -2377,6 +2380,7 @@ impl CadCraftApp {
             return;
         };
         self.panel_header(ui, Icon::Draft, "Face Draft");
+        self.preset_row(ui, "Face Draft", &mut d.def);
         let describe = |p: &crate::part::PlaneRef| match p {
             crate::part::PlaneRef::Origin(o) => format!("{o:?} Plane"),
             crate::part::PlaneRef::Face(n) => n.clone(),

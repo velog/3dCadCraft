@@ -76,6 +76,11 @@ pub struct DraftFeature {
     /// Equations of its values.
     #[serde(default, skip_serializing_if = "FeatureParams::is_empty")]
     pub params: FeatureParams,
+    /// The preset the feature was made with (`docs/spec/0.11-presets.md`):
+    /// only its name, Edit Feature shows it again; the values are the
+    /// feature's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
 }
 
 impl DraftFeature {
@@ -92,6 +97,7 @@ impl DraftFeature {
             angle,
             chain: true,
             params: FeatureParams::default(),
+            preset: None,
         }
     }
 

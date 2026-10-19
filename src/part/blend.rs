@@ -164,6 +164,11 @@ pub struct BlendFeature {
     /// Partial chamfer of its (one) edge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialChamfer>,
+    /// The preset the feature was made with (`docs/spec/0.11-presets.md`):
+    /// only its name, Edit Feature shows it again; the values are the
+    /// feature's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
 }
 
 fn is_constant(t: &FilletType) -> bool {
@@ -186,6 +191,7 @@ impl BlendFeature {
             smooth: false,
             full_round: None,
             partial: None,
+            preset: None,
         }
     }
 
@@ -210,6 +216,7 @@ impl BlendFeature {
             smooth: false,
             full_round: None,
             partial: None,
+            preset: None,
         }
     }
 

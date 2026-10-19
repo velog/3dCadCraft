@@ -169,7 +169,9 @@
 
 **Аналог.** Measure, iProperties → Physical.
 
-## 0.11 Настройки на приложението и документа — ⬜ · S
+## 0.11 Настройки на приложението и документа — 🟡 · S
+
+**Presets** (готови набори в панелите на командите) — 🟡: Extrude, Revolve, Fillet, Chamfer, Shell и Face Draft имат ред Preset (No Preset, Last Used, свои и вградени набори, Save/Rename/Delete, New Default, Sort). Наборите са настройка на потребителя (`%APPDATA%\3dcadcraft\presets`, под Linux `~/.config/3dcadcraft/presets`), не данни на документа. **Спецификация:** [spec/0.11-presets.md](spec/0.11-presets.md)
 
 **Application Options** (за потребителя):
 - единици по подразбиране;

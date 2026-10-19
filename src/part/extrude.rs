@@ -148,6 +148,11 @@ pub struct ExtrudeFeature {
         skip_serializing_if = "super::params::FeatureParams::is_empty"
     )]
     pub params: super::params::FeatureParams,
+    /// The preset the feature was made with (`docs/spec/0.11-presets.md`):
+    /// only its name, Edit Feature shows it again; the values are the
+    /// feature's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
 }
 
 /// Outer-boundary curves of a region: its identity in a [`ProfileRef`].
@@ -286,6 +291,7 @@ impl ExtrudeFeature {
             output: Default::default(),
             solids: Vec::new(),
             params: Default::default(),
+            preset: None,
         }
     }
 
