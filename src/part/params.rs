@@ -181,6 +181,14 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
             super::WorkDef::Point(super::WorkPointDef::Fixed { .. }) => {
                 vec![("x", Unit::Mm), ("y", Unit::Mm), ("z", Unit::Mm)]
             }
+            super::WorkDef::Ucs(super::work::UcsDef::Offsets { .. }) => vec![
+                ("x", Unit::Mm),
+                ("y", Unit::Mm),
+                ("z", Unit::Mm),
+                ("rx", Unit::Deg),
+                ("ry", Unit::Deg),
+                ("rz", Unit::Deg),
+            ],
             _ => Vec::new(),
         },
     }
@@ -270,6 +278,25 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
             (super::WorkDef::Point(super::WorkPointDef::Fixed { x, .. }), "x") => Some(*x),
             (super::WorkDef::Point(super::WorkPointDef::Fixed { y, .. }), "y") => Some(*y),
             (super::WorkDef::Point(super::WorkPointDef::Fixed { z, .. }), "z") => Some(*z),
+            (
+                super::WorkDef::Ucs(super::work::UcsDef::Offsets {
+                    x,
+                    y,
+                    z,
+                    rx,
+                    ry,
+                    rz,
+                }),
+                f,
+            ) => match f {
+                "x" => Some(*x),
+                "y" => Some(*y),
+                "z" => Some(*z),
+                "rx" => Some(*rx),
+                "ry" => Some(*ry),
+                "rz" => Some(*rz),
+                _ => None,
+            },
             _ => None,
         },
     }
@@ -363,6 +390,25 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
             (super::WorkDef::Point(super::WorkPointDef::Fixed { x, .. }), "x") => *x = v,
             (super::WorkDef::Point(super::WorkPointDef::Fixed { y, .. }), "y") => *y = v,
             (super::WorkDef::Point(super::WorkPointDef::Fixed { z, .. }), "z") => *z = v,
+            (
+                super::WorkDef::Ucs(super::work::UcsDef::Offsets {
+                    x,
+                    y,
+                    z,
+                    rx,
+                    ry,
+                    rz,
+                }),
+                f,
+            ) => match f {
+                "x" => *x = v,
+                "y" => *y = v,
+                "z" => *z = v,
+                "rx" => *rx = v,
+                "ry" => *ry = v,
+                "rz" => *rz = v,
+                _ => {}
+            },
             _ => {}
         },
     }

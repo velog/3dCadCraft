@@ -1713,8 +1713,13 @@ fn surface_of(body: &sk::Body, i: usize) -> Option<Surface> {
             axis,
             half_angle,
         } => {
-            let a = w3(axis);
-            Surface::Cone(Cone::new(p3(apex), a, any_x(&a), 0.0, half_angle).ok()?)
+            // Our cone is given by a reference circle (radius > 0): take
+            // the one a unit along the axis from the apex, on the side
+            // where the cone opens.
+            let a = w3(axis).try_normalize(1e-12)?;
+            let side = if half_angle >= 0.0 { 1.0 } else { -1.0 };
+            let r = half_angle.tan().abs();
+            Surface::Cone(Cone::new(p3(apex) + a * side, a, any_x(&a), r, half_angle).ok()?)
         }
         F::Sphere { center, radius } => Surface::Sphere(Sphere {
             center: p3(center),

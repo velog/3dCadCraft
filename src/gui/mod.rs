@@ -50,6 +50,7 @@ mod sketch_tools;
 mod valuefield;
 mod viewcube;
 mod work;
+mod work_panel;
 
 use eframe::egui::{self, Color32, Key, PointerButton, RichText, Sense};
 
@@ -1220,7 +1221,8 @@ impl CadCraftApp {
                 self.thread_draft = Some(hole::ThreadDraft::editing(t, k));
             }
             // Box and work features are edited in Properties.
-            Feature::Box(_) | Feature::Work(_) => {}
+            Feature::Work(_) => self.redefine_work(k),
+            Feature::Box(_) => {}
         }
         if let Some(def) = self.extrude.as_ref().map(|d| d.def.clone()) {
             self.draft_preset_edit(&def);
@@ -1748,6 +1750,7 @@ impl CadCraftApp {
                 Ok(WorkDef::Plane(WorkPlaneDef::Offset { base, distance })) => {
                     Some((ManipOwner::Work, offset(&base, distance)?))
                 }
+                Ok(def) => Some((ManipOwner::Work, self.work_angle_handle(&def)?)),
                 _ => None,
             };
         }
@@ -1759,7 +1762,7 @@ impl CadCraftApp {
                 WorkDef::Plane(WorkPlaneDef::Offset { base, distance }) => {
                     Some((ManipOwner::Feature(k), offset(base, *distance)?))
                 }
-                _ => None,
+                def => Some((ManipOwner::Feature(k), self.work_angle_handle(def)?)),
             };
         }
         if let Some(d) = &self.extrude {
@@ -2654,7 +2657,11 @@ impl CadCraftApp {
     fn handle_value(&self, h: &manip::Handle) -> Option<f64> {
         use crate::part::params::feature_value;
         if let Some(d) = &self.work_draft {
-            return (h.field == "distance").then_some(d.distance);
+            return match h.field {
+                "distance" => Some(d.distance),
+                "angle" => Some(d.angle),
+                _ => None,
+            };
         }
         let f = match (&self.extrude, self.selection) {
             (Some(d), _) => match d.def.clone() {
@@ -2693,10 +2700,12 @@ impl CadCraftApp {
                 }
             }
             ManipOwner::Work => {
-                if let Some(d) = self.work_draft.as_mut()
-                    && field == "distance"
-                {
-                    d.distance = v;
+                if let Some(d) = self.work_draft.as_mut() {
+                    match field {
+                        "distance" => d.distance = v,
+                        "angle" => d.angle = v,
+                        _ => {}
+                    }
                 }
             }
         }
@@ -3197,6 +3206,7 @@ impl CadCraftApp {
             | Action::WorkPlane
             | Action::WorkAxis
             | Action::WorkPoint
+            | Action::Ucs
             | Action::Fillet
             | Action::Chamfer
             | Action::Shell
@@ -3253,7 +3263,7 @@ impl CadCraftApp {
             Action::MirrorFeature => self.start_pattern(crate::part::PatternFeature::mirror()),
             Action::Hole => self.start_hole(),
             Action::Thread => self.start_thread(),
-            Action::WorkPlane | Action::WorkAxis | Action::WorkPoint => {
+            Action::WorkPlane | Action::WorkAxis | Action::WorkPoint | Action::Ucs => {
                 self.blend_draft = None;
                 self.finish_sketch();
                 self.mode = Mode::Normal;
@@ -3261,6 +3271,7 @@ impl CadCraftApp {
                 let kind = match action {
                     Action::WorkAxis => work::WorkKind::Axis,
                     Action::WorkPoint => work::WorkKind::Point,
+                    Action::Ucs => work::WorkKind::Ucs,
                     _ => work::WorkKind::Plane,
                 };
                 self.work_draft = Some(work::WorkDraft::new(kind));
@@ -6154,6 +6165,7 @@ fn command_label(a: Action) -> &'static str {
         Action::Hole => "Hole",
         Action::Thread => "Thread",
         Action::WorkPoint => "Work Point",
+        Action::Ucs => "UCS",
         Action::StartSketch => "Start 2D Sketch",
         _ => "command",
     }

@@ -76,7 +76,10 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 7: End of Part and suppressed features (`PartDocument::eop`,
 ///   `PartDocument::suppressed`; an older build would ignore both and build
 ///   every feature) (2026-10-19).
-pub const FORMAT_REVISION: u32 = 7;
+/// - 8: work feature methods on curved faces, curves and sketch geometry,
+///   and UCS (`WorkDef::Ucs`, new `WorkPlaneDef` / `WorkAxisDef` /
+///   `WorkPointDef` variants) (2026-10-19).
+pub const FORMAT_REVISION: u32 = 8;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

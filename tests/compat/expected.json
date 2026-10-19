@@ -89,5 +89,12 @@
     "features": 4,
     "sketches": 2,
     "exact": true
+  },
+  "r8/work_r8.3dcadcraft": {
+    "volume": 6399.01270095927,
+    "faces": 9,
+    "features": 5,
+    "sketches": 2,
+    "exact": true
   }
 }

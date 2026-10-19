@@ -638,7 +638,7 @@
 
 ## 2.10 Работни елементи — 🟡 · M
 
-**Спецификация:** [spec/2.10-work-features.md](spec/2.10-work-features.md). Готово: команди Plane / Axis / Point (методът се разпознава от избора): равнини (Offset, Through Point, Midplane, Angle, Three Points, Two Coplanar Edges, Normal to Axis), оси (On Line, Parallel Through Point, Two Points, Two Planes, Normal to Plane, Circular Edge, Revolved Feature, Line on Plane), точки (Vertex/Midpoint, Three Planes, Two Lines, Plane + Line, Loop Center, Grounded); скици върху работни равнини. Предстоят UCS, Object Visibility, Show Inputs, Redefine, Flip Normal.
+**Спецификация:** [spec/2.10-work-features.md](spec/2.10-work-features.md). Готово: команди Plane / Axis / Point / UCS (методът се разпознава от избора): равнини (Offset, Through Point, Midplane, Midplane of Torus, Angle с дъга, Three Points, Two Coplanar Edges, Normal to Axis, Tangent to Surface Through Edge / Through Point / Parallel to Plane, Normal to Curve at Point, Flip Normal), оси (On Line или линия от скица, Parallel Through Point, Two Points, Two Planes, Normal to Plane, Circular или Elliptical Edge, Revolved Face/Feature, Line on Plane), точки (Vertex/Sketch Point/Midpoint, Three Planes, Two Lines, Plane или Surface + Line, Loop Center, Torus/Sphere Center, Grounded), UCS (6 параметъра или 3 точки, със свои равнини/оси/център); Redefine; скици върху работни равнини и UCS. Новото чака визуална проверка. Предстоят триада на UCS, Object Visibility, Show Inputs, Loop Select.
 
 **Какво прави.** Помощни равнини, оси, точки и локални координатни системи (UCS), спрямо които се рисуват скици и се позиционират операции.
 

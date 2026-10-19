@@ -111,7 +111,7 @@ UI.md на 2026-10-19; виж последния раздел).
 | **Shell** | стена → за махане (втори клик я връща; *Automatic* взема и допирателните) | — | предварително избраните стени влизат в списъка |
 | **Draft (Face Draft)** | според активния селектор: *Pull Direction* — прав ръб (първо), плоска стена, работна или основна равнина; *Fixed Plane* — равнина; *Faces* — стена (кликът определя неподвижния ръб) | — | след Pull/Plane селекторът минава сам на Faces |
 | **Rectangular / Circular Pattern, Mirror** (3D) | селектор *Features*: стена → нейната операция (втори клик я маха; клик върху ред в дървото също); *Solids*: стена → тялото ѝ. *Direction 1/2*: прав ръб или равнина (стена, работна, основна); *Axis*: прав ръб; *Mirror Plane*: равнина | — | след първия избран обект селекторът минава сам на посоката/оста/равнината; бутони за основни/работни оси и равнини в диалога |
-| **Work Plane / Axis / Point** | работна ос/точка (6/8 px) > връх или среда на прав ръб (8 px) > ръб (прав = линия, окръжност = кръгов ръб) > стена / работна / основна равнина; при Axis извита стена на Revolve = оста на Revolve. Втори клик върху същото го маха; несъвместим избор започва отначало | стрелка на отместена равнина | бутони X/Y/Z/Center в диалога |
+| **Work Plane / Axis / Point / UCS** | работна ос/точка и елементи на UCS (6/8 px) > връх или среда на прав ръб (8 px) > точка/линия/крива на видима скица > ръб (прав = линия, иначе крив ръб) > крива аналитична стена (цилиндър, конус, сфера, тор) > плоска стена / работна / основна равнина; при Axis фасетирана стена на Revolve = оста на Revolve. Втори клик върху същото го маха; несъвместим избор започва отначало | стрелка на отместена равнина, дъга за ъгъл | бутони X/Y/Z/Center в диалога; точка/линия от скица в метод с още входове става скрита работна точка/ос |
 | **Pattern (скица)** | попълва активния селектор (раздел 4.9) | — | Enter: следващ селектор / OK |
 
 Във всички команди средният бутон, F2/F3/F4, колелцето и ViewCube работят нормално.
@@ -606,6 +606,7 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 | Extrude (само Extents = Distance, без From) | стрелка за Distance A (Symmetric: половин стрелка от всяка страна), стрелка B при Asymmetric, дръжка за Taper (и Taper B) до върха |
 | Revolve (Extents = Angle) | дъга около оста с дръжка за Angle A (Flipped — в другата посока, Symmetric — на половин ъгъл), Angle B при Asymmetric |
 | Work Plane — Offset | стрелка за Distance от базовата равнина |
+| Work Plane — Angle to Plane | дъга около ръба за Angle |
 
 - Показват се в диалога на командата и при избрана операция в дървото (не в скица и не при
   операция с проблем).
@@ -758,8 +759,8 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | | Thread (2.9), Slot (2.3), Combine (2.13), Split (2.13) | предстоят |
 | Work Features | **Plane** | работна равнина; методът следва избора |
 | | **Axis** | работна ос |
-| | **Point** | работна точка (и Grounded X, Y, Z) |
-| | UCS (2.10) | предстои |
+| | **Point** | работна точка (и Grounded X, Y, Z; център на тор/сфера; пробив на крива стена) |
+| | **UCS** | потребителска координатна система: X, Y, Z и ъгли или три точки (център, X, Y); свои равнини, оси и център |
 | Pattern | **Rectangular** | копия на операции или тела в редове по една или две посоки |
 | | **Circular** | копия на равни ъгли около ос |
 | | **Mirror** | огледално копие на операции или тела спрямо равнина |
@@ -833,7 +834,7 @@ Clear) и се отварят там, където са били; при по-м
 | Rectangular Pattern (3D) | Input Geometry (Copy: **Features** / **Solids**, списък), Direction 1 (селектор, Origin axis X/Y/Z и работни оси, Flip, Count, Distribution Incremental/Fitted, Spacing/Length, Midplane), Direction 2 (*Use* + същото), Output (само Solids: Join / New Solid), Creation (Identical; Optimized/Adjust — сиви); **OK**, **Apply**, **Cancel** |
 | Circular Pattern (3D) | Input Geometry, Rotation Axis (селектор, оси, Flip), Placement (Count, Incremental/Fitted, Angle / Total Angle, Midplane; Orientation — сиво), Output, Creation; **OK**, **Apply**, **Cancel** |
 | Mirror (3D) | Input Geometry, Mirror Plane (селектор, Origin plane XY/XZ/YZ), Output (Join / New Solid, *Remove Original*), Creation; **OK**, **Apply**, **Cancel** |
-| Work Plane/Axis/Point | Input (избраните, `x`), Origin X/Y/Z/Center, Method, Distance (10 mm) / Angle (90°) / X,Y,Z, Grounded (точка); **OK**, **Cancel** |
+| Work Plane/Axis/Point/UCS | Input (избраните, `x`), Origin X/Y/Z/Center, Method, Distance (10 mm) / Angle (90°) / X,Y,Z, Grounded (точка), Solution + Next (пробив), Other side (допирателна), Flip Normal (равнина), X/Y/Z/Angle X/Y/Z (UCS); **OK**, **Cancel**. Properties на готов елемент: входове, стойности с изрази, Other side, Flip Normal, Visible, New Sketch, **Redefine**, Delete; двоен клик = Redefine |
 | Избрана операция | същите полета, прилагат се веднага (Undo стъпка); **Edit Feature**, **Delete** |
 | Box (тяло) | Length (X), Width (Y), Height (Z) + Validation |
 
