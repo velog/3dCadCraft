@@ -3027,3 +3027,6 @@ mod sphere_tests {
 
 #[cfg(test)]
 mod hole_tests;
+
+mod coil;
+pub use coil::{CoilMesh, CoilMotion, CoilPiece, CoilZone, coil, coil_boolean, coil_mesh};
