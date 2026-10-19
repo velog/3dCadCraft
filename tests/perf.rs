@@ -287,6 +287,37 @@ fn speed_budgets() {
         }),
     ));
 
+    // Face Draft of a box's sides and vertical rounds (one tangent chain
+    // from the front), fixed plane XY.
+    let mut vertical_rounds = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let corner = |x: Real, w: Real| x.abs() < 1e-6 || (x - w).abs() < 1e-6;
+    let vertical: Vec<EdgeRef> = vertical_rounds
+        .body
+        .edges()
+        .filter_map(|(e, _)| edge_ref(&vertical_rounds.body, e))
+        .filter(|r| corner(r.hint[0], 40.0) && corner(r.hint[1], 30.0))
+        .collect();
+    vertical_rounds
+        .add_blend(BlendFeature::fillet(vertical, 5.0))
+        .unwrap();
+    rows.push((
+        "face draft 3° of a box's sides and vertical rounds (add_draft)",
+        200.0,
+        median_ms(3, || {
+            let mut p = vertical_rounds.clone();
+            p.build_cache = Default::default();
+            let mut def = cadcraft3d::part::DraftFeature::new(3f64.to_radians());
+            def.draft_type = cadcraft3d::part::DraftType::FixedPlane;
+            def.plane = Some(cadcraft3d::part::PlaneRef::Origin(
+                cadcraft3d::part::OriginPlane::XY,
+            ));
+            let front = p.body.find_face("Box1:Front").unwrap();
+            let body = p.body.clone();
+            def.toggle(&body, front, None);
+            p.add_draft(def).unwrap();
+        }),
+    ));
+
     println!("{:<62} {:>9} {:>9}", "case", "budget", "median");
     let mut over = Vec::new();
     for (case, budget, ms) in &rows {

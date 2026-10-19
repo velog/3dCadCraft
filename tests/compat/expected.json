@@ -61,5 +61,12 @@
     "features": 3,
     "sketches": 0,
     "exact": true
+  },
+  "r4/draft_r4.3dcadcraft": {
+    "volume": 48000.0,
+    "faces": 6,
+    "features": 2,
+    "sketches": 0,
+    "exact": true
   }
 }

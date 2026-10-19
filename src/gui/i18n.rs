@@ -65,6 +65,18 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
     (
+        "Face Draft: click a planar face, an origin plane or a straight edge for the pull direction",
+        "Face Draft: щракнете плоска стена, основна равнина или прав ръб за посоката на изваждане",
+    ),
+    (
+        "Face Draft: click the fixed plane (a planar face or an origin plane)",
+        "Face Draft: щракнете неподвижната равнина (плоска стена или основна равнина)",
+    ),
+    (
+        "Face Draft: click the faces to draft (Fixed Edge: near the edge that stays), then OK",
+        "Face Draft: щракнете стените за накланяне (Fixed Edge: близо до ръба, който остава), после OK",
+    ),
+    (
         "Shell: click the faces to remove (none: a closed cavity), set the thickness, then OK",
         "Shell: щракнете стените за махане (без стени: затворена кухина), задайте дебелината, после OK",
     ),

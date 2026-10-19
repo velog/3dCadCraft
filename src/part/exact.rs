@@ -414,6 +414,67 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
     Ok(out)
 }
 
+/// Face Draft (`docs/spec/2.8-draft.md`): the faces are found by name on
+/// the solid holding them; faces sharing a neutral plane are drafted in one
+/// kernel call, groups one after another (faces keep their names, so each
+/// group is found again on the result). Kernel failures are health.
+pub(super) fn draft(
+    dr: &super::DraftFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    cur: &[ExactSolid],
+) -> Result<Vec<ExactSolid>, Fail> {
+    if dr.faces.is_empty() {
+        return Err(User("select the faces to draft".into()));
+    }
+    if !(dr.angle.is_finite() && dr.angle.abs() < std::f64::consts::FRAC_PI_2 - 1e-3) {
+        return Err(User("the draft angle must be between −90° and 90°".into()));
+    }
+    let pull = dr.pull_direction(body, works).map_err(User)?;
+    let planes = dr.neutral_planes(body, works, pull).map_err(User)?;
+    // Groups of faces with the same neutral plane (height along the pull).
+    let mut groups: Vec<(crate::kernel::Plane, Vec<&super::FaceRef>)> = Vec::new();
+    for (r, pl) in dr.faces.iter().zip(planes) {
+        let h = pl.origin.coords.dot(&pull);
+        match groups
+            .iter_mut()
+            .find(|(g, _)| (g.origin.coords.dot(&pull) - h).abs() < 1e-9)
+        {
+            Some((_, v)) => v.push(r),
+            None => groups.push((pl, vec![r])),
+        }
+    }
+    let mut out = cur.to_vec();
+    for (pl, refs) in groups {
+        let mut target: Option<usize> = None;
+        let mut faces = Vec::new();
+        for r in refs {
+            let hint = Point3::from(r.hint);
+            let found = out.iter().enumerate().find_map(|(i, s)| {
+                exact::faces_named(s, &r.face, hint)
+                    .ok()
+                    .and_then(|v| v.first().map(|&f| (i, f)))
+            });
+            let Some((i, f)) = found else {
+                return Err(User(format!("the face {} no longer exists", r.face)));
+            };
+            match target {
+                Some(t) if t != i => {
+                    return Err(User("the faces belong to different solids".into()));
+                }
+                _ => target = Some(i),
+            }
+            if !faces.contains(&f) {
+                faces.push(f);
+            }
+        }
+        let Some(t) = target else { continue };
+        out[t] = exact::draft(&out[t], &faces, &pl, pull, dr.angle)
+            .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?;
+    }
+    Ok(out)
+}
+
 /// Fillets beyond one constant set: several sets with their own radii,
 /// variable radius, chord width, Full Round (`docs/spec/2.4-fillet.md`).
 /// The kernel builds them or the feature reports why (no faceted rebuild).

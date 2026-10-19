@@ -312,6 +312,45 @@ impl CadCraftApp {
                 });
                 return;
             }
+            Feature::Draft(dr) => {
+                ui.horizontal(|ui| {
+                    tree_icon(ui, Icon::Draft);
+                    let sick = part.feature_health.get(&dr.id);
+                    let mut text = RichText::new(&dr.name);
+                    if sick.is_some() {
+                        text = text.color(WARNING);
+                    }
+                    let hover = match sick {
+                        Some(h) => format!("Warning: {h}"),
+                        None => format!(
+                            "{}, {} face(s), {:.2}°",
+                            dr.draft_type.label(),
+                            dr.faces.len(),
+                            dr.angle.to_degrees()
+                        ),
+                    };
+                    let r = ui
+                        .selectable_label(self.selection == Selection::Feature(k), text)
+                        .on_hover_text(hover);
+                    if r.clicked() {
+                        cmds.push(BrowserCmd::Select(Selection::Feature(k)));
+                    }
+                    if r.double_clicked() {
+                        cmds.push(BrowserCmd::EditFeature(k));
+                    }
+                    r.context_menu(|ui| {
+                        if ui.button("Edit Feature").clicked() {
+                            cmds.push(BrowserCmd::EditFeature(k));
+                            ui.close();
+                        }
+                        if ui.button("Delete").clicked() {
+                            cmds.push(BrowserCmd::DeleteFeature(k));
+                            ui.close();
+                        }
+                    });
+                });
+                return;
+            }
             Feature::Shell(sh) => {
                 ui.horizontal(|ui| {
                     tree_icon(ui, Icon::Shell);
@@ -551,6 +590,10 @@ impl CadCraftApp {
         }
         if self.shell_draft.is_some() {
             self.shell_dialog(ui);
+            return;
+        }
+        if self.draft_draft.is_some() {
+            self.draft_dialog(ui);
             return;
         }
         if self.editing.is_some() && self.tools.pattern_dialog.is_some() {
@@ -1501,6 +1544,10 @@ impl CadCraftApp {
             self.shell_properties(ui, k, s.clone());
             return;
         }
+        if let Feature::Draft(d) = &f {
+            self.draft_properties(ui, k, d.clone());
+            return;
+        }
         let Some(sketch_id) = f.sketch().map(str::to_owned) else {
             return;
         };
@@ -1541,7 +1588,11 @@ impl CadCraftApp {
                     ui.end_row();
                     axis_change = origin_axis_buttons(ui);
                 }
-                Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) => {}
+                Feature::Box(_)
+                | Feature::Work(_)
+                | Feature::Blend(_)
+                | Feature::Shell(_)
+                | Feature::Draft(_) => {}
             }
         });
         let table = self.part().parameter_table();
@@ -1578,7 +1629,11 @@ impl CadCraftApp {
                     self.edit_feature(k, Feature::Revolve(def));
                 }
             }
-            Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) => {}
+            Feature::Box(_)
+            | Feature::Work(_)
+            | Feature::Blend(_)
+            | Feature::Shell(_)
+            | Feature::Draft(_) => {}
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
@@ -2312,6 +2367,228 @@ impl CadCraftApp {
                 self.end_feature_edit();
             }
         });
+    }
+
+    /// The Face Draft command's panel (`docs/spec/2.8-draft.md`).
+    fn draft_dialog(&mut self, ui: &mut egui::Ui) {
+        use super::draft::DraftInput;
+        use crate::part::DraftType;
+        let Some(mut d) = self.draft_draft.clone() else {
+            return;
+        };
+        self.panel_header(ui, Icon::Draft, "Face Draft");
+        let describe = |p: &crate::part::PlaneRef| match p {
+            crate::part::PlaneRef::Origin(o) => format!("{o:?} Plane"),
+            crate::part::PlaneRef::Face(n) => n.clone(),
+            crate::part::PlaneRef::Work(id) => id.clone(),
+            crate::part::PlaneRef::Fixed => "fixed".into(),
+        };
+        psection(ui, "draft_type", "Draft Type", |ui| {
+            plabel(ui, "Type");
+            ui.vertical(|ui| {
+                for (t, tip) in [
+                    (
+                        DraftType::FixedEdge,
+                        "Each face turns about its edge nearest the click",
+                    ),
+                    (
+                        DraftType::FixedPlane,
+                        "The faces turn about their line on a plane; the pull is its normal",
+                    ),
+                ] {
+                    if ui
+                        .radio(d.def.draft_type == t, t.label())
+                        .on_hover_text(tip)
+                        .clicked()
+                        && d.def.draft_type != t
+                    {
+                        d.def.draft_type = t;
+                        d.input = d.first_input();
+                    }
+                }
+                ui.add_enabled(false, egui::RadioButton::new(false, "Parting Line"))
+                    .on_disabled_hover_text("Not yet: docs/spec/2.8-draft.md");
+            });
+            ui.end_row();
+        });
+        psection(ui, "draft_input", "Input Geometry", |ui| {
+            let selector = |ui: &mut egui::Ui, active: bool, text: String| {
+                let t = if active {
+                    RichText::new(format!("> {text}")).strong().underline()
+                } else {
+                    RichText::new(text)
+                };
+                ui.selectable_label(active, t).clicked()
+            };
+            match d.def.draft_type {
+                DraftType::FixedEdge => {
+                    plabel(ui, "Pull Direction");
+                    let text = match &d.def.pull {
+                        Some(crate::part::PullRef::Plane(p)) => describe(p),
+                        Some(crate::part::PullRef::Line(l)) => format!("{l:?}"),
+                        None => "click to select".into(),
+                    };
+                    if selector(ui, d.input == DraftInput::Pull, text) {
+                        d.input = DraftInput::Pull;
+                    }
+                }
+                DraftType::FixedPlane => {
+                    plabel(ui, "Fixed Plane");
+                    let text = d
+                        .def
+                        .plane
+                        .as_ref()
+                        .map_or("click to select".into(), describe);
+                    if selector(ui, d.input == DraftInput::Plane, text) {
+                        d.input = DraftInput::Plane;
+                    }
+                }
+            }
+            ui.end_row();
+            plabel(ui, "Flip");
+            ui.checkbox(&mut d.def.flip, "")
+                .on_hover_text("Reverse the pull direction");
+            ui.end_row();
+            plabel(ui, "Faces");
+            if selector(
+                ui,
+                d.input == DraftInput::Faces,
+                format!("{} selected", d.def.faces.len()),
+            ) {
+                d.input = DraftInput::Faces;
+            }
+            ui.end_row();
+            plabel(ui, "Face chain");
+            ui.checkbox(&mut d.def.chain, "Automatic")
+                .on_hover_text("A click also takes the faces tangent to the picked one");
+            ui.end_row();
+        });
+        let table = self.part().parameter_table();
+        let mut fx = Fields {
+            table: &table,
+            key: "draft_draft".into(),
+            commits: Vec::new(),
+            bodies: Vec::new(),
+        };
+        let snapshot = Feature::Draft(d.def.clone());
+        psection(ui, "draft_angle", "Angle", |ui| {
+            field_row(ui, &mut fx, "Draft Angle", &snapshot, "angle");
+        });
+        let commits = std::mem::take(&mut fx.commits);
+        drop(fx);
+        for (field, text) in commits {
+            let mut f = Feature::Draft(d.def.clone());
+            match self.part().apply_draft_field(&mut f, field, &text) {
+                Ok(()) => {
+                    if let Feature::Draft(x) = f {
+                        d.def = x;
+                    }
+                    self.file_status = None;
+                }
+                Err(e) => self.file_status = Some(Err(format!("Face Draft: {e}"))),
+            }
+        }
+        self.draft_draft = Some(d.clone());
+        let preview = self.draft_preview();
+        match &preview {
+            Err(e) if e == super::PREVIEW_PENDING => {
+                ui.label(e);
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            Err(e) if !d.def.faces.is_empty() => warning_box(ui, e),
+            _ => {}
+        }
+        ui.horizontal(|ui| {
+            let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
+            if ui
+                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .clicked()
+            {
+                self.commit_draft(false);
+            }
+            if d.edit.is_none()
+                && ui
+                    .add_enabled(
+                        ok,
+                        egui::Button::new("Apply").min_size(egui::vec2(60.0, 22.0)),
+                    )
+                    .on_hover_text("Create it and go on with new faces")
+                    .clicked()
+            {
+                self.commit_draft(true);
+            }
+            if ui
+                .add(egui::Button::new("Cancel").min_size(egui::vec2(60.0, 22.0)))
+                .clicked()
+            {
+                self.draft_draft = None;
+                self.end_feature_edit();
+            }
+        });
+    }
+
+    /// Properties of a Face Draft: type, faces, angle with expressions.
+    fn draft_properties(&mut self, ui: &mut egui::Ui, k: usize, dr: crate::part::DraftFeature) {
+        self.panel_header(ui, Icon::Draft, &dr.name);
+        if let Some(h) = self.part().feature_health.get(&dr.id) {
+            warning_box(ui, h);
+        }
+        let mut flip_change = None;
+        psection(ui, &format!("draft_in_{k}"), "Input", |ui| {
+            plabel(ui, "Type");
+            ui.label(dr.draft_type.label());
+            ui.end_row();
+            plabel(ui, "Faces");
+            ui.label(format!("{}", dr.faces.len()));
+            ui.end_row();
+            plabel(ui, "Flip");
+            let mut f = dr.flip;
+            if ui.checkbox(&mut f, "").changed() {
+                flip_change = Some(f);
+            }
+            ui.end_row();
+        });
+        if let Some(f) = flip_change {
+            let mut nd = dr.clone();
+            nd.flip = f;
+            self.edit_feature(k, Feature::Draft(nd));
+            return;
+        }
+        let table = self.part().parameter_table();
+        let mut fx = Fields {
+            table: &table,
+            key: format!("feature{k}"),
+            commits: Vec::new(),
+            bodies: Vec::new(),
+        };
+        let f = Feature::Draft(dr.clone());
+        psection(ui, &format!("draft_val_{k}"), "Angle", |ui| {
+            field_row(ui, &mut fx, "Draft Angle", &f, "angle");
+        });
+        let commits = std::mem::take(&mut fx.commits);
+        drop(fx);
+        for (field, text) in commits {
+            self.checkpoint("Edit Feature");
+            match self.part_mut().set_feature_field(k, field, &text) {
+                Ok(()) => {
+                    if let Err(e) = self.part_mut().regenerate() {
+                        self.file_status = Some(Err(e.to_string()));
+                    }
+                    self.scene_dirty = true;
+                }
+                Err(e) => {
+                    self.history.cancel();
+                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
+                }
+            }
+        }
+        if ui.button("Edit Feature").clicked() {
+            self.edit_feature_dialog(k);
+        }
+        if ui.button("Delete").clicked() {
+            self.delete_feature(k);
+        }
     }
 
     /// Properties of a Shell: direction, faces, thickness with expressions.
@@ -3180,6 +3457,15 @@ impl CadCraftApp {
                         "Shell: click the faces to remove (none: a closed cavity), set the thickness, then OK"
                     } else {
                         "Shell: click more faces to remove (a second click puts one back), then OK"
+                    };
+                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.draft_draft.is_some() => {
+                    use super::draft::DraftInput;
+                    let text = match self.draft_draft.as_ref().map(|d| d.input) {
+                        Some(DraftInput::Pull) => "Face Draft: click a planar face, an origin plane or a straight edge for the pull direction",
+                        Some(DraftInput::Plane) => "Face Draft: click the fixed plane (a planar face or an origin plane)",
+                        _ => "Face Draft: click the faces to draft (Fixed Edge: near the edge that stays), then OK",
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }

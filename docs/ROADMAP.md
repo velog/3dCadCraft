@@ -188,7 +188,7 @@
 
 - STEP **внос** (7.7).
 - Sweep, Loft, Coil (5.1–5.3).
-- Shell 🟡 (2026-10-19: Inside/Outside/Both, Remove Faces, затворена кухина; [spec](spec/2.6-shell.md)), Draft, Rib (2.6–2.8).
+- Shell 🟡 (2026-10-19: Inside/Outside/Both, Remove Faces, затворена кухина; [spec](spec/2.6-shell.md)), Face Draft 🟡 (2026-10-19: Fixed Edge, Fixed Plane; [spec](spec/2.8-draft.md)), Rib (2.6–2.8).
 - Fillet с променлив радиус: ✅ прави ръбове (2026-10-19, `fillet_variable_points`); ⬜ криви ръбове, NURBS случаи.
 - **Листов метал** с разгъвка в DXF (5.6).
 - Конфигурации и фамилии (5.7, 3.9).

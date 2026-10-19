@@ -159,6 +159,7 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
             }
         },
         Feature::Shell(_) => vec![("thickness", Unit::Mm)],
+        Feature::Draft(_) => vec![("angle", Unit::Deg)],
         Feature::Work(w) => match &w.def {
             super::WorkDef::Plane(super::WorkPlaneDef::Offset { .. }) => {
                 vec![("distance", Unit::Mm)]
@@ -230,6 +231,7 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
             _ => None,
         },
         Feature::Shell(s) => (field == "thickness").then_some(s.thickness),
+        Feature::Draft(d) => (field == "angle").then_some(d.angle),
         Feature::Work(w) => match (&w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 Some(*distance)
@@ -292,6 +294,11 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
                 s.thickness = v;
             }
         }
+        Feature::Draft(d) => {
+            if field == "angle" {
+                d.angle = v;
+            }
+        }
         Feature::Work(w) => match (&mut w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 *distance = v
@@ -315,6 +322,7 @@ fn feature_params_mut(f: &mut Feature) -> Option<&mut FeatureParams> {
         Feature::Work(w) => Some(&mut w.params),
         Feature::Blend(b) => Some(&mut b.params),
         Feature::Shell(s) => Some(&mut s.params),
+        Feature::Draft(d) => Some(&mut d.params),
     }
 }
 
@@ -326,6 +334,7 @@ fn feature_params(f: &Feature) -> Option<&FeatureParams> {
         Feature::Work(w) => Some(&w.params),
         Feature::Blend(b) => Some(&b.params),
         Feature::Shell(s) => Some(&s.params),
+        Feature::Draft(d) => Some(&d.params),
     }
 }
 

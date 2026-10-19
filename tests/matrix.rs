@@ -15,6 +15,7 @@ use cadcraft3d::part::{
     Operation, OriginPlane, PartDocument, ProfileRef, RevolveFeature, ShellDirection, ShellFeature,
     SketchOptions, SketchPlacement, VariableRadius,
 };
+use cadcraft3d::part::{DraftFeature, DraftType, PlaneRef, PullRef};
 use cadcraft3d::sketch::{Entity, Point2, Region};
 
 /// What a case expects.
@@ -682,6 +683,220 @@ fn c_shell_box_with_edge_cylinder() -> Result<PartDocument, String> {
         &[("Extrusion1:End", [20.0, 20.0, 30.0])],
         1.0,
         ShellDirection::Inside,
+    )
+}
+
+// -------------------------------------------------------------- draft ---
+
+/// The name of the face all of whose display points satisfy `on`.
+fn face_where(part: &PartDocument, on: impl Fn(&Point3) -> bool) -> Result<String, String> {
+    part.body
+        .faces()
+        .find(|(_, f)| f.mesh.as_ref().is_some_and(|m| m.positions.iter().all(&on)))
+        .and_then(|(_, f)| f.name.clone())
+        .ok_or_else(|| "no such face".into())
+}
+
+/// The plate's four side faces as (name, a point near height `z`).
+fn plate_sides(part: &PartDocument, z: Real) -> Result<Vec<(String, [Real; 3])>, String> {
+    Ok(vec![
+        (face_where(part, |p| p.y.abs() < 1e-6)?, [20.0, 0.0, z]),
+        (
+            face_where(part, |p| (p.y - 30.0).abs() < 1e-6)?,
+            [20.0, 30.0, z],
+        ),
+        (face_where(part, |p| p.x.abs() < 1e-6)?, [0.0, 15.0, z]),
+        (
+            face_where(part, |p| (p.x - 40.0).abs() < 1e-6)?,
+            [40.0, 15.0, z],
+        ),
+    ])
+}
+
+fn draft_of(
+    mut part: PartDocument,
+    def: impl FnOnce(&mut DraftFeature),
+    faces: &[(String, [Real; 3])],
+) -> Result<PartDocument, String> {
+    let mut d = DraftFeature::new(5f64.to_radians());
+    def(&mut d);
+    for (n, at) in faces {
+        d.faces.push(face_at(&part, n, *at)?);
+    }
+    part.add_draft(d).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+fn fixed_xy(d: &mut DraftFeature) {
+    d.draft_type = DraftType::FixedPlane;
+    d.plane = Some(PlaneRef::Origin(OriginPlane::XY));
+}
+
+fn pull_up(d: &mut DraftFeature) {
+    d.draft_type = DraftType::FixedEdge;
+    d.pull = Some(PullRef::Plane(PlaneRef::Origin(OriginPlane::XY)));
+}
+
+fn k5() -> Real {
+    5f64.to_radians().tan()
+}
+
+fn simpson(f: &dyn Fn(Real) -> Real, a: Real, b: Real) -> Real {
+    (b - a) / 6.0 * (f(a) + 4.0 * f((a + b) / 2.0) + f(b))
+}
+
+/// The plate drafted 5° on all sides about the bottom: a frustum.
+fn frustum_volume() -> Real {
+    simpson(
+        &|z| (40.0 - 2.0 * z * k5()) * (30.0 - 2.0 * z * k5()),
+        0.0,
+        20.0,
+    )
+}
+
+fn s_draft_fixed_plane() -> Result<PartDocument, String> {
+    let part = plate(40.0, 30.0, 20.0)?;
+    let sides = plate_sides(&part, 10.0)?;
+    draft_of(part, fixed_xy, &sides)
+}
+
+/// Fixed Edge, faces clicked near their top edges: they lean out below.
+fn s_draft_fixed_top_edges() -> Result<PartDocument, String> {
+    let part = plate(40.0, 30.0, 20.0)?;
+    let sides = plate_sides(&part, 19.0)?;
+    draft_of(part, pull_up, &sides)
+}
+
+fn s_draft_one_face() -> Result<PartDocument, String> {
+    let part = plate(40.0, 30.0, 20.0)?;
+    let front = plate_sides(&part, 1.0)?.remove(0);
+    draft_of(part, pull_up, &[front])
+}
+
+fn s_draft_cylinder() -> Result<PartDocument, String> {
+    let part = s_cylinder()?;
+    let wall = face_where(&part, |p| (p.x * p.x + p.y * p.y - 225.0).abs() < 1e-3)?;
+    draft_of(part, fixed_xy, &[(wall, [15.0, 0.0, 25.0])])
+}
+
+/// The front fixed at its bottom edge, the right side at its top edge: two
+/// neutral planes, drafted one after the other.
+fn c_draft_two_fixed_edges() -> Result<PartDocument, String> {
+    let part = plate(40.0, 30.0, 20.0)?;
+    let s = plate_sides(&part, 1.0)?;
+    let front = s[0].clone();
+    let right = (s[3].0.clone(), [40.0, 15.0, 19.0]);
+    draft_of(part, pull_up, &[front, right])
+}
+
+/// Vertical edges rounded r5, then all side faces drafted (the chain of
+/// planes and rounds): a tapered rounded rectangle.
+fn c_fillet_then_draft() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let e = vertical_edges(&part);
+    part.add_blend(BlendFeature::fillet(e, 5.0))
+        .map_err(|e| e.to_string())?;
+    let mut faces: Vec<(String, [Real; 3])> = Vec::new();
+    for (_, f) in part.body.faces() {
+        let (Some(n), Some(m)) = (&f.name, &f.mesh) else {
+            continue;
+        };
+        let vertical = m.normals.iter().all(|v| v.z.abs() < 1e-6);
+        if vertical && let Some(p) = m.positions.first() {
+            faces.push((n.clone(), [p.x, p.y, 10.0_f64.min(p.z.max(1.0))]));
+        }
+    }
+    let mut out = Vec::new();
+    for (n, _) in &faces {
+        let (_, f) = part
+            .body
+            .faces()
+            .find(|(_, f)| f.name.as_deref() == Some(n))
+            .ok_or("face")?;
+        let m = f.mesh.as_ref().ok_or("mesh")?;
+        let t = m.triangles.first().ok_or("tri")?;
+        let c = t.map(|i| m.positions[i as usize].coords);
+        let c = (c[0] + c[1] + c[2]) / 3.0;
+        out.push((n.clone(), [c.x, c.y, c.z]));
+    }
+    if out.len() != 8 {
+        return Err(format!("{} side faces", out.len()));
+    }
+    draft_of(part, fixed_xy, &out)
+}
+
+fn rounded_frustum_volume() -> Real {
+    let area = |z: Real| {
+        let d = z * k5();
+        (40.0 - 2.0 * d) * (30.0 - 2.0 * d) - (4.0 - PI) * (5.0 - d) * (5.0 - d)
+    };
+    simpson(&area, 0.0, 20.0)
+}
+
+/// All sides drafted 5°, then the top outline rounded r1.
+fn c_draft_then_fillet() -> Result<PartDocument, String> {
+    let mut part = s_draft_fixed_plane()?;
+    let e = edges_where(&part, |h| (h[2] - 20.0).abs() < 1e-6);
+    if e.len() != 4 {
+        return Err(format!("{} top edges", e.len()));
+    }
+    part.add_blend(BlendFeature::fillet(e, 1.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// The top edges' rounds r1 on the 5° frustum: the cross-section lost at a
+/// 95° edge, along the top outline (corner patches ignored: ~r³).
+fn draft_fillet_volume() -> Real {
+    let phi = 95f64.to_radians();
+    let lost = 1.0 / (phi / 2.0).tan() - (PI - phi) / 2.0;
+    let (a, b) = (40.0 - 40.0 * k5(), 30.0 - 40.0 * k5());
+    frustum_volume() - lost * 2.0 * (a + b)
+}
+
+fn c_draft_then_shell() -> Result<PartDocument, String> {
+    let part = s_draft_fixed_plane()?;
+    shell_of(part, &[TOP], 2.0, ShellDirection::Inside)
+}
+
+/// A shell, then its outer sides drafted about the bottom: the walls get
+/// thinner upwards (0.25 left at the top), the cavity stays.
+fn c_shell_then_draft() -> Result<PartDocument, String> {
+    let shelled = s_shell_box()?;
+    let sides = plate_sides(&plate(40.0, 30.0, 20.0)?, 10.0)?;
+    draft_of(shelled, fixed_xy, &sides)
+}
+
+/// Edit Feature: the draft 5° → 3°; the fillet after it is kept.
+fn c_draft_edit() -> Result<PartDocument, String> {
+    let mut part = c_draft_then_fillet()?;
+    let k = part
+        .features
+        .iter()
+        .position(|f| f.id() == "FaceDraft1")
+        .ok_or("no FaceDraft1")?;
+    let Some(Feature::Draft(mut d)) = part.features.get(k).cloned() else {
+        return Err("not a draft".into());
+    };
+    d.angle = 3f64.to_radians();
+    part.replace_feature(k, Feature::Draft(d))
+        .map_err(|e| e.to_string())?;
+    if !part.feature_health.is_empty() {
+        return Err(format!("sick: {:?}", part.feature_health));
+    }
+    Ok(part)
+}
+
+fn c_draft_bad_angle() -> Result<PartDocument, String> {
+    let part = plate(40.0, 30.0, 20.0)?;
+    let sides = plate_sides(&part, 10.0)?;
+    draft_of(
+        part,
+        |d| {
+            fixed_xy(d);
+            d.angle = 95f64.to_radians();
+        },
+        &sides,
     )
 }
 
@@ -1420,6 +1635,99 @@ fn cases() -> Vec<Case> {
             budget_ms: 1000.0,
             build: c_shell_box_with_edge_cylinder,
             want: Want::VolumeWithin(edge_cylinder_shell_volume(), 30.0),
+        },
+        Case {
+            level: "simple",
+            name: "draft 5° fixed plane XY, four sides",
+            budget_ms: 300.0,
+            build: s_draft_fixed_plane,
+            want: Want::Volume(frustum_volume()),
+        },
+        Case {
+            level: "simple",
+            name: "draft 5° fixed top edges (lean out below)",
+            budget_ms: 300.0,
+            build: s_draft_fixed_top_edges,
+            want: Want::Volume(simpson(
+                &|z| (40.0 + 2.0 * (20.0 - z) * k5()) * (30.0 + 2.0 * (20.0 - z) * k5()),
+                0.0,
+                20.0,
+            )),
+        },
+        Case {
+            level: "simple",
+            name: "draft 5° one face, fixed bottom edge",
+            budget_ms: 300.0,
+            build: s_draft_one_face,
+            want: Want::Volume(40.0 * (600.0 - 200.0 * k5())),
+        },
+        Case {
+            level: "simple",
+            name: "draft 5° of a cylinder wall r15 (#547)",
+            budget_ms: 300.0,
+            build: s_draft_cylinder,
+            want: Want::Volume({
+                let r = 15.0 - 50.0 * k5();
+                PI * 50.0 / 3.0 * (225.0 + 15.0 * r + r * r)
+            }),
+        },
+        Case {
+            level: "complex",
+            name: "draft: front at its bottom, right at its top",
+            budget_ms: 400.0,
+            build: c_draft_two_fixed_edges,
+            want: Want::Volume(24_000.0 - 8000.0 * k5() + k5() * (6000.0 - k5() * 4000.0 / 3.0)),
+        },
+        Case {
+            level: "complex",
+            name: "fillet r5 then draft 5° of all sides",
+            budget_ms: 500.0,
+            build: c_fillet_then_draft,
+            want: Want::Volume(rounded_frustum_volume()),
+        },
+        Case {
+            level: "complex",
+            name: "draft 5° then fillet r1 round the top",
+            budget_ms: 500.0,
+            build: c_draft_then_fillet,
+            want: Want::VolumeWithin(draft_fillet_volume(), 1.0),
+        },
+        Case {
+            level: "complex",
+            name: "draft 5° then shell 2",
+            budget_ms: 500.0,
+            build: c_draft_then_shell,
+            want: Want::Volume(taper_shell_volume()),
+        },
+        Case {
+            level: "complex",
+            name: "shell 2 then draft 5° of the outside",
+            budget_ms: 500.0,
+            build: c_shell_then_draft,
+            want: Want::Volume(frustum_volume() - 36.0 * 26.0 * 18.0),
+        },
+        Case {
+            level: "complex",
+            name: "draft edited 5° -> 3°, fillet after it kept",
+            budget_ms: 800.0,
+            build: c_draft_edit,
+            want: Want::VolumeWithin(
+                {
+                    let k = 3f64.to_radians().tan();
+                    let phi = 93f64.to_radians();
+                    let lost = 1.0 / (phi / 2.0).tan() - (PI - phi) / 2.0;
+                    let v = simpson(&|z| (40.0 - 2.0 * z * k) * (30.0 - 2.0 * z * k), 0.0, 20.0);
+                    v - lost * (140.0 - 160.0 * k)
+                },
+                1.0,
+            ),
+        },
+        Case {
+            level: "complex",
+            name: "draft 95°: refused",
+            budget_ms: 300.0,
+            build: c_draft_bad_angle,
+            want: Want::Error("between"),
         },
         Case {
             level: "complex",

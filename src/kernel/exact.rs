@@ -996,6 +996,41 @@ pub fn shell(
     general().map_err(|e| first.unwrap_or(e))
 }
 
+/// A point on face `face` of `s` (see [`faces_named`]).
+pub fn face_point(s: &ExactSolid, face: usize) -> Option<Point3> {
+    face_samples(s).ok()?.get(face).copied().flatten()
+}
+
+/// Face Draft about a neutral plane: the faces `faces` (kernel indices) of
+/// `s` tilt by `angle` (radians) about their line on `neutral`, leaning in
+/// going along `pull` for a positive angle. The faces keep their names.
+pub fn draft(
+    s: &ExactSolid,
+    faces: &[usize],
+    neutral: &Plane,
+    pull: Vector3,
+    angle: Real,
+) -> Result<ExactSolid, String> {
+    let samples = face_samples(s)?;
+    let pts: Vec<sg::Vec3> = faces
+        .iter()
+        .filter_map(|&f| samples.get(f).copied().flatten())
+        .map(|p| v3(&p))
+        .collect();
+    if pts.len() < faces.len() || pts.is_empty() {
+        return Err("no faces to draft".into());
+    }
+    let pl = plane_of(neutral)?;
+    let body = guarded("draft", || sk::draft(&s.body, &pts, &pl, d3(&pull), angle))?;
+    let face_names = names_from(&body, &[s], &|_| None);
+    Ok(ExactSolid {
+        name: s.name.clone(),
+        body,
+        face_names,
+        profiles: s.profiles.clone(),
+    })
+}
+
 // --------------------------------------------------------- to our B-rep ---
 
 /// Display tolerance (mm) of the exact kernel's triangles.
@@ -2004,6 +2039,105 @@ mod tests {
         let b = box_40();
         let s = shell(&b, &[], 2.0, ShellSide::Inside, "Shell1").unwrap();
         check_shell(&s, 24_000.0 - 36.0 * 26.0 * 16.0);
+    }
+
+    // ------------------------------------------------------------ draft ---
+
+    fn simpson(f: &dyn Fn(f64) -> f64, a: f64, b: f64) -> f64 {
+        (b - a) / 6.0 * (f(a) + 4.0 * f((a + b) / 2.0) + f(b))
+    }
+
+    fn sides(b: &ExactSolid) -> Vec<usize> {
+        ["Box1:Front", "Box1:Back", "Box1:Left", "Box1:Right"]
+            .iter()
+            .map(|n| face(b, n, (20.0, 15.0, 10.0)))
+            .collect()
+    }
+
+    #[test]
+    fn draft_box_sides_about_the_bottom() {
+        let b = box_40();
+        let k = 5f64.to_radians().tan();
+        let up = Vector3::new(0.0, 0.0, 1.0);
+        let d = draft(&b, &sides(&b), &Plane::xy(), up, 5f64.to_radians()).unwrap();
+        check_shell(
+            &d,
+            simpson(&|z| (40.0 - 2.0 * z * k) * (30.0 - 2.0 * z * k), 0.0, 20.0),
+        );
+        // The faces keep their names.
+        let names: Vec<&str> = d.names().iter().flatten().map(String::as_str).collect();
+        for n in ["Box1:Front", "Box1:Top", "Box1:Bottom"] {
+            assert!(names.contains(&n), "{n} in {names:?}");
+        }
+        // About the top (the faces lean out below it).
+        let top = Plane::from_normal(Point3::new(0.0, 0.0, 20.0), up).unwrap();
+        let d = draft(&b, &sides(&b), &top, up, 5f64.to_radians()).unwrap();
+        check_shell(
+            &d,
+            simpson(
+                &|z| (40.0 + 2.0 * (20.0 - z) * k) * (30.0 + 2.0 * (20.0 - z) * k),
+                0.0,
+                20.0,
+            ),
+        );
+    }
+
+    #[test]
+    fn draft_one_face_and_a_negative_angle() {
+        let b = box_40();
+        let k = 5f64.to_radians().tan();
+        let up = Vector3::new(0.0, 0.0, 1.0);
+        let front = face(&b, "Box1:Front", (20.0, 0.0, 10.0));
+        let d = draft(&b, &[front], &Plane::xy(), up, 5f64.to_radians()).unwrap();
+        check_shell(&d, 40.0 * (600.0 - 200.0 * k));
+        let d = draft(&b, &[front], &Plane::xy(), up, -(5f64.to_radians())).unwrap();
+        check_shell(&d, 40.0 * (600.0 + 200.0 * k));
+    }
+
+    #[test]
+    fn draft_of_a_cylinder_wall() {
+        // SolidCraft #547: R10 × 20 at 5° gives a frustum.
+        let c = cylinder(10.0, 20.0, "Extrusion1");
+        let wall = face(&c, "Extrusion1:Side:C1:0", (10.0, 0.0, 10.0));
+        let up = Vector3::new(0.0, 0.0, 1.0);
+        let d = draft(&c, &[wall], &Plane::xy(), up, 5f64.to_radians()).unwrap();
+        let r = 10.0 - 20.0 * 5f64.to_radians().tan();
+        check_shell(&d, PI * 20.0 / 3.0 * (100.0 + 10.0 * r + r * r));
+    }
+
+    #[test]
+    fn draft_of_a_non_convex_prism() {
+        // The L's two outer long walls (x = 0 and y = 0), 3° about the bottom.
+        let l = prism(
+            &[
+                (0.0, 0.0),
+                (30.0, 0.0),
+                (30.0, 10.0),
+                (10.0, 10.0),
+                (10.0, 30.0),
+                (0.0, 30.0),
+            ],
+            10.0,
+            "Extrusion1",
+        );
+        let a = face(&l, "Extrusion1:Side:L0:0", (15.0, 0.0, 5.0));
+        let b = face(&l, "Extrusion1:Side:L5:0", (0.0, 15.0, 5.0));
+        let k = 3f64.to_radians().tan();
+        let up = Vector3::new(0.0, 0.0, 1.0);
+        let d = draft(&l, &[a, b], &Plane::xy(), up, 3f64.to_radians()).unwrap();
+        // Each wall loses a wedge 30 long, 10 high, 10k deep at the top;
+        // they overlap in the corner pyramid (k²·h³/3).
+        let lost = 2.0 * 30.0 * 0.5 * 10.0 * 10.0 * k - k * k * 1000.0 / 3.0;
+        check_shell(&d, 500.0 * 10.0 - lost);
+    }
+
+    #[test]
+    fn draft_errors() {
+        let b = box_40();
+        let up = Vector3::new(0.0, 0.0, 1.0);
+        let s = sides(&b);
+        assert!(draft(&b, &s, &Plane::xy(), up, 90f64.to_radians()).is_err());
+        assert!(draft(&b, &[], &Plane::xy(), up, 0.1).is_err());
     }
 
     #[test]

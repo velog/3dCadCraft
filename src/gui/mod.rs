@@ -26,6 +26,7 @@
 mod blend;
 mod camera;
 mod demos;
+mod draft;
 mod files;
 mod i18n;
 mod icons;
@@ -521,6 +522,8 @@ struct CadCraftApp {
     blend_draft: Option<blend::BlendDraft>,
     /// The open Shell command.
     shell_draft: Option<shell::ShellDraft>,
+    /// The open Face Draft command.
+    draft_draft: Option<draft::DraftDraft>,
     /// The open Work Plane / Axis / Point command.
     work_draft: Option<work::WorkDraft>,
     /// A feature deletion waiting for confirmation, with what it breaks.
@@ -628,6 +631,7 @@ impl CadCraftApp {
             work_draft: None,
             blend_draft: None,
             shell_draft: None,
+            draft_draft: None,
             last_pick: None,
             box_select: None,
             offset_edit: None,
@@ -840,6 +844,8 @@ impl CadCraftApp {
             "2.10-work-features.md"
         } else if self.shell_draft.is_some() {
             "2.6-shell.md"
+        } else if self.draft_draft.is_some() {
+            "2.8-draft.md"
         } else if let Some(d) = &self.blend_draft {
             if d.def.command() == "Chamfer" {
                 "2.5-chamfer.md"
@@ -1033,6 +1039,7 @@ impl CadCraftApp {
     /// for it (Press/Pull) goes too.
     fn cancel_extrude(&mut self) {
         self.shell_draft = None;
+        self.draft_draft = None;
         if let Some(d) = self.extrude.take()
             && d.temp_sketch
         {
@@ -1105,6 +1112,10 @@ impl CadCraftApp {
             Feature::Shell(sh) => {
                 self.roll_back_to(k);
                 self.shell_draft = Some(shell::ShellDraft::editing(sh, k));
+            }
+            Feature::Draft(dr) => {
+                self.roll_back_to(k);
+                self.draft_draft = Some(draft::DraftDraft::editing(dr, k));
             }
             // Box and work features are edited in Properties.
             Feature::Box(_) | Feature::Work(_) => {}
@@ -3101,7 +3112,8 @@ impl CadCraftApp {
             | Action::WorkPoint
             | Action::Fillet
             | Action::Chamfer
-            | Action::Shell => self.last_command = Some(action),
+            | Action::Shell
+            | Action::Draft => self.last_command = Some(action),
             _ => {}
         }
         match action {
@@ -3143,6 +3155,7 @@ impl CadCraftApp {
             Action::Fillet => self.start_blend(false, None),
             Action::Chamfer => self.start_blend(true, None),
             Action::Shell => self.start_shell(),
+            Action::Draft => self.start_draft(),
             Action::WorkPlane | Action::WorkAxis | Action::WorkPoint => {
                 self.blend_draft = None;
                 self.finish_sketch();
@@ -3840,6 +3853,7 @@ impl CadCraftApp {
             self.work_draft = None;
             self.blend_draft = None;
             self.shell_draft = None;
+            self.draft_draft = None;
             self.end_feature_edit();
             self.face_sel = None;
             self.edge_sel = None;
@@ -4089,9 +4103,11 @@ impl CadCraftApp {
         {
             self.blend_face_pick(&name, p, rect);
         }
-        // --- Shell command: picks the faces to remove ---
-        let shell_hover = match (&self.shell_draft, pointer, on_cube) {
-            (Some(_), Some(p), None) => self.camera.ray(p, rect).and_then(|(o, dir)| {
+        // --- Shell / Face Draft: pick faces (with the model point) ---
+        let face_cmd = self.shell_draft.is_some()
+            || self.draft_draft.as_ref().is_some_and(|d| d.picks_faces());
+        let shell_hover = match (face_cmd, pointer, on_cube) {
+            (true, Some(p), None) => self.camera.ray(p, rect).and_then(|(o, dir)| {
                 let dir = dir.try_normalize(1e-12)?;
                 let (f, t) = self.picker().pick(&o, &dir)?;
                 Some((f, o + dir * t))
@@ -4103,6 +4119,35 @@ impl CadCraftApp {
             && let Some((f, at)) = shell_hover
         {
             self.shell_pick(f, at);
+        }
+        // Face Draft's Pull Direction / Fixed Plane: an edge or a plane.
+        let draft_ref = self.draft_draft.as_ref().is_some_and(|d| !d.picks_faces());
+        let (draft_edge, draft_plane) = match (draft_ref, pointer, on_cube) {
+            (true, Some(p), None) => {
+                let pull = self
+                    .draft_draft
+                    .as_ref()
+                    .is_some_and(|d| d.input == draft::DraftInput::Pull);
+                let e = if pull { self.edge_under(p, rect) } else { None };
+                (
+                    e,
+                    if e.is_none() {
+                        self.plane_under(p, rect, true)
+                    } else {
+                        None
+                    },
+                )
+            }
+            _ => (None, None),
+        };
+        if self.draft_draft.is_some() && response.clicked_by(PointerButton::Primary) {
+            if face_cmd {
+                if let Some(h) = shell_hover {
+                    self.draft_pick(Some(h), None, None);
+                }
+            } else if draft_edge.is_some() || draft_plane.is_some() {
+                self.draft_pick(None, draft_edge, draft_plane.clone());
+            }
         }
         // --- Work Plane command: picks planes, edges and points ---
         let wp_hover = match (&self.work_draft, pointer, on_cube) {
@@ -4120,6 +4165,7 @@ impl CadCraftApp {
             && self.work_draft.is_none()
             && self.blend_draft.is_none()
             && self.shell_draft.is_none()
+            && self.draft_draft.is_none()
             && self.editing.is_none()
             && self.extrude.is_none()
             && self.target_pick.is_none()
@@ -5036,29 +5082,58 @@ impl CadCraftApp {
             };
             self.draw_selection(&painter, rect, hover_item.as_ref());
             // Shell: its faces to remove, and the face under the cursor.
-            let (want_sel, want_hover) = match &self.shell_draft {
-                Some(_) => {
+            let cmd_faces = if self.shell_draft.is_some() {
+                Some(self.shell_faces())
+            } else if self.draft_draft.is_some() {
+                Some(self.draft_faces())
+            } else {
+                None
+            };
+            let (want_sel, want_hover) = match cmd_faces {
+                Some(faces) => {
                     let body = &self.part().body;
                     let name = |f| body.face(f).and_then(|x| x.name.clone());
+                    let plane_face = match &draft_plane {
+                        Some(PlaneRef::Face(n)) => Some(n.clone()),
+                        _ => None,
+                    };
                     (
-                        self.shell_faces()
+                        faces
                             .into_iter()
                             .filter_map(|f| name(f).map(select::SelItem::Face))
                             .collect(),
                         shell_hover
                             .and_then(|(f, _)| name(f))
+                            .or(plane_face)
                             .map(select::SelItem::Face),
                     )
                 }
                 None => (self.sel.clone(), hover_item),
             };
+            if let Some(e) = draft_edge {
+                let opts = TessellationOptions::default();
+                if let Ok(pts) = self.part().body.sample_edge(e, &opts) {
+                    self.draw_visible_polyline(
+                        &painter,
+                        rect,
+                        &pts,
+                        egui::Stroke::new(4.0, egui::Color32::from_rgb(60, 190, 90)),
+                    );
+                }
+            }
+            self.draw_draft_pull(&painter, rect);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);
                 self.scene_dirty = true;
             }
-            if self.shell_draft.is_some()
-                && let Ok(edges) = self.shell_preview()
-            {
+            let preview = if self.shell_draft.is_some() {
+                Some(self.shell_preview())
+            } else if self.draft_draft.is_some() {
+                Some(self.draft_preview())
+            } else {
+                None
+            };
+            if let Some(Ok(edges)) = preview {
                 let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(230, 120, 20));
                 for e in edges {
                     let pts: Vec<_> = e
@@ -5860,6 +5935,7 @@ fn command_label(a: Action) -> &'static str {
         Action::Fillet => "Fillet",
         Action::Chamfer => "Chamfer",
         Action::Shell => "Shell",
+        Action::Draft => "Face Draft",
         Action::WorkPoint => "Work Point",
         Action::StartSketch => "Start 2D Sketch",
         _ => "command",

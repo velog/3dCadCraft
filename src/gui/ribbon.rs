@@ -65,6 +65,8 @@ pub enum Action {
     Chamfer,
     /// Shell: hollow a solid.
     Shell,
+    /// Face Draft: tilt faces against a pull direction.
+    Draft,
     /// Work Axis: the method follows from the picks.
     WorkAxis,
     /// Work Point: the method follows from the picks.
@@ -349,7 +351,13 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         Action::Shell,
                         "Shell: hollow the solid, remove the picked faces (Inside, Outside, Both)",
                     ),
-                    todo(Icon::Draft, "Draft", None, "2.8"),
+                    ready(
+                        Icon::Draft,
+                        "Draft",
+                        None,
+                        Action::Draft,
+                        "Face Draft: tilt faces against a pull direction (Fixed Edge, Fixed Plane)",
+                    ),
                     todo(Icon::Thread, "Thread", None, "2.9"),
                     todo(Icon::SlotFeature, "Slot", None, "2.3"),
                     todo(Icon::Combine, "Combine", None, "2.13"),

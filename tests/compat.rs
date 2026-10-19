@@ -212,6 +212,28 @@ fn shell_r3() -> PartDocument {
     part
 }
 
+/// Revision 4: Face Draft, fixed edges (front at its bottom, back at its
+/// top), pull from the XY plane, 4°.
+fn draft_r4() -> PartDocument {
+    use cadcraft3d::part::{DraftFeature, PlaneRef, PullRef};
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+    let mut def = DraftFeature::new(4f64.to_radians());
+    def.pull = Some(PullRef::Plane(PlaneRef::Origin(
+        cadcraft3d::part::OriginPlane::XY,
+    )));
+    for (name, at) in [
+        ("Box1:Front", [30.0, 0.0, 1.0]),
+        ("Box1:Back", [30.0, 40.0, 19.0]),
+    ] {
+        let f = part.body.find_face(name).unwrap();
+        def.faces.push(
+            cadcraft3d::part::shell::face_ref(&part.body, f, Some(Point3::from(at))).unwrap(),
+        );
+    }
+    part.add_draft(def).unwrap();
+    part
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -232,6 +254,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("PartialR2");
             project.add_document("Part1", DocumentData::Part(partial_r2()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r4/draft_r4.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("DraftR4");
+            project.add_document("Part1", DocumentData::Part(draft_r4()));
             project.save(&f).unwrap();
         }
         let f = root().join("r3/shell_r3.3dcadcraft");

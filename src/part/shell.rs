@@ -141,3 +141,25 @@ pub fn face_ref(body: &BRep, f: FaceId, at: Option<Point3>) -> Option<FaceRef> {
         hint: [p.x, p.y, p.z],
     })
 }
+
+/// The face named `name` nearest `hint` (a face a later Boolean split keeps
+/// its name on each piece).
+pub fn face_near(body: &BRep, name: &str, hint: Point3) -> Option<FaceId> {
+    body.faces()
+        .filter(|(_, f)| f.name.as_deref() == Some(name))
+        .map(|(id, f)| {
+            let d = f
+                .mesh
+                .as_ref()
+                .and_then(|m| {
+                    m.positions
+                        .iter()
+                        .map(|p| (p - hint).norm())
+                        .min_by(|a, b| a.total_cmp(b))
+                })
+                .unwrap_or(Real::INFINITY);
+            (id, d)
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
+}
