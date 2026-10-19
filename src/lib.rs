@@ -35,5 +35,6 @@ pub mod document;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod kernel;
+pub mod materials;
 pub mod part;
 pub mod sketch;

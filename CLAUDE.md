@@ -47,11 +47,13 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `kernel` | B-Rep geometry + topology, validation, tessellation (`mesh.rs`), queries & persistent names (`query.rs`), extrude, revolve (`revolve.rs`), BSP CSG on tagged polygons (`csg.rs`), polygons ↔ B-Rep and Booleans (`facet.rs`), exact kernel boundary (`exact.rs`: SolidCraft/truck → our B-Rep) | `BRep`, `Curve`, `Surface`, `Plane`, `Face`, `Tolerance`, `BoolOp` |
 | `sketch` | 2D sketch on a plane (dimension names/equations/tolerances in `dimparam.rs`): points, lines, circles, arcs, CV splines, styles (construction/centerline), ~20 constraint/dimension kinds, driven dims, Levenberg solver with DOF/redundancy analysis; composite shapes (`shapes.rs`), Modify ops (`modify.rs`: trim/extend/split/offset/move/copy/rotate/mirror/scale/stretch), 2D fillet/chamfer (`corner.rs`), associative rectangular/circular patterns (`pattern.rs`), profiles/regions (`profile.rs`: `Sketch::regions`), per-geometry DOF analysis (`dof_analysis`) | `Sketch`, `Constraint`, `Shape`, `SolveReport`, `DofAnalysis` |
 | `part` | part environment: features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`, Shell `shell.rs`, Face Draft `draft.rs`, Rectangular/Circular Pattern and Mirror of features or solids `pattern.rs`; `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `PatternFeature`, `Operation`, `UserParam` |
+| `materials` | material/appearance libraries: built-in CSV (`data/materials/materials.csv`, `data/appearances/appearances.csv`, `include_str!`) + user CSVs in `user_dir()` (`%APPDATA%\3dcadcraft\materials`), same name overrides | `Material`, `Appearance`, `Library` |
+| `part::appearance`, `part::physical` | part material/appearance, overrides by persistent name (`Looks`: bodies, features, faces + hint), document copies, precedence Face > Feature > Body > Part > Material (`Resolver`), Clear/Purge/Update; Physical Properties from the display triangles (mass, COG, inertia) | `Looks`, `LookTarget`, `Resolver`, `physical_properties` |
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
 | `command` | Undo/Redo (snapshot history, coalesced gestures); later the Command enum | `History<T>` |
 | `api` | JSON-RPC/MCP server — placeholder | |
-| `gui` (feature `gui`) | Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
+| `gui` (feature `gui`) | Materials/appearances/Physical Properties (`material.rs`: QAT lists, browsers, Adjust, Clear, Styles Editor, Manage tab, coloured scene), Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
 
 Data flow: GUI action → `checkpoint(label)` (Undo snapshot) → `part::`/`sketch::`
 operation on the active `PartDocument` inside `Project` → `regenerate()` if the body
@@ -506,7 +508,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   separators (`Path::join`, never `format!("{dir}/x")`); paths compared with text in docs
   (`xtask assets`) are normalised to `/`. The X11 scripts in `tools/` do not run there.
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
-  part in Booleans.
+  part in Booleans (amber unless something assigned them an appearance).
 - **Feature patterns copy tools, not faces** (`part/pattern.rs`, `exact::pattern`): every
   Extrude/Revolve (and feature pattern) records its tools (`ToolSet`: solids before
   `combine`, operation, target `solids`) by feature id during `build_features` — also in
@@ -516,6 +518,17 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   hits. Copy k's faces are `<pattern id>#k:<name>` (`exact::transformed`; no profile frames,
   so its edges get generic `E[..]` names). Solid-mode patterns skip the source lookup.
   Kernel failures of a pattern are health (no faceted rebuild).
+- **Appearances** (`part::appearance`, GUI in `gui/material.rs`): the scene is built by
+  `material::add_part_meshes` from `SolidMesh::face_triangles` (per-face triangle ranges);
+  see-through faces go to the renderer's transparent pass (`add_mesh_transparent`: blended,
+  no depth write, two-sided, drawn last), never to the red back-face pass. Viewport colours
+  are `(srgb/255)^2.2` (`Appearance::shader_rgb`, the shader gamma-encodes with 1/2.2);
+  glTF needs true linear sRGB (`Appearance::linear`). A face override's `hint` picks the
+  piece when a Boolean split one name into several (`appearance::nearest_face`). GUI
+  mutations go through `edit_part` (on a copy; Undo only on success). STEP export must not
+  call `exact::face_point` per face (it made the export 2.5 s) — only for split names.
+- **Physical Properties** integrate the tessellation (tetrahedra from the origin); planar
+  bodies are exact, the exact kernel's `measure_full` is the cross-check in tests.
 
 ## Status and next steps
 
@@ -531,6 +544,6 @@ Move/Copy/Rotate/Mirror/Scale/Stretch), Fillet/Chamfer, sketch patterns, midpoin
 (all options, editable, named faces), **parameters** (expressions, Parameters table,
 tolerances, live dimension preview, in-place edit), **Revolve** and **Booleans stage 1**
 (Join/Cut/Intersect/New Solid, Surface output), **exact kernel stage A** (SolidCraft/truck
-via `kernel::exact`, see `docs/SOLIDCRAFT.md`). Next: stages B–F of `docs/SOLIDCRAFT.md`
+via `kernel::exact`, see `docs/SOLIDCRAFT.md`), **materials and appearances** + Physical Properties. Next: stages B–F of `docs/SOLIDCRAFT.md`
 (priorities in its §6: recipe runner through `PartDocument`, Shell/Draft and Mirror/Pattern (done, waiting for a visual check),
 Hole, Sweep/Loft, STEP, commands → control channel → MCP), Properties restyle.

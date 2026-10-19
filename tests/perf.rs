@@ -240,6 +240,41 @@ fn speed_budgets() {
         ));
     }
 
+    // Materials: Physical Properties (mass, COG, inertia) and the face
+    // appearances the viewport and the exports resolve.
+    {
+        let mut styled = filleted.clone();
+        let lib = cadcraft3d::materials::builtin();
+        styled.set_material(Some("Steel S235"), lib).unwrap();
+        styled
+            .set_appearance(
+                &cadcraft3d::part::appearance::LookTarget::Feature("Extrusion1".into()),
+                Some("ABS - Red"),
+                lib,
+            )
+            .unwrap();
+        rows.push((
+            "Physical Properties of the filleted hollow box (Low)",
+            100.0,
+            median_ms(3, || {
+                let p = cadcraft3d::part::physical::physical_properties(
+                    &styled,
+                    cadcraft3d::part::physical::Accuracy::Low,
+                )
+                .unwrap();
+                assert!(p.total.mass > 0.0);
+            }),
+        ));
+        rows.push((
+            "resolve every face's appearance of the filleted hollow box",
+            20.0,
+            median_ms(3, || {
+                let looks = cadcraft3d::part::appearance::Resolver::new(&styled).face_looks();
+                assert!(looks.len() > 10);
+            }),
+        ));
+    }
+
     // Select Mode Solid (All Rounds): every edge of the filleted pocket
     // classified convex / concave.
     rows.push((

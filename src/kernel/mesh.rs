@@ -57,6 +57,9 @@ pub struct SolidMesh {
     pub faces: TriangleMesh,
     /// One polyline per topological edge.
     pub edges: Vec<Vec<Point3>>,
+    /// The triangles of each face (a range of `faces.triangles`), for
+    /// per-face colours.
+    pub face_triangles: Vec<(FaceId, std::ops::Range<usize>)>,
 }
 
 impl BRep {
@@ -179,9 +182,12 @@ impl BRep {
                 let face = self
                     .face(fid)
                     .ok_or(KernelError::DanglingReference("face"))?;
+                let start = mesh.faces.triangles.len();
                 if let Err(e) = self.tessellate_face(face, opts, &mut mesh.faces) {
                     log::warn!("skipping face {fid:?}: {e}");
                 }
+                mesh.face_triangles
+                    .push((fid, start..mesh.faces.triangles.len()));
                 for lp in std::iter::once(&face.outer).chain(&face.inner) {
                     for ce in &lp.coedges {
                         if seen_edges.insert(ce.edge) && !smooth(&ce.edge) {

@@ -709,21 +709,66 @@ pub fn fillet_chord(
     Ok(blend_result(s, body, prefix, "Round"))
 }
 
+/// Colours of one body for STEP: the body's (sRGB 0–1) and faces of their
+/// own (kernel face index, colour, opacity).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StepPaint {
+    /// The body's colour.
+    pub color: Option<[f32; 3]>,
+    /// Faces with another colour.
+    pub faces: Vec<(usize, [f32; 3], f32)>,
+}
+
 /// STEP (ISO 10303-21, AP214/AP242 geometry) text of `solids`, one body
 /// each, named after them; `product` names the part.
 pub fn step_text(solids: &[ExactSolid], product: &str) -> Result<String, String> {
+    step_text_painted(solids, product, &[])
+}
+
+/// [`step_text`] with colours (`paint[i]` for `solids[i]`; missing entries
+/// keep the kernel's own colour).
+pub fn step_text_painted(
+    solids: &[ExactSolid],
+    product: &str,
+    paint: &[StepPaint],
+) -> Result<String, String> {
     let names: Vec<String> = solids
         .iter()
         .enumerate()
         .map(|(i, s)| s.name.clone().unwrap_or_else(|| format!("Body{}", i + 1)))
         .collect();
-    let list: Vec<sk::ExportBody> = solids
+    let painted: Vec<sk::Body> = solids
+        .iter()
+        .enumerate()
+        .map(|(i, s)| match paint.get(i) {
+            None => s.body.clone(),
+            Some(p) => {
+                let faces = (!p.faces.is_empty()).then(|| sk::Paint {
+                    opacity: 1.0,
+                    faces: p
+                        .faces
+                        .iter()
+                        .map(|&(face, color, opacity)| sk::FacePaint {
+                            face,
+                            color,
+                            opacity,
+                        })
+                        .collect(),
+                });
+                s.body
+                    .clone()
+                    .with_color(p.color.or(s.body.color()))
+                    .with_paint(faces)
+            }
+        })
+        .collect();
+    let list: Vec<sk::ExportBody> = painted
         .iter()
         .zip(&names)
-        .map(|(s, n)| sk::ExportBody {
+        .map(|(b, n)| sk::ExportBody {
             name: n.clone(),
-            body: &s.body,
-            color: s.body.color(),
+            body: b,
+            color: b.color(),
         })
         .collect();
     let header = sk::StepHeader {

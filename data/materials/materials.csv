@@ -1,0 +1,33 @@
+# 3DCadCraft built-in material library.
+# One material per line; edit freely. A user library with the same columns in
+# %APPDATA%\3dcadcraft\materials\materials.csv (~/.config/3dcadcraft/materials/
+# elsewhere) overrides entries by name and adds new ones.
+# density in g/cm3; yield strength (MPa) and Young's modulus (GPa) are optional.
+# Values are typical room-temperature values from public sources (EN 10025-2,
+# AISI/ASM handbook data, Aluminum Association, plastics data sheets,
+# Engineering ToolBox); they are not guaranteed minimums.
+name,category,density,yield_mpa,youngs_gpa,appearance
+Generic,Generic,1.0,,,Default
+Steel S235,Steel,7.85,235,210,Steel - Satin
+Steel S355,Steel,7.85,355,210,Steel - Satin
+Steel AISI 1018,Steel,7.87,370,205,Steel - Satin
+Steel AISI 4140,Steel,7.85,415,205,Steel - Satin
+Stainless Steel 304,Steel,8.00,215,193,Stainless Steel - Brushed
+Stainless Steel 316,Steel,8.00,205,193,Stainless Steel - Brushed
+Cast Iron EN-GJL-250,Iron,7.20,,110,Cast Iron
+Aluminium 6061-T6,Aluminium,2.70,276,68.9,Aluminium - Satin
+Aluminium 6082-T6,Aluminium,2.70,260,70,Aluminium - Satin
+Aluminium 7075-T6,Aluminium,2.81,503,71.7,Aluminium - Satin
+Brass CuZn37,Copper Alloys,8.44,,100,Brass - Polished
+Copper Cu-ETP,Copper Alloys,8.96,69,117,Copper
+Titanium Grade 5 (Ti-6Al-4V),Titanium,4.43,880,113.8,Titanium
+ABS,Plastic,1.05,40,2.3,ABS - White
+PLA,Plastic,1.24,60,3.5,Plastic - Blue
+PETG,Plastic,1.27,50,2.1,PETG - Clear
+Nylon PA12,Plastic,1.01,50,1.6,Plastic - Natural
+POM (Acetal),Plastic,1.41,65,2.8,Plastic - Natural
+Polycarbonate (PC),Plastic,1.20,62,2.4,Plastic - Clear
+Rubber (Natural),Rubber,0.93,,0.05,Rubber - Black
+Glass (Soda-Lime),Glass,2.50,,70,Glass - Clear
+Wood (Oak),Wood,0.75,,11,Wood - Oak
+Wood (Pine),Wood,0.50,,9,Wood - Pine

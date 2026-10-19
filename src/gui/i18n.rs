@@ -89,6 +89,10 @@ const TABLE: &[(&str, &str)] = &[
         "Mirror: щракнете огледалната равнина (основна или работна равнина, или плоска стена), после OK",
     ),
     (
+        "Adjust: select faces, features or bodies (the Select list sets which), pick a look or a colour, then Apply",
+        "Adjust: изберете стени, операции или тела (списъкът Select определя кои), изберете вид или цвят, после Apply",
+    ),
+    (
         "Face Draft: click a planar face, an origin plane or a straight edge for the pull direction",
         "Face Draft: щракнете плоска стена, основна равнина или прав ръб за посоката на изваждане",
     ),

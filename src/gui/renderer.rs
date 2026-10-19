@@ -17,6 +17,8 @@ const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// position (3) + normal (3) + colour (3), all `f32`.
 const VERTEX_STRIDE: u64 = 9 * 4;
+/// Transparent faces: position (3) + normal (3) + colour with alpha (4).
+const ALPHA_STRIDE: u64 = 10 * 4;
 /// Background (gamma-encoded, written straight into the target).
 const CLEAR: wgpu::Color = wgpu::Color {
     r: 0.90,
@@ -33,9 +35,59 @@ pub struct SceneGeometry {
     tri_indices: Vec<u32>,
     line_vertices: Vec<u8>,
     line_vertex_count: u32,
+    alpha_vertices: Vec<u8>,
+    alpha_count: u32,
+    alpha_indices: Vec<u32>,
 }
 
 impl SceneGeometry {
+    /// Index counts of the opaque and the transparent triangles.
+    #[cfg(test)]
+    pub fn counts(&self) -> (usize, usize) {
+        (self.tri_indices.len(), self.alpha_indices.len())
+    }
+
+    /// Adds triangles with a colour per vertex (`colors[i]` for
+    /// `positions[i]`); only the vertices the triangles use are kept.
+    pub fn add_mesh_colored(
+        &mut self,
+        positions: &[Point3],
+        normals: &[Vector3],
+        triangles: &[[u32; 3]],
+        colors: &[[f32; 3]],
+    ) {
+        let base = self.tri_count;
+        for ((p, n), c) in positions.iter().zip(normals).zip(colors) {
+            push_vertex(&mut self.tri_vertices, p, n, *c);
+            self.tri_count += 1;
+        }
+        self.tri_indices
+            .extend(triangles.iter().flatten().map(|i| base + i));
+    }
+
+    /// Adds see-through triangles (drawn after everything else, blended,
+    /// without depth writes, both sides).
+    pub fn add_mesh_transparent(
+        &mut self,
+        positions: &[Point3],
+        normals: &[Vector3],
+        triangles: &[[u32; 3]],
+        color: [f32; 4],
+    ) {
+        let base = self.alpha_count;
+        for (p, n) in positions.iter().zip(normals) {
+            for v in [
+                p.x as f32, p.y as f32, p.z as f32, n.x as f32, n.y as f32, n.z as f32, color[0],
+                color[1], color[2], color[3],
+            ] {
+                self.alpha_vertices.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        self.alpha_count += positions.len() as u32;
+        self.alpha_indices
+            .extend(triangles.iter().flatten().map(|i| base + i));
+    }
+
     /// Adds a triangle mesh (positions, normals, CCW triangles) in one colour.
     pub fn add_mesh(
         &mut self,
@@ -84,6 +136,9 @@ struct GpuGeometry {
     tri_index_count: u32,
     line_vbuf: Option<wgpu::Buffer>,
     line_vertex_count: u32,
+    alpha_vbuf: Option<wgpu::Buffer>,
+    alpha_ibuf: Option<wgpu::Buffer>,
+    alpha_index_count: u32,
 }
 
 /// Offscreen render target, recreated when the viewport is resized.
@@ -99,6 +154,7 @@ pub struct ViewportRenderer {
     shaded: wgpu::RenderPipeline,
     backfaces: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
+    transparent: wgpu::RenderPipeline,
     uniform_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     sample_count: u32,
@@ -232,11 +288,59 @@ impl ViewportRenderer {
             bias(16),
         );
         let lines = pipeline("lines", Topo::LineList, None, "fs_flat", Default::default());
+        // See-through faces: blended over the opaque scene, depth-tested
+        // but not written (faces behind stay visible), both sides.
+        let alpha_attributes =
+            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4];
+        let transparent = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("transparent faces"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_alpha"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: ALPHA_STRIDE,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &alpha_attributes,
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: Topo::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: bias(2),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_alpha"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: COLOR_FORMAT,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
 
         Self {
             shaded,
             backfaces,
             lines,
+            transparent,
             uniform_buf,
             bind_group,
             sample_count,
@@ -259,6 +363,11 @@ impl ViewportRenderer {
             })
         };
         let index_bytes: Vec<u8> = g.tri_indices.iter().flat_map(|i| i.to_le_bytes()).collect();
+        let alpha_index_bytes: Vec<u8> = g
+            .alpha_indices
+            .iter()
+            .flat_map(|i| i.to_le_bytes())
+            .collect();
         self.geometry = Some(GpuGeometry {
             tri_vbuf: buffer("tri vertices", &g.tri_vertices, wgpu::BufferUsages::VERTEX),
             tri_ibuf: buffer("tri indices", &index_bytes, wgpu::BufferUsages::INDEX),
@@ -269,6 +378,17 @@ impl ViewportRenderer {
                 wgpu::BufferUsages::VERTEX,
             ),
             line_vertex_count: g.line_vertex_count,
+            alpha_vbuf: buffer(
+                "alpha vertices",
+                &g.alpha_vertices,
+                wgpu::BufferUsages::VERTEX,
+            ),
+            alpha_ibuf: buffer(
+                "alpha indices",
+                &alpha_index_bytes,
+                wgpu::BufferUsages::INDEX,
+            ),
+            alpha_index_count: g.alpha_indices.len() as u32,
         });
     }
 
@@ -348,6 +468,13 @@ impl ViewportRenderer {
                     pass.set_pipeline(&self.lines);
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.draw(0..g.line_vertex_count, 0..1);
+                }
+                // Transparent faces last, over everything opaque.
+                if let (Some(vb), Some(ib)) = (&g.alpha_vbuf, &g.alpha_ibuf) {
+                    pass.set_pipeline(&self.transparent);
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..g.alpha_index_count, 0, 0..1);
                 }
             }
         }
