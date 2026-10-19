@@ -555,6 +555,62 @@ fn speed_budgets() {
         }),
     ));
 
+    // 30 work features on a box: 10 offset planes, 10 axes (plane x
+    // origin plane), 10 points (axis x plane), each built on the previous.
+    let mut wf = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    {
+        use cadcraft3d::part::{
+            LineRef, OriginPlane, PlaneRef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef,
+            WorkPointDef,
+        };
+        let mut defs = Vec::new();
+        for k in 0..10 {
+            defs.push(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Face("Box1:Top".into()),
+                distance: 2.0 + k as Real,
+            }));
+            defs.push(WorkDef::Axis(WorkAxisDef::TwoPlanes {
+                a: PlaneRef::Work(format!("WorkPlane{}", k + 1)),
+                b: PlaneRef::Origin(OriginPlane::XZ),
+            }));
+            defs.push(WorkDef::Point(WorkPointDef::PlaneLine {
+                plane: PlaneRef::Origin(OriginPlane::YZ),
+                line: LineRef::Work(format!("WorkAxis{}", k + 1)),
+            }));
+        }
+        for d in defs {
+            wf.features
+                .push(cadcraft3d::part::Feature::Work(WorkFeature::new(d)));
+        }
+        // Ids as add_work gives them.
+        let mut counts = [0; 3];
+        for f in wf.features.iter_mut() {
+            if let cadcraft3d::part::Feature::Work(w) = f {
+                let (idp, namep) = w.def.prefix();
+                let slot = match idp {
+                    "WorkPlane" => 0,
+                    "WorkAxis" => 1,
+                    _ => 2,
+                };
+                counts[slot] += 1;
+                w.id = format!("{idp}{}", counts[slot]);
+                w.name = format!("{namep}{}", counts[slot]);
+            }
+        }
+        wf.regenerate().unwrap();
+        assert!(wf.feature_health.is_empty(), "{:?}", wf.feature_health);
+        assert_eq!(wf.work.points.len(), 10);
+    }
+    rows.push((
+        "regenerate a box with 30 work features",
+        20.0,
+        median_ms(5, || {
+            let mut p = wf.clone();
+            p.build_cache = Default::default();
+            p.regenerate().unwrap();
+        }),
+    ));
+
     println!("{:<62} {:>9} {:>9}", "case", "budget", "median");
     let mut over = Vec::new();
     for (case, budget, ms) in &rows {

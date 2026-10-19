@@ -335,6 +335,74 @@ fn hole_r6() -> PartDocument {
     part
 }
 
+/// Revision 7: work features on curved faces and a UCS: a cylinder, a
+/// tangent work plane parallel to YZ, an axis through the cylinder face, a
+/// UCS lifted to the top with a boss sketched on its XY plane.
+fn work_r7() -> PartDocument {
+    use cadcraft3d::kernel::Surface;
+    use cadcraft3d::part::{UcsDef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef};
+    let mut part = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_circle(Point2::new(0.0, 0.0), 10.0).unwrap();
+    let r = sk.regions();
+    part.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 20.0),
+    )
+    .unwrap();
+    let face = part
+        .body
+        .faces()
+        .find(|(_, f)| matches!(part.body.surface(f.surface), Some(Surface::Cylinder(_))))
+        .and_then(|(_, f)| f.name.clone())
+        .unwrap();
+    part.add_work(WorkFeature::new(WorkDef::Plane(
+        WorkPlaneDef::TangentParallel {
+            face: face.clone(),
+            base: cadcraft3d::part::PlaneRef::Origin(OriginPlane::YZ),
+            other: false,
+        },
+    )))
+    .unwrap();
+    part.add_work(WorkFeature::new(WorkDef::Axis(WorkAxisDef::RevolvedFace {
+        face,
+    })))
+    .unwrap();
+    part.add_work(WorkFeature::new(WorkDef::Ucs(UcsDef::Offsets {
+        x: 0.0,
+        y: 0.0,
+        z: 20.0,
+        rx: 0.0,
+        ry: 0.0,
+        rz: 0.3,
+    })))
+    .unwrap();
+    let j = part
+        .create_sketch(
+            SketchPlacement {
+                plane: cadcraft3d::part::PlaneRef::Work("UCS1:XY".into()),
+                ..Default::default()
+            },
+            &o,
+        )
+        .unwrap();
+    let sk = &mut part.sketches[j].sketch;
+    sk.add_rectangle_two_point(Point2::new(-3.0, -2.0), Point2::new(3.0, 2.0))
+        .unwrap();
+    let r = sk.regions();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 5.0);
+    ex.operation = cadcraft3d::part::Operation::Join;
+    part.add_extrude(j, ex).unwrap();
+    part
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -376,6 +444,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("HoleR6");
             project.add_document("Part1", DocumentData::Part(hole_r6()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r7/work_r7.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("WorkR7");
+            project.add_document("Part1", DocumentData::Part(work_r7()));
             project.save(&f).unwrap();
         }
         let f = root().join("r3/shell_r3.3dcadcraft");

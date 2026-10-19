@@ -73,7 +73,10 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 5: Rectangular / Circular Pattern and Mirror (`Feature::Pattern`)
 ///   (2026-10-19).
 /// - 6: Hole and Thread (`Feature::Hole`, `Feature::Thread`) (2026-10-19).
-pub const FORMAT_REVISION: u32 = 6;
+/// - 7: work feature methods on curved faces, curves and sketch geometry,
+///   and UCS (`WorkDef::Ucs`, new `WorkPlaneDef` / `WorkAxisDef` /
+///   `WorkPointDef` variants) (2026-10-19).
+pub const FORMAT_REVISION: u32 = 7;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
