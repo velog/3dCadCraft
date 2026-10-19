@@ -259,16 +259,32 @@ impl CadCraftApp {
             return Err(String::new());
         };
         let key = format!("pattern|{:?}|{:?}", d.edit, d.def);
+        // Cached or still computing: no copy of the part this frame.
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
         let mut trial = self.part().clone();
         let (def, edit) = (d.def.clone(), d.edit);
+        // OK reuses what the preview built (see `take_preview_part`).
+        let (slot, sig, k2) = (
+            self.preview_part.clone(),
+            self.part_signature(),
+            key.clone(),
+        );
         self.preview_async(key, move || {
             let built = match edit {
                 Some(k) => trial.replace_feature(k, Feature::Pattern(def)),
                 None => trial.add_pattern(def),
             };
-            built
+            let r = built
                 .map(|id| Self::feature_polylines(&trial, &id))
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string());
+            if r.is_ok()
+                && let Ok(mut s) = slot.lock()
+            {
+                *s = Some((k2, sig, trial));
+            }
+            r
         })
     }
 
@@ -359,12 +375,24 @@ impl CadCraftApp {
         } else {
             d.def.command()
         };
+        let key = format!("pattern|{:?}|{:?}", d.edit, d.def);
+        let ready = self.take_preview_part(&key);
         self.checkpoint(cmd);
-        let built = match d.edit {
-            Some(k) => self
+        let built = match (ready, d.edit) {
+            // The preview built exactly this from the part as it is: take it.
+            (Some(p), _) => {
+                let id = p
+                    .features
+                    .get(d.edit.unwrap_or(p.last_inserted()))
+                    .map(|f| f.id().to_owned())
+                    .unwrap_or_default();
+                *self.part_mut() = p;
+                Ok(id)
+            }
+            (None, Some(k)) => self
                 .part_mut()
                 .replace_feature(k, Feature::Pattern(d.def.clone())),
-            None => self.part_mut().add_pattern(d.def.clone()),
+            (None, None) => self.part_mut().add_pattern(d.def.clone()),
         };
         if built.is_err()
             && let Some(k) = d.edit
@@ -385,7 +413,7 @@ impl CadCraftApp {
                     self.pattern_draft = Some(next);
                 } else {
                     self.pattern_draft = None;
-                    let k = d.edit.unwrap_or(self.part().features.len() - 1);
+                    let k = d.edit.unwrap_or(self.part().last_inserted());
                     self.selection = super::Selection::Feature(k);
                 }
             }

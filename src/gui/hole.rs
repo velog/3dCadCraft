@@ -2,14 +2,20 @@
 //! `docs/spec/2.9-thread.md`).
 //!
 //! Hole (Inventor 2027 placement): a click on a planar face places a centre
-//! there (the feature's sketch is made on that face at OK; further clicks
-//! add centres on the same face, a click on a centre removes it); a click on
-//! a point of a visible sketch uses that sketch's points; a click on a
-//! circular edge places a concentric centre. Thread: a click on a
-//! cylindrical face, near the end where the thread starts.
+//! there (Allow Center Point Creation; the feature's sketch is made on that
+//! face at OK with Center Points; further clicks add centres on the same
+//! face, a click on a centre removes it); a click on a straight model edge
+//! then dimensions the last centre to it (a projected edge and a
+//! point-to-line dimension in the hole's sketch); a click on a point of a
+//! visible sketch uses that sketch's points (its unused Center Points are
+//! preselected); a click on a circular edge or a cylindrical face places a
+//! concentric centre. Thread: a click on a cylindrical face, near the end
+//! where the thread starts.
 //!
 //! The dialog's state is the feature definition itself (`HoleSpec` /
 //! `ThreadSpec`, both serde types): presets can store and restore it.
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui::{self, Color32, Rect, Stroke};
 
@@ -18,7 +24,26 @@ use crate::kernel::{EdgeId, FaceId, Point3, Real};
 use crate::part::hole::{self, HoleCenter};
 use crate::part::standards::Standards;
 use crate::part::{Feature, HoleFeature, HoleSpec, PartDocument, ThreadFeature, ThreadSpec};
-use crate::sketch::PointId;
+use crate::sketch::{Constraint, PointId};
+
+/// Allow Center Point Creation (remembered for the session, Inventor).
+pub(super) static ALLOW_CREATE: AtomicBool = AtomicBool::new(true);
+/// Panel menu: Preselect sketch center points.
+pub(super) static PRESELECT: AtomicBool = AtomicBool::new(true);
+/// Panel menu: Keep sketch visible on (+).
+pub(super) static KEEP_VISIBLE: AtomicBool = AtomicBool::new(false);
+/// Panel menu: Window select center points only.
+pub(super) static WINDOW_CENTERS: AtomicBool = AtomicBool::new(true);
+
+/// Reads one of the option flags.
+pub(super) fn option(flag: &AtomicBool) -> bool {
+    flag.load(Ordering::Relaxed)
+}
+
+/// Sets one of the option flags.
+pub(super) fn set_option(flag: &AtomicBool, on: bool) {
+    flag.store(on, Ordering::Relaxed);
+}
 
 /// What a click in the view means for Hole.
 #[derive(Clone, Debug, PartialEq)]
@@ -27,8 +52,41 @@ pub(super) enum HolePick {
     SketchPoint(usize, PointId),
     /// A circular edge: a concentric centre.
     Circle(crate::part::EdgeRef),
+    /// A cylindrical face: a centre on its axis.
+    Cylinder(crate::part::FaceRef),
+    /// A straight model edge: a dimension from the last centre to it
+    /// (names of its end vertices, its ends).
+    Edge(String, String, [Point3; 2]),
     /// A planar face (name) at a model point.
     Face(String, Point3),
+}
+
+/// A linear dimension from a clicked centre to a model edge (Inventor:
+/// click a reference edge after the centre).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct HoleDim {
+    /// The centre (index into [`HoleDraft::points`]).
+    pub center: usize,
+    /// Names of the edge's end vertices.
+    pub a: String,
+    /// See `a`.
+    pub b: String,
+    /// The edge's ends (model coordinates, for the display).
+    pub ends: [Point3; 2],
+    /// The distance (mm).
+    pub value: Real,
+    /// Its equation, if typed as one.
+    pub expr: Option<String>,
+}
+
+impl HoleDim {
+    /// The foot of the perpendicular from `p` on the edge's line.
+    pub(super) fn foot(&self, p: Point3) -> Point3 {
+        let [a, b] = self.ends;
+        let d = b - a;
+        let t = (p - a).dot(&d) / d.norm_squared().max(1e-300);
+        a + d * t
+    }
 }
 
 /// The open Hole command.
@@ -42,10 +100,15 @@ pub(super) struct HoleDraft {
     pub face: Option<String>,
     /// Centres clicked on `face` (model coordinates).
     pub points: Vec<Point3>,
+    /// Dimensions of the clicked centres to model edges.
+    pub dims: Vec<HoleDim>,
     /// Edit Feature of this feature index.
     pub edit: Option<usize>,
     /// The next face click sets the termination face (To).
     pub to_pick: bool,
+    /// A sketch shared for this hole by Keep sketch visible on (+): Cancel
+    /// unshares it (sketch id).
+    pub kept: Option<String>,
 }
 
 impl HoleDraft {
@@ -55,18 +118,18 @@ impl HoleDraft {
             def: HoleFeature::new(HoleSpec::default()),
             face: None,
             points: Vec::new(),
+            dims: Vec::new(),
             edit: None,
             to_pick: false,
+            kept: None,
         }
     }
 
     pub(super) fn editing(def: HoleFeature, k: usize) -> Self {
         Self {
             def,
-            face: None,
-            points: Vec::new(),
             edit: Some(k),
-            to_pick: false,
+            ..Self::new()
         }
     }
 
@@ -75,20 +138,62 @@ impl HoleDraft {
         self.def.centers.len() + self.points.len()
     }
 
-    /// The feature as it will be added to `part` (its face centres become
-    /// a sketch on the face): (part with the sketch, definition).
-    fn build(&self, part: &mut PartDocument) -> Result<HoleFeature, String> {
+    /// Moves clicked centre `k` so that its dimension `j` reads `value`.
+    pub(super) fn set_dim(&mut self, j: usize, value: Real, expr: Option<String>) {
+        let Some(d) = self.dims.get_mut(j) else {
+            return;
+        };
+        let Some(p) = self.points.get_mut(d.center) else {
+            return;
+        };
+        let f = d.foot(*p);
+        if let Some(u) = (*p - f).try_normalize(1e-12) {
+            *p = f + u * value;
+        }
+        d.value = value;
+        d.expr = expr;
+    }
+
+    /// The feature as it will be added to `part`: its face centres become
+    /// Center Points of a sketch on the face, their edge dimensions
+    /// projected edges and point-to-line dimensions of that sketch.
+    pub(super) fn build(&self, part: &mut PartDocument) -> Result<HoleFeature, String> {
         let mut def = self.def.clone();
         if let (Some(face), false) = (&self.face, self.points.is_empty()) {
             let (i, ids) = part
                 .create_hole_sketch(face, &self.points)
                 .map_err(|e| e.to_string())?;
+            for d in &self.dims {
+                let Some(&point) = ids.get(d.center) else {
+                    continue;
+                };
+                let line = part
+                    .project_segment(i, &d.a, &d.b)
+                    .map_err(|e| e.to_string())?;
+                let ps = &mut part.sketches[i];
+                let c = ps
+                    .sketch
+                    .add_constraint(Constraint::PointLineDistance {
+                        point,
+                        line,
+                        value: d.value,
+                    })
+                    .map_err(|e| e.to_string())?;
+                let plane = ps.sketch.plane.clone();
+                let p = self.points[d.center];
+                let mid = Point3::from((p.coords + d.foot(p).coords) / 2.0);
+                ps.sketch.set_dimension_label(c, Some(plane.project(&mid)));
+                if let Some(dp) = ps.sketch.dim_param_mut(c) {
+                    dp.expr = d.expr.clone();
+                }
+            }
+            let _ = part.sketches[i].sketch.solve();
             def.sketch = part.sketches[i].id.clone();
             let mut centers: Vec<HoleCenter> = ids.into_iter().map(HoleCenter::Point).collect();
             centers.extend(
                 def.centers
                     .iter()
-                    .filter(|c| matches!(c, HoleCenter::Concentric(_)))
+                    .filter(|c| !matches!(c, HoleCenter::Point(_)))
                     .cloned(),
             );
             def.centers = centers;
@@ -96,8 +201,7 @@ impl HoleDraft {
         Ok(def)
     }
 }
-
-/// The open Thread command.
+// The open Thread command.
 #[derive(Clone, Debug)]
 pub(super) struct ThreadDraft {
     /// The face picked (none yet: the definition is not complete).
@@ -146,6 +250,37 @@ impl ThreadDraft {
 
 /// The thread size of `table` that fits a cylinder of `diameter`: a shaft
 /// by its major diameter, a hole by its minor diameter or tap drill.
+/// The visible sketch (the newest) with Center Points that no Hole uses
+/// yet, and those points (Inventor: Preselect sketch center points).
+pub(super) fn unused_center_points(part: &PartDocument) -> Option<(String, Vec<PointId>)> {
+    part.sketches
+        .iter()
+        .rev()
+        .filter(|ps| ps.visible)
+        .find_map(|ps| {
+            let used: Vec<PointId> = part
+                .features
+                .iter()
+                .filter_map(|f| match f {
+                    Feature::Hole(h) if h.sketch == ps.id => Some(h.centers.iter()),
+                    _ => None,
+                })
+                .flatten()
+                .filter_map(|c| match c {
+                    HoleCenter::Point(p) => Some(*p),
+                    _ => None,
+                })
+                .collect();
+            let free: Vec<PointId> = ps
+                .sketch
+                .center_points()
+                .into_iter()
+                .filter(|p| !used.contains(p) && !ps.is_projected(*p))
+                .collect();
+            (!free.is_empty()).then(|| (ps.id.clone(), free))
+        })
+}
+
 pub(super) fn fitting_thread(
     tables: &Standards,
     table: &str,
@@ -169,6 +304,8 @@ pub(super) fn fitting_thread(
 
 impl CadCraftApp {
     /// Starts Hole; a face selected beforehand is where the centres go.
+    /// With Preselect sketch center points, the unused Center Points of a
+    /// visible sketch become the centres (Inventor).
     pub(super) fn start_hole(&mut self) {
         self.finish_sketch();
         self.mode = super::Mode::Normal;
@@ -178,6 +315,11 @@ impl CadCraftApp {
         let mut d = HoleDraft::new();
         if let [super::select::SelItem::Face(name)] = self.sel.as_slice() {
             d.face = Some(name.clone());
+        } else if option(&PRESELECT)
+            && let Some((id, pts)) = unused_center_points(self.part())
+        {
+            d.def.sketch = id;
+            d.def.centers = pts.into_iter().map(HoleCenter::Point).collect();
         }
         self.sel.clear();
         self.face_sel = None;
@@ -198,8 +340,9 @@ impl CadCraftApp {
         self.thread_draft = Some(ThreadDraft::new());
     }
 
-    /// What Hole would take under the cursor: a sketch point, a circular
-    /// edge, or a planar face.
+    /// What Hole would take under the cursor: a sketch point, an edge
+    /// (circular: concentric; straight, after a clicked centre: a
+    /// dimension), a cylindrical face (concentric), or a planar face.
     pub(super) fn hole_pick_under(
         &self,
         pos: egui::Pos2,
@@ -231,24 +374,40 @@ impl CadCraftApp {
         if let Some((_, p)) = best {
             return Some(p);
         }
+        let clicked = self
+            .hole_draft
+            .as_ref()
+            .is_some_and(|d| !d.points.is_empty() && d.edit.is_none());
         if let Some(e) = edge {
             let body = &part.body;
-            let circle = body
-                .edge(e)
-                .and_then(|x| body.curve(x.curve))
-                .is_some_and(|c| matches!(c, crate::kernel::Curve::Circle(_)));
-            if circle && let Some(r) = crate::part::blend::edge_ref(body, e) {
+            let curve = body.edge(e).and_then(|x| body.curve(x.curve));
+            if matches!(curve, Some(crate::kernel::Curve::Circle(_)))
+                && let Some(r) = crate::part::blend::edge_ref(body, e)
+            {
                 return Some(HolePick::Circle(r));
+            }
+            if clicked
+                && body.edge_direction(e).is_some()
+                && let Some(x) = body.edge(e)
+                && let (Some(va), Some(vb)) = (body.vertex(x.start), body.vertex(x.end))
+                && let (Some(a), Some(b)) = (va.name.clone(), vb.name.clone())
+            {
+                return Some(HolePick::Edge(a, b, [va.point, vb.point]));
             }
         }
         let (f, at) = face?;
         let body = &part.body;
-        let planar = body
+        let surface = body
             .face(f)
-            .and_then(|x| body.surface(x.surface))
-            .is_some_and(|s| matches!(s, crate::kernel::Surface::Plane(_)));
+            .and_then(|x| body.surface(x.facet_of.unwrap_or(x.surface)));
         let name = body.face(f).and_then(|x| x.name.clone())?;
-        planar.then_some(HolePick::Face(name, at))
+        match surface {
+            Some(crate::kernel::Surface::Plane(_)) => Some(HolePick::Face(name, at)),
+            Some(crate::kernel::Surface::Cylinder(_)) if !clicked => {
+                crate::part::shell::face_ref(body, f, Some(at)).map(HolePick::Cylinder)
+            }
+            _ => None,
+        }
     }
 
     /// A click while Hole is open.
@@ -313,8 +472,46 @@ impl CadCraftApp {
                     d.def.centers.push(c);
                 }
             }
+            HolePick::Cylinder(r) => {
+                if let Some(k) = d.def.centers.iter().position(|x| match x {
+                    HoleCenter::Axis(f) => f.face == r.face,
+                    _ => false,
+                }) {
+                    d.def.centers.remove(k);
+                } else {
+                    d.def.centers.push(HoleCenter::Axis(r));
+                }
+            }
+            HolePick::Edge(a, b, ends) => {
+                // A dimension from the last clicked centre (two at most).
+                let Some(k) = d.points.len().checked_sub(1) else {
+                    return;
+                };
+                let p = d.points[k];
+                let mut dim = HoleDim {
+                    center: k,
+                    a,
+                    b,
+                    ends,
+                    value: 0.0,
+                    expr: None,
+                };
+                dim.value = (p - dim.foot(p)).norm();
+                if dim.value < 1e-9 {
+                    return;
+                }
+                if let Some(j) = d
+                    .dims
+                    .iter()
+                    .position(|x| x.center == k && x.a == dim.a && x.b == dim.b)
+                {
+                    d.dims.remove(j);
+                } else if d.dims.iter().filter(|x| x.center == k).count() < 2 {
+                    d.dims.push(dim);
+                }
+            }
             HolePick::Face(name, at) => {
-                if !d.def.sketch.is_empty() {
+                if !d.def.sketch.is_empty() || !option(&ALLOW_CREATE) {
                     return;
                 }
                 match &d.face {
@@ -326,10 +523,16 @@ impl CadCraftApp {
                     }
                     _ => {
                         d.face = Some(name);
-                        // A click on a centre removes it.
+                        // A click on a centre removes it (and its dimensions).
                         if let Some(k) = d.points.iter().position(|p| (p - at).norm() < 0.01 * size)
                         {
                             d.points.remove(k);
+                            d.dims.retain(|x| x.center != k);
+                            for x in &mut d.dims {
+                                if x.center > k {
+                                    x.center -= 1;
+                                }
+                            }
                         } else {
                             d.points.push(at);
                         }
@@ -341,7 +544,6 @@ impl CadCraftApp {
             }
         }
     }
-
     /// A click on face `f` at `at` while Thread is open: the face and its
     /// start end; the size follows the face's diameter.
     pub(super) fn thread_pick(&mut self, f: FaceId, at: Point3) {
@@ -401,6 +603,10 @@ impl CadCraftApp {
             );
         }
         let key = format!("hole|{:?}|{:?}|{:?}|{:?}", d.edit, d.def, d.face, d.points);
+        // Cached or still computing: no copy of the part this frame.
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
         let mut trial = self.part().clone();
         let d = d.clone();
         self.preview_async(key, move || {
@@ -425,6 +631,10 @@ impl CadCraftApp {
             return Err("Thread: click a cylindrical face".into());
         };
         let key = format!("thread|{:?}|{def:?}", d.edit);
+        // Cached or still computing: no copy of the part this frame.
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
         let mut trial = self.part().clone();
         let edit = d.edit;
         self.preview_async(key, move || {
@@ -481,16 +691,38 @@ impl CadCraftApp {
                 self.file_status = None;
                 self.scene_dirty = true;
                 if keep_open && d.edit.is_none() {
-                    // Apply: the same settings, new centres.
+                    // Apply (+): the same settings, new centres. Keep sketch
+                    // visible on (+): the hole's sketch is shared for the
+                    // next hole (Cancel unshares it).
                     let mut next = d;
                     next.def.centers.clear();
                     next.def.sketch.clear();
                     next.points.clear();
+                    next.dims.clear();
                     next.face = None;
+                    next.kept = None;
+                    if option(&KEEP_VISIBLE)
+                        && let Some(Feature::Hole(h)) = self
+                            .part()
+                            .features
+                            .get(self.part().last_inserted())
+                            .cloned()
+                        && !h.sketch.is_empty()
+                        && let Some(ps) = self
+                            .part_mut()
+                            .sketches
+                            .iter_mut()
+                            .find(|s| s.id == h.sketch)
+                    {
+                        ps.shared = true;
+                        ps.visible = true;
+                        next.def.sketch = h.sketch.clone();
+                        next.kept = Some(h.sketch);
+                    }
                     self.hole_draft = Some(next);
                 } else {
                     self.hole_draft = None;
-                    let k = d.edit.unwrap_or(self.part().features.len() - 1);
+                    let k = d.edit.unwrap_or(self.part().last_inserted());
                     self.selection = super::Selection::Feature(k);
                 }
             }
@@ -498,6 +730,72 @@ impl CadCraftApp {
                 self.history.cancel();
                 self.file_status = Some(Err(format!("{cmd}: {e}")));
             }
+        }
+    }
+
+    /// The breadcrumb's Sketch: the panel's edits are committed (OK) and the
+    /// hole's sketch opens for editing (dimensions, more centre points);
+    /// Finish Sketch regenerates the hole.
+    pub(super) fn hole_to_sketch(&mut self) {
+        let Some(d) = self.hole_draft.clone() else {
+            return;
+        };
+        let n = self.part().insert_index();
+        self.commit_hole(false);
+        if self.hole_draft.is_some() {
+            return; // the commit failed; its reason is in the status bar
+        }
+        self.edit_hole_sketch(d.edit.unwrap_or(n));
+    }
+
+    /// **Edit Sketch** of Hole feature `k` (browser menu, breadcrumb).
+    pub(super) fn edit_hole_sketch(&mut self, k: usize) {
+        let Some(id) = self
+            .part()
+            .features
+            .get(k)
+            .and_then(|f| f.sketch().map(str::to_owned))
+        else {
+            self.file_status = Some(Err("Edit Sketch: the feature has no sketch".into()));
+            return;
+        };
+        if let Some(i) = self.part().sketches.iter().position(|s| s.id == id) {
+            self.edit_sketch(i);
+        }
+    }
+
+    /// Project Geometry: a click at `p` on a straight model edge projects
+    /// it into sketch `i` (one Undo step). Returns whether the click was
+    /// taken.
+    pub(super) fn project_click(&mut self, i: usize, p: egui::Pos2, rect: Rect) -> bool {
+        let Some(e) = self.edge_under(p, rect) else {
+            return false;
+        };
+        self.checkpoint("Project Geometry");
+        match self.part_mut().project_edge(i, e) {
+            Ok(_) => {
+                let _ = self.part_mut().sketches[i].sketch.solve();
+                self.file_status = None;
+                self.scene_dirty = true;
+            }
+            Err(err) => {
+                self.history.cancel();
+                self.file_status = Some(Err(err.to_string()));
+            }
+        }
+        true
+    }
+
+    /// Cancel / Esc of Hole: a sketch kept visible for this hole is
+    /// unshared again (Inventor).
+    pub(super) fn cancel_hole(&mut self) {
+        if let Some(d) = self.hole_draft.take()
+            && let Some(id) = d.kept
+            && d.def.centers.is_empty()
+            && let Some(i) = self.part().sketches.iter().position(|s| s.id == id)
+            && self.part().consumers(&id).len() <= 1
+        {
+            let _ = self.part_mut().unshare_sketch(i);
         }
     }
 
@@ -535,7 +833,7 @@ impl CadCraftApp {
                     self.thread_draft = Some(next);
                 } else {
                     self.thread_draft = None;
-                    let k = d.edit.unwrap_or(self.part().features.len() - 1);
+                    let k = d.edit.unwrap_or(self.part().last_inserted());
                     self.selection = super::Selection::Feature(k);
                 }
             }
@@ -567,6 +865,40 @@ impl CadCraftApp {
                     painter.line_segment(
                         [s - egui::vec2(0.0, 7.0), s + egui::vec2(0.0, 7.0)],
                         Stroke::new(1.0, col),
+                    );
+                }
+            }
+            // The centres' dimensions to model edges: the edge, the
+            // perpendicular and the value (edited in the panel).
+            if let Some(d) = &self.hole_draft {
+                let dim = Color32::from_rgb(20, 90, 200);
+                for x in &d.dims {
+                    let Some(&p) = d.points.get(x.center) else {
+                        continue;
+                    };
+                    let f = x.foot(p);
+                    let (Some(a), Some(b)) =
+                        (self.camera.project(&p, rect), self.camera.project(&f, rect))
+                    else {
+                        continue;
+                    };
+                    if let (Some(e0), Some(e1)) = (
+                        self.camera.project(&x.ends[0], rect),
+                        self.camera.project(&x.ends[1], rect),
+                    ) {
+                        painter.line_segment([e0, e1], Stroke::new(3.0, dim));
+                    }
+                    painter.arrow(b, a - b, Stroke::new(1.5, dim));
+                    let text = match &x.expr {
+                        Some(e) => format!("{e} = {}", hole::num(x.value, 3)),
+                        None => hole::num(x.value, 3),
+                    };
+                    painter.text(
+                        egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0) - egui::vec2(0.0, 8.0),
+                        egui::Align2::CENTER_BOTTOM,
+                        text,
+                        egui::FontId::proportional(13.0),
+                        dim,
                     );
                 }
             }
@@ -607,6 +939,186 @@ pub(super) fn thread_lines(c: &hole::CosmeticThread) -> Vec<Vec<Point3>> {
 mod tests {
     use super::*;
     use crate::part::standards::ISO_METRIC;
+
+    fn thread_faces(part: &PartDocument) -> usize {
+        part.body
+            .faces()
+            .filter(|(_, f)| f.name.as_deref().is_some_and(|n| n.contains(":Thread")))
+            .count()
+    }
+
+    #[test]
+    fn modeled_thread_through_the_gui_path() {
+        // New hole: Tapped, Modeled, as the dialog sets it.
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let mut d = HoleDraft::new();
+        d.face = Some("Box1:Top".into());
+        d.points = vec![Point3::new(20.0, 15.0, 20.0)];
+        let mut t = ThreadSpec::default_metric();
+        t.modeled = true;
+        d.def.spec.hole_type = crate::part::HoleType::Tapped;
+        d.def.spec.diameter = t.minor;
+        d.def.spec.thread = Some(t);
+        let mut plain = part.clone();
+        let def = d.build(&mut part).unwrap();
+        part.add_hole(def).unwrap();
+        eprintln!("health {:?}", part.feature_health);
+        assert!(thread_faces(&part) > 50, "new: {}", thread_faces(&part));
+        // The scene the view draws has the groove's triangles.
+        let mut cos = d.clone();
+        if let Some(t) = cos.def.spec.thread.as_mut() {
+            t.modeled = false;
+        }
+        let def = cos.build(&mut plain).unwrap();
+        plain.add_hole(def).unwrap();
+        let tris = |p: &PartDocument| {
+            let mut g = super::super::renderer::SceneGeometry::default();
+            super::super::material::add_part_meshes(&mut g, p);
+            g.counts().0
+        };
+        eprintln!("scene cosmetic {} modeled {}", tris(&plain), tris(&part));
+        assert!(tris(&part) > tris(&plain) + 3000, "the groove is drawn");
+        // Edit Feature: cosmetic → modeled, rolled back as the GUI does.
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let mut d = HoleDraft::new();
+        d.face = Some("Box1:Top".into());
+        d.points = vec![Point3::new(20.0, 15.0, 20.0)];
+        d.def.spec = HoleSpec::tapped(ThreadSpec::default_metric(), 12.0);
+        let def = d.build(&mut part).unwrap();
+        part.add_hole(def).unwrap();
+        assert_eq!(thread_faces(&part), 0);
+        let k = part.features.len() - 1;
+        part.rollback = Some(k);
+        part.regenerate().unwrap();
+        let Some(Feature::Hole(mut h)) = part.features.get(k).cloned() else {
+            panic!("hole")
+        };
+        if let Some(t) = h.spec.thread.as_mut() {
+            t.modeled = true;
+        }
+        part.replace_feature(k, Feature::Hole(h)).unwrap();
+        eprintln!("health {:?}", part.feature_health);
+        assert!(thread_faces(&part) > 50, "edit: {}", thread_faces(&part));
+    }
+
+    #[test]
+    fn modeled_thread_command_through_the_gui_path() {
+        use crate::part::{
+            ExtrudeFeature, OriginPlane, ProfileRef, SketchOptions, SketchPlacement,
+        };
+        // A Ø8 shaft 20 long, Thread full length, Modeled.
+        let mut part = PartDocument::default();
+        let i = part
+            .create_sketch(
+                SketchPlacement::on_origin_plane(OriginPlane::XY),
+                &SketchOptions::default(),
+            )
+            .unwrap();
+        part.sketches[i]
+            .sketch
+            .add_circle(crate::sketch::Point2::new(0.0, 0.0), 4.0)
+            .unwrap();
+        let r = part.sketches[i].sketch.regions();
+        let disc = r.iter().find(|r| r.holes.is_empty()).unwrap();
+        part.add_extrude(
+            i,
+            ExtrudeFeature::new(vec![ProfileRef::of(disc, disc.interior_point())], 20.0),
+        )
+        .unwrap();
+        let side = part
+            .body
+            .faces()
+            .find(|(_, f)| f.name.as_deref().is_some_and(|n| n.contains(":Side")))
+            .map(|(fid, _)| fid)
+            .unwrap();
+        let fr = crate::part::shell::face_ref(&part.body, side, Some(Point3::new(4.0, 0.0, 19.0)))
+            .unwrap();
+        let cf = hole::cylinder_face(&part.body, &fr).unwrap();
+        let mut d = ThreadDraft::new();
+        let t = fitting_thread(
+            Standards::global(),
+            &d.spec.thread_type,
+            2.0 * cf.radius,
+            cf.internal,
+        )
+        .unwrap();
+        d.spec = ThreadSpec {
+            modeled: true,
+            full_depth: true,
+            ..t
+        };
+        d.face = Some(fr);
+        part.add_thread(d.def().unwrap()).unwrap();
+        eprintln!("health {:?}", part.feature_health);
+        assert!(thread_faces(&part) > 50, "shaft: {}", thread_faces(&part));
+    }
+
+    #[test]
+    fn edge_dimensions_become_sketch_dimensions() {
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let mut d = HoleDraft::new();
+        d.face = Some("Box1:Top".into());
+        d.points = vec![Point3::new(12.0, 9.0, 20.0)];
+        // The box's front top edge (y 0, z 20): Box1:V001 … V101.
+        let (a, b) = ("Box1:V001", "Box1:V101");
+        let pa = part
+            .body
+            .vertices()
+            .find(|(_, v)| v.name.as_deref() == Some(a))
+            .unwrap()
+            .1
+            .point;
+        let pb = part
+            .body
+            .vertices()
+            .find(|(_, v)| v.name.as_deref() == Some(b))
+            .unwrap()
+            .1
+            .point;
+        d.dims.push(HoleDim {
+            center: 0,
+            a: a.into(),
+            b: b.into(),
+            ends: [pa, pb],
+            value: 9.0,
+            expr: None,
+        });
+        // The panel's field: 12 from the edge.
+        d.set_dim(0, 12.0, None);
+        assert!((d.points[0].y - 12.0).abs() < 1e-9);
+        let def = d.build(&mut part).unwrap();
+        part.add_hole(def).unwrap();
+        let ps = &part.sketches[0];
+        assert_eq!(ps.reference_lines.len(), 1, "the projected edge");
+        assert!(ps.sketch.constraints().any(|(_, c)| matches!(
+            c,
+            Constraint::PointLineDistance { value, .. } if (*value - 12.0).abs() < 1e-9
+        )));
+        assert!((part.holes()[0].origin.y - 12.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn unused_center_points_are_preselected() {
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        assert!(unused_center_points(&part).is_none());
+        let (i, ids) = part
+            .create_hole_sketch(
+                "Box1:Top",
+                &[Point3::new(10.0, 10.0, 20.0), Point3::new(30.0, 10.0, 20.0)],
+            )
+            .unwrap();
+        let id = part.sketches[i].id.clone();
+        let (sid, pts) = unused_center_points(&part).unwrap();
+        assert_eq!((sid, pts.len()), (id.clone(), 2));
+        // One used by a hole (shared sketch, still visible): one left.
+        let mut def = HoleFeature::new(HoleSpec::simple(5.0, 5.0));
+        def.sketch = id.clone();
+        def.centers = vec![HoleCenter::Point(ids[0])];
+        part.add_hole(def).unwrap();
+        part.sketches[i].visible = true;
+        let (_, left) = unused_center_points(&part).unwrap();
+        assert_eq!(left, vec![ids[1]]);
+    }
 
     #[test]
     fn the_size_follows_the_face() {

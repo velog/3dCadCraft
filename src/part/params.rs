@@ -159,7 +159,13 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
             }
         },
         Feature::Shell(_) => vec![("thickness", Unit::Mm)],
-        Feature::Draft(_) => vec![("angle", Unit::Deg)],
+        Feature::Draft(d) => {
+            if d.uses_angle2() {
+                vec![("angle", Unit::Deg), ("angle2", Unit::Deg)]
+            } else {
+                vec![("angle", Unit::Deg)]
+            }
+        }
         Feature::Pattern(p) => match &p.kind {
             super::PatternKind::Rectangular { second, .. } => {
                 let mut v = vec![("count1", Unit::Ul), ("spacing1", Unit::Mm)];
@@ -172,6 +178,8 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
             super::PatternKind::Mirror { .. } => Vec::new(),
         },
         Feature::Hole(h) => h.fields(),
+        Feature::Sweep(s) => s.fields(),
+        Feature::Loft(_) => Vec::new(),
         Feature::Thread(t) => t.fields(),
         Feature::Work(w) => match &w.def {
             super::WorkDef::Plane(super::WorkPlaneDef::Offset { .. }) => {
@@ -181,6 +189,14 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
             super::WorkDef::Point(super::WorkPointDef::Fixed { .. }) => {
                 vec![("x", Unit::Mm), ("y", Unit::Mm), ("z", Unit::Mm)]
             }
+            super::WorkDef::Ucs(super::work::UcsDef::Offsets { .. }) => vec![
+                ("x", Unit::Mm),
+                ("y", Unit::Mm),
+                ("z", Unit::Mm),
+                ("rx", Unit::Deg),
+                ("ry", Unit::Deg),
+                ("rz", Unit::Deg),
+            ],
             _ => Vec::new(),
         },
     }
@@ -244,7 +260,11 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
             _ => None,
         },
         Feature::Shell(s) => (field == "thickness").then_some(s.thickness),
-        Feature::Draft(d) => (field == "angle").then_some(d.angle),
+        Feature::Draft(d) => match field {
+            "angle" => Some(d.angle),
+            "angle2" => Some(d.angle2),
+            _ => None,
+        },
         Feature::Pattern(p) => match (&p.kind, field) {
             (super::PatternKind::Rectangular { first, .. }, "count1") => Some(first.count as Real),
             (super::PatternKind::Rectangular { first, .. }, "spacing1") => Some(first.spacing),
@@ -259,6 +279,8 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
             _ => None,
         },
         Feature::Hole(h) => h.value(field),
+        Feature::Sweep(s) => s.value(field),
+        Feature::Loft(_) => None,
         Feature::Thread(t) => t.value(field),
         Feature::Work(w) => match (&w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
@@ -270,6 +292,25 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
             (super::WorkDef::Point(super::WorkPointDef::Fixed { x, .. }), "x") => Some(*x),
             (super::WorkDef::Point(super::WorkPointDef::Fixed { y, .. }), "y") => Some(*y),
             (super::WorkDef::Point(super::WorkPointDef::Fixed { z, .. }), "z") => Some(*z),
+            (
+                super::WorkDef::Ucs(super::work::UcsDef::Offsets {
+                    x,
+                    y,
+                    z,
+                    rx,
+                    ry,
+                    rz,
+                }),
+                f,
+            ) => match f {
+                "x" => Some(*x),
+                "y" => Some(*y),
+                "z" => Some(*z),
+                "rx" => Some(*rx),
+                "ry" => Some(*ry),
+                "rz" => Some(*rz),
+                _ => None,
+            },
             _ => None,
         },
     }
@@ -322,11 +363,11 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
                 s.thickness = v;
             }
         }
-        Feature::Draft(d) => {
-            if field == "angle" {
-                d.angle = v;
-            }
-        }
+        Feature::Draft(d) => match field {
+            "angle" => d.angle = v,
+            "angle2" => d.angle2 = v,
+            _ => {}
+        },
         Feature::Pattern(p) => {
             // Counts are whole numbers (a typed 2.6 is 3); out-of-range
             // values are kept for the feature to report.
@@ -352,6 +393,8 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
             }
         }
         Feature::Hole(h) => h.set(field, v),
+        Feature::Sweep(s) => s.set(field, v),
+        Feature::Loft(_) => {}
         Feature::Thread(t) => t.set(field, v),
         Feature::Work(w) => match (&mut w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
@@ -363,6 +406,25 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
             (super::WorkDef::Point(super::WorkPointDef::Fixed { x, .. }), "x") => *x = v,
             (super::WorkDef::Point(super::WorkPointDef::Fixed { y, .. }), "y") => *y = v,
             (super::WorkDef::Point(super::WorkPointDef::Fixed { z, .. }), "z") => *z = v,
+            (
+                super::WorkDef::Ucs(super::work::UcsDef::Offsets {
+                    x,
+                    y,
+                    z,
+                    rx,
+                    ry,
+                    rz,
+                }),
+                f,
+            ) => match f {
+                "x" => *x = v,
+                "y" => *y = v,
+                "z" => *z = v,
+                "rx" => *rx = v,
+                "ry" => *ry = v,
+                "rz" => *rz = v,
+                _ => {}
+            },
             _ => {}
         },
     }
@@ -379,6 +441,8 @@ fn feature_params_mut(f: &mut Feature) -> Option<&mut FeatureParams> {
         Feature::Draft(d) => Some(&mut d.params),
         Feature::Pattern(p) => Some(&mut p.params),
         Feature::Hole(h) => Some(&mut h.params),
+        Feature::Sweep(s) => Some(&mut s.params),
+        Feature::Loft(l) => Some(&mut l.params),
         Feature::Thread(t) => Some(&mut t.params),
     }
 }
@@ -394,6 +458,8 @@ fn feature_params(f: &Feature) -> Option<&FeatureParams> {
         Feature::Draft(d) => Some(&d.params),
         Feature::Pattern(p) => Some(&p.params),
         Feature::Hole(h) => Some(&h.params),
+        Feature::Sweep(s) => Some(&s.params),
+        Feature::Loft(l) => Some(&l.params),
         Feature::Thread(t) => Some(&t.params),
     }
 }

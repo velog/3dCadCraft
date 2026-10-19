@@ -15,6 +15,7 @@ use eframe::egui::{self, RichText, Sense, Vec2};
 
 use super::demos::Demo;
 use super::icons::{self, Icon, Palette};
+use super::layout::{Element, UiCmd};
 use super::material::MatCmd;
 use super::sketch_tools::{ConstraintTool, Tool};
 use super::viewcube::StandardView;
@@ -58,6 +59,9 @@ pub enum Action {
     Extrude,
     /// Revolve sketch regions around an axis.
     Revolve,
+    /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch
+    /// + full Revolve).
+    Primitive(crate::part::PrimitiveKind),
     /// Work Plane: the method follows from the picks.
     WorkPlane,
     /// Fillet of model edges.
@@ -66,6 +70,10 @@ pub enum Action {
     Chamfer,
     /// Shell: hollow a solid.
     Shell,
+    /// Sweep: profiles along a path.
+    Sweep,
+    /// Loft: a body through sections.
+    Loft,
     /// Face Draft: tilt faces against a pull direction.
     Draft,
     /// Rectangular Pattern of features or solids.
@@ -76,12 +84,19 @@ pub enum Action {
     MirrorFeature,
     /// Hole: drilled, clearance and tapped holes with seats.
     Hole,
+    /// Project Geometry: a click on a model edge projects it into the sketch.
+    ProjectGeometry,
+    /// Format → Center Point: new points are Center Points.
+    CenterPoint,
     /// Thread: a cosmetic or modeled thread on a cylindrical face.
     Thread,
     /// Work Axis: the method follows from the picks.
     WorkAxis,
     /// Work Point: the method follows from the picks.
     WorkPoint,
+    /// UCS: a user coordinate system (relative to the origin or on three
+    /// points).
+    Ucs,
     /// The Parameters table (fx).
     Parameters,
     /// Rebuild All: recompute every feature of the part from scratch.
@@ -90,6 +105,18 @@ pub enum Action {
     Projection(super::camera::Projection),
     /// Materials, appearances, styles, Physical Properties.
     Material(super::material::MatCmd),
+    /// View → Windows: User Interface toggles, Clean Screen, Full Screen,
+    /// Reset UI Layout (`layout.rs`).
+    Ui(UiCmd),
+}
+
+/// Minimize ribbon state (Inventor: Minimize to Tabs).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Fold {
+    /// Only the tab strip is shown.
+    pub minimized: bool,
+    /// Minimized, but the panels are shown until a command is picked.
+    pub peek: bool,
 }
 
 /// What the ribbon needs to know to enable commands.
@@ -108,6 +135,16 @@ pub struct State {
     pub show_dof: bool,
     /// Relax mode on.
     pub relax: bool,
+    /// Which [`Element`]s are visible (in `Element::ALL` order).
+    pub ui_shown: [bool; 6],
+    /// Clean Screen on.
+    pub clean: bool,
+    /// Full Screen on.
+    pub full_screen: bool,
+    /// Project Geometry is active.
+    pub project: bool,
+    /// Format → Center Point is on.
+    pub center_point: bool,
 }
 
 /// Ribbon tabs of the part environment.
@@ -341,8 +378,20 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         "Revolve closed sketch regions around an axis",
                     )
                     .large(),
-                    todo(Icon::Sweep, "Sweep", None, "5.1"),
-                    todo(Icon::Loft, "Loft", None, "5.2"),
+                    ready(
+                        Icon::Sweep,
+                        "Sweep",
+                        None,
+                        Action::Sweep,
+                        "Sweep: move closed profiles along a path (sketch curves or edges)",
+                    ),
+                    ready(
+                        Icon::Loft,
+                        "Loft",
+                        None,
+                        Action::Loft,
+                        "Loft: a body through sections in order (profiles, faces, a point)",
+                    ),
                     todo(Icon::Coil, "Coil", None, "5.3"),
                     todo(Icon::Rib, "Rib", None, "2.7"),
                     todo(Icon::Emboss, "Emboss", None, "2.17"),
@@ -409,7 +458,8 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         None,
                         Action::WorkPlane,
                         "Work Plane: pick a plane (offset), two planes (midplane), \
-                         a plane and an edge (angle), a plane and a point, or three points",
+                         a plane and an edge (angle), a plane and a point, three points, \
+                         a curved face (tangent, torus midplane) or a curve and a point",
                     )
                     .large(),
                     ready(
@@ -417,18 +467,27 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         "Axis",
                         None,
                         Action::WorkAxis,
-                        "Work Axis: an edge, two points, two planes, a plane and a point, \
-                         a line and a point, a circular edge or a revolved face",
+                        "Work Axis: an edge or sketch line, two points, two planes, a plane \
+                         and a point, a line and a point, a circular or elliptical edge, or a \
+                         cylindrical, conical or toroidal face",
                     ),
                     ready(
                         Icon::WorkPoint,
                         "Point",
                         None,
                         Action::WorkPoint,
-                        "Work Point: a vertex or midpoint, three planes, two lines, a plane \
-                         and a line, a circular edge (centre); or Grounded at X, Y, Z",
+                        "Work Point: a vertex, sketch point or midpoint, three planes, two \
+                         lines, a plane or curved face and a line, a circular edge (centre), a \
+                         sphere or torus (centre); or Grounded at X, Y, Z",
                     ),
-                    todo(Icon::Ucs, "UCS", None, "2.10"),
+                    ready(
+                        Icon::Ucs,
+                        "UCS",
+                        None,
+                        Action::Ucs,
+                        "UCS: a coordinate system with its own planes, axes and centre; \
+                         set X, Y, Z and angles, or pick three points (centre, X, Y)",
+                    ),
                 ],
             ),
             panel(
@@ -459,7 +518,40 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             ),
             panel(
                 "Primitives",
-                vec![todo(Icon::Box, "Box", None, "2.1").large()],
+                {
+                    use crate::part::PrimitiveKind as P;
+                    vec![
+                        ready(
+                            Icon::Box,
+                            "Box",
+                            None,
+                            Action::Primitive(P::Box),
+                            "Box: pick a plane, click the centre, then a corner (a sketch + Extrude)",
+                        )
+                        .large(),
+                        ready(
+                            Icon::Cylinder,
+                            "Cylinder",
+                            None,
+                            Action::Primitive(P::Cylinder),
+                            "Cylinder: pick a plane, click the centre, then the diameter (a sketch + Extrude)",
+                        ),
+                        ready(
+                            Icon::Sphere,
+                            "Sphere",
+                            None,
+                            Action::Primitive(P::Sphere),
+                            "Sphere: pick a plane, click the centre, then the diameter (a sketch + full Revolve)",
+                        ),
+                        ready(
+                            Icon::Torus,
+                            "Torus",
+                            None,
+                            Action::Primitive(P::Torus),
+                            "Torus: pick a plane, click the centre, the section centre, then the section diameter",
+                        ),
+                    ]
+                },
             ),
         ],
         Tab::Sketch => {
@@ -613,6 +705,18 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         menu("Spline", &[Tool::SplineInterp, Tool::SplineCv]),
                         todo(Icon::Ellipse, "Ellipse", None, "1.2"),
                         tool(Tool::Point, None, "Sketch point"),
+                        when(
+                            st.editing,
+                            ready(
+                                Icon::Project,
+                                "Project Geometry",
+                                None,
+                                Action::ProjectGeometry,
+                                "Click straight model edges to project them into the sketch (associative reference lines)",
+                            ),
+                            in_sketch,
+                        )
+                        .mini(),
                         tool(
                             Tool::Polygon,
                             None,
@@ -731,6 +835,18 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                             Style::Normal,
                             "Selected geometry → normal",
                         ),
+                        when(
+                            st.editing,
+                            ready(
+                                Icon::Point,
+                                "Center Point",
+                                None,
+                                Action::CenterPoint,
+                                "New points are Center Points (a cross; Hole takes them as centres)",
+                            ),
+                            in_sketch,
+                        )
+                        .mini(),
                     ],
                 ),
                 panel(
@@ -1010,6 +1126,44 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     },
                 ],
             ),
+            panel(
+                "Windows",
+                vec![
+                    Cmd {
+                        label: "User Interface",
+                        icon: Icon::UiPanels,
+                        size: Size::Small,
+                        key: None,
+                        kind: Kind::Menu(
+                            Element::ALL
+                                .into_iter()
+                                .map(|e| (e.label(), Icon::UiPanels, Action::Ui(UiCmd::Toggle(e))))
+                                .collect(),
+                        ),
+                    },
+                    ready(
+                        Icon::CleanScreen,
+                        "Clean Screen",
+                        Some("Ctrl+0"),
+                        Action::Ui(UiCmd::CleanScreen),
+                        "Only the graphics window (and the Quick Access bar); again to restore",
+                    ),
+                    ready(
+                        Icon::FullScreen,
+                        "Full Screen",
+                        Some("F11 outside a sketch"),
+                        Action::Ui(UiCmd::FullScreen),
+                        "The application fills the screen",
+                    ),
+                    ready(
+                        Icon::ResetLayout,
+                        "Reset",
+                        None,
+                        Action::Ui(UiCmd::ResetLayout),
+                        "Reset UI Layout: panels, sizes and window positions back to the defaults",
+                    ),
+                ],
+            ),
         ],
     }
 }
@@ -1020,12 +1174,37 @@ const PANEL_H: f32 = ROW * 3.0 + 4.0;
 
 /// Draws the tab strip and the active tab's panels; returns the clicked
 /// command, if any.
-pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State) -> Option<Action> {
+pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Option<Action> {
     ui.horizontal(|ui| {
         for t in Tab::ALL {
-            ui.selectable_value(tab, t, RichText::new(t.label()).strong());
+            let was = *tab == t;
+            let r = ui.selectable_value(tab, t, RichText::new(t.label()).strong());
+            if r.double_clicked() && was {
+                // Inventor: a double click on the active tab minimizes.
+                fold.minimized = !fold.minimized;
+                fold.peek = false;
+            } else if r.clicked() && fold.minimized {
+                fold.peek = !(was && fold.peek);
+            }
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (glyph, tip) = if fold.minimized {
+                ("v", "Show the full ribbon")
+            } else {
+                (
+                    "^",
+                    "Minimize the ribbon to its tabs (or double-click the active tab)",
+                )
+            };
+            if ui.small_button(glyph).on_hover_text(tip).clicked() {
+                fold.minimized = !fold.minimized;
+                fold.peek = false;
+            }
+        });
     });
+    if fold.minimized && !fold.peek {
+        return None;
+    }
     ui.separator();
 
     let mut clicked = None;
@@ -1212,7 +1391,11 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                 Action::Tool(t) => *t == active && *t != Tool::Select,
                 Action::Format(Style::Construction) => st.construction,
                 Action::ToggleRelax => st.relax,
+                Action::ProjectGeometry => st.project,
+                Action::CenterPoint => st.center_point,
                 Action::ToggleDof => st.show_dof,
+                Action::Ui(UiCmd::CleanScreen) => st.clean,
+                Action::Ui(UiCmd::FullScreen) => st.full_screen,
                 _ => false,
             };
             let r = icon_button(ui, cmd.icon, cmd.label, cmd.size, true, selected, false)
@@ -1233,7 +1416,15 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
             let mut picked = None;
             egui::Popup::menu(&r).show(|ui| {
                 for (label, icon, action) in items {
-                    if icon_button(ui, *icon, label, Size::Small, true, false, false).clicked() {
+                    // User Interface toggles show as pressed while visible.
+                    let on = match action {
+                        Action::Ui(UiCmd::Toggle(e)) => Element::ALL
+                            .iter()
+                            .position(|x| x == e)
+                            .is_some_and(|k| st.ui_shown[k]),
+                        _ => false,
+                    };
+                    if icon_button(ui, *icon, label, Size::Small, true, on, false).clicked() {
                         picked = Some(*action);
                         ui.close();
                     }

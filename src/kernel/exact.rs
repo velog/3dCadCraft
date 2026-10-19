@@ -62,7 +62,7 @@ impl std::fmt::Debug for ExactSolid {
 
 /// Runs a call into the exact kernel; a panic becomes an error.
 fn guarded<T>(what: &str, f: impl FnOnce() -> sk::Result<T>) -> Result<T, String> {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+    match crate::diagnostics::crash::guard(f) {
         Ok(Ok(v)) => Ok(v),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err(format!("{what}: internal error in the geometry kernel")),
@@ -119,6 +119,21 @@ pub struct ExactMeasure {
 }
 
 impl ExactSolid {
+    /// The size the kernel scales its tolerances with (the box diagonal).
+    pub fn size(&self) -> Real {
+        guarded("size", || Ok(self.body.size())).unwrap_or(1.0)
+    }
+
+    /// Volume from one mesh at chord tolerance `tol`, cached in the body (a
+    /// clone shares it): cheap enough to compare two solids measured at the
+    /// same `tol`. `measure_full` meshes three times, finely (4 s of a
+    /// 400-hole pattern went into "did the cut remove anything").
+    pub fn volume_at(&self, tol: Real) -> Option<Real> {
+        guarded("volume", || Ok(self.body.volume_at(tol)))
+            .ok()
+            .flatten()
+    }
+
     /// Volume, area, centre, box, merged face count and lumps.
     pub fn measure_full(&self) -> Result<ExactMeasure, String> {
         let m = guarded("measure", || sk::measure(&self.body))?;
@@ -541,7 +556,9 @@ pub fn revolve(
         let o = plane.point_at(axis_origin.x, axis_origin.y);
         let d = (plane.x_axis.into_inner() * axis_dir.x + plane.y_axis().into_inner() * axis_dir.y)
             .normalize();
-        let rot = nalgebra::Rotation3::from_axis_angle(&nalgebra::Unit::new_normalize(d), start);
+        // The kernel sweeps a positive angle clockwise about `d` (seen
+        // from its tip): turn the start the same way.
+        let rot = nalgebra::Rotation3::from_axis_angle(&nalgebra::Unit::new_normalize(d), -start);
         let org = o + rot * (plane.origin - o);
         pl = sg::Plane::new(
             v3(&org),
@@ -623,10 +640,48 @@ pub fn union_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> 
     }))
 }
 
+/// Solids the caller knows are apart (no two meet or touch) as one solid
+/// of several pieces: [`union_apart`] without its check, which meshes every
+/// piece (2500 pattern copies: 6 s). Face names are kept.
+pub fn join_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> {
+    if solids.len() < 2 {
+        return Ok(None);
+    }
+    let bodies: Vec<sk::Body> = solids.iter().map(|s| s.body.clone()).collect();
+    let Some(body) = guarded("join apart", || sk::join_apart(&bodies))? else {
+        return Ok(None);
+    };
+    let refs: Vec<&ExactSolid> = solids.iter().collect();
+    let face_names = names_from(&body, &refs, &|_| None);
+    Ok(Some(ExactSolid {
+        name: solids[0].name.clone(),
+        body,
+        face_names,
+        profiles: solids
+            .iter()
+            .flat_map(|s| s.profiles.iter().cloned())
+            .collect(),
+    }))
+}
+
+/// A box around the solid from a coarse mesh, grown by twice its chord
+/// tolerance so the true surface is inside (as `union_apart` measures).
+pub fn bounds(s: &ExactSolid) -> Option<(Point3, Point3)> {
+    let tol = (s.size() * 0.02).max(1e-3);
+    let bb = guarded("bounds", || s.body.tessellate(tol).map(|m| m.bounds())).ok()?;
+    if bb.is_empty() {
+        return None;
+    }
+    let pad = 2.0 * tol;
+    Some((
+        Point3::new(bb.min.x - pad, bb.min.y - pad, bb.min.z - pad),
+        Point3::new(bb.max.x + pad, bb.max.y + pad, bb.max.z + pad),
+    ))
+}
+
 /// Whether `p` lies inside the solid's material.
 pub fn contains(s: &ExactSolid, p: Point3) -> bool {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.body.contains(v3(&p))))
-        .unwrap_or(false)
+    crate::diagnostics::crash::guard(|| s.body.contains(v3(&p))).unwrap_or(false)
 }
 
 /// Whether two solids share material or touch.
@@ -938,6 +993,22 @@ pub fn shell(
     side: ShellSide,
     prefix: &str,
 ) -> Result<ExactSolid, String> {
+    shell_with(s, open, thickness, side, false, prefix)
+}
+
+/// [`shell`] with Inventor's shell type: `rounded` (Rounded Corners) rounds
+/// the corners the offset makes, as a true offset would: the outer walls'
+/// sharp convex edges by the outward offset, the cavity's sharp concave
+/// edges by the inward one (edges on removed faces stay sharp). Rounds are
+/// named `<prefix>:Corner:Round:<edge>`.
+pub fn shell_with(
+    s: &ExactSolid,
+    open: &[usize],
+    thickness: Real,
+    side: ShellSide,
+    rounded: bool,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
     if !(thickness.is_finite() && thickness > 1e-6) {
         return Err("the thickness must be positive".into());
     }
@@ -962,7 +1033,7 @@ pub fn shell(
     };
     // Inside with faces to remove: the kernel's own shell (convex bodies
     // and walls of any kind); the general way below if it gives up.
-    let first = if side == ShellSide::Inside && !open.is_empty() {
+    let first = if side == ShellSide::Inside && !open.is_empty() && !rounded {
         match guarded("shell", || sk::shell(&s.body, &open_pts, thickness)) {
             Ok(body) => {
                 let face_names = names_from(&body, &[s], &|o| match o {
@@ -1009,15 +1080,31 @@ pub fn shell(
         ShellSide::Both => (thickness / 2.0, thickness / 2.0),
     };
     let walls = pts(&|i| !open.contains(&i));
+    // The removed faces' planes: their edges stay sharp (Rounded Corners).
+    let open_planes: Vec<(Point3, Vector3)> = if rounded {
+        let tol = (s.body.size() * 1e-3).max(1e-4);
+        guarded("faces", || s.body.faces(tol))?
+            .into_iter()
+            .filter(|f| open.contains(&f.index))
+            .filter_map(|f| f.plane_normal.map(|n| (p3(f.centroid), w3(n))))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let general = || -> Result<ExactSolid, String> {
         let outer = if out > 0.0 {
             let body = guarded("shell", || sk::offset_faces(&s.body, &walls, out))?;
             let face_names = names_from(&body, &[s], &|_| None);
-            ExactSolid {
+            let o = ExactSolid {
                 name: s.name.clone(),
                 body,
                 face_names,
                 profiles: s.profiles.clone(),
+            };
+            if rounded {
+                round_offset_corners(&o, &open_planes, true, out, prefix)?
+            } else {
+                o
             }
         } else {
             s.clone()
@@ -1033,10 +1120,15 @@ pub fn shell(
         let mut cavity = if inn > 0.0 {
             let body = guarded("shell", || sk::offset_faces(&lined.body, &walls, -inn))?;
             let face_names = names_from(&body, &[&lined], &|_| None);
-            ExactSolid {
+            let c = ExactSolid {
                 face_names,
                 body,
                 ..lined
+            };
+            if rounded {
+                round_offset_corners(&c, &open_planes, false, inn, prefix)?
+            } else {
+                c
             }
         } else {
             lined
@@ -1054,6 +1146,72 @@ pub fn shell(
         boolean(&outer, &cavity, ExactOp::Cut)?.ok_or_else(|| "the shell removed everything".into())
     };
     general().map_err(|e| first.unwrap_or(e))
+}
+
+/// Rounds the sharp edges of `s` that are convex (`convex`) or concave by
+/// `r`, except those lying on one of `skip` (point, normal): Rounded
+/// Corners of a shell. Nothing to round: `s` as it is.
+fn round_offset_corners(
+    s: &ExactSolid,
+    skip: &[(Point3, Vector3)],
+    convex: bool,
+    r: Real,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    let size = s.body.size().max(1e-9);
+    let edges = guarded("edges", || s.body.edges(size * 1e-3))?;
+    let eps = (size * 1e-3).max(1e-4);
+    let mut mids = Vec::new();
+    for e in &edges {
+        let m = p3(e.mid);
+        if skip
+            .iter()
+            .any(|(c, n)| (m - c).dot(n).abs() < size * 1e-6 + 1e-7)
+        {
+            continue;
+        }
+        // The edge's direction at its middle.
+        let k = e
+            .points
+            .iter()
+            .enumerate()
+            .min_by(|a, b| (p3(*a.1) - m).norm().total_cmp(&(p3(*b.1) - m).norm()))
+            .map_or(0, |(k, _)| k);
+        let (Some(a), Some(b)) = (
+            e.points.get(k.saturating_sub(1)),
+            e.points.get((k + 1).min(e.points.len().saturating_sub(1))),
+        ) else {
+            continue;
+        };
+        let Some(d) = (p3(*b) - p3(*a)).try_normalize(1e-12) else {
+            continue;
+        };
+        // Material around the edge: 16 directions square to it.
+        let u = d.cross(&if d.x.abs() < 0.9 {
+            Vector3::x()
+        } else {
+            Vector3::y()
+        });
+        let Some(u) = u.try_normalize(1e-12) else {
+            continue;
+        };
+        let v = d.cross(&u);
+        let inside = (0..16)
+            .filter(|i| {
+                let t = std::f64::consts::TAU * (*i as Real + 0.5) / 16.0;
+                contains(s, m + (u * t.cos() + v * t.sin()) * eps)
+            })
+            .count();
+        let take = if convex { inside < 7 } else { inside > 9 };
+        if take {
+            mids.push(m);
+        }
+    }
+    if mids.is_empty() {
+        return Ok(s.clone());
+    }
+    fillet(s, &mids, r, &format!("{prefix}:Corner"))
+        .map_err(|e| format!("the corners cannot be rounded ({e})"))
 }
 
 /// Shell Inside where an open face meets rounds at least as large as the
@@ -1268,6 +1426,130 @@ pub fn draft(
     })
 }
 
+/// The input face each face of `result` came from: `(operand, face)` of its
+/// first face origin (the history, or a trace of the operands).
+fn face_origins(result: &sk::Body, operands: &[&ExactSolid]) -> Vec<Option<(usize, usize)>> {
+    let traced;
+    let hist: Option<&History> = match result.history() {
+        Some(h) => Some(h),
+        None => {
+            let bodies: Vec<&sk::Body> = operands.iter().map(|o| &o.body).collect();
+            traced = guarded("trace", || sk::provenance::trace(result, &bodies)).ok();
+            traced.as_ref()
+        }
+    };
+    let n = result.face_count();
+    let mut out = vec![None; n];
+    if let Some(h) = hist {
+        for (i, fp) in h.faces.iter().enumerate().take(n) {
+            out[i] = fp.origins.iter().find_map(|o| match o {
+                FaceOrigin::Face { operand, face } => Some((*operand, *face)),
+                _ => None,
+            });
+        }
+    }
+    out
+}
+
+/// Two-sided draft about a plane square to `pull` (Face Draft Symmetric /
+/// Asymmetric, Parting Line; `docs/spec/2.8-draft.md`): the solid is split
+/// by `neutral`, the pieces of `faces` above it are drafted by `above`
+/// (its own neutral plane and angle) leaning in along `pull`, those below
+/// by `below` leaning in along `−pull`, and the halves are joined again.
+/// `None` leaves that side as it is. Every piece keeps its face's name; the
+/// section is not in the result.
+pub fn draft_two_sided(
+    s: &ExactSolid,
+    faces: &[usize],
+    neutral: &Plane,
+    pull: Vector3,
+    above: Option<(&Plane, Real)>,
+    below: Option<(&Plane, Real)>,
+) -> Result<ExactSolid, String> {
+    let pull = pull
+        .try_normalize(1e-12)
+        .ok_or_else(|| "the pull direction has no length".to_owned())?;
+    if neutral.normal.dot(&pull).abs() < 1.0 - 1e-9 {
+        return Err(
+            "the parting plane is not square to the pull direction (not supported yet)".into(),
+        );
+    }
+    if faces.is_empty() {
+        return Err("no faces to draft".into());
+    }
+    let plane = Plane::from_normal(neutral.origin, pull).map_err(|e| e.to_string())?;
+    let h0 = plane.origin.coords.dot(&pull);
+    let kplane = plane_of(&plane)?;
+    let parts = guarded("split", || sk::split_by_plane(&s.body, &kplane))?;
+    // Each part with its side (by the height of its face samples).
+    let mut up: Option<ExactSolid> = None;
+    let mut down: Option<ExactSolid> = None;
+    for body in parts {
+        let face_names = names_from(&body, &[s], &|_| None);
+        let origin = face_origins(&body, &[s]);
+        let part = ExactSolid {
+            name: s.name.clone(),
+            body,
+            face_names,
+            profiles: s.profiles.clone(),
+        };
+        let samples = face_samples(&part)?;
+        let (sum, n) = samples.iter().flatten().fold((0.0, 0usize), |(a, n), p| {
+            (a + p.coords.dot(&pull) - h0, n + 1)
+        });
+        if n == 0 {
+            continue;
+        }
+        let chosen: Vec<usize> = origin
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| matches!(o, Some((0, f)) if faces.contains(f)))
+            .map(|(i, _)| i)
+            .collect();
+        let (slot, angle, dir) = if sum > 0.0 {
+            (&mut up, above, pull)
+        } else {
+            (&mut down, below, -pull)
+        };
+        let drafted = match angle {
+            Some((pl, a)) if !chosen.is_empty() => {
+                if pl.normal.dot(&pull).abs() < 1.0 - 1e-9 {
+                    return Err(
+                        "the pivot plane is not square to the pull direction (not supported yet)"
+                            .into(),
+                    );
+                }
+                draft(&part, &chosen, pl, dir, a)?
+            }
+            _ => part,
+        };
+        if slot.is_some() {
+            return Err(
+                "the plane splits the solid in more than two pieces (not supported yet)".into(),
+            );
+        }
+        *slot = Some(drafted);
+    }
+    let joined = match (up, down) {
+        (Some(a), Some(b)) => {
+            let r = guarded("boolean", || {
+                sk::boolean(&a.body, &b.body, sk::BoolOp::Union)
+            })?
+            .ok_or_else(|| "the drafted halves do not join".to_owned())?;
+            let face_names = names_from(&r, &[&a, &b], &|_| None);
+            ExactSolid {
+                name: s.name.clone(),
+                body: r,
+                face_names,
+                profiles: s.profiles.clone(),
+            }
+        }
+        (Some(a), None) | (None, Some(a)) => a,
+        (None, None) => return Err("the plane leaves nothing of the solid".into()),
+    };
+    Ok(joined)
+}
+
 /// A copy of `s` placed by the rigid motion `m` (rotation, translation or a
 /// reflection, determinant −1; `p' = m · p` in homogeneous coordinates).
 /// Faces keep their order; each name becomes `<rename>:<name>` (pattern
@@ -1462,6 +1744,28 @@ pub struct ThreadGroove {
     pub name: String,
 }
 
+impl ThreadGroove {
+    /// The axis-aligned box around the zone (a cylinder of its outer radius
+    /// between its two heights). Use it to find the solid or piece a groove
+    /// belongs to: the zone's middle can lie in the air (a thin plate under
+    /// a large start margin), which once skipped grooves without a word.
+    pub fn zone_box(&self) -> (Point3, Point3) {
+        let k = self.axis.try_normalize(1e-12).unwrap_or_else(Vector3::z);
+        let r = self.zone[1];
+        let (a, b) = (
+            self.origin + k * self.zone[2],
+            self.origin + k * self.zone[3],
+        );
+        // A disc of radius r square to k reaches r·sqrt(1 − k_i²) along i.
+        let ext = Vector3::new(
+            r * (1.0 - k.x * k.x).max(0.0).sqrt(),
+            r * (1.0 - k.y * k.y).max(0.0).sqrt(),
+            r * (1.0 - k.z * k.z).max(0.0).sqrt(),
+        );
+        (a.inf(&b) - ext, a.sup(&b) + ext)
+    }
+}
+
 /// Stations per turn of a modeled thread's helix (10° apart: the chords
 /// sag 0.4 % of the radius; SolidCraft's `thread_groove` uses 48, which
 /// took twice as long).
@@ -1482,7 +1786,7 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
         return Ok(vec![s.clone()]);
     }
     let mut zones = Vec::new();
-    let mut meshes: Vec<(Point3, sg::Mesh, String)> = Vec::new();
+    let mut meshes: Vec<((Point3, Point3), sg::Mesh, String)> = Vec::new();
     for (k, g) in grooves.iter().enumerate() {
         let [r0, r1, z0, z1] = g.zone;
         if !(r0 >= 0.0 && r1 > r0 && z1 > z0) {
@@ -1526,8 +1830,8 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
             sk::sweep_helix_mesh(&pl, &poly, v3(&base), ax, p, g.turns, THREAD_STATIONS)
         })?;
         m.tri_face = vec![0; m.triangles.len()];
-        let mid = g.origin + k3 * ((z0 + z1) / 2.0);
-        meshes.push((mid, m, format!("{}:{}", g.prefix, g.name)));
+        let zbox = g.zone_box();
+        meshes.push((zbox, m, format!("{}:{}", g.prefix, g.name)));
     }
     let zone = match union_apart(&zones)? {
         Some(z) => z,
@@ -1540,7 +1844,7 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
             z
         }
     };
-    let inside = boolean(s, &zone, ExactOp::Intersect)?
+    let inside = boolean(&zone, s, ExactOp::Intersect)?
         .ok_or_else(|| "the thread is not in the material".to_owned())?;
     let rest = boolean(s, &zone, ExactOp::Cut)?;
     // Each piece of material with the grooves inside its box.
@@ -1553,8 +1857,9 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
         let pad = 1e-6 * (hi - lo).norm() + 1e-9;
         let mut mesh = sg::Mesh::default();
         let mut names = Vec::new();
-        for (mid, g, name) in &meshes {
-            if !(0..3).all(|i| mid[i] >= lo[i] - pad && mid[i] <= hi[i] + pad) {
+        for ((zlo, zhi), g, name) in &meshes {
+            // The zone overlaps this piece (its middle may lie in the air).
+            if !(0..3).all(|i| zlo[i] <= hi[i] + pad && zhi[i] >= lo[i] - pad) {
                 continue;
             }
             let off = u32::try_from(mesh.positions.len()).map_err(|_| "thread mesh too large")?;
@@ -1602,10 +1907,23 @@ fn threaded_piece(
         return Ok(Some(piece.clone()));
     }
     let tol = (piece.body.size() * 5e-4).clamp(2e-3, 1e-2);
-    let Some(body) = guarded("thread", || {
-        sk::faceted_boolean(&piece.body, mesh, sk::BoolOp::Cut, tol)
-    })?
-    else {
+    let mut last = String::new();
+    let mut made = None;
+    for f in [1.0, 0.5] {
+        match guarded("thread", || {
+            sk::faceted_boolean(&piece.body, mesh, sk::BoolOp::Cut, tol * f)
+        }) {
+            Ok(r) => {
+                made = Some(r);
+                break;
+            }
+            Err(e) => last = e,
+        }
+    }
+    let Some(made) = made else {
+        return Err(last);
+    };
+    let Some(body) = made else {
         return Ok(None);
     };
     // Faces on the zone's material keep their names; faces on the mesh are
@@ -1672,9 +1990,18 @@ fn key(p: &Point3) -> Key {
 /// Our B-rep of the solids: named topology, exact analytic surfaces where
 /// the kernel reports them, and its display triangles per face.
 pub fn to_brep(solids: &[ExactSolid]) -> Result<BRep, String> {
+    to_brep_with(solids, false)
+}
+
+/// [`to_brep`]; `lenient`: an edge whose fitted line or circle misses an
+/// end takes the polyline through its samples instead of failing (a
+/// twisted sweep cut leaves nearly circular intersection curves). Only for
+/// Sweep / Loft steps: elsewhere the strict failure sends the part to the
+/// faceted kernel, which some blends still need.
+pub fn to_brep_with(solids: &[ExactSolid], lenient: bool) -> Result<BRep, String> {
     let mut out = BRep::new();
     for s in solids {
-        add_solid(&mut out, s)?;
+        add_solid(&mut out, s, lenient)?;
     }
     Ok(out)
 }
@@ -1714,8 +2041,13 @@ fn surface_of(body: &sk::Body, i: usize) -> Option<Surface> {
             axis,
             half_angle,
         } => {
-            let a = w3(axis);
-            Surface::Cone(Cone::new(p3(apex), a, any_x(&a), 0.0, half_angle).ok()?)
+            // Our cone is given by a reference circle (radius > 0): take
+            // the one a unit along the axis from the apex, on the side
+            // where the cone opens.
+            let a = w3(axis).try_normalize(1e-12)?;
+            let side = if half_angle >= 0.0 { 1.0 } else { -1.0 };
+            let r = half_angle.tan().abs();
+            Surface::Cone(Cone::new(p3(apex) + a * side, a, any_x(&a), r, half_angle).ok()?)
         }
         F::Sphere { center, radius } => Surface::Sphere(Sphere {
             center: p3(center),
@@ -1761,6 +2093,12 @@ fn curve_of(pts: &[Point3]) -> Curve {
             return Curve::Circle(c);
         }
     }
+    polyline_curve(pts)
+}
+
+/// The degree-1 B-spline through `pts` (passes through every sample).
+fn polyline_curve(pts: &[Point3]) -> Curve {
+    let n = pts.len();
     let k = n.max(2);
     let mut knots = vec![0.0; 2];
     for i in 1..k - 1 {
@@ -1862,7 +2200,7 @@ fn sense_by_geometry(
     })
 }
 
-fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
+fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String> {
     let body = &s.body;
     let mesh = guarded("display mesh", || body.display_mesh(DISPLAY_TOL))?;
     let nf = body.face_count();
@@ -1898,10 +2236,8 @@ fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
 
     // Inside test for the orientation fallback below.
     let eps = body.size().max(1e-9) * 1e-5;
-    let inside = |p: Point3| {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body.contains(v3(&p))))
-            .unwrap_or(false)
-    };
+    let inside =
+        |p: Point3| crate::diagnostics::crash::guard(|| body.contains(v3(&p))).unwrap_or(false);
     // Vertices: edge polyline ends, welded.
     let mut vid: HashMap<Key, VertexId> = HashMap::new();
     let mut vertex = |out: &mut BRep, p: Point3| -> VertexId {
@@ -1931,7 +2267,19 @@ fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
             _ => {
                 let range = curve_range(&curve, &pts)?;
                 let cid = out.add_curve(curve);
-                out.add_edge(cid, a, b, range).map_err(|e| e.to_string())?
+                match out.add_edge(cid, a, b, range) {
+                    Ok(e) => e,
+                    // A line or circle fitted to the samples that misses an
+                    // end (an intersection curve of a lofted face, nearly
+                    // circular): the polyline through them.
+                    Err(_) if lenient => {
+                        let poly = polyline_curve(&pts);
+                        let range = curve_range(&poly, &pts)?;
+                        let cid = out.add_curve(poly);
+                        out.add_edge(cid, a, b, range).map_err(|e| e.to_string())?
+                    }
+                    Err(e) => return Err(e.to_string()),
+                }
             }
         };
         edges.push((e, pts.clone()));
@@ -2839,6 +3187,140 @@ mod tests {
         check_shell(&d, 500.0 * 10.0 - lost);
     }
 
+    /// Volume of the box's sides drafted from z = `h` (`a` above, `b`
+    /// below): two frusta of a 40 × 30 section.
+    fn two_sided_box(h: f64, a: f64, b: f64) -> f64 {
+        let (ka, kb) = (a.to_radians().tan(), b.to_radians().tan());
+        simpson(
+            &|z| (40.0 - 2.0 * z * ka) * (30.0 - 2.0 * z * ka),
+            0.0,
+            20.0 - h,
+        ) + simpson(&|z| (40.0 - 2.0 * z * kb) * (30.0 - 2.0 * z * kb), 0.0, h)
+    }
+
+    #[test]
+    fn draft_two_sided_box() {
+        let b = box_40();
+        let up = Vector3::new(0.0, 0.0, 1.0);
+        for (h, a, bb) in [
+            (10.0, 5.0f64, 5.0f64),
+            (10.0, 5.0, 3.0),
+            (5.0, 4.0, 4.0),
+            (15.0, 2.0, 6.0),
+            (10.0, -3.0, -3.0),
+        ] {
+            let mid = Plane::from_normal(Point3::new(0.0, 0.0, h), up).unwrap();
+            let d = draft_two_sided(
+                &b,
+                &sides(&b),
+                &mid,
+                up,
+                Some((&mid, a.to_radians())),
+                Some((&mid, bb.to_radians())),
+            )
+            .unwrap();
+            check_shell(&d, two_sided_box(h, a, bb));
+            let names: Vec<&str> = d.names().iter().flatten().map(String::as_str).collect();
+            // Each side in two pieces, both named after it.
+            assert_eq!(
+                names.iter().filter(|n| **n == "Box1:Front").count(),
+                2,
+                "{names:?}"
+            );
+        }
+        // One side only: the other half stays.
+        let mid = Plane::from_normal(Point3::new(0.0, 0.0, 10.0), up).unwrap();
+        let d = draft_two_sided(
+            &b,
+            &sides(&b),
+            &mid,
+            up,
+            Some((&mid, 5f64.to_radians())),
+            None,
+        )
+        .unwrap();
+        check_shell(&d, two_sided_box(10.0, 5.0, 0.0));
+        // Move Parting Line: the top half about its top edges (z = 20), the
+        // bottom half left; the upper part overhangs at the parting line.
+        let top = Plane::from_normal(Point3::new(0.0, 0.0, 20.0), up).unwrap();
+        let k = 3f64.to_radians().tan();
+        let d = draft_two_sided(
+            &b,
+            &sides(&b),
+            &mid,
+            up,
+            Some((&top, 3f64.to_radians())),
+            None,
+        )
+        .unwrap();
+        check_shell(
+            &d,
+            12_000.0
+                + simpson(
+                    &|z| (40.0 + 2.0 * (20.0 - z) * k) * (30.0 + 2.0 * (20.0 - z) * k),
+                    10.0,
+                    20.0,
+                ),
+        );
+        // The plane must be square to the pull.
+        let tilted =
+            Plane::from_normal(Point3::new(0.0, 0.0, 10.0), Vector3::new(0.0, 0.3, 1.0)).unwrap();
+        assert!(draft_two_sided(&b, &sides(&b), &tilted, up, Some((&tilted, 0.1)), None).is_err());
+    }
+
+    #[test]
+    fn draft_two_sided_cylinder_and_l_prism() {
+        // A cylinder R10 × 20 split at z = 8: two cones meeting at R10.
+        let c = cylinder(10.0, 20.0, "Extrusion1");
+        let wall = face(&c, "Extrusion1:Side:C1:0", (10.0, 0.0, 10.0));
+        let up = Vector3::new(0.0, 0.0, 1.0);
+        let mid = Plane::from_normal(Point3::new(0.0, 0.0, 8.0), up).unwrap();
+        let k = 5f64.to_radians().tan();
+        let d = draft_two_sided(
+            &c,
+            &[wall],
+            &mid,
+            up,
+            Some((&mid, 5f64.to_radians())),
+            Some((&mid, 5f64.to_radians())),
+        )
+        .unwrap();
+        let frustum = |h: f64| {
+            let r = 10.0 - h * k;
+            PI * h / 3.0 * (100.0 + 10.0 * r + r * r)
+        };
+        check_shell(&d, frustum(12.0) + frustum(8.0));
+        // The L's outer long walls, 3° both ways about z = 5.
+        let l = prism(
+            &[
+                (0.0, 0.0),
+                (30.0, 0.0),
+                (30.0, 10.0),
+                (10.0, 10.0),
+                (10.0, 30.0),
+                (0.0, 30.0),
+            ],
+            10.0,
+            "Extrusion1",
+        );
+        let a = face(&l, "Extrusion1:Side:L0:0", (15.0, 0.0, 5.0));
+        let bw = face(&l, "Extrusion1:Side:L5:0", (0.0, 15.0, 5.0));
+        let k = 3f64.to_radians().tan();
+        let mid = Plane::from_normal(Point3::new(0.0, 0.0, 5.0), up).unwrap();
+        let d = draft_two_sided(
+            &l,
+            &[a, bw],
+            &mid,
+            up,
+            Some((&mid, 3f64.to_radians())),
+            Some((&mid, 3f64.to_radians())),
+        )
+        .unwrap();
+        // Per half (height 5): two wedges 30 long, less the corner pyramid.
+        let lost = 2.0 * (2.0 * 30.0 * 0.5 * 5.0 * 5.0 * k - k * k * 125.0 / 3.0);
+        check_shell(&d, 500.0 * 10.0 - lost);
+    }
+
     #[test]
     fn draft_errors() {
         let b = box_40();
@@ -3030,3 +3512,8 @@ mod hole_tests;
 
 mod coil;
 pub use coil::{CoilMesh, CoilMotion, CoilPiece, CoilZone, coil, coil_boolean, coil_mesh};
+
+mod sweep;
+pub use sweep::{
+    Frame, PathPiece, frame_point, loft, loft_frames, loft_to_point, path_points, sweep,
+};

@@ -30,15 +30,21 @@ mod exact;
 pub mod export;
 pub mod expr;
 pub mod extrude;
+pub mod history;
 pub mod hole;
+pub mod loft;
+#[cfg(test)]
+mod option_tests;
 pub mod params;
 pub mod pattern;
 pub mod physical;
 pub mod placement;
+pub mod primitive;
 pub mod revolve;
 pub mod select;
 pub mod shell;
 pub mod standards;
+pub mod sweep;
 pub mod work;
 
 use std::collections::HashMap;
@@ -51,17 +57,22 @@ pub use blend::{
     VariableRadius,
 };
 pub use boolean::{Operation, Output};
-pub use draft::{DraftFeature, DraftType, PullRef};
-pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, TargetRef};
+pub use draft::{DraftExtent, DraftFeature, DraftType, PartingSide, PartingTool, PullRef};
+pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, OpenProfile, ProfileRef, TargetRef};
 pub use hole::{
     ClearanceSpec, CosmeticThread, DrillPoint, FastenerFit, HoleCenter, HoleFeature, HoleGroup,
     HoleInstance, HoleSpec, HoleType, SeatType, Termination, ThreadFeature, ThreadSpec,
 };
+pub use loft::{ConditionKind, LoftCondition, LoftFeature, LoftGuide, LoftSection};
 pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
+pub use primitive::{PrimitiveFeature, PrimitiveKind};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
-pub use shell::{FaceRef, ShellDirection, ShellFeature};
-pub use work::{LineRef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef};
+pub use shell::{FaceRef, ShellCorners, ShellDirection, ShellFeature};
+pub use sweep::{PathRef, ProfileScaling, SweepFeature, SweepOrientation, SweepType};
+pub use work::{
+    CurveRef, LineRef, UcsDef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef,
+};
 
 use crate::kernel::{BRep, KernelError, Plane, Point3, Real};
 use crate::sketch::{EntityId, Point2, PointId, Sketch, SketchError};
@@ -145,6 +156,10 @@ pub enum Feature {
     /// Thread: a cosmetic or modeled thread on a cylindrical face (format
     /// revision 6).
     Thread(ThreadFeature),
+    /// Sweep: profiles along a path (format revision 7).
+    Sweep(SweepFeature),
+    /// Loft: a body through sections (format revision 7).
+    Loft(LoftFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -217,12 +232,12 @@ impl BuildCache {
 /// The key of a build step: the previous step's key, the feature and the
 /// sketch it uses (geometry and resolved plane — not its visibility or
 /// other display state, which changes without changing the body).
-fn step_key(prev: u64, feature: &Feature, sketch: Option<&crate::sketch::Sketch>) -> u64 {
+fn step_key(prev: u64, feature: &Feature, sketches: &[&crate::sketch::Sketch]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     prev.hash(&mut h);
     serde_json::to_vec(feature).unwrap_or_default().hash(&mut h);
-    if let Some(ps) = sketch {
+    for ps in sketches {
         serde_json::to_vec(ps).unwrap_or_default().hash(&mut h);
     }
     h.finish()
@@ -240,6 +255,8 @@ enum BuildStep<'a> {
     Pattern(&'a PatternFeature),
     Hole(&'a HoleFeature),
     Thread(&'a ThreadFeature),
+    Swept(&'a SweepFeature),
+    Loft(&'a LoftFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -255,6 +272,8 @@ impl<'a> BuildStep<'a> {
             Feature::Pattern(p) => Self::Pattern(p),
             Feature::Hole(h) => Self::Hole(h),
             Feature::Thread(t) => Self::Thread(t),
+            Feature::Sweep(s) => Self::Swept(s),
+            Feature::Loft(l) => Self::Loft(l),
         }
     }
 }
@@ -273,6 +292,8 @@ impl Feature {
             Feature::Pattern(p) => &p.id,
             Feature::Hole(h) => &h.id,
             Feature::Thread(t) => &t.id,
+            Feature::Sweep(s) => &s.id,
+            Feature::Loft(l) => &l.id,
         }
     }
 
@@ -289,7 +310,28 @@ impl Feature {
             Feature::Pattern(p) => &p.name,
             Feature::Hole(h) => &h.name,
             Feature::Thread(t) => &t.name,
+            Feature::Sweep(s) => &s.name,
+            Feature::Loft(l) => &l.name,
         }
+    }
+
+    /// Renames it (the id, and so every persistent name, stays).
+    pub fn set_name(&mut self, name: &str) {
+        let n = match self {
+            Feature::Box(b) => &mut b.name,
+            Feature::Extrude(e) => &mut e.name,
+            Feature::Revolve(r) => &mut r.name,
+            Feature::Work(w) => &mut w.name,
+            Feature::Blend(b) => &mut b.name,
+            Feature::Shell(s) => &mut s.name,
+            Feature::Draft(d) => &mut d.name,
+            Feature::Pattern(p) => &mut p.name,
+            Feature::Hole(h) => &mut h.name,
+            Feature::Thread(t) => &mut t.name,
+            Feature::Sweep(s) => &mut s.name,
+            Feature::Loft(l) => &mut l.name,
+        };
+        *n = name.to_owned();
     }
 
     /// Whether it creates a body of its own (a box, or New Solid).
@@ -298,6 +340,8 @@ impl Feature {
             Feature::Box(_) => true,
             Feature::Extrude(e) => e.operation == Operation::NewSolid,
             Feature::Revolve(r) => r.operation == Operation::NewSolid,
+            Feature::Sweep(s) => s.operation == Operation::NewSolid,
+            Feature::Loft(l) => l.operation == Operation::NewSolid,
             Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
@@ -314,12 +358,24 @@ impl Feature {
             | Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
-            | Feature::Draft(_)
             | Feature::Pattern(_) => None,
+            Feature::Draft(d) => d.parting_sketch(),
             Feature::Thread(_) => None,
             Feature::Hole(h) => (!h.sketch.is_empty()).then_some(h.sketch.as_str()),
             Feature::Extrude(e) => Some(&e.sketch),
             Feature::Revolve(r) => Some(&r.sketch),
+            Feature::Sweep(s) => Some(&s.sketch),
+            Feature::Loft(l) => l.sketch_ids().first().copied(),
+        }
+    }
+
+    /// `id` of every sketch it uses (a sweep's profile and path sketches, a
+    /// loft's sections); the first is [`Feature::sketch`].
+    pub fn sketch_ids(&self) -> Vec<&str> {
+        match self {
+            Feature::Sweep(s) => s.sketch_ids(),
+            Feature::Loft(l) => l.sketch_ids(),
+            f => f.sketch().into_iter().collect(),
         }
     }
 }
@@ -597,6 +653,18 @@ pub struct PartDocument {
     /// edited feature). Runtime only.
     #[serde(skip)]
     pub rollback: Option<usize>,
+    /// **End of Part** (Inventor's EOP marker): only the features before
+    /// this index are built; the rest are rolled back (greyed in the
+    /// browser) and new features are inserted here. `None`: after the last
+    /// feature. Composes with [`PartDocument::rollback`] (the smaller one
+    /// wins). See [`history`] (format revision 7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eop: Option<usize>,
+    /// Suppressed features by id: kept in the history but skipped by
+    /// regeneration (Inventor's Suppress Features). See [`history`]
+    /// (format revision 7).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub suppressed: std::collections::BTreeSet<String>,
     /// Exact build steps already made (see [`BuildCache`]).
     #[serde(skip)]
     pub build_cache: BuildCache,
@@ -671,7 +739,8 @@ impl PartDocument {
         let mut body = BRep::new();
         // The exact solids so far (exact build only).
         let mut solids: Vec<ExactSolid> = Vec::new();
-        let limit = self.rollback.unwrap_or(usize::MAX).min(self.features.len());
+        // Edit Feature's rollback and the End of Part: the smaller wins.
+        let limit = self.build_limit();
         let mut prev_key = 0u64;
         // The tools of the features built so far (by id), for patterns.
         let mut tools: HashMap<String, Vec<pattern::ToolSet>> = HashMap::new();
@@ -685,19 +754,25 @@ impl PartDocument {
                     update_sketch(&body, &works, ps);
                 }
             }
-            // The feature's own sketch follows the body built so far.
-            if let Some(id) = f.sketch()
-                && let Some(ps) = self.sketches.iter_mut().find(|s| s.id == id)
-            {
-                update_sketch(&body, &works, ps);
+            // The feature's own sketches follow the body built so far.
+            for id in f.sketch_ids() {
+                if let Some(ps) = self.sketches.iter_mut().find(|s| s.id == id) {
+                    update_sketch(&body, &works, ps);
+                }
             }
-            let key = step_key(
-                prev_key,
-                f,
-                f.sketch()
-                    .and_then(|id| self.sketches.iter().find(|s| s.id == id))
-                    .map(|ps| &ps.sketch),
-            );
+            // Suppressed: as if it were not in the history (its key is not
+            // chained either, so the following steps match a history
+            // without it).
+            if self.suppressed.contains(f.id()) {
+                continue;
+            }
+            let used: Vec<&crate::sketch::Sketch> = f
+                .sketch_ids()
+                .into_iter()
+                .filter_map(|id| self.sketches.iter().find(|s| s.id == id))
+                .map(|ps| &ps.sketch)
+                .collect();
+            let key = step_key(prev_key, f, &used);
             prev_key = key;
             let cacheable = use_exact && !matches!(f, Feature::Work(_));
             if cacheable && let Some(hit) = self.build_cache.get(key) {
@@ -712,6 +787,7 @@ impl PartDocument {
                 hole_out.append(hit.extra);
                 continue;
             }
+            let started = std::time::Instant::now();
             // The tools this step applies (kept for later patterns).
             let mut made: Vec<pattern::ToolSet> = Vec::new();
             let mut extra = exact::HoleOutput::default();
@@ -734,8 +810,9 @@ impl PartDocument {
                         body: &body,
                         works: &works,
                         revolve_axis: &revolve_axis,
+                        sketches,
                     };
-                    match w.def.build(&w.id, &ctx) {
+                    match w.build(&ctx) {
                         Ok(r) => {
                             r.store(&mut works);
                             Ok(None)
@@ -746,7 +823,11 @@ impl PartDocument {
                 BuildStep::Blend(bl) if use_exact => exact::blend(bl, &body, &solids).map(Some),
                 BuildStep::Shell(sh) if use_exact => exact::shell(sh, &solids).map(Some),
                 BuildStep::Draft(dr) if use_exact => {
-                    exact::draft(dr, &body, &works, &solids).map(Some)
+                    let lines = dr
+                        .parting_sketch()
+                        .and_then(|id| self.sketches.iter().find(|s| s.id == id))
+                        .map(|ps| draft::sketch_lines(&ps.sketch));
+                    exact::draft(dr, &body, &works, &solids, lines.as_deref()).map(Some)
                 }
                 BuildStep::Pattern(p) if use_exact => {
                     let sources = if p.solid_mode {
@@ -818,6 +899,38 @@ impl PartDocument {
                 BuildStep::Thread(_) => Err(exact::Fail::User(
                     "a modeled thread needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
+                BuildStep::Swept(sw) if use_exact => match sw.build(&self.sketches, &body) {
+                    Ok(added) => {
+                        made.push(pattern::ToolSet {
+                            tools: added.clone(),
+                            op: sw.operation,
+                            solids: sw.solids.clone(),
+                        });
+                        exact::combine(solids.clone(), added, sw.operation, &sw.solids, false)
+                            .map(Some)
+                            .map_err(exact::as_user)
+                    }
+                    Err(e) => Err(e),
+                },
+                BuildStep::Loft(lo) if use_exact => match lo.build(&self.sketches, &body) {
+                    Ok(added) => {
+                        made.push(pattern::ToolSet {
+                            tools: added.clone(),
+                            op: lo.operation,
+                            solids: lo.solids.clone(),
+                        });
+                        exact::combine(solids.clone(), added, lo.operation, &lo.solids, false)
+                            .map(Some)
+                            .map_err(exact::as_user)
+                    }
+                    Err(e) => Err(e),
+                },
+                BuildStep::Swept(_) => Err(exact::Fail::User(
+                    "Sweep needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
+                BuildStep::Loft(_) => Err(exact::Fail::User(
+                    "Loft needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
                 BuildStep::Draft(_) => Err(exact::Fail::User(
                     "Face Draft needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
@@ -863,8 +976,8 @@ impl PartDocument {
                         None => Err(exact::Fail::User(format!("sketch {sketch_id} is missing"))),
                         Some(ps) if use_exact => {
                             let built = match sweep {
-                                Sweep::Extrude(e) => exact::extrude(e, &body, &ps.sketch),
-                                Sweep::Revolve(r) => exact::revolve(r, &ps.sketch),
+                                Sweep::Extrude(e) => exact::extrude(e, &body, &works, &ps.sketch),
+                                Sweep::Revolve(r) => exact::revolve(r, &body, &works, &ps.sketch),
                             };
                             match built {
                                 Ok(Some(added)) => {
@@ -887,8 +1000,8 @@ impl PartDocument {
                             let before: std::collections::HashSet<_> =
                                 trial.solids().map(|(id, _)| id).collect();
                             let built = match sweep {
-                                Sweep::Extrude(e) => e.build(&mut trial, &ps.sketch),
-                                Sweep::Revolve(r) => r.build(&mut trial, &ps.sketch),
+                                Sweep::Extrude(e) => e.build_in(&mut trial, &works, &ps.sketch),
+                                Sweep::Revolve(r) => r.build_in(&mut trial, &works, &ps.sketch),
                             };
                             // New bodies are named after this feature.
                             let added: Vec<_> = trial
@@ -912,6 +1025,15 @@ impl PartDocument {
                     }
                 }
             };
+            let took = started.elapsed();
+            if took.as_millis() > 200 {
+                log::info!(
+                    "regenerate {} ({} kernel): {} ms",
+                    f.id(),
+                    if use_exact { "exact" } else { "faceted" },
+                    took.as_millis()
+                );
+            }
             let mut failed = match &step {
                 Err(exact::Fail::User(msg)) => Some(msg.clone()),
                 _ => None,
@@ -920,7 +1042,10 @@ impl PartDocument {
                 made.clear();
             }
             match step {
-                Ok(Some(next)) => match to_brep(&next) {
+                Ok(Some(next)) => match crate::kernel::exact::to_brep_with(
+                    &next,
+                    matches!(f, Feature::Sweep(_) | Feature::Loft(_)),
+                ) {
                     // A result the kernel made but that is not a valid solid
                     // (a non-manifold edge: a hemisphere shell, rounds wider
                     // than the wall; FreeCAD #19184, #27918) is never kept.
@@ -944,6 +1069,13 @@ impl PartDocument {
                             failed = Some(msg);
                         }
                     },
+                    // Sweep / Loft have no faceted fallback: their own health.
+                    Err(msg) if matches!(f, Feature::Sweep(_) | Feature::Loft(_)) => {
+                        let msg =
+                            format!("the geometry kernel made a result it cannot show ({msg})");
+                        self.feature_health.insert(f.id().to_owned(), msg.clone());
+                        failed = Some(msg);
+                    }
                     Err(msg) => {
                         log::warn!("exact kernel: {}: {msg}", f.id());
                         return Ok(false);
@@ -1037,19 +1169,19 @@ impl PartDocument {
         // The rest (made after every feature, or older files) follow the
         // final body.
         let n = self.features.len();
-        // Rolled back: the edited feature's own sketch follows the body
-        // before it; the later sketches keep their state.
+        // Rolled back (Edit Feature or End of Part): the sketches made at
+        // the stop follow the body there, and so does the edited feature's
+        // own sketch; the later sketches keep their state.
         let edited_sketch = self
             .rollback
+            .filter(|&k| k <= limit)
             .and_then(|k| self.features.get(k))
             .and_then(|f| f.sketch().map(str::to_owned));
         for ps in &mut self.sketches {
-            let follows = match self.rollback {
-                None => ps.after_features.is_none_or(|k| k >= n),
-                Some(r) => {
-                    ps.after_features == Some(r) || edited_sketch.as_deref() == Some(ps.id.as_str())
-                }
-            };
+            let follows = match ps.after_features {
+                None => limit >= n,
+                Some(k) => k == limit || (limit >= n && k >= n),
+            } || edited_sketch.as_deref() == Some(ps.id.as_str());
             if follows {
                 update_sketch(&self.body, &works, ps);
             }
@@ -1067,6 +1199,8 @@ impl PartDocument {
             .filter(|f| match f {
                 Feature::Extrude(e) => e.output == Output::Solid,
                 Feature::Revolve(r) => r.output == Output::Solid,
+                Feature::Sweep(s) => s.output == Output::Solid,
+                Feature::Loft(l) => l.output == Output::Solid,
                 Feature::Box(_) => true,
                 Feature::Work(_)
                 | Feature::Blend(_)
@@ -1107,20 +1241,19 @@ impl PartDocument {
             .ok_or(PartError::NoSketch(index))?
             .id
             .clone();
-        if def.profiles.is_empty() {
+        if def.profiles.is_empty() && def.open.is_none() {
             return Err(PartError::Feature("select at least one profile".into()));
         }
         let id = self.next_feature_id("Extrusion");
-        (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id.clone());
+        // A name given in the command (breadcrumb rename) is kept.
+        let name = if def.name.is_empty() {
+            id.clone()
+        } else {
+            def.name.clone()
+        };
+        (def.id, def.name, def.sketch) = (id.clone(), name, sketch_id.clone());
         let reused = !self.consumers(&sketch_id).is_empty();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Extrude(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Extrude(def))?;
         let ps = &mut self.sketches[index];
         if reused {
             ps.shared = true;
@@ -1149,16 +1282,14 @@ impl PartDocument {
             return Err(PartError::Feature("select at least one profile".into()));
         }
         let id = self.next_feature_id("Revolution");
-        (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id.clone());
+        let name = if def.name.is_empty() {
+            id.clone()
+        } else {
+            def.name.clone()
+        };
+        (def.id, def.name, def.sketch) = (id.clone(), name, sketch_id.clone());
         let reused = !self.consumers(&sketch_id).is_empty();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Revolve(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Revolve(def))?;
         let ps = &mut self.sketches[index];
         if reused {
             ps.shared = true;
@@ -1166,6 +1297,64 @@ impl PartDocument {
             ps.visible = false; // consumed sketches are hidden
         }
         Ok(id)
+    }
+
+    /// **Sweep** regions of sketch `index` along `def.path` (see [`sweep`];
+    /// id, name and profile sketch are assigned here). The profile and path
+    /// sketches are consumed (hidden), or shared when another feature uses
+    /// them already. Returns the feature id; on failure nothing changes.
+    pub fn add_sweep(&mut self, index: usize, mut def: SweepFeature) -> Result<String, PartError> {
+        let sketch_id = self
+            .sketches
+            .get(index)
+            .ok_or(PartError::NoSketch(index))?
+            .id
+            .clone();
+        if def.profiles.is_empty() {
+            return Err(PartError::Feature("select at least one profile".into()));
+        }
+        if def.path.is_empty() {
+            return Err(PartError::Feature("select the path".into()));
+        }
+        let id = self.next_feature_id("Sweep");
+        (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id);
+        let f = Feature::Sweep(def);
+        let used: Vec<String> = f.sketch_ids().into_iter().map(str::to_owned).collect();
+        self.add_consuming(f, &used)?;
+        Ok(id)
+    }
+
+    /// **Loft** through `def.sections` (see [`loft`]; id and name are
+    /// assigned here). Its sketches are consumed like a sweep's. Returns the
+    /// feature id; on failure nothing changes.
+    pub fn add_loft(&mut self, mut def: LoftFeature) -> Result<String, PartError> {
+        if def.sections.len() < 2 {
+            return Err(PartError::Feature("select at least two sections".into()));
+        }
+        let id = self.next_feature_id("Loft");
+        (def.id, def.name) = (id.clone(), id.clone());
+        let f = Feature::Loft(def);
+        let used: Vec<String> = f.sketch_ids().into_iter().map(str::to_owned).collect();
+        self.add_consuming(f, &used)?;
+        Ok(id)
+    }
+
+    /// Adds `f` that consumes the sketches `used`: rebuilt, rolled
+    /// back on failure; each sketch is hidden, or shared when another
+    /// feature used it already.
+    fn add_consuming(&mut self, f: Feature, used: &[String]) -> Result<(), PartError> {
+        let reused: Vec<bool> = used.iter().map(|s| !self.consumers(s).is_empty()).collect();
+        self.insert_feature_checked(f)?;
+        for (sid, reused) in used.iter().zip(reused) {
+            if let Some(ps) = self.sketches.iter_mut().find(|s| &s.id == sid) {
+                if reused {
+                    ps.shared = true;
+                } else {
+                    ps.visible = false;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// **Edit Feature**: replaces feature `k` by `def` (keeping its id,
@@ -1180,11 +1369,18 @@ impl PartDocument {
             .ok_or_else(|| PartError::Feature("the feature no longer exists".into()))?;
         let id = old.id().to_owned();
         match (&old, &mut def) {
+            // Extrude / Revolve keep a new name (breadcrumb rename).
             (Feature::Extrude(o), Feature::Extrude(n)) => {
-                (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
+                if n.name.is_empty() {
+                    n.name = o.name.clone();
+                }
+                (n.id, n.sketch) = (o.id.clone(), o.sketch.clone());
             }
             (Feature::Revolve(o), Feature::Revolve(n)) => {
-                (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
+                if n.name.is_empty() {
+                    n.name = o.name.clone();
+                }
+                (n.id, n.sketch) = (o.id.clone(), o.sketch.clone());
             }
             (Feature::Blend(o), Feature::Blend(n)) => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
@@ -1202,6 +1398,17 @@ impl PartDocument {
                 (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
             }
             (Feature::Thread(o), Feature::Thread(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::Sweep(o), Feature::Sweep(n)) => {
+                (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
+            }
+            (Feature::Loft(o), Feature::Loft(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            // Redefine of a work feature: any method of the same kind (a
+            // plane stays a plane, so what refers to it still resolves).
+            (Feature::Work(o), Feature::Work(n)) if o.def.prefix() == n.def.prefix() => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             _ => {
@@ -1233,7 +1440,13 @@ impl PartDocument {
                 *n -= 1;
             }
         }
+        if let Some(e) = self.eop.as_mut()
+            && *e > k
+        {
+            *e -= 1;
+        }
         let removed = self.features.remove(k);
+        self.suppressed.remove(removed.id());
         if self.features.is_empty() {
             // `regenerate` keeps a body without features (old files store
             // the body directly), so the last feature's body goes here.
@@ -1276,7 +1489,7 @@ impl PartDocument {
         self.features
             .iter()
             .enumerate()
-            .filter(|(_, f)| f.sketch() == Some(sketch_id))
+            .filter(|(_, f)| f.sketch_ids().contains(&sketch_id))
             .map(|(k, _)| k)
             .collect()
     }
@@ -1334,14 +1547,7 @@ impl PartDocument {
         let base = def.command();
         let id = self.next_feature_id(base);
         (def.id, def.name) = (id.clone(), id.clone());
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Blend(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Blend(def))?;
         Ok(id)
     }
 
@@ -1350,14 +1556,7 @@ impl PartDocument {
     pub fn add_shell(&mut self, mut def: ShellFeature) -> Result<String, PartError> {
         let id = self.next_feature_id("Shell");
         (def.id, def.name) = (id.clone(), id.clone());
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Shell(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Shell(def))?;
         Ok(id)
     }
 
@@ -1367,14 +1566,7 @@ impl PartDocument {
         let id = self.next_feature_id("FaceDraft");
         def.name = format!("Face Draft{}", &id["FaceDraft".len()..]);
         def.id = id.clone();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Draft(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Draft(def))?;
         Ok(id)
     }
 
@@ -1387,14 +1579,7 @@ impl PartDocument {
         let id = self.next_feature_id(base);
         def.name = format!("{}{}", def.command(), &id[base.len()..]);
         def.id = id.clone();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Pattern(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Pattern(def))?;
         Ok(id)
     }
 
@@ -1406,14 +1591,7 @@ impl PartDocument {
         (def.id, def.name) = (id.clone(), id.clone());
         let sketch = def.sketch.clone();
         let reused = !sketch.is_empty() && !self.consumers(&sketch).is_empty();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Hole(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Hole(def))?;
         if let Some(ps) = self.sketches.iter_mut().find(|s| s.id == sketch) {
             if reused {
                 ps.shared = true;
@@ -1443,9 +1621,81 @@ impl PartDocument {
         let plane = ps.sketch.plane.clone();
         let pts = centers
             .iter()
-            .map(|c| ps.sketch.add_point(plane.project(c)))
+            .map(|c| ps.sketch.add_center_point(plane.project(c)))
             .collect();
         Ok((i, pts))
+    }
+
+    /// **Project Geometry** of a straight model edge into sketch `index`:
+    /// its two vertices become fixed projected points (associative: they
+    /// follow the model at every regeneration, by persistent name) joined
+    /// by a reference line, which is returned. An edge already projected
+    /// returns its line.
+    pub fn project_edge(
+        &mut self,
+        index: usize,
+        edge: crate::kernel::EdgeId,
+    ) -> Result<EntityId, PartError> {
+        let body = &self.body;
+        let e = body
+            .edge(edge)
+            .ok_or_else(|| PartError::Feature("the edge no longer exists".into()))?;
+        if body.edge_direction(edge).is_none() {
+            return Err(PartError::Feature(
+                "Project Geometry: only straight edges can be projected yet".into(),
+            ));
+        }
+        let name = |v| body.vertex(v).and_then(|x| x.name.clone());
+        let (Some(a), Some(b)) = (name(e.start), name(e.end)) else {
+            return Err(PartError::Feature(
+                "Project Geometry: the edge's ends have no names".into(),
+            ));
+        };
+        self.project_segment(index, &a, &b)
+    }
+
+    /// A reference line in sketch `index` between the projections of the
+    /// model vertices named `a` and `b` (made when missing).
+    pub fn project_segment(
+        &mut self,
+        index: usize,
+        a: &str,
+        b: &str,
+    ) -> Result<EntityId, PartError> {
+        let body = self.body.clone();
+        let works = self.work.clone();
+        let ps = self
+            .sketches
+            .get_mut(index)
+            .ok_or(PartError::NoSketch(index))?;
+        let plane = ps.sketch.plane.clone();
+        let mut point_of = |name: &str| -> Result<PointId, PartError> {
+            let src = PointRef::Vertex(name.to_owned());
+            if let Some(p) = ps.projections.iter().find(|p| p.source == src) {
+                return Ok(p.point);
+            }
+            let w = placement::point_of(&src, &body, &works)?;
+            let point = ps.sketch.add_fixed_point(plane.project(&w));
+            ps.projections.push(Projection { point, source: src });
+            Ok(point)
+        };
+        let (pa, pb) = (point_of(a)?, point_of(b)?);
+        if pa == pb {
+            return Err(PartError::Feature("the edge has no length".into()));
+        }
+        if let Some(&l) = ps.reference_lines.iter().find(|&&l| {
+            ps.sketch
+                .line_points(l)
+                .is_ok_and(|(x, y)| (x, y) == (pa, pb) || (x, y) == (pb, pa))
+        }) {
+            return Ok(l);
+        }
+        let line = ps
+            .sketch
+            .add_line_between(pa, pb)
+            .map_err(|e| PartError::Feature(e.to_string()))?;
+        ps.reference_lines.push(line);
+        Ok(line)
     }
 
     /// The centres of `def` on the current body: (point on the start
@@ -1463,14 +1713,7 @@ impl PartDocument {
     pub fn add_thread(&mut self, mut def: ThreadFeature) -> Result<String, PartError> {
         let id = self.next_feature_id("Thread");
         (def.id, def.name) = (id.clone(), id.clone());
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Thread(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Thread(def))?;
         Ok(id)
     }
 
@@ -1500,14 +1743,7 @@ impl PartDocument {
         let id = self.next_feature_id(idp);
         def.name = id.replace(idp, namep);
         def.id = id.clone();
-        let before = self.features.clone();
-        self.features.push(Feature::Work(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            self.features = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Work(def))?;
         Ok(id)
     }
 }
@@ -1548,7 +1784,7 @@ fn pattern_sources<'t>(
             _ if health.contains_key(f.id()) => {
                 format!("{} failed, so it cannot be copied", f.name())
             }
-            Feature::Extrude(_) | Feature::Revolve(_) => {
+            Feature::Extrude(_) | Feature::Revolve(_) | Feature::Sweep(_) | Feature::Loft(_) => {
                 format!("{} cannot be copied (a surface)", f.name())
             }
             Feature::Hole(_) => format!("{} made no hole to copy", f.name()),
@@ -1627,7 +1863,7 @@ impl PartDocument {
         let plane = placement.resolve_with(&self.body, &self.work, &Plane::xy())?;
         let mut ps = PartSketch::new(self.next_sketch_name(), Sketch::new(plane));
         ps.placement = placement;
-        ps.after_features = Some(self.features.len());
+        ps.after_features = Some(self.insert_index());
         add_projections(&self.body, &mut ps, opts);
         let _ = ps.sketch.solve();
         self.sketches.push(ps);

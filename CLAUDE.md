@@ -35,6 +35,7 @@ cargo xtask oracle                            # reference cases table (tests/ora
 cargo run -- path/to/project.3dcadcraft       # open a project
 CADCRAFT3D_DEMO=slot cargo run                # start with a demo sketch (rectangle|slot|tangents|lines|revolve)
 cargo run --example make_project -- /tmp/b.3dcadcraft   # build a project via the API
+cargo run --example replay -- session-…-journal.jsonl   # replay a user's action journal
 ```
 
 Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft3d`**
@@ -46,16 +47,17 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 |---|---|---|
 | `kernel` | B-Rep geometry + topology, validation, tessellation (`mesh.rs`), queries & persistent names (`query.rs`), extrude, revolve (`revolve.rs`), BSP CSG on tagged polygons (`csg.rs`), polygons ↔ B-Rep and Booleans (`facet.rs`), exact kernel boundary (`exact.rs`: SolidCraft/truck → our B-Rep) | `BRep`, `Curve`, `Surface`, `Plane`, `Face`, `Tolerance`, `BoolOp` |
 | `sketch` | 2D sketch on a plane (dimension names/equations/tolerances in `dimparam.rs`): points, lines, circles, arcs, CV splines, styles (construction/centerline), ~20 constraint/dimension kinds, driven dims, Levenberg solver with DOF/redundancy analysis; composite shapes (`shapes.rs`), Modify ops (`modify.rs`: trim/extend/split/offset/move/copy/rotate/mirror/scale/stretch), 2D fillet/chamfer (`corner.rs`), associative rectangular/circular patterns (`pattern.rs`), profiles/regions (`profile.rs`: `Sketch::regions`), per-geometry DOF analysis (`dof_analysis`) | `Sketch`, `Constraint`, `Shape`, `SolveReport`, `DofAnalysis` |
-| `part` | part environment: features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`, Shell `shell.rs`, Face Draft `draft.rs`, Rectangular/Circular Pattern and Mirror of features or solids `pattern.rs`, Hole and Thread `hole.rs` (standards tables `standards.rs`, `data/standards/*.csv`); `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `PatternFeature`, `Operation`, `UserParam` |
+| `part` | part environment (primitives Box/Cylinder/Sphere/Torus as sketch + Extrude/Revolve in `primitive.rs`; work planes/axes/points/UCS in `work.rs`, curved-face geometry in `work/surf.rs`; history editing in `history.rs`: End of Part, `insert_feature`, reorder with dependency checks, Suppress, Delete options, Rename): features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`, Sweep `sweep.rs` and Loft `loft.rs` (paths `PathRef`), Shell `shell.rs`, Face Draft `draft.rs`, Rectangular/Circular Pattern and Mirror of features or solids `pattern.rs`, Hole and Thread `hole.rs` (standards tables `standards.rs`, `data/standards/*.csv`); `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `PatternFeature`, `Operation`, `UserParam` |
 | `materials` | material/appearance libraries: built-in CSV (`data/materials/materials.csv`, `data/appearances/appearances.csv`, `include_str!`) + user CSVs in `user_dir()` (`%APPDATA%\3dcadcraft\materials`), same name overrides | `Material`, `Appearance`, `Library` |
 | `part::appearance`, `part::physical` | part material/appearance, overrides by persistent name (`Looks`: bodies, features, faces + hint), document copies, precedence Face > Feature > Body > Part > Material (`Resolver`), Clear/Purge/Update; Physical Properties from the display triangles (mass, COG, inertia) | `Looks`, `LookTarget`, `Resolver`, `physical_properties` |
 | `part::hole`, `part::standards` | Hole and Thread (`Feature::Hole` / `Feature::Thread`): `HoleSpec` (type, seat, termination, drill point, thread, fastener), notes for drawings (`note()`), `HoleInstance` + `group_holes` (`PartDocument::holes`, `hole_groups`); standards tables `data/standards/*.csv` (built in, user override folder) | `HoleFeature`, `HoleSpec`, `ThreadSpec`, `ThreadFeature`, `Standards` |
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
-| `command` | Undo/Redo (snapshot history, coalesced gestures); later the Command enum | `History<T>` |
+| `diagnostics` | session log (`log.rs`, own logger + ring buffer), action journal with JSON-delta part snapshots (`journal.rs`), `replay.rs` (journal → parts, first differing step), autosave + Restore decision (`recovery.rs`), panic hook / crash reports / emergency autosave (`crash.rs`), Save Diagnostics zip (`bundle.rs`); GUI hooks in `gui/diag.rs` | `Journal`, `Outcome`, `Step`, `Autosaver`, `Offer` |
+| `command` | Undo/Redo (snapshot history, coalesced gestures); selector flow of command dialogs (`flow.rs`: active selector, auto-advance, Continue/Back/Enter, accepted `PickKind`s, Face Draft/Shell selector lists — GUI-free); later the Command enum | `History<T>`, `Flow`, `Selector` |
 | `presets` | feature-command presets (user settings, never document data): `PresetData` trait (setting keys, `strip_inputs`, `capture`/`apply`), `apply_in` (re-evaluates stored equations), `CommandPresets` (Last Used, New Default, Sort, built-ins), `PresetStore` (one atomic JSON file per command in `presets/` of the settings folder); GUI row in `gui/presets.rs` | `PresetData`, `PresetStore`, `CommandPresets` |
 | `api` | JSON-RPC/MCP server — placeholder | |
-| `gui` (feature `gui`) | Hole / Thread commands (`hole.rs`, panel `hole_panel.rs`), Materials/appearances/Physical Properties (`material.rs`: QAT lists, browsers, Adjust, Clear, Styles Editor, Manage tab, coloured scene), Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
+| `gui` (feature `gui`) | Sweep / Loft commands (`sweep.rs`: selectors Profiles → Path → Guide Rail, Sections, preview, panels); breadcrumb of every feature panel (`breadcrumb.rs`: `BreadcrumbState`, `show`); command guidance (`command_ui.rs`: selector rows with dot/count/`x`, the right-click menu of an open command, Enter/Ctrl+Enter, cursor hint, minimal breadcrumb rename; Face Draft and Shell use it); panel/window layout and persisted UI settings (`layout.rs`: `UiSettings`, `AppOptions`, `LayoutUi::place` for floating windows, View → User Interface, Clean Screen, Full Screen, debounced atomic save into `settings.json` keys `ui`/`options`); Hole / Thread commands (`hole.rs`, panel `hole_panel.rs`), Materials/appearances/Physical Properties (`material.rs`: QAT lists, browsers, Adjust, Clear, Styles Editor, Manage tab, coloured scene), Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
 
 Data flow: GUI action → `checkpoint(label)` (Undo snapshot) → `part::`/`sketch::`
 operation on the active `PartDocument` inside `Project` → `regenerate()` if the body
@@ -243,6 +245,24 @@ pkill -x 3dcadcraft                                      # NEVER `pkill -f` (kil
 Default window 1400×900: ribbon y≈60–90, browser x<250, properties x>1100,
 viewport ≈ (250..1100, 110..875). Coordinates shift with layout — always take a
 screenshot and measure first (crop + `-scale 300%` to locate small dots).
+
+## How to debug a user's session
+
+"Something did not work at the end of the last session":
+1. Files are in `%APPDATA%\3dcadcraft\logs` (Linux `~/.config/3dcadcraft/logs`): the newest
+   `session-*.log` (UTC times, warnings, sick features, slow regenerations, save/open/export),
+   `session-*-journal.jsonl` (one action per line: `checkpoint`, `command_ok` with the feature
+   JSON, `error`, `health`, `state`…), `session-*.json` (`clean_exit: false` = crash/killed),
+   `crash-*.txt` (panic, backtrace, last log/journal lines). The user may send a zip from
+   Help → Save Diagnostics instead. Autosaves: `…\3dcadcraft\recovery`.
+2. `cargo run --example replay -- <journal>` rebuilds the part state by state and marks the first
+   step whose volume / faces / sick features differ from the recording;
+   `--part N out.3dcadcraft` saves the part at state N to open in the app.
+3. Regression test: copy the journal into `tests/` and assert
+   `diagnostics::replay::first_difference(&replay(path)?)` is `None` (see `tests/diagnostics.rs`),
+   or build the failing state with `replay::part_at(path, N)`.
+- The kernel's expected panics go through `diagnostics::crash::guard` (no crash report); any new
+  `catch_unwind` around kernel calls should use it too.
 
 ## Pitfalls already paid for
 
@@ -503,6 +523,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   neutral planes are drafted group by group, re-found by name on each result (names are
   kept). Automatic Face Chain can reach faces not parallel to the pull (a bottom round →
   the bottom): the kernel refuses those.
+- **Previews** (`preview_async`, `preview_ready`): check `preview_ready(&key)` *before*
+  `self.part().clone()` (copying the part every frame made pattern previews crawl); one job at
+  a time (a value changed quickly waits for the running job, then starts the newest key). A
+  command whose OK would rebuild the same thing can take the preview's part
+  (`preview_part` + `take_preview_part`, matched by key and `part_signature`): Pattern does.
 - **Windows paths** (`docs/spec/0.6-files.md`): `canonicalize` returns `\\?\C:\…` — pass it
   through `document::library::without_verbatim` before showing or storing it; the home folder is
   `USERPROFILE` (Git Bash sets `HOME=/c/Users/…`); `C:` alone is drive-relative
@@ -519,8 +544,85 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   right after `panel_header`, `preset_stamp` before and `preset_used` after a successful OK /
   Apply. GUI tests never touch the user's folder (`PresetUi` is in-memory under `cfg(test)`);
   `CADCRAFT3D_PRESETS_DIR` redirects the folder for scripted runs.
+- **Panels and floating windows** go through `gui/layout.rs`: docked panels use
+  `layout.panel_id(name)` (Reset UI Layout bumps a generation so egui forgets dragged sizes);
+  a floating window is wrapped as `self.layout.place("key", ctx.content_rect(), sized, Window…)`
+  (the *last* call of the builder, so the remembered rectangle wins over `default_pos`);
+  Escape-closable keys are in `ESCAPE_CLOSES`. Do not `.anchor()` a window that should
+  remember its place. New persisted options: add the field to `AppOptions` and to
+  `options_snapshot`/`apply_options`; loading is field by field (`lenient`), so an old file
+  keeps its other values. egui's Ctrl+0/Ctrl+± zoom is off (`zoom_with_keyboard`): Ctrl+0 is
+  Clean Screen. F11 is Relax Mode in a sketch and Full Screen elsewhere.
+- **Insertion goes through `PartDocument::insert_feature`** (all `add_*` via
+  `insert_feature_checked`): a new feature lands at the End of Part (`eop`), sketches after
+  it shift, the marker moves below it. Never `features.push` and never assume the new feature
+  is the last one — use the returned index / `last_inserted()`; new sketches get
+  `after_features = insert_index()`. `build_limit()` = min(Edit Feature `rollback`, EOP).
+- **Suppressed features are skipped *before* their cache key is chained**, so the following
+  keys equal those of a history without them; reorder/insert change the chain from that
+  point on. Clones share `BuildCache`: a timed second run of the same edit is a cache hit.
+- **History dependencies are found by persistent-name strings** (`history::feature_refs`):
+  a string equal to a feature id or starting with `"<id>:"` (then a non-alphanumeric) in the
+  feature JSON (minus id/name/type/sketch) or its sketch's placement/projections. Keep new
+  reference fields as plain persistent names so reorder/suppress/delete see them.
+- **Python file edits on Windows** write CRLF unless `newline=''` is passed; the repo is LF.
+- **Work features on curved faces** (`part/work/surf.rs`) use the face's *infinite* analytic
+  surface (`facet_of` for faceted faces); two-solution methods store `other` / `index`, never a
+  hint point. Sketch points/lines used with other inputs become hidden in-line work points/axes
+  (`WorkDraft::inline_defs`), since `PointRef`/`LineRef` cannot resolve sketches. A UCS stores its
+  parts as `UCS1:XY`, `UCS1:X`, `UCS1:Center` … in `WorkGeom`. Exact cones used to come out of
+  `exact::to_brep` as the XY plane (radius 0 refused by `Cone::new`); they are real cones now.
+- **Sweep / Loft** (format revision 12; `part/sweep.rs`, `part/loft.rs`, `kernel::exact::{sweep, loft, loft_frames,
+  loft_to_point}`): a feature may use several sketches — `Feature::sketch_ids` (profile, path, rail,
+  sections) drives `consumers`, the regeneration cache key (all their geometry, or editing the
+  path sketch hit a stale cache) and history dependencies. A plain sweep is `sk::sweep` /
+  `sk::sweep_path`; taper / twist / rail / Parallel loft placed copies of the profile
+  (`loft_frames`). The kernel's loft pairs every section with the *last* one by vertex
+  directions, so twists and strongly turning paths are built in chunks (≤ 144°/segments, ≤ 60°)
+  joined by Union. A whole circle as one arc (one vertex) panics the kernel's loft — arcs are
+  split into quarters (`map_loop`). Holes of loft sections are lofted separately and cut (#1184).
+  No faceted fallback: kernel failures and results `to_brep` cannot convert are feature health.
+  `to_brep_with(.., lenient)` (Sweep/Loft steps only): a fitted line/circle missing an end falls back to the
+  polyline (an intersection curve of a lofted face failed "edge end vertex is not on its curve");
+  strict elsewhere: a concave partial-arc fillet (combos.rs) gave a wrong exact volume when lenient.
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans (amber unless something assigned them an appearance).
+- **Two-sided Face Draft** (Symmetric / Asymmetric, Parting Line, Move Parting Line):
+  `kernel::exact::draft_two_sided` splits by the plane (`sk::split_by_plane`), finds each
+  half's pieces of the chosen faces by history origin (not by name: both pieces share it),
+  drafts each half with its own neutral plane (`−pull` below) and unions them. The plane
+  must be square to the pull — `draft_walls` tilts only about lines square to it. A
+  Parting Line sketch is the feature's `Feature::sketch()` (consumed, cache key).
+- **Automatic Blending** = `DraftFeature::faces_with_blends`: tangent cylinders *along the
+  pull* next to a picked face join it (they become cones, still tangent). Without them the
+  kernel refuses (an upright round next to a tilted wall).
+- **Command flow:** dialogs keep only the active selector key and rebuild `Flow` each
+  frame from the definition. While a flow command is open, Enter/Space must not repeat
+  the last command (it restarted Face Draft). Selector prompts must not contain `": "`
+  (the i18n test treats `X: …` as a command name).
+- **Shell Center** is the 2027 name; the variant is `#[serde(rename = "Both", alias =
+  "Center")]` so files stay readable by old builds. Rounded Corners rounds the offset's
+  sharp edges (`round_offset_corners`: convex/concave by probing material around the edge
+  midpoint, edges on removed faces skipped) and forces Inside onto the general path.
+- **Revolve direction**: the exact kernel sweeps a positive angle *clockwise* about the
+  axis direction (seen from its tip). The start rotation (Symmetric / Asymmetric) once used
+  the opposite sense and covered 45°..135° instead of ±45°; `RevolveFeature::sweep_in`
+  measures To targets in the kernel's sense. Check new angle code against
+  `revolve_to_with_minimum_solution`.
+- **Extrude terminations not parallel to the sketch** (inclined plane, cylinder) are built
+  by extruding past them and clipping (`extrude::Clip`, `exact::clip_tool`); the clip
+  solids are named `<id>:End`. The cylinder clip uses a half strip 1.5 r wide so no
+  Boolean is tangent. The faceted kernel refuses these.
+- **`extend_face` is true by default** (serde and `ExtrudeFeature::new`: old files and API
+  users always used the face's plane; false broke the feature matrix). Only the GUI command
+  starts with it off (Inventor) and turns it on after a pick when needed (`needs_extended_face`).
+- **Predict Boolean vs. auto-flip**: a predicted operation sets `last_op`, so
+  `sync_extrude_direction` does not flip the direction for it (they would fight).
+- **Breadcrumb jump to the sketch** parks the draft in `suspended_draft`; `finish_sketch`
+  brings it back (so `start_feature`, which calls `finish_sketch`, overwrites it).
+- **Open profiles (Match Shape)** live in `ExtrudeFeature::open` (curves, side, flag); the
+  loop is closed by a frame around the body's box (`extrude::open_loop`); a Join with Match
+  Shape is also intersected with that box.
 - **Feature patterns copy tools, not faces** (`part/pattern.rs`, `exact::pattern`): every
   Extrude/Revolve (and feature pattern) records its tools (`ToolSet`: solids before
   `combine`, operation, target `solids`) by feature id during `build_features` — also in
@@ -555,6 +657,17 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   rest and a ring zone around the thread and cuts only the zone with `faceted_boolean`
   (36 stations a turn; zones in parallel). Grooves are recorded per feature and cut after
   the last feature (`finish_threads`, cached), so no later Boolean meets a faceted zone.
+- **Thread zones are matched by their box, not their middle**: the zone's top used to
+  follow the hole tool's start margin (1 % of the part), so on a thin plate of a large part
+  its middle lay above the plate and the groove was skipped silently (the owner's "the thread
+  makes no geometry"). `ThreadGroove::zone_box` is the match; the groove runs one pitch past
+  the face; a groove no solid takes is the feature's health. Fine threads in thin plates of
+  very large parts (300 mm, M3) fail in the kernel's faceted cut (its circles in so large a
+  face are approximations; SolidCraft's whole-body cut fails too) — reported, not hidden.
+- **Hole sketch**: centres are Center Points (`sketch::PointStyle::Center`); edge dimensions
+  of the Hole panel become `project_segment` reference lines (associative, by vertex names)
+  plus `PointLineDistance` dimensions of the hole's sketch at OK; `PartDocument::project_edge`
+  is also the sketch's Project Geometry (straight edges only).
 - **Hole data for drawings**: `PartDocument::holes()` (filled during regeneration, also from
   cache hits via `CachedStep::extra`). Pattern / Mirror must push `h.transformed(&m)` copies
   (with the element index in `copy`) into `hole_instances` at their place in the loop.

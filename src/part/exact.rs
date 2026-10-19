@@ -6,7 +6,7 @@
 //! yet; regeneration then goes on with the faceted kernel from that feature.
 
 use crate::kernel::exact::{self, ChamferSecond, ExactOp, ExactSolid};
-use crate::kernel::{BRep, Curve, Point3, Real, TessellationOptions};
+use crate::kernel::{BRep, Curve, Plane, Point3, Real, TessellationOptions};
 use crate::sketch::Sketch;
 
 use super::blend::{BlendFeature, BlendKind, ChamferMethod, EdgeRef, FilletType};
@@ -34,7 +34,7 @@ pub(super) fn enabled() -> bool {
 }
 
 /// The prefix of region `n` of a feature (`Extrusion1`, `Extrusion1#2`).
-fn prefix(id: &str, n: usize) -> String {
+pub(super) fn prefix(id: &str, n: usize) -> String {
     if n == 0 {
         id.to_owned()
     } else {
@@ -46,21 +46,17 @@ fn prefix(id: &str, n: usize) -> String {
 pub(super) fn extrude(
     e: &ExtrudeFeature,
     body: &BRep,
+    works: &super::placement::WorkGeom,
     sketch: &Sketch,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
     if e.output == Output::Surface {
         return Ok(None);
     }
-    let regions = sketch.regions();
     let plane = &sketch.plane;
     let mut out = Vec::new();
-    for (n, pr) in e.profiles.iter().enumerate() {
-        let region = pr
-            .resolve(&regions)
-            .ok_or_else(|| User(format!("profile #{} no longer exists in the sketch", n + 1)))?;
-        let levels = e.levels(body, plane, region).map_err(User)?;
-        let (outer, holes) = kernel_profile(region);
-        let prof = exact::profile(&outer, &holes).map_err(Kernel)?;
+    for piece in e.pieces(body, works, sketch).map_err(User)? {
+        let levels = &piece.span.levels;
+        let prof = exact::profile(&piece.outer, &piece.holes).map_err(Kernel)?;
         let (first, last) = match (levels.first(), levels.last()) {
             (Some(a), Some(b)) => (a, b),
             _ => return Err(User("the extrusion has no depth".into())),
@@ -74,31 +70,197 @@ pub(super) fn extrude(
             // A two-sided taper (kinked at the sketch plane): not yet.
             return Ok(None);
         };
-        out.push(
-            exact::extrude(
-                plane,
-                &prof,
-                first.offset,
-                last.offset,
-                taper,
-                &prefix(&e.id, n),
-            )
-            .map_err(Kernel)?,
-        );
+        let mut tool = exact::extrude(
+            plane,
+            &prof,
+            first.offset,
+            last.offset,
+            taper,
+            &piece.prefix,
+        )
+        .map_err(Kernel)?;
+        // A size beyond everything involved (for the clipping solids).
+        let reach = {
+            let (lo, hi) = body.bounding_box().unwrap_or((plane.origin, plane.origin));
+            let far = lo.coords.amax().max(hi.coords.amax()) + plane.origin.coords.norm();
+            2.0 * (far
+                + piece.extent()
+                + levels.iter().map(|l| l.offset.abs()).fold(0.0, Real::max))
+                + 100.0
+        };
+        if let Some(clip) = &piece.span.clip {
+            tool = clip_tool(&tool, clip, &piece.prefix, reach)?;
+        }
+        if let Some((lo, hi)) = piece.bounds {
+            let b =
+                exact::box_named(lo, hi, &format!("{}:Bounds", piece.prefix)).map_err(Kernel)?;
+            tool = exact::boolean(&tool, &b, ExactOp::Intersect)
+                .map_err(Kernel)?
+                .ok_or_else(|| {
+                    User("Match Shape: the open profile does not meet the body".into())
+                })?;
+        }
+        out.push(tool);
     }
     Ok(Some(out))
+}
+
+/// A square slab of half size `half` on `plane` (normal = its normal),
+/// between offsets `from` and `to`; every face is named `name`.
+fn slab(plane: &Plane, half: Real, from: Real, to: Real, name: &str) -> Result<ExactSolid, Fail> {
+    use crate::kernel::{ProfileSegment, Segment2};
+    let c = [
+        nalgebra::Point2::new(-half, -half),
+        nalgebra::Point2::new(half, -half),
+        nalgebra::Point2::new(half, half),
+        nalgebra::Point2::new(-half, half),
+    ];
+    let outer: Vec<ProfileSegment> = (0..4)
+        .map(|k| ProfileSegment {
+            geometry: Segment2::Line {
+                a: c[k],
+                b: c[(k + 1) % 4],
+            },
+            name: format!("S{k}"),
+        })
+        .collect();
+    let prof = exact::profile(&outer, &[]).map_err(Kernel)?;
+    let mut s = exact::extrude(plane, &prof, from, to, 0.0, name).map_err(Kernel)?;
+    for n in &mut s.face_names {
+        *n = Some(name.to_owned());
+    }
+    Ok(s)
+}
+
+/// A solid cylinder around `cyl`'s axis, `2·len` long, its round face
+/// named `name`.
+fn cylinder_solid(
+    cyl: &crate::kernel::Cylinder,
+    len: Real,
+    name: &str,
+) -> Result<ExactSolid, Fail> {
+    use crate::kernel::{ProfileSegment, Segment2};
+    let plane = Plane::new(cyl.origin, cyl.axis.into_inner(), cyl.x_axis.into_inner())
+        .map_err(|e| Kernel(e.to_string()))?;
+    let outer = vec![ProfileSegment {
+        geometry: Segment2::Arc {
+            c: nalgebra::Point2::origin(),
+            r: cyl.radius,
+            a0: 0.0,
+            sweep: std::f64::consts::TAU,
+        },
+        name: "C".into(),
+    }];
+    let prof = exact::profile(&outer, &[]).map_err(Kernel)?;
+    let mut s = exact::extrude(&plane, &prof, -len, len, 0.0, name).map_err(Kernel)?;
+    for n in &mut s.face_names {
+        *n = Some(name.to_owned());
+    }
+    Ok(s)
+}
+
+/// Ends an extrusion made past its termination (`docs/spec/2.1-extrude.md`
+/// §3.3 To): cut by an inclined plane, or stopped at a cylinder's near or
+/// far side. The termination face is named `<prefix>:End`.
+fn clip_tool(
+    tool: &ExactSolid,
+    clip: &super::extrude::Clip,
+    prefix: &str,
+    reach: Real,
+) -> Result<ExactSolid, Fail> {
+    use super::extrude::Clip;
+    let end = format!("{prefix}:End");
+    let gone = || User("To: nothing of the extrusion is left before the termination".into());
+    match clip {
+        Clip::Plane { plane, keep } => {
+            // The kept side at negative offsets of the slab's plane.
+            let m = plane.normal.into_inner();
+            let m = if (keep - plane.origin).dot(&m) > 0.0 {
+                -m
+            } else {
+                m
+            };
+            let x = if m.x.abs() < 0.9 {
+                crate::kernel::Vector3::x()
+            } else {
+                crate::kernel::Vector3::y()
+            };
+            let pl = Plane::new(plane.origin, m, x).map_err(|e| Kernel(e.to_string()))?;
+            let s = slab(&pl, reach, -reach, 0.0, &end)?;
+            exact::boolean(tool, &s, ExactOp::Intersect)
+                .map_err(Kernel)?
+                .ok_or_else(gone)
+        }
+        Clip::Cylinder { cyl, dir, near } => {
+            let a = cyl.axis.into_inner();
+            let dp = (dir - a * dir.dot(&a))
+                .try_normalize(1e-12)
+                .ok_or_else(|| User("To: the extrusion runs along the cylinder's axis".into()))?;
+            let c = cylinder_solid(cyl, reach, &end)?;
+            // The half strip from the axis plane on along the travel
+            // direction, wider than the cylinder (never tangent to it).
+            let w = a.cross(&dp);
+            let pl = Plane::new(cyl.origin, a, w).map_err(|e| Kernel(e.to_string()))?;
+            // In `pl`, x = w and y = a × w = −dp·…: find dp's sign in y.
+            let y = pl.y_axis().into_inner();
+            let (v0, v1) = if y.dot(&dp) > 0.0 {
+                (0.0, reach)
+            } else {
+                (-reach, 0.0)
+            };
+            let r = cyl.radius * 1.5;
+            let strip = {
+                use crate::kernel::{ProfileSegment, Segment2};
+                let c4 = [
+                    nalgebra::Point2::new(-r, v0),
+                    nalgebra::Point2::new(r, v0),
+                    nalgebra::Point2::new(r, v1),
+                    nalgebra::Point2::new(-r, v1),
+                ];
+                let outer: Vec<ProfileSegment> = (0..4)
+                    .map(|k| ProfileSegment {
+                        geometry: Segment2::Line {
+                            a: c4[k],
+                            b: c4[(k + 1) % 4],
+                        },
+                        name: format!("S{k}"),
+                    })
+                    .collect();
+                let prof = exact::profile(&outer, &[]).map_err(Kernel)?;
+                exact::extrude(&pl, &prof, -reach, reach, 0.0, &format!("{prefix}:Strip"))
+                    .map_err(Kernel)?
+            };
+            if *near {
+                let t = exact::boolean(tool, &c, ExactOp::Cut)
+                    .map_err(Kernel)?
+                    .ok_or_else(gone)?;
+                exact::boolean(&t, &strip, ExactOp::Cut)
+                    .map_err(Kernel)?
+                    .ok_or_else(gone)
+            } else {
+                let beyond = exact::boolean(&strip, &c, ExactOp::Cut)
+                    .map_err(Kernel)?
+                    .ok_or_else(gone)?;
+                exact::boolean(tool, &beyond, ExactOp::Cut)
+                    .map_err(Kernel)?
+                    .ok_or_else(gone)
+            }
+        }
+    }
 }
 
 /// The solids of a Revolve (one per region), before its operation.
 pub(super) fn revolve(
     r: &RevolveFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
     sketch: &Sketch,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
     if r.output == Output::Surface {
         return Ok(None);
     }
     let axis = resolve_axis(&r.axis, sketch).map_err(User)?;
-    let (start, sweep) = r.sweep().map_err(User)?;
+    let (start, sweep) = r.sweep_in(body, works, sketch).map_err(User)?;
     let regions = sketch.regions();
     let mut out = Vec::new();
     for (n, pr) in r.profiles.iter().enumerate() {
@@ -171,17 +333,20 @@ pub(super) fn combine(
                 let mut gone = Vec::new();
                 // Volume before and after: a tool that only touches the body
                 // (a cut pointing away from it) removes nothing.
-                let vol = |s: &ExactSolid| s.measure_full().map(|m| m.volume).unwrap_or(0.0);
+                // One coarse mesh, the same tolerance before and after (planar
+                // faces mesh exactly, so a touching tool changes nothing).
+                let vol = |s: &ExactSolid, tol: Real| s.volume_at(tol).unwrap_or(0.0);
                 for &i in &targets {
                     if !exact::meets(&cur[i], &t) {
                         continue;
                     }
-                    let before = vol(&cur[i]);
+                    let tol = (cur[i].size() * 1e-3).max(1e-3);
+                    let before = vol(&cur[i], tol);
                     match exact::boolean(&cur[i], &t, ExactOp::Cut)
                         .map_err(|e| Kernel(format!("Cut failed: {e}")))?
                     {
                         Some(r) => {
-                            if before - vol(&r) > 1e-9 * before.max(1.0) {
+                            if before - vol(&r, tol) > 1e-9 * before.max(1.0) {
                                 hit = true;
                             }
                             cur[i] = r;
@@ -238,7 +403,7 @@ pub(super) fn combine(
 
 /// A kernel failure of a pattern is the feature's health (a faceted
 /// rebuild could not build a pattern either).
-fn as_user(f: Fail) -> Fail {
+pub(super) fn as_user(f: Fail) -> Fail {
     match f {
         Kernel(e) => User(format!("the geometry kernel cannot build it ({e})")),
         u => u,
@@ -342,7 +507,17 @@ pub(super) fn pattern(
             }
         }
         if !copies.is_empty() {
-            out = combine(out, copies.clone(), set.op, &set.solids, true).map_err(as_user)?;
+            // Copies apart from each other (checked on the tools' boxes moved
+            // to each place, no mesh per copy) go in as one tool.
+            let tool = match apart(&set.tools, &places) {
+                true => exact::join_apart(&copies).ok().flatten(),
+                false => None,
+            };
+            let tools = match tool {
+                Some(one) => vec![one],
+                None => copies.clone(),
+            };
+            out = combine(out, tools, set.op, &set.solids, true).map_err(as_user)?;
         }
         let mut all = set.tools.clone();
         all.extend(copies);
@@ -353,6 +528,49 @@ pub(super) fn pattern(
         });
     }
     Ok((out, made))
+}
+
+/// Whether every copy of `tools` at `places` stays clear of every other
+/// copy: each tool's box is measured once and its corners moved to each
+/// place; a sweep along x compares only boxes whose x ranges overlap.
+fn apart(tools: &[ExactSolid], places: &[(usize, nalgebra::Matrix4<Real>)]) -> bool {
+    let mut local = Vec::with_capacity(tools.len());
+    for t in tools {
+        match exact::bounds(t) {
+            Some(b) => local.push(b),
+            None => return false,
+        }
+    }
+    let mut boxes: Vec<(Point3, Point3)> = Vec::with_capacity(local.len() * places.len());
+    for (_, m) in places {
+        for (lo, hi) in &local {
+            let mut a = Point3::new(Real::INFINITY, Real::INFINITY, Real::INFINITY);
+            let mut b = Point3::new(Real::NEG_INFINITY, Real::NEG_INFINITY, Real::NEG_INFINITY);
+            for c in 0..8 {
+                let q = Point3::new(
+                    if c & 1 == 0 { lo.x } else { hi.x },
+                    if c & 2 == 0 { lo.y } else { hi.y },
+                    if c & 4 == 0 { lo.z } else { hi.z },
+                );
+                let w = m.transform_point(&q);
+                a = a.inf(&w);
+                b = b.sup(&w);
+            }
+            boxes.push((a, b));
+        }
+    }
+    boxes.sort_by(|p, q| p.0.x.total_cmp(&q.0.x));
+    for (k, (a0, a1)) in boxes.iter().enumerate() {
+        for (b0, b1) in &boxes[k + 1..] {
+            if b0.x > a1.x {
+                break;
+            }
+            if a0.y <= b1.y && b0.y <= a1.y && a0.z <= b1.z && b0.z <= a1.z {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Points on referenced edges for the kernel, per solid: a straight edge a
@@ -532,9 +750,10 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
     let side = match sh.direction {
         super::ShellDirection::Inside => ShellSide::Inside,
         super::ShellDirection::Outside => ShellSide::Outside,
-        super::ShellDirection::Both => ShellSide::Both,
+        super::ShellDirection::Center => ShellSide::Both,
     };
-    let r = exact::shell(&cur[target], &open, sh.thickness, side, &sh.id)
+    let rounded = sh.corners == super::ShellCorners::Rounded;
+    let r = exact::shell_with(&cur[target], &open, sh.thickness, side, rounded, &sh.id)
         .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?;
     // Walls as thick as the part leave no cavity (a cylinder 10 high shelled
     // 10 or 12 from the top, FreeCAD #25050): no inner wall was made. (By
@@ -550,15 +769,19 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
     Ok(out)
 }
 
-/// Face Draft (`docs/spec/2.8-draft.md`): the faces are found by name on
-/// the solid holding them; faces sharing a neutral plane are drafted in one
-/// kernel call, groups one after another (faces keep their names, so each
-/// group is found again on the result). Kernel failures are health.
+/// Face Draft (`docs/spec/2.8-draft.md`): the faces (with their rounds,
+/// Automatic Blending) are found by name on the solid holding them. One
+/// way: faces sharing a neutral plane are drafted in one kernel call,
+/// groups one after another (faces keep their names, so each group is found
+/// again on the result). Two-sided (Symmetric / Asymmetric, Parting Line):
+/// one split–draft–join. `sketch_lines`: the parting sketch's lines.
+/// Kernel failures are health.
 pub(super) fn draft(
     dr: &super::DraftFeature,
     body: &BRep,
     works: &super::placement::WorkGeom,
     cur: &[ExactSolid],
+    sketch_lines: Option<&[(Point3, Point3, crate::kernel::Vector3)]>,
 ) -> Result<Vec<ExactSolid>, Fail> {
     if dr.faces.is_empty() {
         return Err(User("select the faces to draft".into()));
@@ -567,10 +790,30 @@ pub(super) fn draft(
         return Err(User("the draft angle must be between −90° and 90°".into()));
     }
     let pull = dr.pull_direction(body, works).map_err(User)?;
-    let planes = dr.neutral_planes(body, works, pull).map_err(User)?;
+    let refs = dr.faces_with_blends(body, pull);
+    let kernel = |e: String| User(format!("the geometry kernel cannot build it ({e})"));
+    let mut out = cur.to_vec();
+    if let Some(two) = dr
+        .two_sided(body, works, pull, sketch_lines)
+        .map_err(User)?
+    {
+        let all: Vec<&super::FaceRef> = refs.iter().collect();
+        let (t, faces) = draft_targets(&out, &all)?;
+        out[t] = exact::draft_two_sided(
+            &out[t],
+            &faces,
+            &two.plane,
+            pull,
+            two.above.as_ref().map(|s| (&s.neutral, s.angle)),
+            two.below.as_ref().map(|s| (&s.neutral, s.angle)),
+        )
+        .map_err(kernel)?;
+        return Ok(out);
+    }
+    let planes = dr.neutral_planes(body, works, pull, &refs).map_err(User)?;
     // Groups of faces with the same neutral plane (height along the pull).
     let mut groups: Vec<(crate::kernel::Plane, Vec<&super::FaceRef>)> = Vec::new();
-    for (r, pl) in dr.faces.iter().zip(planes) {
+    for (r, pl) in refs.iter().zip(planes) {
         let h = pl.origin.coords.dot(&pull);
         match groups
             .iter_mut()
@@ -580,38 +823,47 @@ pub(super) fn draft(
             None => groups.push((pl, vec![r])),
         }
     }
-    let mut out = cur.to_vec();
     for (pl, refs) in groups {
-        let mut target: Option<usize> = None;
-        let mut faces = Vec::new();
-        for r in refs {
-            let hint = Point3::from(r.hint);
-            let found = out.iter().enumerate().find_map(|(i, s)| {
-                exact::faces_named(s, &r.face, hint)
-                    .ok()
-                    .and_then(|v| v.first().map(|&f| (i, f)))
-            });
-            let Some((i, f)) = found else {
-                return Err(User(format!("the face {} no longer exists", r.face)));
-            };
-            match target {
-                Some(t) if t != i => {
-                    return Err(User("the faces belong to different solids".into()));
-                }
-                _ => target = Some(i),
-            }
-            if !faces.contains(&f) {
-                faces.push(f);
-            }
-        }
-        let Some(t) = target else { continue };
-        out[t] = exact::draft(&out[t], &faces, &pl, pull, dr.angle)
-            .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?;
+        let (t, faces) = draft_targets(&out, &refs)?;
+        out[t] = exact::draft(&out[t], &faces, &pl, pull, dr.angle).map_err(kernel)?;
     }
     Ok(out)
 }
 
-/// What a Hole or Thread feature leaves for later: the holes it made
+/// The solid holding the referenced faces and their kernel faces (all on
+/// one solid).
+fn draft_targets(
+    out: &[ExactSolid],
+    refs: &[&super::FaceRef],
+) -> Result<(usize, Vec<usize>), Fail> {
+    let mut target: Option<usize> = None;
+    let mut faces = Vec::new();
+    for r in refs {
+        let hint = Point3::from(r.hint);
+        let found = out.iter().enumerate().find_map(|(i, s)| {
+            exact::faces_named(s, &r.face, hint)
+                .ok()
+                .and_then(|v| v.first().map(|&f| (i, f)))
+        });
+        let Some((i, f)) = found else {
+            return Err(User(format!("the face {} no longer exists", r.face)));
+        };
+        match target {
+            Some(t) if t != i => {
+                return Err(User("the faces belong to different solids".into()));
+            }
+            _ => target = Some(i),
+        }
+        if !faces.contains(&f) {
+            faces.push(f);
+        }
+    }
+    target
+        .map(|t| (t, faces))
+        .ok_or_else(|| User("select the faces to draft".into()))
+}
+
+// What a Hole or Thread feature leaves for later: the holes it made
 /// (drawing data), cosmetic threads (display) and modeled threads (cut
 /// after every feature).
 #[derive(Clone, Debug, Default)]
@@ -646,10 +898,10 @@ pub(super) fn hole_placements(
         let (o, mut dir, face) = match c {
             HoleCenter::Point(pid) => {
                 let ps = ps.ok_or_else(|| format!("sketch {} is missing", h.sketch))?;
-                let p = ps
-                    .sketch
-                    .point(*pid)
-                    .ok_or_else(|| "a hole centre no longer exists in the sketch".to_owned())?;
+                // A deleted centre point removes its hole (Inventor).
+                let Some(p) = ps.sketch.point(*pid) else {
+                    continue;
+                };
                 let face = match &ps.placement.plane {
                     super::PlaneRef::Face(n) => Some(n.clone()),
                     _ => None,
@@ -661,11 +913,18 @@ pub(super) fn hole_placements(
                 )
             }
             HoleCenter::Concentric(e) => concentric_center(body, e)?,
+            HoleCenter::Axis(fr) => {
+                let cf = super::hole::cylinder_face(body, fr)?;
+                (cf.start, cf.axis, None)
+            }
         };
         if h.spec.flip {
             dir = -dir;
         }
         out.push((o, dir, face));
+    }
+    if out.is_empty() {
+        return Err("every centre point of the hole was deleted".into());
     }
     Ok(out)
 }
@@ -726,6 +985,20 @@ fn concentric_center(
     Ok((c, dir, Some(face)))
 }
 
+/// Whether the point `q` (on the face's plane) lies on face `f` (its
+/// display triangles).
+fn face_contains(body: &BRep, f: crate::kernel::FaceId, q: Point3) -> bool {
+    let Some(m) = body.face(f).and_then(|x| x.mesh.clone()) else {
+        return true;
+    };
+    m.triangles.iter().any(|t| {
+        let [a, b, c] = t.map(|i| m.positions[i as usize]);
+        let n = (b - a).cross(&(c - a));
+        let inside = |p: Point3, r: Point3| (r - p).cross(&(q - p)).dot(&n) >= -1e-12 * n.norm();
+        inside(a, b) && inside(b, c) && inside(c, a)
+    })
+}
+
 /// How far the body reaches from `o` along `dir` (mm, ≥ 0).
 fn reach(points: &[Point3], o: Point3, dir: crate::kernel::Vector3) -> Real {
     points
@@ -781,7 +1054,10 @@ pub(super) fn hole(
             let probe = *o + up * (1e-4 * size);
             cur.iter().any(|s| exact::contains(s, probe))
         };
-        let top = if in_material && !spec.extend_start {
+        let top = if spec.symmetric {
+            // Through all the other way too.
+            reach(&points, *o, up) + margin
+        } else if in_material && !spec.extend_start {
             0.0
         } else {
             margin
@@ -809,6 +1085,11 @@ pub(super) fn hole(
                 let d = (pl.origin - o).dot(&nrm) / den;
                 if !(d.is_finite() && d > 1e-6) {
                     return Err(User("the termination face is not ahead of the hole".into()));
+                }
+                if !spec.extend_to && !face_contains(body, fid, *o + *dir * d) {
+                    return Err(User(
+                        "the hole does not reach the termination face (turn Extend To on)".into(),
+                    ));
                 }
                 (d, false)
             }
@@ -853,7 +1134,10 @@ pub(super) fn hole(
                 } else {
                     -len + w0
                 };
-                let end = if top > 0.0 { top + p } else { -w0 };
+                // One pitch past the start plane is enough to run out into the air
+                // (the tool's start margin grows with the part: 3.6 mm above a 3 mm
+                // plate of a 300 mm part made the faceted cut fail).
+                let end = if top > 0.0 { p } else { -w0 };
                 let turns = (end - base) / p;
                 if !(turns.is_finite() && turns > 0.0) {
                     continue;
@@ -998,6 +1282,10 @@ pub(super) fn finish_threads(
     if grooves.is_empty() {
         return (solids, failed);
     }
+    // Every groove must land in some solid; one that does not is the
+    // owner's health (it was skipped silently when its zone's middle lay
+    // above the face: a thin plate under a large part's start margin).
+    let mut hit = vec![false; grooves.len()];
     let mut out = Vec::new();
     for s in solids {
         let Ok(m) = s.measure_full() else {
@@ -1005,29 +1293,46 @@ pub(super) fn finish_threads(
             continue;
         };
         let (lo, hi) = m.bbox;
-        let mine: Vec<exact::ThreadGroove> = grooves
-            .iter()
-            .filter(|g| {
-                let mid = g.origin + g.axis.normalize() * ((g.zone[2] + g.zone[3]) / 2.0);
-                (0..3).all(|i| mid[i] >= lo[i] - 1e-6 && mid[i] <= hi[i] + 1e-6)
+        let mine: Vec<usize> = (0..grooves.len())
+            .filter(|&i| {
+                let (zlo, zhi) = grooves[i].zone_box();
+                (0..3).all(|k| zlo[k] <= hi[k] + 1e-6 && zhi[k] >= lo[k] - 1e-6)
             })
-            .cloned()
             .collect();
         if mine.is_empty() {
             out.push(s);
             continue;
         }
-        match exact::cut_threads(&s, &mine) {
-            Ok(pieces) => out.extend(pieces),
+        let set: Vec<exact::ThreadGroove> = mine.iter().map(|&i| grooves[i].clone()).collect();
+        match exact::cut_threads(&s, &set) {
+            Ok(pieces) => {
+                for &i in &mine {
+                    hit[i] = true;
+                }
+                out.extend(pieces);
+            }
+            // The zones miss this solid: another one may hold them.
+            Err(e) if e.contains("not in the material") => out.push(s),
             Err(e) => {
-                for g in &mine {
+                for &i in &mine {
+                    hit[i] = true;
                     failed.push((
-                        g.prefix.clone(),
-                        format!("the modeled thread cannot be built ({e})"),
+                        grooves[i].prefix.clone(),
+                        format!(
+                            "the geometry kernel cannot cut this modeled thread ({e}); use a cosmetic thread"
+                        ),
                     ));
                 }
                 out.push(s);
             }
+        }
+    }
+    for (g, h) in grooves.iter().zip(hit) {
+        if !h {
+            failed.push((
+                g.prefix.clone(),
+                "the modeled thread is not in the material".to_owned(),
+            ));
         }
     }
     (out, failed)

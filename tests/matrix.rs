@@ -416,7 +416,12 @@ fn s_shell_outside() -> Result<PartDocument, String> {
 }
 
 fn s_shell_both() -> Result<PartDocument, String> {
-    shell_of(plate(40.0, 30.0, 20.0)?, &[TOP], 2.0, ShellDirection::Both)
+    shell_of(
+        plate(40.0, 30.0, 20.0)?,
+        &[TOP],
+        2.0,
+        ShellDirection::Center,
+    )
 }
 
 fn s_shell_cylinder() -> Result<PartDocument, String> {
@@ -1806,8 +1811,8 @@ fn p_rect_too_many() -> Result<PartDocument, String> {
     rect_pattern(
         &mut part,
         &[&h],
-        (X_AXIS, 40, 1.0),
-        Some((Y_AXIS, 30, 1.0)),
+        (X_AXIS, 101, 1.0),
+        Some((Y_AXIS, 100, 1.0)),
         |_| {},
     )?;
     Ok(part)
@@ -2389,7 +2394,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             level: "simple",
-            name: "rect pattern: 1200 instances refused",
+            name: "rect pattern: 10100 instances refused (limit 10000)",
             budget_ms: 400.0,
             build: p_rect_too_many,
             want: Want::Error("too many"),

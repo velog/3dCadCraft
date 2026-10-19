@@ -3,6 +3,7 @@
 
 use eframe::egui::{self, Color32, RichText};
 
+use super::browser_edit::{BrowserDrag, RenameTarget};
 use super::icons::Icon;
 use super::{CadCraftApp, Mode, MousePreset, PickPurpose, Selection};
 use crate::document::DocumentData;
@@ -31,9 +32,29 @@ enum BrowserCmd {
     Look(crate::part::appearance::LookTarget, Option<String>),
     /// Material → … on a body.
     BodyMaterial(String, Option<String>),
+    /// Suppress (true) / Unsuppress Features.
+    Suppress(usize, bool),
+    /// Move the End of Part so that this many features are built.
+    MoveEop(usize),
+    /// Delete All Features Below EOP.
+    DeleteBelowEop,
+    /// Reorder: feature `from` to index `to`.
+    MoveFeature(usize, usize),
+    /// Start renaming a row (F2, slow double-click, Rename).
+    StartRename(RenameTarget),
+    /// The rename field was confirmed.
+    Rename(RenameTarget, String),
+    /// The rename field was left with Esc.
+    CancelRename,
+    /// The pointer is over this feature (by id): highlight it in the view.
+    Hover(String),
 }
 
 const WARNING: Color32 = Color32::from_rgb(230, 140, 0);
+
+/// Time after a click on a selected row before it turns into a rename
+/// field (a second click sooner is a double-click: Edit).
+const SLOW_CLICK_S: f64 = 0.5;
 
 /// A 16 px browser icon before the next widget in a horizontal row.
 fn tree_icon(ui: &mut egui::Ui, icon: Icon) {
@@ -41,11 +62,79 @@ fn tree_icon(ui: &mut egui::Ui, icon: Icon) {
     super::icons::paint(ui.painter(), r, icon, &super::icons::Palette::ENABLED);
 }
 
+/// The pending slow-click rename: (row, when it starts).
+fn pending_rename_id() -> egui::Id {
+    egui::Id::new("browser_pending_rename")
+}
+
+/// A click on `selected` row `target`: a slow second click starts a
+/// rename after [`SLOW_CLICK_S`] unless a double-click comes first.
+fn slow_click(ui: &egui::Ui, r: &egui::Response, selected: bool, target: RenameTarget) {
+    let now = ui.input(|i| i.time);
+    let key = egui::Id::new(("browser_click", format!("{target:?}")));
+    let last: Option<f64> = ui.data(|d| d.get_temp(key));
+    ui.data_mut(|d| d.insert_temp(key, now));
+    if r.double_clicked() {
+        ui.data_mut(|d| d.remove::<(RenameTarget, f64)>(pending_rename_id()));
+    } else if r.clicked() && selected && last.is_none_or(|t| now - t > SLOW_CLICK_S) {
+        ui.data_mut(|d| d.insert_temp(pending_rename_id(), (target, now + SLOW_CLICK_S)));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs_f64(SLOW_CLICK_S));
+    }
+}
+
+/// The rename field of a row (Enter / click elsewhere: apply; Esc: cancel).
+fn rename_field(ui: &mut egui::Ui, target: RenameTarget, cmds: &mut Vec<BrowserCmd>) {
+    let id = super::browser_edit::rename_buffer_id();
+    let (mut text, focused): (String, bool) = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+    let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(150.0));
+    if !focused {
+        // Once only: re-requesting every frame swallows Enter.
+        r.request_focus();
+    }
+    ui.data_mut(|d| d.insert_temp(id, (text.clone(), true)));
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        cmds.push(BrowserCmd::CancelRename);
+    } else if r.lost_focus() || (focused && !r.has_focus()) {
+        cmds.push(BrowserCmd::Rename(target, text));
+    }
+}
+
+/// Drag and drop on a feature row `k`: the row can be dragged (reorder),
+/// and a feature or the End of Part dropped on it goes above (upper half)
+/// or below it.
+fn drop_target(ui: &egui::Ui, r: &egui::Response, k: usize, cmds: &mut Vec<BrowserCmd>) {
+    r.dnd_set_drag_payload(BrowserDrag::Feature(k));
+    let below = ui
+        .ctx()
+        .pointer_interact_pos()
+        .is_some_and(|p| p.y > r.rect.center().y);
+    if r.dnd_hover_payload::<BrowserDrag>().is_some() {
+        let y = if below { r.rect.bottom() } else { r.rect.top() };
+        let x = ui.max_rect().x_range();
+        ui.painter().hline(
+            x,
+            y,
+            egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
+        );
+    }
+    if let Some(p) = r.dnd_release_payload::<BrowserDrag>() {
+        let gap = if below { k + 1 } else { k };
+        cmds.push(match *p {
+            BrowserDrag::Feature(from) => {
+                BrowserCmd::MoveFeature(from, if gap > from { gap - 1 } else { gap })
+            }
+            BrowserDrag::Eop => BrowserCmd::MoveEop(gap),
+        });
+    }
+}
+
 impl CadCraftApp {
     /// Model Browser: project → documents → Origin, features, sketches.
     pub(super) fn browser(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Model").strong());
         ui.separator();
+        self.browser_hover = None;
         let mut cmds = Vec::new();
         egui::ScrollArea::vertical().show(ui, |ui| {
             let project_label = RichText::new(self.project.name.clone()).strong();
@@ -79,8 +168,44 @@ impl CadCraftApp {
                 }
             });
         });
+        let ctx = ui.ctx().clone();
+        // F2 over the browser renames the selected row (in the view F2 is
+        // Pan, as in Inventor).
+        let over = ui.rect_contains_pointer(ui.max_rect());
+        if over && self.rename.is_none() && ctx.input(|i| i.key_pressed(egui::Key::F2)) {
+            let part = self.part();
+            let target = match self.selection {
+                Selection::Feature(k) => part
+                    .features
+                    .get(k)
+                    .map(|f| RenameTarget::Feature(f.id().to_owned())),
+                Selection::Sketch(i) => part
+                    .sketches
+                    .get(i)
+                    .map(|s| RenameTarget::Sketch(s.id.clone())),
+                _ => None,
+            };
+            if let Some(t) = target {
+                cmds.push(BrowserCmd::StartRename(t));
+            }
+        }
+        // A slow second click that was not a double-click.
+        let pending: Option<(RenameTarget, f64)> = ctx.data(|d| d.get_temp(pending_rename_id()));
+        if let Some((t, due)) = pending
+            && ctx.input(|i| i.time) >= due
+        {
+            ctx.data_mut(|d| d.remove::<(RenameTarget, f64)>(pending_rename_id()));
+            cmds.push(BrowserCmd::StartRename(t));
+        }
+        // Esc aborts a drag (Inventor: aborts moving the EOP).
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            egui::DragAndDrop::clear_payload(&ctx);
+        }
         for cmd in cmds {
-            self.browser_cmd(cmd);
+            match cmd {
+                BrowserCmd::StartRename(t) => self.start_rename(&ctx, t),
+                c => self.browser_cmd(c),
+            }
         }
     }
 
@@ -89,7 +214,15 @@ impl CadCraftApp {
             // The pattern command's Features selector takes browser rows.
             BrowserCmd::Select(Selection::Feature(k))
                 if self.pattern_draft.is_some() && self.pattern_pick_browser(k) => {}
-            BrowserCmd::Select(s) => self.selection = s,
+            BrowserCmd::Select(s) => {
+                // The feature's faces are highlighted in the view.
+                if let Selection::Feature(k) = s
+                    && let Some(f) = self.part().features.get(k)
+                {
+                    self.sel = vec![super::select::SelItem::Feature(f.id().to_owned())];
+                }
+                self.selection = s;
+            }
             BrowserCmd::NewSketchOn(plane) => {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);
@@ -131,6 +264,15 @@ impl CadCraftApp {
                     self.file_status = Some(Err(e.to_string()));
                 }
             }
+            BrowserCmd::Suppress(k, on) => self.set_suppressed(k, on),
+            BrowserCmd::MoveEop(at) => self.move_eop(at),
+            BrowserCmd::DeleteBelowEop => self.delete_below_eop(),
+            BrowserCmd::MoveFeature(from, to) => self.move_feature(from, to),
+            // Needs the context: handled in `browser`.
+            BrowserCmd::StartRename(_) => {}
+            BrowserCmd::Rename(t, name) => self.apply_rename(t, name),
+            BrowserCmd::CancelRename => self.rename = None,
+            BrowserCmd::Hover(id) => self.browser_hover = Some(id),
         }
     }
 
@@ -244,9 +386,12 @@ impl CadCraftApp {
             // History order (Inventor): sketches and features as they were
             // created. A consumed sketch is nested under its feature; a
             // shared one also stands above its first feature; a free
-            // sketch stays where it was created.
+            // sketch stays where it was created. The End of Part marker
+            // stands where the history stops; below it everything is
+            // rolled back (greyed).
             let mut listed = vec![false; part.sketches.len()];
             let n = part.features.len();
+            let eop = part.eop_index();
             for pos in 0..=n {
                 for (i, ps) in part.sketches.iter().enumerate() {
                     let at = ps.after_features.unwrap_or(n).min(n);
@@ -254,6 +399,9 @@ impl CadCraftApp {
                         listed[i] = true;
                         self.sketch_row(ui, i, cmds);
                     }
+                }
+                if pos == eop {
+                    self.eop_row(ui, cmds);
                 }
                 if let Some(f) = part.features.get(pos) {
                     self.feature_node(ui, pos, f, &mut listed, cmds);
@@ -264,55 +412,213 @@ impl CadCraftApp {
                     self.sketch_row(ui, i, cmds);
                 }
             }
-            ui.label(RichText::new("End of Part").weak().italics());
         });
     }
 
-    /// A browser row of a feature without a nested sketch: icon, name
-    /// (orange when sick), hover text, Edit Feature / Delete.
-    #[allow(clippy::too_many_arguments)]
-    fn plain_feature_row(
-        &self,
-        ui: &mut egui::Ui,
-        k: usize,
-        icon: Icon,
-        id: &str,
-        name: &str,
-        hover: String,
-        cmds: &mut Vec<BrowserCmd>,
-    ) {
+    /// The End of Part row: drag it onto a feature (above / below it), or
+    /// Move EOP to Top / End from its menu.
+    fn eop_row(&self, ui: &mut egui::Ui, cmds: &mut Vec<BrowserCmd>) {
         let part = self.part();
+        let n = part.features.len();
+        let eop = part.eop_index();
         ui.horizontal(|ui| {
-            tree_icon(ui, icon);
-            let sick = part.feature_health.get(id);
-            let mut text = RichText::new(name);
-            if sick.is_some() {
-                text = text.color(WARNING);
-            }
-            let hover = match sick {
-                Some(h) => format!("Warning: {h}"),
-                None => hover,
-            };
+            let (bar, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+            ui.painter().rect_filled(
+                egui::Rect::from_center_size(bar.center(), egui::vec2(12.0, 4.0)),
+                1.0,
+                Color32::from_rgb(200, 60, 60),
+            );
+            let text = RichText::new("End of Part").italics();
             let r = ui
-                .selectable_label(self.selection == Selection::Feature(k), text)
-                .on_hover_text(hover);
-            if r.clicked() {
-                cmds.push(BrowserCmd::Select(Selection::Feature(k)));
-            }
-            if r.double_clicked() {
-                cmds.push(BrowserCmd::EditFeature(k));
+                .add(egui::Label::new(text).sense(egui::Sense::click_and_drag()))
+                .on_hover_text(
+                    "Drag onto a feature: the features below are rolled back (not built), \
+                     new features are inserted here. Esc aborts the drag. \
+                     Right-click: Move EOP to Top / End",
+                );
+            r.dnd_set_drag_payload(BrowserDrag::Eop);
+            if r.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             }
             r.context_menu(|ui| {
-                if ui.button("Edit Feature").clicked() {
-                    cmds.push(BrowserCmd::EditFeature(k));
+                if ui
+                    .add_enabled(eop > 0, egui::Button::new("Move EOP to Top"))
+                    .clicked()
+                {
+                    cmds.push(BrowserCmd::MoveEop(0));
                     ui.close();
                 }
-                if ui.button("Delete").clicked() {
-                    cmds.push(BrowserCmd::DeleteFeature(k));
+                if ui
+                    .add_enabled(eop < n, egui::Button::new("Move EOP to End"))
+                    .clicked()
+                {
+                    cmds.push(BrowserCmd::MoveEop(n));
+                    ui.close();
+                }
+                ui.separator();
+                if ui
+                    .add_enabled(eop < n, egui::Button::new("Delete All Features Below EOP"))
+                    .clicked()
+                {
+                    cmds.push(BrowserCmd::DeleteBelowEop);
                     ui.close();
                 }
             });
         });
+    }
+
+    /// The name of feature `k` in its row: icon, text (orange when sick,
+    /// grey when suppressed or below the End of Part), hover text, click /
+    /// double-click / slow click (rename), drag and drop. `None` while the
+    /// row is being renamed.
+    #[allow(clippy::too_many_arguments)]
+    fn feature_label(
+        &self,
+        ui: &mut egui::Ui,
+        k: usize,
+        icon: Icon,
+        hover: String,
+        selected: bool,
+        select: Selection,
+        cmds: &mut Vec<BrowserCmd>,
+    ) -> Option<egui::Response> {
+        let part = self.part();
+        let f = &part.features[k];
+        let id = f.id();
+        let target = RenameTarget::Feature(id.to_owned());
+        tree_icon(ui, icon);
+        if self.rename.as_ref() == Some(&target) {
+            rename_field(ui, target, cmds);
+            return None;
+        }
+        let sick = part.feature_health.get(id);
+        let suppressed = part.is_suppressed(k);
+        let rolled = part.is_rolled_back(k);
+        let label = match sick {
+            Some(_) => format!("! {}", f.name()),
+            None => f.name().to_owned(),
+        };
+        let mut text = RichText::new(label);
+        if sick.is_some() {
+            text = text.color(WARNING);
+        }
+        if suppressed || rolled {
+            text = text.color(ui.visuals().weak_text_color()).italics();
+        }
+        if suppressed {
+            text = text.strikethrough();
+        }
+        let mut tip = match sick {
+            Some(h) => format!("Warning: {h}"),
+            None => hover,
+        };
+        if suppressed {
+            tip.push_str("\nSuppressed (not built)");
+        }
+        if rolled {
+            tip.push_str("\nBelow the End of Part (rolled back)");
+        }
+        tip.push_str("\nDrag to reorder · F2 or slow double-click: Rename");
+        let r = ui
+            .selectable_label(selected, text)
+            .interact(egui::Sense::drag())
+            .on_hover_text(tip);
+        if r.hovered() && !suppressed && !rolled {
+            cmds.push(BrowserCmd::Hover(id.to_owned()));
+        }
+        slow_click(ui, &r, selected, target);
+        if r.clicked() {
+            cmds.push(BrowserCmd::Select(select));
+        }
+        if r.double_clicked() && !matches!(f, Feature::Box(_)) && !rolled {
+            cmds.push(BrowserCmd::EditFeature(k));
+        }
+        drop_target(ui, &r, k, cmds);
+        Some(r)
+    }
+
+    /// The context menu of feature `k` (`used`: the sketches it uses).
+    fn feature_menu(
+        &self,
+        ui: &mut egui::Ui,
+        k: usize,
+        used: &[usize],
+        cmds: &mut Vec<BrowserCmd>,
+    ) {
+        let part = self.part();
+        let f = &part.features[k];
+        let rolled = part.is_rolled_back(k);
+        if !matches!(f, Feature::Box(_) | Feature::Work(_))
+            && ui
+                .add_enabled(!rolled, egui::Button::new("Edit Feature"))
+                .on_disabled_hover_text("Below the End of Part: move the marker first")
+                .clicked()
+        {
+            cmds.push(BrowserCmd::EditFeature(k));
+            ui.close();
+        }
+        if let Some(&i) = used.first()
+            && ui.button("Edit Sketch").clicked()
+        {
+            cmds.push(BrowserCmd::Edit(i));
+            ui.close();
+        }
+        if let Feature::Work(w) = f
+            && matches!(w.def, crate::part::WorkDef::Plane(_))
+            && ui.button("New Sketch").clicked()
+        {
+            cmds.push(BrowserCmd::NewSketchOn(PlaneRef::Work(w.id.clone())));
+            ui.close();
+        }
+        if !matches!(f, Feature::Work(_))
+            && let Some(a) = self.appearance_submenu(ui)
+        {
+            cmds.push(BrowserCmd::Look(
+                crate::part::appearance::LookTarget::Feature(f.id().to_owned()),
+                a,
+            ));
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Rename").clicked() {
+            cmds.push(BrowserCmd::StartRename(RenameTarget::Feature(
+                f.id().to_owned(),
+            )));
+            ui.close();
+        }
+        let sup = part.is_suppressed(k);
+        if ui
+            .button(if sup {
+                "Unsuppress Features"
+            } else {
+                "Suppress Features"
+            })
+            .on_hover_text(if sup {
+                "Build it again (with what it needs and what depends on it)"
+            } else {
+                "Skip it in the model, with everything that depends on it"
+            })
+            .clicked()
+        {
+            cmds.push(BrowserCmd::Suppress(k, !sup));
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                part.eop_index() != k + 1,
+                egui::Button::new("Move EOP Here"),
+            )
+            .on_hover_text("The End of Part right below this feature")
+            .clicked()
+        {
+            cmds.push(BrowserCmd::MoveEop(k + 1));
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Delete").clicked() {
+            cmds.push(BrowserCmd::DeleteFeature(k));
+            ui.close();
+        }
     }
 
     /// A feature in the browser, with its consumed sketch(es) nested.
@@ -325,37 +631,28 @@ impl CadCraftApp {
         cmds: &mut Vec<BrowserCmd>,
     ) {
         let part = self.part();
-        let (id, name, sketch, icon, what) = match f {
-            Feature::Box(b) => {
-                ui.horizontal(|ui| {
-                    tree_icon(ui, Icon::Box);
-                    let r = ui.selectable_label(self.selection == Selection::Body, &b.name);
-                    if r.clicked() {
-                        cmds.push(BrowserCmd::Select(Selection::Body));
-                    }
-                    r.context_menu(|ui| {
-                        if let Some(a) = self.appearance_submenu(ui) {
-                            cmds.push(BrowserCmd::Look(
-                                crate::part::appearance::LookTarget::Feature(b.id.clone()),
-                                a,
-                            ));
-                            ui.close();
-                        }
-                    });
-                });
-                return;
-            }
-            Feature::Extrude(e) => (&e.id, &e.name, &e.sketch, Icon::Extrude, "Extrude"),
-            Feature::Hole(h) if !h.sketch.is_empty() => {
-                (&h.id, &h.name, &h.sketch, Icon::Hole, "Hole")
-            }
-            Feature::Hole(h) => {
-                let hover = format!("{} centre(s): {}", h.centers.len(), h.spec.note_ascii());
-                self.plain_feature_row(ui, k, Icon::Hole, &h.id, &h.name, hover, cmds);
-                return;
-            }
-            Feature::Thread(t) => {
-                let hover = format!(
+        let (icon, hover) = match f {
+            Feature::Box(b) => (
+                Icon::Box,
+                format!(
+                    "Box {:.2} x {:.2} x {:.2} mm",
+                    b.size[0], b.size[1], b.size[2]
+                ),
+            ),
+            Feature::Extrude(e) => (Icon::Extrude, format!("Extrude of {}", e.sketch)),
+            Feature::Revolve(r) => (Icon::Revolve, format!("Revolve of {}", r.sketch)),
+            Feature::Sweep(s) => (Icon::Sweep, format!("Sweep of {}", s.sketch)),
+            Feature::Loft(l) => (
+                Icon::Loft,
+                format!("Loft through {} sections", l.sections.len()),
+            ),
+            Feature::Hole(h) => (
+                Icon::Hole,
+                format!("{} centre(s): {}", h.centers.len(), h.spec.note_ascii()),
+            ),
+            Feature::Thread(t) => (
+                Icon::Thread,
+                format!(
                     "{} ({})",
                     t.spec.note(),
                     if t.spec.modeled {
@@ -363,235 +660,71 @@ impl CadCraftApp {
                     } else {
                         "cosmetic"
                     }
-                );
-                self.plain_feature_row(ui, k, Icon::Thread, &t.id, &t.name, hover, cmds);
-                return;
-            }
-            Feature::Revolve(r) => (&r.id, &r.name, &r.sketch, Icon::Revolve, "Revolve"),
-            Feature::Blend(bl) => {
-                let icon = match bl.kind {
+                ),
+            ),
+            Feature::Blend(bl) => (
+                match bl.kind {
                     crate::part::BlendKind::Fillet { .. } => Icon::FilletEdge,
                     crate::part::BlendKind::Chamfer { .. } => Icon::ChamferEdge,
-                };
-                ui.horizontal(|ui| {
-                    tree_icon(ui, icon);
-                    let sick = part.feature_health.get(&bl.id);
-                    let mut text = RichText::new(&bl.name);
-                    if sick.is_some() {
-                        text = text.color(WARNING);
-                    }
-                    let hover = match sick {
-                        Some(h) => format!("Warning: {h}"),
-                        None => format!("{} of {} edge(s)", bl.command(), bl.edges.len()),
-                    };
-                    let r = ui
-                        .selectable_label(self.selection == Selection::Feature(k), text)
-                        .on_hover_text(hover);
-                    if r.clicked() {
-                        cmds.push(BrowserCmd::Select(Selection::Feature(k)));
-                    }
-                    if r.double_clicked() {
-                        cmds.push(BrowserCmd::EditFeature(k));
-                    }
-                    r.context_menu(|ui| {
-                        if ui.button("Edit Feature").clicked() {
-                            cmds.push(BrowserCmd::EditFeature(k));
-                            ui.close();
-                        }
-                        if let Some(a) = self.appearance_submenu(ui) {
-                            cmds.push(BrowserCmd::Look(
-                                crate::part::appearance::LookTarget::Feature(f.id().to_owned()),
-                                a,
-                            ));
-                            ui.close();
-                        }
-                        if ui.button("Delete").clicked() {
-                            cmds.push(BrowserCmd::DeleteFeature(k));
-                            ui.close();
-                        }
-                    });
-                });
-                return;
-            }
-            Feature::Draft(dr) => {
-                ui.horizontal(|ui| {
-                    tree_icon(ui, Icon::Draft);
-                    let sick = part.feature_health.get(&dr.id);
-                    let mut text = RichText::new(&dr.name);
-                    if sick.is_some() {
-                        text = text.color(WARNING);
-                    }
-                    let hover = match sick {
-                        Some(h) => format!("Warning: {h}"),
-                        None => format!(
-                            "{}, {} face(s), {:.2}°",
-                            dr.draft_type.label(),
-                            dr.faces.len(),
-                            dr.angle.to_degrees()
-                        ),
-                    };
-                    let r = ui
-                        .selectable_label(self.selection == Selection::Feature(k), text)
-                        .on_hover_text(hover);
-                    if r.clicked() {
-                        cmds.push(BrowserCmd::Select(Selection::Feature(k)));
-                    }
-                    if r.double_clicked() {
-                        cmds.push(BrowserCmd::EditFeature(k));
-                    }
-                    r.context_menu(|ui| {
-                        if ui.button("Edit Feature").clicked() {
-                            cmds.push(BrowserCmd::EditFeature(k));
-                            ui.close();
-                        }
-                        if let Some(a) = self.appearance_submenu(ui) {
-                            cmds.push(BrowserCmd::Look(
-                                crate::part::appearance::LookTarget::Feature(f.id().to_owned()),
-                                a,
-                            ));
-                            ui.close();
-                        }
-                        if ui.button("Delete").clicked() {
-                            cmds.push(BrowserCmd::DeleteFeature(k));
-                            ui.close();
-                        }
-                    });
-                });
-                return;
-            }
-            Feature::Pattern(p) => {
-                ui.horizontal(|ui| {
-                    tree_icon(ui, super::pattern_feature::icon_of(p));
-                    let sick = part.feature_health.get(&p.id);
-                    let mut text = RichText::new(&p.name);
-                    if sick.is_some() {
-                        text = text.color(WARNING);
-                    }
-                    let hover = match sick {
-                        Some(h) => format!("Warning: {h}"),
-                        None => super::pattern_feature::summary(p),
-                    };
-                    let picked = self
-                        .pattern_draft
-                        .as_ref()
-                        .is_some_and(|d| d.def.features.contains(&p.id));
-                    let r = ui
-                        .selectable_label(self.selection == Selection::Feature(k) || picked, text)
-                        .on_hover_text(hover);
-                    if r.clicked() {
-                        cmds.push(BrowserCmd::Select(Selection::Feature(k)));
-                    }
-                    if r.double_clicked() {
-                        cmds.push(BrowserCmd::EditFeature(k));
-                    }
-                    r.context_menu(|ui| {
-                        if ui.button("Edit Feature").clicked() {
-                            cmds.push(BrowserCmd::EditFeature(k));
-                            ui.close();
-                        }
-                        if ui.button("Delete").clicked() {
-                            cmds.push(BrowserCmd::DeleteFeature(k));
-                            ui.close();
-                        }
-                    });
-                });
-                return;
-            }
-            Feature::Shell(sh) => {
-                ui.horizontal(|ui| {
-                    tree_icon(ui, Icon::Shell);
-                    let sick = part.feature_health.get(&sh.id);
-                    let mut text = RichText::new(&sh.name);
-                    if sick.is_some() {
-                        text = text.color(WARNING);
-                    }
-                    let hover = match sick {
-                        Some(h) => format!("Warning: {h}"),
-                        None => format!(
-                            "Shell {}, {} face(s) removed",
-                            sh.direction.label(),
-                            sh.remove.len()
-                        ),
-                    };
-                    let r = ui
-                        .selectable_label(self.selection == Selection::Feature(k), text)
-                        .on_hover_text(hover);
-                    if r.clicked() {
-                        cmds.push(BrowserCmd::Select(Selection::Feature(k)));
-                    }
-                    if r.double_clicked() {
-                        cmds.push(BrowserCmd::EditFeature(k));
-                    }
-                    r.context_menu(|ui| {
-                        if ui.button("Edit Feature").clicked() {
-                            cmds.push(BrowserCmd::EditFeature(k));
-                            ui.close();
-                        }
-                        if let Some(a) = self.appearance_submenu(ui) {
-                            cmds.push(BrowserCmd::Look(
-                                crate::part::appearance::LookTarget::Feature(f.id().to_owned()),
-                                a,
-                            ));
-                            ui.close();
-                        }
-                        if ui.button("Delete").clicked() {
-                            cmds.push(BrowserCmd::DeleteFeature(k));
-                            ui.close();
-                        }
-                    });
-                });
-                return;
-            }
-            Feature::Work(w) => {
-                let icon = match &w.def {
+                },
+                format!("{} of {} edge(s)", bl.command(), bl.edges.len()),
+            ),
+            Feature::Draft(dr) => (
+                Icon::Draft,
+                format!(
+                    "{}, {} face(s), {:.2}°",
+                    dr.draft_type.label(),
+                    dr.faces.len(),
+                    dr.angle.to_degrees()
+                ),
+            ),
+            Feature::Pattern(p) => (
+                super::pattern_feature::icon_of(p),
+                super::pattern_feature::summary(p),
+            ),
+            Feature::Shell(sh) => (
+                Icon::Shell,
+                format!(
+                    "Shell {}, {} face(s) removed",
+                    sh.direction.label(),
+                    sh.remove.len()
+                ),
+            ),
+            Feature::Work(w) => (
+                match &w.def {
                     crate::part::WorkDef::Plane(_) => Icon::WorkPlane,
                     crate::part::WorkDef::Axis(_) => Icon::WorkAxis,
                     crate::part::WorkDef::Point(_) => Icon::WorkPoint,
-                };
-                ui.horizontal(|ui| {
-                    let mut visible = w.visible;
-                    if ui
-                        .checkbox(&mut visible, "")
-                        .on_hover_text("Visibility")
-                        .changed()
-                    {
-                        cmds.push(BrowserCmd::FeatureVisible(k, visible));
-                    }
-                    tree_icon(ui, icon);
-                    let sick = part.feature_health.get(&w.id);
-                    let mut text = RichText::new(&w.name);
-                    if sick.is_some() {
-                        text = text.color(WARNING);
-                    }
-                    let hover = match sick {
-                        Some(h) => format!("Warning: {h}"),
-                        None => w.def.method().to_owned(),
-                    };
-                    let r = ui
-                        .selectable_label(self.selection == Selection::Feature(k), text)
-                        .on_hover_text(hover);
-                    if r.clicked() {
-                        cmds.push(BrowserCmd::Select(Selection::Feature(k)));
-                    }
-                    r.context_menu(|ui| {
-                        if matches!(w.def, crate::part::WorkDef::Plane(_))
-                            && ui.button("New Sketch").clicked()
-                        {
-                            cmds.push(BrowserCmd::NewSketchOn(PlaneRef::Work(w.id.clone())));
-                            ui.close();
-                        }
-                        if ui.button("Delete").clicked() {
-                            cmds.push(BrowserCmd::DeleteFeature(k));
-                            ui.close();
-                        }
-                    });
-                });
-                return;
-            }
+                    crate::part::WorkDef::Ucs(_) => Icon::Ucs,
+                },
+                w.def.method().to_owned(),
+            ),
         };
-        let used: Vec<usize> = (0..part.sketches.len())
-            .filter(|&i| part.sketches[i].id == *sketch)
-            .collect();
+        // The box is the body (its size is in the body's properties).
+        let (selected, select) = match f {
+            Feature::Box(_) => (
+                self.selection == Selection::Body || self.selection == Selection::Feature(k),
+                Selection::Body,
+            ),
+            Feature::Pattern(p) => (
+                self.selection == Selection::Feature(k)
+                    || self
+                        .pattern_draft
+                        .as_ref()
+                        .is_some_and(|d| d.def.features.contains(&p.id)),
+                Selection::Feature(k),
+            ),
+            _ => (
+                self.selection == Selection::Feature(k),
+                Selection::Feature(k),
+            ),
+        };
+        let used: Vec<usize> = match f.sketch() {
+            Some(s) => (0..part.sketches.len())
+                .filter(|&i| part.sketches[i].id == s)
+                .collect(),
+            None => Vec::new(),
+        };
         for &i in &used {
             if part.sketches[i].shared && !listed[i] {
                 listed[i] = true;
@@ -601,60 +734,43 @@ impl CadCraftApp {
                 listed[i] = true; // nested below, even while collapsed
             }
         }
+        let nested: Vec<usize> = used
+            .iter()
+            .copied()
+            .filter(|&i| part.owner_of_sketch(i) == Some(k) || part.sketches[i].shared)
+            .collect();
+        if nested.is_empty() {
+            ui.horizontal(|ui| {
+                if let Feature::Work(w) = f {
+                    let mut visible = w.visible;
+                    if ui
+                        .checkbox(&mut visible, "")
+                        .on_hover_text("Visibility")
+                        .changed()
+                    {
+                        cmds.push(BrowserCmd::FeatureVisible(k, visible));
+                    }
+                }
+                if let Some(r) = self.feature_label(ui, k, icon, hover, selected, select, cmds) {
+                    r.context_menu(|ui| self.feature_menu(ui, k, &used, cmds));
+                }
+            });
+            return;
+        }
+        // Expanded / collapsed is remembered per feature id.
         egui::collapsing_header::CollapsingState::load_with_default_open(
             ui.ctx(),
-            ui.make_persistent_id(("feature", id)),
+            ui.make_persistent_id(("feature", f.id())),
             false,
         )
         .show_header(ui, |ui| {
-            tree_icon(ui, icon);
-            let sick = part.feature_health.get(id);
-            let mut text = RichText::new(name);
-            if sick.is_some() {
-                text = text.color(WARNING);
+            if let Some(r) = self.feature_label(ui, k, icon, hover, selected, select, cmds) {
+                r.context_menu(|ui| self.feature_menu(ui, k, &used, cmds));
             }
-            let hover = match sick {
-                Some(h) => format!("Warning: {h}"),
-                None => format!("{what} of {sketch}"),
-            };
-            let r = ui
-                .selectable_label(self.selection == Selection::Feature(k), text)
-                .on_hover_text(hover);
-            if r.clicked() {
-                cmds.push(BrowserCmd::Select(Selection::Feature(k)));
-            }
-            if r.double_clicked() {
-                cmds.push(BrowserCmd::EditFeature(k));
-            }
-            r.context_menu(|ui| {
-                if ui.button("Edit Feature").clicked() {
-                    cmds.push(BrowserCmd::EditFeature(k));
-                    ui.close();
-                }
-                if let Some(&i) = used.first()
-                    && ui.button("Edit Sketch").clicked()
-                {
-                    cmds.push(BrowserCmd::Edit(i));
-                    ui.close();
-                }
-                if let Some(a) = self.appearance_submenu(ui) {
-                    cmds.push(BrowserCmd::Look(
-                        crate::part::appearance::LookTarget::Feature(id.clone()),
-                        a,
-                    ));
-                    ui.close();
-                }
-                if ui.button("Delete").clicked() {
-                    cmds.push(BrowserCmd::DeleteFeature(k));
-                    ui.close();
-                }
-            });
         })
         .body(|ui| {
-            for &i in &used {
-                if part.owner_of_sketch(i) == Some(k) || part.sketches[i].shared {
-                    self.sketch_row(ui, i, cmds);
-                }
+            for &i in &nested {
+                self.sketch_row(ui, i, cmds);
             }
         });
     }
@@ -666,6 +782,8 @@ impl CadCraftApp {
         let ps = &part.sketches[i];
         let editing = self.editing == Some(i);
         let consumers = part.consumers(&ps.id).len();
+        let rolled = part.sketch_rolled_back(i);
+        let target = RenameTarget::Sketch(ps.id.clone());
         ui.horizontal(|ui| {
             let mut visible = ps.visible;
             if ui
@@ -676,7 +794,14 @@ impl CadCraftApp {
                 cmds.push(BrowserCmd::SetVisible(i, visible));
             }
             tree_icon(ui, Icon::Sketch);
+            if self.rename.as_ref() == Some(&target) {
+                rename_field(ui, target.clone(), cmds);
+                return;
+            }
             let mut label = ps.name.clone();
+            if ps.health.is_some() {
+                label = format!("! {label}");
+            }
             if ps.shared {
                 label.push_str("  (shared)");
             }
@@ -686,16 +811,21 @@ impl CadCraftApp {
             let mut text = RichText::new(label);
             if editing {
                 text = text.strong().color(self.sketch_color());
+            } else if rolled {
+                text = text.color(ui.visuals().weak_text_color()).italics();
             } else if ps.health.is_some() {
                 text = text.color(WARNING);
             }
-            let hover = match &ps.health {
+            let mut hover = match &ps.health {
                 Some(h) => format!("{}\nWarning: {h}", ps.placement.describe()),
                 None => ps.placement.describe(),
             };
-            let r = ui
-                .selectable_label(self.selection == Selection::Sketch(i), text)
-                .on_hover_text(hover);
+            if rolled {
+                hover.push_str("\nBelow the End of Part (rolled back)");
+            }
+            let selected = self.selection == Selection::Sketch(i);
+            let r = ui.selectable_label(selected, text).on_hover_text(hover);
+            slow_click(ui, &r, selected, target.clone());
             if r.clicked() {
                 cmds.push(BrowserCmd::Select(Selection::Sketch(i)));
             }
@@ -726,6 +856,7 @@ impl CadCraftApp {
                     if ps.visible { "Hide" } else { "Show" },
                     BrowserCmd::SetVisible(i, !ps.visible),
                 );
+                item("Rename", BrowserCmd::StartRename(target.clone()));
                 item("Delete", BrowserCmd::Delete(i));
             });
         });
@@ -750,6 +881,14 @@ impl CadCraftApp {
         }
         if self.shell_draft.is_some() {
             self.shell_dialog(ui);
+            return;
+        }
+        if self.sweep_draft.is_some() {
+            self.sweep_dialog(ui);
+            return;
+        }
+        if self.loft_draft.is_some() {
+            self.loft_dialog(ui);
             return;
         }
         if self.draft_draft.is_some() {
@@ -945,12 +1084,39 @@ impl CadCraftApp {
             super::DraftDef::Extrude(_) => Icon::Extrude,
             super::DraftDef::Revolve(_) => Icon::Revolve,
         };
-        let title = d.def.command();
+        let title = d.primitive.map_or(d.def.command(), |k| k.label());
         self.panel_header(ui, icon, title);
+        // Breadcrumb (Sketch1 > Extrusion1) and the Advanced Settings menu.
+        ui.horizontal(|ui| {
+            self.feature_breadcrumb(ui);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.feature_advanced_menu(ui);
+            });
+        });
+        if self.extrude.is_none() {
+            return; // the breadcrumb opened the sketch
+        }
+        self.predict_draft_operation();
         self.extrude_preset_row(ui);
         let Some(d) = self.extrude.as_ref() else {
             return;
         };
+        let primitive = d.primitive.is_some();
+        let op_before = match &d.def {
+            super::DraftDef::Extrude(e) => e.operation,
+            super::DraftDef::Revolve(r) => r.operation,
+        };
+        let curved_to = match &d.def {
+            super::DraftDef::Extrude(e) => match &e.extent {
+                crate::part::Extent::To(t) => t.is_curved_face(&self.part().body),
+                _ => false,
+            },
+            super::DraftDef::Revolve(_) => false,
+        };
+        let base = self
+            .part()
+            .bodies_before(d.edit.unwrap_or(usize::MAX))
+            .is_empty();
         let ps = self.part().sketches.get(d.sketch);
         let sketch = ps.map_or_else(String::new, |s| s.name.clone());
         let axis_text = match &d.def {
@@ -1013,13 +1179,26 @@ impl CadCraftApp {
                         }
                     }
                 });
+                let ctx = DraftCtx {
+                    base,
+                    curved_to,
+                    primitive,
+                };
                 match &mut d.def {
                     super::DraftDef::Extrude(e) => {
-                        extrude_options(ui, e, picking, &mut pick, &mut fx);
+                        extrude_options(ui, e, picking, &mut pick, &mut fx, ctx);
                     }
                     super::DraftDef::Revolve(r) => {
-                        revolve_options(ui, r, &mut fx);
+                        revolve_options(ui, r, &mut fx, picking, &mut pick, ctx);
                     }
+                }
+                // The user chose an operation: no more prediction.
+                let op = match &d.def {
+                    super::DraftDef::Extrude(e) => e.operation,
+                    super::DraftDef::Revolve(r) => r.operation,
+                };
+                if op != op_before {
+                    d.op_auto = false;
                 }
             });
         if let Some(slot) = pick {
@@ -1043,13 +1222,16 @@ impl CadCraftApp {
         // OK while the preview is computed: OK builds the feature itself.
         let ready = preview.is_ok() || pending;
         ui.add_space(4.0);
+        let ctrl_enter = self.ctrl_enter(ui);
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
                     ready,
                     egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)),
                 )
+                .on_hover_text("Create the feature (Ctrl+Enter)")
                 .clicked()
+                || (ready && ctrl_enter)
             {
                 self.commit_extrude();
             }
@@ -1058,6 +1240,18 @@ impl CadCraftApp {
                 .clicked()
             {
                 self.cancel_extrude();
+            }
+            let editing = self.extrude.as_ref().is_some_and(|d| d.edit.is_some());
+            if !editing
+                && ui
+                    .add_enabled(
+                        ready,
+                        egui::Button::new("+").min_size(egui::vec2(26.0, 22.0)),
+                    )
+                    .on_hover_text("Apply (+): create the feature and start the command again")
+                    .clicked()
+            {
+                self.apply_and_continue();
             }
         });
     }
@@ -1717,6 +1911,14 @@ impl CadCraftApp {
             self.shell_properties(ui, k, s.clone());
             return;
         }
+        if let Feature::Sweep(s) = &f {
+            self.sweep_properties(ui, k, s.clone());
+            return;
+        }
+        if let Feature::Loft(l) = &f {
+            self.loft_properties(ui, k, l.clone());
+            return;
+        }
         if let Feature::Draft(d) = &f {
             self.draft_properties(ui, k, d.clone());
             return;
@@ -1780,6 +1982,8 @@ impl CadCraftApp {
                 | Feature::Draft(_)
                 | Feature::Pattern(_)
                 | Feature::Hole(_)
+                | Feature::Sweep(_)
+                | Feature::Loft(_)
                 | Feature::Thread(_) => {}
             }
         });
@@ -1798,7 +2002,12 @@ impl CadCraftApp {
                     .map(|(_, s)| s);
                 let mut def = e.clone();
                 let mut pick = None;
-                if extrude_options(ui, &mut def, picking, &mut pick, &mut fx) {
+                let ctx = DraftCtx {
+                    base: fx.bodies.is_empty(),
+                    curved_to: matches!(&e.extent, crate::part::Extent::To(t) if t.is_curved_face(&self.part().body)),
+                    primitive: false,
+                };
+                if extrude_options(ui, &mut def, picking, &mut pick, &mut fx, ctx) {
                     self.edit_extrude(k, def);
                 }
                 if let Some(slot) = pick {
@@ -1812,9 +2021,22 @@ impl CadCraftApp {
                     def.axis = axis;
                     changed = true;
                 }
-                changed |= revolve_options(ui, &mut def, &mut fx);
+                let picking = self
+                    .target_pick
+                    .filter(|(o, _)| *o == super::TargetOwner::Feature(k))
+                    .map(|(_, s)| s);
+                let mut pick = None;
+                let ctx = DraftCtx {
+                    base: fx.bodies.is_empty(),
+                    curved_to: false,
+                    primitive: false,
+                };
+                changed |= revolve_options(ui, &mut def, &mut fx, picking, &mut pick, ctx);
                 if changed {
                     self.edit_feature(k, Feature::Revolve(def));
+                }
+                if let Some(slot) = pick {
+                    self.target_pick = Some((super::TargetOwner::Feature(k), slot));
                 }
             }
             Feature::Box(_)
@@ -1824,6 +2046,8 @@ impl CadCraftApp {
             | Feature::Draft(_)
             | Feature::Pattern(_)
             | Feature::Hole(_)
+            | Feature::Sweep(_)
+            | Feature::Loft(_)
             | Feature::Thread(_) => {}
         }
         let commits = std::mem::take(&mut fx.commits);
@@ -1847,155 +2071,6 @@ impl CadCraftApp {
         if ui.button("Delete").clicked() {
             self.delete_feature(k);
         }
-    }
-
-    /// The Work Plane / Axis / Point command dialog: picked inputs, the
-    /// method they make, its values, origin axes / centre point as inputs,
-    /// OK / Cancel.
-    fn work_dialog(&mut self, ui: &mut egui::Ui) {
-        use super::work::{WorkKind, WpInput};
-        use crate::part::{LineRef, PointRef, WorkDef, WorkPlaneDef};
-        let Some(mut d) = self.work_draft.clone() else {
-            return;
-        };
-        let icon = match d.kind {
-            WorkKind::Plane => Icon::WorkPlane,
-            WorkKind::Axis => Icon::WorkAxis,
-            WorkKind::Point => Icon::WorkPoint,
-        };
-        self.panel_header(ui, icon, d.kind.title());
-        let mut remove = None;
-        psection(ui, "wp_input", "Input", |ui| {
-            for (k, p) in d.picks.iter().enumerate() {
-                plabel(ui, &format!("{}", k + 1));
-                ui.horizontal(|ui| {
-                    ui.label(p.describe()).on_hover_text(p.describe());
-                    if ui.small_button("x").on_hover_text("Remove").clicked() {
-                        remove = Some(k);
-                    }
-                });
-                ui.end_row();
-            }
-            plabel(ui, "Origin");
-            ui.horizontal(|ui| {
-                for (k, n) in ["X", "Y", "Z"].iter().enumerate() {
-                    if ui
-                        .small_button(*n)
-                        .on_hover_text(format!("Use the {n} axis of the Origin"))
-                        .clicked()
-                    {
-                        d.pick(WpInput::Line(LineRef::Origin(k)));
-                    }
-                }
-                if ui
-                    .small_button("Center")
-                    .on_hover_text("Use the Center Point of the Origin")
-                    .clicked()
-                {
-                    d.pick(WpInput::Point(PointRef::PartOrigin));
-                }
-            });
-            ui.end_row();
-        });
-        if let Some(k) = remove {
-            d.picks.remove(k);
-        }
-        psection(ui, "wp_method", "Method", |ui| {
-            if d.kind == WorkKind::Point {
-                plabel(ui, "Grounded");
-                let was = d.grounded;
-                ui.checkbox(&mut d.grounded, "")
-                    .on_hover_text("Fixed in space at X, Y, Z (no longer follows the model)");
-                // Start from the picked point.
-                if d.grounded && !was {
-                    let mut probe = d.clone();
-                    probe.grounded = false;
-                    if let Ok(def) = probe.def()
-                        && let Ok(crate::part::work::WorkResult::Point(_, p)) =
-                            self.compute_work(&def)
-                    {
-                        d.xyz = [p.x, p.y, p.z];
-                    }
-                }
-                ui.end_row();
-            }
-            plabel(ui, "Method");
-            match d.def() {
-                Ok(def) => ui.label(RichText::new(def.method()).strong()),
-                Err(e) => ui.label(RichText::new(e).weak()),
-            };
-            ui.end_row();
-            match d.def() {
-                Ok(WorkDef::Plane(WorkPlaneDef::Offset { .. })) => {
-                    plabel(ui, "Distance");
-                    ui.add(
-                        super::valuefield::ExprValue::new(&mut d.distance)
-                            .speed(0.5)
-                            .suffix(" mm"),
-                    );
-                    ui.end_row();
-                }
-                Ok(WorkDef::Plane(WorkPlaneDef::Angle { .. })) => {
-                    plabel(ui, "Angle");
-                    let mut deg = d.angle.to_degrees();
-                    if ui
-                        .add(
-                            super::valuefield::ExprValue::new(&mut deg)
-                                .speed(1.0)
-                                .suffix(" °"),
-                        )
-                        .changed()
-                    {
-                        d.angle = deg.to_radians();
-                    }
-                    ui.end_row();
-                }
-                Ok(WorkDef::Point(crate::part::WorkPointDef::Fixed { .. })) => {
-                    for (k, n) in ["X", "Y", "Z"].iter().enumerate() {
-                        plabel(ui, n);
-                        ui.add(
-                            super::valuefield::ExprValue::new(&mut d.xyz[k])
-                                .speed(0.5)
-                                .suffix(" mm"),
-                        );
-                        ui.end_row();
-                    }
-                }
-                _ => {}
-            }
-        });
-        // Incomplete picks only grey the method out; a complete one that
-        // cannot be built is a warning.
-        let def = d.def();
-        let built = def
-            .as_ref()
-            .ok()
-            .map(|def| self.compute_work(def).map(|_| ()));
-        if let Some(Err(e)) = &built {
-            warning_box(ui, e);
-        }
-        let check: Result<(), ()> = match built {
-            Some(Ok(())) => Ok(()),
-            _ => Err(()),
-        };
-        self.work_draft = Some(d);
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    check.is_ok(),
-                    egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)),
-                )
-                .clicked()
-            {
-                self.commit_work();
-            }
-            if ui
-                .add(egui::Button::new("Cancel").min_size(egui::vec2(70.0, 22.0)))
-                .clicked()
-            {
-                self.work_draft = None;
-            }
-        });
     }
 
     /// The Fillet / Chamfer dialog: edges, size (method for chamfers),
@@ -2420,33 +2495,99 @@ impl CadCraftApp {
         });
     }
 
-    /// The Shell command's panel (`docs/spec/2.6-shell.md`): faces to
-    /// remove, Automatic Face Chain, direction, thickness; preview, OK /
-    /// Apply / Cancel.
+    /// The Shell command's panel (`docs/spec/2.6-shell.md`): breadcrumb,
+    /// shell type, direction, thickness, faces to remove (selector,
+    /// `gui/command_ui.rs`), Advanced Properties; preview, OK / Apply /
+    /// Cancel.
     fn shell_dialog(&mut self, ui: &mut egui::Ui) {
-        use crate::part::ShellDirection;
+        use super::command_ui::{name_crumb, selector_rows};
+        use crate::part::{ShellCorners, ShellDirection};
         let Some(mut d) = self.shell_draft.clone() else {
             return;
         };
         self.panel_header(ui, Icon::Shell, "Shell");
+        let shown = match d.edit {
+            Some(k) => self
+                .part()
+                .features
+                .get(k)
+                .map_or("Shell".to_owned(), |f| f.name().to_owned()),
+            None => self.part().next_feature_id("Shell"),
+        };
+        name_crumb(ui, &mut d.crumb, &shown);
         self.preset_row(ui, "Shell", &mut d.def);
         let bodies = self
             .part()
-            .bodies_before(d.edit.unwrap_or(self.part().features.len()));
-        psection(ui, "shell_input", "Input Geometry", |ui| {
-            plabel(ui, "Remove Faces");
+            .bodies_before(d.edit.unwrap_or(self.part().insert_index()));
+        psection(ui, "shell_type", "Shell Type", |ui| {
+            plabel(ui, "Type");
             ui.horizontal(|ui| {
-                ui.label(format!("{} selected", d.def.remove.len()))
-                    .on_hover_text("Click faces in the view; a second click puts one back. None: a closed cavity");
-                if !d.def.remove.is_empty() && ui.small_button("x").on_hover_text("Clear").clicked() {
-                    d.def.remove.clear();
+                for (c, tip) in [
+                    (ShellCorners::Sharp, "The offset corners stay sharp"),
+                    (
+                        ShellCorners::Rounded,
+                        "The corners the offset makes are rounded by the offset distance (outer convex corners when offset out, inner concave ones when offset in)",
+                    ),
+                ] {
+                    if ui
+                        .selectable_label(d.def.corners == c, c.label())
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
+                        d.def.corners = c;
+                    }
                 }
             });
             ui.end_row();
+        });
+        let table = self.part().parameter_table();
+        let mut fx = Fields {
+            table: &table,
+            key: "shell_draft".into(),
+            commits: Vec::new(),
+            bodies: Vec::new(),
+        };
+        let snapshot = Feature::Shell(d.def.clone());
+        psection(ui, "shell_behavior", "Behavior", |ui| {
+            plabel(ui, "Direction");
+            ui.vertical(|ui| {
+                for (dir, tip) in [
+                    (
+                        ShellDirection::Inside,
+                        "The walls grow into the material; the outside stays",
+                    ),
+                    (
+                        ShellDirection::Outside,
+                        "The walls grow out; the faces become the inner walls",
+                    ),
+                    (
+                        ShellDirection::Center,
+                        "Half the thickness inside, half outside",
+                    ),
+                ] {
+                    ui.radio_value(&mut d.def.direction, dir, dir.label())
+                        .on_hover_text(tip);
+                }
+            });
+            ui.end_row();
+            field_row(ui, &mut fx, "Thickness", &snapshot, "thickness");
+        });
+        let mut ev = super::command_ui::RowEvents::default();
+        psection(ui, "shell_input", "Input Geometry", |ui| {
+            let flow = self
+                .command_flow()
+                .unwrap_or_else(|| crate::command::flow::Flow::new(Vec::new(), None));
+            let text = if d.def.remove.is_empty() {
+                String::new()
+            } else {
+                format!("{} face(s)", d.def.remove.len())
+            };
+            ev = selector_rows(ui, &flow, &[("remove", text)]);
             plabel(ui, "Face chain");
-            ui.checkbox(&mut d.def.chain, "Automatic").on_hover_text(
-                "A click also takes the faces tangent to the picked one (its rounds)",
-            );
+            ui.checkbox(&mut d.def.chain, "Automatic Face Chain")
+                .on_hover_text(
+                    "A click also takes the faces tangent to the picked one (its rounds)",
+                );
             ui.end_row();
             if bodies.len() > 1 {
                 plabel(ui, "Solid");
@@ -2476,38 +2617,29 @@ impl CadCraftApp {
                 ui.end_row();
             }
         });
-        let table = self.part().parameter_table();
-        let mut fx = Fields {
-            table: &table,
-            key: "shell_draft".into(),
-            commits: Vec::new(),
-            bodies: Vec::new(),
-        };
-        let snapshot = Feature::Shell(d.def.clone());
-        psection(ui, "shell_behavior", "Behavior", |ui| {
-            plabel(ui, "Direction");
-            ui.vertical(|ui| {
-                for (dir, tip) in [
-                    (
-                        ShellDirection::Inside,
-                        "The walls grow into the material; the outside stays",
-                    ),
-                    (
-                        ShellDirection::Outside,
-                        "The walls grow out; the faces become the inner walls",
-                    ),
-                    (
-                        ShellDirection::Both,
-                        "Half the thickness each way (Inventor: Center)",
-                    ),
-                ] {
-                    ui.radio_value(&mut d.def.direction, dir, dir.label())
-                        .on_hover_text(tip);
-                }
+        if ev.clear == Some("remove") {
+            d.def.remove.clear();
+        }
+        // Advanced Properties: the exact kernel offsets exactly, so there is
+        // nothing to approximate; shown for parity, disabled.
+        egui::CollapsingHeader::new("Advanced Properties")
+            .id_salt("shell_advanced")
+            .default_open(false)
+            .show(ui, |ui| {
+                let why = "Not needed: the exact geometry kernel always keeps the thickness exactly, it never approximates (docs/spec/2.6-shell.md)";
+                ui.add_enabled_ui(false, |ui| {
+                    let mut allow = false;
+                    ui.checkbox(&mut allow, "Allow Approximation")
+                        .on_disabled_hover_text(why);
+                    for m in ["Mean", "Never Too Thin", "Never Too Thick"] {
+                        ui.radio(m == "Mean", m).on_disabled_hover_text(why);
+                    }
+                    ui.horizontal(|ui| {
+                        ui.radio(true, "Optimized").on_disabled_hover_text(why);
+                        ui.radio(false, "Specified").on_disabled_hover_text(why);
+                    });
+                });
             });
-            ui.end_row();
-            field_row(ui, &mut fx, "Thickness", &snapshot, "thickness");
-        });
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
         for (field, text) in commits {
@@ -2537,6 +2669,7 @@ impl CadCraftApp {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Ctrl+Enter or Enter")
                 .clicked()
             {
                 self.commit_shell(false);
@@ -2554,6 +2687,7 @@ impl CadCraftApp {
             }
             if ui
                 .add(egui::Button::new("Cancel").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Esc")
                 .clicked()
             {
                 self.shell_draft = None;
@@ -2562,10 +2696,12 @@ impl CadCraftApp {
         });
     }
 
-    /// The Face Draft command's panel (`docs/spec/2.8-draft.md`).
+    /// The Face Draft command's panel (`docs/spec/2.8-draft.md`): type,
+    /// selectors (`gui/command_ui.rs`), extent and angles, options, Move
+    /// Parting Line; preview, OK / Apply / Cancel.
     fn draft_dialog(&mut self, ui: &mut egui::Ui) {
-        use super::draft::DraftInput;
-        use crate::part::DraftType;
+        use super::command_ui::{RowEvents, selector_rows};
+        use crate::part::{DraftExtent, DraftType, PartingSide, PartingTool, PullRef};
         let Some(mut d) = self.draft_draft.clone() else {
             return;
         };
@@ -2576,6 +2712,11 @@ impl CadCraftApp {
             crate::part::PlaneRef::Face(n) => n.clone(),
             crate::part::PlaneRef::Work(id) => id.clone(),
             crate::part::PlaneRef::Fixed => "fixed".into(),
+        };
+        let line = |l: &crate::part::LineRef| match l {
+            crate::part::LineRef::Origin(k) => format!("{} Axis", ["X", "Y", "Z"][(*k).min(2)]),
+            crate::part::LineRef::Edge(n) => n.clone(),
+            crate::part::LineRef::Work(id) => id.clone(),
         };
         psection(ui, "draft_type", "Draft Type", |ui| {
             plabel(ui, "Type");
@@ -2589,74 +2730,175 @@ impl CadCraftApp {
                         DraftType::FixedPlane,
                         "The faces turn about their line on a plane; the pull is its normal",
                     ),
+                    (
+                        DraftType::PartingLine,
+                        "The faces are drafted above and below a parting tool (a plane or a sketch line)",
+                    ),
                 ] {
                     if ui
                         .radio(d.def.draft_type == t, t.label())
                         .on_hover_text(tip)
                         .clicked()
-                        && d.def.draft_type != t
                     {
-                        d.def.draft_type = t;
-                        d.input = d.first_input();
+                        d.set_type(t);
                     }
                 }
-                ui.add_enabled(false, egui::RadioButton::new(false, "Parting Line"))
-                    .on_disabled_hover_text("Not yet: docs/spec/2.8-draft.md");
             });
             ui.end_row();
         });
+        let sketches: Vec<(String, String)> = self
+            .part()
+            .sketches
+            .iter()
+            .map(|s| (s.id.clone(), s.name.clone()))
+            .collect();
+        let work_axes: Vec<String> = {
+            let mut v: Vec<String> = self.part().work.axes.keys().cloned().collect();
+            v.sort();
+            v
+        };
+        let mut ev = RowEvents::default();
+        let mut pick_sketch: Option<String> = None;
+        let mut pick_axis: Option<crate::part::LineRef> = None;
         psection(ui, "draft_input", "Input Geometry", |ui| {
-            let selector = |ui: &mut egui::Ui, active: bool, text: String| {
-                let t = if active {
-                    RichText::new(format!("> {text}")).strong().underline()
-                } else {
-                    RichText::new(text)
-                };
-                ui.selectable_label(active, t).clicked()
-            };
-            match d.def.draft_type {
-                DraftType::FixedEdge => {
-                    plabel(ui, "Pull Direction");
-                    let text = match &d.def.pull {
-                        Some(crate::part::PullRef::Plane(p)) => describe(p),
-                        Some(crate::part::PullRef::Line(l)) => format!("{l:?}"),
-                        None => "click to select".into(),
-                    };
-                    if selector(ui, d.input == DraftInput::Pull, text) {
-                        d.input = DraftInput::Pull;
+            let flow = d.flow();
+            let texts = vec![
+                (
+                    "pull",
+                    match &d.def.pull {
+                        Some(PullRef::Plane(p)) => describe(p),
+                        Some(PullRef::Line(l)) => line(l),
+                        None => String::new(),
+                    },
+                ),
+                (
+                    "plane",
+                    d.def.plane.as_ref().map_or(String::new(), describe),
+                ),
+                (
+                    "parting",
+                    match &d.def.parting {
+                        Some(PartingTool::Plane(p)) => describe(p),
+                        Some(PartingTool::Sketch(id)) => sketches
+                            .iter()
+                            .find(|(i, _)| i == id)
+                            .map_or(id.clone(), |(_, n)| n.clone()),
+                        None => String::new(),
+                    },
+                ),
+                (
+                    "faces",
+                    if d.def.faces.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{} face(s)", d.def.faces.len())
+                    },
+                ),
+                (
+                    "static",
+                    if d.def.static_edges.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{} edge(s)", d.def.static_edges.len())
+                    },
+                ),
+            ];
+            ev = selector_rows(ui, &flow, &texts);
+            if d.def.draft_type.has_pull() {
+                plabel(ui, "");
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(d.def.flip, "Flip")
+                        .on_hover_text("Reverse the pull direction")
+                        .clicked()
+                    {
+                        d.def.flip = !d.def.flip;
                     }
-                }
-                DraftType::FixedPlane => {
-                    plabel(ui, "Fixed Plane");
-                    let text = d
-                        .def
-                        .plane
-                        .as_ref()
-                        .map_or("click to select".into(), describe);
-                    if selector(ui, d.input == DraftInput::Plane, text) {
-                        d.input = DraftInput::Plane;
+                    for (k, n) in ["X", "Y", "Z"].iter().enumerate() {
+                        if ui
+                            .small_button(*n)
+                            .on_hover_text("The origin axis as the pull direction")
+                            .clicked()
+                        {
+                            pick_axis = Some(crate::part::LineRef::Origin(k));
+                        }
                     }
+                    for id in &work_axes {
+                        if ui.small_button(id).on_hover_text("A work axis").clicked() {
+                            pick_axis = Some(crate::part::LineRef::Work(id.clone()));
+                        }
+                    }
+                });
+                ui.end_row();
+            } else {
+                plabel(ui, "");
+                if ui
+                    .selectable_label(d.def.flip, "Flip")
+                    .on_hover_text("Reverse the pull direction (the plane's normal)")
+                    .clicked()
+                {
+                    d.def.flip = !d.def.flip;
                 }
+                ui.end_row();
             }
-            ui.end_row();
-            plabel(ui, "Flip");
-            ui.checkbox(&mut d.def.flip, "")
-                .on_hover_text("Reverse the pull direction");
-            ui.end_row();
-            plabel(ui, "Faces");
-            if selector(
-                ui,
-                d.input == DraftInput::Faces,
-                format!("{} selected", d.def.faces.len()),
-            ) {
-                d.input = DraftInput::Faces;
+            if d.def.draft_type == DraftType::PartingLine && !sketches.is_empty() {
+                plabel(ui, "Sketch");
+                let current = d.def.parting_sketch().map(str::to_owned);
+                let shown = current
+                    .as_ref()
+                    .and_then(|c| sketches.iter().find(|(i, _)| i == c))
+                    .map_or("a plane in the view".to_owned(), |(_, n)| n.clone());
+                egui::ComboBox::from_id_salt("draft_parting_sketch")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        for (id, n) in &sketches {
+                            if ui
+                                .selectable_label(current.as_deref() == Some(id.as_str()), n)
+                                .clicked()
+                            {
+                                pick_sketch = Some(id.clone());
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("A 2D sketch whose lines are the parting line");
+                ui.end_row();
             }
-            ui.end_row();
             plabel(ui, "Face chain");
-            ui.checkbox(&mut d.def.chain, "Automatic")
+            ui.checkbox(&mut d.def.chain, "Automatic Face Chain")
                 .on_hover_text("A click also takes the faces tangent to the picked one");
             ui.end_row();
+            plabel(ui, "Blending");
+            ui.checkbox(&mut d.def.blending, "Automatic Blending").on_hover_text(
+                "Rounds along the pull next to a drafted face are drafted with it and stay tangent",
+            );
+            ui.end_row();
         });
+        if let Some(k) = ev.activate {
+            d.set_active(k);
+        }
+        if let Some(k) = ev.clear {
+            match k {
+                "pull" => d.def.pull = None,
+                "plane" => d.def.plane = None,
+                "parting" => d.def.parting = None,
+                "faces" => d.def.faces.clear(),
+                "static" => d.def.static_edges.clear(),
+                _ => {}
+            }
+            d.set_active(k);
+        }
+        if let Some(l) = pick_axis {
+            d.def.pull = Some(PullRef::Line(l));
+            if d.input == super::draft::DraftInput::Pull {
+                let mut f = d.flow();
+                if f.picked()
+                    && let Some(k) = f.active_key()
+                {
+                    d.set_active(k);
+                }
+            }
+        }
         let table = self.part().parameter_table();
         let mut fx = Fields {
             table: &table,
@@ -2666,8 +2908,98 @@ impl CadCraftApp {
         };
         let snapshot = Feature::Draft(d.def.clone());
         psection(ui, "draft_angle", "Angle", |ui| {
+            let extents = d.def.draft_type.extents();
+            if extents.len() > 1 {
+                plabel(ui, "Extent");
+                ui.horizontal(|ui| {
+                    for e in extents {
+                        let tip = match e {
+                            DraftExtent::OneWay => "The whole face, in the pull direction",
+                            DraftExtent::Symmetric => {
+                                "Above and below the plane, the same angle, each away from it"
+                            }
+                            DraftExtent::Asymmetric => {
+                                "Above (Draft Angle) and below (Draft Angle 2) the plane"
+                            }
+                        };
+                        if ui
+                            .selectable_label(d.def.effective_extent() == *e, e.label())
+                            .on_hover_text(tip)
+                            .clicked()
+                        {
+                            d.def.extent = *e;
+                        }
+                    }
+                });
+                ui.end_row();
+            }
             field_row(ui, &mut fx, "Draft Angle", &snapshot, "angle");
+            if super::draft::shows_angle2(d.def.effective_extent()) {
+                field_row(ui, &mut fx, "Draft Angle 2", &snapshot, "angle2");
+            }
         });
+        let mut boundary = false;
+        if d.def.draft_type == DraftType::PartingLine {
+            psection(ui, "draft_move", "Move Parting Line", |ui| {
+                plabel(ui, "Move");
+                if ui
+                    .checkbox(&mut d.def.move_parting, "Move Parting Line")
+                    .on_hover_text(
+                        "The faces pivot about static edges instead of the parting line, which moves",
+                    )
+                    .changed()
+                    && d.def.move_parting
+                {
+                    d.input = super::draft::DraftInput::Static;
+                }
+                ui.end_row();
+                if d.def.move_parting {
+                    plabel(ui, "Angle for");
+                    ui.horizontal(|ui| {
+                        for s in [PartingSide::Top, PartingSide::Both, PartingSide::Bottom] {
+                            if ui
+                                .selectable_label(
+                                    d.def.move_side == s,
+                                    s.label().trim_start_matches("Angle for "),
+                                )
+                                .on_hover_text(s.label())
+                                .clicked()
+                            {
+                                d.def.move_side = s;
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    plabel(ui, "Static Edges");
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Select Boundary")
+                            .on_hover_text(
+                                "The top or bottom edges of the faces, as Angle for says",
+                            )
+                            .clicked()
+                        {
+                            boundary = true;
+                        }
+                        if ui.button("Clear All").clicked() {
+                            d.def.static_edges.clear();
+                            d.input = super::draft::DraftInput::Static;
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+        }
+        if boundary {
+            let part = self.part();
+            let lines = self.draft_sketch_lines();
+            if let Err(e) = d
+                .def
+                .select_boundary(&part.body, &part.work, lines.as_deref())
+            {
+                self.file_status = Some(Err(format!("Face Draft: {e}")));
+            }
+        }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
         for (field, text) in commits {
@@ -2683,6 +3015,12 @@ impl CadCraftApp {
             }
         }
         self.draft_draft = Some(d.clone());
+        if let Some(id) = pick_sketch {
+            self.draft_parting_sketch(id);
+            if let Some(nd) = &self.draft_draft {
+                d = nd.clone();
+            }
+        }
         let preview = self.draft_preview();
         match &preview {
             Err(e) if e == super::PREVIEW_PENDING => {
@@ -2697,6 +3035,7 @@ impl CadCraftApp {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Ctrl+Enter; Enter when every input is there")
                 .clicked()
             {
                 self.commit_draft(false);
@@ -2714,6 +3053,7 @@ impl CadCraftApp {
             }
             if ui
                 .add(egui::Button::new("Cancel").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Esc")
                 .clicked()
             {
                 self.draft_draft = None;
@@ -3219,7 +3559,7 @@ impl CadCraftApp {
                 for d in [
                     ShellDirection::Inside,
                     ShellDirection::Outside,
-                    ShellDirection::Both,
+                    ShellDirection::Center,
                 ] {
                     ui.radio_value(&mut dir, d, d.label());
                 }
@@ -3400,134 +3740,6 @@ impl CadCraftApp {
         if ui.button("Delete").clicked() {
             self.delete_feature(k);
         }
-    }
-
-    /// Properties of a work feature: method, inputs, values (expressions),
-    /// visibility.
-    fn work_properties(&mut self, ui: &mut egui::Ui, k: usize, w: crate::part::WorkFeature) {
-        use crate::part::{WorkAxisDef as A, WorkDef, WorkPlaneDef as D, WorkPointDef as P};
-        let icon = match &w.def {
-            WorkDef::Plane(_) => Icon::WorkPlane,
-            WorkDef::Axis(_) => Icon::WorkAxis,
-            WorkDef::Point(_) => Icon::WorkPoint,
-        };
-        self.panel_header(ui, icon, &w.name);
-        if let Some(h) = self.part().feature_health.get(&w.id) {
-            warning_box(ui, h);
-        }
-        let pl = |r: &PlaneRef| super::work::WpInput::Plane(r.clone()).describe();
-        let pt = |r: &crate::part::PointRef| r.describe();
-        let ln = |r: &crate::part::LineRef| r.describe();
-        let rows: Vec<(&str, String)> = match &w.def {
-            WorkDef::Plane(d) => match d {
-                D::Offset { base, .. } => vec![("Plane", pl(base))],
-                D::ThroughPoint { base, point } => vec![("Plane", pl(base)), ("Point", pt(point))],
-                D::Midplane { a, b } => vec![("Plane 1", pl(a)), ("Plane 2", pl(b))],
-                D::Angle { base, axis, .. } => vec![("Plane", pl(base)), ("Edge", ln(axis))],
-                D::ThreePoints { points } => points
-                    .iter()
-                    .zip(["Point 1", "Point 2", "Point 3"])
-                    .map(|(p, l)| (l, pt(p)))
-                    .collect(),
-                D::TwoLines { a, b } => vec![("Edge 1", ln(a)), ("Edge 2", ln(b))],
-                D::NormalToAxis { axis, point } => vec![("Axis", ln(axis)), ("Point", pt(point))],
-                D::Fixed { .. } => Vec::new(),
-            },
-            WorkDef::Axis(d) => match d {
-                A::OnLine { line } => vec![("Line", ln(line))],
-                A::ParallelThroughPoint { line, point } => {
-                    vec![("Line", ln(line)), ("Point", pt(point))]
-                }
-                A::TwoPoints { a, b } => vec![("Point 1", pt(a)), ("Point 2", pt(b))],
-                A::TwoPlanes { a, b } => vec![("Plane 1", pl(a)), ("Plane 2", pl(b))],
-                A::NormalToPlane { plane, point } => {
-                    vec![("Plane", pl(plane)), ("Point", pt(point))]
-                }
-                A::CircularEdge { edge } => vec![("Edge", edge.clone())],
-                A::Revolved { feature } => vec![("Feature", feature.clone())],
-                A::LineOnPlane { line, plane } => vec![("Line", ln(line)), ("Plane", pl(plane))],
-                A::Fixed { .. } => Vec::new(),
-            },
-            WorkDef::Point(d) => match d {
-                P::OnPoint { point } => vec![("Point", pt(point))],
-                P::ThreePlanes { planes } => planes
-                    .iter()
-                    .zip(["Plane 1", "Plane 2", "Plane 3"])
-                    .map(|(p, l)| (l, pl(p)))
-                    .collect(),
-                P::TwoLines { a, b } => vec![("Line 1", ln(a)), ("Line 2", ln(b))],
-                P::PlaneLine { plane, line } => vec![("Plane", pl(plane)), ("Line", ln(line))],
-                P::LoopCenter { edge, .. } => vec![("Edge", edge.clone())],
-                P::Fixed { .. } => Vec::new(),
-            },
-        };
-        psection(ui, &format!("wp_props_{k}"), "Input", |ui| {
-            plabel(ui, "Method");
-            ui.label(w.def.method());
-            ui.end_row();
-            for (l, v) in rows {
-                plabel(ui, l);
-                ui.label(&v).on_hover_text(&v);
-                ui.end_row();
-            }
-        });
-        let table = self.part().parameter_table();
-        let mut fx = Fields {
-            table: &table,
-            key: format!("feature{k}"),
-            commits: Vec::new(),
-            bodies: Vec::new(),
-        };
-        let f = Feature::Work(w.clone());
-        let fields = crate::part::params::feature_field_names(&f);
-        if !fields.is_empty() {
-            psection(ui, &format!("wp_value_{k}"), "Value", |ui| {
-                for field in fields {
-                    let label = match field {
-                        "distance" => "Distance",
-                        "angle" => "Angle",
-                        "x" => "X",
-                        "y" => "Y",
-                        "z" => "Z",
-                        other => other,
-                    };
-                    field_row(ui, &mut fx, label, &f, field);
-                }
-            });
-        }
-        let commits = std::mem::take(&mut fx.commits);
-        drop(fx);
-        for (field, text) in commits {
-            self.checkpoint("Edit Feature");
-            match self.part_mut().set_feature_field(k, field, &text) {
-                Ok(()) => {
-                    if let Err(e) = self.part_mut().regenerate() {
-                        self.file_status = Some(Err(e.to_string()));
-                    }
-                    self.scene_dirty = true;
-                }
-                Err(e) => {
-                    self.history.cancel();
-                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
-                }
-            }
-        }
-        let mut visible = w.visible;
-        if ui.checkbox(&mut visible, "Visible").changed() {
-            self.checkpoint("Visibility");
-            if let Some(Feature::Work(x)) = self.part_mut().features.get_mut(k) {
-                x.visible = visible;
-            }
-        }
-        ui.horizontal(|ui| {
-            if matches!(w.def, WorkDef::Plane(_)) && ui.button("New Sketch").clicked() {
-                self.mode = Mode::PickPlane(PickPurpose::NewSketch);
-                self.plane_picked(PlaneRef::Work(w.id.clone()));
-            }
-            if ui.button("Delete").clicked() {
-                self.delete_feature(k);
-            }
-        });
     }
 
     fn sketch_properties(&mut self, ui: &mut egui::Ui, i: usize) {
@@ -4007,11 +4219,28 @@ impl CadCraftApp {
                                 ),
                             );
                         }
+                        (Mode::PickPlane(PickPurpose::Primitive(k)), _) => {
+                            ui.colored_label(
+                                WARNING,
+                                format!(
+                                    "{}: select a planar face or an origin plane for its sketch (Esc cancels)",
+                                    k.label()
+                                ),
+                            );
+                        }
                         (Mode::PickPlane(PickPurpose::Redefine(i)), _) => {
                             let name = self.part().sketches.get(i).map_or("", |s| s.name.as_str());
                             ui.colored_label(
                                 WARNING,
                                 format!("Select the new plane for {name} (Esc cancels)"),
+                            );
+                        }
+                        (Mode::Normal, Some(_)) if self.project_geometry => {
+                            ui.colored_label(
+                                WARNING,
+                                super::i18n::tr(
+                                    "Project Geometry: click straight model edges to project them (click the button again to stop)",
+                                ),
                             );
                         }
                         (Mode::Normal, Some(i)) => {
@@ -4055,17 +4284,20 @@ impl CadCraftApp {
                         .unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
+                (Mode::Normal, None) if self.feature_prompt().is_some() => {
+                    let text = self.feature_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
                 (Mode::Normal, None) if self.mat.adjusting() => {
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(super::material::ADJUST_PROMPT)).strong()).truncate());
                 }
-                (Mode::Normal, None) if self.shell_draft.is_some() => {
-                    let none = self.shell_draft.as_ref().is_some_and(|d| d.def.remove.is_empty());
-                    let text = if none {
-                        "Shell: click the faces to remove (none: a closed cavity), set the thickness, then OK"
-                    } else {
-                        "Shell: click more faces to remove (a second click puts one back), then OK"
-                    };
+                (Mode::Normal, None) if self.sweep_loft_open() => {
+                    let text = self.sweep_loft_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.shell_draft.is_some() => {
+                    let text = self.command_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.hole_draft.is_some() => {
                     let d = self.hole_draft.as_ref();
@@ -4076,7 +4308,7 @@ impl CadCraftApp {
                     } else if d.is_some_and(|d| d.count() == 0) {
                         "Hole: click a planar face, a sketch point or a circular edge for the centre"
                     } else {
-                        "Hole: click more centres (a click on one removes it), set the options, then OK"
+                        "Hole: click more centres (a click on one removes it), straight edges to dimension the last one, then OK"
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
@@ -4089,13 +4321,8 @@ impl CadCraftApp {
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.draft_draft.is_some() => {
-                    use super::draft::DraftInput;
-                    let text = match self.draft_draft.as_ref().map(|d| d.input) {
-                        Some(DraftInput::Pull) => "Face Draft: click a planar face, an origin plane or a straight edge for the pull direction",
-                        Some(DraftInput::Plane) => "Face Draft: click the fixed plane (a planar face or an origin plane)",
-                        _ => "Face Draft: click the faces to draft (Fixed Edge: near the edge that stays), then OK",
-                    };
-                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                    let text = self.command_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.pattern_draft.is_some() => {
                     use super::pattern_feature::PatternInput;
@@ -4111,21 +4338,12 @@ impl CadCraftApp {
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.work_draft.is_some() => {
-                    let (title, need) = self
+                    let text = self
                         .work_draft
                         .as_ref()
-                        .map(|d| {
-                            let need = match d.def() {
-                                Ok(def) => format!("{}: OK to create, or pick more", def.method()),
-                                Err(e) => e.to_owned(),
-                            };
-                            (d.kind.title(), need)
-                        })
+                        .map(super::work::WorkDraft::prompt)
                         .unwrap_or_default();
-                    ui.add(
-                        egui::Label::new(RichText::new(format!("{title}: {need}")).strong())
-                            .truncate(),
-                    );
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                         (Mode::Normal, None) => match self.selection_summary() {
                             Some(text) => {
@@ -4172,10 +4390,17 @@ impl CadCraftApp {
     /// Tools → Application Options.
     pub(super) fn options_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_options;
-        egui::Window::new("Application Options")
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+        self.layout
+            .place(
+                "options",
+                ctx.content_rect(),
+                true,
+                egui::Window::new("Application Options")
+                    .open(&mut open)
+                    .resizable(true)
+                    .vscroll(true)
+                    .collapsible(false),
+            )
             .show(ctx, |ui| {
                 ui.label(RichText::new("Navigation").strong());
                 for preset in [MousePreset::Inventor, MousePreset::Classic] {
@@ -4381,6 +4606,17 @@ fn origin_axis_buttons(ui: &mut egui::Ui) -> Option<crate::part::AxisRef> {
     out
 }
 
+/// What the Extrude / Revolve panels need to know about the command.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct DraftCtx {
+    /// The part has no solid yet (Inventor: no Output operation).
+    pub base: bool,
+    /// The To target is a curved face (Alternate Solution applies).
+    pub curved_to: bool,
+    /// A primitive's feature (solid only; Sphere / Torus: Full only).
+    pub primitive: bool,
+}
+
 /// Inventor's Output section: Solid / Surface and the Boolean operation.
 fn output_options(
     ui: &mut egui::Ui,
@@ -4389,23 +4625,40 @@ fn output_options(
     output: &mut crate::part::Output,
     solids: &mut Vec<String>,
     bodies: &[(String, String)],
+    ctx: DraftCtx,
 ) {
     use crate::part::{Operation, Output};
     psection(ui, &format!("{id}_output"), "Output", |ui| {
-        plabel(ui, "Output");
-        icon_choice(
-            ui,
-            output,
-            &[
-                (Output::Solid, Icon::OutSolid, "Solid"),
-                (
-                    Output::Surface,
-                    Icon::OutSurface,
-                    "Surface: an open body, no caps",
-                ),
-            ],
-        );
-        ui.end_row();
+        if ctx.primitive {
+            // Inventor: primitives make solids only.
+            *output = Output::Solid;
+        } else {
+            plabel(ui, "Output");
+            icon_choice(
+                ui,
+                output,
+                &[
+                    (Output::Solid, Icon::OutSolid, "Solid"),
+                    (
+                        Output::Surface,
+                        Icon::OutSurface,
+                        "Surface: an open body, no caps",
+                    ),
+                ],
+            );
+            ui.end_row();
+        }
+        // Inventor: the base feature (the first solid) has no operation.
+        if ctx.base {
+            plabel(ui, "");
+            ui.label(
+                RichText::new("The first solid of the part (no operation)")
+                    .small()
+                    .weak(),
+            );
+            ui.end_row();
+            return;
+        }
         plabel(ui, "Operation");
         ui.add_enabled_ui(*output == Output::Solid, |ui| {
             icon_choice(
@@ -4566,17 +4819,69 @@ fn revolve_options(
     ui: &mut egui::Ui,
     def: &mut crate::part::RevolveFeature,
     fx: &mut Fields,
+    picking: Option<super::TargetSlot>,
+    pick: &mut Option<super::TargetSlot>,
+    ctx: DraftCtx,
 ) -> bool {
     use crate::part::{ExtentDirection, RevolveExtent};
     let before = def.clone();
     psection(ui, "revolve_behavior", "Behavior", |ui| {
         plabel(ui, "Extents");
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut def.extent, RevolveExtent::Full, "Full")
-                .on_hover_text("360 deg");
-            ui.selectable_value(&mut def.extent, RevolveExtent::Angle, "Angle");
-        });
+        if ctx.primitive {
+            // Inventor: Sphere and Torus are full revolutions only.
+            def.extent = RevolveExtent::Full;
+            ui.label("Full");
+        } else {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut def.extent, RevolveExtent::Full, "Full")
+                    .on_hover_text("360 deg");
+                ui.selectable_value(&mut def.extent, RevolveExtent::Angle, "Angle");
+                if ui
+                    .selectable_label(def.extent == RevolveExtent::To, "To")
+                    .on_hover_text(
+                        "Up to a planar face or a plane through the axis, or a point (its half-plane)",
+                    )
+                    .clicked()
+                {
+                    def.extent = RevolveExtent::To;
+                    if def.to.is_none() {
+                        *pick = Some(super::TargetSlot::To);
+                    }
+                }
+            });
+        }
         ui.end_row();
+        if def.extent == RevolveExtent::To {
+            plabel(ui, "To");
+            ui.horizontal(|ui| {
+                let active = picking == Some(super::TargetSlot::To);
+                let text = match &def.to {
+                    _ if active => "Picking...".to_owned(),
+                    Some(t) => t.name(),
+                    None => "(none)".to_owned(),
+                };
+                if ui
+                    .selectable_label(active, text)
+                    .on_hover_text(
+                        "Click, then pick a face, a plane or a point in the graphics window",
+                    )
+                    .clicked()
+                {
+                    *pick = Some(super::TargetSlot::To);
+                }
+            });
+            ui.end_row();
+            plabel(ui, "Direction");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut def.direction, ExtentDirection::Default, "Default");
+                ui.selectable_value(&mut def.direction, ExtentDirection::Flipped, "Flipped");
+            });
+            ui.end_row();
+            plabel(ui, "");
+            ui.checkbox(&mut def.minimum, "Minimum Solution")
+                .on_hover_text("A plane through the axis has two halves: stop at the nearer one (off: the farther one)");
+            ui.end_row();
+        }
         if def.extent == RevolveExtent::Angle {
             direction_choice(ui, &mut def.direction);
             let f = Feature::Revolve(def.clone());
@@ -4593,6 +4898,7 @@ fn revolve_options(
         &mut def.output,
         &mut def.solids,
         &fx.bodies,
+        ctx,
     );
     *def != before
 }
@@ -4606,6 +4912,7 @@ fn extrude_options(
     picking: Option<super::TargetSlot>,
     pick: &mut Option<super::TargetSlot>,
     fx: &mut Fields,
+    ctx: DraftCtx,
 ) -> bool {
     use super::TargetSlot;
     use crate::part::{Extent, ExtentDirection};
@@ -4700,12 +5007,26 @@ fn extrude_options(
                 }
             }
             Extent::ToNext => {
-                plabel(ui, "");
-                ui.label(
-                    RichText::new("Next face covering the profile")
-                        .small()
-                        .weak(),
-                );
+                // Inventor's Terminator: the body whose next face ends it.
+                plabel(ui, "Terminator");
+                let current = def
+                    .terminator
+                    .as_ref()
+                    .and_then(|n| fx.bodies.iter().find(|(b, _)| b == n))
+                    .map_or("Any body".to_owned(), |(_, l)| l.clone());
+                egui::ComboBox::from_id_salt(("extrude_terminator", fx.key.as_str()))
+                    .width(110.0)
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut def.terminator, None, "Any body");
+                        for (name, label) in &fx.bodies {
+                            ui.selectable_value(&mut def.terminator, Some(name.clone()), label);
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "The next face (covering the profile) of this body ends the extrusion",
+                    );
                 ui.end_row();
             }
             Extent::ThroughAll => {
@@ -4723,6 +5044,7 @@ fn extrude_options(
         &mut def.output,
         &mut def.solids,
         &fx.bodies,
+        ctx,
     );
 
     psection(ui, "extrude_advanced", "Advanced Properties", |ui| {
@@ -4731,9 +5053,40 @@ fn extrude_options(
         if def.direction == ExtentDirection::Asymmetric {
             field_row(ui, fx, "Taper B", &f, "taper_b");
         }
+        if def.from.is_some() || matches!(def.extent, Extent::To(_)) {
+            plabel(ui, "");
+            ui.checkbox(&mut def.extend_face, "Extend face to end feature")
+                .on_hover_text("A From / To face that does not cover the profile is extended (turns on by itself when needed)");
+            ui.end_row();
+        }
+        if ctx.curved_to {
+            plabel(ui, "");
+            ui.checkbox(&mut def.alternate, "Alternate Solution")
+                .on_hover_text("Stop at the near side of the curved To face (off: the far side)");
+            ui.end_row();
+        }
+        let n_open = def.open.as_ref().map_or(0, |o| o.curves.len());
         plabel(ui, "");
-        ui.add_enabled(false, egui::Checkbox::new(&mut false, "Match Shape"))
-            .on_disabled_hover_text("Open profiles (FEATURES 2.1)");
+        match def.open.as_mut() {
+            Some(op) => {
+                ui.vertical(|ui| {
+                    ui.checkbox(&mut op.match_shape, "Match Shape")
+                        .on_hover_text("On: the fill stops at the body's walls; off: the closed side goes the full extent");
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("Open profile: {n_open} curve(s)")).small());
+                        if ui.small_button("Flip side").on_hover_text("Keep the other side of the open curves").clicked() {
+                            op.flip = !op.flip;
+                        }
+                    });
+                });
+            }
+            None => {
+                ui.add_enabled(false, egui::Checkbox::new(&mut false, "Match Shape"))
+                    .on_disabled_hover_text(
+                        "Click open curves of the sketch (not for the first feature)",
+                    );
+            }
+        }
         ui.end_row();
         plabel(ui, "");
         ui.add_enabled(false, egui::Checkbox::new(&mut false, "Infer iMates"))
@@ -4767,10 +5120,10 @@ impl CadCraftApp {
         }
         let mut edits: Vec<Edit> = Vec::new();
         let buf = &mut self.param_buf;
-        egui::Window::new("Parameters")
+        self.layout.place("parameters", ctx.content_rect(), true, egui::Window::new("Parameters")
             .open(&mut open)
             .default_width(860.0)
-            .resizable(true)
+            .resizable(true))
             .show(ctx, |ui| {
                 // A text cell that applies on Enter / focus loss.
                 let mut cell = |ui: &mut egui::Ui, key: String, current: &str, width: f32, bad: bool| -> Option<String> {
