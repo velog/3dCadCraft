@@ -499,6 +499,9 @@ direction*; *References* (✔ / `!` липсващ източник, **Break Lin
 | **F8** | показва надписите на ограниченията | глобално | Show All Constraints |
 | **F9** | скрива надписите | глобално | Hide All Constraints |
 | **F11** | Relax Mode вкл./изкл. | скица | същото |
+| **F11** | Full Screen вкл./изкл. | извън скица | Full Screen (без клавиш по подразбиране) |
+| **Ctrl+0** | Clean Screen вкл./изкл.: само изгледът и Quick Access | глобално | същото |
+| **Esc** | затваря плаващия прозорец под курсора (Parameters, Options, Physical Properties, Styles Editor, браузърите, Adjust, Clear, Offset Element), без да прекъсва командата | курсорът е над прозореца и не се пише в поле | затваря диалога |
 | **Enter** / **Space** | повтаря последната команда | инструмент Select, без Extrude/Revolve, без избрани криви | Inventor: Enter |
 | **Enter** | край на веригата / сплайна; Geometry → следваща стъпка при трансформации; масив: следващ селектор / OK | скица | |
 | **Enter** | поставя точката с въведените стойности | Dynamic Input | |
@@ -638,7 +641,8 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 | | Horizontal, Vertical, Parallel, Perpendicular, Midpoint, On Curve | кои разпознавания действат | вкл. |
 | | **Coincident (snap to and share points)** | изкл.: новите линии не се свързват към точки | вкл. |
 
-Записва се на диска **само** езикът на подсказките; останалите опции важат до затваряне.
+Всички опции се помнят между стартиранията (`settings.json`, ключ `options`; езикът — в
+`hints_bulgarian`). Прозорецът се разтяга и скролира; помни мястото и размера си.
 
 ### 8.2 settings.json
 
@@ -646,6 +650,14 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 |---|---|
 | `hints_bulgarian` | `true`/`false` — език на подсказките |
 | `recent_files` | до 10 пътя (най-новият първи; липсващите не се показват) |
+| `ui` | подредбата: видими панели (`show_browser`, `show_properties`, `show_ribbon`, `show_status_bar`, `show_view_cube`, `show_triad`), `ribbon_minimized`, страни (`browser_side`, `properties_side`: `Left`/`Right`), ширини/височина (`browser_width`, `properties_width`, `status_height`), плаващи прозорци (`windows`: ключ → `x`, `y`, `w`, `h`), главният прозорец (`main_size`, `maximized`) |
+| `options` | Application Options: `mouse` (`Inventor`/`Classic`), `invert_wheel`, `sketch` (опциите на скицата), `inference`, `show_labels`, `home_view` |
+
+`ui` и `options` се записват 0,5 s след последната промяна (влаченето на ръб пише
+веднъж) и при затваряне; записът е атомарен и пази другите ключове. Непознати ключове се
+пропускат, липсващи или сгрешени стойности остават по подразбиране (поле по поле, със
+съобщение `Settings: …` в лентата на състоянието). Повреден файл → съобщение, стойности по
+подразбиране и `settings.json.bak` при следващия запис; програмата не пада.
 
 Няма материали, шаблони или профили в settings.json. Библиотеките с материали и видове
 са вградени (`data/materials/materials.csv`, `data/appearances/appearances.csv`) и се
@@ -693,6 +705,7 @@ Open), Esc. Записът върху съществуващ файл иска �
 | Елемент | Действие |
 |---|---|
 | **File** ▸ | New (Ctrl+N), Open... (Ctrl+O), Open Recent ▸, Save (Ctrl+S), Save As... (Ctrl+Shift+S), Save as Folder..., Export ▸ STL... / STEP... / GLB..., пътят на файла |
+| **View** ▸ | User Interface: отметки **Browser**, **Properties**, **Ribbon**, **Status Bar**, **ViewCube**, **Axis Triad**, **Minimize Ribbon**; **Clean Screen (Ctrl+0)**, **Full Screen (F11)**; страна на **Browser** и **Properties** (Left / Right); **Reset UI Layout**. Редът Quick Access остава видим винаги, затова оттук всичко се връща |
 | **Open**, **Save** | същото като в File |
 | **Undo**, **Redo** | подсказката показва какво (`Undo Drag (Ctrl+Z)`) |
 | **Rebuild** | Rebuild All: всички операции наново, без кеша; резултат в лентата на състоянието |
@@ -778,6 +791,13 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | Visibility | **Constraints** (F8/F9), **Degrees of Freedom** |
 | Navigate | **Home** (F6), **Look At** (редактираната/избраната скица), **Front** (от −Y), **Top** (от +Z), **Right** (от +X) |
 | Appearance | Visual Style (0.3), Section View (0.3) — предстоят; **Projection** ▸ Orthographic / Perspective / Perspective with Ortho Faces |
+| Windows | **User Interface** ▸ Browser / Properties / Ribbon / Status Bar / ViewCube / Axis Triad (натиснат = видим); **Clean Screen** (Ctrl+0); **Full Screen** (F11 извън скица); **Reset** (Reset UI Layout) |
+
+Лентата се свива до табовете с бутона `^` вдясно от табовете или с двоен клик върху
+активния таб (`v` я връща); свита, клик върху таб показва панелите му до избор на команда
+или клик другаде. Ръбовете на дървото, Properties и лентата на състоянието се влачат;
+размерите се помнят. Плаващите прозорци се разтягат (освен малките Offset Element, Adjust,
+Clear) и се отварят там, където са били; при по-малък екран се вкарват вътре.
 
 ### 9.3 Диалозите в Properties (кратко)
 
@@ -837,10 +857,11 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 - Лентата с предложения до избрана стена/ръб (New Sketch, Extrude/Press-Pull, Edit
   Feature, Edit Sketch, Look At; Fillet/Chamfer) заменя mini-toolbar на Inventor.
 - Един детайл на прозорец; другите документи в проекта само се виждат в дървото.
-- Опциите (освен езика) не се помнят между стартиранията.
+- Лентата се свива само до табовете (Inventor има още две междинни състояния); дървото и
+  Properties се закачат отляво или отдясно, но не плават; няма Navigation Bar.
 - Delete действа само в скица; операции се трият от дървото или Properties.
 - В Inventor F6 е Home; тук F6 е и Home, и Fit; Home може да се зададе от менюто на
-  ViewCube, но не се записва.
+  ViewCube и се помни между стартиранията.
 
 ---
 
