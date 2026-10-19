@@ -25,6 +25,7 @@
 pub mod appearance;
 pub mod blend;
 pub mod boolean;
+pub mod combine;
 pub mod draft;
 mod exact;
 pub mod export;
@@ -38,6 +39,7 @@ pub mod placement;
 pub mod revolve;
 pub mod select;
 pub mod shell;
+pub mod split;
 pub mod standards;
 pub mod work;
 
@@ -51,6 +53,7 @@ pub use blend::{
     VariableRadius,
 };
 pub use boolean::{Operation, Output};
+pub use combine::CombineFeature;
 pub use draft::{DraftFeature, DraftType, PullRef};
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, TargetRef};
 pub use hole::{
@@ -61,6 +64,7 @@ pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
 pub use shell::{FaceRef, ShellDirection, ShellFeature};
+pub use split::{SplitFeature, SplitMethod, SplitToolRef};
 pub use work::{LineRef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef};
 
 use crate::kernel::{BRep, KernelError, Plane, Point3, Real};
@@ -145,6 +149,10 @@ pub enum Feature {
     /// Thread: a cosmetic or modeled thread on a cylindrical face (format
     /// revision 6).
     Thread(ThreadFeature),
+    /// Combine: a base body with toolbodies (format revision 7).
+    Combine(CombineFeature),
+    /// Split: Split Face, Trim Solid, Split Solid (format revision 7).
+    Split(SplitFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -240,6 +248,8 @@ enum BuildStep<'a> {
     Pattern(&'a PatternFeature),
     Hole(&'a HoleFeature),
     Thread(&'a ThreadFeature),
+    Combine(&'a CombineFeature),
+    Split(&'a SplitFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -255,6 +265,8 @@ impl<'a> BuildStep<'a> {
             Feature::Pattern(p) => Self::Pattern(p),
             Feature::Hole(h) => Self::Hole(h),
             Feature::Thread(t) => Self::Thread(t),
+            Feature::Combine(c) => Self::Combine(c),
+            Feature::Split(sp) => Self::Split(sp),
         }
     }
 }
@@ -273,6 +285,8 @@ impl Feature {
             Feature::Pattern(p) => &p.id,
             Feature::Hole(h) => &h.id,
             Feature::Thread(t) => &t.id,
+            Feature::Combine(c) => &c.id,
+            Feature::Split(sp) => &sp.id,
         }
     }
 
@@ -289,6 +303,8 @@ impl Feature {
             Feature::Pattern(p) => &p.name,
             Feature::Hole(h) => &h.name,
             Feature::Thread(t) => &t.name,
+            Feature::Combine(c) => &c.name,
+            Feature::Split(sp) => &sp.name,
         }
     }
 
@@ -303,7 +319,8 @@ impl Feature {
             | Feature::Shell(_)
             | Feature::Draft(_)
             | Feature::Pattern(_) => false,
-            Feature::Hole(_) | Feature::Thread(_) => false,
+            Feature::Hole(_) | Feature::Thread(_) | Feature::Combine(_) => false,
+            Feature::Split(sp) => sp.method == SplitMethod::SplitSolid,
         }
     }
 
@@ -316,7 +333,8 @@ impl Feature {
             | Feature::Shell(_)
             | Feature::Draft(_)
             | Feature::Pattern(_) => None,
-            Feature::Thread(_) => None,
+            Feature::Thread(_) | Feature::Combine(_) => None,
+            Feature::Split(sp) => sp.sketch(),
             Feature::Hole(h) => (!h.sketch.is_empty()).then_some(h.sketch.as_str()),
             Feature::Extrude(e) => Some(&e.sketch),
             Feature::Revolve(r) => Some(&r.sketch),
@@ -581,6 +599,10 @@ pub struct PartDocument {
     /// copies of the definitions in use.
     #[serde(default, skip_serializing_if = "appearance::Looks::is_empty")]
     pub looks: appearance::Looks,
+    /// Bodies hidden in the graphics window, by persistent name (Combine's
+    /// kept toolbodies; a body's Visibility in the browser).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_bodies: Vec<String>,
     /// Parameters whose equation failed at the last evaluation.
     #[serde(skip)]
     pub param_errors: HashMap<String, String>,
@@ -744,6 +766,17 @@ impl PartDocument {
                     }
                 }
                 BuildStep::Blend(bl) if use_exact => exact::blend(bl, &body, &solids).map(Some),
+                BuildStep::Combine(c) if use_exact => combine::build_exact(c, &solids).map(Some),
+                BuildStep::Combine(c) => match combine::build_faceted(c, &mut body) {
+                    Ok(()) => Ok(None),
+                    Err(msg) => Err(exact::Fail::User(msg)),
+                },
+                BuildStep::Split(sp) if use_exact => {
+                    split::build_exact(sp, &body, &works, &self.sketches, &solids).map(Some)
+                }
+                BuildStep::Split(_) => Err(exact::Fail::User(
+                    "Split needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
                 BuildStep::Shell(sh) if use_exact => exact::shell(sh, &solids).map(Some),
                 BuildStep::Draft(dr) if use_exact => {
                     exact::draft(dr, &body, &works, &solids).map(Some)
@@ -1059,24 +1092,37 @@ impl PartDocument {
     }
 
     /// The solid bodies made by the features before index `k`, in order:
-    /// (persistent name, display name `SolidN`). Surface bodies are left out.
+    /// (persistent name, display name `SolidN`). Surface bodies are left out,
+    /// and so are toolbodies a Combine before `k` consumed (the numbers of
+    /// the others stay). Split Solid makes `<id>#2`.
     pub fn bodies_before(&self, k: usize) -> Vec<(String, String)> {
-        self.features[..k.min(self.features.len())]
+        let upto = &self.features[..k.min(self.features.len())];
+        let consumed: Vec<&String> = upto
             .iter()
+            .filter_map(|f| match f {
+                Feature::Combine(c) => Some(c.consumed()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        upto.iter()
             .filter(|f| f.creates_body())
-            .filter(|f| match f {
-                Feature::Extrude(e) => e.output == Output::Solid,
-                Feature::Revolve(r) => r.output == Output::Solid,
-                Feature::Box(_) => true,
+            .filter_map(|f| match f {
+                Feature::Extrude(e) => (e.output == Output::Solid).then(|| e.id.clone()),
+                Feature::Revolve(r) => (r.output == Output::Solid).then(|| r.id.clone()),
+                Feature::Box(b) => Some(b.id.clone()),
+                Feature::Split(sp) => Some(sp.new_body()),
                 Feature::Work(_)
                 | Feature::Blend(_)
                 | Feature::Shell(_)
                 | Feature::Draft(_)
-                | Feature::Pattern(_) => false,
-                Feature::Hole(_) | Feature::Thread(_) => false,
+                | Feature::Pattern(_)
+                | Feature::Combine(_) => None,
+                Feature::Hole(_) | Feature::Thread(_) => None,
             })
             .enumerate()
-            .map(|(n, f)| (f.id().to_owned(), format!("Solid{}", n + 1)))
+            .filter(|(_, id)| !consumed.contains(&id))
+            .map(|(n, id)| (id, format!("Solid{}", n + 1)))
             .collect()
     }
 
@@ -1202,6 +1248,12 @@ impl PartDocument {
                 (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
             }
             (Feature::Thread(o), Feature::Thread(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::Combine(o), Feature::Combine(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::Split(o), Feature::Split(n)) => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             _ => {
@@ -1376,6 +1428,64 @@ impl PartDocument {
             return Err(PartError::Feature(msg));
         }
         Ok(id)
+    }
+
+    /// **Combine** (id `Combine<N>`): the base body joined with, cut by or
+    /// intersected with the toolbodies. Kept toolbodies are hidden
+    /// (Inventor). On failure nothing changes.
+    pub fn add_combine(&mut self, mut def: CombineFeature) -> Result<String, PartError> {
+        def.validate().map_err(PartError::Feature)?;
+        let id = self.next_feature_id("Combine");
+        (def.id, def.name) = (id.clone(), id.clone());
+        let keep = def.keep_tools.then(|| def.tools.clone()).unwrap_or_default();
+        let before = (self.features.clone(), self.body.clone());
+        self.features.push(Feature::Combine(def));
+        self.regenerate()?;
+        if let Some(msg) = self.feature_health.get(&id).cloned() {
+            (self.features, self.body) = before;
+            self.regenerate()?;
+            return Err(PartError::Feature(msg));
+        }
+        for t in keep {
+            if !self.hidden_bodies.contains(&t) {
+                self.hidden_bodies.push(t);
+            }
+        }
+        Ok(id)
+    }
+
+    /// **Split** (id `Split<N>`): Split Face, Trim Solid or Split Solid. A
+    /// sketch tool is consumed (hidden unless Keep sketch visible; shared
+    /// when another feature uses it). On failure nothing changes.
+    pub fn add_split(&mut self, mut def: SplitFeature) -> Result<String, PartError> {
+        let id = self.next_feature_id("Split");
+        (def.id, def.name) = (id.clone(), id.clone());
+        let sketch = def.sketch().map(str::to_owned);
+        let visible = def.keep_sketch_visible;
+        let reused = sketch
+            .as_deref()
+            .is_some_and(|s| !self.consumers(s).is_empty());
+        let before = (self.features.clone(), self.body.clone());
+        self.features.push(Feature::Split(def));
+        self.regenerate()?;
+        if let Some(msg) = self.feature_health.get(&id).cloned() {
+            (self.features, self.body) = before;
+            self.regenerate()?;
+            return Err(PartError::Feature(msg));
+        }
+        if let Some(ps) = sketch.and_then(|s| self.sketches.iter_mut().find(|p| p.id == s)) {
+            if reused {
+                ps.shared = true;
+            } else if !visible {
+                ps.visible = false;
+            }
+        }
+        Ok(id)
+    }
+
+    /// Whether the body with persistent name `name` is shown.
+    pub fn body_visible(&self, name: &str) -> bool {
+        !self.hidden_bodies.iter().any(|h| h == name)
     }
 
     /// **Rectangular Pattern / Circular Pattern / Mirror**: adds the
@@ -1558,6 +1668,8 @@ fn pattern_sources<'t>(
             | Feature::Shell(_)
             | Feature::Draft(_)
             | Feature::Thread(_)
+            | Feature::Combine(_)
+            | Feature::Split(_)
             | Feature::Pattern(_) => format!(
                 "{} cannot be patterned on its own (pattern the solid)",
                 f.name()

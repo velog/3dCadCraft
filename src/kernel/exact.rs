@@ -1656,6 +1656,200 @@ pub fn moved(s: &ExactSolid, m: &nalgebra::Matrix4<Real>) -> Result<ExactSolid, 
     })
 }
 
+// ---------------------------------------------------------------- split ---
+
+/// What divides faces (Split Face, `docs/spec/2.13-combine-split.md`).
+#[derive(Clone, Debug)]
+pub enum SplitBy {
+    /// An unbounded plane.
+    Plane(Plane),
+    /// Sketch curves (chains of our segments in `plane`) swept along the
+    /// plane's normal, each extended past its ends.
+    Curves {
+        /// The sketch plane.
+        plane: Plane,
+        /// The chains, in sketch coordinates.
+        curves: Vec<Vec<Segment2>>,
+    },
+}
+
+/// Split Face (SolidCraft's `split_faces_with_map`): divides the faces
+/// `faces` (kernel indices) of `s` where the tool meets them; the solid is
+/// unchanged. Every piece of a divided face is named
+/// `<name>~<prefix>.<k>`, `k` counting the pieces from the back of `side`
+/// (signed distance of a point on the piece; without `side`, in face order).
+/// A listed face the tool misses is an error.
+pub fn split_faces(
+    s: &ExactSolid,
+    faces: &[usize],
+    tool: &SplitBy,
+    prefix: &str,
+    side: Option<&Plane>,
+) -> Result<ExactSolid, String> {
+    let pieces_of = |segs: &[Segment2]| -> Result<Vec<sg::Seg2>, String> {
+        let mut v = Vec::new();
+        for g in segs {
+            v.extend(seg2(g)?);
+        }
+        Ok(v)
+    };
+    let (body, origin) = match tool {
+        SplitBy::Plane(p) => {
+            let pl = plane_of(p)?;
+            guarded("split face", || {
+                sk::split_faces_with_map(&s.body, faces, &sk::SplitTool::Plane(pl))
+            })?
+        }
+        SplitBy::Curves { plane, curves } => {
+            let pl = plane_of(plane)?;
+            let curves = curves
+                .iter()
+                .map(|c| pieces_of(c))
+                .collect::<Result<Vec<_>, _>>()?;
+            guarded("split face", || {
+                sk::split_faces_with_map(
+                    &s.body,
+                    faces,
+                    &sk::SplitTool::Curves { plane: pl, curves },
+                )
+            })?
+        }
+    };
+    let mut out = ExactSolid {
+        name: s.name.clone(),
+        body,
+        face_names: Vec::new(),
+        profiles: s.profiles.clone(),
+    };
+    let n = out.body.face_count();
+    let samples = face_samples(&out).unwrap_or_default();
+    // Pieces of each source face, ordered along the side plane.
+    let mut by_source: HashMap<usize, Vec<(Real, usize)>> = HashMap::new();
+    for (i, &src) in origin.iter().enumerate().take(n) {
+        let h = match (side, samples.get(i).copied().flatten()) {
+            (Some(pl), Some(p)) => pl.signed_distance(&p),
+            _ => i as Real,
+        };
+        by_source.entry(src).or_default().push((h, i));
+    }
+    let mut names: Vec<Option<String>> = vec![None; n];
+    for (src, mut v) in by_source {
+        let orig = s.face_names.get(src).cloned().flatten();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let several = v.len() > 1;
+        for (k, (_, i)) in v.into_iter().enumerate() {
+            names[i] = match (&orig, several) {
+                (Some(o), true) => Some(format!("{o}~{prefix}.{}", k + 1)),
+                (Some(o), false) => Some(o.clone()),
+                (None, true) => Some(format!("{prefix}:Face.{}", k + 1)),
+                (None, false) => None,
+            };
+        }
+    }
+    out.face_names = names;
+    Ok(out)
+}
+
+/// Split Solid / Trim Solid by a plane (SolidCraft's `split_by_plane`):
+/// the parts behind (`.0`) and in front of (`.1`) the plane, along its
+/// normal; `None` where nothing is. The section faces are named
+/// `<back>:Cut` and `<front>:Cut`; every other face keeps its name (the
+/// pieces of one face in each part). Both parts keep the body's name.
+pub fn split_by_plane(
+    s: &ExactSolid,
+    plane: &Plane,
+    back: &str,
+    front: &str,
+) -> Result<(Option<ExactSolid>, Option<ExactSolid>), String> {
+    let pl = plane_of(plane)?;
+    let parts = guarded("split", || sk::split_by_plane(&s.body, &pl))?;
+    let (mut b, mut f) = (None, None);
+    for body in parts {
+        let m = guarded("measure", || sk::measure(&body))?;
+        let ahead = plane.signed_distance(&p3(m.centroid)) > 0.0;
+        let cut = if ahead { front } else { back };
+        let face_names = names_from(&body, &[s], &|_| None)
+            .into_iter()
+            .map(|n| n.or_else(|| Some(format!("{cut}:Cut"))))
+            .collect();
+        let part = ExactSolid {
+            name: s.name.clone(),
+            body,
+            face_names,
+            profiles: s.profiles.clone(),
+        };
+        if ahead {
+            f = Some(part);
+        } else {
+            b = Some(part);
+        }
+    }
+    Ok((b, f))
+}
+
+/// The display-triangle corners of every face (kernel face order), at a
+/// coarse tolerance: enough to tell which side of a tool a face lies on.
+pub fn face_corners(s: &ExactSolid) -> Result<Vec<Vec<Point3>>, String> {
+    let tol = (s.body.size() * 2e-3).max(1e-3);
+    let mesh = guarded("tessellate", || s.body.tessellate(tol))?;
+    let n = s.face_names.len().max(s.body.face_count());
+    let mut out: Vec<Vec<Point3>> = vec![Vec::new(); n];
+    for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+        if let (Some([a, b, c]), Some(v)) = (mesh.tri(t), out.get_mut(f as usize)) {
+            v.extend([p3(a), p3(b), p3(c)]);
+        }
+    }
+    Ok(out)
+}
+
+/// Like [`split_faces`], but faces the tool misses are left out (All
+/// Faces): the kernel names the first one it misses, which is dropped and
+/// the split tried again. `Ok(None)`: the tool misses every face.
+pub fn split_faces_lenient(
+    s: &ExactSolid,
+    faces: &[usize],
+    tool: &SplitBy,
+    prefix: &str,
+    side: Option<&Plane>,
+) -> Result<Option<ExactSolid>, String> {
+    let mut left = faces.to_vec();
+    while !left.is_empty() {
+        match split_faces(s, &left, tool, prefix, side) {
+            Ok(r) => return Ok(Some(r)),
+            Err(e) => {
+                let missed = e
+                    .split("does not cross face ")
+                    .nth(1)
+                    .and_then(|t| {
+                        t.chars()
+                            .take_while(char::is_ascii_digit)
+                            .collect::<String>()
+                            .parse::<usize>()
+                            .ok()
+                    });
+                match missed {
+                    Some(f) if left.contains(&f) => left.retain(|&x| x != f),
+                    _ if e.contains("does not cross the selected faces") => return Ok(None),
+                    _ => return Err(e),
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+impl ExactSolid {
+    /// Renames the faces whose names start with `from` to start with `to`
+    /// (a section face of the second part of a split).
+    pub fn rename_prefix(&mut self, from: &str, to: &str) {
+        for n in self.face_names.iter_mut().flatten() {
+            if let Some(rest) = n.strip_prefix(from) {
+                *n = format!("{to}{rest}");
+            }
+        }
+    }
+}
+
 // --------------------------------------------------------- to our B-rep ---
 
 /// Display tolerance (mm) of the exact kernel's triangles.
