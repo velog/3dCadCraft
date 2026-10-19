@@ -1382,7 +1382,15 @@ impl BRep {
     /// Axis-aligned box `(min, max)` around all vertices, or `None` for an
     /// empty model. Exact for polyhedra; curved faces may bulge beyond it.
     pub fn bounding_box(&self) -> Option<(Point3, Point3)> {
-        let mut pts = self.vertices.values().map(|v| v.point);
+        // Vertices alone miss curved faces' extent (a cylinder has one
+        // vertex per circle: Through All of a sketch through its axis found
+        // "no body"); the exact kernel's face triangles cover them.
+        let mesh_pts = self
+            .faces
+            .values()
+            .filter_map(|f| f.mesh.as_ref())
+            .flat_map(|m| m.positions.iter().copied());
+        let mut pts = self.vertices.values().map(|v| v.point).chain(mesh_pts);
         let first = pts.next()?;
         Some(pts.fold((first, first), |(lo, hi), p| (lo.inf(&p), hi.sup(&p))))
     }

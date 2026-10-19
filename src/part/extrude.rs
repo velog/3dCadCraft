@@ -440,23 +440,41 @@ impl ExtrudeFeature {
             }
             Extent::ThroughAll => {
                 let n = plane.normal.into_inner();
-                // The far corner of the body's bounding box in that direction.
-                let far = body.bounding_box().map_or(0.0, |(lo, hi)| {
-                    (0..8)
-                        .map(|i| {
-                            let c = crate::kernel::Point3::new(
-                                if i & 1 == 0 { lo.x } else { hi.x },
-                                if i & 2 == 0 { lo.y } else { hi.y },
-                                if i & 4 == 0 { lo.z } else { hi.z },
-                            );
-                            ((c - plane.origin).dot(&n) - s0) * sign
-                        })
-                        .fold(0.0, Real::max)
-                });
-                if far <= 1e-9 {
+                // The far corner of the body's bounding box in direction `sg`.
+                let far = |sg: Real| {
+                    body.bounding_box().map_or(0.0, |(lo, hi)| {
+                        (0..8)
+                            .map(|i| {
+                                let c = crate::kernel::Point3::new(
+                                    if i & 1 == 0 { lo.x } else { hi.x },
+                                    if i & 2 == 0 { lo.y } else { hi.y },
+                                    if i & 4 == 0 { lo.z } else { hi.z },
+                                );
+                                ((c - plane.origin).dot(&n) - s0) * sg
+                            })
+                            .fold(0.0, Real::max)
+                    })
+                };
+                // Symmetric / Asymmetric: through all on both sides of the
+                // sketch (Inventor), each side to its own far end.
+                if matches!(
+                    self.direction,
+                    ExtentDirection::Symmetric | ExtentDirection::Asymmetric
+                ) {
+                    let (up, down) = (far(1.0), far(-1.0));
+                    if up <= 1e-9 && down <= 1e-9 {
+                        return Err("Through All: there is no body on either side".into());
+                    }
+                    // A side without material still gets a sliver of depth,
+                    // so the levels stay ordered.
+                    let tiny = 1e-6 * (up + down);
+                    return Ok(two(up.max(tiny), down.max(tiny), tb));
+                }
+                let f = far(sign);
+                if f <= 1e-9 {
                     return Err("Through All: there is no body in that direction".into());
                 }
-                one(s0 + sign * far)
+                one(s0 + sign * f)
             }
         }
     }
