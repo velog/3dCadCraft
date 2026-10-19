@@ -1491,7 +1491,11 @@ impl PartDocument {
         def.validate().map_err(PartError::Feature)?;
         let id = self.next_feature_id("Combine");
         (def.id, def.name) = (id.clone(), id.clone());
-        let keep = def.keep_tools.then(|| def.tools.clone()).unwrap_or_default();
+        let keep = if def.keep_tools {
+            def.tools.clone()
+        } else {
+            Vec::new()
+        };
         self.insert_feature_checked(Feature::Combine(def))?;
         for t in keep {
             if !self.hidden_bodies.contains(&t) {

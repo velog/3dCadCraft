@@ -169,6 +169,10 @@ pub(super) fn add_part_meshes(g: &mut SceneGeometry, part: &PartDocument) {
     let looks = Resolver::new(part).face_looks();
     let fallback = (Appearance::fallback(), LookSource::Material);
     for (id, solid) in body.solids() {
+        // Hidden bodies (Combine's kept toolbodies, Visibility off).
+        if solid.name.as_deref().is_some_and(|n| !part.body_visible(n)) {
+            continue;
+        }
         let mesh = match body.tessellate_solid(id, &TessellationOptions::default()) {
             Ok(m) => m,
             Err(e) => {

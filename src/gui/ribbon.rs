@@ -72,6 +72,10 @@ pub enum Action {
     Shell,
     /// Face Draft: tilt faces against a pull direction.
     Draft,
+    /// Combine: a base body with toolbodies.
+    Combine,
+    /// Split: faces, or a solid in one or two.
+    Split,
     /// Rectangular Pattern of features or solids.
     RectPattern,
     /// Circular Pattern of features or solids.
@@ -429,8 +433,20 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         "Thread: click a cylindrical face near the end the thread starts at (cosmetic or modeled)",
                     ),
                     todo(Icon::SlotFeature, "Slot", None, "2.3"),
-                    todo(Icon::Combine, "Combine", None, "2.13"),
-                    todo(Icon::SplitBody, "Split", None, "2.13"),
+                    ready(
+                        Icon::Combine,
+                        "Combine",
+                        None,
+                        Action::Combine,
+                        "Combine: join, cut or intersect a base body with toolbodies (multi-body parts)",
+                    ),
+                    ready(
+                        Icon::SplitBody,
+                        "Split",
+                        None,
+                        Action::Split,
+                        "Split: split faces, trim a solid, or split it in two (a plane or a sketch)",
+                    ),
                 ],
             ),
             panel(

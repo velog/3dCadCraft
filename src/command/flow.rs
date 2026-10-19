@@ -394,6 +394,93 @@ pub fn shell_selectors(s: &crate::part::ShellFeature) -> Vec<Selector> {
     }]
 }
 
+const BODIES: &[PickKind] = &[PickKind::Body];
+const SPLIT_TOOLS: &[PickKind] = &[PickKind::Plane, PickKind::Sketch];
+
+/// Prompts of the Combine and Split selectors.
+pub mod body_prompts {
+    /// Combine: Base.
+    pub const BASE: &str = "Select the base body";
+    /// Combine: Toolbodies.
+    pub const TOOLS: &str = "Select the toolbodies (a second click drops one)";
+    /// Split: the tool.
+    pub const TOOL: &str = "Select the split tool (a work or origin plane, or a sketch)";
+    /// Split Face: the faces.
+    pub const FACES: &str = "Select the faces to split";
+    /// Split: the solid.
+    pub const SOLID: &str = "Select the solid";
+}
+
+/// The selectors of Combine (`docs/spec/2.13-combine-split.md`): Base, then
+/// Toolbodies.
+pub fn combine_selectors(c: &crate::part::CombineFeature) -> Vec<Selector> {
+    vec![
+        Selector {
+            key: "base",
+            label: "Base",
+            prompt: body_prompts::BASE,
+            accepts: BODIES,
+            single: true,
+            required: true,
+            count: usize::from(!c.base.is_empty()),
+            color: colors::PLANE,
+        },
+        Selector {
+            key: "tools",
+            label: "Toolbodies",
+            prompt: body_prompts::TOOLS,
+            accepts: BODIES,
+            single: false,
+            required: true,
+            count: c.tools.len(),
+            color: colors::FACES,
+        },
+    ]
+}
+
+/// The selectors of Split for its method: the tool, then the faces (Split
+/// Face) or the solid (required when the part has `many` solids).
+pub fn split_selectors(s: &crate::part::SplitFeature, many: bool) -> Vec<Selector> {
+    use crate::part::SplitMethod;
+    let tool = Selector {
+        key: "tool",
+        label: "Split Tool",
+        prompt: body_prompts::TOOL,
+        accepts: SPLIT_TOOLS,
+        single: true,
+        required: true,
+        count: usize::from(s.tool.is_some()),
+        color: colors::PLANE,
+    };
+    let solid = Selector {
+        key: "solid",
+        label: "Solid",
+        prompt: body_prompts::SOLID,
+        accepts: BODIES,
+        single: true,
+        required: many,
+        count: usize::from(!s.solid.is_empty()),
+        color: colors::EDGES,
+    };
+    match s.method {
+        SplitMethod::SplitFace if s.all_faces => vec![tool, solid],
+        SplitMethod::SplitFace => vec![
+            tool,
+            Selector {
+                key: "faces",
+                label: "Faces",
+                prompt: body_prompts::FACES,
+                accepts: FACES,
+                single: false,
+                required: true,
+                count: s.faces.len(),
+                color: colors::FACES,
+            },
+        ],
+        SplitMethod::TrimSolid | SplitMethod::SplitSolid => vec![tool, solid],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

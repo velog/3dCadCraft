@@ -558,7 +558,10 @@ fn combine_split_r13() -> PartDocument {
     )
     .unwrap();
     let r = sk.regions();
-    let pr = vec![cadcraft3d::part::ProfileRef::of(&r[0], r[0].interior_point())];
+    let pr = vec![cadcraft3d::part::ProfileRef::of(
+        &r[0],
+        r[0].interior_point(),
+    )];
     let tool = part
         .add_extrude(i, cadcraft3d::part::ExtrudeFeature::new(pr, 10.0))
         .unwrap();
@@ -571,23 +574,23 @@ fn combine_split_r13() -> PartDocument {
     s.all_faces = true;
     s.solid = "Box1".into();
     let wp = part
-        .add_work(cadcraft3d::part::WorkFeature::new(cadcraft3d::part::WorkDef::Plane(
-            cadcraft3d::part::WorkPlaneDef::Offset {
+        .add_work(cadcraft3d::part::WorkFeature::new(
+            cadcraft3d::part::WorkDef::Plane(cadcraft3d::part::WorkPlaneDef::Offset {
                 base: PlaneRef::Origin(OriginPlane::YZ),
                 distance: 20.0,
-            },
-        )))
+            }),
+        ))
         .unwrap();
     s.tool = Some(SplitToolRef::Plane(PlaneRef::Work(wp)));
     part.add_split(s).unwrap();
     let mut s = SplitFeature::new(SplitMethod::SplitSolid);
     let wp = part
-        .add_work(cadcraft3d::part::WorkFeature::new(cadcraft3d::part::WorkDef::Plane(
-            cadcraft3d::part::WorkPlaneDef::Offset {
+        .add_work(cadcraft3d::part::WorkFeature::new(
+            cadcraft3d::part::WorkDef::Plane(cadcraft3d::part::WorkPlaneDef::Offset {
                 base: PlaneRef::Origin(OriginPlane::XY),
                 distance: 5.0,
-            },
-        )))
+            }),
+        ))
         .unwrap();
     s.tool = Some(SplitToolRef::Plane(PlaneRef::Work(wp)));
     s.solid = "Box1".into();

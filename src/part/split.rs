@@ -11,7 +11,7 @@
 //! body's name, the front part is the new body `<id>#2`.
 //!
 //! Not patternable on its own (Inventor repeats it only within a patterned
-//! solid), so it records no [`super::pattern::ToolSet`].
+//! solid), so it records no `pattern::ToolSet`.
 
 use serde::{Deserialize, Serialize};
 
@@ -163,7 +163,10 @@ fn seg_point(g: &Segment2, s: Real) -> crate::sketch::Point2 {
             let s = if *reversed { 1.0 - s } else { s };
             let n = points.len().saturating_sub(1);
             if n == 0 {
-                return points.first().copied().unwrap_or_else(crate::sketch::Point2::origin);
+                return points
+                    .first()
+                    .copied()
+                    .unwrap_or_else(crate::sketch::Point2::origin);
             }
             let x = (s.clamp(0.0, 1.0) * n as Real).min(n as Real - 1e-12);
             let k = x.floor() as usize;
@@ -268,10 +271,7 @@ pub fn sketch_chains(ps: &super::PartSketch) -> Vec<Vec<Segment2>> {
     while let Some((seg, s, mut t)) = open.pop() {
         let mut chain = vec![seg];
         let start = s;
-        loop {
-            let Some(k) = open.iter().position(|(_, a, b)| *a == t || *b == t) else {
-                break;
-            };
+        while let Some(k) = open.iter().position(|(_, a, b)| *a == t || *b == t) {
             let (g, a, b) = open.remove(k);
             if a == t {
                 chain.push(g);
@@ -326,7 +326,10 @@ pub fn resolve_tool(
             }
             let chains = sketch_chains(ps);
             if chains.is_empty() {
-                return Err(format!("the sketch {} has no curves to split with", ps.name));
+                return Err(format!(
+                    "the sketch {} has no curves to split with",
+                    ps.name
+                ));
             }
             let plane = ps.sketch.plane.clone();
             let line = match chains.as_slice() {
@@ -484,12 +487,12 @@ pub(super) fn build_exact(
             }
             for (i, faces) in groups {
                 let idx: Vec<usize> = faces.iter().map(|(f, _)| *f).collect();
-                out[i] = exact::split_faces(&out[i], &idx, &by, &sp.id, side.as_ref()).map_err(
-                    |e| {
+                out[i] =
+                    exact::split_faces(&out[i], &idx, &by, &sp.id, side.as_ref()).map_err(|e| {
                         // Name the face the tool misses.
-                        let missed = faces.iter().find(|(f, _)| {
-                            e.contains(&format!("does not cross face {f}"))
-                        });
+                        let missed = faces
+                            .iter()
+                            .find(|(f, _)| e.contains(&format!("does not cross face {f}")));
                         match missed {
                             Some((_, n)) => {
                                 Fail::User(format!("the tool does not cross the face {n}"))
@@ -499,8 +502,7 @@ pub(super) fn build_exact(
                             }
                             None => kernel(e),
                         }
-                    },
-                )?;
+                    })?;
             }
             Ok(out)
         }
@@ -640,7 +642,10 @@ fn orient_ccw(c: &[Segment2]) -> Vec<Segment2> {
     let mut area = 0.0;
     for g in c {
         for k in 0..32 {
-            let (p, q) = (seg_point(g, k as Real / 32.0), seg_point(g, (k + 1) as Real / 32.0));
+            let (p, q) = (
+                seg_point(g, k as Real / 32.0),
+                seg_point(g, (k + 1) as Real / 32.0),
+            );
             area += p.x * q.y - q.x * p.y;
         }
     }
@@ -668,7 +673,12 @@ struct Piece {
     pts: Vec<Point3>,
 }
 
-fn piece_of(s: &ExactSolid, corners: &[Vec<Point3>], f: usize, pull: Vector3) -> Result<Piece, String> {
+fn piece_of(
+    s: &ExactSolid,
+    corners: &[Vec<Point3>],
+    f: usize,
+    pull: Vector3,
+) -> Result<Piece, String> {
     let pts = corners
         .get(f)
         .filter(|p| p.len() >= 3)
@@ -689,7 +699,10 @@ fn piece_of(s: &ExactSolid, corners: &[Vec<Point3>], f: usize, pull: Vector3) ->
         .map(|p| (p - c).norm())
         .fold(0.0, Real::max)
         .max(1e-6);
-    if pts.iter().any(|p| (p - c).dot(&n).abs() > 1e-6 * size.max(1.0)) {
+    if pts
+        .iter()
+        .any(|p| (p - c).dot(&n).abs() > 1e-6 * size.max(1.0))
+    {
         return Err("not supported yet: drafting a piece of a curved face".into());
     }
     // The normal pointing out of the material.

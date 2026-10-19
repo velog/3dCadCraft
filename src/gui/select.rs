@@ -88,7 +88,7 @@ impl CadCraftApp {
     }
 
     /// A visible sketch with a curve under the cursor.
-    fn sketch_under(&self, p: egui::Pos2, rect: egui::Rect) -> Option<usize> {
+    pub(super) fn sketch_under(&self, p: egui::Pos2, rect: egui::Rect) -> Option<usize> {
         self.part().sketches.iter().enumerate().find_map(|(i, ps)| {
             (ps.visible
                 && overlay::pick_entity(&self.camera, rect, &ps.sketch, p, overlay::CURVE_SNAP_PX)

@@ -32,6 +32,8 @@ enum BrowserCmd {
     Look(crate::part::appearance::LookTarget, Option<String>),
     /// Material → … on a body.
     BodyMaterial(String, Option<String>),
+    /// Visibility of a body (persistent name).
+    BodyVisible(String, bool),
     /// Suppress (true) / Unsuppress Features.
     Suppress(usize, bool),
     /// Move the End of Part so that this many features are built.
@@ -251,6 +253,7 @@ impl CadCraftApp {
             }
             BrowserCmd::Look(t, a) => self.assign_appearance(&[t], a.as_deref()),
             BrowserCmd::BodyMaterial(b, m) => self.assign_material(&[b], m.as_deref()),
+            BrowserCmd::BodyVisible(b, v) => self.set_body_visible(&b, v),
             BrowserCmd::Share(i, on) => {
                 self.checkpoint(if on { "Share Sketch" } else { "Unshare Sketch" });
                 let part = self.part_mut();
@@ -317,16 +320,28 @@ impl CadCraftApp {
                     })
                     .collect();
                 labels.sort();
+                labels.dedup();
                 for (label, id) in labels {
                     ui.horizontal(|ui| {
                         tree_icon(ui, Icon::Part);
+                        let shown = part.body_visible(&id);
+                        let text = if shown {
+                            RichText::new(label)
+                        } else {
+                            RichText::new(label).weak()
+                        };
                         let r = ui
-                            .selectable_label(self.selection == Selection::Body, label)
+                            .selectable_label(self.selection == Selection::Body, text)
                             .on_hover_text(format!("Created by {id}"));
                         if r.clicked() {
                             cmds.push(BrowserCmd::Select(Selection::Body));
                         }
                         r.context_menu(|ui| {
+                            let mut v = shown;
+                            if ui.checkbox(&mut v, "Visibility").clicked() {
+                                cmds.push(BrowserCmd::BodyVisible(id.clone(), v));
+                                ui.close();
+                            }
                             if let Some(m) = self.material_submenu(ui) {
                                 cmds.push(BrowserCmd::BodyMaterial(id.clone(), m));
                                 ui.close();
@@ -694,6 +709,17 @@ impl CadCraftApp {
                 },
                 w.def.method().to_owned(),
             ),
+            Feature::Combine(c) => (
+                Icon::Combine,
+                format!(
+                    "{} of {} with {} toolbody(ies){}",
+                    c.operation.label(),
+                    c.base,
+                    c.tools.len(),
+                    if c.keep_tools { ", kept" } else { "" }
+                ),
+            ),
+            Feature::Split(sp) => (Icon::SplitBody, sp.method.label().to_owned()),
         };
         // The box is the body (its size is in the body's properties).
         let (selected, select) = match f {
@@ -880,6 +906,14 @@ impl CadCraftApp {
         }
         if self.draft_draft.is_some() {
             self.draft_dialog(ui);
+            return;
+        }
+        if self.combine_draft.is_some() {
+            self.combine_dialog(ui);
+            return;
+        }
+        if self.split_draft.is_some() {
+            self.split_dialog(ui);
             return;
         }
         if self.pattern_draft.is_some() {
@@ -1902,6 +1936,10 @@ impl CadCraftApp {
             self.draft_properties(ui, k, d.clone());
             return;
         }
+        if matches!(f, Feature::Combine(_) | Feature::Split(_)) {
+            self.body_cmd_properties(ui, k);
+            return;
+        }
         if let Feature::Pattern(p) = &f {
             self.pattern_properties(ui, k, p.clone());
             return;
@@ -1961,7 +1999,9 @@ impl CadCraftApp {
                 | Feature::Draft(_)
                 | Feature::Pattern(_)
                 | Feature::Hole(_)
-                | Feature::Thread(_) => {}
+                | Feature::Thread(_)
+                | Feature::Combine(_)
+                | Feature::Split(_) => {}
             }
         });
         let table = self.part().parameter_table();
@@ -2023,7 +2063,9 @@ impl CadCraftApp {
             | Feature::Draft(_)
             | Feature::Pattern(_)
             | Feature::Hole(_)
-            | Feature::Thread(_) => {}
+            | Feature::Thread(_)
+            | Feature::Combine(_)
+            | Feature::Split(_) => {}
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
@@ -4290,6 +4332,10 @@ impl CadCraftApp {
                         "Thread: set the size and the length, then OK (another click picks another face)"
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.combine_draft.is_some() || self.split_draft.is_some() => {
+                    let text = self.command_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.draft_draft.is_some() => {
                     let text = self.command_prompt().unwrap_or_default();

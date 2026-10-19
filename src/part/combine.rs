@@ -12,7 +12,7 @@
 //!
 //! Not patternable on its own: Inventor repeats a Combine only as part of a
 //! patterned solid (pattern the solid instead), so it records no
-//! [`super::pattern::ToolSet`].
+//! `pattern::ToolSet`.
 
 use serde::{Deserialize, Serialize};
 
@@ -113,10 +113,7 @@ fn find(cur: &[ExactSolid], name: &str) -> Option<usize> {
 /// The exact build: the base combined with each tool in turn; consumed
 /// tools leave the list. User errors are the feature's health; a kernel
 /// failure is `Fail::Kernel` (the part is rebuilt faceted).
-pub(super) fn build_exact(
-    c: &CombineFeature,
-    cur: &[ExactSolid],
-) -> Result<Vec<ExactSolid>, Fail> {
+pub(super) fn build_exact(c: &CombineFeature, cur: &[ExactSolid]) -> Result<Vec<ExactSolid>, Fail> {
     c.validate().map_err(Fail::User)?;
     let mut out = cur.to_vec();
     let b = find(&out, &c.base)
@@ -138,9 +135,7 @@ pub(super) fn build_exact(
                 }
                 exact::boolean(&base, tool, ExactOp::Cut)
                     .map_err(|e| Fail::Kernel(format!("Cut failed: {e}")))?
-                    .ok_or_else(|| {
-                        Fail::User("Cut: nothing is left of the base body".into())
-                    })?
+                    .ok_or_else(|| Fail::User("Cut: nothing is left of the base body".into()))?
             }
             Operation::Intersect => {
                 let r = if exact::meets(&base, tool) {
@@ -155,17 +150,17 @@ pub(super) fn build_exact(
                     ))
                 })?
             }
-            Operation::NewSolid => return Err(Fail::User("New Solid is not an operation of Combine".into())),
+            Operation::NewSolid => {
+                return Err(Fail::User(
+                    "New Solid is not an operation of Combine".into(),
+                ));
+            }
         };
         // The result is the base (its name, so its appearance).
         base.name = Some(c.base.clone());
     }
     out[b] = base;
-    out.retain(|s| {
-        s.name
-            .as_ref()
-            .is_none_or(|n| !c.consumed().contains(n))
-    });
+    out.retain(|s| s.name.as_ref().is_none_or(|n| !c.consumed().contains(n)));
     Ok(out)
 }
 
@@ -191,7 +186,8 @@ pub(super) fn build_faceted(c: &CombineFeature, body: &mut BRep) -> Result<(), S
         return Err(format!("the base body {} no longer exists", c.base));
     }
     for t in &c.tools {
-        let tid = solid_named(&tools, t).ok_or_else(|| format!("the toolbody {t} no longer exists"))?;
+        let tid =
+            solid_named(&tools, t).ok_or_else(|| format!("the toolbody {t} no longer exists"))?;
         let bid = solid_named(&trial, &c.base)
             .ok_or_else(|| format!("{}: nothing is left of the base body", c.operation.label()))?;
         let made = trial.boolean(bid, &tools, tid, kop).map_err(|e| {

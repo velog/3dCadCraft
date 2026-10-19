@@ -230,7 +230,12 @@ fn combine_keeps_the_base_appearance() {
     assert!(!looks.is_empty());
     // Every face of the result (the tool's faces too) is blue.
     for (f, (look, _)) in &looks {
-        assert_eq!(look.name, "ABS - Blue", "{:?}", part.body.face(*f).and_then(|x| x.name.clone()));
+        assert_eq!(
+            look.name,
+            "ABS - Blue",
+            "{:?}",
+            part.body.face(*f).and_then(|x| x.name.clone())
+        );
     }
 }
 
@@ -305,7 +310,9 @@ fn combine_then_fillet_and_shell() {
         let _ = fid;
         if let Some(n) = &f.name
             && n != &topa
-            && f.mesh.as_ref().is_some_and(|m| m.positions.iter().all(|p| (p.z - 20.0).abs() < 1e-6))
+            && f.mesh
+                .as_ref()
+                .is_some_and(|m| m.positions.iter().all(|p| (p.z - 20.0).abs() < 1e-6))
         {
             sh.remove.push(face_ref(&part, n, [55.0, 15.0, 20.0]));
         }
@@ -400,8 +407,11 @@ fn split_solid_by_a_sketch_line() {
     // x < 10 (30 wide), the back x > 10 (10 wide).
     let mut part = centred();
     let s = line_sketch(&mut part, (10.0, -40.0), (10.0, 40.0));
-    part.add_split(split(SplitMethod::SplitSolid, SplitToolRef::Sketch(s.clone())))
-        .unwrap();
+    part.add_split(split(
+        SplitMethod::SplitSolid,
+        SplitToolRef::Sketch(s.clone()),
+    ))
+    .unwrap();
     check(&part, 24000.0, 1e-6);
     close(vol_of(&part, "Extrusion1"), 6000.0, 1e-6);
     close(vol_of(&part, "Split1#2"), 18000.0, 1e-6);
@@ -476,12 +486,18 @@ fn split_face_all_faces_and_names() {
     // The solid is unchanged; the four side faces are in two pieces each.
     check(&part, 24000.0, 1e-6);
     assert_eq!(part.body.faces().count(), before + 4);
-    let names: Vec<String> = part.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
+    let names: Vec<String> = part
+        .body
+        .faces()
+        .filter_map(|(_, f)| f.name.clone())
+        .collect();
     let pieces = names.iter().filter(|n| n.contains("~Split1.")).count();
     assert_eq!(pieces, 8, "{names:?}");
     // `.1` is below the plane (its back), `.2` above.
     for (_, f) in part.body.faces() {
-        let (Some(n), Some(m)) = (&f.name, &f.mesh) else { continue };
+        let (Some(n), Some(m)) = (&f.name, &f.mesh) else {
+            continue;
+        };
         if n.ends_with("~Split1.1") {
             assert!(m.positions.iter().all(|p| p.z <= 10.0 + 1e-6), "{n}");
         }
@@ -577,8 +593,17 @@ fn split_face_then_shell_without_one_piece() {
             let v = volume(&part);
             println!("split face + shell: {v}");
             assert!(part.feature_health.is_empty());
-            // Between a closed shell (7152 + top wall) and an open one.
-            assert!(v > 24000.0 - 36.0 * 26.0 * 18.0 - 1.0 && v < 24000.0 - 36.0 * 26.0 * 16.0 + 1.0, "{v}");
+            // Right: 24000 − 36·26·16 − 18·26·2 = 8088 (the right half of
+            // the top stays). Known gap: SolidCraft's shell of a convex
+            // body opens the whole plane of a removed face, so the whole
+            // top opens (7152). Both are accepted until that is fixed
+            // (docs/spec/2.13-combine-split.md, gaps).
+            let right = 24000.0 - 36.0 * 26.0 * 16.0 - 18.0 * 26.0 * 2.0;
+            let whole_top = 24000.0 - 36.0 * 26.0 * 18.0;
+            assert!(
+                (v - right).abs() < 1.0 || (v - whole_top).abs() < 1.0,
+                "{v}"
+            );
         }
         // A kernel refusal is the feature's error, the part unchanged.
         Err(e) => {
@@ -594,12 +619,11 @@ fn split_solid_then_fillet_a_section_edge() {
     part.add_split(split(SplitMethod::SplitSolid, origin(OriginPlane::YZ)))
         .unwrap();
     // The top edge of the front part's section (x = 0, z = 20, along y).
-    let edges: Vec<EdgeRef> = edges_where(&part, |p| {
-        p[0].abs() < 1e-6 && (p[2] - 20.0).abs() < 1e-6
-    })
-    .into_iter()
-    .filter(|e| e.faces.iter().any(|f| f == "Split1#2:Cut"))
-    .collect();
+    let edges: Vec<EdgeRef> =
+        edges_where(&part, |p| p[0].abs() < 1e-6 && (p[2] - 20.0).abs() < 1e-6)
+            .into_iter()
+            .filter(|e| e.faces.iter().any(|f| f == "Split1#2:Cut"))
+            .collect();
     assert_eq!(edges.len(), 1, "{edges:?}");
     part.add_blend(BlendFeature::fillet(edges, 2.0)).unwrap();
     check(&part, 24000.0 - round_loss(2.0) * 30.0, 1e-4);
@@ -610,11 +634,17 @@ fn split_solid_then_fillet_a_section_edge() {
 fn split_a_shelled_box() {
     let mut part = plate(40.0, 30.0, 20.0);
     let t = top(&part, 20.0);
-    shell(&mut part, &[(&t, [20.0, 15.0, 20.0])], 2.0, ShellDirection::Inside);
+    shell(
+        &mut part,
+        &[(&t, [20.0, 15.0, 20.0])],
+        2.0,
+        ShellDirection::Inside,
+    );
     let shelled = 24000.0 - 36.0 * 26.0 * 18.0;
     check(&part, shelled, 1e-6);
     let tool = offset_plane(&mut part, OriginPlane::YZ, 20.0);
-    part.add_split(split(SplitMethod::SplitSolid, tool)).unwrap();
+    part.add_split(split(SplitMethod::SplitSolid, tool))
+        .unwrap();
     check(&part, shelled, 1e-6);
     close(vol_of(&part, "Extrusion1"), shelled / 2.0, 1e-6);
     close(vol_of(&part, "Split1#2"), shelled / 2.0, 1e-6);
@@ -644,7 +674,8 @@ fn split_across_a_chamfer_cone_keeps_the_volume() {
             None => origin(plane),
             Some(z) => offset_plane(&mut part, plane, z),
         };
-        part.add_split(split(SplitMethod::SplitSolid, tool)).unwrap();
+        part.add_split(split(SplitMethod::SplitSolid, tool))
+            .unwrap();
         let v = volumes(&part);
         let sum: Real = v.iter().map(|x| x.1).sum();
         println!("#1691 {plane:?} {z:?}: {v:?}, sum {sum} vs {whole}");
@@ -712,7 +743,11 @@ fn split_face_by_an_open_chain() {
     let top = face_where(&part, |p| (p.z - 20.0).abs() < 1e-6);
     let before = part.body.faces().count();
     let j = sketch_on(&mut part, &top, |sk, at| {
-        let (a, b, c) = (at(-30.0, 0.0, 20.0), at(0.0, 0.0, 20.0), at(0.0, 30.0, 20.0));
+        let (a, b, c) = (
+            at(-30.0, 0.0, 20.0),
+            at(0.0, 0.0, 20.0),
+            at(0.0, 30.0, 20.0),
+        );
         let l1 = sk.add_line(a, b);
         let l2 = sk.add_line(b, c);
         // Share the corner point.
@@ -759,4 +794,31 @@ fn combine_and_split_save_and_load() {
     assert_eq!(p.hidden_bodies, part.hidden_bodies);
     assert_eq!(p.features, part.features);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A U (a base 40×30×10 with two legs 10×30×10, joined by Combine) split
+/// across its legs at z = 15: the front part is one body of two lumps.
+#[test]
+fn split_a_u_across_its_legs() {
+    let mut part = PartDocument::default();
+    let a = block(&mut part, 0.0, 0.0, 40.0, 30.0, 10.0);
+    let b = block(&mut part, 0.0, 0.0, 10.0, 30.0, 20.0);
+    let c = block(&mut part, 30.0, 0.0, 40.0, 30.0, 20.0);
+    part.add_combine(combine(&a, &[&b, &c], Operation::Join, false))
+        .unwrap();
+    check(&part, 18000.0, 1e-6);
+    let t = offset_plane(&mut part, OriginPlane::XY, 15.0);
+    part.add_split(split(SplitMethod::SplitSolid, t)).unwrap();
+    check(&part, 18000.0, 1e-6);
+    assert_eq!(part.exact_bodies.0.len(), 2);
+    close(vol_of(&part, &a), 15000.0, 1e-6);
+    close(vol_of(&part, "Split1#2"), 3000.0, 1e-6);
+    let lumps = part
+        .exact_bodies
+        .0
+        .iter()
+        .find(|b| b.name.as_deref() == Some("Split1#2"))
+        .and_then(|b| b.measure_full().ok())
+        .map(|m| m.lumps);
+    assert_eq!(lumps, Some(2));
 }

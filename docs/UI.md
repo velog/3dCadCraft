@@ -163,7 +163,7 @@
 | Enter или интервал (без активна команда) | повтаря последната команда (в Face Draft / Shell Enter е Continue / OK) |
 | БГ (долу вдясно) | подсказки на български |
 
-### В отворена команда (Face Draft, Shell)
+### В отворена команда (Face Draft, Shell, Combine, Split)
 
 Както в панелите на Inventor ([spec/0-ui.md §4.1](spec/0-ui.md)):
 

@@ -2080,11 +2080,26 @@ pub fn split_by_plane(
     front: &str,
 ) -> Result<(Option<ExactSolid>, Option<ExactSolid>), String> {
     let pl = plane_of(plane)?;
-    let parts = guarded("split", || sk::split_by_plane(&s.body, &pl))?;
+    // SolidCraft's `split_body` imprints the section (no Boolean: ~10× faster
+    // through rounds); bodies with voids or a plane along a face go through
+    // the half-space Booleans of `split_by_plane`.
+    let parts = match guarded("split", || {
+        sk::split_body(&s.body, &sk::SplitTool::Plane(pl))
+    }) {
+        Ok(v) if v.len() > 1 => v,
+        _ => guarded("split", || sk::split_by_plane(&s.body, &pl))?,
+    };
     let (mut b, mut f) = (None, None);
     for body in parts {
-        let m = guarded("measure", || sk::measure(&body))?;
-        let ahead = plane.signed_distance(&p3(m.centroid)) > 0.0;
+        // The side: the edge midpoint farthest from the plane (a part lies
+        // on one side; measuring its volume took 0.7 s through rounds).
+        let tol = (body.size() * 1e-2).max(1e-3);
+        let edges = guarded("edges", || body.edges(tol))?;
+        let ahead = edges
+            .iter()
+            .map(|e| plane.signed_distance(&p3(e.mid)))
+            .max_by(|x, y| x.abs().total_cmp(&y.abs()))
+            .is_some_and(|d| d > 0.0);
         let cut = if ahead { front } else { back };
         let face_names = names_from(&body, &[s], &|_| None)
             .into_iter()
@@ -2096,11 +2111,20 @@ pub fn split_by_plane(
             face_names,
             profiles: s.profiles.clone(),
         };
-        if ahead {
-            f = Some(part);
-        } else {
-            b = Some(part);
-        }
+        let slot = if ahead { &mut f } else { &mut b };
+        *slot = Some(match slot.take() {
+            None => part,
+            // Several pieces on one side (a U cut across its legs): one
+            // body of several lumps.
+            Some(prev) => {
+                let both = [prev, part];
+                match union_apart(&both)? {
+                    Some(u) => u,
+                    None => boolean(&both[0], &both[1], ExactOp::Union)?
+                        .ok_or_else(|| "split: a part came out empty".to_owned())?,
+                }
+            }
+        });
     }
     Ok((b, f))
 }
@@ -2135,16 +2159,13 @@ pub fn split_faces_lenient(
         match split_faces(s, &left, tool, prefix, side) {
             Ok(r) => return Ok(Some(r)),
             Err(e) => {
-                let missed = e
-                    .split("does not cross face ")
-                    .nth(1)
-                    .and_then(|t| {
-                        t.chars()
-                            .take_while(char::is_ascii_digit)
-                            .collect::<String>()
-                            .parse::<usize>()
-                            .ok()
-                    });
+                let missed = e.split("does not cross face ").nth(1).and_then(|t| {
+                    t.chars()
+                        .take_while(char::is_ascii_digit)
+                        .collect::<String>()
+                        .parse::<usize>()
+                        .ok()
+                });
                 match missed {
                     Some(f) if left.contains(&f) => left.retain(|&x| x != f),
                     _ if e.contains("does not cross the selected faces") => return Ok(None),
