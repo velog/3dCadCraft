@@ -969,6 +969,18 @@ pub fn shell(
                     FaceOrigin::Offset { face, .. } => Some(inner_name(*face)),
                     _ => None,
                 });
+                // Walls the history does not trace (a non-convex body's
+                // cavity): numbered in face order, never unnamed.
+                let mut n = 0usize;
+                let face_names = face_names
+                    .into_iter()
+                    .map(|f| {
+                        f.or_else(|| {
+                            n += 1;
+                            Some(format!("{prefix}:Inner:{n}"))
+                        })
+                    })
+                    .collect();
                 return Ok(ExactSolid {
                     name: s.name.clone(),
                     body,
@@ -2353,6 +2365,9 @@ mod tests {
         let outer = 24_000.0 - 4.0 * (25.0 - PI * 25.0 / 4.0) * 20.0;
         let inner = (36.0 * 26.0 - 4.0 * (9.0 - PI * 9.0 / 4.0)) * 18.0;
         check_shell(&s, outer - inner);
+        // Every face named (rule 2), also walls the history does not trace.
+        assert!(s.names().iter().all(Option::is_some), "{:?}", s.names());
+        assert!(s.names().iter().flatten().any(|n| n.starts_with("Shell1:Inner")));
     }
 
     #[test]

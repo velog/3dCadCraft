@@ -2,7 +2,8 @@
 
 Справочникът описва графичния интерфейс **такъв, какъвто е в кода** (`src/gui/*.rs`) към
 2026-10-19. Имената на командите и опциите са на английски, както в Inventor. Където
-`docs/UI.md` казва друго, важи кодът; разликите са събрани в последния раздел.
+`docs/UI.md` казва друго, важи кодът (разликите, намерени при написването, са поправени в
+UI.md на 2026-10-19; виж последния раздел).
 
 Съдържание:
 1. [Мишка в изгледа](#1-мишка-в-изгледа)
@@ -109,6 +110,7 @@
 | **Fillet / Chamfer** | Select *Edge*: ръб (втори клик го маха; *Automatic* взема допирателната верига). *Loop*: стена → нейният контур, най-близък до клика. *Feature*: стена → ръбовете на операцията ѝ спрямо другите. *Solid*: бутони в панела. Full Round: средната стена. Variable: прав ръб | — | предварително избраните ръбове влизат в набора |
 | **Shell** | стена → за махане (втори клик я връща; *Automatic* взема и допирателните) | — | предварително избраните стени влизат в списъка |
 | **Draft (Face Draft)** | според активния селектор: *Pull Direction* — прав ръб (първо), плоска стена, работна или основна равнина; *Fixed Plane* — равнина; *Faces* — стена (кликът определя неподвижния ръб) | — | след Pull/Plane селекторът минава сам на Faces |
+| **Rectangular / Circular Pattern, Mirror** (3D) | селектор *Features*: стена → нейната операция (втори клик я маха; клик върху ред в дървото също); *Solids*: стена → тялото ѝ. *Direction 1/2*: прав ръб или равнина (стена, работна, основна); *Axis*: прав ръб; *Mirror Plane*: равнина | — | след първия избран обект селекторът минава сам на посоката/оста/равнината; бутони за основни/работни оси и равнини в диалога |
 | **Work Plane / Axis / Point** | работна ос/точка (6/8 px) > връх или среда на прав ръб (8 px) > ръб (прав = линия, окръжност = кръгов ръб) > стена / работна / основна равнина; при Axis извита стена на Revolve = оста на Revolve. Втори клик върху същото го маха; несъвместим избор започва отначало | стрелка на отместена равнина | бутони X/Y/Z/Center в диалога |
 | **Pattern (скица)** | попълва активния селектор (раздел 4.9) | — | Enter: следващ селектор / OK |
 
@@ -123,6 +125,7 @@
 | Точка | Действие |
 |---|---|
 | **Repeat <команда>** | повтаря последната команда (само без активна команда; виж 5.3) |
+| **Appearance ▸** | само извън скица и при избрани обекти: *As Material* (маха замяната), *Document Appearances*, библиотеката по категории — за избраните стени/операции/тела |
 | **Projection ▸** Orthographic / Perspective / Perspective with Ortho Faces | вид проекция |
 | **New Sketch** | нова скица върху стената (или работната равнина) под курсора; иначе сив текст „No face under the cursor“ |
 
@@ -184,18 +187,21 @@
 | Проект | избира (Properties: Name, документи, библиотеки, ID) | — | — |
 | Друг документ | избира (само преглед) | — | — |
 | Активен детайл (заглавие) | разгъва/свива | — | — |
-| *Solid Bodies(n)* → тяло `SolidN` | избира тялото (Properties: Box/Solid + валидация) | — | — |
+| *Solid Bodies(n)* → тяло `SolidN` | избира тялото (Properties: Box/Solid + валидация) | — | **Material ▸** (материали по категории, с плътност), **Appearance ▸** |
 | *Surface Bodies(n)* | — | — | — |
 | *Origin* → XY / XZ / YZ Plane | — | — | **New Sketch** |
 | *Origin* → X/Y/Z Axis, Center Point | (само надпис) | — | — |
-| Box | избира тялото | — | — |
-| Extrude / Revolve | избира | **Edit Feature** | **Edit Feature**, **Edit Sketch**, **Delete** |
-| Fillet / Chamfer, Shell, Draft | избира | **Edit Feature** | **Edit Feature**, **Delete** |
+| Box | избира тялото | — | **Appearance ▸** |
+| Extrude / Revolve | избира | **Edit Feature** | **Edit Feature**, **Edit Sketch**, **Appearance ▸**, **Delete** |
+| Fillet / Chamfer, Shell, Draft | избира | **Edit Feature** | **Edit Feature**, **Appearance ▸**, **Delete** |
+| Rectangular / Circular Pattern, Mirror | избира | **Edit Feature** | **Edit Feature**, **Delete** |
 | Работна равнина / ос / точка | избира; отметката = видимост | — | **New Sketch** (само равнина), **Delete** |
 | Скица | избира; отметката = видимост | **Edit Sketch** | **Edit Sketch** (или **Finish 2D Sketch**, ако се редактира), **Share Sketch** (използвана, несподелена), **Unshare** (споделена, ≤1 операция), **Redefine**, **Look At**, **Hide**/**Show**, **Delete** |
 | *End of Part* | (само надпис) | — | — |
 
-Оранжев надпис = проблем (подсказката започва с `Warning:`). Delete на операция, от която
+Докато в 3D Pattern/Mirror е активен селекторът *Features*, клик върху ред на операция в
+дървото я добавя/маха (не я избира). Оранжев надпис = проблем (подсказката започва с
+`Warning:`). Delete на операция, от която
 зависят други, отваря прозореца *Delete Feature* („Deleting X affects: …“, **Delete anyway** /
 **Cancel**, Esc = Cancel).
 
@@ -484,7 +490,7 @@ direction*; *References* (✔ / `!` липсващ източник, **Break Lin
 
 | Клавиш | Действие | Контекст | Inventor |
 |---|---|---|---|
-| **F1** | отваря спецификацията на текущата команда (`docs/spec/…`) с програмата на системата | глобално | F1 = помощ |
+| **F1** | отваря спецификацията на текущата команда (`docs/spec/…`) с програмата на системата: прозорците за материали/вид → 2.15, Physical Properties → 0.10, работни елементи → 2.10, Shell, Draft, Pattern (2.11) / Mirror (2.12), Fillet, Chamfer, Extrude, Revolve, инструментите на скицата (1.1–1.7), иначе `0-ui.md` | глобално | F1 = помощ |
 | **F2** (задържан) + ляв | Pan | изглед, профил Inventor | същото |
 | **F3** (задържан) + ляв | Zoom (нагоре = приближава) | изглед, профил Inventor | същото |
 | **F4** (задържан) + ляв | Orbit | изглед, профил Inventor | същото |
@@ -497,7 +503,7 @@ direction*; *References* (✔ / `!` липсващ източник, **Break Lin
 | **Enter** | край на веригата / сплайна; Geometry → следваща стъпка при трансформации; масив: следващ селектор / OK | скица | |
 | **Enter** | поставя точката с въведените стойности | Dynamic Input | |
 | **Enter** | прилага | Edit Dimension, файлов прозорец (име/папка) | |
-| **Esc** | прекратява: Select Other, Work/Fillet/Shell/Draft/Extrude/Revolve (и Edit Feature), избор на равнина, From/To, Edit Pattern; изчиства избора (→ Previous Selection); в скица: първо Esc маха текущите кликове, второ връща Select; масив = Cancel | глобално | |
+| **Esc** | прекратява: Select Other, Work/Fillet/Shell/Draft/Pattern/Mirror/Extrude/Revolve (и Edit Feature), избор на равнина, From/To, Edit Pattern; изчиства избора (→ Previous Selection); в скица: първо Esc маха текущите кликове, второ връща Select; масив = Cancel | глобално | |
 | **Esc** | изчиства въведеното | Dynamic Input | |
 | **Esc** | затваря без промяна | Edit Dimension, поле за стойност, файлов прозорец, Unsaved changes, Delete Feature | |
 | **Delete** | изтрива избраните криви и ограничения | скица | Inventor трие и в 3D |
@@ -539,8 +545,8 @@ P/C в сглобка, keymap файл.
 
 ### 5.3 Повтаряне на команда
 
-Помнят се: Start 2D Sketch, Extrude, Revolve, Fillet, Chamfer, Shell, Face Draft, Work
-Plane/Axis/Point и всеки инструмент на скицата (повтаря се само в скица). Повтаря се с
+Помнят се: Start 2D Sketch, Extrude, Revolve, Fillet, Chamfer, Shell, Face Draft,
+Rectangular/Circular Pattern, Mirror, Work Plane/Axis/Point и всеки инструмент на скицата (повтаря се само в скица). Повтаря се с
 Enter/Space или **Repeat <име>** в десния клик.
 
 ---
@@ -597,13 +603,15 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 
 ### 7.2 Предварителен изглед
 
-- Extrude, Revolve, Fillet/Chamfer, Shell, Face Draft: оранжеви ръбове на резултата,
+- Extrude, Revolve, Fillet/Chamfer, Shell, Face Draft, Pattern/Mirror: оранжеви ръбове на резултата,
   изчислени във фонова нишка („Computing the preview...“). OK е разрешено, докато се смята.
   Невъзможна операция → жълто поле `Warning: …`, OK е сиво.
 - Профилите на Extrude/Revolve: регионите на скицата светват зелено (избраните по-тъмно);
   оста на Revolve — зелен пунктир.
 - Fillet/Chamfer: избраните ръбове сини (неактивните набори сиво-сини), под курсора зелен.
   Shell/Draft: избраните стени сини, под курсора зелена; Draft показва стрелка за посоката.
+  Pattern/Mirror: стените на избраните операции/тела сини; Direction 1 — оранжева стрелка,
+  Direction 2 — синя, оста — дълга линия.
 - Work features: синя равнина / ос / точка на живо.
 - Скица: гумена линия на инструмента, знак на прихващането, размерът на живо, копията на
   масива.
@@ -639,7 +647,10 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 | `hints_bulgarian` | `true`/`false` — език на подсказките |
 | `recent_files` | до 10 пътя (най-новият първи; липсващите не се показват) |
 
-Няма материали, шаблони или профили в настройките.
+Няма материали, шаблони или профили в settings.json. Библиотеките с материали и видове
+са вградени (`data/materials/materials.csv`, `data/appearances/appearances.csv`) и се
+допълват от потребителска папка (8.4); **Reload Library** в Material Browser ги чете
+наново, проблемите при зареждане излизат в лентата на състоянието.
 
 ### 8.3 Променливи на средата
 
@@ -659,6 +670,7 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 |---|---|---|
 | settings.json | `%APPDATA%\3dcadcraft\settings.json` | `~/.config/3dcadcraft/settings.json` (`XDG_CONFIG_HOME` не се ползва) |
 | Начална папка на диалозите | папката на текущия файл, иначе `%USERPROFILE%\Documents` или `%OneDrive%\Documents`, иначе профилът | папката на файла, иначе `~/Documents`, иначе `~` |
+| Потребителски материали / видове | `%APPDATA%\3dcadcraft\materials\materials.csv`, `…\appearances.csv` (колоните като във вградените CSV) | `~/.config/3dcadcraft/materials/…` |
 | F1 (спецификации) | `<папката с изходния код>\docs\spec\…` (пътят е от компилацията) | същото, отваря се с `xdg-open` |
 
 Файлове: **Save** → един `.3dcadcraft` (ZIP); **Save as Folder...** → разпакована папка
@@ -685,13 +697,15 @@ Open), Esc. Записът върху съществуващ файл иска �
 | **Undo**, **Redo** | подсказката показва какво (`Undo Drag (Ctrl+Z)`) |
 | **Rebuild** | Rebuild All: всички операции наново, без кеша; резултат в лентата на състоянието |
 | **Select: …** ▸ | режим на избор и действия (3.1) |
+| **Material: <име>** ▸ | материал на детайла (или на избраните тела): категории → материал (плътност в подсказката); **Material Browser...** |
+| **Appearance: <име>[*]** ▸ | вид на избраните стени/операции/тела (без избор — на детайла): *As Material*, *Document Appearances*, библиотека по категории; **Appearance Browser...**, **Adjust...**, **Clear...**. `*` = някои стени/операции/тела имат свой вид |
 | име на документа (`*` при промени) | вдясно: „3DCadCraft“ |
 
 Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 
 ### 9.2 Табове
 
-Табове: **3D Model**, **Sketch**, **Inspect**, **Tools**, **View** (винаги всички).
+Табове: **3D Model**, **Sketch**, **Inspect**, **Tools**, **Manage**, **View** (винаги всички).
 Влизането в скица отваря Sketch, излизането — 3D Model. Сивите команди показват защо в
 подсказката; непредвидените още — „Предстои — docs/FEATURES.md, раздел X“. Клавишът (ако
 има) е в подсказката.
@@ -714,7 +728,9 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | | **Axis** | работна ос |
 | | **Point** | работна точка (и Grounded X, Y, Z) |
 | | UCS (2.10) | предстои |
-| Pattern | Rectangular (2.11), Circular (2.11), Mirror (2.12) | предстоят |
+| Pattern | **Rectangular** | копия на операции или тела в редове по една или две посоки |
+| | **Circular** | копия на равни ъгли около ос |
+| | **Mirror** | огледално копие на операции или тела спрямо равнина |
 | Primitives | Box (2.1) | предстои |
 
 **Sketch** (командите са активни само в скица)
@@ -733,7 +749,7 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 
 | Панел | Команда |
 |---|---|
-| Measure | Measure (0.10), Physical Properties (0.10) — предстоят |
+| Measure | Measure (0.10) — предстои; **Physical Properties** — прозорец: Requested Accuracy, **Update** (когато стойностите са остарели), `kg` (иначе g), таблица по тела (Include, Solid, Material, Density, Mass, Volume), Mass, Area, Volume, Center of Gravity, Principal Moments, Mass Moments of Inertia, **Clipboard** |
 | Analysis | **Validate Solid** (избира тялото: Properties показва V/E/F, Euler–Poincaré, валидност); Interference (3.5), Curvature (5.4), Draft Analysis (2.8) — предстоят |
 
 **Tools**
@@ -741,10 +757,19 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | Панел | Команда |
 |---|---|
 | Options | **Application Options**; Document Settings (0.11, предстои) |
+| Material and Appearance | **Material** (Material Browser: Search, *Assign to*, Document Materials, Library по категории, Reload Library), **Appearance** (Appearance Browser: Search, As Material, Document Appearances, Library), **Adjust** (Colour, Opacity, **Apply** = нов Custom вид за целите; статусът подсказва), **Clear** (Clear Appearance Overrides: Faces, Features, Bodies, Part, *Only the selection*, OK/Cancel) |
 | Parameters | **Parameters** (fx) |
 | Update | **Rebuild All** |
 | Automation | Rules (7.5), AI Assistant (7.6) — предстоят |
 | History | **Undo** (Ctrl+Z), **Redo** (Ctrl+Y) |
+
+**Manage**
+
+| Панел | Команда |
+|---|---|
+| Styles and Standards | **Styles Editor** (Style and Standard Editor: материалите и видовете на документа, Document/Both, Update, Purge; Lighting — сиво), **Update** (стиловете на документа от библиотеката), **Purge** (маха неизползваните), Save (2.15, предстои) |
+
+Приоритет на вида при рисуване: стена > операция > тяло > детайл > материал.
 
 **View**
 
@@ -766,6 +791,9 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | Chamfer | същото + Method, Flip, *Partial* (един прав ръб: To Start, Chamfer length, To End), Corners *Cone at small rounds* |
 | Shell | Remove Faces, Face chain *Automatic*, Solid (при много тела), Direction Inside/Outside/Both, Thickness (2 mm); **OK**, **Apply**, **Cancel** |
 | Face Draft | Type Fixed Edge/Fixed Plane (Parting Line — сиво), Pull Direction / Fixed Plane, Flip, Faces, Face chain, Draft Angle (1°); **OK**, **Apply**, **Cancel** |
+| Rectangular Pattern (3D) | Input Geometry (Copy: **Features** / **Solids**, списък), Direction 1 (селектор, Origin axis X/Y/Z и работни оси, Flip, Count, Distribution Incremental/Fitted, Spacing/Length, Midplane), Direction 2 (*Use* + същото), Output (само Solids: Join / New Solid), Creation (Identical; Optimized/Adjust — сиви); **OK**, **Apply**, **Cancel** |
+| Circular Pattern (3D) | Input Geometry, Rotation Axis (селектор, оси, Flip), Placement (Count, Incremental/Fitted, Angle / Total Angle, Midplane; Orientation — сиво), Output, Creation; **OK**, **Apply**, **Cancel** |
+| Mirror (3D) | Input Geometry, Mirror Plane (селектор, Origin plane XY/XZ/YZ), Output (Join / New Solid, *Remove Original*), Creation; **OK**, **Apply**, **Cancel** |
 | Work Plane/Axis/Point | Input (избраните, `x`), Origin X/Y/Z/Center, Method, Distance (10 mm) / Angle (90°) / X,Y,Z, Grounded (точка); **OK**, **Cancel** |
 | Избрана операция | същите полета, прилагат се веднага (Undo стъпка); **Edit Feature**, **Delete** |
 | Box (тяло) | Length (X), Width (Y), Height (Z) + Validation |
@@ -778,7 +806,7 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 
 | Елемент | Съдържание |
 |---|---|
-| Състояние / подсказка | Избор на равнина: „Select a planar face or an origin plane…“ / „Select the new plane for …“. В скица: `<скица>: Fully constrained` / `Needs N dimension(s)/constraint(s)` / `Over-constrained (N redundant)` / `Constraints conflict — sketch unchanged` (в цвета на скицата) + подсказката на инструмента (+ `[construction]`). При Fillet/Chamfer, Shell, Face Draft, Work: стъпката на командата. Иначе: `Selected: …` или „Ready — Start 2D Sketch (S), or right-click a face: New Sketch“ |
+| Състояние / подсказка | Избор на равнина: „Select a planar face or an origin plane…“ / „Select the new plane for …“. В скица: `<скица>: Fully constrained` / `Needs N dimension(s)/constraint(s)` / `Over-constrained (N redundant)` / `Constraints conflict — sketch unchanged` (в цвета на скицата) + подсказката на инструмента (+ `[construction]`). При Fillet/Chamfer, Adjust, Shell, Face Draft, Pattern/Mirror, Work: стъпката на командата. Иначе: `Selected: …` или „Ready — Start 2D Sketch (S), or right-click a face: New Sketch“ |
 | Съобщение | резултат от последната операция (червено = грешка `<Command>: <причина>`), иначе подсказка за навигацията според профила |
 | `mm`, `ISO` | единици и стандарт (само надписи) |
 | `NN ms` | време на кадър (изгладено) |
@@ -818,58 +846,23 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 
 ## 12. Разлики с docs/UI.md
 
-Кодът е верният; тук е какво трябва да се поправи в `docs/UI.md`.
+**Поправени в `docs/UI.md` на 2026-10-19.** При написването на справочника бяха намерени 21
+разлики; всички са отразени в UI.md (замисленото, но ненаправено, там е отбелязано с ⬜), а
+пропуските са в [ROADMAP.md](ROADMAP.md#интерфейс-пропуски-и-следващи-стъпки). Накратко, за история:
 
-1. **Quick Access (§1, схемата):** няма бутон **New** — New е само във File (и Ctrl+N).
-   Лентата има още **Rebuild** и **Select: …**.
-2. **Табове в скица (§1):** панелите са Create, Modify, Pattern, Constrain, **Format,
-   Demo, Exit** — панел **Insert** няма. Лентата не зависи от вида документ; винаги има 5
-   таба (3D Model, Sketch, Inspect, Tools, View), Sketch се вижда и извън скица (сиви
-   команди).
-3. **Профили на мишката (§2):** избират се в **Tools → Application Options →
-   Navigation**, не във „View → Navigation“.
-4. **„Покажи всичко: Home (F6) / двоен клик със средния бутон“ (§2):** F6 = Home изглед +
-   Fit; двоен среден = Fit без смяна на посоката; клавиш Home не е свързан.
-5. **Classic профил (§2):** „ляв бутон в празно място“ — всъщност лявото влачене върти
-   навсякъде, освен от точка, манипулатор или дръжка; влачене на крива, на текст на размер и
-   правоъгълник за избор не работят в Classic.
-6. **Клавиши (§3):** „всички могат да се преназначат“ и `keymap.toml` — няма такъв файл,
-   клавишите са твърдо зададени.
-7. **Ctrl+N (§3):** отбелязано като неготово („✅ запис и отваряне“), а е реализирано
-   (празен детайл, пита за незаписани промени). **Ctrl+Shift+S** (Save As) липсва в
-   таблицата.
-8. **Ctrl задържан (§3):** „без автоматични ограничения при чертане“ — потиска само
-   H/V/∥/⊥, tangent snap и point alignment; прихващането към точки, среди и криви (и
-   ограниченията от него) остава.
-9. **Space (§3):** в таблицата с клавиши повторението е само „Enter“; кодът приема и
-   **Space** (споменато само в „Избор в 3D“).
-10. **E в скица:** не е отбелязано, че E действа и в скица (излиза от нея и пуска Extrude);
-    R в скица е Rectangle, извън нея Revolve; S действа само извън скица.
-11. **Delete (§3):** действа само в скица; в 3D изгледа не трие нищо.
-12. **Липсват в таблицата:** Ctrl+A в скица (всички криви), Esc при Select Other,
-    ←/→/↑/↓ и Shift+колелце (Select Other — споменати само в „Избор в 3D“), Ctrl за фина
-    стъпка на манипулатор, двоен клик върху крива = избор на верига, Ctrl за превключване в
-    скицата не се ползва (там Shift превключва).
-13. **Dynamic Input (§3):** важи не само за Line / Circle / Rectangle, а и за Point, Two Point
-    Center Rectangle, Move, Copy (Delta X/Y) и Rotate (Angle); има и `,` като десетична
-    запетая.
-14. **Лента на състоянието (§1):** освен DOF и Relax има **Align**, **Slice**, падащо меню
-    за показване на размерите, време на кадър, **БГ** и `Mouse: …`.
-15. **Marking menu (§1):** контекстното меню в изгледа съдържа Repeat, **Projection ▸**,
-    New Sketch, а в скица Done / Cancel (Esc) / Finish 2D Sketch и менютата на криви и
-    размери; в дървото има още Share Sketch / Unshare, Finish 2D Sketch, Edit Feature,
-    Edit Sketch.
-16. **Mini-toolbar (§1, ⬜):** съществува лента с предложения до избрана стена/ръб (раздел
-    3.5 тук); стойности на място в изгледа (mini-toolbar на Extrude) наистина няма.
-17. **Edit Feature (последния раздел):** „контекстното меню Edit Feature, също от стена/ръб
-    в изгледа“ — в изгледа Edit Feature е в **лентата с предложения** след ляв клик;
-    десният клик върху стена/ръб няма Edit Feature.
-18. **File → Export (§3, „Избор в 3D“):** „износ под името от полето за път (разширението
-    се сменя)“ — сега Export отваря файлов прозорец с предложено име `<име>.stl|step|glb`.
-19. **Език (§6):** „превод на интерфейса чрез файлове с преводи … в Application Options“ —
-    има само превод на подсказките (вградена таблица в `gui/i18n.rs`), избор с отметка в
-    Application Options или бутон БГ.
-20. **settings.json:** UI.md не казва, че там се пазят и `recent_files`; останалите опции
-    (мишка, колелце, скица, inference) не се записват.
-21. Коментарът в `src/gui/mod.rs` изброява `CADCRAFT3D_DEMO=rectangle|slot|tangents|lines`
-    без `revolve`, който също работи (дребно, не е в UI.md).
+- Quick Access: няма бутон New, има Rebuild; табовете са винаги 6, без Assemble/Annotate; в
+  таба Sketch няма панел Insert, има Format/Demo/Exit.
+- Профилите на мишката са в Tools → Application Options → Navigation; профил Classic върти с
+  лявото влачене навсякъде освен от точка/манипулатор/дръжка; F6 = Home + Fit, двоен среден =
+  Fit, клавиш Home не е свързан.
+- Клавишите са твърдо зададени (няма `keymap.toml`); Ctrl+N и Ctrl+Shift+S работят; Space
+  повтаря като Enter; E действа и в скица, R/S зависят от скицата; Delete само в скица; Ctrl
+  потиска само H/V/∥/⊥, tangent и alignment; добавени Ctrl+A в скица, Select Other, фина
+  стъпка на манипулатор, двоен клик = верига.
+- Dynamic Input важи и за Point, центриран правоъгълник, Move, Copy, Rotate; `,` е десетична
+  запетая.
+- Лента на състоянието, контекстни менюта, лентата с предложения (вместо mini-toolbar), Edit
+  Feature (в лентата с предложения, не в десния клик), Export (файлов прозорец), език (само
+  подсказките) и `settings.json` (само език + `recent_files`) — описани както в кода.
+- Остава отворено (не е в UI.md): коментарът в `src/gui/mod.rs` изброява
+  `CADCRAFT3D_DEMO=rectangle|slot|tangents|lines` без `revolve` (ROADMAP U20).
