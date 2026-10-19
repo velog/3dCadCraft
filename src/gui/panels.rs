@@ -642,6 +642,8 @@ impl CadCraftApp {
             Feature::Extrude(e) => (Icon::Extrude, format!("Extrude of {}", e.sketch)),
             Feature::Revolve(r) => (Icon::Revolve, format!("Revolve of {}", r.sketch)),
             Feature::Sweep(s) => (Icon::Sweep, format!("Sweep of {}", s.sketch)),
+            Feature::Coil(c) => (Icon::Coil, format!("Coil of {}", c.sketch)),
+            Feature::Rib(r) => (Icon::Rib, format!("Rib of {}", r.sketch)),
             Feature::Loft(l) => (
                 Icon::Loft,
                 format!("Loft through {} sections", l.sections.len()),
@@ -885,6 +887,14 @@ impl CadCraftApp {
         }
         if self.sweep_draft.is_some() {
             self.sweep_dialog(ui);
+            return;
+        }
+        if self.coil_draft.is_some() {
+            self.coil_dialog(ui);
+            return;
+        }
+        if self.rib_draft.is_some() {
+            self.rib_dialog(ui);
             return;
         }
         if self.loft_draft.is_some() {
@@ -1915,6 +1925,14 @@ impl CadCraftApp {
             self.sweep_properties(ui, k, s.clone());
             return;
         }
+        if let Feature::Coil(c) = &f {
+            self.coil_properties(ui, k, c.clone());
+            return;
+        }
+        if let Feature::Rib(r) = &f {
+            self.rib_properties(ui, k, r.clone());
+            return;
+        }
         if let Feature::Loft(l) = &f {
             self.loft_properties(ui, k, l.clone());
             return;
@@ -1984,6 +2002,8 @@ impl CadCraftApp {
                 | Feature::Hole(_)
                 | Feature::Sweep(_)
                 | Feature::Loft(_)
+                | Feature::Coil(_)
+                | Feature::Rib(_)
                 | Feature::Thread(_) => {}
             }
         });
@@ -2048,6 +2068,8 @@ impl CadCraftApp {
             | Feature::Hole(_)
             | Feature::Sweep(_)
             | Feature::Loft(_)
+            | Feature::Coil(_)
+            | Feature::Rib(_)
             | Feature::Thread(_) => {}
         }
         let commits = std::mem::take(&mut fx.commits);
@@ -4290,6 +4312,10 @@ impl CadCraftApp {
                 }
                 (Mode::Normal, None) if self.mat.adjusting() => {
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(super::material::ADJUST_PROMPT)).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.coil_rib_open() => {
+                    let text = self.coil_rib_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.sweep_loft_open() => {
                     let text = self.sweep_loft_prompt().unwrap_or_default();

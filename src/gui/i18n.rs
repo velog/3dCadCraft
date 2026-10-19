@@ -133,6 +133,22 @@ const TABLE: &[(&str, &str)] = &[
         "Изберете разделящия инструмент (равнина, плоска стена или скица)",
     ),
     (
+        "click the profile (a closed region of a sketch)",
+        "щракнете профила (затворена област на скица)",
+    ),
+    (
+        "click the axis (a line of the sketch or a straight edge), or choose an origin or work axis",
+        "щракнете оста (линия от скицата или прав ръб) или изберете основна или работна ос",
+    ),
+    (
+        "click the profile curves (a second click removes one)",
+        "щракнете кривите на профила (втори клик маха кривата)",
+    ),
+    (
+        "click sketch points on the profile for bosses (optional), or OK",
+        "щракнете точки от скицата върху профила за бобини (по избор) или OK",
+    ),
+    (
         "Sweep: click the profile (a closed region of a sketch)",
         "Sweep: щракнете профила (затворена област на скица)",
     ),

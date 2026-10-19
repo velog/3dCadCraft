@@ -74,6 +74,10 @@ pub enum Action {
     Sweep,
     /// Loft: a body through sections.
     Loft,
+    /// Coil: a profile screwed about an axis.
+    Coil,
+    /// Rib / Web: thin walls from open profiles.
+    Rib,
     /// Face Draft: tilt faces against a pull direction.
     Draft,
     /// Rectangular Pattern of features or solids.
@@ -392,8 +396,20 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         Action::Loft,
                         "Loft: a body through sections in order (profiles, faces, a point)",
                     ),
-                    todo(Icon::Coil, "Coil", None, "5.3"),
-                    todo(Icon::Rib, "Rib", None, "2.7"),
+                    ready(
+                        Icon::Coil,
+                        "Coil",
+                        None,
+                        Action::Coil,
+                        "Coil: screw closed profiles about an axis (springs, threads with Cut)",
+                    ),
+                    ready(
+                        Icon::Rib,
+                        "Rib",
+                        None,
+                        Action::Rib,
+                        "Rib: thin walls from open sketch curves out to the part (ribs and webs)",
+                    ),
                     todo(Icon::Emboss, "Emboss", None, "2.17"),
                 ],
             ),

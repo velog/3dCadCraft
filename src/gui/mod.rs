@@ -27,6 +27,7 @@ mod blend;
 mod breadcrumb;
 mod browser_edit;
 mod camera;
+mod coil_rib;
 mod command_ui;
 mod demos;
 mod diag;
@@ -595,6 +596,10 @@ struct CadCraftApp {
     sweep_draft: Option<sweep::SweepDraft>,
     /// The open Loft command.
     loft_draft: Option<sweep::LoftDraft>,
+    /// The open Coil command.
+    coil_draft: Option<coil_rib::CoilDraft>,
+    /// The open Rib command.
+    rib_draft: Option<coil_rib::RibDraft>,
     /// Presets of the feature commands (the Preset row).
     presets: presets::PresetUi,
     /// The open Face Draft command.
@@ -739,6 +744,8 @@ impl CadCraftApp {
             shell_draft: None,
             sweep_draft: None,
             loft_draft: None,
+            coil_draft: None,
+            rib_draft: None,
             draft_draft: None,
             pattern_draft: None,
             presets: Default::default(),
@@ -984,6 +991,16 @@ impl CadCraftApp {
                 if matches!(self.part().features.get(k), Some(crate::part::Feature::Loft(_))))
         {
             "5.2-loft.md"
+        } else if self.coil_draft.is_some()
+            || matches!(self.selection, Selection::Feature(k)
+                if matches!(self.part().features.get(k), Some(crate::part::Feature::Coil(_))))
+        {
+            "5.3-coil.md"
+        } else if self.rib_draft.is_some()
+            || matches!(self.selection, Selection::Feature(k)
+                if matches!(self.part().features.get(k), Some(crate::part::Feature::Rib(_))))
+        {
+            "2.7-rib.md"
         } else if self.shell_draft.is_some() {
             "2.6-shell.md"
         } else if self.draft_draft.is_some() {
@@ -1181,6 +1198,8 @@ impl CadCraftApp {
         self.shell_draft = None;
         self.sweep_draft = None;
         self.loft_draft = None;
+        self.coil_draft = None;
+        self.rib_draft = None;
         self.draft_draft = None;
         self.pattern_draft = None;
         self.hole_draft = None;
@@ -1265,6 +1284,8 @@ impl CadCraftApp {
             }
             Feature::Sweep(s) => self.edit_sweep(s, k),
             Feature::Loft(l) => self.edit_loft(l, k),
+            Feature::Coil(c) => self.edit_coil(c, k),
+            Feature::Rib(r) => self.edit_rib(r, k),
             // Box and work features are edited in Properties.
             Feature::Work(_) => self.redefine_work(k),
             Feature::Box(_) => {}
@@ -3336,6 +3357,8 @@ impl CadCraftApp {
             | Action::Shell
             | Action::Sweep
             | Action::Loft
+            | Action::Coil
+            | Action::Rib
             | Action::Draft
             | Action::RectPattern
             | Action::CircPattern
@@ -3396,6 +3419,8 @@ impl CadCraftApp {
             Action::Shell => self.start_shell(),
             Action::Sweep => self.start_sweep(),
             Action::Loft => self.start_loft(),
+            Action::Coil => self.start_coil(),
+            Action::Rib => self.start_rib(),
             Action::Draft => self.start_draft(),
             Action::RectPattern => self.start_pattern(crate::part::PatternFeature::rectangular()),
             Action::CircPattern => self.start_pattern(crate::part::PatternFeature::circular()),
@@ -4112,6 +4137,8 @@ impl CadCraftApp {
             self.shell_draft = None;
             self.sweep_draft = None;
             self.loft_draft = None;
+            self.coil_draft = None;
+            self.rib_draft = None;
             self.draft_draft = None;
             self.pattern_draft = None;
             self.cancel_hole();
@@ -4488,6 +4515,7 @@ impl CadCraftApp {
             && self.blend_draft.is_none()
             && self.shell_draft.is_none()
             && !self.sweep_loft_open()
+            && !self.coil_rib_open()
             && self.draft_draft.is_none()
             && self.pattern_draft.is_none()
             && self.hole_draft.is_none()
@@ -5539,6 +5567,12 @@ impl CadCraftApp {
                 pointer.filter(|_| on_cube.is_none()),
                 response.clicked_by(PointerButton::Primary),
             );
+            self.coil_rib_view(
+                &painter,
+                rect,
+                pointer.filter(|_| on_cube.is_none()),
+                response.clicked_by(PointerButton::Primary),
+            );
             if let Some(hole::HolePick::Circle(r)) = &hole_hover
                 && let Some(e) = self.part().body.edges().map(|(e, _)| e).find(|&e| {
                     crate::part::blend::edge_ref(&self.part().body, e).as_ref() == Some(r)
@@ -6367,6 +6401,8 @@ fn command_label(a: Action) -> &'static str {
         Action::Shell => "Shell",
         Action::Sweep => "Sweep",
         Action::Loft => "Loft",
+        Action::Coil => "Coil",
+        Action::Rib => "Rib",
         Action::Draft => "Face Draft",
         Action::RectPattern => "Rectangular Pattern",
         Action::CircPattern => "Circular Pattern",
