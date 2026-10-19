@@ -483,7 +483,7 @@ pub struct Preset {
     pub builtin: bool,
 }
 
-/// What a new command starts with (Inventor's **New <Command> Default**).
+/// What a new command starts with (Inventor's **New `<Command>` Default**).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NewDefault {
     /// The values used last.
