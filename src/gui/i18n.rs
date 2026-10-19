@@ -2,7 +2,8 @@
 //! and option names stay in English, as in Inventor, so that its help and
 //! tutorials still match; only the sentences around them are translated.
 //!
-//! The choice is kept in `~/.config/3dcadcraft/settings.json`.
+//! The choice is kept in `settings.json` (`~/.config/3dcadcraft`, or
+//! `%APPDATA%\\3dcadcraft` on Windows).
 
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,8 +22,7 @@ pub fn set_bulgarian(on: bool) {
 }
 
 fn settings_path() -> Option<std::path::PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(std::path::Path::new(&home).join(".config/3dcadcraft/settings.json"))
+    super::files::settings_path()
 }
 
 /// Loads the remembered choice (at start-up).

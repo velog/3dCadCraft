@@ -135,7 +135,10 @@ pub(super) fn list_dir(dir: &Path, exts: &[&str]) -> Vec<(String, bool)> {
             (ext_ok).then_some((name, false))
         })
         .collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+    v.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then(a.0.to_lowercase().cmp(&b.0.to_lowercase()))
+    });
     v
 }
 
@@ -146,7 +149,11 @@ pub(super) fn target_path(dir: &Path, name: &str, exts: &[&str]) -> Option<PathB
         return None;
     }
     let p = Path::new(name);
-    let base = if p.is_absolute() { p.to_path_buf() } else { dir.join(p) };
+    let base = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        dir.join(p)
+    };
     let has = base
         .extension()
         .and_then(|x| x.to_str())
@@ -169,9 +176,27 @@ pub(super) enum Pending {
     Close,
 }
 
-fn settings_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(Path::new(&home).join(".config/3dcadcraft/settings.json"))
+/// The user's home folder (`HOME`, or `USERPROFILE` on Windows).
+pub(super) fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// `settings.json`: `%APPDATA%\3dcadcraft` on Windows, else
+/// `~/.config/3dcadcraft`.
+pub(super) fn settings_path() -> Option<PathBuf> {
+    if cfg!(windows)
+        && let Some(app) = std::env::var_os("APPDATA")
+    {
+        return Some(Path::new(&app).join("3dcadcraft").join("settings.json"));
+    }
+    Some(
+        home_dir()?
+            .join(".config")
+            .join("3dcadcraft")
+            .join("settings.json"),
+    )
 }
 
 /// The recent files (newest first, at most 10, existing ones only).
@@ -218,10 +243,13 @@ fn remember_recent(path: &Path) {
 /// Where dialogs start: the current file's folder, else ~/Documents, else ~.
 fn start_dir(current: &str) -> PathBuf {
     let cur = Path::new(current.trim());
-    if let Some(parent) = cur.parent().filter(|p| !p.as_os_str().is_empty() && p.is_dir()) {
+    if let Some(parent) = cur
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty() && p.is_dir())
+    {
         return parent.to_path_buf();
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
     let docs = home.join("Documents");
     if docs.is_dir() { docs } else { home }
 }
@@ -237,7 +265,9 @@ impl CadCraftApp {
     fn project_signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        serde_json::to_vec(&self.project).unwrap_or_default().hash(&mut h);
+        serde_json::to_vec(&self.project)
+            .unwrap_or_default()
+            .hash(&mut h);
         h.finish()
     }
 
@@ -414,7 +444,9 @@ impl CadCraftApp {
                     if ui.button("Don't Save").clicked() {
                         answer = Some(1);
                     }
-                    if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    if ui.button("Cancel").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
                         answer = Some(2);
                     }
                 });
@@ -474,11 +506,13 @@ impl CadCraftApp {
                         d.go(p);
                     }
                     if ui.button("Home").clicked()
-                        && let Some(h) = std::env::var_os("HOME")
+                        && let Some(h) = home_dir()
                     {
-                        d.go(PathBuf::from(h));
+                        d.go(h);
                     }
-                    let r = ui.add(egui::TextEdit::singleline(&mut d.dir_text).desired_width(f32::INFINITY));
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut d.dir_text).desired_width(f32::INFINITY),
+                    );
                     if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         let p = PathBuf::from(d.dir_text.trim());
                         d.go(p);
@@ -495,7 +529,11 @@ impl CadCraftApp {
                             ui.weak("(no folders or matching files here)");
                         }
                         for (name, is_dir) in d.entries.clone() {
-                            let label = if is_dir { format!("[ ] {name}/") } else { name.clone() };
+                            let label = if is_dir {
+                                format!("[ ] {name}/")
+                            } else {
+                                name.clone()
+                            };
                             let selected = !is_dir && d.name == name;
                             let r = ui.selectable_label(selected, label);
                             if is_dir {
@@ -516,8 +554,13 @@ impl CadCraftApp {
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(if d.purpose.saves() { "File name" } else { "File" });
-                    let r = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY));
+                    ui.label(if d.purpose.saves() {
+                        "File name"
+                    } else {
+                        "File"
+                    });
+                    let r = ui
+                        .add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY));
                     if std::mem::take(&mut d.focus) {
                         r.request_focus();
                     }
@@ -603,7 +646,11 @@ impl CadCraftApp {
                 self.save_project(true);
             }
             DialogPurpose::Export(f) => {
-                let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Part").to_owned();
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Part")
+                    .to_owned();
                 self.file_status = Some(
                     crate::part::export::export(self.part(), &name, &path)
                         .map(|_| format!("Exported {}", path.display()))
@@ -686,11 +733,26 @@ mod tests {
     #[test]
     fn target_adds_the_extension() {
         let d = Path::new("/tmp");
-        assert_eq!(target_path(d, "part", &["3dcadcraft"]), Some(PathBuf::from("/tmp/part.3dcadcraft")));
-        assert_eq!(target_path(d, "part.3DCADCRAFT", &["3dcadcraft"]), Some(PathBuf::from("/tmp/part.3DCADCRAFT")));
-        assert_eq!(target_path(d, "a/b.step", &["step", "stp"]), Some(PathBuf::from("/tmp/a/b.step")));
-        assert_eq!(target_path(d, "x.stp", &["step", "stp"]), Some(PathBuf::from("/tmp/x.stp")));
-        assert_eq!(target_path(d, "/abs/x", &["stl"]), Some(PathBuf::from("/abs/x.stl")));
+        assert_eq!(
+            target_path(d, "part", &["3dcadcraft"]),
+            Some(PathBuf::from("/tmp/part.3dcadcraft"))
+        );
+        assert_eq!(
+            target_path(d, "part.3DCADCRAFT", &["3dcadcraft"]),
+            Some(PathBuf::from("/tmp/part.3DCADCRAFT"))
+        );
+        assert_eq!(
+            target_path(d, "a/b.step", &["step", "stp"]),
+            Some(PathBuf::from("/tmp/a/b.step"))
+        );
+        assert_eq!(
+            target_path(d, "x.stp", &["step", "stp"]),
+            Some(PathBuf::from("/tmp/x.stp"))
+        );
+        assert_eq!(
+            target_path(d, "/abs/x", &["stl"]),
+            Some(PathBuf::from("/abs/x.stl"))
+        );
         assert_eq!(target_path(d, "  ", &["stl"]), None);
     }
 

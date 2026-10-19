@@ -10,6 +10,19 @@ cargo run --release -- my-project.3dcadcraft           # отваря проек
 cargo test --no-default-features                       # тестове (без GUI)
 ```
 
+### Windows
+
+1. Инсталирайте [Git](https://git-scm.com/download/win) и [Rust](https://rustup.rs) (`rustup-init.exe`, с „Desktop development with C++“ от Visual Studio Build Tools, което инсталаторът предлага).
+2. В PowerShell:
+
+```powershell
+git clone <адрес-на-хранилището> 3dCadCraft
+cd 3dCadCraft
+cargo run --release
+```
+
+Настройките са в `%APPDATA%\3dcadcraft\settings.json`. Скриптовете за визуални тестове в `tools/` (X11) работят само под Linux.
+
 | Документ | |
 |---|---|
 | [docs/PROJECT.md](docs/PROJECT.md) | визия, принципи, архитектура |

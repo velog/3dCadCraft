@@ -24,9 +24,9 @@
 //! sketch on the box's top face.
 
 mod blend;
-mod files;
 mod camera;
 mod demos;
+mod files;
 mod i18n;
 mod icons;
 mod manip;
