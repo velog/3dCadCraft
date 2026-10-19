@@ -335,6 +335,348 @@ fn hole_r6() -> PartDocument {
     part
 }
 
+/// Revision 10: a hole with an Angle Y drill point at a Center Point
+/// dimensioned to a projected box edge, and a Flat W hole.
+fn hole_r10() -> PartDocument {
+    use cadcraft3d::part::hole::HoleCenter;
+    use cadcraft3d::part::{DrillPoint, HoleFeature, HoleSpec};
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+    let (i, ids) = part
+        .create_hole_sketch("Box1:Top", &[Point3::new(15.0, 12.0, 20.0)])
+        .unwrap();
+    let line = part.project_segment(i, "Box1:V001", "Box1:V101").unwrap();
+    part.sketches[i]
+        .sketch
+        .add_constraint(cadcraft3d::sketch::Constraint::PointLineDistance {
+            point: ids[0],
+            line,
+            value: 12.0,
+        })
+        .unwrap();
+    let mut s = HoleSpec::simple(8.0, 12.0);
+    s.drill_point = DrillPoint::AngleY;
+    let mut def = HoleFeature::new(s);
+    def.sketch = part.sketches[i].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(def).unwrap();
+    let (j, ids) = part
+        .create_hole_sketch("Box1:Top", &[Point3::new(45.0, 25.0, 20.0)])
+        .unwrap();
+    let mut s = HoleSpec::simple(5.0, 8.0);
+    s.drill_point = DrillPoint::FlatW;
+    let mut def = HoleFeature::new(s);
+    def.sketch = part.sketches[j].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(def).unwrap();
+    part
+}
+
+/// Revision 7: End of Part and suppressed features. Box, two through
+/// holes, a pattern of the first; the second hole suppressed, the marker
+/// above the pattern (built: the box and the first hole).
+fn history_r7() -> PartDocument {
+    use cadcraft3d::part::{
+        Extent, ExtentDirection, LineRef, Operation, PatternFeature, PatternKind, PullRef,
+    };
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 10.0]).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    for (x, y) in [(10.0, 10.0), (40.0, 30.0)] {
+        let j = part
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+            .unwrap();
+        let c = part.sketches[j]
+            .sketch
+            .plane
+            .project(&Point3::new(x, y, 10.0));
+        part.sketches[j].sketch.add_circle(c, 3.0).unwrap();
+        let rg = part.sketches[j].sketch.regions();
+        let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 1.0);
+        ex.operation = Operation::Cut;
+        ex.extent = Extent::ThroughAll;
+        ex.direction = ExtentDirection::Flipped;
+        part.add_extrude(j, ex).unwrap();
+    }
+    let mut rect = PatternFeature::rectangular();
+    rect.features = vec!["Extrusion1".into()];
+    if let PatternKind::Rectangular { first, .. } = &mut rect.kind {
+        first.dir = Some(PullRef::Line(LineRef::Origin(0)));
+        first.count = 3;
+        first.spacing = 15.0;
+    }
+    part.add_pattern(rect).unwrap();
+    part.suppress_feature(2).unwrap();
+    part.set_eop(3).unwrap();
+    part
+}
+/// Revision 8: work features on curved faces and a UCS: a cylinder, a
+/// tangent work plane parallel to YZ, an axis through the cylinder face, a
+/// UCS lifted to the top with a boss sketched on its XY plane.
+fn work_r8() -> PartDocument {
+    use cadcraft3d::kernel::Surface;
+    use cadcraft3d::part::{UcsDef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef};
+    let mut part = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_circle(Point2::new(0.0, 0.0), 10.0).unwrap();
+    let r = sk.regions();
+    part.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 20.0),
+    )
+    .unwrap();
+    let face = part
+        .body
+        .faces()
+        .find(|(_, f)| matches!(part.body.surface(f.surface), Some(Surface::Cylinder(_))))
+        .and_then(|(_, f)| f.name.clone())
+        .unwrap();
+    part.add_work(WorkFeature::new(WorkDef::Plane(
+        WorkPlaneDef::TangentParallel {
+            face: face.clone(),
+            base: cadcraft3d::part::PlaneRef::Origin(OriginPlane::YZ),
+            other: false,
+        },
+    )))
+    .unwrap();
+    part.add_work(WorkFeature::new(WorkDef::Axis(WorkAxisDef::RevolvedFace {
+        face,
+    })))
+    .unwrap();
+    part.add_work(WorkFeature::new(WorkDef::Ucs(UcsDef::Offsets {
+        x: 0.0,
+        y: 0.0,
+        z: 20.0,
+        rx: 0.0,
+        ry: 0.0,
+        rz: 0.3,
+    })))
+    .unwrap();
+    let j = part
+        .create_sketch(
+            SketchPlacement {
+                plane: cadcraft3d::part::PlaneRef::Work("UCS1:XY".into()),
+                ..Default::default()
+            },
+            &o,
+        )
+        .unwrap();
+    let sk = &mut part.sketches[j].sketch;
+    sk.add_rectangle_two_point(Point2::new(-3.0, -2.0), Point2::new(3.0, 2.0))
+        .unwrap();
+    let r = sk.regions();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 5.0);
+    ex.operation = cadcraft3d::part::Operation::Join;
+    part.add_extrude(j, ex).unwrap();
+    part
+}
+
+/// Revision 9: Face Draft Symmetric about a work plane, Parting Line from
+/// a sketch (Asymmetric), Shell Center with Rounded Corners.
+fn draft_r9() -> PartDocument {
+    use cadcraft3d::part::{
+        DraftExtent, DraftFeature, DraftType, PartingTool, PlaneRef, PullRef, ShellCorners,
+        ShellDirection, ShellFeature, WorkDef, WorkFeature, WorkPlaneDef,
+    };
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+    let wp = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 10.0,
+        })))
+        .unwrap();
+    let face = |part: &PartDocument, name: &str, at: [f64; 3]| {
+        let f = part.body.find_face(name).unwrap();
+        cadcraft3d::part::shell::face_ref(&part.body, f, Some(Point3::from(at))).unwrap()
+    };
+    let mut d = DraftFeature::new(3f64.to_radians());
+    d.draft_type = DraftType::FixedPlane;
+    d.plane = Some(PlaneRef::Work(wp));
+    d.extent = DraftExtent::Symmetric;
+    d.faces.push(face(&part, "Box1:Front", [30.0, 0.0, 15.0]));
+    d.faces.push(face(&part, "Box1:Back", [30.0, 40.0, 15.0]));
+    part.add_draft(d).unwrap();
+    let j = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::YZ),
+            &SketchOptions::default(),
+        )
+        .unwrap();
+    {
+        let sk = &mut part.sketches[j].sketch;
+        let a = sk.add_point(Point2::new(-5.0, 6.0));
+        let b = sk.add_point(Point2::new(45.0, 6.0));
+        sk.add_line_between(a, b).unwrap();
+    }
+    let mut d = DraftFeature::new(2f64.to_radians());
+    d.set_type(DraftType::PartingLine);
+    d.pull = Some(PullRef::Plane(PlaneRef::Origin(OriginPlane::XY)));
+    d.parting = Some(PartingTool::Sketch(part.sketches[j].id.clone()));
+    d.extent = DraftExtent::Asymmetric;
+    d.angle2 = 4f64.to_radians();
+    d.faces.push(face(&part, "Box1:Left", [0.0, 20.0, 10.0]));
+    d.faces.push(face(&part, "Box1:Right", [60.0, 20.0, 10.0]));
+    part.add_draft(d).unwrap();
+    let mut s = ShellFeature::new(2.0);
+    s.direction = ShellDirection::Center;
+    s.corners = ShellCorners::Rounded;
+    s.remove.push(face(&part, "Box1:Top", [30.0, 20.0, 20.0]));
+    part.add_shell(s).unwrap();
+    part
+}
+
+/// Revision 11: Extrude / Revolve options from Inventor 2027 — primitives,
+/// To an inclined work plane, an open profile (Match Shape), Revolve To a
+/// plane through the axis with Minimum Solution.
+/// Revision 13: Combine (Join, Keep Toolbody: the tool stays hidden) and
+/// Split (Split Face of the top, Split Solid by an origin plane).
+fn combine_split_r13() -> PartDocument {
+    use cadcraft3d::part::{CombineFeature, PlaneRef, SplitFeature, SplitMethod, SplitToolRef};
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let i = part
+        .create_sketch(
+            cadcraft3d::part::SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &cadcraft3d::part::SketchOptions {
+                auto_project_origin: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(
+        cadcraft3d::sketch::Point2::new(30.0, 10.0),
+        cadcraft3d::sketch::Point2::new(60.0, 20.0),
+    )
+    .unwrap();
+    let r = sk.regions();
+    let pr = vec![cadcraft3d::part::ProfileRef::of(&r[0], r[0].interior_point())];
+    let tool = part
+        .add_extrude(i, cadcraft3d::part::ExtrudeFeature::new(pr, 10.0))
+        .unwrap();
+    let mut c = CombineFeature::new();
+    c.base = "Box1".into();
+    c.tools = vec![tool];
+    c.keep_tools = true;
+    part.add_combine(c).unwrap();
+    let mut s = SplitFeature::new(SplitMethod::SplitFace);
+    s.all_faces = true;
+    s.solid = "Box1".into();
+    let wp = part
+        .add_work(cadcraft3d::part::WorkFeature::new(cadcraft3d::part::WorkDef::Plane(
+            cadcraft3d::part::WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::YZ),
+                distance: 20.0,
+            },
+        )))
+        .unwrap();
+    s.tool = Some(SplitToolRef::Plane(PlaneRef::Work(wp)));
+    part.add_split(s).unwrap();
+    let mut s = SplitFeature::new(SplitMethod::SplitSolid);
+    let wp = part
+        .add_work(cadcraft3d::part::WorkFeature::new(cadcraft3d::part::WorkDef::Plane(
+            cadcraft3d::part::WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: 5.0,
+            },
+        )))
+        .unwrap();
+    s.tool = Some(SplitToolRef::Plane(PlaneRef::Work(wp)));
+    s.solid = "Box1".into();
+    part.add_split(s).unwrap();
+    part
+}
+
+fn extrude_options_r11() -> PartDocument {
+    use cadcraft3d::part::primitive::add_primitive;
+    use cadcraft3d::part::{
+        AxisRef, Extent, LineRef, OpenProfile, Operation, PlaneRef, PrimitiveFeature,
+        PrimitiveKind, RevolveExtent, RevolveFeature, TargetRef, WorkDef, WorkFeature,
+        WorkPlaneDef,
+    };
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let xy = || SketchPlacement::on_origin_plane(OriginPlane::XY);
+    let mut part = PartDocument::default();
+    let f = PrimitiveFeature::extrude(&part, 40.0);
+    add_primitive(
+        &mut part,
+        PrimitiveKind::Box,
+        xy(),
+        &[Point2::new(40.0, 30.0), Point2::new(80.0, 60.0)],
+        f,
+    )
+    .unwrap();
+    let tilted = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Angle {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            axis: LineRef::Origin(1),
+            angle: 0.3,
+        })))
+        .unwrap();
+    let top = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 40.0,
+        })))
+        .unwrap();
+    let mut e = ExtrudeFeature::new(Vec::new(), 1.0);
+    e.extent = Extent::To(TargetRef::Plane(PlaneRef::Work(tilted)));
+    e.operation = Operation::Cut;
+    add_primitive(
+        &mut part,
+        PrimitiveKind::Cylinder,
+        SketchPlacement {
+            plane: PlaneRef::Work(top),
+            ..Default::default()
+        },
+        &[Point2::new(40.0, 30.0), Point2::new(48.0, 30.0)],
+        PrimitiveFeature::Extrude(e),
+    )
+    .unwrap();
+    // An open line across the block: cut one side off, through all.
+    let i = part.create_sketch(xy(), &opts).unwrap();
+    let l = part.sketches[i]
+        .sketch
+        .add_line(Point2::new(70.0, -5.0), Point2::new(70.0, 65.0));
+    let mut cut = ExtrudeFeature::new(Vec::new(), 1.0);
+    cut.open = Some(OpenProfile {
+        curves: vec![l],
+        flip: true,
+        match_shape: true,
+    });
+    cut.extent = Extent::ThroughAll;
+    cut.operation = Operation::Cut;
+    part.add_extrude(i, cut).unwrap();
+    // A ring beside it, revolved To the YZ plane (the nearer half).
+    let j = part.create_sketch(xy(), &opts).unwrap();
+    let sk = &mut part.sketches[j].sketch;
+    sk.add_rectangle_two_point(Point2::new(100.0, 0.0), Point2::new(110.0, 10.0))
+        .unwrap();
+    let rg = sk.regions();
+    let mut r = RevolveFeature::new(
+        vec![ProfileRef::of(&rg[0], rg[0].interior_point())],
+        AxisRef::Origin(1),
+    );
+    r.extent = RevolveExtent::To;
+    r.to = Some(TargetRef::Plane(PlaneRef::Origin(OriginPlane::YZ)));
+    r.minimum = true;
+    r.operation = Operation::NewSolid;
+    part.add_revolve(j, r).unwrap();
+    part
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -371,11 +713,53 @@ fn old_files_still_open() {
             project.add_document("Part1", DocumentData::Part(pattern_r5()));
             project.save(&f).unwrap();
         }
+        let f = root().join("r13/combine_split_r13.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("CombineSplitR13");
+            project.add_document("Part1", DocumentData::Part(combine_split_r13()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r11/extrude_options_r11.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ExtrudeOptionsR11");
+            project.add_document("Part1", DocumentData::Part(extrude_options_r11()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r10/hole_r10.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("HoleR10");
+            project.add_document("Part1", DocumentData::Part(hole_r10()));
+            project.save(&f).unwrap();
+        }
         let f = root().join("r6/hole_r6.3dcadcraft");
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("HoleR6");
             project.add_document("Part1", DocumentData::Part(hole_r6()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r7/history_r7.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("HistoryR7");
+            project.add_document("Part1", DocumentData::Part(history_r7()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r8/work_r8.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("WorkR8");
+            project.add_document("Part1", DocumentData::Part(work_r8()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r9/draft_r9.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("DraftR9");
+            project.add_document("Part1", DocumentData::Part(draft_r9()));
             project.save(&f).unwrap();
         }
         let f = root().join("r3/shell_r3.3dcadcraft");

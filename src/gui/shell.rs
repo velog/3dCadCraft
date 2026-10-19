@@ -13,6 +13,8 @@ pub(super) struct ShellDraft {
     pub def: ShellFeature,
     /// Edit Feature of this feature index (OK replaces it in place).
     pub edit: Option<usize>,
+    /// The breadcrumb's name (a rename is applied on OK).
+    pub crumb: super::command_ui::NameCrumb,
 }
 
 impl ShellDraft {
@@ -21,11 +23,16 @@ impl ShellDraft {
         Self {
             def: ShellFeature::new(2.0),
             edit: None,
+            crumb: Default::default(),
         }
     }
 
     pub(super) fn editing(def: ShellFeature, k: usize) -> Self {
-        Self { def, edit: Some(k) }
+        Self {
+            def,
+            edit: Some(k),
+            crumb: Default::default(),
+        }
     }
 }
 
@@ -101,6 +108,10 @@ impl CadCraftApp {
             return Err(String::new());
         };
         let key = format!("shell|{:?}|{:?}", d.edit, d.def);
+        // Cached or still computing: no copy of the part this frame.
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
         let mut trial = self.part().clone();
         let (def, edit) = (d.def.clone(), d.edit);
         self.preview_async(key, move || {
@@ -140,7 +151,14 @@ impl CadCraftApp {
             let _ = self.part_mut().regenerate();
         }
         match built {
-            Ok(_) => {
+            Ok(id) => {
+                // A rename in the breadcrumb (the id stays).
+                if let Some(name) = d.crumb.name.clone()
+                    && let Some(Feature::Shell(f)) =
+                        self.part_mut().features.iter_mut().find(|f| f.id() == id)
+                {
+                    f.name = name;
+                }
                 self.file_status = None;
                 self.scene_dirty = true;
                 self.preset_used("Shell", &d.def, d.edit.is_none());
@@ -148,10 +166,11 @@ impl CadCraftApp {
                     // Apply: a new shell with the same settings.
                     let mut next = d;
                     next.def.remove.clear();
+                    next.crumb = Default::default();
                     self.shell_draft = Some(next);
                 } else {
                     self.shell_draft = None;
-                    let k = d.edit.unwrap_or(self.part().features.len() - 1);
+                    let k = d.edit.unwrap_or(self.part().last_inserted());
                     self.selection = super::Selection::Feature(k);
                 }
             }
@@ -160,5 +179,86 @@ impl CadCraftApp {
                 self.file_status = Some(Err(format!("{cmd}: {e}")));
             }
         }
+    }
+}
+
+/// Shell's options in the right-click menu: the direction and the type.
+pub(super) fn menu_options(s: &ShellFeature) -> Vec<super::command_ui::MenuOption> {
+    use crate::part::{ShellCorners, ShellDirection};
+    let mut v: Vec<super::command_ui::MenuOption> = [
+        ShellDirection::Inside,
+        ShellDirection::Outside,
+        ShellDirection::Center,
+    ]
+    .iter()
+    .map(|d| super::command_ui::MenuOption {
+        label: d.label().to_owned(),
+        checked: s.direction == *d,
+    })
+    .collect();
+    for c in [ShellCorners::Sharp, ShellCorners::Rounded] {
+        v.push(super::command_ui::MenuOption {
+            label: c.label().to_owned(),
+            checked: s.corners == c,
+        });
+    }
+    v
+}
+
+/// Option `k` of [`menu_options`] was chosen.
+pub(super) fn menu_option(s: &mut ShellFeature, k: usize) {
+    use crate::part::{ShellCorners, ShellDirection};
+    match k {
+        0 => s.direction = ShellDirection::Inside,
+        1 => s.direction = ShellDirection::Outside,
+        2 => s.direction = ShellDirection::Center,
+        3 => s.corners = ShellCorners::Sharp,
+        _ => s.corners = ShellCorners::Rounded,
+    }
+}
+
+impl CadCraftApp {
+    /// The thickness arrow of the open Shell (`docs/spec/2.6-shell.md`):
+    /// from the first removed face (where it was clicked) square to it,
+    /// into the material (Inside), out of it (Outside) or across it
+    /// (Center, half each way); dragging edits the thickness.
+    pub(super) fn shell_handles(&self) -> Vec<super::manip::Handle> {
+        use crate::part::ShellDirection;
+        let Some(d) = &self.shell_draft else {
+            return Vec::new();
+        };
+        let part = self.part();
+        let Some(r) = d.def.remove.first() else {
+            return Vec::new();
+        };
+        let Ok(pl) = crate::part::placement::plane_of(
+            &crate::part::PlaneRef::Face(r.face.clone()),
+            &part.body,
+            &part.work,
+        ) else {
+            return Vec::new();
+        };
+        let n = pl.normal.into_inner();
+        let hint = Point3::from(r.hint);
+        let t = d.def.thickness;
+        let (from, dir, scale) = match d.def.direction {
+            ShellDirection::Inside => (hint, -n, 1.0),
+            ShellDirection::Outside => (hint, n, 1.0),
+            // The arrow starts at the inner wall and spans the thickness.
+            ShellDirection::Center => (hint + n * (t / 2.0), -n, 1.0),
+        };
+        let tip = from + dir * t;
+        vec![super::manip::Handle {
+            field: "thickness",
+            path: vec![from, tip],
+            grip: tip,
+            geom: super::manip::DragGeom::Linear {
+                origin: from,
+                dir,
+                scale,
+            },
+            arrow: Some(dir),
+            angle: false,
+        }]
     }
 }

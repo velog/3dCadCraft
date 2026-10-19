@@ -28,7 +28,7 @@ default = ["gui"]
 # egui UI + wgpu renderer. eframe re-exports its own wgpu (`eframe::wgpu`), so we
 # deliberately don't depend on `wgpu` directly: that guarantees a single wgpu
 # version in the dependency graph.
-gui = ["dep:eframe", "dep:env_logger"]
+gui = ["dep:eframe"]
 
 [dependencies]
 # --- Math & kernel ---------------------------------------------------------
@@ -62,7 +62,6 @@ eframe = { version = "0.36", optional = true, default-features = false, features
     "x11",
     "accesskit",
 ] }
-env_logger = { version = "0.11", optional = true }
 
 [dev-dependencies]
 approx = "0.5"

@@ -89,6 +89,27 @@ pub struct SketchPoint {
     pub position: Point2,
     /// A fixed point is not a DOF: the solver never moves it.
     pub fixed: bool,
+    /// Inventor's point style: a plain sketch point or a Center Point
+    /// (drawn as a cross; Hole takes centre points by default).
+    #[serde(default, skip_serializing_if = "PointStyle::is_normal")]
+    pub style: PointStyle,
+}
+
+/// The style of a sketch point (Inventor: Format → Center Point).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PointStyle {
+    /// A plain sketch point.
+    #[default]
+    Normal,
+    /// A centre point (hole centres).
+    Center,
+}
+
+impl PointStyle {
+    /// Whether it is the plain style (not saved).
+    pub fn is_normal(&self) -> bool {
+        *self == PointStyle::Normal
+    }
 }
 
 /// A curve of the sketch.
@@ -382,7 +403,37 @@ impl Sketch {
         self.points.insert(SketchPoint {
             position,
             fixed: false,
+            style: PointStyle::Normal,
         })
+    }
+
+    /// Adds a Center Point (Inventor's point style for hole centres).
+    pub fn add_center_point(&mut self, position: Point2) -> PointId {
+        self.points.insert(SketchPoint {
+            position,
+            fixed: false,
+            style: PointStyle::Center,
+        })
+    }
+
+    /// Sets the style of a point (Format → Center Point).
+    pub fn set_point_style(
+        &mut self,
+        point: PointId,
+        style: PointStyle,
+    ) -> Result<(), SketchError> {
+        self.points
+            .get_mut(point)
+            .map(|p| p.style = style)
+            .ok_or(SketchError::UnknownPoint)
+    }
+
+    /// The Center Points of the sketch.
+    pub fn center_points(&self) -> Vec<PointId> {
+        self.points()
+            .filter(|(_, p)| p.style == PointStyle::Center)
+            .map(|(id, _)| id)
+            .collect()
     }
 
     /// Adds a point the solver will never move (an anchor).
@@ -390,6 +441,7 @@ impl Sketch {
         self.points.insert(SketchPoint {
             position,
             fixed: true,
+            style: PointStyle::Normal,
         })
     }
 

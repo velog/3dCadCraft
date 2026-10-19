@@ -658,3 +658,187 @@ pub fn arrow(tool: &ResolvedTool, centre: Point3) -> Option<(Point3, Vector3)> {
     let d = pl.signed_distance(&centre);
     Some((centre - pl.normal.into_inner() * d, pl.normal.into_inner()))
 }
+
+/// A planar face piece to draft: its name, outward normal, centre and
+/// triangle corners.
+struct Piece {
+    name: Option<String>,
+    n: Vector3,
+    c: Point3,
+    pts: Vec<Point3>,
+}
+
+fn piece_of(s: &ExactSolid, corners: &[Vec<Point3>], f: usize, pull: Vector3) -> Result<Piece, String> {
+    let pts = corners
+        .get(f)
+        .filter(|p| p.len() >= 3)
+        .ok_or_else(|| format!("face {f} has no geometry"))?
+        .clone();
+    let mut n = Vector3::zeros();
+    for t in pts.chunks(3) {
+        if let [a, b, c] = t {
+            n += (b - a).cross(&(c - a));
+        }
+    }
+    let n = n
+        .try_normalize(1e-12)
+        .ok_or_else(|| "a face to draft is degenerate".to_owned())?;
+    let c = Point3::from(pts.iter().map(|p| p.coords).sum::<Vector3>() / pts.len() as Real);
+    let size = pts
+        .iter()
+        .map(|p| (p - c).norm())
+        .fold(0.0, Real::max)
+        .max(1e-6);
+    if pts.iter().any(|p| (p - c).dot(&n).abs() > 1e-6 * size.max(1.0)) {
+        return Err("not supported yet: drafting a piece of a curved face".into());
+    }
+    // The normal pointing out of the material.
+    let n = if exact::contains(s, c + n * size * 1e-3) {
+        -n
+    } else {
+        n
+    };
+    if n.dot(&pull).abs() > 1e-6 {
+        return Err("a chosen face isn't parallel to the pull direction".into());
+    }
+    Ok(Piece {
+        name: s.face_names.get(f).cloned().flatten(),
+        n,
+        c,
+        pts,
+    })
+}
+
+/// Face Draft of pieces of split faces (`<face>~<split>.<k>`). The kernel's
+/// draft of a convex body works on whole planes, so it tilted every piece
+/// of the face (the volume came out unchanged: one half in, the other out).
+/// Each planar piece is drafted on its own instead: a prism along the hinge
+/// line (the piece's line on `neutral`) between the old and the tilted
+/// plane, over the piece's height along `pull`, is cut (leaning in) or
+/// joined (leaning out). The tilted face keeps the piece's name.
+pub(super) fn draft_pieces(
+    s: &ExactSolid,
+    faces: &[usize],
+    neutral: &Plane,
+    pull: Vector3,
+    angle: Real,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    let pull = pull
+        .try_normalize(1e-12)
+        .ok_or_else(|| "the pull direction has no length".to_owned())?;
+    let corners = exact::face_corners(s)?;
+    // The pieces first (the solid changes with each one).
+    let pieces = faces
+        .iter()
+        .map(|&f| piece_of(s, &corners, f, pull))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut out = s.clone();
+    let tmp = format!("{prefix}~piece");
+    let slant_name = format!("{tmp}:Side:slant");
+    for p in pieces {
+        let denom = neutral.normal.dot(&pull);
+        if denom.abs() < 1e-9 {
+            return Err("the neutral plane is parallel to the pull direction".into());
+        }
+        let hinge = p.c + pull * ((neutral.origin - p.c).dot(&neutral.normal) / denom);
+        // Frame: x along the outward normal, y along the pull, normal along
+        // the hinge line.
+        let z = p.n.cross(&pull);
+        let frame = Plane::new(hinge, z, p.n).map_err(|e| e.to_string())?;
+        let (mut y0, mut y1, mut z0, mut z1) = (
+            Real::INFINITY,
+            Real::NEG_INFINITY,
+            Real::INFINITY,
+            Real::NEG_INFINITY,
+        );
+        for q in &p.pts {
+            let d = q - hinge;
+            (y0, y1) = (y0.min(d.dot(&pull)), y1.max(d.dot(&pull)));
+            (z0, z1) = (z0.min(d.dot(&z)), z1.max(d.dot(&z)));
+        }
+        // A positive angle leans in going along the pull: x = −y tan θ.
+        let k = angle.tan();
+        let xl = |y: Real| -y * k;
+        let eps = 1e-9 * (y1 - y0).max(1.0);
+        let lean_in = xl(y0) < -eps || xl(y1) < -eps;
+        let lean_out = xl(y0) > eps || xl(y1) > eps;
+        if lean_in && lean_out {
+            return Err(
+                "not supported yet: a piece crossing the neutral plane (split it there)".into(),
+            );
+        }
+        if !lean_in && !lean_out {
+            continue;
+        }
+        let reach = (y1 - y0).max(z1 - z0) * 2.0 + 1.0;
+        let pt = crate::sketch::Point2::new;
+        let quad = if lean_in {
+            [pt(xl(y0), y0), pt(reach, y0), pt(reach, y1), pt(xl(y1), y1)]
+        } else {
+            [pt(0.0, y0), pt(xl(y0), y0), pt(xl(y1), y1), pt(0.0, y1)]
+        };
+        // The slanted side: from (xl(y1), y1) to (xl(y0), y0) when cutting,
+        // (xl(y0), y0) → (xl(y1), y1) when adding.
+        let slant = if lean_in { 3 } else { 1 };
+        let mut segs: Vec<ProfileSegment> = (0..4)
+            .map(|i| ProfileSegment {
+                geometry: Segment2::Line {
+                    a: quad[i],
+                    b: quad[(i + 1) % 4],
+                },
+                name: if i == slant {
+                    "slant".into()
+                } else {
+                    format!("e{i}")
+                },
+            })
+            .filter(|s| match &s.geometry {
+                Segment2::Line { a, b } => (b - a).norm() > 1e-9,
+                _ => true,
+            })
+            .collect();
+        let area: Real = (0..4)
+            .map(|i| {
+                let (a, b) = (quad[i], quad[(i + 1) % 4]);
+                a.x * b.y - b.x * a.y
+            })
+            .sum();
+        if area < 0.0 {
+            segs = segs
+                .into_iter()
+                .rev()
+                .map(|s| ProfileSegment {
+                    geometry: reversed(&s.geometry),
+                    name: s.name,
+                })
+                .collect();
+        }
+        let prof = exact::profile(&segs, &[])?;
+        // Cuts reach past the piece sideways (a tool face never ends on an
+        // edge of the result); additions stay within it.
+        let (za, zb) = if lean_in {
+            (z0 - reach, z1 + reach)
+        } else {
+            (z0, z1)
+        };
+        let tool = exact::extrude(&frame, &prof, za, zb, 0.0, &tmp)?;
+        let op = if lean_in {
+            ExactOp::Cut
+        } else {
+            ExactOp::Union
+        };
+        let mut r = exact::boolean(&out, &tool, op)?
+            .ok_or_else(|| "the draft leaves nothing".to_owned())?;
+        for n in r.face_names.iter_mut() {
+            if n.as_deref() == Some(slant_name.as_str()) {
+                *n = p.name.clone();
+            } else if let Some(x) = n.as_ref().filter(|x| x.starts_with(&tmp)) {
+                *n = Some(x.replacen(&tmp, prefix, 1));
+            }
+        }
+        r.name = out.name.clone();
+        out = r;
+    }
+    Ok(out)
+}

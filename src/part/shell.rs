@@ -30,8 +30,10 @@ pub enum ShellDirection {
     Inside,
     /// Out of it: the old faces become the inner walls.
     Outside,
-    /// Half the thickness each way.
-    Both,
+    /// Half the thickness each way (Inventor 2027: Center; saved as
+    /// `Both`, the name of older builds).
+    #[serde(rename = "Both", alias = "Center")]
+    Center,
 }
 
 impl ShellDirection {
@@ -40,13 +42,37 @@ impl ShellDirection {
         match self {
             ShellDirection::Inside => "Inside",
             ShellDirection::Outside => "Outside",
-            ShellDirection::Both => "Both",
+            ShellDirection::Center => "Center",
+        }
+    }
+}
+
+/// Shell type (Inventor 2026+): how the corners the offset makes look.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShellCorners {
+    /// Sharp offset corners.
+    #[default]
+    Sharp,
+    /// The corners the offset makes are rounded (by the offset distance).
+    Rounded,
+}
+
+impl ShellCorners {
+    /// The type's name as Inventor shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            ShellCorners::Sharp => "Sharp Corners",
+            ShellCorners::Rounded => "Rounded Corners",
         }
     }
 }
 
 fn yes() -> bool {
     true
+}
+
+fn is_sharp(c: &ShellCorners) -> bool {
+    *c == ShellCorners::Sharp
 }
 
 /// The Shell feature.
@@ -61,9 +87,12 @@ pub struct ShellFeature {
     pub remove: Vec<FaceRef>,
     /// Wall thickness (mm); parameter field `thickness`.
     pub thickness: Real,
-    /// Inside / Outside / Both.
+    /// Inside / Outside / Center.
     #[serde(default)]
     pub direction: ShellDirection,
+    /// Sharp or Rounded Corners (format revision 9).
+    #[serde(default, skip_serializing_if = "is_sharp")]
+    pub corners: ShellCorners,
     /// Automatic Face Chain: a picked face brings the faces tangent to it
     /// (applied when picking; the list holds every removed face).
     #[serde(default = "yes")]
@@ -91,6 +120,7 @@ impl ShellFeature {
             remove: Vec::new(),
             thickness,
             direction: ShellDirection::Inside,
+            corners: ShellCorners::Sharp,
             chain: true,
             solids: Vec::new(),
             params: FeatureParams::default(),

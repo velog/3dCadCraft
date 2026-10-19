@@ -16,6 +16,10 @@ use cadcraft3d::part::{
 };
 
 /// Median wall time (ms) of `runs` calls.
+/// Budgets of the Face Draft Symmetric and Shell Rounded Corners cases (ms).
+const BUDGET_SYMMETRIC_DRAFT: f64 = 700.0;
+const BUDGET_ROUNDED_SHELL: f64 = 400.0;
+
 fn median_ms(runs: usize, mut f: impl FnMut()) -> f64 {
     let mut t: Vec<f64> = (0..runs)
         .map(|_| {
@@ -145,6 +149,48 @@ fn pattern_grid(n1: u32, n2: u32, s: Real) -> cadcraft3d::part::PatternFeature {
         });
     }
     p
+}
+
+/// A 30-feature part: a box, 15 blocks (New Solid) side by side and a
+/// hole cut into each of the first 14 (Cut limited to its block).
+fn blocks_30() -> PartDocument {
+    use cadcraft3d::part::OriginPlane;
+    use cadcraft3d::sketch::Point2;
+    let mut part = PartDocument::with_box("Box1", [10.0, 10.0, 5.0]).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let xy = || SketchPlacement::on_origin_plane(OriginPlane::XY);
+    for k in 0..15 {
+        let x0 = 20.0 + 20.0 * k as Real;
+        let j = part.create_sketch(xy(), &opts).unwrap();
+        part.sketches[j]
+            .sketch
+            .add_rectangle_two_point(Point2::new(x0, 0.0), Point2::new(x0 + 10.0, 10.0))
+            .unwrap();
+        let rg = part.sketches[j].sketch.regions();
+        let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 5.0);
+        ex.operation = Operation::NewSolid;
+        let block = part.add_extrude(j, ex).unwrap();
+        if k == 14 {
+            break;
+        }
+        let j = part.create_sketch(xy(), &opts).unwrap();
+        let c = part.sketches[j]
+            .sketch
+            .plane
+            .project(&Point3::new(x0 + 5.0, 5.0, 0.0));
+        part.sketches[j].sketch.add_circle(c, 2.0).unwrap();
+        let rg = part.sketches[j].sketch.regions();
+        let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 1.0);
+        ex.operation = Operation::Cut;
+        ex.extent = cadcraft3d::part::Extent::ThroughAll;
+        ex.solids = vec![block];
+        part.add_extrude(j, ex).unwrap();
+    }
+    part
 }
 
 #[test]
@@ -400,6 +446,51 @@ fn speed_budgets() {
         }),
     ));
 
+    // Symmetric Face Draft (split by the plane, both halves drafted, joined
+    // again) of the same box's sides and rounds about z = 10.
+    let mut mid = vertical_rounds.clone();
+    let wp = mid
+        .add_work(cadcraft3d::part::WorkFeature::new(
+            cadcraft3d::part::WorkDef::Plane(cadcraft3d::part::WorkPlaneDef::Offset {
+                base: cadcraft3d::part::PlaneRef::Origin(cadcraft3d::part::OriginPlane::XY),
+                distance: 10.0,
+            }),
+        ))
+        .unwrap();
+    rows.push((
+        "face draft 3° symmetric about z = 10, sides and rounds",
+        BUDGET_SYMMETRIC_DRAFT,
+        median_ms(3, || {
+            let mut p = mid.clone();
+            p.build_cache = Default::default();
+            let mut def = cadcraft3d::part::DraftFeature::new(3f64.to_radians());
+            def.draft_type = cadcraft3d::part::DraftType::FixedPlane;
+            def.plane = Some(cadcraft3d::part::PlaneRef::Work(wp.clone()));
+            def.extent = cadcraft3d::part::DraftExtent::Symmetric;
+            let front = p.body.find_face("Box1:Front").unwrap();
+            let body = p.body.clone();
+            def.toggle(&body, front, None);
+            p.add_draft(def).unwrap();
+        }),
+    ));
+
+    // Shell with Rounded Corners (outside: the offset's convex edges
+    // rounded) of a box open at the top.
+    rows.push((
+        "shell 2 outside, rounded corners, box open at the top",
+        BUDGET_ROUNDED_SHELL,
+        median_ms(3, || {
+            let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+            let top = p.body.find_face("Box1:Top").unwrap();
+            let mut def = cadcraft3d::part::ShellFeature::new(2.0);
+            def.direction = cadcraft3d::part::ShellDirection::Outside;
+            def.corners = cadcraft3d::part::ShellCorners::Rounded;
+            def.remove
+                .push(cadcraft3d::part::shell::face_ref(&p.body, top, None).unwrap());
+            p.add_shell(def).unwrap();
+        }),
+    ));
+
     // Patterns: the whole part is rebuilt (empty cache), so the time is
     // the box, the source feature and the pattern.
     let holed = box_with_circle([60.0, 60.0, 6.0], 5.0, 5.0, 2.0, true, 1.0);
@@ -531,6 +622,170 @@ fn speed_budgets() {
             def.sketch = p.sketches[k].id.clone();
             def.centers = ids.into_iter().map(HoleCenter::Point).collect();
             p.add_hole(def).unwrap();
+        }),
+    ));
+
+    // Extrude / Revolve options (2027): a Box primitive, a Cylinder
+    // primitive cut To an inclined work plane, a Sphere primitive joined.
+    rows.push((
+        "primitives: box, cylinder cut to an inclined plane, sphere join",
+        4000.0,
+        median_ms(3, || {
+            use cadcraft3d::part::primitive::add_primitive;
+            use cadcraft3d::part::{
+                Extent, ExtrudeFeature, LineRef, Operation, OriginPlane, PlaneRef,
+                PrimitiveFeature, PrimitiveKind, SketchPlacement, TargetRef, WorkDef, WorkFeature,
+                WorkPlaneDef,
+            };
+            use cadcraft3d::sketch::Point2;
+            let mut p = PartDocument::default();
+            let xy = || SketchPlacement::on_origin_plane(OriginPlane::XY);
+            let f = PrimitiveFeature::extrude(&p, 40.0);
+            add_primitive(
+                &mut p,
+                PrimitiveKind::Box,
+                xy(),
+                &[Point2::new(40.0, 30.0), Point2::new(80.0, 60.0)],
+                f,
+            )
+            .unwrap();
+            let wp = p
+                .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Angle {
+                    base: PlaneRef::Origin(OriginPlane::XY),
+                    axis: LineRef::Origin(1),
+                    angle: 0.3,
+                })))
+                .unwrap();
+            let top = p
+                .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                    base: PlaneRef::Origin(OriginPlane::XY),
+                    distance: 40.0,
+                })))
+                .unwrap();
+            let on_top = || SketchPlacement {
+                plane: PlaneRef::Work(top.clone()),
+                ..Default::default()
+            };
+            let mut e = ExtrudeFeature::new(Vec::new(), 1.0);
+            e.extent = Extent::To(TargetRef::Plane(PlaneRef::Work(wp)));
+            e.operation = Operation::Cut;
+            add_primitive(
+                &mut p,
+                PrimitiveKind::Cylinder,
+                on_top(),
+                &[Point2::new(40.0, 30.0), Point2::new(50.0, 30.0)],
+                PrimitiveFeature::Extrude(e),
+            )
+            .unwrap();
+            add_primitive(
+                &mut p,
+                PrimitiveKind::Sphere,
+                on_top(),
+                &[Point2::new(65.0, 45.0), Point2::new(70.0, 45.0)],
+                PrimitiveFeature::Revolve(Operation::Join),
+            )
+            .unwrap();
+        }),
+    ));
+
+    // Diagnostics: 1000 user actions journaled (a checkpoint line and the
+    // part's state: a delta snapshot + volume / faces / health) on the
+    // rounded box.
+    let dir = tempfile::tempdir().unwrap();
+    let mut jp = rb.clone();
+    rows.push((
+        "journal 1000 actions (checkpoint + state delta, rounded box)",
+        1000.0,
+        median_ms(1, || {
+            use cadcraft3d::diagnostics::journal::Journal;
+            let mut j = Journal::create(&dir.path().join("perf-journal.jsonl")).unwrap();
+            for k in 0..1000 {
+                j.entry("checkpoint", "Edit", serde_json::json!({}));
+                if let Some(cadcraft3d::part::Feature::Box(b)) = jp.features.first_mut() {
+                    b.size[0] = 40.0 + (k % 7) as Real;
+                }
+                j.state("Edit", &mut jp);
+            }
+        }),
+    ));
+    // History editing (2.16): the last of 30 features moved to the top,
+    // so the 28 steps after it are rebuilt (the dependency check runs over
+    // all 30); then the End of Part up and back (cache hits).
+    let p30 = blocks_30();
+    assert_eq!(p30.features.len(), 30);
+    rows.push((
+        "reorder: feature 30 of 30 to the top + regenerate",
+        4000.0,
+        // Once: clones share the cache, a second run would hit it.
+        median_ms(1, || {
+            let mut p = p30.clone();
+            p.move_feature(29, 1).unwrap();
+            assert!(p.feature_health.is_empty() && p.exact);
+        }),
+    ));
+    rows.push((
+        "End of Part: to 15 of 30 and back to the end (cache warm)",
+        300.0,
+        median_ms(3, || {
+            let mut p = p30.clone();
+            p.set_eop(15).unwrap();
+            p.set_eop(30).unwrap();
+        }),
+    ));
+
+    // 30 work features on a box: 10 offset planes, 10 axes (plane x
+    // origin plane), 10 points (axis x plane), each built on the previous.
+    let mut wf = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    {
+        use cadcraft3d::part::{
+            LineRef, OriginPlane, PlaneRef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef,
+            WorkPointDef,
+        };
+        let mut defs = Vec::new();
+        for k in 0..10 {
+            defs.push(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Face("Box1:Top".into()),
+                distance: 2.0 + k as Real,
+            }));
+            defs.push(WorkDef::Axis(WorkAxisDef::TwoPlanes {
+                a: PlaneRef::Work(format!("WorkPlane{}", k + 1)),
+                b: PlaneRef::Origin(OriginPlane::XZ),
+            }));
+            defs.push(WorkDef::Point(WorkPointDef::PlaneLine {
+                plane: PlaneRef::Origin(OriginPlane::YZ),
+                line: LineRef::Work(format!("WorkAxis{}", k + 1)),
+            }));
+        }
+        for d in defs {
+            wf.features
+                .push(cadcraft3d::part::Feature::Work(WorkFeature::new(d)));
+        }
+        // Ids as add_work gives them.
+        let mut counts = [0; 3];
+        for f in wf.features.iter_mut() {
+            if let cadcraft3d::part::Feature::Work(w) = f {
+                let (idp, namep) = w.def.prefix();
+                let slot = match idp {
+                    "WorkPlane" => 0,
+                    "WorkAxis" => 1,
+                    _ => 2,
+                };
+                counts[slot] += 1;
+                w.id = format!("{idp}{}", counts[slot]);
+                w.name = format!("{namep}{}", counts[slot]);
+            }
+        }
+        wf.regenerate().unwrap();
+        assert!(wf.feature_health.is_empty(), "{:?}", wf.feature_health);
+        assert_eq!(wf.work.points.len(), 10);
+    }
+    rows.push((
+        "regenerate a box with 30 work features",
+        20.0,
+        median_ms(5, || {
+            let mut p = wf.clone();
+            p.build_cache = Default::default();
+            p.regenerate().unwrap();
         }),
     ));
 

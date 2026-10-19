@@ -274,6 +274,9 @@ fn set_type(spec: &mut HoleSpec, ty: HoleType) {
 impl CadCraftApp {
     /// The Hole command's panel.
     pub(super) fn hole_dialog(&mut self, ui: &mut egui::Ui) {
+        use super::hole::{
+            ALLOW_CREATE, KEEP_VISIBLE, PRESELECT, WINDOW_CENTERS, option, set_option,
+        };
         let Some(mut d) = self.hole_draft.clone() else {
             return;
         };
@@ -282,21 +285,102 @@ impl CadCraftApp {
             None => "Hole".into(),
         };
         self.panel_header(ui, Icon::Hole, &title);
+        // Breadcrumb `Sketch > Hole1` and the panel menu (Inventor).
+        let mut to_sketch = false;
+        let mut rename: Option<String> = None;
+        ui.horizontal(|ui| {
+            let has_sketch = !d.def.sketch.is_empty() || !d.points.is_empty();
+            if ui
+                .add_enabled(has_sketch, egui::Button::new("Sketch").small())
+                .on_hover_text("Finish the hole and edit its sketch (dimensions, more centre points)")
+                .clicked()
+            {
+                to_sketch = true;
+            }
+            ui.label(">");
+            let id = egui::Id::new("hole_crumb_rename");
+            let mut editing: Option<String> = ui.data(|x| x.get_temp(id));
+            match editing.as_mut() {
+                Some(text) => {
+                    let r = ui.add(egui::TextEdit::singleline(text).desired_width(90.0));
+                    if !r.has_focus() && !r.lost_focus() {
+                        r.request_focus();
+                    }
+                    if r.lost_focus() {
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
+                            rename = Some(text.trim().to_owned());
+                        }
+                        editing = None;
+                    }
+                }
+                None => {
+                    let r = ui
+                        .add(egui::Button::new(RichText::new(&title).strong()).small())
+                        .on_hover_text("Click twice to rename");
+                    if r.double_clicked() && d.edit.is_some() {
+                        editing = Some(title.clone());
+                    }
+                }
+            }
+            ui.data_mut(|x| match &editing {
+                Some(t) => {
+                    x.insert_temp(id, t.clone());
+                }
+                None => x.remove::<String>(id),
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button("...", |ui| {
+                    for (flag, text, tip) in [
+                        (
+                            &PRESELECT,
+                            "Preselect sketch center points",
+                            "On start, the unused Center Points of the visible sketch are the centres",
+                        ),
+                        (
+                            &KEEP_VISIBLE,
+                            "Keep sketch visible on (+)",
+                            "Apply (+) shares the hole's sketch for the next hole; Cancel unshares it",
+                        ),
+                        (
+                            &WINDOW_CENTERS,
+                            "Window select center points only",
+                            "A window selection takes Center Points only",
+                        ),
+                    ] {
+                        let mut on = option(flag);
+                        if ui.checkbox(&mut on, text).on_hover_text(tip).changed() {
+                            set_option(flag, on);
+                        }
+                    }
+                });
+            });
+        });
         let tables = Standards::global();
         let bodies = self
             .part()
-            .bodies_before(d.edit.unwrap_or(self.part().features.len()));
+            .bodies_before(d.edit.unwrap_or(self.part().insert_index()));
+        let table = self.part().parameter_table();
+        let mut dim_changes: Vec<(usize, Real, Option<String>)> = Vec::new();
         psection(ui, "hole_input", "Input Geometry", |ui| {
             plabel(ui, "Positions");
             ui.horizontal(|ui| {
                 ui.label(format!("{} centre(s)", d.count())).on_hover_text(
-                    "Click a planar face (a centre where you click; a click on a centre removes it), points of a visible sketch, or a circular edge (concentric)",
+                    "Click a planar face (a centre where you click; a click on a centre removes it), then straight edges to dimension it; points of a visible sketch; a circular edge or a cylindrical face (concentric)",
                 );
+                let mut allow = option(&ALLOW_CREATE);
+                if ui
+                    .checkbox(&mut allow, "Create")
+                    .on_hover_text("Allow Center Point Creation: a click on a planar face places a centre; off: existing sketch points only")
+                    .changed()
+                {
+                    set_option(&ALLOW_CREATE, allow);
+                }
                 if d.edit.is_none()
                     && d.count() > 0
                     && ui.small_button("x").on_hover_text("Clear Selections").clicked()
                 {
                     d.points.clear();
+                    d.dims.clear();
                     d.face = None;
                     d.def.centers.clear();
                     d.def.sketch.clear();
@@ -306,6 +390,23 @@ impl CadCraftApp {
             if let Some(f) = &d.face {
                 plabel(ui, "Face");
                 ui.label(f);
+                ui.end_row();
+            }
+            for (j, x) in d.dims.iter().enumerate() {
+                plabel(ui, &format!("Centre {} dim", x.center + 1));
+                let mut v = x.value;
+                let mut eq = x.expr.clone();
+                super::valuefield::set_frame_table(ui.ctx(), table.clone());
+                let r = ui.add(
+                    super::valuefield::ExprValue::new(&mut v)
+                        .equation(&mut eq)
+                        .range(0.0..=1e6)
+                        .suffix(" mm"),
+                );
+                r.on_hover_text(format!("Distance to the edge {} - {}", x.a, x.b));
+                if (v - x.value).abs() > 1e-12 || eq != x.expr {
+                    dim_changes.push((j, v, eq));
+                }
                 ui.end_row();
             }
             if bodies.len() > 1 {
@@ -323,6 +424,26 @@ impl CadCraftApp {
                 ui.end_row();
             }
         });
+        for (j, v, eq) in dim_changes {
+            d.set_dim(j, v, eq);
+        }
+        if let Some(name) = rename
+            && let Some(k) = d.edit
+        {
+            self.checkpoint("Rename");
+            match self.part_mut().rename_feature(k, &name) {
+                Ok(()) => d.def.name = name,
+                Err(e) => {
+                    self.history.cancel();
+                    self.file_status = Some(Err(format!("Rename: {e}")));
+                }
+            }
+        }
+        if to_sketch {
+            self.hole_draft = Some(d);
+            self.hole_to_sketch();
+            return;
+        }
         let spec = &mut d.def.spec;
         psection(ui, "hole_type", "Type", |ui| {
             plabel(ui, "Hole");
@@ -488,6 +609,9 @@ impl CadCraftApp {
                     {
                         d.to_pick = !d.to_pick;
                     }
+                    ui.checkbox(&mut spec.extend_to, "Extend To").on_hover_text(
+                        "On: the face's whole plane ends the hole; off: the hole must meet the face",
+                    );
                 });
                 ui.end_row();
             }
@@ -496,14 +620,37 @@ impl CadCraftApp {
             ui.horizontal(|ui| {
                 ui.radio_value(&mut dir2, false, "Direction 1");
                 ui.radio_value(&mut dir2, true, "Direction 2");
+                let can_sym = spec.termination == Termination::ThroughAll
+                    && spec.seat == SeatType::None
+                    && matches!(spec.hole_type, HoleType::Simple | HoleType::Clearance);
+                if can_sym {
+                    ui.checkbox(&mut spec.symmetric, "Symmetric")
+                        .on_hover_text("Through all in both directions");
+                } else {
+                    spec.symmetric = false;
+                }
             });
             spec.flip = dir2;
             ui.end_row();
             plabel(ui, "Drill Point");
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut spec.drill_point, DrillPoint::Flat, "Flat");
-                ui.radio_value(&mut spec.drill_point, DrillPoint::Angle, "Angle");
-            });
+            let items: Vec<(String, DrillPoint)> = DrillPoint::ALL
+                .iter()
+                .map(|x| (x.label().to_owned(), *x))
+                .collect();
+            if let Some(v) = combo(
+                ui,
+                "hole_point",
+                &spec.drill_point,
+                spec.drill_point.label(),
+                &items,
+            ) {
+                spec.drill_point = v;
+            }
+            ui.end_row();
+            plabel(ui, "Advanced");
+            ui.checkbox(&mut spec.extend_start, "Extend Start").on_hover_text(
+                "The hole starts above its start plane even inside the material (removes leftover slivers)",
+            );
             ui.end_row();
         });
         if let Some(t) = spec
@@ -572,6 +719,10 @@ impl CadCraftApp {
         dimension_picture(ui, &spec);
         ui.label(RichText::new(format!("Note: {}", spec.note_ascii())).weak())
             .on_hover_text("The hole note a drawing writes (the symbols as text here)");
+        // Invalid values in red (Inventor), e.g. a thread longer than the hole.
+        if let Err(e) = spec.validate() {
+            ui.label(RichText::new(format!("Hole: {e}")).color(Color32::from_rgb(200, 30, 30)));
+        }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
         for (field, text) in commits {
@@ -699,9 +850,23 @@ impl CadCraftApp {
         }
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(preview, Err(e) if e == super::PREVIEW_PENDING);
-            if ui
+            // Ctrl+Enter: OK; +: create it and start another (Inventor).
+            let (ctrl_enter, plus) = if ui.ctx().egui_wants_keyboard_input() {
+                (false, false)
+            } else {
+                ui.input(|i| {
+                    (
+                        i.modifiers.command && i.key_pressed(egui::Key::Enter),
+                        i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
+                    )
+                })
+            };
+            if (ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Ctrl+Enter")
                 .clicked()
+                || (ok && ctrl_enter))
+                && !(ok && plus && apply)
             {
                 match cmd {
                     Cmd::Hole => self.commit_hole(false),
@@ -714,8 +879,9 @@ impl CadCraftApp {
                         ok,
                         egui::Button::new("Apply").min_size(egui::vec2(60.0, 22.0)),
                     )
-                    .on_hover_text("Create it and start a new one with the same settings")
+                    .on_hover_text("Create it and start a new one with the same settings (+)")
                     .clicked()
+                || (apply && ok && plus)
             {
                 match cmd {
                     Cmd::Hole => self.commit_hole(true),
@@ -726,7 +892,7 @@ impl CadCraftApp {
                 .add(egui::Button::new("Cancel").min_size(egui::vec2(60.0, 22.0)))
                 .clicked()
             {
-                self.hole_draft = None;
+                self.cancel_hole();
                 self.thread_draft = None;
                 self.end_feature_edit();
             }

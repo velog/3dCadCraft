@@ -44,7 +44,9 @@
 | [0.6-files.md](0.6-files.md) | New, Open, Save, Save As, Export, последни файлове, прозорецът за файлове (и под Windows) |
 | [0.10-physical.md](0.10-physical.md) | Physical Properties: маса, обем, площ, център на тежестта, инерция |
 | [0.9-selection.md](0.9-selection.md) | Избор, филтри, prehighlight, Select Other, контекстни предложения |
+| [0.14-diagnostics.md](0.14-diagnostics.md) | Диагностика: лог на сесията, дневник на действията и replay, автозапис и Restore, доклад за срив, Save Diagnostics |
 | [0.11-presets.md](0.11-presets.md) | Presets: готови набори настройки в панелите на командите (Last Used, No Preset, вградени) |
+| [0.13-ui-layout.md](0.13-ui-layout.md) | Подредба на интерфейса: размер на панелите, свиване на лентата, User Interface, Clean Screen, Full Screen, плаващи прозорци, `settings.json` |
 | [0-ui.md](0-ui.md) | Интерфейс: визия, цветове, знаци, поведение на командите, избор, насочване на потребителя, производителност |
 | [1.1-sketch.md](1.1-sketch.md) | 2D скица: създаване, редакция, координатна система, проекции, настройки |
 | [1.2-sketch-geometry.md](1.2-sketch-geometry.md) | Инструменти за чертане, Fillet и Chamfer, Format |
@@ -69,7 +71,7 @@
 | [2.10-work-features.md](2.10-work-features.md) | Работни равнини, оси, точки |
 | [2.13-booleans.md](2.13-booleans.md) | Join / Cut / Intersect, Surface, представяне на резултата |
 | [2.15-materials.md](2.15-materials.md) | Материали, външен вид (appearances), override-и, библиотеки, Styles Editor |
-| [2.16-browser.md](2.16-browser.md) | Дърво на модела: ред, вложени скици, тела |
+| [2.16-browser.md](2.16-browser.md) | Дърво на модела: ред, вложени скици, тела, End of Part, пренареждане, Suppress, Delete, Rename |
 | [7.7-export.md](7.7-export.md) | Износ: STL, STEP, GLB |
 
 Тестова матрица на основните функции: [TESTING.md](TESTING.md).

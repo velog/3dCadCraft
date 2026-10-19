@@ -104,6 +104,8 @@
 
 **Аналог.** Undo/Redo, Model Browser.
 
+**Диагностика и възстановяване** — 🟡 (2026-10-19, чака визуална проверка): лог на всяка сесия, дневник на действията (JSONL) с разлики на детайла, който се повтаря стъпка по стъпка (`diagnostics::replay`, `cargo run --example replay`), автозапис на 5 минути и след OK в `%APPDATA%\3dcadcraft\recovery` с предложение **Restore** след срив, доклад за срив с backtrace и аварийно копие, **Help → Save Diagnostics…** и **Open Logs Folder**. **Спецификация:** [spec/0.14-diagnostics.md](spec/0.14-diagnostics.md)
+
 ## 0.5 Параметри и изрази — ⬜ · M
 
 **Какво прави.** Всеки размер може да е **именуван параметър** (`width = 120 mm`) или **израз** (`hole_spacing = width / 4`). Промяната на параметър регенерира модела.
@@ -182,7 +184,9 @@
 
 ## 0.11 Настройки на приложението и документа — 🟡 · S
 
-**Състояние (2026-10-19):** Tools → Application Options има Navigation (профил на мишката, Reverse zoom direction), Language (подсказки на български), Sketch, Display и Constraint Settings — Inference. В `settings.json` се пазят само езикът на подсказките и последните файлове; останалото важи до затваряне. Клавишите са твърдо зададени. Document Settings ⬜. Пълен списък на опциите, клавишите и мишката: **[REFERENCE.md](REFERENCE.md)** (§5 клавиши, §8 настройки); пропуските — [ROADMAP.md](ROADMAP.md#интерфейс-пропуски-и-следващи-стъпки) (U1, U2, U8).
+**Състояние (2026-10-19):** Tools → Application Options има Navigation (профил на мишката, Reverse zoom direction), Language (подсказки на български), Sketch, Display и Constraint Settings — Inference. В `settings.json` се пазят езикът на подсказките, последните файлове, всички Application Options (`options`) и подредбата на интерфейса (`ui`). Клавишите са твърдо зададени. Document Settings ⬜. Пълен списък на опциите, клавишите и мишката: **[REFERENCE.md](REFERENCE.md)** (§5 клавиши, §8 настройки); пропуските — [ROADMAP.md](ROADMAP.md#интерфейс-пропуски-и-следващи-стъпки) (U1, U2, U8).
+**Подредба на интерфейса** — 🟡: влачене и запомняне на ширините на дървото, Properties и лентата на състоянието; свиване на лентата до табовете; View → User Interface (Browser, Properties, Ribbon, Status Bar, ViewCube, Axis Triad), Clean Screen (Ctrl+0), Full Screen (F11 извън скица), Reset UI Layout; дърво и Properties отляво или отдясно; плаващите прозорци помнят място и размер. **Спецификация:** [spec/0.13-ui-layout.md](spec/0.13-ui-layout.md)
+
 **Presets** (готови набори в панелите на командите) — 🟡: Extrude, Revolve, Fillet, Chamfer, Shell и Face Draft имат ред Preset (No Preset, Last Used, свои и вградени набори, Save/Rename/Delete, New Default, Sort). Наборите са настройка на потребителя (`%APPDATA%\3dcadcraft\presets`, под Linux `~/.config/3dcadcraft/presets`), не данни на документа. **Спецификация:** [spec/0.11-presets.md](spec/0.11-presets.md)
 
 **Application Options** (за потребителя):
@@ -454,7 +458,9 @@
 
 **Аналог.** Rectangular / Circular / Mirror (sketch pattern).
 
-## 1.8 Проектиране на геометрия — ⬜ · M
+## 1.8 Проектиране на геометрия — 🟡 · M
+
+Направено (чака визуална проверка): Sketch → Create → **Project Geometry** на прави ръбове на модела (асоциативна референтна линия по имената на върховете, `PartDocument::project_edge`). Предстои: криви ръбове, стени, контури.
 
 **Спецификация:** [spec/1.8-project-geometry.md](spec/1.8-project-geometry.md).
 
@@ -522,13 +528,15 @@
   - редакция и „болни“ операции;
 - Output: Solid / Surface; операция New Solid / Join / Cut / Intersect (виж 2.13);
 - избор на тяло (Solids) при няколко тела ✅;
-- **предстои:** Match Shape, наклонени и криволинейни граници, наклон на сплайни.
+- 🟡 (2026-10-19, сравнение с Inventor 2027, чака визуална проверка): breadcrumb `Sketch1 > Extrusion1` (редакция на скицата и връщане, преименуване), Advanced Settings (Predict Boolean Operation, Keep sketch visible on (+)), бутон „+“, Ctrl+Enter, редакция на размерите на скицата по време на прегледа, Output без операция за базовата операция, прегледът чака Solids при няколко тела, To до работна/начална равнина и точка, To до наклонена стена/равнина, To до цилиндрична стена с Alternate Solution, Extend face to end feature (автоматично), Terminator за To Next, отворени профили с Match Shape;
+- 🟡 **Примитиви** (3D Model → Primitives): Box и Cylinder (скица + Extrude), Sphere и Torus (скица + пълен Revolve);
+- **предстои:** конусни/сферични граници, точка от друга скица като To, наклон на сплайни, Revolve с Match Shape.
 
 **Аналог.** Extrude.
 
 ## 2.2 Revolve (завъртане) — 🟡 · L
 
-**Статус (спецификация: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Готово: профили, ос (линия от скицата с авто-избор на единствената централна линия, X/Y/Z на началото), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, ъглите като параметри, диаметрален размер към централна линия. Предстои: работна ос и ръб като ос, To / To Next.
+**Статус (спецификация: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Готово: профили, ос (линия от скицата с авто-избор на единствената централна линия, X/Y/Z на началото), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, ъглите като параметри, диаметрален размер към централна линия. 🟡 (2026-10-19, Inventor 2027, чака визуална проверка): To (стена или равнина през оста, точка) с Minimum Solution, Predict Boolean Operation, Continue с десен клик, breadcrumb, „+“, примитиви Sphere и Torus; поправена посока на Symmetric/Asymmetric в точното ядро. Предстои: работна ос и ръб като ос, To Next, Match Shape.
 
 **Какво прави.** Завърта профил около ос: валове, втулки, фланци.
 
@@ -542,7 +550,7 @@
 
 ## 2.3 Hole (отвор) и Slot (прорез) — 🟡 · L
 
-**Спецификация:** [spec/2.3-hole.md](spec/2.3-hole.md). Направено (чака визуална проверка): Simple, Clearance (ISO 273, ASME B18.2.8: Close / Normal / Loose), Tapped (ISO метрична едра и дребна, UNC / UNF) — козметична или **моделирана** резба с хлабина за 3D печат; гнезда Counterbore, Spotface, Countersink (90° ISO, 82° ANSI) и попълване от таблиците (ISO 4762 / DIN 974-1, ISO 10642, ASME B18.3); граници Distance / Through All / To (равна стена), Direction 1/2, връх Flat / 118°; центрове: клик върху стена (скица с точки), точки от видима скица, концентрично на кръгъл ръб; Edit Feature, параметри, преглед. Стандартите са CSV в `data/standards/` (потребителско копие в `%APPDATA%\3dcadcraft\standards`). За чертежа: `HoleSpec::note()` („M8x1.25 - 6H ↧ 12“, „⌴ Ø11 ↧ 6.4“), `PartDocument::holes()` и групиране „4x Ø6.6 THRU“. Предстои: Taper Tapped, Symmetric, Extend To извън равнината, линейни размери до ръбове, Slot, бележка и таблица в чертежа (4.3–4.4).
+**Спецификация:** [spec/2.3-hole.md](spec/2.3-hole.md). Направено (чака визуална проверка): Simple, Clearance (ISO 273, ASME B18.2.8: Close / Normal / Loose), Tapped (ISO метрична едра и дребна, UNC / UNF) — козметична или **моделирана** резба с хлабина за 3D печат; гнезда Counterbore, Spotface, Countersink (90° ISO, 82° ANSI) и попълване от таблиците (ISO 4762 / DIN 974-1, ISO 10642, ASME B18.3); граници Distance / Through All / To (равна стена), Direction 1/2, връх Flat / 118°; центрове: клик върху стена (скица с точки), точки от видима скица, концентрично на кръгъл ръб; Edit Feature, параметри, преглед. Стандартите са CSV в `data/standards/` (потребителско копие в `%APPDATA%\3dcadcraft\standards`). За чертежа: `HoleSpec::note()` („M8x1.25 - 6H ↧ 12“, „⌴ Ø11 ↧ 6.4“), `PartDocument::holes()` и групиране „4x Ø6.6 THRU“. Добавено след проверката на собственика: центровете са **Center Points**; клик на прав ръб след центъра добавя размер до него (в скицата на отвора: проектиран ръб + размер точка–линия, параметър); Symmetric; Extend To вкл./изкл.; Flat W / Angle V / Angle Y; концентрично на цилиндрична стена; Allow Center Point Creation и менюто (Preselect, Keep sketch visible on (+)); breadcrumb `Sketch > Hole1`; невалидни стойности в червено; Ctrl+Enter / +; изтрита точка маха отвора си; моделираната резба вече не се губи тихо. Предстои: Taper Tapped, Select Feature Dimension, посока от точка + стена/ръб, прозоречен избор, Slot, бележка и таблица в чертежа (4.3–4.4).
 
 **Какво прави.** Създава стандартни отвори с правилна геометрия и *семантика*, т.е. отворът „знае“, че е M8 с резба. Така чертежът (4.3) показва правилната анотация, а BOM и CAM я разпознават.
 
@@ -602,7 +610,7 @@
 
 ## 2.6 Shell (черупка) — 🟡 · L
 
-**Спецификация:** [spec/2.6-shell.md](spec/2.6-shell.md). Направено (чака визуална проверка): Remove Faces с Automatic Face Chain, Inside / Outside / Both, затворена кухина без махнати стени, дебелина с израз, Edit Feature, преглед. Предстои: Unique Face Thickness, Rounded Corners, приближение, стрелка за дебелината в изгледа.
+**Спецификация:** [spec/2.6-shell.md](spec/2.6-shell.md). Направено (чака визуална проверка): Remove Faces с Automatic Face Chain (селектор с насочване, десен клик с Continue/Back, Enter/Ctrl+Enter), Inside / Outside / Center, Sharp / Rounded Corners, затворена кухина без махнати стени, дебелина с израз и стрелка в изгледа, преименуване в breadcrumb, Edit Feature, преглед. Advanced Properties (приближение) са показани неактивни — точното ядро не приближава. Предстои: Unique Face Thickness.
 
 Издълбава тялото до стени с дебелина t, като избраните стени се премахват (отворени). Поддържа различна дебелина за отделни стени.
 
@@ -620,7 +628,7 @@
 
 ## 2.8 Draft (наклон за изваждане) — 🟡 · L
 
-**Спецификация:** [spec/2.8-draft.md](spec/2.8-draft.md). Направено (чака визуална проверка): Fixed Edge (неподвижен ръб перпендикулярен на посоката), Fixed Plane, Pull Direction от стена, равнина или ръб, Flip, Automatic Face Chain, ъгъл с израз, Edit Feature, преглед. Предстои: Parting Line, Symmetric/Asymmetric, Automatic Blending.
+**Спецификация:** [spec/2.8-draft.md](spec/2.8-draft.md). Направено (чака визуална проверка): Fixed Edge (неподвижен ръб перпендикулярен на посоката, показан в изгледа), Fixed Plane, **Parting Line** (равнина или 2D скица на една височина), **One Way / Symmetric / Asymmetric** с Draft Angle 2 (стената се разделя с равнината и всяка част се накланя в своята посока), **Move Parting Line** (Static Edges, Select Boundary, Clear All, Angle for Top/Both/Bottom), Pull Direction от стена, равнина, ръб или ос с Flip и стрелка, **Automatic Blending** (закръгленията по посоката стават конуси и остават допирателни), Automatic Face Chain, ъгли с изрази, насочване (селектори, десен клик Continue/Back, Enter), Edit Feature, преглед. Предстои: наклонена/крива разделителна линия, 3D скица и повърхнина като инструмент, Absolute/Relative, Ctrl+клик за махане.
 
 Накланя стени под ъгъл спрямо посока на изваждане (pull direction), за отливки и леене под налягане. Методи: фиксиран ръб или фиксирана равнина (разделителна линия).
 
@@ -634,7 +642,7 @@
 
 ## 2.10 Работни елементи — 🟡 · M
 
-**Спецификация:** [spec/2.10-work-features.md](spec/2.10-work-features.md). Готово: команди Plane / Axis / Point (методът се разпознава от избора): равнини (Offset, Through Point, Midplane, Angle, Three Points, Two Coplanar Edges, Normal to Axis), оси (On Line, Parallel Through Point, Two Points, Two Planes, Normal to Plane, Circular Edge, Revolved Feature, Line on Plane), точки (Vertex/Midpoint, Three Planes, Two Lines, Plane + Line, Loop Center, Grounded); скици върху работни равнини. Предстоят UCS, Object Visibility, Show Inputs, Redefine, Flip Normal.
+**Спецификация:** [spec/2.10-work-features.md](spec/2.10-work-features.md). Готово: команди Plane / Axis / Point / UCS (методът се разпознава от избора): равнини (Offset, Through Point, Midplane, Midplane of Torus, Angle с дъга, Three Points, Two Coplanar Edges, Normal to Axis, Tangent to Surface Through Edge / Through Point / Parallel to Plane, Normal to Curve at Point, Flip Normal), оси (On Line или линия от скица, Parallel Through Point, Two Points, Two Planes, Normal to Plane, Circular или Elliptical Edge, Revolved Face/Feature, Line on Plane), точки (Vertex/Sketch Point/Midpoint, Three Planes, Two Lines, Plane или Surface + Line, Loop Center, Torus/Sphere Center, Grounded), UCS (6 параметъра или 3 точки, със свои равнини/оси/център); Redefine; скици върху работни равнини и UCS. Новото чака визуална проверка. Предстоят триада на UCS, Object Visibility, Show Inputs, Loop Select.
 
 **Какво прави.** Помощни равнини, оси, точки и локални координатни системи (UCS), спрямо които се рисуват скици и се позиционират операции.
 
@@ -719,7 +727,11 @@
 
 **Аналог.** Material and Appearance Browser.
 
-## 2.16 Дърво на операциите (Model Browser) — ⬜ · M
+## 2.16 Дърво на операциите (Model Browser) — 🟡 · M
+
+**Спецификация:** [spec/2.16-browser.md](spec/2.16-browser.md)
+
+**Статус (2026-10-19, чака визуална проверка):** End of Part (влачене, Move EOP to Top / End / Here, Delete All Features Below EOP), вмъкване на нови операции и скици при маркера, пренареждане с влачене с проверка на зависимостите, Suppress / Unsuppress със зависимите, Delete с опциите на Inventor, Rename (F2, бавен двоен клик), осветяване на стените при посочване. Предстоят: условно изключване, филтри, Find, папки.
 
 **Какво прави.**
 - Показва историята на детайла.

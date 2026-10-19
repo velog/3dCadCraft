@@ -22,7 +22,7 @@ use super::work::LineRef;
 
 /// Most instances (copies and original) one pattern may have (SolidCraft's
 /// limit as well).
-pub const MAX_INSTANCES: usize = 1000;
+pub const MAX_INSTANCES: usize = 10000;
 
 /// One direction of a rectangular pattern.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -512,7 +512,7 @@ mod tests {
         let mut p = PatternFeature::circular();
         if let PatternKind::Circular { axis, count, .. } = &mut p.kind {
             *axis = Some(LineRef::Origin(2));
-            *count = 1001;
+            *count = 10001;
         }
         let e = p.placements(&BRep::new(), &WorkGeom::new()).unwrap_err();
         assert!(e.contains("too many"), "{e}");

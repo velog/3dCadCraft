@@ -24,14 +24,20 @@
 //! sketch on the box's top face.
 
 mod blend;
+mod breadcrumb;
+mod browser_edit;
 mod camera;
+mod command_ui;
 mod demos;
+mod diag;
 mod draft;
+mod feature_cmd;
 mod files;
 mod hole;
 mod hole_panel;
 mod i18n;
 mod icons;
+mod layout;
 mod manip;
 mod material;
 mod overlay;
@@ -47,6 +53,7 @@ mod sketch_tools;
 mod valuefield;
 mod viewcube;
 mod work;
+mod work_panel;
 
 use eframe::egui::{self, Color32, Key, PointerButton, RichText, Sense};
 
@@ -67,12 +74,16 @@ use viewcube::StandardView;
 /// Launches the desktop application, optionally opening a project
 /// (`.3dcadcraft` file or unpacked folder).
 pub fn run(open: Option<std::path::PathBuf>) -> eframe::Result {
-    env_logger::init();
+    if let Some(p) = &open {
+        log::info!("open at start: {}", p.display());
+    }
+    let (size, maximized) = layout::startup_window();
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
             .with_title("3DCadCraft")
-            .with_inner_size([1400.0, 900.0]),
+            .with_inner_size(size)
+            .with_maximized(maximized),
         ..Default::default()
     };
     eframe::run_native(
@@ -90,7 +101,7 @@ pub fn run(open: Option<std::path::PathBuf>) -> eframe::Result {
 }
 
 /// Mouse navigation profiles (Tools → Application Options).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum MousePreset {
     /// Inventor defaults: Shift+middle orbit, middle pan, F2/F3/F4 + left.
     Inventor,
@@ -125,6 +136,8 @@ enum PickPurpose {
     NewSketch,
     /// Redefine sketch #i.
     Redefine(usize),
+    /// The sketch plane of a primitive (Box, Cylinder, Sphere, Torus).
+    Primitive(crate::part::PrimitiveKind),
 }
 
 /// The point of segment `a`–`b` nearest to the line through `o` along `d`.
@@ -202,6 +215,35 @@ struct ExtrudeDraft {
     last_op: Option<crate::part::Operation>,
     /// The direction was turned by that, not by the user.
     auto_flipped: bool,
+    /// The operation follows Predict Boolean Operation (until the user
+    /// picks one).
+    op_auto: bool,
+    /// The inputs the prediction was made for.
+    predicted_for: Option<String>,
+    /// The panel's breadcrumb (`Sketch1 > Extrusion1`).
+    crumbs: breadcrumb::BreadcrumbState,
+    /// Made by a primitive command (Box, Cylinder, Sphere, Torus).
+    primitive: Option<crate::part::PrimitiveKind>,
+}
+
+impl ExtrudeDraft {
+    /// A new command on sketch `sketch` with `def` (no edit, axis unset).
+    fn new(sketch: usize, def: DraftDef) -> Self {
+        Self {
+            sketch,
+            def,
+            axis_pick: false,
+            axis_set: false,
+            temp_sketch: false,
+            edit: None,
+            last_op: None,
+            auto_flipped: false,
+            op_auto: true,
+            predicted_for: None,
+            crumbs: breadcrumb::BreadcrumbState::at(1),
+            primitive: None,
+        }
+    }
 }
 
 /// Something in the model that can be picked in the view.
@@ -362,6 +404,15 @@ enum ManipOwner {
     Feature(usize),
     /// The open Work Plane / Axis / Point dialog.
     Work,
+    /// The open Shell dialog (thickness arrow).
+    Shell,
+}
+
+impl ManipOwner {
+    /// A dialog's handle: its value follows the drag live.
+    fn live(self) -> bool {
+        matches!(self, ManipOwner::Draft | ManipOwner::Shell)
+    }
 }
 
 /// Edge polylines of an Extrude preview, or why it cannot be built.
@@ -427,6 +478,12 @@ struct CadCraftApp {
     last_command: Option<Action>,
     /// The Extrude command, while its dialog is open.
     extrude: Option<ExtrudeDraft>,
+    /// An Extrude / Revolve waiting while its sketch is edited (breadcrumb).
+    suspended_draft: Option<ExtrudeDraft>,
+    /// A primitive being placed (clicks in its sketch).
+    prim_draft: Option<feature_cmd::PrimDraft>,
+    /// Advanced Settings of the feature panels.
+    feature_settings: feature_cmd::FeatureSettings,
     /// Picking a face or vertex for an extrusion's From / To.
     target_pick: Option<(TargetOwner, TargetSlot)>,
     /// Preview of the Extrude dialog: key, edge polylines or the error.
@@ -434,6 +491,10 @@ struct CadCraftApp {
     /// The preview being computed on a worker thread (the exact kernel can
     /// take seconds; computing it in the frame froze the UI).
     preview_job: std::cell::RefCell<Option<(String, std::sync::mpsc::Receiver<PreviewResult>)>>,
+    /// The part a preview built (key, signature of the part it started
+    /// from, result): OK takes it instead of building the feature again on
+    /// the UI thread (a pattern took seconds and looked like it did nothing).
+    preview_part: std::sync::Arc<std::sync::Mutex<Option<(String, u64, PartDocument)>>>,
     /// Plane under the cursor when the viewport context menu opened.
     context_target: Option<PlaneRef>,
 
@@ -537,12 +598,21 @@ struct CadCraftApp {
     pattern_draft: Option<pattern_feature::PatternDraft>,
     /// The open Hole command.
     hole_draft: Option<hole::HoleDraft>,
+    /// Project Geometry is active in the open sketch.
+    project_geometry: bool,
     /// The open Thread command.
     thread_draft: Option<hole::ThreadDraft>,
     /// The open Work Plane / Axis / Point command.
     work_draft: Option<work::WorkDraft>,
     /// A feature deletion waiting for confirmation, with what it breaks.
     confirm_delete: Option<(usize, Vec<(String, String)>)>,
+    /// The options of the Delete Features dialog.
+    delete_opts: crate::part::history::DeleteOptions,
+    /// The browser row being renamed (F2 / slow double-click).
+    rename: Option<browser_edit::RenameTarget>,
+    /// The feature under the pointer in the browser (highlighted in the
+    /// view), by id.
+    browser_hover: Option<String>,
     /// The References row under the pointer: (sketch, its points).
     ref_hover: Option<(usize, Vec<PointId>)>,
     /// Dynamic Input fields.
@@ -557,6 +627,12 @@ struct CadCraftApp {
     list_hover: Option<ConstraintId>,
     /// Materials, appearances, Physical Properties (`material.rs`).
     mat: material::MaterialUi,
+    /// Journal, autosave and Restore (`diag.rs`).
+    diag: diag::DiagUi,
+    /// Panels, floating windows, User Interface toggles (`layout.rs`).
+    layout: layout::LayoutUi,
+    /// Full Screen to send to the window this frame.
+    full_screen_cmd: Option<bool>,
 }
 
 /// Target of a right-click inside the edited sketch.
@@ -590,6 +666,9 @@ impl CadCraftApp {
             regions_cache: Default::default(),
             dragging: None,
             extrude: None,
+            suspended_draft: None,
+            prim_draft: None,
+            feature_settings: Default::default(),
             last_command: None,
             dim_display: Default::default(),
             viewport_rect: egui::Rect::NOTHING,
@@ -599,6 +678,7 @@ impl CadCraftApp {
             target_pick: None,
             extrude_preview: Default::default(),
             preview_job: Default::default(),
+            preview_part: Default::default(),
             context_target: None,
             file_path: String::new(),
             file_dialog: None,
@@ -646,6 +726,9 @@ impl CadCraftApp {
             pick_cache: std::cell::RefCell::new(None),
             ref_hover: None,
             confirm_delete: None,
+            delete_opts: Default::default(),
+            rename: None,
+            browser_hover: None,
             work_draft: None,
             blend_draft: None,
             shell_draft: None,
@@ -653,6 +736,7 @@ impl CadCraftApp {
             pattern_draft: None,
             presets: Default::default(),
             hole_draft: None,
+            project_geometry: false,
             thread_draft: None,
             last_pick: None,
             box_select: None,
@@ -660,7 +744,15 @@ impl CadCraftApp {
             sketch_context: None,
             list_hover: None,
             mat: material::MaterialUi::load(),
+            diag: diag::DiagUi::new(),
+            layout: layout::LayoutUi::default(),
+            full_screen_cmd: None,
         };
+        let (lay, options) = layout::LayoutUi::load(files::settings_path());
+        app.layout = lay;
+        app.apply_options(options);
+        // Ctrl+0 is Clean Screen (Inventor), not egui's zoom reset.
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         // Developer aid: start with a demo sketch, e.g. CADCRAFT3D_DEMO=slot.
         if let Some(demo) = std::env::var("CADCRAFT3D_DEMO")
             .ok()
@@ -692,6 +784,7 @@ impl CadCraftApp {
     /// Records the state before an action named `label` (for Undo).
     fn checkpoint(&mut self, label: &str) {
         self.history.record(label, self.project.clone());
+        self.diag.checkpoint(label);
     }
 
     /// Re-validates UI state after the project was replaced (undo, open).
@@ -713,14 +806,18 @@ impl CadCraftApp {
     }
 
     fn undo(&mut self) {
+        let label = self.history.undo_label().map(str::to_owned);
         if let Some(p) = self.history.undo(self.project.clone()) {
+            self.diag.undo_redo("undo", label);
             self.project = p;
             self.after_restore();
         }
     }
 
     fn redo(&mut self) {
+        let label = self.history.redo_label().map(str::to_owned);
         if let Some(p) = self.history.redo(self.project.clone()) {
+            self.diag.undo_redo("redo", label);
             self.project = p;
             self.after_restore();
         }
@@ -756,6 +853,7 @@ impl CadCraftApp {
         self.mode = Mode::Normal;
         let opts = self.sketch_opts.clone();
         match purpose {
+            PickPurpose::Primitive(kind) => self.primitive_plane(kind, plane),
             PickPurpose::NewSketch => {
                 let name = self.part().next_sketch_name();
                 self.checkpoint(&format!("Create {name}"));
@@ -805,6 +903,8 @@ impl CadCraftApp {
         self.tools.over_prompt = None;
         self.report = None;
         self.tab = Tab::Model;
+        // Breadcrumb: back to the command that opened the sketch.
+        self.resume_suspended_draft();
     }
 
     fn look_at_sketch(&mut self, i: usize) {
@@ -992,29 +1092,15 @@ impl CadCraftApp {
                 auto.unwrap_or(crate::part::AxisRef::Origin(0)),
             );
             def.operation = operation;
-            ExtrudeDraft {
-                sketch,
-                def: DraftDef::Revolve(def),
-                axis_pick: !axis_set,
-                axis_set,
-                temp_sketch: false,
-                edit: None,
-                last_op: None,
-                auto_flipped: false,
-            }
+            let mut d = ExtrudeDraft::new(sketch, DraftDef::Revolve(def));
+            d.axis_pick = !axis_set;
+            d.axis_set = axis_set;
+            d
         } else {
             let mut def = crate::part::ExtrudeFeature::new(profiles, 10.0);
+            def.extend_face = false; // Inventor: off, on by itself when needed
             def.operation = operation;
-            ExtrudeDraft {
-                sketch,
-                def: DraftDef::Extrude(def),
-                axis_pick: false,
-                axis_set: false,
-                temp_sketch: false,
-                edit: None,
-                last_op: None,
-                auto_flipped: false,
-            }
+            ExtrudeDraft::new(sketch, DraftDef::Extrude(def))
         };
         self.draft_preset_start(&mut draft.def);
         self.extrude = Some(draft);
@@ -1065,22 +1151,16 @@ impl CadCraftApp {
         self.draft_preset_start(&mut def);
         self.part_mut().sketches[i].visible = false;
         self.face_sel = None;
-        self.extrude = Some(ExtrudeDraft {
-            sketch: i,
-            def,
-            axis_pick: false,
-            axis_set: false,
-            temp_sketch: true,
-            edit: None,
-            last_op: None,
-            auto_flipped: false,
-        });
+        let mut d = ExtrudeDraft::new(i, def);
+        d.temp_sketch = true;
+        self.extrude = Some(d);
         self.scene_dirty = true;
     }
 
     /// Closes the Extrude/Revolve dialog without a feature; a sketch made
     /// for it (Press/Pull) goes too.
     fn cancel_extrude(&mut self) {
+        self.cancel_primitive();
         self.shell_draft = None;
         self.draft_draft = None;
         self.pattern_draft = None;
@@ -1122,16 +1202,9 @@ impl CadCraftApp {
                     return;
                 };
                 self.roll_back_to(k);
-                self.extrude = Some(ExtrudeDraft {
-                    sketch,
-                    def: DraftDef::Extrude(e),
-                    axis_pick: false,
-                    axis_set: false,
-                    temp_sketch: false,
-                    edit: Some(k),
-                    last_op: None,
-                    auto_flipped: false,
-                });
+                let mut d = ExtrudeDraft::new(sketch, DraftDef::Extrude(e));
+                (d.edit, d.op_auto) = (Some(k), false);
+                self.extrude = Some(d);
             }
             Feature::Revolve(r) => {
                 let Some(sketch) = sketch_of(self, &r.sketch) else {
@@ -1140,16 +1213,9 @@ impl CadCraftApp {
                     return;
                 };
                 self.roll_back_to(k);
-                self.extrude = Some(ExtrudeDraft {
-                    sketch,
-                    def: DraftDef::Revolve(r),
-                    axis_pick: false,
-                    axis_set: true,
-                    temp_sketch: false,
-                    edit: Some(k),
-                    last_op: None,
-                    auto_flipped: false,
-                });
+                let mut d = ExtrudeDraft::new(sketch, DraftDef::Revolve(r));
+                (d.edit, d.op_auto, d.axis_set) = (Some(k), false, true);
+                self.extrude = Some(d);
             }
             Feature::Blend(b) => {
                 self.roll_back_to(k);
@@ -1179,7 +1245,8 @@ impl CadCraftApp {
                 self.thread_draft = Some(hole::ThreadDraft::editing(t, k));
             }
             // Box and work features are edited in Properties.
-            Feature::Box(_) | Feature::Work(_) => {}
+            Feature::Work(_) => self.redefine_work(k),
+            Feature::Box(_) => {}
         }
         if let Some(def) = self.extrude.as_ref().map(|d| d.def.clone()) {
             self.draft_preset_edit(&def);
@@ -1316,6 +1383,9 @@ impl CadCraftApp {
     /// Extrude: a click in the graphics window toggles the region under it
     /// (in the current profile sketch, else in another visible sketch).
     fn extrude_pick(&mut self, pos: egui::Pos2, rect: egui::Rect) {
+        if self.open_curve_pick(pos, rect) {
+            return; // an open curve (Match Shape)
+        }
         let Some(d) = self.extrude.as_ref() else {
             return;
         };
@@ -1463,9 +1533,21 @@ impl CadCraftApp {
         if let Some((_, name)) = vertex {
             return Some(crate::part::TargetRef::Vertex(name));
         }
+        // A work point (To a point: the plane through it).
+        if let Some(work::WpInput::Point(p @ crate::part::PointRef::Work(_))) =
+            self.work_axis_or_point_under(pos, rect)
+        {
+            return Some(crate::part::TargetRef::Point(p));
+        }
         let (origin, dir) = self.camera.ray(pos, rect)?;
-        let (f, _) = self.picker().pick(&origin, &dir)?;
-        Some(crate::part::TargetRef::Face(body.face(f)?.name.clone()?))
+        if let Some((f, _)) = self.picker().pick(&origin, &dir) {
+            return Some(crate::part::TargetRef::Face(body.face(f)?.name.clone()?));
+        }
+        // Work and origin planes.
+        match self.plane_under(pos, rect, true)? {
+            PlaneRef::Face(n) => Some(crate::part::TargetRef::Face(n)),
+            p => Some(crate::part::TargetRef::Plane(p)),
+        }
     }
 
     /// Applies a picked target to the dialog or to an existing feature.
@@ -1478,24 +1560,46 @@ impl CadCraftApp {
             self.target_pick = Some((owner, slot));
             return;
         };
-        let set = |def: &mut crate::part::ExtrudeFeature| match slot {
-            TargetSlot::From => def.from = Some(t.clone()),
-            TargetSlot::To => def.extent = crate::part::Extent::To(t.clone()),
+        // Sets the target; Inventor: Extend face to end feature turns on by
+        // itself when the face does not cover the profile.
+        let set = |def: &mut crate::part::ExtrudeFeature, part: &PartDocument, sketch: usize| {
+            match slot {
+                TargetSlot::From => def.from = Some(t.clone()),
+                TargetSlot::To => def.extent = crate::part::Extent::To(t.clone()),
+            }
+            if let Some(ps) = part.sketches.get(sketch)
+                && def.needs_extended_face(&part.body, &part.work, &ps.sketch)
+            {
+                def.extend_face = true;
+            }
         };
         match owner {
             TargetOwner::Draft => {
-                if let Some(d) = self.extrude.as_mut()
-                    && let DraftDef::Extrude(e) = &mut d.def
-                {
-                    set(e);
+                let Some(mut d) = self.extrude.take() else {
+                    return;
+                };
+                match &mut d.def {
+                    DraftDef::Extrude(e) => set(e, self.part(), d.sketch),
+                    DraftDef::Revolve(r) => {
+                        r.extent = crate::part::RevolveExtent::To;
+                        r.to = Some(t.clone());
+                    }
                 }
+                self.extrude = Some(d);
             }
             TargetOwner::Feature(k) => {
                 if let Some(crate::part::Feature::Extrude(e)) = self.part().features.get(k).cloned()
                 {
                     let mut e = e;
-                    set(&mut e);
+                    let sketch = self.part().sketches.iter().position(|s| s.id == e.sketch);
+                    set(&mut e, self.part(), sketch.unwrap_or(usize::MAX));
                     self.edit_extrude(k, e);
+                } else if let Some(crate::part::Feature::Revolve(mut r)) =
+                    self.part().features.get(k).cloned()
+                {
+                    r.extent = crate::part::RevolveExtent::To;
+                    r.to = Some(t.clone());
+                    self.edit_feature(k, crate::part::Feature::Revolve(r));
                 }
             }
         }
@@ -1504,31 +1608,78 @@ impl CadCraftApp {
     /// A preview by `key`: cached, or computed by `work` on a worker
     /// thread ([`PREVIEW_PENDING`] until it is done). A newer key replaces
     /// the job; the old thread's result is dropped.
+    /// The preview for `key` if it needs no new work: the cached result, or
+    /// "computing" while a job runs — for this key, or for an older one
+    /// (one job at a time: changing a value quickly must not start a full
+    /// regeneration per step; the newest key starts when the old job ends).
+    /// `None`: start a job. Callers check this before copying the part, so
+    /// an idle frame copies nothing.
+    pub(super) fn preview_ready(&self, key: &str) -> Option<PreviewResult> {
+        if let Some((k, r)) = &*self.extrude_preview.borrow()
+            && k == key
+        {
+            return Some(r.clone());
+        }
+        let mut job = self.preview_job.borrow_mut();
+        let (k, rx) = job.as_ref()?;
+        let same = k == key;
+        let done = match rx.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return Some(Err(PREVIEW_PENDING.into())),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("the preview could not be computed".into())
+            }
+        };
+        let k = k.clone();
+        *job = None;
+        *self.extrude_preview.borrow_mut() = Some((k, done.clone()));
+        // A finished job for an older key: start the current one.
+        same.then_some(done)
+    }
+
+    /// A cheap signature of what the part is built from (features,
+    /// sketches, End of Part, suppressions): equal means a preview's result
+    /// is still the part OK would build.
+    pub(super) fn part_signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let p = self.part();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_vec(&p.features)
+            .unwrap_or_default()
+            .hash(&mut h);
+        serde_json::to_vec(&p.sketches)
+            .unwrap_or_default()
+            .hash(&mut h);
+        serde_json::to_vec(&p.user_params)
+            .unwrap_or_default()
+            .hash(&mut h);
+        p.eop.hash(&mut h);
+        let mut sup: Vec<&String> = p.suppressed.iter().collect();
+        sup.sort();
+        sup.hash(&mut h);
+        h.finish()
+    }
+
+    /// The part the preview for `key` built from the part as it is now, if
+    /// there is one (taken: it is used once).
+    pub(super) fn take_preview_part(&self, key: &str) -> Option<PartDocument> {
+        let sig = self.part_signature();
+        let mut slot = self.preview_part.lock().ok()?;
+        match slot.take() {
+            Some((k, s, p)) if k == key && s == sig => Some(p),
+            _ => None,
+        }
+    }
+
     pub(super) fn preview_async(
         &self,
         key: String,
         work: impl FnOnce() -> PreviewResult + Send + 'static,
     ) -> PreviewResult {
-        if let Some((k, r)) = &*self.extrude_preview.borrow()
-            && *k == key
-        {
-            return r.clone();
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
         }
         let mut job = self.preview_job.borrow_mut();
-        if let Some((k, rx)) = &*job
-            && *k == key
-        {
-            let done = match rx.try_recv() {
-                Ok(r) => r,
-                Err(std::sync::mpsc::TryRecvError::Empty) => return Err(PREVIEW_PENDING.into()),
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    Err("the preview could not be computed".into())
-                }
-            };
-            *job = None;
-            *self.extrude_preview.borrow_mut() = Some((key, done.clone()));
-            return done;
-        }
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("preview".into())
@@ -1562,13 +1713,45 @@ impl CadCraftApp {
         let Some(d) = &self.extrude else {
             return Ok(Vec::new());
         };
-        if d.def.profiles().is_empty() {
+        let open = matches!(&d.def, DraftDef::Extrude(e) if e.open.is_some());
+        if d.def.profiles().is_empty() && !open {
             return Err("Select a profile".to_owned());
         }
         if matches!(d.def, DraftDef::Revolve(_)) && !d.axis_set {
             return Err("Pick the axis".to_owned());
         }
-        let key = format!("{}|{:?}|{:?}", d.sketch, d.edit, d.def);
+        // Inventor: in a part with several bodies the preview waits for the
+        // Solids choice (or New Solid).
+        let (op, output, chosen) = match &d.def {
+            DraftDef::Extrude(e) => (e.operation, e.output, e.solids.is_empty()),
+            DraftDef::Revolve(r) => (r.operation, r.output, r.solids.is_empty()),
+        };
+        if chosen
+            && output == crate::part::Output::Solid
+            && op != crate::part::Operation::NewSolid
+            && self
+                .part()
+                .bodies_before(d.edit.unwrap_or(usize::MAX))
+                .len()
+                > 1
+        {
+            return Err(format!(
+                "{}: choose the Solids to {} (or New Solid)",
+                d.def.command(),
+                op.label()
+            ));
+        }
+        // The sketch's geometry too: its dimensions can be edited meanwhile.
+        let sig = self
+            .part()
+            .sketches
+            .get(d.sketch)
+            .map_or(0, |ps| feature_cmd::sketch_sig(&ps.sketch));
+        let key = format!("{}|{sig}|{:?}|{:?}", d.sketch, d.edit, d.def);
+        // Cached or still computing: no copy of the part this frame.
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
         let mut trial = self.part().clone();
         let (sketch, def, edit) = (d.sketch, d.def.clone(), d.edit);
         self.preview_async(key, move || {
@@ -1621,8 +1804,7 @@ impl CadCraftApp {
         }
         match result {
             Ok(_) => {
-                self.selection =
-                    Selection::Feature(d.edit.unwrap_or(self.part().features.len() - 1));
+                self.selection = Selection::Feature(d.edit.unwrap_or(self.part().last_inserted()));
                 self.extrude = None;
                 self.target_pick = None;
                 self.file_status = None;
@@ -1657,6 +1839,7 @@ impl CadCraftApp {
                 Ok(WorkDef::Plane(WorkPlaneDef::Offset { base, distance })) => {
                     Some((ManipOwner::Work, offset(&base, distance)?))
                 }
+                Ok(def) => Some((ManipOwner::Work, self.work_angle_handle(&def)?)),
                 _ => None,
             };
         }
@@ -1668,7 +1851,7 @@ impl CadCraftApp {
                 WorkDef::Plane(WorkPlaneDef::Offset { base, distance }) => {
                     Some((ManipOwner::Feature(k), offset(base, *distance)?))
                 }
-                _ => None,
+                def => Some((ManipOwner::Feature(k), self.work_angle_handle(def)?)),
             };
         }
         if let Some(d) = &self.extrude {
@@ -1679,6 +1862,9 @@ impl CadCraftApp {
                 DraftDef::Revolve(r) => manip::revolve_handles(r, sk),
             };
             return Some((ManipOwner::Draft, h));
+        }
+        if self.shell_draft.is_some() {
+            return Some((ManipOwner::Shell, self.shell_handles()));
         }
         let Selection::Feature(k) = self.selection else {
             return None;
@@ -2563,7 +2749,11 @@ impl CadCraftApp {
     fn handle_value(&self, h: &manip::Handle) -> Option<f64> {
         use crate::part::params::feature_value;
         if let Some(d) = &self.work_draft {
-            return (h.field == "distance").then_some(d.distance);
+            return match h.field {
+                "distance" => Some(d.distance),
+                "angle" => Some(d.angle),
+                _ => None,
+            };
         }
         let f = match (&self.extrude, self.selection) {
             (Some(d), _) => match d.def.clone() {
@@ -2602,10 +2792,23 @@ impl CadCraftApp {
                 }
             }
             ManipOwner::Work => {
-                if let Some(d) = self.work_draft.as_mut()
-                    && field == "distance"
+                if let Some(d) = self.work_draft.as_mut() {
+                    match field {
+                        "distance" => d.distance = v,
+                        "angle" => d.angle = v,
+                        _ => {}
+                    }
+                }
+            }
+            ManipOwner::Shell => {
+                if let Some(d) = self.shell_draft.as_mut()
+                    && v > 0.0
                 {
-                    d.distance = v;
+                    let mut f = crate::part::Feature::Shell(d.def.clone());
+                    set_feature_field_value(&mut f, field, v);
+                    if let crate::part::Feature::Shell(s) = f {
+                        d.def = s;
+                    }
                 }
             }
         }
@@ -2619,10 +2822,16 @@ impl CadCraftApp {
         };
         let mut open = true;
         let mut apply = None;
-        egui::Window::new("Offset Element")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
+        self.layout
+            .place(
+                "offset",
+                ctx.content_rect(),
+                false,
+                egui::Window::new("Offset Element")
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(false),
+            )
             .show(ctx, |ui| {
                 ui.label(format!("Element {} of the pattern", k + 2));
                 egui::Grid::new("offset_el").num_columns(2).show(ui, |ui| {
@@ -2728,93 +2937,6 @@ impl CadCraftApp {
     /// Replaces extrusion `k`'s options and rebuilds the part.
     fn edit_extrude(&mut self, k: usize, def: crate::part::ExtrudeFeature) {
         self.edit_feature(k, crate::part::Feature::Extrude(def));
-    }
-
-    /// Deletes feature `k`; sketches no other feature uses become free and
-    /// visible again.
-    /// Delete Feature: when other sketches/features depend on it, asks
-    /// first and lists them.
-    pub(super) fn delete_feature(&mut self, k: usize) {
-        if k >= self.part().features.len() {
-            return;
-        }
-        let hit = self.part().breaks_if_removed(k);
-        if hit.is_empty() {
-            self.delete_feature_now(k);
-        } else {
-            self.confirm_delete = Some((k, hit));
-        }
-    }
-
-    /// The "what breaks" question of [`Self::delete_feature`].
-    fn confirm_delete_window(&mut self, ctx: &egui::Context) {
-        let Some((k, hit)) = self.confirm_delete.clone() else {
-            return;
-        };
-        let name = self
-            .part()
-            .features
-            .get(k)
-            .map_or_else(String::new, |f| f.name().to_owned());
-        let mut answer = None;
-        egui::Window::new("Delete Feature")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                ui.label(format!("Deleting {name} affects:"));
-                ui.add_space(4.0);
-                for (what, why) in &hit {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(Color32::from_rgb(230, 140, 0), "!");
-                        ui.label(RichText::new(what).strong());
-                        ui.label(RichText::new(why).small().weak());
-                    });
-                }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Delete anyway").clicked() {
-                        answer = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        answer = Some(false);
-                    }
-                });
-            });
-        if ctx.input(|i| i.key_pressed(Key::Escape)) {
-            answer = Some(false);
-        }
-        match answer {
-            Some(true) => {
-                self.confirm_delete = None;
-                self.delete_feature_now(k);
-            }
-            Some(false) => self.confirm_delete = None,
-            None => {}
-        }
-    }
-
-    fn delete_feature_now(&mut self, k: usize) {
-        if k >= self.part().features.len() {
-            return;
-        }
-        self.checkpoint("Delete Feature");
-        let part = self.part_mut();
-        let Some(removed) = part.remove_feature(k) else {
-            return;
-        };
-        if let Some(sk) = removed.sketch()
-            && part.consumers(sk).is_empty()
-            && let Some(ps) = part.sketches.iter_mut().find(|s| s.id == sk)
-        {
-            ps.shared = false;
-            ps.visible = true;
-        }
-        if let Err(e) = self.part_mut().regenerate() {
-            self.file_status = Some(Err(e.to_string()));
-        }
-        self.selection = Selection::Body;
-        self.scene_dirty = true;
     }
 
     fn delete_sketch(&mut self, i: usize) {
@@ -3187,6 +3309,7 @@ impl CadCraftApp {
             | Action::WorkPlane
             | Action::WorkAxis
             | Action::WorkPoint
+            | Action::Ucs
             | Action::Fillet
             | Action::Chamfer
             | Action::Shell
@@ -3202,7 +3325,17 @@ impl CadCraftApp {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);
             }
-            Action::FinishSketch => self.finish_sketch(),
+            Action::FinishSketch => {
+                self.project_geometry = false;
+                self.finish_sketch()
+            }
+            Action::ProjectGeometry => self.project_geometry = !self.project_geometry,
+            Action::CenterPoint => {
+                self.tools.center_point = !self.tools.center_point;
+                if self.tools.center_point {
+                    self.tools.set_tool(Tool::Point);
+                }
+            }
             Action::EditCoordinateSystem => {
                 if let Some(i) = self.editing {
                     self.selection = Selection::Sketch(i);
@@ -3223,6 +3356,7 @@ impl CadCraftApp {
             Action::SelectBody => self.selection = Selection::Body,
             Action::View(v) => self.set_view(v),
             Action::Options => self.show_options = true,
+            Action::Ui(c) => self.ui_command(c),
             Action::Tool(t) => {
                 if self.editing.is_some() {
                     self.tools.set_tool(t);
@@ -3233,6 +3367,7 @@ impl CadCraftApp {
             Action::ToggleRelax => self.relax = !self.relax,
             Action::Extrude => self.start_extrude(),
             Action::Revolve => self.start_revolve(),
+            Action::Primitive(k) => self.start_primitive(k),
             Action::Fillet => self.start_blend(false, None),
             Action::Chamfer => self.start_blend(true, None),
             Action::Shell => self.start_shell(),
@@ -3242,7 +3377,7 @@ impl CadCraftApp {
             Action::MirrorFeature => self.start_pattern(crate::part::PatternFeature::mirror()),
             Action::Hole => self.start_hole(),
             Action::Thread => self.start_thread(),
-            Action::WorkPlane | Action::WorkAxis | Action::WorkPoint => {
+            Action::WorkPlane | Action::WorkAxis | Action::WorkPoint | Action::Ucs => {
                 self.blend_draft = None;
                 self.finish_sketch();
                 self.mode = Mode::Normal;
@@ -3250,6 +3385,7 @@ impl CadCraftApp {
                 let kind = match action {
                     Action::WorkAxis => work::WorkKind::Axis,
                     Action::WorkPoint => work::WorkKind::Point,
+                    Action::Ucs => work::WorkKind::Ucs,
                     _ => work::WorkKind::Plane,
                 };
                 self.work_draft = Some(work::WorkDraft::new(kind));
@@ -3308,7 +3444,7 @@ impl CadCraftApp {
     /// Opens the Edit Dimension box for a dimension (double-click on its
     /// value, or Edit from its context menu).
     fn open_dimension_edit(&mut self, c: ConstraintId) {
-        let Some(i) = self.editing else { return };
+        let Some(i) = self.dim_sketch() else { return };
         let sk = &self.part().sketches[i].sketch;
         let Some(con) = sk.constraint(c) else { return };
         let Some(value) = con.value() else { return };
@@ -3849,8 +3985,14 @@ impl CadCraftApp {
         if pressed(Key::F1) {
             self.open_help();
         }
+        // Enter in a command with selectors: Continue / OK (`command_ui`).
+        let flow_open = self.flow_command_open();
+        if flow_open && pressed(Key::Enter) {
+            self.command_enter(cmd);
+        }
         // Enter (or Space) with nothing in progress repeats the last command.
         if (pressed(Key::Enter) || pressed(Key::Space))
+            && !flow_open
             && self.tools.tool == Tool::Select
             && self.extrude.is_none()
             && self.tools.selected.is_empty()
@@ -3945,7 +4087,7 @@ impl CadCraftApp {
             self.shell_draft = None;
             self.draft_draft = None;
             self.pattern_draft = None;
-            self.hole_draft = None;
+            self.cancel_hole();
             self.thread_draft = None;
             self.end_feature_edit();
             self.face_sel = None;
@@ -3975,6 +4117,12 @@ impl CadCraftApp {
                 ui.set_min_width(260.0);
                 self.file_menu(ui);
             });
+            ui.menu_button("View", |ui| {
+                ui.set_min_width(220.0);
+                self.view_menu(ui);
+            })
+            .response
+            .on_hover_text("User Interface: panels, Clean Screen (Ctrl+0), Full Screen (F11)");
             ui.separator();
             let now = ui.input(|i| i.time);
             if ui.button("Open").on_hover_text("Ctrl+O").clicked() {
@@ -4029,6 +4177,10 @@ impl CadCraftApp {
             )
             .on_hover_text(if dirty { "Unsaved changes" } else { "Saved" });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button("Help", |ui| {
+                    ui.set_min_width(200.0);
+                    self.help_menu(ui);
+                });
                 ui.label(RichText::new("3DCadCraft").weak());
             });
         });
@@ -4139,13 +4291,18 @@ impl CadCraftApp {
         }
         let scrolled = response.hovered() && ui.input(|i| i.smooth_scroll_delta.y != 0.0);
         let press = ui.input(|i| i.pointer.press_origin());
-        let cube_drag = self
-            .view_cube
-            .input(&mut self.camera, rect, &response, press, scrolled);
-        let on_cube = self
-            .view_cube
-            .drag_hit()
-            .or_else(|| pointer.and_then(|p| viewcube::pick(&self.camera, rect, p)));
+        let cube_on = self.layout.visible(layout::Element::ViewCube);
+        let cube_drag = cube_on
+            && self
+                .view_cube
+                .input(&mut self.camera, rect, &response, press, scrolled);
+        let on_cube = if cube_on {
+            self.view_cube
+                .drag_hit()
+                .or_else(|| pointer.and_then(|p| viewcube::pick(&self.camera, rect, p)))
+        } else {
+            None
+        };
 
         // --- picking a sketch plane ---
         let picking = matches!(self.mode, Mode::PickPlane(_));
@@ -4231,35 +4388,25 @@ impl CadCraftApp {
         {
             self.hole_pick(pick);
         }
-        // Face Draft's Pull Direction / Fixed Plane: an edge or a plane.
-        let draft_ref = self.draft_draft.as_ref().is_some_and(|d| !d.picks_faces());
-        let (draft_edge, draft_plane) = match (draft_ref, pointer, on_cube) {
-            (true, Some(p), None) => {
-                let pull = self
-                    .draft_draft
-                    .as_ref()
-                    .is_some_and(|d| d.input == draft::DraftInput::Pull);
-                let e = if pull { self.edge_under(p, rect) } else { None };
-                (
-                    e,
-                    if e.is_none() {
-                        self.plane_under(p, rect, true)
-                    } else {
-                        None
-                    },
-                )
-            }
-            _ => (None, None),
+        // Face Draft: what its active selector takes (`gui/draft.rs`).
+        let draft_hover = match (self.draft_draft.is_some(), pointer, on_cube) {
+            (true, Some(p), None) => self.draft_hover(p, rect, shell_hover),
+            _ => None,
         };
-        if self.draft_draft.is_some() && response.clicked_by(PointerButton::Primary) {
-            if face_cmd {
-                if let Some(h) = shell_hover {
-                    self.draft_pick(Some(h), None, None);
-                }
-            } else if draft_edge.is_some() || draft_plane.is_some() {
-                self.draft_pick(None, draft_edge, draft_plane.clone());
-            }
+        if self.draft_draft.is_some()
+            && response.clicked_by(PointerButton::Primary)
+            && let Some(h) = draft_hover.clone()
+        {
+            self.draft_pick(h);
         }
+        let draft_edge = match &draft_hover {
+            Some(draft::DraftPick::Edge(e)) => Some(*e),
+            _ => None,
+        };
+        let draft_plane = match &draft_hover {
+            Some(draft::DraftPick::Plane(p)) => Some(p.clone()),
+            _ => None,
+        };
         // --- Pattern / Mirror: features (faces), solids, directions,
         // axes and planes ---
         let pat_geom = self
@@ -4319,6 +4466,7 @@ impl CadCraftApp {
             && self.thread_draft.is_none()
             && self.editing.is_none()
             && self.extrude.is_none()
+            && self.prim_draft.is_none()
             && self.target_pick.is_none()
             && on_cube.is_none();
         // Edges first (vertex > edge > face, 0-ui §3.2).
@@ -4415,7 +4563,9 @@ impl CadCraftApp {
             && let Some(p) = pointer
         {
             self.select_other = None;
-            if self.target_pick.is_some() {
+            if self.prim_draft.is_some() {
+                self.primitive_click(p, rect);
+            } else if self.target_pick.is_some() {
                 self.target_picked(p, rect);
             } else if self.extrude.as_ref().is_some_and(|d| d.axis_pick) {
                 self.axis_pick(p, rect);
@@ -4522,7 +4672,7 @@ impl CadCraftApp {
 
         // --- right-click: New Sketch on the face under the cursor; inside
         // the edited sketch: the constraint label or curve under it ---
-        let label_hit = match (self.editing, pointer) {
+        let label_hit = match (self.dim_sketch(), pointer) {
             (Some(i), Some(p)) if self.show_labels && !picking && on_cube.is_none() => {
                 overlay::label_layout(
                     ui.painter(),
@@ -4538,6 +4688,15 @@ impl CadCraftApp {
             }
             _ => None,
         };
+        // Extrude / Revolve open: a double click on a dimension of the
+        // profile sketch edits it in place (the preview follows).
+        if self.editing.is_none()
+            && self.extrude.is_some()
+            && response.double_clicked_by(PointerButton::Primary)
+            && let Some(c) = label_hit
+        {
+            self.open_dimension_edit(c);
+        }
         if response.secondary_clicked() {
             self.cube_context = on_cube.is_some();
         }
@@ -4570,6 +4729,36 @@ impl CadCraftApp {
             if self.cube_context {
                 self.cube_menu(ui);
                 return;
+            }
+            // An open command: its menu (OK, Continue, Back, options…).
+            if self.command_context_menu(ui) {
+                return;
+            }
+            // Extrude / Revolve: Continue (to the axis), OK, Cancel.
+            if self.editing.is_none()
+                && let Some(d) = self.extrude.as_ref()
+            {
+                let revolve_profiles = matches!(d.def, DraftDef::Revolve(_)) && !d.axis_pick;
+                if revolve_profiles
+                    && ui
+                        .button("Continue")
+                        .on_hover_text("Done with the profiles: pick the axis")
+                        .clicked()
+                {
+                    if let Some(d) = self.extrude.as_mut() {
+                        d.axis_pick = true;
+                    }
+                    ui.close();
+                }
+                if ui.button("OK (Ctrl+Enter)").clicked() {
+                    self.commit_extrude();
+                    ui.close();
+                }
+                if ui.button("Cancel (Esc)").clicked() {
+                    self.cancel_extrude();
+                    ui.close();
+                }
+                ui.separator();
             }
             let idle = self.tools.tool == Tool::Select && self.extrude.is_none();
             if idle && let Some(a) = self.repeatable() {
@@ -4700,7 +4889,16 @@ impl CadCraftApp {
                         .is_some_and(crate::sketch::Constraint::is_dimension)
                 })
         });
-        if let Some(c) = dim_label
+        let projected = match (in_sketch, pointer) {
+            (Some(i), Some(p))
+                if self.project_geometry && response.clicked_by(PointerButton::Primary) =>
+            {
+                self.project_click(i, p, rect)
+            }
+            _ => false,
+        };
+        if projected {
+        } else if let Some(c) = dim_label
             && response.clicked_by(PointerButton::Primary)
         {
             // Inventor: the Dimension command on an existing dimension edits it.
@@ -4836,7 +5034,7 @@ impl CadCraftApp {
                 && m.2 != v
             {
                 m.2 = v;
-                if owner == ManipOwner::Draft {
+                if owner.live() {
                     self.manip_apply(owner, h.field, v);
                 }
             }
@@ -4844,7 +5042,7 @@ impl CadCraftApp {
         if response.drag_stopped()
             && let Some((owner, h, v)) = self.manip_drag.take()
         {
-            if owner != ManipOwner::Draft && v.is_finite() {
+            if !owner.live() && v.is_finite() {
                 self.manip_apply(owner, h.field, v);
             }
             self.history.break_coalescing();
@@ -5283,9 +5481,12 @@ impl CadCraftApp {
                             .map(select::SelItem::Face),
                     )
                 }
-                None => (self.sel.clone(), hover_item),
+                None => (
+                    self.sel.clone(),
+                    hover_item.or_else(|| self.browser_hover.clone().map(select::SelItem::Feature)),
+                ),
             };
-            if let Some(e) = draft_edge.or(pat_edge) {
+            if let Some(e) = pat_edge.filter(|_| draft_edge.is_none()) {
                 let opts = TessellationOptions::default();
                 if let Ok(pts) = self.part().body.sample_edge(e, &opts) {
                     self.draw_visible_polyline(
@@ -5296,7 +5497,8 @@ impl CadCraftApp {
                     );
                 }
             }
-            self.draw_draft_pull(&painter, rect);
+            self.draw_draft_overlay(&painter, rect, draft_hover.as_ref());
+            self.draw_command_hint(&painter, rect, pointer);
             self.draw_pattern_refs(&painter, rect);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);
@@ -5408,7 +5610,9 @@ impl CadCraftApp {
         }
         for (i, ps) in self.part().sketches.iter().enumerate() {
             let profile_sketch = self.extrude.as_ref().is_some_and(|d| d.sketch == i);
-            if !ps.visible && self.editing != Some(i) && !profile_sketch {
+            // Sketches below the End of Part are rolled back: not drawn.
+            let shown = ps.visible && !self.part().sketch_rolled_back(i);
+            if !shown && self.editing != Some(i) && !profile_sketch {
                 continue;
             }
             let active = self.editing == Some(i);
@@ -5448,7 +5652,8 @@ impl CadCraftApp {
                 } else {
                     Color32::from_gray(140)
                 },
-                show_labels: active && self.show_labels,
+                show_labels: (active || (profile_sketch && self.editing.is_none()))
+                    && self.show_labels,
                 highlighted: if active {
                     self.dragging.or(hovered)
                 } else {
@@ -5508,6 +5713,7 @@ impl CadCraftApp {
             }
             overlay::draw_sketch(&painter, &self.camera, rect, ps, &style);
         }
+        self.draw_primitive_preview(&painter, rect, ui.input(|i| i.pointer.hover_pos()));
         // Revolve: the chosen axis, extended past the profile.
         if let Some(d) = &self.extrude
             && d.axis_set
@@ -5883,14 +6089,18 @@ impl CadCraftApp {
             }
             overlay::draw_snap(&painter, &self.camera, rect, &ps.sketch, &pick);
         }
-        viewcube::draw_triad(&painter, &self.camera, rect);
-        let cube_active = self.view_cube.dragging();
-        viewcube::draw(&painter, &self.camera, rect, pointer, cube_active);
+        if self.layout.visible(layout::Element::Triad) {
+            viewcube::draw_triad(&painter, &self.camera, rect);
+        }
+        if self.layout.visible(layout::Element::ViewCube) {
+            let cube_active = self.view_cube.dragging();
+            viewcube::draw(&painter, &self.camera, rect, pointer, cube_active);
+        }
     }
 
     /// Screen position of the text of dimension `c` in the edited sketch.
     fn dimension_screen_pos(&self, c: ConstraintId) -> Option<egui::Pos2> {
-        let sk = &self.part().sketches.get(self.editing?)?.sketch;
+        let sk = &self.part().sketches.get(self.dim_sketch()?)?.sketch;
         let at = overlay::dimension_label(&self.camera, self.viewport_rect, sk, c)?;
         self.camera
             .project(&sk.plane.point_at(at.x, at.y), self.viewport_rect)
@@ -5903,7 +6113,7 @@ impl CadCraftApp {
         let Some(edit) = self.tools.dim_edit.clone() else {
             return;
         };
-        let Some(i) = self.editing else {
+        let Some(i) = self.dim_sketch() else {
             self.tools.dim_edit = None;
             return;
         };
@@ -6009,6 +6219,14 @@ impl CadCraftApp {
         if solved {
             self.tools.dim_edit = None;
             self.file_status = None;
+            if self.editing.is_none() {
+                // Edited from a feature command's preview: the features
+                // that already use the sketch follow.
+                if let Err(e) = self.part_mut().regenerate() {
+                    self.file_status = Some(Err(e.to_string()));
+                }
+                self.scene_dirty = true;
+            }
         } else {
             *self.part_mut() = before;
             self.history.cancel();
@@ -6078,51 +6296,26 @@ impl eframe::App for CadCraftApp {
         let ctx = ui.ctx().clone();
         // Expression fields everywhere evaluate against the part's parameters.
         valuefield::set_frame_table(&ctx, self.part().parameter_table());
+        self.layout_begin(&ctx);
         self.shortcuts(&ctx);
         self.files_ui(&ctx);
         self.confirm_delete_window(&ctx);
 
         egui::Panel::top("quick_access").show(ui, |ui| self.quick_access(ui));
-        let mut action = None;
-        let state = ribbon::State {
-            labels_shown: self.show_labels,
-            editing: self.editing.is_some(),
-            picking: matches!(self.mode, Mode::PickPlane(_)),
-            tool: self.tools.tool,
-            construction: self.tools.construction,
-            show_dof: self.show_dof,
-            relax: self.relax,
-        };
-        egui::Panel::top("ribbon").show(ui, |ui| {
-            action = ribbon::show(ui, &mut self.tab, &state);
-        });
-        if let Some(a) = action {
-            self.apply(a);
-        }
-        egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::left("model_browser")
-            .resizable(true)
-            .default_size(250.0)
-            .show(ui, |ui| self.browser(ui));
-        egui::Panel::right("properties")
-            .resizable(true)
-            .default_size(300.0)
-            .show(ui, |ui| {
-                // Long names wrap or are cut instead of widening the panel
-                // (which moved the view under the cursor mid-command).
-                ui.set_max_width(ui.available_width());
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                self.properties(ui)
-            });
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| self.viewport(ui, frame));
+        self.docked_panels(ui, frame);
 
         self.options_window(&ctx);
         self.parameters_window(&ctx);
         self.material_windows(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);
+        self.layout_end(&ctx);
+        self.diag_frame(&ctx);
+    }
+
+    fn on_exit(&mut self) {
+        let options = self.options_snapshot();
+        self.layout.flush(&options);
     }
 }
 
@@ -6132,6 +6325,7 @@ fn command_label(a: Action) -> &'static str {
         Action::Tool(t) => t.label(),
         Action::Extrude => "Extrude",
         Action::Revolve => "Revolve",
+        Action::Primitive(k) => k.label(),
         Action::WorkPlane => "Work Plane",
         Action::WorkAxis => "Work Axis",
         Action::Fillet => "Fillet",
@@ -6144,6 +6338,7 @@ fn command_label(a: Action) -> &'static str {
         Action::Hole => "Hole",
         Action::Thread => "Thread",
         Action::WorkPoint => "Work Point",
+        Action::Ucs => "UCS",
         Action::StartSketch => "Start 2D Sketch",
         _ => "command",
     }

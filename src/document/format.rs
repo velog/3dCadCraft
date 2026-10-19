@@ -73,7 +73,27 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 5: Rectangular / Circular Pattern and Mirror (`Feature::Pattern`)
 ///   (2026-10-19).
 /// - 6: Hole and Thread (`Feature::Hole`, `Feature::Thread`) (2026-10-19).
-pub const FORMAT_REVISION: u32 = 6;
+/// - 7: End of Part and suppressed features (`PartDocument::eop`,
+///   `PartDocument::suppressed`; an older build would ignore both and build
+///   every feature) (2026-10-19).
+/// - 8: work feature methods on curved faces, curves and sketch geometry,
+///   and UCS (`WorkDef::Ucs`, new `WorkPlaneDef` / `WorkAxisDef` /
+///   `WorkPointDef` variants) (2026-10-19).
+/// - 9: Face Draft Parting Line (`DraftType::PartingLine`), Symmetric /
+///   Asymmetric extents, Move Parting Line; Shell Rounded Corners (an older
+///   build would make a one-way or sharp result) (2026-10-19).
+/// - 10: Hole drill points Flat W / Angle V / Angle Y, Symmetric, Extend To,
+///   centres concentric to a cylindrical face (`HoleCenter::Axis`); sketch
+///   Center Points (`PointStyle`, an old build reads them as plain points)
+///   (2026-10-19).
+/// - 11: Extrude / Revolve terminations at work / origin planes and points
+///   (`TargetRef::Plane`, `TargetRef::Point`), Revolve To
+///   (`RevolveExtent::To`); additive fields `alternate`, `extend_face`,
+///   `terminator`, `open` (Match Shape), `minimum` (2026-10-19).
+/// - 12: reserved for Sweep / Loft (another branch).
+/// - 13: Combine and Split (`Feature::Combine`, `Feature::Split`),
+///   `PartDocument::hidden_bodies` (2026-10-20).
+pub const FORMAT_REVISION: u32 = 13;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
@@ -192,6 +212,13 @@ impl Project {
 
     /// Saves as a single packed `.3dcadcraft` file (a ZIP archive).
     pub fn save_with(&self, path: &Path, opts: &SaveOptions) -> ProjectResult<()> {
+        let started = std::time::Instant::now();
+        let r = self.save_packed(path, opts);
+        log_result("save", path, started, &r);
+        r
+    }
+
+    fn save_packed(&self, path: &Path, opts: &SaveOptions) -> ProjectResult<()> {
         let entries = self.entries(path)?;
         let tmp = temp_sibling(path);
         let result = (|| {
@@ -249,6 +276,13 @@ impl Project {
     /// Loads a project from a packed `.3dcadcraft` file or an unpacked
     /// directory.
     pub fn load(path: &Path) -> ProjectResult<Project> {
+        let started = std::time::Instant::now();
+        let r = Self::load_any(path);
+        log_result("open", path, started, &r);
+        r
+    }
+
+    fn load_any(path: &Path) -> ProjectResult<Project> {
         let meta = fs::metadata(path).map_err(io_err(path))?;
         if meta.is_dir() {
             Self::load_with(path, |name| {
@@ -335,6 +369,15 @@ impl Project {
         };
         project.validate().map_err(|e| corrupt(path, e))?;
         Ok(project)
+    }
+}
+
+/// Logs the result of a save or open (`what`) of `path`.
+fn log_result<T>(what: &str, path: &Path, started: std::time::Instant, r: &ProjectResult<T>) {
+    let ms = started.elapsed().as_millis();
+    match r {
+        Ok(_) => log::info!("{what} {}: ok ({ms} ms)", path.display()),
+        Err(e) => log::warn!("{what} {}: {e}", path.display()),
     }
 }
 

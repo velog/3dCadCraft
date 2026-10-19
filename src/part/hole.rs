@@ -128,6 +128,42 @@ pub enum DrillPoint {
     /// cone starts.
     #[default]
     Angle,
+    /// Flat, annotated the ISO way (format revision 10).
+    FlatW,
+    /// Angled, annotated the ISO way (format revision 10).
+    AngleV,
+    /// Angled, the point included in the depth (format revision 10).
+    AngleY,
+}
+
+impl DrillPoint {
+    /// Every drill point, in the panel's order.
+    pub const ALL: [DrillPoint; 5] = [
+        DrillPoint::Flat,
+        DrillPoint::FlatW,
+        DrillPoint::Angle,
+        DrillPoint::AngleV,
+        DrillPoint::AngleY,
+    ];
+
+    /// Whether the bottom is a cone.
+    pub fn angled(self) -> bool {
+        matches!(
+            self,
+            DrillPoint::Angle | DrillPoint::AngleV | DrillPoint::AngleY
+        )
+    }
+
+    /// The name as Inventor shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            DrillPoint::Flat => "Flat",
+            DrillPoint::FlatW => "Flat W",
+            DrillPoint::Angle => "Angle",
+            DrillPoint::AngleV => "Angle V",
+            DrillPoint::AngleY => "Angle Y",
+        }
+    }
 }
 
 /// Fit of a clearance hole.
@@ -393,6 +429,18 @@ pub struct HoleSpec {
     /// lies inside the material.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub extend_start: bool,
+    /// Symmetric: through all in both directions (Simple, no seat, Through
+    /// All only).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub symmetric: bool,
+    /// Extend To (on by default): a To face is taken as its whole plane;
+    /// off, the hole must meet the face itself.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub extend_to: bool,
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
 }
 
 fn drill_angle() -> Real {
@@ -428,6 +476,8 @@ impl HoleSpec {
             clearance: None,
             thread: None,
             extend_start: false,
+            symmetric: false,
+            extend_to: true,
         }
     }
 
@@ -534,7 +584,7 @@ impl HoleSpec {
         {
             return Err("the hole depth must be greater than 0".into());
         }
-        if self.drill_point == DrillPoint::Angle
+        if self.drill_point.angled()
             && !(self.point_angle > 1e-3 && self.point_angle < std::f64::consts::PI - 1e-3)
         {
             return Err("the drill point angle must be between 0 and 180 degrees".into());
@@ -577,6 +627,13 @@ impl HoleSpec {
                     return Err("the countersink must be shallower than the hole".into());
                 }
             }
+        }
+        if self.symmetric
+            && !(self.termination == Termination::ThroughAll
+                && self.seat == SeatType::None
+                && matches!(self.hole_type, HoleType::Simple | HoleType::Clearance))
+        {
+            return Err("Symmetric is only for a simple Through All hole without a seat".into());
         }
         if let Some(t) = self.tapped_thread() {
             t.validate()?;
@@ -665,10 +722,16 @@ impl HoleSpec {
         }
         let zb = -self.bore_bottom(depth);
         let mut bore = vec![([0.0, top], "Top"), ([r, top], "Bore")];
-        if point && self.drill_point == DrillPoint::Angle {
+        if point && self.drill_point.angled() {
             let tip = r / (self.point_angle / 2.0).tan();
-            bore.push(([r, zb], "Tip"));
-            bore.push(([0.0, zb - tip], "Axis"));
+            // Angle Y: the point is part of the depth.
+            let zc = if self.drill_point == DrillPoint::AngleY {
+                zb + tip
+            } else {
+                zb
+            };
+            bore.push(([r, zc], "Tip"));
+            bore.push(([0.0, zc - tip], "Axis"));
         } else {
             bore.push(([r, zb], "Bottom"));
             bore.push(([0.0, zb], "Axis"));
@@ -789,6 +852,9 @@ pub enum HoleCenter {
     Point(PointId),
     /// The centre of a circular edge, square to the planar face it bounds.
     Concentric(EdgeRef),
+    /// Concentric to a cylindrical face: on its axis at the end nearest the
+    /// face's hint, drilled along the axis into the face (format revision 10).
+    Axis(FaceRef),
 }
 
 /// The Hole feature: one [`HoleSpec`] at every centre.
@@ -824,7 +890,7 @@ impl HoleFeature {
         }
         if s.termination == Termination::Distance {
             v.push(("depth", Unit::Mm));
-            if s.drill_point == DrillPoint::Angle {
+            if s.drill_point.angled() {
                 v.push(("point_angle", Unit::Deg));
             }
         }

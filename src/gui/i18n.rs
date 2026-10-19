@@ -65,6 +65,10 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
     (
+        "Project Geometry: click straight model edges to project them (click the button again to stop)",
+        "Project Geometry: щракнете прави ръбове на модела, за да ги проектирате (бутонът отново спира)",
+    ),
+    (
         "Pattern: click the solids to copy (none: all), then the next selector",
         "Pattern: щракнете телата за копиране (без избор: всички), после следващия избор",
     ),
@@ -105,8 +109,8 @@ const TABLE: &[(&str, &str)] = &[
         "Hole: щракнете плоска стена, точка от скица или кръгъл ръб за центъра",
     ),
     (
-        "Hole: click more centres (a click on one removes it), set the options, then OK",
-        "Hole: щракнете още центрове (клик върху център го маха), задайте настройките, после OK",
+        "Hole: click more centres (a click on one removes it), straight edges to dimension the last one, then OK",
+        "Hole: щракнете още центрове (клик върху център го маха), прави ръбове за размер до последния, после OK",
     ),
     (
         "Thread: click a cylindrical face near the end the thread starts at",
@@ -117,25 +121,31 @@ const TABLE: &[(&str, &str)] = &[
         "Thread: задайте размера и дължината, после OK (друг клик избира друга стена)",
     ),
     (
-        "Face Draft: click a planar face, an origin plane or a straight edge for the pull direction",
-        "Face Draft: щракнете плоска стена, основна равнина или прав ръб за посоката на изваждане",
+        "Select the pull direction (a planar face, a plane, a straight edge or an axis)",
+        "Изберете посоката на изваждане (плоска стена, равнина, прав ръб или ос)",
     ),
     (
-        "Face Draft: click the fixed plane (a planar face or an origin plane)",
-        "Face Draft: щракнете неподвижната равнина (плоска стена или основна равнина)",
+        "Select the fixed plane (a planar face or a work or origin plane)",
+        "Изберете неподвижната равнина (плоска стена, работна или основна равнина)",
     ),
     (
-        "Face Draft: click the faces to draft (Fixed Edge: near the edge that stays), then OK",
-        "Face Draft: щракнете стените за накланяне (Fixed Edge: близо до ръба, който остава), после OK",
+        "Select the parting tool (a plane, a planar face or a sketch)",
+        "Изберете разделящия инструмент (равнина, плоска стена или скица)",
     ),
     (
-        "Shell: click the faces to remove (none: a closed cavity), set the thickness, then OK",
-        "Shell: щракнете стените за махане (без стени: затворена кухина), задайте дебелината, после OK",
+        "Select faces to draft (click near the edge that stays fixed)",
+        "Изберете стените за накланяне (щракнете близо до ръба, който остава неподвижен)",
+    ),
+    ("Select faces to draft", "Изберете стените за накланяне"),
+    (
+        "Select the static edges, or Select Boundary",
+        "Изберете неподвижните ръбове или Select Boundary",
     ),
     (
-        "Shell: click more faces to remove (a second click puts one back), then OK",
-        "Shell: щракнете още стени за махане (втори клик връща стената), после OK",
+        "Select faces to remove (none: a closed cavity)",
+        "Изберете стените за махане (без стени: затворена кухина)",
     ),
+    (", or OK (Enter)", " или OK (Enter)"),
     (
         "Ready — Start 2D Sketch (S), or right-click a face: New Sketch",
         "Готово — Start 2D Sketch (S), или десен клик върху стена: New Sketch",

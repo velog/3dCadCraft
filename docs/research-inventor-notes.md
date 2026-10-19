@@ -129,6 +129,15 @@ on the whole body, so features added *after* it are not shelled (LT help). [Help
 - (f) Messages (paraphrased): "shell could not be created / offset failed — try a
   different thickness or allow approximation" [Mem]; approximation accept/edit dialog
   [Help]; red required-field marker if thickness empty [Help general].
+- (g) 2027 page re-read (2026-10-19), in our words: steps are type → direction →
+  thickness → optional faces to remove → Advanced Properties → OK, then (only if an
+  approximation was used) a box to accept it or go back to editing. The third direction
+  is called **Center** (equal offsets in and out; the part grows by half the thickness).
+  **Rounded Corners** puts rounds on the corners the feature itself generates. Keys: Enter
+  or Tab commit a value (Tab moves on), **Ctrl+Enter** creates and closes. Values can also
+  be dragged with the in-canvas manipulator; the active one is highlighted. The
+  **breadcrumb** name is selected by one click and edited by a second. Tolerance as
+  Specified accepts 0–100 and may be slow. [Help]
 
 ---
 
@@ -197,6 +206,21 @@ reference (edge, plane or parting tool). [Help]
   `Face Draft1`; Edit Feature reopens the dialog with the selections highlighted. [Mem]
 - (f) Messages: "one or more faces could not be drafted" / "invalid fixed edge" style
   errors; angle out of range. [Mem]
+- (g) 2027 page re-read (2026-10-19), in our words: Fixed Edge drafts about one or more
+  tangent, contiguous fixed edges per face (may add faces); Fixed Plane can add material
+  on one side and remove it on the other; Parting Line steps are pull direction → parting
+  tool (sketch, plane or surface) → faces → Automatic Blending → angle → OK, or go on to
+  static edges. Hovering a face shows it in one colour and its fixed edge in another.
+  **Move Parting Line** enables the Static Edges selector (single edges, **Select
+  Boundary**, **Clear All**) and **Angle for Top / Both / Bottom** — the page names these
+  but does not explain their effect. Parting Line can also show **Absolute / Relative**
+  angle in the expanded dialog. One Way is for Fixed Edge and Fixed Plane; Symmetric and
+  Asymmetric for Fixed Plane and Parting Line. [Help]
+- (h) API `FaceDraftDefinition` (2025): `AutomaticBlending`; `CutMaterial` (parting tool
+  only; `FixedEdges` apply when it is false — i.e. Move Parting Line); `DraftAngle` (for a
+  parting line: the smaller of the two sides), `DraftAngleTwo` (asymmetric);
+  `AbsoluteDraftAngle`; `PullDirectionReversed`; pull direction objects: planar face,
+  edge, work plane, work axis. [Help API]
 
 ---
 
@@ -450,6 +474,51 @@ except where it crosses the hole volume). [Help]
 - (f) Invalid value → red; no position → OK disabled / Continue; termination face not hit
   with Extend To off → error. [Help/Mem]
 
+### 2027 Help re-read (2026-10-19, GUID-94EB6947-0347-4888-870D-4BA22DB144D8)
+Our own summary:
+- **Panel menu:** three options.
+  - Preselect sketch center points: the unused centre points of the active sketch become
+    hole positions by themselves.
+  - Keep sketch visible on (+): shares the sketch for the next hole while unused centres
+    remain. Part environment only.
+  - Window select center points only: on by default. A window then picks centre points
+    only; off restores the older pick-any-point behaviour.
+  - Ctrl+click drops a centre from the selection but leaves it in the sketch. Deleting the
+    point deletes its hole. Clear Selections, at the end of the Positions list, drops all.
+- **Allow Center Point Creation:**
+  - On: a click anywhere on a planar face or work plane adds a centre. Off: only existing
+    sketch centres, sketch points or work points.
+  - Kept between holes. Unavailable when the position is a work point.
+  - A click on a face makes a sketch there; a click on a work plane makes a sketch on it.
+  - After a point, a face, plane or straight edge can set the direction.
+  - Free centres can be dragged.
+- **Dimensions:**
+  - A click on a reference edge adds a linear dimension from the centre. It can be selected,
+    edited or deleted while the command runs.
+  - An existing dimension can be reused: click it, or use Select Feature Dimension from the
+    field's arrow menu.
+  - Reference dimensions are shown in parentheses and cannot be edited.
+- **Concentric:** after the centre, a model edge or a curved face. A work-plane edge then a
+  model edge measures the depth from the work plane.
+- **Termination:** To has Extend To on by default; turn it off only when the target does
+  not meet the hole. Symmetric exists only for a drilled Simple Through All hole.
+- **Drill point:**
+  - Flat / Flat W: W follows the ISO annotation.
+  - Angle / Angle V: the angle can be typed or measured from geometry. It is positive
+    counter-clockwise from the axis.
+  - Angle Y: the point is counted in the depth.
+- **Advanced:** iMate; Extend Start, which extends the start until it leaves the target
+  body. In multi-body parts Extend Start does not enter other bodies except inside the
+  removed volume.
+- **Keys:** Enter or Tab commits a value and moves on. Ctrl+Enter creates the hole and
+  closes the panel. Create new hole keeps the settings.
+- **Breadcrumb:** a click moves to that step. Click once to select a name, again to edit
+  it, then Enter.
+- **Browser:**
+  - Double-click or Edit Feature reopens the panel.
+  - Convert to Slot is one-way.
+  - Delete can also remove the sketch, with its reference dimensions and projections.
+
 ---
 
 ## 6. Styles and Standards Editor; Material and Appearance browsers
@@ -581,3 +650,60 @@ Fill, Weld Symbol, Surface Texture Symbol. [Help]
 ### For our clone
 Presets are user settings, not document data — store them in the settings folder, never
 in the `.3dcadcraft` file (only the preset *name* used could be recorded per feature). [our note]
+
+## 8. Extrude и Revolve (панелите от 2027)
+
+**Източници:** To Create Extruded Features — GUID-B0CFA8E7-D3F5-48A9-BE6F-C8DF668301BD;
+To Create Revolved Features — GUID-401BABD2-8D5B-4300-BA8D-70037445044F (и двете от 2027,
+прочетени на 2026-10-19). Преразказ с наши думи; подробностите и статусите са в
+[spec/2.1-extrude.md](spec/2.1-extrude.md) и [spec/2.2-revolve.md](spec/2.2-revolve.md).
+
+### Панелът
+- Чете се отгоре надолу: изборът в една секция определя какво има в следващата.
+- **Breadcrumb** най-горе: текстът на скицата отваря скицата за редакция, текстът на
+  операцията връща към нея (и така се преименува). Същото е в Hole, Shell и др.
+- **Surface mode** е бутон до breadcrumb (Solid е по подразбиране); при примитиви и в
+  сглобка липсва.
+- Менюто **Advanced Settings**: Hide Presets (скрити по подразбиране), **Predict Boolean
+  Operation** (вкл.) — командата предвижда операцията и посоката и ги показва в прегледа,
+  **Keep sketch visible on (+)** (вкл.) — консумираната скица остава видима за следващата
+  операция при „+“ (Create new feature). При примитивите тази настройка я няма.
+- Видимите размери на скицата се редактират по време на прегледа, без влизане в скицата.
+
+### Extrude
+- Входове: Profiles (един профил се избира сам; window select), **From** (по подразбиране
+  равнината на скицата; „x“ го сменя със стена или работна равнина). From/To заместват
+  старите Distance from Face и Between.
+- **Extend face to end feature** се включва сам, когато From (или To) не стига профила.
+- Behavior: Default, Flipped, Symmetric (по половин A), Asymmetric (A и B), Distance A/B с
+  манипулатор, **Through All** (без Join), **To** (точка/връх → равнина, успоредна на
+  скицата; стена/равнина → край на нея или на продължението ѝ), **Alternate Solution**
+  (при двусмислена стена — напр. цилиндър — близката или далечната страна; не се показва
+  при планарна), **To Next** (не за базова операция; **Terminator** избира тялото и
+  посоката; следващата стена трябва изцяло да пресича профила).
+- Output: Join, Cut, Intersect, New Solid (по подразбиране за първото тяло); в детайл с
+  много тела — **Solids**, и прегледът чака избора. Базовата операция няма тази секция.
+- Advanced: Taper A, iMate, **Match Shape** за отворен профил (вкл.: „наводняване“ до
+  стените; изкл.: краищата се удължават до детайла и отворът се затваря).
+- **Primitives** (скрит панел): Box (център, ъгъл), Cylinder (център, диаметър) върху
+  равнина или стена; всички опции на Extrude.
+
+### Revolve
+- Без скица командата стартира скица; с една скица с един профил и една ос — и двете се
+  избират сами и прегледът тръгва.
+- **Axis**: десен клик → Continue или селекторът в панела.
+- Behavior: Default, Flipped, Symmetric, Asymmetric; Angle A (манипулаторът стъпва през
+  5°), Angle B, Full, **To** (стена/равнина; удължава се сама; **Minimum Solution** избира
+  най-близкото при двусмислие), **To Next** (Terminator), Extend face to end feature.
+- В детайл с много тела селекторът From/Solids избира тялото.
+- Match Shape за отворен профил: удължава краищата до оста или до габарита.
+- **Sphere** (център, диаметър) и **Torus** (център, център на сечението, диаметър на
+  сечението): само пълно завъртане, само Solid.
+
+### За нашия клонинг
+- Breadcrumb, менюто и „+“ са общи за всички панели → отделни модули
+  (`gui/breadcrumb.rs`, `gui/feature_cmd.rs`).
+- Предсказването на операцията не бива да се бие с автоматичното обръщане на посоката при
+  Cut: предсказаната операция не се брои за избор на потребителя.
+- „Минималното решение“ при Revolve има смисъл най-вече за равнина през оста (две
+  полуравнини); по подразбиране взимаме по-далечната. [наше решение]
