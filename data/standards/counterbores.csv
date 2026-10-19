@@ -1,0 +1,39 @@
+# Counterbores for socket head cap screws (mm).
+# ISO 4762 screws, DIN 974-1 counterbore diameters (row for screws without washers); hole:
+#         ISO 273 medium; depth: head height k max of ISO 4762 (k = d) plus the usual 0.4-0.8 mm
+#         allowance. Check sizes from M12 up against your copy of DIN 974-1 and edit as needed.
+# ASME B18.3 socket head cap screws (inch): counterbore diameter and depth (= head height,
+#         the nominal diameter) and the normal drill, from the standard's appendix table,
+#         converted from inches.
+standard,fastener,size,hole,diameter,depth
+ISO,Socket Head Cap Screw ISO 4762,M3,3.4,6.5,3.4
+ISO,Socket Head Cap Screw ISO 4762,M4,4.5,8,4.4
+ISO,Socket Head Cap Screw ISO 4762,M5,5.5,10,5.4
+ISO,Socket Head Cap Screw ISO 4762,M6,6.6,11,6.4
+ISO,Socket Head Cap Screw ISO 4762,M8,9,15,8.6
+ISO,Socket Head Cap Screw ISO 4762,M10,11,18,10.6
+ISO,Socket Head Cap Screw ISO 4762,M12,13.5,20,12.6
+ISO,Socket Head Cap Screw ISO 4762,M14,15.5,24,14.6
+ISO,Socket Head Cap Screw ISO 4762,M16,17.5,26,16.6
+ISO,Socket Head Cap Screw ISO 4762,M20,22,33,20.6
+ISO,Socket Head Cap Screw ISO 4762,M24,26,40,24.8
+ISO,Socket Head Cap Screw ISO 4762,M30,33,50,30.8
+ISO,Socket Head Cap Screw ISO 4762,M36,39,58,36.8
+ANSI,Socket Head Cap Screw ASME B18.3,#0,1.854,3.175,1.524
+ANSI,Socket Head Cap Screw ASME B18.3,#1,2.261,3.962,1.854
+ANSI,Socket Head Cap Screw ASME B18.3,#2,2.692,4.775,2.184
+ANSI,Socket Head Cap Screw ASME B18.3,#3,3.048,5.563,2.515
+ANSI,Socket Head Cap Screw ASME B18.3,#4,3.454,5.563,2.845
+ANSI,Socket Head Cap Screw ASME B18.3,#5,3.912,6.35,3.175
+ANSI,Socket Head Cap Screw ASME B18.3,#6,4.318,7.137,3.505
+ANSI,Socket Head Cap Screw ASME B18.3,#8,4.928,7.925,4.166
+ANSI,Socket Head Cap Screw ASME B18.3,#10,5.613,9.525,4.826
+ANSI,Socket Head Cap Screw ASME B18.3,1/4,7.137,11.125,6.35
+ANSI,Socket Head Cap Screw ASME B18.3,5/16,8.738,13.487,7.925
+ANSI,Socket Head Cap Screw ASME B18.3,3/8,10.312,15.875,9.525
+ANSI,Socket Head Cap Screw ASME B18.3,7/16,11.913,18.263,11.125
+ANSI,Socket Head Cap Screw ASME B18.3,1/2,13.487,20.625,12.7
+ANSI,Socket Head Cap Screw ASME B18.3,5/8,16.662,25.4,15.875
+ANSI,Socket Head Cap Screw ASME B18.3,3/4,19.837,30.175,19.05
+ANSI,Socket Head Cap Screw ASME B18.3,7/8,23.012,34.925,22.225
+ANSI,Socket Head Cap Screw ASME B18.3,1,26.187,41.275,25.4

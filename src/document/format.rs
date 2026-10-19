@@ -70,7 +70,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 3: Shell (`Feature::Shell`; an older build cannot read the file)
 ///   (2026-10-19).
 /// - 4: Face Draft (`Feature::Draft`) (2026-10-19).
-pub const FORMAT_REVISION: u32 = 4;
+/// - 6: Hole and Thread (`Feature::Hole`, `Feature::Thread`) (2026-10-19;
+///   5 is taken by a parallel branch).
+pub const FORMAT_REVISION: u32 = 6;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

@@ -1197,6 +1197,350 @@ pub fn draft(
     })
 }
 
+// ---------------------------------------------------------- hole tools ---
+
+/// The frame of a tool about an axis: origin on the axis, `x` radial (the
+/// profile's seam turned by `seam` radians about the axis), `y` along it.
+fn axial_frame(origin: Point3, axis: Vector3, seam: Real) -> Result<sg::Plane, String> {
+    let k = axis
+        .try_normalize(1e-12)
+        .ok_or_else(|| "the hole axis has no direction".to_owned())?;
+    let any = if k.x.abs() < 0.9 {
+        Vector3::x()
+    } else {
+        Vector3::y()
+    };
+    let u = (any - k * any.dot(&k)).normalize();
+    let w = k.cross(&u);
+    let x = u * seam.cos() + w * seam.sin();
+    sg::Plane::new(v3(&origin), d3(&x), d3(&k)).ok_or_else(|| "degenerate hole axis".to_owned())
+}
+
+/// A tool of revolution (a drilled hole with its seats, after SolidCraft's
+/// `hole_tools_and_prisms`): `profile` is a closed polygon `[r, z]` in the
+/// half plane through the axis (z along `axis` from `origin`, r ≥ 0), its
+/// segment `i` (from point `i` to `i + 1`) makes the face named
+/// `<prefix>:<names[i]>`. `seam` turns the profile plane (seams of tools
+/// side by side should not line up).
+pub fn revolved_tool(
+    origin: Point3,
+    axis: Vector3,
+    seam: Real,
+    profile: &[[Real; 2]],
+    names: &[&str],
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    if profile.len() < 3 || names.len() != profile.len() {
+        return Err("the hole profile is incomplete".into());
+    }
+    if profile.iter().flatten().any(|x| !x.is_finite()) || profile.iter().any(|p| p[0] < -1e-9) {
+        return Err("the hole profile is not valid".into());
+    }
+    let pl = axial_frame(origin, axis, seam)?;
+    let pts: Vec<sg::Vec2> = profile
+        .iter()
+        .map(|p| sg::Vec2::new(p[0].max(0.0), p[1]))
+        .collect();
+    let region = sg::Region2 {
+        outer: sg::Loop2::polygon(&pts),
+        holes: Vec::new(),
+    };
+    let mut v = guarded("hole", || {
+        sk::revolve(
+            &pl,
+            std::slice::from_ref(&region),
+            sg::Vec2::new(0.0, 0.0),
+            sg::Vec2::new(0.0, 1.0),
+            std::f64::consts::TAU,
+        )
+    })?;
+    if v.len() != 1 {
+        return Err("the hole tool is not one solid".into());
+    }
+    let body = v.remove(0);
+    let face_names = names_from(&body, &[], &|o| match o {
+        FaceOrigin::Profile { segment } => names.get(*segment).map(|n| format!("{prefix}:{n}")),
+        _ => None,
+    });
+    Ok(ExactSolid {
+        name: Some(prefix.to_owned()),
+        body,
+        face_names,
+        profiles: Vec::new(),
+    })
+}
+
+/// A helical thread groove: the closed polygon `section` (`[r, z]` in the
+/// half plane through the axis, z from `origin`) screwed `turns` turns of
+/// `pitch` along `axis` (right-handed about it; `left_hand` turns the other
+/// way). Smooth B-spline walls through SolidCraft's `sweep_helix` (never its
+/// faceted mesh: SolidCraft #2038 faceted the whole body). Every face is
+/// named `<prefix>:<name>`.
+#[allow(clippy::too_many_arguments)]
+pub fn helix_tool(
+    origin: Point3,
+    axis: Vector3,
+    seam: Real,
+    section: &[[Real; 2]],
+    pitch: Real,
+    turns: Real,
+    left_hand: bool,
+    prefix: &str,
+    name: &str,
+) -> Result<ExactSolid, String> {
+    if section.len() < 3 || section.iter().flatten().any(|x| !x.is_finite()) {
+        return Err("the thread section is not valid".into());
+    }
+    if !(pitch.is_finite() && pitch > 1e-3 && turns.is_finite() && turns > 0.0) {
+        return Err("the thread pitch and length must be positive".into());
+    }
+    let pl = axial_frame(origin, axis, seam)?;
+    let pts: Vec<sg::Vec2> = section.iter().map(|p| sg::Vec2::new(p[0], p[1])).collect();
+    let region = sg::Region2 {
+        outer: sg::Loop2::polygon(&pts),
+        holes: Vec::new(),
+    };
+    let k = d3(&axis.normalize());
+    // A left-handed helix turns about −axis and climbs along +axis.
+    let (ax, p) = if left_hand {
+        (k * -1.0, -pitch)
+    } else {
+        (k, pitch)
+    };
+    let body = guarded("thread", || {
+        sk::sweep_helix(&pl, &region, v3(&origin), ax, p, turns)
+    })?;
+    let n = body.face_count();
+    Ok(ExactSolid {
+        name: Some(prefix.to_owned()),
+        body,
+        face_names: vec![Some(format!("{prefix}:{name}")); n],
+        profiles: Vec::new(),
+    })
+}
+
+/// A modeled thread groove for [`cut_threads`]: a closed convex polygon
+/// (`[r, z]` about the axis) screwed along the axis, and the zone around it
+/// that gets the faceted cut.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadGroove {
+    /// A point on the axis (z = 0).
+    pub origin: Point3,
+    /// Axis direction (+z).
+    pub axis: Vector3,
+    /// The section at the helix start (z measured from `base`).
+    pub section: Vec<[Real; 2]>,
+    /// Where the helix starts (z).
+    pub base: Real,
+    /// Pitch (mm per turn).
+    pub pitch: Real,
+    /// Number of turns.
+    pub turns: Real,
+    /// Left-handed thread.
+    pub left_hand: bool,
+    /// The zone `[r_in, r_out, z_lo, z_hi]` holding the groove: only the
+    /// material inside it is faceted.
+    pub zone: [Real; 4],
+    /// Face name prefix (the feature id).
+    pub prefix: String,
+    /// Name of the groove walls after the prefix (`Thread:1`).
+    pub name: String,
+}
+
+/// Stations per turn of a modeled thread's helix (10° apart: the chords
+/// sag 0.4 % of the radius; SolidCraft's `thread_groove` uses 48, which
+/// took twice as long).
+const THREAD_STATIONS: usize = 36;
+
+/// Cuts modeled threads into `s`. The exact kernel's Boolean with a smooth
+/// helical sweep took 5 s per turn crossing a bore and over a minute
+/// crossing a plane, so the grooves are cut as triangle meshes
+/// (SolidCraft's `faceted_boolean`) — but only into the material of their
+/// zones: `s` is split into the exact rest (`s` less the zones) and the
+/// zones' material, and only the latter is faceted (SolidCraft #2038
+/// faceted the whole body). Separate zones are cut on threads of their own.
+/// Returns the pieces: the exact rest (if any) and the threaded zones
+/// (planar faces), touching each other along the zones' walls. The groove
+/// walls are named `<prefix>:<name>`.
+pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<ExactSolid>, String> {
+    if grooves.is_empty() {
+        return Ok(vec![s.clone()]);
+    }
+    let mut zones = Vec::new();
+    let mut meshes: Vec<(Point3, sg::Mesh, String)> = Vec::new();
+    for (k, g) in grooves.iter().enumerate() {
+        let [r0, r1, z0, z1] = g.zone;
+        if !(r0 >= 0.0 && r1 > r0 && z1 > z0) {
+            return Err("the thread zone is empty".into());
+        }
+        zones.push(revolved_tool(
+            g.origin,
+            g.axis,
+            0.4 + 0.613 * k as Real,
+            &[[r0, z0], [r1, z0], [r1, z1], [r0, z1]],
+            &["ThreadZone"; 4],
+            &g.prefix,
+        )?);
+        if g.section.len() < 3 || g.section.len() > 64 {
+            return Err("the thread section is not valid".into());
+        }
+        if !(g.pitch > 1e-3 && g.turns > 0.0 && g.turns <= 200.0) {
+            return Err(format!(
+                "a modeled thread is limited to 200 turns ({:.0} mm at this pitch); use a cosmetic one",
+                200.0 * g.pitch
+            ));
+        }
+        let k3 = g
+            .axis
+            .try_normalize(1e-12)
+            .ok_or_else(|| "the thread axis has no direction".to_owned())?;
+        let base = g.origin + k3 * g.base;
+        let pl = axial_frame(base, k3, 0.0)?;
+        let poly: Vec<sg::Vec2> = g
+            .section
+            .iter()
+            .map(|p| sg::Vec2::new(p[0], p[1]))
+            .collect();
+        // A left-handed helix turns about −axis and climbs along +axis.
+        let (ax, p) = if g.left_hand {
+            (d3(&-k3), -g.pitch)
+        } else {
+            (d3(&k3), g.pitch)
+        };
+        let mut m = guarded("thread", || {
+            sk::sweep_helix_mesh(&pl, &poly, v3(&base), ax, p, g.turns, THREAD_STATIONS)
+        })?;
+        m.tri_face = vec![0; m.triangles.len()];
+        let mid = g.origin + k3 * ((z0 + z1) / 2.0);
+        meshes.push((mid, m, format!("{}:{}", g.prefix, g.name)));
+    }
+    let zone = match union_apart(&zones)? {
+        Some(z) => z,
+        None => {
+            let mut it = zones.into_iter();
+            let mut z = it.next().ok_or("no thread zone")?;
+            for t in it {
+                z = boolean(&z, &t, ExactOp::Union)?.ok_or("thread zones")?;
+            }
+            z
+        }
+    };
+    let inside = boolean(s, &zone, ExactOp::Intersect)?
+        .ok_or_else(|| "the thread is not in the material".to_owned())?;
+    let rest = boolean(s, &zone, ExactOp::Cut)?;
+    // Each piece of material with the grooves inside its box.
+    let mut jobs: Vec<(ExactSolid, sg::Mesh, Vec<String>)> = Vec::new();
+    for piece in lumps(&inside) {
+        let Ok(m) = piece.measure_full() else {
+            continue;
+        };
+        let (lo, hi) = m.bbox;
+        let pad = 1e-6 * (hi - lo).norm() + 1e-9;
+        let mut mesh = sg::Mesh::default();
+        let mut names = Vec::new();
+        for (mid, g, name) in &meshes {
+            if !(0..3).all(|i| mid[i] >= lo[i] - pad && mid[i] <= hi[i] + pad) {
+                continue;
+            }
+            let off = u32::try_from(mesh.positions.len()).map_err(|_| "thread mesh too large")?;
+            mesh.positions.extend(g.positions.iter().copied());
+            mesh.triangles.extend(
+                g.triangles
+                    .iter()
+                    .map(|t| [t[0] + off, t[1] + off, t[2] + off]),
+            );
+            names.extend(std::iter::repeat_n(name.clone(), g.triangles.len()));
+        }
+        mesh.tri_face = vec![0; mesh.triangles.len()];
+        jobs.push((piece, mesh, names));
+    }
+    let results: Vec<Result<Option<ExactSolid>, String>> = std::thread::scope(|sc| {
+        let handles: Vec<_> = jobs
+            .iter()
+            .map(|(piece, mesh, names)| sc.spawn(move || threaded_piece(s, piece, mesh, names)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err("thread: internal error in the geometry kernel".into()))
+            })
+            .collect()
+    });
+    let mut out: Vec<ExactSolid> = rest.into_iter().collect();
+    for r in results {
+        if let Some(p) = r? {
+            out.push(p);
+        }
+    }
+    Ok(out)
+}
+
+/// One zone's material less its grooves (faceted), named.
+fn threaded_piece(
+    s: &ExactSolid,
+    piece: &ExactSolid,
+    mesh: &sg::Mesh,
+    groove_names: &[String],
+) -> Result<Option<ExactSolid>, String> {
+    if mesh.triangles.is_empty() {
+        return Ok(Some(piece.clone()));
+    }
+    let tol = (piece.body.size() * 5e-4).clamp(2e-3, 1e-2);
+    let Some(body) = guarded("thread", || {
+        sk::faceted_boolean(&piece.body, mesh, sk::BoolOp::Cut, tol)
+    })?
+    else {
+        return Ok(None);
+    };
+    // Faces on the zone's material keep their names; faces on the mesh are
+    // the groove's.
+    let n = body.face_count();
+    let mut face_names = vec![None; n];
+    if let Some(h) = body.history() {
+        for (i, fp) in h.faces.iter().enumerate().take(n) {
+            face_names[i] = fp.origins.iter().find_map(|o| match o {
+                FaceOrigin::Face { operand: 0, face } => {
+                    piece.face_names.get(*face).cloned().flatten()
+                }
+                FaceOrigin::Face { operand: 1, face } => groove_names.get(*face).cloned(),
+                _ => None,
+            });
+        }
+    }
+    Ok(Some(ExactSolid {
+        name: s.name.clone(),
+        body,
+        face_names,
+        profiles: Vec::new(),
+    }))
+}
+
+/// `s` moved by the rigid motion `m` (a pattern copy of a tool); face names
+/// are kept.
+pub fn transformed(s: &ExactSolid, m: &nalgebra::Matrix4<Real>) -> Result<ExactSolid, String> {
+    // The kernel takes the matrix column by column.
+    let mut a = [[0.0; 4]; 4];
+    for (c, col) in a.iter_mut().enumerate() {
+        for (r, x) in col.iter_mut().enumerate() {
+            *x = m[(r, c)];
+        }
+    }
+    let body = guarded("transform", || sk::transform_matrix(&s.body, a))?;
+    let face_names = names_from(&body, &[s], &|_| None);
+    let face_names = if face_names.iter().all(Option::is_none) {
+        s.face_names.clone()
+    } else {
+        face_names
+    };
+    Ok(ExactSolid {
+        name: s.name.clone(),
+        body,
+        face_names,
+        profiles: Vec::new(),
+    })
+}
+
 // --------------------------------------------------------- to our B-rep ---
 
 /// Display tolerance (mm) of the exact kernel's triangles.
@@ -2375,3 +2719,6 @@ mod tests {
         assert!(shell(&b, &[top], 16.0, ShellSide::Inside, "Shell1").is_err());
     }
 }
+
+#[cfg(test)]
+mod hole_tests;

@@ -93,7 +93,7 @@
 | **X / O** | Trim / Offset | ✅ |
 | **Shift** (при Trim/Extend) | превключва Trim ↔ Extend | ✅ |
 | **E** | Extrude | ✅ |
-| **R / H** | Revolve / Hole (в 3D Model) | 🟡 R ✅; H ⬜ |
+| **R / H** | Revolve / Hole (в 3D Model) | 🟡 R ✅; H чака визуална проверка |
 | **P / C** | Place / Constrain (в сглобка) | ⬜ |
 | **Ctrl+Z / Ctrl+Y** (и Ctrl+Shift+Z) | Undo / Redo | ✅ |
 | **Ctrl+S / Ctrl+O / Ctrl+N** | запис / отваряне / нов | ✅ запис и отваряне |

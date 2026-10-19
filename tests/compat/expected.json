@@ -68,5 +68,12 @@
     "features": 2,
     "sketches": 0,
     "exact": true
+  },
+  "r6/hole_r6.3dcadcraft": {
+    "volume": 45315.021653650016,
+    "faces": 26,
+    "features": 4,
+    "sketches": 2,
+    "exact": true
   }
 }

@@ -1,0 +1,68 @@
+# ISO general purpose metric screw threads (mm).
+# Sizes and pitches: ISO 261 / ISO 262 (coarse and the selected fine pitches).
+# minor = basic minor diameter of the internal thread, ISO 724: D1 = D - 1.082532 * P
+#         (from the ISO 68-1 basic profile: D1 = D - 2 * 5/8 * H, H = sqrt(3)/2 * P).
+# tap_drill = D - P (the usual drill for about 75 % thread engagement; ISO 2306 lists
+#         close values per tolerance class).
+# Classes: 6H (internal) and 6g (external) are the ISO 965-1 medium tolerance classes.
+# Edit freely, or copy this file to the user standards folder to override it.
+designation,series,size,major,pitch,tap_drill,minor,classes_internal,classes_external
+M1,coarse,M1,1,0.25,0.75,0.729,6H;5H;7H,6g;6h;4h
+M1.2,coarse,M1.2,1.2,0.25,0.95,0.929,6H;5H;7H,6g;6h;4h
+M1.4,coarse,M1.4,1.4,0.3,1.1,1.075,6H;5H;7H,6g;6h;4h
+M1.6,coarse,M1.6,1.6,0.35,1.25,1.221,6H;5H;7H,6g;6h;4h
+M2,coarse,M2,2,0.4,1.6,1.567,6H;5H;7H,6g;6h;4h
+M2.5,coarse,M2.5,2.5,0.45,2.05,2.013,6H;5H;7H,6g;6h;4h
+M3,coarse,M3,3,0.5,2.5,2.459,6H;5H;7H,6g;6h;4h
+M3.5,coarse,M3.5,3.5,0.6,2.9,2.85,6H;5H;7H,6g;6h;4h
+M4,coarse,M4,4,0.7,3.3,3.242,6H;5H;7H,6g;6h;4h
+M5,coarse,M5,5,0.8,4.2,4.134,6H;5H;7H,6g;6h;4h
+M6,coarse,M6,6,1,5,4.917,6H;5H;7H,6g;6h;4h
+M7,coarse,M7,7,1,6,5.917,6H;5H;7H,6g;6h;4h
+M8,coarse,M8,8,1.25,6.75,6.647,6H;5H;7H,6g;6h;4h
+M10,coarse,M10,10,1.5,8.5,8.376,6H;5H;7H,6g;6h;4h
+M12,coarse,M12,12,1.75,10.25,10.106,6H;5H;7H,6g;6h;4h
+M14,coarse,M14,14,2,12,11.835,6H;5H;7H,6g;6h;4h
+M16,coarse,M16,16,2,14,13.835,6H;5H;7H,6g;6h;4h
+M18,coarse,M18,18,2.5,15.5,15.294,6H;5H;7H,6g;6h;4h
+M20,coarse,M20,20,2.5,17.5,17.294,6H;5H;7H,6g;6h;4h
+M22,coarse,M22,22,2.5,19.5,19.294,6H;5H;7H,6g;6h;4h
+M24,coarse,M24,24,3,21,20.752,6H;5H;7H,6g;6h;4h
+M27,coarse,M27,27,3,24,23.752,6H;5H;7H,6g;6h;4h
+M30,coarse,M30,30,3.5,26.5,26.211,6H;5H;7H,6g;6h;4h
+M33,coarse,M33,33,3.5,29.5,29.211,6H;5H;7H,6g;6h;4h
+M36,coarse,M36,36,4,32,31.67,6H;5H;7H,6g;6h;4h
+M39,coarse,M39,39,4,35,34.67,6H;5H;7H,6g;6h;4h
+M42,coarse,M42,42,4.5,37.5,37.129,6H;5H;7H,6g;6h;4h
+M45,coarse,M45,45,4.5,40.5,40.129,6H;5H;7H,6g;6h;4h
+M48,coarse,M48,48,5,43,42.587,6H;5H;7H,6g;6h;4h
+M52,coarse,M52,52,5,47,46.587,6H;5H;7H,6g;6h;4h
+M56,coarse,M56,56,5.5,50.5,50.046,6H;5H;7H,6g;6h;4h
+M60,coarse,M60,60,5.5,54.5,54.046,6H;5H;7H,6g;6h;4h
+M64,coarse,M64,64,6,58,57.505,6H;5H;7H,6g;6h;4h
+M8x1,fine,M8,8,1,7,6.917,6H;5H;7H,6g;6h;4h
+M10x1.25,fine,M10,10,1.25,8.75,8.647,6H;5H;7H,6g;6h;4h
+M10x1,fine,M10,10,1,9,8.917,6H;5H;7H,6g;6h;4h
+M12x1.5,fine,M12,12,1.5,10.5,10.376,6H;5H;7H,6g;6h;4h
+M12x1.25,fine,M12,12,1.25,10.75,10.647,6H;5H;7H,6g;6h;4h
+M14x1.5,fine,M14,14,1.5,12.5,12.376,6H;5H;7H,6g;6h;4h
+M16x1.5,fine,M16,16,1.5,14.5,14.376,6H;5H;7H,6g;6h;4h
+M18x2,fine,M18,18,2,16,15.835,6H;5H;7H,6g;6h;4h
+M18x1.5,fine,M18,18,1.5,16.5,16.376,6H;5H;7H,6g;6h;4h
+M20x2,fine,M20,20,2,18,17.835,6H;5H;7H,6g;6h;4h
+M20x1.5,fine,M20,20,1.5,18.5,18.376,6H;5H;7H,6g;6h;4h
+M22x2,fine,M22,22,2,20,19.835,6H;5H;7H,6g;6h;4h
+M22x1.5,fine,M22,22,1.5,20.5,20.376,6H;5H;7H,6g;6h;4h
+M24x2,fine,M24,24,2,22,21.835,6H;5H;7H,6g;6h;4h
+M27x2,fine,M27,27,2,25,24.835,6H;5H;7H,6g;6h;4h
+M30x2,fine,M30,30,2,28,27.835,6H;5H;7H,6g;6h;4h
+M33x2,fine,M33,33,2,31,30.835,6H;5H;7H,6g;6h;4h
+M36x3,fine,M36,36,3,33,32.752,6H;5H;7H,6g;6h;4h
+M39x3,fine,M39,39,3,36,35.752,6H;5H;7H,6g;6h;4h
+M42x3,fine,M42,42,3,39,38.752,6H;5H;7H,6g;6h;4h
+M45x3,fine,M45,45,3,42,41.752,6H;5H;7H,6g;6h;4h
+M48x3,fine,M48,48,3,45,44.752,6H;5H;7H,6g;6h;4h
+M52x4,fine,M52,52,4,48,47.67,6H;5H;7H,6g;6h;4h
+M56x4,fine,M56,56,4,52,51.67,6H;5H;7H,6g;6h;4h
+M60x4,fine,M60,60,4,56,55.67,6H;5H;7H,6g;6h;4h
+M64x4,fine,M64,64,4,60,59.67,6H;5H;7H,6g;6h;4h

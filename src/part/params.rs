@@ -160,6 +160,8 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
         },
         Feature::Shell(_) => vec![("thickness", Unit::Mm)],
         Feature::Draft(_) => vec![("angle", Unit::Deg)],
+        Feature::Hole(h) => h.fields(),
+        Feature::Thread(t) => t.fields(),
         Feature::Work(w) => match &w.def {
             super::WorkDef::Plane(super::WorkPlaneDef::Offset { .. }) => {
                 vec![("distance", Unit::Mm)]
@@ -232,6 +234,8 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
         },
         Feature::Shell(s) => (field == "thickness").then_some(s.thickness),
         Feature::Draft(d) => (field == "angle").then_some(d.angle),
+        Feature::Hole(h) => h.value(field),
+        Feature::Thread(t) => t.value(field),
         Feature::Work(w) => match (&w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 Some(*distance)
@@ -299,6 +303,8 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
                 d.angle = v;
             }
         }
+        Feature::Hole(h) => h.set(field, v),
+        Feature::Thread(t) => t.set(field, v),
         Feature::Work(w) => match (&mut w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 *distance = v
@@ -323,6 +329,8 @@ fn feature_params_mut(f: &mut Feature) -> Option<&mut FeatureParams> {
         Feature::Blend(b) => Some(&mut b.params),
         Feature::Shell(s) => Some(&mut s.params),
         Feature::Draft(d) => Some(&mut d.params),
+        Feature::Hole(h) => Some(&mut h.params),
+        Feature::Thread(t) => Some(&mut t.params),
     }
 }
 
@@ -335,6 +343,8 @@ fn feature_params(f: &Feature) -> Option<&FeatureParams> {
         Feature::Blend(b) => Some(&b.params),
         Feature::Shell(s) => Some(&s.params),
         Feature::Draft(d) => Some(&d.params),
+        Feature::Hole(h) => Some(&h.params),
+        Feature::Thread(t) => Some(&t.params),
     }
 }
 

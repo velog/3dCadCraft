@@ -47,11 +47,12 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `kernel` | B-Rep geometry + topology, validation, tessellation (`mesh.rs`), queries & persistent names (`query.rs`), extrude, revolve (`revolve.rs`), BSP CSG on tagged polygons (`csg.rs`), polygons ↔ B-Rep and Booleans (`facet.rs`), exact kernel boundary (`exact.rs`: SolidCraft/truck → our B-Rep) | `BRep`, `Curve`, `Surface`, `Plane`, `Face`, `Tolerance`, `BoolOp` |
 | `sketch` | 2D sketch on a plane (dimension names/equations/tolerances in `dimparam.rs`): points, lines, circles, arcs, CV splines, styles (construction/centerline), ~20 constraint/dimension kinds, driven dims, Levenberg solver with DOF/redundancy analysis; composite shapes (`shapes.rs`), Modify ops (`modify.rs`: trim/extend/split/offset/move/copy/rotate/mirror/scale/stretch), 2D fillet/chamfer (`corner.rs`), associative rectangular/circular patterns (`pattern.rs`), profiles/regions (`profile.rs`: `Sketch::regions`), per-geometry DOF analysis (`dof_analysis`) | `Sketch`, `Constraint`, `Shape`, `SolveReport`, `DofAnalysis` |
 | `part` | part environment: features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`, Shell `shell.rs`, Face Draft `draft.rs`; `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `Operation`, `UserParam` |
+| `part::hole`, `part::standards` | Hole and Thread (`Feature::Hole` / `Feature::Thread`): `HoleSpec` (type, seat, termination, drill point, thread, fastener), notes for drawings (`note()`), `HoleInstance` + `group_holes` (`PartDocument::holes`, `hole_groups`); standards tables `data/standards/*.csv` (built in, user override folder) | `HoleFeature`, `HoleSpec`, `ThreadSpec`, `ThreadFeature`, `Standards` |
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
 | `command` | Undo/Redo (snapshot history, coalesced gestures); later the Command enum | `History<T>` |
 | `api` | JSON-RPC/MCP server — placeholder | |
-| `gui` (feature `gui`) | Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
+| `gui` (feature `gui`) | Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Hole / Thread commands (`hole.rs`: picks, preview, cosmetic thread display; panels in `hole_panel.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
 
 Data flow: GUI action → `checkpoint(label)` (Undo snapshot) → `part::`/`sketch::`
 operation on the active `PartDocument` inside `Project` → `regenerate()` if the body
@@ -495,6 +496,27 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (`xtask assets`) are normalised to `/`. The X11 scripts in `tools/` do not run there.
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans.
+- **Holes** (`part/hole.rs`, `part/exact.rs::hole`): each centre gives tools of revolution
+  (`kernel::exact::revolved_tool`), cut in two stages — every seat, then every bore through
+  their floors (one Boolean each, tools joined by `union_apart`). One stepped tool per hole
+  made 36 counterbores take 43 s (n^1.4) instead of 1.6 s. Tools start above a start face
+  (in the air); a centre not on a face asks `exact::contains` first. Faces are
+  `<id>:<role>:<k>` (k from 1). The numbers from the standards tables are copied into the
+  feature (the part regenerates the same without the user's tables, rule 8).
+- **Modeled threads**: never cut a smooth `sk::sweep_helix` groove with the exact Boolean —
+  measured 2.5 s for half a turn through a bore, > 60 s once it crosses a plane, 8 turns
+  did not finish in 15 min. `kernel::exact::cut_threads` splits the solid into the exact
+  rest and a ring zone around the thread and cuts only the zone with `faceted_boolean`
+  (36 stations a turn; zones in parallel). Grooves are recorded per feature and cut after
+  the last feature (`finish_threads`, cached), so no later Boolean meets a faceted zone.
+- **Hole data for drawings**: `PartDocument::holes()` (filled during regeneration, also from
+  cache hits via `CachedStep::extra`). Pattern / Mirror must push `h.transformed(&m)` copies
+  (with the element index in `copy`) into `hole_instances` at their place in the loop.
+- **Cylinder face side** (`hole::cylinder_face`): decide shaft vs hole wall from the face
+  mesh normals against the radial direction; `Face::sense` of an exact-kernel hole wall
+  said "Same" (the Thread fit check called an M8 tapped hole a Ø6.6 shaft).
+- **Revolved cones** (drill point, countersink) come back from `sk::face_surface` without
+  an analytic cone (our `Surface` is a plane there); don't test for `Surface::Cone`.
 
 ## Status and next steps
 
@@ -509,7 +531,8 @@ Move/Copy/Rotate/Mirror/Scale/Stretch), Fillet/Chamfer, sketch patterns, midpoin
 ⊥/∥ inference, point-on-spline, **profiles/regions** (shaded in the sketch), **Extrude**
 (all options, editable, named faces), **parameters** (expressions, Parameters table,
 tolerances, live dimension preview, in-place edit), **Revolve** and **Booleans stage 1**
-(Join/Cut/Intersect/New Solid, Surface output), **exact kernel stage A** (SolidCraft/truck
+(Join/Cut/Intersect/New Solid, Surface output), **Hole / Thread** (standards CSV, notes,
+modeled threads; format revision 6), **exact kernel stage A** (SolidCraft/truck
 via `kernel::exact`, see `docs/SOLIDCRAFT.md`). Next: stages B–F of `docs/SOLIDCRAFT.md`
 (priorities in its §6: recipe runner through `PartDocument`, Shell/Draft, Mirror/Pattern,
 Hole, Sweep/Loft, STEP, commands → control channel → MCP), Properties restyle.

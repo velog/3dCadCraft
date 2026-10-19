@@ -16,6 +16,7 @@ use cadcraft3d::part::{
     SketchOptions, SketchPlacement, VariableRadius,
 };
 use cadcraft3d::part::{DraftFeature, DraftType, PlaneRef, PullRef};
+use cadcraft3d::part::{DrillPoint, HoleCenter, HoleFeature, HoleSpec, SeatType, Termination};
 use cadcraft3d::sketch::{Entity, Point2, Region};
 
 /// What a case expects.
@@ -1552,6 +1553,115 @@ fn c_extrude_to_next() -> Result<PartDocument, String> {
     post_to(Extent::ToNext)
 }
 
+// --------------------------------------------------------------- hole ---
+
+/// Holes `spec` at `centers` (model x, y, z on `face`) through a Hole
+/// sketch on `face`.
+fn hole_on(
+    part: &mut PartDocument,
+    face: &str,
+    spec: HoleSpec,
+    centers: &[[Real; 3]],
+) -> Result<(), String> {
+    let pts: Vec<Point3> = centers.iter().map(|c| Point3::from(*c)).collect();
+    let (i, ids) = part
+        .create_hole_sketch(face, &pts)
+        .map_err(|e| e.to_string())?;
+    let mut def = HoleFeature::new(spec);
+    def.sketch = part.sketches[i].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(def).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn through(d: Real) -> HoleSpec {
+    let mut s = HoleSpec::simple(d, 10.0);
+    s.termination = Termination::ThroughAll;
+    s
+}
+
+/// The 40×30×20 plate with a Ø10 hole through its middle.
+fn holed_plate() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    hole_on(
+        &mut part,
+        "Extrusion1:End",
+        through(10.0),
+        &[[20.0, 15.0, 20.0]],
+    )?;
+    Ok(part)
+}
+
+/// The hole's top rim (radius 5 at z 20).
+fn rim(part: &PartDocument) -> Vec<EdgeRef> {
+    edges_where(part, |h| {
+        (h[2] - 20.0).abs() < 1e-6 && (h[0] - 20.0).hypot(h[1] - 15.0) < 5.01
+    })
+}
+
+fn c_hole_then_fillet() -> Result<PartDocument, String> {
+    let mut part = holed_plate()?;
+    let e = rim(&part);
+    if e.is_empty() {
+        return Err("no rim edge".into());
+    }
+    part.add_blend(BlendFeature::fillet(e, 1.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+fn c_hole_then_chamfer() -> Result<PartDocument, String> {
+    let mut part = holed_plate()?;
+    let e = rim(&part);
+    if e.is_empty() {
+        return Err("no rim edge".into());
+    }
+    part.add_blend(BlendFeature::chamfer(e, 0.5))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// SolidCraft #559: a Ø1 hole into the 2 mm rim of a shelled box.
+fn c_shell_then_hole_in_rim() -> Result<PartDocument, String> {
+    let mut part = s_shell_box()?;
+    let mut s = HoleSpec::simple(1.0, 5.0);
+    s.drill_point = DrillPoint::Flat;
+    hole_on(&mut part, "Extrusion1:End", s, &[[1.0, 15.0, 20.0]])?;
+    Ok(part)
+}
+
+/// A Ø6 hole through the plate, then a shell open at the top: the bore
+/// becomes a tube with 2 mm walls.
+fn c_hole_then_shell() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    hole_on(
+        &mut part,
+        "Extrusion1:End",
+        through(6.0),
+        &[[20.0, 15.0, 20.0]],
+    )?;
+    shell_of(part, &[TOP], 2.0, ShellDirection::Inside)
+}
+
+/// A counterbored hole, edited to a larger counterbore.
+fn c_hole_edit() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let mut s = through(6.6);
+    s.seat = SeatType::Counterbore;
+    s.seat_diameter = 11.0;
+    s.seat_depth = 6.4;
+    hole_on(&mut part, "Extrusion1:End", s, &[[20.0, 15.0, 20.0]])?;
+    let k = part.features.len() - 1;
+    let Some(Feature::Hole(mut h)) = part.features.get(k).cloned() else {
+        return Err("no hole".into());
+    };
+    h.spec.seat_diameter = 14.0;
+    h.spec.seat_depth = 8.0;
+    part.replace_feature(k, Feature::Hole(h))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
 fn cases() -> Vec<Case> {
     let cone_ring = |r: Real| PI * r * r * 0.5 * 0.5 / 3.0; // not used
     let _ = cone_ring;
@@ -1563,7 +1673,51 @@ fn cases() -> Vec<Case> {
         2.0 * PI * (2.0 + 0.5 * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI))) * (1.0 - PI / 4.0) * 0.25;
     let shell_box = 24_000.0 - 36.0 * 26.0 * 18.0;
     let round4 = |r: Real, h: Real| 4.0 * (r * r - PI * r * r / 4.0) * h;
+    // A round r on the rim of a hole of radius R: (1 − π/4) r² at
+    // R + 0.2234 r; a chamfer c: c²/2 at R + c/3.
+    let rim_round = |big: Real, r: Real| {
+        2.0 * PI * (big + r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI))) * (1.0 - PI / 4.0) * r * r
+    };
+    let rim_chamfer = |big: Real, c: Real| 2.0 * PI * (big + c / 3.0) * c * c / 2.0;
+    let holed = 24_000.0 - PI * 25.0 * 20.0;
     vec![
+        Case {
+            level: "simple",
+            name: "hole Ø10 through, fillet r1 on its rim",
+            budget_ms: 1500.0,
+            build: c_hole_then_fillet,
+            want: Want::Volume(holed - rim_round(5.0, 1.0)),
+        },
+        Case {
+            level: "simple",
+            name: "hole Ø10 through, chamfer 0.5 on its rim",
+            budget_ms: 1500.0,
+            build: c_hole_then_chamfer,
+            want: Want::Volume(holed - rim_chamfer(5.0, 0.5)),
+        },
+        Case {
+            level: "complex",
+            name: "shell, then a Ø1 hole into its rim (#559)",
+            budget_ms: 2000.0,
+            build: c_shell_then_hole_in_rim,
+            want: Want::Volume(shell_box - PI * 0.25 * 5.0),
+        },
+        Case {
+            level: "complex",
+            name: "hole Ø6 through, then shell 2",
+            budget_ms: 3000.0,
+            build: c_hole_then_shell,
+            want: Want::Volume(
+                24_000.0 - PI * 9.0 * 20.0 - (36.0 * 26.0 * 18.0 - PI * 25.0 * 18.0),
+            ),
+        },
+        Case {
+            level: "simple",
+            name: "counterbore edited Ø11×6.4 → Ø14×8",
+            budget_ms: 1500.0,
+            build: c_hole_edit,
+            want: Want::Volume(24_000.0 - PI * (49.0 * 8.0 + 3.3 * 3.3 * 12.0)),
+        },
         Case {
             level: "simple",
             name: "shell 2 inside, box open at the top",
