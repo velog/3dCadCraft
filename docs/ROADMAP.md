@@ -159,6 +159,7 @@
 | Mirror | операции или тела спрямо основна/работна равнина или плоска стена; Join / New Solid / Remove Original ([spec](spec/2.12-mirror.md)) | 2.12 🟡 |
 | Материали и външен вид | CSV библиотеки + потребителска папка, приоритет Face > Feature > Body > Part > Material, QAT списъци, Material/Appearance Browser, Adjust, Clear, Styles Editor (Update, Purge), прозрачност, цветове в GLB/STEP ([spec](spec/2.15-materials.md)) | 2.15 🟡 |
 | Physical Properties | маса по тела и общо, обем, площ, център на тежестта, инерция, главни моменти и оси, Requested Accuracy, Update, Clipboard ([spec](spec/0.10-physical.md)) | 0.10 🟡 |
+| Диагностика | лог на сесията, дневник на действията с replay (`cargo run --example replay`), автозапис + Restore след срив, доклад за срив, Help → Save Diagnostics / Open Logs Folder ([spec](spec/0.14-diagnostics.md)) | 0.4 🟡 |
 | Изглед | Orbit през полюса, ViewCube (26 посоки, стрелки, Roll, компас, Home, меню), плавни преходи, ос-триада долу вдясно ([spec](spec/0.3-view.md)) | 0.3 🟡 |
 
 | Задача | Номер |

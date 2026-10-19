@@ -658,7 +658,9 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 |---|---|
 | `CADCRAFT3D_DEMO` = `rectangle` \| `slot` \| `tangents` \| `lines` \| `revolve` | стартира с демо скица (в равнина XY, в редакция) |
 | `CADCRAFT3D_KERNEL=facet` | изключва точното ядро (всичко се строи фасетно; за сравнение) |
-| `RUST_LOG` (напр. `info`, `debug`) | ниво на съобщенията (`env_logger`) |
+| `RUST_LOG` (напр. `info`, `debug`, `cadcraft3d=trace`) | само вдига нивото на лога; голо ниво (`debug`) важи и за другите библиотеки (по подразбиране: нашият код `info`, другите `warn`) |
+| `CADCRAFT3D_LOG` = `trace` \| `debug` \| `info` \| `warn` \| `error` \| `off` | нивото на лога за нашия код и ядрото |
+| `CADCRAFT3D_DIAG_DIR` | друга папка за `logs/` и `recovery/` (вместо `%APPDATA%\3dcadcraft`) |
 | `CADCRAFT_WRITE_COMPAT=1` | само за тестовете (`cargo test --test compat`): записва нови fixtures |
 | `APPDATA`, `USERPROFILE`/`HOME`, `OneDrive` | откъде се вземат пътищата по-долу |
 
@@ -672,6 +674,12 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 | Начална папка на диалозите | папката на текущия файл, иначе `%USERPROFILE%\Documents` или `%OneDrive%\Documents`, иначе профилът | папката на файла, иначе `~/Documents`, иначе `~` |
 | Потребителски материали / видове | `%APPDATA%\3dcadcraft\materials\materials.csv`, `…\appearances.csv` (колоните като във вградените CSV) | `~/.config/3dcadcraft/materials/…` |
 | F1 (спецификации) | `<папката с изходния код>\docs\spec\…` (пътят е от компилацията) | същото, отваря се с `xdg-open` |
+| Лог на сесията | `%APPDATA%\3dcadcraft\logs\session-YYYYMMDD-HHMMSS.log` (UTC; последните 20 сесии) | `~/.config/3dcadcraft/logs/…` |
+| Дневник на действията | `…\logs\session-YYYYMMDD-HHMMSS-journal.jsonl`; описание на сесията (`clean_exit`) `…\logs\session-….json` | същото |
+| Доклади за срив | `…\logs\crash-YYYYMMDD-HHMMSS.txt` (последните 20) | същото |
+| Автозаписи | `%APPDATA%\3dcadcraft\recovery\<проект>-<хеш>-<време>.3dcadcraft` + `.json` (последните 3 на проект) | `~/.config/3dcadcraft/recovery/…` |
+
+**Help** (меню вдясно в Quick Access): **Help** (F1), **Save Diagnostics…** (zip с лога, дневника и описанието на текущата и предишната сесия, докладите за срив, текущия проект и `settings.json`), **Open Logs Folder**. След срив при старт излиза **Restore** (Restore / Open Original / Discard). Подробно: [spec/0.14-diagnostics.md](spec/0.14-diagnostics.md).
 
 Файлове: **Save** → един `.3dcadcraft` (ZIP); **Save as Folder...** → разпакована папка
 (`име.3dcadcraft/` с `manifest.json`, удобна за git). Open показва и такива папки.

@@ -35,6 +35,7 @@ cargo xtask oracle                            # reference cases table (tests/ora
 cargo run -- path/to/project.3dcadcraft       # open a project
 CADCRAFT3D_DEMO=slot cargo run                # start with a demo sketch (rectangle|slot|tangents|lines|revolve)
 cargo run --example make_project -- /tmp/b.3dcadcraft   # build a project via the API
+cargo run --example replay -- session-…-journal.jsonl   # replay a user's action journal
 ```
 
 Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft3d`**
@@ -52,6 +53,7 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `part::hole`, `part::standards` | Hole and Thread (`Feature::Hole` / `Feature::Thread`): `HoleSpec` (type, seat, termination, drill point, thread, fastener), notes for drawings (`note()`), `HoleInstance` + `group_holes` (`PartDocument::holes`, `hole_groups`); standards tables `data/standards/*.csv` (built in, user override folder) | `HoleFeature`, `HoleSpec`, `ThreadSpec`, `ThreadFeature`, `Standards` |
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
+| `diagnostics` | session log (`log.rs`, own logger + ring buffer), action journal with JSON-delta part snapshots (`journal.rs`), `replay.rs` (journal → parts, first differing step), autosave + Restore decision (`recovery.rs`), panic hook / crash reports / emergency autosave (`crash.rs`), Save Diagnostics zip (`bundle.rs`); GUI hooks in `gui/diag.rs` | `Journal`, `Outcome`, `Step`, `Autosaver`, `Offer` |
 | `command` | Undo/Redo (snapshot history, coalesced gestures); later the Command enum | `History<T>` |
 | `presets` | feature-command presets (user settings, never document data): `PresetData` trait (setting keys, `strip_inputs`, `capture`/`apply`), `apply_in` (re-evaluates stored equations), `CommandPresets` (Last Used, New Default, Sort, built-ins), `PresetStore` (one atomic JSON file per command in `presets/` of the settings folder); GUI row in `gui/presets.rs` | `PresetData`, `PresetStore`, `CommandPresets` |
 | `api` | JSON-RPC/MCP server — placeholder | |
@@ -243,6 +245,24 @@ pkill -x 3dcadcraft                                      # NEVER `pkill -f` (kil
 Default window 1400×900: ribbon y≈60–90, browser x<250, properties x>1100,
 viewport ≈ (250..1100, 110..875). Coordinates shift with layout — always take a
 screenshot and measure first (crop + `-scale 300%` to locate small dots).
+
+## How to debug a user's session
+
+"Something did not work at the end of the last session":
+1. Files are in `%APPDATA%\3dcadcraft\logs` (Linux `~/.config/3dcadcraft/logs`): the newest
+   `session-*.log` (UTC times, warnings, sick features, slow regenerations, save/open/export),
+   `session-*-journal.jsonl` (one action per line: `checkpoint`, `command_ok` with the feature
+   JSON, `error`, `health`, `state`…), `session-*.json` (`clean_exit: false` = crash/killed),
+   `crash-*.txt` (panic, backtrace, last log/journal lines). The user may send a zip from
+   Help → Save Diagnostics instead. Autosaves: `…\3dcadcraft\recovery`.
+2. `cargo run --example replay -- <journal>` rebuilds the part state by state and marks the first
+   step whose volume / faces / sick features differ from the recording;
+   `--part N out.3dcadcraft` saves the part at state N to open in the app.
+3. Regression test: copy the journal into `tests/` and assert
+   `diagnostics::replay::first_difference(&replay(path)?)` is `None` (see `tests/diagnostics.rs`),
+   or build the failing state with `replay::part_at(path, N)`.
+- The kernel's expected panics go through `diagnostics::crash::guard` (no crash report); any new
+  `catch_unwind` around kernel calls should use it too.
 
 ## Pitfalls already paid for
 

@@ -26,6 +26,7 @@
 mod blend;
 mod camera;
 mod demos;
+mod diag;
 mod draft;
 mod files;
 mod hole;
@@ -67,7 +68,9 @@ use viewcube::StandardView;
 /// Launches the desktop application, optionally opening a project
 /// (`.3dcadcraft` file or unpacked folder).
 pub fn run(open: Option<std::path::PathBuf>) -> eframe::Result {
-    env_logger::init();
+    if let Some(p) = &open {
+        log::info!("open at start: {}", p.display());
+    }
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
@@ -557,6 +560,8 @@ struct CadCraftApp {
     list_hover: Option<ConstraintId>,
     /// Materials, appearances, Physical Properties (`material.rs`).
     mat: material::MaterialUi,
+    /// Journal, autosave and Restore (`diag.rs`).
+    diag: diag::DiagUi,
 }
 
 /// Target of a right-click inside the edited sketch.
@@ -660,6 +665,7 @@ impl CadCraftApp {
             sketch_context: None,
             list_hover: None,
             mat: material::MaterialUi::load(),
+            diag: diag::DiagUi::new(),
         };
         // Developer aid: start with a demo sketch, e.g. CADCRAFT3D_DEMO=slot.
         if let Some(demo) = std::env::var("CADCRAFT3D_DEMO")
@@ -692,6 +698,7 @@ impl CadCraftApp {
     /// Records the state before an action named `label` (for Undo).
     fn checkpoint(&mut self, label: &str) {
         self.history.record(label, self.project.clone());
+        self.diag.checkpoint(label);
     }
 
     /// Re-validates UI state after the project was replaced (undo, open).
@@ -713,14 +720,18 @@ impl CadCraftApp {
     }
 
     fn undo(&mut self) {
+        let label = self.history.undo_label().map(str::to_owned);
         if let Some(p) = self.history.undo(self.project.clone()) {
+            self.diag.undo_redo("undo", label);
             self.project = p;
             self.after_restore();
         }
     }
 
     fn redo(&mut self) {
+        let label = self.history.redo_label().map(str::to_owned);
         if let Some(p) = self.history.redo(self.project.clone()) {
+            self.diag.undo_redo("redo", label);
             self.project = p;
             self.after_restore();
         }
@@ -4029,6 +4040,10 @@ impl CadCraftApp {
             )
             .on_hover_text(if dirty { "Unsaved changes" } else { "Saved" });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button("Help", |ui| {
+                    ui.set_min_width(200.0);
+                    self.help_menu(ui);
+                });
                 ui.label(RichText::new("3DCadCraft").weak());
             });
         });
@@ -6123,6 +6138,7 @@ impl eframe::App for CadCraftApp {
         self.material_windows(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);
+        self.diag_frame(&ctx);
     }
 }
 

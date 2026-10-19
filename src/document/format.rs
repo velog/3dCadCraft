@@ -192,6 +192,13 @@ impl Project {
 
     /// Saves as a single packed `.3dcadcraft` file (a ZIP archive).
     pub fn save_with(&self, path: &Path, opts: &SaveOptions) -> ProjectResult<()> {
+        let started = std::time::Instant::now();
+        let r = self.save_packed(path, opts);
+        log_result("save", path, started, &r);
+        r
+    }
+
+    fn save_packed(&self, path: &Path, opts: &SaveOptions) -> ProjectResult<()> {
         let entries = self.entries(path)?;
         let tmp = temp_sibling(path);
         let result = (|| {
@@ -249,6 +256,13 @@ impl Project {
     /// Loads a project from a packed `.3dcadcraft` file or an unpacked
     /// directory.
     pub fn load(path: &Path) -> ProjectResult<Project> {
+        let started = std::time::Instant::now();
+        let r = Self::load_any(path);
+        log_result("open", path, started, &r);
+        r
+    }
+
+    fn load_any(path: &Path) -> ProjectResult<Project> {
         let meta = fs::metadata(path).map_err(io_err(path))?;
         if meta.is_dir() {
             Self::load_with(path, |name| {
@@ -335,6 +349,15 @@ impl Project {
         };
         project.validate().map_err(|e| corrupt(path, e))?;
         Ok(project)
+    }
+}
+
+/// Logs the result of a save or open (`what`) of `path`.
+fn log_result<T>(what: &str, path: &Path, started: std::time::Instant, r: &ProjectResult<T>) {
+    let ms = started.elapsed().as_millis();
+    match r {
+        Ok(_) => log::info!("{what} {}: ok ({ms} ms)", path.display()),
+        Err(e) => log::warn!("{what} {}: {e}", path.display()),
     }
 }
 

@@ -20,6 +20,8 @@ pub(super) enum DialogPurpose {
     /// Save as an unpacked folder (git-friendly).
     SaveFolder,
     Export(ExportFormat),
+    /// Help -> Save Diagnostics (a zip, `gui/diag.rs`).
+    Diagnostics,
 }
 
 impl DialogPurpose {
@@ -29,6 +31,7 @@ impl DialogPurpose {
             DialogPurpose::SaveAs => "Save As".into(),
             DialogPurpose::SaveFolder => "Save as Folder".into(),
             DialogPurpose::Export(f) => format!("Export {}", f.extension().to_uppercase()),
+            DialogPurpose::Diagnostics => "Save Diagnostics".into(),
         }
     }
 
@@ -40,6 +43,7 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Stl) => &["stl"],
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
             DialogPurpose::Export(ExportFormat::Glb) => &["glb"],
+            DialogPurpose::Diagnostics => &["zip"],
         }
     }
 
@@ -397,6 +401,10 @@ impl CadCraftApp {
             DialogPurpose::SaveAs => format!("{stem}.{FILE_EXTENSION}"),
             DialogPurpose::SaveFolder => format!("{stem}.{FILE_EXTENSION}"),
             DialogPurpose::Export(f) => format!("{stem}.{}", f.extension()),
+            DialogPurpose::Diagnostics => format!(
+                "3dcadcraft-diagnostics-{}.zip",
+                crate::diagnostics::stamp(std::time::SystemTime::now())
+            ),
         };
         self.file_dialog = Some(FileDialog::new(purpose, start_dir(&self.file_path), name));
     }
@@ -737,6 +745,7 @@ impl CadCraftApp {
                 self.file_path = path.display().to_string();
                 self.save_project(true);
             }
+            DialogPurpose::Diagnostics => self.save_diagnostics(&path),
             DialogPurpose::Export(f) => {
                 let name = path
                     .file_stem()

@@ -534,6 +534,27 @@ fn speed_budgets() {
         }),
     ));
 
+    // Diagnostics: 1000 user actions journaled (a checkpoint line and the
+    // part's state: a delta snapshot + volume / faces / health) on the
+    // rounded box.
+    let dir = tempfile::tempdir().unwrap();
+    let mut jp = rb.clone();
+    rows.push((
+        "journal 1000 actions (checkpoint + state delta, rounded box)",
+        1000.0,
+        median_ms(1, || {
+            use cadcraft3d::diagnostics::journal::Journal;
+            let mut j = Journal::create(&dir.path().join("perf-journal.jsonl")).unwrap();
+            for k in 0..1000 {
+                j.entry("checkpoint", "Edit", serde_json::json!({}));
+                if let Some(cadcraft3d::part::Feature::Box(b)) = jp.features.first_mut() {
+                    b.size[0] = 40.0 + (k % 7) as Real;
+                }
+                j.state("Edit", &mut jp);
+            }
+        }),
+    ));
+
     println!("{:<62} {:>9} {:>9}", "case", "budget", "median");
     let mut over = Vec::new();
     for (case, budget, ms) in &rows {

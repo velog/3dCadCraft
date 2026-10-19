@@ -31,6 +31,7 @@
 
 pub mod api;
 pub mod command;
+pub mod diagnostics;
 pub mod document;
 #[cfg(feature = "gui")]
 pub mod gui;

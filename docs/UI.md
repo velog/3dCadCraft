@@ -156,6 +156,10 @@
 | Enter или интервал (без активна команда) | повтаря последната команда |
 | БГ (долу вдясно) | подсказки на български |
 
+### Help, лог и възстановяване
+
+Менюто **Help** (вдясно в Quick Access): **Help** (F1), **Save Diagnostics…** (zip за доклад за проблем, през файловия прозорец на програмата), **Open Logs Folder** (`%APPDATA%\3dcadcraft\logs`). Програмата пише лог и дневник на действията за всяка сесия, автозаписи в `%APPDATA%\3dcadcraft\recovery` (на 5 минути и след OK, никога върху файла на потребителя) и при срив — `crash-….txt`. Ако предишната сесия не е затворена чисто, при старт излиза **Restore**: „Restore the autosaved version of …?“ — **Restore** / **Open Original** / **Discard** 🟡 ([spec/0.14-diagnostics.md](spec/0.14-diagnostics.md)).
+
 ### Какво се помни между стартиранията
 
 `settings.json` (`%APPDATA%\3dcadcraft\settings.json` под Windows, `~/.config/3dcadcraft/settings.json` под Linux) пази само **езика на подсказките** (`hints_bulgarian`) и **последните файлове** (`recent_files`, до 10). Профилът на мишката, посоката на колелцето, опциите на скицата и на разпознаването (inference) и Home изгледът важат до затваряне на програмата ⬜.
