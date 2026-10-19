@@ -16,11 +16,11 @@ use cadcraft3d::part::{
     SketchOptions, SketchPlacement, VariableRadius,
 };
 use cadcraft3d::part::{DraftFeature, DraftType, PlaneRef, PullRef};
+use cadcraft3d::part::{DrillPoint, HoleCenter, HoleFeature, HoleSpec, SeatType, Termination};
 use cadcraft3d::part::{
     LineRef, PatternDirection, PatternFeature, PatternKind, WorkAxisDef, WorkDef, WorkFeature,
     WorkPlaneDef,
 };
-use cadcraft3d::part::{DrillPoint, HoleCenter, HoleFeature, HoleSpec, SeatType, Termination};
 use cadcraft3d::sketch::{Entity, Point2, Region};
 
 /// What a case expects.

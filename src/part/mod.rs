@@ -53,11 +53,11 @@ pub use blend::{
 pub use boolean::{Operation, Output};
 pub use draft::{DraftFeature, DraftType, PullRef};
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, TargetRef};
-pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use hole::{
     ClearanceSpec, CosmeticThread, DrillPoint, FastenerFit, HoleCenter, HoleFeature, HoleGroup,
     HoleInstance, HoleSpec, HoleType, SeatType, Termination, ThreadFeature, ThreadSpec,
 };
+pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
 pub use shell::{FaceRef, ShellDirection, ShellFeature};
@@ -303,8 +303,7 @@ impl Feature {
             | Feature::Shell(_)
             | Feature::Draft(_)
             | Feature::Pattern(_) => false,
-            | Feature::Hole(_)
-            | Feature::Thread(_) => false,
+            Feature::Hole(_) | Feature::Thread(_) => false,
         }
     }
 
@@ -317,7 +316,7 @@ impl Feature {
             | Feature::Shell(_)
             | Feature::Draft(_)
             | Feature::Pattern(_) => None,
-            | Feature::Thread(_) => None,
+            Feature::Thread(_) => None,
             Feature::Hole(h) => (!h.sketch.is_empty()).then_some(h.sketch.as_str()),
             Feature::Extrude(e) => Some(&e.sketch),
             Feature::Revolve(r) => Some(&r.sketch),
@@ -773,11 +772,11 @@ impl PartDocument {
                                         .collect();
                                     for (k, m) in &places {
                                         for h in &src {
+                                            // The copy starts on the face
+                                            // its tool meets (the body's,
+                                            // e.g. the same top face).
                                             let mut c = h.transformed(m);
                                             c.copy.push(*k);
-                                            c.start_face = c
-                                                .start_face
-                                                .map(|f| format!("{}#{k}:{f}", p.id));
                                             extra.holes.push(c);
                                         }
                                     }
@@ -1007,7 +1006,8 @@ impl PartDocument {
                         }
                         Err(msg) => (
                             None,
-                            hole_out.grooves
+                            hole_out
+                                .grooves
                                 .iter()
                                 .map(|g| {
                                     (
@@ -1073,8 +1073,7 @@ impl PartDocument {
                 | Feature::Shell(_)
                 | Feature::Draft(_)
                 | Feature::Pattern(_) => false,
-                | Feature::Hole(_)
-                | Feature::Thread(_) => false,
+                Feature::Hole(_) | Feature::Thread(_) => false,
             })
             .enumerate()
             .map(|(n, f)| (f.id().to_owned(), format!("Solid{}", n + 1)))

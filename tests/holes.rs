@@ -645,3 +645,52 @@ fn thirty_six_holes_in_one_feature() {
     assert_eq!(part.hole_groups()[0].label(), "36x Ø5 THRU");
     println!("36 holes: {ms:.0} ms");
 }
+
+/// Holes copied by a Rectangular Pattern are cut (the Hole feature's
+/// tools are patterned) and are holes for the drawing too: a 2×2 pattern
+/// of one M6 clearance hole gives 4 bores and one group "4x Ø6.6 THRU";
+/// a Mirror of a Hole feature likewise.
+#[test]
+fn pattern_and_mirror_of_a_hole_feature() {
+    use cadcraft3d::part::{LineRef, PatternDirection, PatternFeature, PatternKind, PullRef};
+    let t = Standards::builtin();
+    let s = HoleSpec::clearance(&t, "ISO 273", "M6", FastenerFit::Normal).unwrap();
+    let mut part = block();
+    holes_at(&mut part, s, &[(10.0, 8.0)]).unwrap();
+    let dir = |axis: usize, count: u32, spacing: Real| {
+        let mut d = PatternDirection::new();
+        d.dir = Some(PullRef::Line(LineRef::Origin(axis)));
+        d.count = count;
+        d.spacing = spacing;
+        d
+    };
+    let mut p = PatternFeature::rectangular();
+    p.features = vec!["Hole1".into()];
+    p.kind = PatternKind::Rectangular {
+        first: dir(0, 2, 20.0),
+        second: Some(dir(1, 2, 14.0)),
+    };
+    part.add_pattern(p).unwrap();
+    let bore = PI * 3.3 * 3.3 * 20.0;
+    // Display-triangle volume: ~2 mm³ low per bore.
+    check(&part, BLOCK - 4.0 * bore, 5e-4);
+    assert_eq!(part.holes().len(), 4, "{:?}", part.holes());
+    let g = part.hole_groups();
+    assert_eq!(g.len(), 1, "{g:?}");
+    assert_eq!(g[0].label(), "4x Ø6.6 THRU");
+
+    // Mirror of the Hole feature across the plane x = 20 (YZ moved): the
+    // origin YZ plane mirrors x = 10 to x = −10, off the block; use a
+    // block centred on the origin instead.
+    let mut part = plate(40.0, 30.0, 20.0);
+    holes_at(&mut part, HoleSpec::simple(6.0, 10.0), &[(30.0, 15.0)]).unwrap();
+    let mut m = PatternFeature::mirror();
+    m.features = vec!["Hole1".into()];
+    m.kind = PatternKind::Mirror {
+        plane: Some(cadcraft3d::part::PlaneRef::Origin(OriginPlane::YZ)),
+    };
+    // The mirror of x = 30 is x = −30: off the block, refused cleanly.
+    let n = part.features.len();
+    assert!(part.add_pattern(m).is_err());
+    assert_eq!(part.features.len(), n);
+}

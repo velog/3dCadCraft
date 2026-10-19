@@ -3194,8 +3194,7 @@ impl CadCraftApp {
             | Action::RectPattern
             | Action::CircPattern
             | Action::MirrorFeature => self.last_command = Some(action),
-            | Action::Hole
-            | Action::Thread => self.last_command = Some(action),
+            Action::Hole | Action::Thread => self.last_command = Some(action),
             _ => {}
         }
         match action {
