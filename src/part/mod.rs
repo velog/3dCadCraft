@@ -762,16 +762,35 @@ impl PartDocument {
                     }
                 }
             };
-            let failed = match &step {
+            let mut failed = match &step {
                 Err(exact::Fail::User(msg)) => Some(msg.clone()),
                 _ => None,
             };
             match step {
                 Ok(Some(next)) => match to_brep(&next) {
-                    Ok(b) => {
-                        solids = next;
-                        body = b;
-                    }
+                    // A result the kernel made but that is not a valid solid
+                    // (a non-manifold edge: a hemisphere shell, rounds wider
+                    // than the wall; FreeCAD #19184, #27918) is never kept.
+                    Ok(b) => match invalid_solid(&b) {
+                        None => {
+                            solids = next;
+                            body = b;
+                        }
+                        Some(why)
+                            if matches!(
+                                f,
+                                Feature::Extrude(_) | Feature::Revolve(_) | Feature::Box(_)
+                            ) =>
+                        {
+                            log::warn!("exact kernel: {}: invalid result: {why}", f.id());
+                            return Ok(false);
+                        }
+                        Some(why) => {
+                            let msg = format!("the geometry kernel made an invalid solid ({why})");
+                            self.feature_health.insert(f.id().to_owned(), msg.clone());
+                            failed = Some(msg);
+                        }
+                    },
                     Err(msg) => {
                         log::warn!("exact kernel: {}: {msg}", f.id());
                         return Ok(false);
@@ -1305,6 +1324,14 @@ fn describe(source: &PointRef) -> String {
         PointRef::Vertex(n) => n.clone(),
         other => other.describe(),
     }
+}
+
+/// Why `body` is not a valid set of solids (closed, oriented, manifold),
+/// if it is not; surface bodies are not checked.
+fn invalid_solid(body: &BRep) -> Option<String> {
+    body.solids()
+        .filter(|(_, s)| !s.open)
+        .find_map(|(id, _)| body.validate_solid(id).err().map(|e| format!("{e:?}")))
 }
 
 /// Adds the automatic projections (part origin, face edges) per `opts`.

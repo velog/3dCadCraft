@@ -409,6 +409,15 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
     };
     let r = exact::shell(&cur[target], &open, sh.thickness, side, &sh.id)
         .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?;
+    // Walls as thick as the part leave no cavity (a cylinder 10 high shelled
+    // 10 or 12 from the top, FreeCAD #25050): no inner wall was made. (By
+    // names: measuring the volumes took 1.4 s on a rounded disc.)
+    let inner = format!("{}:Inner", sh.id);
+    if !r.names().iter().flatten().any(|n| n.starts_with(&inner)) {
+        return Err(User(
+            "the walls are as thick as the part: nothing is left to hollow".into(),
+        ));
+    }
     let mut out = cur.to_vec();
     out[target] = r;
     Ok(out)

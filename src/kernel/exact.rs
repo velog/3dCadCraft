@@ -1009,6 +1009,18 @@ fn shell_with_openings(
     thickness: Real,
     prefix: &str,
 ) -> Result<ExactSolid, String> {
+    let grow = thickness * 1e-3;
+    openings_cut(s, open, thickness, prefix, grow)
+        .or_else(|_| openings_cut(s, open, thickness, prefix, -grow))
+}
+
+fn openings_cut(
+    s: &ExactSolid,
+    open: &[usize],
+    thickness: Real,
+    prefix: &str,
+    grow: Real,
+) -> Result<ExactSolid, String> {
     use super::extrude::ProfileSegment;
     // The prisms first: an opening the cut cannot make fails before the
     // (slower) cavity is built.
@@ -1087,10 +1099,12 @@ fn shell_with_openings(
         let k = (0..loops.len())
             .max_by(|&i, &j| area(&loops[i]).abs().total_cmp(&area(&loops[j]).abs()))
             .ok_or("the opening has no outline")?;
-        // The opening grows by a hair: its sides then cross the rounds next to
-        // the face instead of running along the edges where they touch it
-        // (the kernel cannot cut faces that only touch).
-        let grow = thickness * 1e-3;
+        // The opening grows by a hair (`grow` > 0): its sides then cross the
+        // rounds next to the face instead of running along the edges where
+        // they touch it (the kernel cannot cut faces that only touch). When
+        // that cut grazes them (small rounds), it shrinks by a hair instead:
+        // its sides then meet only the flat face and the cavity's ceiling.
+
         let mut n_seg = 0usize;
         let mut seg_loop = |l: &[nalgebra::Point2<Real>], ccw: bool| -> Vec<ProfileSegment> {
             let mut v: Vec<nalgebra::Point2<Real>> = l.to_vec();
@@ -1352,6 +1366,39 @@ fn circle_through(pts: &[Point3]) -> Option<Circle> {
     Circle::new(center, plane_n, a - center, r).ok()
 }
 
+/// The sense in which face `m` runs an edge through `pts`: the face lies to
+/// the left of the edge seen from outside (normal × direction points into
+/// it). Taken at the edge's middle segment, against the face's triangle
+/// nearest to it.
+fn sense_by_geometry(m: &TriangleMesh, pts: &[Point3]) -> Option<Sense> {
+    let i = pts.len() / 2;
+    let (a, b) = (pts[i.saturating_sub(1)], pts[i.max(1)]);
+    let d = b - a;
+    let mid = nalgebra::center(&a, &b);
+    let (_, c, n) = m
+        .triangles
+        .iter()
+        .map(|t| {
+            let [p, q, r] = t.map(|k| m.positions[k as usize]);
+            let c = Point3::from((p.coords + q.coords + r.coords) / 3.0);
+            let n = t
+                .iter()
+                .map(|&k| m.normals[k as usize])
+                .fold(Vector3::zeros(), |s, v| s + v);
+            ((c - mid).norm(), c, n)
+        })
+        .min_by(|x, y| x.0.total_cmp(&y.0))?;
+    let side = n.cross(&d).dot(&(c - mid));
+    if side.abs() < 1e-15 {
+        return None;
+    }
+    Some(if side > 0.0 {
+        Sense::Same
+    } else {
+        Sense::Reversed
+    })
+}
+
 fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
     let body = &s.body;
     let mesh = guarded("display mesh", || body.display_mesh(DISPLAY_TOL))?;
@@ -1428,6 +1475,24 @@ fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
         let mut distinct = faces.clone();
         distinct.sort_unstable();
         distinct.dedup();
+        // Two faces must run the edge in opposite directions. When the
+        // triangle winding says the same for both (a sphere split in three
+        // pieces met by a disc, FreeCAD #19184), the geometry decides.
+        if let [f, g] = distinct[..]
+            && faces.len() == 2
+            && f < nf
+            && g < nf
+            && directed[f].contains(&(k0, k1)) == directed[g].contains(&(k0, k1))
+            && let (Some(sf), Some(sg_)) = (
+                sense_by_geometry(&meshes[f], &pts),
+                sense_by_geometry(&meshes[g], &pts),
+            )
+            && sf != sg_
+        {
+            by_face[f].push((edges.len() - 1, sf));
+            by_face[g].push((edges.len() - 1, sg_));
+            continue;
+        }
         for &f in &distinct {
             if f >= nf {
                 continue;
@@ -2373,5 +2438,57 @@ mod tests {
         assert!(shell(&b, &[top], -1.0, ShellSide::Inside, "Shell1").is_err());
         // Walls thicker than half the body: nothing sensible is left.
         assert!(shell(&b, &[top], 16.0, ShellSide::Inside, "Shell1").is_err());
+    }
+}
+
+#[cfg(test)]
+mod sphere_tests {
+    use super::*;
+
+    /// A quarter disc revolved about its edge on the axis: the kernel
+    /// splits the sphere in three faces; the disc's arcs must still be run
+    /// once each way (they were not: a non-manifold edge, FreeCAD #19184).
+    #[test]
+    fn revolved_hemisphere_converts_to_a_valid_solid() {
+        use super::super::extrude::ProfileSegment;
+        let p = |x: f64, y: f64| nalgebra::Point2::new(x, y);
+        let line = |a, b, n: &str| ProfileSegment {
+            geometry: Segment2::Line { a, b },
+            name: n.into(),
+        };
+        let segs = vec![
+            line(p(0.0, 0.0), p(10.0, 0.0), "a"),
+            ProfileSegment {
+                geometry: Segment2::Arc {
+                    c: p(0.0, 0.0),
+                    r: 10.0,
+                    a0: 0.0,
+                    sweep: std::f64::consts::FRAC_PI_2,
+                },
+                name: "b".into(),
+            },
+            line(p(0.0, 10.0), p(0.0, 0.0), "c"),
+        ];
+        let prof = profile(&segs, &[]).unwrap();
+        let plane =
+            Plane::new(Point3::origin(), Vector3::new(0.0, -1.0, 0.0), Vector3::x()).unwrap();
+        let s = revolve(
+            &plane,
+            &prof,
+            p(0.0, 0.0),
+            nalgebra::Vector2::new(0.0, 1.0),
+            0.0,
+            std::f64::consts::TAU,
+            "Revolution1",
+        )
+        .unwrap();
+        let (vol, _, _) = s.measure().unwrap();
+        let want = 2.0 / 3.0 * std::f64::consts::PI * 1000.0;
+        assert!((vol - want).abs() / want < 3e-4, "{vol} vs {want}");
+        let b = to_brep(&[s]).unwrap();
+        for (id, _) in b.solids() {
+            let st = b.validate_solid(id).unwrap();
+            assert_eq!(st.euler_characteristic(), 2, "{st:?}");
+        }
     }
 }
