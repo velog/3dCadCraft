@@ -96,5 +96,12 @@
     "features": 5,
     "sketches": 2,
     "exact": true
+  },
+  "r9/draft_r9.3dcadcraft": {
+    "volume": 12490.473059139249,
+    "faces": 39,
+    "features": 5,
+    "sketches": 1,
+    "exact": true
   }
 }

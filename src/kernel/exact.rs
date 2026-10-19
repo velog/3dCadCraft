@@ -937,6 +937,22 @@ pub fn shell(
     side: ShellSide,
     prefix: &str,
 ) -> Result<ExactSolid, String> {
+    shell_with(s, open, thickness, side, false, prefix)
+}
+
+/// [`shell`] with Inventor's shell type: `rounded` (Rounded Corners) rounds
+/// the corners the offset makes, as a true offset would: the outer walls'
+/// sharp convex edges by the outward offset, the cavity's sharp concave
+/// edges by the inward one (edges on removed faces stay sharp). Rounds are
+/// named `<prefix>:Corner:Round:<edge>`.
+pub fn shell_with(
+    s: &ExactSolid,
+    open: &[usize],
+    thickness: Real,
+    side: ShellSide,
+    rounded: bool,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
     if !(thickness.is_finite() && thickness > 1e-6) {
         return Err("the thickness must be positive".into());
     }
@@ -961,7 +977,7 @@ pub fn shell(
     };
     // Inside with faces to remove: the kernel's own shell (convex bodies
     // and walls of any kind); the general way below if it gives up.
-    let first = if side == ShellSide::Inside && !open.is_empty() {
+    let first = if side == ShellSide::Inside && !open.is_empty() && !rounded {
         match guarded("shell", || sk::shell(&s.body, &open_pts, thickness)) {
             Ok(body) => {
                 let face_names = names_from(&body, &[s], &|o| match o {
@@ -1008,15 +1024,31 @@ pub fn shell(
         ShellSide::Both => (thickness / 2.0, thickness / 2.0),
     };
     let walls = pts(&|i| !open.contains(&i));
+    // The removed faces' planes: their edges stay sharp (Rounded Corners).
+    let open_planes: Vec<(Point3, Vector3)> = if rounded {
+        let tol = (s.body.size() * 1e-3).max(1e-4);
+        guarded("faces", || s.body.faces(tol))?
+            .into_iter()
+            .filter(|f| open.contains(&f.index))
+            .filter_map(|f| f.plane_normal.map(|n| (p3(f.centroid), w3(n))))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let general = || -> Result<ExactSolid, String> {
         let outer = if out > 0.0 {
             let body = guarded("shell", || sk::offset_faces(&s.body, &walls, out))?;
             let face_names = names_from(&body, &[s], &|_| None);
-            ExactSolid {
+            let o = ExactSolid {
                 name: s.name.clone(),
                 body,
                 face_names,
                 profiles: s.profiles.clone(),
+            };
+            if rounded {
+                round_offset_corners(&o, &open_planes, true, out, prefix)?
+            } else {
+                o
             }
         } else {
             s.clone()
@@ -1032,10 +1064,15 @@ pub fn shell(
         let mut cavity = if inn > 0.0 {
             let body = guarded("shell", || sk::offset_faces(&lined.body, &walls, -inn))?;
             let face_names = names_from(&body, &[&lined], &|_| None);
-            ExactSolid {
+            let c = ExactSolid {
                 face_names,
                 body,
                 ..lined
+            };
+            if rounded {
+                round_offset_corners(&c, &open_planes, false, inn, prefix)?
+            } else {
+                c
             }
         } else {
             lined
@@ -1053,6 +1090,72 @@ pub fn shell(
         boolean(&outer, &cavity, ExactOp::Cut)?.ok_or_else(|| "the shell removed everything".into())
     };
     general().map_err(|e| first.unwrap_or(e))
+}
+
+/// Rounds the sharp edges of `s` that are convex (`convex`) or concave by
+/// `r`, except those lying on one of `skip` (point, normal): Rounded
+/// Corners of a shell. Nothing to round: `s` as it is.
+fn round_offset_corners(
+    s: &ExactSolid,
+    skip: &[(Point3, Vector3)],
+    convex: bool,
+    r: Real,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    let size = s.body.size().max(1e-9);
+    let edges = guarded("edges", || s.body.edges(size * 1e-3))?;
+    let eps = (size * 1e-3).max(1e-4);
+    let mut mids = Vec::new();
+    for e in &edges {
+        let m = p3(e.mid);
+        if skip
+            .iter()
+            .any(|(c, n)| (m - c).dot(n).abs() < size * 1e-6 + 1e-7)
+        {
+            continue;
+        }
+        // The edge's direction at its middle.
+        let k = e
+            .points
+            .iter()
+            .enumerate()
+            .min_by(|a, b| (p3(*a.1) - m).norm().total_cmp(&(p3(*b.1) - m).norm()))
+            .map_or(0, |(k, _)| k);
+        let (Some(a), Some(b)) = (
+            e.points.get(k.saturating_sub(1)),
+            e.points.get((k + 1).min(e.points.len().saturating_sub(1))),
+        ) else {
+            continue;
+        };
+        let Some(d) = (p3(*b) - p3(*a)).try_normalize(1e-12) else {
+            continue;
+        };
+        // Material around the edge: 16 directions square to it.
+        let u = d.cross(&if d.x.abs() < 0.9 {
+            Vector3::x()
+        } else {
+            Vector3::y()
+        });
+        let Some(u) = u.try_normalize(1e-12) else {
+            continue;
+        };
+        let v = d.cross(&u);
+        let inside = (0..16)
+            .filter(|i| {
+                let t = std::f64::consts::TAU * (*i as Real + 0.5) / 16.0;
+                contains(s, m + (u * t.cos() + v * t.sin()) * eps)
+            })
+            .count();
+        let take = if convex { inside < 7 } else { inside > 9 };
+        if take {
+            mids.push(m);
+        }
+    }
+    if mids.is_empty() {
+        return Ok(s.clone());
+    }
+    fillet(s, &mids, r, &format!("{prefix}:Corner"))
+        .map_err(|e| format!("the corners cannot be rounded ({e})"))
 }
 
 /// Shell Inside where an open face meets rounds at least as large as the
@@ -1265,6 +1368,130 @@ pub fn draft(
         face_names,
         profiles: s.profiles.clone(),
     })
+}
+
+/// The input face each face of `result` came from: `(operand, face)` of its
+/// first face origin (the history, or a trace of the operands).
+fn face_origins(result: &sk::Body, operands: &[&ExactSolid]) -> Vec<Option<(usize, usize)>> {
+    let traced;
+    let hist: Option<&History> = match result.history() {
+        Some(h) => Some(h),
+        None => {
+            let bodies: Vec<&sk::Body> = operands.iter().map(|o| &o.body).collect();
+            traced = guarded("trace", || sk::provenance::trace(result, &bodies)).ok();
+            traced.as_ref()
+        }
+    };
+    let n = result.face_count();
+    let mut out = vec![None; n];
+    if let Some(h) = hist {
+        for (i, fp) in h.faces.iter().enumerate().take(n) {
+            out[i] = fp.origins.iter().find_map(|o| match o {
+                FaceOrigin::Face { operand, face } => Some((*operand, *face)),
+                _ => None,
+            });
+        }
+    }
+    out
+}
+
+/// Two-sided draft about a plane square to `pull` (Face Draft Symmetric /
+/// Asymmetric, Parting Line; `docs/spec/2.8-draft.md`): the solid is split
+/// by `neutral`, the pieces of `faces` above it are drafted by `above`
+/// (its own neutral plane and angle) leaning in along `pull`, those below
+/// by `below` leaning in along `−pull`, and the halves are joined again.
+/// `None` leaves that side as it is. Every piece keeps its face's name; the
+/// section is not in the result.
+pub fn draft_two_sided(
+    s: &ExactSolid,
+    faces: &[usize],
+    neutral: &Plane,
+    pull: Vector3,
+    above: Option<(&Plane, Real)>,
+    below: Option<(&Plane, Real)>,
+) -> Result<ExactSolid, String> {
+    let pull = pull
+        .try_normalize(1e-12)
+        .ok_or_else(|| "the pull direction has no length".to_owned())?;
+    if neutral.normal.dot(&pull).abs() < 1.0 - 1e-9 {
+        return Err(
+            "the parting plane is not square to the pull direction (not supported yet)".into(),
+        );
+    }
+    if faces.is_empty() {
+        return Err("no faces to draft".into());
+    }
+    let plane = Plane::from_normal(neutral.origin, pull).map_err(|e| e.to_string())?;
+    let h0 = plane.origin.coords.dot(&pull);
+    let kplane = plane_of(&plane)?;
+    let parts = guarded("split", || sk::split_by_plane(&s.body, &kplane))?;
+    // Each part with its side (by the height of its face samples).
+    let mut up: Option<ExactSolid> = None;
+    let mut down: Option<ExactSolid> = None;
+    for body in parts {
+        let face_names = names_from(&body, &[s], &|_| None);
+        let origin = face_origins(&body, &[s]);
+        let part = ExactSolid {
+            name: s.name.clone(),
+            body,
+            face_names,
+            profiles: s.profiles.clone(),
+        };
+        let samples = face_samples(&part)?;
+        let (sum, n) = samples.iter().flatten().fold((0.0, 0usize), |(a, n), p| {
+            (a + p.coords.dot(&pull) - h0, n + 1)
+        });
+        if n == 0 {
+            continue;
+        }
+        let chosen: Vec<usize> = origin
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| matches!(o, Some((0, f)) if faces.contains(f)))
+            .map(|(i, _)| i)
+            .collect();
+        let (slot, angle, dir) = if sum > 0.0 {
+            (&mut up, above, pull)
+        } else {
+            (&mut down, below, -pull)
+        };
+        let drafted = match angle {
+            Some((pl, a)) if !chosen.is_empty() => {
+                if pl.normal.dot(&pull).abs() < 1.0 - 1e-9 {
+                    return Err(
+                        "the pivot plane is not square to the pull direction (not supported yet)"
+                            .into(),
+                    );
+                }
+                draft(&part, &chosen, pl, dir, a)?
+            }
+            _ => part,
+        };
+        if slot.is_some() {
+            return Err(
+                "the plane splits the solid in more than two pieces (not supported yet)".into(),
+            );
+        }
+        *slot = Some(drafted);
+    }
+    let joined = match (up, down) {
+        (Some(a), Some(b)) => {
+            let r = guarded("boolean", || {
+                sk::boolean(&a.body, &b.body, sk::BoolOp::Union)
+            })?
+            .ok_or_else(|| "the drafted halves do not join".to_owned())?;
+            let face_names = names_from(&r, &[&a, &b], &|_| None);
+            ExactSolid {
+                name: s.name.clone(),
+                body: r,
+                face_names,
+                profiles: s.profiles.clone(),
+            }
+        }
+        (Some(a), None) | (None, Some(a)) => a,
+        (None, None) => return Err("the plane leaves nothing of the solid".into()),
+    };
+    Ok(joined)
 }
 
 /// A copy of `s` placed by the rigid motion `m` (rotation, translation or a
@@ -2838,6 +3065,140 @@ mod tests {
         // Each wall loses a wedge 30 long, 10 high, 10k deep at the top;
         // they overlap in the corner pyramid (k²·h³/3).
         let lost = 2.0 * 30.0 * 0.5 * 10.0 * 10.0 * k - k * k * 1000.0 / 3.0;
+        check_shell(&d, 500.0 * 10.0 - lost);
+    }
+
+    /// Volume of the box's sides drafted from z = `h` (`a` above, `b`
+    /// below): two frusta of a 40 × 30 section.
+    fn two_sided_box(h: f64, a: f64, b: f64) -> f64 {
+        let (ka, kb) = (a.to_radians().tan(), b.to_radians().tan());
+        simpson(
+            &|z| (40.0 - 2.0 * z * ka) * (30.0 - 2.0 * z * ka),
+            0.0,
+            20.0 - h,
+        ) + simpson(&|z| (40.0 - 2.0 * z * kb) * (30.0 - 2.0 * z * kb), 0.0, h)
+    }
+
+    #[test]
+    fn draft_two_sided_box() {
+        let b = box_40();
+        let up = Vector3::new(0.0, 0.0, 1.0);
+        for (h, a, bb) in [
+            (10.0, 5.0f64, 5.0f64),
+            (10.0, 5.0, 3.0),
+            (5.0, 4.0, 4.0),
+            (15.0, 2.0, 6.0),
+            (10.0, -3.0, -3.0),
+        ] {
+            let mid = Plane::from_normal(Point3::new(0.0, 0.0, h), up).unwrap();
+            let d = draft_two_sided(
+                &b,
+                &sides(&b),
+                &mid,
+                up,
+                Some((&mid, a.to_radians())),
+                Some((&mid, bb.to_radians())),
+            )
+            .unwrap();
+            check_shell(&d, two_sided_box(h, a, bb));
+            let names: Vec<&str> = d.names().iter().flatten().map(String::as_str).collect();
+            // Each side in two pieces, both named after it.
+            assert_eq!(
+                names.iter().filter(|n| **n == "Box1:Front").count(),
+                2,
+                "{names:?}"
+            );
+        }
+        // One side only: the other half stays.
+        let mid = Plane::from_normal(Point3::new(0.0, 0.0, 10.0), up).unwrap();
+        let d = draft_two_sided(
+            &b,
+            &sides(&b),
+            &mid,
+            up,
+            Some((&mid, 5f64.to_radians())),
+            None,
+        )
+        .unwrap();
+        check_shell(&d, two_sided_box(10.0, 5.0, 0.0));
+        // Move Parting Line: the top half about its top edges (z = 20), the
+        // bottom half left; the upper part overhangs at the parting line.
+        let top = Plane::from_normal(Point3::new(0.0, 0.0, 20.0), up).unwrap();
+        let k = 3f64.to_radians().tan();
+        let d = draft_two_sided(
+            &b,
+            &sides(&b),
+            &mid,
+            up,
+            Some((&top, 3f64.to_radians())),
+            None,
+        )
+        .unwrap();
+        check_shell(
+            &d,
+            12_000.0
+                + simpson(
+                    &|z| (40.0 + 2.0 * (20.0 - z) * k) * (30.0 + 2.0 * (20.0 - z) * k),
+                    10.0,
+                    20.0,
+                ),
+        );
+        // The plane must be square to the pull.
+        let tilted =
+            Plane::from_normal(Point3::new(0.0, 0.0, 10.0), Vector3::new(0.0, 0.3, 1.0)).unwrap();
+        assert!(draft_two_sided(&b, &sides(&b), &tilted, up, Some((&tilted, 0.1)), None).is_err());
+    }
+
+    #[test]
+    fn draft_two_sided_cylinder_and_l_prism() {
+        // A cylinder R10 × 20 split at z = 8: two cones meeting at R10.
+        let c = cylinder(10.0, 20.0, "Extrusion1");
+        let wall = face(&c, "Extrusion1:Side:C1:0", (10.0, 0.0, 10.0));
+        let up = Vector3::new(0.0, 0.0, 1.0);
+        let mid = Plane::from_normal(Point3::new(0.0, 0.0, 8.0), up).unwrap();
+        let k = 5f64.to_radians().tan();
+        let d = draft_two_sided(
+            &c,
+            &[wall],
+            &mid,
+            up,
+            Some((&mid, 5f64.to_radians())),
+            Some((&mid, 5f64.to_radians())),
+        )
+        .unwrap();
+        let frustum = |h: f64| {
+            let r = 10.0 - h * k;
+            PI * h / 3.0 * (100.0 + 10.0 * r + r * r)
+        };
+        check_shell(&d, frustum(12.0) + frustum(8.0));
+        // The L's outer long walls, 3° both ways about z = 5.
+        let l = prism(
+            &[
+                (0.0, 0.0),
+                (30.0, 0.0),
+                (30.0, 10.0),
+                (10.0, 10.0),
+                (10.0, 30.0),
+                (0.0, 30.0),
+            ],
+            10.0,
+            "Extrusion1",
+        );
+        let a = face(&l, "Extrusion1:Side:L0:0", (15.0, 0.0, 5.0));
+        let bw = face(&l, "Extrusion1:Side:L5:0", (0.0, 15.0, 5.0));
+        let k = 3f64.to_radians().tan();
+        let mid = Plane::from_normal(Point3::new(0.0, 0.0, 5.0), up).unwrap();
+        let d = draft_two_sided(
+            &l,
+            &[a, bw],
+            &mid,
+            up,
+            Some((&mid, 3f64.to_radians())),
+            Some((&mid, 3f64.to_radians())),
+        )
+        .unwrap();
+        // Per half (height 5): two wedges 30 long, less the corner pyramid.
+        let lost = 2.0 * (2.0 * 30.0 * 0.5 * 5.0 * 5.0 * k - k * k * 125.0 / 3.0);
         check_shell(&d, 500.0 * 10.0 - lost);
     }
 

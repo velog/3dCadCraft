@@ -153,8 +153,9 @@
 
 | Област | Готово | Номер |
 |---|---|---|
-| Shell | Remove Faces (+ Automatic Face Chain), Inside / Outside / Both, затворена кухина, дебелина с израз, Edit Feature, преглед ([spec](spec/2.6-shell.md)) | 2.6 🟡 |
-| Face Draft | Fixed Edge, Fixed Plane, Pull Direction от стена / равнина / ръб, Flip, Face chain, ъгъл с израз, Edit Feature, преглед ([spec](spec/2.8-draft.md)) | 2.8 🟡 |
+| Shell | Remove Faces (+ Automatic Face Chain), Inside / Outside / Center, Sharp / Rounded Corners, затворена кухина, дебелина с израз и стрелка, breadcrumb, Edit Feature, преглед ([spec](spec/2.6-shell.md)) | 2.6 🟡 |
+| Face Draft | Fixed Edge, Fixed Plane, Parting Line, One Way / Symmetric / Asymmetric, Move Parting Line, Automatic Blending, Pull Direction от стена / равнина / ръб / ос, Flip, Face chain, ъгли с изрази, Edit Feature, преглед ([spec](spec/2.8-draft.md)) | 2.8 🟡 |
+| Насочване в командите | общ модул `command::flow` + `gui/command_ui.rs`: селектори с цвят/брой/`x`, автоматично напред, десен клик OK/Apply/Continue/Back/Cancel/Repeat + опции, Enter = Continue/OK, Ctrl+Enter, подсказка до курсора; Face Draft и Shell ([0-ui §4.1](spec/0-ui.md)); другите команди — предстои | 0.x 🟡 |
 | Rectangular / Circular Pattern | операции или тела; Direction 1/2, Flip, Midplane, Incremental / Fitted; ос от ръб или основна/работна ос; една булева операция за всички копия; Join / New Solid ([spec](spec/2.11-patterns.md)) | 2.11 🟡 |
 | Mirror | операции или тела спрямо основна/работна равнина или плоска стена; Join / New Solid / Remove Original ([spec](spec/2.12-mirror.md)) | 2.12 🟡 |
 | Материали и външен вид | CSV библиотеки + потребителска папка, приоритет Face > Feature > Body > Part > Material, QAT списъци, Material/Appearance Browser, Adjust, Clear, Styles Editor (Update, Purge), прозрачност, цветове в GLB/STEP ([spec](spec/2.15-materials.md)) | 2.15 🟡 |
@@ -207,7 +208,7 @@
 - STEP **внос** (7.7).
 - Sweep, Loft, Coil (5.1–5.3).
 - Материали и външен вид 🟡 (2026-10-19: библиотеки в CSV, override-и Face > Feature > Body > Part > Material, QAT списъци, браузъри, Adjust, Clear, Styles Editor, прозрачност, цветове в GLB/STEP; [spec](spec/2.15-materials.md)) и Physical Properties 🟡 (маса, център на тежестта, инерция; [spec](spec/0.10-physical.md)) (2.15, 0.10).
-- Shell 🟡 (2026-10-19: Inside/Outside/Both, Remove Faces, затворена кухина; [spec](spec/2.6-shell.md)), Face Draft 🟡 (2026-10-19: Fixed Edge, Fixed Plane; [spec](spec/2.8-draft.md)), Rib (2.6–2.8).
+- Shell 🟡 (2026-10-19: Inside/Outside/Center, Sharp/Rounded Corners, Remove Faces, затворена кухина; [spec](spec/2.6-shell.md)), Face Draft 🟡 (2026-10-19: Fixed Edge, Fixed Plane, Parting Line, Symmetric/Asymmetric, Move Parting Line, Automatic Blending; [spec](spec/2.8-draft.md)), Rib (2.6–2.8).
 - Rectangular / Circular Pattern и Mirror на операции и тела 🟡 (2026-10-19: копие на инструментите на Extrude/Revolve с една булева операция, тела Join / New Solid / Remove Original; [spec](spec/2.11-patterns.md), [spec](spec/2.12-mirror.md)); предстоят Suppress на копия, по крива, Sketch Driven.
 - Presets в панелите на командите 🟡 (2026-10-19: Extrude, Revolve, Fillet, Chamfer, Shell, Face Draft; Last Used / No Preset / вградени; [spec](spec/0.11-presets.md)); ⬜ Hole, Pattern, допуски в наборите, Hide Presets.
 - Fillet с променлив радиус: ✅ прави ръбове (2026-10-19, `fillet_variable_points`); ⬜ криви ръбове, NURBS случаи.

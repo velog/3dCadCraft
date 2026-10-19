@@ -305,7 +305,7 @@ impl PresetData for BlendFeature {
 }
 
 impl PresetData for ShellFeature {
-    const KEYS: &'static [&'static str] = &["thickness", "direction", "chain"];
+    const KEYS: &'static [&'static str] = &["thickness", "direction", "chain", "corners"];
 
     fn preset_name(&self) -> Option<&str> {
         self.preset.as_deref()
@@ -328,7 +328,15 @@ impl PresetData for ShellFeature {
 }
 
 impl PresetData for DraftFeature {
-    const KEYS: &'static [&'static str] = &["draft_type", "angle", "flip", "chain"];
+    const KEYS: &'static [&'static str] = &[
+        "draft_type",
+        "angle",
+        "flip",
+        "chain",
+        "extent",
+        "angle2",
+        "blending",
+    ];
 
     fn preset_name(&self) -> Option<&str> {
         self.preset.as_deref()
@@ -1090,7 +1098,7 @@ mod tests {
         assert_eq!(e, expected);
         // Shell: inputs kept, settings taken.
         let mut src = ShellFeature::new(4.0);
-        src.direction = ShellDirection::Both;
+        src.direction = ShellDirection::Center;
         src.chain = false;
         let mut sh = ShellFeature::new(2.0);
         sh.remove = vec![face()];
@@ -1098,7 +1106,7 @@ mod tests {
         assert_eq!(sh.remove, vec![face()]);
         assert_eq!(
             (sh.thickness, sh.direction, sh.chain),
-            (4.0, ShellDirection::Both, false)
+            (4.0, ShellDirection::Center, false)
         );
         // Draft and blend.
         let mut src = DraftFeature::new(0.2);

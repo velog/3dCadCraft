@@ -159,7 +159,13 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
             }
         },
         Feature::Shell(_) => vec![("thickness", Unit::Mm)],
-        Feature::Draft(_) => vec![("angle", Unit::Deg)],
+        Feature::Draft(d) => {
+            if d.uses_angle2() {
+                vec![("angle", Unit::Deg), ("angle2", Unit::Deg)]
+            } else {
+                vec![("angle", Unit::Deg)]
+            }
+        }
         Feature::Pattern(p) => match &p.kind {
             super::PatternKind::Rectangular { second, .. } => {
                 let mut v = vec![("count1", Unit::Ul), ("spacing1", Unit::Mm)];
@@ -252,7 +258,11 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
             _ => None,
         },
         Feature::Shell(s) => (field == "thickness").then_some(s.thickness),
-        Feature::Draft(d) => (field == "angle").then_some(d.angle),
+        Feature::Draft(d) => match field {
+            "angle" => Some(d.angle),
+            "angle2" => Some(d.angle2),
+            _ => None,
+        },
         Feature::Pattern(p) => match (&p.kind, field) {
             (super::PatternKind::Rectangular { first, .. }, "count1") => Some(first.count as Real),
             (super::PatternKind::Rectangular { first, .. }, "spacing1") => Some(first.spacing),
@@ -349,11 +359,11 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
                 s.thickness = v;
             }
         }
-        Feature::Draft(d) => {
-            if field == "angle" {
-                d.angle = v;
-            }
-        }
+        Feature::Draft(d) => match field {
+            "angle" => d.angle = v,
+            "angle2" => d.angle2 = v,
+            _ => {}
+        },
         Feature::Pattern(p) => {
             // Counts are whole numbers (a typed 2.6 is 3); out-of-range
             // values are kept for the feature to report.

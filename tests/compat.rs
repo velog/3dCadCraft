@@ -444,6 +444,60 @@ fn work_r8() -> PartDocument {
     part
 }
 
+/// Revision 9: Face Draft Symmetric about a work plane, Parting Line from
+/// a sketch (Asymmetric), Shell Center with Rounded Corners.
+fn draft_r9() -> PartDocument {
+    use cadcraft3d::part::{
+        DraftExtent, DraftFeature, DraftType, PartingTool, PlaneRef, PullRef, ShellCorners,
+        ShellDirection, ShellFeature, WorkDef, WorkFeature, WorkPlaneDef,
+    };
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+    let wp = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 10.0,
+        })))
+        .unwrap();
+    let face = |part: &PartDocument, name: &str, at: [f64; 3]| {
+        let f = part.body.find_face(name).unwrap();
+        cadcraft3d::part::shell::face_ref(&part.body, f, Some(Point3::from(at))).unwrap()
+    };
+    let mut d = DraftFeature::new(3f64.to_radians());
+    d.draft_type = DraftType::FixedPlane;
+    d.plane = Some(PlaneRef::Work(wp));
+    d.extent = DraftExtent::Symmetric;
+    d.faces.push(face(&part, "Box1:Front", [30.0, 0.0, 15.0]));
+    d.faces.push(face(&part, "Box1:Back", [30.0, 40.0, 15.0]));
+    part.add_draft(d).unwrap();
+    let j = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::YZ),
+            &SketchOptions::default(),
+        )
+        .unwrap();
+    {
+        let sk = &mut part.sketches[j].sketch;
+        let a = sk.add_point(Point2::new(-5.0, 6.0));
+        let b = sk.add_point(Point2::new(45.0, 6.0));
+        sk.add_line_between(a, b).unwrap();
+    }
+    let mut d = DraftFeature::new(2f64.to_radians());
+    d.set_type(DraftType::PartingLine);
+    d.pull = Some(PullRef::Plane(PlaneRef::Origin(OriginPlane::XY)));
+    d.parting = Some(PartingTool::Sketch(part.sketches[j].id.clone()));
+    d.extent = DraftExtent::Asymmetric;
+    d.angle2 = 4f64.to_radians();
+    d.faces.push(face(&part, "Box1:Left", [0.0, 20.0, 10.0]));
+    d.faces.push(face(&part, "Box1:Right", [60.0, 20.0, 10.0]));
+    part.add_draft(d).unwrap();
+    let mut s = ShellFeature::new(2.0);
+    s.direction = ShellDirection::Center;
+    s.corners = ShellCorners::Rounded;
+    s.remove.push(face(&part, "Box1:Top", [30.0, 20.0, 20.0]));
+    part.add_shell(s).unwrap();
+    part
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -499,6 +553,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("WorkR8");
             project.add_document("Part1", DocumentData::Part(work_r8()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r9/draft_r9.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("DraftR9");
+            project.add_document("Part1", DocumentData::Part(draft_r9()));
             project.save(&f).unwrap();
         }
         let f = root().join("r3/shell_r3.3dcadcraft");

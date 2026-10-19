@@ -108,8 +108,8 @@ UI.md на 2026-10-19; виж последния раздел).
 | **Start 2D Sketch** (избор на равнина) | стена на модела, работна равнина или основна равнина (XY/XZ/YZ) → скицата се създава | — | стените печелят пред основните равнини; Esc отказва |
 | **Extrude / Revolve** | превключва региона под курсора (най-малкият, който го съдържа) в текущата скица; регион от друга видима скица сменя скицата | от празно (профил Inventor): правоъгълник за профили, window/crossing, Shift добавя, Ctrl превключва, без клавиш замества; влачене на стрелка/дъга = манипулатор | Revolve: докато е активен селекторът **Axis**, клик избира линия на скицата (в радиус 8 px); бутони X/Y/Z за основните оси. *From*/*To*: клик върху полето, после стена или връх (връх в радиус 12 px печели) |
 | **Fillet / Chamfer** | Select *Edge*: ръб (втори клик го маха; *Automatic* взема допирателната верига). *Loop*: стена → нейният контур, най-близък до клика. *Feature*: стена → ръбовете на операцията ѝ спрямо другите. *Solid*: бутони в панела. Full Round: средната стена. Variable: прав ръб | — | предварително избраните ръбове влизат в набора |
-| **Shell** | стена → за махане (втори клик я връща; *Automatic* взема и допирателните) | — | предварително избраните стени влизат в списъка |
-| **Draft (Face Draft)** | според активния селектор: *Pull Direction* — прав ръб (първо), плоска стена, работна или основна равнина; *Fixed Plane* — равнина; *Faces* — стена (кликът определя неподвижния ръб) | — | след Pull/Plane селекторът минава сам на Faces |
+| **Shell** | стена → за махане (втори клик я връща; *Automatic* взема и допирателните); стрелката на дебелината се влачи | — | предварително избраните стени влизат в списъка; десен клик → меню на командата |
+| **Draft (Face Draft)** | според активния селектор (свети само приеманото): *Pull Direction* — работна ос, прав ръб, плоска стена, работна или основна равнина (бледа стрелка показва кандидата); *Fixed Plane* / *Parting Tool* — равнина (скица — от списъка в диалога); *Faces* — стена (при Fixed Edge кликът определя неподвижния ръб, лилав); *Static Edges* — ръб (втори клик го маха) | — | след единичен селектор минава сам на следващия празен; десен клик → меню на командата |
 | **Rectangular / Circular Pattern, Mirror** (3D) | селектор *Features*: стена → нейната операция (втори клик я маха; клик върху ред в дървото също); *Solids*: стена → тялото ѝ. *Direction 1/2*: прав ръб или равнина (стена, работна, основна); *Axis*: прав ръб; *Mirror Plane*: равнина | — | след първия избран обект селекторът минава сам на посоката/оста/равнината; бутони за основни/работни оси и равнини в диалога |
 | **Work Plane / Axis / Point / UCS** | работна ос/точка и елементи на UCS (6/8 px) > връх или среда на прав ръб (8 px) > точка/линия/крива на видима скица > ръб (прав = линия, иначе крив ръб) > крива аналитична стена (цилиндър, конус, сфера, тор) > плоска стена / работна / основна равнина; при Axis фасетирана стена на Revolve = оста на Revolve. Втори клик върху същото го маха; несъвместим избор започва отначало | стрелка на отместена равнина, дъга за ъгъл | бутони X/Y/Z/Center в диалога; точка/линия от скица в метод с още входове става скрита работна точка/ос |
 | **Pattern (скица)** | попълва активния селектор (раздел 4.9) | — | Enter: следващ селектор / OK |
@@ -194,6 +194,7 @@ UI.md на 2026-10-19; виж последния раздел).
 | Box | избира тялото | — | **Appearance ▸**, общите (по-долу) |
 | Extrude / Revolve, Hole | избира | **Edit Feature** | **Edit Feature**, **Edit Sketch**, **Appearance ▸**, общите |
 | Fillet / Chamfer, Shell, Draft, Thread, Rectangular / Circular Pattern, Mirror | избира | **Edit Feature** | **Edit Feature**, **Appearance ▸**, общите |
+| Изгледът, докато Face Draft или Shell е отворена | — | — | меню на командата: **OK**, **Apply (+)**, **Continue**, **Back**, **Cancel**, **Repeat …** и опциите (вид, посока, Flip / Inside, Outside, Center, Sharp/Rounded) |
 | Работна равнина / ос / точка | избира; отметката = видимост | — | **New Sketch** (само равнина), общите |
 | Общите за операция | | | **Rename**, **Suppress Features** / **Unsuppress Features**, **Move EOP Here**, **Delete** |
 | Скица | избира; отметката = видимост | **Edit Sketch** | **Edit Sketch** (или **Finish 2D Sketch**, ако се редактира), **Share Sketch** (използвана, несподелена), **Unshare** (споделена, ≤1 операция), **Redefine**, **Look At**, **Hide**/**Show**, **Rename**, **Delete** |
@@ -513,7 +514,9 @@ direction*; *References* (✔ / `!` липсващ източник, **Break Lin
 | **F11** | Full Screen вкл./изкл. | извън скица | Full Screen (без клавиш по подразбиране) |
 | **Ctrl+0** | Clean Screen вкл./изкл.: само изгледът и Quick Access | глобално | същото |
 | **Esc** | затваря плаващия прозорец под курсора (Parameters, Options, Physical Properties, Styles Editor, браузърите, Adjust, Clear, Offset Element), без да прекъсва командата | курсорът е над прозореца и не се пише в поле | затваря диалога |
-| **Enter** / **Space** | повтаря последната команда | инструмент Select, без Extrude/Revolve, без избрани криви | Inventor: Enter |
+| **Enter** / **Space** | повтаря последната команда | инструмент Select, без Extrude/Revolve/Face Draft/Shell, без избрани криви | Inventor: Enter |
+| **Enter** | **Continue** към празния задължителен селектор, иначе **OK** | Face Draft, Shell (извън поле) | Inventor: Enter = Continue / OK |
+| **Ctrl+Enter** | **OK** (ако може) | Face Draft, Shell | същото |
 | **Enter** | край на веригата / сплайна; Geometry → следваща стъпка при трансформации; масив: следващ селектор / OK | скица | |
 | **Enter** | поставя точката с въведените стойности | Dynamic Input | |
 | **Enter** | прилага | Edit Dimension, файлов прозорец (име/папка) | |
@@ -754,8 +757,8 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | Modify | Hole (H, 2.3) | предстои |
 | | **Fillet** | закръгля ръбове (изпъкнал — реже, вдлъбнат — добавя) |
 | | **Chamfer** | фаска: Distance, Two Distances, Distance and Angle |
-| | **Shell** | черупка; Inside, Outside, Both |
-| | **Draft** | Face Draft: Fixed Edge, Fixed Plane |
+| | **Shell** | черупка; Inside, Outside, Center; Sharp / Rounded Corners |
+| | **Draft** | Face Draft: Fixed Edge, Fixed Plane, Parting Line; One Way / Symmetric / Asymmetric; Move Parting Line |
 | | Thread (2.9), Slot (2.3), Combine (2.13), Split (2.13) | предстоят |
 | Work Features | **Plane** | работна равнина; методът следва избора |
 | | **Axis** | работна ос |
@@ -829,8 +832,8 @@ Clear) и се отварят там, където са били; при по-м
 | Revolve | Input Geometry (Profiles, Axis, Origin axis X/Y/Z), Behavior (Full/Angle, Direction, Angle A/B), Output; **OK**, **Cancel** |
 | Fillet | Type (Constant/Variable/Chord/Full Round), Select (Edge/Loop/Feature/Solid → All Edges/All Fillets/All Rounds), Edges + **Add set** (до 9 набора), Edge chain *Automatic*; Variable: точки по ръба (Start/End/Point, **Add point**, *Smooth radius*); Size; **OK**, **Apply** (създава и продължава), **Cancel** |
 | Chamfer | същото + Method, Flip, *Partial* (един прав ръб: To Start, Chamfer length, To End), Corners *Cone at small rounds* |
-| Shell | Remove Faces, Face chain *Automatic*, Solid (при много тела), Direction Inside/Outside/Both, Thickness (2 mm); **OK**, **Apply**, **Cancel** |
-| Face Draft | Type Fixed Edge/Fixed Plane (Parting Line — сиво), Pull Direction / Fixed Plane, Flip, Faces, Face chain, Draft Angle (1°); **OK**, **Apply**, **Cancel** |
+| Shell | `Part > Shell1` (два клика — преименуване), Shell Type Sharp/Rounded Corners, Direction Inside/Outside/Center, Thickness (2 mm), Remove Faces (селектор), Automatic Face Chain, Solid (при много тела), Advanced Properties (приближение — неактивно); **OK**, **Apply**, **Cancel** |
+| Face Draft | Type Fixed Edge/Fixed Plane/Parting Line; селектори Pull Direction / Fixed Plane / Parting Tool / Faces / Static Edges (точка, брой, `x`); Flip, X/Y/Z и работни оси, Sketch (при Parting Line); Automatic Face Chain, Automatic Blending; One Way/Symmetric/Asymmetric, Draft Angle (1°), Draft Angle 2; Move Parting Line (Angle for Top/Both/Bottom, Select Boundary, Clear All); **OK**, **Apply**, **Cancel** |
 | Rectangular Pattern (3D) | Input Geometry (Copy: **Features** / **Solids**, списък), Direction 1 (селектор, Origin axis X/Y/Z и работни оси, Flip, Count, Distribution Incremental/Fitted, Spacing/Length, Midplane), Direction 2 (*Use* + същото), Output (само Solids: Join / New Solid), Creation (Identical; Optimized/Adjust — сиви); **OK**, **Apply**, **Cancel** |
 | Circular Pattern (3D) | Input Geometry, Rotation Axis (селектор, оси, Flip), Placement (Count, Incremental/Fitted, Angle / Total Angle, Midplane; Orientation — сиво), Output, Creation; **OK**, **Apply**, **Cancel** |
 | Mirror (3D) | Input Geometry, Mirror Plane (селектор, Origin plane XY/XZ/YZ), Output (Join / New Solid, *Remove Original*), Creation; **OK**, **Apply**, **Cancel** |

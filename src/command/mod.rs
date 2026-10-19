@@ -13,6 +13,8 @@
 //! executed through one entry point, shared by GUI, scripts and the MCP API,
 //! with this history storing commands/deltas instead of full copies.
 
+pub mod flow;
+
 use std::time::{Duration, Instant};
 
 /// Undo/redo stacks of labelled snapshots of `T`.

@@ -416,7 +416,12 @@ fn s_shell_outside() -> Result<PartDocument, String> {
 }
 
 fn s_shell_both() -> Result<PartDocument, String> {
-    shell_of(plate(40.0, 30.0, 20.0)?, &[TOP], 2.0, ShellDirection::Both)
+    shell_of(
+        plate(40.0, 30.0, 20.0)?,
+        &[TOP],
+        2.0,
+        ShellDirection::Center,
+    )
 }
 
 fn s_shell_cylinder() -> Result<PartDocument, String> {

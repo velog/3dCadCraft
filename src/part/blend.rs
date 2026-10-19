@@ -1012,7 +1012,7 @@ fn faces_named(body: &BRep, n: &str) -> Vec<FaceId> {
 
 /// The exact cylinder a face lies on (its surface, or the one its facets
 /// approximate).
-fn cylinder_of(body: &BRep, f: FaceId) -> Option<crate::kernel::Cylinder> {
+pub(super) fn cylinder_of(body: &BRep, f: FaceId) -> Option<crate::kernel::Cylinder> {
     let face = body.face(f)?;
     let s = face.facet_of.unwrap_or(face.surface);
     match body.surface(s)? {

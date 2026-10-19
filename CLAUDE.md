@@ -55,10 +55,10 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
 | `diagnostics` | session log (`log.rs`, own logger + ring buffer), action journal with JSON-delta part snapshots (`journal.rs`), `replay.rs` (journal → parts, first differing step), autosave + Restore decision (`recovery.rs`), panic hook / crash reports / emergency autosave (`crash.rs`), Save Diagnostics zip (`bundle.rs`); GUI hooks in `gui/diag.rs` | `Journal`, `Outcome`, `Step`, `Autosaver`, `Offer` |
-| `command` | Undo/Redo (snapshot history, coalesced gestures); later the Command enum | `History<T>` |
+| `command` | Undo/Redo (snapshot history, coalesced gestures); selector flow of command dialogs (`flow.rs`: active selector, auto-advance, Continue/Back/Enter, accepted `PickKind`s, Face Draft/Shell selector lists — GUI-free); later the Command enum | `History<T>`, `Flow`, `Selector` |
 | `presets` | feature-command presets (user settings, never document data): `PresetData` trait (setting keys, `strip_inputs`, `capture`/`apply`), `apply_in` (re-evaluates stored equations), `CommandPresets` (Last Used, New Default, Sort, built-ins), `PresetStore` (one atomic JSON file per command in `presets/` of the settings folder); GUI row in `gui/presets.rs` | `PresetData`, `PresetStore`, `CommandPresets` |
 | `api` | JSON-RPC/MCP server — placeholder | |
-| `gui` (feature `gui`) | panel/window layout and persisted UI settings (`layout.rs`: `UiSettings`, `AppOptions`, `LayoutUi::place` for floating windows, View → User Interface, Clean Screen, Full Screen, debounced atomic save into `settings.json` keys `ui`/`options`); Hole / Thread commands (`hole.rs`, panel `hole_panel.rs`), Materials/appearances/Physical Properties (`material.rs`: QAT lists, browsers, Adjust, Clear, Styles Editor, Manage tab, coloured scene), Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
+| `gui` (feature `gui`) | command guidance (`command_ui.rs`: selector rows with dot/count/`x`, the right-click menu of an open command, Enter/Ctrl+Enter, cursor hint, minimal breadcrumb rename; Face Draft and Shell use it); panel/window layout and persisted UI settings (`layout.rs`: `UiSettings`, `AppOptions`, `LayoutUi::place` for floating windows, View → User Interface, Clean Screen, Full Screen, debounced atomic save into `settings.json` keys `ui`/`options`); Hole / Thread commands (`hole.rs`, panel `hole_panel.rs`), Materials/appearances/Physical Properties (`material.rs`: QAT lists, browsers, Adjust, Clear, Styles Editor, Manage tab, coloured scene), Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
 
 Data flow: GUI action → `checkpoint(label)` (Undo snapshot) → `part::`/`sketch::`
 operation on the active `PartDocument` inside `Project` → `regenerate()` if the body
@@ -575,6 +575,23 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `exact::to_brep` as the XY plane (radius 0 refused by `Cone::new`); they are real cones now.
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans (amber unless something assigned them an appearance).
+- **Two-sided Face Draft** (Symmetric / Asymmetric, Parting Line, Move Parting Line):
+  `kernel::exact::draft_two_sided` splits by the plane (`sk::split_by_plane`), finds each
+  half's pieces of the chosen faces by history origin (not by name: both pieces share it),
+  drafts each half with its own neutral plane (`−pull` below) and unions them. The plane
+  must be square to the pull — `draft_walls` tilts only about lines square to it. A
+  Parting Line sketch is the feature's `Feature::sketch()` (consumed, cache key).
+- **Automatic Blending** = `DraftFeature::faces_with_blends`: tangent cylinders *along the
+  pull* next to a picked face join it (they become cones, still tangent). Without them the
+  kernel refuses (an upright round next to a tilted wall).
+- **Command flow:** dialogs keep only the active selector key and rebuild `Flow` each
+  frame from the definition. While a flow command is open, Enter/Space must not repeat
+  the last command (it restarted Face Draft). Selector prompts must not contain `": "`
+  (the i18n test treats `X: …` as a command name).
+- **Shell Center** is the 2027 name; the variant is `#[serde(rename = "Both", alias =
+  "Center")]` so files stay readable by old builds. Rounded Corners rounds the offset's
+  sharp edges (`round_offset_corners`: convex/concave by probing material around the edge
+  midpoint, edges on removed faces skipped) and forces Inside onto the general path.
 - **Feature patterns copy tools, not faces** (`part/pattern.rs`, `exact::pattern`): every
   Extrude/Revolve (and feature pattern) records its tools (`ToolSet`: solids before
   `combine`, operation, target `solids`) by feature id during `build_features` — also in

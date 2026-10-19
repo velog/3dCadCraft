@@ -79,7 +79,10 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 8: work feature methods on curved faces, curves and sketch geometry,
 ///   and UCS (`WorkDef::Ucs`, new `WorkPlaneDef` / `WorkAxisDef` /
 ///   `WorkPointDef` variants) (2026-10-19).
-pub const FORMAT_REVISION: u32 = 8;
+/// - 9: Face Draft Parting Line (`DraftType::PartingLine`), Symmetric /
+///   Asymmetric extents, Move Parting Line; Shell Rounded Corners (an older
+///   build would make a one-way or sharp result) (2026-10-19).
+pub const FORMAT_REVISION: u32 = 9;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

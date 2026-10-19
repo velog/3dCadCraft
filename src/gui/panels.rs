@@ -2397,33 +2397,99 @@ impl CadCraftApp {
         });
     }
 
-    /// The Shell command's panel (`docs/spec/2.6-shell.md`): faces to
-    /// remove, Automatic Face Chain, direction, thickness; preview, OK /
-    /// Apply / Cancel.
+    /// The Shell command's panel (`docs/spec/2.6-shell.md`): breadcrumb,
+    /// shell type, direction, thickness, faces to remove (selector,
+    /// `gui/command_ui.rs`), Advanced Properties; preview, OK / Apply /
+    /// Cancel.
     fn shell_dialog(&mut self, ui: &mut egui::Ui) {
-        use crate::part::ShellDirection;
+        use super::command_ui::{name_crumb, selector_rows};
+        use crate::part::{ShellCorners, ShellDirection};
         let Some(mut d) = self.shell_draft.clone() else {
             return;
         };
         self.panel_header(ui, Icon::Shell, "Shell");
+        let shown = match d.edit {
+            Some(k) => self
+                .part()
+                .features
+                .get(k)
+                .map_or("Shell".to_owned(), |f| f.name().to_owned()),
+            None => self.part().next_feature_id("Shell"),
+        };
+        name_crumb(ui, &mut d.crumb, &shown);
         self.preset_row(ui, "Shell", &mut d.def);
         let bodies = self
             .part()
             .bodies_before(d.edit.unwrap_or(self.part().insert_index()));
-        psection(ui, "shell_input", "Input Geometry", |ui| {
-            plabel(ui, "Remove Faces");
+        psection(ui, "shell_type", "Shell Type", |ui| {
+            plabel(ui, "Type");
             ui.horizontal(|ui| {
-                ui.label(format!("{} selected", d.def.remove.len()))
-                    .on_hover_text("Click faces in the view; a second click puts one back. None: a closed cavity");
-                if !d.def.remove.is_empty() && ui.small_button("x").on_hover_text("Clear").clicked() {
-                    d.def.remove.clear();
+                for (c, tip) in [
+                    (ShellCorners::Sharp, "The offset corners stay sharp"),
+                    (
+                        ShellCorners::Rounded,
+                        "The corners the offset makes are rounded by the offset distance (outer convex corners when offset out, inner concave ones when offset in)",
+                    ),
+                ] {
+                    if ui
+                        .selectable_label(d.def.corners == c, c.label())
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
+                        d.def.corners = c;
+                    }
                 }
             });
             ui.end_row();
+        });
+        let table = self.part().parameter_table();
+        let mut fx = Fields {
+            table: &table,
+            key: "shell_draft".into(),
+            commits: Vec::new(),
+            bodies: Vec::new(),
+        };
+        let snapshot = Feature::Shell(d.def.clone());
+        psection(ui, "shell_behavior", "Behavior", |ui| {
+            plabel(ui, "Direction");
+            ui.vertical(|ui| {
+                for (dir, tip) in [
+                    (
+                        ShellDirection::Inside,
+                        "The walls grow into the material; the outside stays",
+                    ),
+                    (
+                        ShellDirection::Outside,
+                        "The walls grow out; the faces become the inner walls",
+                    ),
+                    (
+                        ShellDirection::Center,
+                        "Half the thickness inside, half outside",
+                    ),
+                ] {
+                    ui.radio_value(&mut d.def.direction, dir, dir.label())
+                        .on_hover_text(tip);
+                }
+            });
+            ui.end_row();
+            field_row(ui, &mut fx, "Thickness", &snapshot, "thickness");
+        });
+        let mut ev = super::command_ui::RowEvents::default();
+        psection(ui, "shell_input", "Input Geometry", |ui| {
+            let flow = self
+                .command_flow()
+                .unwrap_or_else(|| crate::command::flow::Flow::new(Vec::new(), None));
+            let text = if d.def.remove.is_empty() {
+                String::new()
+            } else {
+                format!("{} face(s)", d.def.remove.len())
+            };
+            ev = selector_rows(ui, &flow, &[("remove", text)]);
             plabel(ui, "Face chain");
-            ui.checkbox(&mut d.def.chain, "Automatic").on_hover_text(
-                "A click also takes the faces tangent to the picked one (its rounds)",
-            );
+            ui.checkbox(&mut d.def.chain, "Automatic Face Chain")
+                .on_hover_text(
+                    "A click also takes the faces tangent to the picked one (its rounds)",
+                );
             ui.end_row();
             if bodies.len() > 1 {
                 plabel(ui, "Solid");
@@ -2453,38 +2519,29 @@ impl CadCraftApp {
                 ui.end_row();
             }
         });
-        let table = self.part().parameter_table();
-        let mut fx = Fields {
-            table: &table,
-            key: "shell_draft".into(),
-            commits: Vec::new(),
-            bodies: Vec::new(),
-        };
-        let snapshot = Feature::Shell(d.def.clone());
-        psection(ui, "shell_behavior", "Behavior", |ui| {
-            plabel(ui, "Direction");
-            ui.vertical(|ui| {
-                for (dir, tip) in [
-                    (
-                        ShellDirection::Inside,
-                        "The walls grow into the material; the outside stays",
-                    ),
-                    (
-                        ShellDirection::Outside,
-                        "The walls grow out; the faces become the inner walls",
-                    ),
-                    (
-                        ShellDirection::Both,
-                        "Half the thickness each way (Inventor: Center)",
-                    ),
-                ] {
-                    ui.radio_value(&mut d.def.direction, dir, dir.label())
-                        .on_hover_text(tip);
-                }
+        if ev.clear == Some("remove") {
+            d.def.remove.clear();
+        }
+        // Advanced Properties: the exact kernel offsets exactly, so there is
+        // nothing to approximate; shown for parity, disabled.
+        egui::CollapsingHeader::new("Advanced Properties")
+            .id_salt("shell_advanced")
+            .default_open(false)
+            .show(ui, |ui| {
+                let why = "Not needed: the exact geometry kernel always keeps the thickness exactly, it never approximates (docs/spec/2.6-shell.md)";
+                ui.add_enabled_ui(false, |ui| {
+                    let mut allow = false;
+                    ui.checkbox(&mut allow, "Allow Approximation")
+                        .on_disabled_hover_text(why);
+                    for m in ["Mean", "Never Too Thin", "Never Too Thick"] {
+                        ui.radio(m == "Mean", m).on_disabled_hover_text(why);
+                    }
+                    ui.horizontal(|ui| {
+                        ui.radio(true, "Optimized").on_disabled_hover_text(why);
+                        ui.radio(false, "Specified").on_disabled_hover_text(why);
+                    });
+                });
             });
-            ui.end_row();
-            field_row(ui, &mut fx, "Thickness", &snapshot, "thickness");
-        });
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
         for (field, text) in commits {
@@ -2514,6 +2571,7 @@ impl CadCraftApp {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Ctrl+Enter or Enter")
                 .clicked()
             {
                 self.commit_shell(false);
@@ -2531,6 +2589,7 @@ impl CadCraftApp {
             }
             if ui
                 .add(egui::Button::new("Cancel").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Esc")
                 .clicked()
             {
                 self.shell_draft = None;
@@ -2539,10 +2598,12 @@ impl CadCraftApp {
         });
     }
 
-    /// The Face Draft command's panel (`docs/spec/2.8-draft.md`).
+    /// The Face Draft command's panel (`docs/spec/2.8-draft.md`): type,
+    /// selectors (`gui/command_ui.rs`), extent and angles, options, Move
+    /// Parting Line; preview, OK / Apply / Cancel.
     fn draft_dialog(&mut self, ui: &mut egui::Ui) {
-        use super::draft::DraftInput;
-        use crate::part::DraftType;
+        use super::command_ui::{RowEvents, selector_rows};
+        use crate::part::{DraftExtent, DraftType, PartingSide, PartingTool, PullRef};
         let Some(mut d) = self.draft_draft.clone() else {
             return;
         };
@@ -2553,6 +2614,11 @@ impl CadCraftApp {
             crate::part::PlaneRef::Face(n) => n.clone(),
             crate::part::PlaneRef::Work(id) => id.clone(),
             crate::part::PlaneRef::Fixed => "fixed".into(),
+        };
+        let line = |l: &crate::part::LineRef| match l {
+            crate::part::LineRef::Origin(k) => format!("{} Axis", ["X", "Y", "Z"][(*k).min(2)]),
+            crate::part::LineRef::Edge(n) => n.clone(),
+            crate::part::LineRef::Work(id) => id.clone(),
         };
         psection(ui, "draft_type", "Draft Type", |ui| {
             plabel(ui, "Type");
@@ -2566,74 +2632,175 @@ impl CadCraftApp {
                         DraftType::FixedPlane,
                         "The faces turn about their line on a plane; the pull is its normal",
                     ),
+                    (
+                        DraftType::PartingLine,
+                        "The faces are drafted above and below a parting tool (a plane or a sketch line)",
+                    ),
                 ] {
                     if ui
                         .radio(d.def.draft_type == t, t.label())
                         .on_hover_text(tip)
                         .clicked()
-                        && d.def.draft_type != t
                     {
-                        d.def.draft_type = t;
-                        d.input = d.first_input();
+                        d.set_type(t);
                     }
                 }
-                ui.add_enabled(false, egui::RadioButton::new(false, "Parting Line"))
-                    .on_disabled_hover_text("Not yet: docs/spec/2.8-draft.md");
             });
             ui.end_row();
         });
+        let sketches: Vec<(String, String)> = self
+            .part()
+            .sketches
+            .iter()
+            .map(|s| (s.id.clone(), s.name.clone()))
+            .collect();
+        let work_axes: Vec<String> = {
+            let mut v: Vec<String> = self.part().work.axes.keys().cloned().collect();
+            v.sort();
+            v
+        };
+        let mut ev = RowEvents::default();
+        let mut pick_sketch: Option<String> = None;
+        let mut pick_axis: Option<crate::part::LineRef> = None;
         psection(ui, "draft_input", "Input Geometry", |ui| {
-            let selector = |ui: &mut egui::Ui, active: bool, text: String| {
-                let t = if active {
-                    RichText::new(format!("> {text}")).strong().underline()
-                } else {
-                    RichText::new(text)
-                };
-                ui.selectable_label(active, t).clicked()
-            };
-            match d.def.draft_type {
-                DraftType::FixedEdge => {
-                    plabel(ui, "Pull Direction");
-                    let text = match &d.def.pull {
-                        Some(crate::part::PullRef::Plane(p)) => describe(p),
-                        Some(crate::part::PullRef::Line(l)) => format!("{l:?}"),
-                        None => "click to select".into(),
-                    };
-                    if selector(ui, d.input == DraftInput::Pull, text) {
-                        d.input = DraftInput::Pull;
+            let flow = d.flow();
+            let texts = vec![
+                (
+                    "pull",
+                    match &d.def.pull {
+                        Some(PullRef::Plane(p)) => describe(p),
+                        Some(PullRef::Line(l)) => line(l),
+                        None => String::new(),
+                    },
+                ),
+                (
+                    "plane",
+                    d.def.plane.as_ref().map_or(String::new(), describe),
+                ),
+                (
+                    "parting",
+                    match &d.def.parting {
+                        Some(PartingTool::Plane(p)) => describe(p),
+                        Some(PartingTool::Sketch(id)) => sketches
+                            .iter()
+                            .find(|(i, _)| i == id)
+                            .map_or(id.clone(), |(_, n)| n.clone()),
+                        None => String::new(),
+                    },
+                ),
+                (
+                    "faces",
+                    if d.def.faces.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{} face(s)", d.def.faces.len())
+                    },
+                ),
+                (
+                    "static",
+                    if d.def.static_edges.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{} edge(s)", d.def.static_edges.len())
+                    },
+                ),
+            ];
+            ev = selector_rows(ui, &flow, &texts);
+            if d.def.draft_type.has_pull() {
+                plabel(ui, "");
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(d.def.flip, "Flip")
+                        .on_hover_text("Reverse the pull direction")
+                        .clicked()
+                    {
+                        d.def.flip = !d.def.flip;
                     }
-                }
-                DraftType::FixedPlane => {
-                    plabel(ui, "Fixed Plane");
-                    let text = d
-                        .def
-                        .plane
-                        .as_ref()
-                        .map_or("click to select".into(), describe);
-                    if selector(ui, d.input == DraftInput::Plane, text) {
-                        d.input = DraftInput::Plane;
+                    for (k, n) in ["X", "Y", "Z"].iter().enumerate() {
+                        if ui
+                            .small_button(*n)
+                            .on_hover_text("The origin axis as the pull direction")
+                            .clicked()
+                        {
+                            pick_axis = Some(crate::part::LineRef::Origin(k));
+                        }
                     }
+                    for id in &work_axes {
+                        if ui.small_button(id).on_hover_text("A work axis").clicked() {
+                            pick_axis = Some(crate::part::LineRef::Work(id.clone()));
+                        }
+                    }
+                });
+                ui.end_row();
+            } else {
+                plabel(ui, "");
+                if ui
+                    .selectable_label(d.def.flip, "Flip")
+                    .on_hover_text("Reverse the pull direction (the plane's normal)")
+                    .clicked()
+                {
+                    d.def.flip = !d.def.flip;
                 }
+                ui.end_row();
             }
-            ui.end_row();
-            plabel(ui, "Flip");
-            ui.checkbox(&mut d.def.flip, "")
-                .on_hover_text("Reverse the pull direction");
-            ui.end_row();
-            plabel(ui, "Faces");
-            if selector(
-                ui,
-                d.input == DraftInput::Faces,
-                format!("{} selected", d.def.faces.len()),
-            ) {
-                d.input = DraftInput::Faces;
+            if d.def.draft_type == DraftType::PartingLine && !sketches.is_empty() {
+                plabel(ui, "Sketch");
+                let current = d.def.parting_sketch().map(str::to_owned);
+                let shown = current
+                    .as_ref()
+                    .and_then(|c| sketches.iter().find(|(i, _)| i == c))
+                    .map_or("a plane in the view".to_owned(), |(_, n)| n.clone());
+                egui::ComboBox::from_id_salt("draft_parting_sketch")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        for (id, n) in &sketches {
+                            if ui
+                                .selectable_label(current.as_deref() == Some(id.as_str()), n)
+                                .clicked()
+                            {
+                                pick_sketch = Some(id.clone());
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("A 2D sketch whose lines are the parting line");
+                ui.end_row();
             }
-            ui.end_row();
             plabel(ui, "Face chain");
-            ui.checkbox(&mut d.def.chain, "Automatic")
+            ui.checkbox(&mut d.def.chain, "Automatic Face Chain")
                 .on_hover_text("A click also takes the faces tangent to the picked one");
             ui.end_row();
+            plabel(ui, "Blending");
+            ui.checkbox(&mut d.def.blending, "Automatic Blending").on_hover_text(
+                "Rounds along the pull next to a drafted face are drafted with it and stay tangent",
+            );
+            ui.end_row();
         });
+        if let Some(k) = ev.activate {
+            d.set_active(k);
+        }
+        if let Some(k) = ev.clear {
+            match k {
+                "pull" => d.def.pull = None,
+                "plane" => d.def.plane = None,
+                "parting" => d.def.parting = None,
+                "faces" => d.def.faces.clear(),
+                "static" => d.def.static_edges.clear(),
+                _ => {}
+            }
+            d.set_active(k);
+        }
+        if let Some(l) = pick_axis {
+            d.def.pull = Some(PullRef::Line(l));
+            if d.input == super::draft::DraftInput::Pull {
+                let mut f = d.flow();
+                if f.picked()
+                    && let Some(k) = f.active_key()
+                {
+                    d.set_active(k);
+                }
+            }
+        }
         let table = self.part().parameter_table();
         let mut fx = Fields {
             table: &table,
@@ -2643,8 +2810,98 @@ impl CadCraftApp {
         };
         let snapshot = Feature::Draft(d.def.clone());
         psection(ui, "draft_angle", "Angle", |ui| {
+            let extents = d.def.draft_type.extents();
+            if extents.len() > 1 {
+                plabel(ui, "Extent");
+                ui.horizontal(|ui| {
+                    for e in extents {
+                        let tip = match e {
+                            DraftExtent::OneWay => "The whole face, in the pull direction",
+                            DraftExtent::Symmetric => {
+                                "Above and below the plane, the same angle, each away from it"
+                            }
+                            DraftExtent::Asymmetric => {
+                                "Above (Draft Angle) and below (Draft Angle 2) the plane"
+                            }
+                        };
+                        if ui
+                            .selectable_label(d.def.effective_extent() == *e, e.label())
+                            .on_hover_text(tip)
+                            .clicked()
+                        {
+                            d.def.extent = *e;
+                        }
+                    }
+                });
+                ui.end_row();
+            }
             field_row(ui, &mut fx, "Draft Angle", &snapshot, "angle");
+            if super::draft::shows_angle2(d.def.effective_extent()) {
+                field_row(ui, &mut fx, "Draft Angle 2", &snapshot, "angle2");
+            }
         });
+        let mut boundary = false;
+        if d.def.draft_type == DraftType::PartingLine {
+            psection(ui, "draft_move", "Move Parting Line", |ui| {
+                plabel(ui, "Move");
+                if ui
+                    .checkbox(&mut d.def.move_parting, "Move Parting Line")
+                    .on_hover_text(
+                        "The faces pivot about static edges instead of the parting line, which moves",
+                    )
+                    .changed()
+                    && d.def.move_parting
+                {
+                    d.input = super::draft::DraftInput::Static;
+                }
+                ui.end_row();
+                if d.def.move_parting {
+                    plabel(ui, "Angle for");
+                    ui.horizontal(|ui| {
+                        for s in [PartingSide::Top, PartingSide::Both, PartingSide::Bottom] {
+                            if ui
+                                .selectable_label(
+                                    d.def.move_side == s,
+                                    s.label().trim_start_matches("Angle for "),
+                                )
+                                .on_hover_text(s.label())
+                                .clicked()
+                            {
+                                d.def.move_side = s;
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    plabel(ui, "Static Edges");
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Select Boundary")
+                            .on_hover_text(
+                                "The top or bottom edges of the faces, as Angle for says",
+                            )
+                            .clicked()
+                        {
+                            boundary = true;
+                        }
+                        if ui.button("Clear All").clicked() {
+                            d.def.static_edges.clear();
+                            d.input = super::draft::DraftInput::Static;
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+        }
+        if boundary {
+            let part = self.part();
+            let lines = self.draft_sketch_lines();
+            if let Err(e) = d
+                .def
+                .select_boundary(&part.body, &part.work, lines.as_deref())
+            {
+                self.file_status = Some(Err(format!("Face Draft: {e}")));
+            }
+        }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
         for (field, text) in commits {
@@ -2660,6 +2917,12 @@ impl CadCraftApp {
             }
         }
         self.draft_draft = Some(d.clone());
+        if let Some(id) = pick_sketch {
+            self.draft_parting_sketch(id);
+            if let Some(nd) = &self.draft_draft {
+                d = nd.clone();
+            }
+        }
         let preview = self.draft_preview();
         match &preview {
             Err(e) if e == super::PREVIEW_PENDING => {
@@ -2674,6 +2937,7 @@ impl CadCraftApp {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Ctrl+Enter; Enter when every input is there")
                 .clicked()
             {
                 self.commit_draft(false);
@@ -2691,6 +2955,7 @@ impl CadCraftApp {
             }
             if ui
                 .add(egui::Button::new("Cancel").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Esc")
                 .clicked()
             {
                 self.draft_draft = None;
@@ -3196,7 +3461,7 @@ impl CadCraftApp {
                 for d in [
                     ShellDirection::Inside,
                     ShellDirection::Outside,
-                    ShellDirection::Both,
+                    ShellDirection::Center,
                 ] {
                     ui.radio_value(&mut dir, d, d.label());
                 }
@@ -3908,13 +4173,8 @@ impl CadCraftApp {
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(super::material::ADJUST_PROMPT)).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.shell_draft.is_some() => {
-                    let none = self.shell_draft.as_ref().is_some_and(|d| d.def.remove.is_empty());
-                    let text = if none {
-                        "Shell: click the faces to remove (none: a closed cavity), set the thickness, then OK"
-                    } else {
-                        "Shell: click more faces to remove (a second click puts one back), then OK"
-                    };
-                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                    let text = self.command_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.hole_draft.is_some() => {
                     let d = self.hole_draft.as_ref();
@@ -3938,13 +4198,8 @@ impl CadCraftApp {
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.draft_draft.is_some() => {
-                    use super::draft::DraftInput;
-                    let text = match self.draft_draft.as_ref().map(|d| d.input) {
-                        Some(DraftInput::Pull) => "Face Draft: click a planar face, an origin plane or a straight edge for the pull direction",
-                        Some(DraftInput::Plane) => "Face Draft: click the fixed plane (a planar face or an origin plane)",
-                        _ => "Face Draft: click the faces to draft (Fixed Edge: near the edge that stays), then OK",
-                    };
-                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                    let text = self.command_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.pattern_draft.is_some() => {
                     use super::pattern_feature::PatternInput;
