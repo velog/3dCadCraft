@@ -33,6 +33,7 @@ mod hole;
 mod hole_panel;
 mod i18n;
 mod icons;
+mod layout;
 mod manip;
 mod material;
 mod overlay;
@@ -71,11 +72,13 @@ pub fn run(open: Option<std::path::PathBuf>) -> eframe::Result {
     if let Some(p) = &open {
         log::info!("open at start: {}", p.display());
     }
+    let (size, maximized) = layout::startup_window();
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
             .with_title("3DCadCraft")
-            .with_inner_size([1400.0, 900.0]),
+            .with_inner_size(size)
+            .with_maximized(maximized),
         ..Default::default()
     };
     eframe::run_native(
@@ -93,7 +96,7 @@ pub fn run(open: Option<std::path::PathBuf>) -> eframe::Result {
 }
 
 /// Mouse navigation profiles (Tools → Application Options).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum MousePreset {
     /// Inventor defaults: Shift+middle orbit, middle pan, F2/F3/F4 + left.
     Inventor,
@@ -562,6 +565,10 @@ struct CadCraftApp {
     mat: material::MaterialUi,
     /// Journal, autosave and Restore (`diag.rs`).
     diag: diag::DiagUi,
+    /// Panels, floating windows, User Interface toggles (`layout.rs`).
+    layout: layout::LayoutUi,
+    /// Full Screen to send to the window this frame.
+    full_screen_cmd: Option<bool>,
 }
 
 /// Target of a right-click inside the edited sketch.
@@ -666,7 +673,14 @@ impl CadCraftApp {
             list_hover: None,
             mat: material::MaterialUi::load(),
             diag: diag::DiagUi::new(),
+            layout: layout::LayoutUi::default(),
+            full_screen_cmd: None,
         };
+        let (lay, options) = layout::LayoutUi::load(files::settings_path());
+        app.layout = lay;
+        app.apply_options(options);
+        // Ctrl+0 is Clean Screen (Inventor), not egui's zoom reset.
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         // Developer aid: start with a demo sketch, e.g. CADCRAFT3D_DEMO=slot.
         if let Some(demo) = std::env::var("CADCRAFT3D_DEMO")
             .ok()
@@ -2630,10 +2644,16 @@ impl CadCraftApp {
         };
         let mut open = true;
         let mut apply = None;
-        egui::Window::new("Offset Element")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
+        self.layout
+            .place(
+                "offset",
+                ctx.content_rect(),
+                false,
+                egui::Window::new("Offset Element")
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(false),
+            )
             .show(ctx, |ui| {
                 ui.label(format!("Element {} of the pattern", k + 2));
                 egui::Grid::new("offset_el").num_columns(2).show(ui, |ui| {
@@ -3234,6 +3254,7 @@ impl CadCraftApp {
             Action::SelectBody => self.selection = Selection::Body,
             Action::View(v) => self.set_view(v),
             Action::Options => self.show_options = true,
+            Action::Ui(c) => self.ui_command(c),
             Action::Tool(t) => {
                 if self.editing.is_some() {
                     self.tools.set_tool(t);
@@ -3986,6 +4007,12 @@ impl CadCraftApp {
                 ui.set_min_width(260.0);
                 self.file_menu(ui);
             });
+            ui.menu_button("View", |ui| {
+                ui.set_min_width(220.0);
+                self.view_menu(ui);
+            })
+            .response
+            .on_hover_text("User Interface: panels, Clean Screen (Ctrl+0), Full Screen (F11)");
             ui.separator();
             let now = ui.input(|i| i.time);
             if ui.button("Open").on_hover_text("Ctrl+O").clicked() {
@@ -4154,13 +4181,18 @@ impl CadCraftApp {
         }
         let scrolled = response.hovered() && ui.input(|i| i.smooth_scroll_delta.y != 0.0);
         let press = ui.input(|i| i.pointer.press_origin());
-        let cube_drag = self
-            .view_cube
-            .input(&mut self.camera, rect, &response, press, scrolled);
-        let on_cube = self
-            .view_cube
-            .drag_hit()
-            .or_else(|| pointer.and_then(|p| viewcube::pick(&self.camera, rect, p)));
+        let cube_on = self.layout.visible(layout::Element::ViewCube);
+        let cube_drag = cube_on
+            && self
+                .view_cube
+                .input(&mut self.camera, rect, &response, press, scrolled);
+        let on_cube = if cube_on {
+            self.view_cube
+                .drag_hit()
+                .or_else(|| pointer.and_then(|p| viewcube::pick(&self.camera, rect, p)))
+        } else {
+            None
+        };
 
         // --- picking a sketch plane ---
         let picking = matches!(self.mode, Mode::PickPlane(_));
@@ -5898,9 +5930,13 @@ impl CadCraftApp {
             }
             overlay::draw_snap(&painter, &self.camera, rect, &ps.sketch, &pick);
         }
-        viewcube::draw_triad(&painter, &self.camera, rect);
-        let cube_active = self.view_cube.dragging();
-        viewcube::draw(&painter, &self.camera, rect, pointer, cube_active);
+        if self.layout.visible(layout::Element::Triad) {
+            viewcube::draw_triad(&painter, &self.camera, rect);
+        }
+        if self.layout.visible(layout::Element::ViewCube) {
+            let cube_active = self.view_cube.dragging();
+            viewcube::draw(&painter, &self.camera, rect, pointer, cube_active);
+        }
     }
 
     /// Screen position of the text of dimension `c` in the edited sketch.
@@ -6093,52 +6129,26 @@ impl eframe::App for CadCraftApp {
         let ctx = ui.ctx().clone();
         // Expression fields everywhere evaluate against the part's parameters.
         valuefield::set_frame_table(&ctx, self.part().parameter_table());
+        self.layout_begin(&ctx);
         self.shortcuts(&ctx);
         self.files_ui(&ctx);
         self.confirm_delete_window(&ctx);
 
         egui::Panel::top("quick_access").show(ui, |ui| self.quick_access(ui));
-        let mut action = None;
-        let state = ribbon::State {
-            labels_shown: self.show_labels,
-            editing: self.editing.is_some(),
-            picking: matches!(self.mode, Mode::PickPlane(_)),
-            tool: self.tools.tool,
-            construction: self.tools.construction,
-            show_dof: self.show_dof,
-            relax: self.relax,
-        };
-        egui::Panel::top("ribbon").show(ui, |ui| {
-            action = ribbon::show(ui, &mut self.tab, &state);
-        });
-        if let Some(a) = action {
-            self.apply(a);
-        }
-        egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::left("model_browser")
-            .resizable(true)
-            .default_size(250.0)
-            .show(ui, |ui| self.browser(ui));
-        egui::Panel::right("properties")
-            .resizable(true)
-            .default_size(300.0)
-            .show(ui, |ui| {
-                // Long names wrap or are cut instead of widening the panel
-                // (which moved the view under the cursor mid-command).
-                ui.set_max_width(ui.available_width());
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                self.properties(ui)
-            });
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| self.viewport(ui, frame));
+        self.docked_panels(ui, frame);
 
         self.options_window(&ctx);
         self.parameters_window(&ctx);
         self.material_windows(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);
+        self.layout_end(&ctx);
         self.diag_frame(&ctx);
+    }
+
+    fn on_exit(&mut self) {
+        let options = self.options_snapshot();
+        self.layout.flush(&options);
     }
 }
 

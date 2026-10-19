@@ -4172,10 +4172,17 @@ impl CadCraftApp {
     /// Tools → Application Options.
     pub(super) fn options_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_options;
-        egui::Window::new("Application Options")
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
+        self.layout
+            .place(
+                "options",
+                ctx.content_rect(),
+                true,
+                egui::Window::new("Application Options")
+                    .open(&mut open)
+                    .resizable(true)
+                    .vscroll(true)
+                    .collapsible(false),
+            )
             .show(ctx, |ui| {
                 ui.label(RichText::new("Navigation").strong());
                 for preset in [MousePreset::Inventor, MousePreset::Classic] {
@@ -4767,10 +4774,10 @@ impl CadCraftApp {
         }
         let mut edits: Vec<Edit> = Vec::new();
         let buf = &mut self.param_buf;
-        egui::Window::new("Parameters")
+        self.layout.place("parameters", ctx.content_rect(), true, egui::Window::new("Parameters")
             .open(&mut open)
             .default_width(860.0)
-            .resizable(true)
+            .resizable(true))
             .show(ctx, |ui| {
                 // A text cell that applies on Enter / focus loss.
                 let mut cell = |ui: &mut egui::Ui, key: String, current: &str, width: f32, bad: bool| -> Option<String> {

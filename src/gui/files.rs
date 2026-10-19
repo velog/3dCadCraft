@@ -583,12 +583,19 @@ impl CadCraftApp {
         let mut done: Option<PathBuf> = None;
         let mut cancel = false;
         let mut open = true;
-        egui::Window::new(d.purpose.title())
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size(egui::vec2(520.0, 420.0))
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        self.layout
+            .place(
+                "file_dialog",
+                ctx.content_rect(),
+                true,
+                egui::Window::new(d.purpose.title())
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(true)
+                    .default_size(egui::vec2(520.0, 420.0))
+                    .pivot(egui::Align2::CENTER_CENTER)
+                    .default_pos(ctx.content_rect().center()),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     let up = ui.add_enabled(

@@ -373,7 +373,7 @@ pub type ClickResult = Result<Option<String>, String>;
 
 /// Which constraints are inferred while sketching and whether they are
 /// created (Inventor: Constraint Settings → Inference).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InferenceSettings {
     /// Infer constraints at all (glyphs at the cursor).
     pub infer: bool,

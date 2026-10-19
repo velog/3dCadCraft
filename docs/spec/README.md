@@ -46,6 +46,7 @@
 | [0.9-selection.md](0.9-selection.md) | Избор, филтри, prehighlight, Select Other, контекстни предложения |
 | [0.14-diagnostics.md](0.14-diagnostics.md) | Диагностика: лог на сесията, дневник на действията и replay, автозапис и Restore, доклад за срив, Save Diagnostics |
 | [0.11-presets.md](0.11-presets.md) | Presets: готови набори настройки в панелите на командите (Last Used, No Preset, вградени) |
+| [0.13-ui-layout.md](0.13-ui-layout.md) | Подредба на интерфейса: размер на панелите, свиване на лентата, User Interface, Clean Screen, Full Screen, плаващи прозорци, `settings.json` |
 | [0-ui.md](0-ui.md) | Интерфейс: визия, цветове, знаци, поведение на командите, избор, насочване на потребителя, производителност |
 | [1.1-sketch.md](1.1-sketch.md) | 2D скица: създаване, редакция, координатна система, проекции, настройки |
 | [1.2-sketch-geometry.md](1.2-sketch-geometry.md) | Инструменти за чертане, Fillet и Chamfer, Format |

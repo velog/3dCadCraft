@@ -184,7 +184,9 @@
 
 ## 0.11 Настройки на приложението и документа — 🟡 · S
 
-**Състояние (2026-10-19):** Tools → Application Options има Navigation (профил на мишката, Reverse zoom direction), Language (подсказки на български), Sketch, Display и Constraint Settings — Inference. В `settings.json` се пазят само езикът на подсказките и последните файлове; останалото важи до затваряне. Клавишите са твърдо зададени. Document Settings ⬜. Пълен списък на опциите, клавишите и мишката: **[REFERENCE.md](REFERENCE.md)** (§5 клавиши, §8 настройки); пропуските — [ROADMAP.md](ROADMAP.md#интерфейс-пропуски-и-следващи-стъпки) (U1, U2, U8).
+**Състояние (2026-10-19):** Tools → Application Options има Navigation (профил на мишката, Reverse zoom direction), Language (подсказки на български), Sketch, Display и Constraint Settings — Inference. В `settings.json` се пазят езикът на подсказките, последните файлове, всички Application Options (`options`) и подредбата на интерфейса (`ui`). Клавишите са твърдо зададени. Document Settings ⬜. Пълен списък на опциите, клавишите и мишката: **[REFERENCE.md](REFERENCE.md)** (§5 клавиши, §8 настройки); пропуските — [ROADMAP.md](ROADMAP.md#интерфейс-пропуски-и-следващи-стъпки) (U1, U2, U8).
+**Подредба на интерфейса** — 🟡: влачене и запомняне на ширините на дървото, Properties и лентата на състоянието; свиване на лентата до табовете; View → User Interface (Browser, Properties, Ribbon, Status Bar, ViewCube, Axis Triad), Clean Screen (Ctrl+0), Full Screen (F11 извън скица), Reset UI Layout; дърво и Properties отляво или отдясно; плаващите прозорци помнят място и размер. **Спецификация:** [spec/0.13-ui-layout.md](spec/0.13-ui-layout.md)
+
 **Presets** (готови набори в панелите на командите) — 🟡: Extrude, Revolve, Fillet, Chamfer, Shell и Face Draft имат ред Preset (No Preset, Last Used, свои и вградени набори, Save/Rename/Delete, New Default, Sort). Наборите са настройка на потребителя (`%APPDATA%\3dcadcraft\presets`, под Linux `~/.config/3dcadcraft/presets`), не данни на документа. **Спецификация:** [spec/0.11-presets.md](spec/0.11-presets.md)
 
 **Application Options** (за потребителя):
