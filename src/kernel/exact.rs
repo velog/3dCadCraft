@@ -119,6 +119,21 @@ pub struct ExactMeasure {
 }
 
 impl ExactSolid {
+    /// The size the kernel scales its tolerances with (the box diagonal).
+    pub fn size(&self) -> Real {
+        guarded("size", || Ok(self.body.size())).unwrap_or(1.0)
+    }
+
+    /// Volume from one mesh at chord tolerance `tol`, cached in the body (a
+    /// clone shares it): cheap enough to compare two solids measured at the
+    /// same `tol`. `measure_full` meshes three times, finely (4 s of a
+    /// 400-hole pattern went into "did the cut remove anything").
+    pub fn volume_at(&self, tol: Real) -> Option<Real> {
+        guarded("volume", || Ok(self.body.volume_at(tol)))
+            .ok()
+            .flatten()
+    }
+
     /// Volume, area, centre, box, merged face count and lumps.
     pub fn measure_full(&self) -> Result<ExactMeasure, String> {
         let m = guarded("measure", || sk::measure(&self.body))?;
@@ -621,6 +636,45 @@ pub fn union_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> 
             .flat_map(|s| s.profiles.iter().cloned())
             .collect(),
     }))
+}
+
+/// Solids the caller knows are apart (no two meet or touch) as one solid
+/// of several pieces: [`union_apart`] without its check, which meshes every
+/// piece (2500 pattern copies: 6 s). Face names are kept.
+pub fn join_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> {
+    if solids.len() < 2 {
+        return Ok(None);
+    }
+    let bodies: Vec<sk::Body> = solids.iter().map(|s| s.body.clone()).collect();
+    let Some(body) = guarded("join apart", || sk::join_apart(&bodies))? else {
+        return Ok(None);
+    };
+    let refs: Vec<&ExactSolid> = solids.iter().collect();
+    let face_names = names_from(&body, &refs, &|_| None);
+    Ok(Some(ExactSolid {
+        name: solids[0].name.clone(),
+        body,
+        face_names,
+        profiles: solids
+            .iter()
+            .flat_map(|s| s.profiles.iter().cloned())
+            .collect(),
+    }))
+}
+
+/// A box around the solid from a coarse mesh, grown by twice its chord
+/// tolerance so the true surface is inside (as `union_apart` measures).
+pub fn bounds(s: &ExactSolid) -> Option<(Point3, Point3)> {
+    let tol = (s.size() * 0.02).max(1e-3);
+    let bb = guarded("bounds", || s.body.tessellate(tol).map(|m| m.bounds())).ok()?;
+    if bb.is_empty() {
+        return None;
+    }
+    let pad = 2.0 * tol;
+    Some((
+        Point3::new(bb.min.x - pad, bb.min.y - pad, bb.min.z - pad),
+        Point3::new(bb.max.x + pad, bb.max.y + pad, bb.max.z + pad),
+    ))
 }
 
 /// Whether `p` lies inside the solid's material.

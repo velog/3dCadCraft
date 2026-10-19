@@ -171,17 +171,20 @@ pub(super) fn combine(
                 let mut gone = Vec::new();
                 // Volume before and after: a tool that only touches the body
                 // (a cut pointing away from it) removes nothing.
-                let vol = |s: &ExactSolid| s.measure_full().map(|m| m.volume).unwrap_or(0.0);
+                // One coarse mesh, the same tolerance before and after (planar
+                // faces mesh exactly, so a touching tool changes nothing).
+                let vol = |s: &ExactSolid, tol: Real| s.volume_at(tol).unwrap_or(0.0);
                 for &i in &targets {
                     if !exact::meets(&cur[i], &t) {
                         continue;
                     }
-                    let before = vol(&cur[i]);
+                    let tol = (cur[i].size() * 1e-3).max(1e-3);
+                    let before = vol(&cur[i], tol);
                     match exact::boolean(&cur[i], &t, ExactOp::Cut)
                         .map_err(|e| Kernel(format!("Cut failed: {e}")))?
                     {
                         Some(r) => {
-                            if before - vol(&r) > 1e-9 * before.max(1.0) {
+                            if before - vol(&r, tol) > 1e-9 * before.max(1.0) {
                                 hit = true;
                             }
                             cur[i] = r;
@@ -342,7 +345,17 @@ pub(super) fn pattern(
             }
         }
         if !copies.is_empty() {
-            out = combine(out, copies.clone(), set.op, &set.solids, true).map_err(as_user)?;
+            // Copies apart from each other (checked on the tools' boxes moved
+            // to each place, no mesh per copy) go in as one tool.
+            let tool = match apart(&set.tools, &places) {
+                true => exact::join_apart(&copies).ok().flatten(),
+                false => None,
+            };
+            let tools = match tool {
+                Some(one) => vec![one],
+                None => copies.clone(),
+            };
+            out = combine(out, tools, set.op, &set.solids, true).map_err(as_user)?;
         }
         let mut all = set.tools.clone();
         all.extend(copies);
@@ -353,6 +366,49 @@ pub(super) fn pattern(
         });
     }
     Ok((out, made))
+}
+
+/// Whether every copy of `tools` at `places` stays clear of every other
+/// copy: each tool's box is measured once and its corners moved to each
+/// place; a sweep along x compares only boxes whose x ranges overlap.
+fn apart(tools: &[ExactSolid], places: &[(usize, nalgebra::Matrix4<Real>)]) -> bool {
+    let mut local = Vec::with_capacity(tools.len());
+    for t in tools {
+        match exact::bounds(t) {
+            Some(b) => local.push(b),
+            None => return false,
+        }
+    }
+    let mut boxes: Vec<(Point3, Point3)> = Vec::with_capacity(local.len() * places.len());
+    for (_, m) in places {
+        for (lo, hi) in &local {
+            let mut a = Point3::new(Real::INFINITY, Real::INFINITY, Real::INFINITY);
+            let mut b = Point3::new(Real::NEG_INFINITY, Real::NEG_INFINITY, Real::NEG_INFINITY);
+            for c in 0..8 {
+                let q = Point3::new(
+                    if c & 1 == 0 { lo.x } else { hi.x },
+                    if c & 2 == 0 { lo.y } else { hi.y },
+                    if c & 4 == 0 { lo.z } else { hi.z },
+                );
+                let w = m.transform_point(&q);
+                a = a.inf(&w);
+                b = b.sup(&w);
+            }
+            boxes.push((a, b));
+        }
+    }
+    boxes.sort_by(|p, q| p.0.x.total_cmp(&q.0.x));
+    for (k, (a0, a1)) in boxes.iter().enumerate() {
+        for (b0, b1) in &boxes[k + 1..] {
+            if b0.x > a1.x {
+                break;
+            }
+            if a0.y <= b1.y && b0.y <= a1.y && a0.z <= b1.z && b0.z <= a1.z {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Points on referenced edges for the kernel, per solid: a straight edge a
