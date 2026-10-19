@@ -74,7 +74,10 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
    (Inventor: sick sketch / frozen projections). Never silently "fix" user data.
 6. **File format is additive.** New fields get `#[serde(default)]` (+
    `skip_serializing_if` where sensible). Breaking changes bump `FORMAT_VERSION` and
-   add a migration in `document::format::load_with`. Saves must stay atomic and
+   add a migration in `document::format::load_with`. Something old builds cannot read
+   (a new enum variant) bumps `FORMAT_REVISION` and adds fixtures under
+   `tests/compat/r<N>/` (`CADCRAFT_WRITE_COMPAT=1 cargo test --test compat`); never
+   edit existing fixtures or `tests/compat/expected.json`. Saves must stay atomic and
    deterministic; `serde_json` keeps `float_roundtrip`.
 7. **Ribbon lists the full Inventor command set.** Unimplemented commands stay
    disabled with the `docs/FEATURES.md` section in the tooltip; implemented ones get

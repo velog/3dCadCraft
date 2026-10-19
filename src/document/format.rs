@@ -56,6 +56,17 @@ pub const FILE_EXTENSION: &str = "3dcadcraft";
 /// Newest format version this build writes and reads.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// Additive revision within [`FORMAT_VERSION`]: bumped whenever a build
+/// writes something an older build cannot read (a new enum variant, a field
+/// that changes the meaning of others). Older builds still open the file
+/// when they can, and say "made by a newer 3DCadCraft" when they cannot,
+/// instead of "invalid project file". New *optional* fields that old builds
+/// may simply ignore need no bump.
+///
+/// - 1: fillet types (Variable, Chord, Full Round) and edge sets, sketch
+///   pattern count equations (2026-10-19).
+pub const FORMAT_REVISION: u32 = 1;
+
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
 const MIMETYPE_ENTRY: &str = "mimetype";
@@ -80,6 +91,9 @@ struct Manifest {
     /// Always `"3dcadcraft"`; identifies the file type.
     format: String,
     format_version: u32,
+    /// [`FORMAT_REVISION`] of the build that wrote it (0 in older files).
+    #[serde(default)]
+    format_revision: u32,
     /// Which build wrote the file, for diagnostics.
     generator: String,
     project: ProjectHeader,
@@ -135,6 +149,7 @@ impl Project {
         let manifest = Manifest {
             format: FORMAT_MAGIC.into(),
             format_version: FORMAT_VERSION,
+            format_revision: FORMAT_REVISION,
             generator: format!("3DCadCraft {}", env!("CARGO_PKG_VERSION")),
             project: ProjectHeader {
                 id: self.id,
@@ -276,8 +291,19 @@ impl Project {
             // a path taken from the file, so a crafted manifest cannot point
             // the reader outside the project ("zip slip").
             let bytes = read(&document_entry_name(entry.id))?;
-            let doc: Document = serde_json::from_slice(&bytes)
-                .map_err(|e| corrupt(path, format!("document {}: {e}", entry.id)))?;
+            let doc: Document = serde_json::from_slice(&bytes).map_err(|e| {
+                if manifest.format_revision > FORMAT_REVISION {
+                    ProjectError::NewerRevision {
+                        path: path.to_path_buf(),
+                        generator: manifest.generator.clone(),
+                        found: manifest.format_revision,
+                        supported: FORMAT_REVISION,
+                        reason: e.to_string(),
+                    }
+                } else {
+                    corrupt(path, format!("document {}: {e}", entry.id))
+                }
+            })?;
             if doc.id != entry.id {
                 return Err(corrupt(
                     path,
@@ -469,6 +495,40 @@ mod tests {
             Project::load(&folder),
             Err(ProjectError::UnsupportedVersion { found: 999, .. })
         ));
+    }
+
+    /// A file from a newer build (higher revision) whose document this
+    /// build cannot read says so; an extra field it can ignore is fine.
+    #[test]
+    fn newer_revision_is_explained() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("p.3dcadcraft");
+        sample_project()
+            .save_folder(&folder, &SaveOptions::default())
+            .unwrap();
+        let m = folder.join(MANIFEST_ENTRY);
+        let text = fs::read_to_string(&m).unwrap().replace(
+            &format!("\"format_revision\": {FORMAT_REVISION}"),
+            "\"format_revision\": 999",
+        );
+        fs::write(&m, text).unwrap();
+        let docs: Vec<_> = fs::read_dir(folder.join("documents"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        // An unknown extra field: ignored, the project opens.
+        let original = fs::read_to_string(&docs[0]).unwrap();
+        let extra = original.replacen('{', "{\"from_the_future\": 1, ", 1);
+        fs::write(&docs[0], &extra).unwrap();
+        assert!(Project::load(&folder).is_ok());
+        // Something it cannot read: "made by a newer 3DCadCraft".
+        fs::write(&docs[0], original.replacen("\"data\"", "\"data_v2\"", 1)).unwrap();
+        let err = Project::load(&folder).unwrap_err();
+        assert!(
+            matches!(err, ProjectError::NewerRevision { found: 999, .. }),
+            "{err}"
+        );
+        assert!(err.to_string().contains("newer 3DCadCraft"));
     }
 
     #[test]

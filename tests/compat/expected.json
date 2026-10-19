@@ -1,0 +1,51 @@
+{
+  "r1/features_r1.3dcadcraft": {
+    "volume": 48812.011601960585,
+    "faces": 16,
+    "features": 5,
+    "sketches": 2,
+    "exact": true
+  },
+  "r1/grille.3dcadcraft": {
+    "volume": 6280.349935291537,
+    "faces": 4,
+    "features": 1,
+    "sketches": 2,
+    "exact": true
+  },
+  "r1/hollow_chamfer.3dcadcraft": {
+    "volume": 27656.000000000007,
+    "faces": 19,
+    "features": 3,
+    "sketches": 1,
+    "exact": true
+  },
+  "r1/hollow_fillet.3dcadcraft": {
+    "volume": 27367.13886128538,
+    "faces": 23,
+    "features": 3,
+    "sketches": 1,
+    "exact": true
+  },
+  "r1/pocket_dent.3dcadcraft": {
+    "volume": 64457.45936212126,
+    "faces": 19,
+    "features": 3,
+    "sketches": 2,
+    "exact": true
+  },
+  "r1/pocket_rounds.3dcadcraft": {
+    "volume": 61105.76728632599,
+    "faces": 19,
+    "features": 3,
+    "sketches": 2,
+    "exact": true
+  },
+  "r1/vent_sketch.3dcadcraft": {
+    "volume": 36000.0,
+    "faces": 6,
+    "features": 1,
+    "sketches": 1,
+    "exact": true
+  }
+}

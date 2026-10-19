@@ -44,7 +44,7 @@ use uuid::Uuid;
 use crate::kernel::Transform3;
 pub use crate::part::{PartDocument, PartSketch};
 
-pub use format::{FILE_EXTENSION, FORMAT_VERSION, SaveOptions};
+pub use format::{FILE_EXTENSION, FORMAT_REVISION, FORMAT_VERSION, SaveOptions};
 pub use library::Resolver;
 
 macro_rules! uuid_id {
@@ -112,6 +112,23 @@ pub enum ProjectError {
         found: u32,
         /// Newest version this build understands.
         supported: u32,
+    },
+    /// Written by a newer build using something this one cannot read
+    /// (same format version, higher [`FORMAT_REVISION`]).
+    #[error(
+        "{path} was made by a newer 3DCadCraft ({generator}, revision {found}; this build reads revision {supported}): update the program ({reason})"
+    )]
+    NewerRevision {
+        /// File involved.
+        path: PathBuf,
+        /// The build that wrote it.
+        generator: String,
+        /// Revision in the file.
+        found: u32,
+        /// Newest revision this build writes.
+        supported: u32,
+        /// The parse error.
+        reason: String,
     },
     /// A [`DocumentId`] that is not in the project.
     #[error("document {0} not found")]
