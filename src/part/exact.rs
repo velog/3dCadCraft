@@ -124,12 +124,15 @@ pub(super) fn revolve(
 }
 
 /// Applies a feature's operation: `added` (its solids) against the bodies
-/// so far (all of them, or those named in `solids`).
+/// so far (all of them, or those named in `solids`). `lenient` (pattern
+/// copies): a cutting tool that misses the body is skipped; only when none
+/// hits is it an error.
 pub(super) fn combine(
     mut cur: Vec<ExactSolid>,
     added: Vec<ExactSolid>,
     op: Operation,
     solids: &[String],
+    lenient: bool,
 ) -> Result<Vec<ExactSolid>, Fail> {
     if op == Operation::NewSolid {
         cur.extend(added);
@@ -144,6 +147,7 @@ pub(super) fn combine(
     };
     let chosen =
         |s: &ExactSolid| solids.is_empty() || s.name.as_ref().is_some_and(|n| solids.contains(n));
+    let mut any_hit = false;
     for t in added {
         let targets: Vec<usize> = (0..cur.len()).filter(|&i| chosen(&cur[i])).collect();
         if targets.is_empty() {
@@ -188,9 +192,10 @@ pub(super) fn combine(
                         }
                     }
                 }
-                if !hit {
+                if !hit && !lenient {
                     return Err(User("Cut: the feature does not intersect the body".into()));
                 }
+                any_hit |= hit;
                 for i in gone.into_iter().rev() {
                     cur.remove(i);
                 }
@@ -225,7 +230,129 @@ pub(super) fn combine(
             Operation::NewSolid => {}
         }
     }
+    if lenient && op == Operation::Cut && !any_hit {
+        return Err(User("Cut: none of the copies intersects the body".into()));
+    }
     Ok(cur)
+}
+
+/// A kernel failure of a pattern is the feature's health (a faceted
+/// rebuild could not build a pattern either).
+fn as_user(f: Fail) -> Fail {
+    match f {
+        Kernel(e) => User(format!("the geometry kernel cannot build it ({e})")),
+        u => u,
+    }
+}
+
+/// Rectangular / Circular Pattern and Mirror (`docs/spec/2.11-patterns.md`,
+/// `docs/spec/2.12-mirror.md`). Feature mode: the sources' tools are copied
+/// to every placement and applied with their own operation (all copies of
+/// one tool set at once: `combine` joins the ones apart into one tool).
+/// Solid mode: whole solids are copied and joined to the original, added as
+/// new solids, or (Remove Original) replace it. Returns the solids and the
+/// tools the pattern applied (originals and copies, so a later pattern or
+/// mirror of this one copies every instance).
+pub(super) fn pattern(
+    p: &super::PatternFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    cur: &[ExactSolid],
+    sources: &[&super::pattern::ToolSet],
+) -> Result<(Vec<ExactSolid>, Vec<super::pattern::ToolSet>), Fail> {
+    use super::pattern::ToolSet;
+    let places = p.placements(body, works).map_err(User)?;
+    let tag = |k: usize| format!("{}#{k}", p.id);
+    let copy = |s: &ExactSolid, k: usize, m: &nalgebra::Matrix4<Real>, name: &str| {
+        exact::transformed(s, m, &tag(k), Some(name))
+            .map_err(|e| User(format!("the geometry kernel cannot copy it ({e})")))
+    };
+    let mut out = cur.to_vec();
+    if p.solid_mode {
+        let targets: Vec<usize> = (0..cur.len())
+            .filter(|&i| {
+                p.solids.is_empty() || cur[i].name.as_ref().is_some_and(|n| p.solids.contains(n))
+            })
+            .collect();
+        if targets.is_empty() {
+            return Err(User(if p.solids.is_empty() {
+                "there is no solid to copy".into()
+            } else {
+                "the chosen solid no longer exists".into()
+            }));
+        }
+        let several = targets.len() > 1;
+        let mut extra = Vec::new();
+        for &i in &targets {
+            let src = &cur[i];
+            let orig = src.name.clone().unwrap_or_default();
+            let mut copies = Vec::new();
+            for (k, m) in &places {
+                let name = if several {
+                    format!("{}[{orig}]", tag(*k))
+                } else {
+                    tag(*k)
+                };
+                copies.push(copy(src, *k, m, &name)?);
+            }
+            if copies.is_empty() {
+                continue;
+            }
+            if p.remove_original {
+                // Only the copy stays, under the original's body name (later
+                // features keep finding their body).
+                if let Some(mut c) = copies.into_iter().next() {
+                    c.name = src.name.clone();
+                    out[i] = c;
+                }
+                continue;
+            }
+            match p.operation {
+                Operation::NewSolid => extra.extend(copies),
+                _ => {
+                    let tools = match exact::union_apart(&copies) {
+                        Ok(Some(one)) => vec![one],
+                        _ => copies,
+                    };
+                    for t in tools {
+                        out[i] = exact::boolean(&out[i], &t, ExactOp::Union)
+                            .map_err(|e| User(format!("Join failed: {e}")))?
+                            .ok_or_else(|| User("Join failed: the result is empty".into()))?;
+                    }
+                }
+            }
+        }
+        out.extend(extra);
+        return Ok((out, Vec::new()));
+    }
+    if sources.is_empty() {
+        return Err(User("select the features to copy".into()));
+    }
+    let mut made = Vec::new();
+    for set in sources {
+        if set.op == Operation::Intersect {
+            return Err(User(
+                "an Intersect feature cannot be copied yet (pattern the solid)".into(),
+            ));
+        }
+        let mut copies = Vec::new();
+        for (k, m) in &places {
+            for t in &set.tools {
+                copies.push(copy(t, *k, m, &tag(*k))?);
+            }
+        }
+        if !copies.is_empty() {
+            out = combine(out, copies.clone(), set.op, &set.solids, true).map_err(as_user)?;
+        }
+        let mut all = set.tools.clone();
+        all.extend(copies);
+        made.push(ToolSet {
+            tools: all,
+            op: set.op,
+            solids: set.solids.clone(),
+        });
+    }
+    Ok((out, made))
 }
 
 /// Points on referenced edges for the kernel, per solid: a straight edge a

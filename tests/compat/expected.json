@@ -68,5 +68,12 @@
     "features": 2,
     "sketches": 0,
     "exact": true
+  },
+  "r5/pattern_r5.3dcadcraft": {
+    "volume": 46532.85048549442,
+    "faces": 44,
+    "features": 6,
+    "sketches": 2,
+    "exact": true
   }
 }

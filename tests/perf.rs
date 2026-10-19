@@ -100,6 +100,53 @@ fn below_rim(part: &PartDocument) -> Vec<EdgeRef> {
         .collect()
 }
 
+/// A box with one round feature on its top at (x, y): a through hole
+/// (`cut`) or a boss `h` high (`Extrusion1`).
+fn box_with_circle(size: [Real; 3], x: Real, y: Real, r: Real, cut: bool, h: Real) -> PartDocument {
+    let mut part = PartDocument::with_box("Box1", size).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let j = part
+        .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+        .unwrap();
+    let c = part.sketches[j]
+        .sketch
+        .plane
+        .project(&Point3::new(x, y, size[2]));
+    part.sketches[j].sketch.add_circle(c, r).unwrap();
+    let rg = part.sketches[j].sketch.regions();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], h);
+    if cut {
+        ex.operation = Operation::Cut;
+        ex.extent = cadcraft3d::part::Extent::ThroughAll;
+        ex.direction = ExtentDirection::Flipped;
+    } else {
+        ex.operation = Operation::Join;
+    }
+    part.add_extrude(j, ex).unwrap();
+    part
+}
+
+/// A rectangular pattern of `Extrusion1`, n1 × n2 at `s` along X and Y.
+fn pattern_grid(n1: u32, n2: u32, s: Real) -> cadcraft3d::part::PatternFeature {
+    use cadcraft3d::part::{LineRef, PatternDirection, PatternFeature, PatternKind, PullRef};
+    let mut p = PatternFeature::rectangular();
+    p.features = vec!["Extrusion1".into()];
+    if let PatternKind::Rectangular { first, second } = &mut p.kind {
+        (first.dir, first.count, first.spacing) = (Some(PullRef::Line(LineRef::Origin(0))), n1, s);
+        *second = Some(PatternDirection {
+            dir: Some(PullRef::Line(LineRef::Origin(1))),
+            count: n2,
+            spacing: s,
+            ..PatternDirection::new()
+        });
+    }
+    p
+}
+
 #[test]
 fn speed_budgets() {
     // (case, budget ms, median ms)
@@ -318,6 +365,56 @@ fn speed_budgets() {
         }),
     ));
 
+    // Patterns: the whole part is rebuilt (empty cache), so the time is
+    // the box, the source feature and the pattern.
+    let holed = box_with_circle([60.0, 60.0, 6.0], 5.0, 5.0, 2.0, true, 1.0);
+    rows.push((
+        "rectangular pattern 6×6 of a hole on a plate (add_pattern)",
+        2500.0,
+        median_ms(3, || {
+            let mut p = holed.clone();
+            p.build_cache = Default::default();
+            p.add_pattern(pattern_grid(6, 6, 10.0)).unwrap();
+        }),
+    ));
+    let bossed = box_with_circle([200.0, 200.0, 5.0], 10.0, 10.0, 1.5, false, 3.0);
+    rows.push((
+        "rectangular pattern 10×10 of a joined boss (SolidCraft #2076)",
+        3000.0,
+        median_ms(3, || {
+            let mut p = bossed.clone();
+            p.build_cache = Default::default();
+            p.add_pattern(pattern_grid(10, 10, 20.0)).unwrap();
+        }),
+    ));
+    let mut patterned = holed.clone();
+    patterned.add_pattern(pattern_grid(6, 6, 10.0)).unwrap();
+    rows.push((
+        "mirror the 36-hole plate as a solid, Join across its right face",
+        1500.0,
+        {
+            use cadcraft3d::part::{PatternFeature, PatternKind, PlaneRef};
+            // The steps before the mirror come from a fresh cache filled
+            // outside the timing: only the mirror is measured.
+            let mut t: Vec<f64> = (0..3)
+                .map(|_| {
+                    let mut p = patterned.clone();
+                    p.build_cache = Default::default();
+                    p.regenerate().unwrap();
+                    let mut m = PatternFeature::mirror();
+                    m.solid_mode = true;
+                    m.kind = PatternKind::Mirror {
+                        plane: Some(PlaneRef::Face("Box1:Right".into())),
+                    };
+                    let t0 = Instant::now();
+                    p.add_pattern(m).unwrap();
+                    t0.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            t.sort_by(f64::total_cmp);
+            t[1]
+        },
+    ));
     println!("{:<62} {:>9} {:>9}", "case", "budget", "median");
     let mut over = Vec::new();
     for (case, budget, ms) in &rows {

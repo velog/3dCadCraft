@@ -160,6 +160,17 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
         },
         Feature::Shell(_) => vec![("thickness", Unit::Mm)],
         Feature::Draft(_) => vec![("angle", Unit::Deg)],
+        Feature::Pattern(p) => match &p.kind {
+            super::PatternKind::Rectangular { second, .. } => {
+                let mut v = vec![("count1", Unit::Ul), ("spacing1", Unit::Mm)];
+                if second.is_some() {
+                    v.extend([("count2", Unit::Ul), ("spacing2", Unit::Mm)]);
+                }
+                v
+            }
+            super::PatternKind::Circular { .. } => vec![("count", Unit::Ul), ("angle", Unit::Deg)],
+            super::PatternKind::Mirror { .. } => Vec::new(),
+        },
         Feature::Work(w) => match &w.def {
             super::WorkDef::Plane(super::WorkPlaneDef::Offset { .. }) => {
                 vec![("distance", Unit::Mm)]
@@ -232,6 +243,19 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
         },
         Feature::Shell(s) => (field == "thickness").then_some(s.thickness),
         Feature::Draft(d) => (field == "angle").then_some(d.angle),
+        Feature::Pattern(p) => match (&p.kind, field) {
+            (super::PatternKind::Rectangular { first, .. }, "count1") => Some(first.count as Real),
+            (super::PatternKind::Rectangular { first, .. }, "spacing1") => Some(first.spacing),
+            (super::PatternKind::Rectangular { second, .. }, "count2") => {
+                second.as_ref().map(|d| d.count as Real)
+            }
+            (super::PatternKind::Rectangular { second, .. }, "spacing2") => {
+                second.as_ref().map(|d| d.spacing)
+            }
+            (super::PatternKind::Circular { count, .. }, "count") => Some(*count as Real),
+            (super::PatternKind::Circular { angle, .. }, "angle") => Some(*angle),
+            _ => None,
+        },
         Feature::Work(w) => match (&w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 Some(*distance)
@@ -299,6 +323,30 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
                 d.angle = v;
             }
         }
+        Feature::Pattern(p) => {
+            // Counts are whole numbers (a typed 2.6 is 3); out-of-range
+            // values are kept for the feature to report.
+            let count = || v.round().clamp(0.0, 1e6) as u32;
+            match (&mut p.kind, field) {
+                (super::PatternKind::Rectangular { first, .. }, "count1") => first.count = count(),
+                (super::PatternKind::Rectangular { first, .. }, "spacing1") => first.spacing = v,
+                (
+                    super::PatternKind::Rectangular {
+                        second: Some(d), ..
+                    },
+                    "count2",
+                ) => d.count = count(),
+                (
+                    super::PatternKind::Rectangular {
+                        second: Some(d), ..
+                    },
+                    "spacing2",
+                ) => d.spacing = v,
+                (super::PatternKind::Circular { count: c, .. }, "count") => *c = count(),
+                (super::PatternKind::Circular { angle, .. }, "angle") => *angle = v,
+                _ => {}
+            }
+        }
         Feature::Work(w) => match (&mut w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 *distance = v
@@ -323,6 +371,7 @@ fn feature_params_mut(f: &mut Feature) -> Option<&mut FeatureParams> {
         Feature::Blend(b) => Some(&mut b.params),
         Feature::Shell(s) => Some(&mut s.params),
         Feature::Draft(d) => Some(&mut d.params),
+        Feature::Pattern(p) => Some(&mut p.params),
     }
 }
 
@@ -335,6 +384,7 @@ fn feature_params(f: &Feature) -> Option<&FeatureParams> {
         Feature::Blend(b) => Some(&b.params),
         Feature::Shell(s) => Some(&s.params),
         Feature::Draft(d) => Some(&d.params),
+        Feature::Pattern(p) => Some(&p.params),
     }
 }
 

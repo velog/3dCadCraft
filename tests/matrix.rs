@@ -16,6 +16,10 @@ use cadcraft3d::part::{
     SketchOptions, SketchPlacement, VariableRadius,
 };
 use cadcraft3d::part::{DraftFeature, DraftType, PlaneRef, PullRef};
+use cadcraft3d::part::{
+    LineRef, PatternDirection, PatternFeature, PatternKind, WorkAxisDef, WorkDef, WorkFeature,
+    WorkPlaneDef,
+};
 use cadcraft3d::sketch::{Entity, Point2, Region};
 
 /// What a case expects.
@@ -1552,6 +1556,620 @@ fn c_extrude_to_next() -> Result<PartDocument, String> {
     post_to(Extent::ToNext)
 }
 
+// ------------------------------------------------- patterns and mirror ---
+
+/// A rectangle (x0, y0)–(x1, y1) on XY extruded `h`, New Solid (the first
+/// is `Extrusion1`).
+fn slab(
+    part: &mut PartDocument,
+    a: (Real, Real),
+    b: (Real, Real),
+    h: Real,
+) -> Result<String, String> {
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
+        .map_err(|e| e.to_string())?;
+    let r = sk.regions();
+    part.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], h),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// A disc of radius `r`, `h` high, centred on the Z axis.
+fn disc(r: Real, h: Real) -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    part.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), r)
+        .map_err(|e| e.to_string())?;
+    let rg = part.sketches[i].sketch.regions();
+    part.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], h),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A through hole of radius `r` at (x, y) from the top face (at height
+/// `z`); returns the feature id.
+fn hole_at(
+    part: &mut PartDocument,
+    top: &str,
+    z: Real,
+    x: Real,
+    y: Real,
+    r: Real,
+) -> Result<String, String> {
+    let before = part.features.len();
+    let j = sketch_on_top(part, top, z, |sk, at| {
+        sk.add_circle(at(x, y), r)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    cut_regions(part, j, |rg| {
+        rg.holes.is_empty() && rg.area() < PI * r * r * 1.01
+    })?;
+    Ok(part.features[before].id().to_owned())
+}
+
+/// A round boss of radius `r`, `h` high, joined on the top face at (x, y).
+fn boss_at(
+    part: &mut PartDocument,
+    top: &str,
+    z: Real,
+    x: Real,
+    y: Real,
+    r: Real,
+    h: Real,
+) -> Result<String, String> {
+    let j = sketch_on_top(part, top, z, |sk, at| {
+        sk.add_circle(at(x, y), r)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    let regions = part.sketches[j].sketch.regions();
+    let profiles: Vec<ProfileRef> = regions
+        .iter()
+        .filter(|rg| rg.holes.is_empty() && rg.area() < PI * r * r * 1.01)
+        .map(|rg| ProfileRef::of(rg, rg.interior_point()))
+        .collect();
+    let mut ex = ExtrudeFeature::new(profiles, h);
+    ex.operation = Operation::Join;
+    part.add_extrude(j, ex).map_err(|e| e.to_string())
+}
+
+const X_AXIS: PullRef = PullRef::Line(LineRef::Origin(0));
+const Y_AXIS: PullRef = PullRef::Line(LineRef::Origin(1));
+
+/// A rectangular pattern of `features`: `n1` × `s1` along `d1`, and
+/// optionally `n2` × `s2` along `d2`; `tweak` sets further options.
+fn rect_pattern(
+    part: &mut PartDocument,
+    features: &[&str],
+    (d1, n1, s1): (PullRef, u32, Real),
+    second: Option<(PullRef, u32, Real)>,
+    tweak: impl FnOnce(&mut PatternFeature),
+) -> Result<String, String> {
+    let mut p = PatternFeature::rectangular();
+    p.features = features.iter().map(|s| s.to_string()).collect();
+    if let PatternKind::Rectangular { first, second: sec } = &mut p.kind {
+        (first.dir, first.count, first.spacing) = (Some(d1), n1, s1);
+        *sec = second.map(|(d, n, s)| PatternDirection {
+            dir: Some(d),
+            count: n,
+            spacing: s,
+            ..PatternDirection::new()
+        });
+    }
+    tweak(&mut p);
+    part.add_pattern(p).map_err(|e| e.to_string())
+}
+
+fn circ_pattern(
+    part: &mut PartDocument,
+    features: &[&str],
+    axis: LineRef,
+    n: u32,
+    angle_deg: Real,
+    fitted: bool,
+    tweak: impl FnOnce(&mut PatternFeature),
+) -> Result<String, String> {
+    let mut p = PatternFeature::circular();
+    p.features = features.iter().map(|s| s.to_string()).collect();
+    if let PatternKind::Circular {
+        axis: a,
+        count,
+        angle,
+        fitted: f,
+        ..
+    } = &mut p.kind
+    {
+        (*a, *count, *angle, *f) = (Some(axis), n, angle_deg.to_radians(), fitted);
+    }
+    tweak(&mut p);
+    part.add_pattern(p).map_err(|e| e.to_string())
+}
+
+fn mirror_of(
+    part: &mut PartDocument,
+    features: &[&str],
+    plane: PlaneRef,
+    tweak: impl FnOnce(&mut PatternFeature),
+) -> Result<String, String> {
+    let mut p = PatternFeature::mirror();
+    p.features = features.iter().map(|s| s.to_string()).collect();
+    p.kind = PatternKind::Mirror { plane: Some(plane) };
+    tweak(&mut p);
+    part.add_pattern(p).map_err(|e| e.to_string())
+}
+
+const PLATE: (&str, Real) = ("Extrusion1:End", 10.0);
+const HOLE: Real = PI * 16.0 * 10.0; // r 4 through a 10 plate
+
+/// Plate 100×60×10 with a hole r 4 at (x, y).
+fn plate_hole(x: Real, y: Real) -> Result<(PartDocument, String), String> {
+    let mut part = plate(100.0, 60.0, 10.0)?;
+    let id = hole_at(&mut part, PLATE.0, PLATE.1, x, y, 4.0)?;
+    Ok((part, id))
+}
+
+fn p_rect_holes_3x2() -> Result<PartDocument, String> {
+    let (mut part, h) = plate_hole(20.0, 15.0)?;
+    rect_pattern(
+        &mut part,
+        &[&h],
+        (X_AXIS, 3, 25.0),
+        Some((Y_AXIS, 2, 30.0)),
+        |_| {},
+    )?;
+    let names = part
+        .body
+        .faces()
+        .filter_map(|(_, f)| f.name.clone())
+        .filter(|n| n.starts_with("RectangularPattern1#6:Extrusion2"))
+        .count();
+    if names == 0 {
+        return Err("no face named RectangularPattern1#6:Extrusion2…".into());
+    }
+    Ok(part)
+}
+
+fn p_rect_boss_join() -> Result<PartDocument, String> {
+    let mut part = plate(100.0, 60.0, 10.0)?;
+    let b = boss_at(&mut part, PLATE.0, PLATE.1, 15.0, 30.0, 5.0, 8.0)?;
+    rect_pattern(&mut part, &[&b], (X_AXIS, 4, 20.0), None, |_| {})?;
+    if part.body.solids().count() != 1 {
+        return Err("the bosses are not joined to the plate".into());
+    }
+    Ok(part)
+}
+
+fn p_rect_midplane() -> Result<PartDocument, String> {
+    let (mut part, h) = plate_hole(50.0, 30.0)?;
+    rect_pattern(&mut part, &[&h], (X_AXIS, 3, 30.0), None, |p| {
+        if let PatternKind::Rectangular { first, .. } = &mut p.kind {
+            first.midplane = true;
+        }
+    })?;
+    Ok(part)
+}
+
+fn p_rect_fitted() -> Result<PartDocument, String> {
+    let (mut part, h) = plate_hole(10.0, 30.0)?;
+    rect_pattern(&mut part, &[&h], (X_AXIS, 5, 80.0), None, |p| {
+        if let PatternKind::Rectangular { first, .. } = &mut p.kind {
+            first.fitted = true;
+        }
+    })?;
+    Ok(part)
+}
+
+/// Direction from the YZ plane's normal (+X), flipped: from the right edge
+/// leftwards.
+fn p_rect_plane_normal_flipped() -> Result<PartDocument, String> {
+    let (mut part, h) = plate_hole(90.0, 30.0)?;
+    let dir = PullRef::Plane(PlaneRef::Origin(OriginPlane::YZ));
+    rect_pattern(&mut part, &[&h], (dir, 4, 25.0), None, |p| {
+        if let PatternKind::Rectangular { first, .. } = &mut p.kind {
+            first.flip = true;
+        }
+    })?;
+    Ok(part)
+}
+
+/// 5 holes 30 apart from x = 15: the last two miss the plate and are
+/// skipped.
+fn p_rect_past_the_edge() -> Result<PartDocument, String> {
+    let (mut part, h) = plate_hole(15.0, 30.0)?;
+    rect_pattern(&mut part, &[&h], (X_AXIS, 5, 30.0), None, |_| {})?;
+    Ok(part)
+}
+
+fn p_rect_too_many() -> Result<PartDocument, String> {
+    let (mut part, h) = plate_hole(15.0, 30.0)?;
+    rect_pattern(
+        &mut part,
+        &[&h],
+        (X_AXIS, 40, 1.0),
+        Some((Y_AXIS, 30, 1.0)),
+        |_| {},
+    )?;
+    Ok(part)
+}
+
+fn p_rect_zero_count() -> Result<PartDocument, String> {
+    let (mut part, h) = plate_hole(15.0, 30.0)?;
+    rect_pattern(&mut part, &[&h], (X_AXIS, 0, 10.0), None, |_| {})?;
+    Ok(part)
+}
+
+fn p_pattern_a_fillet() -> Result<PartDocument, String> {
+    let mut part = s_fillet_edge()?;
+    rect_pattern(&mut part, &["Fillet1"], (X_AXIS, 2, 10.0), None, |_| {})?;
+    Ok(part)
+}
+
+fn p_no_features() -> Result<PartDocument, String> {
+    let mut part = plate(100.0, 60.0, 10.0)?;
+    rect_pattern(&mut part, &[], (X_AXIS, 2, 10.0), None, |_| {})?;
+    Ok(part)
+}
+
+const DISC: (&str, Real) = ("Extrusion1:End", 8.0);
+
+/// Disc r 40 × 8 with a hole r 4 at (25, 0).
+fn disc_hole() -> Result<(PartDocument, String), String> {
+    let mut part = disc(40.0, 8.0)?;
+    let h = hole_at(&mut part, DISC.0, DISC.1, 25.0, 0.0, 4.0)?;
+    Ok((part, h))
+}
+
+fn p_circ_six_holes() -> Result<PartDocument, String> {
+    let (mut part, h) = disc_hole()?;
+    circ_pattern(&mut part, &[&h], LineRef::Origin(2), 6, 360.0, true, |_| {})?;
+    Ok(part)
+}
+
+fn p_circ_incremental() -> Result<PartDocument, String> {
+    let (mut part, h) = disc_hole()?;
+    circ_pattern(&mut part, &[&h], LineRef::Origin(2), 3, 45.0, false, |_| {})?;
+    Ok(part)
+}
+
+fn p_circ_midplane_flipped() -> Result<PartDocument, String> {
+    let (mut part, h) = disc_hole()?;
+    circ_pattern(&mut part, &[&h], LineRef::Origin(2), 4, 60.0, false, |p| {
+        if let PatternKind::Circular { midplane, flip, .. } = &mut p.kind {
+            (*midplane, *flip) = (true, true);
+        }
+    })?;
+    Ok(part)
+}
+
+fn p_circ_bosses() -> Result<PartDocument, String> {
+    let mut part = disc(40.0, 8.0)?;
+    let b = boss_at(&mut part, DISC.0, DISC.1, 30.0, 0.0, 3.0, 5.0)?;
+    circ_pattern(&mut part, &[&b], LineRef::Origin(2), 8, 360.0, true, |_| {})?;
+    Ok(part)
+}
+
+/// About a work axis (the intersection of the XZ and YZ planes).
+fn p_circ_work_axis() -> Result<PartDocument, String> {
+    let (mut part, h) = disc_hole()?;
+    let ax = part
+        .add_work(WorkFeature::new(WorkDef::Axis(WorkAxisDef::TwoPlanes {
+            a: PlaneRef::Origin(OriginPlane::XZ),
+            b: PlaneRef::Origin(OriginPlane::YZ),
+        })))
+        .map_err(|e| e.to_string())?;
+    circ_pattern(&mut part, &[&h], LineRef::Work(ax), 5, 360.0, true, |_| {})?;
+    Ok(part)
+}
+
+/// About a box's vertical corner edge: copies of a boss land beside the box
+/// and stay separate lumps of its solid.
+fn p_circ_edge_lumps() -> Result<PartDocument, String> {
+    let mut part = PartDocument::with_box("Box1", [60.0, 60.0, 10.0]).map_err(|e| e.to_string())?;
+    let b = boss_at(&mut part, "Box1:Top", 10.0, 20.0, 20.0, 4.0, 5.0)?;
+    circ_pattern(
+        &mut part,
+        &[&b],
+        LineRef::Edge("Box1:E000-001".into()),
+        4,
+        360.0,
+        true,
+        |_| {},
+    )?;
+    Ok(part)
+}
+
+fn p_circ_no_axis() -> Result<PartDocument, String> {
+    let (mut part, h) = disc_hole()?;
+    let mut p = PatternFeature::circular();
+    p.features = vec![h];
+    part.add_pattern(p).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Plate 100×60×10 centred on the origin.
+fn centred_plate() -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    slab(&mut part, (-50.0, -30.0), (50.0, 30.0), 10.0)?;
+    Ok(part)
+}
+
+fn m_boss_yz() -> Result<PartDocument, String> {
+    let mut part = centred_plate()?;
+    let b = boss_at(&mut part, PLATE.0, PLATE.1, 25.0, 10.0, 5.0, 8.0)?;
+    mirror_of(&mut part, &[&b], PlaneRef::Origin(OriginPlane::YZ), |_| {})?;
+    let ok = part
+        .body
+        .faces()
+        .filter_map(|(_, f)| f.name.clone())
+        .any(|n| n.starts_with("Mirror1#2:Extrusion2"));
+    if !ok {
+        return Err("no face named Mirror1#2:Extrusion2…".into());
+    }
+    Ok(part)
+}
+
+fn m_hole_xz() -> Result<PartDocument, String> {
+    let mut part = centred_plate()?;
+    let h = hole_at(&mut part, PLATE.0, PLATE.1, 25.0, 10.0, 4.0)?;
+    mirror_of(&mut part, &[&h], PlaneRef::Origin(OriginPlane::XZ), |_| {})?;
+    Ok(part)
+}
+
+/// A hole and a boss mirrored together across a work plane at x = 0 (an
+/// offset of YZ).
+fn m_two_features_work_plane() -> Result<PartDocument, String> {
+    let mut part = centred_plate()?;
+    let h = hole_at(&mut part, PLATE.0, PLATE.1, 25.0, 10.0, 4.0)?;
+    let b = boss_at(&mut part, PLATE.0, PLATE.1, 30.0, -15.0, 5.0, 8.0)?;
+    let wp = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::YZ),
+            distance: 0.0,
+        })))
+        .map_err(|e| e.to_string())?;
+    mirror_of(&mut part, &[&h, &b], PlaneRef::Work(wp), |_| {})?;
+    Ok(part)
+}
+
+fn mirror_solid(op: Operation, remove: bool, plane: PlaneRef) -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    hole_at(&mut part, "Extrusion1:End", 20.0, 10.0, 10.0, 3.0)?;
+    mirror_of(&mut part, &[], plane, |p| {
+        p.solid_mode = true;
+        p.operation = op;
+        p.remove_original = remove;
+    })?;
+    Ok(part)
+}
+
+fn m_solid_join_face() -> Result<PartDocument, String> {
+    let base = plate(40.0, 30.0, 20.0)?;
+    let face = face_where(&base, |c| (c.x - 40.0).abs() < 1e-6)?;
+    let p = mirror_solid(Operation::Join, false, PlaneRef::Face(face))?;
+    if p.body.solids().count() != 1 {
+        return Err("the mirror is not joined".into());
+    }
+    Ok(p)
+}
+
+fn m_solid_new_solid() -> Result<PartDocument, String> {
+    let p = mirror_solid(
+        Operation::NewSolid,
+        false,
+        PlaneRef::Origin(OriginPlane::YZ),
+    )?;
+    if p.body.solids().count() != 2 {
+        return Err(format!("{} solids, want 2", p.body.solids().count()));
+    }
+    Ok(p)
+}
+
+fn m_solid_remove_original() -> Result<PartDocument, String> {
+    let p = mirror_solid(Operation::Join, true, PlaneRef::Origin(OriginPlane::YZ))?;
+    // Only the mirror stays, at negative x.
+    let xs: Vec<Real> = p.body.vertices().map(|(_, v)| v.point.x).collect();
+    if xs.iter().any(|&x| x > 1e-6) {
+        return Err("the original is still there".into());
+    }
+    Ok(p)
+}
+
+fn m_then_chamfer() -> Result<PartDocument, String> {
+    let mut part = centred_plate()?;
+    let b = boss_at(&mut part, PLATE.0, PLATE.1, 25.0, 10.0, 5.0, 8.0)?;
+    mirror_of(&mut part, &[&b], PlaneRef::Origin(OriginPlane::YZ), |_| {})?;
+    // The mirrored boss's top rim.
+    let e = edges_where(&part, |h| (h[2] - 18.0).abs() < 1e-6 && h[0] < 0.0);
+    if e.is_empty() {
+        return Err("no top edge on the mirrored boss".into());
+    }
+    part.add_blend(BlendFeature::chamfer(e, 1.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A pattern of holes mirrored as a whole (the pattern is the source).
+fn m_of_a_pattern() -> Result<PartDocument, String> {
+    let mut part = centred_plate()?;
+    let h = hole_at(&mut part, PLATE.0, PLATE.1, 10.0, 10.0, 4.0)?;
+    let p = rect_pattern(&mut part, &[&h], (X_AXIS, 3, 15.0), None, |_| {})?;
+    mirror_of(&mut part, &[&p], PlaneRef::Origin(OriginPlane::YZ), |_| {})?;
+    Ok(part)
+}
+
+fn m_no_plane() -> Result<PartDocument, String> {
+    let mut part = centred_plate()?;
+    let b = boss_at(&mut part, PLATE.0, PLATE.1, 25.0, 10.0, 5.0, 8.0)?;
+    let mut p = PatternFeature::mirror();
+    p.features = vec![b];
+    part.add_pattern(p).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Three bosses, then a round r 1 on every boss's top rim (copies included).
+fn x_pattern_then_fillet() -> Result<PartDocument, String> {
+    let mut part = plate(100.0, 60.0, 10.0)?;
+    let b = boss_at(&mut part, PLATE.0, PLATE.1, 20.0, 30.0, 5.0, 8.0)?;
+    rect_pattern(&mut part, &[&b], (X_AXIS, 3, 30.0), None, |_| {})?;
+    let e = edges_where(&part, |h| (h[2] - 18.0).abs() < 1e-6);
+    part.add_blend(BlendFeature::fillet(e, 1.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Two through holes, then Shell 2 inside open at the top: the holes become
+/// tubes.
+fn x_pattern_then_shell() -> Result<PartDocument, String> {
+    let mut part = plate(60.0, 40.0, 20.0)?;
+    let h = hole_at(&mut part, "Extrusion1:End", 20.0, 20.0, 20.0, 4.0)?;
+    rect_pattern(&mut part, &[&h], (X_AXIS, 2, 20.0), None, |_| {})?;
+    shell_of(
+        part,
+        &[("Extrusion1:End", [5.0, 5.0, 20.0])],
+        2.0,
+        ShellDirection::Inside,
+    )
+}
+
+/// Shell 2 of a box, then the solid patterned 3 times as new solids.
+fn x_shell_then_pattern_solid() -> Result<PartDocument, String> {
+    let mut part = s_shell_box()?;
+    rect_pattern(&mut part, &[], (X_AXIS, 3, 50.0), None, |p| {
+        p.solid_mode = true;
+        p.operation = Operation::NewSolid;
+    })?;
+    if part.body.solids().count() != 3 {
+        return Err(format!("{} solids, want 3", part.body.solids().count()));
+    }
+    Ok(part)
+}
+
+/// Solid pattern joined: two boxes side by side touching, one solid.
+fn x_pattern_solid_join() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    rect_pattern(&mut part, &[], (X_AXIS, 3, 30.0), None, |p| {
+        p.solid_mode = true;
+    })?;
+    if part.body.solids().count() != 1 {
+        return Err("not joined".into());
+    }
+    Ok(part)
+}
+
+/// Edit the source: the through holes become 4 deep, the copies follow.
+fn x_edit_source() -> Result<PartDocument, String> {
+    let mut part = p_rect_holes_3x2()?;
+    let k = part
+        .features
+        .iter()
+        .position(|f| f.id() == "Extrusion2")
+        .ok_or("no Extrusion2")?;
+    let Some(Feature::Extrude(mut ex)) = part.features.get(k).cloned() else {
+        return Err("not an extrude".into());
+    };
+    ex.extent = Extent::Distance;
+    ex.distance = 4.0;
+    part.replace_feature(k, Feature::Extrude(ex))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Edit the pattern: 3 × 2 → 4 × 2, through its parameter.
+fn x_edit_count() -> Result<PartDocument, String> {
+    let mut part = p_rect_holes_3x2()?;
+    let k = part.features.len() - 1;
+    part.set_feature_field(k, "count1", "4")
+        .map_err(|e| e.to_string())?;
+    part.regenerate().map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// SolidCraft #2076: 100 small bosses joined by one pattern (quadratic
+/// there; one compound tool here).
+fn v_pattern_100_joins() -> Result<PartDocument, String> {
+    let mut part = plate(200.0, 200.0, 5.0)?;
+    let b = boss_at(&mut part, "Extrusion1:End", 5.0, 10.0, 10.0, 1.5, 3.0)?;
+    rect_pattern(
+        &mut part,
+        &[&b],
+        (X_AXIS, 10, 20.0),
+        Some((Y_AXIS, 10, 20.0)),
+        |_| {},
+    )?;
+    Ok(part)
+}
+
+/// SolidCraft #2755: the copies keep the source's target body. Two plates;
+/// a hole cutting only the right one; of its copies, one cuts the right
+/// plate too, the ones over the gap and over the left plate cut nothing.
+fn v_pattern_keeps_targets() -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    slab(&mut part, (0.0, 0.0), (50.0, 40.0), 10.0)?;
+    let right = slab(&mut part, (60.0, 0.0), (110.0, 40.0), 10.0)?;
+    let j = sketch_on_top(&mut part, &format!("{right}:End"), 10.0, |sk, at| {
+        sk.add_circle(at(85.0, 20.0), 4.0)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    let regions = part.sketches[j].sketch.regions();
+    let profiles: Vec<ProfileRef> = regions
+        .iter()
+        .filter(|r| r.area() < 60.0)
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
+    let mut ex = ExtrudeFeature::new(profiles, 1.0);
+    ex.operation = Operation::Cut;
+    ex.extent = Extent::ThroughAll;
+    ex.direction = ExtentDirection::Flipped;
+    ex.solids = vec![right.clone()];
+    let h = part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    rect_pattern(&mut part, &[&h], (X_AXIS, 4, 15.0), None, |p| {
+        if let PatternKind::Rectangular { first, .. } = &mut p.kind {
+            first.flip = true;
+        }
+    })?;
+    Ok(part)
+}
+
+/// 36 holes in a 6 × 6 pattern on a plate, the copies' rims rounded.
+fn v_pattern_36_holes_rounded() -> Result<PartDocument, String> {
+    let mut part = plate(60.0, 60.0, 6.0)?;
+    let h = hole_at(&mut part, "Extrusion1:End", 6.0, 5.0, 5.0, 2.0)?;
+    rect_pattern(
+        &mut part,
+        &[&h],
+        (X_AXIS, 6, 10.0),
+        Some((Y_AXIS, 6, 10.0)),
+        |_| {},
+    )?;
+    let e = edges_where(&part, |h| {
+        (h[2] - 6.0).abs() < 1e-6 && h[0] > 1.0 && h[0] < 59.0 && h[1] > 1.0 && h[1] < 59.0
+    });
+    part.add_blend(BlendFeature::fillet(e, 0.5))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
 fn cases() -> Vec<Case> {
     let cone_ring = |r: Real| PI * r * r * 0.5 * 0.5 / 3.0; // not used
     let _ = cone_ring;
@@ -1563,7 +2181,264 @@ fn cases() -> Vec<Case> {
         2.0 * PI * (2.0 + 0.5 * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI))) * (1.0 - PI / 4.0) * 0.25;
     let shell_box = 24_000.0 - 36.0 * 26.0 * 18.0;
     let round4 = |r: Real, h: Real| 4.0 * (r * r - PI * r * r / 4.0) * h;
-    vec![
+    let hole = HOLE;
+    let plate60 = 60_000.0;
+    let boss = |r: Real, h: Real| PI * r * r * h;
+    let disc40 = PI * 1600.0 * 8.0;
+    let dhole = PI * 16.0 * 8.0;
+    let solid_hole = 24_000.0 - PI * 9.0 * 20.0;
+    let boss_round = 2.0 * PI * (5.0 - (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI))) * (1.0 - PI / 4.0);
+    let boss_chamfer = 2.0 * PI * (5.0 - 1.0 / 3.0) * 0.5;
+    let tube_shell =
+        60.0 * 40.0 * 20.0 - 2.0 * PI * 16.0 * 20.0 - (56.0 * 36.0 * 18.0 - 2.0 * PI * 36.0 * 18.0);
+    let mut pattern_cases = vec![
+        Case {
+            level: "simple",
+            name: "rect pattern: hole 3×2 on a plate",
+            budget_ms: 400.0,
+            build: p_rect_holes_3x2,
+            want: Want::Volume(plate60 - 6.0 * hole),
+        },
+        Case {
+            level: "simple",
+            name: "rect pattern: boss ×4 joined",
+            budget_ms: 400.0,
+            build: p_rect_boss_join,
+            want: Want::Volume(plate60 + 4.0 * boss(5.0, 8.0)),
+        },
+        Case {
+            level: "simple",
+            name: "rect pattern: midplane, 3 holes",
+            budget_ms: 400.0,
+            build: p_rect_midplane,
+            want: Want::Volume(plate60 - 3.0 * hole),
+        },
+        Case {
+            level: "simple",
+            name: "rect pattern: fitted, 5 holes over 80",
+            budget_ms: 400.0,
+            build: p_rect_fitted,
+            want: Want::Volume(plate60 - 5.0 * hole),
+        },
+        Case {
+            level: "simple",
+            name: "rect pattern: plane normal, flipped",
+            budget_ms: 400.0,
+            build: p_rect_plane_normal_flipped,
+            want: Want::Volume(plate60 - 4.0 * hole),
+        },
+        Case {
+            level: "simple",
+            name: "rect pattern: copies past the edge skipped",
+            budget_ms: 400.0,
+            build: p_rect_past_the_edge,
+            want: Want::Volume(plate60 - 3.0 * hole),
+        },
+        Case {
+            level: "simple",
+            name: "rect pattern: 1200 instances refused",
+            budget_ms: 400.0,
+            build: p_rect_too_many,
+            want: Want::Error("too many"),
+        },
+        Case {
+            level: "simple",
+            name: "rect pattern: count 0 refused",
+            budget_ms: 400.0,
+            build: p_rect_zero_count,
+            want: Want::Error("at least 1"),
+        },
+        Case {
+            level: "simple",
+            name: "rect pattern: of a fillet refused",
+            budget_ms: 400.0,
+            build: p_pattern_a_fillet,
+            want: Want::Error("cannot be patterned on its own"),
+        },
+        Case {
+            level: "simple",
+            name: "rect pattern: no features refused",
+            budget_ms: 400.0,
+            build: p_no_features,
+            want: Want::Error("select the features"),
+        },
+        Case {
+            level: "simple",
+            name: "circ pattern: 6 holes on a disc",
+            budget_ms: 600.0,
+            build: p_circ_six_holes,
+            want: Want::Volume(disc40 - 6.0 * dhole),
+        },
+        Case {
+            level: "simple",
+            name: "circ pattern: 3 holes 45° apart",
+            budget_ms: 600.0,
+            build: p_circ_incremental,
+            want: Want::Volume(disc40 - 3.0 * dhole),
+        },
+        Case {
+            level: "simple",
+            name: "circ pattern: midplane, flipped, 4",
+            budget_ms: 600.0,
+            build: p_circ_midplane_flipped,
+            want: Want::Volume(disc40 - 4.0 * dhole),
+        },
+        Case {
+            level: "simple",
+            name: "circ pattern: 8 bosses joined",
+            budget_ms: 1000.0,
+            build: p_circ_bosses,
+            want: Want::Volume(disc40 + 8.0 * boss(3.0, 5.0)),
+        },
+        Case {
+            level: "simple",
+            name: "circ pattern: about a work axis",
+            budget_ms: 600.0,
+            build: p_circ_work_axis,
+            want: Want::Volume(disc40 - 5.0 * dhole),
+        },
+        Case {
+            level: "simple",
+            name: "circ pattern: about a box edge (lumps)",
+            budget_ms: 400.0,
+            build: p_circ_edge_lumps,
+            want: Want::Volume(36_000.0 + 4.0 * boss(4.0, 5.0)),
+        },
+        Case {
+            level: "simple",
+            name: "circ pattern: no axis refused",
+            budget_ms: 600.0,
+            build: p_circ_no_axis,
+            want: Want::Error("rotation axis"),
+        },
+        Case {
+            level: "simple",
+            name: "mirror: boss across YZ",
+            budget_ms: 400.0,
+            build: m_boss_yz,
+            want: Want::Volume(plate60 + 2.0 * boss(5.0, 8.0)),
+        },
+        Case {
+            level: "simple",
+            name: "mirror: hole across XZ",
+            budget_ms: 400.0,
+            build: m_hole_xz,
+            want: Want::Volume(plate60 - 2.0 * hole),
+        },
+        Case {
+            level: "simple",
+            name: "mirror: hole + boss, work plane",
+            budget_ms: 500.0,
+            build: m_two_features_work_plane,
+            want: Want::Volume(plate60 - 2.0 * hole + 2.0 * boss(5.0, 8.0)),
+        },
+        Case {
+            level: "simple",
+            name: "mirror solid: Join across a face",
+            budget_ms: 400.0,
+            build: m_solid_join_face,
+            want: Want::Volume(2.0 * solid_hole),
+        },
+        Case {
+            level: "simple",
+            name: "mirror solid: New Solid",
+            budget_ms: 400.0,
+            build: m_solid_new_solid,
+            want: Want::Volume(2.0 * solid_hole),
+        },
+        Case {
+            level: "simple",
+            name: "mirror solid: Remove Original",
+            budget_ms: 400.0,
+            build: m_solid_remove_original,
+            want: Want::Volume(solid_hole),
+        },
+        Case {
+            level: "simple",
+            name: "mirror: no plane refused",
+            budget_ms: 400.0,
+            build: m_no_plane,
+            want: Want::Error("mirror plane"),
+        },
+        Case {
+            level: "complex",
+            name: "mirror, then chamfer the copy",
+            budget_ms: 800.0,
+            build: m_then_chamfer,
+            want: Want::Volume(plate60 + 2.0 * boss(5.0, 8.0) - boss_chamfer),
+        },
+        Case {
+            level: "complex",
+            name: "mirror of a pattern",
+            budget_ms: 800.0,
+            build: m_of_a_pattern,
+            want: Want::Volume(plate60 - 6.0 * hole),
+        },
+        Case {
+            level: "complex",
+            name: "pattern, then fillet the copies",
+            budget_ms: 1500.0,
+            build: x_pattern_then_fillet,
+            want: Want::Volume(plate60 + 3.0 * boss(5.0, 8.0) - 3.0 * boss_round),
+        },
+        Case {
+            level: "complex",
+            name: "pattern of holes, then shell",
+            budget_ms: 1500.0,
+            build: x_pattern_then_shell,
+            want: Want::Volume(tube_shell),
+        },
+        Case {
+            level: "complex",
+            name: "shell, then pattern the solid",
+            budget_ms: 1500.0,
+            build: x_shell_then_pattern_solid,
+            want: Want::Volume(3.0 * (24_000.0 - 36.0 * 26.0 * 18.0)),
+        },
+        Case {
+            level: "complex",
+            name: "pattern the solid, Join (overlapping)",
+            budget_ms: 800.0,
+            build: x_pattern_solid_join,
+            want: Want::Volume(100.0 * 30.0 * 20.0),
+        },
+        Case {
+            level: "complex",
+            name: "edit the source: copies follow",
+            budget_ms: 1000.0,
+            build: x_edit_source,
+            want: Want::Volume(plate60 - 6.0 * PI * 16.0 * 4.0),
+        },
+        Case {
+            level: "complex",
+            name: "edit the pattern count 3 → 4",
+            budget_ms: 1000.0,
+            build: x_edit_count,
+            want: Want::Volume(plate60 - 8.0 * hole),
+        },
+        Case {
+            level: "very complex",
+            name: "pattern of 100 joins (SolidCraft #2076)",
+            budget_ms: 5000.0,
+            build: v_pattern_100_joins,
+            want: Want::Volume(200.0 * 200.0 * 5.0 + 100.0 * boss(1.5, 3.0)),
+        },
+        Case {
+            level: "very complex",
+            name: "copies keep the target (SolidCraft #2755)",
+            budget_ms: 1000.0,
+            build: v_pattern_keeps_targets,
+            want: Want::Volume(40_000.0 - 2.0 * hole),
+        },
+        Case {
+            level: "very complex",
+            name: "6×6 hole pattern, rims rounded",
+            budget_ms: 6000.0,
+            build: v_pattern_36_holes_rounded,
+            want: Want::Volume(60.0 * 60.0 * 6.0 - 36.0 * (PI * 4.0 * 6.0 + round)),
+        },
+    ];
+    let mut all = vec![
         Case {
             level: "simple",
             name: "shell 2 inside, box open at the top",
@@ -2096,7 +2971,9 @@ fn cases() -> Vec<Case> {
             build: v_holes_filleted,
             want: Want::Volume(60.0 * 60.0 * 6.0 - 36.0 * (PI * 4.0 * 6.0 + round)),
         },
-    ]
+    ];
+    all.append(&mut pattern_cases);
+    all
 }
 
 #[test]

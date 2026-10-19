@@ -67,6 +67,12 @@ pub enum Action {
     Shell,
     /// Face Draft: tilt faces against a pull direction.
     Draft,
+    /// Rectangular Pattern of features or solids.
+    RectPattern,
+    /// Circular Pattern of features or solids.
+    CircPattern,
+    /// Mirror of features or solids across a plane.
+    MirrorFeature,
     /// Work Axis: the method follows from the picks.
     WorkAxis,
     /// Work Point: the method follows from the picks.
@@ -398,9 +404,27 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             panel(
                 "Pattern",
                 vec![
-                    todo(Icon::PatternRect, "Rectangular", None, "2.11"),
-                    todo(Icon::PatternCirc, "Circular", None, "2.11"),
-                    todo(Icon::Mirror, "Mirror", None, "2.12"),
+                    ready(
+                        Icon::PatternRect,
+                        "Rectangular",
+                        None,
+                        Action::RectPattern,
+                        "Rectangular Pattern: copy features or solids in rows along one or two directions",
+                    ),
+                    ready(
+                        Icon::PatternCirc,
+                        "Circular",
+                        None,
+                        Action::CircPattern,
+                        "Circular Pattern: copy features or solids at equal angles about an axis",
+                    ),
+                    ready(
+                        Icon::Mirror,
+                        "Mirror",
+                        None,
+                        Action::MirrorFeature,
+                        "Mirror: copy features or solids mirrored across a plane",
+                    ),
                 ],
             ),
             panel(

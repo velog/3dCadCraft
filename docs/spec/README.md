@@ -60,6 +60,8 @@
 | [2.5-chamfer.md](2.5-chamfer.md) | Chamfer (фаска) |
 | [2.8-draft.md](2.8-draft.md) | Face Draft: Fixed Edge, Fixed Plane, посока на изваждане |
 | [2.6-shell.md](2.6-shell.md) | Shell (черупка): Remove Faces, Inside / Outside / Both, затворена кухина |
+| [2.11-patterns.md](2.11-patterns.md) | Rectangular Pattern и Circular Pattern на операции и тела |
+| [2.12-mirror.md](2.12-mirror.md) | Mirror на операции и тела |
 | [2.10-work-features.md](2.10-work-features.md) | Работни равнини, оси, точки |
 | [2.13-booleans.md](2.13-booleans.md) | Join / Cut / Intersect, Surface, представяне на резултата |
 | [2.16-browser.md](2.16-browser.md) | Дърво на модела: ред, вложени скици, тела |
