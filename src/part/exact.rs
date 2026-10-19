@@ -588,9 +588,10 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
     let side = match sh.direction {
         super::ShellDirection::Inside => ShellSide::Inside,
         super::ShellDirection::Outside => ShellSide::Outside,
-        super::ShellDirection::Both => ShellSide::Both,
+        super::ShellDirection::Center => ShellSide::Both,
     };
-    let r = exact::shell(&cur[target], &open, sh.thickness, side, &sh.id)
+    let rounded = sh.corners == super::ShellCorners::Rounded;
+    let r = exact::shell_with(&cur[target], &open, sh.thickness, side, rounded, &sh.id)
         .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?;
     // Walls as thick as the part leave no cavity (a cylinder 10 high shelled
     // 10 or 12 from the top, FreeCAD #25050): no inner wall was made. (By
@@ -606,15 +607,19 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
     Ok(out)
 }
 
-/// Face Draft (`docs/spec/2.8-draft.md`): the faces are found by name on
-/// the solid holding them; faces sharing a neutral plane are drafted in one
-/// kernel call, groups one after another (faces keep their names, so each
-/// group is found again on the result). Kernel failures are health.
+/// Face Draft (`docs/spec/2.8-draft.md`): the faces (with their rounds,
+/// Automatic Blending) are found by name on the solid holding them. One
+/// way: faces sharing a neutral plane are drafted in one kernel call,
+/// groups one after another (faces keep their names, so each group is found
+/// again on the result). Two-sided (Symmetric / Asymmetric, Parting Line):
+/// one split–draft–join. `sketch_lines`: the parting sketch's lines.
+/// Kernel failures are health.
 pub(super) fn draft(
     dr: &super::DraftFeature,
     body: &BRep,
     works: &super::placement::WorkGeom,
     cur: &[ExactSolid],
+    sketch_lines: Option<&[(Point3, Point3, crate::kernel::Vector3)]>,
 ) -> Result<Vec<ExactSolid>, Fail> {
     if dr.faces.is_empty() {
         return Err(User("select the faces to draft".into()));
@@ -623,10 +628,30 @@ pub(super) fn draft(
         return Err(User("the draft angle must be between −90° and 90°".into()));
     }
     let pull = dr.pull_direction(body, works).map_err(User)?;
-    let planes = dr.neutral_planes(body, works, pull).map_err(User)?;
+    let refs = dr.faces_with_blends(body, pull);
+    let kernel = |e: String| User(format!("the geometry kernel cannot build it ({e})"));
+    let mut out = cur.to_vec();
+    if let Some(two) = dr
+        .two_sided(body, works, pull, sketch_lines)
+        .map_err(User)?
+    {
+        let all: Vec<&super::FaceRef> = refs.iter().collect();
+        let (t, faces) = draft_targets(&out, &all)?;
+        out[t] = exact::draft_two_sided(
+            &out[t],
+            &faces,
+            &two.plane,
+            pull,
+            two.above.as_ref().map(|s| (&s.neutral, s.angle)),
+            two.below.as_ref().map(|s| (&s.neutral, s.angle)),
+        )
+        .map_err(kernel)?;
+        return Ok(out);
+    }
+    let planes = dr.neutral_planes(body, works, pull, &refs).map_err(User)?;
     // Groups of faces with the same neutral plane (height along the pull).
     let mut groups: Vec<(crate::kernel::Plane, Vec<&super::FaceRef>)> = Vec::new();
-    for (r, pl) in dr.faces.iter().zip(planes) {
+    for (r, pl) in refs.iter().zip(planes) {
         let h = pl.origin.coords.dot(&pull);
         match groups
             .iter_mut()
@@ -636,38 +661,47 @@ pub(super) fn draft(
             None => groups.push((pl, vec![r])),
         }
     }
-    let mut out = cur.to_vec();
     for (pl, refs) in groups {
-        let mut target: Option<usize> = None;
-        let mut faces = Vec::new();
-        for r in refs {
-            let hint = Point3::from(r.hint);
-            let found = out.iter().enumerate().find_map(|(i, s)| {
-                exact::faces_named(s, &r.face, hint)
-                    .ok()
-                    .and_then(|v| v.first().map(|&f| (i, f)))
-            });
-            let Some((i, f)) = found else {
-                return Err(User(format!("the face {} no longer exists", r.face)));
-            };
-            match target {
-                Some(t) if t != i => {
-                    return Err(User("the faces belong to different solids".into()));
-                }
-                _ => target = Some(i),
-            }
-            if !faces.contains(&f) {
-                faces.push(f);
-            }
-        }
-        let Some(t) = target else { continue };
-        out[t] = exact::draft(&out[t], &faces, &pl, pull, dr.angle)
-            .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?;
+        let (t, faces) = draft_targets(&out, &refs)?;
+        out[t] = exact::draft(&out[t], &faces, &pl, pull, dr.angle).map_err(kernel)?;
     }
     Ok(out)
 }
 
-/// What a Hole or Thread feature leaves for later: the holes it made
+/// The solid holding the referenced faces and their kernel faces (all on
+/// one solid).
+fn draft_targets(
+    out: &[ExactSolid],
+    refs: &[&super::FaceRef],
+) -> Result<(usize, Vec<usize>), Fail> {
+    let mut target: Option<usize> = None;
+    let mut faces = Vec::new();
+    for r in refs {
+        let hint = Point3::from(r.hint);
+        let found = out.iter().enumerate().find_map(|(i, s)| {
+            exact::faces_named(s, &r.face, hint)
+                .ok()
+                .and_then(|v| v.first().map(|&f| (i, f)))
+        });
+        let Some((i, f)) = found else {
+            return Err(User(format!("the face {} no longer exists", r.face)));
+        };
+        match target {
+            Some(t) if t != i => {
+                return Err(User("the faces belong to different solids".into()));
+            }
+            _ => target = Some(i),
+        }
+        if !faces.contains(&f) {
+            faces.push(f);
+        }
+    }
+    target
+        .map(|t| (t, faces))
+        .ok_or_else(|| User("select the faces to draft".into()))
+}
+
+// What a Hole or Thread feature leaves for later: the holes it made
 /// (drawing data), cosmetic threads (display) and modeled threads (cut
 /// after every feature).
 #[derive(Clone, Debug, Default)]

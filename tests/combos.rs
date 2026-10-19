@@ -321,7 +321,7 @@ fn shell_both_then_window_then_fillet() {
         &mut p,
         &[(&t, [20.0, 15.0, 20.0])],
         2.0,
-        ShellDirection::Both,
+        ShellDirection::Center,
     );
     let front = face_where(&p, |q| (q.y + 1.0).abs() < 1e-6);
     let j = sketch_on(&mut p, &front, |sk, at| {

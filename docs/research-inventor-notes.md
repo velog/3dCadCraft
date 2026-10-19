@@ -129,6 +129,15 @@ on the whole body, so features added *after* it are not shelled (LT help). [Help
 - (f) Messages (paraphrased): "shell could not be created / offset failed — try a
   different thickness or allow approximation" [Mem]; approximation accept/edit dialog
   [Help]; red required-field marker if thickness empty [Help general].
+- (g) 2027 page re-read (2026-10-19), in our words: steps are type → direction →
+  thickness → optional faces to remove → Advanced Properties → OK, then (only if an
+  approximation was used) a box to accept it or go back to editing. The third direction
+  is called **Center** (equal offsets in and out; the part grows by half the thickness).
+  **Rounded Corners** puts rounds on the corners the feature itself generates. Keys: Enter
+  or Tab commit a value (Tab moves on), **Ctrl+Enter** creates and closes. Values can also
+  be dragged with the in-canvas manipulator; the active one is highlighted. The
+  **breadcrumb** name is selected by one click and edited by a second. Tolerance as
+  Specified accepts 0–100 and may be slow. [Help]
 
 ---
 
@@ -197,6 +206,21 @@ reference (edge, plane or parting tool). [Help]
   `Face Draft1`; Edit Feature reopens the dialog with the selections highlighted. [Mem]
 - (f) Messages: "one or more faces could not be drafted" / "invalid fixed edge" style
   errors; angle out of range. [Mem]
+- (g) 2027 page re-read (2026-10-19), in our words: Fixed Edge drafts about one or more
+  tangent, contiguous fixed edges per face (may add faces); Fixed Plane can add material
+  on one side and remove it on the other; Parting Line steps are pull direction → parting
+  tool (sketch, plane or surface) → faces → Automatic Blending → angle → OK, or go on to
+  static edges. Hovering a face shows it in one colour and its fixed edge in another.
+  **Move Parting Line** enables the Static Edges selector (single edges, **Select
+  Boundary**, **Clear All**) and **Angle for Top / Both / Bottom** — the page names these
+  but does not explain their effect. Parting Line can also show **Absolute / Relative**
+  angle in the expanded dialog. One Way is for Fixed Edge and Fixed Plane; Symmetric and
+  Asymmetric for Fixed Plane and Parting Line. [Help]
+- (h) API `FaceDraftDefinition` (2025): `AutomaticBlending`; `CutMaterial` (parting tool
+  only; `FixedEdges` apply when it is false — i.e. Move Parting Line); `DraftAngle` (for a
+  parting line: the smaller of the two sides), `DraftAngleTwo` (asymmetric);
+  `AbsoluteDraftAngle`; `PullDirectionReversed`; pull direction objects: planar face,
+  edge, work plane, work axis. [Help API]
 
 ---
 

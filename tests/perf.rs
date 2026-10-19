@@ -16,6 +16,10 @@ use cadcraft3d::part::{
 };
 
 /// Median wall time (ms) of `runs` calls.
+/// Budgets of the Face Draft Symmetric and Shell Rounded Corners cases (ms).
+const BUDGET_SYMMETRIC_DRAFT: f64 = 700.0;
+const BUDGET_ROUNDED_SHELL: f64 = 400.0;
+
 fn median_ms(runs: usize, mut f: impl FnMut()) -> f64 {
     let mut t: Vec<f64> = (0..runs)
         .map(|_| {
@@ -439,6 +443,51 @@ fn speed_budgets() {
             let body = p.body.clone();
             def.toggle(&body, front, None);
             p.add_draft(def).unwrap();
+        }),
+    ));
+
+    // Symmetric Face Draft (split by the plane, both halves drafted, joined
+    // again) of the same box's sides and rounds about z = 10.
+    let mut mid = vertical_rounds.clone();
+    let wp = mid
+        .add_work(cadcraft3d::part::WorkFeature::new(
+            cadcraft3d::part::WorkDef::Plane(cadcraft3d::part::WorkPlaneDef::Offset {
+                base: cadcraft3d::part::PlaneRef::Origin(cadcraft3d::part::OriginPlane::XY),
+                distance: 10.0,
+            }),
+        ))
+        .unwrap();
+    rows.push((
+        "face draft 3° symmetric about z = 10, sides and rounds",
+        BUDGET_SYMMETRIC_DRAFT,
+        median_ms(3, || {
+            let mut p = mid.clone();
+            p.build_cache = Default::default();
+            let mut def = cadcraft3d::part::DraftFeature::new(3f64.to_radians());
+            def.draft_type = cadcraft3d::part::DraftType::FixedPlane;
+            def.plane = Some(cadcraft3d::part::PlaneRef::Work(wp.clone()));
+            def.extent = cadcraft3d::part::DraftExtent::Symmetric;
+            let front = p.body.find_face("Box1:Front").unwrap();
+            let body = p.body.clone();
+            def.toggle(&body, front, None);
+            p.add_draft(def).unwrap();
+        }),
+    ));
+
+    // Shell with Rounded Corners (outside: the offset's convex edges
+    // rounded) of a box open at the top.
+    rows.push((
+        "shell 2 outside, rounded corners, box open at the top",
+        BUDGET_ROUNDED_SHELL,
+        median_ms(3, || {
+            let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+            let top = p.body.find_face("Box1:Top").unwrap();
+            let mut def = cadcraft3d::part::ShellFeature::new(2.0);
+            def.direction = cadcraft3d::part::ShellDirection::Outside;
+            def.corners = cadcraft3d::part::ShellCorners::Rounded;
+            def.remove
+                .push(cadcraft3d::part::shell::face_ref(&p.body, top, None).unwrap());
+            p.add_shell(def).unwrap();
         }),
     ));
 

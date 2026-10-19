@@ -26,6 +26,7 @@
 mod blend;
 mod browser_edit;
 mod camera;
+mod command_ui;
 mod demos;
 mod diag;
 mod draft;
@@ -370,6 +371,15 @@ enum ManipOwner {
     Feature(usize),
     /// The open Work Plane / Axis / Point dialog.
     Work,
+    /// The open Shell dialog (thickness arrow).
+    Shell,
+}
+
+impl ManipOwner {
+    /// A dialog's handle: its value follows the drag live.
+    fn live(self) -> bool {
+        matches!(self, ManipOwner::Draft | ManipOwner::Shell)
+    }
 }
 
 /// Edge polylines of an Extrude preview, or why it cannot be built.
@@ -1774,6 +1784,9 @@ impl CadCraftApp {
             };
             return Some((ManipOwner::Draft, h));
         }
+        if self.shell_draft.is_some() {
+            return Some((ManipOwner::Shell, self.shell_handles()));
+        }
         let Selection::Feature(k) = self.selection else {
             return None;
         };
@@ -2705,6 +2718,17 @@ impl CadCraftApp {
                         "distance" => d.distance = v,
                         "angle" => d.angle = v,
                         _ => {}
+                    }
+                }
+            }
+            ManipOwner::Shell => {
+                if let Some(d) = self.shell_draft.as_mut()
+                    && v > 0.0
+                {
+                    let mut f = crate::part::Feature::Shell(d.def.clone());
+                    set_feature_field_value(&mut f, field, v);
+                    if let crate::part::Feature::Shell(s) = f {
+                        d.def = s;
                     }
                 }
             }
@@ -3871,8 +3895,14 @@ impl CadCraftApp {
         if pressed(Key::F1) {
             self.open_help();
         }
+        // Enter in a command with selectors: Continue / OK (`command_ui`).
+        let flow_open = self.flow_command_open();
+        if flow_open && pressed(Key::Enter) {
+            self.command_enter(cmd);
+        }
         // Enter (or Space) with nothing in progress repeats the last command.
         if (pressed(Key::Enter) || pressed(Key::Space))
+            && !flow_open
             && self.tools.tool == Tool::Select
             && self.extrude.is_none()
             && self.tools.selected.is_empty()
@@ -4268,35 +4298,25 @@ impl CadCraftApp {
         {
             self.hole_pick(pick);
         }
-        // Face Draft's Pull Direction / Fixed Plane: an edge or a plane.
-        let draft_ref = self.draft_draft.as_ref().is_some_and(|d| !d.picks_faces());
-        let (draft_edge, draft_plane) = match (draft_ref, pointer, on_cube) {
-            (true, Some(p), None) => {
-                let pull = self
-                    .draft_draft
-                    .as_ref()
-                    .is_some_and(|d| d.input == draft::DraftInput::Pull);
-                let e = if pull { self.edge_under(p, rect) } else { None };
-                (
-                    e,
-                    if e.is_none() {
-                        self.plane_under(p, rect, true)
-                    } else {
-                        None
-                    },
-                )
-            }
-            _ => (None, None),
+        // Face Draft: what its active selector takes (`gui/draft.rs`).
+        let draft_hover = match (self.draft_draft.is_some(), pointer, on_cube) {
+            (true, Some(p), None) => self.draft_hover(p, rect, shell_hover),
+            _ => None,
         };
-        if self.draft_draft.is_some() && response.clicked_by(PointerButton::Primary) {
-            if face_cmd {
-                if let Some(h) = shell_hover {
-                    self.draft_pick(Some(h), None, None);
-                }
-            } else if draft_edge.is_some() || draft_plane.is_some() {
-                self.draft_pick(None, draft_edge, draft_plane.clone());
-            }
+        if self.draft_draft.is_some()
+            && response.clicked_by(PointerButton::Primary)
+            && let Some(h) = draft_hover.clone()
+        {
+            self.draft_pick(h);
         }
+        let draft_edge = match &draft_hover {
+            Some(draft::DraftPick::Edge(e)) => Some(*e),
+            _ => None,
+        };
+        let draft_plane = match &draft_hover {
+            Some(draft::DraftPick::Plane(p)) => Some(p.clone()),
+            _ => None,
+        };
         // --- Pattern / Mirror: features (faces), solids, directions,
         // axes and planes ---
         let pat_geom = self
@@ -4608,6 +4628,10 @@ impl CadCraftApp {
                 self.cube_menu(ui);
                 return;
             }
+            // An open command: its menu (OK, Continue, Back, options…).
+            if self.command_context_menu(ui) {
+                return;
+            }
             let idle = self.tools.tool == Tool::Select && self.extrude.is_none();
             if idle && let Some(a) = self.repeatable() {
                 if ui.button(format!("Repeat {}", command_label(a))).clicked() {
@@ -4873,7 +4897,7 @@ impl CadCraftApp {
                 && m.2 != v
             {
                 m.2 = v;
-                if owner == ManipOwner::Draft {
+                if owner.live() {
                     self.manip_apply(owner, h.field, v);
                 }
             }
@@ -4881,7 +4905,7 @@ impl CadCraftApp {
         if response.drag_stopped()
             && let Some((owner, h, v)) = self.manip_drag.take()
         {
-            if owner != ManipOwner::Draft && v.is_finite() {
+            if !owner.live() && v.is_finite() {
                 self.manip_apply(owner, h.field, v);
             }
             self.history.break_coalescing();
@@ -5325,7 +5349,7 @@ impl CadCraftApp {
                     hover_item.or_else(|| self.browser_hover.clone().map(select::SelItem::Feature)),
                 ),
             };
-            if let Some(e) = draft_edge.or(pat_edge) {
+            if let Some(e) = pat_edge.filter(|_| draft_edge.is_none()) {
                 let opts = TessellationOptions::default();
                 if let Ok(pts) = self.part().body.sample_edge(e, &opts) {
                     self.draw_visible_polyline(
@@ -5336,7 +5360,8 @@ impl CadCraftApp {
                     );
                 }
             }
-            self.draw_draft_pull(&painter, rect);
+            self.draw_draft_overlay(&painter, rect, draft_hover.as_ref());
+            self.draw_command_hint(&painter, rect, pointer);
             self.draw_pattern_refs(&painter, rect);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);

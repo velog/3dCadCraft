@@ -52,7 +52,7 @@ pub use blend::{
     VariableRadius,
 };
 pub use boolean::{Operation, Output};
-pub use draft::{DraftFeature, DraftType, PullRef};
+pub use draft::{DraftExtent, DraftFeature, DraftType, PartingSide, PartingTool, PullRef};
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, TargetRef};
 pub use hole::{
     ClearanceSpec, CosmeticThread, DrillPoint, FastenerFit, HoleCenter, HoleFeature, HoleGroup,
@@ -61,7 +61,7 @@ pub use hole::{
 pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
-pub use shell::{FaceRef, ShellDirection, ShellFeature};
+pub use shell::{FaceRef, ShellCorners, ShellDirection, ShellFeature};
 pub use work::{
     CurveRef, LineRef, UcsDef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef,
 };
@@ -317,8 +317,8 @@ impl Feature {
             | Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
-            | Feature::Draft(_)
             | Feature::Pattern(_) => None,
+            Feature::Draft(d) => d.parting_sketch(),
             Feature::Thread(_) => None,
             Feature::Hole(h) => (!h.sketch.is_empty()).then_some(h.sketch.as_str()),
             Feature::Extrude(e) => Some(&e.sketch),
@@ -770,7 +770,11 @@ impl PartDocument {
                 BuildStep::Blend(bl) if use_exact => exact::blend(bl, &body, &solids).map(Some),
                 BuildStep::Shell(sh) if use_exact => exact::shell(sh, &solids).map(Some),
                 BuildStep::Draft(dr) if use_exact => {
-                    exact::draft(dr, &body, &works, &solids).map(Some)
+                    let lines = dr
+                        .parting_sketch()
+                        .and_then(|id| self.sketches.iter().find(|s| s.id == id))
+                        .map(|ps| draft::sketch_lines(&ps.sketch));
+                    exact::draft(dr, &body, &works, &solids, lines.as_deref()).map(Some)
                 }
                 BuildStep::Pattern(p) if use_exact => {
                     let sources = if p.solid_mode {

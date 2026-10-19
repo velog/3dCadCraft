@@ -606,7 +606,7 @@
 
 ## 2.6 Shell (черупка) — 🟡 · L
 
-**Спецификация:** [spec/2.6-shell.md](spec/2.6-shell.md). Направено (чака визуална проверка): Remove Faces с Automatic Face Chain, Inside / Outside / Both, затворена кухина без махнати стени, дебелина с израз, Edit Feature, преглед. Предстои: Unique Face Thickness, Rounded Corners, приближение, стрелка за дебелината в изгледа.
+**Спецификация:** [spec/2.6-shell.md](spec/2.6-shell.md). Направено (чака визуална проверка): Remove Faces с Automatic Face Chain (селектор с насочване, десен клик с Continue/Back, Enter/Ctrl+Enter), Inside / Outside / Center, Sharp / Rounded Corners, затворена кухина без махнати стени, дебелина с израз и стрелка в изгледа, преименуване в breadcrumb, Edit Feature, преглед. Advanced Properties (приближение) са показани неактивни — точното ядро не приближава. Предстои: Unique Face Thickness.
 
 Издълбава тялото до стени с дебелина t, като избраните стени се премахват (отворени). Поддържа различна дебелина за отделни стени.
 
@@ -624,7 +624,7 @@
 
 ## 2.8 Draft (наклон за изваждане) — 🟡 · L
 
-**Спецификация:** [spec/2.8-draft.md](spec/2.8-draft.md). Направено (чака визуална проверка): Fixed Edge (неподвижен ръб перпендикулярен на посоката), Fixed Plane, Pull Direction от стена, равнина или ръб, Flip, Automatic Face Chain, ъгъл с израз, Edit Feature, преглед. Предстои: Parting Line, Symmetric/Asymmetric, Automatic Blending.
+**Спецификация:** [spec/2.8-draft.md](spec/2.8-draft.md). Направено (чака визуална проверка): Fixed Edge (неподвижен ръб перпендикулярен на посоката, показан в изгледа), Fixed Plane, **Parting Line** (равнина или 2D скица на една височина), **One Way / Symmetric / Asymmetric** с Draft Angle 2 (стената се разделя с равнината и всяка част се накланя в своята посока), **Move Parting Line** (Static Edges, Select Boundary, Clear All, Angle for Top/Both/Bottom), Pull Direction от стена, равнина, ръб или ос с Flip и стрелка, **Automatic Blending** (закръгленията по посоката стават конуси и остават допирателни), Automatic Face Chain, ъгли с изрази, насочване (селектори, десен клик Continue/Back, Enter), Edit Feature, преглед. Предстои: наклонена/крива разделителна линия, 3D скица и повърхнина като инструмент, Absolute/Relative, Ctrl+клик за махане.
 
 Накланя стени под ъгъл спрямо посока на изваждане (pull direction), за отливки и леене под налягане. Методи: фиксиран ръб или фиксирана равнина (разделителна линия).
 
