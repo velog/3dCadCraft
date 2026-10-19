@@ -47,5 +47,12 @@
     "features": 1,
     "sketches": 1,
     "exact": true
+  },
+  "r2/partial_chamfer_r2.3dcadcraft": {
+    "volume": 47970.00000000001,
+    "faces": 9,
+    "features": 2,
+    "sketches": 0,
+    "exact": true
   }
 }

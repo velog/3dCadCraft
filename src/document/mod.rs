@@ -302,6 +302,10 @@ pub struct Project {
     pub name: String,
     documents: Vec<Document>,
     libraries: Vec<LibraryLink>,
+    /// Set when the file was written by a newer build (higher format
+    /// revision) and still opened: what may be built differently. Not saved.
+    #[serde(skip)]
+    pub newer_file: Option<String>,
 }
 
 impl Project {
@@ -312,6 +316,7 @@ impl Project {
             name: name.into(),
             documents: Vec::new(),
             libraries: Vec::new(),
+            newer_file: None,
         }
     }
 

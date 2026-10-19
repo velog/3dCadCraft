@@ -1859,7 +1859,7 @@ impl CadCraftApp {
                         d.def.sets.remove(k - 1);
                         d.set = 0;
                     }
-                    if ft == FilletType::Constant {
+                    if is_fillet && ft == FilletType::Constant {
                         let last_empty = d
                             .def
                             .sets
@@ -1967,6 +1967,22 @@ impl CadCraftApp {
             bodies: Vec::new(),
         };
         let snapshot = crate::part::Feature::Blend(d.def.clone());
+        // Partial chamfer: the one straight edge's start and length.
+        let single_edge: Option<([f64; 3], f64)> = match (&d.def.kind, &d.def.edges[..]) {
+            (BlendKind::Chamfer { .. }, [r]) => {
+                let body = &self.part().body;
+                self.edges_of_ref(r).first().and_then(|&e| {
+                    let x = body.edge(e)?;
+                    let a = body.vertex(x.start)?.point;
+                    let b = body.vertex(x.end)?.point;
+                    crate::part::select::edge_is_straight(body, e)
+                        .then(|| ([a.x, a.y, a.z], (b - a).norm()))
+                })
+            }
+            _ => None,
+        };
+        let mut partial_toggle: Option<bool> = None;
+        let partial_on = d.def.partial.is_some();
         let cone = &mut d.def.cone_corners;
         psection(ui, "blend_size", "Size", |ui| {
             if let BlendKind::Chamfer { method, flip, .. } = &mut d.def.kind {
@@ -1983,6 +1999,20 @@ impl CadCraftApp {
                         .on_hover_text("Swap the faces the values apply to");
                     ui.end_row();
                 }
+                plabel(ui, "Partial");
+                let mut on = partial_on;
+                if ui
+                    .add_enabled(
+                        single_edge.is_some() || on,
+                        egui::Checkbox::new(&mut on, ""),
+                    )
+                    .on_hover_text("Chamfer only part of the edge (one straight edge)")
+                    .on_disabled_hover_text("Select one straight edge")
+                    .changed()
+                {
+                    partial_toggle = Some(on);
+                }
+                ui.end_row();
             }
             let chord = matches!(snapshot, crate::part::Feature::Blend(ref b) if b.fillet_type == crate::part::FilletType::Chord);
             for field in crate::part::params::feature_field_names(&snapshot) {
@@ -2000,9 +2030,22 @@ impl CadCraftApp {
                     "distance" => "Distance",
                     "distance2" => "Distance 2",
                     "angle" => "Angle",
+                    "to_start" => "To Start",
+                    "partial_length" => "Chamfer length",
                     other => other,
                 };
                 field_row(ui, &mut fx, label, &snapshot, field);
+            }
+            if let (crate::part::Feature::Blend(b), Some((_, len))) = (&snapshot, single_edge)
+                && let Some(p) = &b.partial
+            {
+                plabel(ui, "To End");
+                let rest = len - p.to_start - p.length;
+                ui.label(format!("{rest:.3} mm (of {len:.3})"))
+                    .on_hover_text(
+                        "Driven: the edge's length less To Start and the chamfer length",
+                    );
+                ui.end_row();
             }
             if matches!(snapshot, crate::part::Feature::Blend(ref b) if matches!(b.kind, BlendKind::Chamfer { .. }))
             {
@@ -2014,6 +2057,17 @@ impl CadCraftApp {
         });
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
+        match (partial_toggle, single_edge) {
+            (Some(true), Some((start, len))) => {
+                d.def.partial = Some(crate::part::PartialChamfer {
+                    start,
+                    to_start: 0.0,
+                    length: len / 2.0,
+                });
+            }
+            (Some(false), _) => d.def.partial = None,
+            _ => {}
+        }
         for (field, text) in commits {
             let mut f = crate::part::Feature::Blend(d.def.clone());
             match self.part().apply_draft_field(&mut f, field, &text) {
@@ -2175,6 +2229,8 @@ impl CadCraftApp {
                     "distance" => "Distance",
                     "distance2" => "Distance 2",
                     "angle" => "Angle",
+                    "to_start" => "To Start",
+                    "partial_length" => "Chamfer length",
                     other => other,
                 };
                 field_row(ui, &mut fx, label, &f, field);

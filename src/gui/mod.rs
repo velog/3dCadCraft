@@ -2934,11 +2934,14 @@ impl CadCraftApp {
                         {
                             let _ = p.regenerate(); // resolve sketch placements
                         }
-                        let msg = format!(
+                        let mut msg = format!(
                             "Opened '{}' ({} documents)",
                             project.name,
                             project.documents().len()
                         );
+                        if let Some(w) = &project.newer_file {
+                            msg.push_str(&format!(". Warning: {w}"));
+                        }
                         self.project = project;
                         self.part_id = id;
                         self.history.clear();

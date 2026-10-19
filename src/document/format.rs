@@ -65,7 +65,9 @@ pub const FORMAT_VERSION: u32 = 1;
 ///
 /// - 1: fillet types (Variable, Chord, Full Round) and edge sets, sketch
 ///   pattern count equations (2026-10-19).
-pub const FORMAT_REVISION: u32 = 1;
+/// - 2: partial chamfer (`BlendFeature::partial`; an older build would make a
+///   full chamfer of the edge) (2026-10-19).
+pub const FORMAT_REVISION: u32 = 2;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
@@ -318,6 +320,12 @@ impl Project {
             name: manifest.project.name,
             documents,
             libraries: manifest.libraries,
+            newer_file: (manifest.format_revision > FORMAT_REVISION).then(|| {
+                format!(
+                    "made by a newer 3DCadCraft ({}, format revision {}; this build: {}): features added since may be missing or built differently, update the program",
+                    manifest.generator, manifest.format_revision, FORMAT_REVISION
+                )
+            }),
         };
         project.validate().map_err(|e| corrupt(path, e))?;
         Ok(project)
@@ -520,7 +528,12 @@ mod tests {
         let original = fs::read_to_string(&docs[0]).unwrap();
         let extra = original.replacen('{', "{\"from_the_future\": 1, ", 1);
         fs::write(&docs[0], &extra).unwrap();
-        assert!(Project::load(&folder).is_ok());
+        let p = Project::load(&folder).unwrap();
+        assert!(
+            p.newer_file
+                .as_deref()
+                .is_some_and(|m| m.contains("newer 3DCadCraft"))
+        );
         // Something it cannot read: "made by a newer 3DCadCraft".
         fs::write(&docs[0], original.replacen("\"data\"", "\"data_v2\"", 1)).unwrap();
         let err = Project::load(&folder).unwrap_err();

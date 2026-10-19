@@ -150,15 +150,13 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
                     .map(|n| (n, Unit::Mm))
                     .collect(),
             },
-            super::BlendKind::Chamfer { method, .. } => match method {
-                super::ChamferMethod::Distance => vec![("distance", Unit::Mm)],
-                super::ChamferMethod::TwoDistances => {
-                    vec![("distance", Unit::Mm), ("distance2", Unit::Mm)]
+            super::BlendKind::Chamfer { method, .. } => {
+                let mut v = chamfer_fields(*method);
+                if b.partial.is_some() {
+                    v.extend([("to_start", Unit::Mm), ("partial_length", Unit::Mm)]);
                 }
-                super::ChamferMethod::DistanceAngle => {
-                    vec![("distance", Unit::Mm), ("angle", Unit::Deg)]
-                }
-            },
+                v
+            }
         },
         Feature::Work(w) => match &w.def {
             super::WorkDef::Plane(super::WorkPlaneDef::Offset { .. }) => {
@@ -170,6 +168,15 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
             }
             _ => Vec::new(),
         },
+    }
+}
+
+/// A chamfer's size fields for its method.
+fn chamfer_fields(method: super::ChamferMethod) -> Vec<(&'static str, Unit)> {
+    match method {
+        super::ChamferMethod::Distance => vec![("distance", Unit::Mm)],
+        super::ChamferMethod::TwoDistances => vec![("distance", Unit::Mm), ("distance2", Unit::Mm)],
+        super::ChamferMethod::DistanceAngle => vec![("distance", Unit::Mm), ("angle", Unit::Deg)],
     }
 }
 
@@ -217,6 +224,8 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
             (super::BlendKind::Chamfer { distance, .. }, "distance") => Some(*distance),
             (super::BlendKind::Chamfer { distance2, .. }, "distance2") => Some(*distance2),
             (super::BlendKind::Chamfer { angle, .. }, "angle") => Some(*angle),
+            (_, "to_start") => b.partial.as_ref().map(|p| p.to_start),
+            (_, "partial_length") => b.partial.as_ref().map(|p| p.length),
             _ => None,
         },
         Feature::Work(w) => match (&w.def, field) {
@@ -264,6 +273,16 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
             (super::BlendKind::Chamfer { distance, .. }, "distance") => *distance = v,
             (super::BlendKind::Chamfer { distance2, .. }, "distance2") => *distance2 = v,
             (super::BlendKind::Chamfer { angle, .. }, "angle") => *angle = v,
+            (_, "to_start") => {
+                if let Some(p) = b.partial.as_mut() {
+                    p.to_start = v;
+                }
+            }
+            (_, "partial_length") => {
+                if let Some(p) = b.partial.as_mut() {
+                    p.length = v;
+                }
+            }
             _ => {}
         },
         Feature::Work(w) => match (&mut w.def, field) {

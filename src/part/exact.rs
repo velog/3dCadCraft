@@ -325,6 +325,13 @@ pub(super) fn blend(
     {
         return special_fillet(bl, body, cur);
     }
+    // Partial chamfer: one straight edge, a wedge only along its part.
+    if bl.partial.is_some() {
+        if bl.edges.len() != 1 {
+            return Err(User("a partial chamfer takes one edge".into()));
+        }
+        return wedge_blend(bl, body, cur).map_err(User);
+    }
     let mut points: Vec<Vec<Point3>> = vec![Vec::new(); cur.len()];
     let mut picker = EdgePoints::new(body);
     for (i, p) in picker.points(&bl.edges).map_err(User)? {
@@ -556,8 +563,34 @@ fn wedge_blend(
                 let q = p + dir * probe.min(ext) + (u1 + u2) * probe;
                 exact::contains(solid, q) != convex
             };
-            let back = if goes_on(a, -t) { ext } else { 0.0 };
-            let ahead = if goes_on(b, t) { ext } else { 0.0 };
+            let mut back = if goes_on(a, -t) { ext } else { 0.0 };
+            let mut ahead = if goes_on(b, t) { ext } else { 0.0 };
+            // Partial: only `length` of the edge, `to_start` from the end
+            // nearest the start point, ends square to the edge.
+            let (a, b, len) = match &bl.partial {
+                Some(p) => {
+                    let s = Point3::from(p.start);
+                    let from_a = (a - s).norm() <= (b - s).norm();
+                    if !(p.to_start >= 0.0 && p.length > 1e-9) {
+                        return Err(
+                            "the partial chamfer needs a length and a start distance".into()
+                        );
+                    }
+                    if p.to_start + p.length > len + 1e-9 {
+                        return Err("the partial chamfer runs past the end of the edge".into());
+                    }
+                    back = 0.0;
+                    ahead = 0.0;
+                    if from_a {
+                        let a2 = a + t * p.to_start;
+                        (a2, a2 + t * p.length, p.length)
+                    } else {
+                        let b2 = b - t * p.to_start;
+                        (b2 - t * p.length, b2, p.length)
+                    }
+                }
+                None => (a, b, len),
+            };
             let mut pair = [
                 body.face(f1)
                     .and_then(|x| x.name.clone())

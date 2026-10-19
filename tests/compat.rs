@@ -172,6 +172,25 @@ fn features_r1() -> PartDocument {
     part
 }
 
+/// Revision 2: a partial chamfer (15 of the 60 mm top front edge).
+fn partial_r2() -> PartDocument {
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+    let front: Vec<EdgeRef> = part
+        .body
+        .edges()
+        .filter_map(|(e, _)| edge_ref(&part.body, e))
+        .filter(|r| r.hint[1].abs() < 1e-6 && (r.hint[2] - 20.0).abs() < 1e-6)
+        .collect();
+    let mut def = BlendFeature::chamfer(front, 2.0);
+    def.partial = Some(cadcraft3d::part::PartialChamfer {
+        start: [0.0, 0.0, 20.0],
+        to_start: 10.0,
+        length: 15.0,
+    });
+    part.add_blend(def).unwrap();
+    part
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -185,6 +204,13 @@ fn old_files_still_open() {
         if !f.exists() {
             let mut project = Project::new("FeaturesR1");
             project.add_document("Part1", DocumentData::Part(features_r1()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r2/partial_chamfer_r2.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("PartialR2");
+            project.add_document("Part1", DocumentData::Part(partial_r2()));
             project.save(&f).unwrap();
         }
     }

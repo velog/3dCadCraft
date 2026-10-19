@@ -8,6 +8,7 @@ use std::f64::consts::PI;
 use std::time::Instant;
 
 use cadcraft3d::kernel::{Point3, Real};
+use cadcraft3d::part::PartialChamfer;
 use cadcraft3d::part::blend::edge_ref;
 use cadcraft3d::part::{
     BlendFeature, EdgeRef, Extent, ExtentDirection, ExtrudeFeature, Feature, FilletSet, Operation,
@@ -644,6 +645,27 @@ fn c_variable_fillet() -> Result<PartDocument, String> {
     Ok(part)
 }
 
+/// Partial chamfer 2 on the box's front top edge: from 10 mm after its
+/// x = 0 end, 15 mm long.
+fn partial_chamfer(to_start: Real, length: Real) -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let edge = front_top_edge(&part)?;
+    let mut def = BlendFeature::chamfer(vec![edge], 2.0);
+    def.partial = Some(PartialChamfer {
+        start: [0.0, 0.0, 20.0],
+        to_start,
+        length,
+    });
+    part.add_blend(def).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+fn c_partial_chamfer() -> Result<PartDocument, String> {
+    partial_chamfer(10.0, 15.0)
+}
+fn c_partial_chamfer_too_long() -> Result<PartDocument, String> {
+    partial_chamfer(30.0, 15.0)
+}
+
 /// Chord width 4 on the box's front top edge (90°: r = 4 / √2).
 fn c_chord_fillet() -> Result<PartDocument, String> {
     let mut part = plate(40.0, 30.0, 20.0)?;
@@ -1049,6 +1071,20 @@ fn cases() -> Vec<Case> {
                 24000.0 - (1.0 - PI / 4.0) * 40.0 * (4.0 + 10.0 + 25.0) / 3.0,
                 1.5,
             ),
+        },
+        Case {
+            level: "complex",
+            name: "partial chamfer 2, 15 of 40 mm",
+            budget_ms: 300.0,
+            build: c_partial_chamfer,
+            want: Want::VolumeWithin(24000.0 - 2.0 * 15.0, 0.01),
+        },
+        Case {
+            level: "complex",
+            name: "partial chamfer past the edge's end",
+            budget_ms: 300.0,
+            build: c_partial_chamfer_too_long,
+            want: Want::Error("runs past the end of the edge"),
         },
         Case {
             level: "complex",

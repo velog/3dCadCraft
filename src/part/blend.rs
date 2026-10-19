@@ -59,6 +59,19 @@ pub struct VariableRadius {
     pub points: Vec<[Real; 2]>,
 }
 
+/// A Partial chamfer (Inventor): the chamfer covers only part of its edge,
+/// `to_start` from the edge's end nearest `start` and `length` long; its
+/// ends are planes square to the edge.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PartialChamfer {
+    /// A point at (or near) the end the distances are measured from.
+    pub start: [Real; 3],
+    /// From that end to the chamfer (mm, ≥ 0; Inventor's To Start).
+    pub to_start: Real,
+    /// The chamfer's length along the edge (mm; Inventor's Chamfer).
+    pub length: Real,
+}
+
 /// Fillet types beyond the constant edge fillet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FilletType {
@@ -148,6 +161,9 @@ pub struct BlendFeature {
     /// The middle face of a Full Round (persistent name).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_round: Option<String>,
+    /// Partial chamfer of its (one) edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial: Option<PartialChamfer>,
 }
 
 fn is_constant(t: &FilletType) -> bool {
@@ -169,6 +185,7 @@ impl BlendFeature {
             variable: Vec::new(),
             smooth: false,
             full_round: None,
+            partial: None,
         }
     }
 
@@ -192,6 +209,7 @@ impl BlendFeature {
             variable: Vec::new(),
             smooth: false,
             full_round: None,
+            partial: None,
         }
     }
 
@@ -256,6 +274,7 @@ impl BlendFeature {
     pub fn build(&self, body: &mut BRep) -> Result<(), String> {
         if matches!(self.kind, BlendKind::Fillet { .. })
             && (self.fillet_type != FilletType::Constant || !self.sets.is_empty())
+            || self.partial.is_some()
         {
             return Err("this fillet type needs the exact kernel".into());
         }

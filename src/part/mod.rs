@@ -40,7 +40,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use blend::{
-    BlendFeature, BlendKind, ChamferMethod, EdgeRef, FilletSet, FilletType, VariableRadius,
+    BlendFeature, BlendKind, ChamferMethod, EdgeRef, FilletSet, FilletType, PartialChamfer,
+    VariableRadius,
 };
 pub use boolean::{Operation, Output};
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, TargetRef};
