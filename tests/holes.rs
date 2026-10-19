@@ -694,3 +694,18 @@ fn pattern_and_mirror_of_a_hole_feature() {
     assert!(part.add_pattern(m).is_err());
     assert_eq!(part.features.len(), n);
 }
+
+/// Two blind 118° holes in one feature (the GUI test's case): a valid body
+/// (a cone tip's edges were run twice the same way: a non-manifold edge).
+#[test]
+fn two_blind_drilled_holes_are_valid() {
+    let mut part = block();
+    holes_at(
+        &mut part,
+        HoleSpec::simple(6.0, 10.0),
+        &[(10.0, 10.0), (30.0, 20.0)],
+    )
+    .unwrap();
+    let want = BLOCK - 2.0 * (PI * 9.0 * 10.0 + cone(3.0, 118f64.to_radians()));
+    check(&part, want, 2e-4);
+}

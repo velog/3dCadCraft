@@ -1815,7 +1815,12 @@ fn circle_through(pts: &[Point3]) -> Option<Circle> {
 /// the left of the edge seen from outside (normal × direction points into
 /// it). Taken at the edge's middle segment, against the face's triangle
 /// nearest to it.
-fn sense_by_geometry(m: &TriangleMesh, pts: &[Point3]) -> Option<Sense> {
+fn sense_by_geometry(
+    m: &TriangleMesh,
+    pts: &[Point3],
+    inside: &dyn Fn(Point3) -> bool,
+    eps: Real,
+) -> Option<Sense> {
     let i = pts.len() / 2;
     let (a, b) = (pts[i.saturating_sub(1)], pts[i.max(1)]);
     let d = b - a;
@@ -1826,13 +1831,26 @@ fn sense_by_geometry(m: &TriangleMesh, pts: &[Point3]) -> Option<Sense> {
         .map(|t| {
             let [p, q, r] = t.map(|k| m.positions[k as usize]);
             let c = Point3::from((p.coords + q.coords + r.coords) / 3.0);
-            let n = t
+            // The triangle's own normal, turned outward by its vertex
+            // normals (one of them can be meaningless at a cone's tip).
+            let vn = t
                 .iter()
                 .map(|&k| m.normals[k as usize])
                 .fold(Vector3::zeros(), |s, v| s + v);
+            let g = (q - p).cross(&(r - p));
+            let n = if g.dot(&vn) < 0.0 { -g } else { g };
             ((c - mid).norm(), c, n)
         })
+        // Zero-area triangles (at a cone's tip) give no direction.
+        .filter(|(_, _, n)| n.norm() > 1e-12 * (1.0 + mid.coords.norm()).powi(2))
         .min_by(|x, y| x.0.total_cmp(&y.0))?;
+    // A face whose triangles (and normals) came out inside-out: the body
+    // decides which side is outside.
+    let n = match n.try_normalize(1e-30) {
+        Some(u) if inside(c + u * eps) && !inside(c - u * eps) => -u,
+        Some(u) => u,
+        None => return None,
+    };
     let side = n.cross(&d).dot(&(c - mid));
     if side.abs() < 1e-15 {
         return None;
@@ -1878,6 +1896,12 @@ fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
         }
     }
 
+    // Inside test for the orientation fallback below.
+    let eps = body.size().max(1e-9) * 1e-5;
+    let inside = |p: Point3| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body.contains(v3(&p))))
+            .unwrap_or(false)
+    };
     // Vertices: edge polyline ends, welded.
     let mut vid: HashMap<Key, VertexId> = HashMap::new();
     let mut vertex = |out: &mut BRep, p: Point3| -> VertexId {
@@ -1929,8 +1953,8 @@ fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
             && g < nf
             && directed[f].contains(&(k0, k1)) == directed[g].contains(&(k0, k1))
             && let (Some(sf), Some(sg_)) = (
-                sense_by_geometry(&meshes[f], &pts),
-                sense_by_geometry(&meshes[g], &pts),
+                sense_by_geometry(&meshes[f], &pts, &inside, eps),
+                sense_by_geometry(&meshes[g], &pts, &inside, eps),
             )
             && sf != sg_
         {
