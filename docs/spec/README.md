@@ -65,6 +65,8 @@
 | [2.5-chamfer.md](2.5-chamfer.md) | Chamfer (фаска) |
 | [2.8-draft.md](2.8-draft.md) | Face Draft: Fixed Edge, Fixed Plane, посока на изваждане |
 | [2.6-shell.md](2.6-shell.md) | Shell (черупка): Remove Faces, Inside / Outside / Both, затворена кухина |
+| [2.7-rib.md](2.7-rib.md) | Rib / Web: ребра и прегради от отворени профили, To Next / Finite, Draft, бобини, мрежи |
+| [5.3-coil.md](5.3-coil.md) | Coil: пружини и винтови канали, три метода, Taper, затворени краища, резба с Cut |
 | [5.1-sweep.md](5.1-sweep.md) | Sweep: профил по път (скица или ръбове), Guide Rail, Parallel, Taper, Twist |
 | [5.2-loft.md](5.2-loft.md) | Loft: сечения (скици, стени, точка), Closed Loop, условия, преход |
 | [2.11-patterns.md](2.11-patterns.md) | Rectangular Pattern и Circular Pattern на операции и тела |

@@ -739,3 +739,38 @@ To Create Revolved Features — GUID-401BABD2-8D5B-4300-BA8D-70037445044F (и д
 Sweep/Loft go through SolidCraft's `sweep`, `sweep_path`, `loft`, `loft_to_point`; options it
 lacks (guide surface, solid sweep, rails, centre line, area loft, G1/G2) refuse clearly rather
 than build an approximation that looks right but is not. [our note]
+
+## 10. Coil and Rib (Inventor 2027 Help, our summary)
+
+### Coil (GUID-E95936AF-ABBE-48DD-8FCC-762ED86943F1)
+- A property panel: Output Solid or Surface (a surface can serve as a termination or a split
+  tool); Profiles (picked by itself in a lone sketch) and Axis (a line, a work axis or an
+  origin axis, any direction, never through the profile; a lone centerline is taken and the
+  preview appears at once); Flip reverses the axis. [Help]
+- Behavior: the method decides which two of Pitch (rise per turn), Revolution (more than 0,
+  fractions allowed, the ends included) and Height (centre of the first section to centre of
+  the last) are typed; Taper (not for a spiral); Rotation Left / Right. [Help]
+- Ends: both Close boxes off = natural ends. Close Start / Close End each have a Transition
+  Angle (the pitch eases out, usually under a turn) and a Flat Angle (no rise, so a spring
+  stands up). [Help]
+- Output: Join / Cut (threads) / Intersect / New Solid (the only one for a first body), the
+  Solids selector with several bodies; OK / Apply; the advanced Keep sketch visible on (+). [Help]
+- A thread by hand: work plane and axis through the cylinder, the profile sketched on a plane
+  through the axis with the silhouette projected, then Coil with Cut. [Help]
+
+### Rib (GUID-BFE147D7-49FE-4DA8-9AC2-1A5ABC4F0C8D)
+- Parallel to Sketch Plane makes a rib from an open profile (thickness along the sketch
+  normal); Normal to Sketch Plane makes a web (open or closed profile, thickness in the
+  sketch plane). Several profiles in one sketch make a network, crossing or not. [Help]
+- Two direction buttons choose where it grows; the Solids selector picks the body; Extend
+  Profile appears only when the ends stop short of the part (off: exactly the profile). [Help]
+- Thickness with three buttons (one side, the other, both); Depth To Next or Finite; Taper only
+  when the direction is perpendicular to the sketch plane. [Help]
+- Normal ribs also have a Draft tab (Hold Thickness At Top / At Root, Draft Angle) and a Boss
+  tab (Centers on the profile, Select All, Diameter, Offset above or below the plane, Draft
+  Angle). [Help]
+
+### For our clone
+Coil Booleans are cut through a faceted ring around the coil (as modeled threads) because the
+exact Boolean with helical B-spline walls takes seconds per turn. We treat Taper and the Draft
+Angle of a web as one side-wall angle; the page does not say how they combine. [our note]

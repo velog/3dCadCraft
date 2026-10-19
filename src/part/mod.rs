@@ -59,6 +59,7 @@ pub use blend::{
     VariableRadius,
 };
 pub use boolean::{Operation, Output};
+pub use coil::{CoilAxis, CoilEnd, CoilFeature, CoilMethod};
 pub use draft::{DraftExtent, DraftFeature, DraftType, PartingSide, PartingTool, PullRef};
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, OpenProfile, ProfileRef, TargetRef};
 pub use hole::{
@@ -70,9 +71,8 @@ pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use primitive::{PrimitiveFeature, PrimitiveKind};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
-pub use shell::{FaceRef, ShellCorners, ShellDirection, ShellFeature};
-pub use coil::{CoilAxis, CoilEnd, CoilFeature, CoilMethod};
 pub use rib::{DraftHold, RibBoss, RibDirection, RibExtent, RibFeature, RibSide};
+pub use shell::{FaceRef, ShellCorners, ShellDirection, ShellFeature};
 pub use sweep::{PathRef, ProfileScaling, SweepFeature, SweepOrientation, SweepType};
 pub use work::{
     CurveRef, LineRef, UcsDef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef,
@@ -1151,7 +1151,10 @@ impl PartDocument {
                     Err(msg)
                         if matches!(
                             f,
-                            Feature::Sweep(_) | Feature::Loft(_) | Feature::Coil(_) | Feature::Rib(_)
+                            Feature::Sweep(_)
+                                | Feature::Loft(_)
+                                | Feature::Coil(_)
+                                | Feature::Rib(_)
                         ) =>
                     {
                         let msg =

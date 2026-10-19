@@ -323,14 +323,17 @@ pub fn coil_mesh(
     for i in 0..=steps {
         let a = a0 + span * i as Real / steps as Real;
         for q in &poly {
-            mesh.positions.push(v3(&m.apply(a, plane.point_at(q.x, q.y))));
+            mesh.positions
+                .push(v3(&m.apply(a, plane.point_at(q.x, q.y))));
         }
     }
     let id = |i: usize, j: usize| u32::try_from(i * n + j % n).unwrap_or(0);
     for i in 0..steps {
         for j in 0..n {
-            mesh.triangles.push([id(i, j), id(i + 1, j), id(i + 1, j + 1)]);
-            mesh.triangles.push([id(i, j), id(i + 1, j + 1), id(i, j + 1)]);
+            mesh.triangles
+                .push([id(i, j), id(i + 1, j), id(i + 1, j + 1)]);
+            mesh.triangles
+                .push([id(i, j), id(i + 1, j + 1), id(i, j + 1)]);
         }
     }
     // Caps: counter-clockwise triangles of the (counter-clockwise) section
@@ -338,7 +341,8 @@ pub fn coil_mesh(
     let (_, tris) = crate::kernel::triangulate_with_holes(&poly, &[]);
     for t in &tris {
         mesh.triangles.push([id(0, t[0]), id(0, t[1]), id(0, t[2])]);
-        mesh.triangles.push([id(steps, t[0]), id(steps, t[2]), id(steps, t[1])]);
+        mesh.triangles
+            .push([id(steps, t[0]), id(steps, t[2]), id(steps, t[1])]);
     }
     mesh.tri_face = vec![0; mesh.triangles.len()];
     if mesh.measure().volume < 0.0 {
@@ -409,7 +413,9 @@ pub fn coil_boolean(
     };
     let facet = |piece: &ExactSolid| -> Result<Option<ExactSolid>, String> {
         let tol = (piece.body.size() * 5e-4).clamp(2e-3, 1e-2);
-        let r = guarded("coil", || sk::faceted_boolean(&piece.body, &mesh.0, kop, tol))?;
+        let r = guarded("coil", || {
+            sk::faceted_boolean(&piece.body, &mesh.0, kop, tol)
+        })?;
         let Some(body) = r else {
             return Ok(None);
         };
@@ -464,36 +470,35 @@ pub fn coil_boolean(
         })
         .collect::<Result<_, _>>()?;
     type Slab = Result<Vec<ExactSolid>, String>;
-    let (rest, slabs): (Result<Option<ExactSolid>, String>, Vec<Slab>) =
-        std::thread::scope(|sc| {
-            let rest = (op == ExactOp::Cut).then(|| sc.spawn(|| boolean(s, &whole, ExactOp::Cut)));
-            let jobs: Vec<_> = rings
-                .iter()
-                .map(|z| {
-                    let facet = &facet;
-                    sc.spawn(move || -> Slab {
-                        let Some(inside) = boolean(s, z, ExactOp::Intersect)? else {
-                            return Ok(Vec::new());
-                        };
-                        let mut out = Vec::new();
-                        for piece in lumps(&inside) {
-                            out.extend(facet(&piece)?);
-                        }
-                        Ok(out)
-                    })
+    let (rest, slabs): (Result<Option<ExactSolid>, String>, Vec<Slab>) = std::thread::scope(|sc| {
+        let rest = (op == ExactOp::Cut).then(|| sc.spawn(|| boolean(s, &whole, ExactOp::Cut)));
+        let jobs: Vec<_> = rings
+            .iter()
+            .map(|z| {
+                let facet = &facet;
+                sc.spawn(move || -> Slab {
+                    let Some(inside) = boolean(s, z, ExactOp::Intersect)? else {
+                        return Ok(Vec::new());
+                    };
+                    let mut out = Vec::new();
+                    for piece in lumps(&inside) {
+                        out.extend(facet(&piece)?);
+                    }
+                    Ok(out)
                 })
-                .collect();
-            let lost = "coil: internal error in the geometry kernel";
-            let rest = match rest {
-                Some(h) => h.join().unwrap_or_else(|_| Err(lost.to_owned())),
-                None => Ok(None),
-            };
-            let slabs = jobs
-                .into_iter()
-                .map(|h| h.join().unwrap_or_else(|_| Err(lost.to_owned())))
-                .collect();
-            (rest, slabs)
-        });
+            })
+            .collect();
+        let lost = "coil: internal error in the geometry kernel";
+        let rest = match rest {
+            Some(h) => h.join().unwrap_or_else(|_| Err(lost.to_owned())),
+            None => Ok(None),
+        };
+        let slabs = jobs
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| Err(lost.to_owned())))
+            .collect();
+        (rest, slabs)
+    });
     let mut out: Vec<ExactSolid> = rest?.into_iter().collect();
     for sl in slabs {
         out.extend(sl?);
@@ -567,14 +572,25 @@ mod tests {
             assert!((v - want).abs() < 0.012 * want, "{pitch:?}: {v} vs {want}");
             let names: Vec<_> = s.face_names.iter().flatten().cloned().collect();
             assert!(names.contains(&"Coil1:Start".to_owned()), "{names:?}");
-            assert!(names.contains(&"Coil1:End".to_owned()), "{pitch:?} {names:?}
-{}", s.debug_topology());
-            assert!(names.iter().any(|n| n.starts_with("Coil1:Side:C")), "{names:?}");
+            assert!(
+                names.contains(&"Coil1:End".to_owned()),
+                "{pitch:?} {names:?}
+{}",
+                s.debug_topology()
+            );
+            assert!(
+                names.iter().any(|n| n.starts_with("Coil1:Side:C")),
+                "{names:?}"
+            );
         }
         // The mesh: closed and outward, the polygon's area × path.
         let mesh = coil_mesh(&plane, &poly, &m, 0.0, 3.0 * TAU, 36).unwrap();
         let area = 0.5 * 48.0 * (TAU / 48.0).sin();
         let mv = area * TAU * 10.0 * 3.0;
-        assert!((mesh.volume() - mv).abs() < 0.01 * mv, "{} vs {mv}", mesh.volume());
+        assert!(
+            (mesh.volume() - mv).abs() < 0.01 * mv,
+            "{} vs {mv}",
+            mesh.volume()
+        );
     }
 }

@@ -42,7 +42,11 @@ fn volume(part: &PartDocument) -> Real {
 }
 
 fn healthy(part: &PartDocument) {
-    assert!(part.feature_health.is_empty(), "sick: {:?}", part.feature_health);
+    assert!(
+        part.feature_health.is_empty(),
+        "sick: {:?}",
+        part.feature_health
+    );
 }
 
 fn near(got: Real, want: Real, rel: Real, what: &str) {
@@ -130,7 +134,10 @@ fn coil_left_and_right_hand() {
         near(volume(&part), pappus(1.0, 10.0, 1.25), 0.01, "volume");
         let f = part.body.find_face("Coil1:End").unwrap();
         let m = part.body.face(f).unwrap().mesh.clone().unwrap();
-        let c = m.positions.iter().fold(nalgebra::Vector3::zeros(), |a, p| a + p.coords)
+        let c = m
+            .positions
+            .iter()
+            .fold(nalgebra::Vector3::zeros(), |a, p| a + p.coords)
             / m.positions.len() as Real;
         ends.push(c);
     }
@@ -167,7 +174,11 @@ fn coil_taper_and_closed_ends() {
     // 1080 − 2·90 − 90 = 810° of full rise, 2.25 pitches.
     near(h, 11.25, 1e-9, "height");
     // Smooth walls (a sweep along the centre's path), not facets.
-    assert!(part.body.faces().count() < 20, "{} faces", part.body.faces().count());
+    assert!(
+        part.body.faces().count() < 20,
+        "{} faces",
+        part.body.faces().count()
+    );
 }
 
 #[test]
@@ -240,7 +251,10 @@ fn coil_cuts_a_thread_into_a_cylinder() {
     // as facets (chords inside the rod's circle): a few % more comes off.
     let groove = (2.0 / 3.0) * TAU * (9.0 + 2.0 / 3.0) * 6.0;
     let cut = v0 - v;
-    assert!(cut > groove * 0.98 && cut < groove * 1.06, "groove {cut} vs {groove}");
+    assert!(
+        cut > groove * 0.98 && cut < groove * 1.06,
+        "groove {cut} vs {groove}"
+    );
     // The end faces and the side outside the zone stay exact.
     assert!(part.body.find_face("Extrusion1:Start").is_some());
     assert!(part.body.find_face("Extrusion1:End").is_some());
@@ -273,7 +287,10 @@ fn coil_join_to_a_base_and_surface() {
     healthy(&part);
     // The coil sinks 0.5 mm into the plate at its start: a little less.
     let v = volume(&part);
-    assert!(v > v0 + pappus(1.0, 10.0, 2.0) * 0.9 && v < v0 + pappus(1.0, 10.0, 2.0), "{v}");
+    assert!(
+        v > v0 + pappus(1.0, 10.0, 2.0) * 0.9 && v < v0 + pappus(1.0, 10.0, 2.0),
+        "{v}"
+    );
 
     // Surface output: walls only (an open body), the part goes faceted.
     let mut part = PartDocument::default();
@@ -405,7 +422,10 @@ fn web_in_an_open_box_to_next() {
     open_box(&mut part);
     let v0 = volume(&part);
     // Across the box, wall to wall (inner faces at x = 2 and 58).
-    let (k, ids) = top_sketch(&mut part, &[(Point2::new(2.0, 20.0), Point2::new(58.0, 20.0))]);
+    let (k, ids) = top_sketch(
+        &mut part,
+        &[(Point2::new(2.0, 20.0), Point2::new(58.0, 20.0))],
+    );
     part.add_rib(k, RibFeature::new(ids, 2.0)).unwrap();
     healthy(&part);
     // 56 long, 2 thick, 18 deep (to the floor).
@@ -454,19 +474,28 @@ fn web_thickness_sides_finite_and_extend() {
         let ys: Vec<Real> = part
             .body
             .faces()
-            .filter(|(_, f)| f.name.as_deref().is_some_and(|n| n.starts_with("Rib1:Side:")))
+            .filter(|(_, f)| {
+                f.name
+                    .as_deref()
+                    .is_some_and(|n| n.starts_with("Rib1:Side:"))
+            })
             .filter_map(|(_, f)| f.mesh.as_ref())
             .flat_map(|m| m.positions.iter().map(|p| p.y))
             .collect();
         let (lo, hi) = ys
             .iter()
-            .fold((Real::INFINITY, Real::NEG_INFINITY), |(a, b), &y| (a.min(y), b.max(y)));
+            .fold((Real::INFINITY, Real::NEG_INFINITY), |(a, b), &y| {
+                (a.min(y), b.max(y))
+            });
         let (wl, wh) = match side {
             RibSide::Symmetric => (18.5, 21.5),
             RibSide::Side1 => (20.0, 23.0),
             RibSide::Side2 => (17.0, 20.0),
         };
-        assert!((lo - wl).abs() < 1e-3 && (hi - wh).abs() < 1e-3, "{side:?}: {lo}..{hi}");
+        assert!(
+            (lo - wl).abs() < 1e-3 && (hi - wh).abs() < 1e-3,
+            "{side:?}: {lo}..{hi}"
+        );
     }
 }
 
@@ -494,14 +523,35 @@ fn web_network_of_three() {
 fn web_taper_and_draft_hold() {
     let a = 2f64.to_radians();
     for (taper, draft, hold, want_top, want_root) in [
-        (a, 0.0, cadcraft3d::part::DraftHold::Top, 2.0, 2.0 + 2.0 * 18.0 * a.tan()),
-        (0.0, a, cadcraft3d::part::DraftHold::Top, 2.0, 2.0 + 2.0 * 18.0 * a.tan()),
-        (0.0, a, cadcraft3d::part::DraftHold::Root, 2.0 - 2.0 * 18.0 * a.tan(), 2.0),
+        (
+            a,
+            0.0,
+            cadcraft3d::part::DraftHold::Top,
+            2.0,
+            2.0 + 2.0 * 18.0 * a.tan(),
+        ),
+        (
+            0.0,
+            a,
+            cadcraft3d::part::DraftHold::Top,
+            2.0,
+            2.0 + 2.0 * 18.0 * a.tan(),
+        ),
+        (
+            0.0,
+            a,
+            cadcraft3d::part::DraftHold::Root,
+            2.0 - 2.0 * 18.0 * a.tan(),
+            2.0,
+        ),
     ] {
         let mut part = PartDocument::default();
         open_box(&mut part);
         let v0 = volume(&part);
-        let (k, ids) = top_sketch(&mut part, &[(Point2::new(2.0, 20.0), Point2::new(58.0, 20.0))]);
+        let (k, ids) = top_sketch(
+            &mut part,
+            &[(Point2::new(2.0, 20.0), Point2::new(58.0, 20.0))],
+        );
         let mut r = RibFeature::new(ids, 2.0);
         (r.taper, r.draft, r.hold) = (taper, draft, hold);
         part.add_rib(k, r).unwrap();
@@ -518,7 +568,10 @@ fn web_bosses() {
     let mut part = PartDocument::default();
     open_box(&mut part);
     let v0 = volume(&part);
-    let (k, ids) = top_sketch(&mut part, &[(Point2::new(2.0, 20.0), Point2::new(58.0, 20.0))]);
+    let (k, ids) = top_sketch(
+        &mut part,
+        &[(Point2::new(2.0, 20.0), Point2::new(58.0, 20.0))],
+    );
     let c1 = part.sketches[k].sketch.add_point(Point2::new(20.0, 20.0));
     let c2 = part.sketches[k].sketch.add_point(Point2::new(40.0, 20.0));
     let mut r = RibFeature::new(ids, 2.0);
@@ -551,13 +604,21 @@ fn bracket(part: &mut PartDocument) {
         .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts())
         .unwrap();
     let sk = &mut part.sketches[k].sketch;
-    let pts = [(0.0, 0.0), (40.0, 0.0), (40.0, 3.0), (3.0, 3.0), (3.0, 40.0), (0.0, 40.0)];
+    let pts = [
+        (0.0, 0.0),
+        (40.0, 0.0),
+        (40.0, 3.0),
+        (3.0, 3.0),
+        (3.0, 40.0),
+        (0.0, 40.0),
+    ];
     let ids: Vec<_> = pts
         .iter()
         .map(|&(x, z)| sk.add_point(Point2::new(x, z)))
         .collect();
     for i in 0..ids.len() {
-        sk.add_line_between(ids[i], ids[(i + 1) % ids.len()]).unwrap();
+        sk.add_line_between(ids[i], ids[(i + 1) % ids.len()])
+            .unwrap();
     }
     let pr = profiles(part, k);
     // XZ normal is −Y: a flipped extrusion goes to +Y.
@@ -594,10 +655,18 @@ fn rib_refusals_leave_the_part_unchanged() {
     let mut part = PartDocument::default();
     open_box(&mut part);
     let v0 = volume(&part);
-    let ribs = |p: &PartDocument| p.features.iter().filter(|f| matches!(f, Feature::Rib(_))).count();
+    let ribs = |p: &PartDocument| {
+        p.features
+            .iter()
+            .filter(|f| matches!(f, Feature::Rib(_)))
+            .count()
+    };
     let n = ribs(&part);
     // A line outside the box: To Next finds no face.
-    let (k, ids) = top_sketch(&mut part, &[(Point2::new(80.0, 0.0), Point2::new(90.0, 0.0))]);
+    let (k, ids) = top_sketch(
+        &mut part,
+        &[(Point2::new(80.0, 0.0), Point2::new(90.0, 0.0))],
+    );
     let mut r = RibFeature::new(ids.clone(), 2.0);
     r.extend = false;
     assert!(part.add_rib(k, r).is_err());
@@ -622,7 +691,10 @@ fn rib_save_load_and_edit() {
     let mut part = PartDocument::default();
     open_box(&mut part);
     let v0 = volume(&part);
-    let (k, ids) = top_sketch(&mut part, &[(Point2::new(2.0, 20.0), Point2::new(58.0, 20.0))]);
+    let (k, ids) = top_sketch(
+        &mut part,
+        &[(Point2::new(2.0, 20.0), Point2::new(58.0, 20.0))],
+    );
     part.add_rib(k, RibFeature::new(ids, 2.0)).unwrap();
     let json = serde_json::to_string(&part).unwrap();
     let mut back: PartDocument = serde_json::from_str(&json).unwrap();
@@ -673,7 +745,10 @@ fn rib_then_fillet_and_pattern() {
     use cadcraft3d::part::{BlendFeature, PatternFeature};
     let mut part = PartDocument::default();
     open_box(&mut part);
-    let (k, ids) = top_sketch(&mut part, &[(Point2::new(10.0, 2.0), Point2::new(10.0, 38.0))]);
+    let (k, ids) = top_sketch(
+        &mut part,
+        &[(Point2::new(10.0, 2.0), Point2::new(10.0, 38.0))],
+    );
     part.add_rib(k, RibFeature::new(ids, 2.0)).unwrap();
     healthy(&part);
     let v1 = volume(&part);
@@ -690,13 +765,21 @@ fn rib_then_fillet_and_pattern() {
         panic!("pattern: {e}");
     }
     healthy(&part);
-    near(volume(&part) - v1, 2.0 * 36.0 * 2.0 * 18.0, 0.003, "pattern");
+    near(
+        volume(&part) - v1,
+        2.0 * 36.0 * 2.0 * 18.0,
+        0.003,
+        "pattern",
+    );
     // Fillet the top edge of the rib (between its side and its top).
     // The root of the rib: its side meeting the floor (a concave round).
     let e = edge_between(&part, "Rib1:Side:Left", "Extrusion2").expect("rib root edge");
     part.add_blend(BlendFeature::fillet(vec![e], 0.5)).unwrap();
     healthy(&part);
-    assert!(volume(&part) > volume_before_fillet(&part), "a root round adds material");
+    assert!(
+        volume(&part) > volume_before_fillet(&part),
+        "a root round adds material"
+    );
 }
 
 #[test]
@@ -755,6 +838,9 @@ fn coil_defaults_and_fields() {
     c.method = CoilMethod::PitchAndHeight;
     c.end.closed = true;
     let names: Vec<_> = c.fields().into_iter().map(|(n, _)| n).collect();
-    assert_eq!(names, ["pitch", "height", "taper", "end_transition", "end_flat"]);
+    assert_eq!(
+        names,
+        ["pitch", "height", "taper", "end_transition", "end_flat"]
+    );
     let _ = Point3::origin();
 }

@@ -526,11 +526,7 @@ fn offset_polyline(pts: &[Point2], closed: bool, d: Real) -> Vec<Point2> {
                 (Some(a), Some(b)) => {
                     let s = a + b;
                     let c = s.norm_squared() / 2.0;
-                    if c < 0.05 {
-                        b
-                    } else {
-                        s / c
-                    }
+                    if c < 0.05 { b } else { s / c }
                 }
                 (Some(a), None) | (None, Some(a)) => a,
                 (None, None) => Vector2::zeros(),
@@ -587,9 +583,15 @@ impl RibFeature {
         let dir = self.normal_dir(sketch, &rays, &chains);
         chains.iter().filter(|c| !c.closed).all(|c| {
             let n = c.points.len();
-            [(c.points[0], c.points[1]), (c.points[n - 1], c.points[n - 2])]
-                .iter()
-                .all(|&(e, prev)| self.end_gap(sketch, &rays, e, prev, dir).is_none_or(|g| g < 1e-3))
+            [
+                (c.points[0], c.points[1]),
+                (c.points[n - 1], c.points[n - 2]),
+            ]
+            .iter()
+            .all(|&(e, prev)| {
+                self.end_gap(sketch, &rays, e, prev, dir)
+                    .is_none_or(|g| g < 1e-3)
+            })
         })
     }
 
@@ -617,7 +619,14 @@ impl RibFeature {
     /// How far an open end `e` (coming from `prev`) is from the body along
     /// its tangent (`None`: nothing there). For a web the ray runs a little
     /// below the sketch plane (side `dir`).
-    fn end_gap(&self, sketch: &Sketch, rays: &Rays, e: Point2, prev: Point2, dir: Real) -> Option<Real> {
+    fn end_gap(
+        &self,
+        sketch: &Sketch,
+        rays: &Rays,
+        e: Point2,
+        prev: Point2,
+        dir: Real,
+    ) -> Option<Real> {
         let pl = &sketch.plane;
         let t = (e - prev).try_normalize(1e-12)?;
         let t3 = pl.x_axis.into_inner() * t.x + pl.y_axis().into_inner() * t.y;
@@ -628,7 +637,10 @@ impl RibFeature {
                 RibExtent::ToNext => {
                     let p = pl.point_at(e.x, e.y);
                     rays.entry(p, pl.normal.into_inner() * dir)
-                        .map_or(0.5, |(h, x)| if h > 1e-9 { h / 2.0 } else { x.min(1.0) / 2.0 })
+                        .map_or(
+                            0.5,
+                            |(h, x)| if h > 1e-9 { h / 2.0 } else { x.min(1.0) / 2.0 },
+                        )
                 }
             };
             pl.normal.into_inner() * dir * d.max(1e-3)
@@ -641,7 +653,14 @@ impl RibFeature {
 
     /// The chains with Extend Profile applied: open ends run on along their
     /// tangent into the body.
-    fn extended(&self, sketch: &Sketch, rays: &Rays, chains: &[RibChain], dir: Real, ov: Real) -> Vec<RibChain> {
+    fn extended(
+        &self,
+        sketch: &Sketch,
+        rays: &Rays,
+        chains: &[RibChain],
+        dir: Real,
+        ov: Real,
+    ) -> Vec<RibChain> {
         if !self.extend {
             return chains.to_vec();
         }
@@ -705,7 +724,9 @@ impl RibFeature {
             };
             match self.direction {
                 RibDirection::Parallel => out.push(self.parallel_tool(&pl, &rays, c, ov, prefix)?),
-                RibDirection::Normal => out.extend(self.web_tools(sketch, &rays, c, dir, ov, prefix)?),
+                RibDirection::Normal => {
+                    out.extend(self.web_tools(sketch, &rays, c, dir, ov, prefix)?)
+                }
             }
         }
         Ok(out)
@@ -861,7 +882,9 @@ impl RibFeature {
             DraftHold::Root => t - 2.0 * root * angle.tan(),
         };
         if top <= 1e-6 {
-            return Err("Draft: the web gets no thickness at the top (Hold Thickness At Root)".into());
+            return Err(
+                "Draft: the web gets no thickness at the top (Hold Thickness At Root)".into(),
+            );
         }
         let (l, r) = match self.side {
             RibSide::Symmetric => (top / 2.0, -top / 2.0),
@@ -918,7 +941,11 @@ impl RibFeature {
                 let (a, b) = (c.points[i], c.points[(i + 1) % n]);
                 let d = b - a;
                 let l2 = d.norm_squared();
-                let s = if l2 > 0.0 { ((p - a).dot(&d) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                let s = if l2 > 0.0 {
+                    ((p - a).dot(&d) / l2).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
                 (a + d * s - p).norm() < 1e-3
             })
         };
@@ -980,7 +1007,11 @@ impl super::PartDocument {
     /// **Rib** on curves of sketch `index` (id `Rib<N>`; name and sketch
     /// are assigned here). The sketch is consumed (hidden) or shared.
     /// Returns the id; on failure nothing changes.
-    pub fn add_rib(&mut self, index: usize, mut def: RibFeature) -> Result<String, super::PartError> {
+    pub fn add_rib(
+        &mut self,
+        index: usize,
+        mut def: RibFeature,
+    ) -> Result<String, super::PartError> {
         let sketch_id = self
             .sketches
             .get(index)
@@ -988,7 +1019,9 @@ impl super::PartDocument {
             .id
             .clone();
         if def.curves.is_empty() {
-            return Err(super::PartError::Feature("select the profile curves".into()));
+            return Err(super::PartError::Feature(
+                "select the profile curves".into(),
+            ));
         }
         let id = self.next_feature_id("Rib");
         (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id.clone());
@@ -1024,7 +1057,11 @@ mod tests {
 
     #[test]
     fn offsets_and_simplify() {
-        let p = vec![Point2::new(0.0, 0.0), Point2::new(10.0, 0.0), Point2::new(10.0, 10.0)];
+        let p = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 0.0),
+            Point2::new(10.0, 10.0),
+        ];
         let l = offset_polyline(&p, false, 1.0);
         assert!((l[1] - Point2::new(9.0, 1.0)).norm() < 1e-9, "{l:?}");
         let s = simplify(&resample(&p, false, 20), 1e-6);

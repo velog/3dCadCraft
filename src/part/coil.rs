@@ -15,8 +15,8 @@ use std::f64::consts::TAU;
 
 use serde::{Deserialize, Serialize};
 
-use crate::kernel::csg::CsgPolygon;
 use crate::kernel::FaceTag;
+use crate::kernel::csg::CsgPolygon;
 use crate::kernel::{BRep, Point3, Real, Vector3};
 use crate::sketch::{EntityId, Point2, Sketch};
 
@@ -533,7 +533,9 @@ impl CoilFeature {
             }
             let m = poly.len();
             let ring = |a: Real| -> Vec<Point3> {
-                poly.iter().map(|q| motion(a, pl.point_at(q.x, q.y))).collect()
+                poly.iter()
+                    .map(|q| motion(a, pl.point_at(q.x, q.y)))
+                    .collect()
             };
             let mut prev = ring(0.0);
             let first = prev.clone();
@@ -756,7 +758,9 @@ impl super::PartDocument {
             .id
             .clone();
         if def.profiles.is_empty() {
-            return Err(super::PartError::Feature("select at least one profile".into()));
+            return Err(super::PartError::Feature(
+                "select at least one profile".into(),
+            ));
         }
         let id = self.next_feature_id("Coil");
         (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id.clone());

@@ -1030,8 +1030,16 @@ fn speed_budgets() {
             6000.0,
             coil_part(6.0, false, true),
         ),
-        ("rib: network of 3 webs in an open box", 1500.0, rib_part(true)),
-        ("rib: web with 2 bosses in an open box", 1500.0, rib_part(false)),
+        (
+            "rib: network of 3 webs in an open box",
+            1500.0,
+            rib_part(true),
+        ),
+        (
+            "rib: web with 2 bosses in an open box",
+            1500.0,
+            rib_part(false),
+        ),
     ] {
         rows.push((
             case,

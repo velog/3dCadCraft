@@ -185,7 +185,11 @@ impl CadCraftApp {
         let curves = sketch
             .map(|i| crate::part::rib::default_curves(&self.part().sketches[i]))
             .unwrap_or_default();
-        let active = if curves.is_empty() { "profile" } else { "centers" };
+        let active = if curves.is_empty() {
+            "profile"
+        } else {
+            "centers"
+        };
         self.rib_draft = Some(RibDraft {
             def: RibFeature::new(curves, 2.0),
             sketch,
@@ -320,7 +324,9 @@ impl CadCraftApp {
             let pl = &ps.sketch.plane;
             for c in chains {
                 let mut pts: Vec<Point3> = c.points.iter().map(|q| pl.point_at(q.x, q.y)).collect();
-                if c.closed && let Some(f) = pts.first().copied() {
+                if c.closed
+                    && let Some(f) = pts.first().copied()
+                {
                     pts.push(f);
                 }
                 out.push(pts);
@@ -398,7 +404,10 @@ impl CadCraftApp {
                     if let Some(f) = pts.first().copied() {
                         pts.push(f);
                     }
-                    return Some((Pick::Region(i, ProfileRef::of(r, r.interior_point())), vec![pts]));
+                    return Some((
+                        Pick::Region(i, ProfileRef::of(r, r.interior_point())),
+                        vec![pts],
+                    ));
                 }
             }
             return None;
@@ -406,7 +415,8 @@ impl CadCraftApp {
         let d = self.rib_draft.as_ref()?;
         if d.active == "centers" {
             let ps = d.sketch.and_then(|i| part.sketches.get(i))?;
-            let pt = overlay::pick_any_point(&self.camera, rect, &ps.sketch, p, overlay::POINT_PICK_PX)?;
+            let pt =
+                overlay::pick_any_point(&self.camera, rect, &ps.sketch, p, overlay::POINT_PICK_PX)?;
             let q = ps.sketch.point(pt)?;
             let w = ps.sketch.plane.point_at(q.position.x, q.position.y);
             return Some((Pick::Point(pt), vec![vec![w, w]]));
@@ -559,7 +569,11 @@ impl CadCraftApp {
             self.file_status = Some(Err("Coil: select a profile".into()));
             return;
         };
-        let cmd = if d.edit.is_some() { "Edit Feature" } else { "Coil" };
+        let cmd = if d.edit.is_some() {
+            "Edit Feature"
+        } else {
+            "Coil"
+        };
         self.checkpoint(cmd);
         let built = match d.edit {
             Some(k) => self
@@ -610,7 +624,11 @@ impl CadCraftApp {
             self.file_status = Some(Err("Rib: select the profile curves".into()));
             return;
         };
-        let cmd = if d.edit.is_some() { "Edit Feature" } else { "Rib" };
+        let cmd = if d.edit.is_some() {
+            "Edit Feature"
+        } else {
+            "Rib"
+        };
         self.checkpoint(cmd);
         let built = match d.edit {
             Some(k) => self
@@ -776,7 +794,13 @@ impl CadCraftApp {
                 .on_hover_text("The pitch runs down to zero at the start (both off: natural ends)");
             ui.end_row();
             if d.def.start.closed {
-                field_row(ui, &mut fx, "Transition Angle", &snapshot, "start_transition");
+                field_row(
+                    ui,
+                    &mut fx,
+                    "Transition Angle",
+                    &snapshot,
+                    "start_transition",
+                );
                 field_row(ui, &mut fx, "Flat Angle", &snapshot, "start_flat");
             }
             plabel(ui, "End");
@@ -872,8 +896,9 @@ impl CadCraftApp {
             }
             if short {
                 plabel(ui, "Extend Profile");
-                ui.checkbox(&mut d.def.extend, "")
-                    .on_hover_text("The profile's ends run on to the body (off: exactly the profile)");
+                ui.checkbox(&mut d.def.extend, "").on_hover_text(
+                    "The profile's ends run on to the body (off: exactly the profile)",
+                );
                 ui.end_row();
             }
         });
@@ -1031,7 +1056,11 @@ impl CadCraftApp {
             ui.end_row();
             if !r.boss.centers.is_empty() {
                 plabel(ui, "Bosses");
-                ui.label(format!("{} × Ø{:.3}", r.boss.centers.len(), r.boss.diameter));
+                ui.label(format!(
+                    "{} × Ø{:.3}",
+                    r.boss.centers.len(),
+                    r.boss.diameter
+                ));
                 ui.end_row();
             }
         });
@@ -1204,6 +1233,10 @@ mod tests {
         };
         assert!(rib_flow(&d).ready(), "bosses are optional");
         d.def.direction = RibDirection::Parallel;
-        assert_eq!(rib_flow(&d).selectors.len(), 1, "no bosses on a parallel rib");
+        assert_eq!(
+            rib_flow(&d).selectors.len(),
+            1,
+            "no bosses on a parallel rib"
+        );
     }
 }
