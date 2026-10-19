@@ -124,5 +124,12 @@
     "features": 6,
     "sketches": 4,
     "exact": true
+  },
+  "r14/coil_rib_r14.3dcadcraft": {
+    "volume": 7892.4224793912745,
+    "faces": 68,
+    "features": 5,
+    "sketches": 4,
+    "exact": true
   }
 }

@@ -275,7 +275,10 @@ fn name_caps(
         let c = Point3::new(f.centroid.x, f.centroid.y, f.centroid.z);
         let d = [(c - centres[0]).norm(), (c - centres[1]).norm()];
         let k = usize::from(d[1] < d[0]);
-        if on(planes[k], f.centroid, f.plane_normal) {
+        // A round section swept along its centre's path ends turned a
+        // little out of the station plane, centred on the station.
+        let centred = f.plane_normal.is_some() && d[k] < 1e-6 * (1.0 + centres[k].coords.norm());
+        if centred || on(planes[k], f.centroid, f.plane_normal) {
             *slot = Some(format!("{prefix}:{}", ["Start", "End"][k]));
         } else if slot.is_none() {
             *slot = Some(format!("{prefix}:Side"));
@@ -387,42 +390,28 @@ pub fn coil_boolean(
     if !(r0 >= 0.0 && r1 > r0 && z1 > z0) {
         return Err("the coil zone is empty".into());
     }
-    let z = revolved_tool(
-        zone.origin,
-        zone.axis,
-        0.37,
-        &[[r0, z0], [r1, z0], [r1, z1], [r0, z1]],
-        &["CoilZone"; 4],
-        s.name.as_deref().unwrap_or("Coil"),
-    )?;
-    let Some(inside) = boolean(s, &z, ExactOp::Intersect)? else {
-        return Ok(None);
+    let prefix = s.name.as_deref().unwrap_or("Coil");
+    let ring = |a: Real, b: Real, k: usize| {
+        revolved_tool(
+            zone.origin,
+            zone.axis,
+            0.37 + 0.613 * k as Real,
+            &[[r0, a], [r1, a], [r1, b], [r0, b]],
+            &["CoilZone"; 4],
+            prefix,
+        )
     };
-    let vol = inside.measure_full().map(|m| m.volume).unwrap_or(0.0);
-    if vol <= 1e-9 * zone_volume(zone).max(1.0) {
-        return Ok(None);
-    }
-    let rest = if op == ExactOp::Intersect {
-        None
-    } else {
-        boolean(s, &z, ExactOp::Cut)?
-    };
+    let whole = ring(z0, z1, 0)?;
     let kop = match op {
         ExactOp::Union => sk::BoolOp::Union,
         ExactOp::Cut => sk::BoolOp::Cut,
         ExactOp::Intersect => sk::BoolOp::Intersect,
     };
-    let tol = (inside.body.size() * 5e-4).clamp(2e-3, 1e-2);
-    let mut out: Vec<ExactSolid> = rest.into_iter().collect();
-    let parts = if op == ExactOp::Union {
-        vec![inside]
-    } else {
-        lumps(&inside)
-    };
-    for piece in parts {
+    let facet = |piece: &ExactSolid| -> Result<Option<ExactSolid>, String> {
+        let tol = (piece.body.size() * 5e-4).clamp(2e-3, 1e-2);
         let r = guarded("coil", || sk::faceted_boolean(&piece.body, &mesh.0, kop, tol))?;
         let Some(body) = r else {
-            continue;
+            return Ok(None);
         };
         let n = body.face_count();
         let mut face_names = vec![None; n];
@@ -437,12 +426,77 @@ pub fn coil_boolean(
                 });
             }
         }
-        out.push(ExactSolid {
+        Ok(Some(ExactSolid {
             name: s.name.clone(),
             body,
             face_names,
             profiles: Vec::new(),
+        }))
+    };
+    if op == ExactOp::Union {
+        // One piece: the coil joins the zone's material once.
+        let Some(inside) = boolean(s, &whole, ExactOp::Intersect)? else {
+            return Ok(None);
+        };
+        let vol = inside.measure_full().map(|m| m.volume).unwrap_or(0.0);
+        if vol <= 1e-9 * zone_volume(zone).max(1.0) {
+            return Ok(None);
+        }
+        let rest = boolean(s, &whole, ExactOp::Cut)?;
+        let mut out: Vec<ExactSolid> = rest.into_iter().collect();
+        out.extend(facet(&inside)?);
+        return Ok(Some(out));
+    }
+    if !super::meets(s, &whole) {
+        return Ok(None);
+    }
+    // Cut / Intersect: the zone in slabs across the axis (about 4 mm high,
+    // one per core, at most 8), each slab's material cut on a thread of its
+    // own — the exact Booleans with the rings and the faceted Booleans both
+    // take seconds; the rest (outside the zone) is made meanwhile.
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let n = (((z1 - z0) / 4.0).ceil() as usize).clamp(1, cores.clamp(1, 8));
+    let rings: Vec<ExactSolid> = (0..n)
+        .map(|k| {
+            let a = z0 + (z1 - z0) * k as Real / n as Real;
+            let b = z0 + (z1 - z0) * (k + 1) as Real / n as Real;
+            ring(a, b, k + 1)
+        })
+        .collect::<Result<_, _>>()?;
+    type Slab = Result<Vec<ExactSolid>, String>;
+    let (rest, slabs): (Result<Option<ExactSolid>, String>, Vec<Slab>) =
+        std::thread::scope(|sc| {
+            let rest = (op == ExactOp::Cut).then(|| sc.spawn(|| boolean(s, &whole, ExactOp::Cut)));
+            let jobs: Vec<_> = rings
+                .iter()
+                .map(|z| {
+                    let facet = &facet;
+                    sc.spawn(move || -> Slab {
+                        let Some(inside) = boolean(s, z, ExactOp::Intersect)? else {
+                            return Ok(Vec::new());
+                        };
+                        let mut out = Vec::new();
+                        for piece in lumps(&inside) {
+                            out.extend(facet(&piece)?);
+                        }
+                        Ok(out)
+                    })
+                })
+                .collect();
+            let lost = "coil: internal error in the geometry kernel";
+            let rest = match rest {
+                Some(h) => h.join().unwrap_or_else(|_| Err(lost.to_owned())),
+                None => Ok(None),
+            };
+            let slabs = jobs
+                .into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err(lost.to_owned())))
+                .collect();
+            (rest, slabs)
         });
+    let mut out: Vec<ExactSolid> = rest?.into_iter().collect();
+    for sl in slabs {
+        out.extend(sl?);
     }
     Ok(Some(out))
 }
@@ -513,7 +567,8 @@ mod tests {
             assert!((v - want).abs() < 0.012 * want, "{pitch:?}: {v} vs {want}");
             let names: Vec<_> = s.face_names.iter().flatten().cloned().collect();
             assert!(names.contains(&"Coil1:Start".to_owned()), "{names:?}");
-            assert!(names.contains(&"Coil1:End".to_owned()), "{names:?}");
+            assert!(names.contains(&"Coil1:End".to_owned()), "{pitch:?} {names:?}
+{}", s.debug_topology());
             assert!(names.iter().any(|n| n.starts_with("Coil1:Side:C")), "{names:?}");
         }
         // The mesh: closed and outward, the polygon's area × path.

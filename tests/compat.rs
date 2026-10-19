@@ -414,6 +414,78 @@ fn history_r7() -> PartDocument {
 }
 /// Revision 12: a Sweep (a circle along an arc on XZ) and a Loft (a square
 /// to a smaller square) joined to it.
+/// Revision 14: a Coil (closed ends, left hand) beside a plate with a Web
+/// across it (To Next) and a boss.
+fn coil_rib_r14() -> PartDocument {
+    use cadcraft3d::part::work::LineRef;
+    use cadcraft3d::part::{
+        CoilAxis, CoilFeature, Operation, PlaneRef, RibFeature, WorkDef, WorkFeature, WorkPlaneDef,
+    };
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::default();
+    // A plate 40 × 30 × 4 with a 2 mm rim 6 high (an open tray).
+    let k = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    part.sketches[k]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(40.0, 30.0))
+        .unwrap();
+    let r = part.sketches[k].sketch.regions();
+    let pr = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    part.add_extrude(k, ExtrudeFeature::new(pr, 10.0)).unwrap();
+    let wp = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 10.0,
+        })))
+        .unwrap();
+    let on = SketchPlacement {
+        plane: PlaneRef::Work(wp),
+        ..Default::default()
+    };
+    let k = part.create_sketch(on.clone(), &o).unwrap();
+    part.sketches[k]
+        .sketch
+        .add_rectangle_two_point(Point2::new(2.0, 2.0), Point2::new(38.0, 28.0))
+        .unwrap();
+    let r = part.sketches[k].sketch.regions();
+    let pr = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let mut cut = ExtrudeFeature::new(pr, 6.0);
+    cut.operation = Operation::Cut;
+    cut.direction = cadcraft3d::part::ExtentDirection::Flipped;
+    part.add_extrude(k, cut).unwrap();
+    let k = part.create_sketch(on, &o).unwrap();
+    let l = part.sketches[k]
+        .sketch
+        .add_line(Point2::new(2.0, 15.0), Point2::new(38.0, 15.0));
+    let c = part.sketches[k].sketch.add_point(Point2::new(20.0, 15.0));
+    let mut web = RibFeature::new(vec![l], 2.0);
+    web.boss.centers = vec![c];
+    part.add_rib(k, web).unwrap();
+    // A spring beside it.
+    let k = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .unwrap();
+    part.sketches[k]
+        .sketch
+        .add_circle(Point2::new(-20.0, 1.0), 1.0)
+        .unwrap();
+    let r = part.sketches[k].sketch.regions();
+    let pr = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let mut coil = CoilFeature::new(pr, CoilAxis::Line(LineRef::Origin(2)));
+    coil.axis = CoilAxis::Line(LineRef::Origin(2));
+    (coil.pitch, coil.revolutions, coil.left_hand) = (5.0, 2.5, true);
+    coil.start.closed = true;
+    coil.end.closed = true;
+    part.add_coil(k, coil).unwrap();
+    part
+}
+
 fn sweep_loft_r12() -> PartDocument {
     use cadcraft3d::part::{
         LoftFeature, LoftSection, Operation, PathRef, PlaneRef, SweepFeature, WorkDef, WorkFeature,
@@ -767,6 +839,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("WorkR8");
             project.add_document("Part1", DocumentData::Part(work_r8()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r14/coil_rib_r14.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("CoilRibR14");
+            project.add_document("Part1", DocumentData::Part(coil_rib_r14()));
             project.save(&f).unwrap();
         }
         let f = root().join("r12/sweep_loft_r12.3dcadcraft");

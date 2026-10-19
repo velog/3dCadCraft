@@ -15,6 +15,118 @@ use cadcraft3d::part::{
     SketchOptions, SketchPlacement,
 };
 
+/// A coil of a Ø2 circle at radius 10 about Z (5 mm pitch): `turns`,
+/// closed ends or not; with `rod`, a triangle cut 6 turns into a Ø20 rod.
+fn coil_part(turns: Real, closed: bool, rod: bool) -> PartDocument {
+    use cadcraft3d::part::work::LineRef;
+    use cadcraft3d::part::{CoilAxis, CoilFeature, OriginPlane};
+    use cadcraft3d::sketch::Point2;
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::default();
+    if rod {
+        let k = part
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        part.sketches[k]
+            .sketch
+            .add_circle(Point2::new(0.0, 0.0), 10.0)
+            .unwrap();
+        let r = part.sketches[k].sketch.regions();
+        let pr = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+        part.add_extrude(k, ExtrudeFeature::new(pr, 30.0)).unwrap();
+    }
+    let k = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .unwrap();
+    let sk = &mut part.sketches[k].sketch;
+    if rod {
+        let a = sk.add_point(Point2::new(10.5, 4.0));
+        let b = sk.add_point(Point2::new(9.0, 5.0));
+        let c = sk.add_point(Point2::new(10.5, 6.0));
+        sk.add_line_between(a, b).unwrap();
+        sk.add_line_between(b, c).unwrap();
+        sk.add_line_between(c, a).unwrap();
+    } else {
+        sk.add_circle(Point2::new(10.0, 0.0), 1.0).unwrap();
+    }
+    let r = sk.regions();
+    let pr = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let mut c = CoilFeature::new(pr, CoilAxis::Line(LineRef::Origin(2)));
+    (c.pitch, c.revolutions) = (if rod { 3.0 } else { 5.0 }, turns);
+    c.start.closed = closed;
+    c.end.closed = closed;
+    if rod {
+        c.operation = Operation::Cut;
+    }
+    part.add_coil(k, c).unwrap();
+    part
+}
+
+/// An open box 60 × 40 × 20 (2 mm walls) with a web network (3 webs) or
+/// one web with two bosses, sketched on the rim plane.
+fn rib_part(network: bool) -> PartDocument {
+    use cadcraft3d::part::{OriginPlane, PlaneRef, RibFeature, WorkDef, WorkFeature, WorkPlaneDef};
+    use cadcraft3d::sketch::Point2;
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::default();
+    let k = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    part.sketches[k]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(60.0, 40.0))
+        .unwrap();
+    let r = part.sketches[k].sketch.regions();
+    let pr = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    part.add_extrude(k, ExtrudeFeature::new(pr, 20.0)).unwrap();
+    let wp = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 20.0,
+        })))
+        .unwrap();
+    let on = SketchPlacement {
+        plane: PlaneRef::Work(wp),
+        ..Default::default()
+    };
+    let k = part.create_sketch(on.clone(), &o).unwrap();
+    part.sketches[k]
+        .sketch
+        .add_rectangle_two_point(Point2::new(2.0, 2.0), Point2::new(58.0, 38.0))
+        .unwrap();
+    let r = part.sketches[k].sketch.regions();
+    let pr = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let mut cut = ExtrudeFeature::new(pr, 18.0);
+    cut.operation = Operation::Cut;
+    cut.direction = ExtentDirection::Flipped;
+    part.add_extrude(k, cut).unwrap();
+    let k = part.create_sketch(on, &o).unwrap();
+    let sk = &mut part.sketches[k].sketch;
+    let mut lines = vec![sk.add_line(Point2::new(2.0, 20.0), Point2::new(58.0, 20.0))];
+    let mut web = if network {
+        lines.push(sk.add_line(Point2::new(20.0, 2.0), Point2::new(20.0, 38.0)));
+        lines.push(sk.add_line(Point2::new(40.0, 2.0), Point2::new(40.0, 38.0)));
+        RibFeature::new(lines, 2.0)
+    } else {
+        let a = sk.add_point(Point2::new(20.0, 20.0));
+        let b = sk.add_point(Point2::new(40.0, 20.0));
+        let mut w = RibFeature::new(lines, 2.0);
+        w.boss.centers = vec![a, b];
+        w
+    };
+    web.extend = true;
+    part.add_rib(k, web).unwrap();
+    part
+}
+
 /// Median wall time (ms) of `runs` calls.
 /// Budgets of the Face Draft Symmetric and Shell Rounded Corners cases (ms).
 const BUDGET_SYMMETRIC_DRAFT: f64 = 700.0;
@@ -903,6 +1015,23 @@ fn speed_budgets() {
             loft_part(2),
         ),
         ("loft through 4 sections (smooth)", 100.0, loft_part(4)),
+        (
+            "coil: Ø2 spring, 5 turns (exact helical sweep)",
+            1000.0,
+            coil_part(5.0, false, false),
+        ),
+        (
+            "coil: Ø2 spring, 5 turns, closed ends (sweep along the path)",
+            1000.0,
+            coil_part(5.0, true, false),
+        ),
+        (
+            "coil: thread cut 6 turns into a Ø20 rod (faceted zone)",
+            6000.0,
+            coil_part(6.0, false, true),
+        ),
+        ("rib: network of 3 webs in an open box", 1500.0, rib_part(true)),
+        ("rib: web with 2 bosses in an open box", 1500.0, rib_part(false)),
     ] {
         rows.push((
             case,

@@ -92,7 +92,10 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   `terminator`, `open` (Match Shape), `minimum` (2026-10-19).
 /// - 12: Sweep and Loft (`Feature::Sweep`, `Feature::Loft`) (2026-10-19;
 ///   the merge may renumber).
-pub const FORMAT_REVISION: u32 = 12;
+/// - 14: Coil and Rib / Web (`Feature::Coil`, `Feature::Rib`) (2026-10-20;
+///   13 is taken by Combine / Split on another branch — the merge may
+///   renumber).
+pub const FORMAT_REVISION: u32 = 14;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
