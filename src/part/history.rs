@@ -666,6 +666,8 @@ impl Feature {
             Feature::Thread(t) => &mut t.name,
             Feature::Sweep(s) => &mut s.name,
             Feature::Loft(l) => &mut l.name,
+            Feature::Coil(c) => &mut c.name,
+            Feature::Rib(r) => &mut r.name,
         }
     }
 }

@@ -3511,7 +3511,7 @@ mod sphere_tests {
 mod hole_tests;
 
 mod coil;
-pub use coil::{CoilMesh, CoilMotion, CoilPiece, CoilZone, coil, coil_boolean, coil_mesh};
+pub use coil::{CoilMesh, CoilMotion, CoilZone, coil, coil_boolean, coil_mesh};
 
 mod sweep;
 pub use sweep::{

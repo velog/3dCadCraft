@@ -19,19 +19,6 @@ use super::{
 };
 use crate::kernel::Plane;
 
-/// One stretch of a coil, between two turn angles (radians from the
-/// start). `pitch`: a constant pitch without radial growth (the helical
-/// sweep builds it); `None`: built through stations.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CoilPiece {
-    /// Start angle.
-    pub from: Real,
-    /// End angle.
-    pub to: Real,
-    /// Constant pitch (mm per turn), if the stretch has one.
-    pub pitch: Option<Real>,
-}
-
 /// The screw motion of a coil: at turn angle `a` the profile is turned by
 /// `a` about the axis (the other way for a left-hand coil), lifted by
 /// `height(a)` along it and pushed out from it by `grow(a)`.
@@ -75,28 +62,40 @@ impl CoilMotion<'_> {
     }
 }
 
-/// Stations per radian of the lofted pieces (15° apart).
+/// Finest station spacing of a lofted coil (15°).
 const LOFT_STEP: Real = std::f64::consts::PI / 12.0;
+/// Coarsest station spacing a loft may use (45°: the cubic sections stay
+/// within about 1e-4 of the radius); longer coils are faceted.
+const LOFT_COARSE: Real = std::f64::consts::FRAC_PI_4;
 /// Most steps of one loft (the kernel takes at most 50 sections).
 const LOFT_MAX: usize = 48;
+/// Stations per turn of a faceted coil body.
+pub const MESH_STATIONS: usize = 36;
 
-/// A solid coil of `prof` (on `plane`) moved by `m` through `pieces` (in
-/// order, each starting where the one before ends). Walls are named
-/// `<prefix>:Side:<segment>`, the first section `<prefix>:Start` and the
-/// last `<prefix>:End`.
+/// A solid coil of `prof` (on `plane`) moved by `m` from angle 0 to
+/// `total`. `pitch`: the coil has one constant pitch and no taper — the
+/// kernel's helical sweep builds it; otherwise a smooth loft through
+/// stations (15° to 45° apart). When neither works (too many turns for one
+/// loft, a kernel failure) the coil is a faceted body of `polygon` (the
+/// profile's outer loop sampled, sketch coordinates). Walls are named
+/// `<prefix>:Side:<segment>` (`<prefix>:Side` when faceted), the first
+/// section `<prefix>:Start`, the last `<prefix>:End`.
+#[allow(clippy::too_many_arguments)]
 pub fn coil(
     plane: &Plane,
     prof: &ExactProfile,
+    polygon: &[nalgebra::Point2<Real>],
     m: &CoilMotion,
-    pieces: &[CoilPiece],
+    total: Real,
+    pitch: Option<Real>,
     prefix: &str,
 ) -> Result<ExactSolid, String> {
     if !prof.region.holes.is_empty() {
         return Err("a coil profile with holes is not supported yet".into());
     }
-    let (Some(first), Some(last)) = (pieces.first(), pieces.last()) else {
+    if !(total.is_finite() && total > 1e-9) {
         return Err("the coil has no turns".into());
-    };
+    }
     // The sweeps need distinct segment ends: a full circle becomes halves.
     let mut names = Vec::new();
     let mut segs = Vec::new();
@@ -129,54 +128,66 @@ pub fn coil(
         outer: sg::Loop2 { segs },
         holes: Vec::new(),
     };
-    let mut bodies: Vec<sk::Body> = Vec::new();
-    for p in pieces {
-        let span = p.to - p.from;
-        if !(span.is_finite() && span > 1e-9) {
-            continue;
+    let smooth: Result<sk::Body, String> = match pitch {
+        Some(pitch) => {
+            let pl = m.plane_at(plane, 0.0)?;
+            let k = d3(&m.axis);
+            let (ax, pp) = if m.left_hand {
+                (k * -1.0, -pitch)
+            } else {
+                (k, pitch)
+            };
+            let turns = total / std::f64::consts::TAU;
+            let origin = v3(&m.origin);
+            guarded("coil", || {
+                sk::sweep_helix(&pl, &region, origin, ax, pp, turns)
+            })
         }
-        match p.pitch {
-            Some(pitch) => {
-                let pl = m.plane_at(plane, p.from)?;
-                let k = d3(&m.axis);
-                let (ax, pp) = if m.left_hand {
-                    (k * -1.0, -pitch)
+        None => {
+            let nseg = region.outer.segs.len();
+            // Smooth walls only: a ruled result (one face per segment and
+            // station) cuts the corners — 2.5 % of the volume at 22.5°.
+            let smooth_only = |b: sk::Body| {
+                if b.face_count() <= nseg + 2 {
+                    Ok(b)
                 } else {
-                    (k, pitch)
-                };
-                let turns = span / std::f64::consts::TAU;
-                let origin = v3(&m.apply(p.from, m.origin));
-                let body = guarded("coil", || {
-                    sk::sweep_helix(&pl, &region, origin, ax, pp, turns)
-                })?;
-                bodies.push(body);
-            }
-            None => {
-                let steps = ((span / LOFT_STEP).ceil() as usize).max(2);
-                let mut k0 = 0;
-                while k0 < steps {
-                    let k1 = (k0 + LOFT_MAX).min(steps);
-                    // At least two steps per loft (three sections: smooth).
-                    let k1 = if steps - k1 == 1 { k1 + 1 } else { k1 };
-                    let mut secs = Vec::with_capacity(k1 - k0 + 1);
-                    for k in k0..=k1 {
-                        let a = p.from + span * k as Real / steps as Real;
+                    Err("the kernel made ruled walls".to_owned())
+                }
+            };
+            // A round section looks the same however it turns: a sweep
+            // along the centre's path (a rotation-minimising frame) is
+            // smooth for any number of turns.
+            let round = round_section(&region.outer);
+            let swept = if let Some(c) = round {
+                let pl = m.plane_at(plane, 0.0)?;
+                let steps = ((total / (std::f64::consts::PI / 36.0)).ceil() as usize).max(8);
+                let centre = plane.point_at(c.x, c.y);
+                let path: Vec<sg::Vec3> = (0..=steps)
+                    .map(|k| v3(&m.apply(total * k as Real / steps as Real, centre)))
+                    .collect();
+                guarded("coil", || sk::sweep_path(&pl, &region, &path)).and_then(smooth_only)
+            } else {
+                Err("not a round section".into())
+            };
+            swept.or_else(|_| {
+                let steps = ((total / LOFT_STEP).ceil() as usize).clamp(2, LOFT_MAX);
+                if total / steps as Real > LOFT_COARSE + 1e-9 {
+                    Err("too many turns for one loft".into())
+                } else {
+                    let mut secs = Vec::with_capacity(steps + 1);
+                    for k in 0..=steps {
+                        let a = total * k as Real / steps as Real;
                         secs.push((m.plane_at(plane, a)?, region.outer.clone()));
                     }
-                    bodies.push(guarded("coil", || sk::loft(&secs))?);
-                    k0 = k1;
+                    guarded("coil", || sk::loft(&secs)).and_then(smooth_only)
                 }
-            }
+            })
         }
-    }
-    if bodies.is_empty() {
-        return Err("the coil has no turns".into());
-    }
-    let start = m.plane_at(plane, first.from)?;
-    let end = m.plane_at(plane, last.to)?;
-    let pieces: Vec<ExactSolid> = bodies
-        .into_iter()
-        .map(|body| {
+    };
+    let start = m.plane_at(plane, 0.0)?;
+    let end = m.plane_at(plane, total)?;
+    let mut out = match smooth {
+        Ok(body) => {
             let face_names = names_from(&body, &[], &|o| match o {
                 FaceOrigin::Profile { segment } => {
                     names.get(*segment).map(|n| format!("{prefix}:Side:{n}"))
@@ -189,25 +200,70 @@ pub fn coil(
                 face_names,
                 profiles: Vec::new(),
             }
-        })
-        .collect();
-    let mut it = pieces.into_iter();
-    let mut out = it.next().ok_or("the coil has no turns")?;
-    for p in it {
-        out = boolean(&out, &p, ExactOp::Union)?
-            .ok_or_else(|| "the coil pieces do not join".to_owned())?;
-    }
-    name_caps(&mut out, &start, &end, prefix)?;
+        }
+        Err(e) => {
+            log::debug!("coil {prefix}: faceted body ({e})");
+            let mesh = coil_mesh(plane, polygon, m, 0.0, total, MESH_STATIONS)?;
+            let body = guarded("coil", || {
+                sk::mesh_body(&mesh.0.positions, &mesh.0.triangles)
+            })?;
+            let n = body.face_count();
+            ExactSolid {
+                name: Some(prefix.to_owned()),
+                body,
+                face_names: vec![None; n],
+                profiles: Vec::new(),
+            }
+        }
+    };
+    let c = polygon
+        .iter()
+        .fold(nalgebra::Vector2::zeros(), |acc, p| acc + p.coords)
+        / polygon.len().max(1) as Real;
+    let c = plane.point_at(c.x, c.y);
+    name_caps(
+        &mut out,
+        [&start, &end],
+        [m.apply(0.0, c), m.apply(total, c)],
+        prefix,
+    )?;
     Ok(out)
 }
 
-/// Names the planar faces on the first and last sections `Start` / `End`
-/// and any wall left without a name `Side`.
-fn name_caps(s: &mut ExactSolid, start: &sg::Plane, end: &sg::Plane, prefix: &str) -> Result<(), String> {
-    let faces = guarded("faces", || s.body.faces(1e-3))?;
+/// The centre of a loop made only of arcs of one circle.
+fn round_section(lp: &sg::Loop2) -> Option<nalgebra::Point2<Real>> {
+    let mut c: Option<(sg::Vec2, Real)> = None;
+    for s in &lp.segs {
+        let sg::Seg2::Arc { center, radius, .. } = *s else {
+            return None;
+        };
+        match c {
+            None => c = Some((center, radius)),
+            Some((c0, r0)) => {
+                if (c0 - center).len() > 1e-9 || (r0 - radius).abs() > 1e-9 {
+                    return None;
+                }
+            }
+        }
+    }
+    c.map(|(p, _)| nalgebra::Point2::new(p.x, p.y))
+}
+
+/// Names the planar faces lying on the first and last sections (on their
+/// planes, nearer the section's centre) `Start` / `End`, and any wall left
+/// without a name `Side`. Both sections can lie in one plane (whole turns
+/// about an axis in the profile plane).
+fn name_caps(
+    s: &mut ExactSolid,
+    planes: [&sg::Plane; 2],
+    centres: [Point3; 2],
+    prefix: &str,
+) -> Result<(), String> {
+    let tol = (s.body.size() * 1e-3).max(1e-3);
+    let faces = guarded("faces", || s.body.faces(tol))?;
     let on = |pl: &sg::Plane, c: sg::Vec3, n: Option<sg::Vec3>| {
         let nn = pl.normal();
-        n.is_some_and(|n| n.cross(nn).len() < 1e-6) && (c - pl.origin).dot(nn).abs() < 1e-6
+        n.is_some_and(|n| n.cross(nn).len() < 1e-6) && (c - pl.origin).dot(nn).abs() < 1e-5
     };
     if s.face_names.len() < s.body.face_count() {
         s.face_names.resize(s.body.face_count(), None);
@@ -216,10 +272,11 @@ fn name_caps(s: &mut ExactSolid, start: &sg::Plane, end: &sg::Plane, prefix: &st
         let Some(slot) = s.face_names.get_mut(f.index) else {
             continue;
         };
-        if on(start, f.centroid, f.plane_normal) {
-            *slot = Some(format!("{prefix}:Start"));
-        } else if on(end, f.centroid, f.plane_normal) {
-            *slot = Some(format!("{prefix}:End"));
+        let c = Point3::new(f.centroid.x, f.centroid.y, f.centroid.z);
+        let d = [(c - centres[0]).norm(), (c - centres[1]).norm()];
+        let k = usize::from(d[1] < d[0]);
+        if on(planes[k], f.centroid, f.plane_normal) {
+            *slot = Some(format!("{prefix}:{}", ["Start", "End"][k]));
         } else if slot.is_none() {
             *slot = Some(format!("{prefix}:Side"));
         }
@@ -401,7 +458,7 @@ mod tests {
     use crate::kernel::extrude::{ProfileSegment, Segment2};
     use std::f64::consts::{PI, TAU};
 
-    fn circle_profile(cx: Real, cy: Real, r: Real) -> ExactProfile {
+    fn circle_profile(cx: Real, cy: Real, r: Real) -> (ExactProfile, Vec<nalgebra::Point2<Real>>) {
         let seg = ProfileSegment {
             geometry: Segment2::Arc {
                 c: nalgebra::Point2::new(cx, cy),
@@ -411,30 +468,58 @@ mod tests {
             },
             name: "C".into(),
         };
-        super::super::profile(&[seg], &[]).unwrap()
+        let poly = (0..48)
+            .map(|k| {
+                let t = TAU * k as Real / 48.0;
+                nalgebra::Point2::new(cx + r * t.cos(), cy + r * t.sin())
+            })
+            .collect();
+        (super::super::profile(&[seg], &[]).unwrap(), poly)
     }
 
+    fn brep_volume(s: &ExactSolid) -> Real {
+        let b = super::super::to_brep(std::slice::from_ref(s)).unwrap();
+        b.faces()
+            .filter_map(|(_, f)| f.mesh.as_ref())
+            .flat_map(|m| {
+                m.triangles.iter().map(|t| {
+                    let [p, q, r] = t.map(|i| m.positions[i as usize].coords);
+                    p.dot(&q.cross(&r)) / 6.0
+                })
+            })
+            .sum()
+    }
+
+    /// Helical sweep, round-section sweep and faceted body: the same volume
+    /// (a meridian section screwed about the axis: area × centre circle ×
+    /// turns), the caps named apart although they lie in one plane.
     #[test]
-    fn prototype_timings() {
+    fn coil_bodies_and_names() {
         let plane = Plane::zx();
-        let prof = circle_profile(0.0, 10.0, 1.0);
-        let at = |a: Real| (5.0 * a / TAU, 0.0);
+        let (prof, poly) = circle_profile(0.0, 10.0, 1.0);
+        let lin = |a: Real| (5.0 * a / TAU, 0.0);
         let m = CoilMotion {
             origin: Point3::origin(),
             axis: Vector3::z(),
             left_hand: false,
             radial: Vector3::x(),
-            at: &at,
+            at: &lin,
         };
-        let t = std::time::Instant::now();
-        let s = coil(&plane, &prof, &m, &[CoilPiece { from: 0.0, to: 3.0 * TAU, pitch: Some(5.0) }], "Coil1").unwrap();
-        let v = s.measure().unwrap();
-        eprintln!("helix: {:?} in {:?} expect {}", v, t.elapsed(), PI * 2.0 * PI * 10.0 * 3.0 * (1.0f64 + (5.0 / (TAU * 10.0)).powi(2)).sqrt());
-        eprintln!("{:?}", s.face_names);
-        let t = std::time::Instant::now();
-        let s = coil(&plane, &prof, &m, &[CoilPiece { from: 0.0, to: TAU, pitch: Some(5.0) }, CoilPiece { from: TAU, to: 2.0 * TAU, pitch: None }], "Coil1").unwrap();
-        let v = s.measure().unwrap();
-        eprintln!("helix+loft: {:?} in {:?}", v, t.elapsed());
-        eprintln!("{:?}", s.face_names);
+        let want = PI * TAU * 10.0 * 3.0;
+        for pitch in [Some(5.0), None] {
+            let s = coil(&plane, &prof, &poly, &m, 3.0 * TAU, pitch, "Coil1").unwrap();
+            let v = brep_volume(&s);
+            // Display triangles (0.01 mm) sit inside the round walls.
+            assert!((v - want).abs() < 0.012 * want, "{pitch:?}: {v} vs {want}");
+            let names: Vec<_> = s.face_names.iter().flatten().cloned().collect();
+            assert!(names.contains(&"Coil1:Start".to_owned()), "{names:?}");
+            assert!(names.contains(&"Coil1:End".to_owned()), "{names:?}");
+            assert!(names.iter().any(|n| n.starts_with("Coil1:Side:C")), "{names:?}");
+        }
+        // The mesh: closed and outward, the polygon's area × path.
+        let mesh = coil_mesh(&plane, &poly, &m, 0.0, 3.0 * TAU, 36).unwrap();
+        let area = 0.5 * 48.0 * (TAU / 48.0).sin();
+        let mv = area * TAU * 10.0 * 3.0;
+        assert!((mesh.volume() - mv).abs() < 0.01 * mv, "{} vs {mv}", mesh.volume());
     }
 }

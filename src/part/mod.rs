@@ -25,6 +25,7 @@
 pub mod appearance;
 pub mod blend;
 pub mod boolean;
+pub mod coil;
 pub mod draft;
 mod exact;
 pub mod export;
@@ -41,6 +42,7 @@ pub mod physical;
 pub mod placement;
 pub mod primitive;
 pub mod revolve;
+pub mod rib;
 pub mod select;
 pub mod shell;
 pub mod standards;
@@ -69,6 +71,8 @@ pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlace
 pub use primitive::{PrimitiveFeature, PrimitiveKind};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
 pub use shell::{FaceRef, ShellCorners, ShellDirection, ShellFeature};
+pub use coil::{CoilAxis, CoilEnd, CoilFeature, CoilMethod};
+pub use rib::{DraftHold, RibBoss, RibDirection, RibExtent, RibFeature, RibSide};
 pub use sweep::{PathRef, ProfileScaling, SweepFeature, SweepOrientation, SweepType};
 pub use work::{
     CurveRef, LineRef, UcsDef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef,
@@ -160,6 +164,10 @@ pub enum Feature {
     Sweep(SweepFeature),
     /// Loft: a body through sections (format revision 7).
     Loft(LoftFeature),
+    /// Coil: a profile screwed about an axis (format revision 14).
+    Coil(CoilFeature),
+    /// Rib / Web: thin walls from open profiles (format revision 14).
+    Rib(RibFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -257,6 +265,8 @@ enum BuildStep<'a> {
     Thread(&'a ThreadFeature),
     Swept(&'a SweepFeature),
     Loft(&'a LoftFeature),
+    Coil(&'a CoilFeature),
+    Rib(&'a RibFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -274,6 +284,8 @@ impl<'a> BuildStep<'a> {
             Feature::Thread(t) => Self::Thread(t),
             Feature::Sweep(s) => Self::Swept(s),
             Feature::Loft(l) => Self::Loft(l),
+            Feature::Coil(c) => Self::Coil(c),
+            Feature::Rib(r) => Self::Rib(r),
         }
     }
 }
@@ -294,6 +306,8 @@ impl Feature {
             Feature::Thread(t) => &t.id,
             Feature::Sweep(s) => &s.id,
             Feature::Loft(l) => &l.id,
+            Feature::Coil(c) => &c.id,
+            Feature::Rib(r) => &r.id,
         }
     }
 
@@ -312,6 +326,8 @@ impl Feature {
             Feature::Thread(t) => &t.name,
             Feature::Sweep(s) => &s.name,
             Feature::Loft(l) => &l.name,
+            Feature::Coil(c) => &c.name,
+            Feature::Rib(r) => &r.name,
         }
     }
 
@@ -330,6 +346,8 @@ impl Feature {
             Feature::Thread(t) => &mut t.name,
             Feature::Sweep(s) => &mut s.name,
             Feature::Loft(l) => &mut l.name,
+            Feature::Coil(c) => &mut c.name,
+            Feature::Rib(r) => &mut r.name,
         };
         *n = name.to_owned();
     }
@@ -342,6 +360,8 @@ impl Feature {
             Feature::Revolve(r) => r.operation == Operation::NewSolid,
             Feature::Sweep(s) => s.operation == Operation::NewSolid,
             Feature::Loft(l) => l.operation == Operation::NewSolid,
+            Feature::Coil(c) => c.operation == Operation::NewSolid,
+            Feature::Rib(_) => false,
             Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
@@ -366,6 +386,8 @@ impl Feature {
             Feature::Revolve(r) => Some(&r.sketch),
             Feature::Sweep(s) => Some(&s.sketch),
             Feature::Loft(l) => l.sketch_ids().first().copied(),
+            Feature::Coil(c) => Some(&c.sketch),
+            Feature::Rib(r) => Some(&r.sketch),
         }
     }
 
@@ -925,6 +947,59 @@ impl PartDocument {
                     }
                     Err(e) => Err(e),
                 },
+                BuildStep::Coil(co) if use_exact => match self.sketches.iter().find(|s| s.id == co.sketch) {
+                    None => Err(exact::Fail::User(format!("sketch {} is missing", co.sketch))),
+                    Some(ps) => match co.build_exact(&ps.sketch, &body, &works, &solids) {
+                        Ok(Some((next, tools))) => {
+                            made.push(pattern::ToolSet {
+                                tools,
+                                op: co.operation,
+                                solids: co.solids.clone(),
+                            });
+                            Ok(Some(next))
+                        }
+                        // Surface output: the faceted kernel builds the part.
+                        Ok(None) => return Ok(false),
+                        Err(e) => Err(e),
+                    },
+                },
+                BuildStep::Coil(co) => match self.sketches.iter().find(|s| s.id == co.sketch) {
+                    None => Err(exact::Fail::User(format!("sketch {} is missing", co.sketch))),
+                    Some(ps) => {
+                        let mut trial = body.clone();
+                        let before: std::collections::HashSet<_> =
+                            trial.solids().map(|(id, _)| id).collect();
+                        match co
+                            .build_faceted(&mut trial, &ps.sketch, &works)
+                            .and_then(|()| boolean::apply(&mut trial, &before, co.operation, &co.solids))
+                        {
+                            Ok(()) => {
+                                body = trial;
+                                Ok(None)
+                            }
+                            Err(msg) => Err(exact::Fail::User(msg)),
+                        }
+                    }
+                },
+                BuildStep::Rib(rb) if use_exact => match self.sketches.iter().find(|s| s.id == rb.sketch) {
+                    None => Err(exact::Fail::User(format!("sketch {} is missing", rb.sketch))),
+                    Some(ps) => match rb.build_exact(&ps.sketch, &body) {
+                        Ok(added) => {
+                            made.push(pattern::ToolSet {
+                                tools: added.clone(),
+                                op: Operation::Join,
+                                solids: rb.solids.clone(),
+                            });
+                            exact::combine(solids.clone(), added, Operation::Join, &rb.solids, false)
+                                .map(Some)
+                                .map_err(exact::as_user)
+                        }
+                        Err(e) => Err(e),
+                    },
+                },
+                BuildStep::Rib(_) => Err(exact::Fail::User(
+                    "Rib needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
                 BuildStep::Swept(_) => Err(exact::Fail::User(
                     "Sweep needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
@@ -1044,7 +1119,10 @@ impl PartDocument {
             match step {
                 Ok(Some(next)) => match crate::kernel::exact::to_brep_with(
                     &next,
-                    matches!(f, Feature::Sweep(_) | Feature::Loft(_)),
+                    matches!(
+                        f,
+                        Feature::Sweep(_) | Feature::Loft(_) | Feature::Coil(_) | Feature::Rib(_)
+                    ),
                 ) {
                     // A result the kernel made but that is not a valid solid
                     // (a non-manifold edge: a hemisphere shell, rounds wider
@@ -1070,7 +1148,12 @@ impl PartDocument {
                         }
                     },
                     // Sweep / Loft have no faceted fallback: their own health.
-                    Err(msg) if matches!(f, Feature::Sweep(_) | Feature::Loft(_)) => {
+                    Err(msg)
+                        if matches!(
+                            f,
+                            Feature::Sweep(_) | Feature::Loft(_) | Feature::Coil(_) | Feature::Rib(_)
+                        ) =>
+                    {
                         let msg =
                             format!("the geometry kernel made a result it cannot show ({msg})");
                         self.feature_health.insert(f.id().to_owned(), msg.clone());
@@ -1201,6 +1284,8 @@ impl PartDocument {
                 Feature::Revolve(r) => r.output == Output::Solid,
                 Feature::Sweep(s) => s.output == Output::Solid,
                 Feature::Loft(l) => l.output == Output::Solid,
+                Feature::Coil(c) => c.output == Output::Solid,
+                Feature::Rib(_) => false,
                 Feature::Box(_) => true,
                 Feature::Work(_)
                 | Feature::Blend(_)
@@ -1401,6 +1486,12 @@ impl PartDocument {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             (Feature::Sweep(o), Feature::Sweep(n)) => {
+                (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
+            }
+            (Feature::Coil(o), Feature::Coil(n)) => {
+                (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
+            }
+            (Feature::Rib(o), Feature::Rib(n)) => {
                 (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
             }
             (Feature::Loft(o), Feature::Loft(n)) => {
@@ -1784,7 +1875,12 @@ fn pattern_sources<'t>(
             _ if health.contains_key(f.id()) => {
                 format!("{} failed, so it cannot be copied", f.name())
             }
-            Feature::Extrude(_) | Feature::Revolve(_) | Feature::Sweep(_) | Feature::Loft(_) => {
+            Feature::Extrude(_)
+            | Feature::Revolve(_)
+            | Feature::Sweep(_)
+            | Feature::Loft(_)
+            | Feature::Coil(_)
+            | Feature::Rib(_) => {
                 format!("{} cannot be copied (a surface)", f.name())
             }
             Feature::Hole(_) => format!("{} made no hole to copy", f.name()),

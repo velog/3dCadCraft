@@ -180,6 +180,8 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
         Feature::Hole(h) => h.fields(),
         Feature::Sweep(s) => s.fields(),
         Feature::Loft(_) => Vec::new(),
+        Feature::Coil(c) => c.fields(),
+        Feature::Rib(r) => r.fields(),
         Feature::Thread(t) => t.fields(),
         Feature::Work(w) => match &w.def {
             super::WorkDef::Plane(super::WorkPlaneDef::Offset { .. }) => {
@@ -281,6 +283,8 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
         Feature::Hole(h) => h.value(field),
         Feature::Sweep(s) => s.value(field),
         Feature::Loft(_) => None,
+        Feature::Coil(c) => c.value(field),
+        Feature::Rib(r) => r.value(field),
         Feature::Thread(t) => t.value(field),
         Feature::Work(w) => match (&w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
@@ -395,6 +399,8 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
         Feature::Hole(h) => h.set(field, v),
         Feature::Sweep(s) => s.set(field, v),
         Feature::Loft(_) => {}
+        Feature::Coil(c) => c.set(field, v),
+        Feature::Rib(r) => r.set(field, v),
         Feature::Thread(t) => t.set(field, v),
         Feature::Work(w) => match (&mut w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
@@ -443,6 +449,8 @@ fn feature_params_mut(f: &mut Feature) -> Option<&mut FeatureParams> {
         Feature::Hole(h) => Some(&mut h.params),
         Feature::Sweep(s) => Some(&mut s.params),
         Feature::Loft(l) => Some(&mut l.params),
+        Feature::Coil(c) => Some(&mut c.params),
+        Feature::Rib(r) => Some(&mut r.params),
         Feature::Thread(t) => Some(&mut t.params),
     }
 }
@@ -460,6 +468,8 @@ fn feature_params(f: &Feature) -> Option<&FeatureParams> {
         Feature::Hole(h) => Some(&h.params),
         Feature::Sweep(s) => Some(&s.params),
         Feature::Loft(l) => Some(&l.params),
+        Feature::Coil(c) => Some(&c.params),
+        Feature::Rib(r) => Some(&r.params),
         Feature::Thread(t) => Some(&t.params),
     }
 }
