@@ -64,6 +64,19 @@ pub(super) struct MaterialUi {
 }
 
 impl MaterialUi {
+    /// Closes floating window `key` (Escape over it; keys of `layout.rs`).
+    pub(super) fn close_window(&mut self, key: &str) {
+        match key {
+            "materials" => self.show_materials = false,
+            "appearances" => self.show_appearances = false,
+            "adjust" => self.show_adjust = false,
+            "clear_looks" => self.show_clear = false,
+            "styles" => self.show_styles = false,
+            "physical" => self.show_physical = false,
+            _ => {}
+        }
+    }
+
     /// Loads the built-in library and the user's (`materials::user_dir`).
     pub(super) fn load() -> Self {
         let (lib, problems) = Library::with_user(materials::user_dir().as_deref());
@@ -705,10 +718,16 @@ impl CadCraftApp {
         }
         let mut open = true;
         let mut search = std::mem::take(&mut self.mat.search);
-        egui::Window::new("Material Browser")
-            .open(&mut open)
-            .default_width(420.0)
-            .resizable(true)
+        self.layout
+            .place(
+                "materials",
+                ctx.content_rect(),
+                true,
+                egui::Window::new("Material Browser")
+                    .open(&mut open)
+                    .default_width(420.0)
+                    .resizable(true),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Search");
@@ -824,10 +843,16 @@ impl CadCraftApp {
         }
         let mut open = true;
         let mut search = std::mem::take(&mut self.mat.search);
-        egui::Window::new("Appearance Browser")
-            .open(&mut open)
-            .default_width(360.0)
-            .resizable(true)
+        self.layout
+            .place(
+                "appearances",
+                ctx.content_rect(),
+                true,
+                egui::Window::new("Appearance Browser")
+                    .open(&mut open)
+                    .default_width(360.0)
+                    .resizable(true),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Search");
@@ -906,9 +931,15 @@ impl CadCraftApp {
         }
         let mut open = true;
         let summary = self.target_summary();
-        egui::Window::new("Adjust")
-            .open(&mut open)
-            .default_width(300.0)
+        self.layout
+            .place(
+                "adjust",
+                ctx.content_rect(),
+                false,
+                egui::Window::new("Adjust")
+                    .open(&mut open)
+                    .default_width(300.0),
+            )
             .show(ctx, |ui| {
                 ui.label(RichText::new(super::i18n::tr(ADJUST_PROMPT)).weak());
                 ui.label(format!("Targets: {summary}"));
@@ -944,9 +975,15 @@ impl CadCraftApp {
         let mut ok = false;
         let has_sel = !self.sel.is_empty();
         let summary = self.target_summary();
-        egui::Window::new("Clear Appearance Overrides")
-            .open(&mut open)
-            .default_width(300.0)
+        self.layout
+            .place(
+                "clear_looks",
+                ctx.content_rect(),
+                false,
+                egui::Window::new("Clear Appearance Overrides")
+                    .open(&mut open)
+                    .default_width(300.0),
+            )
             .show(ctx, |ui| {
                 let c = &mut self.mat.clear;
                 ui.checkbox(&mut c.faces, "Faces");
@@ -983,10 +1020,16 @@ impl CadCraftApp {
             return;
         }
         let mut open = true;
-        egui::Window::new("Style and Standard Editor")
-            .open(&mut open)
-            .default_width(460.0)
-            .resizable(true)
+        self.layout
+            .place(
+                "styles",
+                ctx.content_rect(),
+                true,
+                egui::Window::new("Style and Standard Editor")
+                    .open(&mut open)
+                    .default_width(460.0)
+                    .resizable(true),
+            )
             .show(ctx, |ui| {
                 let part = self.part();
                 let lib = &self.mat.lib;
@@ -1061,10 +1104,16 @@ impl CadCraftApp {
         let mut open = true;
         let key = self.physical_key();
         let kg = self.mat.kg;
-        egui::Window::new("Physical Properties")
-            .open(&mut open)
-            .default_width(520.0)
-            .resizable(true)
+        self.layout
+            .place(
+                "physical",
+                ctx.content_rect(),
+                true,
+                egui::Window::new("Physical Properties")
+                    .open(&mut open)
+                    .default_width(520.0)
+                    .resizable(true),
+            )
             .show(ctx, |ui| {
                 let stale = self.mat.physical.as_ref().is_none_or(|(k, _)| *k != key);
                 ui.horizontal(|ui| {
