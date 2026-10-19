@@ -191,19 +191,30 @@ UI.md на 2026-10-19; виж последния раздел).
 | *Surface Bodies(n)* | — | — | — |
 | *Origin* → XY / XZ / YZ Plane | — | — | **New Sketch** |
 | *Origin* → X/Y/Z Axis, Center Point | (само надпис) | — | — |
-| Box | избира тялото | — | **Appearance ▸** |
-| Extrude / Revolve | избира | **Edit Feature** | **Edit Feature**, **Edit Sketch**, **Appearance ▸**, **Delete** |
-| Fillet / Chamfer, Shell, Draft | избира | **Edit Feature** | **Edit Feature**, **Appearance ▸**, **Delete** |
-| Rectangular / Circular Pattern, Mirror | избира | **Edit Feature** | **Edit Feature**, **Delete** |
-| Работна равнина / ос / точка | избира; отметката = видимост | — | **New Sketch** (само равнина), **Delete** |
-| Скица | избира; отметката = видимост | **Edit Sketch** | **Edit Sketch** (или **Finish 2D Sketch**, ако се редактира), **Share Sketch** (използвана, несподелена), **Unshare** (споделена, ≤1 операция), **Redefine**, **Look At**, **Hide**/**Show**, **Delete** |
-| *End of Part* | (само надпис) | — | — |
+| Box | избира тялото | — | **Appearance ▸**, общите (по-долу) |
+| Extrude / Revolve, Hole | избира | **Edit Feature** | **Edit Feature**, **Edit Sketch**, **Appearance ▸**, общите |
+| Fillet / Chamfer, Shell, Draft, Thread, Rectangular / Circular Pattern, Mirror | избира | **Edit Feature** | **Edit Feature**, **Appearance ▸**, общите |
+| Работна равнина / ос / точка | избира; отметката = видимост | — | **New Sketch** (само равнина), общите |
+| Общите за операция | | | **Rename**, **Suppress Features** / **Unsuppress Features**, **Move EOP Here**, **Delete** |
+| Скица | избира; отметката = видимост | **Edit Sketch** | **Edit Sketch** (или **Finish 2D Sketch**, ако се редактира), **Share Sketch** (използвана, несподелена), **Unshare** (споделена, ≤1 операция), **Redefine**, **Look At**, **Hide**/**Show**, **Rename**, **Delete** |
+| *End of Part* (червена черта) | — (влачи се) | — | **Move EOP to Top**, **Move EOP to End**, **Delete All Features Below EOP** |
 
 Докато в 3D Pattern/Mirror е активен селекторът *Features*, клик върху ред на операция в
-дървото я добавя/маха (не я избира). Оранжев надпис = проблем (подсказката започва с
-`Warning:`). Delete на операция, от която
-зависят други, отваря прозореца *Delete Feature* („Deleting X affects: …“, **Delete anyway** /
-**Cancel**, Esc = Cancel).
+дървото я добавя/маха (не я избира). Оранжев надпис с „! “ = проблем (подсказката започва с
+`Warning:`). Сив курсив = под *End of Part* (не се строи); сив зачеркнат = изключена
+(Suppress). Клик върху операция оцветява стените ѝ в изгледа (синьо), посочването — зелено.
+
+- **Влачене на операция** върху друга: застава над нея (горна половина на реда) или под нея
+  (долна). Забранено местене (над това, от което зависи, или през маркера) се отказва с
+  причината в лентата на състоянието; ако след местенето нещо стане болно, то се връща.
+- **Влачене на *End of Part*** върху операция: маркерът застава над/под нея. Esc прекъсва.
+  Новите операции и скици се вмъкват при маркера.
+- **Rename:** F2 (мишката над дървото), бавен втори клик върху избран ред или менюто;
+  Enter/клик другаде = готово, Esc = отказ. Сменя само името, не id.
+- **Delete** на операция, която взима и други неща (скицата си, зависими) или чупи нещо,
+  отваря *Delete Features*: отметки **Consumed sketches and features** и **Dependent sketches
+  and features** (и двете включени), списък какво още изчезва и кое ще стане болно,
+  **OK** / **Cancel** (Esc = Cancel).
 
 ### 2.6 ViewCube
 

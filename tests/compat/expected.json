@@ -82,5 +82,12 @@
     "features": 4,
     "sketches": 2,
     "exact": true
+  },
+  "r7/history_r7.3dcadcraft": {
+    "volume": 23717.89640164407,
+    "faces": 8,
+    "features": 4,
+    "sketches": 2,
+    "exact": true
   }
 }

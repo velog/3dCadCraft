@@ -47,7 +47,7 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 |---|---|---|
 | `kernel` | B-Rep geometry + topology, validation, tessellation (`mesh.rs`), queries & persistent names (`query.rs`), extrude, revolve (`revolve.rs`), BSP CSG on tagged polygons (`csg.rs`), polygons ↔ B-Rep and Booleans (`facet.rs`), exact kernel boundary (`exact.rs`: SolidCraft/truck → our B-Rep) | `BRep`, `Curve`, `Surface`, `Plane`, `Face`, `Tolerance`, `BoolOp` |
 | `sketch` | 2D sketch on a plane (dimension names/equations/tolerances in `dimparam.rs`): points, lines, circles, arcs, CV splines, styles (construction/centerline), ~20 constraint/dimension kinds, driven dims, Levenberg solver with DOF/redundancy analysis; composite shapes (`shapes.rs`), Modify ops (`modify.rs`: trim/extend/split/offset/move/copy/rotate/mirror/scale/stretch), 2D fillet/chamfer (`corner.rs`), associative rectangular/circular patterns (`pattern.rs`), profiles/regions (`profile.rs`: `Sketch::regions`), per-geometry DOF analysis (`dof_analysis`) | `Sketch`, `Constraint`, `Shape`, `SolveReport`, `DofAnalysis` |
-| `part` | part environment: features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`, Shell `shell.rs`, Face Draft `draft.rs`, Rectangular/Circular Pattern and Mirror of features or solids `pattern.rs`, Hole and Thread `hole.rs` (standards tables `standards.rs`, `data/standards/*.csv`); `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `PatternFeature`, `Operation`, `UserParam` |
+| `part` | part environment (history editing in `history.rs`: End of Part, `insert_feature`, reorder with dependency checks, Suppress, Delete options, Rename): features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`, Shell `shell.rs`, Face Draft `draft.rs`, Rectangular/Circular Pattern and Mirror of features or solids `pattern.rs`, Hole and Thread `hole.rs` (standards tables `standards.rs`, `data/standards/*.csv`); `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `PatternFeature`, `Operation`, `UserParam` |
 | `materials` | material/appearance libraries: built-in CSV (`data/materials/materials.csv`, `data/appearances/appearances.csv`, `include_str!`) + user CSVs in `user_dir()` (`%APPDATA%\3dcadcraft\materials`), same name overrides | `Material`, `Appearance`, `Library` |
 | `part::appearance`, `part::physical` | part material/appearance, overrides by persistent name (`Looks`: bodies, features, faces + hint), document copies, precedence Face > Feature > Body > Part > Material (`Resolver`), Clear/Purge/Update; Physical Properties from the display triangles (mass, COG, inertia) | `Looks`, `LookTarget`, `Resolver`, `physical_properties` |
 | `part::hole`, `part::standards` | Hole and Thread (`Feature::Hole` / `Feature::Thread`): `HoleSpec` (type, seat, termination, drill point, thread, fastener), notes for drawings (`note()`), `HoleInstance` + `group_holes` (`PartDocument::holes`, `hole_groups`); standards tables `data/standards/*.csv` (built in, user override folder) | `HoleFeature`, `HoleSpec`, `ThreadSpec`, `ThreadFeature`, `Standards` |
@@ -548,6 +548,19 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `options_snapshot`/`apply_options`; loading is field by field (`lenient`), so an old file
   keeps its other values. egui's Ctrl+0/Ctrl+± zoom is off (`zoom_with_keyboard`): Ctrl+0 is
   Clean Screen. F11 is Relax Mode in a sketch and Full Screen elsewhere.
+- **Insertion goes through `PartDocument::insert_feature`** (all `add_*` via
+  `insert_feature_checked`): a new feature lands at the End of Part (`eop`), sketches after
+  it shift, the marker moves below it. Never `features.push` and never assume the new feature
+  is the last one — use the returned index / `last_inserted()`; new sketches get
+  `after_features = insert_index()`. `build_limit()` = min(Edit Feature `rollback`, EOP).
+- **Suppressed features are skipped *before* their cache key is chained**, so the following
+  keys equal those of a history without them; reorder/insert change the chain from that
+  point on. Clones share `BuildCache`: a timed second run of the same edit is a cache hit.
+- **History dependencies are found by persistent-name strings** (`history::feature_refs`):
+  a string equal to a feature id or starting with `"<id>:"` (then a non-alphanumeric) in the
+  feature JSON (minus id/name/type/sketch) or its sketch's placement/projections. Keep new
+  reference fields as plain persistent names so reorder/suppress/delete see them.
+- **Python file edits on Windows** write CRLF unless `newline=''` is passed; the repo is LF.
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans (amber unless something assigned them an appearance).
 - **Feature patterns copy tools, not faces** (`part/pattern.rs`, `exact::pattern`): every

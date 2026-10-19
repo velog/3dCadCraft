@@ -30,6 +30,7 @@ mod exact;
 pub mod export;
 pub mod expr;
 pub mod extrude;
+pub mod history;
 pub mod hole;
 pub mod params;
 pub mod pattern;
@@ -597,6 +598,18 @@ pub struct PartDocument {
     /// edited feature). Runtime only.
     #[serde(skip)]
     pub rollback: Option<usize>,
+    /// **End of Part** (Inventor's EOP marker): only the features before
+    /// this index are built; the rest are rolled back (greyed in the
+    /// browser) and new features are inserted here. `None`: after the last
+    /// feature. Composes with [`PartDocument::rollback`] (the smaller one
+    /// wins). See [`history`] (format revision 7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eop: Option<usize>,
+    /// Suppressed features by id: kept in the history but skipped by
+    /// regeneration (Inventor's Suppress Features). See [`history`]
+    /// (format revision 7).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub suppressed: std::collections::BTreeSet<String>,
     /// Exact build steps already made (see [`BuildCache`]).
     #[serde(skip)]
     pub build_cache: BuildCache,
@@ -671,7 +684,8 @@ impl PartDocument {
         let mut body = BRep::new();
         // The exact solids so far (exact build only).
         let mut solids: Vec<ExactSolid> = Vec::new();
-        let limit = self.rollback.unwrap_or(usize::MAX).min(self.features.len());
+        // Edit Feature's rollback and the End of Part: the smaller wins.
+        let limit = self.build_limit();
         let mut prev_key = 0u64;
         // The tools of the features built so far (by id), for patterns.
         let mut tools: HashMap<String, Vec<pattern::ToolSet>> = HashMap::new();
@@ -690,6 +704,12 @@ impl PartDocument {
                 && let Some(ps) = self.sketches.iter_mut().find(|s| s.id == id)
             {
                 update_sketch(&body, &works, ps);
+            }
+            // Suppressed: as if it were not in the history (its key is not
+            // chained either, so the following steps match a history
+            // without it).
+            if self.suppressed.contains(f.id()) {
+                continue;
             }
             let key = step_key(
                 prev_key,
@@ -1047,19 +1067,19 @@ impl PartDocument {
         // The rest (made after every feature, or older files) follow the
         // final body.
         let n = self.features.len();
-        // Rolled back: the edited feature's own sketch follows the body
-        // before it; the later sketches keep their state.
+        // Rolled back (Edit Feature or End of Part): the sketches made at
+        // the stop follow the body there, and so does the edited feature's
+        // own sketch; the later sketches keep their state.
         let edited_sketch = self
             .rollback
+            .filter(|&k| k <= limit)
             .and_then(|k| self.features.get(k))
             .and_then(|f| f.sketch().map(str::to_owned));
         for ps in &mut self.sketches {
-            let follows = match self.rollback {
-                None => ps.after_features.is_none_or(|k| k >= n),
-                Some(r) => {
-                    ps.after_features == Some(r) || edited_sketch.as_deref() == Some(ps.id.as_str())
-                }
-            };
+            let follows = match ps.after_features {
+                None => limit >= n,
+                Some(k) => k == limit || (limit >= n && k >= n),
+            } || edited_sketch.as_deref() == Some(ps.id.as_str());
             if follows {
                 update_sketch(&self.body, &works, ps);
             }
@@ -1123,14 +1143,7 @@ impl PartDocument {
         let id = self.next_feature_id("Extrusion");
         (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id.clone());
         let reused = !self.consumers(&sketch_id).is_empty();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Extrude(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Extrude(def))?;
         let ps = &mut self.sketches[index];
         if reused {
             ps.shared = true;
@@ -1161,14 +1174,7 @@ impl PartDocument {
         let id = self.next_feature_id("Revolution");
         (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id.clone());
         let reused = !self.consumers(&sketch_id).is_empty();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Revolve(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Revolve(def))?;
         let ps = &mut self.sketches[index];
         if reused {
             ps.shared = true;
@@ -1243,7 +1249,13 @@ impl PartDocument {
                 *n -= 1;
             }
         }
+        if let Some(e) = self.eop.as_mut()
+            && *e > k
+        {
+            *e -= 1;
+        }
         let removed = self.features.remove(k);
+        self.suppressed.remove(removed.id());
         if self.features.is_empty() {
             // `regenerate` keeps a body without features (old files store
             // the body directly), so the last feature's body goes here.
@@ -1344,14 +1356,7 @@ impl PartDocument {
         let base = def.command();
         let id = self.next_feature_id(base);
         (def.id, def.name) = (id.clone(), id.clone());
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Blend(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Blend(def))?;
         Ok(id)
     }
 
@@ -1360,14 +1365,7 @@ impl PartDocument {
     pub fn add_shell(&mut self, mut def: ShellFeature) -> Result<String, PartError> {
         let id = self.next_feature_id("Shell");
         (def.id, def.name) = (id.clone(), id.clone());
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Shell(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Shell(def))?;
         Ok(id)
     }
 
@@ -1377,14 +1375,7 @@ impl PartDocument {
         let id = self.next_feature_id("FaceDraft");
         def.name = format!("Face Draft{}", &id["FaceDraft".len()..]);
         def.id = id.clone();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Draft(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Draft(def))?;
         Ok(id)
     }
 
@@ -1397,14 +1388,7 @@ impl PartDocument {
         let id = self.next_feature_id(base);
         def.name = format!("{}{}", def.command(), &id[base.len()..]);
         def.id = id.clone();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Pattern(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Pattern(def))?;
         Ok(id)
     }
 
@@ -1416,14 +1400,7 @@ impl PartDocument {
         (def.id, def.name) = (id.clone(), id.clone());
         let sketch = def.sketch.clone();
         let reused = !sketch.is_empty() && !self.consumers(&sketch).is_empty();
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Hole(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Hole(def))?;
         if let Some(ps) = self.sketches.iter_mut().find(|s| s.id == sketch) {
             if reused {
                 ps.shared = true;
@@ -1473,14 +1450,7 @@ impl PartDocument {
     pub fn add_thread(&mut self, mut def: ThreadFeature) -> Result<String, PartError> {
         let id = self.next_feature_id("Thread");
         (def.id, def.name) = (id.clone(), id.clone());
-        let before = (self.features.clone(), self.body.clone());
-        self.features.push(Feature::Thread(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            (self.features, self.body) = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Thread(def))?;
         Ok(id)
     }
 
@@ -1510,14 +1480,7 @@ impl PartDocument {
         let id = self.next_feature_id(idp);
         def.name = id.replace(idp, namep);
         def.id = id.clone();
-        let before = self.features.clone();
-        self.features.push(Feature::Work(def));
-        self.regenerate()?;
-        if let Some(msg) = self.feature_health.get(&id).cloned() {
-            self.features = before;
-            self.regenerate()?;
-            return Err(PartError::Feature(msg));
-        }
+        self.insert_feature_checked(Feature::Work(def))?;
         Ok(id)
     }
 }
@@ -1637,7 +1600,7 @@ impl PartDocument {
         let plane = placement.resolve_with(&self.body, &self.work, &Plane::xy())?;
         let mut ps = PartSketch::new(self.next_sketch_name(), Sketch::new(plane));
         ps.placement = placement;
-        ps.after_features = Some(self.features.len());
+        ps.after_features = Some(self.insert_index());
         add_projections(&self.body, &mut ps, opts);
         let _ = ps.sketch.solve();
         self.sketches.push(ps);

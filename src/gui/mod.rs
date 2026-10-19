@@ -24,6 +24,7 @@
 //! sketch on the box's top face.
 
 mod blend;
+mod browser_edit;
 mod camera;
 mod demos;
 mod diag;
@@ -549,6 +550,13 @@ struct CadCraftApp {
     work_draft: Option<work::WorkDraft>,
     /// A feature deletion waiting for confirmation, with what it breaks.
     confirm_delete: Option<(usize, Vec<(String, String)>)>,
+    /// The options of the Delete Features dialog.
+    delete_opts: crate::part::history::DeleteOptions,
+    /// The browser row being renamed (F2 / slow double-click).
+    rename: Option<browser_edit::RenameTarget>,
+    /// The feature under the pointer in the browser (highlighted in the
+    /// view), by id.
+    browser_hover: Option<String>,
     /// The References row under the pointer: (sketch, its points).
     ref_hover: Option<(usize, Vec<PointId>)>,
     /// Dynamic Input fields.
@@ -658,6 +666,9 @@ impl CadCraftApp {
             pick_cache: std::cell::RefCell::new(None),
             ref_hover: None,
             confirm_delete: None,
+            delete_opts: Default::default(),
+            rename: None,
+            browser_hover: None,
             work_draft: None,
             blend_draft: None,
             shell_draft: None,
@@ -1646,8 +1657,7 @@ impl CadCraftApp {
         }
         match result {
             Ok(_) => {
-                self.selection =
-                    Selection::Feature(d.edit.unwrap_or(self.part().features.len() - 1));
+                self.selection = Selection::Feature(d.edit.unwrap_or(self.part().last_inserted()));
                 self.extrude = None;
                 self.target_pick = None;
                 self.file_status = None;
@@ -2759,93 +2769,6 @@ impl CadCraftApp {
     /// Replaces extrusion `k`'s options and rebuilds the part.
     fn edit_extrude(&mut self, k: usize, def: crate::part::ExtrudeFeature) {
         self.edit_feature(k, crate::part::Feature::Extrude(def));
-    }
-
-    /// Deletes feature `k`; sketches no other feature uses become free and
-    /// visible again.
-    /// Delete Feature: when other sketches/features depend on it, asks
-    /// first and lists them.
-    pub(super) fn delete_feature(&mut self, k: usize) {
-        if k >= self.part().features.len() {
-            return;
-        }
-        let hit = self.part().breaks_if_removed(k);
-        if hit.is_empty() {
-            self.delete_feature_now(k);
-        } else {
-            self.confirm_delete = Some((k, hit));
-        }
-    }
-
-    /// The "what breaks" question of [`Self::delete_feature`].
-    fn confirm_delete_window(&mut self, ctx: &egui::Context) {
-        let Some((k, hit)) = self.confirm_delete.clone() else {
-            return;
-        };
-        let name = self
-            .part()
-            .features
-            .get(k)
-            .map_or_else(String::new, |f| f.name().to_owned());
-        let mut answer = None;
-        egui::Window::new("Delete Feature")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                ui.label(format!("Deleting {name} affects:"));
-                ui.add_space(4.0);
-                for (what, why) in &hit {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(Color32::from_rgb(230, 140, 0), "!");
-                        ui.label(RichText::new(what).strong());
-                        ui.label(RichText::new(why).small().weak());
-                    });
-                }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Delete anyway").clicked() {
-                        answer = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        answer = Some(false);
-                    }
-                });
-            });
-        if ctx.input(|i| i.key_pressed(Key::Escape)) {
-            answer = Some(false);
-        }
-        match answer {
-            Some(true) => {
-                self.confirm_delete = None;
-                self.delete_feature_now(k);
-            }
-            Some(false) => self.confirm_delete = None,
-            None => {}
-        }
-    }
-
-    fn delete_feature_now(&mut self, k: usize) {
-        if k >= self.part().features.len() {
-            return;
-        }
-        self.checkpoint("Delete Feature");
-        let part = self.part_mut();
-        let Some(removed) = part.remove_feature(k) else {
-            return;
-        };
-        if let Some(sk) = removed.sketch()
-            && part.consumers(sk).is_empty()
-            && let Some(ps) = part.sketches.iter_mut().find(|s| s.id == sk)
-        {
-            ps.shared = false;
-            ps.visible = true;
-        }
-        if let Err(e) = self.part_mut().regenerate() {
-            self.file_status = Some(Err(e.to_string()));
-        }
-        self.selection = Selection::Body;
-        self.scene_dirty = true;
     }
 
     fn delete_sketch(&mut self, i: usize) {
@@ -5330,7 +5253,10 @@ impl CadCraftApp {
                             .map(select::SelItem::Face),
                     )
                 }
-                None => (self.sel.clone(), hover_item),
+                None => (
+                    self.sel.clone(),
+                    hover_item.or_else(|| self.browser_hover.clone().map(select::SelItem::Feature)),
+                ),
             };
             if let Some(e) = draft_edge.or(pat_edge) {
                 let opts = TessellationOptions::default();
@@ -5455,7 +5381,9 @@ impl CadCraftApp {
         }
         for (i, ps) in self.part().sketches.iter().enumerate() {
             let profile_sketch = self.extrude.as_ref().is_some_and(|d| d.sketch == i);
-            if !ps.visible && self.editing != Some(i) && !profile_sketch {
+            // Sketches below the End of Part are rolled back: not drawn.
+            let shown = ps.visible && !self.part().sketch_rolled_back(i);
+            if !shown && self.editing != Some(i) && !profile_sketch {
                 continue;
             }
             let active = self.editing == Some(i);

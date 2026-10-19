@@ -684,7 +684,7 @@ impl CadCraftApp {
         match self.part_mut().add_work(crate::part::WorkFeature::new(def)) {
             Ok(_) => {
                 self.work_draft = None;
-                self.selection = super::Selection::Feature(self.part().features.len() - 1);
+                self.selection = super::Selection::Feature(self.part().last_inserted());
                 self.file_status = None;
             }
             Err(e) => {
