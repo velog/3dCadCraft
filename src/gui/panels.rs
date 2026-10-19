@@ -268,6 +268,53 @@ impl CadCraftApp {
         });
     }
 
+    /// A browser row of a feature without a nested sketch: icon, name
+    /// (orange when sick), hover text, Edit Feature / Delete.
+    #[allow(clippy::too_many_arguments)]
+    fn plain_feature_row(
+        &self,
+        ui: &mut egui::Ui,
+        k: usize,
+        icon: Icon,
+        id: &str,
+        name: &str,
+        hover: String,
+        cmds: &mut Vec<BrowserCmd>,
+    ) {
+        let part = self.part();
+        ui.horizontal(|ui| {
+            tree_icon(ui, icon);
+            let sick = part.feature_health.get(id);
+            let mut text = RichText::new(name);
+            if sick.is_some() {
+                text = text.color(WARNING);
+            }
+            let hover = match sick {
+                Some(h) => format!("Warning: {h}"),
+                None => hover,
+            };
+            let r = ui
+                .selectable_label(self.selection == Selection::Feature(k), text)
+                .on_hover_text(hover);
+            if r.clicked() {
+                cmds.push(BrowserCmd::Select(Selection::Feature(k)));
+            }
+            if r.double_clicked() {
+                cmds.push(BrowserCmd::EditFeature(k));
+            }
+            r.context_menu(|ui| {
+                if ui.button("Edit Feature").clicked() {
+                    cmds.push(BrowserCmd::EditFeature(k));
+                    ui.close();
+                }
+                if ui.button("Delete").clicked() {
+                    cmds.push(BrowserCmd::DeleteFeature(k));
+                    ui.close();
+                }
+            });
+        });
+    }
+
     /// A feature in the browser, with its consumed sketch(es) nested.
     fn feature_node(
         &self,
@@ -299,6 +346,27 @@ impl CadCraftApp {
                 return;
             }
             Feature::Extrude(e) => (&e.id, &e.name, &e.sketch, Icon::Extrude, "Extrude"),
+            Feature::Hole(h) if !h.sketch.is_empty() => {
+                (&h.id, &h.name, &h.sketch, Icon::Hole, "Hole")
+            }
+            Feature::Hole(h) => {
+                let hover = format!("{} centre(s): {}", h.centers.len(), h.spec.note_ascii());
+                self.plain_feature_row(ui, k, Icon::Hole, &h.id, &h.name, hover, cmds);
+                return;
+            }
+            Feature::Thread(t) => {
+                let hover = format!(
+                    "{} ({})",
+                    t.spec.note(),
+                    if t.spec.modeled {
+                        "modeled"
+                    } else {
+                        "cosmetic"
+                    }
+                );
+                self.plain_feature_row(ui, k, Icon::Thread, &t.id, &t.name, hover, cmds);
+                return;
+            }
             Feature::Revolve(r) => (&r.id, &r.name, &r.sketch, Icon::Revolve, "Revolve"),
             Feature::Blend(bl) => {
                 let icon = match bl.kind {
@@ -692,6 +760,14 @@ impl CadCraftApp {
             self.pattern_feature_dialog(ui);
             return;
         }
+        if self.hole_draft.is_some() {
+            self.hole_dialog(ui);
+            return;
+        }
+        if self.thread_draft.is_some() {
+            self.thread_dialog(ui);
+            return;
+        }
         if self.editing.is_some() && self.tools.pattern_dialog.is_some() {
             self.pattern_dialog_panel(ui);
             return;
@@ -840,7 +916,7 @@ impl CadCraftApp {
     }
 
     /// The header of the property panel: icon, title and `?` (F1).
-    fn panel_header(&mut self, ui: &mut egui::Ui, icon: Icon, title: &str) {
+    pub(super) fn panel_header(&mut self, ui: &mut egui::Ui, icon: Icon, title: &str) {
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
             super::icons::paint(ui.painter(), r, icon, &super::icons::Palette::ENABLED);
@@ -1649,6 +1725,14 @@ impl CadCraftApp {
             self.pattern_properties(ui, k, p.clone());
             return;
         }
+        if let Feature::Hole(h) = &f {
+            self.hole_properties(ui, k, h.clone());
+            return;
+        }
+        if let Feature::Thread(t) = &f {
+            self.thread_properties(ui, k, t.clone());
+            return;
+        }
         let Some(sketch_id) = f.sketch().map(str::to_owned) else {
             return;
         };
@@ -1694,7 +1778,9 @@ impl CadCraftApp {
                 | Feature::Blend(_)
                 | Feature::Shell(_)
                 | Feature::Draft(_)
-                | Feature::Pattern(_) => {}
+                | Feature::Pattern(_)
+                | Feature::Hole(_)
+                | Feature::Thread(_) => {}
             }
         });
         let table = self.part().parameter_table();
@@ -1736,7 +1822,9 @@ impl CadCraftApp {
             | Feature::Blend(_)
             | Feature::Shell(_)
             | Feature::Draft(_)
-            | Feature::Pattern(_) => {}
+            | Feature::Pattern(_)
+            | Feature::Hole(_)
+            | Feature::Thread(_) => {}
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
@@ -3979,6 +4067,27 @@ impl CadCraftApp {
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
+                (Mode::Normal, None) if self.hole_draft.is_some() => {
+                    let d = self.hole_draft.as_ref();
+                    let text = if d.is_some_and(|d| d.to_pick) {
+                        "Hole: click the planar face where the hole ends"
+                    } else if d.is_some_and(|d| d.edit.is_some()) {
+                        "Hole: change the options, then OK (the centres are edited in the hole's sketch)"
+                    } else if d.is_some_and(|d| d.count() == 0) {
+                        "Hole: click a planar face, a sketch point or a circular edge for the centre"
+                    } else {
+                        "Hole: click more centres (a click on one removes it), set the options, then OK"
+                    };
+                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.thread_draft.is_some() => {
+                    let text = if self.thread_draft.as_ref().is_some_and(|d| d.face.is_none()) {
+                        "Thread: click a cylindrical face near the end the thread starts at"
+                    } else {
+                        "Thread: set the size and the length, then OK (another click picks another face)"
+                    };
+                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                }
                 (Mode::Normal, None) if self.draft_draft.is_some() => {
                     use super::draft::DraftInput;
                     let text = match self.draft_draft.as_ref().map(|d| d.input) {
@@ -4139,7 +4248,7 @@ impl CadCraftApp {
 const LABEL_W: f32 = 82.0;
 
 /// A collapsible section; `body` gets a two-column grid (label, field).
-fn psection<R>(
+pub(super) fn psection<R>(
     ui: &mut egui::Ui,
     id: &str,
     title: &str,
@@ -4167,7 +4276,7 @@ fn psection<R>(
 }
 
 /// A label cell of a property row (left column of a [`psection`] grid).
-fn plabel(ui: &mut egui::Ui, text: &str) {
+pub(super) fn plabel(ui: &mut egui::Ui, text: &str) {
     let color = ui.visuals().weak_text_color();
     ui.allocate_ui_with_layout(
         egui::vec2(LABEL_W, 18.0),
@@ -4221,7 +4330,7 @@ fn icon_choice<T: PartialEq + Copy>(
 }
 
 /// Inventor's yellow warning box.
-fn warning_box(ui: &mut egui::Ui, text: &str) {
+pub(super) fn warning_box(ui: &mut egui::Ui, text: &str) {
     egui::Frame::new()
         .fill(Color32::from_rgb(255, 244, 200))
         .stroke(egui::Stroke::new(1.0, Color32::from_rgb(220, 170, 40)))
@@ -4423,7 +4532,13 @@ fn pattern_direction_rows(
 }
 
 /// A numeric feature field that takes expressions (one grid row).
-fn field_row(ui: &mut egui::Ui, fx: &mut Fields, label: &str, f: &Feature, field: &'static str) {
+pub(super) fn field_row(
+    ui: &mut egui::Ui,
+    fx: &mut Fields,
+    label: &str,
+    f: &Feature,
+    field: &'static str,
+) {
     use crate::part::params::{feature_field_param, feature_field_unit, feature_value};
     plabel(ui, label);
     let p = feature_field_param(f, field);

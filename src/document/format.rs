@@ -72,7 +72,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 4: Face Draft (`Feature::Draft`) (2026-10-19).
 /// - 5: Rectangular / Circular Pattern and Mirror (`Feature::Pattern`)
 ///   (2026-10-19).
-pub const FORMAT_REVISION: u32 = 5;
+/// - 6: Hole and Thread (`Feature::Hole`, `Feature::Thread`) (2026-10-19).
+pub const FORMAT_REVISION: u32 = 6;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

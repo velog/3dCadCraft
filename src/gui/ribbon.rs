@@ -74,6 +74,10 @@ pub enum Action {
     CircPattern,
     /// Mirror of features or solids across a plane.
     MirrorFeature,
+    /// Hole: drilled, clearance and tapped holes with seats.
+    Hole,
+    /// Thread: a cosmetic or modeled thread on a cylindrical face.
+    Thread,
     /// Work Axis: the method follows from the picks.
     WorkAxis,
     /// Work Point: the method follows from the picks.
@@ -347,7 +351,14 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             panel(
                 "Modify",
                 vec![
-                    todo(Icon::Hole, "Hole", Some("H"), "2.3").large(),
+                    ready(
+                        Icon::Hole,
+                        "Hole",
+                        Some("H"),
+                        Action::Hole,
+                        "Hole: click a face, sketch points or a circular edge for the centres (Simple, Clearance, Tapped; Counterbore, Spotface, Countersink)",
+                    )
+                    .large(),
                     ready(
                         Icon::FilletEdge,
                         "Fillet",
@@ -377,7 +388,13 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         Action::Draft,
                         "Face Draft: tilt faces against a pull direction (Fixed Edge, Fixed Plane)",
                     ),
-                    todo(Icon::Thread, "Thread", None, "2.9"),
+                    ready(
+                        Icon::Thread,
+                        "Thread",
+                        None,
+                        Action::Thread,
+                        "Thread: click a cylindrical face near the end the thread starts at (cosmetic or modeled)",
+                    ),
                     todo(Icon::SlotFeature, "Slot", None, "2.3"),
                     todo(Icon::Combine, "Combine", None, "2.13"),
                     todo(Icon::SplitBody, "Split", None, "2.13"),

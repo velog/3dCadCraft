@@ -478,6 +478,61 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Hole: 36 counterbored M5 holes in one feature (two Booleans: the seats,
+    // then the bores; a stepped tool per hole took 43 s), and one
+    // modeled M8 thread 10 deep (faceted zone only).
+    let plate = PartDocument::with_box("Box1", [100.0, 100.0, 10.0]).unwrap();
+    rows.push((
+        "hole: 36 counterbored Ø5.5 holes in one feature (add_hole)",
+        2500.0,
+        median_ms(3, || {
+            use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, SeatType, Termination};
+            let mut p = plate.clone();
+            p.build_cache = Default::default();
+            let pts: Vec<Point3> = (0..36)
+                .map(|i| {
+                    Point3::new(
+                        10.0 + 16.0 * (i % 6) as Real,
+                        10.0 + 16.0 * (i / 6) as Real,
+                        10.0,
+                    )
+                })
+                .collect();
+            let (k, ids) = p.create_hole_sketch("Box1:Top", &pts).unwrap();
+            let mut s = HoleSpec::simple(5.5, 10.0);
+            s.termination = Termination::ThroughAll;
+            s.seat = SeatType::Counterbore;
+            s.seat_diameter = 10.0;
+            s.seat_depth = 5.4;
+            let mut def = HoleFeature::new(s);
+            def.sketch = p.sketches[k].id.clone();
+            def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+            p.add_hole(def).unwrap();
+        }),
+    ));
+    rows.push((
+        "hole: tapped M8 modeled thread 10 deep (add_hole)",
+        12000.0,
+        median_ms(1, || {
+            use cadcraft3d::part::standards::{self, Standards};
+            use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, ThreadSpec};
+            let mut p = PartDocument::with_box("Box1", [30.0, 30.0, 20.0]).unwrap();
+            p.build_cache = Default::default();
+            let (k, ids) = p
+                .create_hole_sketch("Box1:Top", &[Point3::new(15.0, 15.0, 20.0)])
+                .unwrap();
+            let mut t =
+                ThreadSpec::from_table(&Standards::builtin(), standards::ISO_METRIC, "M8", true)
+                    .unwrap();
+            t.modeled = true;
+            t.full_depth = false;
+            t.depth = 10.0;
+            let mut def = HoleFeature::new(HoleSpec::tapped(t, 15.0));
+            def.sketch = p.sketches[k].id.clone();
+            def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+            p.add_hole(def).unwrap();
+        }),
+    ));
 
     println!("{:<62} {:>9} {:>9}", "case", "budget", "median");
     let mut over = Vec::new();

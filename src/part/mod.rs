@@ -30,6 +30,7 @@ mod exact;
 pub mod export;
 pub mod expr;
 pub mod extrude;
+pub mod hole;
 pub mod params;
 pub mod pattern;
 pub mod physical;
@@ -37,6 +38,7 @@ pub mod placement;
 pub mod revolve;
 pub mod select;
 pub mod shell;
+pub mod standards;
 pub mod work;
 
 use std::collections::HashMap;
@@ -52,6 +54,10 @@ pub use boolean::{Operation, Output};
 pub use draft::{DraftFeature, DraftType, PullRef};
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, TargetRef};
 pub use pattern::{PatternDirection, PatternFeature, PatternKind};
+pub use hole::{
+    ClearanceSpec, CosmeticThread, DrillPoint, FastenerFit, HoleCenter, HoleFeature, HoleGroup,
+    HoleInstance, HoleSpec, HoleType, SeatType, Termination, ThreadFeature, ThreadSpec,
+};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
 pub use shell::{FaceRef, ShellDirection, ShellFeature};
@@ -134,6 +140,11 @@ pub enum Feature {
     /// Rectangular / Circular Pattern or Mirror of features or solids
     /// (format revision 5).
     Pattern(PatternFeature),
+    /// Hole: drilled, clearance or tapped holes with seats (format revision 6).
+    Hole(HoleFeature),
+    /// Thread: a cosmetic or modeled thread on a cylindrical face (format
+    /// revision 6).
+    Thread(ThreadFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -160,6 +171,10 @@ struct CachedStep {
     /// The tools the step applied (Extrude, Revolve, feature patterns), so
     /// a later pattern still finds them when this step is a cache hit.
     tools: Vec<pattern::ToolSet>,
+    /// Holes and threads the step made (Hole / Thread features).
+    extra: exact::HoleOutput,
+    /// Health of other features (the modeled threads' finishing step).
+    healths: Vec<(String, String)>,
 }
 
 impl std::fmt::Debug for BuildCache {
@@ -223,6 +238,8 @@ enum BuildStep<'a> {
     Shell(&'a ShellFeature),
     Draft(&'a DraftFeature),
     Pattern(&'a PatternFeature),
+    Hole(&'a HoleFeature),
+    Thread(&'a ThreadFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -236,6 +253,8 @@ impl<'a> BuildStep<'a> {
             Feature::Shell(sh) => Self::Shell(sh),
             Feature::Draft(d) => Self::Draft(d),
             Feature::Pattern(p) => Self::Pattern(p),
+            Feature::Hole(h) => Self::Hole(h),
+            Feature::Thread(t) => Self::Thread(t),
         }
     }
 }
@@ -252,6 +271,8 @@ impl Feature {
             Feature::Shell(s) => &s.id,
             Feature::Draft(d) => &d.id,
             Feature::Pattern(p) => &p.id,
+            Feature::Hole(h) => &h.id,
+            Feature::Thread(t) => &t.id,
         }
     }
 
@@ -266,6 +287,8 @@ impl Feature {
             Feature::Shell(s) => &s.name,
             Feature::Draft(d) => &d.name,
             Feature::Pattern(p) => &p.name,
+            Feature::Hole(h) => &h.name,
+            Feature::Thread(t) => &t.name,
         }
     }
 
@@ -280,6 +303,8 @@ impl Feature {
             | Feature::Shell(_)
             | Feature::Draft(_)
             | Feature::Pattern(_) => false,
+            | Feature::Hole(_)
+            | Feature::Thread(_) => false,
         }
     }
 
@@ -292,6 +317,8 @@ impl Feature {
             | Feature::Shell(_)
             | Feature::Draft(_)
             | Feature::Pattern(_) => None,
+            | Feature::Thread(_) => None,
+            Feature::Hole(h) => (!h.sketch.is_empty()).then_some(h.sketch.as_str()),
             Feature::Extrude(e) => Some(&e.sketch),
             Feature::Revolve(r) => Some(&r.sketch),
         }
@@ -578,6 +605,14 @@ pub struct PartDocument {
     /// faceted kernel built the part): STEP export reads them.
     #[serde(skip)]
     pub exact_bodies: ExactBodies,
+    /// The holes of the last regeneration, in feature order (see
+    /// [`PartDocument::holes`]). Runtime only.
+    #[serde(skip)]
+    pub hole_instances: Vec<HoleInstance>,
+    /// Cosmetic threads of the last regeneration (display hints). Runtime
+    /// only.
+    #[serde(skip)]
+    pub cosmetic_threads: Vec<CosmeticThread>,
 }
 
 impl PartDocument {
@@ -641,6 +676,8 @@ impl PartDocument {
         let mut prev_key = 0u64;
         // The tools of the features built so far (by id), for patterns.
         let mut tools: HashMap<String, Vec<pattern::ToolSet>> = HashMap::new();
+        // Holes, cosmetic and modeled threads of the features so far.
+        let mut hole_out = exact::HoleOutput::default();
         for (j, f) in self.features.iter().enumerate().take(limit) {
             // Sketches made at this point of the history follow the body as
             // it was then (Inventor), not the final one.
@@ -673,10 +710,12 @@ impl PartDocument {
                 if !hit.tools.is_empty() {
                     tools.insert(f.id().to_owned(), hit.tools);
                 }
+                hole_out.append(hit.extra);
                 continue;
             }
             // The tools this step applies (kept for later patterns).
             let mut made: Vec<pattern::ToolSet> = Vec::new();
+            let mut extra = exact::HoleOutput::default();
             // `Ok(Some(solids))`: the new exact solids; `Ok(None)`: done by
             // the faceted kernel (`body` updated); `Err`: the feature fails.
             let step: Result<Option<Vec<ExactSolid>>, exact::Fail> = match BuildStep::of(f) {
@@ -720,6 +759,29 @@ impl PartDocument {
                         Ok(sources) => {
                             exact::pattern(p, &body, &works, &solids, &sources).map(|(next, t)| {
                                 made = t;
+                                // Copies of holes are holes too (Hole Table,
+                                // `4x` notes): each source hole moved by
+                                // each copy's placement.
+                                if !p.solid_mode
+                                    && let Ok(places) = p.placements(&body, &works)
+                                {
+                                    let src: Vec<HoleInstance> = hole_out
+                                        .holes
+                                        .iter()
+                                        .filter(|h| p.features.contains(&h.feature))
+                                        .cloned()
+                                        .collect();
+                                    for (k, m) in &places {
+                                        for h in &src {
+                                            let mut c = h.transformed(m);
+                                            c.copy.push(*k);
+                                            c.start_face = c
+                                                .start_face
+                                                .map(|f| format!("{}#{k}:{f}", p.id));
+                                            extra.holes.push(c);
+                                        }
+                                    }
+                                }
                                 Some(next)
                             })
                         }
@@ -730,6 +792,33 @@ impl PartDocument {
                     "{} needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)",
                     p.command()
                 ))),
+                BuildStep::Hole(h) if use_exact => {
+                    let ps = self.sketches.iter().find(|s| s.id == h.sketch);
+                    exact::hole(h, ps, &body, &solids).map(|(next, out, sets)| {
+                        extra = out;
+                        made = sets;
+                        Some(next)
+                    })
+                }
+                BuildStep::Hole(_) => Err(exact::Fail::User(
+                    "Hole needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
+                BuildStep::Thread(th) if use_exact || !th.spec.modeled => {
+                    match exact::thread(th, &body) {
+                        Ok((out, ring)) => {
+                            extra = out;
+                            match ring {
+                                Some(r) => exact::combine(solids.clone(), vec![r], Operation::Cut, &[], false)
+                                    .map(Some),
+                                None => Ok(None),
+                            }
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                BuildStep::Thread(_) => Err(exact::Fail::User(
+                    "a modeled thread needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
                 BuildStep::Draft(_) => Err(exact::Fail::User(
                     "Face Draft needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
@@ -870,6 +959,9 @@ impl PartDocument {
                     return Ok(false);
                 }
             }
+            if failed.is_some() {
+                extra = exact::HoleOutput::default();
+            }
             if cacheable {
                 self.build_cache.put(CachedStep {
                     key,
@@ -877,12 +969,67 @@ impl PartDocument {
                     body: body.clone(),
                     health: failed,
                     tools: made.clone(),
+                    extra: extra.clone(),
+                    healths: Vec::new(),
                 });
             }
             if !made.is_empty() {
                 tools.insert(f.id().to_owned(), made);
             }
+            hole_out.append(extra);
         }
+        // Modeled threads: cut after every feature (their zones are faceted,
+        // and no later Boolean may meet them).
+        if use_exact && !hole_out.grooves.is_empty() {
+            let key = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                prev_key.hash(&mut h);
+                format!("{:?}", hole_out.grooves).hash(&mut h);
+                h.finish()
+            };
+            let (next, failed) = match self.build_cache.get(key) {
+                Some(hit) => (Some((hit.solids, hit.body)), hit.healths),
+                None => {
+                    let (next, failed) = exact::finish_threads(solids.clone(), &hole_out.grooves);
+                    match to_brep(&next) {
+                        Ok(b) => {
+                            self.build_cache.put(CachedStep {
+                                key,
+                                solids: next.clone(),
+                                body: b.clone(),
+                                health: None,
+                                tools: Vec::new(),
+                                extra: exact::HoleOutput::default(),
+                                healths: failed.clone(),
+                            });
+                            (Some((next, b)), failed)
+                        }
+                        Err(msg) => (
+                            None,
+                            hole_out.grooves
+                                .iter()
+                                .map(|g| {
+                                    (
+                                        g.prefix.clone(),
+                                        format!("the modeled thread cannot be shown ({msg})"),
+                                    )
+                                })
+                                .collect(),
+                        ),
+                    }
+                }
+            };
+            if let Some((s, b)) = next {
+                solids = s;
+                body = b;
+            }
+            for (id, msg) in failed {
+                self.feature_health.entry(id).or_insert(msg);
+            }
+        }
+        self.hole_instances = hole_out.holes;
+        self.cosmetic_threads = hole_out.cosmetic;
         if !self.features.is_empty() {
             self.body = body;
         }
@@ -926,6 +1073,8 @@ impl PartDocument {
                 | Feature::Shell(_)
                 | Feature::Draft(_)
                 | Feature::Pattern(_) => false,
+                | Feature::Hole(_)
+                | Feature::Thread(_) => false,
             })
             .enumerate()
             .map(|(n, f)| (f.id().to_owned(), format!("Solid{}", n + 1)))
@@ -1048,6 +1197,12 @@ impl PartDocument {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             (Feature::Pattern(o), Feature::Pattern(n)) if o.id_base() == n.id_base() => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::Hole(o), Feature::Hole(n)) => {
+                (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
+            }
+            (Feature::Thread(o), Feature::Thread(n)) => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             _ => {
@@ -1244,6 +1399,100 @@ impl PartDocument {
         Ok(id)
     }
 
+    /// **Hole**: adds the feature (id `Hole<N>`). Its sketch (if any) is
+    /// consumed like an extrusion's: hidden, or shared when another feature
+    /// uses it already. On failure nothing changes.
+    pub fn add_hole(&mut self, mut def: HoleFeature) -> Result<String, PartError> {
+        let id = self.next_feature_id("Hole");
+        (def.id, def.name) = (id.clone(), id.clone());
+        let sketch = def.sketch.clone();
+        let reused = !sketch.is_empty() && !self.consumers(&sketch).is_empty();
+        let before = (self.features.clone(), self.body.clone());
+        self.features.push(Feature::Hole(def));
+        self.regenerate()?;
+        if let Some(msg) = self.feature_health.get(&id).cloned() {
+            (self.features, self.body) = before;
+            self.regenerate()?;
+            return Err(PartError::Feature(msg));
+        }
+        if let Some(ps) = self.sketches.iter_mut().find(|s| s.id == sketch) {
+            if reused {
+                ps.shared = true;
+            } else {
+                ps.visible = false;
+            }
+        }
+        Ok(id)
+    }
+
+    /// The sketch Hole makes on a planar face (Inventor's Allow Center
+    /// Point Creation): a sketch on `face` without projections, with a
+    /// point at each of `centers` (model coordinates, projected onto the
+    /// face). Returns the sketch index and the points.
+    pub fn create_hole_sketch(
+        &mut self,
+        face: &str,
+        centers: &[Point3],
+    ) -> Result<(usize, Vec<PointId>), PartError> {
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..SketchOptions::default()
+        };
+        let i = self.create_sketch(SketchPlacement::on_face(face), &opts)?;
+        let ps = &mut self.sketches[i];
+        let plane = ps.sketch.plane.clone();
+        let pts = centers
+            .iter()
+            .map(|c| ps.sketch.add_point(plane.project(c)))
+            .collect();
+        Ok((i, pts))
+    }
+
+    /// The centres of `def` on the current body: (point on the start
+    /// plane, unit drilling direction, start face).
+    pub fn hole_placements(
+        &self,
+        def: &HoleFeature,
+    ) -> Result<Vec<(Point3, crate::kernel::Vector3, Option<String>)>, String> {
+        let ps = self.sketches.iter().find(|s| s.id == def.sketch);
+        exact::hole_placements(def, ps, &self.body)
+    }
+
+    /// **Thread**: adds the feature (id `Thread<N>`). On failure nothing
+    /// changes.
+    pub fn add_thread(&mut self, mut def: ThreadFeature) -> Result<String, PartError> {
+        let id = self.next_feature_id("Thread");
+        (def.id, def.name) = (id.clone(), id.clone());
+        let before = (self.features.clone(), self.body.clone());
+        self.features.push(Feature::Thread(def));
+        self.regenerate()?;
+        if let Some(msg) = self.feature_health.get(&id).cloned() {
+            (self.features, self.body) = before;
+            self.regenerate()?;
+            return Err(PartError::Feature(msg));
+        }
+        Ok(id)
+    }
+
+    /// Every hole of the part as of the last regeneration, in feature and
+    /// centre order: spec, centre, direction, start face, feature id and
+    /// occurrence (drawing data: Hole Table, hole notes).
+    ///
+    /// Pattern / Mirror hook: a feature that copies a Hole feature adds
+    /// `h.transformed(&m)` for each copy (with its element index pushed onto
+    /// [`HoleInstance::copy`]) to [`PartDocument::hole_instances`] at its
+    /// place in the regeneration loop.
+    pub fn holes(&self) -> &[HoleInstance] {
+        &self.hole_instances
+    }
+
+    /// The holes grouped as a drawing counts them: identical holes on the
+    /// same face, from any Hole feature (`4x Ø6.6 THRU`).
+    pub fn hole_groups(&self) -> Vec<HoleGroup> {
+        hole::group_holes(&self.hole_instances)
+    }
+
     /// **Work Plane / Axis / Point**: adds a work feature (id `WorkPlane<N>`,
     /// name `Work Plane<N>`, likewise for axes and points). On failure
     /// nothing changes.
@@ -1303,11 +1552,13 @@ fn pattern_sources<'t>(
             Feature::Extrude(_) | Feature::Revolve(_) => {
                 format!("{} cannot be copied (a surface)", f.name())
             }
+            Feature::Hole(_) => format!("{} made no hole to copy", f.name()),
             Feature::Box(_)
             | Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
             | Feature::Draft(_)
+            | Feature::Thread(_)
             | Feature::Pattern(_) => format!(
                 "{} cannot be patterned on its own (pattern the solid)",
                 f.name()

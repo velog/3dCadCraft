@@ -297,6 +297,43 @@ fn pattern_r5() -> PartDocument {
     part.add_pattern(m).unwrap();
     part
 }
+/// Revision 6: Hole (two counterbored M6 clearance holes, a tapped M8 hole)
+/// and a cosmetic Thread in the tapped hole's wall.
+fn hole_r6() -> PartDocument {
+    use cadcraft3d::part::hole::HoleCenter;
+    use cadcraft3d::part::standards::{self, Standards};
+    use cadcraft3d::part::{FastenerFit, HoleFeature, HoleSpec, ThreadFeature, ThreadSpec};
+    let t = Standards::builtin();
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+    let add = |part: &mut PartDocument, spec: HoleSpec, at: &[Point3]| {
+        let (i, ids) = part.create_hole_sketch("Box1:Top", at).unwrap();
+        let mut def = HoleFeature::new(spec);
+        def.sketch = part.sketches[i].id.clone();
+        def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+        part.add_hole(def).unwrap();
+    };
+    let mut cb = HoleSpec::clearance(&t, "ISO 273", "M6", FastenerFit::Normal).unwrap();
+    assert!(cb.counterbore_from(&t, "Socket Head Cap Screw ISO 4762", "M6"));
+    add(
+        &mut part,
+        cb,
+        &[Point3::new(10.0, 10.0, 20.0), Point3::new(50.0, 10.0, 20.0)],
+    );
+    let m8 = ThreadSpec::from_table(&t, standards::ISO_METRIC, "M8", true).unwrap();
+    add(
+        &mut part,
+        HoleSpec::tapped(m8.clone(), 15.0),
+        &[Point3::new(30.0, 25.0, 20.0)],
+    );
+    let wall = part.body.find_face("Hole2:Bore:1").unwrap();
+    let face =
+        cadcraft3d::part::shell::face_ref(&part.body, wall, Some(Point3::new(30.0, 28.3, 19.0)))
+            .unwrap();
+    part.add_thread(ThreadFeature::new(face, m8))
+        .map_err(|e| e.to_string())
+        .unwrap();
+    part
+}
 
 #[test]
 fn old_files_still_open() {
@@ -332,6 +369,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("PatternR5");
             project.add_document("Part1", DocumentData::Part(pattern_r5()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r6/hole_r6.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("HoleR6");
+            project.add_document("Part1", DocumentData::Part(hole_r6()));
             project.save(&f).unwrap();
         }
         let f = root().join("r3/shell_r3.3dcadcraft");

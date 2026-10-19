@@ -611,6 +611,428 @@ pub(super) fn draft(
     Ok(out)
 }
 
+/// What a Hole or Thread feature leaves for later: the holes it made
+/// (drawing data), cosmetic threads (display) and modeled threads (cut
+/// after every feature).
+#[derive(Clone, Debug, Default)]
+pub(super) struct HoleOutput {
+    pub holes: Vec<super::hole::HoleInstance>,
+    pub cosmetic: Vec<super::hole::CosmeticThread>,
+    pub grooves: Vec<exact::ThreadGroove>,
+}
+
+impl HoleOutput {
+    /// Adds a later step's output.
+    pub fn append(&mut self, mut o: HoleOutput) {
+        self.holes.append(&mut o.holes);
+        self.cosmetic.append(&mut o.cosmetic);
+        self.grooves.append(&mut o.grooves);
+    }
+}
+
+/// The centres of a Hole feature: (point on the start plane, unit drilling
+/// direction, start face name).
+pub(super) fn hole_placements(
+    h: &super::hole::HoleFeature,
+    ps: Option<&super::PartSketch>,
+    body: &BRep,
+) -> Result<Vec<(Point3, crate::kernel::Vector3, Option<String>)>, String> {
+    use super::hole::HoleCenter;
+    if h.centers.is_empty() {
+        return Err("select the hole centres".into());
+    }
+    let mut out = Vec::new();
+    for c in &h.centers {
+        let (o, mut dir, face) = match c {
+            HoleCenter::Point(pid) => {
+                let ps = ps.ok_or_else(|| format!("sketch {} is missing", h.sketch))?;
+                let p = ps
+                    .sketch
+                    .point(*pid)
+                    .ok_or_else(|| "a hole centre no longer exists in the sketch".to_owned())?;
+                let face = match &ps.placement.plane {
+                    super::PlaneRef::Face(n) => Some(n.clone()),
+                    _ => None,
+                };
+                (
+                    ps.sketch.to_world(&p.position),
+                    -ps.sketch.plane.normal.into_inner(),
+                    face,
+                )
+            }
+            HoleCenter::Concentric(e) => concentric_center(body, e)?,
+        };
+        if h.spec.flip {
+            dir = -dir;
+        }
+        out.push((o, dir, face));
+    }
+    Ok(out)
+}
+
+/// The centre of the circular edge `e` and the drilling direction into the
+/// planar face it bounds.
+fn concentric_center(
+    body: &BRep,
+    e: &EdgeRef,
+) -> Result<(Point3, crate::kernel::Vector3, Option<String>), String> {
+    use crate::kernel::{Sense, Surface};
+    let hint = Point3::from(e.hint);
+    let mut best: Option<(Real, Real, Point3, crate::kernel::Vector3, String)> = None;
+    for (fid, f) in body.faces() {
+        let Some(name) = f.name.as_deref() else {
+            continue;
+        };
+        if !e.faces.iter().any(|n| n == name) {
+            continue;
+        }
+        let Some(Surface::Plane(pl)) = body.surface(f.surface) else {
+            continue;
+        };
+        let out = match f.sense {
+            Sense::Same => pl.normal.into_inner(),
+            Sense::Reversed => -pl.normal.into_inner(),
+        };
+        for eid in super::select::edges_of_face(body, fid) {
+            let Some(Curve::Circle(c)) = body.edge(eid).and_then(|x| body.curve(x.curve)) else {
+                continue;
+            };
+            // The hint lies on the circle's plane, on the circle or inside
+            // it (an edge's hint may be the middle of its chord).
+            let v = hint - c.center;
+            let off = v.dot(&c.normal).abs();
+            let rho = (v - c.normal.into_inner() * v.dot(&c.normal)).norm();
+            if rho > c.radius * 1.05 + 1e-6 {
+                continue;
+            }
+            let d = off + (rho - c.radius).abs();
+            if best.as_ref().is_none_or(|b| d < b.0) {
+                best = Some((d, off, c.center, -out, name.to_owned()));
+            }
+        }
+    }
+    let (_, off, c, dir, face) = best.ok_or_else(|| {
+        format!(
+            "the circular edge between {} and {} no longer exists",
+            e.faces[0], e.faces[1]
+        )
+    })?;
+    let size = body
+        .bounding_box()
+        .map_or(1.0, |(lo, hi)| (hi - lo).norm().max(1.0));
+    if off > 1e-3 * size {
+        return Err("the circular edge no longer exists".into());
+    }
+    Ok((c, dir, Some(face)))
+}
+
+/// How far the body reaches from `o` along `dir` (mm, ≥ 0).
+fn reach(points: &[Point3], o: Point3, dir: crate::kernel::Vector3) -> Real {
+    points
+        .iter()
+        .map(|p| (p - o).dot(&dir))
+        .fold(0.0, Real::max)
+}
+
+/// Every point of the body's display triangles and vertices (for
+/// [`reach`]).
+fn body_points(body: &BRep) -> Vec<Point3> {
+    let mut v: Vec<Point3> = body.vertices().map(|(_, x)| x.point).collect();
+    for (_, f) in body.faces() {
+        if let Some(m) = &f.mesh {
+            v.extend(m.positions.iter().copied());
+        }
+    }
+    v
+}
+
+/// Hole (`docs/spec/2.3-hole.md`): tools of revolution per centre (seat,
+/// bore), cut in two Booleans — the seats, then the bores (`combine` unions tools
+/// apart from each other with `union_apart`; after SolidCraft's
+/// `hole_tools_and_prisms`). Modeled
+/// threads are only recorded here (cut after every feature).
+pub(super) fn hole(
+    h: &super::hole::HoleFeature,
+    ps: Option<&super::PartSketch>,
+    body: &BRep,
+    cur: &[ExactSolid],
+) -> Result<(Vec<ExactSolid>, HoleOutput, Vec<super::pattern::ToolSet>), Fail> {
+    use super::hole::{CosmeticThread, HoleInstance, Termination};
+    let spec = &h.spec;
+    spec.validate().map_err(User)?;
+    let places = hole_placements(h, ps, body).map_err(User)?;
+    let size = body
+        .bounding_box()
+        .map_or(1.0, |(lo, hi)| (hi - lo).norm().max(1.0));
+    let margin = (size * 0.01).max(0.1);
+    let points = body_points(body);
+    let (mut seats, mut bores) = (Vec::new(), Vec::new());
+    let mut out = HoleOutput::default();
+    for (k, (o, dir, face)) in places.iter().enumerate() {
+        let n = k + 1;
+        let up = -*dir;
+        // Above the start plane: air (the plane is a face, or outside the
+        // body) → the tool starts above it, so no cap lies on a face.
+        // A centre on a face has air on its outward side (the sketch normal),
+        // material behind it (Direction 2 drills into the air); elsewhere ask.
+        let in_material = if face.is_some() {
+            spec.flip
+        } else {
+            let probe = *o + up * (1e-4 * size);
+            cur.iter().any(|s| exact::contains(s, probe))
+        };
+        let top = if in_material && !spec.extend_start {
+            0.0
+        } else {
+            margin
+        };
+        let far = reach(&points, *o, *dir);
+        let (depth, point) = match &spec.termination {
+            Termination::Distance => (spec.depth, true),
+            Termination::ThroughAll => (far + margin, false),
+            Termination::To(fr) => {
+                let fid = super::shell::face_near(body, &fr.face, Point3::from(fr.hint))
+                    .ok_or_else(|| User(format!("the face {} no longer exists", fr.face)))?;
+                let pl = match body.face(fid).and_then(|f| body.surface(f.surface)) {
+                    Some(crate::kernel::Surface::Plane(pl)) => pl.clone(),
+                    _ => {
+                        return Err(User(
+                            "a termination face that is not planar is not supported yet".into(),
+                        ));
+                    }
+                };
+                let nrm = pl.normal.into_inner();
+                let den = dir.dot(&nrm);
+                if den.abs() < 1e-9 {
+                    return Err(User("the termination face is parallel to the hole".into()));
+                }
+                let d = (pl.origin - o).dot(&nrm) / den;
+                if !(d.is_finite() && d > 1e-6) {
+                    return Err(User("the termination face is not ahead of the hole".into()));
+                }
+                (d, false)
+            }
+        };
+        let parts = spec.tools(depth, top, point);
+        let last = parts.len().saturating_sub(1);
+        for (j, prof) in parts.iter().enumerate() {
+            let pts: Vec<[Real; 2]> = prof.iter().map(|x| x.0).collect();
+            let names: Vec<String> = prof.iter().map(|x| format!("{}:{n}", x.1)).collect();
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            let seam = 0.2 + 0.613 * k as Real + 0.29 * j as Real;
+            let tool = exact::revolved_tool(*o, up, seam, &pts, &refs, &h.id).map_err(Kernel)?;
+            if j == last {
+                bores.push(tool);
+            } else {
+                seats.push(tool);
+            }
+        }
+        out.holes.push(HoleInstance {
+            feature: h.id.clone(),
+            occurrence: n,
+            spec: spec.clone(),
+            origin: *o,
+            direction: *dir,
+            start_face: face.clone(),
+            copy: Vec::new(),
+        });
+        if let Some(t) = spec.tapped_thread() {
+            // The threaded length, never past the material.
+            let through = !matches!(spec.termination, Termination::Distance);
+            let len = spec.thread_length(depth).min(far);
+            if !(len.is_finite() && len > 1e-6) {
+                continue;
+            }
+            if t.modeled {
+                let section = t.internal_groove(spec.bore_radius()).map_err(User)?;
+                let w0 = section[0][1].abs().max(section[3][1].abs());
+                let p = t.pitch;
+                // Through: the groove runs out below the body.
+                let base = if through && len >= far - 1e-6 {
+                    -len - p
+                } else {
+                    -len + w0
+                };
+                let end = if top > 0.0 { top + p } else { -w0 };
+                let turns = (end - base) / p;
+                if !(turns.is_finite() && turns > 0.0) {
+                    continue;
+                }
+                let r_out = t.major / 2.0 + t.clearance + 0.3 * p;
+                out.grooves.push(exact::ThreadGroove {
+                    origin: *o,
+                    axis: up,
+                    section: section.clone(),
+                    base,
+                    pitch: p,
+                    turns,
+                    left_hand: !t.right_hand,
+                    zone: [
+                        (spec.bore_radius() - 0.2 * p).max(0.0),
+                        r_out,
+                        base - w0 - 0.25 * p,
+                        end + w0 + 0.25 * p,
+                    ],
+                    prefix: h.id.clone(),
+                    name: format!("Thread:{n}"),
+                });
+            } else {
+                out.cosmetic.push(CosmeticThread {
+                    feature: h.id.clone(),
+                    start: *o,
+                    axis: *dir,
+                    radius: t.major / 2.0,
+                    length: len,
+                    pitch: t.pitch,
+                    shown: true,
+                });
+            }
+        }
+    }
+    // Seats first, then the bores through their floors; each stage is one
+    // Boolean (`combine` joins tools apart from each other). Both stages are
+    // kept as tool sets, in that order, so Pattern / Mirror can copy holes.
+    let sets: Vec<super::pattern::ToolSet> = [&seats, &bores]
+        .into_iter()
+        .filter(|t| !t.is_empty())
+        .map(|t| super::pattern::ToolSet {
+            tools: t.clone(),
+            op: Operation::Cut,
+            solids: h.solids.clone(),
+        })
+        .collect();
+    let next = if seats.is_empty() {
+        cur.to_vec()
+    } else {
+        combine(cur.to_vec(), seats, Operation::Cut, &h.solids, false)?
+    };
+    let next = combine(next, bores, Operation::Cut, &h.solids, false)?;
+    Ok((next, out, sets))
+}
+
+/// Thread (`docs/spec/2.9-thread.md`): a cosmetic thread changes nothing;
+/// a modeled one records its groove (cut after every feature). A modeled
+/// external thread with a printing clearance also returns the ring that
+/// shrinks the shaft to `major − 2·clearance` (cut exactly, at once).
+pub(super) fn thread(
+    th: &super::hole::ThreadFeature,
+    body: &BRep,
+) -> Result<(HoleOutput, Option<ExactSolid>), Fail> {
+    use super::hole::CosmeticThread;
+    let (cf, a, b) = th.stretch(body).map_err(User)?;
+    let t = &th.spec;
+    let mut out = HoleOutput::default();
+    let len = b - a;
+    let start = cf.start + cf.axis * a;
+    if !t.modeled {
+        out.cosmetic.push(CosmeticThread {
+            feature: th.id.clone(),
+            start,
+            axis: cf.axis,
+            radius: if cf.internal {
+                t.major / 2.0
+            } else {
+                t.minor / 2.0
+            },
+            length: len,
+            pitch: t.pitch,
+            shown: th.display,
+        });
+        return Ok((out, None));
+    }
+    let p = t.pitch;
+    let mut ring = None;
+    let (section, zone_r) = if cf.internal {
+        let s = t.internal_groove(cf.radius).map_err(User)?;
+        let r0 = (cf.radius - 0.2 * p).max(0.0);
+        (s, [r0, t.major / 2.0 + t.clearance + 0.3 * p])
+    } else {
+        let shrunk = t.major / 2.0 - t.clearance;
+        if t.clearance > 0.0 && shrunk < cf.radius {
+            let r_out = cf.radius + 0.25 * p;
+            let end = if b >= cf.length - 1e-6 { len + p } else { len };
+            ring = Some(
+                exact::revolved_tool(
+                    start,
+                    cf.axis,
+                    0.31,
+                    &[[shrunk, -p], [r_out, -p], [r_out, end], [shrunk, end]],
+                    &["Crest", "Clear", "Clear", "Crest"],
+                    &th.id,
+                )
+                .map_err(Kernel)?,
+            );
+        }
+        let s = t.external_groove(cf.radius.min(shrunk)).map_err(User)?;
+        let root = s[0][0];
+        (s, [(root - 0.25 * p).max(0.0), cf.radius + 0.25 * p])
+    };
+    let w = section.iter().map(|q| q[1].abs()).fold(0.0, Real::max);
+    // The thread runs out past the start end of the face (into the air at
+    // a free end) and stops square at its other end, unless it reaches it.
+    let base = -p;
+    let z1 = len + if b >= cf.length - 1e-6 { p } else { -w };
+    out.grooves.push(exact::ThreadGroove {
+        origin: start,
+        axis: cf.axis,
+        section,
+        base,
+        pitch: p,
+        turns: (z1 - base) / p,
+        left_hand: !t.right_hand,
+        zone: [zone_r[0], zone_r[1], base - w - 0.25 * p, z1 + w + 0.25 * p],
+        prefix: th.id.clone(),
+        name: "Thread".into(),
+    });
+    Ok((out, ring))
+}
+
+// Cuts the modeled threads into the solids they lie in (after every
+/// feature, so no later Boolean meets their faceted zones). A failure is
+/// the owning feature's health; the solids then stay as they were.
+pub(super) fn finish_threads(
+    solids: Vec<ExactSolid>,
+    grooves: &[exact::ThreadGroove],
+) -> (Vec<ExactSolid>, Vec<(String, String)>) {
+    let mut failed = Vec::new();
+    if grooves.is_empty() {
+        return (solids, failed);
+    }
+    let mut out = Vec::new();
+    for s in solids {
+        let Ok(m) = s.measure_full() else {
+            out.push(s);
+            continue;
+        };
+        let (lo, hi) = m.bbox;
+        let mine: Vec<exact::ThreadGroove> = grooves
+            .iter()
+            .filter(|g| {
+                let mid = g.origin + g.axis.normalize() * ((g.zone[2] + g.zone[3]) / 2.0);
+                (0..3).all(|i| mid[i] >= lo[i] - 1e-6 && mid[i] <= hi[i] + 1e-6)
+            })
+            .cloned()
+            .collect();
+        if mine.is_empty() {
+            out.push(s);
+            continue;
+        }
+        match exact::cut_threads(&s, &mine) {
+            Ok(pieces) => out.extend(pieces),
+            Err(e) => {
+                for g in &mine {
+                    failed.push((
+                        g.prefix.clone(),
+                        format!("the modeled thread cannot be built ({e})"),
+                    ));
+                }
+                out.push(s);
+            }
+        }
+    }
+    (out, failed)
+}
+
 /// Fillets beyond one constant set: several sets with their own radii,
 /// variable radius, chord width, Full Round (`docs/spec/2.4-fillet.md`).
 /// The kernel builds them or the feature reports why (no faceted rebuild).

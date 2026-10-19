@@ -58,12 +58,14 @@
 | [1.9-profiles.md](1.9-profiles.md) | Профили и региони |
 | [2.1-extrude.md](2.1-extrude.md) | Extrude, включително консумирани и споделени скици |
 | [2.2-revolve.md](2.2-revolve.md) | Revolve, ос и централна линия, диаметрални размери |
+| [2.3-hole.md](2.3-hole.md) | Hole: Simple / Clearance / Tapped, гнезда, граници, стандарти в CSV, бележка за чертеж |
 | [2.4-fillet.md](2.4-fillet.md) | Fillet (закръгление на ръбове) |
 | [2.5-chamfer.md](2.5-chamfer.md) | Chamfer (фаска) |
 | [2.8-draft.md](2.8-draft.md) | Face Draft: Fixed Edge, Fixed Plane, посока на изваждане |
 | [2.6-shell.md](2.6-shell.md) | Shell (черупка): Remove Faces, Inside / Outside / Both, затворена кухина |
 | [2.11-patterns.md](2.11-patterns.md) | Rectangular Pattern и Circular Pattern на операции и тела |
 | [2.12-mirror.md](2.12-mirror.md) | Mirror на операции и тела |
+| [2.9-thread.md](2.9-thread.md) | Thread: козметична или моделирана резба, хлабина за 3D печат |
 | [2.10-work-features.md](2.10-work-features.md) | Работни равнини, оси, точки |
 | [2.13-booleans.md](2.13-booleans.md) | Join / Cut / Intersect, Surface, представяне на резултата |
 | [2.15-materials.md](2.15-materials.md) | Материали, външен вид (appearances), override-и, библиотеки, Styles Editor |

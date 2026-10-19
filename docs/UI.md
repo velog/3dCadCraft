@@ -110,6 +110,8 @@
 | **Ctrl+A** | изглед в покой: всичко от режима на избор; в скица: всички криви | ✅ |
 | **двоен клик** върху размер | Edit Dimension | ✅ |
 | **двоен клик** върху крива (скица) | избира свързаната верига | ✅ |
+| **E** | Extrude | ✅ |
+| **R / H** | Revolve / Hole (в 3D Model) | 🟡 R ✅; H чака визуална проверка |
 | **P / C** | Place / Constrain (в сглобка) | ⬜ |
 | **Ctrl+Z / Ctrl+Y** (и Ctrl+Shift+Z) | Undo / Redo | ✅ |
 | **Ctrl+S / Ctrl+Shift+S** | Save / Save As | ✅ |

@@ -28,6 +28,8 @@ mod camera;
 mod demos;
 mod draft;
 mod files;
+mod hole;
+mod hole_panel;
 mod i18n;
 mod icons;
 mod manip;
@@ -533,6 +535,10 @@ struct CadCraftApp {
     draft_draft: Option<draft::DraftDraft>,
     /// The open Rectangular / Circular Pattern or Mirror command.
     pattern_draft: Option<pattern_feature::PatternDraft>,
+    /// The open Hole command.
+    hole_draft: Option<hole::HoleDraft>,
+    /// The open Thread command.
+    thread_draft: Option<hole::ThreadDraft>,
     /// The open Work Plane / Axis / Point command.
     work_draft: Option<work::WorkDraft>,
     /// A feature deletion waiting for confirmation, with what it breaks.
@@ -646,6 +652,8 @@ impl CadCraftApp {
             draft_draft: None,
             pattern_draft: None,
             presets: Default::default(),
+            hole_draft: None,
+            thread_draft: None,
             last_pick: None,
             box_select: None,
             offset_edit: None,
@@ -868,6 +876,16 @@ impl CadCraftApp {
                 crate::part::PatternKind::Mirror { .. } => "2.12-mirror.md",
                 _ => "2.11-patterns.md",
             }
+        } else if self.hole_draft.is_some()
+            || matches!(self.selection, Selection::Feature(k)
+                if matches!(self.part().features.get(k), Some(crate::part::Feature::Hole(_))))
+        {
+            "2.3-hole.md"
+        } else if self.thread_draft.is_some()
+            || matches!(self.selection, Selection::Feature(k)
+                if matches!(self.part().features.get(k), Some(crate::part::Feature::Thread(_))))
+        {
+            "2.9-thread.md"
         } else if let Some(d) = &self.blend_draft {
             if d.def.command() == "Chamfer" {
                 "2.5-chamfer.md"
@@ -1066,6 +1084,8 @@ impl CadCraftApp {
         self.shell_draft = None;
         self.draft_draft = None;
         self.pattern_draft = None;
+        self.hole_draft = None;
+        self.thread_draft = None;
         if let Some(d) = self.extrude.take()
             && d.temp_sketch
         {
@@ -1149,6 +1169,14 @@ impl CadCraftApp {
             Feature::Pattern(p) => {
                 self.roll_back_to(k);
                 self.pattern_draft = Some(pattern_feature::PatternDraft::editing(p, k));
+            }
+            Feature::Hole(h) => {
+                self.roll_back_to(k);
+                self.hole_draft = Some(hole::HoleDraft::editing(h, k));
+            }
+            Feature::Thread(t) => {
+                self.roll_back_to(k);
+                self.thread_draft = Some(hole::ThreadDraft::editing(t, k));
             }
             // Box and work features are edited in Properties.
             Feature::Box(_) | Feature::Work(_) => {}
@@ -2706,7 +2734,7 @@ impl CadCraftApp {
     /// visible again.
     /// Delete Feature: when other sketches/features depend on it, asks
     /// first and lists them.
-    fn delete_feature(&mut self, k: usize) {
+    pub(super) fn delete_feature(&mut self, k: usize) {
         if k >= self.part().features.len() {
             return;
         }
@@ -3166,6 +3194,8 @@ impl CadCraftApp {
             | Action::RectPattern
             | Action::CircPattern
             | Action::MirrorFeature => self.last_command = Some(action),
+            | Action::Hole
+            | Action::Thread => self.last_command = Some(action),
             _ => {}
         }
         match action {
@@ -3211,6 +3241,8 @@ impl CadCraftApp {
             Action::RectPattern => self.start_pattern(crate::part::PatternFeature::rectangular()),
             Action::CircPattern => self.start_pattern(crate::part::PatternFeature::circular()),
             Action::MirrorFeature => self.start_pattern(crate::part::PatternFeature::mirror()),
+            Action::Hole => self.start_hole(),
+            Action::Thread => self.start_thread(),
             Action::WorkPlane | Action::WorkAxis | Action::WorkPoint => {
                 self.blend_draft = None;
                 self.finish_sketch();
@@ -3855,6 +3887,9 @@ impl CadCraftApp {
         if !cmd && pressed(Key::R) && self.editing.is_none() {
             self.apply(Action::Revolve);
         }
+        if !cmd && pressed(Key::H) && self.editing.is_none() {
+            self.apply(Action::Hole);
+        }
         // Ctrl+A outside a sketch: everything of the selection mode.
         if cmd && pressed(Key::A) && self.editing.is_none() && self.extrude.is_none() {
             self.select_all();
@@ -3911,6 +3946,8 @@ impl CadCraftApp {
             self.shell_draft = None;
             self.draft_draft = None;
             self.pattern_draft = None;
+            self.hole_draft = None;
+            self.thread_draft = None;
             self.end_feature_edit();
             self.face_sel = None;
             self.edge_sel = None;
@@ -4155,8 +4192,11 @@ impl CadCraftApp {
         {
             self.blend_face_pick(&name, p, rect);
         }
-        // --- Shell / Face Draft: pick faces (with the model point) ---
+        // --- Shell / Face Draft / Hole / Thread: pick faces (with the model
+        // point) ---
         let face_cmd = self.shell_draft.is_some()
+            || self.hole_draft.is_some()
+            || self.thread_draft.is_some()
             || self.draft_draft.as_ref().is_some_and(|d| d.picks_faces());
         let shell_hover = match (face_cmd, pointer, on_cube) {
             (true, Some(p), None) => self.camera.ray(p, rect).and_then(|(o, dir)| {
@@ -4171,6 +4211,26 @@ impl CadCraftApp {
             && let Some((f, at)) = shell_hover
         {
             self.shell_pick(f, at);
+        }
+        if self.thread_draft.is_some()
+            && response.clicked_by(PointerButton::Primary)
+            && let Some((f, at)) = shell_hover
+        {
+            self.thread_pick(f, at);
+        }
+        // Hole: a sketch point, a circular edge or a planar face.
+        let hole_hover = match (&self.hole_draft, pointer, on_cube) {
+            (Some(_), Some(p), None) => {
+                let e = self.edge_under(p, rect);
+                self.hole_pick_under(p, rect, e, shell_hover)
+            }
+            _ => None,
+        };
+        if self.hole_draft.is_some()
+            && response.clicked_by(PointerButton::Primary)
+            && let Some(pick) = hole_hover.clone()
+        {
+            self.hole_pick(pick);
         }
         // Face Draft's Pull Direction / Fixed Plane: an edge or a plane.
         let draft_ref = self.draft_draft.as_ref().is_some_and(|d| !d.picks_faces());
@@ -4256,6 +4316,8 @@ impl CadCraftApp {
             && self.shell_draft.is_none()
             && self.draft_draft.is_none()
             && self.pattern_draft.is_none()
+            && self.hole_draft.is_none()
+            && self.thread_draft.is_none()
             && self.editing.is_none()
             && self.extrude.is_none()
             && self.target_pick.is_none()
@@ -5185,6 +5247,19 @@ impl CadCraftApp {
                 Some(self.draft_faces())
             } else if self.pattern_draft.is_some() {
                 Some(self.pattern_faces())
+            } else if let Some(d) = &self.thread_draft {
+                let body = &self.part().body;
+                Some(
+                    d.face
+                        .iter()
+                        .filter_map(|r| {
+                            crate::part::shell::face_near(body, &r.face, Point3::from(r.hint))
+                        })
+                        .collect(),
+                )
+            } else if let Some(d) = &self.hole_draft {
+                let body = &self.part().body;
+                Some(d.face.iter().filter_map(|n| body.find_face(n)).collect())
             } else {
                 None
             };
@@ -5228,12 +5303,33 @@ impl CadCraftApp {
                 self.scene_sel = (want_sel, want_hover);
                 self.scene_dirty = true;
             }
+            self.draw_holes_and_threads(&painter, rect);
+            if let Some(hole::HolePick::Circle(r)) = &hole_hover
+                && let Some(e) = self.part().body.edges().map(|(e, _)| e).find(|&e| {
+                    crate::part::blend::edge_ref(&self.part().body, e).as_ref() == Some(r)
+                })
+                && let Ok(pts) = self
+                    .part()
+                    .body
+                    .sample_edge(e, &TessellationOptions::default())
+            {
+                self.draw_visible_polyline(
+                    &painter,
+                    rect,
+                    &pts,
+                    egui::Stroke::new(4.0, egui::Color32::from_rgb(60, 190, 90)),
+                );
+            }
             let preview = if self.shell_draft.is_some() {
                 Some(self.shell_preview())
             } else if self.draft_draft.is_some() {
                 Some(self.draft_preview())
             } else if self.pattern_draft.is_some() {
                 Some(self.pattern_preview())
+            } else if self.hole_draft.is_some() {
+                Some(self.hole_preview())
+            } else if self.thread_draft.is_some() {
+                Some(self.thread_preview())
             } else {
                 None
             };
@@ -6046,6 +6142,8 @@ fn command_label(a: Action) -> &'static str {
         Action::RectPattern => "Rectangular Pattern",
         Action::CircPattern => "Circular Pattern",
         Action::MirrorFeature => "Mirror",
+        Action::Hole => "Hole",
+        Action::Thread => "Thread",
         Action::WorkPoint => "Work Point",
         Action::StartSketch => "Start 2D Sketch",
         _ => "command",

@@ -93,6 +93,30 @@ const TABLE: &[(&str, &str)] = &[
         "Adjust: изберете стени, операции или тела (списъкът Select определя кои), изберете вид или цвят, после Apply",
     ),
     (
+        "Hole: click the planar face where the hole ends",
+        "Hole: щракнете плоската стена, в която свършва отворът",
+    ),
+    (
+        "Hole: change the options, then OK (the centres are edited in the hole's sketch)",
+        "Hole: променете настройките, после OK (центровете се редактират в скицата на отвора)",
+    ),
+    (
+        "Hole: click a planar face, a sketch point or a circular edge for the centre",
+        "Hole: щракнете плоска стена, точка от скица или кръгъл ръб за центъра",
+    ),
+    (
+        "Hole: click more centres (a click on one removes it), set the options, then OK",
+        "Hole: щракнете още центрове (клик върху център го маха), задайте настройките, после OK",
+    ),
+    (
+        "Thread: click a cylindrical face near the end the thread starts at",
+        "Thread: щракнете цилиндрична стена близо до края, от който започва резбата",
+    ),
+    (
+        "Thread: set the size and the length, then OK (another click picks another face)",
+        "Thread: задайте размера и дължината, после OK (друг клик избира друга стена)",
+    ),
+    (
         "Face Draft: click a planar face, an origin plane or a straight edge for the pull direction",
         "Face Draft: щракнете плоска стена, основна равнина или прав ръб за посоката на изваждане",
     ),
