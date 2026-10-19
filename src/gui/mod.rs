@@ -34,6 +34,7 @@ mod manip;
 mod overlay;
 mod panels;
 mod pattern_dialog;
+mod pattern_feature;
 mod renderer;
 mod ribbon;
 mod select;
@@ -524,6 +525,8 @@ struct CadCraftApp {
     shell_draft: Option<shell::ShellDraft>,
     /// The open Face Draft command.
     draft_draft: Option<draft::DraftDraft>,
+    /// The open Rectangular / Circular Pattern or Mirror command.
+    pattern_draft: Option<pattern_feature::PatternDraft>,
     /// The open Work Plane / Axis / Point command.
     work_draft: Option<work::WorkDraft>,
     /// A feature deletion waiting for confirmation, with what it breaks.
@@ -632,6 +635,7 @@ impl CadCraftApp {
             blend_draft: None,
             shell_draft: None,
             draft_draft: None,
+            pattern_draft: None,
             last_pick: None,
             box_select: None,
             offset_edit: None,
@@ -846,6 +850,11 @@ impl CadCraftApp {
             "2.6-shell.md"
         } else if self.draft_draft.is_some() {
             "2.8-draft.md"
+        } else if let Some(d) = &self.pattern_draft {
+            match d.def.kind {
+                crate::part::PatternKind::Mirror { .. } => "2.12-mirror.md",
+                _ => "2.11-patterns.md",
+            }
         } else if let Some(d) = &self.blend_draft {
             if d.def.command() == "Chamfer" {
                 "2.5-chamfer.md"
@@ -1040,6 +1049,7 @@ impl CadCraftApp {
     fn cancel_extrude(&mut self) {
         self.shell_draft = None;
         self.draft_draft = None;
+        self.pattern_draft = None;
         if let Some(d) = self.extrude.take()
             && d.temp_sketch
         {
@@ -1116,6 +1126,10 @@ impl CadCraftApp {
             Feature::Draft(dr) => {
                 self.roll_back_to(k);
                 self.draft_draft = Some(draft::DraftDraft::editing(dr, k));
+            }
+            Feature::Pattern(p) => {
+                self.roll_back_to(k);
+                self.pattern_draft = Some(pattern_feature::PatternDraft::editing(p, k));
             }
             // Box and work features are edited in Properties.
             Feature::Box(_) | Feature::Work(_) => {}
@@ -3113,7 +3127,10 @@ impl CadCraftApp {
             | Action::Fillet
             | Action::Chamfer
             | Action::Shell
-            | Action::Draft => self.last_command = Some(action),
+            | Action::Draft
+            | Action::RectPattern
+            | Action::CircPattern
+            | Action::MirrorFeature => self.last_command = Some(action),
             _ => {}
         }
         match action {
@@ -3156,6 +3173,9 @@ impl CadCraftApp {
             Action::Chamfer => self.start_blend(true, None),
             Action::Shell => self.start_shell(),
             Action::Draft => self.start_draft(),
+            Action::RectPattern => self.start_pattern(crate::part::PatternFeature::rectangular()),
+            Action::CircPattern => self.start_pattern(crate::part::PatternFeature::circular()),
+            Action::MirrorFeature => self.start_pattern(crate::part::PatternFeature::mirror()),
             Action::WorkPlane | Action::WorkAxis | Action::WorkPoint => {
                 self.blend_draft = None;
                 self.finish_sketch();
@@ -3854,6 +3874,7 @@ impl CadCraftApp {
             self.blend_draft = None;
             self.shell_draft = None;
             self.draft_draft = None;
+            self.pattern_draft = None;
             self.end_feature_edit();
             self.face_sel = None;
             self.edge_sel = None;
@@ -4149,6 +4170,43 @@ impl CadCraftApp {
                 self.draft_pick(None, draft_edge, draft_plane.clone());
             }
         }
+        // --- Pattern / Mirror: features (faces), solids, directions,
+        // axes and planes ---
+        let pat_geom = self
+            .pattern_draft
+            .as_ref()
+            .is_some_and(|d| d.picks_geometry());
+        let pat_face = match (pat_geom, pointer, on_cube) {
+            (true, Some(p), None) => self.camera.ray(p, rect).and_then(|(o, dir)| {
+                let dir = dir.try_normalize(1e-12)?;
+                self.picker().pick(&o, &dir).map(|(f, _)| f)
+            }),
+            _ => None,
+        };
+        let (pat_edge, pat_plane) = match (&self.pattern_draft, pointer, on_cube) {
+            (Some(d), Some(p), None) if !d.picks_geometry() => {
+                let e = if d.picks_lines() {
+                    self.edge_under(p, rect)
+                        .filter(|&e| self.part().body.edge_direction(e).is_some())
+                } else {
+                    None
+                };
+                let pl = if e.is_none() && d.picks_planes() {
+                    self.plane_under(p, rect, true)
+                } else {
+                    None
+                };
+                (e, pl)
+            }
+            _ => (None, None),
+        };
+        if self.pattern_draft.is_some() && response.clicked_by(PointerButton::Primary) {
+            if let Some(f) = pat_face {
+                self.pattern_pick_face(f);
+            } else if pat_edge.is_some() || pat_plane.is_some() {
+                self.pattern_pick_ref(pat_edge, pat_plane.clone());
+            }
+        }
         // --- Work Plane command: picks planes, edges and points ---
         let wp_hover = match (&self.work_draft, pointer, on_cube) {
             (Some(d), Some(p), None) => self.wp_input_under(p, rect, d.kind),
@@ -4166,6 +4224,7 @@ impl CadCraftApp {
             && self.blend_draft.is_none()
             && self.shell_draft.is_none()
             && self.draft_draft.is_none()
+            && self.pattern_draft.is_none()
             && self.editing.is_none()
             && self.extrude.is_none()
             && self.target_pick.is_none()
@@ -5086,6 +5145,8 @@ impl CadCraftApp {
                 Some(self.shell_faces())
             } else if self.draft_draft.is_some() {
                 Some(self.draft_faces())
+            } else if self.pattern_draft.is_some() {
+                Some(self.pattern_faces())
             } else {
                 None
             };
@@ -5093,7 +5154,7 @@ impl CadCraftApp {
                 Some(faces) => {
                     let body = &self.part().body;
                     let name = |f| body.face(f).and_then(|x| x.name.clone());
-                    let plane_face = match &draft_plane {
+                    let plane_face = match draft_plane.as_ref().or(pat_plane.as_ref()) {
                         Some(PlaneRef::Face(n)) => Some(n.clone()),
                         _ => None,
                     };
@@ -5103,14 +5164,16 @@ impl CadCraftApp {
                             .filter_map(|f| name(f).map(select::SelItem::Face))
                             .collect(),
                         shell_hover
-                            .and_then(|(f, _)| name(f))
+                            .map(|(f, _)| f)
+                            .or(pat_face)
+                            .and_then(name)
                             .or(plane_face)
                             .map(select::SelItem::Face),
                     )
                 }
                 None => (self.sel.clone(), hover_item),
             };
-            if let Some(e) = draft_edge {
+            if let Some(e) = draft_edge.or(pat_edge) {
                 let opts = TessellationOptions::default();
                 if let Ok(pts) = self.part().body.sample_edge(e, &opts) {
                     self.draw_visible_polyline(
@@ -5122,6 +5185,7 @@ impl CadCraftApp {
                 }
             }
             self.draw_draft_pull(&painter, rect);
+            self.draw_pattern_refs(&painter, rect);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);
                 self.scene_dirty = true;
@@ -5130,6 +5194,8 @@ impl CadCraftApp {
                 Some(self.shell_preview())
             } else if self.draft_draft.is_some() {
                 Some(self.draft_preview())
+            } else if self.pattern_draft.is_some() {
+                Some(self.pattern_preview())
             } else {
                 None
             };
@@ -5936,6 +6002,9 @@ fn command_label(a: Action) -> &'static str {
         Action::Chamfer => "Chamfer",
         Action::Shell => "Shell",
         Action::Draft => "Face Draft",
+        Action::RectPattern => "Rectangular Pattern",
+        Action::CircPattern => "Circular Pattern",
+        Action::MirrorFeature => "Mirror",
         Action::WorkPoint => "Work Point",
         Action::StartSketch => "Start 2D Sketch",
         _ => "command",

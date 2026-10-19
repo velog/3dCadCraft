@@ -1197,6 +1197,51 @@ pub fn draft(
     })
 }
 
+/// A copy of `s` placed by the rigid motion `m` (rotation, translation or a
+/// reflection, determinant −1; `p' = m · p` in homogeneous coordinates).
+/// Faces keep their order; each name becomes `<rename>:<name>` (pattern
+/// copies: `RectangularPattern1#2:Extrusion2:Side`), and the body is named
+/// `body` (or keeps its name). The copy carries no profile frames, so its
+/// vertices and edges are not named after a sketch.
+pub fn transformed(
+    s: &ExactSolid,
+    m: &nalgebra::Matrix4<Real>,
+    rename: &str,
+    body: Option<&str>,
+) -> Result<ExactSolid, String> {
+    let lin = m.fixed_view::<3, 3>(0, 0).into_owned();
+    let ortho = (lin.transpose() * lin - nalgebra::Matrix3::identity())
+        .abs()
+        .max();
+    let bottom = m[(3, 0)].abs() + m[(3, 1)].abs() + m[(3, 2)].abs() + (m[(3, 3)] - 1.0).abs();
+    if !(ortho < 1e-9 && bottom < 1e-12) {
+        return Err("the placement is not a rigid motion".into());
+    }
+    // SolidCraft's matrices are column-major: c[col][row].
+    let mut c = [[0.0; 4]; 4];
+    for (col, cc) in c.iter_mut().enumerate() {
+        for (row, x) in cc.iter_mut().enumerate() {
+            *x = m[(row, col)];
+        }
+    }
+    let placed = guarded("transform", || sk::transform_matrix(&s.body, c))?;
+    let mut face_names = names_from(&placed, &[s], &|_| None);
+    // Without a history the order is the original's (affine placement).
+    if face_names.iter().all(Option::is_none) && placed.face_count() == s.face_names.len() {
+        face_names = s.face_names.clone();
+    }
+    let face_names = face_names
+        .into_iter()
+        .map(|n| n.map(|n| format!("{rename}:{n}")))
+        .collect();
+    Ok(ExactSolid {
+        name: body.map(str::to_owned).or_else(|| s.name.clone()),
+        body: placed,
+        face_names,
+        profiles: Vec::new(),
+    })
+}
+
 // --------------------------------------------------------- to our B-rep ---
 
 /// Display tolerance (mm) of the exact kernel's triangles.
@@ -2373,5 +2418,60 @@ mod tests {
         assert!(shell(&b, &[top], -1.0, ShellSide::Inside, "Shell1").is_err());
         // Walls thicker than half the body: nothing sensible is left.
         assert!(shell(&b, &[top], 16.0, ShellSide::Inside, "Shell1").is_err());
+    }
+
+    fn check_valid(s: &ExactSolid, vol: Real) {
+        let (v, _, _) = s.measure().unwrap();
+        assert!((v - vol).abs() < 1e-6 * vol.max(1.0), "volume {v} vs {vol}");
+        let brep = to_brep(std::slice::from_ref(s)).unwrap();
+        for (sid, _) in brep.solids() {
+            let st = brep.validate_solid(sid).unwrap();
+            assert_eq!(st.euler_characteristic(), 2, "{st:?}");
+        }
+    }
+
+    #[test]
+    fn translated_copy_keeps_volume_and_prefixes_names() {
+        let b = box_named(Point3::origin(), Point3::new(10.0, 20.0, 5.0), "Box1").unwrap();
+        let m = nalgebra::Matrix4::new_translation(&Vector3::new(30.0, 0.0, 0.0));
+        let c = transformed(&b, &m, "RectangularPattern1#2", Some("P#2")).unwrap();
+        check_valid(&c, 1000.0);
+        assert_eq!(c.name.as_deref(), Some("P#2"));
+        assert!(
+            c.names()
+                .iter()
+                .flatten()
+                .any(|n| n == "RectangularPattern1#2:Box1:Top")
+        );
+        let mm = c.measure_full().unwrap();
+        assert!((mm.bbox.0.x - 30.0).abs() < 1e-9 && (mm.bbox.1.x - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rotated_and_mirrored_copies_are_valid() {
+        let b = box_named(
+            Point3::new(10.0, 0.0, 0.0),
+            Point3::new(20.0, 5.0, 4.0),
+            "Box1",
+        )
+        .unwrap();
+        let rot = nalgebra::Rotation3::from_axis_angle(&Vector3::z_axis(), 1.0);
+        let c = transformed(&b, &rot.to_homogeneous(), "C#2", None).unwrap();
+        check_valid(&c, 200.0);
+        // Reflection in the YZ plane (determinant −1): still a solid with
+        // positive volume, on the other side.
+        let mut m = nalgebra::Matrix4::identity();
+        m[(0, 0)] = -1.0;
+        let r = transformed(&b, &m, "Mirror1#2", None).unwrap();
+        check_valid(&r, 200.0);
+        let mm = r.measure_full().unwrap();
+        assert!((mm.bbox.0.x + 20.0).abs() < 1e-9 && (mm.bbox.1.x + 10.0).abs() < 1e-9);
+        assert!(contains(&r, Point3::new(-15.0, 2.5, 2.0)));
+        // Union with the original: twice the volume.
+        let u = boolean(&b, &r, ExactOp::Union).unwrap().unwrap();
+        assert!((u.measure().unwrap().0 - 400.0).abs() < 1e-6);
+        // Scaling is refused.
+        let s = nalgebra::Matrix4::new_scaling(2.0);
+        assert!(transformed(&b, &s, "X", None).is_err());
     }
 }

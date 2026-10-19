@@ -234,6 +234,70 @@ fn draft_r4() -> PartDocument {
     part
 }
 
+/// Revision 5: Rectangular Pattern of a hole, Circular Pattern of a boss,
+/// Mirror of the solid as a new solid.
+fn pattern_r5() -> PartDocument {
+    use cadcraft3d::part::{
+        Extent, ExtentDirection, LineRef, Operation, PatternFeature, PatternKind, PlaneRef, PullRef,
+    };
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 10.0]).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    // A hole r 3 at (10, 10) through, a boss r 2 × 3 at (30, 10) on top.
+    for (at, r, cut) in [((10.0, 10.0), 3.0, true), ((30.0, 10.0), 2.0, false)] {
+        let j = part
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+            .unwrap();
+        let c = part.sketches[j]
+            .sketch
+            .plane
+            .project(&Point3::new(at.0, at.1, 10.0));
+        part.sketches[j].sketch.add_circle(c, r).unwrap();
+        let rg = part.sketches[j].sketch.regions();
+        let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 3.0);
+        if cut {
+            ex.operation = Operation::Cut;
+            ex.extent = Extent::ThroughAll;
+            ex.direction = ExtentDirection::Flipped;
+        } else {
+            ex.operation = Operation::Join;
+        }
+        part.add_extrude(j, ex).unwrap();
+    }
+    let mut rect = PatternFeature::rectangular();
+    rect.features = vec!["Extrusion1".into()];
+    if let PatternKind::Rectangular { first, .. } = &mut rect.kind {
+        first.dir = Some(PullRef::Line(LineRef::Origin(0)));
+        first.count = 3;
+        first.spacing = 20.0;
+    }
+    part.add_pattern(rect).unwrap();
+    let mut circ = PatternFeature::circular();
+    circ.features = vec!["Extrusion2".into()];
+    if let PatternKind::Circular {
+        axis,
+        count,
+        angle,
+        fitted,
+        ..
+    } = &mut circ.kind
+    {
+        (*axis, *count, *angle, *fitted) = (Some(LineRef::Origin(2)), 3, 15f64.to_radians(), false);
+    }
+    part.add_pattern(circ).unwrap();
+    let mut m = PatternFeature::mirror();
+    m.solid_mode = true;
+    m.operation = Operation::NewSolid;
+    m.kind = PatternKind::Mirror {
+        plane: Some(PlaneRef::Origin(OriginPlane::YZ)),
+    };
+    part.add_pattern(m).unwrap();
+    part
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -261,6 +325,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("DraftR4");
             project.add_document("Part1", DocumentData::Part(draft_r4()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r5/pattern_r5.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("PatternR5");
+            project.add_document("Part1", DocumentData::Part(pattern_r5()));
             project.save(&f).unwrap();
         }
         let f = root().join("r3/shell_r3.3dcadcraft");

@@ -65,6 +65,30 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
     (
+        "Pattern: click the solids to copy (none: all), then the next selector",
+        "Pattern: щракнете телата за копиране (без избор: всички), после следващия избор",
+    ),
+    (
+        "Pattern: click a face of each feature to copy (or its browser row); a second click drops it",
+        "Pattern: щракнете стена на всяка операция за копиране (или реда ѝ в дървото); втори клик я маха",
+    ),
+    (
+        "Rectangular Pattern: click a straight edge or a plane for Direction 1, set count and spacing, then OK",
+        "Rectangular Pattern: щракнете прав ръб или равнина за Direction 1, задайте брой и стъпка, после OK",
+    ),
+    (
+        "Rectangular Pattern: click a straight edge or a plane for Direction 2 (optional), then OK",
+        "Rectangular Pattern: щракнете прав ръб или равнина за Direction 2 (по избор), после OK",
+    ),
+    (
+        "Circular Pattern: click a straight edge or choose an axis, set count and angle, then OK",
+        "Circular Pattern: щракнете прав ръб или изберете ос, задайте брой и ъгъл, после OK",
+    ),
+    (
+        "Mirror: click the mirror plane (an origin or work plane, or a planar face), then OK",
+        "Mirror: щракнете огледалната равнина (основна или работна равнина, или плоска стена), после OK",
+    ),
+    (
         "Face Draft: click a planar face, an origin plane or a straight edge for the pull direction",
         "Face Draft: щракнете плоска стена, основна равнина или прав ръб за посоката на изваждане",
     ),

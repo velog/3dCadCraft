@@ -30,6 +30,7 @@ pub mod export;
 pub mod expr;
 pub mod extrude;
 pub mod params;
+pub mod pattern;
 pub mod placement;
 pub mod revolve;
 pub mod select;
@@ -48,6 +49,7 @@ pub use blend::{
 pub use boolean::{Operation, Output};
 pub use draft::{DraftFeature, DraftType, PullRef};
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, TargetRef};
+pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
 pub use shell::{FaceRef, ShellDirection, ShellFeature};
@@ -127,6 +129,9 @@ pub enum Feature {
     Shell(ShellFeature),
     /// Face Draft: tilts faces against a pull direction (format revision 4).
     Draft(DraftFeature),
+    /// Rectangular / Circular Pattern or Mirror of features or solids
+    /// (format revision 5).
+    Pattern(PatternFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -150,6 +155,9 @@ struct CachedStep {
     solids: Vec<crate::kernel::exact::ExactSolid>,
     body: BRep,
     health: Option<String>,
+    /// The tools the step applied (Extrude, Revolve, feature patterns), so
+    /// a later pattern still finds them when this step is a cache hit.
+    tools: Vec<pattern::ToolSet>,
 }
 
 impl std::fmt::Debug for BuildCache {
@@ -212,6 +220,7 @@ enum BuildStep<'a> {
     Blend(&'a BlendFeature),
     Shell(&'a ShellFeature),
     Draft(&'a DraftFeature),
+    Pattern(&'a PatternFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -224,6 +233,7 @@ impl<'a> BuildStep<'a> {
             Feature::Blend(bl) => Self::Blend(bl),
             Feature::Shell(sh) => Self::Shell(sh),
             Feature::Draft(d) => Self::Draft(d),
+            Feature::Pattern(p) => Self::Pattern(p),
         }
     }
 }
@@ -239,6 +249,7 @@ impl Feature {
             Feature::Blend(b) => &b.id,
             Feature::Shell(s) => &s.id,
             Feature::Draft(d) => &d.id,
+            Feature::Pattern(p) => &p.id,
         }
     }
 
@@ -252,6 +263,7 @@ impl Feature {
             Feature::Blend(b) => &b.name,
             Feature::Shell(s) => &s.name,
             Feature::Draft(d) => &d.name,
+            Feature::Pattern(p) => &p.name,
         }
     }
 
@@ -261,7 +273,11 @@ impl Feature {
             Feature::Box(_) => true,
             Feature::Extrude(e) => e.operation == Operation::NewSolid,
             Feature::Revolve(r) => r.operation == Operation::NewSolid,
-            Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) | Feature::Draft(_) => false,
+            Feature::Work(_)
+            | Feature::Blend(_)
+            | Feature::Shell(_)
+            | Feature::Draft(_)
+            | Feature::Pattern(_) => false,
         }
     }
 
@@ -272,7 +288,8 @@ impl Feature {
             | Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
-            | Feature::Draft(_) => None,
+            | Feature::Draft(_)
+            | Feature::Pattern(_) => None,
             Feature::Extrude(e) => Some(&e.sketch),
             Feature::Revolve(r) => Some(&r.sketch),
         }
@@ -610,6 +627,8 @@ impl PartDocument {
         let mut solids: Vec<ExactSolid> = Vec::new();
         let limit = self.rollback.unwrap_or(usize::MAX).min(self.features.len());
         let mut prev_key = 0u64;
+        // The tools of the features built so far (by id), for patterns.
+        let mut tools: HashMap<String, Vec<pattern::ToolSet>> = HashMap::new();
         for (j, f) in self.features.iter().enumerate().take(limit) {
             // Sketches made at this point of the history follow the body as
             // it was then (Inventor), not the final one.
@@ -639,8 +658,13 @@ impl PartDocument {
                 if let Some(h) = hit.health {
                     self.feature_health.insert(f.id().to_owned(), h);
                 }
+                if !hit.tools.is_empty() {
+                    tools.insert(f.id().to_owned(), hit.tools);
+                }
                 continue;
             }
+            // The tools this step applies (kept for later patterns).
+            let mut made: Vec<pattern::ToolSet> = Vec::new();
             // `Ok(Some(solids))`: the new exact solids; `Ok(None)`: done by
             // the faceted kernel (`body` updated); `Err`: the feature fails.
             let step: Result<Option<Vec<ExactSolid>>, exact::Fail> = match BuildStep::of(f) {
@@ -674,6 +698,26 @@ impl PartDocument {
                 BuildStep::Draft(dr) if use_exact => {
                     exact::draft(dr, &body, &works, &solids).map(Some)
                 }
+                BuildStep::Pattern(p) if use_exact => {
+                    let sources = if p.solid_mode {
+                        Ok(Vec::new())
+                    } else {
+                        pattern_sources(&self.features[..j], p, &tools, &self.feature_health)
+                    };
+                    match sources {
+                        Ok(sources) => {
+                            exact::pattern(p, &body, &works, &solids, &sources).map(|(next, t)| {
+                                made = t;
+                                Some(next)
+                            })
+                        }
+                        Err(msg) => Err(exact::Fail::User(msg)),
+                    }
+                }
+                BuildStep::Pattern(p) => Err(exact::Fail::User(format!(
+                    "{} needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)",
+                    p.command()
+                ))),
                 BuildStep::Draft(_) => Err(exact::Fail::User(
                     "Face Draft needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
@@ -724,7 +768,13 @@ impl PartDocument {
                             };
                             match built {
                                 Ok(Some(added)) => {
-                                    exact::combine(solids.clone(), added, op, chosen).map(Some)
+                                    made.push(pattern::ToolSet {
+                                        tools: added.clone(),
+                                        op,
+                                        solids: chosen.clone(),
+                                    });
+                                    exact::combine(solids.clone(), added, op, chosen, false)
+                                        .map(Some)
                                 }
                                 // An option the exact kernel lacks.
                                 Ok(None) => return Ok(false),
@@ -766,6 +816,9 @@ impl PartDocument {
                 Err(exact::Fail::User(msg)) => Some(msg.clone()),
                 _ => None,
             };
+            if step.is_err() {
+                made.clear();
+            }
             match step {
                 Ok(Some(next)) => match to_brep(&next) {
                     Ok(b) => {
@@ -792,7 +845,11 @@ impl PartDocument {
                     solids: solids.clone(),
                     body: body.clone(),
                     health: failed,
+                    tools: made.clone(),
                 });
+            }
+            if !made.is_empty() {
+                tools.insert(f.id().to_owned(), made);
             }
         }
         if !self.features.is_empty() {
@@ -833,9 +890,11 @@ impl PartDocument {
                 Feature::Extrude(e) => e.output == Output::Solid,
                 Feature::Revolve(r) => r.output == Output::Solid,
                 Feature::Box(_) => true,
-                Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) | Feature::Draft(_) => {
-                    false
-                }
+                Feature::Work(_)
+                | Feature::Blend(_)
+                | Feature::Shell(_)
+                | Feature::Draft(_)
+                | Feature::Pattern(_) => false,
             })
             .enumerate()
             .map(|(n, f)| (f.id().to_owned(), format!("Solid{}", n + 1)))
@@ -955,6 +1014,9 @@ impl PartDocument {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             (Feature::Draft(o), Feature::Draft(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::Pattern(o), Feature::Pattern(n)) if o.id_base() == n.id_base() => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             _ => {
@@ -1131,6 +1193,26 @@ impl PartDocument {
         Ok(id)
     }
 
+    /// **Rectangular Pattern / Circular Pattern / Mirror**: adds the
+    /// feature (id `RectangularPattern<N>` shown as `Rectangular
+    /// Pattern<N>`, likewise `CircularPattern<N>`, `Mirror<N>`). On failure
+    /// nothing changes.
+    pub fn add_pattern(&mut self, mut def: PatternFeature) -> Result<String, PartError> {
+        let base = def.id_base();
+        let id = self.next_feature_id(base);
+        def.name = format!("{}{}", def.command(), &id[base.len()..]);
+        def.id = id.clone();
+        let before = (self.features.clone(), self.body.clone());
+        self.features.push(Feature::Pattern(def));
+        self.regenerate()?;
+        if let Some(msg) = self.feature_health.get(&id).cloned() {
+            (self.features, self.body) = before;
+            self.regenerate()?;
+            return Err(PartError::Feature(msg));
+        }
+        Ok(id)
+    }
+
     /// **Work Plane / Axis / Point**: adds a work feature (id `WorkPlane<N>`,
     /// name `Work Plane<N>`, likewise for axes and points). On failure
     /// nothing changes.
@@ -1149,6 +1231,59 @@ impl PartDocument {
         }
         Ok(id)
     }
+}
+
+/// The tools a feature pattern copies, in history order (`before`: the
+/// features before the pattern). A feature without tools of its own is
+/// refused with the reason.
+fn pattern_sources<'t>(
+    before: &[Feature],
+    p: &PatternFeature,
+    tools: &'t HashMap<String, Vec<pattern::ToolSet>>,
+    health: &HashMap<String, String>,
+) -> Result<Vec<&'t pattern::ToolSet>, String> {
+    if p.features.is_empty() {
+        return Err("select the features to copy".into());
+    }
+    let mut at: Vec<usize> = Vec::new();
+    for id in &p.features {
+        let k = before
+            .iter()
+            .position(|f| f.id() == id)
+            .ok_or_else(|| format!("the feature {id} no longer exists before it"))?;
+        if !at.contains(&k) {
+            at.push(k);
+        }
+    }
+    at.sort_unstable();
+    let mut out = Vec::new();
+    for k in at {
+        let f = &before[k];
+        // Any feature that applied tools (Extrude, Revolve, a feature
+        // pattern; a Hole later) can be patterned.
+        if let Some(sets) = tools.get(f.id()) {
+            out.extend(sets.iter());
+            continue;
+        }
+        return Err(match f {
+            _ if health.contains_key(f.id()) => {
+                format!("{} failed, so it cannot be copied", f.name())
+            }
+            Feature::Extrude(_) | Feature::Revolve(_) => {
+                format!("{} cannot be copied (a surface)", f.name())
+            }
+            Feature::Box(_)
+            | Feature::Work(_)
+            | Feature::Blend(_)
+            | Feature::Shell(_)
+            | Feature::Draft(_)
+            | Feature::Pattern(_) => format!(
+                "{} cannot be patterned on its own (pattern the solid)",
+                f.name()
+            ),
+        });
+    }
+    Ok(out)
 }
 
 /// Re-resolves one sketch against `body`: placement, projected points,

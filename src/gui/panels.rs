@@ -82,6 +82,9 @@ impl CadCraftApp {
 
     fn browser_cmd(&mut self, cmd: BrowserCmd) {
         match cmd {
+            // The pattern command's Features selector takes browser rows.
+            BrowserCmd::Select(Selection::Feature(k))
+                if self.pattern_draft.is_some() && self.pattern_pick_browser(k) => {}
             BrowserCmd::Select(s) => self.selection = s,
             BrowserCmd::NewSketchOn(plane) => {
                 self.finish_sketch();
@@ -351,6 +354,44 @@ impl CadCraftApp {
                 });
                 return;
             }
+            Feature::Pattern(p) => {
+                ui.horizontal(|ui| {
+                    tree_icon(ui, super::pattern_feature::icon_of(p));
+                    let sick = part.feature_health.get(&p.id);
+                    let mut text = RichText::new(&p.name);
+                    if sick.is_some() {
+                        text = text.color(WARNING);
+                    }
+                    let hover = match sick {
+                        Some(h) => format!("Warning: {h}"),
+                        None => super::pattern_feature::summary(p),
+                    };
+                    let picked = self
+                        .pattern_draft
+                        .as_ref()
+                        .is_some_and(|d| d.def.features.contains(&p.id));
+                    let r = ui
+                        .selectable_label(self.selection == Selection::Feature(k) || picked, text)
+                        .on_hover_text(hover);
+                    if r.clicked() {
+                        cmds.push(BrowserCmd::Select(Selection::Feature(k)));
+                    }
+                    if r.double_clicked() {
+                        cmds.push(BrowserCmd::EditFeature(k));
+                    }
+                    r.context_menu(|ui| {
+                        if ui.button("Edit Feature").clicked() {
+                            cmds.push(BrowserCmd::EditFeature(k));
+                            ui.close();
+                        }
+                        if ui.button("Delete").clicked() {
+                            cmds.push(BrowserCmd::DeleteFeature(k));
+                            ui.close();
+                        }
+                    });
+                });
+                return;
+            }
             Feature::Shell(sh) => {
                 ui.horizontal(|ui| {
                     tree_icon(ui, Icon::Shell);
@@ -594,6 +635,10 @@ impl CadCraftApp {
         }
         if self.draft_draft.is_some() {
             self.draft_dialog(ui);
+            return;
+        }
+        if self.pattern_draft.is_some() {
+            self.pattern_feature_dialog(ui);
             return;
         }
         if self.editing.is_some() && self.tools.pattern_dialog.is_some() {
@@ -1548,6 +1593,10 @@ impl CadCraftApp {
             self.draft_properties(ui, k, d.clone());
             return;
         }
+        if let Feature::Pattern(p) = &f {
+            self.pattern_properties(ui, k, p.clone());
+            return;
+        }
         let Some(sketch_id) = f.sketch().map(str::to_owned) else {
             return;
         };
@@ -1592,7 +1641,8 @@ impl CadCraftApp {
                 | Feature::Work(_)
                 | Feature::Blend(_)
                 | Feature::Shell(_)
-                | Feature::Draft(_) => {}
+                | Feature::Draft(_)
+                | Feature::Pattern(_) => {}
             }
         });
         let table = self.part().parameter_table();
@@ -1633,7 +1683,8 @@ impl CadCraftApp {
             | Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
-            | Feature::Draft(_) => {}
+            | Feature::Draft(_)
+            | Feature::Pattern(_) => {}
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
@@ -2526,6 +2577,416 @@ impl CadCraftApp {
                 self.end_feature_edit();
             }
         });
+    }
+
+    /// The Rectangular / Circular Pattern and Mirror panel
+    /// (`docs/spec/2.11-patterns.md`, `docs/spec/2.12-mirror.md`).
+    fn pattern_feature_dialog(&mut self, ui: &mut egui::Ui) {
+        use super::pattern_feature::{PatternInput, describe_line, describe_plane, describe_pull};
+        use crate::part::{Operation, PatternDirection, PatternKind, PullRef};
+        let Some(mut d) = self.pattern_draft.clone() else {
+            return;
+        };
+        self.panel_header(ui, super::pattern_feature::icon_of(&d.def), d.def.command());
+        let selector = |ui: &mut egui::Ui, active: bool, text: String| {
+            let t = if active {
+                RichText::new(format!("> {text}")).strong().underline()
+            } else {
+                RichText::new(text)
+            };
+            ui.selectable_label(active, t).clicked()
+        };
+        let names: Vec<String> = d
+            .def
+            .features
+            .iter()
+            .map(|id| {
+                self.part()
+                    .features
+                    .iter()
+                    .find(|f| f.id() == id)
+                    .map_or_else(|| format!("{id} (missing)"), |f| f.name().to_owned())
+            })
+            .collect();
+        let work_axes: Vec<String> = {
+            let mut v: Vec<String> = self.part().work.axes.keys().cloned().collect();
+            v.sort();
+            v
+        };
+        let input = d.input;
+        let mut new_input = None;
+        let mirror = matches!(d.def.kind, PatternKind::Mirror { .. });
+        psection(ui, "pat_input", "Input Geometry", |ui| {
+            plabel(ui, "Copy");
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(!d.def.solid_mode, "Features")
+                    .on_hover_text("Copy individual features (Extrude, Revolve, patterns)")
+                    .clicked()
+                {
+                    d.def.solid_mode = false;
+                    new_input = Some(PatternInput::Geometry);
+                }
+                if ui
+                    .selectable_label(d.def.solid_mode, "Solids")
+                    .on_hover_text("Copy whole solids, with every feature on them")
+                    .clicked()
+                {
+                    d.def.solid_mode = true;
+                    new_input = Some(PatternInput::Geometry);
+                }
+            });
+            ui.end_row();
+            if d.def.solid_mode {
+                plabel(ui, "Solids");
+                let text = if d.def.solids.is_empty() {
+                    "all (click one to choose)".to_owned()
+                } else {
+                    d.def.solids.join(", ")
+                };
+                if selector(ui, input == PatternInput::Geometry, text) {
+                    new_input = Some(PatternInput::Geometry);
+                }
+            } else {
+                plabel(ui, "Features");
+                let text = if names.is_empty() {
+                    "click a face or a browser row".to_owned()
+                } else {
+                    names.join(", ")
+                };
+                if selector(ui, input == PatternInput::Geometry, text) {
+                    new_input = Some(PatternInput::Geometry);
+                }
+            }
+            ui.end_row();
+        });
+        let table = self.part().parameter_table();
+        let mut fx = Fields {
+            table: &table,
+            key: "pattern_draft".into(),
+            commits: Vec::new(),
+            bodies: Vec::new(),
+        };
+        let snapshot = Feature::Pattern(d.def.clone());
+        let axis_buttons = |ui: &mut egui::Ui| -> Option<crate::part::LineRef> {
+            let mut out = None;
+            plabel(ui, "Origin axis");
+            ui.horizontal(|ui| {
+                for (k, n) in ["X", "Y", "Z"].iter().enumerate() {
+                    if ui.small_button(*n).clicked() {
+                        out = Some(crate::part::LineRef::Origin(k));
+                    }
+                }
+                for id in &work_axes {
+                    if ui.small_button(id).on_hover_text("A work axis").clicked() {
+                        out = Some(crate::part::LineRef::Work(id.clone()));
+                    }
+                }
+            });
+            ui.end_row();
+            out
+        };
+        match &mut d.def.kind {
+            PatternKind::Rectangular { first, second } => {
+                psection(ui, "pat_dir1", "Direction 1", |ui| {
+                    plabel(ui, "Direction");
+                    let text = first
+                        .dir
+                        .as_ref()
+                        .map_or("click an edge or a plane".into(), describe_pull);
+                    if selector(ui, input == PatternInput::Dir1, text) {
+                        new_input = Some(PatternInput::Dir1);
+                    }
+                    ui.end_row();
+                    if let Some(l) = axis_buttons(ui) {
+                        first.dir = Some(PullRef::Line(l));
+                    }
+                    pattern_direction_rows(ui, first, &mut fx, &snapshot, "count1", "spacing1");
+                });
+                psection(ui, "pat_dir2", "Direction 2", |ui| {
+                    plabel(ui, "Use");
+                    let mut on = second.is_some();
+                    if ui
+                        .checkbox(&mut on, "")
+                        .on_hover_text("Rows along a second direction")
+                        .changed()
+                    {
+                        *second = on.then(PatternDirection::new);
+                        new_input = on.then_some(PatternInput::Dir2);
+                    }
+                    ui.end_row();
+                    if let Some(s) = second {
+                        plabel(ui, "Direction");
+                        let text = s
+                            .dir
+                            .as_ref()
+                            .map_or("click an edge or a plane".into(), describe_pull);
+                        if selector(ui, input == PatternInput::Dir2, text) {
+                            new_input = Some(PatternInput::Dir2);
+                        }
+                        ui.end_row();
+                        if let Some(l) = axis_buttons(ui) {
+                            s.dir = Some(PullRef::Line(l));
+                        }
+                        pattern_direction_rows(ui, s, &mut fx, &snapshot, "count2", "spacing2");
+                    }
+                });
+            }
+            PatternKind::Circular {
+                axis,
+                flip,
+                fitted,
+                midplane,
+                ..
+            } => {
+                psection(ui, "pat_axis", "Rotation Axis", |ui| {
+                    plabel(ui, "Axis");
+                    let text = axis
+                        .as_ref()
+                        .map_or("click a straight edge".into(), describe_line);
+                    if selector(ui, input == PatternInput::Axis, text) {
+                        new_input = Some(PatternInput::Axis);
+                    }
+                    ui.end_row();
+                    if let Some(l) = axis_buttons(ui) {
+                        *axis = Some(l);
+                    }
+                    plabel(ui, "Flip");
+                    ui.checkbox(flip, "")
+                        .on_hover_text("Turn the other way about the axis");
+                    ui.end_row();
+                });
+                psection(ui, "pat_place", "Placement", |ui| {
+                    field_row(ui, &mut fx, "Count", &snapshot, "count");
+                    plabel(ui, "Distribution");
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(fitted, false, "Incremental")
+                            .on_hover_text("The angle between instances");
+                        ui.selectable_value(fitted, true, "Fitted")
+                            .on_hover_text("The whole angle (360° = a full circle)");
+                    });
+                    ui.end_row();
+                    let label = if *fitted { "Total Angle" } else { "Angle" };
+                    field_row(ui, &mut fx, label, &snapshot, "angle");
+                    plabel(ui, "Midplane");
+                    ui.checkbox(midplane, "")
+                        .on_hover_text("Instances on both sides of the original");
+                    ui.end_row();
+                    plabel(ui, "Orientation");
+                    ui.horizontal(|ui| {
+                        ui.add_enabled(false, egui::RadioButton::new(true, "Rotational"));
+                        ui.add_enabled(false, egui::RadioButton::new(false, "Fixed"))
+                            .on_disabled_hover_text("Not yet: docs/spec/2.11-patterns.md");
+                    });
+                    ui.end_row();
+                });
+            }
+            PatternKind::Mirror { plane } => {
+                psection(ui, "pat_plane", "Mirror Plane", |ui| {
+                    plabel(ui, "Plane");
+                    let text = plane
+                        .as_ref()
+                        .map_or("click a plane or a planar face".into(), describe_plane);
+                    if selector(ui, input == PatternInput::Plane, text) {
+                        new_input = Some(PatternInput::Plane);
+                    }
+                    ui.end_row();
+                    plabel(ui, "Origin plane");
+                    ui.horizontal(|ui| {
+                        for o in OriginPlane::ALL {
+                            if ui.small_button(format!("{o:?}")).clicked() {
+                                *plane = Some(PlaneRef::Origin(o));
+                            }
+                        }
+                    });
+                    ui.end_row();
+                });
+            }
+        }
+        if d.def.solid_mode {
+            psection(ui, "pat_output", "Output", |ui| {
+                plabel(ui, "Operation");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut d.def.operation, Operation::Join, "Join")
+                        .on_hover_text("The copies join the original solid");
+                    ui.selectable_value(&mut d.def.operation, Operation::NewSolid, "New Solid")
+                        .on_hover_text("Each copy is a solid of its own");
+                });
+                ui.end_row();
+                if mirror {
+                    plabel(ui, "Remove Original");
+                    ui.checkbox(&mut d.def.remove_original, "")
+                        .on_hover_text("Only the mirrored solid stays");
+                    ui.end_row();
+                }
+            });
+        }
+        psection(ui, "pat_creation", "Creation", |ui| {
+            plabel(ui, "Method");
+            ui.vertical(|ui| {
+                ui.add_enabled(false, egui::RadioButton::new(false, "Optimized"))
+                    .on_disabled_hover_text("Not yet: every copy is built as Identical");
+                ui.radio(true, "Identical")
+                    .on_hover_text("Each copy is the original feature's result, moved");
+                ui.add_enabled(false, egui::RadioButton::new(false, "Adjust"))
+                    .on_disabled_hover_text("Not yet: docs/spec/2.11-patterns.md");
+            });
+            ui.end_row();
+        });
+        let commits = std::mem::take(&mut fx.commits);
+        drop(fx);
+        if let Some(i) = new_input {
+            d.input = i;
+        }
+        let cmd = d.def.command();
+        for (field, text) in commits {
+            let mut f = Feature::Pattern(d.def.clone());
+            match self.part().apply_draft_field(&mut f, field, &text) {
+                Ok(()) => {
+                    if let Feature::Pattern(x) = f {
+                        d.def = x;
+                    }
+                    self.file_status = None;
+                }
+                Err(e) => self.file_status = Some(Err(format!("{cmd}: {e}"))),
+            }
+        }
+        self.pattern_draft = Some(d.clone());
+        let preview = self.pattern_preview();
+        let has_input = !d.def.features.is_empty() || d.def.solid_mode;
+        match &preview {
+            Err(e) if e == super::PREVIEW_PENDING => {
+                ui.label(e);
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            Err(e) if has_input => warning_box(ui, e),
+            _ => {}
+        }
+        ui.horizontal(|ui| {
+            let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
+            if ui
+                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .clicked()
+            {
+                self.commit_pattern(false);
+            }
+            if d.edit.is_none()
+                && ui
+                    .add_enabled(
+                        ok,
+                        egui::Button::new("Apply").min_size(egui::vec2(60.0, 22.0)),
+                    )
+                    .on_hover_text("Create it and go on with new features")
+                    .clicked()
+            {
+                self.commit_pattern(true);
+            }
+            if ui
+                .add(egui::Button::new("Cancel").min_size(egui::vec2(60.0, 22.0)))
+                .clicked()
+            {
+                self.pattern_draft = None;
+                self.end_feature_edit();
+            }
+        });
+    }
+
+    /// Properties of a pattern / mirror: what it copies, its counts,
+    /// spacings and angle with expressions, Flip.
+    fn pattern_properties(&mut self, ui: &mut egui::Ui, k: usize, p: crate::part::PatternFeature) {
+        use crate::part::PatternKind;
+        self.panel_header(ui, super::pattern_feature::icon_of(&p), &p.name);
+        if let Some(h) = self.part().feature_health.get(&p.id) {
+            warning_box(ui, h);
+        }
+        let mut changed = p.clone();
+        psection(ui, &format!("pat_in_{k}"), "Input", |ui| {
+            plabel(ui, "Copies");
+            ui.label(super::pattern_feature::summary(&p));
+            ui.end_row();
+            match &mut changed.kind {
+                PatternKind::Rectangular { first, second } => {
+                    plabel(ui, "Flip 1");
+                    ui.checkbox(&mut first.flip, "");
+                    ui.end_row();
+                    if let Some(s) = second {
+                        plabel(ui, "Flip 2");
+                        ui.checkbox(&mut s.flip, "");
+                        ui.end_row();
+                    }
+                }
+                PatternKind::Circular { flip, .. } => {
+                    plabel(ui, "Flip");
+                    ui.checkbox(flip, "");
+                    ui.end_row();
+                }
+                PatternKind::Mirror { plane } => {
+                    plabel(ui, "Plane");
+                    ui.label(
+                        plane
+                            .as_ref()
+                            .map_or("none".into(), super::pattern_feature::describe_plane),
+                    );
+                    ui.end_row();
+                }
+            }
+        });
+        if changed != p {
+            self.edit_feature(k, Feature::Pattern(changed));
+            return;
+        }
+        let table = self.part().parameter_table();
+        let mut fx = Fields {
+            table: &table,
+            key: format!("feature{k}"),
+            commits: Vec::new(),
+            bodies: Vec::new(),
+        };
+        let f = Feature::Pattern(p.clone());
+        let fields: &[(&str, &'static str)] = match &p.kind {
+            PatternKind::Rectangular {
+                second: Some(_), ..
+            } => &[
+                ("Count 1", "count1"),
+                ("Spacing 1", "spacing1"),
+                ("Count 2", "count2"),
+                ("Spacing 2", "spacing2"),
+            ],
+            PatternKind::Rectangular { .. } => &[("Count", "count1"), ("Spacing", "spacing1")],
+            PatternKind::Circular { .. } => &[("Count", "count"), ("Angle", "angle")],
+            PatternKind::Mirror { .. } => &[],
+        };
+        if !fields.is_empty() {
+            psection(ui, &format!("pat_val_{k}"), "Values", |ui| {
+                for (label, field) in fields {
+                    field_row(ui, &mut fx, label, &f, field);
+                }
+            });
+        }
+        let commits = std::mem::take(&mut fx.commits);
+        drop(fx);
+        for (field, text) in commits {
+            self.checkpoint("Edit Feature");
+            match self.part_mut().set_feature_field(k, field, &text) {
+                Ok(()) => {
+                    if let Err(e) = self.part_mut().regenerate() {
+                        self.file_status = Some(Err(e.to_string()));
+                    }
+                    self.scene_dirty = true;
+                }
+                Err(e) => {
+                    self.history.cancel();
+                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
+                }
+            }
+        }
+        if ui.button("Edit Feature").clicked() {
+            self.edit_feature_dialog(k);
+        }
+        if ui.button("Delete").clicked() {
+            self.delete_feature(k);
+        }
     }
 
     /// Properties of a Face Draft: type, faces, angle with expressions.
@@ -3469,6 +3930,19 @@ impl CadCraftApp {
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
+                (Mode::Normal, None) if self.pattern_draft.is_some() => {
+                    use super::pattern_feature::PatternInput;
+                    let solid = self.pattern_draft.as_ref().is_some_and(|d| d.def.solid_mode);
+                    let text = match self.pattern_draft.as_ref().map(|d| d.input) {
+                        Some(PatternInput::Geometry) if solid => "Pattern: click the solids to copy (none: all), then the next selector",
+                        Some(PatternInput::Geometry) => "Pattern: click a face of each feature to copy (or its browser row); a second click drops it",
+                        Some(PatternInput::Dir1) => "Rectangular Pattern: click a straight edge or a plane for Direction 1, set count and spacing, then OK",
+                        Some(PatternInput::Dir2) => "Rectangular Pattern: click a straight edge or a plane for Direction 2 (optional), then OK",
+                        Some(PatternInput::Axis) => "Circular Pattern: click a straight edge or choose an axis, set count and angle, then OK",
+                        _ => "Mirror: click the mirror plane (an origin or work plane, or a planar face), then OK",
+                    };
+                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                }
                 (Mode::Normal, None) if self.work_draft.is_some() => {
                     let (title, need) = self
                         .work_draft
@@ -3857,6 +4331,37 @@ pub(super) struct Fields<'a> {
     pub commits: Vec<(&'static str, String)>,
     /// Bodies the feature may operate on: (name, display name).
     pub bodies: Vec<(String, String)>,
+}
+
+/// One direction of a rectangular pattern in the panel: Flip, Count,
+/// Incremental / Fitted, Spacing or Distance, Midplane.
+fn pattern_direction_rows(
+    ui: &mut egui::Ui,
+    dir: &mut crate::part::PatternDirection,
+    fx: &mut Fields,
+    f: &Feature,
+    count: &'static str,
+    spacing: &'static str,
+) {
+    plabel(ui, "Flip");
+    ui.checkbox(&mut dir.flip, "")
+        .on_hover_text("Reverse the direction");
+    ui.end_row();
+    field_row(ui, fx, "Count", f, count);
+    plabel(ui, "Distribution");
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut dir.fitted, false, "Incremental")
+            .on_hover_text("The spacing between instances");
+        ui.selectable_value(&mut dir.fitted, true, "Fitted")
+            .on_hover_text("The distance from the first instance to the last");
+    });
+    ui.end_row();
+    let label = if dir.fitted { "Distance" } else { "Spacing" };
+    field_row(ui, fx, label, f, spacing);
+    plabel(ui, "Midplane");
+    ui.checkbox(&mut dir.midplane, "")
+        .on_hover_text("Instances on both sides of the original");
+    ui.end_row();
 }
 
 /// A numeric feature field that takes expressions (one grid row).

@@ -70,7 +70,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 3: Shell (`Feature::Shell`; an older build cannot read the file)
 ///   (2026-10-19).
 /// - 4: Face Draft (`Feature::Draft`) (2026-10-19).
-pub const FORMAT_REVISION: u32 = 4;
+/// - 5: Rectangular / Circular Pattern and Mirror (`Feature::Pattern`)
+///   (2026-10-19).
+pub const FORMAT_REVISION: u32 = 5;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
