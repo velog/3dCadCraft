@@ -22,7 +22,9 @@ fn hole(part: &mut PartDocument, face: &str, z: Real, x: Real, y: Real, r: Real)
     let j = sketch_on(part, face, |sk, at| {
         sk.add_circle(at(x, y, z), r).unwrap();
     });
-    cut(part, j, None, |rg| rg.holes.is_empty() && rg.area() < PI * r * r * 1.01);
+    cut(part, j, None, |rg| {
+        rg.holes.is_empty() && rg.area() < PI * r * r * 1.01
+    });
     part.features[n].id().to_owned()
 }
 
@@ -56,7 +58,11 @@ fn circ(part: &mut PartDocument, features: &[&str], n: u32) -> Result<String, St
     part.add_pattern(p).map_err(|e| e.to_string())
 }
 
-fn mirror(part: &mut PartDocument, features: &[&str], plane: OriginPlane) -> Result<String, String> {
+fn mirror(
+    part: &mut PartDocument,
+    features: &[&str],
+    plane: OriginPlane,
+) -> Result<String, String> {
     let mut p = PatternFeature::mirror();
     p.features = features.iter().map(|s| s.to_string()).collect();
     p.kind = PatternKind::Mirror {
@@ -162,11 +168,7 @@ fn r27_polar_teeth_counts() {
         p.add_extrude(i, ex).unwrap();
         let tooth = p.features[1].id().to_owned();
         circ(&mut p, &[&tooth], count).unwrap();
-        check(
-            &p,
-            PI * 900.0 * 5.0 + count as Real * outside * 5.0,
-            3e-4,
-        );
+        check(&p, PI * 900.0 * 5.0 + count as Real * outside * 5.0, 3e-4);
         assert_eq!(p.body.solids().count(), 1, "N {count}");
     }
 }
@@ -517,22 +519,36 @@ fn mirror_then_shell() {
         .add_rectangle_two_point(Point2::new(-30.0, -15.0), Point2::new(30.0, 15.0))
         .unwrap();
     let reg = p.sketches[i].sketch.regions();
-    p.add_extrude(i, ExtrudeFeature::new(region_profiles(&reg, |_| true), 10.0))
-        .unwrap();
+    p.add_extrude(
+        i,
+        ExtrudeFeature::new(region_profiles(&reg, |_| true), 10.0),
+    )
+    .unwrap();
     let t = top(&p, 10.0);
     let j = sketch_on(&mut p, &t, |sk, at| {
         sk.add_rectangle_two_point(at(10.0, -5.0, 10.0), at(20.0, 5.0, 10.0))
             .unwrap();
     });
-    boss(&mut p, j, 5.0, |r| r.holes.is_empty() && (r.area() - 100.0).abs() < 1e-3);
+    boss(&mut p, j, 5.0, |r| {
+        r.holes.is_empty() && (r.area() - 100.0).abs() < 1e-3
+    });
     let b = p.features[1].id().to_owned();
     mirror(&mut p, &[&b], OriginPlane::YZ).unwrap();
     let outer = 60.0 * 30.0 * 10.0 + 2.0 * 500.0;
     check(&p, outer, 1e-9);
     let bottom = top(&p, 0.0);
-    shell(&mut p, &[(&bottom, [0.0, 0.0, 0.0])], 1.0, ShellDirection::Inside);
+    shell(
+        &mut p,
+        &[(&bottom, [0.0, 0.0, 0.0])],
+        1.0,
+        ShellDirection::Inside,
+    );
     // Cavity: 58×28×9 plus each boss 8×8×5 (its walls 1 thick).
-    check(&p, outer - (58.0 * 28.0 * 9.0 + 2.0 * 8.0 * 8.0 * 5.0), 1e-6);
+    check(
+        &p,
+        outer - (58.0 * 28.0 * 9.0 + 2.0 * 8.0 * 8.0 * 5.0),
+        1e-6,
+    );
 }
 
 /// A shelled box patterned as a solid (New Solid): three equal shells.
@@ -540,7 +556,12 @@ fn mirror_then_shell() {
 fn shell_then_solid_pattern_new_solids() {
     let mut p = plate(20.0, 20.0, 10.0);
     let t = top(&p, 10.0);
-    shell(&mut p, &[(&t, [10.0, 10.0, 10.0])], 1.0, ShellDirection::Inside);
+    shell(
+        &mut p,
+        &[(&t, [10.0, 10.0, 10.0])],
+        1.0,
+        ShellDirection::Inside,
+    );
     let one = volume(&p);
     let mut pat = PatternFeature::rectangular();
     pat.solid_mode = true;
