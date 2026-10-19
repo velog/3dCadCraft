@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+# Saved demo projects and save backups
+/demo.3dcadcraft
+*.3dcadcraft.bak
+*.tmp
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,96 @@
+[package]
+name = "cadcraft3d"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88" # let-chains
+description = "Open-source parametric 3D CAD in pure Rust: B-Rep kernel, 2D constraint solver, agent-ready API."
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["cad", "brep", "geometry", "parametric", "nurbs"]
+categories = ["graphics", "science", "mathematics"]
+
+[workspace]
+members = [".", "xtask"]
+
+[lib]
+name = "cadcraft3d"
+path = "src/lib.rs"
+
+# Desktop application. Requires the `gui` feature so headless builds
+# (CI, the agent server, kernel-only consumers) never compile the graphics stack.
+[[bin]]
+name = "3dcadcraft"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[features]
+default = ["gui"]
+# egui UI + wgpu renderer. eframe re-exports its own wgpu (`eframe::wgpu`), so we
+# deliberately don't depend on `wgpu` directly: that guarantees a single wgpu
+# version in the dependency graph.
+gui = ["dep:eframe", "dep:env_logger"]
+
+[dependencies]
+# --- Math & kernel ---------------------------------------------------------
+nalgebra = { version = "0.35", features = ["serde-serialize"] }
+# Generational arenas: stable, typed IDs for topology without `unsafe` or Rc cycles.
+slotmap = { version = "1.1", features = ["serde"] }
+
+# Exact B-rep kernel: SolidCraft's kernel crate (MIT OR Apache-2.0, built on
+# truck, Apache-2.0), pinned to a reviewed commit. See ATTRIBUTION.md.
+solidcraft-kernel = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+solidcraft-geom = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+
+# --- Serialization (file format + JSON-RPC/MCP payloads) -------------------
+serde = { version = "1.0", features = ["derive"] }
+# Exact f64 round-trips: a CAD file must reload bit-identical coordinates.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+# Project container (.3dcadcraft = ZIP). Deflate only, backed by pure-Rust zlib-rs.
+zip = { version = "9", default-features = false, features = ["deflate"] }
+# Globally unique, copy-safe identities for projects and documents.
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# --- Errors & diagnostics --------------------------------------------------
+thiserror = "2.0"
+log = "0.4"
+
+# --- GUI (optional) --------------------------------------------------------
+eframe = { version = "0.36", optional = true, default-features = false, features = [
+    "wgpu",
+    "default_fonts",
+    "wayland",
+    "x11",
+    "accesskit",
+] }
+env_logger = { version = "0.11", optional = true }
+
+[dev-dependencies]
+approx = "0.5"
+tempfile = "3"
+
+[lints.rust]
+# Project policy: no unsafe code anywhere in this crate. Graphics FFI lives
+# inside wgpu/winit, not here.
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.dev]
+# Geometry code is painfully slow unoptimised; optimise deps even in debug.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# SolidCraft's fixed copies of truck crates (see its vendor/README.md).
+[patch.crates-io]
+truck-shapeops = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+truck-stepio = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+truck-meshalgo = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+matext4cgmath = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }

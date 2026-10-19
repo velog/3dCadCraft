@@ -1,0 +1,2 @@
+# id  # reason (keep sorted; a case that starts passing must be removed)
+26-sketch-belt  # loops made of pieces of circles (belt around two pulleys): need region selection from the solved sketch (Sketch::regions)

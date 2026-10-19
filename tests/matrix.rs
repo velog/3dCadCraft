@@ -1,0 +1,1326 @@
+//! The basic features on simple, complex and very complex geometry
+//! (`docs/spec/TESTING.md`): each case must build with the exact kernel (or
+//! fail with a clear message where that is the right answer), give a valid
+//! B-rep, match its analytic volume and stay within its time budget.
+//! Run with `--nocapture` for the table.
+
+use std::f64::consts::PI;
+use std::time::Instant;
+
+use cadcraft3d::kernel::{Point3, Real};
+use cadcraft3d::part::blend::edge_ref;
+use cadcraft3d::part::{
+    BlendFeature, EdgeRef, Extent, ExtentDirection, ExtrudeFeature, Feature, FilletSet, Operation,
+    OriginPlane, PartDocument, ProfileRef, RevolveFeature, SketchOptions, SketchPlacement,
+    VariableRadius,
+};
+use cadcraft3d::sketch::{Entity, Point2, Region};
+
+/// What a case expects.
+enum Want {
+    /// Built exactly, with this volume (mm³).
+    Volume(Real),
+    /// Built exactly, with this volume within an absolute tolerance (mm³):
+    /// for small blends on a large part, where 2e-3 of the total would hide
+    /// a missing round (the tessellated volume itself is ~3 mm³ off here).
+    VolumeWithin(Real, Real),
+    /// Refused with a message containing this text; the part unchanged.
+    Error(&'static str),
+}
+
+struct Case {
+    level: &'static str,
+    name: &'static str,
+    budget_ms: Real,
+    build: fn() -> Result<PartDocument, String>,
+    want: Want,
+}
+
+fn volume(part: &PartDocument) -> Real {
+    let opts = cadcraft3d::kernel::TessellationOptions::default();
+    part.body
+        .solids()
+        .map(|(sid, _)| {
+            let m = part.body.tessellate_solid(sid, &opts).unwrap();
+            m.faces
+                .triangles
+                .iter()
+                .map(|t| {
+                    let [p, q, s] = t.map(|i| m.faces.positions[i as usize].coords);
+                    p.dot(&q.cross(&s)) / 6.0
+                })
+                .sum::<Real>()
+        })
+        .sum()
+}
+
+fn no_projection() -> SketchOptions {
+    SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    }
+}
+
+/// A rectangle W×D extruded H on XY.
+fn plate(w: Real, d: Real, h: Real) -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(w, d))
+        .map_err(|e| e.to_string())?;
+    let r = sk.regions();
+    part.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], h),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A sketch on the top face (`face`) of `part`; `draw` adds geometry in model
+/// x/y (the face is at height z), returns the sketch index.
+fn sketch_on_top(
+    part: &mut PartDocument,
+    face: &str,
+    z: Real,
+    draw: impl FnOnce(
+        &mut cadcraft3d::sketch::Sketch,
+        &dyn Fn(Real, Real) -> Point2,
+    ) -> Result<(), String>,
+) -> Result<usize, String> {
+    let j = part
+        .create_sketch(SketchPlacement::on_face(face), &no_projection())
+        .map_err(|e| e.to_string())?;
+    let plane = part.sketches[j].sketch.plane.clone();
+    let at = move |x: Real, y: Real| plane.project(&Point3::new(x, y, z));
+    draw(&mut part.sketches[j].sketch, &at)?;
+    Ok(j)
+}
+
+/// Cut through all, against the sketch normal, the regions `pick` chooses.
+fn cut_regions(
+    part: &mut PartDocument,
+    j: usize,
+    pick: impl Fn(&Region) -> bool,
+) -> Result<(), String> {
+    let regions = part.sketches[j].sketch.regions();
+    let profiles: Vec<ProfileRef> = regions
+        .iter()
+        .filter(|r| pick(r))
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
+    if profiles.is_empty() {
+        return Err("no region picked".into());
+    }
+    let mut ex = ExtrudeFeature::new(profiles, 1.0);
+    ex.operation = Operation::Cut;
+    ex.extent = Extent::ThroughAll;
+    ex.direction = ExtentDirection::Flipped;
+    part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn edges_where(part: &PartDocument, keep: impl Fn([Real; 3]) -> bool) -> Vec<EdgeRef> {
+    part.body
+        .edges()
+        .filter_map(|(e, _)| edge_ref(&part.body, e))
+        .filter(|r| keep(r.hint))
+        .collect()
+}
+
+// ------------------------------------------------------------- simple ---
+
+fn s_box() -> Result<PartDocument, String> {
+    plate(40.0, 30.0, 20.0)
+}
+
+fn s_cylinder() -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    part.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 15.0)
+        .map_err(|e| e.to_string())?;
+    let r = part.sketches[i].sketch.regions();
+    part.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 50.0),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A 10×20 rectangle 10 off the axis revolved 360°: a tube.
+fn s_revolve_tube() -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XZ),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(10.0, 0.0), Point2::new(20.0, 20.0))
+        .map_err(|e| e.to_string())?;
+    let r = sk.regions();
+    let def = RevolveFeature::new(
+        vec![ProfileRef::of(&r[0], r[0].interior_point())],
+        cadcraft3d::part::AxisRef::Origin(2),
+    );
+    part.add_revolve(i, def).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+fn s_fillet_edge() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let e = edges_where(&part, |h| (h[0] - 40.0).abs() < 1e-6 && h[1].abs() < 1e-6);
+    part.add_blend(BlendFeature::fillet(e, 5.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+fn s_through_hole() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 10.0)?;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 10.0, |sk, at| {
+        sk.add_circle(at(20.0, 15.0), 5.0)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    cut_regions(&mut part, j, |r| r.holes.is_empty() && r.area() < 100.0)?;
+    Ok(part)
+}
+
+// ------------------------------------------------------------ complex ---
+
+/// Disc r 20 × 5; on top a circle r 15 and a radial line patterned 8
+/// times (circular sketch pattern through the centre); every other sector
+/// cut through: a radial grille.
+fn c_radial_grille() -> Result<PartDocument, String> {
+    radial_grille(8, 20.0, 15.0)
+}
+
+fn radial_grille(n: usize, big: Real, small: Real) -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    part.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), big)
+        .map_err(|e| e.to_string())?;
+    let r = part.sketches[i].sketch.regions();
+    part.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 5.0),
+    )
+    .map_err(|e| e.to_string())?;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 5.0, |sk, at| {
+        let c = sk
+            .add_circle(at(0.0, 0.0), small)
+            .map_err(|e| e.to_string())?;
+        let Some(Entity::Circle { center, .. }) = sk.entity(c).cloned() else {
+            return Err("circle".into());
+        };
+        let b = sk.add_point(at(small + 3.0, 0.0));
+        let l = sk.add_line_between(center, b).map_err(|e| e.to_string())?;
+        sk.circular_pattern(&[l], center, n, std::f64::consts::TAU, true)
+            .map_err(|e| e.to_string())?;
+        sk.solve().map_err(|e| e.to_string())?;
+        Ok(())
+    })?;
+    let mut sectors: Vec<Region> = part.sketches[j]
+        .sketch
+        .regions()
+        .into_iter()
+        .filter(|r| r.area() < PI * small * small / n as Real * 1.01)
+        .collect();
+    if sectors.len() != n {
+        return Err(format!("{} sectors instead of {n}", sectors.len()));
+    }
+    sectors.sort_by(|a, b| {
+        let ang = |r: &Region| {
+            let p = r.interior_point();
+            p.y.atan2(p.x)
+        };
+        ang(a).total_cmp(&ang(b))
+    });
+    let keep: Vec<Point2> = sectors
+        .iter()
+        .step_by(2)
+        .map(|r| r.interior_point())
+        .collect();
+    cut_regions(&mut part, j, |r| {
+        keep.iter().any(|p| r.contains(*p)) && r.area() < PI * small * small / n as Real * 1.01
+    })?;
+    Ok(part)
+}
+
+/// Checkerboard ventilation grille: a 60×60×3 plate, a grid of 6×6 cells
+/// of 10 mm, a 8×8 hole in every other cell (a 2 mm web between them).
+fn c_checker_grille() -> Result<PartDocument, String> {
+    checker_grille(6, 10.0, 8.0)
+}
+
+fn checker_grille(n: usize, cell: Real, hole: Real) -> Result<PartDocument, String> {
+    let side = n as Real * cell;
+    let mut part = plate(side, side, 3.0)?;
+    let m = (cell - hole) / 2.0;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 3.0, |sk, at| {
+        for i in 0..n {
+            for k in 0..n {
+                if (i + k) % 2 == 0 {
+                    let (x, y) = (i as Real * cell + m, k as Real * cell + m);
+                    sk.add_rectangle_two_point(at(x, y), at(x + hole, y + hole))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    })?;
+    // The holes by their centres (where they touch at corners, the cells
+    // between them are regions of the same size too).
+    let plane = part.sketches[j].sketch.plane.clone();
+    let centres: Vec<Point2> = (0..n)
+        .flat_map(|i| (0..n).map(move |k| (i, k)))
+        .filter(|(i, k)| (i + k) % 2 == 0)
+        .map(|(i, k)| {
+            let c = (i as Real + 0.5) * cell;
+            let d = (k as Real + 0.5) * cell;
+            plane.project(&Point3::new(c, d, 3.0))
+        })
+        .collect();
+    cut_regions(&mut part, j, |r| {
+        r.holes.is_empty()
+            && r.area() < hole * hole * 1.01
+            && centres.iter().any(|c| r.contains(*c))
+    })?;
+    Ok(part)
+}
+
+/// A strict checkerboard: holes as big as the cells touch at their
+/// corners (non-manifold edges). Must be refused cleanly, never hang.
+fn c_checker_touching() -> Result<PartDocument, String> {
+    checker_grille(4, 10.0, 10.0)
+}
+
+/// A cut pointing away from the body removes nothing: an error.
+fn c_cut_away() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 10.0)?;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 10.0, |sk, at| {
+        sk.add_circle(at(20.0, 15.0), 5.0)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    let regions = part.sketches[j].sketch.regions();
+    let r = regions
+        .iter()
+        .find(|r| r.holes.is_empty() && r.area() < 100.0)
+        .ok_or("no region")?;
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(r, r.interior_point())], 5.0);
+    ex.operation = Operation::Cut;
+    part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Edit Feature: the hole's cut changed from through-all to 4 deep; the
+/// fillet on the top edge after it survives.
+fn c_edit_feature() -> Result<PartDocument, String> {
+    let mut part = s_through_hole()?;
+    let e = edges_where(&part, |h| (h[2] - 10.0).abs() < 1e-6 && h[1].abs() < 1e-6);
+    part.add_blend(BlendFeature::fillet(e, 2.0))
+        .map_err(|e| e.to_string())?;
+    let k = part
+        .features
+        .iter()
+        .position(|f| f.id() == "Extrusion2")
+        .ok_or("no Extrusion2")?;
+    let Some(Feature::Extrude(mut ex)) = part.features.get(k).cloned() else {
+        return Err("not an extrude".into());
+    };
+    ex.extent = Extent::Distance;
+    ex.distance = 4.0;
+    part.replace_feature(k, Feature::Extrude(ex))
+        .map_err(|e| e.to_string())?;
+    if !part.feature_health.is_empty() {
+        return Err(format!("sick: {:?}", part.feature_health));
+    }
+    Ok(part)
+}
+
+// ------------------------------------------------------- very complex ---
+
+fn v_checker_grille_12() -> Result<PartDocument, String> {
+    checker_grille(12, 8.0, 6.0)
+}
+
+fn v_radial_grille_24() -> Result<PartDocument, String> {
+    radial_grille(24, 40.0, 34.0)
+}
+
+/// A 6×6 grid of Ø4 holes in a plate, every hole's top edge chamfered 0.5.
+fn v_holes_chamfered() -> Result<PartDocument, String> {
+    let mut part = plate(60.0, 60.0, 6.0)?;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 6.0, |sk, at| {
+        for i in 0..6 {
+            for k in 0..6 {
+                sk.add_circle(at(5.0 + 10.0 * i as Real, 5.0 + 10.0 * k as Real), 2.0)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    })?;
+    cut_regions(&mut part, j, |r| r.holes.is_empty() && r.area() < 13.0)?;
+    let e = edges_where(&part, |h| {
+        (h[2] - 6.0).abs() < 1e-6 && h[0] > 1.0 && h[0] < 59.0 && h[1] > 1.0 && h[1] < 59.0
+    });
+    if e.len() < 36 {
+        return Err(format!("{} hole edges", e.len()));
+    }
+    part.add_blend(BlendFeature::chamfer(e, 0.5))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// The same plate and holes, every hole's top edge rounded r 0.5.
+fn v_holes_filleted() -> Result<PartDocument, String> {
+    let mut part = plate(60.0, 60.0, 6.0)?;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 6.0, |sk, at| {
+        for i in 0..6 {
+            for k in 0..6 {
+                sk.add_circle(at(5.0 + 10.0 * i as Real, 5.0 + 10.0 * k as Real), 2.0)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    })?;
+    cut_regions(&mut part, j, |r| r.holes.is_empty() && r.area() < 13.0)?;
+    let e = edges_where(&part, |h| {
+        (h[2] - 6.0).abs() < 1e-6 && h[0] > 1.0 && h[0] < 59.0 && h[1] > 1.0 && h[1] < 59.0
+    });
+    part.add_blend(BlendFeature::fillet(e, 0.5))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+// ------------------------------------------------- pocket with rounds ---
+
+/// The pocket's outline in plate coordinates: two end circles r 10 at
+/// (30, 30) and (70, 30), joined below by a line and above by an arc of
+/// radius 40 tangent to both (`dent` false: bulging out) or of radius 20
+/// curving into the pocket (`dent` true). Pieces as (kind, data) for the
+/// sketch and for the analytic area/perimeter: lines (a, b), arcs CCW
+/// (centre, radius, from angle, to angle).
+#[derive(Clone, Copy)]
+enum Piece {
+    Line([Real; 2], [Real; 2]),
+    Arc([Real; 2], Real, Real, Real),
+}
+
+fn pocket_outline(dent: bool) -> Vec<Piece> {
+    let (c1, c2, r) = ([30.0, 30.0], [70.0, 30.0], 10.0);
+    let ang = |c: [Real; 2], p: [Real; 2]| (p[1] - c[1]).atan2(p[0] - c[0]);
+    let norm = |a: Real, b: Real| {
+        // CCW sweep from a to b in (0, 2π].
+        let mut s = b - a;
+        while s <= 0.0 {
+            s += 2.0 * PI;
+        }
+        a + s
+    };
+    let (big, rr) = if dent { (20.0, 30.0) } else { (40.0, 30.0) };
+    // |C − c_i| = rr (40 − 10 inside, 20 + 10 outside).
+    let h = (rr * rr - 400.0_f64).sqrt();
+    let cc = if dent {
+        [50.0, 30.0 + h]
+    } else {
+        [50.0, 30.0 - h]
+    };
+    let toward = |from: [Real; 2], to: [Real; 2], len: Real| {
+        let d = [to[0] - from[0], to[1] - from[1]];
+        let n = (d[0] * d[0] + d[1] * d[1]).sqrt();
+        [from[0] + d[0] / n * len, from[1] + d[1] / n * len]
+    };
+    // Touching points on the end circles.
+    let (t1, t2) = if dent {
+        (toward(c1, cc, r), toward(c2, cc, r))
+    } else {
+        (toward(cc, c1, big), toward(cc, c2, big))
+    };
+    let b1 = [30.0, 20.0];
+    let b2 = [70.0, 20.0];
+    let a2 = ang(c2, b2);
+    let a1 = ang(c1, t1);
+    let mut out = vec![
+        Piece::Line(b1, b2),
+        Piece::Arc(c2, r, a2, norm(a2, ang(c2, t2))),
+    ];
+    if dent {
+        // Traversed clockwise round its centre: as a CCW arc from t1 to t2.
+        let s = ang(cc, t1);
+        out.push(Piece::Arc(cc, big, s, norm(s, ang(cc, t2))));
+    } else {
+        let s = ang(cc, t2);
+        out.push(Piece::Arc(cc, big, s, norm(s, ang(cc, t1))));
+    }
+    out.push(Piece::Arc(c1, r, a1, norm(a1, ang(c1, b1))));
+    out
+}
+
+/// Area and perimeter of the outline (Green's theorem; the dent arc is
+/// walked backwards along the boundary).
+fn pocket_area_perimeter(dent: bool) -> (Real, Real) {
+    let mut area = 0.0;
+    let mut len = 0.0;
+    for (k, p) in pocket_outline(dent).into_iter().enumerate() {
+        match p {
+            Piece::Line(a, b) => {
+                area += 0.5 * (a[0] * b[1] - b[0] * a[1]);
+                len += ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+            }
+            Piece::Arc(c, r, t0, t1) => {
+                let term = 0.5
+                    * (r * r * (t1 - t0) + c[0] * r * (t1.sin() - t0.sin())
+                        - c[1] * r * (t1.cos() - t0.cos()));
+                let backwards = dent && k == 2;
+                area += if backwards { -term } else { term };
+                len += r * (t1 - t0);
+            }
+        }
+    }
+    (area, len)
+}
+
+/// A 100×60×12 plate with the pocket cut 8 deep from the top.
+fn pocket_plate(dent: bool) -> Result<PartDocument, String> {
+    let mut part = plate(100.0, 60.0, 12.0)?;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 12.0, |sk, at| {
+        // Sketch frames may be mirrored against the model: arcs are CCW in
+        // the sketch, so swap their ends then.
+        let (o, x, y) = (at(0.0, 0.0), at(1.0, 0.0), at(0.0, 1.0));
+        let mirrored = (x - o).perp(&(y - o)) < 0.0;
+        let mut pts: Vec<(Point2, cadcraft3d::sketch::PointId)> = Vec::new();
+        let mut point = |sk: &mut cadcraft3d::sketch::Sketch, q: [Real; 2]| {
+            let p = at(q[0], q[1]);
+            if let Some((_, id)) = pts.iter().find(|(x, _)| (x - p).norm() < 1e-6) {
+                return *id;
+            }
+            let id = sk.add_point(p);
+            pts.push((p, id));
+            id
+        };
+        for piece in pocket_outline(dent) {
+            match piece {
+                Piece::Line(a, b) => {
+                    let (pa, pb) = (point(sk, a), point(sk, b));
+                    sk.add_line_between(pa, pb).map_err(|e| e.to_string())?;
+                }
+                Piece::Arc(c, r, t0, t1) => {
+                    let pc = sk.add_point(at(c[0], c[1]));
+                    let pa = point(sk, [c[0] + r * t0.cos(), c[1] + r * t0.sin()]);
+                    let pb = point(sk, [c[0] + r * t1.cos(), c[1] + r * t1.sin()]);
+                    let (s, e) = if mirrored { (pb, pa) } else { (pa, pb) };
+                    sk.add_arc(pc, s, e).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    })?;
+    let regions = part.sketches[j].sketch.regions();
+    let pocket: Vec<ProfileRef> = regions
+        .iter()
+        .filter(|r| r.holes.is_empty())
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
+    if pocket.len() != 1 {
+        return Err(format!(
+            "{} pocket regions of {}",
+            pocket.len(),
+            regions.len()
+        ));
+    }
+    let mut ex = ExtrudeFeature::new(pocket, 8.0);
+    ex.operation = Operation::Cut;
+    ex.direction = ExtentDirection::Flipped;
+    part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Edges of the pocket at height `z` (inside the plate outline).
+fn pocket_edges(part: &PartDocument, z: Real) -> Vec<EdgeRef> {
+    edges_where(part, |h| {
+        (h[2] - z).abs() < 1e-6 && h[0] > 10.0 && h[0] < 90.0 && h[1] > 5.0 && h[1] < 58.0
+    })
+}
+
+fn pocket_blend(dent: bool, rim: bool, floor: bool, chamfer: bool) -> Result<PartDocument, String> {
+    let mut part = pocket_plate(dent)?;
+    let mut e = Vec::new();
+    if rim {
+        e.extend(pocket_edges(&part, 12.0));
+    }
+    if floor {
+        e.extend(pocket_edges(&part, 4.0));
+    }
+    if e.len() < 4 {
+        return Err(format!("{} pocket edges", e.len()));
+    }
+    let def = if chamfer {
+        BlendFeature::chamfer(e, 1.5)
+    } else {
+        BlendFeature::fillet(e, 2.0)
+    };
+    part.add_blend(def).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+fn c_pocket() -> Result<PartDocument, String> {
+    pocket_plate(false)
+}
+fn c_pocket_rim() -> Result<PartDocument, String> {
+    pocket_blend(false, true, false, false)
+}
+fn c_pocket_floor() -> Result<PartDocument, String> {
+    pocket_blend(false, false, true, false)
+}
+fn c_pocket_rim_chamfer() -> Result<PartDocument, String> {
+    pocket_blend(false, true, false, true)
+}
+fn v_pocket_rim_and_floor() -> Result<PartDocument, String> {
+    pocket_blend(false, true, true, false)
+}
+fn v_dent_pocket_rim() -> Result<PartDocument, String> {
+    pocket_blend(true, true, false, false)
+}
+fn v_dent_pocket_floor() -> Result<PartDocument, String> {
+    pocket_blend(true, false, true, false)
+}
+
+/// Two edge sets in one fillet: the pocket's rim at r 2, its floor at r 1.
+fn v_pocket_two_sets() -> Result<PartDocument, String> {
+    let mut part = pocket_plate(false)?;
+    let mut def = BlendFeature::fillet(pocket_edges(&part, 12.0), 2.0);
+    def.sets.push(FilletSet {
+        edges: pocket_edges(&part, 4.0),
+        radius: 1.0,
+    });
+    part.add_blend(def).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// The box 40×30×20, its front top edge (y = 0, z = 20, along x).
+fn front_top_edge(part: &PartDocument) -> Result<EdgeRef, String> {
+    edges_where(part, |h| h[1].abs() < 1e-6 && (h[2] - 20.0).abs() < 1e-6)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no front top edge".to_owned())
+}
+
+/// Variable radius 2 → 5 along the box's front top edge.
+fn c_variable_fillet() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let edge = front_top_edge(&part)?;
+    let def = BlendFeature::variable_fillet(
+        vec![VariableRadius {
+            edge,
+            start: [0.0, 0.0, 20.0],
+            points: vec![[0.0, 2.0], [1.0, 5.0]],
+        }],
+        false,
+    );
+    part.add_blend(def).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Chord width 4 on the box's front top edge (90°: r = 4 / √2).
+fn c_chord_fillet() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let edge = front_top_edge(&part)?;
+    part.add_blend(BlendFeature::chord_fillet(vec![edge], 4.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Full Round of a 14×6×10 rib's end face (6 wide): r 3 on its two
+/// vertical edges, the face is used up.
+fn c_full_round() -> Result<PartDocument, String> {
+    let mut part = plate(14.0, 6.0, 10.0)?;
+    let end = part
+        .body
+        .faces()
+        .find_map(|(f, x)| {
+            let p = part.body.face_plane(f)?;
+            (p.normal.x > 0.99 && (p.origin.x - 14.0).abs() < 1e-6).then(|| x.name.clone())?
+        })
+        .ok_or("no end face")?;
+    part.add_blend(BlendFeature::full_round(end))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// The pocket's floor (concave) chamfered 1.
+fn c_pocket_floor_chamfer() -> Result<PartDocument, String> {
+    let mut part = pocket_plate(false)?;
+    let e = pocket_edges(&part, 4.0);
+    part.add_blend(BlendFeature::chamfer(e, 1.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Select Mode Solid, All Rounds: every convex edge of the pocket plate
+/// (its 12 edges and the pocket's rim) rounded r 1.
+fn v_all_rounds() -> Result<PartDocument, String> {
+    use cadcraft3d::part::select::{SolidEdges, solid_edges};
+    let mut part = pocket_plate(false)?;
+    let edges: Vec<EdgeRef> = solid_edges(&part.body, None, SolidEdges::Rounds)
+        .into_iter()
+        .filter_map(|e| edge_ref(&part.body, e))
+        .collect();
+    if edges.len() < 16 {
+        return Err(format!("{} convex edges", edges.len()));
+    }
+    part.add_blend(BlendFeature::fillet(edges, 1.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A box a×b×c with all 12 edges rounded r: the edge strips between the
+/// corners and the 8 corner pieces (a cube r³ less an eighth of a ball).
+fn rounded_box_loss(a: Real, b: Real, c: Real, r: Real) -> Real {
+    (1.0 - PI / 4.0) * r * r * 4.0 * ((a - 2.0 * r) + (b - 2.0 * r) + (c - 2.0 * r))
+        + 8.0 * (r * r * r - PI * r * r * r / 6.0)
+}
+
+/// Volumes: plate − pocket, then the rounds by Pappus: spandrel area
+/// (1 − π/4) r² swept along the outline offset by its centroid distance
+/// d = r (10 − 3π) / (3 (4 − π)) — outwards at the rim (length L + 2π d,
+/// removed), inwards at the floor (L − 2π d, added). Chamfer c: triangle
+/// c²/2, centroid c/3 out.
+fn pocket_volume(dent: bool, rim: bool, floor: bool, chamfer: bool) -> Real {
+    let (a, l) = pocket_area_perimeter(dent);
+    let mut v = 100.0 * 60.0 * 12.0 - a * 8.0;
+    if chamfer {
+        let c: Real = 1.5;
+        v -= c * c / 2.0 * (l + 2.0 * PI * c / 3.0);
+        return v;
+    }
+    let r: Real = 2.0;
+    let af = (1.0 - PI / 4.0) * r * r;
+    let d = r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI));
+    if rim {
+        v -= af * (l + 2.0 * PI * d);
+    }
+    if floor {
+        v += af * (l - 2.0 * PI * d);
+    }
+    v
+}
+
+/// Rim r 2 (removed) and floor r 1 (added) by Pappus, as in
+/// [`pocket_volume`].
+fn two_sets_volume() -> Real {
+    let (a, l) = pocket_area_perimeter(false);
+    let spandrel = |r: Real| {
+        let d = r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI));
+        ((1.0 - PI / 4.0) * r * r, d)
+    };
+    let (a2, d2) = spandrel(2.0);
+    let (a1, d1) = spandrel(1.0);
+    100.0 * 60.0 * 12.0 - a * 8.0 - a2 * (l + 2.0 * PI * d2) + a1 * (l - 2.0 * PI * d1)
+}
+
+/// A 40×30 rectangle extruded with `f` setting the options.
+fn rect_extrude(f: impl FnOnce(&mut ExtrudeFeature)) -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(40.0, 30.0))
+        .map_err(|e| e.to_string())?;
+    let r = sk.regions();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 20.0);
+    f(&mut ex);
+    part.add_extrude(i, ex).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+fn s_symmetric() -> Result<PartDocument, String> {
+    rect_extrude(|e| e.direction = ExtentDirection::Symmetric)
+}
+
+fn s_asymmetric() -> Result<PartDocument, String> {
+    rect_extrude(|e| {
+        e.direction = ExtentDirection::Asymmetric;
+        e.distance = 15.0;
+        e.distance_b = 5.0;
+    })
+}
+
+fn s_taper() -> Result<PartDocument, String> {
+    rect_extrude(|e| e.taper = 5f64.to_radians())
+}
+
+/// The tube's section revolved 270° (Angle).
+fn s_revolve_270() -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XZ),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(10.0, 0.0), Point2::new(20.0, 20.0))
+        .map_err(|e| e.to_string())?;
+    let r = sk.regions();
+    let mut def = RevolveFeature::new(
+        vec![ProfileRef::of(&r[0], r[0].interior_point())],
+        cadcraft3d::part::AxisRef::Origin(2),
+    );
+    def.extent = cadcraft3d::part::RevolveExtent::Angle;
+    def.angle = 1.5 * PI;
+    part.add_revolve(i, def).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A box and a cylinder r 15 through it, Intersect: the cylinder's part
+/// inside the box.
+fn c_intersect() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 20.0, |sk, at| {
+        sk.add_circle(at(20.0, 15.0), 15.0)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    let regions = part.sketches[j].sketch.regions();
+    let r = regions
+        .iter()
+        .find(|r| r.holes.is_empty() && (r.area() - PI * 225.0).abs() < 1.0)
+        .ok_or("no circle region")?;
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(r, r.interior_point())], 30.0);
+    ex.operation = Operation::Intersect;
+    ex.direction = ExtentDirection::Flipped;
+    part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A plate with a boss r 8 × 10 joined on top; the boss's base (a concave
+/// circle) rounded r 2.
+fn c_boss_base_fillet() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 40.0, 5.0)?;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 5.0, |sk, at| {
+        sk.add_circle(at(20.0, 20.0), 8.0)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    let regions = part.sketches[j].sketch.regions();
+    let r = regions
+        .iter()
+        .find(|r| r.holes.is_empty() && r.area() < 210.0)
+        .ok_or("no boss region")?;
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(r, r.interior_point())], 10.0);
+    ex.operation = Operation::Join;
+    part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    let e = edges_where(&part, |h| {
+        (h[2] - 5.0).abs() < 1e-6 && ((h[0] - 20.0).powi(2) + (h[1] - 20.0).powi(2)).sqrt() < 9.0
+    });
+    if e.is_empty() {
+        return Err("no base edge".into());
+    }
+    part.add_blend(BlendFeature::fillet(e, 2.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// Chamfer, Two Distances 2 × 4, on one edge of the box.
+fn s_chamfer_two() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let e = edges_where(&part, |h| (h[2] - 20.0).abs() < 1e-6 && h[1].abs() < 1e-6);
+    let mut c = BlendFeature::chamfer(e, 2.0);
+    if let cadcraft3d::part::BlendKind::Chamfer {
+        method, distance2, ..
+    } = &mut c.kind
+    {
+        *method = cadcraft3d::part::ChamferMethod::TwoDistances;
+        *distance2 = 4.0;
+    }
+    part.add_blend(c).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A plate 40×30×10 and, as a separate body (New Solid), a slab over it
+/// at z 20…25; returns the part.
+fn plate_and_slab() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 10.0)?;
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(40.0, 30.0))
+        .map_err(|e| e.to_string())?;
+    let r = sk.regions();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 5.0);
+    ex.operation = Operation::NewSolid;
+    ex.from = Some(cadcraft3d::part::TargetRef::Face("Extrusion1:End".into()));
+    // From the plate's top, 10…15 above it: z 20…25 needs an offset start;
+    // the plain way: extrude 25 and cut 0…20 is not a slab. Use From = top
+    // face and Distance 15 then cut the lower 10 back with a second cut.
+    ex.distance = 15.0;
+    part.add_extrude(i, ex).map_err(|e| e.to_string())?;
+    // Remove z 10…20 of the new body: a cut of the same rectangle from the
+    // plate's top, 10 deep, on the new body only.
+    let j = part
+        .create_sketch(SketchPlacement::on_face("Extrusion1:End"), &no_projection())
+        .map_err(|e| e.to_string())?;
+    let plane = part.sketches[j].sketch.plane.clone();
+    let a = plane.project(&Point3::new(-1.0, -1.0, 10.0));
+    let b = plane.project(&Point3::new(41.0, 31.0, 10.0));
+    part.sketches[j]
+        .sketch
+        .add_rectangle_two_point(a, b)
+        .map_err(|e| e.to_string())?;
+    let regions = part.sketches[j].sketch.regions();
+    let big = regions
+        .iter()
+        .max_by(|x, y| x.area().total_cmp(&y.area()))
+        .ok_or("no region")?;
+    let mut cut = ExtrudeFeature::new(vec![ProfileRef::of(big, big.interior_point())], 10.0);
+    cut.operation = Operation::Cut;
+    cut.solids = vec!["Extrusion2".into()];
+    part.add_extrude(j, cut).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A circle r 5 on the plate's top, extruded with `extent` (Join).
+fn post_to(extent: Extent) -> Result<PartDocument, String> {
+    let mut part = plate_and_slab()?;
+    let j = sketch_on_top(&mut part, "Extrusion1:End", 10.0, |sk, at| {
+        sk.add_circle(at(20.0, 15.0), 5.0)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    let regions = part.sketches[j].sketch.regions();
+    let r = regions
+        .iter()
+        .find(|r| r.holes.is_empty() && (r.area() - PI * 25.0).abs() < 0.5)
+        .ok_or("no circle region")?;
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(r, r.interior_point())], 1.0);
+    ex.operation = Operation::Join;
+    ex.extent = extent;
+    ex.solids = vec!["Extrusion1".into()];
+    part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+fn c_extrude_to_face() -> Result<PartDocument, String> {
+    // The slab's bottom face (z 20), facing the plate.
+    post_to(Extent::To(cadcraft3d::part::TargetRef::Face(
+        "Extrusion3:End".into(),
+    )))
+}
+
+fn c_extrude_to_next() -> Result<PartDocument, String> {
+    post_to(Extent::ToNext)
+}
+
+fn cases() -> Vec<Case> {
+    let cone_ring = |r: Real| PI * r * r * 0.5 * 0.5 / 3.0; // not used
+    let _ = cone_ring;
+    // Chamfer 0.5 on a hole edge of radius 2: the ring removed is the
+    // revolved triangle, area 0.125 at radius 2 + 0.5/3.
+    let ring = 2.0 * PI * (2.0 + 0.5 / 3.0) * 0.125;
+    // Round r on a hole rim: area (1 − π/4) r², centroid 0.2234 r out.
+    let round =
+        2.0 * PI * (2.0 + 0.5 * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI))) * (1.0 - PI / 4.0) * 0.25;
+    vec![
+        Case {
+            level: "complex",
+            name: "pocket: 2 circles + line + arc, 8 deep",
+            budget_ms: 100.0,
+            build: c_pocket,
+            want: Want::VolumeWithin(pocket_volume(false, false, false, false), 8.0),
+        },
+        Case {
+            level: "complex",
+            name: "pocket rim rounded r2",
+            budget_ms: 300.0,
+            build: c_pocket_rim,
+            want: Want::VolumeWithin(pocket_volume(false, true, false, false), 8.0),
+        },
+        Case {
+            level: "complex",
+            name: "pocket floor rounded r2",
+            budget_ms: 300.0,
+            build: c_pocket_floor,
+            want: Want::VolumeWithin(pocket_volume(false, false, true, false), 8.0),
+        },
+        Case {
+            level: "complex",
+            name: "pocket rim chamfered 1.5",
+            budget_ms: 300.0,
+            build: c_pocket_rim_chamfer,
+            want: Want::VolumeWithin(pocket_volume(false, true, false, true), 8.0),
+        },
+        Case {
+            level: "very complex",
+            name: "pocket rim and floor rounded r2",
+            budget_ms: 500.0,
+            build: v_pocket_rim_and_floor,
+            want: Want::VolumeWithin(pocket_volume(false, true, true, false), 8.0),
+        },
+        Case {
+            level: "very complex",
+            name: "pocket with an inward arc, rim r2",
+            budget_ms: 500.0,
+            build: v_dent_pocket_rim,
+            want: Want::VolumeWithin(pocket_volume(true, true, false, false), 8.0),
+        },
+        Case {
+            level: "very complex",
+            name: "pocket with an inward arc, floor r2",
+            budget_ms: 500.0,
+            build: v_dent_pocket_floor,
+            want: Want::VolumeWithin(pocket_volume(true, false, true, false), 8.0),
+        },
+        Case {
+            level: "very complex",
+            name: "pocket: rim r2 and floor r1 (two edge sets)",
+            budget_ms: 500.0,
+            build: v_pocket_two_sets,
+            want: Want::VolumeWithin(two_sets_volume(), 8.0),
+        },
+        Case {
+            level: "complex",
+            name: "pocket floor chamfered 1 (concave)",
+            budget_ms: 300.0,
+            build: c_pocket_floor_chamfer,
+            want: Want::VolumeWithin(
+                {
+                    let (a, l) = pocket_area_perimeter(false);
+                    100.0 * 60.0 * 12.0 - a * 8.0 + 0.5 * (l - 2.0 * PI / 3.0)
+                },
+                8.0,
+            ),
+        },
+        Case {
+            level: "very complex",
+            name: "Solid > All Rounds r1 (box edges + pocket rim)",
+            budget_ms: 1500.0,
+            build: v_all_rounds,
+            want: Want::VolumeWithin(
+                {
+                    let (a, l) = pocket_area_perimeter(false);
+                    let r: Real = 1.0;
+                    let d = r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI));
+                    100.0 * 60.0 * 12.0
+                        - a * 8.0
+                        - rounded_box_loss(100.0, 60.0, 12.0, r)
+                        - (1.0 - PI / 4.0) * r * r * (l + 2.0 * PI * d)
+                },
+                8.0,
+            ),
+        },
+        Case {
+            level: "complex",
+            name: "variable radius 2..5 on a box edge",
+            budget_ms: 300.0,
+            build: c_variable_fillet,
+            // Linear r: ∫(1 − π/4) r² dx = (1 − π/4) L (r0² + r0 r1 + r1²) / 3.
+            want: Want::VolumeWithin(
+                24000.0 - (1.0 - PI / 4.0) * 40.0 * (4.0 + 10.0 + 25.0) / 3.0,
+                1.5,
+            ),
+        },
+        Case {
+            level: "complex",
+            name: "chord width 4 on a box edge",
+            budget_ms: 300.0,
+            build: c_chord_fillet,
+            want: Want::VolumeWithin(24000.0 - (1.0 - PI / 4.0) * 8.0 * 40.0, 1.5),
+        },
+        Case {
+            level: "complex",
+            name: "Full Round of a 6 mm rib end",
+            budget_ms: 300.0,
+            build: c_full_round,
+            want: Want::VolumeWithin(840.0 - (4.0 - PI) * 9.0 * 5.0, 1.0),
+        },
+        Case {
+            level: "simple",
+            name: "box 40×30×20",
+            budget_ms: 50.0,
+            build: s_box,
+            want: Want::Volume(24000.0),
+        },
+        Case {
+            level: "simple",
+            name: "cylinder r15 h50",
+            budget_ms: 50.0,
+            build: s_cylinder,
+            want: Want::Volume(PI * 225.0 * 50.0),
+        },
+        Case {
+            level: "simple",
+            name: "revolved tube 10..20 × 20",
+            budget_ms: 80.0,
+            build: s_revolve_tube,
+            want: Want::Volume(PI * (400.0 - 100.0) * 20.0),
+        },
+        Case {
+            level: "simple",
+            name: "fillet r5 on one edge",
+            budget_ms: 80.0,
+            build: s_fillet_edge,
+            want: Want::Volume(24000.0 - (1.0 - PI / 4.0) * 25.0 * 20.0),
+        },
+        Case {
+            level: "simple",
+            name: "through hole Ø10",
+            budget_ms: 100.0,
+            build: s_through_hole,
+            want: Want::Volume(40.0 * 30.0 * 10.0 - PI * 25.0 * 10.0),
+        },
+        Case {
+            level: "simple",
+            name: "extrude symmetric 20",
+            budget_ms: 50.0,
+            build: s_symmetric,
+            want: Want::Volume(24000.0),
+        },
+        Case {
+            level: "simple",
+            name: "extrude asymmetric 15 / 5",
+            budget_ms: 50.0,
+            build: s_asymmetric,
+            want: Want::Volume(24000.0),
+        },
+        Case {
+            level: "simple",
+            name: "extrude taper +5°",
+            budget_ms: 80.0,
+            build: s_taper,
+            want: Want::Volume({
+                let t = 5f64.to_radians().tan();
+                1200.0 * 20.0 + 70.0 * t * 400.0 + 4.0 * t * t * 8000.0 / 3.0
+            }),
+        },
+        Case {
+            level: "simple",
+            name: "revolve 270° (tube section)",
+            budget_ms: 80.0,
+            build: s_revolve_270,
+            want: Want::Volume(0.75 * PI * 300.0 * 20.0),
+        },
+        Case {
+            level: "simple",
+            name: "chamfer two distances 2 × 4",
+            budget_ms: 80.0,
+            build: s_chamfer_two,
+            want: Want::Volume(24000.0 - 4.0 * 40.0),
+        },
+        Case {
+            level: "complex",
+            name: "plate + slab (new solid, from face, cut)",
+            budget_ms: 300.0,
+            build: plate_and_slab,
+            want: Want::Volume(12000.0 + 1200.0 * 5.0),
+        },
+        Case {
+            level: "complex",
+            name: "post: extrude To the slab's face",
+            budget_ms: 300.0,
+            build: c_extrude_to_face,
+            want: Want::Volume(12000.0 + 6000.0 + PI * 25.0 * 10.0),
+        },
+        Case {
+            level: "complex",
+            name: "post: extrude To Next",
+            budget_ms: 300.0,
+            build: c_extrude_to_next,
+            want: Want::Volume(12000.0 + 6000.0 + PI * 25.0 * 10.0),
+        },
+        Case {
+            level: "complex",
+            name: "intersect: cylinder r15 within the box",
+            budget_ms: 200.0,
+            build: c_intersect,
+            want: Want::Volume(PI * 225.0 * 20.0),
+        },
+        Case {
+            level: "complex",
+            name: "boss r8 joined, base rounded r2 (concave)",
+            budget_ms: 400.0,
+            build: c_boss_base_fillet,
+            want: Want::Volume(
+                40.0 * 40.0 * 5.0
+                    + PI * 64.0 * 10.0
+                    + 2.0
+                        * PI
+                        * (8.0 + 2.0 * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI)))
+                        * (1.0 - PI / 4.0)
+                        * 4.0,
+            ),
+        },
+        Case {
+            level: "complex",
+            name: "radial grille, 4 of 8 sectors cut",
+            budget_ms: 400.0,
+            build: c_radial_grille,
+            want: Want::Volume((PI * 400.0 - PI * 225.0 / 2.0) * 5.0),
+        },
+        Case {
+            level: "complex",
+            name: "checkerboard grille 6×6, 2 mm webs",
+            budget_ms: 600.0,
+            build: c_checker_grille,
+            want: Want::Volume((3600.0 - 18.0 * 64.0) * 3.0),
+        },
+        Case {
+            level: "complex",
+            name: "checkerboard touching at corners",
+            budget_ms: 3000.0,
+            build: c_checker_touching,
+            want: Want::Volume((1600.0 - 800.0) * 3.0),
+        },
+        Case {
+            level: "complex",
+            name: "cut pointing away from the body",
+            budget_ms: 100.0,
+            build: c_cut_away,
+            want: Want::Error("does not intersect"),
+        },
+        Case {
+            level: "complex",
+            name: "edit: through hole → 4 deep, fillet after",
+            budget_ms: 300.0,
+            build: c_edit_feature,
+            want: Want::Volume(
+                40.0 * 30.0 * 10.0 - PI * 25.0 * 4.0 - (1.0 - PI / 4.0) * 4.0 * 40.0,
+            ),
+        },
+        Case {
+            level: "very complex",
+            name: "checkerboard grille 12×12 (72 holes)",
+            budget_ms: 3000.0,
+            build: v_checker_grille_12,
+            want: Want::Volume((96.0 * 96.0 - 72.0 * 36.0) * 3.0),
+        },
+        Case {
+            level: "very complex",
+            name: "radial grille, 12 of 24 sectors cut",
+            budget_ms: 1500.0,
+            build: v_radial_grille_24,
+            want: Want::Volume((PI * 1600.0 - PI * 34.0 * 34.0 / 2.0) * 5.0),
+        },
+        Case {
+            level: "very complex",
+            name: "36 holes Ø4, top edges chamfered 0.5",
+            budget_ms: 5000.0,
+            build: v_holes_chamfered,
+            want: Want::Volume(60.0 * 60.0 * 6.0 - 36.0 * (PI * 4.0 * 6.0 + ring)),
+        },
+        Case {
+            level: "very complex",
+            name: "36 holes Ø4, top edges rounded r0.5",
+            budget_ms: 5000.0,
+            build: v_holes_filleted,
+            want: Want::Volume(60.0 * 60.0 * 6.0 - 36.0 * (PI * 4.0 * 6.0 + round)),
+        },
+    ]
+}
+
+#[test]
+fn feature_matrix() {
+    let mut problems = Vec::new();
+    println!(
+        "{:<13} {:<44} {:>8} {:>9}  result",
+        "level", "case", "budget", "time"
+    );
+    for c in cases() {
+        let t0 = Instant::now();
+        let built = (c.build)();
+        let mut ms = t0.elapsed().as_secs_f64() * 1000.0;
+        // Over budget: once more, the faster run counts (a busy machine
+        // must not fail a case; slow code stays slow in both runs).
+        if ms > c.budget_ms {
+            let t1 = Instant::now();
+            let _ = (c.build)();
+            ms = ms.min(t1.elapsed().as_secs_f64() * 1000.0);
+        }
+        let verdict = match (&built, &c.want) {
+            (Ok(part), Want::Volume(_) | Want::VolumeWithin(..)) => {
+                let (want, tol) = match c.want {
+                    Want::VolumeWithin(w, t) => (w, t),
+                    Want::Volume(w) => (w, 2e-3 * w),
+                    Want::Error(_) => (0.0, 0.0),
+                };
+                let v = volume(part);
+                let mut bad = Vec::new();
+                if !part.exact {
+                    bad.push("faceted kernel".to_owned());
+                }
+                for (sid, _) in part.body.solids() {
+                    if let Err(e) = part.body.validate_solid(sid) {
+                        bad.push(format!("invalid: {e}"));
+                    }
+                }
+                if !part.feature_health.is_empty() {
+                    bad.push(format!("sick: {:?}", part.feature_health));
+                }
+                if (v - want).abs() > tol {
+                    bad.push(format!("volume {v:.2} vs {want:.2}"));
+                }
+                if bad.is_empty() {
+                    Ok(format!("V {v:.1}"))
+                } else {
+                    Err(bad.join("; "))
+                }
+            }
+            (Err(e), Want::Error(text)) if e.contains(text) => Ok(format!("refused: {e}")),
+            (Ok(_), Want::Error(text)) => Err(format!("built, but should be refused ({text})")),
+            (Err(e), _) => Err(format!("failed: {e}")),
+        };
+        let over = ms > c.budget_ms;
+        let line = match &verdict {
+            Ok(v) => v.clone(),
+            Err(e) => format!("FAIL {e}"),
+        };
+        println!(
+            "{:<13} {:<44} {:>6.0} ms {:>7.0} ms{}  {line}",
+            c.level,
+            c.name,
+            c.budget_ms,
+            ms,
+            if over { " OVER" } else { "" }
+        );
+        if let Err(e) = verdict {
+            problems.push(format!("{} / {}: {e}", c.level, c.name));
+        }
+        if over {
+            problems.push(format!(
+                "{} / {}: {ms:.0} ms > {:.0} ms",
+                c.level, c.name, c.budget_ms
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "\n{}", problems.join("\n"));
+}

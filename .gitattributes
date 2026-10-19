@@ -1,0 +1,10 @@
+# Keep LF line endings in the repository on every OS (Windows checkouts too).
+* text=auto eol=lf
+*.rs text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.png binary
+*.3dcadcraft binary
+*.stl binary
+*.glb binary
