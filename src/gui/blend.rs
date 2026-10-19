@@ -200,6 +200,7 @@ impl CadCraftApp {
         } else {
             BlendDraft::fillet()
         };
+        self.preset_start(d.def.command(), &mut d.def);
         if let Some(e) = edge {
             d.pick(&self.part().body, e);
         }
@@ -415,7 +416,7 @@ impl CadCraftApp {
 
     /// OK (`keep_open` false) or Apply: adds the feature.
     pub(super) fn commit_blend(&mut self, keep_open: bool) {
-        let Some(d) = self.blend_draft.clone() else {
+        let Some(mut d) = self.blend_draft.clone() else {
             return;
         };
         let cmd = if d.edit.is_some() {
@@ -423,6 +424,7 @@ impl CadCraftApp {
         } else {
             d.def.command()
         };
+        self.preset_stamp(d.def.command(), &mut d.def);
         self.checkpoint(cmd);
         let built = match d.edit {
             Some(k) => self
@@ -437,15 +439,17 @@ impl CadCraftApp {
             self.part_mut().rollback = Some(k);
             let _ = self.part_mut().regenerate();
         }
+        if built.is_ok() {
+            self.file_status = None;
+            self.preset_used(d.def.command(), &d.def, d.edit.is_none());
+        }
         match built {
             Ok(_) if d.edit.is_some() => {
-                self.file_status = None;
                 self.scene_dirty = true;
                 self.blend_draft = None;
                 self.selection = super::Selection::Feature(d.edit.unwrap_or_default());
             }
             Ok(_) => {
-                self.file_status = None;
                 self.scene_dirty = true;
                 if keep_open {
                     let mut next = d;

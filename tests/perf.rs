@@ -450,6 +450,35 @@ fn speed_budgets() {
             t[1]
         },
     ));
+    // The Preset row's model work in one frame (list with built-ins and the
+    // asterisk check), 100 frames.
+    {
+        use cadcraft3d::presets::{CommandPresets, PresetData};
+        let mut presets = CommandPresets::new("Fillet");
+        for k in 0..20 {
+            presets
+                .create(
+                    &format!("R{k}"),
+                    BlendFeature::fillet(Vec::new(), k as Real).capture(),
+                )
+                .unwrap();
+        }
+        let def = BlendFeature::fillet(Vec::new(), 3.0);
+        rows.push((
+            "preset row: 100 frames of list + modified check (20 presets)",
+            30.0,
+            median_ms(3, || {
+                for _ in 0..100 {
+                    let data = presets.clone();
+                    let list = data.list();
+                    let p = data.find("R7").unwrap();
+                    assert!(list.len() > 20);
+                    assert!(def.differs_from(&p.settings));
+                }
+            }),
+        ));
+    }
+
     println!("{:<62} {:>9} {:>9}", "case", "budget", "median");
     let mut over = Vec::new();
     for (case, budget, ms) in &rows {

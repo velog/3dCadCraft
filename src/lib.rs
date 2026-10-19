@@ -37,4 +37,5 @@ pub mod gui;
 pub mod kernel;
 pub mod materials;
 pub mod part;
+pub mod presets;
 pub mod sketch;

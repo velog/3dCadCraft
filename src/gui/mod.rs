@@ -36,6 +36,7 @@ mod overlay;
 mod panels;
 mod pattern_dialog;
 mod pattern_feature;
+mod presets;
 mod renderer;
 mod ribbon;
 mod select;
@@ -526,6 +527,8 @@ struct CadCraftApp {
     blend_draft: Option<blend::BlendDraft>,
     /// The open Shell command.
     shell_draft: Option<shell::ShellDraft>,
+    /// Presets of the feature commands (the Preset row).
+    presets: presets::PresetUi,
     /// The open Face Draft command.
     draft_draft: Option<draft::DraftDraft>,
     /// The open Rectangular / Circular Pattern or Mirror command.
@@ -642,6 +645,7 @@ impl CadCraftApp {
             shell_draft: None,
             draft_draft: None,
             pattern_draft: None,
+            presets: Default::default(),
             last_pick: None,
             box_select: None,
             offset_edit: None,
@@ -962,7 +966,7 @@ impl CadCraftApp {
         let profiles =
             crate::part::extrude::default_profiles(&self.part().sketches[sketch], &regions);
         let operation = crate::part::Operation::default_for(&self.part().body);
-        let draft = if revolve {
+        let mut draft = if revolve {
             let auto = crate::part::revolve::auto_axis(&self.part().sketches[sketch].sketch);
             let axis_set = auto.is_some();
             let mut def = crate::part::RevolveFeature::new(
@@ -994,6 +998,7 @@ impl CadCraftApp {
                 auto_flipped: false,
             }
         };
+        self.draft_preset_start(&mut draft.def);
         self.extrude = Some(draft);
     }
 
@@ -1038,11 +1043,13 @@ impl CadCraftApp {
             10.0,
         );
         def.operation = crate::part::Operation::default_for(&self.part().body);
+        let mut def = DraftDef::Extrude(def);
+        self.draft_preset_start(&mut def);
         self.part_mut().sketches[i].visible = false;
         self.face_sel = None;
         self.extrude = Some(ExtrudeDraft {
             sketch: i,
-            def: DraftDef::Extrude(def),
+            def,
             axis_pick: false,
             axis_set: false,
             temp_sketch: true,
@@ -1126,14 +1133,17 @@ impl CadCraftApp {
             }
             Feature::Blend(b) => {
                 self.roll_back_to(k);
+                self.preset_edit(b.command(), &b);
                 self.blend_draft = Some(blend::BlendDraft::editing(b, k));
             }
             Feature::Shell(sh) => {
                 self.roll_back_to(k);
+                self.preset_edit("Shell", &sh);
                 self.shell_draft = Some(shell::ShellDraft::editing(sh, k));
             }
             Feature::Draft(dr) => {
                 self.roll_back_to(k);
+                self.preset_edit("Face Draft", &dr);
                 self.draft_draft = Some(draft::DraftDraft::editing(dr, k));
             }
             Feature::Pattern(p) => {
@@ -1142,6 +1152,9 @@ impl CadCraftApp {
             }
             // Box and work features are edited in Properties.
             Feature::Box(_) | Feature::Work(_) => {}
+        }
+        if let Some(def) = self.extrude.as_ref().map(|d| d.def.clone()) {
+            self.draft_preset_edit(&def);
         }
     }
 
@@ -1551,7 +1564,7 @@ impl CadCraftApp {
     /// Extrude / Revolve dialog OK: adds the feature (or reports why it
     /// cannot).
     fn commit_extrude(&mut self) {
-        let Some(d) = self.extrude.clone() else {
+        let Some(mut d) = self.extrude.clone() else {
             return;
         };
         let cmd = if d.edit.is_some() {
@@ -1559,6 +1572,8 @@ impl CadCraftApp {
         } else {
             d.def.command()
         };
+        self.draft_preset_stamp(&mut d.def);
+        let used = d.def.clone();
         self.checkpoint(cmd);
         let result = match (d.edit, d.def) {
             (Some(k), DraftDef::Extrude(e)) => self
@@ -1583,6 +1598,7 @@ impl CadCraftApp {
                 self.extrude = None;
                 self.target_pick = None;
                 self.file_status = None;
+                self.draft_preset_used(&used, d.edit.is_none());
                 self.scene_dirty = true;
             }
             Err(e) => {

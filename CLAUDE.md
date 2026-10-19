@@ -52,6 +52,7 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
 | `command` | Undo/Redo (snapshot history, coalesced gestures); later the Command enum | `History<T>` |
+| `presets` | feature-command presets (user settings, never document data): `PresetData` trait (setting keys, `strip_inputs`, `capture`/`apply`), `apply_in` (re-evaluates stored equations), `CommandPresets` (Last Used, New Default, Sort, built-ins), `PresetStore` (one atomic JSON file per command in `presets/` of the settings folder); GUI row in `gui/presets.rs` | `PresetData`, `PresetStore`, `CommandPresets` |
 | `api` | JSON-RPC/MCP server — placeholder | |
 | `gui` (feature `gui`) | Materials/appearances/Physical Properties (`material.rs`: QAT lists, browsers, Adjust, Clear, Styles Editor, Manage tab, coloured scene), Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
 
@@ -507,6 +508,16 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (`gui::files::drive_root`); paths handed to other programs (Explorer) need native
   separators (`Path::join`, never `format!("{dir}/x")`); paths compared with text in docs
   (`xtask assets`) are normalised to `/`. The X11 scripts in `tools/` do not run there.
+- **Presets** (`src/presets.rs`, `gui/presets.rs`, `docs/spec/0.11-presets.md`): a preset is the
+  feature's JSON with only `PresetData::KEYS` kept (a key skipped by `skip_serializing_if` is
+  stored as `null` = "default"), equations as `params: {field: expr}` without parameter names.
+  A feature stores only `preset: Option<String>` (skipped when `None`, so no format revision).
+  **New command with presets** (Hole, Pattern…): `impl PresetData for XFeature` (keys + inputs
+  hidden in a setting via `strip_inputs`), add it to `builtins`/`factory`/`COMMANDS`, then the
+  GUI hooks: `preset_start` when the command opens, `preset_edit` on Edit Feature, `preset_row`
+  right after `panel_header`, `preset_stamp` before and `preset_used` after a successful OK /
+  Apply. GUI tests never touch the user's folder (`PresetUi` is in-memory under `cfg(test)`);
+  `CADCRAFT3D_PRESETS_DIR` redirects the folder for scripted runs.
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans (amber unless something assigned them an appearance).
 - **Feature patterns copy tools, not faces** (`part/pattern.rs`, `exact::pattern`): every

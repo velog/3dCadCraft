@@ -73,7 +73,10 @@ impl CadCraftApp {
         self.sel.clear();
         self.face_sel = None;
         self.edge_sel = None;
-        self.draft_draft = Some(DraftDraft::new());
+        let mut d = DraftDraft::new();
+        self.preset_start("Face Draft", &mut d.def);
+        d.input = d.first_input();
+        self.draft_draft = Some(d);
     }
 
     /// A click while the command is open: on a face (with its model point),
@@ -183,7 +186,7 @@ impl CadCraftApp {
 
     /// OK (`keep_open` false) or Apply.
     pub(super) fn commit_draft(&mut self, keep_open: bool) {
-        let Some(d) = self.draft_draft.clone() else {
+        let Some(mut d) = self.draft_draft.clone() else {
             return;
         };
         let cmd = if d.edit.is_some() {
@@ -191,6 +194,7 @@ impl CadCraftApp {
         } else {
             "Face Draft"
         };
+        self.preset_stamp("Face Draft", &mut d.def);
         self.checkpoint(cmd);
         let built = match d.edit {
             Some(k) => self
@@ -208,6 +212,7 @@ impl CadCraftApp {
             Ok(_) => {
                 self.file_status = None;
                 self.scene_dirty = true;
+                self.preset_used("Face Draft", &d.def, d.edit.is_none());
                 if keep_open && d.edit.is_none() {
                     // Apply: the same pull / plane and angle, new faces.
                     let mut next = d;

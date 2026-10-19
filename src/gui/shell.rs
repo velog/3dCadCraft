@@ -38,6 +38,8 @@ impl CadCraftApp {
         self.work_draft = None;
         self.blend_draft = None;
         let mut d = ShellDraft::new();
+        // The preset first: its Automatic Face Chain applies to the picks.
+        self.preset_start("Shell", &mut d.def);
         let body = self.part().body.clone();
         for x in std::mem::take(&mut self.sel) {
             if let super::select::SelItem::Face(name) = x
@@ -114,7 +116,7 @@ impl CadCraftApp {
 
     /// OK (`keep_open` false) or Apply: adds (or replaces) the feature.
     pub(super) fn commit_shell(&mut self, keep_open: bool) {
-        let Some(d) = self.shell_draft.clone() else {
+        let Some(mut d) = self.shell_draft.clone() else {
             return;
         };
         let cmd = if d.edit.is_some() {
@@ -122,6 +124,7 @@ impl CadCraftApp {
         } else {
             "Shell"
         };
+        self.preset_stamp("Shell", &mut d.def);
         self.checkpoint(cmd);
         let built = match d.edit {
             Some(k) => self
@@ -140,6 +143,7 @@ impl CadCraftApp {
             Ok(_) => {
                 self.file_status = None;
                 self.scene_dirty = true;
+                self.preset_used("Shell", &d.def, d.edit.is_none());
                 if keep_open && d.edit.is_none() {
                     // Apply: a new shell with the same settings.
                     let mut next = d;
