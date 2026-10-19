@@ -147,6 +147,48 @@ fn pattern_grid(n1: u32, n2: u32, s: Real) -> cadcraft3d::part::PatternFeature {
     p
 }
 
+/// A 30-feature part: a box, 15 blocks (New Solid) side by side and a
+/// hole cut into each of the first 14 (Cut limited to its block).
+fn blocks_30() -> PartDocument {
+    use cadcraft3d::part::OriginPlane;
+    use cadcraft3d::sketch::Point2;
+    let mut part = PartDocument::with_box("Box1", [10.0, 10.0, 5.0]).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let xy = || SketchPlacement::on_origin_plane(OriginPlane::XY);
+    for k in 0..15 {
+        let x0 = 20.0 + 20.0 * k as Real;
+        let j = part.create_sketch(xy(), &opts).unwrap();
+        part.sketches[j]
+            .sketch
+            .add_rectangle_two_point(Point2::new(x0, 0.0), Point2::new(x0 + 10.0, 10.0))
+            .unwrap();
+        let rg = part.sketches[j].sketch.regions();
+        let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 5.0);
+        ex.operation = Operation::NewSolid;
+        let block = part.add_extrude(j, ex).unwrap();
+        if k == 14 {
+            break;
+        }
+        let j = part.create_sketch(xy(), &opts).unwrap();
+        let c = part.sketches[j]
+            .sketch
+            .plane
+            .project(&Point3::new(x0 + 5.0, 5.0, 0.0));
+        part.sketches[j].sketch.add_circle(c, 2.0).unwrap();
+        let rg = part.sketches[j].sketch.regions();
+        let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 1.0);
+        ex.operation = Operation::Cut;
+        ex.extent = cadcraft3d::part::Extent::ThroughAll;
+        ex.solids = vec![block];
+        part.add_extrude(j, ex).unwrap();
+    }
+    part
+}
+
 #[test]
 fn speed_budgets() {
     // (case, budget ms, median ms)
@@ -531,6 +573,31 @@ fn speed_budgets() {
             def.sketch = p.sketches[k].id.clone();
             def.centers = ids.into_iter().map(HoleCenter::Point).collect();
             p.add_hole(def).unwrap();
+        }),
+    ));
+
+    // History editing (2.16): the last of 30 features moved to the top,
+    // so the 28 steps after it are rebuilt (the dependency check runs over
+    // all 30); then the End of Part up and back (cache hits).
+    let p30 = blocks_30();
+    assert_eq!(p30.features.len(), 30);
+    rows.push((
+        "reorder: feature 30 of 30 to the top + regenerate",
+        4000.0,
+        // Once: clones share the cache, a second run would hit it.
+        median_ms(1, || {
+            let mut p = p30.clone();
+            p.move_feature(29, 1).unwrap();
+            assert!(p.feature_health.is_empty() && p.exact);
+        }),
+    ));
+    rows.push((
+        "End of Part: to 15 of 30 and back to the end (cache warm)",
+        300.0,
+        median_ms(3, || {
+            let mut p = p30.clone();
+            p.set_eop(15).unwrap();
+            p.set_eop(30).unwrap();
         }),
     ));
 

@@ -490,7 +490,7 @@ impl CadCraftApp {
                     self.hole_draft = Some(next);
                 } else {
                     self.hole_draft = None;
-                    let k = d.edit.unwrap_or(self.part().features.len() - 1);
+                    let k = d.edit.unwrap_or(self.part().last_inserted());
                     self.selection = super::Selection::Feature(k);
                 }
             }
@@ -535,7 +535,7 @@ impl CadCraftApp {
                     self.thread_draft = Some(next);
                 } else {
                     self.thread_draft = None;
-                    let k = d.edit.unwrap_or(self.part().features.len() - 1);
+                    let k = d.edit.unwrap_or(self.part().last_inserted());
                     self.selection = super::Selection::Feature(k);
                 }
             }

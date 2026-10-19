@@ -335,6 +335,48 @@ fn hole_r6() -> PartDocument {
     part
 }
 
+/// Revision 7: End of Part and suppressed features. Box, two through
+/// holes, a pattern of the first; the second hole suppressed, the marker
+/// above the pattern (built: the box and the first hole).
+fn history_r7() -> PartDocument {
+    use cadcraft3d::part::{
+        Extent, ExtentDirection, LineRef, Operation, PatternFeature, PatternKind, PullRef,
+    };
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 10.0]).unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    for (x, y) in [(10.0, 10.0), (40.0, 30.0)] {
+        let j = part
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+            .unwrap();
+        let c = part.sketches[j]
+            .sketch
+            .plane
+            .project(&Point3::new(x, y, 10.0));
+        part.sketches[j].sketch.add_circle(c, 3.0).unwrap();
+        let rg = part.sketches[j].sketch.regions();
+        let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 1.0);
+        ex.operation = Operation::Cut;
+        ex.extent = Extent::ThroughAll;
+        ex.direction = ExtentDirection::Flipped;
+        part.add_extrude(j, ex).unwrap();
+    }
+    let mut rect = PatternFeature::rectangular();
+    rect.features = vec!["Extrusion1".into()];
+    if let PatternKind::Rectangular { first, .. } = &mut rect.kind {
+        first.dir = Some(PullRef::Line(LineRef::Origin(0)));
+        first.count = 3;
+        first.spacing = 15.0;
+    }
+    part.add_pattern(rect).unwrap();
+    part.suppress_feature(2).unwrap();
+    part.set_eop(3).unwrap();
+    part
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -376,6 +418,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("HoleR6");
             project.add_document("Part1", DocumentData::Part(hole_r6()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r7/history_r7.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("HistoryR7");
+            project.add_document("Part1", DocumentData::Part(history_r7()));
             project.save(&f).unwrap();
         }
         let f = root().join("r3/shell_r3.3dcadcraft");

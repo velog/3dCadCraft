@@ -461,7 +461,7 @@ impl CadCraftApp {
                     self.blend_draft = Some(next);
                 } else {
                     self.blend_draft = None;
-                    self.selection = super::Selection::Feature(self.part().features.len() - 1);
+                    self.selection = super::Selection::Feature(self.part().last_inserted());
                 }
             }
             Err(e) => {

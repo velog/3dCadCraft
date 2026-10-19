@@ -285,7 +285,7 @@ impl CadCraftApp {
         let tables = Standards::global();
         let bodies = self
             .part()
-            .bodies_before(d.edit.unwrap_or(self.part().features.len()));
+            .bodies_before(d.edit.unwrap_or(self.part().insert_index()));
         psection(ui, "hole_input", "Input Geometry", |ui| {
             plabel(ui, "Positions");
             ui.horizontal(|ui| {

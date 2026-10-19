@@ -151,7 +151,7 @@ impl CadCraftApp {
                     self.shell_draft = Some(next);
                 } else {
                     self.shell_draft = None;
-                    let k = d.edit.unwrap_or(self.part().features.len() - 1);
+                    let k = d.edit.unwrap_or(self.part().last_inserted());
                     self.selection = super::Selection::Feature(k);
                 }
             }
