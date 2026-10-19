@@ -41,6 +41,7 @@
 |---|---|
 | [0.5-parameters.md](0.5-parameters.md) | Параметри, изрази, връзка с размерите и допуските |
 | [0.6-files.md](0.6-files.md) | New, Open, Save, Save As, Export, последни файлове, прозорецът за файлове (и под Windows) |
+| [0.10-physical.md](0.10-physical.md) | Physical Properties: маса, обем, площ, център на тежестта, инерция |
 | [0.9-selection.md](0.9-selection.md) | Избор, филтри, prehighlight, Select Other, контекстни предложения |
 | [0-ui.md](0-ui.md) | Интерфейс: визия, цветове, знаци, поведение на командите, избор, насочване на потребителя, производителност |
 | [1.1-sketch.md](1.1-sketch.md) | 2D скица: създаване, редакция, координатна система, проекции, настройки |
@@ -61,6 +62,7 @@
 | [2.6-shell.md](2.6-shell.md) | Shell (черупка): Remove Faces, Inside / Outside / Both, затворена кухина |
 | [2.10-work-features.md](2.10-work-features.md) | Работни равнини, оси, точки |
 | [2.13-booleans.md](2.13-booleans.md) | Join / Cut / Intersect, Surface, представяне на резултата |
+| [2.15-materials.md](2.15-materials.md) | Материали, външен вид (appearances), override-и, библиотеки, Styles Editor |
 | [2.16-browser.md](2.16-browser.md) | Дърво на модела: ред, вложени скици, тела |
 | [7.7-export.md](7.7-export.md) | Износ: STL, STEP, GLB |
 

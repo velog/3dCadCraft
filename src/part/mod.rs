@@ -22,6 +22,7 @@
 //!    geometry) and **Edit Coordinate System** (new origin/axis; geometry
 //!    stays where it is in 3D).
 
+pub mod appearance;
 pub mod blend;
 pub mod boolean;
 pub mod draft;
@@ -30,6 +31,7 @@ pub mod export;
 pub mod expr;
 pub mod extrude;
 pub mod params;
+pub mod physical;
 pub mod placement;
 pub mod revolve;
 pub mod select;
@@ -526,6 +528,16 @@ pub struct PartDocument {
     /// Next model-parameter number (`d<N>`).
     #[serde(default)]
     pub next_param: usize,
+    /// The part's material (`None`: Generic), see [`appearance`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// The part's appearance (`None`: As Material).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<String>,
+    /// Appearance/material overrides by persistent name and the document
+    /// copies of the definitions in use.
+    #[serde(default, skip_serializing_if = "appearance::Looks::is_empty")]
+    pub looks: appearance::Looks,
     /// Parameters whose equation failed at the last evaluation.
     #[serde(skip)]
     pub param_errors: HashMap<String, String>,

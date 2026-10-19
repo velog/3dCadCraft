@@ -31,6 +31,7 @@ mod files;
 mod i18n;
 mod icons;
 mod manip;
+mod material;
 mod overlay;
 mod panels;
 mod pattern_dialog;
@@ -540,6 +541,8 @@ struct CadCraftApp {
     handle_drag: Option<(EntityId, usize)>,
     /// Constraint row hovered in the Properties list (highlighted in the window).
     list_hover: Option<ConstraintId>,
+    /// Materials, appearances, Physical Properties (`material.rs`).
+    mat: material::MaterialUi,
 }
 
 /// Target of a right-click inside the edited sketch.
@@ -637,6 +640,7 @@ impl CadCraftApp {
             offset_edit: None,
             sketch_context: None,
             list_hover: None,
+            mat: material::MaterialUi::load(),
         };
         // Developer aid: start with a demo sketch, e.g. CADCRAFT3D_DEMO=slot.
         if let Some(demo) = std::env::var("CADCRAFT3D_DEMO")
@@ -837,7 +841,9 @@ impl CadCraftApp {
     /// F1: opens the specification of what the user is doing
     /// (`docs/spec/…`), as Inventor's F1 opens the help of the command.
     fn open_help(&mut self) {
-        let file = if self.work_draft.is_some()
+        let file = if let Some(f) = self.mat.help_file() {
+            f
+        } else if self.work_draft.is_some()
             || matches!(self.selection, Selection::Feature(k)
                 if matches!(self.part().features.get(k), Some(crate::part::Feature::Work(_))))
         {
@@ -3176,6 +3182,7 @@ impl CadCraftApp {
             }
             Action::Parameters => self.show_params = true,
             Action::RebuildAll => self.rebuild_all(),
+            Action::Material(c) => self.material_cmd(c),
         }
     }
 
@@ -3923,6 +3930,8 @@ impl CadCraftApp {
             ui.separator();
             self.select_menu(ui);
             ui.separator();
+            self.material_qat(ui);
+            ui.separator();
             let dirty = self.dirty_cache.1;
             ui.label(
                 RichText::new(format!(
@@ -3963,29 +3972,9 @@ impl CadCraftApp {
         g.add_line(&o, &Point3::new(0.0, 30.0, 0.0), [0.1, 0.7, 0.1]);
         g.add_line(&o, &Point3::new(0.0, 0.0, 30.0), [0.1, 0.2, 0.9]);
 
+        // Faces in their appearance (face > feature > body > part > material).
+        material::add_part_meshes(&mut g, self.part());
         let body = &self.part().body;
-        for (id, solid) in body.solids() {
-            match body.tessellate_solid(id, &TessellationOptions::default()) {
-                Ok(mesh) => {
-                    let f = &mesh.faces;
-                    if solid.open {
-                        // Surface bodies: amber and two-sided (their back is
-                        // visible and is not an orientation error).
-                        let color = [0.86, 0.62, 0.32];
-                        g.add_mesh(&f.positions, &f.normals, &f.triangles, color);
-                        let back: Vec<_> = f.normals.iter().map(|n| -n).collect();
-                        let tris: Vec<_> = f.triangles.iter().map(|t| [t[0], t[2], t[1]]).collect();
-                        g.add_mesh(&f.positions, &back, &tris, color);
-                    } else {
-                        g.add_mesh(&f.positions, &f.normals, &f.triangles, [0.42, 0.56, 0.75]);
-                    }
-                    for edge in &mesh.edges {
-                        g.add_polyline(edge, [0.02, 0.02, 0.04]);
-                    }
-                }
-                Err(e) => log::error!("tessellation failed: {e}"),
-            }
-        }
         // Selected (blue) and prehighlighted (green) faces: drawn again just
         // outside the body, so the depth test hides them behind other faces.
         let eps = body
@@ -4433,6 +4422,9 @@ impl CadCraftApp {
             {
                 self.sketch_context_menu(ui, ctx);
                 ui.separator();
+            }
+            if self.editing.is_none() && !self.sel.is_empty() {
+                self.appearance_context_menu(ui);
             }
             ui.menu_button("Projection", |ui| {
                 for p in [
@@ -5919,6 +5911,7 @@ impl eframe::App for CadCraftApp {
 
         self.options_window(&ctx);
         self.parameters_window(&ctx);
+        self.material_windows(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);
     }

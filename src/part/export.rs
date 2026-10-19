@@ -8,7 +8,9 @@
 use std::path::Path;
 
 use super::PartDocument;
+use super::appearance::{LookSource, Resolver};
 use crate::kernel::{Point3, Real, TessellationOptions, Vector3};
+use crate::materials::Appearance;
 
 /// Export formats.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,15 +55,30 @@ pub struct ExportMesh {
     pub positions: Vec<Point3>,
     /// Unit normals per vertex.
     pub normals: Vec<Vector3>,
-    /// Triangles.
+    /// Triangles, sorted by appearance (see `groups`).
     pub triangles: Vec<[u32; 3]>,
+    /// Runs of `triangles` sharing one appearance (empty: one default
+    /// material).
+    pub groups: Vec<ExportGroup>,
+}
+
+/// Triangles of one appearance.
+#[derive(Clone, Debug)]
+pub struct ExportGroup {
+    /// The resolved appearance (face > feature > body > part > material).
+    pub appearance: Appearance,
+    /// Range of `ExportMesh::triangles`.
+    pub triangles: std::ops::Range<usize>,
 }
 
 impl ExportMesh {
-    /// Collects the part's bodies.
+    /// Collects the part's bodies, each face with its appearance.
     pub fn of(part: &PartDocument) -> Result<Self, String> {
         let opts = TessellationOptions::default();
+        let looks = Resolver::new(part).face_looks();
         let mut m = ExportMesh::default();
+        // Appearance → triangles, in order of first use.
+        let mut by_look: Vec<(Appearance, Vec<[u32; 3]>)> = Vec::new();
         for (sid, _) in part.body.solids() {
             let s = part
                 .body
@@ -70,8 +87,31 @@ impl ExportMesh {
             let base = m.positions.len() as u32;
             m.positions.extend(s.faces.positions.iter().copied());
             m.normals.extend(s.faces.normals.iter().copied());
-            m.triangles
-                .extend(s.faces.triangles.iter().map(|t| t.map(|i| i + base)));
+            for (fid, range) in &s.face_triangles {
+                let look = looks
+                    .get(fid)
+                    .map_or_else(Appearance::fallback, |(a, _)| a.clone());
+                let k = match by_look.iter().position(|(a, _)| *a == look) {
+                    Some(k) => k,
+                    None => {
+                        by_look.push((look, Vec::new()));
+                        by_look.len() - 1
+                    }
+                };
+                by_look[k].1.extend(
+                    s.faces.triangles[range.clone()]
+                        .iter()
+                        .map(|t| t.map(|i| i + base)),
+                );
+            }
+        }
+        for (appearance, tris) in by_look {
+            let start = m.triangles.len();
+            m.triangles.extend(tris);
+            m.groups.push(ExportGroup {
+                appearance,
+                triangles: start..m.triangles.len(),
+            });
         }
         if m.triangles.is_empty() {
             return Err("the part has no body".into());
@@ -161,40 +201,69 @@ pub fn glb_bytes(m: &ExportMesh, name: &str) -> Vec<u8> {
         }
     }
     let n_vert = pos.len();
-    let n_idx = m.triangles.len() * 3;
+    let groups: Vec<ExportGroup> = if m.groups.is_empty() {
+        vec![ExportGroup {
+            appearance: Appearance::fallback(),
+            triangles: 0..m.triangles.len(),
+        }]
+    } else {
+        m.groups.clone()
+    };
+    let mut primitives = Vec::new();
+    let mut materials = Vec::new();
+    let mut views = vec![
+        serde_json::json!({ "buffer": 0, "byteOffset": 0, "byteLength": nor_offset, "target": 34962 }),
+        serde_json::json!({ "buffer": 0, "byteOffset": nor_offset,
+            "byteLength": idx_offset - nor_offset, "target": 34962 }),
+    ];
+    let mut accessors = vec![
+        serde_json::json!({ "bufferView": 0, "componentType": 5126, "count": n_vert,
+            "type": "VEC3", "min": lo, "max": hi }),
+        serde_json::json!({ "bufferView": 1, "componentType": 5126, "count": n_vert, "type": "VEC3" }),
+    ];
+    // One primitive (own index range) and material per appearance.
+    for (k, g) in groups.iter().enumerate() {
+        let a = &g.appearance;
+        let [r, gr, b] = a.linear();
+        let mut mat = serde_json::json!({
+            "name": a.name,
+            "pbrMetallicRoughness": {
+                "baseColorFactor": [r, gr, b, a.opacity as f32],
+                "metallicFactor": a.metalness.unwrap_or(0.1),
+                "roughnessFactor": a.roughness.unwrap_or(0.6)
+            }
+        });
+        if a.is_transparent() {
+            mat["alphaMode"] = serde_json::json!("BLEND");
+            mat["doubleSided"] = serde_json::json!(true);
+        }
+        materials.push(mat);
+        views.push(serde_json::json!({
+            "buffer": 0,
+            "byteOffset": idx_offset + g.triangles.start * 12,
+            "byteLength": g.triangles.len() * 12,
+            "target": 34963
+        }));
+        accessors.push(serde_json::json!({
+            "bufferView": 2 + k, "componentType": 5125,
+            "count": g.triangles.len() * 3, "type": "SCALAR"
+        }));
+        primitives.push(serde_json::json!({
+            "attributes": { "POSITION": 0, "NORMAL": 1 },
+            "indices": 2 + k,
+            "material": k
+        }));
+    }
     let json = serde_json::json!({
         "asset": { "version": "2.0", "generator": "3DCadCraft" },
         "scene": 0,
         "scenes": [ { "nodes": [0] } ],
         "nodes": [ { "mesh": 0, "name": name } ],
-        "meshes": [ {
-            "name": name,
-            "primitives": [ {
-                "attributes": { "POSITION": 0, "NORMAL": 1 },
-                "indices": 2,
-                "material": 0
-            } ]
-        } ],
-        "materials": [ {
-            "name": "Default",
-            "pbrMetallicRoughness": {
-                "baseColorFactor": [0.42, 0.56, 0.75, 1.0],
-                "metallicFactor": 0.1,
-                "roughnessFactor": 0.6
-            }
-        } ],
+        "meshes": [ { "name": name, "primitives": primitives } ],
+        "materials": materials,
         "buffers": [ { "byteLength": bin.len() } ],
-        "bufferViews": [
-            { "buffer": 0, "byteOffset": 0, "byteLength": nor_offset, "target": 34962 },
-            { "buffer": 0, "byteOffset": nor_offset, "byteLength": idx_offset - nor_offset, "target": 34962 },
-            { "buffer": 0, "byteOffset": idx_offset, "byteLength": n_idx * 4, "target": 34963 }
-        ],
-        "accessors": [
-            { "bufferView": 0, "componentType": 5126, "count": n_vert, "type": "VEC3",
-              "min": lo, "max": hi },
-            { "bufferView": 1, "componentType": 5126, "count": n_vert, "type": "VEC3" },
-            { "bufferView": 2, "componentType": 5125, "count": n_idx, "type": "SCALAR" }
-        ]
+        "bufferViews": views,
+        "accessors": accessors
     });
     let mut js = json.to_string().into_bytes();
     while !js.len().is_multiple_of(4) {
@@ -221,7 +290,57 @@ pub fn step_text(part: &PartDocument, name: &str) -> Result<String, String> {
             "STEP needs the exact kernel (this part was built with the faceted one)".into(),
         );
     }
-    crate::kernel::exact::step_text(&part.exact_bodies.0, name)
+    let r = Resolver::new(part);
+    let srgb = |a: &Appearance| a.color.map(|c| c as f32 / 255.0);
+    let paint: Vec<crate::kernel::exact::StepPaint> = part
+        .exact_bodies
+        .0
+        .iter()
+        .map(|s| {
+            let (body_look, _) = r.body_look(s.name.as_deref());
+            // Face overrides land on the piece of that name nearest their
+            // hint (face points are computed only for split names).
+            let names = s.names();
+            let mut own: std::collections::HashMap<usize, &str> = Default::default();
+            for e in &part.looks.faces {
+                let cands: Vec<usize> = (0..names.len())
+                    .filter(|&i| names[i].as_deref() == Some(e.face.as_str()))
+                    .collect();
+                let pick = if cands.len() <= 1 {
+                    cands.first().copied()
+                } else {
+                    let hint = Point3::from(e.hint);
+                    cands
+                        .into_iter()
+                        .map(|i| {
+                            let d = crate::kernel::exact::face_point(s, i)
+                                .map_or(Real::INFINITY, |p| (p - hint).norm());
+                            (i, d)
+                        })
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .map(|(i, _)| i)
+                };
+                if let Some(i) = pick {
+                    own.insert(i, e.appearance.as_str());
+                }
+            }
+            let faces = names
+                .iter()
+                .enumerate()
+                .filter_map(|(i, n)| {
+                    let n = n.as_deref()?;
+                    let (a, src) = r.face_look(s.name.as_deref(), Some(n), own.get(&i).copied());
+                    matches!(src, LookSource::Face | LookSource::Feature)
+                        .then(|| (i, srgb(&a), a.opacity as f32))
+                })
+                .collect();
+            crate::kernel::exact::StepPaint {
+                color: Some(srgb(&body_look)),
+                faces,
+            }
+        })
+        .collect();
+    crate::kernel::exact::step_text_painted(&part.exact_bodies.0, name, &paint)
 }
 
 /// The file content for `format`.
@@ -337,6 +456,84 @@ mod tests {
         // The 20 mm height is glTF's Y: 0.02 m.
         let hi = json["accessors"][0]["max"][1].as_f64().unwrap();
         assert!((hi - 0.02).abs() < 1e-6, "{hi}");
+    }
+
+    /// GLB with appearances: one material per look, base colour linear,
+    /// the overridden face in its own primitive, transparent looks blended;
+    /// the index ranges cover every triangle once.
+    #[test]
+    fn glb_carries_colours() {
+        use crate::part::appearance::{LookTarget, face_hint};
+        let lib = crate::materials::builtin();
+        let mut part = rounded_box();
+        part.set_material(Some("Steel S235"), lib).unwrap();
+        let top = part.body.find_face("Box1:Top").unwrap();
+        let hint = face_hint(&part.body, top).unwrap();
+        part.set_appearance(
+            &LookTarget::Face {
+                face: "Box1:Top".into(),
+                hint,
+            },
+            Some("Glass - Clear"),
+            lib,
+        )
+        .unwrap();
+        let m = ExportMesh::of(&part).unwrap();
+        assert_eq!(m.groups.len(), 2);
+        let covered: usize = m.groups.iter().map(|g| g.triangles.len()).sum();
+        assert_eq!(covered, m.triangles.len());
+        let b = glb_bytes(&m, "Part1");
+        let jlen = u32::from_le_bytes(b[12..16].try_into().unwrap()) as usize;
+        let json: serde_json::Value = serde_json::from_slice(&b[20..20 + jlen]).unwrap();
+        let mats = json["materials"].as_array().unwrap();
+        assert_eq!(mats.len(), 2);
+        let steel = mats.iter().find(|x| x["name"] == "Steel - Satin").unwrap();
+        let c = &steel["pbrMetallicRoughness"]["baseColorFactor"];
+        // sRGB 158 → linear 0.341.
+        assert!((c[0].as_f64().unwrap() - 0.341).abs() < 0.002, "{c}");
+        let glass = mats.iter().find(|x| x["name"] == "Glass - Clear").unwrap();
+        assert_eq!(glass["alphaMode"], "BLEND");
+        let alpha = glass["pbrMetallicRoughness"]["baseColorFactor"][3]
+            .as_f64()
+            .unwrap();
+        assert!((alpha - 0.25).abs() < 1e-6);
+        let prims = json["meshes"][0]["primitives"].as_array().unwrap();
+        assert_eq!(prims.len(), 2);
+        let total: u64 = prims
+            .iter()
+            .map(|p| {
+                json["accessors"][p["indices"].as_u64().unwrap() as usize]["count"]
+                    .as_u64()
+                    .unwrap()
+            })
+            .sum();
+        assert_eq!(total as usize, m.triangles.len() * 3);
+    }
+
+    /// STEP carries the body colour and the overridden face's colour.
+    #[test]
+    fn step_carries_colours() {
+        use crate::part::appearance::LookTarget;
+        let lib = crate::materials::builtin();
+        let mut part = rounded_box();
+        let custom = part.add_custom_appearance([255, 0, 0], 1.0);
+        part.set_appearance(&LookTarget::Feature("Fillet1".into()), Some(&custom), lib)
+            .unwrap();
+        part.set_appearance(&LookTarget::Part, Some("ABS - Blue"), lib)
+            .unwrap();
+        let text = step_text(&part, "Part1").unwrap();
+        // ABS - Blue: 40, 90, 186 → 0.157, 0.353, 0.729.
+        assert!(text.contains("COLOUR_RGB"), "no colour");
+        assert!(
+            text.contains("COLOUR_RGB('',1.,0.,0.)") || text.contains("COLOUR_RGB('',1.0,0.0,0.0)"),
+            "{}",
+            text.lines()
+                .filter(|l| l.contains("COLOUR_RGB"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let vols = crate::kernel::exact::step_volumes(&text).unwrap();
+        assert_eq!(vols.len(), 1);
     }
 
     /// STEP: written from the exact bodies and read back by the kernel's

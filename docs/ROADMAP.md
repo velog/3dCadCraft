@@ -188,6 +188,7 @@
 
 - STEP **внос** (7.7).
 - Sweep, Loft, Coil (5.1–5.3).
+- Материали и външен вид 🟡 (2026-10-19: библиотеки в CSV, override-и Face > Feature > Body > Part > Material, QAT списъци, браузъри, Adjust, Clear, Styles Editor, прозрачност, цветове в GLB/STEP; [spec](spec/2.15-materials.md)) и Physical Properties 🟡 (маса, център на тежестта, инерция; [spec](spec/0.10-physical.md)) (2.15, 0.10).
 - Shell 🟡 (2026-10-19: Inside/Outside/Both, Remove Faces, затворена кухина; [spec](spec/2.6-shell.md)), Face Draft 🟡 (2026-10-19: Fixed Edge, Fixed Plane; [spec](spec/2.8-draft.md)), Rib (2.6–2.8).
 - Fillet с променлив радиус: ✅ прави ръбове (2026-10-19, `fillet_variable_points`); ⬜ криви ръбове, NURBS случаи.
 - **Листов метал** с разгъвка в DXF (5.6).

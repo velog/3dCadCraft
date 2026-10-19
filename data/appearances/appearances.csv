@@ -1,0 +1,36 @@
+# 3DCadCraft built-in appearance library.
+# colour in sRGB 0-255; opacity 0-1 (1 = opaque); roughness and metalness
+# 0-1 are optional (kept for a later realistic renderer). A user library with
+# the same columns in %APPDATA%\3dcadcraft\materials\appearances.csv
+# overrides entries by name and adds new ones.
+# Part of the colours follow SolidCraft's appearance list (MIT OR Apache-2.0).
+name,category,r,g,b,opacity,roughness,metalness
+Default,Default,172,196,224,1,0.6,0.1
+Steel - Satin,Metal,158,164,172,1,0.4,1
+Stainless Steel - Brushed,Metal,186,191,198,1,0.35,1
+Cast Iron,Metal,104,104,110,1,0.7,1
+Aluminium - Satin,Metal,204,208,214,1,0.35,1
+Aluminium - Anodized Black,Metal,44,46,50,1,0.4,1
+Aluminium - Anodized Blue,Metal,52,92,160,1,0.4,1
+Brass - Polished,Metal,208,172,88,1,0.2,1
+Copper,Metal,204,122,80,1,0.3,1
+Titanium,Metal,150,148,158,1,0.4,1
+ABS - White,Plastic,236,236,230,1,0.5,0
+ABS - Black,Plastic,36,36,38,1,0.5,0
+ABS - Red,Plastic,196,40,40,1,0.5,0
+ABS - Blue,Plastic,40,90,186,1,0.5,0
+ABS - Yellow,Plastic,236,196,40,1,0.5,0
+ABS - Green,Plastic,52,150,80,1,0.5,0
+Plastic - Blue,Plastic,110,160,222,1,0.5,0
+Plastic - Natural,Plastic,236,230,214,1,0.6,0
+Plastic - Clear,Plastic,196,216,232,0.5,0.1,0
+PETG - Clear,Plastic,180,214,220,0.6,0.15,0
+Rubber - Black,Rubber,28,28,28,1,0.9,0
+Glass - Clear,Glass,190,220,228,0.25,0.05,0
+Glass - Smoked,Glass,90,96,104,0.45,0.05,0
+Wood - Oak,Wood,190,146,92,1,0.7,0
+Wood - Pine,Wood,222,184,135,1,0.7,0
+Paint - Gloss White,Paint,246,246,244,1,0.15,0
+Paint - Gloss Red,Paint,190,30,30,1,0.15,0
+Paint - Gloss Black,Paint,20,20,22,1,0.15,0
+Paint - Signal Yellow,Paint,240,180,0,1,0.2,0

@@ -149,6 +149,18 @@ pub enum Icon {
     ViewTop,
     ViewRight,
     VisualStyle,
+    /// Material (a ball with a density band).
+    Material,
+    /// Appearance (a ball with colour patches).
+    Appearance,
+    /// Adjust appearance (a brush on a face).
+    AdjustLook,
+    /// Clear appearance overrides.
+    ClearLook,
+    /// Styles Editor (stacked sheets).
+    Styles,
+    /// Purge (a bin).
+    Purge,
     Section,
     Ortho,
     // browser
@@ -935,6 +947,42 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
                 ],
                 soft,
             );
+        }
+        Material => {
+            p.disc(8.0, 8.0, 6.0, tint(ink, 60));
+            p.circle(8.0, 8.0, 6.0, ink);
+            p.arc(8.0, 13.0, 6.5, 40.0, 140.0, acc);
+            p.disc(6.0, 5.5, 1.2, ink);
+        }
+        Appearance => {
+            p.circle(8.0, 8.0, 6.0, ink);
+            p.disc(5.5, 6.0, 1.7, warn);
+            p.disc(10.5, 6.0, 1.7, acc);
+            p.disc(8.0, 10.8, 1.7, ok);
+        }
+        AdjustLook => {
+            p.fill(&[(2.0, 10.0), (9.0, 13.0), (14.0, 10.0), (7.0, 7.0)], soft);
+            p.closed(&[(2.0, 10.0), (9.0, 13.0), (14.0, 10.0), (7.0, 7.0)], ink);
+            p.line(&[(9.0, 9.0), (13.5, 1.5)], hot);
+            p.disc(9.0, 9.0, 1.4, acc);
+        }
+        ClearLook => {
+            p.circle(7.0, 8.0, 5.5, ink);
+            p.disc(5.0, 6.5, 1.4, acc);
+            p.line(&[(10.0, 10.0), (15.0, 15.0)], warn);
+            p.line(&[(15.0, 10.0), (10.0, 15.0)], warn);
+        }
+        Styles => {
+            p.rect(5.0, 2.0, 14.0, 11.0, ink);
+            p.fill(&[(2.0, 5.0), (11.0, 5.0), (11.0, 14.0), (2.0, 14.0)], soft);
+            p.rect(2.0, 5.0, 11.0, 14.0, acc);
+            p.line(&[(4.0, 9.0), (9.0, 9.0)], acc);
+        }
+        Purge => {
+            p.line(&[(3.0, 4.0), (13.0, 4.0)], ink);
+            p.line(&[(6.5, 4.0), (6.5, 2.5), (9.5, 2.5), (9.5, 4.0)], ink);
+            p.closed(&[(4.0, 5.0), (12.0, 5.0), (11.0, 14.0), (5.0, 14.0)], ink);
+            p.line(&[(8.0, 7.0), (8.0, 12.0)], warn);
         }
         Section => {
             p.block([2.0, 6.0, 9.0, 8.0, 5.0], ink, Color32::TRANSPARENT);

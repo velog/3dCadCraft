@@ -65,6 +65,10 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
     (
+        "Adjust: select faces, features or bodies (the Select list sets which), pick a look or a colour, then Apply",
+        "Adjust: изберете стени, операции или тела (списъкът Select определя кои), изберете вид или цвят, после Apply",
+    ),
+    (
         "Face Draft: click a planar face, an origin plane or a straight edge for the pull direction",
         "Face Draft: щракнете плоска стена, основна равнина или прав ръб за посоката на изваждане",
     ),

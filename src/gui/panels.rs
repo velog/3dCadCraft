@@ -27,6 +27,10 @@ enum BrowserCmd {
     Share(usize, bool),
     /// Show / hide a feature (work planes).
     FeatureVisible(usize, bool),
+    /// Appearance → … on a feature or body (`None`: remove the override).
+    Look(crate::part::appearance::LookTarget, Option<String>),
+    /// Material → … on a body.
+    BodyMaterial(String, Option<String>),
 }
 
 const WARNING: Color32 = Color32::from_rgb(230, 140, 0);
@@ -109,6 +113,8 @@ impl CadCraftApp {
                     w.visible = v;
                 }
             }
+            BrowserCmd::Look(t, a) => self.assign_appearance(&[t], a.as_deref()),
+            BrowserCmd::BodyMaterial(b, m) => self.assign_material(&[b], m.as_deref()),
             BrowserCmd::Share(i, on) => {
                 self.checkpoint(if on { "Share Sketch" } else { "Unshare Sketch" });
                 let part = self.part_mut();
@@ -169,13 +175,23 @@ impl CadCraftApp {
                 for (label, id) in labels {
                     ui.horizontal(|ui| {
                         tree_icon(ui, Icon::Part);
-                        if ui
+                        let r = ui
                             .selectable_label(self.selection == Selection::Body, label)
-                            .on_hover_text(format!("Created by {id}"))
-                            .clicked()
-                        {
+                            .on_hover_text(format!("Created by {id}"));
+                        if r.clicked() {
                             cmds.push(BrowserCmd::Select(Selection::Body));
                         }
+                        r.context_menu(|ui| {
+                            if let Some(m) = self.material_submenu(ui) {
+                                cmds.push(BrowserCmd::BodyMaterial(id.clone(), m));
+                                ui.close();
+                            }
+                            if let Some(a) = self.appearance_submenu(ui) {
+                                use crate::part::appearance::LookTarget;
+                                cmds.push(BrowserCmd::Look(LookTarget::Body(id.clone()), a));
+                                ui.close();
+                            }
+                        });
                     });
                 }
             });
@@ -263,12 +279,19 @@ impl CadCraftApp {
             Feature::Box(b) => {
                 ui.horizontal(|ui| {
                     tree_icon(ui, Icon::Box);
-                    if ui
-                        .selectable_label(self.selection == Selection::Body, &b.name)
-                        .clicked()
-                    {
+                    let r = ui.selectable_label(self.selection == Selection::Body, &b.name);
+                    if r.clicked() {
                         cmds.push(BrowserCmd::Select(Selection::Body));
                     }
+                    r.context_menu(|ui| {
+                        if let Some(a) = self.appearance_submenu(ui) {
+                            cmds.push(BrowserCmd::Look(
+                                crate::part::appearance::LookTarget::Feature(b.id.clone()),
+                                a,
+                            ));
+                            ui.close();
+                        }
+                    });
                 });
                 return;
             }
@@ -302,6 +325,13 @@ impl CadCraftApp {
                     r.context_menu(|ui| {
                         if ui.button("Edit Feature").clicked() {
                             cmds.push(BrowserCmd::EditFeature(k));
+                            ui.close();
+                        }
+                        if let Some(a) = self.appearance_submenu(ui) {
+                            cmds.push(BrowserCmd::Look(
+                                crate::part::appearance::LookTarget::Feature(f.id().to_owned()),
+                                a,
+                            ));
                             ui.close();
                         }
                         if ui.button("Delete").clicked() {
@@ -343,6 +373,13 @@ impl CadCraftApp {
                             cmds.push(BrowserCmd::EditFeature(k));
                             ui.close();
                         }
+                        if let Some(a) = self.appearance_submenu(ui) {
+                            cmds.push(BrowserCmd::Look(
+                                crate::part::appearance::LookTarget::Feature(f.id().to_owned()),
+                                a,
+                            ));
+                            ui.close();
+                        }
                         if ui.button("Delete").clicked() {
                             cmds.push(BrowserCmd::DeleteFeature(k));
                             ui.close();
@@ -379,6 +416,13 @@ impl CadCraftApp {
                     r.context_menu(|ui| {
                         if ui.button("Edit Feature").clicked() {
                             cmds.push(BrowserCmd::EditFeature(k));
+                            ui.close();
+                        }
+                        if let Some(a) = self.appearance_submenu(ui) {
+                            cmds.push(BrowserCmd::Look(
+                                crate::part::appearance::LookTarget::Feature(f.id().to_owned()),
+                                a,
+                            ));
                             ui.close();
                         }
                         if ui.button("Delete").clicked() {
@@ -482,6 +526,13 @@ impl CadCraftApp {
                     && ui.button("Edit Sketch").clicked()
                 {
                     cmds.push(BrowserCmd::Edit(i));
+                    ui.close();
+                }
+                if let Some(a) = self.appearance_submenu(ui) {
+                    cmds.push(BrowserCmd::Look(
+                        crate::part::appearance::LookTarget::Feature(id.clone()),
+                        a,
+                    ));
                     ui.close();
                 }
                 if ui.button("Delete").clicked() {
@@ -3450,6 +3501,9 @@ impl CadCraftApp {
                         })
                         .unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.mat.adjusting() => {
+                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(super::material::ADJUST_PROMPT)).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.shell_draft.is_some() => {
                     let none = self.shell_draft.as_ref().is_some_and(|d| d.def.remove.is_empty());

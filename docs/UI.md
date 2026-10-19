@@ -31,7 +31,7 @@
 
 | Зона | В Inventor | В 3DCadCraft | Статус |
 |---|---|---|---|
-| Бутон за файлове + Quick Access | File menu, Quick Access Toolbar | **File** меню и New/Open/Save/Undo/Redo | 🟡 |
+| Бутон за файлове + Quick Access | File menu, Quick Access Toolbar | **File** меню и New/Open/Save/Undo/Redo, Select, списъци **Material** и **Appearance** (с `*`, когато стени/операции/тела имат свой вид) | 🟡 |
 | Лента с табове | Ribbon (3D Model, Sketch, Assemble, Annotate, Inspect, Tools, Manage, View, Environments) | същите табове, **зависят от вида на документа** (детайл/сглобка/чертеж) | 🟡 обвивка; неготовите команди са сиви с подсказка „предстои (ниво X.Y)“ |
 | Дърво на модела | Model Browser | **Model**: проект → документи → Origin, скици, ограничения, тела | 🟡 |
 | Панел със свойства | Property Panel (в новите версии вместо модални диалози) | **Properties**: параметрите на избрания елемент, редактируеми на място | 🟡 |
@@ -42,7 +42,7 @@
 | Mini-toolbar | плаваща лента при операция | стойности на място в изгледа (например разстояние при Extrude) | ⬜ |
 
 **Лентата зависи от средата:**
-- **Детайл:** 3D Model, Sketch, Inspect, Tools, View.
+- **Детайл:** 3D Model, Sketch, Inspect, Tools, Manage, View. Tools има панел **Material and Appearance** (Material, Appearance, Adjust, Clear); Manage — **Styles and Standards** (Styles Editor, Update, Purge); Inspect → **Physical Properties**.
 - **В скица:** таб Sketch, с панели Create, Modify, Pattern, Constrain, Insert, Format.
 - **Сглобка:** Assemble, Design (калкулатори), Inspect, Tools, View.
 - **Чертеж:** Place Views, Annotate, Sketch, Tools, View.
@@ -146,7 +146,9 @@
 | Pack and Go | **Pack** | вгражда библиотеките; проектът става самостоятелен |
 | Content Center | **библиотечни проекти** (`*.3dcadcraft`) + Link | обикновени файлове, могат да са в git |
 | Vault | git с разпакувана папка + заключване и ревизии (предстои) | |
-| iProperties | **Properties** на документа | |
+| iProperties | **Properties** на документа | таб Physical = Inspect → **Physical Properties** |
+| Material / Appearance Browser | **Material Browser**, **Appearance Browser** (Tools → Material and Appearance) | библиотеките са CSV файлове; потребителската е в `%APPDATA%\3dcadcraft\materials` |
+| Adjust / Clear (appearance) | **Adjust**, **Clear** | приоритет Face > Feature > Body > Part > Material |
 | Parameters (fx) | **Parameters** | изрази с единици |
 | iPart / iAssembly | **конфигурации** (таблица на вариантите) | |
 | Model States | **конфигурации** | общ механизъм с iPart |

@@ -90,3 +90,41 @@ fn fs_flat(i: VsOut) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(to_gamma(i.color), 1.0);
 }
+
+// See-through faces (appearance opacity < 1): colour with alpha, lit like
+// the shaded faces from either side, blended over the opaque scene.
+struct AlphaIn {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+};
+
+struct AlphaOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+};
+
+@vertex
+fn vs_alpha(v: AlphaIn) -> AlphaOut {
+    var o: AlphaOut;
+    o.clip = u.view_proj * vec4<f32>(v.position, 1.0);
+    o.world = v.position;
+    o.normal = v.normal;
+    o.color = v.color;
+    return o;
+}
+
+@fragment
+fn fs_alpha(i: AlphaOut) -> @location(0) vec4<f32> {
+    if (sliced(i.world)) {
+        discard;
+    }
+    let n = normalize(i.normal);
+    let v = normalize(u.eye.xyz - i.world);
+    let ndv = abs(dot(n, v));
+    let diffuse = 0.25 + 0.75 * ndv;
+    let spec = 0.15 * pow(ndv, 48.0);
+    return vec4<f32>(to_gamma(i.color.rgb * diffuse + vec3<f32>(spec)), i.color.a);
+}

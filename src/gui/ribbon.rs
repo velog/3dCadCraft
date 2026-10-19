@@ -15,6 +15,7 @@ use eframe::egui::{self, RichText, Sense, Vec2};
 
 use super::demos::Demo;
 use super::icons::{self, Icon, Palette};
+use super::material::MatCmd;
 use super::sketch_tools::{ConstraintTool, Tool};
 use super::viewcube::StandardView;
 use crate::sketch::Style;
@@ -77,6 +78,8 @@ pub enum Action {
     RebuildAll,
     /// View projection (Orthographic / Perspective / … with Ortho Faces).
     Projection(super::camera::Projection),
+    /// Materials, appearances, styles, Physical Properties.
+    Material(super::material::MatCmd),
 }
 
 /// What the ribbon needs to know to enable commands.
@@ -106,14 +109,23 @@ pub enum Tab {
     Sketch,
     /// Measuring and analysis.
     Inspect,
-    /// Options, parameters.
+    /// Options, parameters, materials and appearances.
     Tools,
+    /// Styles and standards.
+    Manage,
     /// Visibility and navigation.
     View,
 }
 
 impl Tab {
-    const ALL: [Tab; 5] = [Tab::Model, Tab::Sketch, Tab::Inspect, Tab::Tools, Tab::View];
+    const ALL: [Tab; 6] = [
+        Tab::Model,
+        Tab::Sketch,
+        Tab::Inspect,
+        Tab::Tools,
+        Tab::Manage,
+        Tab::View,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -121,6 +133,7 @@ impl Tab {
             Tab::Sketch => "Sketch",
             Tab::Inspect => "Inspect",
             Tab::Tools => "Tools",
+            Tab::Manage => "Manage",
             Tab::View => "View",
         }
     }
@@ -718,7 +731,13 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 "Measure",
                 vec![
                     todo(Icon::Measure, "Measure", None, "0.10").large(),
-                    todo(Icon::Mass, "Physical Properties", None, "0.10"),
+                    ready(
+                        Icon::Mass,
+                        "Physical Properties",
+                        None,
+                        Action::Material(MatCmd::Physical),
+                        "Mass, area, volume, centre of gravity and inertia (iProperties: Physical)",
+                    ),
                 ],
             ),
             panel(
@@ -750,6 +769,39 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     )
                     .large(),
                     todo(Icon::Settings, "Document Settings", None, "0.11"),
+                ],
+            ),
+            panel(
+                "Material and Appearance",
+                vec![
+                    ready(
+                        Icon::Material,
+                        "Material",
+                        None,
+                        Action::Material(MatCmd::MaterialBrowser),
+                        "Material Browser: document and library materials",
+                    ),
+                    ready(
+                        Icon::Appearance,
+                        "Appearance",
+                        None,
+                        Action::Material(MatCmd::AppearanceBrowser),
+                        "Appearance Browser: document and library appearances",
+                    ),
+                    ready(
+                        Icon::AdjustLook,
+                        "Adjust",
+                        None,
+                        Action::Material(MatCmd::Adjust),
+                        "Give the selected faces, features or bodies an appearance or a colour",
+                    ),
+                    ready(
+                        Icon::ClearLook,
+                        "Clear",
+                        None,
+                        Action::Material(MatCmd::Clear),
+                        "Remove appearance overrides from faces, features, bodies",
+                    ),
                 ],
             ),
             panel(
@@ -805,6 +857,34 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 ],
             ),
         ],
+        Tab::Manage => vec![panel(
+            "Styles and Standards",
+            vec![
+                ready(
+                    Icon::Styles,
+                    "Styles Editor",
+                    None,
+                    Action::Material(MatCmd::StylesEditor),
+                    "Style and Standard Editor: the document's materials and appearances",
+                )
+                .large(),
+                ready(
+                    Icon::Rebuild,
+                    "Update",
+                    None,
+                    Action::Material(MatCmd::UpdateStyles),
+                    "Update the document's styles from the library",
+                ),
+                ready(
+                    Icon::Purge,
+                    "Purge",
+                    None,
+                    Action::Material(MatCmd::Purge),
+                    "Remove document styles nothing uses",
+                ),
+                todo(Icon::Styles, "Save", None, "2.15"),
+            ],
+        )],
         Tab::View => vec![
             panel(
                 "Visibility",
