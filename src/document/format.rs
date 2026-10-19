@@ -86,7 +86,11 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   centres concentric to a cylindrical face (`HoleCenter::Axis`); sketch
 ///   Center Points (`PointStyle`, an old build reads them as plain points)
 ///   (2026-10-19).
-pub const FORMAT_REVISION: u32 = 10;
+/// - 11: Extrude / Revolve terminations at work / origin planes and points
+///   (`TargetRef::Plane`, `TargetRef::Point`), Revolve To
+///   (`RevolveExtent::To`); additive fields `alternate`, `extend_face`,
+///   `terminator`, `open` (Match Shape), `minimum` (2026-10-19).
+pub const FORMAT_REVISION: u32 = 11;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

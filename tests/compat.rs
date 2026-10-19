@@ -534,6 +534,91 @@ fn draft_r9() -> PartDocument {
     part
 }
 
+/// Revision 11: Extrude / Revolve options from Inventor 2027 — primitives,
+/// To an inclined work plane, an open profile (Match Shape), Revolve To a
+/// plane through the axis with Minimum Solution.
+fn extrude_options_r11() -> PartDocument {
+    use cadcraft3d::part::primitive::add_primitive;
+    use cadcraft3d::part::{
+        AxisRef, Extent, LineRef, OpenProfile, Operation, PlaneRef, PrimitiveFeature,
+        PrimitiveKind, RevolveExtent, RevolveFeature, TargetRef, WorkDef, WorkFeature,
+        WorkPlaneDef,
+    };
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let xy = || SketchPlacement::on_origin_plane(OriginPlane::XY);
+    let mut part = PartDocument::default();
+    let f = PrimitiveFeature::extrude(&part, 40.0);
+    add_primitive(
+        &mut part,
+        PrimitiveKind::Box,
+        xy(),
+        &[Point2::new(40.0, 30.0), Point2::new(80.0, 60.0)],
+        f,
+    )
+    .unwrap();
+    let tilted = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Angle {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            axis: LineRef::Origin(1),
+            angle: 0.3,
+        })))
+        .unwrap();
+    let top = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 40.0,
+        })))
+        .unwrap();
+    let mut e = ExtrudeFeature::new(Vec::new(), 1.0);
+    e.extent = Extent::To(TargetRef::Plane(PlaneRef::Work(tilted)));
+    e.operation = Operation::Cut;
+    add_primitive(
+        &mut part,
+        PrimitiveKind::Cylinder,
+        SketchPlacement {
+            plane: PlaneRef::Work(top),
+            ..Default::default()
+        },
+        &[Point2::new(40.0, 30.0), Point2::new(48.0, 30.0)],
+        PrimitiveFeature::Extrude(e),
+    )
+    .unwrap();
+    // An open line across the block: cut one side off, through all.
+    let i = part.create_sketch(xy(), &opts).unwrap();
+    let l = part.sketches[i]
+        .sketch
+        .add_line(Point2::new(70.0, -5.0), Point2::new(70.0, 65.0));
+    let mut cut = ExtrudeFeature::new(Vec::new(), 1.0);
+    cut.open = Some(OpenProfile {
+        curves: vec![l],
+        flip: true,
+        match_shape: true,
+    });
+    cut.extent = Extent::ThroughAll;
+    cut.operation = Operation::Cut;
+    part.add_extrude(i, cut).unwrap();
+    // A ring beside it, revolved To the YZ plane (the nearer half).
+    let j = part.create_sketch(xy(), &opts).unwrap();
+    let sk = &mut part.sketches[j].sketch;
+    sk.add_rectangle_two_point(Point2::new(100.0, 0.0), Point2::new(110.0, 10.0))
+        .unwrap();
+    let rg = sk.regions();
+    let mut r = RevolveFeature::new(
+        vec![ProfileRef::of(&rg[0], rg[0].interior_point())],
+        AxisRef::Origin(1),
+    );
+    r.extent = RevolveExtent::To;
+    r.to = Some(TargetRef::Plane(PlaneRef::Origin(OriginPlane::YZ)));
+    r.minimum = true;
+    r.operation = Operation::NewSolid;
+    part.add_revolve(j, r).unwrap();
+    part
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -568,6 +653,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("PatternR5");
             project.add_document("Part1", DocumentData::Part(pattern_r5()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r11/extrude_options_r11.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ExtrudeOptionsR11");
+            project.add_document("Part1", DocumentData::Part(extrude_options_r11()));
             project.save(&f).unwrap();
         }
         let f = root().join("r10/hole_r10.3dcadcraft");

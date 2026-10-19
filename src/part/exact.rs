@@ -6,7 +6,7 @@
 //! yet; regeneration then goes on with the faceted kernel from that feature.
 
 use crate::kernel::exact::{self, ChamferSecond, ExactOp, ExactSolid};
-use crate::kernel::{BRep, Curve, Point3, Real, TessellationOptions};
+use crate::kernel::{BRep, Curve, Plane, Point3, Real, TessellationOptions};
 use crate::sketch::Sketch;
 
 use super::blend::{BlendFeature, BlendKind, ChamferMethod, EdgeRef, FilletType};
@@ -46,21 +46,17 @@ fn prefix(id: &str, n: usize) -> String {
 pub(super) fn extrude(
     e: &ExtrudeFeature,
     body: &BRep,
+    works: &super::placement::WorkGeom,
     sketch: &Sketch,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
     if e.output == Output::Surface {
         return Ok(None);
     }
-    let regions = sketch.regions();
     let plane = &sketch.plane;
     let mut out = Vec::new();
-    for (n, pr) in e.profiles.iter().enumerate() {
-        let region = pr
-            .resolve(&regions)
-            .ok_or_else(|| User(format!("profile #{} no longer exists in the sketch", n + 1)))?;
-        let levels = e.levels(body, plane, region).map_err(User)?;
-        let (outer, holes) = kernel_profile(region);
-        let prof = exact::profile(&outer, &holes).map_err(Kernel)?;
+    for piece in e.pieces(body, works, sketch).map_err(User)? {
+        let levels = &piece.span.levels;
+        let prof = exact::profile(&piece.outer, &piece.holes).map_err(Kernel)?;
         let (first, last) = match (levels.first(), levels.last()) {
             (Some(a), Some(b)) => (a, b),
             _ => return Err(User("the extrusion has no depth".into())),
@@ -74,31 +70,197 @@ pub(super) fn extrude(
             // A two-sided taper (kinked at the sketch plane): not yet.
             return Ok(None);
         };
-        out.push(
-            exact::extrude(
-                plane,
-                &prof,
-                first.offset,
-                last.offset,
-                taper,
-                &prefix(&e.id, n),
-            )
-            .map_err(Kernel)?,
-        );
+        let mut tool = exact::extrude(
+            plane,
+            &prof,
+            first.offset,
+            last.offset,
+            taper,
+            &piece.prefix,
+        )
+        .map_err(Kernel)?;
+        // A size beyond everything involved (for the clipping solids).
+        let reach = {
+            let (lo, hi) = body.bounding_box().unwrap_or((plane.origin, plane.origin));
+            let far = lo.coords.amax().max(hi.coords.amax()) + plane.origin.coords.norm();
+            2.0 * (far
+                + piece.extent()
+                + levels.iter().map(|l| l.offset.abs()).fold(0.0, Real::max))
+                + 100.0
+        };
+        if let Some(clip) = &piece.span.clip {
+            tool = clip_tool(&tool, clip, &piece.prefix, reach)?;
+        }
+        if let Some((lo, hi)) = piece.bounds {
+            let b =
+                exact::box_named(lo, hi, &format!("{}:Bounds", piece.prefix)).map_err(Kernel)?;
+            tool = exact::boolean(&tool, &b, ExactOp::Intersect)
+                .map_err(Kernel)?
+                .ok_or_else(|| {
+                    User("Match Shape: the open profile does not meet the body".into())
+                })?;
+        }
+        out.push(tool);
     }
     Ok(Some(out))
+}
+
+/// A square slab of half size `half` on `plane` (normal = its normal),
+/// between offsets `from` and `to`; every face is named `name`.
+fn slab(plane: &Plane, half: Real, from: Real, to: Real, name: &str) -> Result<ExactSolid, Fail> {
+    use crate::kernel::{ProfileSegment, Segment2};
+    let c = [
+        nalgebra::Point2::new(-half, -half),
+        nalgebra::Point2::new(half, -half),
+        nalgebra::Point2::new(half, half),
+        nalgebra::Point2::new(-half, half),
+    ];
+    let outer: Vec<ProfileSegment> = (0..4)
+        .map(|k| ProfileSegment {
+            geometry: Segment2::Line {
+                a: c[k],
+                b: c[(k + 1) % 4],
+            },
+            name: format!("S{k}"),
+        })
+        .collect();
+    let prof = exact::profile(&outer, &[]).map_err(Kernel)?;
+    let mut s = exact::extrude(plane, &prof, from, to, 0.0, name).map_err(Kernel)?;
+    for n in &mut s.face_names {
+        *n = Some(name.to_owned());
+    }
+    Ok(s)
+}
+
+/// A solid cylinder around `cyl`'s axis, `2·len` long, its round face
+/// named `name`.
+fn cylinder_solid(
+    cyl: &crate::kernel::Cylinder,
+    len: Real,
+    name: &str,
+) -> Result<ExactSolid, Fail> {
+    use crate::kernel::{ProfileSegment, Segment2};
+    let plane = Plane::new(cyl.origin, cyl.axis.into_inner(), cyl.x_axis.into_inner())
+        .map_err(|e| Kernel(e.to_string()))?;
+    let outer = vec![ProfileSegment {
+        geometry: Segment2::Arc {
+            c: nalgebra::Point2::origin(),
+            r: cyl.radius,
+            a0: 0.0,
+            sweep: std::f64::consts::TAU,
+        },
+        name: "C".into(),
+    }];
+    let prof = exact::profile(&outer, &[]).map_err(Kernel)?;
+    let mut s = exact::extrude(&plane, &prof, -len, len, 0.0, name).map_err(Kernel)?;
+    for n in &mut s.face_names {
+        *n = Some(name.to_owned());
+    }
+    Ok(s)
+}
+
+/// Ends an extrusion made past its termination (`docs/spec/2.1-extrude.md`
+/// §3.3 To): cut by an inclined plane, or stopped at a cylinder's near or
+/// far side. The termination face is named `<prefix>:End`.
+fn clip_tool(
+    tool: &ExactSolid,
+    clip: &super::extrude::Clip,
+    prefix: &str,
+    reach: Real,
+) -> Result<ExactSolid, Fail> {
+    use super::extrude::Clip;
+    let end = format!("{prefix}:End");
+    let gone = || User("To: nothing of the extrusion is left before the termination".into());
+    match clip {
+        Clip::Plane { plane, keep } => {
+            // The kept side at negative offsets of the slab's plane.
+            let m = plane.normal.into_inner();
+            let m = if (keep - plane.origin).dot(&m) > 0.0 {
+                -m
+            } else {
+                m
+            };
+            let x = if m.x.abs() < 0.9 {
+                crate::kernel::Vector3::x()
+            } else {
+                crate::kernel::Vector3::y()
+            };
+            let pl = Plane::new(plane.origin, m, x).map_err(|e| Kernel(e.to_string()))?;
+            let s = slab(&pl, reach, -reach, 0.0, &end)?;
+            exact::boolean(tool, &s, ExactOp::Intersect)
+                .map_err(Kernel)?
+                .ok_or_else(gone)
+        }
+        Clip::Cylinder { cyl, dir, near } => {
+            let a = cyl.axis.into_inner();
+            let dp = (dir - a * dir.dot(&a))
+                .try_normalize(1e-12)
+                .ok_or_else(|| User("To: the extrusion runs along the cylinder's axis".into()))?;
+            let c = cylinder_solid(cyl, reach, &end)?;
+            // The half strip from the axis plane on along the travel
+            // direction, wider than the cylinder (never tangent to it).
+            let w = a.cross(&dp);
+            let pl = Plane::new(cyl.origin, a, w).map_err(|e| Kernel(e.to_string()))?;
+            // In `pl`, x = w and y = a × w = −dp·…: find dp's sign in y.
+            let y = pl.y_axis().into_inner();
+            let (v0, v1) = if y.dot(&dp) > 0.0 {
+                (0.0, reach)
+            } else {
+                (-reach, 0.0)
+            };
+            let r = cyl.radius * 1.5;
+            let strip = {
+                use crate::kernel::{ProfileSegment, Segment2};
+                let c4 = [
+                    nalgebra::Point2::new(-r, v0),
+                    nalgebra::Point2::new(r, v0),
+                    nalgebra::Point2::new(r, v1),
+                    nalgebra::Point2::new(-r, v1),
+                ];
+                let outer: Vec<ProfileSegment> = (0..4)
+                    .map(|k| ProfileSegment {
+                        geometry: Segment2::Line {
+                            a: c4[k],
+                            b: c4[(k + 1) % 4],
+                        },
+                        name: format!("S{k}"),
+                    })
+                    .collect();
+                let prof = exact::profile(&outer, &[]).map_err(Kernel)?;
+                exact::extrude(&pl, &prof, -reach, reach, 0.0, &format!("{prefix}:Strip"))
+                    .map_err(Kernel)?
+            };
+            if *near {
+                let t = exact::boolean(tool, &c, ExactOp::Cut)
+                    .map_err(Kernel)?
+                    .ok_or_else(gone)?;
+                exact::boolean(&t, &strip, ExactOp::Cut)
+                    .map_err(Kernel)?
+                    .ok_or_else(gone)
+            } else {
+                let beyond = exact::boolean(&strip, &c, ExactOp::Cut)
+                    .map_err(Kernel)?
+                    .ok_or_else(gone)?;
+                exact::boolean(tool, &beyond, ExactOp::Cut)
+                    .map_err(Kernel)?
+                    .ok_or_else(gone)
+            }
+        }
+    }
 }
 
 /// The solids of a Revolve (one per region), before its operation.
 pub(super) fn revolve(
     r: &RevolveFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
     sketch: &Sketch,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
     if r.output == Output::Surface {
         return Ok(None);
     }
     let axis = resolve_axis(&r.axis, sketch).map_err(User)?;
-    let (start, sweep) = r.sweep().map_err(User)?;
+    let (start, sweep) = r.sweep_in(body, works, sketch).map_err(User)?;
     let regions = sketch.regions();
     let mut out = Vec::new();
     for (n, pr) in r.profiles.iter().enumerate() {

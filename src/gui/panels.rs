@@ -1071,12 +1071,39 @@ impl CadCraftApp {
             super::DraftDef::Extrude(_) => Icon::Extrude,
             super::DraftDef::Revolve(_) => Icon::Revolve,
         };
-        let title = d.def.command();
+        let title = d.primitive.map_or(d.def.command(), |k| k.label());
         self.panel_header(ui, icon, title);
+        // Breadcrumb (Sketch1 > Extrusion1) and the Advanced Settings menu.
+        ui.horizontal(|ui| {
+            self.feature_breadcrumb(ui);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.feature_advanced_menu(ui);
+            });
+        });
+        if self.extrude.is_none() {
+            return; // the breadcrumb opened the sketch
+        }
+        self.predict_draft_operation();
         self.extrude_preset_row(ui);
         let Some(d) = self.extrude.as_ref() else {
             return;
         };
+        let primitive = d.primitive.is_some();
+        let op_before = match &d.def {
+            super::DraftDef::Extrude(e) => e.operation,
+            super::DraftDef::Revolve(r) => r.operation,
+        };
+        let curved_to = match &d.def {
+            super::DraftDef::Extrude(e) => match &e.extent {
+                crate::part::Extent::To(t) => t.is_curved_face(&self.part().body),
+                _ => false,
+            },
+            super::DraftDef::Revolve(_) => false,
+        };
+        let base = self
+            .part()
+            .bodies_before(d.edit.unwrap_or(usize::MAX))
+            .is_empty();
         let ps = self.part().sketches.get(d.sketch);
         let sketch = ps.map_or_else(String::new, |s| s.name.clone());
         let axis_text = match &d.def {
@@ -1139,13 +1166,26 @@ impl CadCraftApp {
                         }
                     }
                 });
+                let ctx = DraftCtx {
+                    base,
+                    curved_to,
+                    primitive,
+                };
                 match &mut d.def {
                     super::DraftDef::Extrude(e) => {
-                        extrude_options(ui, e, picking, &mut pick, &mut fx);
+                        extrude_options(ui, e, picking, &mut pick, &mut fx, ctx);
                     }
                     super::DraftDef::Revolve(r) => {
-                        revolve_options(ui, r, &mut fx);
+                        revolve_options(ui, r, &mut fx, picking, &mut pick, ctx);
                     }
+                }
+                // The user chose an operation: no more prediction.
+                let op = match &d.def {
+                    super::DraftDef::Extrude(e) => e.operation,
+                    super::DraftDef::Revolve(r) => r.operation,
+                };
+                if op != op_before {
+                    d.op_auto = false;
                 }
             });
         if let Some(slot) = pick {
@@ -1169,13 +1209,16 @@ impl CadCraftApp {
         // OK while the preview is computed: OK builds the feature itself.
         let ready = preview.is_ok() || pending;
         ui.add_space(4.0);
+        let ctrl_enter = self.ctrl_enter(ui);
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
                     ready,
                     egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)),
                 )
+                .on_hover_text("Create the feature (Ctrl+Enter)")
                 .clicked()
+                || (ready && ctrl_enter)
             {
                 self.commit_extrude();
             }
@@ -1184,6 +1227,18 @@ impl CadCraftApp {
                 .clicked()
             {
                 self.cancel_extrude();
+            }
+            let editing = self.extrude.as_ref().is_some_and(|d| d.edit.is_some());
+            if !editing
+                && ui
+                    .add_enabled(
+                        ready,
+                        egui::Button::new("+").min_size(egui::vec2(26.0, 22.0)),
+                    )
+                    .on_hover_text("Apply (+): create the feature and start the command again")
+                    .clicked()
+            {
+                self.apply_and_continue();
             }
         });
     }
@@ -1924,7 +1979,12 @@ impl CadCraftApp {
                     .map(|(_, s)| s);
                 let mut def = e.clone();
                 let mut pick = None;
-                if extrude_options(ui, &mut def, picking, &mut pick, &mut fx) {
+                let ctx = DraftCtx {
+                    base: fx.bodies.is_empty(),
+                    curved_to: matches!(&e.extent, crate::part::Extent::To(t) if t.is_curved_face(&self.part().body)),
+                    primitive: false,
+                };
+                if extrude_options(ui, &mut def, picking, &mut pick, &mut fx, ctx) {
                     self.edit_extrude(k, def);
                 }
                 if let Some(slot) = pick {
@@ -1938,9 +1998,22 @@ impl CadCraftApp {
                     def.axis = axis;
                     changed = true;
                 }
-                changed |= revolve_options(ui, &mut def, &mut fx);
+                let picking = self
+                    .target_pick
+                    .filter(|(o, _)| *o == super::TargetOwner::Feature(k))
+                    .map(|(_, s)| s);
+                let mut pick = None;
+                let ctx = DraftCtx {
+                    base: fx.bodies.is_empty(),
+                    curved_to: false,
+                    primitive: false,
+                };
+                changed |= revolve_options(ui, &mut def, &mut fx, picking, &mut pick, ctx);
                 if changed {
                     self.edit_feature(k, Feature::Revolve(def));
+                }
+                if let Some(slot) = pick {
+                    self.target_pick = Some((super::TargetOwner::Feature(k), slot));
                 }
             }
             Feature::Box(_)
@@ -4121,6 +4194,15 @@ impl CadCraftApp {
                                 ),
                             );
                         }
+                        (Mode::PickPlane(PickPurpose::Primitive(k)), _) => {
+                            ui.colored_label(
+                                WARNING,
+                                format!(
+                                    "{}: select a planar face or an origin plane for its sketch (Esc cancels)",
+                                    k.label()
+                                ),
+                            );
+                        }
                         (Mode::PickPlane(PickPurpose::Redefine(i)), _) => {
                             let name = self.part().sketches.get(i).map_or("", |s| s.name.as_str());
                             ui.colored_label(
@@ -4175,6 +4257,10 @@ impl CadCraftApp {
                             }
                         })
                         .unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.feature_prompt().is_some() => {
+                    let text = self.feature_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.mat.adjusting() => {
@@ -4491,6 +4577,17 @@ fn origin_axis_buttons(ui: &mut egui::Ui) -> Option<crate::part::AxisRef> {
     out
 }
 
+/// What the Extrude / Revolve panels need to know about the command.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct DraftCtx {
+    /// The part has no solid yet (Inventor: no Output operation).
+    pub base: bool,
+    /// The To target is a curved face (Alternate Solution applies).
+    pub curved_to: bool,
+    /// A primitive's feature (solid only; Sphere / Torus: Full only).
+    pub primitive: bool,
+}
+
 /// Inventor's Output section: Solid / Surface and the Boolean operation.
 fn output_options(
     ui: &mut egui::Ui,
@@ -4499,23 +4596,40 @@ fn output_options(
     output: &mut crate::part::Output,
     solids: &mut Vec<String>,
     bodies: &[(String, String)],
+    ctx: DraftCtx,
 ) {
     use crate::part::{Operation, Output};
     psection(ui, &format!("{id}_output"), "Output", |ui| {
-        plabel(ui, "Output");
-        icon_choice(
-            ui,
-            output,
-            &[
-                (Output::Solid, Icon::OutSolid, "Solid"),
-                (
-                    Output::Surface,
-                    Icon::OutSurface,
-                    "Surface: an open body, no caps",
-                ),
-            ],
-        );
-        ui.end_row();
+        if ctx.primitive {
+            // Inventor: primitives make solids only.
+            *output = Output::Solid;
+        } else {
+            plabel(ui, "Output");
+            icon_choice(
+                ui,
+                output,
+                &[
+                    (Output::Solid, Icon::OutSolid, "Solid"),
+                    (
+                        Output::Surface,
+                        Icon::OutSurface,
+                        "Surface: an open body, no caps",
+                    ),
+                ],
+            );
+            ui.end_row();
+        }
+        // Inventor: the base feature (the first solid) has no operation.
+        if ctx.base {
+            plabel(ui, "");
+            ui.label(
+                RichText::new("The first solid of the part (no operation)")
+                    .small()
+                    .weak(),
+            );
+            ui.end_row();
+            return;
+        }
         plabel(ui, "Operation");
         ui.add_enabled_ui(*output == Output::Solid, |ui| {
             icon_choice(
@@ -4676,17 +4790,69 @@ fn revolve_options(
     ui: &mut egui::Ui,
     def: &mut crate::part::RevolveFeature,
     fx: &mut Fields,
+    picking: Option<super::TargetSlot>,
+    pick: &mut Option<super::TargetSlot>,
+    ctx: DraftCtx,
 ) -> bool {
     use crate::part::{ExtentDirection, RevolveExtent};
     let before = def.clone();
     psection(ui, "revolve_behavior", "Behavior", |ui| {
         plabel(ui, "Extents");
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut def.extent, RevolveExtent::Full, "Full")
-                .on_hover_text("360 deg");
-            ui.selectable_value(&mut def.extent, RevolveExtent::Angle, "Angle");
-        });
+        if ctx.primitive {
+            // Inventor: Sphere and Torus are full revolutions only.
+            def.extent = RevolveExtent::Full;
+            ui.label("Full");
+        } else {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut def.extent, RevolveExtent::Full, "Full")
+                    .on_hover_text("360 deg");
+                ui.selectable_value(&mut def.extent, RevolveExtent::Angle, "Angle");
+                if ui
+                    .selectable_label(def.extent == RevolveExtent::To, "To")
+                    .on_hover_text(
+                        "Up to a planar face or a plane through the axis, or a point (its half-plane)",
+                    )
+                    .clicked()
+                {
+                    def.extent = RevolveExtent::To;
+                    if def.to.is_none() {
+                        *pick = Some(super::TargetSlot::To);
+                    }
+                }
+            });
+        }
         ui.end_row();
+        if def.extent == RevolveExtent::To {
+            plabel(ui, "To");
+            ui.horizontal(|ui| {
+                let active = picking == Some(super::TargetSlot::To);
+                let text = match &def.to {
+                    _ if active => "Picking...".to_owned(),
+                    Some(t) => t.name(),
+                    None => "(none)".to_owned(),
+                };
+                if ui
+                    .selectable_label(active, text)
+                    .on_hover_text(
+                        "Click, then pick a face, a plane or a point in the graphics window",
+                    )
+                    .clicked()
+                {
+                    *pick = Some(super::TargetSlot::To);
+                }
+            });
+            ui.end_row();
+            plabel(ui, "Direction");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut def.direction, ExtentDirection::Default, "Default");
+                ui.selectable_value(&mut def.direction, ExtentDirection::Flipped, "Flipped");
+            });
+            ui.end_row();
+            plabel(ui, "");
+            ui.checkbox(&mut def.minimum, "Minimum Solution")
+                .on_hover_text("A plane through the axis has two halves: stop at the nearer one (off: the farther one)");
+            ui.end_row();
+        }
         if def.extent == RevolveExtent::Angle {
             direction_choice(ui, &mut def.direction);
             let f = Feature::Revolve(def.clone());
@@ -4703,6 +4869,7 @@ fn revolve_options(
         &mut def.output,
         &mut def.solids,
         &fx.bodies,
+        ctx,
     );
     *def != before
 }
@@ -4716,6 +4883,7 @@ fn extrude_options(
     picking: Option<super::TargetSlot>,
     pick: &mut Option<super::TargetSlot>,
     fx: &mut Fields,
+    ctx: DraftCtx,
 ) -> bool {
     use super::TargetSlot;
     use crate::part::{Extent, ExtentDirection};
@@ -4810,12 +4978,26 @@ fn extrude_options(
                 }
             }
             Extent::ToNext => {
-                plabel(ui, "");
-                ui.label(
-                    RichText::new("Next face covering the profile")
-                        .small()
-                        .weak(),
-                );
+                // Inventor's Terminator: the body whose next face ends it.
+                plabel(ui, "Terminator");
+                let current = def
+                    .terminator
+                    .as_ref()
+                    .and_then(|n| fx.bodies.iter().find(|(b, _)| b == n))
+                    .map_or("Any body".to_owned(), |(_, l)| l.clone());
+                egui::ComboBox::from_id_salt(("extrude_terminator", fx.key.as_str()))
+                    .width(110.0)
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut def.terminator, None, "Any body");
+                        for (name, label) in &fx.bodies {
+                            ui.selectable_value(&mut def.terminator, Some(name.clone()), label);
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "The next face (covering the profile) of this body ends the extrusion",
+                    );
                 ui.end_row();
             }
             Extent::ThroughAll => {
@@ -4833,6 +5015,7 @@ fn extrude_options(
         &mut def.output,
         &mut def.solids,
         &fx.bodies,
+        ctx,
     );
 
     psection(ui, "extrude_advanced", "Advanced Properties", |ui| {
@@ -4841,9 +5024,40 @@ fn extrude_options(
         if def.direction == ExtentDirection::Asymmetric {
             field_row(ui, fx, "Taper B", &f, "taper_b");
         }
+        if def.from.is_some() || matches!(def.extent, Extent::To(_)) {
+            plabel(ui, "");
+            ui.checkbox(&mut def.extend_face, "Extend face to end feature")
+                .on_hover_text("A From / To face that does not cover the profile is extended (turns on by itself when needed)");
+            ui.end_row();
+        }
+        if ctx.curved_to {
+            plabel(ui, "");
+            ui.checkbox(&mut def.alternate, "Alternate Solution")
+                .on_hover_text("Stop at the near side of the curved To face (off: the far side)");
+            ui.end_row();
+        }
+        let n_open = def.open.as_ref().map_or(0, |o| o.curves.len());
         plabel(ui, "");
-        ui.add_enabled(false, egui::Checkbox::new(&mut false, "Match Shape"))
-            .on_disabled_hover_text("Open profiles (FEATURES 2.1)");
+        match def.open.as_mut() {
+            Some(op) => {
+                ui.vertical(|ui| {
+                    ui.checkbox(&mut op.match_shape, "Match Shape")
+                        .on_hover_text("On: the fill stops at the body's walls; off: the closed side goes the full extent");
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("Open profile: {n_open} curve(s)")).small());
+                        if ui.small_button("Flip side").on_hover_text("Keep the other side of the open curves").clicked() {
+                            op.flip = !op.flip;
+                        }
+                    });
+                });
+            }
+            None => {
+                ui.add_enabled(false, egui::Checkbox::new(&mut false, "Match Shape"))
+                    .on_disabled_hover_text(
+                        "Click open curves of the sketch (not for the first feature)",
+                    );
+            }
+        }
         ui.end_row();
         plabel(ui, "");
         ui.add_enabled(false, egui::Checkbox::new(&mut false, "Infer iMates"))

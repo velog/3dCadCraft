@@ -32,10 +32,13 @@ pub mod expr;
 pub mod extrude;
 pub mod history;
 pub mod hole;
+#[cfg(test)]
+mod option_tests;
 pub mod params;
 pub mod pattern;
 pub mod physical;
 pub mod placement;
+pub mod primitive;
 pub mod revolve;
 pub mod select;
 pub mod shell;
@@ -53,13 +56,14 @@ pub use blend::{
 };
 pub use boolean::{Operation, Output};
 pub use draft::{DraftExtent, DraftFeature, DraftType, PartingSide, PartingTool, PullRef};
-pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, TargetRef};
+pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, OpenProfile, ProfileRef, TargetRef};
 pub use hole::{
     ClearanceSpec, CosmeticThread, DrillPoint, FastenerFit, HoleCenter, HoleFeature, HoleGroup,
     HoleInstance, HoleSpec, HoleType, SeatType, Termination, ThreadFeature, ThreadSpec,
 };
 pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
+pub use primitive::{PrimitiveFeature, PrimitiveKind};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
 pub use shell::{FaceRef, ShellCorners, ShellDirection, ShellFeature};
 pub use work::{
@@ -908,8 +912,8 @@ impl PartDocument {
                         None => Err(exact::Fail::User(format!("sketch {sketch_id} is missing"))),
                         Some(ps) if use_exact => {
                             let built = match sweep {
-                                Sweep::Extrude(e) => exact::extrude(e, &body, &ps.sketch),
-                                Sweep::Revolve(r) => exact::revolve(r, &ps.sketch),
+                                Sweep::Extrude(e) => exact::extrude(e, &body, &works, &ps.sketch),
+                                Sweep::Revolve(r) => exact::revolve(r, &body, &works, &ps.sketch),
                             };
                             match built {
                                 Ok(Some(added)) => {
@@ -932,8 +936,8 @@ impl PartDocument {
                             let before: std::collections::HashSet<_> =
                                 trial.solids().map(|(id, _)| id).collect();
                             let built = match sweep {
-                                Sweep::Extrude(e) => e.build(&mut trial, &ps.sketch),
-                                Sweep::Revolve(r) => r.build(&mut trial, &ps.sketch),
+                                Sweep::Extrude(e) => e.build_in(&mut trial, &works, &ps.sketch),
+                                Sweep::Revolve(r) => r.build_in(&mut trial, &works, &ps.sketch),
                             };
                             // New bodies are named after this feature.
                             let added: Vec<_> = trial
@@ -1161,11 +1165,17 @@ impl PartDocument {
             .ok_or(PartError::NoSketch(index))?
             .id
             .clone();
-        if def.profiles.is_empty() {
+        if def.profiles.is_empty() && def.open.is_none() {
             return Err(PartError::Feature("select at least one profile".into()));
         }
         let id = self.next_feature_id("Extrusion");
-        (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id.clone());
+        // A name given in the command (breadcrumb rename) is kept.
+        let name = if def.name.is_empty() {
+            id.clone()
+        } else {
+            def.name.clone()
+        };
+        (def.id, def.name, def.sketch) = (id.clone(), name, sketch_id.clone());
         let reused = !self.consumers(&sketch_id).is_empty();
         self.insert_feature_checked(Feature::Extrude(def))?;
         let ps = &mut self.sketches[index];
@@ -1196,7 +1206,12 @@ impl PartDocument {
             return Err(PartError::Feature("select at least one profile".into()));
         }
         let id = self.next_feature_id("Revolution");
-        (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id.clone());
+        let name = if def.name.is_empty() {
+            id.clone()
+        } else {
+            def.name.clone()
+        };
+        (def.id, def.name, def.sketch) = (id.clone(), name, sketch_id.clone());
         let reused = !self.consumers(&sketch_id).is_empty();
         self.insert_feature_checked(Feature::Revolve(def))?;
         let ps = &mut self.sketches[index];
@@ -1220,11 +1235,18 @@ impl PartDocument {
             .ok_or_else(|| PartError::Feature("the feature no longer exists".into()))?;
         let id = old.id().to_owned();
         match (&old, &mut def) {
+            // Extrude / Revolve keep a new name (breadcrumb rename).
             (Feature::Extrude(o), Feature::Extrude(n)) => {
-                (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
+                if n.name.is_empty() {
+                    n.name = o.name.clone();
+                }
+                (n.id, n.sketch) = (o.id.clone(), o.sketch.clone());
             }
             (Feature::Revolve(o), Feature::Revolve(n)) => {
-                (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
+                if n.name.is_empty() {
+                    n.name = o.name.clone();
+                }
+                (n.id, n.sketch) = (o.id.clone(), o.sketch.clone());
             }
             (Feature::Blend(o), Feature::Blend(n)) => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
