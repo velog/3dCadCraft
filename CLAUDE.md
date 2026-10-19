@@ -479,7 +479,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   size·1e-3). Inside uses `sk::shell`; Outside/Both/closed use `offset_faces` minus a cavity
   whose faces are pre-named `Shell1:Inner[..]`. The rim keeps the removed face's name.
   After an Inside shell the outer straight edges are split at the floor level — select
-  every piece (blends join them).
+  every piece (blends join them). Rounds ≥ the wall at an open face: the kernel refuses the
+  rim; `shell_with_openings` = closed cavity + a prism of the face outline grown by
+  0.001·t (a prism side along the round's tangent edge only *touches* it and the cut fails).
 - **Face Draft** (`part/draft.rs`, `kernel::exact::draft`): Fixed Edge = a neutral plane square
   to the pull through the picked face's nearest edge square to it; faces with different
   neutral planes are drafted group by group, re-found by name on each result (names are

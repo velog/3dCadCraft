@@ -900,6 +900,45 @@ fn c_draft_bad_angle() -> Result<PartDocument, String> {
     )
 }
 
+/// The owner's case: every edge of the 40×30×20 plate rounded `r`, shelled
+/// 2 with the top removed (r ≥ the wall: the kernel refuses the rim, the
+/// opening is cut as a prism of the top face).
+fn rounded_box_shell(r: Real) -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let all = edges_where(&part, |_| true);
+    if all.len() != 12 {
+        return Err(format!("{} edges", all.len()));
+    }
+    part.add_blend(BlendFeature::fillet(all, r))
+        .map_err(|e| e.to_string())?;
+    shell_of(part, &[TOP], 2.0, ShellDirection::Inside)
+}
+
+fn c_rounded_box_shell_r2() -> Result<PartDocument, String> {
+    rounded_box_shell(2.0)
+}
+
+fn c_rounded_box_shell_r3() -> Result<PartDocument, String> {
+    rounded_box_shell(3.0)
+}
+
+/// A box `a × b × c` with every edge rounded `r` (Steiner's formula).
+fn rounded_volume(a: Real, b: Real, c: Real, r: Real) -> Real {
+    let (p, q, s) = (a - 2.0 * r, b - 2.0 * r, c - 2.0 * r);
+    p * q * s
+        + 2.0 * (p * q + q * s + s * p) * r
+        + PI * (p + q + s) * r * r
+        + 4.0 / 3.0 * PI * r * r * r
+}
+
+/// Its volume: the outside less the closed cavity less the top wall under
+/// the top face.
+fn rounded_box_shell_volume(r: Real) -> Real {
+    rounded_volume(40.0, 30.0, 20.0, r)
+        - rounded_volume(36.0, 26.0, 16.0, r - 2.0)
+        - (40.0 - 2.0 * r) * (30.0 - 2.0 * r) * 2.0
+}
+
 /// Walls thicker than half the box: refused, the part unchanged.
 fn c_shell_too_thick() -> Result<PartDocument, String> {
     shell_of(
@@ -1728,6 +1767,20 @@ fn cases() -> Vec<Case> {
             budget_ms: 300.0,
             build: c_draft_bad_angle,
             want: Want::Error("between"),
+        },
+        Case {
+            level: "complex",
+            name: "all edges r2, shell 2, top removed (round = wall)",
+            budget_ms: 1500.0,
+            build: c_rounded_box_shell_r2,
+            want: Want::Volume(rounded_box_shell_volume(2.0)),
+        },
+        Case {
+            level: "complex",
+            name: "all edges r3, shell 2, top removed (round > wall)",
+            budget_ms: 2500.0,
+            build: c_rounded_box_shell_r3,
+            want: Want::Volume(rounded_box_shell_volume(3.0)),
         },
         Case {
             level: "complex",

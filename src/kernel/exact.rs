@@ -931,10 +931,13 @@ pub fn shell(
                     profiles: s.profiles.clone(),
                 });
             }
-            // A rim the kernel proved to have no thickness (a round at an
-            // open face at least as large as the wall) cannot be built any
-            // other way: no fallback (it spent 7 s failing, SolidCraft #342).
-            Err(e) if e.contains("rim would have no thickness") => return Err(e),
+            // A round at an open face at least as thick as the wall: the
+            // kernel refuses the rim (SolidCraft #342). Inventor still makes
+            // it: a closed cavity, the opening cut as a prism of the face.
+            // The general path below only spent 7 s failing here.
+            Err(e) if e.contains("rim would have no thickness") => {
+                return shell_with_openings(s, open, thickness, prefix).map_err(|_| e);
+            }
             Err(e) => Some(e),
         }
     } else {
@@ -994,6 +997,169 @@ pub fn shell(
         boolean(&outer, &cavity, ExactOp::Cut)?.ok_or_else(|| "the shell removed everything".into())
     };
     general().map_err(|e| first.unwrap_or(e))
+}
+
+/// Shell Inside where an open face meets rounds at least as large as the
+/// wall: the closed cavity, then each open planar face cut through as a
+/// prism of its outline (straight edges only), from outside to 1.5 walls
+/// deep. The rim faces are named `<prefix>:Rim:Side:<n>`.
+fn shell_with_openings(
+    s: &ExactSolid,
+    open: &[usize],
+    thickness: Real,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    use super::extrude::ProfileSegment;
+    // The prisms first: an opening the cut cannot make fails before the
+    // (slower) cavity is built.
+    let mut prisms = Vec::new();
+    let size = s.body.size().max(1e-9);
+    let mesh = guarded("tessellate", || s.body.tessellate((size * 1e-4).max(1e-4)))?;
+    let infos = guarded("faces", || s.body.faces(1e-3))?;
+    let samples = face_samples(s)?;
+    let key = |p: &Point3| {
+        let q = |x: Real| (x / (size * 1e-6)).round() as i64;
+        (q(p.x), q(p.y), q(p.z))
+    };
+    for &f in open {
+        let info = infos.iter().find(|i| i.index == f).ok_or("no such face")?;
+        let n = info
+            .plane_normal
+            .map(w3)
+            .ok_or("not supported yet: a curved open face next to a round")?;
+        let origin = samples
+            .get(f)
+            .copied()
+            .flatten()
+            .ok_or("face without area")?;
+        let plane = Plane::from_normal(origin, n).map_err(|e| e.to_string())?;
+        // The face's boundary edges, each straight: (start, end).
+        let mut segs: Vec<(Point3, Point3)> = Vec::new();
+        for (pts, faces) in mesh.edges.iter().zip(&mesh.edge_faces) {
+            if !faces.contains(&(f as u32)) {
+                continue;
+            }
+            let pts: Vec<Point3> = pts.iter().map(|v| p3(*v)).collect();
+            let (Some(a), Some(b)) = (pts.first().copied(), pts.last().copied()) else {
+                continue;
+            };
+            let d = b - a;
+            let l = d.norm();
+            if l < size * 1e-9 {
+                continue;
+            }
+            if pts
+                .iter()
+                .any(|p| (p - a).cross(&d).norm() / l > size * 1e-6)
+            {
+                return Err(
+                    "not supported yet: an opening with curved edges next to a round".into(),
+                );
+            }
+            segs.push((a, b));
+        }
+        // Chain into loops.
+        let mut loops: Vec<Vec<nalgebra::Point2<Real>>> = Vec::new();
+        while let Some((a, b)) = segs.pop() {
+            let start = key(&a);
+            let mut lp = vec![a];
+            let mut end = b;
+            while key(&end) != start {
+                lp.push(end);
+                let i = segs
+                    .iter()
+                    .position(|(x, y)| key(x) == key(&end) || key(y) == key(&end))
+                    .ok_or("the opening's outline is not closed")?;
+                let (x, y) = segs.swap_remove(i);
+                end = if key(&x) == key(&end) { y } else { x };
+            }
+            loops.push(lp.iter().map(|p| plane.project(p)).collect());
+        }
+        let area = |l: &[nalgebra::Point2<Real>]| {
+            (0..l.len())
+                .map(|i| {
+                    let (a, b) = (l[i], l[(i + 1) % l.len()]);
+                    a.x * b.y - b.x * a.y
+                })
+                .sum::<Real>()
+                / 2.0
+        };
+        let k = (0..loops.len())
+            .max_by(|&i, &j| area(&loops[i]).abs().total_cmp(&area(&loops[j]).abs()))
+            .ok_or("the opening has no outline")?;
+        // The opening grows by a hair: its sides then cross the rounds next to
+        // the face instead of running along the edges where they touch it
+        // (the kernel cannot cut faces that only touch).
+        let grow = thickness * 1e-3;
+        let mut n_seg = 0usize;
+        let mut seg_loop = |l: &[nalgebra::Point2<Real>], ccw: bool| -> Vec<ProfileSegment> {
+            let mut v: Vec<nalgebra::Point2<Real>> = l.to_vec();
+            if (area(&v) > 0.0) != ccw {
+                v.reverse();
+            }
+            let v = offset_polygon(&v, grow);
+            (0..v.len())
+                .map(|i| {
+                    n_seg += 1;
+                    ProfileSegment {
+                        geometry: Segment2::Line {
+                            a: v[i],
+                            b: v[(i + 1) % v.len()],
+                        },
+                        name: n_seg.to_string(),
+                    }
+                })
+                .collect()
+        };
+        let outer = seg_loop(&loops[k], true);
+        let holes: Vec<Vec<ProfileSegment>> = loops
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != k)
+            .map(|(_, l)| seg_loop(l, false))
+            .collect();
+        let prof = profile(&outer, &holes)?;
+        let prism = extrude(
+            &plane,
+            &prof,
+            -1.5 * thickness,
+            thickness + 1.0,
+            0.0,
+            &format!("{prefix}:Rim"),
+        )?;
+        prisms.push(prism);
+    }
+    let mut out = shell(s, &[], thickness, ShellSide::Inside, prefix)?;
+    for prism in prisms {
+        out = boolean(&out, &prism, ExactOp::Cut)?.ok_or("the shell removed everything")?;
+    }
+    Ok(out)
+}
+
+/// Polygon `v` with every edge moved `d` to its right (outward for a
+/// counter-clockwise loop, into the hole for a clockwise one); corners where
+/// the moved edges meet, collinear edges just shifted.
+fn offset_polygon(v: &[nalgebra::Point2<Real>], d: Real) -> Vec<nalgebra::Point2<Real>> {
+    let n = v.len();
+    let shifted = |i: usize| {
+        let (a, b) = (v[i], v[(i + 1) % n]);
+        let t = (b - a).normalize();
+        let nr = nalgebra::Vector2::new(t.y, -t.x) * d;
+        (a + nr, t)
+    };
+    (0..n)
+        .map(|i| {
+            let (p0, t0) = shifted((i + n - 1) % n);
+            let (p1, t1) = shifted(i);
+            let cross = t0.x * t1.y - t0.y * t1.x;
+            if cross.abs() < 1e-12 {
+                p1
+            } else {
+                let s = ((p1 - p0).x * t1.y - (p1 - p0).y * t1.x) / cross;
+                p0 + t0 * s
+            }
+        })
+        .collect()
 }
 
 /// A point on face `face` of `s` (see [`faces_named`]).
@@ -2138,6 +2304,65 @@ mod tests {
         let s = sides(&b);
         assert!(draft(&b, &s, &Plane::xy(), up, 90f64.to_radians()).is_err());
         assert!(draft(&b, &[], &Plane::xy(), up, 0.1).is_err());
+    }
+
+    /// A box with all 12 edges rounded `r`.
+    fn all_rounded(r: f64) -> ExactSolid {
+        let b = box_40();
+        let mut pts = Vec::new();
+        for &(x, y) in &[(20.0, 0.0), (40.0, 15.0), (20.0, 30.0), (0.0, 15.0)] {
+            pts.push(Point3::new(x, y, 0.0));
+            pts.push(Point3::new(x, y, 20.0));
+        }
+        for &(x, y) in &[(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0)] {
+            pts.push(Point3::new(x, y, 10.0));
+        }
+        fillet(&b, &pts, r, "Fillet1").unwrap()
+    }
+
+    /// Volume of a box `a × b × c` with every edge rounded `r` (Steiner:
+    /// the inner box grown by a ball).
+    fn rounded_volume(a: f64, b: f64, c: f64, r: f64) -> f64 {
+        let (p, q, s) = (a - 2.0 * r, b - 2.0 * r, c - 2.0 * r);
+        p * q * s
+            + 2.0 * (p * q + q * s + s * p) * r
+            + PI * (p + q + s) * r * r
+            + 4.0 / 3.0 * PI * r * r * r
+    }
+
+    #[test]
+    fn shell_closed_of_a_fully_rounded_box() {
+        let b = all_rounded(3.0);
+        check_shell(&b, rounded_volume(40.0, 30.0, 20.0, 3.0));
+        let s = shell(&b, &[], 2.0, ShellSide::Inside, "Shell1").unwrap();
+        check_shell(
+            &s,
+            rounded_volume(40.0, 30.0, 20.0, 3.0) - rounded_volume(36.0, 26.0, 16.0, 1.0),
+        );
+    }
+
+    /// Your rounded box: every edge rounded `r`, the top removed, walls 2.
+    /// With r ≥ the wall the kernel refuses the rim; the opening is cut as a
+    /// prism of the top face (rim strip square to the top, walls 2 thick).
+    #[test]
+    fn shell_open_top_of_a_fully_rounded_box() {
+        for r in [1.0, 3.0, 5.0, 2.0] {
+            let b = all_rounded(r);
+            let top = face(&b, "Box1:Top", (20.0, 15.0, 20.0));
+            let s = shell(&b, &[top], 2.0, ShellSide::Inside, "Shell1")
+                .unwrap_or_else(|e| panic!("r {r}: {e}"));
+            let outer = rounded_volume(40.0, 30.0, 20.0, r);
+            let expect = if r < 2.0 {
+                // The kernel's own shell (inner corners sharp where r < t):
+                // checked for validity only.
+                s.measure().unwrap().0
+            } else {
+                outer
+                    - rounded_volume(36.0, 26.0, 16.0, r - 2.0)
+                    - (40.0 - 2.0 * r) * (30.0 - 2.0 * r) * 2.0
+            };
+            check_shell(&s, expect);
+        }
     }
 
     #[test]
