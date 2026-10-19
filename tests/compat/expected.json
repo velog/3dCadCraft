@@ -54,5 +54,12 @@
     "features": 2,
     "sketches": 0,
     "exact": true
+  },
+  "r3/shell_r3.3dcadcraft": {
+    "volume": 16718.385563170952,
+    "faces": 15,
+    "features": 3,
+    "sketches": 0,
+    "exact": true
   }
 }

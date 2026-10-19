@@ -191,6 +191,27 @@ fn partial_r2() -> PartDocument {
     part
 }
 
+/// Revision 3: a shell (top removed, 3 thick) and a fillet r2 on the outer
+/// vertical edges after it.
+fn shell_r3() -> PartDocument {
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+    let top = part.body.find_face("Box1:Top").unwrap();
+    let mut def = cadcraft3d::part::ShellFeature::new(3.0);
+    def.remove
+        .push(cadcraft3d::part::shell::face_ref(&part.body, top, None).unwrap());
+    part.add_shell(def).unwrap();
+    let corner = |x: Real, w: Real| x.abs() < 1e-6 || (x - w).abs() < 1e-6;
+    let vertical: Vec<EdgeRef> = part
+        .body
+        .edges()
+        .filter_map(|(e, _)| edge_ref(&part.body, e))
+        .filter(|r| corner(r.hint[0], 60.0) && corner(r.hint[1], 40.0))
+        .filter(|r| r.hint[2] > 1e-6 && r.hint[2] < 20.0 - 1e-6)
+        .collect();
+    part.add_blend(BlendFeature::fillet(vertical, 2.0)).unwrap();
+    part
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -211,6 +232,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("PartialR2");
             project.add_document("Part1", DocumentData::Part(partial_r2()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r3/shell_r3.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ShellR3");
+            project.add_document("Part1", DocumentData::Part(shell_r3()));
             project.save(&f).unwrap();
         }
     }

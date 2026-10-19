@@ -312,6 +312,44 @@ impl CadCraftApp {
                 });
                 return;
             }
+            Feature::Shell(sh) => {
+                ui.horizontal(|ui| {
+                    tree_icon(ui, Icon::Shell);
+                    let sick = part.feature_health.get(&sh.id);
+                    let mut text = RichText::new(&sh.name);
+                    if sick.is_some() {
+                        text = text.color(WARNING);
+                    }
+                    let hover = match sick {
+                        Some(h) => format!("Warning: {h}"),
+                        None => format!(
+                            "Shell {}, {} face(s) removed",
+                            sh.direction.label(),
+                            sh.remove.len()
+                        ),
+                    };
+                    let r = ui
+                        .selectable_label(self.selection == Selection::Feature(k), text)
+                        .on_hover_text(hover);
+                    if r.clicked() {
+                        cmds.push(BrowserCmd::Select(Selection::Feature(k)));
+                    }
+                    if r.double_clicked() {
+                        cmds.push(BrowserCmd::EditFeature(k));
+                    }
+                    r.context_menu(|ui| {
+                        if ui.button("Edit Feature").clicked() {
+                            cmds.push(BrowserCmd::EditFeature(k));
+                            ui.close();
+                        }
+                        if ui.button("Delete").clicked() {
+                            cmds.push(BrowserCmd::DeleteFeature(k));
+                            ui.close();
+                        }
+                    });
+                });
+                return;
+            }
             Feature::Work(w) => {
                 let icon = match &w.def {
                     crate::part::WorkDef::Plane(_) => Icon::WorkPlane,
@@ -509,6 +547,10 @@ impl CadCraftApp {
         }
         if self.blend_draft.is_some() {
             self.blend_dialog(ui);
+            return;
+        }
+        if self.shell_draft.is_some() {
+            self.shell_dialog(ui);
             return;
         }
         if self.editing.is_some() && self.tools.pattern_dialog.is_some() {
@@ -1455,6 +1497,10 @@ impl CadCraftApp {
             self.blend_properties(ui, k, b.clone());
             return;
         }
+        if let Feature::Shell(s) = &f {
+            self.shell_properties(ui, k, s.clone());
+            return;
+        }
         let Some(sketch_id) = f.sketch().map(str::to_owned) else {
             return;
         };
@@ -1495,7 +1541,7 @@ impl CadCraftApp {
                     ui.end_row();
                     axis_change = origin_axis_buttons(ui);
                 }
-                Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) => {}
+                Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) => {}
             }
         });
         let table = self.part().parameter_table();
@@ -1532,7 +1578,7 @@ impl CadCraftApp {
                     self.edit_feature(k, Feature::Revolve(def));
                 }
             }
-            Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) => {}
+            Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) => {}
         }
         let commits = std::mem::take(&mut fx.commits);
         drop(fx);
@@ -2125,6 +2171,223 @@ impl CadCraftApp {
                 self.end_feature_edit();
             }
         });
+    }
+
+    /// The Shell command's panel (`docs/spec/2.6-shell.md`): faces to
+    /// remove, Automatic Face Chain, direction, thickness; preview, OK /
+    /// Apply / Cancel.
+    fn shell_dialog(&mut self, ui: &mut egui::Ui) {
+        use crate::part::ShellDirection;
+        let Some(mut d) = self.shell_draft.clone() else {
+            return;
+        };
+        self.panel_header(ui, Icon::Shell, "Shell");
+        let bodies = self
+            .part()
+            .bodies_before(d.edit.unwrap_or(self.part().features.len()));
+        psection(ui, "shell_input", "Input Geometry", |ui| {
+            plabel(ui, "Remove Faces");
+            ui.horizontal(|ui| {
+                ui.label(format!("{} selected", d.def.remove.len()))
+                    .on_hover_text("Click faces in the view; a second click puts one back. None: a closed cavity");
+                if !d.def.remove.is_empty() && ui.small_button("x").on_hover_text("Clear").clicked() {
+                    d.def.remove.clear();
+                }
+            });
+            ui.end_row();
+            plabel(ui, "Face chain");
+            ui.checkbox(&mut d.def.chain, "Automatic").on_hover_text(
+                "A click also takes the faces tangent to the picked one (its rounds)",
+            );
+            ui.end_row();
+            if bodies.len() > 1 {
+                plabel(ui, "Solid");
+                let current = d.def.solids.first().cloned();
+                let shown = current
+                    .as_ref()
+                    .and_then(|c| bodies.iter().find(|(id, _)| id == c))
+                    .map_or("Of the faces".to_owned(), |(_, n)| n.clone());
+                egui::ComboBox::from_id_salt("shell_solid")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(current.is_none(), "Of the faces")
+                            .clicked()
+                        {
+                            d.def.solids.clear();
+                        }
+                        for (id, n) in &bodies {
+                            if ui
+                                .selectable_label(current.as_deref() == Some(id.as_str()), n)
+                                .clicked()
+                            {
+                                d.def.solids = vec![id.clone()];
+                            }
+                        }
+                    });
+                ui.end_row();
+            }
+        });
+        let table = self.part().parameter_table();
+        let mut fx = Fields {
+            table: &table,
+            key: "shell_draft".into(),
+            commits: Vec::new(),
+            bodies: Vec::new(),
+        };
+        let snapshot = Feature::Shell(d.def.clone());
+        psection(ui, "shell_behavior", "Behavior", |ui| {
+            plabel(ui, "Direction");
+            ui.vertical(|ui| {
+                for (dir, tip) in [
+                    (
+                        ShellDirection::Inside,
+                        "The walls grow into the material; the outside stays",
+                    ),
+                    (
+                        ShellDirection::Outside,
+                        "The walls grow out; the faces become the inner walls",
+                    ),
+                    (
+                        ShellDirection::Both,
+                        "Half the thickness each way (Inventor: Center)",
+                    ),
+                ] {
+                    ui.radio_value(&mut d.def.direction, dir, dir.label())
+                        .on_hover_text(tip);
+                }
+            });
+            ui.end_row();
+            field_row(ui, &mut fx, "Thickness", &snapshot, "thickness");
+        });
+        let commits = std::mem::take(&mut fx.commits);
+        drop(fx);
+        for (field, text) in commits {
+            let mut f = Feature::Shell(d.def.clone());
+            match self.part().apply_draft_field(&mut f, field, &text) {
+                Ok(()) => {
+                    if let Feature::Shell(s) = f {
+                        d.def = s;
+                    }
+                    self.file_status = None;
+                }
+                Err(e) => self.file_status = Some(Err(format!("Shell: {e}"))),
+            }
+        }
+        self.shell_draft = Some(d.clone());
+        let preview = self.shell_preview();
+        match &preview {
+            Err(e) if e == super::PREVIEW_PENDING => {
+                ui.label(e);
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            Err(e) => warning_box(ui, e),
+            _ => {}
+        }
+        ui.horizontal(|ui| {
+            let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
+            if ui
+                .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .clicked()
+            {
+                self.commit_shell(false);
+            }
+            if d.edit.is_none()
+                && ui
+                    .add_enabled(
+                        ok,
+                        egui::Button::new("Apply").min_size(egui::vec2(60.0, 22.0)),
+                    )
+                    .on_hover_text("Create it and start a new shell with the same settings")
+                    .clicked()
+            {
+                self.commit_shell(true);
+            }
+            if ui
+                .add(egui::Button::new("Cancel").min_size(egui::vec2(60.0, 22.0)))
+                .clicked()
+            {
+                self.shell_draft = None;
+                self.end_feature_edit();
+            }
+        });
+    }
+
+    /// Properties of a Shell: direction, faces, thickness with expressions.
+    fn shell_properties(&mut self, ui: &mut egui::Ui, k: usize, s: crate::part::ShellFeature) {
+        use crate::part::ShellDirection;
+        self.panel_header(ui, Icon::Shell, &s.name);
+        if let Some(h) = self.part().feature_health.get(&s.id) {
+            warning_box(ui, h);
+        }
+        let mut dir_change = None;
+        psection(ui, &format!("shell_in_{k}"), "Input", |ui| {
+            plabel(ui, "Remove Faces");
+            ui.label(format!("{}", s.remove.len())).on_hover_text(
+                s.remove
+                    .iter()
+                    .map(|r| r.face.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+            ui.end_row();
+            plabel(ui, "Direction");
+            let mut dir = s.direction;
+            ui.vertical(|ui| {
+                for d in [
+                    ShellDirection::Inside,
+                    ShellDirection::Outside,
+                    ShellDirection::Both,
+                ] {
+                    ui.radio_value(&mut dir, d, d.label());
+                }
+            });
+            if dir != s.direction {
+                dir_change = Some(dir);
+            }
+            ui.end_row();
+        });
+        if let Some(dir) = dir_change {
+            let mut ns = s.clone();
+            ns.direction = dir;
+            self.edit_feature(k, Feature::Shell(ns));
+            return;
+        }
+        let table = self.part().parameter_table();
+        let mut fx = Fields {
+            table: &table,
+            key: format!("feature{k}"),
+            commits: Vec::new(),
+            bodies: Vec::new(),
+        };
+        let f = Feature::Shell(s.clone());
+        psection(ui, &format!("shell_val_{k}"), "Size", |ui| {
+            field_row(ui, &mut fx, "Thickness", &f, "thickness");
+        });
+        let commits = std::mem::take(&mut fx.commits);
+        drop(fx);
+        for (field, text) in commits {
+            self.checkpoint("Edit Feature");
+            match self.part_mut().set_feature_field(k, field, &text) {
+                Ok(()) => {
+                    if let Err(e) = self.part_mut().regenerate() {
+                        self.file_status = Some(Err(e.to_string()));
+                    }
+                    self.scene_dirty = true;
+                }
+                Err(e) => {
+                    self.history.cancel();
+                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
+                }
+            }
+        }
+        if ui.button("Edit Feature").clicked() {
+            self.edit_feature_dialog(k);
+        }
+        if ui.button("Delete").clicked() {
+            self.delete_feature(k);
+        }
     }
 
     /// Properties of a Fillet / Chamfer: edges, values with expressions.
@@ -2910,6 +3173,15 @@ impl CadCraftApp {
                         })
                         .unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.shell_draft.is_some() => {
+                    let none = self.shell_draft.as_ref().is_some_and(|d| d.def.remove.is_empty());
+                    let text = if none {
+                        "Shell: click the faces to remove (none: a closed cavity), set the thickness, then OK"
+                    } else {
+                        "Shell: click more faces to remove (a second click puts one back), then OK"
+                    };
+                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.work_draft.is_some() => {
                     let (title, need) = self

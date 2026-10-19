@@ -32,6 +32,7 @@ pub mod params;
 pub mod placement;
 pub mod revolve;
 pub mod select;
+pub mod shell;
 pub mod work;
 
 use std::collections::HashMap;
@@ -47,6 +48,7 @@ pub use boolean::{Operation, Output};
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, ProfileRef, TargetRef};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
+pub use shell::{FaceRef, ShellDirection, ShellFeature};
 pub use work::{LineRef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef};
 
 use crate::kernel::{BRep, KernelError, Plane, Point3, Real};
@@ -119,6 +121,8 @@ pub enum Feature {
     Work(WorkFeature),
     /// Fillet or Chamfer of model edges.
     Blend(BlendFeature),
+    /// Shell: hollows a solid (format revision 3).
+    Shell(ShellFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -202,6 +206,7 @@ enum BuildStep<'a> {
     Sweep(Sweep<'a>),
     Work(&'a WorkFeature),
     Blend(&'a BlendFeature),
+    Shell(&'a ShellFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -212,6 +217,7 @@ impl<'a> BuildStep<'a> {
             Feature::Revolve(r) => Self::Sweep(Sweep::Revolve(r)),
             Feature::Work(w) => Self::Work(w),
             Feature::Blend(bl) => Self::Blend(bl),
+            Feature::Shell(sh) => Self::Shell(sh),
         }
     }
 }
@@ -225,6 +231,7 @@ impl Feature {
             Feature::Revolve(r) => &r.id,
             Feature::Work(w) => &w.id,
             Feature::Blend(b) => &b.id,
+            Feature::Shell(s) => &s.id,
         }
     }
 
@@ -236,6 +243,7 @@ impl Feature {
             Feature::Revolve(r) => &r.name,
             Feature::Work(w) => &w.name,
             Feature::Blend(b) => &b.name,
+            Feature::Shell(s) => &s.name,
         }
     }
 
@@ -245,14 +253,14 @@ impl Feature {
             Feature::Box(_) => true,
             Feature::Extrude(e) => e.operation == Operation::NewSolid,
             Feature::Revolve(r) => r.operation == Operation::NewSolid,
-            Feature::Work(_) | Feature::Blend(_) => false,
+            Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) => false,
         }
     }
 
     /// `id` of the sketch it consumes, if any.
     pub fn sketch(&self) -> Option<&str> {
         match self {
-            Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) => None,
+            Feature::Box(_) | Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) => None,
             Feature::Extrude(e) => Some(&e.sketch),
             Feature::Revolve(r) => Some(&r.sketch),
         }
@@ -650,6 +658,11 @@ impl PartDocument {
                     }
                 }
                 BuildStep::Blend(bl) if use_exact => exact::blend(bl, &body, &solids).map(Some),
+                BuildStep::Shell(sh) if use_exact => exact::shell(sh, &solids).map(Some),
+                // The faceted kernel has no shell (and never gets one).
+                BuildStep::Shell(_) => Err(exact::Fail::User(
+                    "Shell needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
                 BuildStep::Blend(bl) => {
                     // On a copy: a failure leaves the body as it was.
                     let mut trial = body.clone();
@@ -802,7 +815,7 @@ impl PartDocument {
                 Feature::Extrude(e) => e.output == Output::Solid,
                 Feature::Revolve(r) => r.output == Output::Solid,
                 Feature::Box(_) => true,
-                Feature::Work(_) | Feature::Blend(_) => false,
+                Feature::Work(_) | Feature::Blend(_) | Feature::Shell(_) => false,
             })
             .enumerate()
             .map(|(n, f)| (f.id().to_owned(), format!("Solid{}", n + 1)))
@@ -916,6 +929,9 @@ impl PartDocument {
                 (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
             }
             (Feature::Blend(o), Feature::Blend(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::Shell(o), Feature::Shell(n)) => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             _ => {
@@ -1050,6 +1066,22 @@ impl PartDocument {
         (def.id, def.name) = (id.clone(), id.clone());
         let before = (self.features.clone(), self.body.clone());
         self.features.push(Feature::Blend(def));
+        self.regenerate()?;
+        if let Some(msg) = self.feature_health.get(&id).cloned() {
+            (self.features, self.body) = before;
+            self.regenerate()?;
+            return Err(PartError::Feature(msg));
+        }
+        Ok(id)
+    }
+
+    /// **Shell**: adds the feature (id `Shell<N>`). On failure nothing
+    /// changes.
+    pub fn add_shell(&mut self, mut def: ShellFeature) -> Result<String, PartError> {
+        let id = self.next_feature_id("Shell");
+        (def.id, def.name) = (id.clone(), id.clone());
+        let before = (self.features.clone(), self.body.clone());
+        self.features.push(Feature::Shell(def));
         self.regenerate()?;
         if let Some(msg) = self.feature_health.get(&id).cloned() {
             (self.features, self.body) = before;

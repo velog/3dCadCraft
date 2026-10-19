@@ -271,6 +271,22 @@ fn speed_budgets() {
         }),
     ));
 
+    // Shell of the rounded box (8 fillets and the chamfer chain before
+    // it), the chamfered top removed: walls follow the rounds.
+    rows.push((
+        "shell 1.5 of the rounded box, top removed (add_shell)",
+        600.0,
+        median_ms(3, || {
+            let mut p = rb.clone();
+            p.build_cache = Default::default();
+            let top = p.body.find_face("Box1:Top").unwrap();
+            let mut def = cadcraft3d::part::ShellFeature::new(1.5);
+            def.remove
+                .push(cadcraft3d::part::shell::face_ref(&p.body, top, None).unwrap());
+            p.add_shell(def).unwrap();
+        }),
+    ));
+
     println!("{:<62} {:>9} {:>9}", "case", "budget", "median");
     let mut over = Vec::new();
     for (case, budget, ms) in &rows {

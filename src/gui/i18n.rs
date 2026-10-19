@@ -65,6 +65,14 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
     (
+        "Shell: click the faces to remove (none: a closed cavity), set the thickness, then OK",
+        "Shell: щракнете стените за махане (без стени: затворена кухина), задайте дебелината, после OK",
+    ),
+    (
+        "Shell: click more faces to remove (a second click puts one back), then OK",
+        "Shell: щракнете още стени за махане (втори клик връща стената), после OK",
+    ),
+    (
         "Ready — Start 2D Sketch (S), or right-click a face: New Sketch",
         "Готово — Start 2D Sketch (S), или десен клик върху стена: New Sketch",
     ),

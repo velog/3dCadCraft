@@ -46,7 +46,7 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 |---|---|---|
 | `kernel` | B-Rep geometry + topology, validation, tessellation (`mesh.rs`), queries & persistent names (`query.rs`), extrude, revolve (`revolve.rs`), BSP CSG on tagged polygons (`csg.rs`), polygons ↔ B-Rep and Booleans (`facet.rs`), exact kernel boundary (`exact.rs`: SolidCraft/truck → our B-Rep) | `BRep`, `Curve`, `Surface`, `Plane`, `Face`, `Tolerance`, `BoolOp` |
 | `sketch` | 2D sketch on a plane (dimension names/equations/tolerances in `dimparam.rs`): points, lines, circles, arcs, CV splines, styles (construction/centerline), ~20 constraint/dimension kinds, driven dims, Levenberg solver with DOF/redundancy analysis; composite shapes (`shapes.rs`), Modify ops (`modify.rs`: trim/extend/split/offset/move/copy/rotate/mirror/scale/stretch), 2D fillet/chamfer (`corner.rs`), associative rectangular/circular patterns (`pattern.rs`), profiles/regions (`profile.rs`: `Sketch::regions`), per-geometry DOF analysis (`dof_analysis`) | `Sketch`, `Constraint`, `Shape`, `SolveReport`, `DofAnalysis` |
-| `part` | part environment: features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`; `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `Operation`, `UserParam` |
+| `part` | part environment: features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`, Shell `shell.rs`; `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `Operation`, `UserParam` |
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
 | `command` | Undo/Redo (snapshot history, coalesced gestures); later the Command enum | `History<T>` |
@@ -473,6 +473,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Tangent snap** (`Snap::Tangent`, Line tool): the end lies on the circle (PointOnCircle) and
   the line is Tangent — a double root; `Constraint::Tangent` uses the first-order form
   (radius ⟂ line) when a line end is held on the circle, like for shared endpoints.
+- **Shell** (`part/shell.rs`, `kernel::exact::shell`): faces are `FaceRef` (name + point);
+  `exact::faces_named` gives the piece nearest the hint and `face_samples` a point on each
+  kernel face (centre of its largest triangle at size·1e-4 — the kernel picks faces within
+  size·1e-3). Inside uses `sk::shell`; Outside/Both/closed use `offset_faces` minus a cavity
+  whose faces are pre-named `Shell1:Inner[..]`. The rim keeps the removed face's name.
+  After an Inside shell the outer straight edges are split at the floor level — select
+  every piece (blends join them).
 - **Windows paths** (`docs/spec/0.6-files.md`): `canonicalize` returns `\\?\C:\…` — pass it
   through `document::library::without_verbatim` before showing or storing it; the home folder is
   `USERPROFILE` (Git Bash sets `HOME=/c/Users/…`); `C:` alone is drive-relative

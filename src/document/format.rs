@@ -67,7 +67,9 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   pattern count equations (2026-10-19).
 /// - 2: partial chamfer (`BlendFeature::partial`; an older build would make a
 ///   full chamfer of the edge) (2026-10-19).
-pub const FORMAT_REVISION: u32 = 2;
+/// - 3: Shell (`Feature::Shell`; an older build cannot read the file)
+///   (2026-10-19).
+pub const FORMAT_REVISION: u32 = 3;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

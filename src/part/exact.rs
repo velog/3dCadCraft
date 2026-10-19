@@ -357,6 +357,63 @@ pub(super) fn blend(
     }
 }
 
+/// Shell (`docs/spec/2.6-shell.md`): the removed faces are found by name
+/// (the piece nearest the hint); the solid is the one holding them, the one
+/// named in `solids`, or the only one. A kernel failure is the feature's
+/// health (no faceted rebuild, as for blends).
+pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<ExactSolid>, Fail> {
+    use exact::ShellSide;
+    if !(sh.thickness.is_finite() && sh.thickness > 0.0) {
+        return Err(User("the thickness must be greater than 0".into()));
+    }
+    let mut target: Option<usize> = None;
+    let mut open = Vec::new();
+    for r in &sh.remove {
+        let hint = Point3::from(r.hint);
+        let found = cur.iter().enumerate().find_map(|(i, s)| {
+            exact::faces_named(s, &r.face, hint)
+                .ok()
+                .and_then(|v| v.first().map(|&f| (i, f)))
+        });
+        let Some((i, f)) = found else {
+            return Err(User(format!("the face {} no longer exists", r.face)));
+        };
+        match target {
+            Some(t) if t != i => {
+                return Err(User("the removed faces belong to different solids".into()));
+            }
+            _ => target = Some(i),
+        }
+        if !open.contains(&f) {
+            open.push(f);
+        }
+    }
+    let named = |s: &ExactSolid| s.name.as_ref().is_some_and(|n| sh.solids.contains(n));
+    let target = match (target, sh.solids.is_empty()) {
+        (Some(t), _) => t,
+        (None, false) => cur
+            .iter()
+            .position(named)
+            .ok_or_else(|| User("the chosen solid no longer exists".into()))?,
+        (None, true) if cur.len() == 1 => 0,
+        (None, true) if cur.is_empty() => return Err(User("there is no solid to shell".into())),
+        (None, true) => return Err(User("select the solid to shell".into())),
+    };
+    if !sh.solids.is_empty() && !named(&cur[target]) {
+        return Err(User("the removed faces are not on the chosen solid".into()));
+    }
+    let side = match sh.direction {
+        super::ShellDirection::Inside => ShellSide::Inside,
+        super::ShellDirection::Outside => ShellSide::Outside,
+        super::ShellDirection::Both => ShellSide::Both,
+    };
+    let r = exact::shell(&cur[target], &open, sh.thickness, side, &sh.id)
+        .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?;
+    let mut out = cur.to_vec();
+    out[target] = r;
+    Ok(out)
+}
+
 /// Fillets beyond one constant set: several sets with their own radii,
 /// variable radius, chord width, Full Round (`docs/spec/2.4-fillet.md`).
 /// The kernel builds them or the feature reports why (no faceted rebuild).

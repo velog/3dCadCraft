@@ -822,6 +822,176 @@ fn blend_result(s: &ExactSolid, body: sk::Body, prefix: &str, role: &str) -> Exa
     }
 }
 
+// ---------------------------------------------------------------- faces ---
+
+/// A point on every face of `s` (kernel face order): the centre of the
+/// face's largest triangle at a fine tolerance, so it lies on the face (its
+/// sag is far below the kernel's face-picking distance) and away from its
+/// edges. `None` for a face without triangles.
+fn face_samples(s: &ExactSolid) -> Result<Vec<Option<Point3>>, String> {
+    let tol = (s.body.size() * 1e-4).max(1e-4);
+    let mesh = guarded("tessellate", || s.body.tessellate(tol))?;
+    let n = s.face_names.len().max(s.body.face_count());
+    let mut best: Vec<Option<(Real, Point3)>> = vec![None; n];
+    for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+        let Some([a, b, c]) = mesh.tri(t) else {
+            continue;
+        };
+        let (a, b, c) = (p3(a), p3(b), p3(c));
+        let area = (b - a).cross(&(c - a)).norm();
+        let slot = best.get_mut(f as usize);
+        if let Some(slot) = slot
+            && slot.is_none_or(|(x, _)| area > x)
+        {
+            *slot = Some((area, Point3::from((a.coords + b.coords + c.coords) / 3.0)));
+        }
+    }
+    Ok(best.into_iter().map(|b| b.map(|(_, p)| p)).collect())
+}
+
+/// The faces of `s` named `name`, nearest to `hint` first (a face a later
+/// Boolean split in pieces keeps its name on each piece).
+pub fn faces_named(s: &ExactSolid, name: &str, hint: Point3) -> Result<Vec<usize>, String> {
+    let samples = face_samples(s)?;
+    let mut v: Vec<(Real, usize)> = s
+        .face_names
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.as_deref() == Some(name))
+        .filter_map(|(i, _)| {
+            samples
+                .get(i)
+                .copied()
+                .flatten()
+                .map(|p| ((p - hint).norm(), i))
+        })
+        .collect();
+    v.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Ok(v.into_iter().map(|(_, i)| i).collect())
+}
+
+/// Which way a shell's walls grow from the faces (Inventor: Inside,
+/// Outside, Both).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellSide {
+    /// Into the material: the outside stays where it is.
+    Inside,
+    /// Out of it: the old faces become the inner walls.
+    Outside,
+    /// Half each way.
+    Both,
+}
+
+/// Hollows `s` with walls `thickness` thick; the faces `open` (kernel face
+/// indices) are removed. Inner walls are named `<prefix>:Inner[<face>]`
+/// after the face they line; the outside keeps its names. With no open
+/// face the body gets a closed cavity (Inventor allows that).
+pub fn shell(
+    s: &ExactSolid,
+    open: &[usize],
+    thickness: Real,
+    side: ShellSide,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    if !(thickness.is_finite() && thickness > 1e-6) {
+        return Err("the thickness must be positive".into());
+    }
+    let samples = face_samples(s)?;
+    let pts = |want: &dyn Fn(usize) -> bool| -> Vec<sg::Vec3> {
+        samples
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| want(*i))
+            .filter_map(|(_, p)| p.as_ref().map(v3))
+            .collect()
+    };
+    let open_pts = pts(&|i| open.contains(&i));
+    if open_pts.len() < open.len() {
+        return Err("a face to remove has no area".into());
+    }
+    let inner_name = |face: usize| -> String {
+        match s.face_names.get(face).cloned().flatten() {
+            Some(n) => format!("{prefix}:Inner[{n}]"),
+            None => format!("{prefix}:Inner:{face}"),
+        }
+    };
+    // Inside with faces to remove: the kernel's own shell (convex bodies
+    // and walls of any kind); the general way below if it gives up.
+    let first = if side == ShellSide::Inside && !open.is_empty() {
+        match guarded("shell", || sk::shell(&s.body, &open_pts, thickness)) {
+            Ok(body) => {
+                let face_names = names_from(&body, &[s], &|o| match o {
+                    FaceOrigin::Offset { face, .. } => Some(inner_name(*face)),
+                    _ => None,
+                });
+                return Ok(ExactSolid {
+                    name: s.name.clone(),
+                    body,
+                    face_names,
+                    profiles: s.profiles.clone(),
+                });
+            }
+            Err(e) => Some(e),
+        }
+    } else {
+        None
+    };
+    // An offset body less a cavity (SolidCraft's Outside / Both): the walls
+    // moved out by `out`, the cavity the body moved in by `inn`, its open
+    // faces pushed out through the walls.
+    let (out, inn) = match side {
+        ShellSide::Inside => (0.0, thickness),
+        ShellSide::Outside => (thickness, 0.0),
+        ShellSide::Both => (thickness / 2.0, thickness / 2.0),
+    };
+    let walls = pts(&|i| !open.contains(&i));
+    let general = || -> Result<ExactSolid, String> {
+        let outer = if out > 0.0 {
+            let body = guarded("shell", || sk::offset_faces(&s.body, &walls, out))?;
+            let face_names = names_from(&body, &[s], &|_| None);
+            ExactSolid {
+                name: s.name.clone(),
+                body,
+                face_names,
+                profiles: s.profiles.clone(),
+            }
+        } else {
+            s.clone()
+        };
+        let lined = ExactSolid {
+            name: s.name.clone(),
+            body: s.body.clone(),
+            face_names: (0..s.face_names.len())
+                .map(|i| Some(inner_name(i)))
+                .collect(),
+            profiles: Vec::new(),
+        };
+        let mut cavity = if inn > 0.0 {
+            let body = guarded("shell", || sk::offset_faces(&lined.body, &walls, -inn))?;
+            let face_names = names_from(&body, &[&lined], &|_| None);
+            ExactSolid {
+                face_names,
+                body,
+                ..lined
+            }
+        } else {
+            lined
+        };
+        if !open_pts.is_empty() {
+            let push = 2.0 * thickness + 1.0;
+            let body = guarded("shell", || sk::offset_faces(&cavity.body, &open_pts, push))?;
+            let face_names = names_from(&body, &[&cavity], &|_| None);
+            cavity = ExactSolid {
+                face_names,
+                body,
+                ..cavity
+            };
+        }
+        boolean(&outer, &cavity, ExactOp::Cut)?.ok_or_else(|| "the shell removed everything".into())
+    };
+    general().map_err(|e| first.unwrap_or(e))
+}
+
 // --------------------------------------------------------- to our B-rep ---
 
 /// Display tolerance (mm) of the exact kernel's triangles.
@@ -1680,5 +1850,165 @@ mod tests {
     fn panics_become_errors() {
         let r: Result<(), String> = guarded("test", || panic!("boom"));
         assert!(r.is_err());
+    }
+
+    // ------------------------------------------------------------ shell ---
+
+    use std::f64::consts::PI;
+
+    /// A prism of the closed polygon `pts` (counter-clockwise), `h` high.
+    fn prism(pts: &[(f64, f64)], h: f64, id: &str) -> ExactSolid {
+        use super::super::extrude::ProfileSegment;
+        let segs: Vec<ProfileSegment> = (0..pts.len())
+            .map(|i| {
+                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+                ProfileSegment {
+                    geometry: Segment2::Line {
+                        a: nalgebra::Point2::new(a.0, a.1),
+                        b: nalgebra::Point2::new(b.0, b.1),
+                    },
+                    name: format!("L{i}:0"),
+                }
+            })
+            .collect();
+        let prof = profile(&segs, &[]).unwrap();
+        extrude(&Plane::xy(), &prof, 0.0, h, 0.0, id).unwrap()
+    }
+
+    fn cylinder(r: f64, h: f64, id: &str) -> ExactSolid {
+        use super::super::extrude::ProfileSegment;
+        let c = vec![ProfileSegment {
+            geometry: Segment2::Arc {
+                c: nalgebra::Point2::new(0.0, 0.0),
+                r,
+                a0: 0.0,
+                sweep: std::f64::consts::TAU,
+            },
+            name: "C1:0".into(),
+        }];
+        let prof = profile(&c, &[]).unwrap();
+        extrude(&Plane::xy(), &prof, 0.0, h, 0.0, id).unwrap()
+    }
+
+    fn face(s: &ExactSolid, name: &str, hint: (f64, f64, f64)) -> usize {
+        faces_named(s, name, Point3::new(hint.0, hint.1, hint.2)).unwrap()[0]
+    }
+
+    /// Volume within 3e-4 (relative: the kernel measures curved faces on
+    /// its triangles) and a valid B-rep.
+    fn check_shell(s: &ExactSolid, expect: f64) {
+        let (vol, _, _) = s.measure().unwrap();
+        assert!((vol - expect).abs() / expect < 3e-4, "{vol} vs {expect}");
+        let brep = to_brep(std::slice::from_ref(s)).unwrap();
+        for (id, _) in brep.solids() {
+            brep.validate_solid(id).unwrap();
+        }
+    }
+
+    fn box_40() -> ExactSolid {
+        box_named(Point3::origin(), Point3::new(40.0, 30.0, 20.0), "Box1").unwrap()
+    }
+
+    #[test]
+    fn shell_inside_open_top_of_a_box() {
+        let b = box_40();
+        let top = face(&b, "Box1:Top", (20.0, 15.0, 20.0));
+        let s = shell(&b, &[top], 2.0, ShellSide::Inside, "Shell1").unwrap();
+        check_shell(&s, 24_000.0 - 36.0 * 26.0 * 18.0);
+        // The rim round the opening is what is left of the top: it keeps
+        // the top's name; 6 outer + 5 inner faces.
+        let names: Vec<&str> = s.names().iter().flatten().map(String::as_str).collect();
+        assert_eq!(names.len(), 11, "{names:?}");
+        for n in [
+            "Box1:Top",
+            "Box1:Front",
+            "Shell1:Inner[Box1:Front]",
+            "Shell1:Inner[Box1:Bottom]",
+        ] {
+            assert!(names.contains(&n), "{n} missing in {names:?}");
+        }
+        assert!(!names.iter().any(|n| n.contains("Inner[Box1:Top]")));
+    }
+
+    #[test]
+    fn shell_outside_and_both_of_a_box() {
+        let b = box_40();
+        let top = face(&b, "Box1:Top", (20.0, 15.0, 20.0));
+        let out = shell(&b, &[top], 2.0, ShellSide::Outside, "Shell1").unwrap();
+        // The walls grow out (the open top stays at z = 20); the old box is
+        // the cavity.
+        check_shell(&out, 44.0 * 34.0 * 22.0 - 24_000.0);
+        let m = out.measure_full().unwrap();
+        assert!((m.bbox.0.z + 2.0).abs() < 1e-6 && (m.bbox.1.z - 20.0).abs() < 1e-6);
+        let names: Vec<&str> = out.names().iter().flatten().map(String::as_str).collect();
+        assert!(names.contains(&"Shell1:Inner[Box1:Front]"), "{names:?}");
+        let both = shell(&b, &[top], 2.0, ShellSide::Both, "Shell1").unwrap();
+        check_shell(&both, 42.0 * 32.0 * 21.0 - 38.0 * 28.0 * 19.0);
+    }
+
+    #[test]
+    fn shell_of_a_cylinder_open_top() {
+        let c = cylinder(10.0, 20.0, "Extrusion1");
+        let top = face(&c, "Extrusion1:End", (0.0, 0.0, 20.0));
+        let s = shell(&c, &[top], 2.0, ShellSide::Inside, "Shell1").unwrap();
+        check_shell(&s, PI * 100.0 * 20.0 - PI * 64.0 * 18.0);
+        let out = shell(&c, &[top], 2.0, ShellSide::Outside, "Shell1").unwrap();
+        check_shell(&out, PI * 144.0 * 22.0 - PI * 100.0 * 20.0);
+    }
+
+    #[test]
+    fn shell_of_a_non_convex_prism() {
+        // An L: 30 × 30 less the 20 × 20 corner, 10 high.
+        let l = prism(
+            &[
+                (0.0, 0.0),
+                (30.0, 0.0),
+                (30.0, 10.0),
+                (10.0, 10.0),
+                (10.0, 30.0),
+                (0.0, 30.0),
+            ],
+            10.0,
+            "Extrusion1",
+        );
+        let top = face(&l, "Extrusion1:End", (5.0, 5.0, 10.0));
+        let s = shell(&l, &[top], 1.0, ShellSide::Inside, "Shell1").unwrap();
+        // Cavity: the L offset in by 1 (area 28·8 + 8·20), 9 deep.
+        let cavity = (28.0 * 8.0 + 8.0 * 20.0) * 9.0;
+        check_shell(&s, 500.0 * 10.0 - cavity);
+    }
+
+    #[test]
+    fn shell_with_two_open_faces_and_rounded_walls() {
+        // A box open at the top and the front.
+        let b = box_40();
+        let top = face(&b, "Box1:Top", (20.0, 15.0, 20.0));
+        let front = face(&b, "Box1:Front", (20.0, 0.0, 10.0));
+        let s = shell(&b, &[top, front], 2.0, ShellSide::Inside, "Shell1").unwrap();
+        check_shell(&s, 24_000.0 - 36.0 * 28.0 * 18.0);
+        // Rounded vertical edges (r 5): the inner rounds have radius 3.
+        let r = rounded_box();
+        let top = face(&r, "Box1:Top", (20.0, 15.0, 20.0));
+        let s = shell(&r, &[top], 2.0, ShellSide::Inside, "Shell1").unwrap();
+        let outer = 24_000.0 - 4.0 * (25.0 - PI * 25.0 / 4.0) * 20.0;
+        let inner = (36.0 * 26.0 - 4.0 * (9.0 - PI * 9.0 / 4.0)) * 18.0;
+        check_shell(&s, outer - inner);
+    }
+
+    #[test]
+    fn shell_without_open_faces_leaves_a_closed_cavity() {
+        let b = box_40();
+        let s = shell(&b, &[], 2.0, ShellSide::Inside, "Shell1").unwrap();
+        check_shell(&s, 24_000.0 - 36.0 * 26.0 * 16.0);
+    }
+
+    #[test]
+    fn shell_errors() {
+        let b = box_40();
+        let top = face(&b, "Box1:Top", (20.0, 15.0, 20.0));
+        assert!(shell(&b, &[top], 0.0, ShellSide::Inside, "Shell1").is_err());
+        assert!(shell(&b, &[top], -1.0, ShellSide::Inside, "Shell1").is_err());
+        // Walls thicker than half the body: nothing sensible is left.
+        assert!(shell(&b, &[top], 16.0, ShellSide::Inside, "Shell1").is_err());
     }
 }

@@ -11,9 +11,9 @@ use cadcraft3d::kernel::{Point3, Real};
 use cadcraft3d::part::PartialChamfer;
 use cadcraft3d::part::blend::edge_ref;
 use cadcraft3d::part::{
-    BlendFeature, EdgeRef, Extent, ExtentDirection, ExtrudeFeature, Feature, FilletSet, Operation,
-    OriginPlane, PartDocument, ProfileRef, RevolveFeature, SketchOptions, SketchPlacement,
-    VariableRadius,
+    BlendFeature, EdgeRef, Extent, ExtentDirection, ExtrudeFeature, FaceRef, Feature, FilletSet,
+    Operation, OriginPlane, PartDocument, ProfileRef, RevolveFeature, ShellDirection, ShellFeature,
+    SketchOptions, SketchPlacement, VariableRadius,
 };
 use cadcraft3d::sketch::{Entity, Point2, Region};
 
@@ -359,6 +359,217 @@ fn c_edit_feature() -> Result<PartDocument, String> {
         return Err(format!("sick: {:?}", part.feature_health));
     }
     Ok(part)
+}
+
+// -------------------------------------------------------------- shell ---
+
+/// The reference of the face named `name` (the piece nearest `at`).
+fn face_at(part: &PartDocument, name: &str, at: [Real; 3]) -> Result<FaceRef, String> {
+    let p = Point3::from(at);
+    part.body
+        .faces()
+        .filter(|(_, f)| f.name.as_deref() == Some(name))
+        .filter_map(|(fid, _)| cadcraft3d::part::shell::face_ref(&part.body, fid, Some(p)))
+        .next()
+        .ok_or_else(|| format!("no face {name}"))
+}
+
+fn shell_of(
+    mut part: PartDocument,
+    faces: &[(&str, [Real; 3])],
+    t: Real,
+    dir: ShellDirection,
+) -> Result<PartDocument, String> {
+    let mut def = ShellFeature::new(t);
+    def.direction = dir;
+    for (n, at) in faces {
+        def.remove.push(face_at(&part, n, *at)?);
+    }
+    part.add_shell(def).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+const TOP: (&str, [Real; 3]) = ("Extrusion1:End", [20.0, 15.0, 20.0]);
+
+fn s_shell_box() -> Result<PartDocument, String> {
+    shell_of(
+        plate(40.0, 30.0, 20.0)?,
+        &[TOP],
+        2.0,
+        ShellDirection::Inside,
+    )
+}
+
+fn s_shell_outside() -> Result<PartDocument, String> {
+    shell_of(
+        plate(40.0, 30.0, 20.0)?,
+        &[TOP],
+        2.0,
+        ShellDirection::Outside,
+    )
+}
+
+fn s_shell_both() -> Result<PartDocument, String> {
+    shell_of(plate(40.0, 30.0, 20.0)?, &[TOP], 2.0, ShellDirection::Both)
+}
+
+fn s_shell_cylinder() -> Result<PartDocument, String> {
+    shell_of(
+        s_cylinder()?,
+        &[("Extrusion1:End", [0.0, 0.0, 50.0])],
+        2.0,
+        ShellDirection::Inside,
+    )
+}
+
+fn s_shell_closed() -> Result<PartDocument, String> {
+    shell_of(plate(40.0, 30.0, 20.0)?, &[], 2.0, ShellDirection::Inside)
+}
+
+/// The four vertical edges of the 40×30×20 plate (every piece: after a
+/// shell they are split where the floor inside is, the blend joins them).
+fn vertical_edges(part: &PartDocument) -> Vec<EdgeRef> {
+    edges_where(part, |h| {
+        h[2] > 1e-6
+            && h[2] < 20.0 - 1e-6
+            && (h[0].abs() < 1e-6 || (h[0] - 40.0).abs() < 1e-6)
+            && (h[1].abs() < 1e-6 || (h[1] - 30.0).abs() < 1e-6)
+    })
+}
+
+/// Fillet r5 on the vertical edges, then a shell open at the top.
+fn c_fillet_then_shell() -> Result<PartDocument, String> {
+    let mut part = plate(40.0, 30.0, 20.0)?;
+    let e = vertical_edges(&part);
+    if e.len() != 4 {
+        return Err(format!("{} vertical edges", e.len()));
+    }
+    part.add_blend(BlendFeature::fillet(e, 5.0))
+        .map_err(|e| e.to_string())?;
+    shell_of(part, &[TOP], 2.0, ShellDirection::Inside)
+}
+
+/// A shell, then a fillet r1 on the outer vertical edges.
+fn c_shell_then_fillet() -> Result<PartDocument, String> {
+    let mut part = s_shell_box()?;
+    let e = vertical_edges(&part);
+    if e.len() != 8 {
+        return Err(format!("{} vertical edge pieces", e.len()));
+    }
+    part.add_blend(BlendFeature::fillet(e, 1.0))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A shell, then a chamfer 0.5 round the outer bottom edges.
+fn c_shell_then_chamfer() -> Result<PartDocument, String> {
+    let mut part = s_shell_box()?;
+    let e = edges_where(&part, |h| {
+        h[2].abs() < 1e-6
+            && (h[0].abs() < 1e-6
+                || (h[0] - 40.0).abs() < 1e-6
+                || h[1].abs() < 1e-6
+                || (h[1] - 30.0).abs() < 1e-6)
+    });
+    if e.len() != 4 {
+        return Err(format!("{} bottom edges", e.len()));
+    }
+    part.add_blend(BlendFeature::chamfer(e, 0.5))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A shell, then a hole Ø6 cut through the front wall (a sketch on the
+/// front face).
+fn c_shell_then_hole() -> Result<PartDocument, String> {
+    let mut part = s_shell_box()?;
+    let front = part
+        .body
+        .faces()
+        .find(|(_, f)| {
+            f.name
+                .as_deref()
+                .is_some_and(|n| n.starts_with("Extrusion1:Side:"))
+                && f.mesh
+                    .as_ref()
+                    .is_some_and(|m| m.positions.iter().all(|p| p.y.abs() < 1e-6))
+        })
+        .and_then(|(_, f)| f.name.clone())
+        .ok_or("no front face")?;
+    let j = part
+        .create_sketch(SketchPlacement::on_face(&front), &no_projection())
+        .map_err(|e| e.to_string())?;
+    let plane = part.sketches[j].sketch.plane.clone();
+    let c = plane.project(&Point3::new(20.0, 0.0, 10.0));
+    part.sketches[j]
+        .sketch
+        .add_circle(c, 3.0)
+        .map_err(|e| e.to_string())?;
+    let regions = part.sketches[j].sketch.regions();
+    let r = regions
+        .iter()
+        .find(|r| r.holes.is_empty() && r.area() < 30.0)
+        .ok_or("no region")?;
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(r, r.interior_point())], 1.0);
+    ex.operation = Operation::Cut;
+    ex.extent = Extent::ThroughAll;
+    ex.direction = ExtentDirection::Flipped;
+    // Through the front wall only: 2 deep into the box.
+    ex.extent = Extent::Distance;
+    ex.distance = 2.0;
+    part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// A shell open at the top and the front.
+fn c_shell_two_faces() -> Result<PartDocument, String> {
+    let part = plate(40.0, 30.0, 20.0)?;
+    let front = part
+        .body
+        .faces()
+        .find(|(_, f)| {
+            f.mesh
+                .as_ref()
+                .is_some_and(|m| m.positions.iter().all(|p| p.y.abs() < 1e-6))
+        })
+        .and_then(|(_, f)| f.name.clone())
+        .ok_or("no front face")?;
+    shell_of(
+        part,
+        &[TOP, (front.as_str(), [20.0, 0.0, 10.0])],
+        2.0,
+        ShellDirection::Inside,
+    )
+}
+
+/// Edit Feature: the shell's thickness 2 → 3; a fillet after it survives.
+fn c_shell_edit() -> Result<PartDocument, String> {
+    let mut part = c_shell_then_fillet()?;
+    let k = part
+        .features
+        .iter()
+        .position(|f| f.id() == "Shell1")
+        .ok_or("no Shell1")?;
+    let Some(Feature::Shell(mut sh)) = part.features.get(k).cloned() else {
+        return Err("not a shell".into());
+    };
+    sh.thickness = 3.0;
+    part.replace_feature(k, Feature::Shell(sh))
+        .map_err(|e| e.to_string())?;
+    if !part.feature_health.is_empty() {
+        return Err(format!("sick: {:?}", part.feature_health));
+    }
+    Ok(part)
+}
+
+/// Walls thicker than half the box: refused, the part unchanged.
+fn c_shell_too_thick() -> Result<PartDocument, String> {
+    shell_of(
+        plate(40.0, 30.0, 20.0)?,
+        &[TOP],
+        16.0,
+        ShellDirection::Inside,
+    )
 }
 
 // ------------------------------------------------------- very complex ---
@@ -973,7 +1184,95 @@ fn cases() -> Vec<Case> {
     // Round r on a hole rim: area (1 − π/4) r², centroid 0.2234 r out.
     let round =
         2.0 * PI * (2.0 + 0.5 * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI))) * (1.0 - PI / 4.0) * 0.25;
+    let shell_box = 24_000.0 - 36.0 * 26.0 * 18.0;
+    let round4 = |r: Real, h: Real| 4.0 * (r * r - PI * r * r / 4.0) * h;
     vec![
+        Case {
+            level: "simple",
+            name: "shell 2 inside, box open at the top",
+            budget_ms: 300.0,
+            build: s_shell_box,
+            want: Want::Volume(shell_box),
+        },
+        Case {
+            level: "simple",
+            name: "shell 2 outside",
+            budget_ms: 300.0,
+            build: s_shell_outside,
+            want: Want::Volume(44.0 * 34.0 * 22.0 - 24_000.0),
+        },
+        Case {
+            level: "simple",
+            name: "shell 2 both ways",
+            budget_ms: 300.0,
+            build: s_shell_both,
+            want: Want::Volume(42.0 * 32.0 * 21.0 - 38.0 * 28.0 * 19.0),
+        },
+        Case {
+            level: "simple",
+            name: "shell 2 of a cylinder r15, open top",
+            budget_ms: 300.0,
+            build: s_shell_cylinder,
+            want: Want::Volume(PI * (225.0 * 50.0 - 169.0 * 48.0)),
+        },
+        Case {
+            level: "simple",
+            name: "shell 2, no face removed: closed cavity",
+            budget_ms: 300.0,
+            build: s_shell_closed,
+            want: Want::Volume(24_000.0 - 36.0 * 26.0 * 16.0),
+        },
+        Case {
+            level: "complex",
+            name: "fillet r5 then shell 2",
+            budget_ms: 500.0,
+            build: c_fillet_then_shell,
+            want: Want::Volume(
+                24_000.0 - round4(5.0, 20.0) - (36.0 * 26.0 - round4(3.0, 1.0)) * 18.0,
+            ),
+        },
+        Case {
+            level: "complex",
+            name: "shell 2 then fillet r1 outside",
+            budget_ms: 500.0,
+            build: c_shell_then_fillet,
+            want: Want::Volume(shell_box - round4(1.0, 20.0)),
+        },
+        Case {
+            level: "complex",
+            name: "shell 2 then chamfer 0.5 bottom",
+            budget_ms: 500.0,
+            build: c_shell_then_chamfer,
+            want: Want::Volume(shell_box - (0.125 * 140.0 - 4.0 * 0.125 / 3.0)),
+        },
+        Case {
+            level: "complex",
+            name: "shell 2 then hole d6 through the front wall",
+            budget_ms: 500.0,
+            build: c_shell_then_hole,
+            want: Want::Volume(shell_box - PI * 9.0 * 2.0),
+        },
+        Case {
+            level: "complex",
+            name: "shell 2 open at top and front",
+            budget_ms: 300.0,
+            build: c_shell_two_faces,
+            want: Want::Volume(24_000.0 - 36.0 * 28.0 * 18.0),
+        },
+        Case {
+            level: "complex",
+            name: "shell edited 2 -> 3, fillet after it kept",
+            budget_ms: 800.0,
+            build: c_shell_edit,
+            want: Want::Volume(24_000.0 - 34.0 * 24.0 * 17.0 - round4(1.0, 20.0)),
+        },
+        Case {
+            level: "complex",
+            name: "shell 16 in a box 20 high: refused",
+            budget_ms: 300.0,
+            build: c_shell_too_thick,
+            want: Want::Error("geometry kernel"),
+        },
         Case {
             level: "complex",
             name: "pocket: 2 circles + line + arc, 8 deep",

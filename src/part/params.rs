@@ -158,6 +158,7 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
                 v
             }
         },
+        Feature::Shell(_) => vec![("thickness", Unit::Mm)],
         Feature::Work(w) => match &w.def {
             super::WorkDef::Plane(super::WorkPlaneDef::Offset { .. }) => {
                 vec![("distance", Unit::Mm)]
@@ -228,6 +229,7 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
             (_, "partial_length") => b.partial.as_ref().map(|p| p.length),
             _ => None,
         },
+        Feature::Shell(s) => (field == "thickness").then_some(s.thickness),
         Feature::Work(w) => match (&w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 Some(*distance)
@@ -285,6 +287,11 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
             }
             _ => {}
         },
+        Feature::Shell(s) => {
+            if field == "thickness" {
+                s.thickness = v;
+            }
+        }
         Feature::Work(w) => match (&mut w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 *distance = v
@@ -307,6 +314,7 @@ fn feature_params_mut(f: &mut Feature) -> Option<&mut FeatureParams> {
         Feature::Revolve(r) => Some(&mut r.params),
         Feature::Work(w) => Some(&mut w.params),
         Feature::Blend(b) => Some(&mut b.params),
+        Feature::Shell(s) => Some(&mut s.params),
     }
 }
 
@@ -317,6 +325,7 @@ fn feature_params(f: &Feature) -> Option<&FeatureParams> {
         Feature::Revolve(r) => Some(&r.params),
         Feature::Work(w) => Some(&w.params),
         Feature::Blend(b) => Some(&b.params),
+        Feature::Shell(s) => Some(&s.params),
     }
 }
 

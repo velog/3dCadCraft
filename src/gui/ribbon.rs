@@ -63,6 +63,8 @@ pub enum Action {
     Fillet,
     /// Chamfer of model edges.
     Chamfer,
+    /// Shell: hollow a solid.
+    Shell,
     /// Work Axis: the method follows from the picks.
     WorkAxis,
     /// Work Point: the method follows from the picks.
@@ -340,7 +342,13 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         Action::Chamfer,
                         "Chamfer: bevel the picked edges (Distance, Two Distances, Distance and Angle)",
                     ),
-                    todo(Icon::Shell, "Shell", None, "2.6"),
+                    ready(
+                        Icon::Shell,
+                        "Shell",
+                        None,
+                        Action::Shell,
+                        "Shell: hollow the solid, remove the picked faces (Inside, Outside, Both)",
+                    ),
                     todo(Icon::Draft, "Draft", None, "2.8"),
                     todo(Icon::Thread, "Thread", None, "2.9"),
                     todo(Icon::SlotFeature, "Slot", None, "2.3"),
