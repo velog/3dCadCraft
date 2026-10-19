@@ -62,7 +62,7 @@ impl std::fmt::Debug for ExactSolid {
 
 /// Runs a call into the exact kernel; a panic becomes an error.
 fn guarded<T>(what: &str, f: impl FnOnce() -> sk::Result<T>) -> Result<T, String> {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+    match crate::diagnostics::crash::guard(f) {
         Ok(Ok(v)) => Ok(v),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err(format!("{what}: internal error in the geometry kernel")),
@@ -625,8 +625,7 @@ pub fn union_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> 
 
 /// Whether `p` lies inside the solid's material.
 pub fn contains(s: &ExactSolid, p: Point3) -> bool {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.body.contains(v3(&p))))
-        .unwrap_or(false)
+    crate::diagnostics::crash::guard(|| s.body.contains(v3(&p))).unwrap_or(false)
 }
 
 /// Whether two solids share material or touch.
@@ -1903,10 +1902,8 @@ fn add_solid(out: &mut BRep, s: &ExactSolid) -> Result<(), String> {
 
     // Inside test for the orientation fallback below.
     let eps = body.size().max(1e-9) * 1e-5;
-    let inside = |p: Point3| {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body.contains(v3(&p))))
-            .unwrap_or(false)
-    };
+    let inside =
+        |p: Point3| crate::diagnostics::crash::guard(|| body.contains(v3(&p))).unwrap_or(false);
     // Vertices: edge polyline ends, welded.
     let mut vid: HashMap<Key, VertexId> = HashMap::new();
     let mut vertex = |out: &mut BRep, p: Point3| -> VertexId {

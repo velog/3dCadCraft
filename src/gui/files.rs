@@ -20,6 +20,8 @@ pub(super) enum DialogPurpose {
     /// Save as an unpacked folder (git-friendly).
     SaveFolder,
     Export(ExportFormat),
+    /// Help -> Save Diagnostics (a zip, `gui/diag.rs`).
+    Diagnostics,
 }
 
 impl DialogPurpose {
@@ -29,6 +31,7 @@ impl DialogPurpose {
             DialogPurpose::SaveAs => "Save As".into(),
             DialogPurpose::SaveFolder => "Save as Folder".into(),
             DialogPurpose::Export(f) => format!("Export {}", f.extension().to_uppercase()),
+            DialogPurpose::Diagnostics => "Save Diagnostics".into(),
         }
     }
 
@@ -40,6 +43,7 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Stl) => &["stl"],
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
             DialogPurpose::Export(ExportFormat::Glb) => &["glb"],
+            DialogPurpose::Diagnostics => &["zip"],
         }
     }
 
@@ -397,6 +401,10 @@ impl CadCraftApp {
             DialogPurpose::SaveAs => format!("{stem}.{FILE_EXTENSION}"),
             DialogPurpose::SaveFolder => format!("{stem}.{FILE_EXTENSION}"),
             DialogPurpose::Export(f) => format!("{stem}.{}", f.extension()),
+            DialogPurpose::Diagnostics => format!(
+                "3dcadcraft-diagnostics-{}.zip",
+                crate::diagnostics::stamp(std::time::SystemTime::now())
+            ),
         };
         self.file_dialog = Some(FileDialog::new(purpose, start_dir(&self.file_path), name));
     }
@@ -575,12 +583,19 @@ impl CadCraftApp {
         let mut done: Option<PathBuf> = None;
         let mut cancel = false;
         let mut open = true;
-        egui::Window::new(d.purpose.title())
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size(egui::vec2(520.0, 420.0))
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        self.layout
+            .place(
+                "file_dialog",
+                ctx.content_rect(),
+                true,
+                egui::Window::new(d.purpose.title())
+                    .open(&mut open)
+                    .collapsible(false)
+                    .resizable(true)
+                    .default_size(egui::vec2(520.0, 420.0))
+                    .pivot(egui::Align2::CENTER_CENTER)
+                    .default_pos(ctx.content_rect().center()),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     let up = ui.add_enabled(
@@ -737,6 +752,7 @@ impl CadCraftApp {
                 self.file_path = path.display().to_string();
                 self.save_project(true);
             }
+            DialogPurpose::Diagnostics => self.save_diagnostics(&path),
             DialogPurpose::Export(f) => {
                 let name = path
                     .file_stem()
