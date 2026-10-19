@@ -58,10 +58,10 @@ pub enum TargetRef {
     Face(String),
     /// A vertex: the termination plane through it, parallel to the sketch.
     Vertex(String),
-    /// An origin or work plane (format revision 7).
+    /// An origin or work plane (format revision 8).
     Plane(PlaneRef),
     /// A work point, the part origin or an edge midpoint: the termination
-    /// plane through it, parallel to the sketch (format revision 7).
+    /// plane through it, parallel to the sketch (format revision 8).
     Point(PointRef),
 }
 
@@ -416,7 +416,7 @@ impl ExtrudeFeature {
             params: Default::default(),
             preset: None,
             alternate: false,
-            extend_face: false,
+            extend_face: true,
             terminator: None,
             open: None,
         }
@@ -511,7 +511,12 @@ impl ExtrudeFeature {
 
     /// [`Self::build`] with the part's work geometry (work planes and
     /// points as targets).
-    pub fn build_in(&self, body: &mut BRep, works: &WorkGeom, sketch: &Sketch) -> Result<(), String> {
+    pub fn build_in(
+        &self,
+        body: &mut BRep,
+        works: &WorkGeom,
+        sketch: &Sketch,
+    ) -> Result<(), String> {
         let plane: &Plane = &sketch.plane;
         for piece in self.pieces(body, works, sketch)? {
             if piece.span.clip.is_some() || piece.bounds.is_some() {
@@ -521,7 +526,13 @@ impl ExtrudeFeature {
                 );
             }
             let id = body
-                .extrude_profile(plane, &piece.outer, &piece.holes, &piece.span.levels, &piece.prefix)
+                .extrude_profile(
+                    plane,
+                    &piece.outer,
+                    &piece.holes,
+                    &piece.span.levels,
+                    &piece.prefix,
+                )
                 .map_err(|e| e.to_string())?;
             if self.output == super::Output::Surface {
                 let p = &piece.prefix;
@@ -593,7 +604,9 @@ impl ExtrudeFeature {
         let n = plane.normal.into_inner();
         let s0 = match &self.from {
             Some(t) => {
-                let s = t.offset(body, works, plane).map_err(|e| format!("From: {e}"))?;
+                let s = t
+                    .offset(body, works, plane)
+                    .map_err(|e| format!("From: {e}"))?;
                 if !self.extend_face
                     && let Some(f) = t.face(body)
                     && !face_covers(body, f, plane, 0.0, probes)
@@ -663,7 +676,10 @@ impl ExtrudeFeature {
             }
             Extent::To(t) => {
                 let base = |p: &Point2| plane.point_at(p.x, p.y) + n * s0;
-                match t.termination(body, works, plane).map_err(|e| format!("To: {e}"))? {
+                match t
+                    .termination(body, works, plane)
+                    .map_err(|e| format!("To: {e}"))?
+                {
                     Termination::Offset(end) => {
                         if !self.extend_face
                             && let Some(f) = t.face(body)
@@ -751,13 +767,17 @@ impl ExtrudeFeature {
                     self.terminator.as_ref().map(|name| {
                         body.solids()
                             .filter(|(_, s)| s.name.as_deref() == Some(name.as_str()))
-                            .flat_map(|(_, s)| s.shells.iter().flat_map(|sh| sh.faces.iter().copied()))
+                            .flat_map(|(_, s)| {
+                                s.shells.iter().flat_map(|sh| sh.faces.iter().copied())
+                            })
                             .collect()
                     });
                 if let (Some(set), Some(name)) = (&allowed, &self.terminator)
                     && set.is_empty()
                 {
-                    return Err(format!("To Next: the terminator body {name} no longer exists"));
+                    return Err(format!(
+                        "To Next: the terminator body {name} no longer exists"
+                    ));
                 }
                 body.faces()
                     .filter(|(f, _)| allowed.as_ref().is_none_or(|s| s.contains(f)))
@@ -899,7 +919,10 @@ fn probe_points(region: &Region) -> Vec<Point2> {
 
 /// Diagonal of the probes' box.
 fn probes_size(probes: &[Point2]) -> Real {
-    let (mut lo, mut hi) = (Point2::new(Real::MAX, Real::MAX), Point2::new(Real::MIN, Real::MIN));
+    let (mut lo, mut hi) = (
+        Point2::new(Real::MAX, Real::MAX),
+        Point2::new(Real::MIN, Real::MIN),
+    );
     for p in probes {
         lo = lo.inf(p);
         hi = hi.sup(p);
@@ -913,7 +936,13 @@ fn probes_size(probes: &[Point2]) -> Real {
 
 /// Whether planar face `f` covers every probe, projected along the sketch
 /// normal from offset `s0` onto the face's plane.
-fn face_covers(body: &BRep, f: crate::kernel::FaceId, plane: &Plane, s0: Real, probes: &[Point2]) -> bool {
+fn face_covers(
+    body: &BRep,
+    f: crate::kernel::FaceId,
+    plane: &Plane,
+    s0: Real,
+    probes: &[Point2],
+) -> bool {
     let Some(fp) = body.face_plane(f) else {
         return true; // curved faces are taken whole (infinite surface)
     };
@@ -980,7 +1009,10 @@ fn open_loop(
     operation: super::Operation,
 ) -> Result<(Vec<ProfileSegment>, Option<(Point3, Point3)>), String> {
     use crate::sketch::Entity;
-    let Some((lo, hi)) = body.bounding_box().filter(|_| body.solids().any(|(_, s)| !s.open)) else {
+    let Some((lo, hi)) = body
+        .bounding_box()
+        .filter(|_| body.solids().any(|(_, s)| !s.open))
+    else {
         return Err("an open profile needs a solid body (it cannot be the first feature)".into());
     };
     // The chain's curves as segments with their end points.
@@ -1054,13 +1086,19 @@ fn open_loop(
     let mut end_dir = Vector2::zeros();
     let mut start_dir = Vector2::zeros();
     for step in 0..pieces.len() {
-        let Some(k) = (0..pieces.len()).find(|&k| !used[k] && (close(pieces[k].a, at) || close(pieces[k].b, at))) else {
+        let Some(k) = (0..pieces.len())
+            .find(|&k| !used[k] && (close(pieces[k].a, at) || close(pieces[k].b, at)))
+        else {
             return Err("Match Shape: the open profile must be one connected chain".into());
         };
         used[k] = true;
         let c = &pieces[k];
         let forward = close(c.a, at);
-        let seg = if forward { c.seg.clone() } else { reverse_segment(&c.seg) };
+        let seg = if forward {
+            c.seg.clone()
+        } else {
+            reverse_segment(&c.seg)
+        };
         let (t0, t1) = segment_tangents(&seg);
         if step == 0 {
             start_dir = -t0;
@@ -1106,7 +1144,11 @@ fn open_loop(
                 t = t.min((lo_ - pc) / dc);
             }
         }
-        if t == Real::MAX { p } else { p + d * t.max(0.0) }
+        if t == Real::MAX {
+            p
+        } else {
+            p + d * t.max(0.0)
+        }
     };
     let e_out = exit(last, end_dir);
     let s_out = exit(first, start_dir);
@@ -1218,7 +1260,9 @@ fn segment_tangents(s: &Segment2) -> (Vector2, Vector2) {
             let t = |a: Real| Vector2::new(-a.sin(), a.cos()) * sg;
             (t(*a0), t(a0 + sweep))
         }
-        Segment2::Spline { points, reversed, .. } => {
+        Segment2::Spline {
+            points, reversed, ..
+        } => {
             let (p0, p1, q0, q1) = match points.as_slice() {
                 [a, b, .., c, d] => (*a, *b, *c, *d),
                 [a, b] => (*a, *b, *a, *b),

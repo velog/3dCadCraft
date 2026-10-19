@@ -59,6 +59,9 @@ pub enum Action {
     Extrude,
     /// Revolve sketch regions around an axis.
     Revolve,
+    /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch
+    /// + full Revolve).
+    Primitive(crate::part::PrimitiveKind),
     /// Work Plane: the method follows from the picks.
     WorkPlane,
     /// Fillet of model edges.
@@ -478,7 +481,40 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             ),
             panel(
                 "Primitives",
-                vec![todo(Icon::Box, "Box", None, "2.1").large()],
+                {
+                    use crate::part::PrimitiveKind as P;
+                    vec![
+                        ready(
+                            Icon::Box,
+                            "Box",
+                            None,
+                            Action::Primitive(P::Box),
+                            "Box: pick a plane, click the centre, then a corner (a sketch + Extrude)",
+                        )
+                        .large(),
+                        ready(
+                            Icon::Cylinder,
+                            "Cylinder",
+                            None,
+                            Action::Primitive(P::Cylinder),
+                            "Cylinder: pick a plane, click the centre, then the diameter (a sketch + Extrude)",
+                        ),
+                        ready(
+                            Icon::Sphere,
+                            "Sphere",
+                            None,
+                            Action::Primitive(P::Sphere),
+                            "Sphere: pick a plane, click the centre, then the diameter (a sketch + full Revolve)",
+                        ),
+                        ready(
+                            Icon::Torus,
+                            "Torus",
+                            None,
+                            Action::Primitive(P::Torus),
+                            "Torus: pick a plane, click the centre, the section centre, then the section diameter",
+                        ),
+                    ]
+                },
             ),
         ],
         Tab::Sketch => {

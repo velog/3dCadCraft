@@ -81,9 +81,7 @@ pub(super) fn extrude(
         .map_err(Kernel)?;
         // A size beyond everything involved (for the clipping solids).
         let reach = {
-            let (lo, hi) = body
-                .bounding_box()
-                .unwrap_or((plane.origin, plane.origin));
+            let (lo, hi) = body.bounding_box().unwrap_or((plane.origin, plane.origin));
             let far = lo.coords.amax().max(hi.coords.amax()) + plane.origin.coords.norm();
             2.0 * (far
                 + piece.extent()
@@ -94,10 +92,13 @@ pub(super) fn extrude(
             tool = clip_tool(&tool, clip, &piece.prefix, reach)?;
         }
         if let Some((lo, hi)) = piece.bounds {
-            let b = exact::box_named(lo, hi, &format!("{}:Bounds", piece.prefix)).map_err(Kernel)?;
+            let b =
+                exact::box_named(lo, hi, &format!("{}:Bounds", piece.prefix)).map_err(Kernel)?;
             tool = exact::boolean(&tool, &b, ExactOp::Intersect)
                 .map_err(Kernel)?
-                .ok_or_else(|| User("Match Shape: the open profile does not meet the body".into()))?;
+                .ok_or_else(|| {
+                    User("Match Shape: the open profile does not meet the body".into())
+                })?;
         }
         out.push(tool);
     }
@@ -133,7 +134,11 @@ fn slab(plane: &Plane, half: Real, from: Real, to: Real, name: &str) -> Result<E
 
 /// A solid cylinder around `cyl`'s axis, `2·len` long, its round face
 /// named `name`.
-fn cylinder_solid(cyl: &crate::kernel::Cylinder, len: Real, name: &str) -> Result<ExactSolid, Fail> {
+fn cylinder_solid(
+    cyl: &crate::kernel::Cylinder,
+    len: Real,
+    name: &str,
+) -> Result<ExactSolid, Fail> {
     use crate::kernel::{ProfileSegment, Segment2};
     let plane = Plane::new(cyl.origin, cyl.axis.into_inner(), cyl.x_axis.into_inner())
         .map_err(|e| Kernel(e.to_string()))?;
@@ -170,7 +175,11 @@ fn clip_tool(
         Clip::Plane { plane, keep } => {
             // The kept side at negative offsets of the slab's plane.
             let m = plane.normal.into_inner();
-            let m = if (keep - plane.origin).dot(&m) > 0.0 { -m } else { m };
+            let m = if (keep - plane.origin).dot(&m) > 0.0 {
+                -m
+            } else {
+                m
+            };
             let x = if m.x.abs() < 0.9 {
                 crate::kernel::Vector3::x()
             } else {

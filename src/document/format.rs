@@ -73,11 +73,11 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 5: Rectangular / Circular Pattern and Mirror (`Feature::Pattern`)
 ///   (2026-10-19).
 /// - 6: Hole and Thread (`Feature::Hole`, `Feature::Thread`) (2026-10-19).
-/// - 7: Extrude / Revolve terminations at work / origin planes and points
+/// - 8: Extrude / Revolve terminations at work / origin planes and points
 ///   (`TargetRef::Plane`, `TargetRef::Point`), Revolve To
 ///   (`RevolveExtent::To`); additive fields `alternate`, `extend_face`,
 ///   `terminator`, `open` (Match Shape), `minimum` (2026-10-19).
-pub const FORMAT_REVISION: u32 = 7;
+pub const FORMAT_REVISION: u32 = 8;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

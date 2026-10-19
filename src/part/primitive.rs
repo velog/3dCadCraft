@@ -186,8 +186,7 @@ pub fn draw(
                 value: 2.0 * small,
             })
             .map_err(err)?;
-            if let Some(crate::sketch::Entity::Circle { center, .. }) = sk.entity(circle).cloned()
-            {
+            if let Some(crate::sketch::Entity::Circle { center, .. }) = sk.entity(circle).cloned() {
                 sk.add_constraint(Constraint::PointLineDistance {
                     point: center,
                     line: axis,
@@ -230,6 +229,7 @@ pub fn primitive_sketch(
 /// profiles are filled in) or the operation of the full Revolve (Sphere,
 /// Torus).
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)] // built once per command
 pub enum PrimitiveFeature {
     /// Box / Cylinder.
     Extrude(ExtrudeFeature),
@@ -400,7 +400,12 @@ mod tests {
             .unwrap();
             let big = (s - c).norm();
             let small = (rim - s).norm();
-            close(volume(&part), 2.0 * PI * PI * big * small * small, 3e-4, "torus");
+            close(
+                volume(&part),
+                2.0 * PI * PI * big * small * small,
+                3e-4,
+                "torus",
+            );
         }
     }
 
@@ -464,7 +469,12 @@ mod tests {
             PrimitiveFeature::Revolve(Operation::Cut),
         )
         .unwrap();
-        close(volume(&part), base - 2.0 / 3.0 * PI * 1000.0, 3e-4, "cut sphere");
+        close(
+            volume(&part),
+            base - 2.0 / 3.0 * PI * 1000.0,
+            3e-4,
+            "cut sphere",
+        );
         // Join a sphere: adds the upper half.
         let mut part = block();
         add_primitive(
@@ -475,7 +485,12 @@ mod tests {
             PrimitiveFeature::Revolve(Operation::Join),
         )
         .unwrap();
-        close(volume(&part), base + 2.0 / 3.0 * PI * 1000.0, 3e-4, "join sphere");
+        close(
+            volume(&part),
+            base + 2.0 / 3.0 * PI * 1000.0,
+            3e-4,
+            "join sphere",
+        );
         // Intersect with a sphere: only the lower half ball is left.
         let mut part = block();
         add_primitive(
@@ -486,7 +501,12 @@ mod tests {
             PrimitiveFeature::Revolve(Operation::Intersect),
         )
         .unwrap();
-        close(volume(&part), 2.0 / 3.0 * PI * 1000.0, 3e-4, "intersect sphere");
+        close(
+            volume(&part),
+            2.0 / 3.0 * PI * 1000.0,
+            3e-4,
+            "intersect sphere",
+        );
         // New Solid torus beside the block: two bodies.
         let mut part = block();
         add_primitive(
@@ -516,7 +536,10 @@ mod tests {
         for (kind, clicks) in [
             (PrimitiveKind::Box, vec![p(0.0, 0.0), p(10.0, 0.0)]),
             (PrimitiveKind::Cylinder, vec![p(0.0, 0.0), p(0.0, 0.0)]),
-            (PrimitiveKind::Torus, vec![p(0.0, 0.0), p(5.0, 0.0), p(5.0, 6.0)]),
+            (
+                PrimitiveKind::Torus,
+                vec![p(0.0, 0.0), p(5.0, 0.0), p(5.0, 6.0)],
+            ),
             (PrimitiveKind::Sphere, vec![p(0.0, 0.0)]),
         ] {
             let feat = if kind.revolves() {

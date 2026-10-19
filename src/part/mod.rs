@@ -31,6 +31,8 @@ pub mod export;
 pub mod expr;
 pub mod extrude;
 pub mod hole;
+#[cfg(test)]
+mod option_tests;
 pub mod params;
 pub mod pattern;
 pub mod physical;
@@ -54,13 +56,13 @@ pub use blend::{
 pub use boolean::{Operation, Output};
 pub use draft::{DraftFeature, DraftType, PullRef};
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, OpenProfile, ProfileRef, TargetRef};
-pub use primitive::{PrimitiveFeature, PrimitiveKind};
 pub use hole::{
     ClearanceSpec, CosmeticThread, DrillPoint, FastenerFit, HoleCenter, HoleFeature, HoleGroup,
     HoleInstance, HoleSpec, HoleType, SeatType, Termination, ThreadFeature, ThreadSpec,
 };
 pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
+pub use primitive::{PrimitiveFeature, PrimitiveKind};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
 pub use shell::{FaceRef, ShellDirection, ShellFeature};
 pub use work::{LineRef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef};
@@ -1124,7 +1126,11 @@ impl PartDocument {
         }
         let id = self.next_feature_id("Extrusion");
         // A name given in the command (breadcrumb rename) is kept.
-        let name = if def.name.is_empty() { id.clone() } else { def.name.clone() };
+        let name = if def.name.is_empty() {
+            id.clone()
+        } else {
+            def.name.clone()
+        };
         (def.id, def.name, def.sketch) = (id.clone(), name, sketch_id.clone());
         let reused = !self.consumers(&sketch_id).is_empty();
         let before = (self.features.clone(), self.body.clone());
@@ -1163,7 +1169,11 @@ impl PartDocument {
             return Err(PartError::Feature("select at least one profile".into()));
         }
         let id = self.next_feature_id("Revolution");
-        let name = if def.name.is_empty() { id.clone() } else { def.name.clone() };
+        let name = if def.name.is_empty() {
+            id.clone()
+        } else {
+            def.name.clone()
+        };
         (def.id, def.name, def.sketch) = (id.clone(), name, sketch_id.clone());
         let reused = !self.consumers(&sketch_id).is_empty();
         let before = (self.features.clone(), self.body.clone());

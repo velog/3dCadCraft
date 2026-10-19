@@ -541,7 +541,9 @@ pub fn revolve(
         let o = plane.point_at(axis_origin.x, axis_origin.y);
         let d = (plane.x_axis.into_inner() * axis_dir.x + plane.y_axis().into_inner() * axis_dir.y)
             .normalize();
-        let rot = nalgebra::Rotation3::from_axis_angle(&nalgebra::Unit::new_normalize(d), start);
+        // The kernel sweeps a positive angle clockwise about `d` (seen
+        // from its tip): turn the start the same way.
+        let rot = nalgebra::Rotation3::from_axis_angle(&nalgebra::Unit::new_normalize(d), -start);
         let org = o + rot * (plane.origin - o);
         pl = sg::Plane::new(
             v3(&org),

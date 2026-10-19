@@ -534,6 +534,69 @@ fn speed_budgets() {
         }),
     ));
 
+    // Extrude / Revolve options (2027): a Box primitive, a Cylinder
+    // primitive cut To an inclined work plane, a Sphere primitive joined.
+    rows.push((
+        "primitives: box, cylinder cut to an inclined plane, sphere join",
+        4000.0,
+        median_ms(3, || {
+            use cadcraft3d::part::primitive::add_primitive;
+            use cadcraft3d::part::{
+                Extent, ExtrudeFeature, LineRef, Operation, OriginPlane, PlaneRef,
+                PrimitiveFeature, PrimitiveKind, SketchPlacement, TargetRef, WorkDef, WorkFeature,
+                WorkPlaneDef,
+            };
+            use cadcraft3d::sketch::Point2;
+            let mut p = PartDocument::default();
+            let xy = || SketchPlacement::on_origin_plane(OriginPlane::XY);
+            let f = PrimitiveFeature::extrude(&p, 40.0);
+            add_primitive(
+                &mut p,
+                PrimitiveKind::Box,
+                xy(),
+                &[Point2::new(40.0, 30.0), Point2::new(80.0, 60.0)],
+                f,
+            )
+            .unwrap();
+            let wp = p
+                .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Angle {
+                    base: PlaneRef::Origin(OriginPlane::XY),
+                    axis: LineRef::Origin(1),
+                    angle: 0.3,
+                })))
+                .unwrap();
+            let top = p
+                .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                    base: PlaneRef::Origin(OriginPlane::XY),
+                    distance: 40.0,
+                })))
+                .unwrap();
+            let on_top = || SketchPlacement {
+                plane: PlaneRef::Work(top.clone()),
+                ..Default::default()
+            };
+            let mut e = ExtrudeFeature::new(Vec::new(), 1.0);
+            e.extent = Extent::To(TargetRef::Plane(PlaneRef::Work(wp)));
+            e.operation = Operation::Cut;
+            add_primitive(
+                &mut p,
+                PrimitiveKind::Cylinder,
+                on_top(),
+                &[Point2::new(40.0, 30.0), Point2::new(50.0, 30.0)],
+                PrimitiveFeature::Extrude(e),
+            )
+            .unwrap();
+            add_primitive(
+                &mut p,
+                PrimitiveKind::Sphere,
+                on_top(),
+                &[Point2::new(65.0, 45.0), Point2::new(70.0, 45.0)],
+                PrimitiveFeature::Revolve(Operation::Join),
+            )
+            .unwrap();
+        }),
+    ));
+
     // Diagnostics: 1000 user actions journaled (a checkpoint line and the
     // part's state: a delta snapshot + volume / faces / health) on the
     // rounded box.

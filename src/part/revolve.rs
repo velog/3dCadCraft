@@ -12,8 +12,8 @@ use crate::kernel::{BRep, Plane, Point3, Real, RevolveAxis, Vector3};
 use crate::sketch::{Entity, EntityId, Sketch, Style};
 
 use super::extrude::{ExtentDirection, ProfileRef, TargetRef, kernel_profile};
-use super::placement::WorkGeom;
 use super::params::FeatureParams;
+use super::placement::WorkGeom;
 use super::{Operation, Output};
 
 /// The axis of a revolve.
@@ -34,7 +34,7 @@ pub enum RevolveExtent {
     /// By an angle (with direction).
     Angle,
     /// Up to a face, plane or point ([`RevolveFeature::to`]; format
-    /// revision 7).
+    /// revision 8).
     To,
 }
 
@@ -136,7 +136,11 @@ impl RevolveFeature {
                 let p = r.interior_point();
                 body.contains_point(&sketch.plane.point_at(p.x, p.y))
             });
-        if inside { Operation::Cut } else { Operation::Join }
+        if inside {
+            Operation::Cut
+        } else {
+            Operation::Join
+        }
     }
 
     /// Start angle and signed sweep, with To resolved against the model.
@@ -237,8 +241,14 @@ impl RevolveFeature {
         let angles: Vec<Real> = dirs
             .iter()
             .map(|u| {
-                let ccw = u0.cross(u).dot(&a).atan2(u0.dot(u)).rem_euclid(TAU);
-                if flipped { (TAU - ccw).rem_euclid(TAU) } else { ccw }
+                // The kernel sweeps a positive angle clockwise about the axis
+                // direction (seen from its tip).
+                let ccw = (-u0.cross(u).dot(&a)).atan2(u0.dot(u)).rem_euclid(TAU);
+                if flipped {
+                    (TAU - ccw).rem_euclid(TAU)
+                } else {
+                    ccw
+                }
             })
             .filter(|&t| t > 1e-9)
             .collect();
@@ -255,7 +265,9 @@ impl RevolveFeature {
     pub(super) fn sweep(&self) -> Result<(Real, Real), String> {
         match self.extent {
             RevolveExtent::Full => return Ok((0.0, TAU)),
-            RevolveExtent::To => return Err("To: the termination is resolved against the model".into()),
+            RevolveExtent::To => {
+                return Err("To: the termination is resolved against the model".into());
+            }
             RevolveExtent::Angle => {}
         }
         let pos = |v: Real, what: &str| {
@@ -284,7 +296,12 @@ impl RevolveFeature {
 
     /// [`Self::build`] with the part's work geometry (To a work plane or
     /// point).
-    pub fn build_in(&self, body: &mut BRep, works: &WorkGeom, sketch: &Sketch) -> Result<(), String> {
+    pub fn build_in(
+        &self,
+        body: &mut BRep,
+        works: &WorkGeom,
+        sketch: &Sketch,
+    ) -> Result<(), String> {
         let axis = resolve_axis(&self.axis, sketch)?;
         let (start, sweep) = self.sweep_in(body, works, sketch)?;
         let regions = sketch.regions();

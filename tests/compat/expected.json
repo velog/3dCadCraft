@@ -82,5 +82,12 @@
     "features": 4,
     "sketches": 2,
     "exact": true
+  },
+  "r8/extrude_options_r8.3dcadcraft": {
+    "volume": 176455.66594001814,
+    "faces": 18,
+    "features": 6,
+    "sketches": 4,
+    "exact": true
   }
 }

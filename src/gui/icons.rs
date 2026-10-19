@@ -128,6 +128,12 @@ pub enum Icon {
     WorkPoint,
     Ucs,
     Box,
+    /// Primitive cylinder.
+    Cylinder,
+    /// Primitive sphere.
+    Sphere,
+    /// Primitive torus.
+    Torus,
     // inspect / tools / view
     Measure,
     Mass,
@@ -845,6 +851,36 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
         }
         Box => {
             p.block([2.0, 6.0, 9.0, 8.0, 5.0], ink, soft);
+        }
+        Cylinder | Sphere | Torus => {
+            // An ellipse around (x, y) with half axes a, b.
+            let ellipse = |x: f32, y: f32, a: f32, b: f32| -> Vec<(f32, f32)> {
+                (0..24)
+                    .map(|k| {
+                        let t = k as f32 / 24.0 * std::f32::consts::TAU;
+                        (x + a * t.cos(), y + b * t.sin())
+                    })
+                    .collect()
+            };
+            match icon {
+                Cylinder => {
+                    p.fill(&[(3.0, 4.0), (13.0, 4.0), (13.0, 12.0), (3.0, 12.0)], soft);
+                    p.line(&[(3.0, 4.0), (3.0, 12.0)], ink);
+                    p.line(&[(13.0, 4.0), (13.0, 12.0)], ink);
+                    p.closed(&ellipse(8.0, 4.0, 5.0, 2.0), acc);
+                    p.line(&ellipse(8.0, 12.0, 5.0, 2.0)[..13], ink);
+                }
+                Sphere => {
+                    p.fill(&ellipse(8.0, 8.0, 6.0, 6.0), soft);
+                    p.circle(8.0, 8.0, 6.0, ink);
+                    p.closed(&ellipse(8.0, 8.0, 6.0, 2.0), acc);
+                }
+                _ => {
+                    p.fill(&ellipse(8.0, 8.0, 7.0, 4.0), soft);
+                    p.closed(&ellipse(8.0, 8.0, 7.0, 4.0), ink);
+                    p.closed(&ellipse(8.0, 7.5, 2.5, 1.2), acc);
+                }
+            }
         }
         Measure => {
             p.closed(&[(1.0, 10.0), (11.0, 2.0), (15.0, 6.0), (5.0, 14.0)], ink);

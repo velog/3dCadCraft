@@ -209,6 +209,7 @@
 - Rectangular / Circular Pattern и Mirror на операции и тела 🟡 (2026-10-19: копие на инструментите на Extrude/Revolve с една булева операция, тела Join / New Solid / Remove Original; [spec](spec/2.11-patterns.md), [spec](spec/2.12-mirror.md)); предстоят Suppress на копия, по крива, Sketch Driven.
 - Presets в панелите на командите 🟡 (2026-10-19: Extrude, Revolve, Fillet, Chamfer, Shell, Face Draft; Last Used / No Preset / вградени; [spec](spec/0.11-presets.md)); ⬜ Hole, Pattern, допуски в наборите, Hide Presets.
 - Fillet с променлив радиус: ✅ прави ръбове (2026-10-19, `fillet_variable_points`); ⬜ криви ръбове, NURBS случаи.
+- Extrude / Revolve по Inventor 2027 🟡 (2026-10-19, чака визуална проверка): breadcrumb (`gui/breadcrumb.rs`, общ за всички панели), Predict Boolean Operation, Keep sketch visible on (+), „+“, Ctrl+Enter, размери на скицата по време на прегледа, To до работни/начални равнини и точки, наклонени и цилиндрични граници (Alternate Solution), Extend face, Terminator, Match Shape за отворени профили, Revolve To с Minimum Solution, примитиви Box / Cylinder / Sphere / Torus ([spec](spec/2.1-extrude.md), [spec](spec/2.2-revolve.md)); ⬜ конусни/сферични граници, Revolve To Next и Match Shape.
 - **Листов метал** с разгъвка в DXF (5.6).
 - Конфигурации и фамилии (5.7, 3.9).
 - Повърхнини (5.4).

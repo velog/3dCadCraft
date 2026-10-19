@@ -526,13 +526,15 @@
   - редакция и „болни“ операции;
 - Output: Solid / Surface; операция New Solid / Join / Cut / Intersect (виж 2.13);
 - избор на тяло (Solids) при няколко тела ✅;
-- **предстои:** Match Shape, наклонени и криволинейни граници, наклон на сплайни.
+- 🟡 (2026-10-19, сравнение с Inventor 2027, чака визуална проверка): breadcrumb `Sketch1 > Extrusion1` (редакция на скицата и връщане, преименуване), Advanced Settings (Predict Boolean Operation, Keep sketch visible on (+)), бутон „+“, Ctrl+Enter, редакция на размерите на скицата по време на прегледа, Output без операция за базовата операция, прегледът чака Solids при няколко тела, To до работна/начална равнина и точка, To до наклонена стена/равнина, To до цилиндрична стена с Alternate Solution, Extend face to end feature (автоматично), Terminator за To Next, отворени профили с Match Shape;
+- 🟡 **Примитиви** (3D Model → Primitives): Box и Cylinder (скица + Extrude), Sphere и Torus (скица + пълен Revolve);
+- **предстои:** конусни/сферични граници, точка от друга скица като To, наклон на сплайни, Revolve с Match Shape.
 
 **Аналог.** Extrude.
 
 ## 2.2 Revolve (завъртане) — 🟡 · L
 
-**Статус (спецификация: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Готово: профили, ос (линия от скицата с авто-избор на единствената централна линия, X/Y/Z на началото), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, ъглите като параметри, диаметрален размер към централна линия. Предстои: работна ос и ръб като ос, To / To Next.
+**Статус (спецификация: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Готово: профили, ос (линия от скицата с авто-избор на единствената централна линия, X/Y/Z на началото), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, ъглите като параметри, диаметрален размер към централна линия. 🟡 (2026-10-19, Inventor 2027, чака визуална проверка): To (стена или равнина през оста, точка) с Minimum Solution, Predict Boolean Operation, Continue с десен клик, breadcrumb, „+“, примитиви Sphere и Torus; поправена посока на Symmetric/Asymmetric в точното ядро. Предстои: работна ос и ръб като ос, To Next, Match Shape.
 
 **Какво прави.** Завърта профил около ос: валове, втулки, фланци.
 
