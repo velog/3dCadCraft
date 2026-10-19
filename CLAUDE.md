@@ -609,6 +609,17 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   rest and a ring zone around the thread and cuts only the zone with `faceted_boolean`
   (36 stations a turn; zones in parallel). Grooves are recorded per feature and cut after
   the last feature (`finish_threads`, cached), so no later Boolean meets a faceted zone.
+- **Thread zones are matched by their box, not their middle**: the zone's top used to
+  follow the hole tool's start margin (1 % of the part), so on a thin plate of a large part
+  its middle lay above the plate and the groove was skipped silently (the owner's "the thread
+  makes no geometry"). `ThreadGroove::zone_box` is the match; the groove runs one pitch past
+  the face; a groove no solid takes is the feature's health. Fine threads in thin plates of
+  very large parts (300 mm, M3) fail in the kernel's faceted cut (its circles in so large a
+  face are approximations; SolidCraft's whole-body cut fails too) — reported, not hidden.
+- **Hole sketch**: centres are Center Points (`sketch::PointStyle::Center`); edge dimensions
+  of the Hole panel become `project_segment` reference lines (associative, by vertex names)
+  plus `PointLineDistance` dimensions of the hole's sketch at OK; `PartDocument::project_edge`
+  is also the sketch's Project Geometry (straight edges only).
 - **Hole data for drawings**: `PartDocument::holes()` (filled during regeneration, also from
   cache hits via `CachedStep::extra`). Pattern / Mirror must push `h.transformed(&m)` copies
   (with the element index in `copy`) into `hole_instances` at their place in the loop.

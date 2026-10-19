@@ -888,6 +888,8 @@ impl CadCraftApp {
                 ui_shown: Element::ALL.map(|e| self.layout.visible(e)),
                 clean: self.layout.clean,
                 full_screen: self.layout.full_screen,
+                project: self.project_geometry,
+                center_point: self.tools.center_point,
             };
             let mut fold = super::ribbon::Fold {
                 minimized: self.layout.s.ribbon_minimized,

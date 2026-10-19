@@ -118,6 +118,7 @@
 | **двоен клик** върху работен елемент (дърво) | Redefine: командата Plane/Axis/Point/UCS се отваря с текущите стойности | 🟡 |
 | **E** | Extrude | ✅ |
 | **R / H** | Revolve / Hole (в 3D Model) | 🟡 R ✅; H чака визуална проверка |
+| **Ctrl+Enter / +** | в панела Hole / Thread: OK / създава и започва нов със същите настройки | 🟡 чака визуална проверка |
 | **P / C** | Place / Constrain (в сглобка) | ⬜ |
 | **Ctrl+Z / Ctrl+Y** (и Ctrl+Shift+Z) | Undo / Redo | ✅ |
 | **Ctrl+S / Ctrl+Shift+S** | Save / Save As | ✅ |

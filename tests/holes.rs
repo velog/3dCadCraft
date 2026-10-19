@@ -401,6 +401,56 @@ fn tapped_m8_modeled_blind_keeps_the_bottom_exact() {
     assert!((1..5).contains(&tips), "{tips} drill point faces");
 }
 
+/// A modeled M3 through a plate `w` wide and `h` thick.
+fn m3_through(w: Real, h: Real) -> (PartDocument, Result<String, String>) {
+    let mut part = plate(w, w, h);
+    let mut t =
+        ThreadSpec::from_table(&Standards::builtin(), standards::ISO_METRIC, "M3", true).unwrap();
+    t.modeled = true;
+    let mut s = HoleSpec::tapped(t, h);
+    s.termination = Termination::ThroughAll;
+    let r = holes_at(&mut part, s, &[(20.0, 20.0)]);
+    (part, r)
+}
+
+fn groove_faces(part: &PartDocument) -> usize {
+    part.body
+        .faces()
+        .filter(|(_, f)| f.name.as_deref() == Some("Hole1:Thread:1"))
+        .count()
+}
+
+#[test]
+fn modeled_thread_in_a_thin_plate_of_a_large_part() {
+    // The owner's "the thread makes no geometry": on a 150 mm plate 2 mm
+    // thick the tool starts 2.1 mm above the face, the middle of the thread
+    // zone lay above the plate and the groove was skipped without a word.
+    let (part, r) = m3_through(150.0, 2.0);
+    r.unwrap();
+    assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+    assert!(
+        groove_faces(&part) > 50,
+        "{} groove faces",
+        groove_faces(&part)
+    );
+}
+
+#[test]
+fn a_thread_the_kernel_cannot_cut_is_reported() {
+    // 300 mm wide, 3 thick, M3: the kernel's faceted cut fails (the bore's
+    // circles in so large a face are its approximations; SolidCraft's own
+    // whole-body faceted cut fails the same way). The hole is refused with
+    // the reason instead of silently missing its thread.
+    let (part, r) = m3_through(300.0, 3.0);
+    match r {
+        Ok(_) => assert!(groove_faces(&part) > 50, "built: it must have its groove"),
+        Err(e) => {
+            assert!(e.contains("cosmetic"), "{e}");
+            assert_eq!(part.features.len(), 1, "the part is unchanged");
+        }
+    }
+}
+
 #[test]
 fn printing_clearance_widens_a_modeled_thread() {
     let mut t = m8();
@@ -708,4 +758,257 @@ fn two_blind_drilled_holes_are_valid() {
     .unwrap();
     let want = BLOCK - 2.0 * (PI * 9.0 * 10.0 + cone(3.0, 118f64.to_radians()));
     check(&part, want, 2e-4);
+}
+
+// ------------------------------------------------- owner's follow-ups ---
+
+#[test]
+fn hole_centres_are_center_points() {
+    let mut part = block();
+    holes_at(&mut part, HoleSpec::simple(6.0, 10.0), &[(10.0, 10.0)]).unwrap();
+    let ps = &part.sketches[1];
+    let (_, p) = ps.sketch.points().next().unwrap();
+    assert_eq!(p.style, cadcraft3d::sketch::PointStyle::Center);
+    assert_eq!(ps.sketch.center_points().len(), 1);
+    // Saved and read back; an old file without the style reads Normal.
+    let json = serde_json::to_string(&ps.sketch).unwrap();
+    assert!(json.contains("Center"), "{json}");
+    let back: cadcraft3d::sketch::Sketch = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.center_points().len(), 1);
+}
+
+#[test]
+fn a_centre_dimensioned_to_an_edge_stays_parametric() {
+    // The owner: dimension the centre to model edges, editable later.
+    let mut part = block();
+    let (i, ids) = part
+        .create_hole_sketch(TOP, &[Point3::new(12.0, 9.0, 20.0)])
+        .unwrap();
+    // Box edge along X at y = 0 on the top face: its end vertices.
+    let e = part
+        .body
+        .edges()
+        .find(|(e, x)| {
+            let a = part.body.vertex(x.start).unwrap().point;
+            let b = part.body.vertex(x.end).unwrap().point;
+            part.body.edge_direction(*e).is_some()
+                && (a.y.abs() + b.y.abs()) < 1e-9
+                && (a.z - 20.0).abs() + (b.z - 20.0).abs() < 1e-9
+        })
+        .map(|(e, _)| e)
+        .unwrap();
+    let line = part.project_edge(i, e).unwrap();
+    assert_eq!(part.project_edge(i, e).unwrap(), line, "projected once");
+    let c = part.sketches[i]
+        .sketch
+        .add_constraint(cadcraft3d::sketch::Constraint::PointLineDistance {
+            point: ids[0],
+            line,
+            value: 9.0,
+        })
+        .unwrap();
+    let mut def = HoleFeature::new(HoleSpec::simple(6.0, 10.0));
+    def.sketch = part.sketches[i].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(def).unwrap();
+    assert!((part.holes()[0].origin.y - 9.0).abs() < 1e-6);
+    // The dimension is a parameter: change it, the hole follows.
+    let name = part.sketches[i].sketch.dim_param(c).name.clone();
+    assert!(!name.is_empty());
+    part.set_parameter_expr(&name, "15").unwrap();
+    part.regenerate().unwrap();
+    assert!(
+        (part.holes()[0].origin.y - 15.0).abs() < 1e-6,
+        "{:?}",
+        part.holes()[0].origin
+    );
+    // The projection follows the model: a longer box keeps it on the edge.
+    assert!(
+        part.sketches[i].health.is_none(),
+        "{:?}",
+        part.sketches[i].health
+    );
+}
+
+#[test]
+fn deleting_a_centre_point_removes_its_hole() {
+    let mut part = block();
+    holes_at(
+        &mut part,
+        HoleSpec::simple(6.0, 10.0),
+        &[(10.0, 10.0), (30.0, 20.0)],
+    )
+    .unwrap();
+    assert_eq!(part.holes().len(), 2);
+    let pid = part.sketches[1].sketch.center_points()[0];
+    part.sketches[1].sketch.remove_point(pid).unwrap();
+    part.regenerate().unwrap();
+    assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+    assert_eq!(part.holes().len(), 1);
+}
+
+/// A sketch on a work plane half way up the block, a Ø6 hole through all.
+fn mid_plane_hole(symmetric: bool) -> PartDocument {
+    use cadcraft3d::part::{PlaneRef, WorkDef, WorkFeature, WorkPlaneDef};
+    let mut part = block();
+    part.add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+        base: PlaneRef::Face("Extrusion1:Start".into()),
+        distance: -10.0,
+    })))
+    .unwrap();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let i = part
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work("WorkPlane1".into()),
+                ..Default::default()
+            },
+            &opts,
+        )
+        .unwrap();
+    let plane = part.sketches[i].sketch.plane.clone();
+    let p = part.sketches[i]
+        .sketch
+        .add_center_point(plane.project(&Point3::new(20.0, 15.0, 10.0)));
+    let mut s = HoleSpec::simple(6.0, 10.0);
+    s.termination = Termination::ThroughAll;
+    s.symmetric = symmetric;
+    let mut def = HoleFeature::new(s);
+    def.sketch = part.sketches[i].id.clone();
+    def.centers = vec![HoleCenter::Point(p)];
+    part.add_hole(def).unwrap();
+    part
+}
+
+#[test]
+fn symmetric_through_all_both_ways() {
+    let half = mid_plane_hole(false);
+    check(&half, BLOCK - PI * 9.0 * 10.0, 3e-4);
+    let both = mid_plane_hole(true);
+    check(&both, BLOCK - PI * 9.0 * 20.0, 3e-4);
+    // Only for a plain Through All hole.
+    let mut s = HoleSpec::simple(6.0, 10.0);
+    s.symmetric = true;
+    assert!(s.validate().is_err());
+}
+
+#[test]
+fn drill_points_flat_w_angle_v_angle_y() {
+    let a = 118f64.to_radians();
+    for (dp, want) in [
+        (DrillPoint::FlatW, BLOCK - PI * 9.0 * 10.0),
+        (DrillPoint::AngleV, BLOCK - PI * 9.0 * 10.0 - cone(3.0, a)),
+        // Angle Y: the point is part of the 10 mm depth.
+        (
+            DrillPoint::AngleY,
+            BLOCK - PI * 9.0 * (10.0 - 3.0 / (a / 2.0).tan()) - cone(3.0, a),
+        ),
+    ] {
+        let mut part = block();
+        let mut s = HoleSpec::simple(6.0, 10.0);
+        s.drill_point = dp;
+        holes_at(&mut part, s, &[(20.0, 15.0)]).unwrap();
+        check(&part, want, 2e-4);
+    }
+    assert_eq!(DrillPoint::ALL.len(), 5);
+    assert_eq!(DrillPoint::AngleY.label(), "Angle Y");
+}
+
+#[test]
+fn extend_to_off_needs_the_face_itself() {
+    // A slab far off to the side: its top plane (z −5) is under the hole,
+    // the face itself is not.
+    let mut part = block();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts)
+        .unwrap();
+    part.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(100.0, 0.0), Point2::new(120.0, 20.0))
+        .unwrap();
+    let r = part.sketches[i].sketch.regions();
+    let reg = r.iter().find(|r| r.interior_point().x > 99.0).unwrap();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(reg, reg.interior_point())], 5.0);
+    ex.operation = cadcraft3d::part::Operation::NewSolid;
+    ex.direction = cadcraft3d::part::ExtentDirection::Flipped;
+    part.add_extrude(i, ex).unwrap();
+    let slab_top = part
+        .body
+        .faces()
+        .find(|(_, f)| {
+            f.name
+                .as_deref()
+                .is_some_and(|n| n.starts_with("Extrusion2"))
+                && f.mesh
+                    .as_ref()
+                    .is_some_and(|m| m.positions.iter().all(|p| p.z.abs() < 1e-9))
+        })
+        .and_then(|(fid, _)| {
+            cadcraft3d::part::shell::face_ref(&part.body, fid, Some(Point3::new(110.0, 10.0, 0.0)))
+        });
+    let Some(face) = slab_top else {
+        panic!("no slab face at z 0")
+    };
+    let mut s = HoleSpec::simple(6.0, 10.0);
+    s.termination = Termination::To(face.clone());
+    s.drill_point = DrillPoint::Flat;
+    let mut on = part.clone();
+    holes_at(&mut on, s.clone(), &[(20.0, 15.0)]).unwrap();
+    s.extend_to = false;
+    let e = holes_at(&mut part, s, &[(20.0, 15.0)]).unwrap_err();
+    assert!(e.contains("Extend To"), "{e}");
+}
+
+#[test]
+fn concentric_to_a_cylindrical_face() {
+    // A Ø20 boss on the block; a click on its side: the hole on its axis,
+    // from its top, down into it.
+    let mut part = block();
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let j = part
+        .create_sketch(SketchPlacement::on_face(TOP), &opts)
+        .unwrap();
+    let plane = part.sketches[j].sketch.plane.clone();
+    let c = plane.project(&Point3::new(20.0, 15.0, 20.0));
+    part.sketches[j].sketch.add_circle(c, 10.0).unwrap();
+    let r = part.sketches[j].sketch.regions();
+    let disc = r.iter().find(|r| r.holes.is_empty()).unwrap();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(disc, disc.interior_point())], 5.0);
+    ex.operation = cadcraft3d::part::Operation::Join;
+    part.add_extrude(j, ex).unwrap();
+    let side = part
+        .body
+        .faces()
+        .find(|(_, f)| {
+            f.name
+                .as_deref()
+                .is_some_and(|n| n.starts_with("Extrusion2:Side"))
+        })
+        .map(|(fid, _)| fid)
+        .unwrap();
+    let fr =
+        cadcraft3d::part::shell::face_ref(&part.body, side, Some(Point3::new(30.0, 15.0, 24.0)))
+            .unwrap();
+    let mut def = HoleFeature::new(HoleSpec::simple(8.0, 10.0));
+    def.spec.drill_point = DrillPoint::Flat;
+    def.centers = vec![HoleCenter::Axis(fr)];
+    part.add_hole(def).unwrap();
+    check(&part, BLOCK + PI * 100.0 * 5.0 - PI * 16.0 * 10.0, 2e-3);
+    let h = &part.holes()[0];
+    assert!(
+        (h.origin - Point3::new(20.0, 15.0, 25.0)).norm() < 1e-6,
+        "{h:?}"
+    );
 }

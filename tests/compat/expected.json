@@ -96,5 +96,12 @@
     "features": 5,
     "sketches": 2,
     "exact": true
+  },
+  "r9/hole_r9.3dcadcraft": {
+    "volume": 47322.033782868646,
+    "faces": 16,
+    "features": 3,
+    "sketches": 2,
+    "exact": true
   }
 }

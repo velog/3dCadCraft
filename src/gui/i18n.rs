@@ -65,6 +65,10 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
     (
+        "Project Geometry: click straight model edges to project them (click the button again to stop)",
+        "Project Geometry: щракнете прави ръбове на модела, за да ги проектирате (бутонът отново спира)",
+    ),
+    (
         "Pattern: click the solids to copy (none: all), then the next selector",
         "Pattern: щракнете телата за копиране (без избор: всички), после следващия избор",
     ),
@@ -105,8 +109,8 @@ const TABLE: &[(&str, &str)] = &[
         "Hole: щракнете плоска стена, точка от скица или кръгъл ръб за центъра",
     ),
     (
-        "Hole: click more centres (a click on one removes it), set the options, then OK",
-        "Hole: щракнете още центрове (клик върху център го маха), задайте настройките, после OK",
+        "Hole: click more centres (a click on one removes it), straight edges to dimension the last one, then OK",
+        "Hole: щракнете още центрове (клик върху център го маха), прави ръбове за размер до последния, после OK",
     ),
     (
         "Thread: click a cylindrical face near the end the thread starts at",
