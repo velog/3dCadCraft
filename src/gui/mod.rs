@@ -441,6 +441,10 @@ struct CadCraftApp {
     /// The preview being computed on a worker thread (the exact kernel can
     /// take seconds; computing it in the frame froze the UI).
     preview_job: std::cell::RefCell<Option<(String, std::sync::mpsc::Receiver<PreviewResult>)>>,
+    /// The part a preview built (key, signature of the part it started
+    /// from, result): OK takes it instead of building the feature again on
+    /// the UI thread (a pattern took seconds and looked like it did nothing).
+    preview_part: std::sync::Arc<std::sync::Mutex<Option<(String, u64, PartDocument)>>>,
     /// Plane under the cursor when the viewport context menu opened.
     context_target: Option<PlaneRef>,
 
@@ -619,6 +623,7 @@ impl CadCraftApp {
             target_pick: None,
             extrude_preview: Default::default(),
             preview_job: Default::default(),
+            preview_part: Default::default(),
             context_target: None,
             file_path: String::new(),
             file_dialog: None,
@@ -1540,31 +1545,78 @@ impl CadCraftApp {
     /// A preview by `key`: cached, or computed by `work` on a worker
     /// thread ([`PREVIEW_PENDING`] until it is done). A newer key replaces
     /// the job; the old thread's result is dropped.
+    /// The preview for `key` if it needs no new work: the cached result, or
+    /// "computing" while a job runs — for this key, or for an older one
+    /// (one job at a time: changing a value quickly must not start a full
+    /// regeneration per step; the newest key starts when the old job ends).
+    /// `None`: start a job. Callers check this before copying the part, so
+    /// an idle frame copies nothing.
+    pub(super) fn preview_ready(&self, key: &str) -> Option<PreviewResult> {
+        if let Some((k, r)) = &*self.extrude_preview.borrow()
+            && k == key
+        {
+            return Some(r.clone());
+        }
+        let mut job = self.preview_job.borrow_mut();
+        let (k, rx) = job.as_ref()?;
+        let same = k == key;
+        let done = match rx.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return Some(Err(PREVIEW_PENDING.into())),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("the preview could not be computed".into())
+            }
+        };
+        let k = k.clone();
+        *job = None;
+        *self.extrude_preview.borrow_mut() = Some((k, done.clone()));
+        // A finished job for an older key: start the current one.
+        same.then_some(done)
+    }
+
+    /// A cheap signature of what the part is built from (features,
+    /// sketches, End of Part, suppressions): equal means a preview's result
+    /// is still the part OK would build.
+    pub(super) fn part_signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let p = self.part();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_vec(&p.features)
+            .unwrap_or_default()
+            .hash(&mut h);
+        serde_json::to_vec(&p.sketches)
+            .unwrap_or_default()
+            .hash(&mut h);
+        serde_json::to_vec(&p.user_params)
+            .unwrap_or_default()
+            .hash(&mut h);
+        p.eop.hash(&mut h);
+        let mut sup: Vec<&String> = p.suppressed.iter().collect();
+        sup.sort();
+        sup.hash(&mut h);
+        h.finish()
+    }
+
+    /// The part the preview for `key` built from the part as it is now, if
+    /// there is one (taken: it is used once).
+    pub(super) fn take_preview_part(&self, key: &str) -> Option<PartDocument> {
+        let sig = self.part_signature();
+        let mut slot = self.preview_part.lock().ok()?;
+        match slot.take() {
+            Some((k, s, p)) if k == key && s == sig => Some(p),
+            _ => None,
+        }
+    }
+
     pub(super) fn preview_async(
         &self,
         key: String,
         work: impl FnOnce() -> PreviewResult + Send + 'static,
     ) -> PreviewResult {
-        if let Some((k, r)) = &*self.extrude_preview.borrow()
-            && *k == key
-        {
-            return r.clone();
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
         }
         let mut job = self.preview_job.borrow_mut();
-        if let Some((k, rx)) = &*job
-            && *k == key
-        {
-            let done = match rx.try_recv() {
-                Ok(r) => r,
-                Err(std::sync::mpsc::TryRecvError::Empty) => return Err(PREVIEW_PENDING.into()),
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    Err("the preview could not be computed".into())
-                }
-            };
-            *job = None;
-            *self.extrude_preview.borrow_mut() = Some((key, done.clone()));
-            return done;
-        }
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("preview".into())
@@ -1605,6 +1657,10 @@ impl CadCraftApp {
             return Err("Pick the axis".to_owned());
         }
         let key = format!("{}|{:?}|{:?}", d.sketch, d.edit, d.def);
+        // Cached or still computing: no copy of the part this frame.
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
         let mut trial = self.part().clone();
         let (sketch, def, edit) = (d.sketch, d.def.clone(), d.edit);
         self.preview_async(key, move || {

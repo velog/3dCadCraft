@@ -401,6 +401,10 @@ impl CadCraftApp {
             );
         }
         let key = format!("hole|{:?}|{:?}|{:?}|{:?}", d.edit, d.def, d.face, d.points);
+        // Cached or still computing: no copy of the part this frame.
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
         let mut trial = self.part().clone();
         let d = d.clone();
         self.preview_async(key, move || {
@@ -425,6 +429,10 @@ impl CadCraftApp {
             return Err("Thread: click a cylindrical face".into());
         };
         let key = format!("thread|{:?}|{def:?}", d.edit);
+        // Cached or still computing: no copy of the part this frame.
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
         let mut trial = self.part().clone();
         let edit = d.edit;
         self.preview_async(key, move || {

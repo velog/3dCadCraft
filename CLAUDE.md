@@ -523,6 +523,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   neutral planes are drafted group by group, re-found by name on each result (names are
   kept). Automatic Face Chain can reach faces not parallel to the pull (a bottom round →
   the bottom): the kernel refuses those.
+- **Previews** (`preview_async`, `preview_ready`): check `preview_ready(&key)` *before*
+  `self.part().clone()` (copying the part every frame made pattern previews crawl); one job at
+  a time (a value changed quickly waits for the running job, then starts the newest key). A
+  command whose OK would rebuild the same thing can take the preview's part
+  (`preview_part` + `take_preview_part`, matched by key and `part_signature`): Pattern does.
 - **Windows paths** (`docs/spec/0.6-files.md`): `canonicalize` returns `\\?\C:\…` — pass it
   through `document::library::without_verbatim` before showing or storing it; the home folder is
   `USERPROFILE` (Git Bash sets `HOME=/c/Users/…`); `C:` alone is drive-relative

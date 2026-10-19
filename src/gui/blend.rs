@@ -336,6 +336,10 @@ impl CadCraftApp {
             });
         }
         let key = format!("blend|{:?}|{:?}", d.edit, d.def);
+        // Cached or still computing: no copy of the part this frame.
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
         let mut trial = self.part().clone();
         let (def, edit) = (d.def.clone(), d.edit);
         self.preview_async(key, move || {
