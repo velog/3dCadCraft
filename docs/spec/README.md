@@ -39,6 +39,7 @@
 
 | Файл | Тема |
 |---|---|
+| [0.3-view.md](0.3-view.md) | Изглед: Orbit през полюсите, ViewCube (Home, компас, влачене, преходи), ос-триада |
 | [0.5-parameters.md](0.5-parameters.md) | Параметри, изрази, връзка с размерите и допуските |
 | [0.6-files.md](0.6-files.md) | New, Open, Save, Save As, Export, последни файлове, прозорецът за файлове (и под Windows) |
 | [0.9-selection.md](0.9-selection.md) | Избор, филтри, prehighlight, Select Other, контекстни предложения |
