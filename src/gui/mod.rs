@@ -559,6 +559,8 @@ struct CadCraftApp {
     pattern_draft: Option<pattern_feature::PatternDraft>,
     /// The open Hole command.
     hole_draft: Option<hole::HoleDraft>,
+    /// Project Geometry is active in the open sketch.
+    project_geometry: bool,
     /// The open Thread command.
     thread_draft: Option<hole::ThreadDraft>,
     /// The open Work Plane / Axis / Point command.
@@ -692,6 +694,7 @@ impl CadCraftApp {
             pattern_draft: None,
             presets: Default::default(),
             hole_draft: None,
+            project_geometry: false,
             thread_draft: None,
             last_pick: None,
             box_select: None,
@@ -3246,7 +3249,17 @@ impl CadCraftApp {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);
             }
-            Action::FinishSketch => self.finish_sketch(),
+            Action::FinishSketch => {
+                self.project_geometry = false;
+                self.finish_sketch()
+            }
+            Action::ProjectGeometry => self.project_geometry = !self.project_geometry,
+            Action::CenterPoint => {
+                self.tools.center_point = !self.tools.center_point;
+                if self.tools.center_point {
+                    self.tools.set_tool(Tool::Point);
+                }
+            }
             Action::EditCoordinateSystem => {
                 if let Some(i) = self.editing {
                     self.selection = Selection::Sketch(i);
@@ -3997,7 +4010,7 @@ impl CadCraftApp {
             self.shell_draft = None;
             self.draft_draft = None;
             self.pattern_draft = None;
-            self.hole_draft = None;
+            self.cancel_hole();
             self.thread_draft = None;
             self.end_feature_edit();
             self.face_sel = None;
@@ -4761,7 +4774,16 @@ impl CadCraftApp {
                         .is_some_and(crate::sketch::Constraint::is_dimension)
                 })
         });
-        if let Some(c) = dim_label
+        let projected = match (in_sketch, pointer) {
+            (Some(i), Some(p))
+                if self.project_geometry && response.clicked_by(PointerButton::Primary) =>
+            {
+                self.project_click(i, p, rect)
+            }
+            _ => false,
+        };
+        if projected {
+        } else if let Some(c) = dim_label
             && response.clicked_by(PointerButton::Primary)
         {
             // Inventor: the Dimension command on an existing dimension edits it.

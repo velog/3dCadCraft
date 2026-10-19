@@ -474,6 +474,51 @@ except where it crosses the hole volume). [Help]
 - (f) Invalid value → red; no position → OK disabled / Continue; termination face not hit
   with Extend To off → error. [Help/Mem]
 
+### 2027 Help re-read (2026-10-19, GUID-94EB6947-0347-4888-870D-4BA22DB144D8)
+Our own summary:
+- **Panel menu:** three options.
+  - Preselect sketch center points: the unused centre points of the active sketch become
+    hole positions by themselves.
+  - Keep sketch visible on (+): shares the sketch for the next hole while unused centres
+    remain. Part environment only.
+  - Window select center points only: on by default. A window then picks centre points
+    only; off restores the older pick-any-point behaviour.
+  - Ctrl+click drops a centre from the selection but leaves it in the sketch. Deleting the
+    point deletes its hole. Clear Selections, at the end of the Positions list, drops all.
+- **Allow Center Point Creation:**
+  - On: a click anywhere on a planar face or work plane adds a centre. Off: only existing
+    sketch centres, sketch points or work points.
+  - Kept between holes. Unavailable when the position is a work point.
+  - A click on a face makes a sketch there; a click on a work plane makes a sketch on it.
+  - After a point, a face, plane or straight edge can set the direction.
+  - Free centres can be dragged.
+- **Dimensions:**
+  - A click on a reference edge adds a linear dimension from the centre. It can be selected,
+    edited or deleted while the command runs.
+  - An existing dimension can be reused: click it, or use Select Feature Dimension from the
+    field's arrow menu.
+  - Reference dimensions are shown in parentheses and cannot be edited.
+- **Concentric:** after the centre, a model edge or a curved face. A work-plane edge then a
+  model edge measures the depth from the work plane.
+- **Termination:** To has Extend To on by default; turn it off only when the target does
+  not meet the hole. Symmetric exists only for a drilled Simple Through All hole.
+- **Drill point:**
+  - Flat / Flat W: W follows the ISO annotation.
+  - Angle / Angle V: the angle can be typed or measured from geometry. It is positive
+    counter-clockwise from the axis.
+  - Angle Y: the point is counted in the depth.
+- **Advanced:** iMate; Extend Start, which extends the start until it leaves the target
+  body. In multi-body parts Extend Start does not enter other bodies except inside the
+  removed volume.
+- **Keys:** Enter or Tab commits a value and moves on. Ctrl+Enter creates the hole and
+  closes the panel. Create new hole keeps the settings.
+- **Breadcrumb:** a click moves to that step. Click once to select a name, again to edit
+  it, then Enter.
+- **Browser:**
+  - Double-click or Edit Feature reopens the panel.
+  - Convert to Slot is one-way.
+  - Delete can also remove the sketch, with its reference dimensions and projections.
+
 ---
 
 ## 6. Styles and Standards Editor; Material and Appearance browsers

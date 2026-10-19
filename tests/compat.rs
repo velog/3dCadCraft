@@ -335,6 +335,42 @@ fn hole_r6() -> PartDocument {
     part
 }
 
+/// Revision 10: a hole with an Angle Y drill point at a Center Point
+/// dimensioned to a projected box edge, and a Flat W hole.
+fn hole_r10() -> PartDocument {
+    use cadcraft3d::part::hole::HoleCenter;
+    use cadcraft3d::part::{DrillPoint, HoleFeature, HoleSpec};
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+    let (i, ids) = part
+        .create_hole_sketch("Box1:Top", &[Point3::new(15.0, 12.0, 20.0)])
+        .unwrap();
+    let line = part.project_segment(i, "Box1:V001", "Box1:V101").unwrap();
+    part.sketches[i]
+        .sketch
+        .add_constraint(cadcraft3d::sketch::Constraint::PointLineDistance {
+            point: ids[0],
+            line,
+            value: 12.0,
+        })
+        .unwrap();
+    let mut s = HoleSpec::simple(8.0, 12.0);
+    s.drill_point = DrillPoint::AngleY;
+    let mut def = HoleFeature::new(s);
+    def.sketch = part.sketches[i].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(def).unwrap();
+    let (j, ids) = part
+        .create_hole_sketch("Box1:Top", &[Point3::new(45.0, 25.0, 20.0)])
+        .unwrap();
+    let mut s = HoleSpec::simple(5.0, 8.0);
+    s.drill_point = DrillPoint::FlatW;
+    let mut def = HoleFeature::new(s);
+    def.sketch = part.sketches[j].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(def).unwrap();
+    part
+}
+
 /// Revision 7: End of Part and suppressed features. Box, two through
 /// holes, a pattern of the first; the second hole suppressed, the marker
 /// above the pattern (built: the box and the first hole).
@@ -532,6 +568,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("PatternR5");
             project.add_document("Part1", DocumentData::Part(pattern_r5()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r10/hole_r10.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("HoleR10");
+            project.add_document("Part1", DocumentData::Part(hole_r10()));
             project.save(&f).unwrap();
         }
         let f = root().join("r6/hole_r6.3dcadcraft");

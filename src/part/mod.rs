@@ -295,6 +295,23 @@ impl Feature {
         }
     }
 
+    /// Renames it (the id, and so every persistent name, stays).
+    pub fn set_name(&mut self, name: &str) {
+        let n = match self {
+            Feature::Box(b) => &mut b.name,
+            Feature::Extrude(e) => &mut e.name,
+            Feature::Revolve(r) => &mut r.name,
+            Feature::Work(w) => &mut w.name,
+            Feature::Blend(b) => &mut b.name,
+            Feature::Shell(s) => &mut s.name,
+            Feature::Draft(d) => &mut d.name,
+            Feature::Pattern(p) => &mut p.name,
+            Feature::Hole(h) => &mut h.name,
+            Feature::Thread(t) => &mut t.name,
+        };
+        *n = name.to_owned();
+    }
+
     /// Whether it creates a body of its own (a box, or New Solid).
     pub fn creates_body(&self) -> bool {
         match self {
@@ -1442,9 +1459,81 @@ impl PartDocument {
         let plane = ps.sketch.plane.clone();
         let pts = centers
             .iter()
-            .map(|c| ps.sketch.add_point(plane.project(c)))
+            .map(|c| ps.sketch.add_center_point(plane.project(c)))
             .collect();
         Ok((i, pts))
+    }
+
+    /// **Project Geometry** of a straight model edge into sketch `index`:
+    /// its two vertices become fixed projected points (associative: they
+    /// follow the model at every regeneration, by persistent name) joined
+    /// by a reference line, which is returned. An edge already projected
+    /// returns its line.
+    pub fn project_edge(
+        &mut self,
+        index: usize,
+        edge: crate::kernel::EdgeId,
+    ) -> Result<EntityId, PartError> {
+        let body = &self.body;
+        let e = body
+            .edge(edge)
+            .ok_or_else(|| PartError::Feature("the edge no longer exists".into()))?;
+        if body.edge_direction(edge).is_none() {
+            return Err(PartError::Feature(
+                "Project Geometry: only straight edges can be projected yet".into(),
+            ));
+        }
+        let name = |v| body.vertex(v).and_then(|x| x.name.clone());
+        let (Some(a), Some(b)) = (name(e.start), name(e.end)) else {
+            return Err(PartError::Feature(
+                "Project Geometry: the edge's ends have no names".into(),
+            ));
+        };
+        self.project_segment(index, &a, &b)
+    }
+
+    /// A reference line in sketch `index` between the projections of the
+    /// model vertices named `a` and `b` (made when missing).
+    pub fn project_segment(
+        &mut self,
+        index: usize,
+        a: &str,
+        b: &str,
+    ) -> Result<EntityId, PartError> {
+        let body = self.body.clone();
+        let works = self.work.clone();
+        let ps = self
+            .sketches
+            .get_mut(index)
+            .ok_or(PartError::NoSketch(index))?;
+        let plane = ps.sketch.plane.clone();
+        let mut point_of = |name: &str| -> Result<PointId, PartError> {
+            let src = PointRef::Vertex(name.to_owned());
+            if let Some(p) = ps.projections.iter().find(|p| p.source == src) {
+                return Ok(p.point);
+            }
+            let w = placement::point_of(&src, &body, &works)?;
+            let point = ps.sketch.add_fixed_point(plane.project(&w));
+            ps.projections.push(Projection { point, source: src });
+            Ok(point)
+        };
+        let (pa, pb) = (point_of(a)?, point_of(b)?);
+        if pa == pb {
+            return Err(PartError::Feature("the edge has no length".into()));
+        }
+        if let Some(&l) = ps.reference_lines.iter().find(|&&l| {
+            ps.sketch
+                .line_points(l)
+                .is_ok_and(|(x, y)| (x, y) == (pa, pb) || (x, y) == (pb, pa))
+        }) {
+            return Ok(l);
+        }
+        let line = ps
+            .sketch
+            .add_line_between(pa, pb)
+            .map_err(|e| PartError::Feature(e.to_string()))?;
+        ps.reference_lines.push(line);
+        Ok(line)
     }
 
     /// The centres of `def` on the current body: (point on the start

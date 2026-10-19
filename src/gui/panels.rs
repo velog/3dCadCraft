@@ -4128,6 +4128,14 @@ impl CadCraftApp {
                                 format!("Select the new plane for {name} (Esc cancels)"),
                             );
                         }
+                        (Mode::Normal, Some(_)) if self.project_geometry => {
+                            ui.colored_label(
+                                WARNING,
+                                super::i18n::tr(
+                                    "Project Geometry: click straight model edges to project them (click the button again to stop)",
+                                ),
+                            );
+                        }
                         (Mode::Normal, Some(i)) => {
                             let name = &self.part().sketches[i].name;
                             ui.colored_label(
@@ -4185,7 +4193,7 @@ impl CadCraftApp {
                     } else if d.is_some_and(|d| d.count() == 0) {
                         "Hole: click a planar face, a sketch point or a circular edge for the centre"
                     } else {
-                        "Hole: click more centres (a click on one removes it), set the options, then OK"
+                        "Hole: click more centres (a click on one removes it), straight edges to dimension the last one, then OK"
                     };
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }

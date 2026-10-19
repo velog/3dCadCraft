@@ -103,5 +103,12 @@
     "features": 5,
     "sketches": 1,
     "exact": true
+  },
+  "r10/hole_r10.3dcadcraft": {
+    "volume": 47322.033782868646,
+    "faces": 16,
+    "features": 3,
+    "sketches": 2,
+    "exact": true
   }
 }

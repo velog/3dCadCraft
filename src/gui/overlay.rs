@@ -214,6 +214,23 @@ pub fn draw_sketch(
                 0.0,
                 Color32::BLACK,
             );
+        } else if p.style == crate::sketch::PointStyle::Center {
+            // Inventor's Center Point: a cross.
+            let k = Stroke::new(2.0, style.color);
+            painter.line_segment(
+                [
+                    s - eframe::egui::vec2(5.0, 0.0),
+                    s + eframe::egui::vec2(5.0, 0.0),
+                ],
+                k,
+            );
+            painter.line_segment(
+                [
+                    s - eframe::egui::vec2(0.0, 5.0),
+                    s + eframe::egui::vec2(0.0, 5.0),
+                ],
+                k,
+            );
         } else {
             painter.circle_filled(s, 3.5, style.color);
         }

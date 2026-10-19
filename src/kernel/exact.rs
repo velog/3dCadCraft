@@ -1742,6 +1742,28 @@ pub struct ThreadGroove {
     pub name: String,
 }
 
+impl ThreadGroove {
+    /// The axis-aligned box around the zone (a cylinder of its outer radius
+    /// between its two heights). Use it to find the solid or piece a groove
+    /// belongs to: the zone's middle can lie in the air (a thin plate under
+    /// a large start margin), which once skipped grooves without a word.
+    pub fn zone_box(&self) -> (Point3, Point3) {
+        let k = self.axis.try_normalize(1e-12).unwrap_or_else(Vector3::z);
+        let r = self.zone[1];
+        let (a, b) = (
+            self.origin + k * self.zone[2],
+            self.origin + k * self.zone[3],
+        );
+        // A disc of radius r square to k reaches r·sqrt(1 − k_i²) along i.
+        let ext = Vector3::new(
+            r * (1.0 - k.x * k.x).max(0.0).sqrt(),
+            r * (1.0 - k.y * k.y).max(0.0).sqrt(),
+            r * (1.0 - k.z * k.z).max(0.0).sqrt(),
+        );
+        (a.inf(&b) - ext, a.sup(&b) + ext)
+    }
+}
+
 /// Stations per turn of a modeled thread's helix (10° apart: the chords
 /// sag 0.4 % of the radius; SolidCraft's `thread_groove` uses 48, which
 /// took twice as long).
@@ -1762,7 +1784,7 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
         return Ok(vec![s.clone()]);
     }
     let mut zones = Vec::new();
-    let mut meshes: Vec<(Point3, sg::Mesh, String)> = Vec::new();
+    let mut meshes: Vec<((Point3, Point3), sg::Mesh, String)> = Vec::new();
     for (k, g) in grooves.iter().enumerate() {
         let [r0, r1, z0, z1] = g.zone;
         if !(r0 >= 0.0 && r1 > r0 && z1 > z0) {
@@ -1806,8 +1828,8 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
             sk::sweep_helix_mesh(&pl, &poly, v3(&base), ax, p, g.turns, THREAD_STATIONS)
         })?;
         m.tri_face = vec![0; m.triangles.len()];
-        let mid = g.origin + k3 * ((z0 + z1) / 2.0);
-        meshes.push((mid, m, format!("{}:{}", g.prefix, g.name)));
+        let zbox = g.zone_box();
+        meshes.push((zbox, m, format!("{}:{}", g.prefix, g.name)));
     }
     let zone = match union_apart(&zones)? {
         Some(z) => z,
@@ -1820,7 +1842,7 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
             z
         }
     };
-    let inside = boolean(s, &zone, ExactOp::Intersect)?
+    let inside = boolean(&zone, s, ExactOp::Intersect)?
         .ok_or_else(|| "the thread is not in the material".to_owned())?;
     let rest = boolean(s, &zone, ExactOp::Cut)?;
     // Each piece of material with the grooves inside its box.
@@ -1833,8 +1855,9 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
         let pad = 1e-6 * (hi - lo).norm() + 1e-9;
         let mut mesh = sg::Mesh::default();
         let mut names = Vec::new();
-        for (mid, g, name) in &meshes {
-            if !(0..3).all(|i| mid[i] >= lo[i] - pad && mid[i] <= hi[i] + pad) {
+        for ((zlo, zhi), g, name) in &meshes {
+            // The zone overlaps this piece (its middle may lie in the air).
+            if !(0..3).all(|i| zlo[i] <= hi[i] + pad && zhi[i] >= lo[i] - pad) {
                 continue;
             }
             let off = u32::try_from(mesh.positions.len()).map_err(|_| "thread mesh too large")?;
@@ -1882,10 +1905,23 @@ fn threaded_piece(
         return Ok(Some(piece.clone()));
     }
     let tol = (piece.body.size() * 5e-4).clamp(2e-3, 1e-2);
-    let Some(body) = guarded("thread", || {
-        sk::faceted_boolean(&piece.body, mesh, sk::BoolOp::Cut, tol)
-    })?
-    else {
+    let mut last = String::new();
+    let mut made = None;
+    for f in [1.0, 0.5] {
+        match guarded("thread", || {
+            sk::faceted_boolean(&piece.body, mesh, sk::BoolOp::Cut, tol * f)
+        }) {
+            Ok(r) => {
+                made = Some(r);
+                break;
+            }
+            Err(e) => last = e,
+        }
+    }
+    let Some(made) = made else {
+        return Err(last);
+    };
+    let Some(body) = made else {
         return Ok(None);
     };
     // Faces on the zone's material keep their names; faces on the mesh are

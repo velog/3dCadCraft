@@ -77,6 +77,10 @@ pub enum Action {
     MirrorFeature,
     /// Hole: drilled, clearance and tapped holes with seats.
     Hole,
+    /// Project Geometry: a click on a model edge projects it into the sketch.
+    ProjectGeometry,
+    /// Format → Center Point: new points are Center Points.
+    CenterPoint,
     /// Thread: a cosmetic or modeled thread on a cylindrical face.
     Thread,
     /// Work Axis: the method follows from the picks.
@@ -130,6 +134,10 @@ pub struct State {
     pub clean: bool,
     /// Full Screen on.
     pub full_screen: bool,
+    /// Project Geometry is active.
+    pub project: bool,
+    /// Format → Center Point is on.
+    pub center_point: bool,
 }
 
 /// Ribbon tabs of the part environment.
@@ -645,6 +653,18 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         menu("Spline", &[Tool::SplineInterp, Tool::SplineCv]),
                         todo(Icon::Ellipse, "Ellipse", None, "1.2"),
                         tool(Tool::Point, None, "Sketch point"),
+                        when(
+                            st.editing,
+                            ready(
+                                Icon::Project,
+                                "Project Geometry",
+                                None,
+                                Action::ProjectGeometry,
+                                "Click straight model edges to project them into the sketch (associative reference lines)",
+                            ),
+                            in_sketch,
+                        )
+                        .mini(),
                         tool(
                             Tool::Polygon,
                             None,
@@ -763,6 +783,18 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                             Style::Normal,
                             "Selected geometry → normal",
                         ),
+                        when(
+                            st.editing,
+                            ready(
+                                Icon::Point,
+                                "Center Point",
+                                None,
+                                Action::CenterPoint,
+                                "New points are Center Points (a cross; Hole takes them as centres)",
+                            ),
+                            in_sketch,
+                        )
+                        .mini(),
                     ],
                 ),
                 panel(
@@ -1307,6 +1339,8 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                 Action::Tool(t) => *t == active && *t != Tool::Select,
                 Action::Format(Style::Construction) => st.construction,
                 Action::ToggleRelax => st.relax,
+                Action::ProjectGeometry => st.project,
+                Action::CenterPoint => st.center_point,
                 Action::ToggleDof => st.show_dof,
                 Action::Ui(UiCmd::CleanScreen) => st.clean,
                 Action::Ui(UiCmd::FullScreen) => st.full_screen,

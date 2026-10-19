@@ -736,10 +736,10 @@ pub(super) fn hole_placements(
         let (o, mut dir, face) = match c {
             HoleCenter::Point(pid) => {
                 let ps = ps.ok_or_else(|| format!("sketch {} is missing", h.sketch))?;
-                let p = ps
-                    .sketch
-                    .point(*pid)
-                    .ok_or_else(|| "a hole centre no longer exists in the sketch".to_owned())?;
+                // A deleted centre point removes its hole (Inventor).
+                let Some(p) = ps.sketch.point(*pid) else {
+                    continue;
+                };
                 let face = match &ps.placement.plane {
                     super::PlaneRef::Face(n) => Some(n.clone()),
                     _ => None,
@@ -751,11 +751,18 @@ pub(super) fn hole_placements(
                 )
             }
             HoleCenter::Concentric(e) => concentric_center(body, e)?,
+            HoleCenter::Axis(fr) => {
+                let cf = super::hole::cylinder_face(body, fr)?;
+                (cf.start, cf.axis, None)
+            }
         };
         if h.spec.flip {
             dir = -dir;
         }
         out.push((o, dir, face));
+    }
+    if out.is_empty() {
+        return Err("every centre point of the hole was deleted".into());
     }
     Ok(out)
 }
@@ -816,6 +823,20 @@ fn concentric_center(
     Ok((c, dir, Some(face)))
 }
 
+/// Whether the point `q` (on the face's plane) lies on face `f` (its
+/// display triangles).
+fn face_contains(body: &BRep, f: crate::kernel::FaceId, q: Point3) -> bool {
+    let Some(m) = body.face(f).and_then(|x| x.mesh.clone()) else {
+        return true;
+    };
+    m.triangles.iter().any(|t| {
+        let [a, b, c] = t.map(|i| m.positions[i as usize]);
+        let n = (b - a).cross(&(c - a));
+        let inside = |p: Point3, r: Point3| (r - p).cross(&(q - p)).dot(&n) >= -1e-12 * n.norm();
+        inside(a, b) && inside(b, c) && inside(c, a)
+    })
+}
+
 /// How far the body reaches from `o` along `dir` (mm, ≥ 0).
 fn reach(points: &[Point3], o: Point3, dir: crate::kernel::Vector3) -> Real {
     points
@@ -871,7 +892,10 @@ pub(super) fn hole(
             let probe = *o + up * (1e-4 * size);
             cur.iter().any(|s| exact::contains(s, probe))
         };
-        let top = if in_material && !spec.extend_start {
+        let top = if spec.symmetric {
+            // Through all the other way too.
+            reach(&points, *o, up) + margin
+        } else if in_material && !spec.extend_start {
             0.0
         } else {
             margin
@@ -899,6 +923,11 @@ pub(super) fn hole(
                 let d = (pl.origin - o).dot(&nrm) / den;
                 if !(d.is_finite() && d > 1e-6) {
                     return Err(User("the termination face is not ahead of the hole".into()));
+                }
+                if !spec.extend_to && !face_contains(body, fid, *o + *dir * d) {
+                    return Err(User(
+                        "the hole does not reach the termination face (turn Extend To on)".into(),
+                    ));
                 }
                 (d, false)
             }
@@ -943,7 +972,10 @@ pub(super) fn hole(
                 } else {
                     -len + w0
                 };
-                let end = if top > 0.0 { top + p } else { -w0 };
+                // One pitch past the start plane is enough to run out into the air
+                // (the tool's start margin grows with the part: 3.6 mm above a 3 mm
+                // plate of a 300 mm part made the faceted cut fail).
+                let end = if top > 0.0 { p } else { -w0 };
                 let turns = (end - base) / p;
                 if !(turns.is_finite() && turns > 0.0) {
                     continue;
@@ -1088,6 +1120,10 @@ pub(super) fn finish_threads(
     if grooves.is_empty() {
         return (solids, failed);
     }
+    // Every groove must land in some solid; one that does not is the
+    // owner's health (it was skipped silently when its zone's middle lay
+    // above the face: a thin plate under a large part's start margin).
+    let mut hit = vec![false; grooves.len()];
     let mut out = Vec::new();
     for s in solids {
         let Ok(m) = s.measure_full() else {
@@ -1095,29 +1131,46 @@ pub(super) fn finish_threads(
             continue;
         };
         let (lo, hi) = m.bbox;
-        let mine: Vec<exact::ThreadGroove> = grooves
-            .iter()
-            .filter(|g| {
-                let mid = g.origin + g.axis.normalize() * ((g.zone[2] + g.zone[3]) / 2.0);
-                (0..3).all(|i| mid[i] >= lo[i] - 1e-6 && mid[i] <= hi[i] + 1e-6)
+        let mine: Vec<usize> = (0..grooves.len())
+            .filter(|&i| {
+                let (zlo, zhi) = grooves[i].zone_box();
+                (0..3).all(|k| zlo[k] <= hi[k] + 1e-6 && zhi[k] >= lo[k] - 1e-6)
             })
-            .cloned()
             .collect();
         if mine.is_empty() {
             out.push(s);
             continue;
         }
-        match exact::cut_threads(&s, &mine) {
-            Ok(pieces) => out.extend(pieces),
+        let set: Vec<exact::ThreadGroove> = mine.iter().map(|&i| grooves[i].clone()).collect();
+        match exact::cut_threads(&s, &set) {
+            Ok(pieces) => {
+                for &i in &mine {
+                    hit[i] = true;
+                }
+                out.extend(pieces);
+            }
+            // The zones miss this solid: another one may hold them.
+            Err(e) if e.contains("not in the material") => out.push(s),
             Err(e) => {
-                for g in &mine {
+                for &i in &mine {
+                    hit[i] = true;
                     failed.push((
-                        g.prefix.clone(),
-                        format!("the modeled thread cannot be built ({e})"),
+                        grooves[i].prefix.clone(),
+                        format!(
+                            "the geometry kernel cannot cut this modeled thread ({e}); use a cosmetic thread"
+                        ),
                     ));
                 }
                 out.push(s);
             }
+        }
+    }
+    for (g, h) in grooves.iter().zip(hit) {
+        if !h {
+            failed.push((
+                g.prefix.clone(),
+                "the modeled thread is not in the material".to_owned(),
+            ));
         }
     }
     (out, failed)

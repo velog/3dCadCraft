@@ -425,6 +425,9 @@ pub struct SketchTools {
     pub polygon_inscribed: bool,
     /// New geometry is created as construction (Format → Construction).
     pub construction: bool,
+    /// New points are Center Points (Format → Center Point; Hole takes them
+    /// by default).
+    pub center_point: bool,
     /// Selected entities (Select tool, and the input of Move/Copy/Rotate/Mirror).
     pub selected: Vec<EntityId>,
     /// Selected constraints (glyphs or dimensions picked in the window).
@@ -501,6 +504,7 @@ impl Default for SketchTools {
             polygon_sides: 6,
             polygon_inscribed: true,
             construction: false,
+            center_point: false,
             selected: Vec::new(),
             selected_constraints: Vec::new(),
             dim_edit: None,
@@ -1694,6 +1698,7 @@ impl SketchTools {
     /// Creates the geometry of a fixed-click tool.
     fn create(&mut self, ps: &mut PartSketch, picks: &[Pick]) -> ClickResult {
         let construction = self.construction;
+        let center = self.center_point;
         let (sides, inscribed) = (self.polygon_sides, self.polygon_inscribed);
         let tool = self.tool;
         let pos: Vec<Point2> = picks.iter().map(|p| p.pos).collect();
@@ -1701,7 +1706,11 @@ impl SketchTools {
             let mut extra = Vec::new();
             match tool {
                 Tool::Point => {
-                    endpoint(ps, &picks[0], &mut extra);
+                    let p = endpoint(ps, &picks[0], &mut extra);
+                    if center {
+                        ps.sketch
+                            .set_point_style(p, crate::sketch::PointStyle::Center)?;
+                    }
                 }
                 Tool::CircleCenter => {
                     let r = (pos[1] - pos[0]).norm();

@@ -458,7 +458,9 @@
 
 **Аналог.** Rectangular / Circular / Mirror (sketch pattern).
 
-## 1.8 Проектиране на геометрия — ⬜ · M
+## 1.8 Проектиране на геометрия — 🟡 · M
+
+Направено (чака визуална проверка): Sketch → Create → **Project Geometry** на прави ръбове на модела (асоциативна референтна линия по имената на върховете, `PartDocument::project_edge`). Предстои: криви ръбове, стени, контури.
 
 **Спецификация:** [spec/1.8-project-geometry.md](spec/1.8-project-geometry.md).
 
@@ -546,7 +548,7 @@
 
 ## 2.3 Hole (отвор) и Slot (прорез) — 🟡 · L
 
-**Спецификация:** [spec/2.3-hole.md](spec/2.3-hole.md). Направено (чака визуална проверка): Simple, Clearance (ISO 273, ASME B18.2.8: Close / Normal / Loose), Tapped (ISO метрична едра и дребна, UNC / UNF) — козметична или **моделирана** резба с хлабина за 3D печат; гнезда Counterbore, Spotface, Countersink (90° ISO, 82° ANSI) и попълване от таблиците (ISO 4762 / DIN 974-1, ISO 10642, ASME B18.3); граници Distance / Through All / To (равна стена), Direction 1/2, връх Flat / 118°; центрове: клик върху стена (скица с точки), точки от видима скица, концентрично на кръгъл ръб; Edit Feature, параметри, преглед. Стандартите са CSV в `data/standards/` (потребителско копие в `%APPDATA%\3dcadcraft\standards`). За чертежа: `HoleSpec::note()` („M8x1.25 - 6H ↧ 12“, „⌴ Ø11 ↧ 6.4“), `PartDocument::holes()` и групиране „4x Ø6.6 THRU“. Предстои: Taper Tapped, Symmetric, Extend To извън равнината, линейни размери до ръбове, Slot, бележка и таблица в чертежа (4.3–4.4).
+**Спецификация:** [spec/2.3-hole.md](spec/2.3-hole.md). Направено (чака визуална проверка): Simple, Clearance (ISO 273, ASME B18.2.8: Close / Normal / Loose), Tapped (ISO метрична едра и дребна, UNC / UNF) — козметична или **моделирана** резба с хлабина за 3D печат; гнезда Counterbore, Spotface, Countersink (90° ISO, 82° ANSI) и попълване от таблиците (ISO 4762 / DIN 974-1, ISO 10642, ASME B18.3); граници Distance / Through All / To (равна стена), Direction 1/2, връх Flat / 118°; центрове: клик върху стена (скица с точки), точки от видима скица, концентрично на кръгъл ръб; Edit Feature, параметри, преглед. Стандартите са CSV в `data/standards/` (потребителско копие в `%APPDATA%\3dcadcraft\standards`). За чертежа: `HoleSpec::note()` („M8x1.25 - 6H ↧ 12“, „⌴ Ø11 ↧ 6.4“), `PartDocument::holes()` и групиране „4x Ø6.6 THRU“. Добавено след проверката на собственика: центровете са **Center Points**; клик на прав ръб след центъра добавя размер до него (в скицата на отвора: проектиран ръб + размер точка–линия, параметър); Symmetric; Extend To вкл./изкл.; Flat W / Angle V / Angle Y; концентрично на цилиндрична стена; Allow Center Point Creation и менюто (Preselect, Keep sketch visible on (+)); breadcrumb `Sketch > Hole1`; невалидни стойности в червено; Ctrl+Enter / +; изтрита точка маха отвора си; моделираната резба вече не се губи тихо. Предстои: Taper Tapped, Select Feature Dimension, посока от точка + стена/ръб, прозоречен избор, Slot, бележка и таблица в чертежа (4.3–4.4).
 
 **Какво прави.** Създава стандартни отвори с правилна геометрия и *семантика*, т.е. отворът „знае“, че е M8 с резба. Така чертежът (4.3) показва правилната анотация, а BOM и CAM я разпознават.
 
