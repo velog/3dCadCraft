@@ -708,7 +708,39 @@ To Create Revolved Features — GUID-401BABD2-8D5B-4300-BA8D-70037445044F (и д
 - „Минималното решение“ при Revolve има смисъл най-вече за равнина през оста (две
   полуравнини); по подразбиране взимаме по-далечната. [наше решение]
 
-## 9. Combine и Split (2027)
+## 9. Sweep and Loft (Inventor 2027 Help, our summary)
+
+### Sweep (GUID-FCC0126F-50ED-449B-A0EF-1DED0287170B)
+- Three kinds: along a path; path + guide rail (the rail sets the profile's turn and, with
+  Profile Scaling X & Y / X / None, its size); path + guide surface (the surface sets the turn
+  about the path). A fourth mode moves a whole body (Solid Sweep, with Keep Toolbody and an
+  orientation Follow Path / Fixed / Aligned). [Help]
+- The path is a 2D or 3D sketch curve or model edges (edges become a 3D sketch on OK); it must
+  pierce the profile's plane near its start. The profile need not lie on the path. [Help]
+- Orientation Path keeps the profile's angle to the path; Parallel keeps it parallel to the
+  start. Taper (positive grows away from the start; holes go the other way) and Twist are only
+  for a path sweep oriented to the path. [Help]
+- Output Solid / Surface; Join / Cut / Intersect / New Solid; the Solids selector with several
+  bodies; Optimize for Single Selection; the advanced "keep sketch visible on (+)". [Help]
+
+### Loft (GUID-E1E2C90E-B74D-4774-8CE1-5413CD1BE281)
+- Curves tab: sections in pick order (closed profiles or face loops for a solid; open allowed
+  for a surface; a point only first or last), Rails (curves through every section), Center
+  Line (sections stay normal to it) or Area Loft (placed sections with an area or a scale
+  factor, proportional or absolute position, driving or driven). Closed Loop joins the last
+  section to the first; Merge Tangent Faces drops edges between tangent faces. [Help]
+- Conditions tab: per end section / outer rail Free, Tangent (G1), Direction (2D sketches),
+  Smooth (G2), each with an angle (0–180°, 90° square) and a weight; a point end is Sharp,
+  Tangent (dome) or Tangent to Plane. [Help]
+- Transition tab: Automatic Mapping, or manual point sets / map points with a 0–1 position
+  along the curve. [Help]
+
+### For our clone
+Sweep/Loft go through SolidCraft's `sweep`, `sweep_path`, `loft`, `loft_to_point`; options it
+lacks (guide surface, solid sweep, rails, centre line, area loft, G1/G2) refuse clearly rather
+than build an approximation that looks right but is not. [our note]
+
+## 10. Combine и Split (2027)
 
 **Източник:** To Combine and Split Bodies and Faces — GUID-349C84EE-2D24-4DFC-A239-AFD55E5441AD (2027).
 

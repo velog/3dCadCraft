@@ -133,6 +133,34 @@ const TABLE: &[(&str, &str)] = &[
         "Изберете разделящия инструмент (равнина, плоска стена или скица)",
     ),
     (
+        "Sweep: click the profile (a closed region of a sketch)",
+        "Sweep: щракнете профила (затворена област на скица)",
+    ),
+    (
+        "Sweep: click more profiles (a second click removes one), then pick the Path",
+        "Sweep: щракнете още профили (втори клик маха профила), после изберете Path",
+    ),
+    (
+        "Sweep: click the path (a sketch curve on another plane, or model edges)",
+        "Sweep: щракнете пътя (крива от скица в друга равнина или ръбове на модела)",
+    ),
+    (
+        "Sweep: click the guide rail curve, then OK",
+        "Sweep: щракнете водещата крива (Guide Rail), после OK",
+    ),
+    (
+        "Loft: click the first section (a closed region, a face or a sketch point)",
+        "Loft: щракнете първото сечение (затворена област, стена или точка от скица)",
+    ),
+    (
+        "Loft: click the next section",
+        "Loft: щракнете следващото сечение",
+    ),
+    (
+        "Loft: click more sections in order (a second click removes one), then OK",
+        "Loft: щракнете още сечения по ред (втори клик маха сечението), после OK",
+    ),
+    (
         "Select faces to draft (click near the edge that stays fixed)",
         "Изберете стените за накланяне (щракнете близо до ръба, който остава неподвижен)",
     ),

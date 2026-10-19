@@ -70,6 +70,10 @@ pub enum Action {
     Chamfer,
     /// Shell: hollow a solid.
     Shell,
+    /// Sweep: profiles along a path.
+    Sweep,
+    /// Loft: a body through sections.
+    Loft,
     /// Face Draft: tilt faces against a pull direction.
     Draft,
     /// Combine: a base body with toolbodies.
@@ -378,8 +382,20 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         "Revolve closed sketch regions around an axis",
                     )
                     .large(),
-                    todo(Icon::Sweep, "Sweep", None, "5.1"),
-                    todo(Icon::Loft, "Loft", None, "5.2"),
+                    ready(
+                        Icon::Sweep,
+                        "Sweep",
+                        None,
+                        Action::Sweep,
+                        "Sweep: move closed profiles along a path (sketch curves or edges)",
+                    ),
+                    ready(
+                        Icon::Loft,
+                        "Loft",
+                        None,
+                        Action::Loft,
+                        "Loft: a body through sections in order (profiles, faces, a point)",
+                    ),
                     todo(Icon::Coil, "Coil", None, "5.3"),
                     todo(Icon::Rib, "Rib", None, "2.7"),
                     todo(Icon::Emboss, "Emboss", None, "2.17"),

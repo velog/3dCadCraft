@@ -119,6 +119,7 @@
 | **E** | Extrude | ✅ |
 | **R / H** | Revolve / Hole (в 3D Model) | 🟡 R ✅; H чака визуална проверка |
 | **Ctrl+Enter / +** | в панела Hole / Thread: OK / създава и започва нов със същите настройки | 🟡 чака визуална проверка |
+| (без клавиш) | Sweep / Loft (3D Model → Create): селекторите в панела се активират с клик; Optimize for Single Selection минава сам към следващия; Esc отказва | 🟡 чака визуална проверка |
 | **P / C** | Place / Constrain (в сглобка) | ⬜ |
 | **Ctrl+Z / Ctrl+Y** (и Ctrl+Shift+Z) | Undo / Redo | ✅ |
 | **Ctrl+S / Ctrl+Shift+S** | Save / Save As | ✅ |

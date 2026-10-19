@@ -198,6 +198,103 @@ fn blocks_30() -> PartDocument {
     part
 }
 
+/// Sweep / Loft cases (`docs/spec/5.1-sweep.md`, `5.2-loft.md`): a profile
+/// on XY and a path on XZ, or sections on planes parallel to XY.
+fn sweep_part(twist_deg: Real, square: bool) -> PartDocument {
+    use cadcraft3d::part::{OriginPlane, PathRef, SweepFeature};
+    use cadcraft3d::sketch::Point2;
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::default();
+    let a = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    if square {
+        part.sketches[a]
+            .sketch
+            .add_rectangle_two_point(Point2::new(-5.0, -5.0), Point2::new(5.0, 5.0))
+            .unwrap();
+    } else {
+        part.sketches[a]
+            .sketch
+            .add_circle(Point2::new(0.0, 0.0), 4.0)
+            .unwrap();
+    }
+    let b = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .unwrap();
+    {
+        let s = &mut part.sketches[b].sketch;
+        if square {
+            s.add_line(Point2::new(0.0, 0.0), Point2::new(0.0, 40.0));
+        } else {
+            let c = s.add_point(Point2::new(30.0, 0.0));
+            let t = s.add_point(Point2::new(30.0, 30.0));
+            let z = s.add_point(Point2::new(0.0, 0.0));
+            s.add_arc(c, t, z).unwrap();
+        }
+    }
+    let r = part.sketches[a].sketch.regions();
+    let path = PathRef::Sketch {
+        sketch: part.sketches[b].id.clone(),
+        curves: part.sketches[b]
+            .sketch
+            .entities()
+            .map(|(id, _)| id)
+            .collect(),
+    };
+    let mut def = SweepFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], path);
+    def.twist = twist_deg.to_radians();
+    part.add_sweep(a, def).unwrap();
+    part
+}
+
+fn loft_part(n: usize) -> PartDocument {
+    use cadcraft3d::part::{
+        LoftFeature, LoftSection, OriginPlane, PlaneRef, WorkDef, WorkFeature, WorkPlaneDef,
+    };
+    use cadcraft3d::sketch::Point2;
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::default();
+    let mut secs = Vec::new();
+    for k in 0..n {
+        let placement = if k == 0 {
+            SketchPlacement::on_origin_plane(OriginPlane::XY)
+        } else {
+            let wp = part
+                .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                    base: PlaneRef::Origin(OriginPlane::XY),
+                    distance: 15.0 * k as Real,
+                })))
+                .unwrap();
+            SketchPlacement {
+                plane: PlaneRef::Work(wp),
+                ..Default::default()
+            }
+        };
+        let i = part.create_sketch(placement, &o).unwrap();
+        let sk = &mut part.sketches[i].sketch;
+        if k % 2 == 0 {
+            sk.add_rectangle_two_point(Point2::new(-10.0, -10.0), Point2::new(10.0, 10.0))
+                .unwrap();
+        } else {
+            sk.add_circle(Point2::new(0.0, 0.0), 9.0).unwrap();
+        }
+        let r = sk.regions();
+        secs.push(LoftSection::Profile {
+            sketch: part.sketches[i].id.clone(),
+            profile: ProfileRef::of(&r[0], r[0].interior_point()),
+        });
+    }
+    part.add_loft(LoftFeature::new(secs)).unwrap();
+    part
+}
+
 #[test]
 fn speed_budgets() {
     // (case, budget ms, median ms)
@@ -870,6 +967,36 @@ fn speed_budgets() {
             p.regenerate().unwrap();
         }),
     ));
+
+    for (case, budget, part) in [
+        (
+            "sweep a circle along a quarter arc (exact sweep)",
+            150.0,
+            sweep_part(0.0, false),
+        ),
+        (
+            "sweep a square 40 with a 90 deg twist (3 lofted pieces)",
+            400.0,
+            sweep_part(90.0, true),
+        ),
+        (
+            "loft square -> circle (2 sections, ruled)",
+            60.0,
+            loft_part(2),
+        ),
+        ("loft through 4 sections (smooth)", 100.0, loft_part(4)),
+    ] {
+        rows.push((
+            case,
+            budget,
+            median_ms(3, || {
+                let mut p = part.clone();
+                p.build_cache = Default::default();
+                p.regenerate().unwrap();
+                assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+            }),
+        ));
+    }
 
     println!("{:<62} {:>9} {:>9}", "case", "budget", "median");
     let mut over = Vec::new();

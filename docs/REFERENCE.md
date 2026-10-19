@@ -757,7 +757,9 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | Sketch | **Start 2D Sketch** (S) | скица върху равнина или стена (сива, докато се избира равнина) |
 | Create | **Extrude** (E) | изтегля затворени региони |
 | | **Revolve** (R) | завърта региони около ос |
-| | Sweep (5.1), Loft (5.2), Coil (5.3), Rib (2.7), Emboss (2.17) | предстоят |
+| | **Sweep** | протяга профили по път (крива от скица в друга равнина или ръбове); Guide Rail, Parallel, Taper, Twist |
+| | **Loft** | тяло през сечения по ред (профили, стени, точка в края) |
+| | Coil (5.3), Rib (2.7), Emboss (2.17) | предстоят |
 | Modify | Hole (H, 2.3) | предстои |
 | | **Fillet** | закръгля ръбове (изпъкнал — реже, вдлъбнат — добавя) |
 | | **Chamfer** | фаска: Distance, Two Distances, Distance and Angle |

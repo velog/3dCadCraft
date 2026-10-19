@@ -90,7 +90,7 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (`TargetRef::Plane`, `TargetRef::Point`), Revolve To
 ///   (`RevolveExtent::To`); additive fields `alternate`, `extend_face`,
 ///   `terminator`, `open` (Match Shape), `minimum` (2026-10-19).
-/// - 12: reserved for Sweep / Loft (another branch).
+/// - 12: Sweep and Loft (`Feature::Sweep`, `Feature::Loft`) (2026-10-19).
 /// - 13: Combine and Split (`Feature::Combine`, `Feature::Split`),
 ///   `PartDocument::hidden_bodies` (2026-10-20).
 pub const FORMAT_REVISION: u32 = 13;

@@ -33,6 +33,7 @@ pub mod expr;
 pub mod extrude;
 pub mod history;
 pub mod hole;
+pub mod loft;
 #[cfg(test)]
 mod option_tests;
 pub mod params;
@@ -45,6 +46,7 @@ pub mod select;
 pub mod shell;
 pub mod split;
 pub mod standards;
+pub mod sweep;
 pub mod work;
 
 use std::collections::HashMap;
@@ -64,12 +66,14 @@ pub use hole::{
     ClearanceSpec, CosmeticThread, DrillPoint, FastenerFit, HoleCenter, HoleFeature, HoleGroup,
     HoleInstance, HoleSpec, HoleType, SeatType, Termination, ThreadFeature, ThreadSpec,
 };
+pub use loft::{ConditionKind, LoftCondition, LoftFeature, LoftGuide, LoftSection};
 pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use primitive::{PrimitiveFeature, PrimitiveKind};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
 pub use shell::{FaceRef, ShellCorners, ShellDirection, ShellFeature};
 pub use split::{SplitFeature, SplitMethod, SplitToolRef};
+pub use sweep::{PathRef, ProfileScaling, SweepFeature, SweepOrientation, SweepType};
 pub use work::{
     CurveRef, LineRef, UcsDef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef,
 };
@@ -156,10 +160,14 @@ pub enum Feature {
     /// Thread: a cosmetic or modeled thread on a cylindrical face (format
     /// revision 6).
     Thread(ThreadFeature),
-    /// Combine: a base body with toolbodies (format revision 7).
+    /// Combine: a base body with toolbodies (format revision 13).
     Combine(CombineFeature),
-    /// Split: Split Face, Trim Solid, Split Solid (format revision 7).
+    /// Split: Split Face, Trim Solid, Split Solid (format revision 13).
     Split(SplitFeature),
+    /// Sweep: profiles along a path (format revision 7).
+    Sweep(SweepFeature),
+    /// Loft: a body through sections (format revision 7).
+    Loft(LoftFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -232,12 +240,12 @@ impl BuildCache {
 /// The key of a build step: the previous step's key, the feature and the
 /// sketch it uses (geometry and resolved plane — not its visibility or
 /// other display state, which changes without changing the body).
-fn step_key(prev: u64, feature: &Feature, sketch: Option<&crate::sketch::Sketch>) -> u64 {
+fn step_key(prev: u64, feature: &Feature, sketches: &[&crate::sketch::Sketch]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     prev.hash(&mut h);
     serde_json::to_vec(feature).unwrap_or_default().hash(&mut h);
-    if let Some(ps) = sketch {
+    for ps in sketches {
         serde_json::to_vec(ps).unwrap_or_default().hash(&mut h);
     }
     h.finish()
@@ -257,6 +265,8 @@ enum BuildStep<'a> {
     Thread(&'a ThreadFeature),
     Combine(&'a CombineFeature),
     Split(&'a SplitFeature),
+    Swept(&'a SweepFeature),
+    Loft(&'a LoftFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -274,6 +284,8 @@ impl<'a> BuildStep<'a> {
             Feature::Thread(t) => Self::Thread(t),
             Feature::Combine(c) => Self::Combine(c),
             Feature::Split(sp) => Self::Split(sp),
+            Feature::Sweep(s) => Self::Swept(s),
+            Feature::Loft(l) => Self::Loft(l),
         }
     }
 }
@@ -294,6 +306,8 @@ impl Feature {
             Feature::Thread(t) => &t.id,
             Feature::Combine(c) => &c.id,
             Feature::Split(sp) => &sp.id,
+            Feature::Sweep(s) => &s.id,
+            Feature::Loft(l) => &l.id,
         }
     }
 
@@ -312,6 +326,8 @@ impl Feature {
             Feature::Thread(t) => &t.name,
             Feature::Combine(c) => &c.name,
             Feature::Split(sp) => &sp.name,
+            Feature::Sweep(s) => &s.name,
+            Feature::Loft(l) => &l.name,
         }
     }
 
@@ -330,6 +346,8 @@ impl Feature {
             Feature::Thread(t) => &mut t.name,
             Feature::Combine(c) => &mut c.name,
             Feature::Split(sp) => &mut sp.name,
+            Feature::Sweep(s) => &mut s.name,
+            Feature::Loft(l) => &mut l.name,
         };
         *n = name.to_owned();
     }
@@ -340,6 +358,8 @@ impl Feature {
             Feature::Box(_) => true,
             Feature::Extrude(e) => e.operation == Operation::NewSolid,
             Feature::Revolve(r) => r.operation == Operation::NewSolid,
+            Feature::Sweep(s) => s.operation == Operation::NewSolid,
+            Feature::Loft(l) => l.operation == Operation::NewSolid,
             Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
@@ -364,6 +384,18 @@ impl Feature {
             Feature::Hole(h) => (!h.sketch.is_empty()).then_some(h.sketch.as_str()),
             Feature::Extrude(e) => Some(&e.sketch),
             Feature::Revolve(r) => Some(&r.sketch),
+            Feature::Sweep(s) => Some(&s.sketch),
+            Feature::Loft(l) => l.sketch_ids().first().copied(),
+        }
+    }
+
+    /// `id` of every sketch it uses (a sweep's profile and path sketches, a
+    /// loft's sections); the first is [`Feature::sketch`].
+    pub fn sketch_ids(&self) -> Vec<&str> {
+        match self {
+            Feature::Sweep(s) => s.sketch_ids(),
+            Feature::Loft(l) => l.sketch_ids(),
+            f => f.sketch().into_iter().collect(),
         }
     }
 }
@@ -746,11 +778,11 @@ impl PartDocument {
                     update_sketch(&body, &works, ps);
                 }
             }
-            // The feature's own sketch follows the body built so far.
-            if let Some(id) = f.sketch()
-                && let Some(ps) = self.sketches.iter_mut().find(|s| s.id == id)
-            {
-                update_sketch(&body, &works, ps);
+            // The feature's own sketches follow the body built so far.
+            for id in f.sketch_ids() {
+                if let Some(ps) = self.sketches.iter_mut().find(|s| s.id == id) {
+                    update_sketch(&body, &works, ps);
+                }
             }
             // Suppressed: as if it were not in the history (its key is not
             // chained either, so the following steps match a history
@@ -758,13 +790,13 @@ impl PartDocument {
             if self.suppressed.contains(f.id()) {
                 continue;
             }
-            let key = step_key(
-                prev_key,
-                f,
-                f.sketch()
-                    .and_then(|id| self.sketches.iter().find(|s| s.id == id))
-                    .map(|ps| &ps.sketch),
-            );
+            let used: Vec<&crate::sketch::Sketch> = f
+                .sketch_ids()
+                .into_iter()
+                .filter_map(|id| self.sketches.iter().find(|s| s.id == id))
+                .map(|ps| &ps.sketch)
+                .collect();
+            let key = step_key(prev_key, f, &used);
             prev_key = key;
             let cacheable = use_exact && !matches!(f, Feature::Work(_));
             if cacheable && let Some(hit) = self.build_cache.get(key) {
@@ -902,6 +934,38 @@ impl PartDocument {
                 BuildStep::Thread(_) => Err(exact::Fail::User(
                     "a modeled thread needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
+                BuildStep::Swept(sw) if use_exact => match sw.build(&self.sketches, &body) {
+                    Ok(added) => {
+                        made.push(pattern::ToolSet {
+                            tools: added.clone(),
+                            op: sw.operation,
+                            solids: sw.solids.clone(),
+                        });
+                        exact::combine(solids.clone(), added, sw.operation, &sw.solids, false)
+                            .map(Some)
+                            .map_err(exact::as_user)
+                    }
+                    Err(e) => Err(e),
+                },
+                BuildStep::Loft(lo) if use_exact => match lo.build(&self.sketches, &body) {
+                    Ok(added) => {
+                        made.push(pattern::ToolSet {
+                            tools: added.clone(),
+                            op: lo.operation,
+                            solids: lo.solids.clone(),
+                        });
+                        exact::combine(solids.clone(), added, lo.operation, &lo.solids, false)
+                            .map(Some)
+                            .map_err(exact::as_user)
+                    }
+                    Err(e) => Err(e),
+                },
+                BuildStep::Swept(_) => Err(exact::Fail::User(
+                    "Sweep needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
+                BuildStep::Loft(_) => Err(exact::Fail::User(
+                    "Loft needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
                 BuildStep::Draft(_) => Err(exact::Fail::User(
                     "Face Draft needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
@@ -1013,7 +1077,10 @@ impl PartDocument {
                 made.clear();
             }
             match step {
-                Ok(Some(next)) => match to_brep(&next) {
+                Ok(Some(next)) => match crate::kernel::exact::to_brep_with(
+                    &next,
+                    matches!(f, Feature::Sweep(_) | Feature::Loft(_)),
+                ) {
                     // A result the kernel made but that is not a valid solid
                     // (a non-manifold edge: a hemisphere shell, rounds wider
                     // than the wall; FreeCAD #19184, #27918) is never kept.
@@ -1037,6 +1104,13 @@ impl PartDocument {
                             failed = Some(msg);
                         }
                     },
+                    // Sweep / Loft have no faceted fallback: their own health.
+                    Err(msg) if matches!(f, Feature::Sweep(_) | Feature::Loft(_)) => {
+                        let msg =
+                            format!("the geometry kernel made a result it cannot show ({msg})");
+                        self.feature_health.insert(f.id().to_owned(), msg.clone());
+                        failed = Some(msg);
+                    }
                     Err(msg) => {
                         log::warn!("exact kernel: {}: {msg}", f.id());
                         return Ok(false);
@@ -1171,6 +1245,8 @@ impl PartDocument {
                 Feature::Extrude(e) => (e.output == Output::Solid).then(|| e.id.clone()),
                 Feature::Revolve(r) => (r.output == Output::Solid).then(|| r.id.clone()),
                 Feature::Box(b) => Some(b.id.clone()),
+                Feature::Sweep(s) => (s.output == Output::Solid).then(|| s.id.clone()),
+                Feature::Loft(l) => (l.output == Output::Solid).then(|| l.id.clone()),
                 Feature::Split(sp) => Some(sp.new_body()),
                 Feature::Work(_)
                 | Feature::Blend(_)
@@ -1271,6 +1347,64 @@ impl PartDocument {
         Ok(id)
     }
 
+    /// **Sweep** regions of sketch `index` along `def.path` (see [`sweep`];
+    /// id, name and profile sketch are assigned here). The profile and path
+    /// sketches are consumed (hidden), or shared when another feature uses
+    /// them already. Returns the feature id; on failure nothing changes.
+    pub fn add_sweep(&mut self, index: usize, mut def: SweepFeature) -> Result<String, PartError> {
+        let sketch_id = self
+            .sketches
+            .get(index)
+            .ok_or(PartError::NoSketch(index))?
+            .id
+            .clone();
+        if def.profiles.is_empty() {
+            return Err(PartError::Feature("select at least one profile".into()));
+        }
+        if def.path.is_empty() {
+            return Err(PartError::Feature("select the path".into()));
+        }
+        let id = self.next_feature_id("Sweep");
+        (def.id, def.name, def.sketch) = (id.clone(), id.clone(), sketch_id);
+        let f = Feature::Sweep(def);
+        let used: Vec<String> = f.sketch_ids().into_iter().map(str::to_owned).collect();
+        self.add_consuming(f, &used)?;
+        Ok(id)
+    }
+
+    /// **Loft** through `def.sections` (see [`loft`]; id and name are
+    /// assigned here). Its sketches are consumed like a sweep's. Returns the
+    /// feature id; on failure nothing changes.
+    pub fn add_loft(&mut self, mut def: LoftFeature) -> Result<String, PartError> {
+        if def.sections.len() < 2 {
+            return Err(PartError::Feature("select at least two sections".into()));
+        }
+        let id = self.next_feature_id("Loft");
+        (def.id, def.name) = (id.clone(), id.clone());
+        let f = Feature::Loft(def);
+        let used: Vec<String> = f.sketch_ids().into_iter().map(str::to_owned).collect();
+        self.add_consuming(f, &used)?;
+        Ok(id)
+    }
+
+    /// Adds `f` that consumes the sketches `used`: rebuilt, rolled
+    /// back on failure; each sketch is hidden, or shared when another
+    /// feature used it already.
+    fn add_consuming(&mut self, f: Feature, used: &[String]) -> Result<(), PartError> {
+        let reused: Vec<bool> = used.iter().map(|s| !self.consumers(s).is_empty()).collect();
+        self.insert_feature_checked(f)?;
+        for (sid, reused) in used.iter().zip(reused) {
+            if let Some(ps) = self.sketches.iter_mut().find(|s| &s.id == sid) {
+                if reused {
+                    ps.shared = true;
+                } else {
+                    ps.visible = false;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// **Edit Feature**: replaces feature `k` by `def` (keeping its id,
     /// name, sketch and place in the history) and rebuilds. If the new
     /// definition fails, the part is left as it was and the reason
@@ -1318,6 +1452,12 @@ impl PartDocument {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             (Feature::Split(o), Feature::Split(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::Sweep(o), Feature::Sweep(n)) => {
+                (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
+            }
+            (Feature::Loft(o), Feature::Loft(n)) => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             // Redefine of a work feature: any method of the same kind (a
@@ -1403,7 +1543,7 @@ impl PartDocument {
         self.features
             .iter()
             .enumerate()
-            .filter(|(_, f)| f.sketch() == Some(sketch_id))
+            .filter(|(_, f)| f.sketch_ids().contains(&sketch_id))
             .map(|(k, _)| k)
             .collect()
     }
@@ -1746,7 +1886,7 @@ fn pattern_sources<'t>(
             _ if health.contains_key(f.id()) => {
                 format!("{} failed, so it cannot be copied", f.name())
             }
-            Feature::Extrude(_) | Feature::Revolve(_) => {
+            Feature::Extrude(_) | Feature::Revolve(_) | Feature::Sweep(_) | Feature::Loft(_) => {
                 format!("{} cannot be copied (a surface)", f.name())
             }
             Feature::Hole(_) => format!("{} made no hole to copy", f.name()),

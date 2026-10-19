@@ -178,6 +178,8 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
             super::PatternKind::Mirror { .. } => Vec::new(),
         },
         Feature::Hole(h) => h.fields(),
+        Feature::Sweep(s) => s.fields(),
+        Feature::Loft(_) => Vec::new(),
         Feature::Thread(t) => t.fields(),
         Feature::Combine(_) | Feature::Split(_) => Vec::new(),
         Feature::Work(w) => match &w.def {
@@ -278,6 +280,8 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
             _ => None,
         },
         Feature::Hole(h) => h.value(field),
+        Feature::Sweep(s) => s.value(field),
+        Feature::Loft(_) => None,
         Feature::Thread(t) => t.value(field),
         Feature::Combine(_) | Feature::Split(_) => None,
         Feature::Work(w) => match (&w.def, field) {
@@ -391,6 +395,8 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
             }
         }
         Feature::Hole(h) => h.set(field, v),
+        Feature::Sweep(s) => s.set(field, v),
+        Feature::Loft(_) => {}
         Feature::Thread(t) => t.set(field, v),
         Feature::Combine(_) | Feature::Split(_) => {}
         Feature::Work(w) => match (&mut w.def, field) {
@@ -438,6 +444,8 @@ fn feature_params_mut(f: &mut Feature) -> Option<&mut FeatureParams> {
         Feature::Draft(d) => Some(&mut d.params),
         Feature::Pattern(p) => Some(&mut p.params),
         Feature::Hole(h) => Some(&mut h.params),
+        Feature::Sweep(s) => Some(&mut s.params),
+        Feature::Loft(l) => Some(&mut l.params),
         Feature::Thread(t) => Some(&mut t.params),
         Feature::Combine(_) | Feature::Split(_) => None,
     }
@@ -454,6 +462,8 @@ fn feature_params(f: &Feature) -> Option<&FeatureParams> {
         Feature::Draft(d) => Some(&d.params),
         Feature::Pattern(p) => Some(&p.params),
         Feature::Hole(h) => Some(&h.params),
+        Feature::Sweep(s) => Some(&s.params),
+        Feature::Loft(l) => Some(&l.params),
         Feature::Thread(t) => Some(&t.params),
         Feature::Combine(_) | Feature::Split(_) => None,
     }

@@ -248,6 +248,51 @@ struct GraphEdge {
 }
 
 impl Sketch {
+    /// The whole curve `id` as profile geometry (a line, an arc counter-
+    /// clockwise, a circle as a full turn from angle 0, a spline with its
+    /// knots), e.g. as a sweep path. `None` for a missing entity.
+    pub fn curve_of(&self, id: EntityId) -> Option<ProfileCurve> {
+        let pos = |p| self.point(p).map(|q| q.position);
+        Some(match self.entity(id)? {
+            Entity::Line { start, end } => ProfileCurve::Line {
+                a: pos(*start)?,
+                b: pos(*end)?,
+            },
+            Entity::Circle { center, radius } => ProfileCurve::Arc {
+                c: pos(*center)?,
+                r: *radius,
+                a0: 0.0,
+                sweep: TAU,
+            },
+            Entity::Arc { center, start, end } => {
+                let (c, s, e) = (pos(*center)?, pos(*start)?, pos(*end)?);
+                let a0 = (s.y - c.y).atan2(s.x - c.x);
+                let a1 = (e.y - c.y).atan2(e.x - c.x);
+                let mut sweep = (a1 - a0).rem_euclid(TAU);
+                if sweep < 1e-12 {
+                    sweep = TAU;
+                }
+                ProfileCurve::Arc {
+                    c,
+                    r: (s - c).norm(),
+                    a0,
+                    sweep,
+                }
+            }
+            Entity::Spline { .. } => {
+                let (cv, knots) = self.spline_def(id, &|p| {
+                    self.point(p)
+                        .map_or(Vector2::zeros(), |q| q.position.coords)
+                });
+                ProfileCurve::Spline {
+                    points: cv.into_iter().map(Point2::from).collect(),
+                    reversed: false,
+                    knots,
+                }
+            }
+        })
+    }
+
     /// The closed regions formed by the sketch's normal curves (see the
     /// module docs). Deterministic for a given sketch.
     pub fn regions(&self) -> Vec<Region> {
