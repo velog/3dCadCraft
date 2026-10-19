@@ -179,6 +179,15 @@ pub enum Icon {
     OpNewSolid,
     OutSolid,
     OutSurface,
+    // windows
+    /// User Interface (a window with side panels).
+    UiPanels,
+    /// Clean Screen (an empty frame with the model).
+    CleanScreen,
+    /// Full Screen (corner brackets).
+    FullScreen,
+    /// Reset UI Layout (a frame with a turning arrow).
+    ResetLayout,
 }
 
 /// Pen on the 16 × 16 design grid mapped into a screen rect.
@@ -1073,6 +1082,34 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
         OutSurface => {
             p.line(&[(2.0, 12.0), (5.0, 6.0), (12.0, 6.0), (15.0, 12.0)], acc);
             p.line(&[(2.0, 12.0), (15.0, 12.0)], tint(acc, 120));
+        }
+        UiPanels => {
+            p.fill(&[(1.5, 2.5), (14.5, 2.5), (14.5, 4.5), (1.5, 4.5)], soft);
+            p.fill(&[(1.5, 4.5), (4.5, 4.5), (4.5, 13.5), (1.5, 13.5)], soft);
+            p.fill(
+                &[(11.5, 4.5), (14.5, 4.5), (14.5, 13.5), (11.5, 13.5)],
+                soft,
+            );
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            p.line(&[(4.5, 4.5), (4.5, 13.5)], acc);
+            p.line(&[(11.5, 4.5), (11.5, 13.5)], acc);
+        }
+        CleanScreen => {
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            p.block([5.0, 7.5, 4.5, 4.0, 2.5], acc, soft);
+        }
+        FullScreen => {
+            p.rect(5.0, 5.0, 11.0, 11.0, ink);
+            p.line(&[(2.0, 6.0), (2.0, 2.0), (6.0, 2.0)], acc);
+            p.line(&[(10.0, 2.0), (14.0, 2.0), (14.0, 6.0)], acc);
+            p.line(&[(14.0, 10.0), (14.0, 14.0), (10.0, 14.0)], acc);
+            p.line(&[(6.0, 14.0), (2.0, 14.0), (2.0, 10.0)], acc);
+        }
+        ResetLayout => {
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            p.line(&[(1.5, 4.5), (14.5, 4.5)], ink);
+            p.arc(8.0, 9.0, 3.2, -60.0, 200.0, acc);
+            p.head((5.0, 10.1), (0.34, 0.94), acc);
         }
     }
 }

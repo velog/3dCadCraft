@@ -359,6 +359,21 @@ pub fn export_bytes(
 /// Writes the part to `path` in the format its extension names
 /// (atomically: a temporary file renamed over the target).
 pub fn export(part: &PartDocument, name: &str, path: &Path) -> Result<ExportFormat, String> {
+    let started = std::time::Instant::now();
+    let r = export_file(part, name, path);
+    match &r {
+        Ok(f) => log::info!(
+            "export {} ({}): ok ({} ms)",
+            path.display(),
+            f.extension(),
+            started.elapsed().as_millis()
+        ),
+        Err(e) => log::warn!("export {}: {e}", path.display()),
+    }
+    r
+}
+
+fn export_file(part: &PartDocument, name: &str, path: &Path) -> Result<ExportFormat, String> {
     let format = ExportFormat::from_path(path)
         .ok_or("the file name must end in .stl, .step / .stp or .glb")?;
     let bytes = export_bytes(part, name, format)?;

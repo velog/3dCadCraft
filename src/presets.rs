@@ -871,6 +871,9 @@ pub fn load_file(path: &Path, command: &str) -> Loaded {
             None => w,
         });
     }
+    if let Some(w) = &l.warning {
+        log::warn!("presets: {w}");
+    }
     l
 }
 

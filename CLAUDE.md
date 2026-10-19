@@ -35,6 +35,7 @@ cargo xtask oracle                            # reference cases table (tests/ora
 cargo run -- path/to/project.3dcadcraft       # open a project
 CADCRAFT3D_DEMO=slot cargo run                # start with a demo sketch (rectangle|slot|tangents|lines|revolve)
 cargo run --example make_project -- /tmp/b.3dcadcraft   # build a project via the API
+cargo run --example replay -- session-…-journal.jsonl   # replay a user's action journal
 ```
 
 Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft3d`**
@@ -52,10 +53,11 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `part::hole`, `part::standards` | Hole and Thread (`Feature::Hole` / `Feature::Thread`): `HoleSpec` (type, seat, termination, drill point, thread, fastener), notes for drawings (`note()`), `HoleInstance` + `group_holes` (`PartDocument::holes`, `hole_groups`); standards tables `data/standards/*.csv` (built in, user override folder) | `HoleFeature`, `HoleSpec`, `ThreadSpec`, `ThreadFeature`, `Standards` |
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
+| `diagnostics` | session log (`log.rs`, own logger + ring buffer), action journal with JSON-delta part snapshots (`journal.rs`), `replay.rs` (journal → parts, first differing step), autosave + Restore decision (`recovery.rs`), panic hook / crash reports / emergency autosave (`crash.rs`), Save Diagnostics zip (`bundle.rs`); GUI hooks in `gui/diag.rs` | `Journal`, `Outcome`, `Step`, `Autosaver`, `Offer` |
 | `command` | Undo/Redo (snapshot history, coalesced gestures); later the Command enum | `History<T>` |
 | `presets` | feature-command presets (user settings, never document data): `PresetData` trait (setting keys, `strip_inputs`, `capture`/`apply`), `apply_in` (re-evaluates stored equations), `CommandPresets` (Last Used, New Default, Sort, built-ins), `PresetStore` (one atomic JSON file per command in `presets/` of the settings folder); GUI row in `gui/presets.rs` | `PresetData`, `PresetStore`, `CommandPresets` |
 | `api` | JSON-RPC/MCP server — placeholder | |
-| `gui` (feature `gui`) | Hole / Thread commands (`hole.rs`, panel `hole_panel.rs`), Materials/appearances/Physical Properties (`material.rs`: QAT lists, browsers, Adjust, Clear, Styles Editor, Manage tab, coloured scene), Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
+| `gui` (feature `gui`) | panel/window layout and persisted UI settings (`layout.rs`: `UiSettings`, `AppOptions`, `LayoutUi::place` for floating windows, View → User Interface, Clean Screen, Full Screen, debounced atomic save into `settings.json` keys `ui`/`options`); Hole / Thread commands (`hole.rs`, panel `hole_panel.rs`), Materials/appearances/Physical Properties (`material.rs`: QAT lists, browsers, Adjust, Clear, Styles Editor, Manage tab, coloured scene), Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
 
 Data flow: GUI action → `checkpoint(label)` (Undo snapshot) → `part::`/`sketch::`
 operation on the active `PartDocument` inside `Project` → `regenerate()` if the body
@@ -243,6 +245,24 @@ pkill -x 3dcadcraft                                      # NEVER `pkill -f` (kil
 Default window 1400×900: ribbon y≈60–90, browser x<250, properties x>1100,
 viewport ≈ (250..1100, 110..875). Coordinates shift with layout — always take a
 screenshot and measure first (crop + `-scale 300%` to locate small dots).
+
+## How to debug a user's session
+
+"Something did not work at the end of the last session":
+1. Files are in `%APPDATA%\3dcadcraft\logs` (Linux `~/.config/3dcadcraft/logs`): the newest
+   `session-*.log` (UTC times, warnings, sick features, slow regenerations, save/open/export),
+   `session-*-journal.jsonl` (one action per line: `checkpoint`, `command_ok` with the feature
+   JSON, `error`, `health`, `state`…), `session-*.json` (`clean_exit: false` = crash/killed),
+   `crash-*.txt` (panic, backtrace, last log/journal lines). The user may send a zip from
+   Help → Save Diagnostics instead. Autosaves: `…\3dcadcraft\recovery`.
+2. `cargo run --example replay -- <journal>` rebuilds the part state by state and marks the first
+   step whose volume / faces / sick features differ from the recording;
+   `--part N out.3dcadcraft` saves the part at state N to open in the app.
+3. Regression test: copy the journal into `tests/` and assert
+   `diagnostics::replay::first_difference(&replay(path)?)` is `None` (see `tests/diagnostics.rs`),
+   or build the failing state with `replay::part_at(path, N)`.
+- The kernel's expected panics go through `diagnostics::crash::guard` (no crash report); any new
+  `catch_unwind` around kernel calls should use it too.
 
 ## Pitfalls already paid for
 
@@ -519,6 +539,15 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   right after `panel_header`, `preset_stamp` before and `preset_used` after a successful OK /
   Apply. GUI tests never touch the user's folder (`PresetUi` is in-memory under `cfg(test)`);
   `CADCRAFT3D_PRESETS_DIR` redirects the folder for scripted runs.
+- **Panels and floating windows** go through `gui/layout.rs`: docked panels use
+  `layout.panel_id(name)` (Reset UI Layout bumps a generation so egui forgets dragged sizes);
+  a floating window is wrapped as `self.layout.place("key", ctx.content_rect(), sized, Window…)`
+  (the *last* call of the builder, so the remembered rectangle wins over `default_pos`);
+  Escape-closable keys are in `ESCAPE_CLOSES`. Do not `.anchor()` a window that should
+  remember its place. New persisted options: add the field to `AppOptions` and to
+  `options_snapshot`/`apply_options`; loading is field by field (`lenient`), so an old file
+  keeps its other values. egui's Ctrl+0/Ctrl+± zoom is off (`zoom_with_keyboard`): Ctrl+0 is
+  Clean Screen. F11 is Relax Mode in a sketch and Full Screen elsewhere.
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans (amber unless something assigned them an appearance).
 - **Feature patterns copy tools, not faces** (`part/pattern.rs`, `exact::pattern`): every

@@ -714,6 +714,7 @@ impl PartDocument {
                 hole_out.append(hit.extra);
                 continue;
             }
+            let started = std::time::Instant::now();
             // The tools this step applies (kept for later patterns).
             let mut made: Vec<pattern::ToolSet> = Vec::new();
             let mut extra = exact::HoleOutput::default();
@@ -914,6 +915,15 @@ impl PartDocument {
                     }
                 }
             };
+            let took = started.elapsed();
+            if took.as_millis() > 200 {
+                log::info!(
+                    "regenerate {} ({} kernel): {} ms",
+                    f.id(),
+                    if use_exact { "exact" } else { "faceted" },
+                    took.as_millis()
+                );
+            }
             let mut failed = match &step {
                 Err(exact::Fail::User(msg)) => Some(msg.clone()),
                 _ => None,
