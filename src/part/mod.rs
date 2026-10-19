@@ -61,7 +61,9 @@ pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use revolve::{AxisRef, RevolveExtent, RevolveFeature};
 pub use shell::{FaceRef, ShellDirection, ShellFeature};
-pub use work::{LineRef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef};
+pub use work::{
+    CurveRef, LineRef, UcsDef, WorkAxisDef, WorkDef, WorkFeature, WorkPlaneDef, WorkPointDef,
+};
 
 use crate::kernel::{BRep, KernelError, Plane, Point3, Real};
 use crate::sketch::{EntityId, Point2, PointId, Sketch, SketchError};
@@ -734,8 +736,9 @@ impl PartDocument {
                         body: &body,
                         works: &works,
                         revolve_axis: &revolve_axis,
+                        sketches,
                     };
-                    match w.def.build(&w.id, &ctx) {
+                    match w.build(&ctx) {
                         Ok(r) => {
                             r.store(&mut works);
                             Ok(None)
@@ -1202,6 +1205,11 @@ impl PartDocument {
                 (n.id, n.name, n.sketch) = (o.id.clone(), o.name.clone(), o.sketch.clone());
             }
             (Feature::Thread(o), Feature::Thread(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            // Redefine of a work feature: any method of the same kind (a
+            // plane stays a plane, so what refers to it still resolves).
+            (Feature::Work(o), Feature::Work(n)) if o.def.prefix() == n.def.prefix() => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
             _ => {

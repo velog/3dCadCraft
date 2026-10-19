@@ -547,6 +547,7 @@ impl CadCraftApp {
                     crate::part::WorkDef::Plane(_) => Icon::WorkPlane,
                     crate::part::WorkDef::Axis(_) => Icon::WorkAxis,
                     crate::part::WorkDef::Point(_) => Icon::WorkPoint,
+                    crate::part::WorkDef::Ucs(_) => Icon::Ucs,
                 };
                 ui.horizontal(|ui| {
                     let mut visible = w.visible;
@@ -1847,155 +1848,6 @@ impl CadCraftApp {
         if ui.button("Delete").clicked() {
             self.delete_feature(k);
         }
-    }
-
-    /// The Work Plane / Axis / Point command dialog: picked inputs, the
-    /// method they make, its values, origin axes / centre point as inputs,
-    /// OK / Cancel.
-    fn work_dialog(&mut self, ui: &mut egui::Ui) {
-        use super::work::{WorkKind, WpInput};
-        use crate::part::{LineRef, PointRef, WorkDef, WorkPlaneDef};
-        let Some(mut d) = self.work_draft.clone() else {
-            return;
-        };
-        let icon = match d.kind {
-            WorkKind::Plane => Icon::WorkPlane,
-            WorkKind::Axis => Icon::WorkAxis,
-            WorkKind::Point => Icon::WorkPoint,
-        };
-        self.panel_header(ui, icon, d.kind.title());
-        let mut remove = None;
-        psection(ui, "wp_input", "Input", |ui| {
-            for (k, p) in d.picks.iter().enumerate() {
-                plabel(ui, &format!("{}", k + 1));
-                ui.horizontal(|ui| {
-                    ui.label(p.describe()).on_hover_text(p.describe());
-                    if ui.small_button("x").on_hover_text("Remove").clicked() {
-                        remove = Some(k);
-                    }
-                });
-                ui.end_row();
-            }
-            plabel(ui, "Origin");
-            ui.horizontal(|ui| {
-                for (k, n) in ["X", "Y", "Z"].iter().enumerate() {
-                    if ui
-                        .small_button(*n)
-                        .on_hover_text(format!("Use the {n} axis of the Origin"))
-                        .clicked()
-                    {
-                        d.pick(WpInput::Line(LineRef::Origin(k)));
-                    }
-                }
-                if ui
-                    .small_button("Center")
-                    .on_hover_text("Use the Center Point of the Origin")
-                    .clicked()
-                {
-                    d.pick(WpInput::Point(PointRef::PartOrigin));
-                }
-            });
-            ui.end_row();
-        });
-        if let Some(k) = remove {
-            d.picks.remove(k);
-        }
-        psection(ui, "wp_method", "Method", |ui| {
-            if d.kind == WorkKind::Point {
-                plabel(ui, "Grounded");
-                let was = d.grounded;
-                ui.checkbox(&mut d.grounded, "")
-                    .on_hover_text("Fixed in space at X, Y, Z (no longer follows the model)");
-                // Start from the picked point.
-                if d.grounded && !was {
-                    let mut probe = d.clone();
-                    probe.grounded = false;
-                    if let Ok(def) = probe.def()
-                        && let Ok(crate::part::work::WorkResult::Point(_, p)) =
-                            self.compute_work(&def)
-                    {
-                        d.xyz = [p.x, p.y, p.z];
-                    }
-                }
-                ui.end_row();
-            }
-            plabel(ui, "Method");
-            match d.def() {
-                Ok(def) => ui.label(RichText::new(def.method()).strong()),
-                Err(e) => ui.label(RichText::new(e).weak()),
-            };
-            ui.end_row();
-            match d.def() {
-                Ok(WorkDef::Plane(WorkPlaneDef::Offset { .. })) => {
-                    plabel(ui, "Distance");
-                    ui.add(
-                        super::valuefield::ExprValue::new(&mut d.distance)
-                            .speed(0.5)
-                            .suffix(" mm"),
-                    );
-                    ui.end_row();
-                }
-                Ok(WorkDef::Plane(WorkPlaneDef::Angle { .. })) => {
-                    plabel(ui, "Angle");
-                    let mut deg = d.angle.to_degrees();
-                    if ui
-                        .add(
-                            super::valuefield::ExprValue::new(&mut deg)
-                                .speed(1.0)
-                                .suffix(" °"),
-                        )
-                        .changed()
-                    {
-                        d.angle = deg.to_radians();
-                    }
-                    ui.end_row();
-                }
-                Ok(WorkDef::Point(crate::part::WorkPointDef::Fixed { .. })) => {
-                    for (k, n) in ["X", "Y", "Z"].iter().enumerate() {
-                        plabel(ui, n);
-                        ui.add(
-                            super::valuefield::ExprValue::new(&mut d.xyz[k])
-                                .speed(0.5)
-                                .suffix(" mm"),
-                        );
-                        ui.end_row();
-                    }
-                }
-                _ => {}
-            }
-        });
-        // Incomplete picks only grey the method out; a complete one that
-        // cannot be built is a warning.
-        let def = d.def();
-        let built = def
-            .as_ref()
-            .ok()
-            .map(|def| self.compute_work(def).map(|_| ()));
-        if let Some(Err(e)) = &built {
-            warning_box(ui, e);
-        }
-        let check: Result<(), ()> = match built {
-            Some(Ok(())) => Ok(()),
-            _ => Err(()),
-        };
-        self.work_draft = Some(d);
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    check.is_ok(),
-                    egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)),
-                )
-                .clicked()
-            {
-                self.commit_work();
-            }
-            if ui
-                .add(egui::Button::new("Cancel").min_size(egui::vec2(70.0, 22.0)))
-                .clicked()
-            {
-                self.work_draft = None;
-            }
-        });
     }
 
     /// The Fillet / Chamfer dialog: edges, size (method for chamfers),
@@ -3402,134 +3254,6 @@ impl CadCraftApp {
         }
     }
 
-    /// Properties of a work feature: method, inputs, values (expressions),
-    /// visibility.
-    fn work_properties(&mut self, ui: &mut egui::Ui, k: usize, w: crate::part::WorkFeature) {
-        use crate::part::{WorkAxisDef as A, WorkDef, WorkPlaneDef as D, WorkPointDef as P};
-        let icon = match &w.def {
-            WorkDef::Plane(_) => Icon::WorkPlane,
-            WorkDef::Axis(_) => Icon::WorkAxis,
-            WorkDef::Point(_) => Icon::WorkPoint,
-        };
-        self.panel_header(ui, icon, &w.name);
-        if let Some(h) = self.part().feature_health.get(&w.id) {
-            warning_box(ui, h);
-        }
-        let pl = |r: &PlaneRef| super::work::WpInput::Plane(r.clone()).describe();
-        let pt = |r: &crate::part::PointRef| r.describe();
-        let ln = |r: &crate::part::LineRef| r.describe();
-        let rows: Vec<(&str, String)> = match &w.def {
-            WorkDef::Plane(d) => match d {
-                D::Offset { base, .. } => vec![("Plane", pl(base))],
-                D::ThroughPoint { base, point } => vec![("Plane", pl(base)), ("Point", pt(point))],
-                D::Midplane { a, b } => vec![("Plane 1", pl(a)), ("Plane 2", pl(b))],
-                D::Angle { base, axis, .. } => vec![("Plane", pl(base)), ("Edge", ln(axis))],
-                D::ThreePoints { points } => points
-                    .iter()
-                    .zip(["Point 1", "Point 2", "Point 3"])
-                    .map(|(p, l)| (l, pt(p)))
-                    .collect(),
-                D::TwoLines { a, b } => vec![("Edge 1", ln(a)), ("Edge 2", ln(b))],
-                D::NormalToAxis { axis, point } => vec![("Axis", ln(axis)), ("Point", pt(point))],
-                D::Fixed { .. } => Vec::new(),
-            },
-            WorkDef::Axis(d) => match d {
-                A::OnLine { line } => vec![("Line", ln(line))],
-                A::ParallelThroughPoint { line, point } => {
-                    vec![("Line", ln(line)), ("Point", pt(point))]
-                }
-                A::TwoPoints { a, b } => vec![("Point 1", pt(a)), ("Point 2", pt(b))],
-                A::TwoPlanes { a, b } => vec![("Plane 1", pl(a)), ("Plane 2", pl(b))],
-                A::NormalToPlane { plane, point } => {
-                    vec![("Plane", pl(plane)), ("Point", pt(point))]
-                }
-                A::CircularEdge { edge } => vec![("Edge", edge.clone())],
-                A::Revolved { feature } => vec![("Feature", feature.clone())],
-                A::LineOnPlane { line, plane } => vec![("Line", ln(line)), ("Plane", pl(plane))],
-                A::Fixed { .. } => Vec::new(),
-            },
-            WorkDef::Point(d) => match d {
-                P::OnPoint { point } => vec![("Point", pt(point))],
-                P::ThreePlanes { planes } => planes
-                    .iter()
-                    .zip(["Plane 1", "Plane 2", "Plane 3"])
-                    .map(|(p, l)| (l, pl(p)))
-                    .collect(),
-                P::TwoLines { a, b } => vec![("Line 1", ln(a)), ("Line 2", ln(b))],
-                P::PlaneLine { plane, line } => vec![("Plane", pl(plane)), ("Line", ln(line))],
-                P::LoopCenter { edge, .. } => vec![("Edge", edge.clone())],
-                P::Fixed { .. } => Vec::new(),
-            },
-        };
-        psection(ui, &format!("wp_props_{k}"), "Input", |ui| {
-            plabel(ui, "Method");
-            ui.label(w.def.method());
-            ui.end_row();
-            for (l, v) in rows {
-                plabel(ui, l);
-                ui.label(&v).on_hover_text(&v);
-                ui.end_row();
-            }
-        });
-        let table = self.part().parameter_table();
-        let mut fx = Fields {
-            table: &table,
-            key: format!("feature{k}"),
-            commits: Vec::new(),
-            bodies: Vec::new(),
-        };
-        let f = Feature::Work(w.clone());
-        let fields = crate::part::params::feature_field_names(&f);
-        if !fields.is_empty() {
-            psection(ui, &format!("wp_value_{k}"), "Value", |ui| {
-                for field in fields {
-                    let label = match field {
-                        "distance" => "Distance",
-                        "angle" => "Angle",
-                        "x" => "X",
-                        "y" => "Y",
-                        "z" => "Z",
-                        other => other,
-                    };
-                    field_row(ui, &mut fx, label, &f, field);
-                }
-            });
-        }
-        let commits = std::mem::take(&mut fx.commits);
-        drop(fx);
-        for (field, text) in commits {
-            self.checkpoint("Edit Feature");
-            match self.part_mut().set_feature_field(k, field, &text) {
-                Ok(()) => {
-                    if let Err(e) = self.part_mut().regenerate() {
-                        self.file_status = Some(Err(e.to_string()));
-                    }
-                    self.scene_dirty = true;
-                }
-                Err(e) => {
-                    self.history.cancel();
-                    self.file_status = Some(Err(format!("Edit Feature: {e}")));
-                }
-            }
-        }
-        let mut visible = w.visible;
-        if ui.checkbox(&mut visible, "Visible").changed() {
-            self.checkpoint("Visibility");
-            if let Some(Feature::Work(x)) = self.part_mut().features.get_mut(k) {
-                x.visible = visible;
-            }
-        }
-        ui.horizontal(|ui| {
-            if matches!(w.def, WorkDef::Plane(_)) && ui.button("New Sketch").clicked() {
-                self.mode = Mode::PickPlane(PickPurpose::NewSketch);
-                self.plane_picked(PlaneRef::Work(w.id.clone()));
-            }
-            if ui.button("Delete").clicked() {
-                self.delete_feature(k);
-            }
-        });
-    }
-
     fn sketch_properties(&mut self, ui: &mut egui::Ui, i: usize) {
         let editing = self.editing == Some(i);
         let ps = self.part().sketches[i].clone();
@@ -4111,21 +3835,12 @@ impl CadCraftApp {
                     ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.work_draft.is_some() => {
-                    let (title, need) = self
+                    let text = self
                         .work_draft
                         .as_ref()
-                        .map(|d| {
-                            let need = match d.def() {
-                                Ok(def) => format!("{}: OK to create, or pick more", def.method()),
-                                Err(e) => e.to_owned(),
-                            };
-                            (d.kind.title(), need)
-                        })
+                        .map(super::work::WorkDraft::prompt)
                         .unwrap_or_default();
-                    ui.add(
-                        egui::Label::new(RichText::new(format!("{title}: {need}")).strong())
-                            .truncate(),
-                    );
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                         (Mode::Normal, None) => match self.selection_summary() {
                             Some(text) => {

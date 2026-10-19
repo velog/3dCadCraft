@@ -82,6 +82,9 @@ pub enum Action {
     WorkAxis,
     /// Work Point: the method follows from the picks.
     WorkPoint,
+    /// UCS: a user coordinate system (relative to the origin or on three
+    /// points).
+    Ucs,
     /// The Parameters table (fx).
     Parameters,
     /// Rebuild All: recompute every feature of the part from scratch.
@@ -409,7 +412,8 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         None,
                         Action::WorkPlane,
                         "Work Plane: pick a plane (offset), two planes (midplane), \
-                         a plane and an edge (angle), a plane and a point, or three points",
+                         a plane and an edge (angle), a plane and a point, three points, \
+                         a curved face (tangent, torus midplane) or a curve and a point",
                     )
                     .large(),
                     ready(
@@ -417,18 +421,27 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         "Axis",
                         None,
                         Action::WorkAxis,
-                        "Work Axis: an edge, two points, two planes, a plane and a point, \
-                         a line and a point, a circular edge or a revolved face",
+                        "Work Axis: an edge or sketch line, two points, two planes, a plane \
+                         and a point, a line and a point, a circular or elliptical edge, or a \
+                         cylindrical, conical or toroidal face",
                     ),
                     ready(
                         Icon::WorkPoint,
                         "Point",
                         None,
                         Action::WorkPoint,
-                        "Work Point: a vertex or midpoint, three planes, two lines, a plane \
-                         and a line, a circular edge (centre); or Grounded at X, Y, Z",
+                        "Work Point: a vertex, sketch point or midpoint, three planes, two \
+                         lines, a plane or curved face and a line, a circular edge (centre), a \
+                         sphere or torus (centre); or Grounded at X, Y, Z",
                     ),
-                    todo(Icon::Ucs, "UCS", None, "2.10"),
+                    ready(
+                        Icon::Ucs,
+                        "UCS",
+                        None,
+                        Action::Ucs,
+                        "UCS: a coordinate system with its own planes, axes and centre; \
+                         set X, Y, Z and angles, or pick three points (centre, X, Y)",
+                    ),
                 ],
             ),
             panel(

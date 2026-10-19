@@ -108,6 +108,36 @@ pub fn plane_offset_handle(origin: Point3, n: Vector3, distance: Real) -> Handle
     }
 }
 
+/// The angle arc of an Angle to Plane work plane: around the hinge line
+/// (`center`, unit `axis`), from the base plane (its in-plane direction
+/// square to the hinge, `reference`, of length = the arc radius) to the
+/// work plane at `angle`.
+pub fn plane_angle_handle(
+    center: Point3,
+    axis: Vector3,
+    reference: Vector3,
+    angle: Real,
+) -> Handle {
+    let at = |t: Real| {
+        center + na::Rotation3::from_axis_angle(&na::Unit::new_normalize(axis), t) * reference
+    };
+    let n = ((angle.abs() / (TAU / 96.0)).ceil().max(2.0)) as usize;
+    let path = (0..=n).map(|k| at(angle * k as Real / n as Real)).collect();
+    Handle {
+        field: "angle",
+        path,
+        grip: at(angle),
+        geom: DragGeom::Angle {
+            center,
+            axis,
+            reference,
+            map: AngleMap::Plain,
+        },
+        arrow: None,
+        angle: true,
+    }
+}
+
 /// Extrude handles (only for the Distance extent from the sketch plane).
 pub fn extrude_handles(def: &ExtrudeFeature, sk: &Sketch) -> Vec<Handle> {
     if def.extent != Extent::Distance || def.from.is_some() {

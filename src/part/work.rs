@@ -3,12 +3,22 @@
 //! in the history, rebuilt in order at every regeneration from persistent
 //! references into [`WorkGeom`]; sketches and other work features refer to
 //! them ([`PlaneRef::Work`], [`LineRef::Work`], [`PointRef::Work`]).
+//!
+//! A **UCS** (user coordinate system) is a work feature too: it stores its
+//! three planes, three axes and centre point under `<id>:XY`, `<id>:XZ`,
+//! `<id>:YZ`, `<id>:X`, `<id>:Y`, `<id>:Z` and `<id>:Center`, so other
+//! features refer to them like to any work plane, axis or point.
+
+mod surf;
 
 use serde::{Deserialize, Serialize};
 
+use super::PartSketch;
 use super::params::FeatureParams;
 use super::placement::{PlaneRef, PointRef, WorkGeom, plane_of, point_of};
 use crate::kernel::{BRep, Curve, Plane, Point3, Real, Vector3};
+use crate::sketch::{Entity, EntityId, PointId};
+use surf::CurveGeom;
 
 /// What a work feature computation can look up.
 pub struct Ctx<'a> {
@@ -19,6 +29,9 @@ pub struct Ctx<'a> {
     /// World axis of a Revolve feature by id (for "Through Revolved
     /// Feature").
     pub revolve_axis: &'a dyn Fn(&str) -> Option<(Point3, Vector3)>,
+    /// The part's sketches (for sketch points, lines and curves), at their
+    /// state at this point of the history.
+    pub sketches: &'a [PartSketch],
 }
 
 impl Ctx<'_> {
@@ -32,6 +45,100 @@ impl Ctx<'_> {
 
     fn line(&self, r: &LineRef) -> Result<(Point3, Vector3), String> {
         r.resolve(self.body, self.works)
+    }
+
+    fn sketch(&self, id: &str) -> Result<&PartSketch, String> {
+        self.sketches
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| format!("sketch '{id}' no longer exists"))
+    }
+
+    fn sketch_point(&self, sketch: &str, p: PointId) -> Result<Point3, String> {
+        let ps = self.sketch(sketch)?;
+        let q = ps
+            .sketch
+            .point(p)
+            .ok_or_else(|| format!("the point of sketch '{sketch}' no longer exists"))?;
+        Ok(ps.sketch.to_world(&q.position))
+    }
+
+    fn sketch_line(&self, sketch: &str, e: EntityId) -> Result<(Point3, Vector3), String> {
+        let ps = self.sketch(sketch)?;
+        let (a, b) = ps
+            .sketch
+            .line_points(e)
+            .map_err(|_| format!("the line of sketch '{sketch}' no longer exists"))?;
+        let (a, b) = (self.sketch_point(sketch, a)?, self.sketch_point(sketch, b)?);
+        let d = (b - a)
+            .try_normalize(1e-12)
+            .ok_or("the sketch line has no length")?;
+        Ok((a, d))
+    }
+
+    fn curve(&self, r: &CurveRef) -> Result<CurveGeom, String> {
+        match r {
+            CurveRef::Edge(name) => CurveGeom::of_edge(self.body, name),
+            CurveRef::Sketch { sketch, entity } => {
+                let ps = self.sketch(sketch)?;
+                let sk = &ps.sketch;
+                let gone = || format!("the curve of sketch '{sketch}' no longer exists");
+                let world = |p: PointId| -> Result<Point3, String> {
+                    Ok(sk.to_world(&sk.point(p).ok_or_else(gone)?.position))
+                };
+                let n = sk.plane.normal.into_inner();
+                match sk.entity(*entity).ok_or_else(gone)? {
+                    Entity::Line { .. } => Err("the sketch curve is straight".into()),
+                    Entity::Circle { center, radius } => {
+                        Ok(CurveGeom::Circle(world(*center)?, n, *radius))
+                    }
+                    Entity::Arc { center, start, .. } => {
+                        let c = world(*center)?;
+                        Ok(CurveGeom::Circle(c, n, (world(*start)? - c).norm()))
+                    }
+                    Entity::Spline { .. } => {
+                        let b = sk.spline_curve(*entity).ok_or_else(gone)?;
+                        let dom = b.domain();
+                        let pts = (0..=512)
+                            .map(|i| {
+                                let t = dom.min + (dom.max - dom.min) * i as Real / 512.0;
+                                let q = b.point_at(t);
+                                sk.plane.point_at(q.x, q.y)
+                            })
+                            .collect();
+                        Ok(CurveGeom::Poly(pts))
+                    }
+                }
+            }
+        }
+    }
+
+    fn surface(&self, face: &str) -> Result<crate::kernel::Surface, String> {
+        surf::face_surface(self.body, face)
+    }
+}
+
+/// A curve of the model: a curved edge or a curve of a sketch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CurveRef {
+    /// A model edge, by persistent name.
+    Edge(String),
+    /// A sketch curve (arc, circle, spline).
+    Sketch {
+        /// The sketch id.
+        sketch: String,
+        /// The curve.
+        entity: EntityId,
+    },
+}
+
+impl CurveRef {
+    /// Browser/Properties text.
+    pub fn describe(&self) -> String {
+        match self {
+            CurveRef::Edge(n) => format!("Edge {n}"),
+            CurveRef::Sketch { sketch, .. } => format!("Curve of {sketch}"),
+        }
     }
 }
 
@@ -89,15 +196,7 @@ fn plane_make(o: Point3, n: Vector3, x: Vector3) -> Result<Plane, String> {
     Plane::new(o, n, x).map_err(|e| format!("degenerate plane: {e}"))
 }
 
-/// Any unit vector perpendicular to `n`.
-fn perpendicular(n: &Vector3) -> Vector3 {
-    let t = if n.x.abs() < 0.9 {
-        Vector3::x()
-    } else {
-        Vector3::y()
-    };
-    (t - n * t.dot(n)).normalize()
-}
+use surf::perpendicular;
 
 // ---------------------------------------------------------------- planes ---
 
@@ -164,6 +263,52 @@ pub enum WorkPlaneDef {
         /// X axis (unit, ⟂ normal).
         x_axis: [Real; 3],
     },
+    /// **Midplane of Torus**: through the centre, normal along the axis.
+    TorusMidplane {
+        /// A toroidal face, by persistent name.
+        face: String,
+    },
+    /// **Tangent to Surface Through Edge**: X along the tangency, +Y
+    /// towards the edge (cylinder: edge parallel to the axis; sphere).
+    TangentEdge {
+        /// The curved face.
+        face: String,
+        /// The straight edge or axis.
+        line: LineRef,
+        /// The second of the two tangent planes.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        other: bool,
+    },
+    /// **Tangent to Surface Through Point**: tangent there (point on the
+    /// face), or through the axis-parallel line (point off a cylinder).
+    TangentPoint {
+        /// The curved face.
+        face: String,
+        /// The point.
+        point: PointRef,
+        /// The second of the two tangent planes (point off a cylinder).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        other: bool,
+    },
+    /// **Tangent to Surface and Parallel to Plane**: the coordinate system
+    /// comes from the plane.
+    TangentParallel {
+        /// The curved face.
+        face: String,
+        /// The plane it is parallel to.
+        base: PlaneRef,
+        /// The far side (against the plane's normal).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        other: bool,
+    },
+    /// **Normal to Curve at Point**: perpendicular to the curve's tangent
+    /// at the point (which must lie on the curve).
+    NormalToCurve {
+        /// A curved edge or sketch curve.
+        curve: CurveRef,
+        /// The point on it.
+        point: PointRef,
+    },
 }
 
 impl WorkPlaneDef {
@@ -178,6 +323,11 @@ impl WorkPlaneDef {
             WorkPlaneDef::TwoLines { .. } => "Two Coplanar Edges",
             WorkPlaneDef::NormalToAxis { .. } => "Normal to Axis Through Point",
             WorkPlaneDef::Fixed { .. } => "Fixed",
+            WorkPlaneDef::TorusMidplane { .. } => "Midplane of Torus",
+            WorkPlaneDef::TangentEdge { .. } => "Tangent to Surface Through Edge",
+            WorkPlaneDef::TangentPoint { .. } => "Tangent to Surface Through Point",
+            WorkPlaneDef::TangentParallel { .. } => "Tangent to Surface and Parallel to Plane",
+            WorkPlaneDef::NormalToCurve { .. } => "Normal to Curve at Point",
         }
     }
 
@@ -270,6 +420,34 @@ impl WorkPlaneDef {
                 Vector3::from(*normal),
                 Vector3::from(*x_axis),
             ),
+            WorkPlaneDef::TorusMidplane { face } => surf::torus_midplane(&c.surface(face)?),
+            WorkPlaneDef::TangentEdge { face, line, other } => {
+                let s = c.surface(face)?;
+                let (p, d) = c.line(line)?;
+                surf::tangent_through_line(&s, p, d, *other)
+            }
+            WorkPlaneDef::TangentPoint { face, point, other } => {
+                let s = c.surface(face)?;
+                surf::tangent_through_point(&s, c.point(point)?, *other)
+            }
+            WorkPlaneDef::TangentParallel { face, base, other } => {
+                let s = c.surface(face)?;
+                surf::tangent_parallel(&s, &c.plane(base)?, *other)
+            }
+            WorkPlaneDef::NormalToCurve { curve, point } => {
+                let g = c.curve(curve)?;
+                let q = c.point(point)?;
+                let (at, t) = g.tangent_at(&q)?;
+                // X: from the centre of a circle outwards, else any
+                // direction square to the tangent.
+                let x = match &g {
+                    CurveGeom::Circle(cc, ..) => (at - cc)
+                        .try_normalize(1e-12)
+                        .unwrap_or_else(|| perpendicular(&t)),
+                    CurveGeom::Poly(_) => perpendicular(&t),
+                };
+                plane_make(q, t, x)
+            }
         }
     }
 }
@@ -336,6 +514,27 @@ pub enum WorkAxisDef {
         /// Direction (unit).
         dir: [Real; 3],
     },
+    /// **On Line**: a line of a 2D sketch.
+    SketchLine {
+        /// The sketch id.
+        sketch: String,
+        /// The line.
+        entity: EntityId,
+    },
+    /// **Through Revolved Face**: the axis of a cylindrical, conical or
+    /// toroidal face (of any feature: Revolve, Extrude of a circle, fillet).
+    RevolvedFace {
+        /// The face, by persistent name.
+        face: String,
+    },
+    /// **Through Center of Circular or Elliptical Edge** of a sketch
+    /// (circle, arc).
+    SketchCircle {
+        /// The sketch id.
+        sketch: String,
+        /// The circle or arc.
+        entity: EntityId,
+    },
 }
 
 impl WorkAxisDef {
@@ -347,10 +546,14 @@ impl WorkAxisDef {
             WorkAxisDef::TwoPoints { .. } => "Through Two Points",
             WorkAxisDef::TwoPlanes { .. } => "Intersection of Two Planes",
             WorkAxisDef::NormalToPlane { .. } => "Normal to Plane Through Point",
-            WorkAxisDef::CircularEdge { .. } => "Through Center of Circular Edge",
+            WorkAxisDef::CircularEdge { .. } | WorkAxisDef::SketchCircle { .. } => {
+                "Through Center of Circular or Elliptical Edge"
+            }
             WorkAxisDef::Revolved { .. } => "Through Revolved Feature",
             WorkAxisDef::LineOnPlane { .. } => "Line Projected onto Plane",
             WorkAxisDef::Fixed { .. } => "Fixed",
+            WorkAxisDef::SketchLine { .. } => "On Line or Edge",
+            WorkAxisDef::RevolvedFace { .. } => "Through Revolved Face",
         }
     }
 
@@ -388,16 +591,20 @@ impl WorkAxisDef {
                 Ok((c.point(point)?, p.normal.into_inner()))
             }
             WorkAxisDef::CircularEdge { edge } => {
-                let e = c
-                    .body
-                    .find_edge(edge)
-                    .and_then(|e| c.body.edge(e))
-                    .ok_or_else(|| format!("edge '{edge}' no longer exists"))?;
-                match c.body.curve(e.curve) {
-                    Some(Curve::Circle(k)) => Ok((k.center, k.normal.into_inner())),
-                    _ => Err(format!("edge '{edge}' is not circular")),
-                }
+                // Exact circles directly; ellipses (and circles a Boolean
+                // left as polylines) by a conic fit of the edge's points.
+                CurveGeom::of_edge(c.body, edge)?
+                    .center_axis()
+                    .map_err(|e| format!("edge '{edge}': {e}"))
             }
+            WorkAxisDef::SketchCircle { sketch, entity } => c
+                .curve(&CurveRef::Sketch {
+                    sketch: sketch.clone(),
+                    entity: *entity,
+                })?
+                .center_axis(),
+            WorkAxisDef::SketchLine { sketch, entity } => c.sketch_line(sketch, *entity),
+            WorkAxisDef::RevolvedFace { face } => surf::axis_of(&c.surface(face)?),
             WorkAxisDef::Revolved { feature } => (c.revolve_axis)(feature)
                 .ok_or_else(|| format!("revolve '{feature}' is not available")),
             WorkAxisDef::LineOnPlane { line, plane } => {
@@ -469,13 +676,50 @@ pub enum WorkPointDef {
         /// Z (mm).
         z: Real,
     },
+    /// **On Sketch Point**: a point of a 2D sketch.
+    SketchPoint {
+        /// The sketch id.
+        sketch: String,
+        /// The point.
+        point: PointId,
+    },
+    /// **Intersection of Surface and Line**: where a line pierces a curved
+    /// face's surface (hits ordered along the line).
+    SurfaceLine {
+        /// The curved face.
+        face: String,
+        /// The line.
+        line: LineRef,
+        /// Which hit along the line (0 = first).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        index: usize,
+    },
+    /// **Center Point of Torus**.
+    TorusCenter {
+        /// A toroidal face.
+        face: String,
+    },
+    /// **Center Point of Sphere**.
+    SphereCenter {
+        /// A spherical face.
+        face: String,
+    },
+}
+
+fn is_zero(k: &usize) -> bool {
+    *k == 0
 }
 
 impl WorkPointDef {
     /// Inventor's method name.
     pub fn method(&self) -> &'static str {
         match self {
-            WorkPointDef::OnPoint { .. } => "On Vertex or Midpoint",
+            WorkPointDef::OnPoint { .. } | WorkPointDef::SketchPoint { .. } => {
+                "On Vertex, Sketch Point, or Midpoint"
+            }
+            WorkPointDef::SurfaceLine { .. } => "Intersection of Surface and Line",
+            WorkPointDef::TorusCenter { .. } => "Center Point of Torus",
+            WorkPointDef::SphereCenter { .. } => "Center Point of Sphere",
             WorkPointDef::ThreePlanes { .. } => "Intersection of Three Planes",
             WorkPointDef::TwoLines { .. } => "Intersection of Two Lines",
             WorkPointDef::PlaneLine { .. } => "Intersection of Plane and Line",
@@ -537,6 +781,21 @@ impl WorkPointDef {
             }
             WorkPointDef::LoopCenter { edge, face } => loop_center(c.body, edge, face.as_deref()),
             WorkPointDef::Fixed { x, y, z } => Ok(Point3::new(*x, *y, *z)),
+            WorkPointDef::SketchPoint { sketch, point } => c.sketch_point(sketch, *point),
+            WorkPointDef::SurfaceLine { face, line, index } => {
+                let s = c.surface(face)?;
+                let (p, d) = c.line(line)?;
+                let hits = surf::line_hits(&s, p, d)?;
+                if hits.is_empty() {
+                    return Err("the line does not meet the surface".into());
+                }
+                let t = hits.get(*index).ok_or_else(|| {
+                    format!("the line meets the surface only {} time(s)", hits.len())
+                })?;
+                Ok(p + d.normalize() * *t)
+            }
+            WorkPointDef::TorusCenter { face } => surf::torus_center(&c.surface(face)?),
+            WorkPointDef::SphereCenter { face } => surf::sphere_center(&c.surface(face)?),
         }
     }
 }
@@ -631,6 +890,104 @@ pub enum WorkDef {
     Axis(WorkAxisDef),
     /// A work point.
     Point(WorkPointDef),
+    /// A user coordinate system (three planes, three axes, a centre).
+    Ucs(UcsDef),
+}
+
+// ------------------------------------------------------------------- UCS ---
+
+/// How a UCS is placed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum UcsDef {
+    /// **Relative to the Origin**: moved by (x, y, z), then turned about the
+    /// world X, Y and Z axes by `rx`, `ry`, `rz` (in that order, radians):
+    /// its axes are the columns of `Rz·Ry·Rx`.
+    Offsets {
+        /// Offset along X (mm).
+        x: Real,
+        /// Offset along Y (mm).
+        y: Real,
+        /// Offset along Z (mm).
+        z: Real,
+        /// Angle about X (radians).
+        rx: Real,
+        /// Angle about Y (radians).
+        ry: Real,
+        /// Angle about Z (radians).
+        rz: Real,
+    },
+    /// **On Geometry**: the centre at the first point, +X towards the
+    /// second, +Y towards the third (in the XY plane).
+    ThreePoints {
+        /// Centre, X point, Y point.
+        points: [PointRef; 3],
+    },
+}
+
+impl UcsDef {
+    /// Inventor's method name.
+    pub fn method(&self) -> &'static str {
+        match self {
+            UcsDef::Offsets { .. } => "Relative to the Origin",
+            UcsDef::ThreePoints { .. } => "Three Points",
+        }
+    }
+
+    /// The centre and the unit X, Y, Z axes.
+    pub fn frame(&self, c: &Ctx) -> Result<(Point3, [Vector3; 3]), String> {
+        match self {
+            UcsDef::Offsets {
+                x,
+                y,
+                z,
+                rx,
+                ry,
+                rz,
+            } => {
+                let r = nalgebra::Rotation3::from_axis_angle(&Vector3::z_axis(), *rz)
+                    * nalgebra::Rotation3::from_axis_angle(&Vector3::y_axis(), *ry)
+                    * nalgebra::Rotation3::from_axis_angle(&Vector3::x_axis(), *rx);
+                let m = r.matrix();
+                Ok((
+                    Point3::new(*x, *y, *z),
+                    [
+                        m.column(0).into_owned(),
+                        m.column(1).into_owned(),
+                        m.column(2).into_owned(),
+                    ],
+                ))
+            }
+            UcsDef::ThreePoints { points } => {
+                let [o, a, b] = [
+                    c.point(&points[0])?,
+                    c.point(&points[1])?,
+                    c.point(&points[2])?,
+                ];
+                let x = (a - o)
+                    .try_normalize(1e-9)
+                    .ok_or("the first two points coincide")?;
+                let y = (b - o) - x * (b - o).dot(&x);
+                let y = y
+                    .try_normalize(1e-9 * (1.0 + (b - o).norm()))
+                    .ok_or("the points are collinear")?;
+                Ok((o, [x, y, x.cross(&y)]))
+            }
+        }
+    }
+}
+
+/// The ids of a UCS's planes, axes and centre point (`UCS1:XY` …) with
+/// their display names.
+pub fn ucs_parts(id: &str) -> [(String, &'static str); 7] {
+    [
+        (format!("{id}:XY"), "XY Plane"),
+        (format!("{id}:XZ"), "XZ Plane"),
+        (format!("{id}:YZ"), "YZ Plane"),
+        (format!("{id}:X"), "X Axis"),
+        (format!("{id}:Y"), "Y Axis"),
+        (format!("{id}:Z"), "Z Axis"),
+        (format!("{id}:Center"), "Center Point"),
+    ]
 }
 
 impl WorkDef {
@@ -640,6 +997,7 @@ impl WorkDef {
             WorkDef::Plane(d) => d.method(),
             WorkDef::Axis(d) => d.method(),
             WorkDef::Point(d) => d.method(),
+            WorkDef::Ucs(d) => d.method(),
         }
     }
 
@@ -649,6 +1007,7 @@ impl WorkDef {
             WorkDef::Plane(_) => ("WorkPlane", "Work Plane"),
             WorkDef::Axis(_) => ("WorkAxis", "Work Axis"),
             WorkDef::Point(_) => ("WorkPoint", "Work Point"),
+            WorkDef::Ucs(_) => ("UCS", "UCS"),
         }
     }
 
@@ -661,6 +1020,10 @@ impl WorkDef {
                 WorkResult::Axis(id.to_owned(), p, v)
             }
             WorkDef::Point(d) => WorkResult::Point(id.to_owned(), d.compute(c)?),
+            WorkDef::Ucs(d) => {
+                let (o, axes) = d.frame(c)?;
+                WorkResult::Ucs(id.to_owned(), o, axes)
+            }
         })
     }
 }
@@ -673,6 +1036,8 @@ pub enum WorkResult {
     Axis(String, Point3, Vector3),
     /// (id, position).
     Point(String, Point3),
+    /// (id, centre, unit X / Y / Z axes).
+    Ucs(String, Point3, [Vector3; 3]),
 }
 
 impl WorkResult {
@@ -687,6 +1052,23 @@ impl WorkResult {
             }
             WorkResult::Point(id, p) => {
                 works.points.insert(id, p);
+            }
+            WorkResult::Ucs(id, o, [x, y, z]) => {
+                // Planes like the origin planes: XY (normal Z, x = X),
+                // XZ (normal −Y, x = X), YZ (normal X, x = Y).
+                let [xy, xz, yz, ax, ay, az, center] = ucs_parts(&id).map(|(k, _)| k);
+                let mut plane = |k: String, n: Vector3, xd: Vector3| {
+                    if let Ok(p) = Plane::new(o, n, xd) {
+                        works.planes.insert(k, p);
+                    }
+                };
+                plane(xy, z, x);
+                plane(xz, -y, x);
+                plane(yz, x, y);
+                works.axes.insert(ax, (o, x));
+                works.axes.insert(ay, (o, y));
+                works.axes.insert(az, (o, z));
+                works.points.insert(center, o);
             }
         }
     }
@@ -707,6 +1089,9 @@ pub struct WorkFeature {
     /// Equations of the numeric fields (`distance`, `angle`, `x`/`y`/`z`).
     #[serde(default, skip_serializing_if = "FeatureParams::is_empty")]
     pub params: FeatureParams,
+    /// **Flip Normal** (work planes): the normal is reversed, X kept.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip: bool,
 }
 
 fn yes() -> bool {
@@ -722,6 +1107,21 @@ impl WorkFeature {
             def,
             visible: true,
             params: FeatureParams::default(),
+            flip: false,
+        }
+    }
+
+    /// Computes it (with its Flip Normal) for the regeneration.
+    pub fn build(&self, c: &Ctx) -> Result<WorkResult, String> {
+        match self.def.build(&self.id, c)? {
+            WorkResult::Plane(id, p) if self.flip => {
+                let n = -p.normal.into_inner();
+                Ok(WorkResult::Plane(
+                    id,
+                    plane_make(p.origin, n, p.x_axis.into_inner())?,
+                ))
+            }
+            r => Ok(r),
         }
     }
 }
@@ -755,6 +1155,7 @@ mod tests {
             body: &part.body,
             works: &works,
             revolve_axis: &no_revolve,
+            sketches: &[],
         };
         let top = PlaneRef::Face("Box1:Top".into());
         let p = WorkPlaneDef::Offset {
@@ -847,6 +1248,7 @@ mod tests {
             body: &part.body,
             works: &works,
             revolve_axis: &rev,
+            sketches: &[],
         };
         let face = |n: &str| PlaneRef::Face(format!("Box1:{n}"));
         // Intersection of the top and front faces: the top front edge.
