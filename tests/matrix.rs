@@ -562,6 +562,129 @@ fn c_shell_edit() -> Result<PartDocument, String> {
     Ok(part)
 }
 
+/// SolidCraft #2178: a shell after an extrusion tapered −5°.
+fn c_shell_after_taper() -> Result<PartDocument, String> {
+    let part = rect_extrude(|e| e.taper = (-5f64).to_radians())?;
+    shell_of(part, &[TOP], 2.0, ShellDirection::Inside)
+}
+
+/// Volume of the −5° tapered 40×30×20 block shelled 2 (open top): the
+/// walls offset 2 square to themselves (2 / cos 5° across), the floor 2 up.
+fn taper_shell_volume() -> Real {
+    let (k, c) = (5f64.to_radians().tan(), 5f64.to_radians().cos());
+    let section =
+        |z: Real, inset: Real| (40.0 - 2.0 * z * k - inset) * (30.0 - 2.0 * z * k - inset);
+    // Simpson's rule is exact for these quadratics.
+    let integral = |f: &dyn Fn(Real) -> Real, a: Real, b: Real| {
+        (b - a) / 6.0 * (f(a) + 4.0 * f((a + b) / 2.0) + f(b))
+    };
+    integral(&|z| section(z, 0.0), 0.0, 20.0) - integral(&|z| section(z, 4.0 / c), 2.0, 20.0)
+}
+
+/// A disc r20 × 5 with its top circular edge rounded `r`.
+fn rounded_disc(r: Real) -> Result<PartDocument, String> {
+    let mut part = PartDocument::default();
+    let i = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    part.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 20.0)
+        .map_err(|e| e.to_string())?;
+    let reg = part.sketches[i].sketch.regions();
+    part.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&reg[0], reg[0].interior_point())], 5.0),
+    )
+    .map_err(|e| e.to_string())?;
+    let e = edges_where(&part, |h| (h[2] - 5.0).abs() < 1e-6);
+    if e.is_empty() {
+        return Err("no top edge".into());
+    }
+    part.add_blend(BlendFeature::fillet(e, r))
+        .map_err(|e| e.to_string())?;
+    Ok(part)
+}
+
+/// SolidCraft #319: the disc's top edge rounded r1 (less than the wall),
+/// shelled 2 with the bottom removed: the inner corner comes out sharp.
+fn c_shell_disc_small_round() -> Result<PartDocument, String> {
+    let part = rounded_disc(1.0)?;
+    shell_of(
+        part,
+        &[("Extrusion1:Start", [5.0, 0.0, 0.0])],
+        2.0,
+        ShellDirection::Inside,
+    )
+}
+
+/// SolidCraft #342: the round equals the wall and meets the removed top:
+/// the rim would have no thickness, refused.
+fn c_shell_disc_round_as_thick() -> Result<PartDocument, String> {
+    let part = rounded_disc(2.0)?;
+    shell_of(
+        part,
+        &[("Extrusion1:End", [0.0, 0.0, 5.0])],
+        2.0,
+        ShellDirection::Inside,
+    )
+}
+
+/// The #1494 part shelled 1: the union less the union of the box and the
+/// cylinder each moved in by 1 (the cavity is a little larger along the two
+/// concave seams, where the eroded union gets rounds; within 30 mm³).
+fn edge_cylinder_shell_volume() -> Real {
+    let (r, ri) = (7.5, 6.5);
+    let union = 47.5 * 45.0 * 30.0 + 0.75 * PI * r * r * 47.5;
+    let inner_box = 45.5 * 43.0 * 29.0;
+    let inner_cyl = PI * ri * ri * 45.5;
+    // The inner cylinder's part inside the inner box: its disc where
+    // y ≥ 1 and z ≥ 1 (numerically).
+    let n = 20_000;
+    let y1 = (ri * ri - 1.0_f64).sqrt();
+    let h = (y1 - 1.0) / n as Real;
+    let quad: Real = (0..n)
+        .map(|i| {
+            let y = 1.0 + (i as Real + 0.5) * h;
+            ((ri * ri - y * y).sqrt() - 1.0) * h
+        })
+        .sum();
+    union - (inner_box + inner_cyl - quad * 45.5)
+}
+
+/// SolidCraft #1494: a box 47.5×45×30 joined with a cylinder r7.5 whose
+/// axis is the box's bottom front edge, shelled 1 with the top removed.
+fn c_shell_box_with_edge_cylinder() -> Result<PartDocument, String> {
+    let mut part = plate(47.5, 45.0, 30.0)?;
+    let j = part
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::YZ),
+            &no_projection(),
+        )
+        .map_err(|e| e.to_string())?;
+    part.sketches[j]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 7.5)
+        .map_err(|e| e.to_string())?;
+    let reg = part.sketches[j].sketch.regions();
+    let disc = reg
+        .iter()
+        .find(|r| r.holes.is_empty() && (r.area() - PI * 56.25).abs() < 1.0)
+        .ok_or("no disc")?;
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(disc, disc.interior_point())], 47.5);
+    ex.operation = Operation::Join;
+    part.add_extrude(j, ex).map_err(|e| e.to_string())?;
+    shell_of(
+        part,
+        &[("Extrusion1:End", [20.0, 20.0, 30.0])],
+        1.0,
+        ShellDirection::Inside,
+    )
+}
+
 /// Walls thicker than half the box: refused, the part unchanged.
 fn c_shell_too_thick() -> Result<PartDocument, String> {
     shell_of(
@@ -1265,6 +1388,38 @@ fn cases() -> Vec<Case> {
             budget_ms: 800.0,
             build: c_shell_edit,
             want: Want::Volume(24_000.0 - 34.0 * 24.0 * 17.0 - round4(1.0, 20.0)),
+        },
+        Case {
+            level: "complex",
+            name: "shell 2 after a -5° taper (SolidCraft #2178)",
+            budget_ms: 500.0,
+            build: c_shell_after_taper,
+            want: Want::Volume(taper_shell_volume()),
+        },
+        Case {
+            level: "complex",
+            name: "shell 2 of a disc rounded r1, bottom open (#319)",
+            budget_ms: 1500.0,
+            build: c_shell_disc_small_round,
+            want: Want::Volume({
+                let c = 0.5 * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI)) * 2.0;
+                let loss = 2.0 * PI * (20.0 - c) * (1.0 - PI / 4.0);
+                PI * 400.0 * 5.0 - loss - PI * 324.0 * 3.0
+            }),
+        },
+        Case {
+            level: "complex",
+            name: "shell 2, round r2 at the open top: refused (#342)",
+            budget_ms: 500.0,
+            build: c_shell_disc_round_as_thick,
+            want: Want::Error("rim"),
+        },
+        Case {
+            level: "complex",
+            name: "shell 1, box + cylinder on its edge (#1494)",
+            budget_ms: 1000.0,
+            build: c_shell_box_with_edge_cylinder,
+            want: Want::VolumeWithin(edge_cylinder_shell_volume(), 30.0),
         },
         Case {
             level: "complex",

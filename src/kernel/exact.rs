@@ -931,6 +931,10 @@ pub fn shell(
                     profiles: s.profiles.clone(),
                 });
             }
+            // A rim the kernel proved to have no thickness (a round at an
+            // open face at least as large as the wall) cannot be built any
+            // other way: no fallback (it spent 7 s failing, SolidCraft #342).
+            Err(e) if e.contains("rim would have no thickness") => return Err(e),
             Err(e) => Some(e),
         }
     } else {
