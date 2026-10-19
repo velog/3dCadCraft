@@ -865,7 +865,11 @@ impl CadCraftApp {
         } else {
             "0-ui.md"
         };
-        let path = format!("{}/docs/spec/{file}", env!("CARGO_MANIFEST_DIR"));
+        // Native separators: Explorer does not open `C:\x/docs/spec/a.md`.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs")
+            .join("spec")
+            .join(file);
         let opener = if cfg!(target_os = "windows") {
             "explorer"
         } else if cfg!(target_os = "macos") {
@@ -874,7 +878,7 @@ impl CadCraftApp {
             "xdg-open"
         };
         if let Err(e) = std::process::Command::new(opener).arg(&path).spawn() {
-            self.file_status = Some(Err(format!("Help: cannot open {path}: {e}")));
+            self.file_status = Some(Err(format!("Help: cannot open {}: {e}", path.display())));
         }
     }
 

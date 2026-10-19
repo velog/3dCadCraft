@@ -62,11 +62,12 @@ fn assets() -> bool {
                     .strip_prefix(&root)
                     .unwrap_or(&p)
                     .to_string_lossy()
-                    .to_string();
+                    .replace('\\', "/");
+                // `ATTRIBUTION.md` writes paths with `/` (Windows lists `\`).
                 let dir_rel = p
                     .parent()
                     .and_then(|d| d.strip_prefix(&root).ok())
-                    .map(|d| d.to_string_lossy().to_string())
+                    .map(|d| d.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_default();
                 if !attribution.contains(&rel)
                     && (dir_rel.is_empty() || !attribution.contains(&format!("{dir_rel}/")))

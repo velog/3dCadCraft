@@ -1,7 +1,7 @@
 //! Files: New / Open / Save / Save As / Export through an in-app file
 //! dialog (folders, files of the right kind, a name field), the recent
 //! files list, unsaved-changes prompts before New / Open / closing, and
-//! opening a project dropped on the window (`docs/spec/0.12-files.md`).
+//! opening a project dropped on the window (`docs/spec/0.6-files.md`).
 
 use std::path::{Path, PathBuf};
 
@@ -84,15 +84,32 @@ impl FileDialog {
         d
     }
 
+    /// The drive list is shown (Windows: Up from a drive's root).
+    pub(super) fn at_drives(&self) -> bool {
+        self.dir.as_os_str().is_empty()
+    }
+
     /// Re-reads the folder.
     pub(super) fn refresh(&mut self) {
-        self.dir_text = self.dir.display().to_string();
-        self.entries = list_dir(&self.dir, self.purpose.extensions());
         self.note = None;
+        if self.at_drives() {
+            self.dir_text.clear();
+            self.entries = drives().into_iter().map(|d| (d, true)).collect();
+            return;
+        }
+        self.dir_text = self.dir.display().to_string();
+        match list_dir(&self.dir, self.purpose.extensions()) {
+            Ok(v) => self.entries = v,
+            Err(e) => {
+                self.entries.clear();
+                self.note = Some(format!("Cannot read {}: {e}", self.dir.display()));
+            }
+        }
     }
 
     fn go(&mut self, dir: PathBuf) {
-        if dir.is_dir() {
+        let dir = drive_root(dir);
+        if dir.is_dir() || (cfg!(windows) && dir.as_os_str().is_empty()) {
             self.dir = dir;
             self.refresh();
         } else {
@@ -100,25 +117,82 @@ impl FileDialog {
         }
     }
 
+    /// Up: the parent folder; from a drive's root, the drive list (Windows).
+    fn up(&mut self) {
+        match self.dir.parent() {
+            Some(p) => {
+                let p = p.to_path_buf();
+                self.go(p);
+            }
+            None if cfg!(windows) && !self.at_drives() => self.go(PathBuf::new()),
+            None => {}
+        }
+    }
+
     /// The path the dialog would use for its name (extension added when
-    /// missing; a bare `.` or `..` is no file).
+    /// missing; a bare `.` or `..` is no file). In the drive list only a
+    /// full path names a file.
     pub(super) fn target(&self) -> Option<PathBuf> {
+        if self.at_drives() && !Path::new(self.name.trim()).is_absolute() {
+            return None;
+        }
         target_path(&self.dir, &self.name, self.purpose.extensions())
     }
 }
 
+/// A bare drive (`C:`) means its root (`C:\`); `C:` alone is "the current
+/// folder on C:", so joining a name to it would not give `C:\name`.
+pub(super) fn drive_root(dir: PathBuf) -> PathBuf {
+    match dir.to_str() {
+        Some(s) if s.len() == 2 && s.ends_with(':') && s.as_bytes()[0].is_ascii_alphabetic() => {
+            PathBuf::from(format!("{s}\\"))
+        }
+        _ => dir,
+    }
+}
+
+/// The drives that exist (`C:`, `D:`…); empty outside Windows.
+pub(super) fn drives() -> Vec<String> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    (b'A'..=b'Z')
+        .map(|c| format!("{}:", c as char))
+        .filter(|d| Path::new(&format!("{d}\\")).is_dir())
+        .collect()
+}
+
+/// Hidden entries: a leading `.` everywhere, and on Windows the Hidden or
+/// System attribute (`$Recycle.Bin`, `AppData`, `ntuser.dat`…).
+fn is_hidden(e: &std::fs::DirEntry, name: &str) -> bool {
+    if name.starts_with('.') {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const HIDDEN_OR_SYSTEM: u32 = 0x2 | 0x4;
+        if e.metadata()
+            .is_ok_and(|m| m.file_attributes() & HIDDEN_OR_SYSTEM != 0)
+        {
+            return true;
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = e;
+    false
+}
+
 /// Folders and files with one of `exts` (any file when empty and the list
 /// is for folders only, files are left out), sorted: folders first, by
-/// name, hidden entries skipped.
-pub(super) fn list_dir(dir: &Path, exts: &[&str]) -> Vec<(String, bool)> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
+/// name, hidden entries skipped. An unreadable folder is an error.
+pub(super) fn list_dir(dir: &Path, exts: &[&str]) -> std::io::Result<Vec<(String, bool)>> {
+    let rd = std::fs::read_dir(dir)?;
     let mut v: Vec<(String, bool)> = rd
         .filter_map(Result::ok)
         .filter_map(|e| {
             let name = e.file_name().to_str()?.to_owned();
-            if name.starts_with('.') {
+            if is_hidden(&e, &name) {
                 return None;
             }
             let path = e.path();
@@ -139,7 +213,7 @@ pub(super) fn list_dir(dir: &Path, exts: &[&str]) -> Vec<(String, bool)> {
         b.1.cmp(&a.1)
             .then(a.0.to_lowercase().cmp(&b.0.to_lowercase()))
     });
-    v
+    Ok(v)
 }
 
 /// `dir/name` with the first of `exts` added when the name has none of them.
@@ -176,10 +250,17 @@ pub(super) enum Pending {
     Close,
 }
 
-/// The user's home folder (`HOME`, or `USERPROFILE` on Windows).
+/// The user's home folder: `USERPROFILE` on Windows (Git Bash / MSYS set
+/// `HOME` to paths like `/c/Users/x` that Windows cannot open), else `HOME`.
 pub(super) fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
+    let (first, second) = if cfg!(windows) {
+        ("USERPROFILE", "HOME")
+    } else {
+        ("HOME", "USERPROFILE")
+    };
+    std::env::var_os(first)
+        .or_else(|| std::env::var_os(second))
+        .filter(|s| !s.is_empty())
         .map(PathBuf::from)
 }
 
@@ -218,7 +299,9 @@ pub(super) fn recent_files() -> Vec<PathBuf> {
 /// Puts `path` first in the recent files.
 fn remember_recent(path: &Path) {
     let Some(p) = settings_path() else { return };
-    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let abs = std::fs::canonicalize(path)
+        .map(crate::document::library::without_verbatim)
+        .unwrap_or_else(|_| path.to_path_buf());
     let mut list: Vec<PathBuf> = recent_files().into_iter().filter(|x| *x != abs).collect();
     list.insert(0, abs);
     list.truncate(10);
@@ -240,7 +323,8 @@ fn remember_recent(path: &Path) {
     }
 }
 
-/// Where dialogs start: the current file's folder, else ~/Documents, else ~.
+/// Where dialogs start: the current file's folder, else ~/Documents (on
+/// Windows also a OneDrive-redirected Documents), else ~.
 fn start_dir(current: &str) -> PathBuf {
     let cur = Path::new(current.trim());
     if let Some(parent) = cur
@@ -250,8 +334,14 @@ fn start_dir(current: &str) -> PathBuf {
         return parent.to_path_buf();
     }
     let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let docs = home.join("Documents");
-    if docs.is_dir() { docs } else { home }
+    let onedrive = cfg!(windows)
+        .then(|| std::env::var_os("OneDrive"))
+        .flatten()
+        .map(|d| Path::new(&d).join("Documents"));
+    std::iter::once(home.join("Documents"))
+        .chain(onedrive)
+        .find(|d| d.is_dir())
+        .unwrap_or(home)
 }
 
 impl CadCraftApp {
@@ -410,7 +500,11 @@ impl CadCraftApp {
                 .dropped_files
                 .iter()
                 .map(|f| f.path().to_path_buf())
-                .find(|p| p.extension().and_then(|x| x.to_str()) == Some(FILE_EXTENSION))
+                .find(|p| {
+                    p.extension()
+                        .and_then(|x| x.to_str())
+                        .is_some_and(|x| x.eq_ignore_ascii_case(FILE_EXTENSION))
+                })
         });
         if let Some(p) = dropped {
             if self.is_dirty(now, true) {
@@ -499,11 +593,12 @@ impl CadCraftApp {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Up").on_hover_text("Parent folder").clicked()
-                        && let Some(p) = d.dir.parent()
-                    {
-                        let p = p.to_path_buf();
-                        d.go(p);
+                    let up = ui.add_enabled(
+                        d.dir.parent().is_some() || (cfg!(windows) && !d.at_drives()),
+                        egui::Button::new("Up"),
+                    );
+                    if up.on_hover_text("Parent folder").clicked() {
+                        d.up();
                     }
                     if ui.button("Home").clicked()
                         && let Some(h) = home_dir()
@@ -511,7 +606,9 @@ impl CadCraftApp {
                         d.go(h);
                     }
                     let r = ui.add(
-                        egui::TextEdit::singleline(&mut d.dir_text).desired_width(f32::INFINITY),
+                        egui::TextEdit::singleline(&mut d.dir_text)
+                            .hint_text("Drives - type a folder")
+                            .desired_width(f32::INFINITY),
                     );
                     if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         let p = PathBuf::from(d.dir_text.trim());
@@ -529,7 +626,9 @@ impl CadCraftApp {
                             ui.weak("(no folders or matching files here)");
                         }
                         for (name, is_dir) in d.entries.clone() {
-                            let label = if is_dir {
+                            let label = if d.at_drives() {
+                                format!("[ ] {name}\\")
+                            } else if is_dir {
                                 format!("[ ] {name}/")
                             } else {
                                 name.clone()
@@ -601,6 +700,9 @@ impl CadCraftApp {
                 if let Some(n) = chosen {
                     d.name = n;
                     match d.target() {
+                        None if d.at_drives() && !d.name.trim().is_empty() => {
+                            d.note = Some("Pick a drive or type a full path".into())
+                        }
                         None => d.note = Some("Type a file name".into()),
                         Some(p) if d.purpose == DialogPurpose::Open => {
                             if p.exists() {
@@ -765,7 +867,7 @@ mod tests {
         std::fs::write(root.join("b.3dcadcraft"), b"x").unwrap();
         std::fs::write(root.join("a.3dcadcraft"), b"x").unwrap();
         std::fs::write(root.join("notes.txt"), b"x").unwrap();
-        let v = list_dir(&root, &["3dcadcraft"]);
+        let v = list_dir(&root, &["3dcadcraft"]).unwrap();
         assert_eq!(
             v,
             vec![
@@ -775,5 +877,80 @@ mod tests {
             ]
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unreadable_folder_is_an_error() {
+        let missing = std::env::temp_dir().join("cadcraft_no_such_folder_x");
+        assert!(list_dir(&missing, &["stl"]).is_err());
+    }
+
+    #[test]
+    fn bare_drive_means_its_root() {
+        assert_eq!(drive_root(PathBuf::from("C:")), PathBuf::from("C:\\"));
+        assert_eq!(drive_root(PathBuf::from("d:")), PathBuf::from("d:\\"));
+        for p in ["C:\\", "C:\\x", "/home", "ab", ""] {
+            assert_eq!(drive_root(PathBuf::from(p)), PathBuf::from(p));
+        }
+    }
+
+    /// Windows: Up from `C:\` shows the drive list, a drive opens its root,
+    /// and a name typed there is no file until a drive is picked.
+    #[cfg(windows)]
+    #[test]
+    fn up_from_a_drive_root_lists_the_drives() {
+        let sys = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+        assert!(drives().contains(&sys.to_uppercase()), "{:?}", drives());
+        let mut d = FileDialog::new(
+            DialogPurpose::SaveAs,
+            PathBuf::from(format!("{sys}\\")),
+            "x".into(),
+        );
+        d.up();
+        assert!(d.at_drives());
+        assert!(d.entries.iter().all(|(_, dir)| *dir));
+        assert_eq!(d.target(), None);
+        d.name = format!("{sys}\\a\\x");
+        assert_eq!(
+            d.target(),
+            Some(PathBuf::from(format!("{sys}\\a\\x.3dcadcraft")))
+        );
+        d.go(d.dir.join(&sys));
+        assert_eq!(d.dir, PathBuf::from(format!("{sys}\\")));
+        // Up from the drive list does nothing.
+        d.go(PathBuf::new());
+        d.up();
+        assert!(d.at_drives());
+    }
+
+    /// Windows: folders with the Hidden or System attribute are not listed.
+    #[cfg(windows)]
+    #[test]
+    fn hidden_attribute_hides_entries() {
+        let root = std::env::temp_dir().join(format!("cadcraft_hidden_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("secret")).unwrap();
+        std::fs::create_dir_all(root.join("shown")).unwrap();
+        let ok = std::process::Command::new("attrib")
+            .arg("+h")
+            .arg(root.join("secret"))
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        let v = list_dir(&root, &["3dcadcraft"]).unwrap();
+        assert_eq!(v, vec![("shown".to_owned(), true)]);
+        let _ = std::process::Command::new("attrib")
+            .arg("-h")
+            .arg(root.join("secret"))
+            .status();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn home_is_a_native_path() {
+        if let Some(h) = home_dir() {
+            assert!(h.is_absolute(), "{}", h.display());
+        }
     }
 }

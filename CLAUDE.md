@@ -473,6 +473,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Tangent snap** (`Snap::Tangent`, Line tool): the end lies on the circle (PointOnCircle) and
   the line is Tangent — a double root; `Constraint::Tangent` uses the first-order form
   (radius ⟂ line) when a line end is held on the circle, like for shared endpoints.
+- **Windows paths** (`docs/spec/0.6-files.md`): `canonicalize` returns `\\?\C:\…` — pass it
+  through `document::library::without_verbatim` before showing or storing it; the home folder is
+  `USERPROFILE` (Git Bash sets `HOME=/c/Users/…`); `C:` alone is drive-relative
+  (`gui::files::drive_root`); paths handed to other programs (Explorer) need native
+  separators (`Path::join`, never `format!("{dir}/x")`); paths compared with text in docs
+  (`xtask assets`) are normalised to `/`. The X11 scripts in `tools/` do not run there.
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans.
 

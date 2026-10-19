@@ -243,15 +243,34 @@ impl Resolver {
 }
 
 fn canonical(path: &Path) -> ProjectResult<PathBuf> {
-    path.canonicalize().map_err(|source| match source.kind() {
-        std::io::ErrorKind::NotFound => ProjectError::MissingLibrary {
-            path: path.to_path_buf(),
-        },
-        _ => ProjectError::Io {
-            path: path.to_path_buf(),
-            source,
-        },
-    })
+    path.canonicalize()
+        .map(without_verbatim)
+        .map_err(|source| match source.kind() {
+            std::io::ErrorKind::NotFound => ProjectError::MissingLibrary {
+                path: path.to_path_buf(),
+            },
+            _ => ProjectError::Io {
+                path: path.to_path_buf(),
+                source,
+            },
+        })
+}
+
+/// `path` without the Windows verbatim prefix that `canonicalize` adds
+/// (`\\?\C:\x` → `C:\x`, `\\?\UNC\srv\share` → `\\srv\share`): the plain
+/// form is what users read, and a verbatim path written with `/` (library
+/// paths across drives) no longer parses as one.
+pub(crate) fn without_verbatim(path: PathBuf) -> PathBuf {
+    let Some(s) = path.to_str() else {
+        return path;
+    };
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
 }
 
 /// Relative path from directory `from` to file `to` (both canonical), with
@@ -290,6 +309,39 @@ mod tests {
         let path = dir.join("lib/fasteners.3dcadcraft");
         lib.save(&path).unwrap();
         (path, bolt, nut)
+    }
+
+    #[test]
+    fn verbatim_prefix_is_dropped() {
+        assert_eq!(
+            without_verbatim(PathBuf::from(r"\\?\C:\Users\a\x.3dcadcraft")),
+            PathBuf::from(r"C:\Users\a\x.3dcadcraft")
+        );
+        assert_eq!(
+            without_verbatim(PathBuf::from(r"\\?\UNC\srv\share\x")),
+            PathBuf::from(r"\\srv\share\x")
+        );
+        // Other verbatim forms (devices, volume GUIDs) and plain paths stay.
+        for p in [r"\\?\Volume{1}\x", "/home/a/x", r"D:\x"] {
+            assert_eq!(without_verbatim(PathBuf::from(p)), PathBuf::from(p));
+        }
+    }
+
+    /// Canonical paths on Windows carry no `\\?\`, so a library on another
+    /// drive is stored as `D:/…`, which parses back to the same file.
+    #[cfg(windows)]
+    #[test]
+    fn canonical_paths_are_plain_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = canonical(dir.path()).unwrap();
+        assert!(!c.to_string_lossy().starts_with(r"\\?\"), "{}", c.display());
+        assert!(c.is_dir());
+        let other = relative_path(Path::new(r"C:\a"), Path::new(r"D:\lib\x.3dcadcraft"));
+        assert_eq!(other, "D:/lib/x.3dcadcraft");
+        assert_eq!(
+            Path::new(r"C:\a").join(&other),
+            PathBuf::from(r"D:\lib\x.3dcadcraft")
+        );
     }
 
     #[test]
