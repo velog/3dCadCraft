@@ -1811,8 +1811,8 @@ fn p_rect_too_many() -> Result<PartDocument, String> {
     rect_pattern(
         &mut part,
         &[&h],
-        (X_AXIS, 40, 1.0),
-        Some((Y_AXIS, 30, 1.0)),
+        (X_AXIS, 101, 1.0),
+        Some((Y_AXIS, 100, 1.0)),
         |_| {},
     )?;
     Ok(part)
@@ -2394,7 +2394,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             level: "simple",
-            name: "rect pattern: 1200 instances refused",
+            name: "rect pattern: 10100 instances refused (limit 10000)",
             budget_ms: 400.0,
             build: p_rect_too_many,
             want: Want::Error("too many"),

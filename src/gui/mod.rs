@@ -24,8 +24,8 @@
 //! sketch on the box's top face.
 
 mod blend;
-mod browser_edit;
 mod breadcrumb;
+mod browser_edit;
 mod camera;
 mod command_ui;
 mod demos;
