@@ -481,6 +481,8 @@ struct CadCraftApp {
     home_view: Option<(f64, f64)>,
     /// The last right-click was on the ViewCube.
     cube_context: bool,
+    /// ViewCube transitions and cube/compass drags.
+    view_cube: viewcube::ViewCube,
     /// Offset Element window: sketch, pattern, element, along/across (mm).
     offset_edit: Option<(usize, crate::sketch::PatternId, usize, [f64; 2])>,
     /// A sketch-pattern handle being dragged, and the value shown.
@@ -607,6 +609,7 @@ impl CadCraftApp {
             slice: false,
             home_view: None,
             cube_context: false,
+            view_cube: Default::default(),
             manip_drag: None,
             pattern_drag: None,
             context_point: None,
@@ -3020,6 +3023,7 @@ impl CadCraftApp {
 
     /// Snaps the camera to a standard view (ViewCube, View tab, F6).
     fn set_view(&mut self, view: StandardView) {
+        let before = self.camera.clone();
         let (yaw, pitch) = match (view, self.home_view) {
             (StandardView::Home, Some(h)) => h,
             _ => view.angles(),
@@ -3030,6 +3034,7 @@ impl CadCraftApp {
         if view == StandardView::Home {
             self.fit_view();
         }
+        self.view_cube.animate(before, &mut self.camera);
     }
 
     /// Right-click on the ViewCube (Inventor's ViewCube menu).
@@ -3067,9 +3072,15 @@ impl CadCraftApp {
     /// neighbouring face or a 90° roll.
     fn cube_clicked(&mut self, hit: viewcube::CubeHit) {
         use viewcube::CubeHit;
+        let before = self.camera.clone();
         match hit {
             CubeHit::Home => self.set_view(StandardView::Home),
             CubeHit::Dir(d) => self.camera.look_from(viewcube::direction(d)),
+            CubeHit::Compass(Some(d)) => {
+                let dir = viewcube::compass_direction(&self.camera, d);
+                self.camera.look_from(dir);
+            }
+            CubeHit::Compass(None) => {}
             CubeHit::Arrow(x, y) => {
                 if let Some(d) = viewcube::arrow_direction(&self.camera, x, y) {
                     self.camera.look_from(d);
@@ -3079,6 +3090,8 @@ impl CadCraftApp {
                 self.camera.roll += sign as f64 * std::f64::consts::FRAC_PI_2;
             }
         }
+        // Smooth transition (Home already animated itself).
+        self.view_cube.animate(before, &mut self.camera);
     }
 
     /// Half-size of the origin-plane squares shown while picking.
@@ -4057,7 +4070,20 @@ impl CadCraftApp {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.viewport_rect = rect;
         let pointer = response.hover_pos();
-        let on_cube = pointer.and_then(|p| viewcube::pick(&self.camera, rect, p));
+        // --- ViewCube: running transition, cube/compass drags (they own
+        // the pointer for the whole drag, before anything else picks) ---
+        if self.view_cube.tick(&mut self.camera, ui.input(|i| i.time)) {
+            ui.ctx().request_repaint();
+        }
+        let scrolled = response.hovered() && ui.input(|i| i.smooth_scroll_delta.y != 0.0);
+        let press = ui.input(|i| i.pointer.press_origin());
+        let cube_drag = self
+            .view_cube
+            .input(&mut self.camera, rect, &response, press, scrolled);
+        let on_cube = self
+            .view_cube
+            .drag_hit()
+            .or_else(|| pointer.and_then(|p| viewcube::pick(&self.camera, rect, p)));
 
         // --- picking a sketch plane ---
         let picking = matches!(self.mode, Mode::PickPlane(_));
@@ -4664,6 +4690,7 @@ impl CadCraftApp {
             _ => None,
         };
         if response.drag_started_by(PointerButton::Primary)
+            && on_cube.is_none()
             && let (Some((owner, hs)), Some(p)) = (&handles, ui.input(|i| i.pointer.press_origin()))
             && let Some(i) = manip::hit(hs, &self.camera, rect, p)
         {
@@ -4725,6 +4752,7 @@ impl CadCraftApp {
         if response.drag_started_by(PointerButton::Primary)
             && self.manip_drag.is_none()
             && in_sketch.is_none()
+            && on_cube.is_none()
             && self.mouse == MousePreset::Inventor
             && self.target_pick.is_none()
             && self.extrude.as_ref().is_some_and(|d| !d.axis_pick)
@@ -4901,6 +4929,8 @@ impl CadCraftApp {
             Zoom,
         }
         let nav = match self.mouse {
+            // A drag on the ViewCube orbits by itself.
+            _ if cube_drag => Nav::None,
             // Function keys take priority over point dragging, as in Inventor.
             MousePreset::Inventor if left && f4 => Nav::Orbit,
             MousePreset::Inventor if left && f2 => Nav::Pan,
@@ -5684,7 +5714,9 @@ impl CadCraftApp {
             }
             overlay::draw_snap(&painter, &self.camera, rect, &ps.sketch, &pick);
         }
-        viewcube::draw(&painter, &self.camera, rect, pointer);
+        viewcube::draw_triad(&painter, &self.camera, rect);
+        let cube_active = self.view_cube.dragging();
+        viewcube::draw(&painter, &self.camera, rect, pointer, cube_active);
     }
 
     /// Screen position of the text of dimension `c` in the edited sketch.

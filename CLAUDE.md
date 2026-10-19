@@ -361,7 +361,19 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   them as the hatched section when slicing (otherwise red = orientation bug).
 - **ViewCube** picks 26 directions from 3×3 regions per visible face (`BAND`); arrows
   and roll buttons exist only while looking straight at a face. `OrbitCamera::roll`
-  rotates the image; `look_from` resets it.
+  rotates the image; `look_from` resets it. Pick order: Home > arrows/roll > cube regions
+  > compass letters > compass ring. `viewcube::ViewCube` owns a drag that *starts* on the
+  cube/ring for its whole duration (`drag_hit` feeds `on_cube`, nav is skipped via
+  `cube_drag`), so new viewport drag handlers must check `on_cube.is_none()`.
+  Clicks/standard views animate (`ViewCube::animate(before, &mut camera)` after changing
+  the camera; `ViewAnim` slerps the view direction). The transition yields when anyone
+  else changes the camera (`tick` compares with the camera it set last) — never rely on
+  the camera being at its end value right after `set_view`/`cube_clicked`.
+- **Orbit has no pitch clamp**: pitch is wrapped to (−π, π] and may exceed ±90°
+  (upside down). The view's up is `OrbitCamera::up()` = d(eye)/d(pitch), never world Z;
+  use `frame()` for (back, screen-up) and `set_frame(dir, up)` to place the camera (it picks
+  the yaw/pitch branch and roll). Never test "top view" by pitch value — use the eye
+  direction (`is_ortho`, `face_on`).
 - **Pattern element offsets:** pattern copies are chained (`Translated` from the
   neighbour). An offset element gets `offset = own − neighbour's` and so does the
   next one (negative), so the chain returns to the grid. Defining copies (first of
