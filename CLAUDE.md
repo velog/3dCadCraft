@@ -180,7 +180,7 @@ Never implement from memory of "how Inventor probably does it".
 - **Where:** the section number comes from `docs/FEATURES.md`, e.g. `2.2-revolve.md`,
   `1.4-dimensions.md`. UI-wide rules are in `0-ui.md`. One file per feature or
   mechanism. Add it to the table in `docs/spec/README.md` and link it from the
-  FEATURES section (`**Спецификация:** [spec/…](spec/…)`).
+  FEATURES section (`**Specification:** [spec/…](spec/…)`).
 - **Hard algorithms** (blends at corners, Booleans, offsets, shell…): before inventing one,
   look up how others solve it — SolidCraft source (`~/.cargo/git/checkouts/solidcraft-*`,
   MIT/Apache, adapt with attribution), FreeCAD docs/wiki and FreeCAD run as an external
@@ -192,7 +192,7 @@ Never implement from memory of "how Inventor probably does it".
   with the 2027 path. Use Inventor Help (help.autodesk.com `Inventor-Help`, newest
   year first)
   and the API object model (`Inventor-API`). Use WebSearch/WebFetch; note the GUIDs
-  in "Източници".
+  in "Sources".
 - **Content** (template in `docs/spec/README.md`), in English and in our own words.
   Never copy Autodesk text. Option and command names stay in English.
   1. purpose;

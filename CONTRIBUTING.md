@@ -24,7 +24,7 @@ them). On Linux the GUI needs the usual X11/Wayland development packages
 - **Read [CLAUDE.md](CLAUDE.md).** Despite the name, it is the developer
   guide for humans and AI agents alike: architecture, invariants and the
   pitfalls we have already paid for.
-- Look at [docs/ROADMAP.md](docs/ROADMAP.md) (the **Критични** section lists
+- Look at [docs/ROADMAP.md](docs/ROADMAP.md) (the **⚠ Critical fixes** section lists
   the most urgent problems) and [docs/FEATURES.md](docs/FEATURES.md).
 - For anything bigger than a bug fix, open an issue first so we can agree on
   the approach.

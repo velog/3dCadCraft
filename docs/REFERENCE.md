@@ -808,8 +808,7 @@ in Inventor, a Bulgarian name, Inventor's aliases, a key, a place (Tab › Panel
 
 Tabs: **3D Model**, **Sketch**, **Inspect**, **Tools**, **Manage**, **View** (always all of them).
 Entering a sketch opens Sketch, leaving it — 3D Model. Grey commands say why in
-the tooltip; those not implemented yet say "Planned — docs/FEATURES.md, section X" (Bulgarian UI:
-"Предстои — docs/FEATURES.md, раздел X"). The key (if
+the tooltip; those not implemented yet say "Planned — docs/FEATURES.md, section X". The key (if
 any) is in the tooltip.
 
 **3D Model**

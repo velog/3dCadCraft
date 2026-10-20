@@ -58,7 +58,7 @@ Use `--release`: geometry is much slower in debug builds. Settings live in
 
 Contributions are very welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)**
 and the developer guide **[CLAUDE.md](CLAUDE.md)** (for humans and AI agents
-alike). Good places to start: the **Критични** (critical) list at the top of
+alike). Good places to start: the **⚠ Critical fixes** list at the top of
 [docs/ROADMAP.md](docs/ROADMAP.md), and the ⬜ rows in `docs/spec/`.
 
 | Document | |
@@ -95,6 +95,6 @@ cargo run --release
 
 Нужни са [Git](https://git-scm.com/download/win) и [Rust](https://rustup.rs) (`rustup-init.exe`, с „Desktop development with C++“ от Visual Studio Build Tools, което инсталаторът предлага). Настройките са в `%APPDATA%\3dcadcraft\settings.json`; скриптовете за визуални тестове в `tools/` (X11) работят само под Linux.
 
-Искате да помогнете? Вижте [CONTRIBUTING.md](CONTRIBUTING.md) и списъка „Критични“ в [docs/ROADMAP.md](docs/ROADMAP.md). При проблем: **Help → Save Diagnostics…** и приложете zip файла към issue.
+Искате да помогнете? Вижте [CONTRIBUTING.md](CONTRIBUTING.md) и списъка „⚠ Critical fixes“ в [docs/ROADMAP.md](docs/ROADMAP.md). При проблем: **Help → Save Diagnostics…** и приложете zip файла към issue.
 
 Лиценз: MIT OR Apache-2.0. „Inventor“ е търговска марка на Autodesk, Inc. 3DCadCraft не е свързан с Autodesk.
