@@ -637,6 +637,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   the first normal (a ring turns right round). Plain Catmull-Rom shrinks a ring of sections (6 on
   a circle: −2.6 %); origin tangents get the arc length (`through`). The kernel's volume of a
   twisted ruled side (a saddle) is ~1 % low (coarse display mesh), not a geometry error.
+  A section that is not square to a centre line keeps its plane: stations blend its tilt (a
+  rotation vector in the carried frame) out towards the next section — square stations right up
+  to it cut through it (owner's journal `tests/data/loft_centerline_journal.jsonl`, wall below
+  z = 0). The kernel accepts self-intersecting lofts, so `check_folds` refuses stations that fall
+  behind the previous station's plane.
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans (amber unless something assigned them an appearance).
 - **Exact surface bodies** (`kernel/exact/sheet.rs`): Extrude / Revolve with Output Surface build

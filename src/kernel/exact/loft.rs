@@ -883,6 +883,7 @@ fn stations(g: &GuidedLoft) -> Result<Vec<Sec>, String> {
         }
         st.into_iter().map(|s| s.sec).collect()
     };
+    check_folds(&out, g.closed)?;
     if out.len() > 50 {
         return Err(format!(
             "too many sections for these options ({} stations, the kernel lofts through 50 at \
@@ -896,6 +897,43 @@ fn stations(g: &GuidedLoft) -> Result<Vec<Sec>, String> {
         s.names = names.clone();
     }
     Ok(out)
+}
+
+/// Refuses stations that fold back: every point of a station must lie in
+/// front of the previous station's plane (the planes face the way the loft
+/// runs). Otherwise the side faces between them cross each other — a
+/// self-intersecting solid the kernel would still return.
+fn check_folds(st: &[Sec], closed: bool) -> Result<(), String> {
+    let n = st.len();
+    let pairs = if closed { n } else { n.saturating_sub(1) };
+    for i in 0..pairs {
+        let (a, b) = (&st[i], &st[(i + 1) % n]);
+        let normal = a.n();
+        let pts: Vec<Point3> = b
+            .segs
+            .iter()
+            .flat_map(|z| (0..8).map(move |j| z.eval(j as Real / 8.0)))
+            .map(|q| b.world(q))
+            .collect();
+        let size = pts
+            .iter()
+            .map(|p| (p - b.o).norm())
+            .fold(0.0, Real::max)
+            .max(1e-3);
+        let worst = pts
+            .iter()
+            .map(|p| (p - a.o).dot(&normal))
+            .fold(Real::MAX, Real::min);
+        if worst < -1e-4 * size {
+            return Err(format!(
+                "the loft would cross itself: its surface folds back {:.2} mm behind a section \
+                 between sections (the guide bends too sharply for the section size, or a \
+                 section leans too far from it)",
+                -worst
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Intermediate stations per span (∝ the span's length, at least `min`,
@@ -1539,6 +1577,28 @@ fn center_line_stations(
     let (s0, s1) = (c.s[0], c.s[k - 1]);
     let shapes: Vec<Vec<V2>> = secs.iter().map(|x| flat(&x.segs)).collect();
     let m = shapes[0].len();
+    // How each section's plane is tilted from square to the line, as a
+    // rotation vector in the carried frame there (x, y, tangent). The
+    // stations blend it out away from the section: a section that is not
+    // square to the line keeps its plane, and the stations next to it lean
+    // like it instead of cutting through it (the owner's loft dipped below
+    // its bottom section when the stations were square right up to it).
+    let tilts: Vec<Vector3> = (0..k)
+        .map(|i| {
+            let (hx, hy) = c.frame_at(c.s[i]);
+            let t = c.track.tangent(c.s[i]);
+            let w = turn(&t, &secs[i].n()).scaled_axis();
+            Vector3::new(w.dot(&hx), w.dot(&hy), w.dot(&t))
+        })
+        .collect();
+    let frame = |s: Real, span: usize, tau: Real| -> (Vector3, Vector3) {
+        let (hx, hy) = c.frame_at(s);
+        let t = c.track.tangent(s);
+        let h = hermite(tau);
+        let w = tilts[span] * h[0] + tilts[span + 1] * h[2];
+        let r = Rotation3::new(hx * w.x + hy * w.y + t * w.z);
+        (r * hx, r * hy)
+    };
     // Shape (unscaled) at arc length s: span and Catmull-Rom Hermite.
     let shape_at = |s: Real| -> (usize, Real, Vec<V2>) {
         let span = (0..k - 1)
@@ -1629,7 +1689,7 @@ fn center_line_stations(
         };
         for step in first..j {
             let s = a + (b - a) * step as Real / j as Real;
-            let (_, _, v) = shape_at(s);
+            let (span, tau, v) = shape_at(s);
             let mut segs = unflat(&v);
             if let Some(want) = target(s) {
                 let (have, cen) = area_centroid(&segs);
@@ -1642,7 +1702,7 @@ fn center_line_stations(
                     .map(|bz| bz.map(|p| cen + (p - cen) * f))
                     .collect();
             }
-            let (gx, gy) = c.frame_at(s);
+            let (gx, gy) = frame(s, span, tau);
             out.push(Sec {
                 o: c.track.at(s),
                 gx,
