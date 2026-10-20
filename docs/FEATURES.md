@@ -1,1228 +1,1228 @@
-# 3DCadCraft — каталог на функциите по нива
+# 3DCadCraft — feature catalogue by level
 
-Този документ описва **целия обхват** на 3DCadCraft като параметрична CAD система за машиностроене. За функционален ориентир е използван наборът от възможности на **Autodesk Inventor 2027**: какви инструменти очаква един конструктор от професионален CAD. Текстът е **собствен**. Документацията, кодът и файловите формати на Autodesk не са копирани (clean-room). „Inventor“ е търговска марка на Autodesk, Inc., и 3DCadCraft не е свързан с Autodesk.
+This document describes the **full scope** of 3DCadCraft as a parametric CAD system for mechanical engineering. The capability set of **Autodesk Inventor 2027** is used as the functional reference: which tools a designer expects from a professional CAD. The text is **our own**. Autodesk's documentation, code and file formats are not copied (clean-room). "Inventor" is a trademark of Autodesk, Inc., and 3DCadCraft is not affiliated with Autodesk.
 
-## Как да се чете
+## How to read this
 
-Подробните спецификации (опция по опция, със статус) са в [spec/](spec/README.md). Изискванията към интерфейса — визия, поведение, насочване — са в [spec/0-ui.md](spec/0-ui.md).
+The detailed specifications (option by option, with status) are in [spec/](spec/README.md). The interface requirements — look, behaviour, guidance — are in [spec/0-ui.md](spec/0-ui.md).
 
-Функциите са групирани в **нива (степени)**. Всяко ниво стъпва на предишните, а редът отразява едновременно **зависимостите** и **ползата** за потребителя:
+The features are grouped into **levels (tiers)**. Each level builds on the previous ones, and the order reflects both the **dependencies** and the **value** to the user:
 
-| Ниво | Име | Какво отключва |
+| Level | Name | What it unlocks |
 |---|---|---|
-| **0** | Платформа | ядро, файлове, команди, API — основата на всичко |
-| **1** | Скициране | 2D профили с ограничения и размери |
-| **2** | Детайли (основно) | реален машинен детайл: екструдиране, отвори, закръгления |
-| **3** | Сглобки | поставяне и свързване на детайли, спецификация (BOM) |
-| **4** | Чертежи | 2D документация за производство |
-| **5** | Напреднало моделиране | сложни форми, повърхнини, листов метал, фамилии детайли |
-| **6** | Специализирани среди | рамки, заварки, тръби, кабели, стандартни елементи |
-| **7** | Анализ, визуализация, автоматизация, обмен | якостни анализи, рендер, правила, AI агент, STEP |
+| **0** | Platform | kernel, files, commands, API — the foundation of everything |
+| **1** | Sketching | 2D profiles with constraints and dimensions |
+| **2** | Parts (basic) | a real machined part: extrusion, holes, fillets |
+| **3** | Assemblies | placing and connecting parts, bill of materials (BOM) |
+| **4** | Drawings | 2D documentation for manufacturing |
+| **5** | Advanced modelling | complex shapes, surfaces, sheet metal, part families |
+| **6** | Specialised environments | frames, weldments, tubes, cables, standard components |
+| **7** | Analysis, visualisation, automation, exchange | stress analysis, rendering, rules, AI agent, STEP |
 
-**Ниво 0–4 = MVP за производство:** с тях може да се проектира детайл, да се сглоби и да се изкара чертеж.
+**Levels 0–4 = MVP for manufacturing:** with them you can design a part, assemble it and produce a drawing.
 
-Всяка функция е описана по един и същ шаблон:
+Every feature is described with the same template:
 
-- **Какво прави** — от гледна точка на потребителя.
-- **Как работи** — как се реализира в 3DCadCraft (алгоритъм, структури от данни).
-- **Настройки** — параметрите, които потребителят задава.
-- **Аналог в Inventor** — за ориентация.
-- **Статус** — ✅ готово · 🟡 частично · ⬜ предстои. Сложност: S / M / L / XL.
+- **What it does** — from the user's point of view.
+- **How it works** — how it is implemented in 3DCadCraft (algorithm, data structures).
+- **Settings** — the parameters the user sets.
+- **Inventor equivalent** — for orientation.
+- **Status** — ✅ done · 🟡 partial · ⬜ to do. Complexity: S / M / L / XL.
 
 ---
 
-# Ниво 0 — Платформа
+# Level 0 — Platform
 
-## 0.1 Геометрично ядро (B-Rep) — 🟡 · XL
+## 0.1 Geometric kernel (B-Rep) — 🟡 · XL
 
-**Какво прави.** Пази точната форма на телата: не като мрежа от триъгълници, а като **граници**. Едно тяло е затворена обвивка от стени, всяка стена е част от повърхнина, ограничена от ръбове, а всеки ръб е част от крива между два върха. Затова цилиндричен отвор остава *истински* цилиндър с радиус 5.000 mm, а не многоъгълник.
+**What it does.** Keeps the exact shape of bodies: not as a mesh of triangles but as **boundaries**. A body is a closed shell of faces, each face is part of a surface bounded by edges, and each edge is part of a curve between two vertices. So a cylindrical hole stays a *real* cylinder with radius 5.000 mm, not a polygon.
 
-**Как работи.**
-- **Геометрия** (*къде*): `Line`, `Circle`, `BSplineCurve` (NURBS с тегла, точна окръжност), `Plane`, `Cylinder`. Предстоят конус, сфера, тор, NURBS повърхнина и offset повърхнина.
-- **Топология** (*как е свързано*): `Vertex → Edge → Coedge → Loop → Face → Shell → Solid`. `Coedge` (half-edge) прави всеки ръб на затворено тяло да се използва точно два пъти, в противоположни посоки. Така „вътре“ и „вън“ са строго дефинирани.
-- Всички елементи са в генерационни арени (`slotmap`) с типизирани ID. Няма `unsafe`, няма цикли от указатели, а моделът се копира евтино (за Undo) и се сериализира.
-- **Проверки:** затворена 2-многообразна обвивка, формула на Ойлер–Поанкаре `V − E + F − R = 2(S − H)` (H = брой проходни отвори), ръбовете трябва да лежат върху кривите си.
+**How it works.**
+- **Geometry** (*where*): `Line`, `Circle`, `BSplineCurve` (NURBS with weights, exact circle), `Plane`, `Cylinder`. Cone, sphere, torus, NURBS surface and offset surface are to do.
+- **Topology** (*how it is connected*): `Vertex → Edge → Coedge → Loop → Face → Shell → Solid`. `Coedge` (half-edge) makes every edge of a closed body be used exactly twice, in opposite directions. So "inside" and "outside" are strictly defined.
+- All elements live in generational arenas (`slotmap`) with typed IDs. There is no `unsafe`, no pointer cycles, and the model is cheap to copy (for Undo) and serialisable.
+- **Checks:** closed 2-manifold shell, the Euler–Poincaré formula `V − E + F − R = 2(S − H)` (H = number of through holes), edges must lie on their curves.
 
-**Настройки.** Толеранси (виж 0.2).
+**Settings.** Tolerances (see 0.2).
 
-**Аналог в Inventor.** Inventor ползва лицензираното ядро ShapeManager. 3DCadCraft пише собствено ядро от нулата на Rust.
+**Inventor equivalent.** Inventor uses the licensed ShapeManager kernel. 3DCadCraft writes its own kernel from scratch in Rust.
 
-**Точно ядро (етап A, [SOLIDCRAFT.md](SOLIDCRAFT.md)).** Box, Extrude, Revolve, Join/Cut/Intersect, Fillet и Chamfer се строят от точното ядро на SolidCraft (на truck) през `kernel::exact`. Резултатът се превежда в нашия B-Rep: точни равнини, цилиндри, конуси, сфери и торове, имена на стени, ръбове и върхове по нашата схема, триъгълници за изгледа. Тестовият детайл (кутия, 8 закръгления, фаска по веригата) има 26 стени вместо ~20 000 и се строи за милисекунди. Surface изходът на Extrude и Revolve също е точен (отворени повърхнинни тела извън булевите операции). Каквото точното ядро още не покрива (Surface с наклон, двустранен наклон, съвпадащи стени при Cut), строи целия детайл със старото фасетирано ядро. `CADCRAFT3D_KERNEL=facet` го изключва.
+**Exact kernel (stage A, [SOLIDCRAFT.md](SOLIDCRAFT.md)).** Box, Extrude, Revolve, Join/Cut/Intersect, Fillet and Chamfer are built by the SolidCraft exact kernel (on truck) through `kernel::exact`. The result is converted into our B-Rep: exact planes, cylinders, cones, spheres and tori, names of faces, edges and vertices following our scheme, triangles for the view. The test part (box, 8 fillets, a chamfer along the chain) has 26 faces instead of ~20,000 and builds in milliseconds. The Surface output of Extrude and Revolve is exact too (open surface bodies outside the Boolean operations). Whatever the exact kernel does not cover yet (Surface with taper, two-sided taper, coincident faces in Cut) builds the whole part with the old faceted kernel. `CADCRAFT3D_KERNEL=facet` turns it off.
 
-**Предстои (по ред):** конструиране на тела от скици (екструдиране/завъртане) → булеви операции (обединяване/изваждане/сечение) → закръгления → NURBS повърхнини. **Булевите операции са най-трудната част на всяко CAD ядро** (виж ROADMAP, решения на ниво ядро).
+**To do (in order):** building bodies from sketches (extrude/revolve) → Boolean operations (union/subtraction/intersection) → fillets → NURBS surfaces. **Boolean operations are the hardest part of any CAD kernel** (see ROADMAP, kernel-level decisions).
 
-## 0.2 Единици и толеранси — 🟡 · S
+## 0.2 Units and tolerances — 🟡 · S
 
-**Какво прави.** Определя в какви единици се работи и кога две точки се смятат за една.
+**What it does.** Defines which units are used and when two points count as one.
 
-**Как работи.** Вътрешно всичко е в **милиметри и радиани**, `f64` (около 15 значещи цифри). Сравненията минават само през `Tolerance` (линеен 1e-6 mm, ъглов 1e-9 rad), никога през `==`. Единиците за показване (mm, cm, m, in, ft) се превръщат само при вход и изход.
+**How it works.** Internally everything is in **millimetres and radians**, `f64` (about 15 significant digits). Comparisons go only through `Tolerance` (linear 1e-6 mm, angular 1e-9 rad), never through `==`. Display units (mm, cm, m, in, ft) are converted only on input and output.
 
-**Настройки.**
-- *Настройки на документа:* единици за дължина и ъгъл, брой знаци след запетаята при показване, единица за маса.
-- *Модел:* линеен толеранс, за напреднали.
+**Settings.**
+- *Document settings:* length and angle units, number of decimal places shown, mass unit.
+- *Model:* linear tolerance, for advanced users.
 
-**Аналог.** Document Settings → Units.
+**Inventor equivalent.** Document Settings → Units.
 
-## 0.3 Визуализация и навигация — 🟡 · L
+## 0.3 Visualisation and navigation — 🟡 · L
 
-**Какво прави.** Показва модела в 3D и позволява разглеждането му.
+**What it does.** Shows the model in 3D and lets you look around it.
 
-**Как работи.** Ядрото триангулира (тесселира) точната геометрия до зададена хорда, а wgpu я рисува с MSAA 4x и дълбочинен буфер. Ръбовете се рисуват отделно, за да са винаги остри. Обърнатите навътре стени се оцветяват в **червено**, като диагностика на грешки в ядрото.
+**How it works.** The kernel triangulates (tessellates) the exact geometry to a given chord, and wgpu draws it with MSAA 4x and a depth buffer. Edges are drawn separately so they are always sharp. Faces turned inwards are coloured **red**, as a diagnostic for kernel bugs.
 
-**Спецификация:** [spec/0.3-view.md](spec/0.3-view.md)
+**Specification:** [spec/0.3-view.md](spec/0.3-view.md)
 
-**Управление (сега):** профил **Inventor** по подразбиране — Shift + среден бутон върти, среден мести, колелцето мащабира, F2/F3/F4 + ляв, двоен среден клик = Fit, F6 = Home; профил **Classic** — ляв върти, десен или среден мести (Tools → Application Options → Navigation). Orbit минава свободно през горната и долната страна (🟡 чака визуална проверка). Всички клавиши и действия с мишката: **[REFERENCE.md](REFERENCE.md)** (§1 мишка, §5 клавиши); пропуските — [ROADMAP.md](ROADMAP.md#интерфейс-пропуски-и-следващи-стъпки).
+**Controls (now):** the **Inventor** profile by default — Shift + middle button orbits, middle pans, the wheel zooms, F2/F3/F4 + left, double middle click = Fit, F6 = Home; the **Classic** profile — left orbits, right or middle pans (Tools → Application Options → Navigation). Orbit passes freely over the top and the bottom (🟡 waiting for a visual check). All keys and mouse actions: **[REFERENCE.md](REFERENCE.md)** (§1 mouse, §5 keys); the gaps — [ROADMAP.md](ROADMAP.md#interface-gaps-and-next-steps).
 
-**ViewCube** (🟡 чака визуална проверка): 26 посоки (стени, ръбове, ъгли) с подсветка, стрелки и завъртане на 90° при поглед в стена, Home като иконка-къщичка, компас N/E/S/W под куба (влачене = въртене около Z, клик върху буква = изглед от тази страна), влачене на куба = Orbit, плавни преходи (~300 ms), полупрозрачен, когато мишката е далеч, контекстно меню с проекциите и Home.
+**ViewCube** (🟡 waiting for a visual check): 26 directions (faces, edges, corners) with highlight, arrows and 90° rotation when looking at a face, Home as a house icon, an N/E/S/W compass under the cube (drag = rotation about Z, click on a letter = view from that side), dragging the cube = Orbit, smooth transitions (~300 ms), semi-transparent when the mouse is far away, a context menu with the projections and Home.
 
-**Ос-триада** (🟡 чака визуална проверка): X/Y/Z (червено/зелено/синьо) долу вдясно в изгледа, върти се с камерата.
+**Axis triad** (🟡 waiting for a visual check): X/Y/Z (red/green/blue) at the bottom right of the view, rotates with the camera.
 
-**Предстои:**
-- **ViewCube:** настройки (размер, ъгъл на екрана, Snap to closest view, Angle of North, Fit-to-View при клик);
-- **визуални стилове:** сенки с ръбове, само сенки, телена рамка, скрити линии;
-- ортографска и перспективна проекция: ✅ (Orthographic / Perspective / Perspective with Ortho Faces в менюто на ViewCube, десен клик и View → Projection);
-- F5 (Previous View), клавиш Home (Zoom All), мащаб към курсора, Navigation Bar;
-- разрез на изгледа (section view);
-- фон, осветление и материали (виж 7.3).
+**To do:**
+- **ViewCube:** settings (size, screen corner, Snap to closest view, Angle of North, Fit-to-View on click);
+- **visual styles:** shaded with edges, shaded only, wireframe, hidden lines;
+- orthographic and perspective projection: ✅ (Orthographic / Perspective / Perspective with Ortho Faces in the ViewCube menu, right click and View → Projection);
+- F5 (Previous View), the Home key (Zoom All), zoom to cursor, Navigation Bar;
+- view section (section view);
+- background, lighting and materials (see 7.3).
 
-**Настройки.**
-- *Application Options → Display:* скорост на въртене, посока на колелцето, точност на тесселацията;
-- цветове и теми (тъмна/светла).
+**Settings.**
+- *Application Options → Display:* orbit speed, wheel direction, tessellation accuracy;
+- colours and themes (dark/light).
 
-**Аналог.** Navigation Bar, ViewCube, Visual Styles, Half Section View.
+**Inventor equivalent.** Navigation Bar, ViewCube, Visual Styles, Half Section View.
 
-## 0.4 Команди, Undo/Redo и история — 🟡 · M (Undo/Redo със снимки ✅; Command enum ⬜)
+## 0.4 Commands, Undo/Redo and history — 🟡 · M (Undo/Redo with snapshots ✅; Command enum ⬜)
 
-**Какво прави.** Всяко действие („начертай линия“, „екструдирай 10 mm“, „постави болт“) е **команда**, която може да се отмени (Undo) и да се повтори (Redo).
+**What it does.** Every action ("draw a line", "extrude 10 mm", "place a bolt") is a **command** that can be undone (Undo) and redone (Redo).
 
-**Как работи.**
-- Сериализуем `enum Command` е единственият начин за промяна на модела. GUI, скриптове и AI агенти използват **същия** речник и минават през **същата** валидация.
-- Изпълнената команда връща обратна операция или делта на модела, която отива в Undo стека.
-- Командите за *моделиране* (скица, екструдиране и т.н.) се записват и в **дървото на операциите** (feature tree) на детайла. Това е параметричната история, която се регенерира при промяна на размер.
+**How it works.**
+- A serialisable `enum Command` is the only way to change the model. The GUI, scripts and AI agents use the **same** vocabulary and go through the **same** validation.
+- An executed command returns an inverse operation or a model delta, which goes onto the Undo stack.
+- *Modelling* commands (sketch, extrude etc.) are also recorded in the part's **feature tree**. This is the parametric history, which regenerates when a dimension changes.
 
-**Настройки.** Дълбочина на Undo стека.
+**Settings.** Undo stack depth.
 
-**Аналог.** Undo/Redo, Model Browser.
+**Inventor equivalent.** Undo/Redo, Model Browser.
 
-**Контекстни менюта, клавиши, псевдоними и улеснения** — 🟡: десен клик в изгледа, дървото и скицата, Repeat, лента с предложения ✅; меню по вид обект, marking menu, псевдоними и поле за тях, търсене на команда (Alt+S), подсказка до курсора за всички команди, преназначаване на клавишите, F5/Home/End/PageUp, Isolate, видимост по вид ⬜. **Спецификация:** [spec/0.15-context-menus-shortcuts.md](spec/0.15-context-menus-shortcuts.md)
+**Context menus, keys, aliases and conveniences** — 🟡: right click in the view, the browser and the sketch, Repeat, suggestion bar ✅; menu by object kind, marking menu, aliases and a field for them, command search (Alt+S), a cursor hint for every command, key remapping, F5/Home/End/PageUp, Isolate, visibility by kind ⬜. **Specification:** [spec/0.15-context-menus-shortcuts.md](spec/0.15-context-menus-shortcuts.md)
 
-**Диагностика и възстановяване** — 🟡 (2026-10-19, чака визуална проверка): лог на всяка сесия, дневник на действията (JSONL) с разлики на детайла, който се повтаря стъпка по стъпка (`diagnostics::replay`, `cargo run --example replay`), автозапис на 5 минути и след OK в `%APPDATA%\3dcadcraft\recovery` с предложение **Restore** след срив, доклад за срив с backtrace и аварийно копие, **Help → Save Diagnostics…** и **Open Logs Folder**. **Спецификация:** [spec/0.14-diagnostics.md](spec/0.14-diagnostics.md)
+**Diagnostics and recovery** — 🟡 (2026-10-19, waiting for a visual check): a log of every session, an action journal (JSONL) with part deltas that is replayed step by step (`diagnostics::replay`, `cargo run --example replay`), autosave every 5 minutes and after OK into `%APPDATA%\3dcadcraft\recovery` with a **Restore** offer after a crash, a crash report with backtrace and an emergency copy, **Help → Save Diagnostics…** and **Open Logs Folder**. **Specification:** [spec/0.14-diagnostics.md](spec/0.14-diagnostics.md)
 
-## 0.5 Параметри и изрази — ⬜ · M
+## 0.5 Parameters and expressions — ⬜ · M
 
-**Какво прави.** Всеки размер може да е **именуван параметър** (`width = 120 mm`) или **израз** (`hole_spacing = width / 4`). Промяната на параметър регенерира модела.
+**What it does.** Every dimension can be a **named parameter** (`width = 120 mm`) or an **expression** (`hole_spacing = width / 4`). Changing a parameter regenerates the model.
 
-**Как работи.**
-- Таблица с параметри в документа.
-- Изразите се парсват до дърво (AST) с проверка на единиците: mm + mm е позволено, mm + deg е грешка.
-- Зависимостите образуват граф, който се подрежда топологично. Цикличните зависимости се отхвърлят.
-- Параметрите на модела (създадени от размерите) и потребителските параметри живеят заедно.
+**How it works.**
+- A parameter table in the document.
+- Expressions are parsed into a tree (AST) with unit checking: mm + mm is allowed, mm + deg is an error.
+- Dependencies form a graph that is sorted topologically. Cyclic dependencies are rejected.
+- Model parameters (created by dimensions) and user parameters live together.
 
-**Настройки.** Име, израз, единица, коментар, „експортирай като свойство“ (за спецификацията), таблица с допуски (min, номинал, max).
+**Settings.** Name, expression, unit, comment, "export as property" (for the BOM), tolerance table (min, nominal, max).
 
-**Аналог.** Parameters (fx), User Parameters, Linked Spreadsheet.
+**Inventor equivalent.** Parameters (fx), User Parameters, Linked Spreadsheet.
 
-**2026-10-14:** всяко числово поле приема изрази, имена на параметри и `>` меню: полетата на операциите (с уравнения, които остават), размерите на Box (`length/width/height` са параметри), стойностите на инструментите и диалозите (`ExprValue`). Spacing/Angle на масивите в скица запазват уравнението в размера на масива.
+**2026-10-14:** every numeric field accepts expressions, parameter names and the `>` menu: feature fields (with equations that are kept), Box sizes (`length/width/height` are parameters), tool and dialog values (`ExprValue`). Spacing/Angle of sketch patterns keep the equation in the pattern's dimension.
 
-## 0.6 Проекти и файлове — ✅ (версия 1) · M
+## 0.6 Projects and files — ✅ (version 1) · M
 
-Виж **[FILE_FORMAT.md](FILE_FORMAT.md)**. Накратко:
+See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
-- един файл `.3dcadcraft` с много документи;
-- Link, Append и Pack между проекти;
-- разпакувана папка за git;
-- атомарен запис с `.bak`;
-- версиониран формат.
+- one `.3dcadcraft` file with many documents;
+- Link, Append and Pack between projects;
+- an unpacked folder for git;
+- atomic save with `.bak`;
+- versioned format.
 
-**Спецификация:** [spec/0.6-files.md](spec/0.6-files.md) (прозорецът за файлове, последни файлове, Windows).
+**Specification:** [spec/0.6-files.md](spec/0.6-files.md) (the file dialog, recent files, Windows).
 
-**Аналог.** Project files (`.ipj`), Pack and Go, Vault (частично).
+**Inventor equivalent.** Project files (`.ipj`), Pack and Go, Vault (partly).
 
-## 0.7 API за агенти (JSON-RPC / MCP) — ⬜ · M
+## 0.7 API for agents (JSON-RPC / MCP) — ⬜ · M
 
-**Какво прави.** Външни програми и AI агенти управляват 3DCadCraft **без GUI**: отварят проекти, рисуват скици, добавят ограничения, екструдират, четат резултати (масa, обем, грешки) и записват.
+**What it does.** External programs and AI agents drive 3DCadCraft **without a GUI**: they open projects, draw sketches, add constraints, extrude, read results (mass, volume, errors) and save.
 
-**Как работи.**
-- Самостоятелен сървър (`--no-default-features`, без графична част), който превежда JSON-RPC методи и **MCP tools** към команди (0.4).
-- Транспорт: stdio (стандартният за MCP) и локален сокет.
-- Всяко действие на агент е обикновена команда, следователно **може да се отмени**.
-- Отговорите са структурирани: ID на създадените елементи, отчет от solver-а, валидност на тялото.
+**How it works.**
+- A standalone server (`--no-default-features`, without the graphics part) that translates JSON-RPC methods and **MCP tools** into commands (0.4).
+- Transport: stdio (the standard one for MCP) and a local socket.
+- Every agent action is an ordinary command, so it **can be undone**.
+- Responses are structured: IDs of the created elements, the solver report, body validity.
 
-**Настройки.** Включване/изключване на сървъра, разрешени операции (само четене / пълно управление), лог на действията на агента.
+**Settings.** Enabling/disabling the server, allowed operations (read-only / full control), a log of the agent's actions.
 
-**Аналог.** Inventor API, iLogic, Autodesk Assistant (2027).
+**Inventor equivalent.** Inventor API, iLogic, Autodesk Assistant (2027).
 
-## 0.8 Устойчиво именуване на топологията — 🟡 · XL (v0: имена от примитивите, неизменим `id` на операцията ✅)
+## 0.8 Persistent topology naming — 🟡 · XL (v0: names from the primitives, immutable feature `id` ✅)
 
-**Какво прави.** Решава класическия **„topological naming problem“**. Ако закръгление сочи „ръб №7“, а после промениш скицата и ръбовете се преномерират, закръглението не трябва да скочи на грешния ръб (известен проблем във FreeCAD до версия 1.0).
+**What it does.** Solves the classic **"topological naming problem"**. If a fillet points at "edge #7" and you then change the sketch and the edges get renumbered, the fillet must not jump to the wrong edge (a known problem in FreeCAD up to version 1.0).
 
-**Как работи (план).** Всяка стена и ръб получават **име, изведено от историята**: „страничната стена на Extrude1, породена от линия L3 на Sketch1“. Операциите наследяват и комбинират тези имена. Препратките в операциите се пазят като такива имена, не като индекси. При двусмислие се ползва геометрична евристика с предупреждение към потребителя.
+**How it works (plan).** Every face and edge gets a **name derived from the history**: "the side face of Extrude1, generated by line L3 of Sketch1". Features inherit and combine these names. References in features are stored as such names, not as indices. In case of ambiguity a geometric heuristic is used, with a warning to the user.
 
-**Аналог.** В Inventor е вградено в ядрото.
+**Inventor equivalent.** In Inventor it is built into the kernel.
 
-## 0.9 Избор и филтри — 🟡 · M
+## 0.9 Selection and filters — 🟡 · M
 
-**Спецификация:** [spec/0.9-selection.md](spec/0.9-selection.md), [spec/0.9a-selection-filters.md](spec/0.9a-selection-filters.md)
+**Specification:** [spec/0.9-selection.md](spec/0.9-selection.md), [spec/0.9a-selection-filters.md](spec/0.9a-selection-filters.md)
 
-**Състояние.** Един модел на избора (`command::selection`): по подразбиране се посочва всичко, филтрите (12 вида) изключват; Select Priority (Faces and Edges / Features / Bodies / Sketch Features); в команда — сечение на селектора с филтъра; меню **Shift + десен клик**; правоъгълник Window/Crossing по посока или винаги един от тях. 🟡 чака визуална проверка.
+**State.** One selection model (`command::selection`): by default everything is pickable, the filters (12 kinds) exclude; Select Priority (Faces and Edges / Features / Bodies / Sketch Features); in a command — the intersection of the selector with the filter; a **Shift + right click** menu; Window/Crossing box by direction or always one of them. 🟡 waiting for a visual check.
 
-**Какво прави.** Избор на върхове, ръбове, стени, тела, операции и компоненти с мишката. Има филтри („само ръбове“), приоритет (детайл/операция/стена), правоъгълник за избор (window/crossing) и цикъл през припокриващи се елементи.
+**What it does.** Selecting vertices, edges, faces, bodies, features and components with the mouse. There are filters ("edges only"), priority (part/feature/face), a selection box (window/crossing) and cycling through overlapping elements.
 
-**Как работи.** GPU picking (рендер на ID в отделна текстура) за бърз избор под курсора, плюс аналитично пресичане на лъч с B-Rep за точност.
+**How it works.** GPU picking (rendering IDs into a separate texture) for fast selection under the cursor, plus analytic ray–B-Rep intersection for accuracy.
 
-## 0.10 Измерване и физически свойства — 🟡 (Physical Properties) · M
+## 0.10 Measurement and physical properties — 🟡 (Physical Properties) · M
 
-**Спецификация:** [spec/0.10-physical.md](spec/0.10-physical.md)
+**Specification:** [spec/0.10-physical.md](spec/0.10-physical.md)
 
-**Състояние (2026-10-19):** Inspect → Physical Properties: маса по тела и общо (g / kg), обем, площ, център на тежестта, инерционен тензор спрямо центъра на тежестта, главни моменти и оси, Requested Accuracy, Update, Include по тела, Clipboard (`part::physical`). Measure ⬜. Чака визуална проверка.
+**State (2026-10-19):** Inspect → Physical Properties: mass per body and total (g / kg), volume, area, centre of gravity, inertia tensor about the centre of gravity, principal moments and axes, Requested Accuracy, Update, Include per body, Clipboard (`part::physical`). Measure ⬜. Waiting for a visual check.
 
-**Какво прави.**
-- **Measure:** разстояние, ъгъл, радиус, дължина на верига, площ.
-- **Физически свойства:** маса, обем, площ, център на тежестта, инерционни моменти и главни оси.
+**What it does.**
+- **Measure:** distance, angle, radius, chain length, area.
+- **Physical properties:** mass, volume, area, centre of gravity, moments of inertia and principal axes.
 
-**Как работи.** Обемът и инерцията се смятат по теоремата на Гаус–Остроградски върху B-Rep с адаптивна квадратура, точно за аналитични повърхнини. Проверката на тесселацията вече ползва същата идея (обемът на кутия се проверява чрез дивергенция).
+**How it works.** Volume and inertia are computed with the Gauss–Ostrogradsky (divergence) theorem over the B-Rep with adaptive quadrature, exactly for analytic surfaces. The tessellation check already uses the same idea (the volume of a box is checked via divergence).
 
-**Настройки.** Материал (плътност), точност (ниска/средна/висока), система на инерционните моменти.
+**Settings.** Material (density), accuracy (low/medium/high), moment-of-inertia system.
 
-**Аналог.** Measure, iProperties → Physical.
+**Inventor equivalent.** Measure, iProperties → Physical.
 
-## 0.11 Настройки на приложението и документа — 🟡 · S
+## 0.11 Application and document settings — 🟡 · S
 
-**Състояние (2026-10-19):** Tools → Application Options има Navigation (профил на мишката, Reverse zoom direction), Language (подсказки на български), Sketch, Display и Constraint Settings — Inference. В `settings.json` се пазят езикът на подсказките, последните файлове, всички Application Options (`options`) и подредбата на интерфейса (`ui`). Клавишите са твърдо зададени. Document Settings ⬜. Пълен списък на опциите, клавишите и мишката: **[REFERENCE.md](REFERENCE.md)** (§5 клавиши, §8 настройки); пропуските — [ROADMAP.md](ROADMAP.md#интерфейс-пропуски-и-следващи-стъпки) (U1, U2, U8).
-**Подредба на интерфейса** — 🟡: влачене и запомняне на ширините на дървото, Properties и лентата на състоянието; свиване на лентата до табовете; View → User Interface (Browser, Properties, Ribbon, Status Bar, ViewCube, Axis Triad), Clean Screen (Ctrl+0), Full Screen (F11 извън скица), Reset UI Layout; дърво и Properties отляво или отдясно; плаващите прозорци помнят място и размер. **Спецификация:** [spec/0.13-ui-layout.md](spec/0.13-ui-layout.md)
+**State (2026-10-19):** Tools → Application Options has Navigation (mouse profile, Reverse zoom direction), Language (hints in Bulgarian), Sketch, Display and Constraint Settings — Inference. `settings.json` stores the hint language, the recent files, all Application Options (`options`) and the interface layout (`ui`). Keys are hard-coded. Document Settings ⬜. Full list of options, keys and mouse: **[REFERENCE.md](REFERENCE.md)** (§5 keys, §8 settings); the gaps — [ROADMAP.md](ROADMAP.md#interface-gaps-and-next-steps) (U1, U2, U8).
+**Interface layout** — 🟡: dragging and remembering the widths of the browser, Properties and the status bar; collapsing the ribbon to its tabs; View → User Interface (Browser, Properties, Ribbon, Status Bar, ViewCube, Axis Triad), Clean Screen (Ctrl+0), Full Screen (F11 outside a sketch), Reset UI Layout; browser and Properties on the left or on the right; floating windows remember their place and size. **Specification:** [spec/0.13-ui-layout.md](spec/0.13-ui-layout.md)
 
-**Presets** (готови набори в панелите на командите) — 🟡: Extrude, Revolve, Fillet, Chamfer, Shell и Face Draft имат ред Preset (No Preset, Last Used, свои и вградени набори, Save/Rename/Delete, New Default, Sort). Наборите са настройка на потребителя (`%APPDATA%\3dcadcraft\presets`, под Linux `~/.config/3dcadcraft/presets`), не данни на документа. **Спецификация:** [spec/0.11-presets.md](spec/0.11-presets.md)
+**Presets** (ready-made sets in the command panels) — 🟡: Extrude, Revolve, Fillet, Chamfer, Shell and Face Draft have a Preset row (No Preset, Last Used, own and built-in sets, Save/Rename/Delete, New Default, Sort). Presets are a user setting (`%APPDATA%\3dcadcraft\presets`, on Linux `~/.config/3dcadcraft/presets`), not document data. **Specification:** [spec/0.11-presets.md](spec/0.11-presets.md)
 
-**Application Options** (за потребителя):
-- единици по подразбиране;
-- цветова схема;
-- мишка и клавишни комбинации;
-- пътища до библиотеки;
-- автоматичен запис;
-- брой `.bak` копия;
-- език.
+**Application Options** (per user):
+- default units;
+- colour scheme;
+- mouse and keyboard shortcuts;
+- library paths;
+- autosave;
+- number of `.bak` copies;
+- language.
 
-**Document Settings** (за файла):
-- единици;
-- материал по подразбиране;
-- стандарт за чертежи;
-- правила за листов метал;
-- точност на показване.
+**Document Settings** (per file):
+- units;
+- default material;
+- drafting standard;
+- sheet metal rules;
+- display precision.
 
-**Styles & Standards** (за чертежи):
+**Styles & Standards** (for drawings):
 - ISO, ANSI, DIN, JIS, GB, BSI;
-- шрифтове, стрелки, дебелини на линии;
-- стилове на размери.
+- fonts, arrowheads, line weights;
+- dimension styles.
 
 ---
 
-# Ниво 1 — Скициране
+# Level 1 — Sketching
 
-## 1.1 Скица върху равнина или стена (Start 2D Sketch) — ✅ · M
+## 1.1 Sketch on a plane or face (Start 2D Sketch) — ✅ · M
 
-**Спецификация:** [spec/1.1-sketch.md](spec/1.1-sketch.md).
+**Specification:** [spec/1.1-sketch.md](spec/1.1-sketch.md).
 
-**Какво прави.** Създава 2D скица върху **основна равнина** (XY, XZ, YZ) или **плоска стена** на тялото. Работните равнини (2.10) ще се добавят като трета възможност. Скицата помни *върху какво* е създадена и го **следва**: ако стената се премести при промяна на модела, скицата се мести с нея.
+**What it does.** Creates a 2D sketch on an **origin plane** (XY, XZ, YZ) or a **planar face** of the body. Work planes (2.10) will be added as a third option. The sketch remembers *what* it was created on and **follows** it: if the face moves when the model changes, the sketch moves with it.
 
-**Работен поток (както в Inventor):**
-1. **Start 2D Sketch** (3D Model → Sketch, клавиш **S**). Появяват се трите основни равнини (полупрозрачни), а стената под курсора се осветява. Стените имат приоритет пред основните равнини. Esc отказва.
-   - Алтернативи: десен клик върху стена → **New Sketch**; в дървото Origin → десен клик върху равнина → **New Sketch**.
-2. Клик → създава се **SketchN** и се влиза в режим на редакция: отваря се табът Sketch, изгледът се обръща перпендикулярно (**Look At**), показват се мрежата, осите и триадата.
-3. **Finish Sketch** (лентата или десен клик) излиза от режима. **Edit Sketch** е двоен клик в дървото.
-4. В дървото, с десен клик върху скица:
+**Workflow (as in Inventor):**
+1. **Start 2D Sketch** (3D Model → Sketch, key **S**). The three origin planes appear (semi-transparent), and the face under the cursor is highlighted. Faces take priority over origin planes. Esc cancels.
+   - Alternatives: right click on a face → **New Sketch**; in the browser, Origin → right click on a plane → **New Sketch**.
+2. Click → **SketchN** is created and edit mode starts: the Sketch tab opens, the view turns perpendicular (**Look At**), the grid, the axes and the triad are shown.
+3. **Finish Sketch** (ribbon or right click) leaves the mode. **Edit Sketch** is a double click in the browser.
+4. In the browser, right click on a sketch:
    - Edit Sketch / Finish 2D Sketch;
-   - **Redefine** (премества скицата на друга стена или равнина, 2D геометрията се запазва);
+   - **Redefine** (moves the sketch to another face or plane, the 2D geometry is kept);
    - Look At, Hide/Show, Delete.
 
-**Дефиниция на скицата** (`part::SketchPlacement`, по модела на API-то на Inventor `PlanarSketch`):
+**Sketch definition** (`part::SketchPlacement`, modelled on the Inventor API's `PlanarSketch`):
 
-| Свойство | Inventor | Значение |
+| Property | Inventor | Meaning |
 |---|---|---|
-| Равнина | `PlanarEntity` | основна равнина или стена, **по устойчиво име** (`Box1:Top`) |
-| Начало | `OriginPoint` | проектираното начало на детайла или връх на модела |
-| Ос | `AxisEntity` | прав ръб, задаващ посоката на оста |
-| Оста е X / Y | `AxisIsX` | дали ръбът задава X или Y |
-| Посока | `NaturalAxisDirection` | обръщане на оста |
+| Plane | `PlanarEntity` | origin plane or face, **by persistent name** (`Box1:Top`) |
+| Origin | `OriginPoint` | the projected part origin or a model vertex |
+| Axis | `AxisEntity` | a straight edge giving the axis direction |
+| Axis is X / Y | `AxisIsX` | whether the edge gives X or Y |
+| Direction | `NaturalAxisDirection` | flipping the axis |
 
-**Координатна система по подразбиране** (Z нагоре):
+**Default coordinate system** (Z up):
 - **XY:** x = X.
-- **XZ:** гледа се откъм −Y; x = X, y = Z.
-- **YZ:** гледа се откъм +X; x = Y, y = Z.
-- **Стена:** нормалата сочи навън. На вертикална стена y = +Z (текстът се чете право); на хоризонтална x = +X.
-- **Начало:** проекцията на началото на детайла.
+- **XZ:** viewed from −Y; x = X, y = Z.
+- **YZ:** viewed from +X; x = Y, y = Z.
+- **Face:** the normal points outwards. On a vertical face y = +Z (text reads upright); on a horizontal one x = +X.
+- **Origin:** the projection of the part origin.
 
-**Edit Coordinate System** (Sketch → Constrain или панела Properties) сменя началото (връх), оста (ръб), X/Y и посоката. Геометрията **остава на мястото си в 3D**: само координатите ѝ се преизразяват. Inventor по подразбиране е с Y нагоре, затова някои начални посоки се различават, но всичко се настройва.
+**Edit Coordinate System** (Sketch → Constrain or the Properties panel) changes the origin (vertex), the axis (edge), X/Y and the direction. The geometry **stays in place in 3D**: only its coordinates are re-expressed. Inventor is Y-up by default, so some initial directions differ, but everything can be adjusted.
 
-**Автоматична проекция** (Tools → Application Options → Sketch, имената на опциите са от Inventor):
-- *Autoproject part origin*: началото като фиксирана точка;
-- *Autoproject edges of the face*: ръбовете на стената като пунктирана **референтна геометрия** с оранжеви точки.
+**Automatic projection** (Tools → Application Options → Sketch, the option names are Inventor's):
+- *Autoproject part origin*: the origin as a fixed point;
+- *Autoproject edges of the face*: the face's edges as dashed **reference geometry** with orange points.
 
-Проекцията е **асоциативна**. При регенерация точките се преизчисляват, а потребителската геометрия, свързана с тях, ги следва. Ако източникът изчезне, проекцията „замръзва“ и скицата се маркира с предупреждение („здраве“).
+The projection is **associative**. On regeneration the points are recomputed, and the user geometry connected to them follows. If the source disappears, the projection "freezes" and the sketch is flagged with a warning ("health").
 
-**Други настройки (Application Options):** Look at sketch plane on create/edit, Grid lines, Axes, Coordinate system indicator.
+**Other settings (Application Options):** Look at sketch plane on create/edit, Grid lines, Axes, Coordinate system indicator.
 
-**Undo/Redo** (Ctrl+Z / Ctrl+Y) обхваща създаване, Redefine, координатна система, видимост, изтриване, влачене и размери.
+**Undo/Redo** (Ctrl+Z / Ctrl+Y) covers creation, Redefine, coordinate system, visibility, deletion, dragging and dimensions.
 
-**Ограничения сега:**
-- проектират се само прави ръбове;
-- няма работни равнини;
-- Look At е ограничен от камерата със Z нагоре: на хоризонтални стени y сочи нагоре на екрана, на вертикални сочи Z.
+**Current limitations:**
+- only straight edges are projected;
+- there are no work planes;
+- Look At is limited by the Z-up camera: on horizontal faces y points up on the screen, on vertical ones Z does.
 
-**Код:** `src/part/` (`placement.rs`, `mod.rs`), `src/kernel/query.rs`, GUI в `src/gui/`.
+**Code:** `src/part/` (`placement.rs`, `mod.rs`), `src/kernel/query.rs`, GUI in `src/gui/`.
 
-**Аналог.** Start 2D Sketch, Finish Sketch, Edit Sketch, Redefine, Edit Coordinate System, Application Options → Sketch.
+**Inventor equivalent.** Start 2D Sketch, Finish Sketch, Edit Sketch, Redefine, Edit Coordinate System, Application Options → Sketch.
 
-## 1.2 Елементи на скицата — ✅ (основните) · L
+## 1.2 Sketch elements — ✅ (the basic ones) · L
 
-**Спецификация:** [spec/1.2-sketch-geometry.md](spec/1.2-sketch-geometry.md).
+**Specification:** [spec/1.2-sketch-geometry.md](spec/1.2-sketch-geometry.md).
 
-Всеки инструмент следва **последователността от кликове на Inventor**. Значението на клика зависи от това какво има под курсора: празно място, точка или крива.
+Every tool follows **Inventor's click sequence**. What a click means depends on what is under the cursor: empty space, a point or a curve.
 
-| Инструмент | Статус | Вход (както в Inventor) | Какво създава автоматично |
+| Tool | Status | Input (as in Inventor) | What it creates automatically |
 |---|---|---|---|
-| **Line** (L) | ✅ | клик, клик…: верига с общи точки; Esc или десен клик → Done | H/V, ако е почти хоризонтално или вертикално (Ctrl изключва) |
-| Line → **дъга при влачене** | ✅ | натисни върху края на линия или дъга и влачи: **по допирателната** → допирателна дъга, **напречно** → перпендикулярна дъга | Tangent или центърът е върху линията (перпендикулярност) |
-| **Center Point Circle** (C) | ✅ | център, точка от окръжността | ако втората точка е **върху крива** → Tangent към нея |
-| **Tangent Circle** | ✅ | три линии | 3 × Tangent (solver-ът намира вписаната окръжност) |
-| **Three Point Arc** | ✅ | двата края, после точка, която задава страната и радиуса | — |
-| **Tangent Arc** | ✅ | край на линия или дъга, после край на дъгата | Tangent (в общата точка) |
-| **Center Point Arc** | ✅ | център, начало (радиус), край | — |
-| **Two Point Rectangle** (R) | ✅ | два срещуположни ъгъла | H, V, H, V |
-| **Three Point Rectangle** | ✅ | ъгъл, край на първата страна, съседна страна | ∥, ∥, ⟂ (свободна ориентация) |
-| **Two/Three Point Center Rectangle** | ✅ | център, ъгъл / център, половин страна, съседна страна | + construction диагонали, центърът е в средата |
-| **Center to Center Slot** | ✅ | центровете на дъгите, ширина | 4 × Tangent, Equal, construction ос |
-| **Overall Slot** | ✅ | краищата на прореза, ширина | същото |
-| **Center Point Slot** | ✅ | центърът на прореза, център на дъга, ширина | същото + Midpoint |
-| **Three Point / Center Point Arc Slot** | ✅ | дъга (3 точки или център-начало-край), ширина | 4 × Tangent, радиални construction линии |
-| **Polygon** | ✅ | център, връх (вписан) / средата на страна (описан); брой страни в Properties | върхове върху construction окръжност или страни, допирателни към нея; Equal |
-| **Control Vertex Spline** | ✅ | контролни точки; Enter или двоен клик завършва | краищата могат да са общи с други елементи |
-| Point | ✅ | клик | Coincident, ако е върху точка или крива |
-| **Interpolation Spline** | ✅ | точки, през които минава; дръжки във всяка точка, Close Curve, Insert/Delete Point, Convert ↔ CV, Display Curvature ([spec](spec/1.2a-splines.md)) | краищата могат да са общи с други елементи |
-| Ellipse | ⬜ | център, ос, втора ос | |
-| **Fillet** (Create → Fillet) | ✅ | радиус в Properties; две линии (остават кликнатите страни) или клик върху ъгъл | Tangent ×2; първото закръгление в командата получава размер R, следващите — Equal към него |
-| **Chamfer** (Create → Fillet → Chamfer) | ✅ | равни отстояния / две отстояния / отстояние и ъгъл; две линии или ъгъл | виртуален ъгъл (construction) + размери към него |
+| **Line** (L) | ✅ | click, click…: a chain with shared points; Esc or right click → Done | H/V if nearly horizontal or vertical (Ctrl turns it off) |
+| Line → **arc on drag** | ✅ | press on the end of a line or arc and drag: **along the tangent** → tangent arc, **across** → perpendicular arc | Tangent, or the centre lies on the line (perpendicularity) |
+| **Center Point Circle** (C) | ✅ | centre, a point on the circle | if the second point is **on a curve** → Tangent to it |
+| **Tangent Circle** | ✅ | three lines | 3 × Tangent (the solver finds the inscribed circle) |
+| **Three Point Arc** | ✅ | the two ends, then a point that sets the side and the radius | — |
+| **Tangent Arc** | ✅ | end of a line or arc, then the end of the arc | Tangent (at the shared point) |
+| **Center Point Arc** | ✅ | centre, start (radius), end | — |
+| **Two Point Rectangle** (R) | ✅ | two opposite corners | H, V, H, V |
+| **Three Point Rectangle** | ✅ | corner, end of the first side, adjacent side | ∥, ∥, ⟂ (free orientation) |
+| **Two/Three Point Center Rectangle** | ✅ | centre, corner / centre, half side, adjacent side | + construction diagonals, the centre is at their middle |
+| **Center to Center Slot** | ✅ | the arc centres, width | 4 × Tangent, Equal, construction axis |
+| **Overall Slot** | ✅ | the ends of the slot, width | the same |
+| **Center Point Slot** | ✅ | the slot centre, an arc centre, width | the same + Midpoint |
+| **Three Point / Center Point Arc Slot** | ✅ | arc (3 points or centre-start-end), width | 4 × Tangent, radial construction lines |
+| **Polygon** | ✅ | centre, vertex (inscribed) / middle of a side (circumscribed); number of sides in Properties | vertices on a construction circle or sides tangent to it; Equal |
+| **Control Vertex Spline** | ✅ | control points; Enter or double click finishes | the ends can be shared with other elements |
+| Point | ✅ | click | Coincident if on a point or curve |
+| **Interpolation Spline** | ✅ | points it passes through; handles at every point, Close Curve, Insert/Delete Point, Convert ↔ CV, Display Curvature ([spec](spec/1.2a-splines.md)) | the ends can be shared with other elements |
+| Ellipse | ⬜ | centre, axis, second axis | |
+| **Fillet** (Create → Fillet) | ✅ | radius in Properties; two lines (the clicked sides stay) or a click on a corner | Tangent ×2; the first fillet in the command gets an R dimension, the following ones — Equal to it |
+| **Chamfer** (Create → Fillet → Chamfer) | ✅ | equal distances / two distances / distance and angle; two lines or a corner | virtual corner (construction) + dimensions to it |
 | Text | ⬜ | | |
 
-**Формат (Sketch → Format):**
-- **Construction:** пунктир; не образува профил.
-- **Centerline:** щрих-точка; ос за завъртане.
+**Format (Sketch → Format):**
+- **Construction:** dashed; does not form a profile.
+- **Centerline:** dash-dot; an axis for revolving.
 - **Normal.**
 
-Прилага се към избраните елементи. Ако няма избрани, Construction включва или изключва режим за новата геометрия, както в Inventor.
+Applies to the selected elements. If nothing is selected, Construction toggles a mode for new geometry, as in Inventor.
 
-**Избор:**
-- инструментът **Select** (Esc) избира с клик (Shift добавя към избора);
-- **Delete** изтрива избраното;
-- проектираната геометрия не може да се изтрие.
+**Selection:**
+- the **Select** tool (Esc) selects with a click (Shift adds to the selection);
+- **Delete** deletes the selection;
+- projected geometry cannot be deleted.
 
-**Fillet и Chamfer** (`sketch/corner.rs`):
-- работят между две линии, засега не и с дъги;
-- ъгъл, към който има размер или ограничение (Fix, Distance…), не се изтрива. Остава като **виртуален ъгъл**: точка върху двете линии. Така размерите оцеляват, както в Inventor;
-- при грешка скицата не се променя. Грешка е например успоредни линии или радиус, по-голям от линиите.
+**Fillet and Chamfer** (`sketch/corner.rs`):
+- work between two lines, not yet with arcs;
+- a corner that has a dimension or constraint (Fix, Distance…) is not deleted. It stays as a **virtual corner**: a point on both lines. So the dimensions survive, as in Inventor;
+- on an error the sketch does not change. An error is, for example, parallel lines or a radius larger than the lines.
 
-**Как работи.** Готовите фигури са в `sketch/shapes.rs`. Тестовете проверяват **точния брой степени на свобода и нула излишни ограничения** за всяка фигура. Две неща, открити при това:
-- **Тангента в обща крайна точка:** условието „разстояние = радиус“ има **нулев градиент** (двоен корен), затова там solver-ът ползва перпендикулярност между радиуса и линията.
-- **Описан многоъгълник с четен брой страни:** по **теоремата на Пито** едно от „равни страни“ е излишно, затова не се добавя.
+**How it works.** The ready-made shapes are in `sketch/shapes.rs`. Tests check the **exact number of degrees of freedom and zero redundant constraints** for every shape. Two things found along the way:
+- **Tangency at a shared endpoint:** the condition "distance = radius" has a **zero gradient** (double root), so there the solver uses perpendicularity between the radius and the line.
+- **Circumscribed polygon with an even number of sides:** by **Pitot's theorem** one of the "equal sides" is redundant, so it is not added.
 
-## 1.3 Геометрични ограничения — ✅ (без Smooth) · M
+## 1.3 Geometric constraints — ✅ (without Smooth) · M
 
-**Спецификация:** [spec/1.3-constraints.md](spec/1.3-constraints.md).
+**Specification:** [spec/1.3-constraints.md](spec/1.3-constraints.md).
 
-Всички са в Sketch → Constrain. Избираш инструмента и посочваш геометрията **в реда на Inventor**. Инструментът остава активен, а Esc го прекратява. Ограничение, което би **свръхограничило** скицата, **не се прилага** и скицата остава непроменена.
+All are in Sketch → Constrain. You choose the tool and pick the geometry **in Inventor's order**. The tool stays active, and Esc ends it. A constraint that would **over-constrain** the sketch is **not applied** and the sketch stays unchanged.
 
-| Ограничение | Статус | Избор |
+| Constraint | Status | Selection |
 |---|---|---|
-| Coincident | ✅ | точка + точка → съвпадение; точка + крива (линия, окръжност, дъга, **сплайн**) → точката е върху кривата (може да се плъзга) |
-| Collinear | ✅ | две линии |
-| Concentric | ✅ | две окръжности или дъги |
-| Fix | ✅ | точка; или крива (фиксира определящите ѝ точки) |
-| Parallel / Perpendicular | ✅ | две линии |
-| Horizontal / Vertical | ✅ | линия, **или две точки** |
-| Tangent | ✅ | линия–окръжност/дъга, окръжност–окръжност (вътрешно/външно според геометрията) |
-| Symmetric | ✅ | две точки, две линии или две окръжности + линия на симетрия |
-| Equal | ✅ | две линии (дължини) или две окръжности/дъги (радиуси) |
-| Midpoint | ✅ (в модела) | ползва се от фигурите; в Inventor е Coincident към средна точка |
-| Smooth (G2) | ⬜ | изисква кривина на сплайна |
+| Coincident | ✅ | point + point → coincidence; point + curve (line, circle, arc, **spline**) → the point lies on the curve (can slide) |
+| Collinear | ✅ | two lines |
+| Concentric | ✅ | two circles or arcs |
+| Fix | ✅ | a point; or a curve (fixes its defining points) |
+| Parallel / Perpendicular | ✅ | two lines |
+| Horizontal / Vertical | ✅ | a line, **or two points** |
+| Tangent | ✅ | line–circle/arc, circle–circle (internal/external depending on the geometry) |
+| Symmetric | ✅ | two points, two lines or two circles + a symmetry line |
+| Equal | ✅ | two lines (lengths) or two circles/arcs (radii) |
+| Midpoint | ✅ (in the model) | used by the shapes; in Inventor it is Coincident to a midpoint |
+| Smooth (G2) | ⬜ | needs spline curvature |
 
-**Как работи.**
-- Всяко ограничение е уравнение `f(x) = 0` над степените на свобода.
-- Solver-ът минимизира ‖F(x)‖² с **Levenberg** (затихване λ·I). При λ → 0 стъпката става **с минимална норма**, т.е. геометрията се мести *възможно най-малко*.
-- Рангът на якобиана дава **оставащите степени на свобода** и броя на **излишните** ограничения.
+**How it works.**
+- Every constraint is an equation `f(x) = 0` over the degrees of freedom.
+- The solver minimises ‖F(x)‖² with **Levenberg** (damping λ·I). As λ → 0 the step becomes **minimum-norm**, i.e. the geometry moves *as little as possible*.
+- The rank of the Jacobian gives the **remaining degrees of freedom** and the number of **redundant** constraints.
 
-**Цветове (както в Inventor):**
-- зелено: напълно дефинирана;
-- синьо: недодефинирана;
-- оранжево: излишно ограничение;
-- червено: противоречие (скицата не се променя).
+**Colours (as in Inventor):**
+- green: fully defined;
+- blue: under-defined;
+- orange: redundant constraint;
+- red: conflict (the sketch does not change).
 
-**Редакция на ограниченията (както в Inventor):**
-- посочване на етикет на ограничение осветява **геометрията, която то ограничава**;
-- **клик** избира (Shift добавя), **Delete** изтрива;
-- **десен клик** върху етикета: Delete Constraint, а за размер още Edit Dimension и Driven/Driving;
-- **двоен клик** върху размер отваря Edit Dimension;
-- в Properties посочването на ред осветява геометрията, а кликът я избира;
-- десен клик върху крива → **Delete Constraints** маха всички ограничения на кривата и нейните точки.
+**Editing constraints (as in Inventor):**
+- hovering a constraint label highlights **the geometry it constrains**;
+- **click** selects (Shift adds), **Delete** deletes;
+- **right click** on the label: Delete Constraint, and for a dimension also Edit Dimension and Driven/Driving;
+- **double click** on a dimension opens Edit Dimension;
+- in Properties, hovering a row highlights the geometry, and a click selects it;
+- right click on a curve → **Delete Constraints** removes all constraints of the curve and its points.
 
-**Степени на свобода (Show All Degrees of Freedom):** бутон **DOF** в лентата на състоянието, Constrain → Show DOF или десен клик върху крива → Display Degrees of Freedom. Знаците:
-- кръст от стрелки: точката е свободна в равнината;
-- двойна стрелка: точката се плъзга по една посока;
-- дъгова стрелка: кривата може да се върти;
-- радиална стрелка: радиусът на окръжността е свободен.
+**Degrees of freedom (Show All Degrees of Freedom):** the **DOF** button in the status bar, Constrain → Show DOF or right click on a curve → Display Degrees of Freedom. The glyphs:
+- a cross of arrows: the point is free in the plane;
+- a double arrow: the point slides in one direction;
+- a curved arrow: the curve can rotate;
+- a radial arrow: the circle's radius is free.
 
-Анализът е по **нулевото пространство на якобиана**. Освен това **напълно дефинираните криви се оцветяват в зелено поотделно**, още преди цялата скица да е дефинирана.
+The analysis uses the **null space of the Jacobian**. In addition, **fully defined curves are coloured green individually**, even before the whole sketch is defined.
 
-**Аналог.** Constrain panel.
+**Inventor equivalent.** Constrain panel.
 
-## 1.4 Размери (General Dimension) — ✅ · M
+## 1.4 Dimensions (General Dimension) — ✅ · M
 
-**Спецификация:** [spec/1.4-dimensions.md](spec/1.4-dimensions.md).
+**Specification:** [spec/1.4-dimensions.md](spec/1.4-dimensions.md).
 
-**Какво се създава зависи от избора и от мястото на поставяне** (както в Inventor):
+**What gets created depends on the selection and on the placement point** (as in Inventor):
 
-| Избор | Размер |
+| Selection | Dimension |
 |---|---|
-| окръжност | **диаметър** (Ø) |
-| дъга | **радиус** (R) |
-| линия, или две точки | разстояние; ако го поставиш **над/под** → хоризонтално, **встрани** → вертикално, иначе подравнено |
-| точка + линия | перпендикулярно разстояние |
-| две успоредни линии | разстояние между тях |
-| две неуспоредни линии | **ъгъл** (въвежда се в градуси) |
+| circle | **diameter** (Ø) |
+| arc | **radius** (R) |
+| line, or two points | distance; placed **above/below** → horizontal, **to the side** → vertical, otherwise aligned |
+| point + line | perpendicular distance |
+| two parallel lines | the distance between them |
+| two non-parallel lines | **angle** (entered in degrees) |
 
-Последователност: избор (1 или 2 клика) → клик в празно място за поставяне → прозорец **Edit Dimension** с измерената стойност (Enter прилага, „Keep measured“ оставя измерената).
+Sequence: selection (1 or 2 clicks) → click in empty space to place → the **Edit Dimension** window with the measured value (Enter applies, "Keep measured" keeps the measured value).
 
-Ако размерът би **свръхограничил** скицата, излиза въпрос дали да се създаде като **driven (справочен) размер**. Той се показва **в скоби**, изчислява се от геометрията и не я мести. Всеки размер може да се превключи между driving и driven от отметката „ref“ в Properties.
+If the dimension would **over-constrain** the sketch, you are asked whether to create it as a **driven (reference) dimension**. It is shown **in parentheses**, is computed from the geometry and does not move it. Every dimension can be switched between driving and driven with the "ref" checkbox in Properties.
 
-**Предстоят:** изрази и параметри (0.5); показване като име, израз или стойност.
+**To do:** expressions and parameters (0.5); display as name, expression or value.
 
-**Аналог.** General Dimension, Driven Dimension, Edit Dimension.
+**Inventor equivalent.** General Dimension, Driven Dimension, Edit Dimension.
 
-## 1.5 Прихващане и автоматични ограничения при чертане — 🟡 · M
+## 1.5 Snapping and automatic constraints while drawing — 🟡 · M
 
-**Спецификация:** [spec/1.5-inference.md](spec/1.5-inference.md).
+**Specification:** [spec/1.5-inference.md](spec/1.5-inference.md).
 
-**Готово:**
-- прихващане към **точка**: собствените точки се споделят, а за проектираните се добавя Coincident;
-- прихващане **върху крива** (Coincident към кривата), за всички видове криви, включително сплайн;
-- влачена точка, пусната върху точка или крива, се свързва с нея (Coincident);
-- радиус на прихващане: 12 px за точка, 8 px за крива;
-- **H/V** за линии и сплайни (3°);
-- **Ctrl** изключва разпознаването;
-- знак до курсора показва какво ще се създаде: „coincident“, „on curve“, H, V.
+**Done:**
+- snap to a **point**: own points are shared, and a Coincident is added for projected ones;
+- snap **onto a curve** (Coincident to the curve), for all curve kinds, including splines;
+- a dragged point dropped on a point or curve gets connected to it (Coincident);
+- snap radius: 12 px for a point, 8 px for a curve;
+- **H/V** for lines and splines (3°);
+- **Ctrl** turns inference off;
+- a glyph next to the cursor shows what will be created: "coincident", "on curve", H, V.
 
-- прихващане към **средата на линия** при чертане (знак „midpoint“) → ограничение Midpoint; центровете на окръжности и дъги се прихващат като точки;
-- разпознаване на **⊥ и ∥** спрямо предишната линия във веригата (знак „90°“ / „//“), с толеранс 3°, след H/V.
+- snap to the **midpoint of a line** while drawing (glyph "midpoint") → Midpoint constraint; centres of circles and arcs are snapped as points;
+- inference of **⊥ and ∥** relative to the previous line in the chain (glyph "90°" / "//"), with a 3° tolerance, after H/V.
 
-**Предстои:**
-- прихващане към квадрант;
-- разпознаване на допирателност и на ∥ / ⊥ към произволна линия, над която е минал курсорът;
-- настройки на разпознаването;
+**To do:**
+- snap to a quadrant;
+- inference of tangency and of ∥ / ⊥ to any line the cursor has passed over;
+- inference settings;
 - Relax mode;
-- автоматично оразмеряване (Auto Dimension).
+- automatic dimensioning (Auto Dimension).
 
-**Аналог.** Constraint Inference, Constraint Persistence, Relax Mode.
+**Inventor equivalent.** Constraint Inference, Constraint Persistence, Relax Mode.
 
-## 1.6 Модифициране — ✅ · M
+## 1.6 Modify — ✅ · M
 
-**Спецификация:** [spec/1.6-modify.md](spec/1.6-modify.md).
+**Specification:** [spec/1.6-modify.md](spec/1.6-modify.md).
 
-| Инструмент | Поведение (по Inventor) |
+| Tool | Behaviour (as in Inventor) |
 |---|---|
-| **Trim** (X) | маха кликнатата част до **най-близките** пресичащи криви. Края получават Coincident към границата; без пресичания маха цялата крива. При окръжност остава дъгата без кликнатата част. Shift превключва към Extend |
-| **Extend** | удължава края, най-близък до клика, до следващата крива (линии и дъги), с Coincident към границата. Shift превключва към Trim |
-| **Split** | разделя кривата при най-близкото пресичане. Частите остават Collinear (линии) или Equal с общ център (дъги), така запазват H/V/∥/⟂ на оригинала |
-| **Offset** (O) | крива или с **Loop Select** цялата верига. Линиите са Parallel, дъгите концентрични, гладките съединения Tangent. С **Constrain Offset** всички части са на едно отстояние, което остава **единствената** свободна степен (оразмерява се) |
-| **Move / Copy / Rotate** | първо се избира геометрията (Select или в самата команда + Enter), после базова точка → крайна точка (Rotate: център → отправна → целева). Останалата скица следва, а ограниченията се спазват. Copy копира и вътрешните ограничения |
-| **Влачене** | точка или **цяла крива** (Select), с осветяване |
-| **Relax Mode** | Constrain → Relax Mode или бутон Relax в лентата на състоянието: при влачене размерите се обновяват, вместо да задържат геометрията |
-| **Scale** | избраната геометрия → базова точка; коефициентът е в Properties. Радиусите и размерите изцяло в избора се мащабират, останалата скица следва |
-| **Stretch** | избраната геометрия → базова точка → крайна точка. Точките на избора се местят, свързаната геометрия се разтяга. Размерите между преместени и непреместени точки приемат новите стойности, а размерите изцяло в избора се запазват. Ако точното положение е невъзможно (H/V), остава най-близкото валидно |
+| **Trim** (X) | removes the clicked part up to the **nearest** intersecting curves. The ends get Coincident to the boundary; with no intersections it removes the whole curve. On a circle, the arc without the clicked part remains. Shift switches to Extend |
+| **Extend** | extends the end nearest the click to the next curve (lines and arcs), with Coincident to the boundary. Shift switches to Trim |
+| **Split** | splits the curve at the nearest intersection. The pieces stay Collinear (lines) or Equal with a shared centre (arcs), so they keep the original's H/V/∥/⟂ |
+| **Offset** (O) | a curve, or the whole chain with **Loop Select**. Lines are Parallel, arcs concentric, smooth joins Tangent. With **Constrain Offset** all pieces are at one distance, which remains the **only** free degree of freedom (it gets dimensioned) |
+| **Move / Copy / Rotate** | first the geometry is selected (Select, or in the command itself + Enter), then base point → end point (Rotate: centre → reference → target). The rest of the sketch follows and constraints are respected. Copy also copies the internal constraints |
+| **Drag** | a point or a **whole curve** (Select), with highlighting |
+| **Relax Mode** | Constrain → Relax Mode or the Relax button in the status bar: while dragging, dimensions are updated instead of holding the geometry |
+| **Scale** | the selected geometry → base point; the factor is in Properties. Radii and dimensions entirely inside the selection are scaled, the rest of the sketch follows |
+| **Stretch** | the selected geometry → base point → end point. The selection's points move, connected geometry is stretched. Dimensions between moved and unmoved points take the new values, dimensions entirely inside the selection are kept. If the exact position is impossible (H/V), the nearest valid one remains |
 
-**Как работи.** `sketch/modify.rs` пресича носителите (права или окръжност) и филтрира по обхвата на кривите. Offset добавя всяко ограничение **само ако е независимо** (проверка на ранга). На гладко съединение ъгълът е точка на допиране (двоен корен), затова се добавя Tangent от първи ред. Всеки инструмент е покрит с тестове за степени на свобода и излишни ограничения.
+**How it works.** `sketch/modify.rs` intersects the carriers (line or circle) and filters by the curves' extents. Offset adds each constraint **only if it is independent** (rank check). At a smooth join the corner is a point of tangency (a double root), so a first-order Tangent is added. Every tool is covered by tests for degrees of freedom and redundant constraints.
 
-## 1.7 Масиви в скица — ✅ · S
+## 1.7 Sketch patterns — ✅ · S
 
-**Спецификация:** [spec/1.7-patterns.md](spec/1.7-patterns.md).
+**Specification:** [spec/1.7-patterns.md](spec/1.7-patterns.md).
 
-**Mirror** ✅: избраната геометрия се отразява спрямо линия. Огледалното копие е вързано със **Symmetric** за всяка двойка точки (и Equal за окръжности); точките върху оста се споделят.
+**Mirror** ✅: the selected geometry is mirrored about a line. The mirror copy is tied by **Symmetric** for each pair of points (and Equal for circles); points on the axis are shared.
 
 **Rectangular** ✅:
-- избираш геометрията, натискаш Rectangular и посочваш линия за посока 1, а ако брой 2 > 1, и линия за посока 2;
-- в Properties се задават брой (с оригинала), разстояние и Flip за всяка посока;
-- докато посочваш, се вижда преглед.
+- you select the geometry, press Rectangular and pick a line for direction 1 and, if count 2 > 1, a line for direction 2;
+- Properties set the count (including the original), the spacing and Flip for each direction;
+- a preview is shown while you pick.
 
-**Circular** ✅: избираш геометрията, натискаш Circular и посочваш точка за център. В Properties се задават брой, общ ъгъл (360° = равномерно) и Flip.
+**Circular** ✅: you select the geometry, press Circular and pick a point for the centre. Properties set the count, the total angle (360° = evenly spaced) and Flip.
 
-**Асоциативност (както в Inventor):**
-- първата стъпка е construction линия с **размер**: разстояние, или ъгъл при кръговия масив;
-- всяко копие повтаря тази стъпка чрез вътрешните ограничения Translated / Rotated, които не се показват;
-- промяна на размера или преместване на оригинала мести целия масив;
-- копията **не добавят степени на свобода**.
+**Associativity (as in Inventor):**
+- the first step is a construction line with a **dimension**: a distance, or an angle for the circular pattern;
+- every copy repeats that step through the hidden internal constraints Translated / Rotated;
+- changing the dimension or moving the original moves the whole pattern;
+- the copies **add no degrees of freedom**.
 
-Копие на дъга вече има вградено уравнение „краят е върху окръжността“. Затова един от краищата ѝ се връзва само тангенциално, иначе всяко копие би било свръхограничено (`sketch/pattern.rs`).
+A copy of an arc already has a built-in equation "the end lies on the circle". So one of its ends is tied only tangentially; otherwise every copy would be over-constrained (`sketch/pattern.rs`).
 
-**Аналог.** Rectangular / Circular / Mirror (sketch pattern).
+**Inventor equivalent.** Rectangular / Circular / Mirror (sketch pattern).
 
-## 1.8 Проектиране на геометрия — 🟡 · M
+## 1.8 Project geometry — 🟡 · M
 
-Направено (чака визуална проверка): Sketch → Create → **Project Geometry** на прави ръбове на модела (асоциативна референтна линия по имената на върховете, `PartDocument::project_edge`), на **точки и криви от по-ранни скици** (точка, център, линия, окръжност, дъга, сплайн; в друга равнина — ортогонална проекция, окръжности/дъги само в успоредна) и на **кръгли ръбове** (окръжност/дъга, успоредни на скицата) — асоциативно (`part::link`), болни при липсващ източник. Списък *References* в Properties с Break Link, Delete, Replace и Select; Break Link / Replace Reference / Delete и в контекстното меню на проекцията. Предстои: елипси (наклонени окръжности), стени, контури, работни елементи, Project Cut Edges.
+Implemented (waiting for a visual check): Sketch → Create → **Project Geometry** of straight model edges (an associative reference line by the vertex names, `PartDocument::project_edge`), of **points and curves from earlier sketches** (point, centre, line, circle, arc, spline; in another plane — orthogonal projection, circles/arcs only in a parallel one) and of **circular edges** (circle/arc, parallel to the sketch) — associative (`part::link`), sick when the source is missing. A *References* list in Properties with Break Link, Delete, Replace and Select; Break Link / Replace Reference / Delete also in the projection's context menu. To do: ellipses (inclined circles), faces, loops, work features, Project Cut Edges.
 
-**Спецификация:** [spec/1.8-project-geometry.md](spec/1.8-project-geometry.md).
+**Specification:** [spec/1.8-project-geometry.md](spec/1.8-project-geometry.md).
 
-**Какво прави.** Пренася ръбове на тялото, стени или други скици в текущата скица като **асоциативна** справочна геометрия: ако тялото се промени, проектираното го следва. Включва и проекция на сечение (cut edges) на тялото с равнината на скицата.
+**What it does.** Brings body edges, faces or other sketches into the current sketch as **associative** reference geometry: if the body changes, the projection follows it. It also includes projecting the body's section (cut edges) with the sketch plane.
 
-**Как работи.** Ортогонална проекция на 3D кривите в равнината (линия → линия, окръжност → окръжност или елипса). Изисква устойчиво именуване (0.8).
+**How it works.** Orthogonal projection of the 3D curves into the plane (line → line, circle → circle or ellipse). Requires persistent naming (0.8).
 
-**Аналог.** Project Geometry, Project Cut Edges.
+**Inventor equivalent.** Project Geometry, Project Cut Edges.
 
-## 1.9 Профили и региони — ✅ (без пресичане на сплайни) · M — *ключово за Ниво 2*
+## 1.9 Profiles and regions — ✅ (without spline intersections) · M — *key for Level 2*
 
-**Спецификация:** [spec/1.9-profiles.md](spec/1.9-profiles.md).
+**Specification:** [spec/1.9-profiles.md](spec/1.9-profiles.md).
 
-**Какво прави.** Намира **затворените области** в скицата, които могат да се екструдират. Например правоъгълник с две окръжности вътре дава „плоча с два отвора“.
+**What it does.** Finds the **closed areas** in the sketch that can be extruded. For example, a rectangle with two circles inside gives "a plate with two holes".
 
-**Как работи.**
-1. Строи се планарен граф от сегментите, с разделяне в пресечните точки.
-2. Намират се лицата на графа (обхождане най-вляво).
-3. Определя се влагането на контурите (кой контур е вътре в кой), от което се получават външни контури и дупки.
-4. Изкарва се `Loop` с правилната ориентация. Това е същата конвенция като в ядрото: външен контур обратно на часовниковата стрелка, дупки по часовниковата стрелка.
+**How it works.**
+1. A planar graph is built from the segments, split at the intersection points.
+2. The faces of the graph are found (leftmost traversal).
+3. The nesting of the loops is determined (which loop is inside which), giving outer loops and holes.
+4. A `Loop` is produced with the correct orientation. This is the same convention as in the kernel: outer loop counter-clockwise, holes clockwise.
 
-**Статус.** `Sketch::regions()` (`sketch/profile.rs`):
-- линиите, дъгите и окръжностите се разделят във всички пресечни и допирни точки;
-- сплайните засега се свързват само в краищата си;
-- висящите ръбове се отрязват; construction и centerline геометрията не участва;
-- в редактираната скица затворените региони се оцветяват.
+**Status.** `Sketch::regions()` (`sketch/profile.rs`):
+- lines, arcs and circles are split at all intersection and tangency points;
+- splines are for now joined only at their ends;
+- dangling edges are cut off; construction and centerline geometry does not take part;
+- in the sketch being edited, closed regions are shaded.
 
-Триангулацията с отвори (`kernel::triangulate_with_holes`) свързва всеки отвор към външния контур с мост, после ползва ear clipping.
+Triangulation with holes (`kernel::triangulate_with_holes`) connects every hole to the outer loop with a bridge, then uses ear clipping.
 
-**Аналог.** Изборът на Profile в Extrude/Revolve.
+**Inventor equivalent.** The Profile selection in Extrude/Revolve.
 
-## 1.10 3D скица — ⬜ · L
+## 1.10 3D sketch — ⬜ · L
 
-Линии, сплайни и спирали директно в пространството, плюс пресичане на повърхнини и проекция върху стени. Ползва се за траектории (sweep, тръби, рамки).
+Lines, splines and helices directly in space, plus intersection of surfaces and projection onto faces. Used for paths (sweep, tubes, frames).
 
-**Аналог.** 3D Sketch.
+**Inventor equivalent.** 3D Sketch.
 
-## 1.11 Блокове, вмъкване, изображения — ⬜ · M
+## 1.11 Blocks, insertion, images — ⬜ · M
 
-- **Sketch blocks:** групи елементи, вмъквани многократно, като 2D кинематични схеми.
-- **Вмъкване:** DXF и изображения (за трасиране).
-- **Spreadsheet-driven точки:** точки от таблица (за отвори).
+- **Sketch blocks:** groups of elements inserted many times, such as 2D kinematic diagrams.
+- **Insertion:** DXF and images (for tracing).
+- **Spreadsheet-driven points:** points from a table (for holes).
 
 ---
 
-# Ниво 2 — Детайли (основно моделиране)
+# Level 2 — Parts (basic modelling)
 
-> Всички операции от това ниво са **параметрични**: записват се в дървото на операциите (0.4), имат редактируеми параметри и се регенерират при промяна.
+> All operations of this level are **parametric**: they are recorded in the feature tree (0.4), have editable parameters and are regenerated on change.
 
-## 2.1 Extrude (екструдиране) — 🟡 (всички настройки без булевите операции) · L — *първата 3D операция*
+## 2.1 Extrude — 🟡 (all settings except the Boolean operations) · L — *the first 3D operation*
 
-**Какво прави.** Изтегля профил (1.9) перпендикулярно на равнината му и образува тяло.
+**What it does.** Pulls a profile (1.9) perpendicular to its plane and forms a body.
 
-**Пълна спецификация със статус на всяка опция:** [spec/2.1-extrude.md](spec/2.1-extrude.md).
+**Full specification with the status of every option:** [spec/2.1-extrude.md](spec/2.1-extrude.md).
 
-**Накратко:**
-- **готово:**
-  - региони с отвори и няколко профила;
+**In short:**
+- **done:**
+  - regions with holes and several profiles;
   - From;
   - Default, Flipped, Symmetric, Asymmetric;
-  - Distance, To (връх или успоредна стена), Between, To Next, Through All;
-  - Taper A и B (линии и дъги);
-  - преглед на живо;
-  - консумирани и споделени скици;
-  - редакция и „болни“ операции;
-- Output: Solid / Surface; операция New Solid / Join / Cut / Intersect (виж 2.13);
-- избор на тяло (Solids) при няколко тела ✅;
-- 🟡 (2026-10-19, сравнение с Inventor 2027, чака визуална проверка): breadcrumb `Sketch1 > Extrusion1` (редакция на скицата и връщане, преименуване), Advanced Settings (Predict Boolean Operation, Keep sketch visible on (+)), бутон „+“, Ctrl+Enter, редакция на размерите на скицата по време на прегледа, Output без операция за базовата операция, прегледът чака Solids при няколко тела, To до работна/начална равнина и точка, To до наклонена стена/равнина, To до цилиндрична стена с Alternate Solution, Extend face to end feature (автоматично), Terminator за To Next, отворени профили с Match Shape;
-- 🟡 **Примитиви** (3D Model → Primitives): Box и Cylinder (скица + Extrude), Sphere и Torus (скица + пълен Revolve);
-- **предстои:** конусни/сферични граници, точка от друга скица като To, наклон на сплайни, Revolve с Match Shape.
+  - Distance, To (vertex or parallel face), Between, To Next, Through All;
+  - Taper A and B (lines and arcs);
+  - live preview;
+  - consumed and shared sketches;
+  - editing and "sick" features;
+- Output: Solid / Surface; operation New Solid / Join / Cut / Intersect (see 2.13);
+- body selection (Solids) with several bodies ✅;
+- 🟡 (2026-10-19, comparison with Inventor 2027, waiting for a visual check): breadcrumb `Sketch1 > Extrusion1` (editing the sketch and returning, renaming), Advanced Settings (Predict Boolean Operation, Keep sketch visible on (+)), "+" button, Ctrl+Enter, editing the sketch's dimensions during the preview, Output without an operation for the base feature, the preview waits for Solids with several bodies, To a work/origin plane and a point, To an inclined face/plane, To a cylindrical face with Alternate Solution, Extend face to end feature (automatic), Terminator for To Next, open profiles with Match Shape;
+- 🟡 **Primitives** (3D Model → Primitives): Box and Cylinder (sketch + Extrude), Sphere and Torus (sketch + full Revolve);
+- **to do:** conical/spherical terminations, a point from another sketch as To, taper of splines, Revolve with Match Shape.
 
-**Аналог.** Extrude.
+**Inventor equivalent.** Extrude.
 
-## 2.2 Revolve (завъртане) — 🟡 · L
+## 2.2 Revolve — 🟡 · L
 
-**Статус (спецификация: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Готово: профили, ос (линия от скицата с авто-избор на единствената централна линия, X/Y/Z на началото), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, ъглите като параметри, диаметрален размер към централна линия. 🟡 (2026-10-19, Inventor 2027, чака визуална проверка): To (стена или равнина през оста, точка) с Minimum Solution, Predict Boolean Operation, Continue с десен клик, breadcrumb, „+“, примитиви Sphere и Torus; поправена посока на Symmetric/Asymmetric в точното ядро. Предстои: работна ос и ръб като ос, To Next, Match Shape.
+**Status (specification: [docs/spec/2.2-revolve.md](spec/2.2-revolve.md)).** Done: profiles, axis (a line from the sketch, with automatic choice of the only centerline, X/Y/Z of the origin), Full / Angle / Symmetric / Asymmetric, Solid / Surface, Join / Cut / Intersect / New Solid, angles as parameters, diameter dimension to a centerline. 🟡 (2026-10-19, Inventor 2027, waiting for a visual check): To (a face or plane through the axis, a point) with Minimum Solution, Predict Boolean Operation, Continue with right-click, breadcrumb, "+", Sphere and Torus primitives; fixed direction of Symmetric/Asymmetric in the exact kernel. To do: work axis and edge as the axis, To Next, Match Shape.
 
-**Какво прави.** Завърта профил около ос: валове, втулки, фланци.
+**What it does.** Revolves a profile about an axis: shafts, bushings, flanges.
 
-**Как работи.**
-- Страничните стени са повърхнини на въртене: линия, успоредна на оста → цилиндър; наклонена линия → конус; дъга → тор или сфера; общият случай е NURBS.
-- Ако профилът докосва оста, възникват изродени ръбове (полюси). Ядрото трябва да ги поддържа.
+**How it works.**
+- The side faces are surfaces of revolution: a line parallel to the axis → cylinder; an inclined line → cone; an arc → torus or sphere; the general case is NURBS.
+- If the profile touches the axis, degenerate edges (poles) appear. The kernel must support them.
 
-**Настройки.** Профил, ос (линия от скицата, работна ос или ръб), ъгъл (360° / ъгъл / симетричен / до стена), операция (Join/Cut/...).
+**Settings.** Profile, axis (a line from the sketch, a work axis or an edge), angle (360° / angle / symmetric / to a face), operation (Join/Cut/...).
 
-**Аналог.** Revolve.
+**Inventor equivalent.** Revolve.
 
-## 2.3 Hole (отвор) и Slot (прорез) — 🟡 · L
+## 2.3 Hole and Slot — 🟡 · L
 
-**Спецификация:** [spec/2.3-hole.md](spec/2.3-hole.md). Направено (чака визуална проверка): Simple, Clearance (ISO 273, ASME B18.2.8: Close / Normal / Loose), Tapped (ISO метрична едра и дребна, UNC / UNF) — козметична или **моделирана** резба с хлабина за 3D печат; гнезда Counterbore, Spotface, Countersink (90° ISO, 82° ANSI) и попълване от таблиците (ISO 4762 / DIN 974-1, ISO 10642, ASME B18.3); граници Distance / Through All / To (равна стена), Direction 1/2, връх Flat / 118°; центрове: клик върху стена (скица с точки), точки от видима скица, концентрично на кръгъл ръб; Edit Feature, параметри, преглед. Стандартите са CSV в `data/standards/` (потребителско копие в `%APPDATA%\3dcadcraft\standards`). За чертежа: `HoleSpec::note()` („M8x1.25 - 6H ↧ 12“, „⌴ Ø11 ↧ 6.4“), `PartDocument::holes()` и групиране „4x Ø6.6 THRU“. Добавено след проверката на собственика: центровете са **Center Points**; клик на прав ръб след центъра добавя размер до него (в скицата на отвора: проектиран ръб + размер точка–линия, параметър); Symmetric; Extend To вкл./изкл.; Flat W / Angle V / Angle Y; концентрично на цилиндрична стена; Allow Center Point Creation и менюто (Preselect, Keep sketch visible on (+)); breadcrumb `Sketch > Hole1`; невалидни стойности в червено; Ctrl+Enter / +; изтрита точка маха отвора си; моделираната резба вече не се губи тихо. Предстои: Taper Tapped, Select Feature Dimension, посока от точка + стена/ръб, прозоречен избор, Slot, бележка и таблица в чертежа (4.3–4.4).
+**Specification:** [spec/2.3-hole.md](spec/2.3-hole.md). Implemented (waiting for a visual check): Simple, Clearance (ISO 273, ASME B18.2.8: Close / Normal / Loose), Tapped (ISO metric coarse and fine, UNC / UNF) — cosmetic or **modeled** thread with clearance for 3D printing; Counterbore, Spotface, Countersink seats (90° ISO, 82° ANSI) and filling from the tables (ISO 4762 / DIN 974-1, ISO 10642, ASME B18.3); terminations Distance / Through All / To (flat face), Direction 1/2, drill point Flat / 118°; centres: click on a face (sketch with points), points from a visible sketch, concentric to a circular edge; Edit Feature, parameters, preview. The standards are CSV files in `data/standards/` (user copy in `%APPDATA%\3dcadcraft\standards`). For the drawing: `HoleSpec::note()` ("M8x1.25 - 6H ↧ 12", "⌴ Ø11 ↧ 6.4"), `PartDocument::holes()` and grouping "4x Ø6.6 THRU". Added after the owner's check: the centres are **Center Points**; clicking a straight edge after the centre adds a dimension to it (in the hole's sketch: projected edge + point–line dimension, a parameter); Symmetric; Extend To on/off; Flat W / Angle V / Angle Y; concentric to a cylindrical face; Allow Center Point Creation and the menu (Preselect, Keep sketch visible on (+)); breadcrumb `Sketch > Hole1`; invalid values in red; Ctrl+Enter / +; a deleted point removes its hole; the modeled thread is no longer lost silently. To do: Taper Tapped, Select Feature Dimension, direction from a point + face/edge, window selection, Slot, note and table in the drawing (4.3–4.4).
 
-**Какво прави.** Създава стандартни отвори с правилна геометрия и *семантика*, т.е. отворът „знае“, че е M8 с резба. Така чертежът (4.3) показва правилната анотация, а BOM и CAM я разпознават.
+**What it does.** Creates standard holes with correct geometry and *semantics*, i.e. the hole "knows" it is an M8 with a thread. So the drawing (4.3) shows the correct annotation, and BOM and CAM recognise it.
 
-**Видове:**
-- прост;
-- **зенкер с цилиндрична глава** (counterbore);
-- **зенкер с конична глава** (countersink);
+**Types:**
+- simple;
+- **counterbore**;
+- **countersink**;
 - spotface;
-- **отвор за резба** (tapped);
-- **отвор за болт** (clearance, по стандарт: fine/normal/coarse);
-- конична тръбна резба.
+- **tapped hole**;
+- **clearance hole** (per standard: fine/normal/coarse);
+- tapered pipe thread.
 
-**Настройки.**
-- *Позициониране:* от централни точки в скица, върху стена с размери до два ръба, концентрично на окръжен ръб, в точка;
-- *Граница:* дълбочина, до стена, през всичко;
-- *Дъно:* плоско или с ъгъл на свредлото (118°);
-- *Резба:* стандарт (ISO метрична, UNC/UNF, G/BSP), размер, стъпка, клас на точност, дясна/лява, дълбочина на резбата.
+**Settings.**
+- *Placement:* from centre points in a sketch, on a face with dimensions to two edges, concentric to a circular edge, at a point;
+- *Termination:* depth, to a face, through all;
+- *Bottom:* flat or with a drill point angle (118°);
+- *Thread:* standard (ISO metric, UNC/UNF, G/BSP), size, pitch, class, right/left hand, thread depth.
 
-**Slot (новост в Inventor 2027).** Прорез със същия панел като отвора: размер, ориентация, позиция, плюс варианти с цилиндрично и конично зенкероване.
+**Slot (new in Inventor 2027).** A slot with the same panel as the hole: size, orientation, position, plus variants with counterbore and countersink.
 
-**Как работи.** Геометрично е Revolve на стандартен профил (цилиндър + конус), изваден с Cut. Таблиците със стандарти (диаметри, дълбочини) са данни в библиотека, не код. Резбата се пази като *атрибут* на цилиндричната стена (козметична резба), без да се моделира винтова повърхнина.
+**How it works.** Geometrically it is a Revolve of a standard profile (cylinder + cone), subtracted with Cut. The standards tables (diameters, depths) are data in a library, not code. The thread is stored as an *attribute* of the cylindrical face (cosmetic thread), without modelling a helical surface.
 
-**Аналог.** Hole, Slot (2027), Thread.
+**Inventor equivalent.** Hole, Slot (2027), Thread.
 
-## 2.4 Fillet (закръгление) — 🟡 · XL
+## 2.4 Fillet — 🟡 · XL
 
-**Спецификация:** [spec/2.4-fillet.md](spec/2.4-fillet.md). Готово: постоянен радиус на прави ръбове между плоски стени (изпъкнали и вдлъбнати) и на кръгли ръбове на цилиндри, няколко ръба в една операция, преглед, OK/Apply, редакция на радиуса с израз; **няколко набора с различен радиус**, **Variable** (начало/край/междинни точки, Smooth), **Chord** (постоянна ширина), **Full Round** (по средна стена между успоредни страни); избор **Edge / Loop / Feature / Solid** (All Edges / All Fillets / All Rounds).
+**Specification:** [spec/2.4-fillet.md](spec/2.4-fillet.md). Done: constant radius on straight edges between planar faces (convex and concave) and on circular edges of cylinders, several edges in one feature, preview, OK/Apply, editing the radius with an expression; **several sets with different radii**, **Variable** (start/end/intermediate points, Smooth), **Chord** (constant width), **Full Round** (by a middle face between parallel sides); selection **Edge / Loop / Feature / Solid** (All Edges / All Fillets / All Rounds).
 
-**Какво прави.** Закръгля ръбове с радиус. Това е най-често използваната операция след Extrude и **технически най-трудната**.
+**What it does.** Rounds edges with a radius. It is the most used operation after Extrude and **technically the hardest**.
 
-**Видове:**
-- постоянен радиус;
-- **променлив** радиус (стойности в точки по ръба);
-- *setback* в ъглите, където се срещат три закръгления;
-- закръгление между две стени (face fillet);
-- **full round** (закръгление, което изцяло заменя средна стена).
+**Types:**
+- constant radius;
+- **variable** radius (values at points along the edge);
+- *setback* at corners where three fillets meet;
+- fillet between two faces (face fillet);
+- **full round** (a fillet that fully replaces a middle face).
 
-**Как работи.** За всеки ръб се строи „търкаляща се топка“ с радиус r, допирателна до двете съседни стени. Траекторията на центъра ѝ е сечението на две offset повърхнини, а повърхнината на закръглението е тръба около тази траектория. Тя се отрязва по линиите на допиране, а съседните стени се скъсяват. Ъглите, където се срещат три или повече закръгления, се затварят с *vertex blend*.
+**How it works.** For each edge a "rolling ball" of radius r is built, tangent to both neighbouring faces. The path of its centre is the intersection of two offset surfaces, and the fillet surface is a tube around that path. It is trimmed along the lines of tangency, and the neighbouring faces are shortened. Corners where three or more fillets meet are closed with a *vertex blend*.
 
-Аналитичните случаи (равнина–равнина, равнина–цилиндър) дават цилиндър или тор и се реализират първи. Общият случай изисква NURBS.
+The analytic cases (plane–plane, plane–cylinder) give a cylinder or a torus and are implemented first. The general case needs NURBS.
 
-**Настройки.** Ръбове (с избор на верига от допирателни ръбове), радиус, режим (ръб/стена/full round), *Roll along sharp edges*, *Rolling ball where possible*, *Preserve all features*.
+**Settings.** Edges (with selection of a chain of tangent edges), radius, mode (edge/face/full round), *Roll along sharp edges*, *Rolling ball where possible*, *Preserve all features*.
 
-**Аналог.** Fillet.
+**Inventor equivalent.** Fillet.
 
-**Edit Feature** (двоен клик): моделът се връща преди операцията, ръбовете се избират наново, OK заменя на място. Fillet/Chamfer, които точното ядро не може да построи, дават грешка за < 1 s (без фасетирания път, който замръзваше).
+**Edit Feature** (double-click): the model rolls back to before the feature, the edges are selected again, OK replaces it in place. A Fillet/Chamfer that the exact kernel cannot build gives an error in < 1 s (without the faceted path, which froze).
 
-## 2.5 Chamfer (фаска) — 🟡 · L
+## 2.5 Chamfer — 🟡 · L
 
-**Спецификация:** [spec/2.5-chamfer.md](spec/2.5-chamfer.md). Готово: Distance, Two Distances (Flip), Distance and Angle; избор Edge / Loop / Feature / Solid като при Fillet.
+**Specification:** [spec/2.5-chamfer.md](spec/2.5-chamfer.md). Done: Distance, Two Distances (Flip), Distance and Angle; selection Edge / Loop / Feature / Solid as in Fillet.
 
-Фаска по ръб, зададена по три начина: **разстояние**, **разстояние + ъгъл** или **две разстояния**. Реализацията е по-проста от Fillet: плоска стена, получена от сечението на две offset повърхнини.
+A chamfer along an edge, given in three ways: **distance**, **distance + angle** or **two distances**. The implementation is simpler than Fillet: a planar face obtained from the intersection of two offset surfaces.
 
-**Аналог.** Chamfer.
+**Inventor equivalent.** Chamfer.
 
-**Фаска по-голяма от закръглението в контура:** горната стена получава остри ъгли, равнините на фаската режат закръглението (като Creo Intersect). Отметката **Cone at small rounds** (конус под ъгъла) е в диалога, но още не се строи ([spec §2б](spec/2.5-chamfer.md)).
+**A chamfer larger than a round in the loop:** the top face gets sharp corners, the chamfer planes cut the round (like Creo Intersect). The **Cone at small rounds** checkbox (a cone under the angle) is in the dialog but not built yet ([spec §2b](spec/2.5-chamfer.md)).
 
-## 2.6 Shell (черупка) — 🟡 · L
+## 2.6 Shell — 🟡 · L
 
-**Спецификация:** [spec/2.6-shell.md](spec/2.6-shell.md). Направено (чака визуална проверка): Remove Faces с Automatic Face Chain (селектор с насочване, десен клик с Continue/Back, Enter/Ctrl+Enter), Inside / Outside / Center, Sharp / Rounded Corners, затворена кухина без махнати стени, дебелина с израз и стрелка в изгледа, преименуване в breadcrumb, Edit Feature, преглед. Advanced Properties (приближение) са показани неактивни — точното ядро не приближава. Предстои: Unique Face Thickness.
+**Specification:** [spec/2.6-shell.md](spec/2.6-shell.md). Implemented (waiting for a visual check): Remove Faces with Automatic Face Chain (selector with guidance, right-click with Continue/Back, Enter/Ctrl+Enter), Inside / Outside / Center, Sharp / Rounded Corners, a closed cavity with no faces removed, thickness with an expression and an arrow in the view, renaming in the breadcrumb, Edit Feature, preview. Advanced Properties (approximation) are shown disabled — the exact kernel does not approximate. To do: Unique Face Thickness.
 
-Издълбава тялото до стени с дебелина t, като избраните стени се премахват (отворени). Поддържа различна дебелина за отделни стени.
+Hollows the body into walls of thickness t, with the selected faces removed (open). Supports a different thickness for individual faces.
 
-**Как работи.** Offset на всяка стена с −t. Цилиндър с радиус R дава цилиндър с радиус R − t, а NURBS повърхнината дава offset повърхнина. След това вътрешната обвивка се изважда от тялото.
+**How it works.** Offset of each face by −t. A cylinder of radius R gives a cylinder of radius R − t, and a NURBS surface gives an offset surface. Then the inner shell is subtracted from the body.
 
-**Настройки.** Дебелина, посока (навътре, навън, двустранно), премахнати стени, индивидуални дебелини.
+**Settings.** Thickness, direction (inside, outside, both sides), removed faces, individual thicknesses.
 
-**Аналог.** Shell.
+**Inventor equivalent.** Shell.
 
-## 2.7 Rib / Web (ребро) — 🟡 · M
+## 2.7 Rib / Web — 🟡 · M
 
-**Спецификация:** [spec/2.7-rib.md](spec/2.7-rib.md). Направено (чака визуална проверка): Normal to Sketch Plane (web) и Parallel to Sketch Plane (rib), посока към тялото с Flip, Solids, Extend Profile (показва се само когато краищата не стигат тялото), дебелина от едната/другата страна или симетрично, To Next / Finite, Taper, Draft (Hold Thickness At Top / At Root), бобини (Centers, Select All, Diameter, Offset, Draft Angle), мрежи от много вериги в една скица, затворен профил за Web, Edit Feature, преглед. Предстоят Presets.
+**Specification:** [spec/2.7-rib.md](spec/2.7-rib.md). Implemented (waiting for a visual check): Normal to Sketch Plane (web) and Parallel to Sketch Plane (rib), direction towards the body with Flip, Solids, Extend Profile (shown only when the ends do not reach the body), thickness to one side/the other or symmetric, To Next / Finite, Taper, Draft (Hold Thickness At Top / At Root), bosses (Centers, Select All, Diameter, Offset, Draft Angle), networks of many chains in one sketch, a closed profile for Web, Edit Feature, preview. To do: Presets.
 
-От отворен профил в скица (линия) създава ребро с дебелина, което се удължава до стените на тялото. Използва се за подсилване на отливки и пластмасови детайли.
+From an open profile in a sketch (a line) creates a rib with a thickness that extends to the body's faces. Used to stiffen castings and plastic parts.
 
-**Настройки.** Дебелина, посока, до следващата стена или на разстояние, наклон за изваждане от матрицата (draft), закръгление в основата.
+**Settings.** Thickness, direction, to the next face or at a distance, draft angle for removal from the mould, fillet at the root.
 
-## 2.8 Draft (наклон за изваждане) — 🟡 · L
+## 2.8 Draft — 🟡 · L
 
-**Спецификация:** [spec/2.8-draft.md](spec/2.8-draft.md). Направено (чака визуална проверка): Fixed Edge (неподвижен ръб перпендикулярен на посоката, показан в изгледа), Fixed Plane, **Parting Line** (равнина или 2D скица на една височина), **One Way / Symmetric / Asymmetric** с Draft Angle 2 (стената се разделя с равнината и всяка част се накланя в своята посока), **Move Parting Line** (Static Edges, Select Boundary, Clear All, Angle for Top/Both/Bottom), Pull Direction от стена, равнина, ръб или ос с Flip и стрелка, **Automatic Blending** (закръгленията по посоката стават конуси и остават допирателни), Automatic Face Chain, ъгли с изрази, насочване (селектори, десен клик Continue/Back, Enter), Edit Feature, преглед. Предстои: наклонена/крива разделителна линия, 3D скица и повърхнина като инструмент, Absolute/Relative, Ctrl+клик за махане.
+**Specification:** [spec/2.8-draft.md](spec/2.8-draft.md). Implemented (waiting for a visual check): Fixed Edge (a fixed edge perpendicular to the direction, shown in the view), Fixed Plane, **Parting Line** (a plane or a 2D sketch at one height), **One Way / Symmetric / Asymmetric** with Draft Angle 2 (the face is split by the plane and each part is tilted in its own direction), **Move Parting Line** (Static Edges, Select Boundary, Clear All, Angle for Top/Both/Bottom), Pull Direction from a face, plane, edge or axis with Flip and an arrow, **Automatic Blending** (rounds along the direction become cones and stay tangent), Automatic Face Chain, angles with expressions, guidance (selectors, right-click Continue/Back, Enter), Edit Feature, preview. To do: inclined/curved parting line, 3D sketch and surface as the tool, Absolute/Relative, Ctrl+click to remove.
 
-Накланя стени под ъгъл спрямо посока на изваждане (pull direction), за отливки и леене под налягане. Методи: фиксиран ръб или фиксирана равнина (разделителна линия).
+Tilts faces at an angle to a pull direction, for castings and die casting. Methods: fixed edge or fixed plane (parting line).
 
-## 2.9 Thread (резба) — 🟡 · M
+## 2.9 Thread — 🟡 · M
 
-**Спецификация:** [spec/2.9-thread.md](spec/2.9-thread.md). Направено (чака визуална проверка): резба на цилиндрична стена (вал или отвор), размерът се предлага по диаметъра, проверка дали размерът отговаря на стената, Full Length или Offset + Length, Right/Left Hand, козметична (данни + текстура с винтови ивици през една стъпка върху стената, само по дължината на резбата, и в копията на масив; Application Options → Display → Thread texture) или моделирана (канал по ISO 68-1; само зоната около резбата е фасетирана), хлабина за 3D печат. Предстои: няколко стени наведнъж, конична резба.
+**Specification:** [spec/2.9-thread.md](spec/2.9-thread.md). Implemented (waiting for a visual check): a thread on a cylindrical face (shaft or hole), the size is proposed from the diameter, a check that the size fits the face, Full Length or Offset + Length, Right/Left Hand, cosmetic (data + a texture with helical stripes one pitch apart on the face, only along the thread's length, and in pattern copies; Application Options → Display → Thread texture) or modeled (groove per ISO 68-1; only the zone around the thread is faceted), clearance for 3D printing. To do: several faces at once, tapered thread.
 
-Козметична резба върху цилиндрична стена (атрибут + текстура в изгледа + правилно изображение в чертежа). Моделирана (физическа) резба е по избор, за 3D печат.
+A cosmetic thread on a cylindrical face (attribute + texture in the view + correct representation in the drawing). A modeled (physical) thread is optional, for 3D printing.
 
-**Настройки.** Стандарт, размер, клас, дължина, отместване, дясна/лява.
+**Settings.** Standard, size, class, length, offset, right/left hand.
 
-## 2.10 Работни елементи — 🟡 · M
+## 2.10 Work features — 🟡 · M
 
-**Спецификация:** [spec/2.10-work-features.md](spec/2.10-work-features.md). Готово: команди Plane / Axis / Point / UCS (методът се разпознава от избора): равнини (Offset, Through Point, Midplane, Midplane of Torus, Angle с дъга, Three Points, Two Coplanar Edges, Normal to Axis, Tangent to Surface Through Edge / Through Point / Parallel to Plane, Normal to Curve at Point, Flip Normal), оси (On Line или линия от скица, Parallel Through Point, Two Points, Two Planes, Normal to Plane, Circular или Elliptical Edge, Revolved Face/Feature, Line on Plane), точки (Vertex/Sketch Point/Midpoint, Three Planes, Two Lines, Plane или Surface + Line, Loop Center, Torus/Sphere Center, Grounded), UCS (6 параметъра или 3 точки, със свои равнини/оси/център); Redefine; скици върху работни равнини и UCS. Новото чака визуална проверка. Предстоят триада на UCS, Object Visibility, Show Inputs, Loop Select.
+**Specification:** [spec/2.10-work-features.md](spec/2.10-work-features.md). Done: commands Plane / Axis / Point / UCS (the method is inferred from the selection): planes (Offset, Through Point, Midplane, Midplane of Torus, Angle with an arc, Three Points, Two Coplanar Edges, Normal to Axis, Tangent to Surface Through Edge / Through Point / Parallel to Plane, Normal to Curve at Point, Flip Normal), axes (On Line or a line from a sketch, Parallel Through Point, Two Points, Two Planes, Normal to Plane, Circular or Elliptical Edge, Revolved Face/Feature, Line on Plane), points (Vertex/Sketch Point/Midpoint, Three Planes, Two Lines, Plane or Surface + Line, Loop Center, Torus/Sphere Center, Grounded), UCS (6 parameters or 3 points, with its own planes/axes/centre); Redefine; sketches on work planes and UCS. The new parts are waiting for a visual check. To do: UCS triad, Object Visibility, Show Inputs, Loop Select.
 
-**Какво прави.** Помощни равнини, оси, точки и локални координатни системи (UCS), спрямо които се рисуват скици и се позиционират операции.
+**What it does.** Helper planes, axes, points and local coordinate systems (UCS) relative to which sketches are drawn and features are positioned.
 
-**Варианти за работна равнина:**
-- отместена (offset) от стена;
-- под ъгъл около ръб;
-- през 3 точки;
-- допирателна към цилиндър;
-- средна между две успоредни стени;
-- перпендикулярна на крива в точка.
+**Work plane variants:**
+- offset from a face;
+- at an angle about an edge;
+- through 3 points;
+- tangent to a cylinder;
+- midway between two parallel faces;
+- perpendicular to a curve at a point.
 
-**Варианти за работна ос:**
-- през две точки;
-- ос на цилиндър;
-- сечение на две равнини.
+**Work axis variants:**
+- through two points;
+- axis of a cylinder;
+- intersection of two planes.
 
-**Как работи.** Работните елементи са операции в дървото и също се регенерират.
+**How it works.** Work features are features in the tree and are regenerated too.
 
-**Аналог.** Work Plane / Axis / Point, UCS.
+**Inventor equivalent.** Work Plane / Axis / Point, UCS.
 
-## 2.11 Масиви от операции — 🟡 · M
+## 2.11 Feature patterns — 🟡 · M
 
-**Спецификация:** [spec/2.11-patterns.md](spec/2.11-patterns.md). Направено (чака визуална проверка): Rectangular Pattern (Direction 1 и 2, Flip, Midplane, Incremental / Fitted, брой и стъпка като параметри с изрази) и Circular Pattern (ос от ръб, основна или работна ос, брой и ъгъл, Fitted 360°, Midplane, Flip) на операции (Extrude, Revolve, други масиви: копие на инструмента с операцията му, всички копия с една булева операция) или на цели тела (Join / New Solid); копия извън тялото при Cut се пропускат; до 1000 копия; Edit Feature, преглед. Предстоят: Suppress на копия, Orientation Fixed, Optimized / Adjust, по крива, Sketch Driven, нередовни копия, манипулатори.
+**Specification:** [spec/2.11-patterns.md](spec/2.11-patterns.md). Implemented (waiting for a visual check): Rectangular Pattern (Direction 1 and 2, Flip, Midplane, Incremental / Fitted, count and spacing as parameters with expressions) and Circular Pattern (axis from an edge, origin or work axis, count and angle, Fitted 360°, Midplane, Flip) of features (Extrude, Revolve, other patterns: a copy of the tool with its operation, all copies with one Boolean operation) or of whole bodies (Join / New Solid); copies outside the body are skipped for Cut; up to 1000 copies; Edit Feature, preview. To do: Suppress of copies, Orientation Fixed, Optimized / Adjust, along a curve, Sketch Driven, irregular copies, manipulators.
 
-**Видове:**
-- **Правоъгълен:** две посоки, брой и стъпка;
-- **Кръгов:** ос, брой, ъгъл;
-- **Скица-задвижван:** копия в точките на скица;
-- **По крива.**
+**Types:**
+- **Rectangular:** two directions, count and spacing;
+- **Circular:** axis, count, angle;
+- **Sketch-driven:** copies at the points of a sketch;
+- **Along a curve.**
 
-**Поведение.**
-- Отделни копия могат да се **изключат** (suppress).
-- Новост в Inventor 2027 API: **неравномерно разпределение** (irregular distribution set).
+**Behaviour.**
+- Individual copies can be **suppressed**.
+- New in the Inventor 2027 API: **irregular distribution** (irregular distribution set).
 
-**Как работи.** Операцията се повтаря с трансформация. Оптимизация: копира се *резултатната* геометрия и се прави една обща булева операция, вместо N отделни.
+**How it works.** The feature is repeated with a transformation. Optimisation: the *resulting* geometry is copied and one common Boolean operation is done instead of N separate ones.
 
-**Настройки.** Брой, разстояние или ъгъл, общо разстояние, изчисление *identical* (същото тяло) или *adjust* (всяко копие се пресмята наново, например спрямо края на детайла).
+**Settings.** Count, distance or angle, total distance, computation *identical* (the same body) or *adjust* (each copy is recomputed, e.g. against the end of the part).
 
-## 2.12 Mirror (огледало) — 🟡 · S
+## 2.12 Mirror — 🟡 · S
 
-**Спецификация:** [spec/2.12-mirror.md](spec/2.12-mirror.md). Направено (чака визуална проверка): огледало на операции или на тела спрямо основна или работна равнина или плоска стена; при тела Join / New Solid / Remove Original; Edit Feature, преглед. Предстоят: автоматично добавяне на зависимите операции, Optimized / Adjust.
+**Specification:** [spec/2.12-mirror.md](spec/2.12-mirror.md). Implemented (waiting for a visual check): mirror of features or of bodies about an origin or work plane or a planar face; for bodies Join / New Solid / Remove Original; Edit Feature, preview. To do: automatic addition of dependent features, Optimized / Adjust.
 
-Огледално копие на операции или на цялото тяло спрямо равнина.
+A mirror copy of features or of the whole body about a plane.
 
-## 2.13 Булеви операции и няколко тела — 🟡 · XL — *критичен път*
+## 2.13 Boolean operations and multiple bodies — 🟡 · XL — *critical path*
 
-**Статус (спецификация: [docs/spec/2.13-booleans.md](spec/2.13-booleans.md)).** Точните булеви операции идват от ядрото на SolidCraft (`kernel::exact`, виж 0.1); фасетираният етап 1 остава резерва. Етап 1 е готов: Join / Cut / Intersect / New Solid за Extrude и Revolve чрез BSP CSG върху многоъгълници с етикети и сглобяване обратно в B-Rep. Имената на стените се запазват, кривите стени са фасети с гладко осветяване, а разделените тела стават отделни. Предстои: точни булеви операции (етап 2), избор на тяло.
+**Status (specification: [docs/spec/2.13-booleans.md](spec/2.13-booleans.md)).** The exact Boolean operations come from the SolidCraft kernel (`kernel::exact`, see 0.1); the faceted stage 1 remains a fallback. Stage 1 is done: Join / Cut / Intersect / New Solid for Extrude and Revolve through BSP CSG on tagged polygons and reassembly into a B-Rep. Face names are kept, curved faces are facets with smooth shading, and split bodies become separate. To do: exact Boolean operations (stage 2), body selection.
 
-**Combine и Split** — 🟡 реализирани, чакат визуална проверка. **Спецификация:** [spec/2.13-combine-split.md](spec/2.13-combine-split.md). Combine: основа + тела-инструменти, Join / Cut / Intersect, Keep Toolbody (запазеното тяло се скрива), изтриването връща инструментите. Split: Split Face (равнина, 2D скица или повърхнина от една стена; All Faces), Trim Solid (Keep Default / Flip, стрелка), Split Solid (новото тяло `<id>#2`); инструментът е работна или основна равнина, 2D скица (права, затворени контури или **отворена верига — сплайн, линии и дъги**, продължена по допирателните) или **повърхнинно тяло** (Extrude / Revolve с Output Surface, вече точни); избира се в изгледа (основните равнини се показват, докато селекторът е активен) или в дървото (Origin, работна равнина, скица, Surface Bodies). Face Draft на парче от разделена стена работи. Предстои: повърхнина от няколко стени за Split Face, quilt от Sweep/Loft/Stitch, избор с рамка.
+**Combine and Split** — 🟡 implemented, waiting for a visual check. **Specification:** [spec/2.13-combine-split.md](spec/2.13-combine-split.md). Combine: base + tool bodies, Join / Cut / Intersect, Keep Toolbody (the kept body is hidden), deleting it restores the tools. Split: Split Face (a plane, a 2D sketch or a surface of one face; All Faces), Trim Solid (Keep Default / Flip, arrow), Split Solid (the new body `<id>#2`); the tool is a work or origin plane, a 2D sketch (a straight line, closed loops or an **open chain — spline, lines and arcs**, extended along the tangents) or a **surface body** (Extrude / Revolve with Output Surface, now exact); it is selected in the view (the origin planes are shown while the selector is active) or in the tree (Origin, work plane, sketch, Surface Bodies). Face Draft on a piece of a split face works. To do: a surface of several faces for Split Face, a quilt from Sweep/Loft/Stitch, window selection.
 
-**Какво прави.** Обединяване, изваждане и сечение на тела. Всички Cut/Join операции минават оттук.
+**What it does.** Union, subtraction and intersection of bodies. All Cut/Join operations go through here.
 
-**Свързани операции:**
-- **Split** (разрязване с равнина/повърхнина);
+**Related operations:**
+- **Split** (cutting with a plane/surface);
 - **Move/Copy body**;
-- детайли с **няколко тела** (multi-body);
-- **Make Components** (тялото става отделен детайл в сглобка).
+- parts with **several bodies** (multi-body);
+- **Make Components** (the body becomes a separate part in an assembly).
 
-**Как работи.**
-1. Пресичане стена–стена (аналитично за равнина/цилиндър/конус/сфера, числено за NURBS).
-2. Разделяне на стените по пресечните криви.
-3. Класификация на всяка част като вътре, вън или на границата спрямо другото тяло.
-4. Сглобяване на резултата.
+**How it works.**
+1. Face–face intersection (analytic for plane/cylinder/cone/sphere, numeric for NURBS).
+2. Splitting the faces along the intersection curves.
+3. Classification of each piece as inside, outside or on the boundary relative to the other body.
+4. Assembly of the result.
 
-Устойчивостта при допирни и почти съвпадащи случаи се постига с толеранси и „fuzzy“ режим. Подробностите са в ROADMAP, решения на ниво ядро.
+Robustness in touching and nearly coincident cases is achieved with tolerances and a "fuzzy" mode. The details are in ROADMAP, kernel-level decisions.
 
-**Аналог.** Combine, Split, Move Bodies, Make Components.
+**Inventor equivalent.** Combine, Split, Move Bodies, Make Components.
 
 ## 2.14 Thicken / Offset, Delete Face, Replace Face — ⬜ · L
 
-- **Thicken/Offset:** превръща повърхнина в тяло с дебелина.
-- **Delete Face:** премахва стена и затваря дупката (лечение на внесени модели).
-- **Replace Face:** заменя стена с друга повърхнина.
+- **Thicken/Offset:** turns a surface into a body with a thickness.
+- **Delete Face:** removes a face and closes the hole (healing imported models).
+- **Replace Face:** replaces a face with another surface.
 
-## 2.15 Материали и външен вид — 🟡 · M
+## 2.15 Materials and appearance — 🟡 · M
 
-**Спецификация:** [spec/2.15-materials.md](spec/2.15-materials.md)
+**Specification:** [spec/2.15-materials.md](spec/2.15-materials.md)
 
-**Състояние (2026-10-19):** библиотеки в CSV (`data/materials`, `data/appearances`) + потребителска в `%APPDATA%\3dcadcraft\materials`; материал на детайла и на тяло; външен вид на детайл / тяло / операция / стена с приоритет Face > Feature > Body > Part > Material; документни копия; QAT списъци Material и Appearance; Tools → Material and Appearance (Material, Appearance, Adjust, Clear); Manage → Styles Editor (Update, Purge); прозрачност в изгледа; цветове в GLB и STEP. Чака визуална проверка.
+**State (2026-10-19):** CSV libraries (`data/materials`, `data/appearances`) + a user one in `%APPDATA%\3dcadcraft\materials`; material of the part and of a body; appearance of a part / body / feature / face with precedence Face > Feature > Body > Part > Material; document copies; QAT lists Material and Appearance; Tools → Material and Appearance (Material, Appearance, Adjust, Clear); Manage → Styles Editor (Update, Purge); transparency in the view; colours in GLB and STEP. Waiting for a visual check.
 
-**Какво прави.** Материалът носи физични свойства (плътност, модул на еластичност, коефициент на Поасон, граница на провлачане, топлопроводност), а *външният вид* (appearance) е отделен (цвят, грапавост, метал). Външният вид може да се зададе и на отделни стени.
+**What it does.** The material carries physical properties (density, Young's modulus, Poisson's ratio, yield strength, thermal conductivity), while the *appearance* is separate (colour, roughness, metal). The appearance can also be set on individual faces.
 
-**Настройки.** Библиотека с материали (стомана S235/S355, AlMg3, PA6...), собствени материали, отмяна на цвета за стена.
+**Settings.** A material library (steel S235/S355, AlMg3, PA6...), custom materials, colour override for a face.
 
-**Аналог.** Material and Appearance Browser.
+**Inventor equivalent.** Material and Appearance Browser.
 
-## 2.16 Дърво на операциите (Model Browser) — 🟡 · M
+## 2.16 Feature tree (Model Browser) — 🟡 · M
 
-**Спецификация:** [spec/2.16-browser.md](spec/2.16-browser.md)
+**Specification:** [spec/2.16-browser.md](spec/2.16-browser.md)
 
-**Статус (2026-10-19, чака визуална проверка):** End of Part (влачене, Move EOP to Top / End / Here, Delete All Features Below EOP), вмъкване на нови операции и скици при маркера, пренареждане с влачене с проверка на зависимостите, Suppress / Unsuppress със зависимите, Delete с опциите на Inventor, Rename (F2, бавен двоен клик), осветяване на стените при посочване. Предстоят: условно изключване, филтри, Find, папки.
+**Status (2026-10-19, waiting for a visual check):** End of Part (dragging, Move EOP to Top / End / Here, Delete All Features Below EOP), insertion of new features and sketches at the marker, reordering by dragging with a dependency check, Suppress / Unsuppress with the dependents, Delete with Inventor's options, Rename (F2, slow double-click), highlighting of the faces on hover. To do: conditional suppression, filters, Find, folders.
 
-**Какво прави.**
-- Показва историята на детайла.
-- Позволява редакция на операция (двоен клик), **изключване** (suppress) и **пренареждане**.
-- **Връщане назад** чрез маркер *End of Part*: моделът се показва до този момент, а новите операции се вмъкват там.
-- **Папки** за групиране (Inventor 2027 API добавя папки в браузъра на детайла).
+**What it does.**
+- Shows the part's history.
+- Allows editing a feature (double-click), **suppressing** and **reordering**.
+- **Rolling back** with the *End of Part* marker: the model is shown up to that point, and new features are inserted there.
+- **Folders** for grouping (the Inventor 2027 API adds folders to the part browser).
 
-**Как работи.** Детайлът е списък от операции. Регенерацията ги изпълнява по ред, кешира резултатите и при промяна преизпълнява само операциите от променената нататък. При грешка (например ръб, който вече не съществува) операцията се маркира с червено, а останалите продължават където е възможно.
+**How it works.** A part is a list of features. Regeneration runs them in order, caches the results and on a change re-runs only the features from the changed one onwards. On an error (for example an edge that no longer exists) the feature is marked red and the rest continue where possible.
 
 ## 2.17 Emboss / Engrave, Decal — ⬜ · M
 
-- **Emboss / Engrave:** релефен или вдлъбнат текст или контур върху стена, включително увит около цилиндър.
-- **Decal:** изображение, проектирано върху стена.
+- **Emboss / Engrave:** raised or recessed text or outline on a face, including wrapped around a cylinder.
+- **Decal:** an image projected onto a face.
 
 ---
 
-# Ниво 3 — Сглобки
+# Level 3 — Assemblies
 
-## 3.1 Поставяне на компоненти — 🟡 (данни) · M
+## 3.1 Placing components — 🟡 (data) · M
 
-**Какво прави.** Поставя детайли и подсглобки в сглобка: от същия проект, от свързана библиотека (Link) или като копие (Append). Първият компонент обикновено е **закрепен** (grounded).
+**What it does.** Places parts and subassemblies in an assembly: from the same project, from a linked library (Link) or as a copy (Append). The first component is usually **grounded**.
 
-**Как работи.** `Occurrence { component: DocRef, transform, grounded }` вече съществува във файловия формат. Един детайл, поставен N пъти, се пази веднъж.
+**How it works.** `Occurrence { component: DocRef, transform, grounded }` already exists in the file format. A part placed N times is stored once.
 
-**Настройки.** Позиция при поставяне, „постави в началото, закрепен“ (Place Grounded at Origin), брой копия, име.
+**Settings.** Position on placement, "place at the origin, grounded" (Place Grounded at Origin), number of copies, name.
 
-**Аналог.** Place, Place from Content Center, Place Grounded at Origin.
+**Inventor equivalent.** Place, Place from Content Center, Place Grounded at Origin.
 
-## 3.2 Ограничения в сглобка — ⬜ · L
+## 3.2 Assembly constraints — ⬜ · L
 
-| Ограничение | Значение |
+| Constraint | Meaning |
 |---|---|
-| **Mate** | две равнини една срещу друга (нормалите противоположни), оси съвпадат, точки съвпадат |
-| **Flush** | две равнини в една посока (на едно ниво) |
-| **Angle** | ъгъл между стени или ръбове (насочен/ненасочен) |
-| **Tangent** | цилиндър или сфера допирателна до стена |
-| **Insert** | ос и стена наведнъж (болт в отвор) |
-| **Symmetry** | два компонента симетрични спрямо равнина |
-| **Motion** | предавателно отношение (зъбни колела, зъбна рейка) |
-| **Transitional** | гърбица–последовател |
+| **Mate** | two planes facing each other (normals opposite), axes coincide, points coincide |
+| **Flush** | two planes in one direction (level with each other) |
+| **Angle** | angle between faces or edges (directed/undirected) |
+| **Tangent** | a cylinder or sphere tangent to a face |
+| **Insert** | axis and face at once (a bolt in a hole) |
+| **Symmetry** | two components symmetric about a plane |
+| **Motion** | transmission ratio (gears, rack and pinion) |
+| **Transitional** | cam–follower |
 
-**Настройки.** Отместване (offset), минимум/максимум (граници на движение), решение mate/flush, предварителен преглед.
+**Settings.** Offset, minimum/maximum (limits of motion), mate/flush solution, preview.
 
-## 3.3 Съединения (Joints) — ⬜ · L
+## 3.3 Joints — ⬜ · L
 
-По-интуитивен начин: една операция задава и *положението*, и *движението*.
+A more intuitive way: one operation sets both the *position* and the *motion*.
 
-**Видове:**
-- **Rigid** (неподвижно);
-- **Rotational** (шарнир);
-- **Slider** (плъзгач);
+**Types:**
+- **Rigid** (fixed);
+- **Rotational** (hinge);
+- **Slider**;
 - **Cylindrical**;
 - **Planar**;
-- **Ball** (сферично).
+- **Ball** (spherical).
 
-**Настройки.** Граници на ъгъла/хода, начално положение, обръщане на посоката.
+**Settings.** Angle/travel limits, initial position, direction flip.
 
-**Как работи (за 3.2 и 3.3).** Всеки компонент има 6 степени на свобода: 3 транслации и 3 ротации, параметризирани с кватернион. Ограниченията са уравнения като в 2D solver-а (1.3), със същия Levenberg и анализ на ранга, който показва „оставащи степени на свобода“ за всеки компонент.
+**How it works (for 3.2 and 3.3).** Each component has 6 degrees of freedom: 3 translations and 3 rotations, parametrised with a quaternion. The constraints are equations as in the 2D solver (1.3), with the same Levenberg and rank analysis, which shows the "remaining degrees of freedom" of each component.
 
-**Аналог.** Constrain, Joint.
+**Inventor equivalent.** Constrain, Joint.
 
-## 3.4 Влачене и контакт — ⬜ · M
+## 3.4 Dragging and contact — ⬜ · M
 
-- Влачене на компонент с мишката в рамките на свободата му. Използва се същата идея като влаченето на точки в скицата, която вече работи.
-- **Контактен solver:** компонентите не могат да проникват един в друг при влачене.
+- Dragging a component with the mouse within its freedom. It uses the same idea as dragging points in the sketch, which already works.
+- **Contact solver:** components cannot penetrate each other while dragging.
 
-## 3.5 Проверка за застъпване — ⬜ · M
+## 3.5 Interference check — ⬜ · M
 
-Намира застъпващите се обеми между компоненти, показва ги в червено и дава обема им. Ползва булевото сечение (2.13) с бърз предварителен филтър по обхващащи кутии (AABB/BVH).
+Finds the overlapping volumes between components, shows them in red and gives their volume. Uses the Boolean intersection (2.13) with a fast pre-filter by bounding boxes (AABB/BVH).
 
-**Аналог.** Analyze Interference.
+**Inventor equivalent.** Analyze Interference.
 
-## 3.6 Спецификация (BOM) — ⬜ · M
+## 3.6 Bill of materials (BOM) — ⬜ · M
 
-**Какво прави.** Списък на компонентите с количества.
+**What it does.** A list of the components with quantities.
 
-**Изгледи:**
-- *структуриран*: по нива на подсглобките;
-- *само детайли*: плосък списък.
+**Views:**
+- *structured*: by subassembly levels;
+- *parts only*: a flat list.
 
-**Свойства и номерация.**
-- Колони със свойства: номер на част, описание, материал, маса, доставчик.
-- Номера на позиции, които се ползват от балоните в чертежа (4.4).
+**Properties and numbering.**
+- Property columns: part number, description, material, mass, vendor.
+- Item numbers, used by the balloons in the drawing (4.4).
 
-**Настройки.** Видими колони, групиране, BOM структура на компонента (normal / phantom / reference / purchased / inseparable).
+**Settings.** Visible columns, grouping, the component's BOM structure (normal / phantom / reference / purchased / inseparable).
 
-**Аналог.** Bill of Materials.
+**Inventor equivalent.** Bill of Materials.
 
-## 3.7 Масиви и огледало на компоненти — ⬜ · M
+## 3.7 Component patterns and mirror — ⬜ · M
 
-**Видове.**
-- **Масиви:** правоъгълни, кръгови, по масив от операции в детайл (болтове в отворите на фланец).
-- **Скица-задвижвани масиви** (новост в 2027).
+**Kinds.**
+- **Patterns:** rectangular, circular, following a feature pattern in a part (bolts in the holes of a flange).
+- **Sketch-driven patterns** (new in 2027).
 
-**Mirror Components.** Огледало на компоненти, с избор за всеки компонент (подобрено в 2027):
-- *повторно използване*: същият детайл, само завъртян;
-- *огледален нов детайл*: лява/дясна версия.
+**Mirror Components.** Mirrors components, with a choice for each component (improved in 2027):
+- *reuse*: the same part, only rotated;
+- *mirrored new part*: a left/right version.
 
-## 3.8 Замяна, копиране, независимост — ⬜ · S
+## 3.8 Replace, copy, make independent — ⬜ · S
 
-- **Replace:** един компонент с друг, с опит да се запазят ограниченията.
+- **Replace:** one component with another, trying to keep the constraints.
 - **Copy Components.**
-- **Make independent:** превръща свързан документ (Link) в локално копие. Вътрешно ползва Append.
+- **Make independent:** turns a linked document (Link) into a local copy. Internally it uses Append.
 
-## 3.9 Представяния и състояния на модела — ⬜ · L
+## 3.9 Representations and model states — ⬜ · L
 
-- **View representations:** видимост, цветове, прозрачност.
-- **Positional representations:** различни положения на механизма, например „отворено“ и „затворено“.
-- **Model States** (състояния на модела): варианти на същия документ с различни параметри или изключени операции и компоненти, например конфигурации „къс/дълъг“ или „опростен“. В 3DCadCraft това е общият механизъм за **конфигурации** (виж 5.7).
+- **View representations:** visibility, colours, transparency.
+- **Positional representations:** different positions of the mechanism, e.g. "open" and "closed".
+- **Model States:** variants of the same document with different parameters or suppressed features and components, e.g. "short/long" or "simplified" configurations. In 3DCadCraft this is the common mechanism for **configurations** (see 5.7).
 
-## 3.10 Проектиране отгоре надолу — ⬜ · L
+## 3.10 Top-down design — ⬜ · L
 
-- **Create in place:** създаване на детайл директно в сглобката, със скица върху стена на друг компонент.
-- **Адаптивност:** размер на детайл, задвижван от сглобката.
-- **Derive:** детайл, изведен от друг, например форма за отливка от модел.
-- **Skeleton / layout:** един мастер-скелет управлява целия продукт.
+- **Create in place:** creating a part directly in the assembly, with a sketch on a face of another component.
+- **Adaptivity:** a part's size driven by the assembly.
+- **Derive:** a part derived from another, e.g. a casting mould from a model.
+- **Skeleton / layout:** one master skeleton drives the whole product.
 
-## 3.11 Опростяване — ⬜ · M
+## 3.11 Simplification — ⬜ · M
 
-**Shrinkwrap / Simplify.** Сглобката става един лек детайл:
-- премахват се вътрешните компоненти;
-- запълват се малки отвори;
-- остава само външната обвивка.
+**Shrinkwrap / Simplify.** The assembly becomes one lightweight part:
+- internal components are removed;
+- small holes are filled;
+- only the outer shell remains.
 
-Използва се за подаване на доставчици без разкриване на детайлите.
+Used for handing models to suppliers without revealing the details.
 
 ---
 
-# Ниво 4 — Чертежи (2D документация)
+# Level 4 — Drawings (2D documentation)
 
-> Чертежът ще е нов вид документ (`DocumentData::Drawing`) в същия проект и ще е **асоциативен**: промяна в модела обновява изгледите и размерите.
+> A drawing will be a new kind of document (`DocumentData::Drawing`) in the same project and will be **associative**: a change in the model updates the views and dimensions.
 
-## 4.1 Листове, формати, стандарти — ⬜ · M
+## 4.1 Sheets, formats, standards — ⬜ · M
 
-**Какво прави.** Листове A4–A0 (или ANSI A–E), рамка, **основен надпис** (title block) с полета, които се попълват автоматично от свойствата на модела (име, материал, маса, чертожник, дата, ревизия).
+**What it does.** Sheets A4–A0 (or ANSI A–E), a border, a **title block** with fields filled in automatically from the model's properties (name, material, mass, drafter, date, revision).
 
-**Стандарти.** ISO, DIN, ANSI, JIS, GB, BSI. Определят шрифтове, стрелки, дебелини на линиите, **проекционния метод** (европейски/първи ъгъл или американски/трети ъгъл) и стила на размерите.
+**Standards.** ISO, DIN, ANSI, JIS, GB, BSI. They define fonts, arrowheads, line weights, the **projection method** (European/first angle or American/third angle) and the dimension style.
 
-**Настройки.** Шаблони за листове, редактор на основни надписи, Styles & Standards Editor.
+**Settings.** Sheet templates, title block editor, Styles & Standards Editor.
 
-## 4.2 Изгледи — ⬜ · XL
+## 4.2 Views — ⬜ · XL
 
-| Изглед | Какво прави |
+| View | What it does |
 |---|---|
-| **Base** (основен) | първи изглед на модела в избрана ориентация и мащаб |
-| **Projected** (проекционен) | ортогонални и изометрични изгледи от основния |
-| **Section** (разрез) | разрез по линия с щриховка; пълен, полу-, стъпаловиден, завъртян |
-| **Detail** (детайл) | увеличен кръг или правоъгълник от друг изглед |
-| **Auxiliary** (допълнителен) | перпендикулярен на наклонен ръб |
-| **Break** (прекъснат) | съкратен дълъг детайл |
-| **Break-out** (местен разрез) | локален разрез в контур |
-| **Slice** (сечение) | тънко сечение без зад-разрезната геометрия |
-| **Crop** | изрязване на изглед |
-| **Overlay** | няколко положения на механизма в един изглед |
+| **Base** | the first view of the model in a chosen orientation and scale |
+| **Projected** | orthographic and isometric views from the base view |
+| **Section** | a section along a line, with hatching; full, half, offset, aligned |
+| **Detail** | an enlarged circle or rectangle from another view |
+| **Auxiliary** | perpendicular to an inclined edge |
+| **Break** | a shortened long part |
+| **Break-out** | a local section inside a contour |
+| **Slice** | a thin section without the geometry behind the cut |
+| **Crop** | cropping a view |
+| **Overlay** | several positions of the mechanism in one view |
 
-**Как работи.** Ядрото на чертежите е **HLR (Hidden Line Removal)**:
-1. Ръбовете и силуетните криви на B-Rep се проектират.
-2. Определя се кои части са видими и кои скрити, чрез точно пресмятане, не растерно.
-3. Резултатът са 2D криви с асоциативни препратки към оригиналните ръбове (за размерите).
+**How it works.** The core of drawings is **HLR (Hidden Line Removal)**:
+1. The B-Rep's edges and silhouette curves are projected.
+2. Which parts are visible and which hidden is decided by exact computation, not by rasterisation.
+3. The result is 2D curves with associative references to the original edges (for dimensions).
 
-Разрезът е булево сечение с полупространство (2.13) плюс щриховка по материала.
+A section is a Boolean intersection with a half-space (2.13) plus hatching by material.
 
-**Настройки.** Мащаб, стил (видими, скрити и допирателни линии, сенки), етикет, подравняване между изгледите.
+**Settings.** Scale, style (visible, hidden and tangent lines, shading), label, alignment between views.
 
-## 4.3 Анотации — ⬜ · L
+## 4.3 Annotations — ⬜ · L
 
-**Видове.**
-- **Размери:** общ, базов (от една база), ординатен, верижен.
-- **Retrieve Model Dimensions:** изтегля размерите от скиците и операциите.
-- **Бележки за отвори и резби:** от семантиката на Hole (2.3), например „4× M8 – 6H ↧ 15“.
-- **Централни маркери и централни линии.**
-- **Текст и водачи.**
-- **Грапавост на повърхнината.**
-- **GD&T:** рамки за допуски на форма и положение, база (datum).
-- **Заваръчни символи.**
-- **Допуски на размерите:** симетрични, отклонения, гранични, по ISO 286 (например H7/g6).
+**Kinds.**
+- **Dimensions:** general, baseline (from one datum), ordinate, chain.
+- **Retrieve Model Dimensions:** pulls in the dimensions from the sketches and features.
+- **Hole and thread notes:** from the Hole semantics (2.3), e.g. "4× M8 – 6H ↧ 15".
+- **Centre marks and centrelines.**
+- **Text and leaders.**
+- **Surface roughness.**
+- **GD&T:** feature control frames for form and position tolerances, datums.
+- **Welding symbols.**
+- **Dimension tolerances:** symmetric, deviation, limits, ISO 286 fits (e.g. H7/g6).
 
-**Как работи.** Всяка анотация е прикрепена към геометрия от изглед (асоциативно). Ако ръбът изчезне, анотацията се маркира като „осиротяла“ (orphaned), вместо да изчезне тихо.
+**How it works.** Each annotation is attached to geometry of a view (associatively). If the edge disappears, the annotation is marked as "orphaned" instead of silently disappearing.
 
-## 4.4 Таблици — ⬜ · M
+## 4.4 Tables — ⬜ · M
 
-- **Parts list** (от BOM, 3.6), с **балони** (номера на позиции);
-- **таблица на ревизиите**;
-- **таблица на отворите** (координати спрямо база);
-- обща таблица;
-- **таблица на огъванията** (за листов метал, 5.6).
+- **Parts list** (from the BOM, 3.6), with **balloons** (item numbers);
+- **revision table**;
+- **hole table** (coordinates relative to a datum);
+- general table;
+- **bend table** (for sheet metal, 5.6).
 
-Inventor 2027 API добавя подмяна на BOM изгледа с **запазване на разположението на анотациите**. Това е добра цел за поведението и при нас.
+The Inventor 2027 API adds replacing the BOM view while **keeping the placement of the annotations**. That is a good target for our behaviour too.
 
-## 4.5 Износ — ⬜ · M
+## 4.5 Export — ⬜ · M
 
-PDF (векторен, многолистов), DXF (по листове), SVG и печат.
+PDF (vector, multi-sheet), DXF (per sheet), SVG and printing.
 
 ---
 
-# Ниво 5 — Напреднало моделиране
+# Level 5 — Advanced modelling
 
-## 5.1 Sweep (протегляне) — 🟡 · L
+## 5.1 Sweep — 🟡 · L
 
-Профил, движен по траектория (path).
+A profile moved along a trajectory (path).
 
-**Спецификация:** [spec/5.1-sweep.md](spec/5.1-sweep.md)
+**Specification:** [spec/5.1-sweep.md](spec/5.1-sweep.md)
 
-**Режими.**
-- **Path:** профилът остава под същия ъгъл към пътя. 🟡 (точно ядро; път от 2D скица в
-  друга равнина или ръбове на модела; 3D скица ⛔ 1.10)
-- **Parallel:** профилът запазва ориентацията си. 🟡
-- **Guide rail:** профилът е управляван от втора крива (Profile Scaling X & Y / X / None). 🟡
-- **Guide surface.** ⬜ (ясен отказ)
-- **Solid Sweep** (тяло по пътя). ⬜ (ясен отказ)
+**Modes.**
+- **Path:** the profile keeps the same angle to the path. 🟡 (exact kernel; path from a 2D sketch in
+  another plane or from model edges; 3D sketch ⛔ 1.10)
+- **Parallel:** the profile keeps its orientation. 🟡
+- **Guide rail:** the profile is controlled by a second curve (Profile Scaling X & Y / X / None). 🟡
+- **Guide surface.** ⬜ (clear refusal)
+- **Solid Sweep** (a body along the path). ⬜ (clear refusal)
 
-**Настройки.** Усукване (twist) 🟡, конус (taper; мащаб около пътя) 🟡, Join / Cut /
-Intersect / New Solid 🟡, Surface ⬜. Чака визуална проверка.
+**Settings.** Twist 🟡, taper (scale about the path) 🟡, Join / Cut /
+Intersect / New Solid 🟡, Surface ⬜. Waiting for a visual check.
 
-## 5.2 Loft (преход между сечения) — 🟡 · XL
+## 5.2 Loft (transition between sections) — 🟡 · XL
 
-Плавна повърхнина или тяло през няколко сечения. Може да е управлявано от **рамки** (rails), от **централна линия** или с **area loft** (зададена площ на сечението по дължината).
+A smooth surface or body through several sections. It can be controlled by **rails**, by a **centre line** or with an **area loft** (a given section area along the length).
 
-**Спецификация:** [spec/5.2-loft.md](spec/5.2-loft.md)
+**Specification:** [spec/5.2-loft.md](spec/5.2-loft.md)
 
-**Условия в краищата:** свободно, допирателно, гладко (G2), насочено. Ползва се за преходни тръби, корпуси и лопатки.
+**End conditions:** free, tangent, smooth (G2), direction. Used for transition ducts, housings and blades.
 
-**При нас:** сечения от скици (и с дупки — кухо тяло), контури на стени, точка в края
-(пирамида); 2 сечения праволинейно, ≥ 3 гладко; Join / Cut / Intersect / New Solid 🟡.
-**Rails** 🟡 (1, 2, 3 и повече релси, които докосват всяко сечение; станции, напаснати към
-релсите), **Center Line** 🟡 (сеченията перпендикулярни на кривата, рамки без въртене),
-**Area Loft** 🟡 (поставени сечения с площ или мащаб, Proportional / Absolute, Driving /
-Driven), условия **Direction** (Angle, Weight) и **Tangent** (към съседните стени на контур на
-стена) 🟡, ръчно съпоставяне **Map Point** 🟡 (усукване), **Closed Loop** 🟡 (пръстен);
-табове Curves / Conditions / Transition с общия поток на селекторите. Smooth (G2), заоблен
-връх, Surface, условия заедно с релси ⬜ (ясен отказ). Чака визуална проверка.
+**Ours:** sections from sketches (also with holes — a hollow body), face loops, a point at the end
+(pyramid); 2 sections ruled, ≥ 3 smooth; Join / Cut / Intersect / New Solid 🟡.
+**Rails** 🟡 (1, 2, 3 and more rails that touch every section; stations fitted to the
+rails), **Center Line** 🟡 (sections perpendicular to the curve, frames without twist),
+**Area Loft** 🟡 (placed sections with an area or a scale, Proportional / Absolute, Driving /
+Driven), the **Direction** (Angle, Weight) and **Tangent** (to the faces adjacent to a face
+loop) conditions 🟡, manual matching with **Map Point** 🟡 (twist), **Closed Loop** 🟡 (ring);
+tabs Curves / Conditions / Transition with the common selector flow. Smooth (G2), rounded
+point, Surface, conditions together with rails ⬜ (clear refusal). Waiting for a visual check.
 
-## 5.3 Coil (спирала) — 🟡 · M
+## 5.3 Coil — 🟡 · M
 
-**Спецификация:** [spec/5.3-coil.md](spec/5.3-coil.md). Направено (чака визуална проверка): профили и ос (линия от скицата/централна линия сама, начална или работна ос, прав ръб; Flip), Pitch and Revolution / Revolution and Height / Pitch and Height, Taper, Right/Left, Close Start/End с Transition и Flat Angle, Solid и Surface, Join/Cut/Intersect/New Solid със Solids, Keep sketch visible, резба с Coil + Cut (само зоната около спиралата е фасетирана), Edit Feature, преглед. Предстоят Presets, профил с дупки, Spiral.
+**Specification:** [spec/5.3-coil.md](spec/5.3-coil.md). Done (waiting for a visual check): profiles and axis (a sketch line/centreline picked automatically, origin or work axis, straight edge; Flip), Pitch and Revolution / Revolution and Height / Pitch and Height, Taper, Right/Left, Close Start/End with Transition and Flat Angle, Solid and Surface, Join/Cut/Intersect/New Solid with Solids, Keep sketch visible, a thread made with Coil + Cut (only the zone around the coil is faceted), Edit Feature, preview. To do: Presets, profile with holes, Spiral.
 
-Пружини и винтови повърхнини. Задава се с височина и стъпка, брой навивки и височина, или брой навивки и стъпка. Има конусни спирали и затворени краища.
+Springs and helical surfaces. Defined by height and pitch, number of revolutions and height, or number of revolutions and pitch. There are tapered coils and closed ends.
 
-## 5.4 Повърхнини — ⬜ · XL
+## 5.4 Surfaces — ⬜ · XL
 
-**Инструменти.**
-- **Boundary Patch:** повърхнина в затворен контур.
-- **Stitch:** зашиване на повърхнини в тяло.
-- **Sculpt:** тяло, ограничено от повърхнини.
+**Tools.**
+- **Boundary Patch:** a surface inside a closed loop.
+- **Stitch:** stitching surfaces into a body.
+- **Sculpt:** a body bounded by surfaces.
 - **Trim, Extend.**
-- **Ruled surface:** нормална, допирателна, по вектор.
-- **Repair:** диагностика и лечение на внесени модели.
+- **Ruled surface:** normal, tangent, along a vector.
+- **Repair:** diagnosing and healing imported models.
 
-**Основа в ядрото.** Изисква NURBS повърхнини и стабилно пресичане повърхнина–повърхнина.
+**Kernel foundation.** Requires NURBS surfaces and robust surface–surface intersection.
 
-## 5.5 Директно редактиране и Freeform — ⬜ · L / XL
+## 5.5 Direct editing and Freeform — ⬜ · L / XL
 
-- **Direct edit:** местене, завъртане и мащабиране на стени без история. Полезно за внесени STEP модели.
-- **Freeform (T-spline/SubD):** органични форми чрез влачене на контролна клетка. Дългосрочна цел.
+- **Direct edit:** moving, rotating and scaling faces without history. Useful for imported STEP models.
+- **Freeform (T-spline/SubD):** organic shapes by dragging a control cage. A long-term goal.
 
-## 5.6 Листов метал (Sheet Metal) — ⬜ · XL
+## 5.6 Sheet Metal — ⬜ · XL
 
-**Какво прави.** Детайли от ламарина, които се **разгъват** до плосък шаблон за лазер/щанца и се огъват на абкант.
+**What it does.** Parts from sheet stock that are **unfolded** into a flat pattern for laser/punching and bent on a press brake.
 
-**Правила на ламарината (Sheet Metal Rules / Styles):**
-- дебелина;
-- радиус на огъване;
-- **K-фактор** (положение на неутралната ос; определя развитата дължина) или таблица на огъванията;
-- форма и размер на разтоварването (relief);
-- празнина в ъглите.
+**Sheet metal rules (Sheet Metal Rules / Styles):**
+- thickness;
+- bend radius;
+- **K-factor** (position of the neutral axis; it sets the developed length) or a bend table;
+- relief shape and size;
+- corner gap.
 
-**Операции:**
+**Features:**
 
-| Операция | Какво прави |
+| Feature | What it does |
 |---|---|
-| Face | плоча от профил с дебелината от правилата |
-| Contour Flange | огънат профил от отворена линия (Г, U, Z) |
-| Flange | фланец по ръб, с ъгъл, височина, позиция |
-| Hem | подгъване (единично, двойно, капка, валцовано) |
-| Fold | огъване по линия в скица |
-| Bend | огъване между две плочи |
-| Corner Seam / Round / Chamfer | обработка на ъглите |
-| Cut | изрязване, включително увито през огъвания |
-| Punch Tool | стандартни щанцови форми (жалузи, ребра, отвори) от библиотека |
-| Contour Roll | валцован профил |
-| Lofted Flange | преход между две сечения (бункер, фуния) |
-| Unfold / Refold | временно разгъване за операции в разгънат вид |
-| **Flat Pattern** | плоският шаблон с линии на огъване, износ в DXF |
+| Face | a plate from a profile with the thickness from the rules |
+| Contour Flange | a bent profile from an open line (L, U, Z) |
+| Flange | a flange along an edge, with angle, height, position |
+| Hem | a hem (single, double, teardrop, rolled) |
+| Fold | a fold along a sketch line |
+| Bend | a bend between two plates |
+| Corner Seam / Round / Chamfer | corner treatment |
+| Cut | a cut, also wrapped across bends |
+| Punch Tool | standard punch forms (louvres, ribs, holes) from a library |
+| Contour Roll | a rolled profile |
+| Lofted Flange | a transition between two sections (hopper, funnel) |
+| Unfold / Refold | temporary unfolding for features in the unfolded state |
+| **Flat Pattern** | the flat pattern with bend lines, DXF export |
 
-**Как работи.** Детайлът пази **топологията на огъванията**. Всяко огъване е цилиндричен сегмент с дебелина t и радиус r. Развитата дължина на огъване под ъгъл θ е `L = θ·(r + K·t)`. Разгъването „изправя“ цилиндрите в равнини в реда на дървото на огъванията.
+**How it works.** The part keeps the **bend topology**. Each bend is a cylindrical segment with thickness t and radius r. The developed length of a bend through angle θ is `L = θ·(r + K·t)`. Unfolding "straightens" the cylinders into planes in the order of the bend tree.
 
-## 5.7 Повторна употреба на операции и фамилии — ⬜ · L
+## 5.7 Feature reuse and part families — ⬜ · L
 
-**Механизми.**
-- **Derive Part:** детайл, изведен от друг, с мащаб, огледало и избор на тела.
-- **iFeature:** запазена операция (например стандартен канал за шпонка) за вмъкване в други детайли.
-- **Фамилии детайли (iPart в Inventor):** таблица с варианти, например болт M6/M8/M10 с дължини. Всеки ред е конфигурация.
+**Mechanisms.**
+- **Derive Part:** a part derived from another, with scale, mirror and choice of bodies.
+- **iFeature:** a saved feature (e.g. a standard keyway) for inserting into other parts.
+- **Part families (iPart in Inventor):** a table of variants, e.g. an M6/M8/M10 bolt with lengths. Each row is a configuration.
 
-**3DCadCraft подход.** **Конфигурациите** (виж 3.9 Model States) и таблиците са общ механизъм. Един документ с таблица на параметрите дава всички варианти, а Link към „болт, ред M8×30“ е обикновен `DocRef` + избор на конфигурация.
+**3DCadCraft approach.** **Configurations** (see 3.9 Model States) and tables are one common mechanism. One document with a parameter table gives all variants, and a Link to "bolt, row M8×30" is an ordinary `DocRef` + a choice of configuration.
 
-## 5.8 Пластмасови детайли — ⬜ · L
+## 5.8 Plastic parts — ⬜ · L
 
-- **Grill:** вентилационна решетка;
-- **Boss:** гнездо за винт;
-- **Rest:** опора;
-- **Snap Fit:** щракваща връзка;
-- **Lip / Groove:** зъб/канал между две половини на корпус;
-- **Rule Fillet:** закръгления по правило, например „всички ръбове между тези операции“.
+- **Grill:** a ventilation grille;
+- **Boss:** a screw boss;
+- **Rest:** a support;
+- **Snap Fit:** a snap joint;
+- **Lip / Groove:** a lip/groove between the two halves of a housing;
+- **Rule Fillet:** fillets by a rule, e.g. "all edges between these features".
 
-## 5.9 Облаци от точки и мрежи — ⬜ · L
+## 5.9 Point clouds and meshes — ⬜ · L
 
-- **Внос:**
-  - облаци от точки от 3D сканиране (E57, LAS, PLY);
-  - мрежи (STL, OBJ, 3MF).
-- **Инструменти:**
-  - пресичане на облака с равнина, като основа за скица;
-  - напасване на равнини, цилиндри и сфери;
-  - мрежа към B-Rep за прости форми.
+- **Import:**
+  - point clouds from 3D scanning (E57, LAS, PLY);
+  - meshes (STL, OBJ, 3MF).
+- **Tools:**
+  - intersecting the cloud with a plane, as the basis for a sketch;
+  - fitting planes, cylinders and spheres;
+  - mesh to B-Rep for simple shapes.
 
-Inventor 2027 подобри работата с облаци от точки: разрези, размер на точките, подравняване на координатната система, отмяна на изрязването. Това е добър ориентир за обхвата.
+Inventor 2027 improved working with point clouds: sections, point size, coordinate system alignment, undoing the crop. That is a good guide for the scope.
 
 ---
 
-# Ниво 6 — Специализирани среди
+# Level 6 — Specialised environments
 
-## 6.1 Метални конструкции (Frame Generator) — ⬜ · L
+## 6.1 Steel structures (Frame Generator) — ⬜ · L
 
-**Какво прави.** От скелет (линии в 3D скица или ръбове) поставя **стандартни профили**: I/H греди, канали, ъгловници, тръби.
+**What it does.** Places **standard profiles** on a skeleton (lines in a 3D sketch, or edges): I/H beams, channels, angles, tubes.
 
-**Обработка на краищата:**
-- **Miter** (на фуга);
-- **Notch** (изрязване по профила);
-- **Trim/Extend** до стена;
+**End treatment:**
+- **Miter**;
+- **Notch** (cut to the profile);
+- **Trim/Extend** to a face;
 - **Lengthen/Shorten.**
 
-**Изход.** Списък за рязане (cut list) с дължини и ъгли.
+**Output.** A cut list with lengths and angles.
 
-**Как работи.** Профилите са параметрични детайли от библиотека (5.7). Всеки член на рамката е Sweep (5.1) на сечението по сегмента от скелета.
+**How it works.** The profiles are parametric parts from a library (5.7). Each frame member is a Sweep (5.1) of the section along a segment of the skeleton.
 
-## 6.2 Конструктивни калкулатори (Design Accelerator) — ⬜ · XL
+## 6.2 Design calculators (Design Accelerator) — ⬜ · XL
 
-Генератори, които **изчисляват** и **моделират** стандартни машинни елементи:
+Generators that **calculate** and **model** standard machine elements:
 
-- **Болтови съединения:** избор на болт, шайби, гайки и отвори в няколко детайла наведнъж, с якостна проверка.
-- **Валове:** сегменти, фаски, канали, шпонкови канали, лагерни места; огъване, усукване, провисване.
-- **Зъбни предавки:** цилиндрични (прави/наклонени), конусни, червячни; геометрия по ISO/DIN, якостна проверка.
-- **Лагери:** избор по натоварване и дълготрайност (L10).
-- **Шпонки, шлицове, щифтове.**
-- **Пружини:** натискови, опънни, торсионни.
-- **Ремъчни и верижни предавки.**
+- **Bolted connections:** choosing the bolt, washers, nuts and holes in several parts at once, with a strength check.
+- **Shafts:** segments, chamfers, grooves, keyways, bearing seats; bending, torsion, deflection.
+- **Gears:** spur (straight/helical), bevel, worm; geometry per ISO/DIN, strength check.
+- **Bearings:** selection by load and life (L10).
+- **Keys, splines, pins.**
+- **Springs:** compression, extension, torsion.
+- **Belt and chain drives.**
 
-**Как работи.** Изчислителните модули са чиста логика (тествани с примери от стандартите), а изходът е обикновени детайли и сглобки в проекта.
+**How it works.** The calculation modules are pure logic (tested with examples from the standards), and the output is ordinary parts and assemblies in the project.
 
-## 6.3 Библиотека със стандартни елементи (Content Center) — ⬜ · L
+## 6.3 Standard parts library (Content Center) — ⬜ · L
 
-**Какво прави.** Хиляди стандартни елементи: болтове, гайки, шайби, лагери, профили, уплътнения по ISO/DIN/ANSI. Новост в Inventor 2027: публикуване на **цели сглобки** в библиотеката.
+**What it does.** Thousands of standard parts: bolts, nuts, washers, bearings, profiles, seals per ISO/DIN/ANSI. New in Inventor 2027: publishing **whole assemblies** to the library.
 
-**3DCadCraft подход.**
-- Библиотеките са **обикновени `.3dcadcraft` проекти** с параметрични фамилии (5.7), свързвани с Link (вече реализирано).
-- Фирмата държи своя `company-standard.3dcadcraft` в споделена папка или git.
-- Pack вгражда използваното при изпращане.
+**3DCadCraft approach.**
+- Libraries are **ordinary `.3dcadcraft` projects** with parametric families (5.7), connected by Link (already implemented).
+- A company keeps its `company-standard.3dcadcraft` in a shared folder or in git.
+- Pack embeds whatever is used when sending a project out.
 
-## 6.4 Заварени конструкции (Weldments) — ⬜ · L
+## 6.4 Weldments — ⬜ · L
 
-**Последователност.**
-1. **Подготовка** на кантовете (фаски за заваряване).
-2. **Заварки:** ъглови (fillet), челни (groove), козметични.
-3. **Механична обработка** след заваряването.
+**Sequence.**
+1. **Preparation** of the edges (weld chamfers).
+2. **Welds:** fillet, groove, cosmetic.
+3. **Machining** after welding.
 
-**Свойства.** Заваръчните шевове имат обем и маса, а символите им отиват в чертежа (4.3).
+**Properties.** Weld beads have volume and mass, and their symbols go into the drawing (4.3).
 
-## 6.5 Тръбопроводи (Tube & Pipe) — ⬜ · XL
+## 6.5 Tube & Pipe — ⬜ · XL
 
-Маршрути (routes) с автоматично прокарване. Стилове задават диаметър, материал, минимален радиус на огъване, фитинги (колена, тройници, фланци) и огънати тръби. Изход: изометрични чертежи, списък за рязане.
+Routes with automatic routing. Styles set the diameter, material, minimum bend radius, fittings (elbows, tees, flanges) and bent tubes. Output: isometric drawings, a cut list.
 
-## 6.6 Кабели и снопове (Cable & Harness) — ⬜ · XL
+## 6.6 Cable & Harness — ⬜ · XL
 
-Проводници, кабели, сегменти на снопа, конектори с пинове, дължини, гъвкави маршрути и **разгъване на снопа** за производство (nailboard).
+Wires, cables, harness segments, connectors with pins, lengths, flexible routes and **flattening the harness** for manufacturing (nailboard).
 
-## 6.7 Форми за леене (Mold Design) — ⬜ · XL (дългосрочно)
+## 6.7 Mold Design — ⬜ · XL (long term)
 
-Разделителна линия и повърхнина, ядра и матрици, литникова система, охлаждане, избор на стандартна рамка.
-
----
-
-# Ниво 7 — Анализ, визуализация, автоматизация, обмен
-
-## 7.1 Якостен анализ (FEA) — ⬜ · XL
-
-**Какво прави.** Линеен статичен анализ (напрежения по фон Мизес, деформации, коефициент на сигурност) и модален анализ (собствени честоти).
-
-**Как работи.**
-1. Тетраедрична мрежа от B-Rep (със сгъстяване около малки елементи).
-2. Квадратични тетраедри (10 възела).
-3. Сглобяване на матрицата на коравина.
-4. Решаване с итеративен метод (спрегнати градиенти с предусловие).
-5. **Конвергенция:** мрежата се сгъстява, докато резултатът спре да се променя с повече от X%.
-
-**Настройки.**
-- Материал (от 2.15).
-- Натоварвания: сила, налягане, гравитация, момент, отдалечено натоварване.
-- Закрепвания: фиксирано, без триене, шарнир.
-- Контакти между детайлите в сглобка.
-- Размер на мрежата.
-
-## 7.2 Динамична симулация — ⬜ · L
-
-Кинематика и динамика на механизми, изведени от съединенията (3.3): сили, моменти, триене, пружини, задвижвания, графики на величините, износ на натоварванията към FEA.
-
-## 7.3 Рендериране (Studio) — ⬜ · L
-
-Фотореалистични изображения: PBR материали, HDR осветление от среда, сенки, дълбочина на рязкостта. Реализацията е path tracing на GPU през wgpu compute. Включва и анимации: въртене на 360°, движение на механизма, камера по път.
-
-## 7.4 Презентации и инструкции — ⬜ · M
-
-Взривени изгледи (exploded views) с трасиращи линии, раскадровки (storyboards), анимация на разглобяване, износ във видео и изображения. Изгледите се ползват в чертежите (4.2) за монтажни инструкции.
-
-## 7.5 Правила и автоматизация (еквивалент на iLogic) — ⬜ · L
-
-**Какво прави.** Правила, които реагират на промени, например:
-
-- „ако дължина > 1000, добави опора в средата“;
-- „материалът определя цената“;
-- „при запис генерирай PDF“.
-
-Инструментите са форми за вход на параметри и пакетна обработка на много файлове.
-
-**Как работи.**
-- Вграден скриптов език на чист Rust (кандидат: **Rhai**) или WASM плъгини.
-- Скриптът вика същия Command API (0.4), т.е. всяко действие може да се отмени.
-
-Inventor 2027 добавя **Codeblocks**: визуално програмиране с блокове, без писане на код. Добра цел за ниво 2 на този модул.
-
-## 7.6 AI асистент — ⬜ · M
-
-**Какво прави.** Естествен език → действия в модела. Например:
-
-- „направи фланец ⌀120 с 6 отвора M10 на окръжност ⌀90“;
-- „смени материала на всички пластмасови детайли“;
-- „изкарай PDF на всички чертежи“.
-
-Inventor 2027 въвежда *Autodesk Assistant* с подобни възможности.
-
-**3DCadCraft подход.**
-- Архитектурата е **agent-ready от първия ден**: всеки агент, който говори MCP, работи през 0.7 API.
-- Вграденият чат панел е просто още един MCP клиент.
-- **Безопасност:**
-  - всяко действие е команда, която може да се отмени;
-  - има преглед преди прилагане;
-  - има лог на действията;
-  - има режим „само четене“.
-
-## 7.7 Обмен на данни — 🟡 · XL
-
-**Спецификация:** [spec/7.7-export.md](spec/7.7-export.md). Готово: износ в **STL** (двоичен, затворен), **STEP** AP242 (точни повърхнини) и **GLB** от File → Export и от командния ред (`examples/export.rs`). Предстои: внос на STEP, 3MF, настройки.
-
-Таблицата с формати е в [FILE_FORMAT.md, раздел 8](FILE_FORMAT.md#8-обмен-с-други-програми-не-е-родният-формат). **STEP AP242** е с най-висок приоритет, защото през него минава обменът с всички останали CAD системи.
-
-**Как работи.** STEP е текстов формат (ISO 10303-21). Читателят парсва entity графа и превежда геометрията (B_SPLINE_SURFACE_WITH_KNOTS, CYLINDRICAL_SURFACE...) и топологията (ADVANCED_FACE, EDGE_LOOP...) към нашето ядро. За съвместимост с Inventor/SolidWorks/Fusion се тества върху публични набори от модели.
-
-## 7.8 Управление на данни (вместо Vault) — ⬜ · M
-
-- **Версии:** проектът се пази в git в разпакувана форма. Всеки документ е отделен файл, така че diff-ът е смислен.
-- **Заключване:** избягва едновременна редакция на един документ.
-- **Ревизии и състояния:**
-  - статуси на документите: работен, за преглед, одобрен, архивиран;
-  - ревизионни букви (A, B, C);
-  - полета от основния надпис.
-- **Pack** при изпращане навън.
-
-## 7.9 Пакетна обработка от командния ред — ⬜ · S
-
-Пример: `3dcadcraft export --pdf drawings/*.3dcadcraft`, или регенерация, валидация и износ на много проекти. Ползва безглавото ядро (без GUI) и е подходящо за CI.
-
-## 7.10 Model-Based Definition (3D анотации) — ⬜ · L
-
-Размери, допуски и GD&T директно върху 3D модела, без чертеж, с износ като семантичен PMI в STEP AP242. Модерната алтернатива на 2D чертежите.
+Parting line and parting surface, cores and cavities, runner system, cooling, choice of a standard mold base.
 
 ---
 
-## Обобщение на статуса
+# Level 7 — Analysis, visualisation, automation, exchange
 
-| Ниво | Готово | Частично | Предстои |
+## 7.1 Stress analysis (FEA) — ⬜ · XL
+
+**What it does.** Linear static analysis (von Mises stresses, deformations, safety factor) and modal analysis (natural frequencies).
+
+**How it works.**
+1. A tetrahedral mesh from the B-Rep (refined around small details).
+2. Quadratic tetrahedra (10 nodes).
+3. Assembling the stiffness matrix.
+4. Solving with an iterative method (preconditioned conjugate gradients).
+5. **Convergence:** the mesh is refined until the result stops changing by more than X%.
+
+**Settings.**
+- Material (from 2.15).
+- Loads: force, pressure, gravity, moment, remote load.
+- Constraints: fixed, frictionless, pin.
+- Contacts between the parts of an assembly.
+- Mesh size.
+
+## 7.2 Dynamic simulation — ⬜ · L
+
+Kinematics and dynamics of mechanisms derived from the joints (3.3): forces, moments, friction, springs, drivers, graphs of the quantities, export of the loads to FEA.
+
+## 7.3 Rendering (Studio) — ⬜ · L
+
+Photorealistic images: PBR materials, HDR environment lighting, shadows, depth of field. The implementation is GPU path tracing through wgpu compute. It also covers animations: a 360° turntable, mechanism motion, a camera along a path.
+
+## 7.4 Presentations and instructions — ⬜ · M
+
+Exploded views with trail lines, storyboards, disassembly animation, export to video and images. The views are used in drawings (4.2) for assembly instructions.
+
+## 7.5 Rules and automation (iLogic equivalent) — ⬜ · L
+
+**What it does.** Rules that react to changes, for example:
+
+- "if length > 1000, add a support in the middle";
+- "the material determines the price";
+- "on save, generate a PDF".
+
+The tools are forms for entering parameters and batch processing of many files.
+
+**How it works.**
+- An embedded scripting language in pure Rust (candidate: **Rhai**) or WASM plug-ins.
+- A script calls the same Command API (0.4), i.e. every action can be undone.
+
+Inventor 2027 adds **Codeblocks**: visual programming with blocks, without writing code. A good target for level 2 of this module.
+
+## 7.6 AI assistant — ⬜ · M
+
+**What it does.** Natural language → actions in the model. For example:
+
+- "make a ⌀120 flange with 6 M10 holes on a ⌀90 circle";
+- "change the material of all plastic parts";
+- "export a PDF of all drawings".
+
+Inventor 2027 introduces *Autodesk Assistant* with similar capabilities.
+
+**3DCadCraft approach.**
+- The architecture is **agent-ready from day one**: any agent that speaks MCP works through the 0.7 API.
+- The built-in chat panel is just another MCP client.
+- **Safety:**
+  - every action is a command that can be undone;
+  - there is a preview before applying;
+  - there is an action log;
+  - there is a "read-only" mode.
+
+## 7.7 Data exchange — 🟡 · XL
+
+**Specification:** [spec/7.7-export.md](spec/7.7-export.md). Done: export to **STL** (binary, closed), **STEP** AP242 (exact surfaces) and **GLB** from File → Export and from the command line (`examples/export.rs`). To do: STEP import, 3MF, settings.
+
+The table of formats is in [FILE_FORMAT.md, section 8](FILE_FORMAT.md#8-exchange-with-other-programs-not-the-native-format). **STEP AP242** has the highest priority, because exchange with every other CAD system goes through it.
+
+**How it works.** STEP is a text format (ISO 10303-21). The reader parses the entity graph and translates the geometry (B_SPLINE_SURFACE_WITH_KNOTS, CYLINDRICAL_SURFACE...) and the topology (ADVANCED_FACE, EDGE_LOOP...) into our kernel. Compatibility with Inventor/SolidWorks/Fusion is tested on public model sets.
+
+## 7.8 Data management (instead of Vault) — ⬜ · M
+
+- **Versions:** the project is kept in git in unpacked form. Each document is a separate file, so the diff is meaningful.
+- **Locking:** prevents two people editing one document at the same time.
+- **Revisions and states:**
+  - document statuses: work in progress, for review, approved, archived;
+  - revision letters (A, B, C);
+  - title block fields.
+- **Pack** when sending a project out.
+
+## 7.9 Command-line batch processing — ⬜ · S
+
+Example: `3dcadcraft export --pdf drawings/*.3dcadcraft`, or regenerating, validating and exporting many projects. Uses the headless kernel (no GUI) and suits CI.
+
+## 7.10 Model-Based Definition (3D annotations) — ⬜ · L
+
+Dimensions, tolerances and GD&T directly on the 3D model, without a drawing, exported as semantic PMI in STEP AP242. The modern alternative to 2D drawings.
+
+---
+
+## Status summary
+
+| Level | Done | Partial | To do |
 |---|---|---|---|
-| 0 Платформа | 0.6 файлове | 0.1 ядро, 0.2 единици, 0.3 визуализация (чака визуална проверка), 0.4 Undo/Redo (снимки), 0.8 именуване v0, 0.9 избор, 0.10 Physical Properties, 0.11 Application Options (без запис) | 0.5 (изразите и таблицата Parameters са готови, виж раздела), 0.7 API |
-| 1 Скициране | 1.1 скица върху равнина/стена; 1.2 инструменти за чертане; 1.3 ограничения; 1.4 размери; 1.6 модифициране; 1.7 масиви; 1.9 профили | 1.5 прихващане | 1.8, 1.10, 1.11 |
-| 2 Детайли | — | 2.1 Extrude, 2.2 Revolve, 2.4 Fillet, 2.5 Chamfer, 2.6 Shell, 2.8 Draft, 2.10 работни елементи, 2.11 масиви, 2.12 Mirror, 2.13 булеви, 2.15 материали (2.6, 2.8, 2.11, 2.12, 2.15 чакат визуална проверка) | 2.3, 2.7 (чака визуална проверка), 2.9, 2.14, 2.16, 2.17 |
-| 3 Сглобки | — | 3.1 (структура на данните) | останалите |
-| 4–7 | — | 7.7 износ STL/STEP/GLB | останалите |
+| 0 Platform | 0.6 files | 0.1 kernel, 0.2 units, 0.3 visualisation (waiting for a visual check), 0.4 Undo/Redo (snapshots), 0.8 naming v0, 0.9 selection, 0.10 Physical Properties, 0.11 Application Options (not saved) | 0.5 (expressions and the Parameters table are done, see the section), 0.7 API |
+| 1 Sketching | 1.1 sketch on a plane/face; 1.2 drawing tools; 1.3 constraints; 1.4 dimensions; 1.6 modify; 1.7 patterns; 1.9 profiles | 1.5 snapping | 1.8, 1.10, 1.11 |
+| 2 Parts | — | 2.1 Extrude, 2.2 Revolve, 2.4 Fillet, 2.5 Chamfer, 2.6 Shell, 2.8 Draft, 2.10 work features, 2.11 patterns, 2.12 Mirror, 2.13 Booleans, 2.15 materials (2.6, 2.8, 2.11, 2.12, 2.15 waiting for a visual check) | 2.3, 2.7 (waiting for a visual check), 2.9, 2.14, 2.16, 2.17 |
+| 3 Assemblies | — | 3.1 (data structure) | the rest |
+| 4–7 | — | 7.7 export STL/STEP/GLB | the rest |
 
-Планът за реализация (фази, критерии за приемане, решения на ниво ядро) е в **[ROADMAP.md](ROADMAP.md)**.
+The implementation plan (phases, acceptance criteria, kernel-level decisions) is in **[ROADMAP.md](ROADMAP.md)**.
