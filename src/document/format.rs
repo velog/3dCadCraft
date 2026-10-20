@@ -90,11 +90,10 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (`TargetRef::Plane`, `TargetRef::Point`), Revolve To
 ///   (`RevolveExtent::To`); additive fields `alternate`, `extend_face`,
 ///   `terminator`, `open` (Match Shape), `minimum` (2026-10-19).
-/// - 12: Sweep and Loft (`Feature::Sweep`, `Feature::Loft`) (2026-10-19;
-///   the merge may renumber).
-/// - 14: Coil and Rib / Web (`Feature::Coil`, `Feature::Rib`) (2026-10-20;
-///   13 is taken by Combine / Split on another branch — the merge may
-///   renumber).
+/// - 12: Sweep and Loft (`Feature::Sweep`, `Feature::Loft`) (2026-10-19).
+/// - 13: Combine and Split (`Feature::Combine`, `Feature::Split`),
+///   `PartDocument::hidden_bodies` (2026-10-20).
+/// - 14: Coil and Rib / Web (`Feature::Coil`, `Feature::Rib`) (2026-10-20).
 pub const FORMAT_REVISION: u32 = 14;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";

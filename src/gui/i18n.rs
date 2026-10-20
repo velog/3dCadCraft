@@ -190,6 +190,17 @@ const TABLE: &[(&str, &str)] = &[
         "Изберете стените за махане (без стени: затворена кухина)",
     ),
     (", or OK (Enter)", " или OK (Enter)"),
+    ("Select the base body", "Изберете основното тяло"),
+    (
+        "Select the toolbodies (a second click drops one)",
+        "Изберете телата-инструменти (втори клик маха тяло)",
+    ),
+    (
+        "Select the split tool (a work or origin plane, or a sketch)",
+        "Изберете инструмента за рязане (работна или основна равнина, или скица)",
+    ),
+    ("Select the faces to split", "Изберете стените за разделяне"),
+    ("Select the solid", "Изберете тялото"),
     (
         "Ready — Start 2D Sketch (S), or right-click a face: New Sketch",
         "Готово — Start 2D Sketch (S), или десен клик върху стена: New Sketch",

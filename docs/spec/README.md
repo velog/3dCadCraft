@@ -74,6 +74,7 @@
 | [2.9-thread.md](2.9-thread.md) | Thread: козметична или моделирана резба, хлабина за 3D печат |
 | [2.10-work-features.md](2.10-work-features.md) | Работни равнини, оси, точки |
 | [2.13-booleans.md](2.13-booleans.md) | Join / Cut / Intersect, Surface, представяне на резултата |
+| [2.13-combine-split.md](2.13-combine-split.md) | Combine (Base, Toolbodies, Keep Toolbody) и Split (Split Face, Trim Solid, Split Solid) |
 | [2.15-materials.md](2.15-materials.md) | Материали, външен вид (appearances), override-и, библиотеки, Styles Editor |
 | [2.16-browser.md](2.16-browser.md) | Дърво на модела: ред, вложени скици, тела, End of Part, пренареждане, Suppress, Delete, Rename |
 | [7.7-export.md](7.7-export.md) | Износ: STL, STEP, GLB |

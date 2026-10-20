@@ -825,7 +825,13 @@ pub(super) fn draft(
     }
     for (pl, refs) in groups {
         let (t, faces) = draft_targets(&out, &refs)?;
-        out[t] = exact::draft(&out[t], &faces, &pl, pull, dr.angle).map_err(kernel)?;
+        // Pieces of split faces (Split Face): drafted piece by piece.
+        out[t] = if refs.iter().any(|r| r.face.contains('~')) {
+            super::split::draft_pieces(&out[t], &faces, &pl, pull, dr.angle, &dr.id)
+                .map_err(kernel)?
+        } else {
+            exact::draft(&out[t], &faces, &pl, pull, dr.angle).map_err(kernel)?
+        };
     }
     Ok(out)
 }

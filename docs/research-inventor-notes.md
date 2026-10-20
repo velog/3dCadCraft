@@ -740,7 +740,25 @@ Sweep/Loft go through SolidCraft's `sweep`, `sweep_path`, `loft`, `loft_to_point
 lacks (guide surface, solid sweep, rails, centre line, area loft, G1/G2) refuse clearly rather
 than build an approximation that looks right but is not. [our note]
 
-## 10. Coil and Rib (Inventor 2027 Help, our summary)
+## 10. Combine и Split (2027)
+
+**Източник:** To Combine and Split Bodies and Faces — GUID-349C84EE-2D24-4DFC-A239-AFD55E5441AD (2027).
+
+- Combine съществува само в детайл с няколко тела. Първият селектор (основата) е активен още при
+  отваряне; след избора му активен става селекторът на инструментите, който брои избраното и
+  приема избор с рамка. Резултатът взема вида на основата.
+- Keep Toolbody пази инструмента като самостоятелно тяло, но го скрива; без отметката тялото се
+  изразходва. Изтриването на Combine връща изразходваните тела. Бутон за видимост държи
+  инструментите видими за следващия избор. Apply оставя командата отворена.
+- Split има три поведения: делене на стени (инструмент: 2D/3D скица, работна равнина или
+  повърхнина; избрани стени или всички стени на тяло; скицата може да остане видима — Advanced
+  Settings), отрязване на едната страна (стрелка сочи махнатата страна, Default / Flip) и
+  разделяне на две тела (при едно тяло то се избира само). След делене на стени Face Draft
+  накланя отделните парчета.
+- За нашия клонинг: парчетата на стена носят името ѝ с наставка `~<Split>.<k>`, новото тяло е
+  `<Split>#2`; повърхнина като инструмент чака точните повърхнини.
+
+## 11. Coil and Rib (Inventor 2027 Help, our summary)
 
 ### Coil (GUID-E95936AF-ABBE-48DD-8FCC-762ED86943F1)
 - A property panel: Output Solid or Surface (a surface can serve as a termination or a split

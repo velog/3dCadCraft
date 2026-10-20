@@ -156,6 +156,10 @@ name.3dcadcraft/           ← разпакувана форма: папка с�
 
 Ревизия 11 (2026-10-19): Extrude / Revolve — краища до работни / начални равнини и точки (`TargetRef::Plane`, `TargetRef::Point`), Revolve To (`RevolveExtent::To`); нови незадължителни полета `alternate`, `extend_face`, `terminator`, `open` (Match Shape), `minimum`. Фикстура `tests/compat/r11/extrude_options_r11.3dcadcraft`.
 
+Ревизия 12 е запазена за Sweep / Loft (друг клон).
+
+Ревизия 13 (2026-10-20): Combine и Split (`Feature::Combine`, `Feature::Split`), списък на скритите тела `hidden_bodies` в детайла. Фикстура `tests/compat/r13/combine_split_r13.3dcadcraft`.
+
 ## 7. Как да го пробваш
 
 ```bash

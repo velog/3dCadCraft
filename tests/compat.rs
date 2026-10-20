@@ -688,6 +688,67 @@ fn draft_r9() -> PartDocument {
 /// Revision 11: Extrude / Revolve options from Inventor 2027 — primitives,
 /// To an inclined work plane, an open profile (Match Shape), Revolve To a
 /// plane through the axis with Minimum Solution.
+/// Revision 13: Combine (Join, Keep Toolbody: the tool stays hidden) and
+/// Split (Split Face of the top, Split Solid by an origin plane).
+fn combine_split_r13() -> PartDocument {
+    use cadcraft3d::part::{CombineFeature, PlaneRef, SplitFeature, SplitMethod, SplitToolRef};
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let i = part
+        .create_sketch(
+            cadcraft3d::part::SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &cadcraft3d::part::SketchOptions {
+                auto_project_origin: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(
+        cadcraft3d::sketch::Point2::new(30.0, 10.0),
+        cadcraft3d::sketch::Point2::new(60.0, 20.0),
+    )
+    .unwrap();
+    let r = sk.regions();
+    let pr = vec![cadcraft3d::part::ProfileRef::of(
+        &r[0],
+        r[0].interior_point(),
+    )];
+    let tool = part
+        .add_extrude(i, cadcraft3d::part::ExtrudeFeature::new(pr, 10.0))
+        .unwrap();
+    let mut c = CombineFeature::new();
+    c.base = "Box1".into();
+    c.tools = vec![tool];
+    c.keep_tools = true;
+    part.add_combine(c).unwrap();
+    let mut s = SplitFeature::new(SplitMethod::SplitFace);
+    s.all_faces = true;
+    s.solid = "Box1".into();
+    let wp = part
+        .add_work(cadcraft3d::part::WorkFeature::new(
+            cadcraft3d::part::WorkDef::Plane(cadcraft3d::part::WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::YZ),
+                distance: 20.0,
+            }),
+        ))
+        .unwrap();
+    s.tool = Some(SplitToolRef::Plane(PlaneRef::Work(wp)));
+    part.add_split(s).unwrap();
+    let mut s = SplitFeature::new(SplitMethod::SplitSolid);
+    let wp = part
+        .add_work(cadcraft3d::part::WorkFeature::new(
+            cadcraft3d::part::WorkDef::Plane(cadcraft3d::part::WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: 5.0,
+            }),
+        ))
+        .unwrap();
+    s.tool = Some(SplitToolRef::Plane(PlaneRef::Work(wp)));
+    s.solid = "Box1".into();
+    part.add_split(s).unwrap();
+    part
+}
+
 fn extrude_options_r11() -> PartDocument {
     use cadcraft3d::part::primitive::add_primitive;
     use cadcraft3d::part::{
@@ -804,6 +865,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("PatternR5");
             project.add_document("Part1", DocumentData::Part(pattern_r5()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r13/combine_split_r13.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("CombineSplitR13");
+            project.add_document("Part1", DocumentData::Part(combine_split_r13()));
             project.save(&f).unwrap();
         }
         let f = root().join("r11/extrude_options_r11.3dcadcraft");

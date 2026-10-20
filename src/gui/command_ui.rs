@@ -191,6 +191,9 @@ pub(super) fn cursor_hint(painter: &egui::Painter, rect: Rect, pos: Pos2, text: 
 enum Cmd {
     Draft,
     Shell,
+    /// Combine and Split (`gui/combine_split.rs`).
+    Combine,
+    Split,
 }
 
 impl CadCraftApp {
@@ -199,6 +202,10 @@ impl CadCraftApp {
             Some(Cmd::Draft)
         } else if self.shell_draft.is_some() {
             Some(Cmd::Shell)
+        } else if self.combine_draft.is_some() {
+            Some(Cmd::Combine)
+        } else if self.split_draft.is_some() {
+            Some(Cmd::Split)
         } else {
             None
         }
@@ -214,6 +221,7 @@ impl CadCraftApp {
                     Some("remove"),
                 )
             }),
+            Cmd::Combine | Cmd::Split => self.body_cmd_flow(),
         }
     }
 
@@ -229,10 +237,12 @@ impl CadCraftApp {
         let name = match self.flow_cmd()? {
             Cmd::Draft => "Face Draft",
             Cmd::Shell => "Shell",
+            Cmd::Combine => "Combine",
+            Cmd::Split => "Split",
         };
         let p = super::i18n::tr(flow.prompt());
         // A finished command also offers OK (Shell's input is optional).
-        let ok = if flow.ready() && self.flow_cmd() == Some(Cmd::Draft) {
+        let ok = if flow.ready() && self.flow_cmd() != Some(Cmd::Shell) {
             super::i18n::tr(OR_OK)
         } else {
             "".into()
@@ -248,6 +258,7 @@ impl CadCraftApp {
                     d.set_active(key);
                 }
             }
+            Some(Cmd::Combine | Cmd::Split) => self.body_cmd_activate(key),
             Some(Cmd::Shell) | None => {}
         }
     }
@@ -256,6 +267,8 @@ impl CadCraftApp {
         match self.flow_cmd() {
             Some(Cmd::Draft) => self.commit_draft(keep_open),
             Some(Cmd::Shell) => self.commit_shell(keep_open),
+            Some(Cmd::Combine) => self.commit_combine(keep_open),
+            Some(Cmd::Split) => self.commit_split(keep_open),
             None => {}
         }
     }
@@ -263,6 +276,7 @@ impl CadCraftApp {
     fn command_cancel(&mut self) {
         self.draft_draft = None;
         self.shell_draft = None;
+        self.close_body_cmds();
         self.end_feature_edit();
     }
 
@@ -300,6 +314,11 @@ impl CadCraftApp {
         let editing = match cmd {
             Cmd::Draft => self.draft_draft.as_ref().is_some_and(|d| d.edit.is_some()),
             Cmd::Shell => self.shell_draft.as_ref().is_some_and(|d| d.edit.is_some()),
+            Cmd::Combine => self
+                .combine_draft
+                .as_ref()
+                .is_some_and(|d| d.edit.is_some()),
+            Cmd::Split => self.split_draft.as_ref().is_some_and(|d| d.edit.is_some()),
         };
         let repeat = self
             .repeatable()
@@ -315,6 +334,7 @@ impl CadCraftApp {
                 .as_ref()
                 .map(|d| super::shell::menu_options(&d.def))
                 .unwrap_or_default(),
+            Cmd::Combine | Cmd::Split => self.body_cmd_menu_options(),
         };
         let Some(choice) = command_menu(ui, &flow, !editing, repeat, &options) else {
             return true;
@@ -354,6 +374,7 @@ impl CadCraftApp {
                         super::shell::menu_option(&mut d.def, k);
                     }
                 }
+                Cmd::Combine | Cmd::Split => self.body_cmd_menu_option(k),
             },
         }
         true

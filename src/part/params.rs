@@ -183,6 +183,7 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
         Feature::Coil(c) => c.fields(),
         Feature::Rib(r) => r.fields(),
         Feature::Thread(t) => t.fields(),
+        Feature::Combine(_) | Feature::Split(_) => Vec::new(),
         Feature::Work(w) => match &w.def {
             super::WorkDef::Plane(super::WorkPlaneDef::Offset { .. }) => {
                 vec![("distance", Unit::Mm)]
@@ -286,6 +287,7 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
         Feature::Coil(c) => c.value(field),
         Feature::Rib(r) => r.value(field),
         Feature::Thread(t) => t.value(field),
+        Feature::Combine(_) | Feature::Split(_) => None,
         Feature::Work(w) => match (&w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 Some(*distance)
@@ -402,6 +404,7 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
         Feature::Coil(c) => c.set(field, v),
         Feature::Rib(r) => r.set(field, v),
         Feature::Thread(t) => t.set(field, v),
+        Feature::Combine(_) | Feature::Split(_) => {}
         Feature::Work(w) => match (&mut w.def, field) {
             (super::WorkDef::Plane(super::WorkPlaneDef::Offset { distance, .. }), "distance") => {
                 *distance = v
@@ -452,6 +455,7 @@ fn feature_params_mut(f: &mut Feature) -> Option<&mut FeatureParams> {
         Feature::Coil(c) => Some(&mut c.params),
         Feature::Rib(r) => Some(&mut r.params),
         Feature::Thread(t) => Some(&mut t.params),
+        Feature::Combine(_) | Feature::Split(_) => None,
     }
 }
 
@@ -471,6 +475,7 @@ fn feature_params(f: &Feature) -> Option<&FeatureParams> {
         Feature::Coil(c) => Some(&c.params),
         Feature::Rib(r) => Some(&r.params),
         Feature::Thread(t) => Some(&t.params),
+        Feature::Combine(_) | Feature::Split(_) => None,
     }
 }
 

@@ -131,6 +131,11 @@ fn rib_part(network: bool) -> PartDocument {
 /// Budgets of the Face Draft Symmetric and Shell Rounded Corners cases (ms).
 const BUDGET_SYMMETRIC_DRAFT: f64 = 700.0;
 const BUDGET_ROUNDED_SHELL: f64 = 400.0;
+const BUDGET_COMBINE: f64 = 300.0;
+const BUDGET_SPLIT: f64 = 500.0;
+/// One kernel call (`split_body`, the section through four rounds at an
+/// angle) is ~0.8 s; classifying the parts by volume added 1.4 s (removed).
+const BUDGET_SPLIT_INCLINED: f64 = 1500.0;
 
 fn median_ms(runs: usize, mut f: impl FnMut()) -> f64 {
     let mut t: Vec<f64> = (0..runs)
@@ -680,6 +685,83 @@ fn speed_budgets() {
             let body = p.body.clone();
             def.toggle(&body, front, None);
             p.add_draft(def).unwrap();
+        }),
+    ));
+
+    // Combine: a box and a cylinder sunk 10 into it as a second body, cut;
+    // Split Solid of a filleted box by a plane at an angle.
+    let two_bodies = {
+        let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let j = part
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+            .unwrap();
+        let c = part.sketches[j]
+            .sketch
+            .plane
+            .project(&Point3::new(30.0, 20.0, 20.0));
+        part.sketches[j].sketch.add_circle(c, 8.0).unwrap();
+        let rg = part.sketches[j].sketch.regions();
+        let mut ex =
+            ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 10.0);
+        ex.direction = ExtentDirection::Flipped;
+        let tool = part.add_extrude(j, ex).unwrap();
+        (part, tool)
+    };
+    rows.push((
+        "combine: cut a cylinder body out of a box body (add_combine)",
+        BUDGET_COMBINE,
+        median_ms(3, || {
+            let mut p = two_bodies.0.clone();
+            p.build_cache = Default::default();
+            let mut c = cadcraft3d::part::CombineFeature::new();
+            c.base = "Box1".into();
+            c.tools = vec![two_bodies.1.clone()];
+            c.operation = Operation::Cut;
+            p.add_combine(c).unwrap();
+        }),
+    ));
+    let mut tilted = vertical_rounds.clone();
+    let tw = tilted
+        .add_work(cadcraft3d::part::WorkFeature::new(
+            cadcraft3d::part::WorkDef::Plane(cadcraft3d::part::WorkPlaneDef::Angle {
+                base: cadcraft3d::part::PlaneRef::Origin(cadcraft3d::part::OriginPlane::YZ),
+                axis: cadcraft3d::part::LineRef::Origin(1),
+                angle: 0.3,
+            }),
+        ))
+        .unwrap();
+    rows.push((
+        "split solid of a box with rounds by a plane at an angle (add_split)",
+        BUDGET_SPLIT_INCLINED,
+        median_ms(3, || {
+            let mut p = tilted.clone();
+            p.build_cache = Default::default();
+            let mut s =
+                cadcraft3d::part::SplitFeature::new(cadcraft3d::part::SplitMethod::SplitSolid);
+            s.tool = Some(cadcraft3d::part::SplitToolRef::Plane(
+                cadcraft3d::part::PlaneRef::Work(tw.clone()),
+            ));
+            p.add_split(s).unwrap();
+        }),
+    ));
+    rows.push((
+        "split face: all faces of a box with rounds by a plane (add_split)",
+        BUDGET_SPLIT,
+        median_ms(3, || {
+            let mut p = mid.clone();
+            p.build_cache = Default::default();
+            let mut s =
+                cadcraft3d::part::SplitFeature::new(cadcraft3d::part::SplitMethod::SplitFace);
+            s.tool = Some(cadcraft3d::part::SplitToolRef::Plane(
+                cadcraft3d::part::PlaneRef::Work(wp.clone()),
+            ));
+            s.all_faces = true;
+            p.add_split(s).unwrap();
         }),
     ));
 

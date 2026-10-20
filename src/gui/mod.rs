@@ -28,6 +28,7 @@ mod breadcrumb;
 mod browser_edit;
 mod camera;
 mod coil_rib;
+mod combine_split;
 mod command_ui;
 mod demos;
 mod diag;
@@ -278,11 +279,17 @@ pub(super) struct PickCache {
 }
 
 impl PickCache {
-    fn build(body: &crate::kernel::BRep) -> Self {
+    fn build(
+        body: &crate::kernel::BRep,
+        hidden: &std::collections::HashSet<crate::kernel::FaceId>,
+    ) -> Self {
         let opts = TessellationOptions::default();
         let mut tris = Vec::new();
         let mut edge_faces: std::collections::HashMap<_, Vec<_>> = Default::default();
         for (fid, face) in body.faces() {
+            if hidden.contains(&fid) {
+                continue;
+            }
             if let Ok(mesh) = body.face_mesh(fid, &opts) {
                 for t in &mesh.triangles {
                     tris.push((
@@ -604,6 +611,10 @@ struct CadCraftApp {
     presets: presets::PresetUi,
     /// The open Face Draft command.
     draft_draft: Option<draft::DraftDraft>,
+    /// The open Combine command.
+    combine_draft: Option<combine_split::CombineDraft>,
+    /// The open Split command.
+    split_draft: Option<combine_split::SplitDraft>,
     /// The open Rectangular / Circular Pattern or Mirror command.
     pattern_draft: Option<pattern_feature::PatternDraft>,
     /// The open Hole command.
@@ -747,6 +758,8 @@ impl CadCraftApp {
             coil_draft: None,
             rib_draft: None,
             draft_draft: None,
+            combine_draft: None,
+            split_draft: None,
             pattern_draft: None,
             presets: Default::default(),
             hole_draft: None,
@@ -1005,6 +1018,13 @@ impl CadCraftApp {
             "2.6-shell.md"
         } else if self.draft_draft.is_some() {
             "2.8-draft.md"
+        } else if self.combine_draft.is_some()
+            || self.split_draft.is_some()
+            || matches!(self.selection, Selection::Feature(k)
+                if matches!(self.part().features.get(k),
+                    Some(crate::part::Feature::Combine(_) | crate::part::Feature::Split(_))))
+        {
+            "2.13-combine-split.md"
         } else if let Some(d) = &self.pattern_draft {
             match d.def.kind {
                 crate::part::PatternKind::Mirror { .. } => "2.12-mirror.md",
@@ -1201,6 +1221,7 @@ impl CadCraftApp {
         self.coil_draft = None;
         self.rib_draft = None;
         self.draft_draft = None;
+        self.close_body_cmds();
         self.pattern_draft = None;
         self.hole_draft = None;
         self.thread_draft = None;
@@ -1281,6 +1302,14 @@ impl CadCraftApp {
             Feature::Thread(t) => {
                 self.roll_back_to(k);
                 self.thread_draft = Some(hole::ThreadDraft::editing(t, k));
+            }
+            Feature::Combine(c) => {
+                self.roll_back_to(k);
+                self.combine_draft = Some(combine_split::CombineDraft::editing(c, k));
+            }
+            Feature::Split(sp) => {
+                self.roll_back_to(k);
+                self.split_draft = Some(combine_split::SplitDraft::editing(sp, k));
             }
             Feature::Sweep(s) => self.edit_sweep(s, k),
             Feature::Loft(l) => self.edit_loft(l, k),
@@ -2036,11 +2065,12 @@ impl CadCraftApp {
     pub(super) fn body_key(&self) -> String {
         let body = &self.part().body;
         format!(
-            "{}|{}|{}|{:?}",
+            "{}|{}|{}|{:?}|{:?}",
             body.edges().count(),
             body.faces().count(),
             body.vertices().count(),
-            body.bounding_box()
+            body.bounding_box(),
+            self.part().hidden_bodies
         )
     }
 
@@ -2052,7 +2082,7 @@ impl CadCraftApp {
         {
             return v.clone();
         }
-        let v = std::rc::Rc::new(PickCache::build(&self.part().body));
+        let v = std::rc::Rc::new(PickCache::build(&self.part().body, &self.hidden_faces()));
         *self.pick_cache.borrow_mut() = Some((key, v.clone()));
         v
     }
@@ -2066,9 +2096,11 @@ impl CadCraftApp {
             return v.clone();
         }
         let opts = TessellationOptions::default();
+        let shown = self.shown_edges();
         let v: EdgePolylines = std::rc::Rc::new(
             body.visible_edges()
                 .into_iter()
+                .filter(|e| shown.as_ref().is_none_or(|s| s.contains(e)))
                 .filter(|&e| body.solids().any(|(_, s)| !s.open) || body.edge(e).is_some())
                 .filter_map(|e| Some((e, body.sample_edge(e, &opts).ok()?)))
                 .collect(),
@@ -3360,6 +3392,8 @@ impl CadCraftApp {
             | Action::Coil
             | Action::Rib
             | Action::Draft
+            | Action::Combine
+            | Action::Split
             | Action::RectPattern
             | Action::CircPattern
             | Action::MirrorFeature => self.last_command = Some(action),
@@ -3422,6 +3456,8 @@ impl CadCraftApp {
             Action::Coil => self.start_coil(),
             Action::Rib => self.start_rib(),
             Action::Draft => self.start_draft(),
+            Action::Combine => self.start_combine(),
+            Action::Split => self.start_split(),
             Action::RectPattern => self.start_pattern(crate::part::PatternFeature::rectangular()),
             Action::CircPattern => self.start_pattern(crate::part::PatternFeature::circular()),
             Action::MirrorFeature => self.start_pattern(crate::part::PatternFeature::mirror()),
@@ -4140,6 +4176,7 @@ impl CadCraftApp {
             self.coil_draft = None;
             self.rib_draft = None;
             self.draft_draft = None;
+            self.close_body_cmds();
             self.pattern_draft = None;
             self.cancel_hole();
             self.thread_draft = None;
@@ -4442,6 +4479,18 @@ impl CadCraftApp {
         {
             self.hole_pick(pick);
         }
+        // Combine / Split: bodies, faces, planes, sketches (`gui/combine_split.rs`).
+        let body_cmd = self.combine_draft.is_some() || self.split_draft.is_some();
+        let body_hover = match (body_cmd, pointer, on_cube) {
+            (true, Some(p), None) => self.body_cmd_hover(p, rect),
+            _ => None,
+        };
+        if body_cmd
+            && response.clicked_by(PointerButton::Primary)
+            && let Some(h) = body_hover.clone()
+        {
+            self.body_cmd_pick(h);
+        }
         // Face Draft: what its active selector takes (`gui/draft.rs`).
         let draft_hover = match (self.draft_draft.is_some(), pointer, on_cube) {
             (true, Some(p), None) => self.draft_hover(p, rect, shell_hover),
@@ -4517,6 +4566,7 @@ impl CadCraftApp {
             && !self.sweep_loft_open()
             && !self.coil_rib_open()
             && self.draft_draft.is_none()
+            && !body_cmd
             && self.pattern_draft.is_none()
             && self.hole_draft.is_none()
             && self.thread_draft.is_none()
@@ -5498,6 +5548,8 @@ impl CadCraftApp {
                 Some(self.shell_faces())
             } else if self.draft_draft.is_some() {
                 Some(self.draft_faces())
+            } else if body_cmd {
+                Some(self.body_cmd_faces())
             } else if self.pattern_draft.is_some() {
                 Some(self.pattern_faces())
             } else if let Some(d) = &self.thread_draft {
@@ -5534,7 +5586,8 @@ impl CadCraftApp {
                             .or(pat_face)
                             .and_then(name)
                             .or(plane_face)
-                            .map(select::SelItem::Face),
+                            .map(select::SelItem::Face)
+                            .or_else(|| self.body_cmd_hover_item(body_hover.as_ref())),
                     )
                 }
                 None => (
@@ -5555,6 +5608,7 @@ impl CadCraftApp {
             }
             self.draw_draft_overlay(&painter, rect, draft_hover.as_ref());
             self.draw_command_hint(&painter, rect, pointer);
+            self.draw_split_arrow(&painter, rect);
             self.draw_pattern_refs(&painter, rect);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
                 self.scene_sel = (want_sel, want_hover);
@@ -5593,6 +5647,8 @@ impl CadCraftApp {
                 Some(self.shell_preview())
             } else if self.draft_draft.is_some() {
                 Some(self.draft_preview())
+            } else if body_cmd {
+                Some(self.body_cmd_preview())
             } else if self.pattern_draft.is_some() {
                 Some(self.pattern_preview())
             } else if self.hole_draft.is_some() {
@@ -6404,6 +6460,8 @@ fn command_label(a: Action) -> &'static str {
         Action::Coil => "Coil",
         Action::Rib => "Rib",
         Action::Draft => "Face Draft",
+        Action::Combine => "Combine",
+        Action::Split => "Split",
         Action::RectPattern => "Rectangular Pattern",
         Action::CircPattern => "Circular Pattern",
         Action::MirrorFeature => "Mirror",

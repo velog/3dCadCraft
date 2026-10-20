@@ -125,6 +125,13 @@
     "sketches": 4,
     "exact": true
   },
+  "r13/combine_split_r13.3dcadcraft": {
+    "volume": 28999.999999999993,
+    "faces": 32,
+    "features": 7,
+    "sketches": 1,
+    "exact": true
+  },
   "r14/coil_rib_r14.3dcadcraft": {
     "volume": 7892.4224793912745,
     "faces": 68,

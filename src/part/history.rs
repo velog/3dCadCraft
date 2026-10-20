@@ -79,6 +79,8 @@ fn names_feature(s: &str, id: &str) -> bool {
     s.strip_prefix(id).is_some_and(|rest| {
         rest.is_empty() || rest.starts_with(|c: char| !c.is_ascii_alphanumeric() && c != '_')
     })
+    // A piece of a face divided by Split Face: `<face>~<split id>.<k>`.
+    || s.contains(&format!("~{id}."))
 }
 
 /// The model references of a sketch: its placement and projections.
@@ -664,6 +666,8 @@ impl Feature {
             Feature::Pattern(p) => &mut p.name,
             Feature::Hole(h) => &mut h.name,
             Feature::Thread(t) => &mut t.name,
+            Feature::Combine(c) => &mut c.name,
+            Feature::Split(sp) => &mut sp.name,
             Feature::Sweep(s) => &mut s.name,
             Feature::Loft(l) => &mut l.name,
             Feature::Coil(c) => &mut c.name,
