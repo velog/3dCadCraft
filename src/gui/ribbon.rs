@@ -744,7 +744,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                                 "Project Geometry",
                                 None,
                                 Action::ProjectGeometry,
-                                "Click straight model edges to project them into the sketch (associative reference lines)",
+                                "Project points and curves of earlier sketches, or model edges, into this sketch (associative; Shift: construction; Esc ends)",
                             ),
                             in_sketch,
                         )
