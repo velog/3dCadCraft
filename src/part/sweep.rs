@@ -674,6 +674,9 @@ impl SweepFeature {
         for (k, region) in chosen.iter().enumerate() {
             let (outer, holes) = kernel_profile(region);
             let prof = kx::profile(&outer, &holes).map_err(User)?;
+            if self.orientation == SweepOrientation::Path && rail.is_none() {
+                kx::check_bend(plane, &prof, &path.pieces).map_err(User)?;
+            }
             let prefix = super::exact::prefix(&self.id, k);
             let solid = if plain {
                 kx::sweep(plane, &prof, &path.pieces, &prefix)

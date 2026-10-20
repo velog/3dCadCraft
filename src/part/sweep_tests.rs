@@ -505,5 +505,196 @@ fn circle_along_a_spline() {
             })
             .unwrap();
         assert_vol(&p, PI * r * r * len, 0.03);
+
+// ------------------------------------------------- spline paths (session) ---
+
+/// The owner's session: the spline through these sketch points on YZ.
+const SESSION_PATH: [(Real, Real); 4] = [(0.0, 0.0), (0.0, 16.73), (9.20, 44.53), (36.42, 80.02)];
+
+/// A circle (radius `r`, centre `c`) on XY and an interpolation spline
+/// through `pts` on `plane`.
+fn circle_and_spline(
+    r: Real,
+    c: (Real, Real),
+    plane: OriginPlane,
+    pts: &[(Real, Real)],
+) -> (PartDocument, usize, usize) {
+    let mut p = PartDocument::default();
+    let a = sketch(&mut p, OriginPlane::XY, |s| {
+        s.add_circle(Point2::new(c.0, c.1), r).unwrap();
+    });
+    let b = sketch(&mut p, plane, |s| {
+        let ids = pts
+            .iter()
+            .map(|q| s.add_point(Point2::new(q.0, q.1)))
+            .collect();
+        s.add_interp_spline(ids).unwrap();
+    });
+    (p, a, b)
+}
+
+/// The resolved path of sketch `b` (from its start at the origin).
+fn path_geom(p: &PartDocument, b: usize) -> PathGeom {
+    path_of(p, b)
+        .resolve(&p.sketches, &p.body, Point3::origin())
+        .unwrap()
+}
+
+/// The path's length times the cosine of its start angle to the profile
+/// (on XY): the kernel keeps that angle, so every section square to the
+/// path has the profile's area times it (an interpolation spline's end
+/// tangent leans towards its next points).
+fn square_len(path: &PathGeom) -> Real {
+    path.length() * path.eval(0.0).1.z.abs()
+}
+
+/// The signed turn of a planar path about `axis` (start to end tangent).
+fn planar_turn(path: &PathGeom, axis: Vector3) -> Real {
+    let pts = path.polyline();
+    pts.windows(3)
+        .map(|w| {
+            let (a, b) = (w[1] - w[0], w[2] - w[1]);
+            a.cross(&b).dot(&axis).atan2(a.dot(&b))
+        })
+        .sum()
+}
+
+#[test]
+fn circle_along_a_spline_session_and_smaller_radii() {
+    // The owner's sweep (R17.72) failed with "internal error": the whole
+    // circle is one arc with one vertex and the point-path sweep panicked.
+    for r in [17.721586226130526, 5.0, 10.0, 2.0, 14.0] {
+        let (mut p, a, b) = circle_and_spline(r, (0.0, 0.0), OriginPlane::YZ, &SESSION_PATH);
+        let len = square_len(&path_geom(&p, b));
+        sweep_of(&mut p, a, b, |_| {}).unwrap();
+        // Pappus: the centroid follows the path.
+        assert_vol(&p, PI * r * r * len, 5e-3);
+        let names: Vec<String> = p.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
+        for n in ["Sweep1:Start", "Sweep1:End"] {
+            assert!(names.iter().any(|x| x == n), "{names:?}");
+        }
+        assert!(
+            names.iter().any(|n| n.starts_with("Sweep1:Side:")),
+            "{names:?}"
+        );
+    }
+}
+
+#[test]
+fn circle_along_an_s_shaped_spline() {
+    let s_path = [
+        (0.0, 0.0),
+        (0.0, 20.0),
+        (20.0, 40.0),
+        (0.0, 70.0),
+        (0.0, 90.0),
+    ];
+    // The tightest bend (near (20, 40)) has a radius of about 5.7 mm.
+    for r in [2.0, 4.0, 1.0, 3.0, 5.0] {
+        let (mut p, a, b) = circle_and_spline(r, (0.0, 0.0), OriginPlane::XZ, &s_path);
+        let len = square_len(&path_geom(&p, b));
+        sweep_of(&mut p, a, b, |_| {}).unwrap();
+        assert_vol(&p, PI * r * r * len, 5e-3);
+    }
+}
+
+#[test]
+fn spline_leaving_the_profile_at_an_angle() {
+    // Path orientation keeps the angle between profile and path: the
+    // section square to the path has area A·cos(θ0).
+    for (r, pts) in [
+        (4.0, vec![(0.0, 0.0), (10.0, 20.0), (15.0, 50.0)]),
+        (3.0, vec![(0.0, 0.0), (8.0, 15.0), (10.0, 40.0)]),
+        (5.0, vec![(0.0, 0.0), (-10.0, 25.0), (-5.0, 60.0)]),
+        (
+            2.0,
+            vec![(0.0, 0.0), (5.0, 10.0), (20.0, 30.0), (25.0, 60.0)],
+        ),
+        (6.0, vec![(0.0, 0.0), (12.0, 30.0), (30.0, 60.0)]),
+    ] {
+        let (mut p, a, b) = circle_and_spline(r, (0.0, 0.0), OriginPlane::XZ, &pts);
+        let path = path_geom(&p, b);
+        let (_, t0) = path.eval(0.0);
+        let cos = t0.z.abs();
+        assert!(cos < 0.97, "the start is tilted: {cos}");
+        let len = path.length();
+        sweep_of(&mut p, a, b, |_| {}).unwrap();
+        assert_vol(&p, PI * r * r * len * cos, 1e-2);
+    }
+}
+
+#[test]
+fn profile_off_the_spline_start() {
+    for (r, (cx, cy)) in [
+        (3.0, (8.0, 0.0)),
+        (2.0, (-5.0, 0.0)),
+        (3.0, (0.0, 6.0)),
+        (2.5, (0.0, -6.0)),
+        (2.0, (4.0, 4.0)),
+    ] {
+        let (mut p, a, b) = circle_and_spline(r, (cx, cy), OriginPlane::YZ, &SESSION_PATH);
+        let path = path_geom(&p, b);
+        // The path lies in YZ; the centroid's offset along X (square to the
+        // path's plane) keeps the path length, one in the plane changes it
+        // by offset × turn (Pappus along a planar curve).
+        let turn = planar_turn(&path, Vector3::x());
+        let centroid = (path.length() + cy * turn) * path.eval(0.0).1.z.abs();
+        sweep_of(&mut p, a, b, |_| {}).unwrap();
+        assert_vol(&p, PI * r * r * centroid, 5e-3);
+    }
+}
+
+#[test]
+fn profile_too_big_for_the_bend_is_refused() {
+    // A tight bend: the curvature radius near (10, 30) is about 10 mm.
+    let tight = [(0.0, 0.0), (0.0, 20.0), (10.0, 30.0), (30.0, 30.0)];
+    for r in [30.0, 25.0, 40.0, 20.0, 50.0] {
+        let (mut p, a, b) = circle_and_spline(r, (0.0, 0.0), OriginPlane::XZ, &tight);
+        let e = sweep_of(&mut p, a, b, |_| {}).unwrap_err();
+        assert!(e.contains("larger than the path's bend"), "{e}");
+        assert!(p.features.is_empty());
+        assert!(p.sketches[a].visible && p.sketches[b].visible);
+    }
+    // The same path with a small profile builds.
+    let (mut p, a, b) = circle_and_spline(2.0, (0.0, 0.0), OriginPlane::XZ, &tight);
+    let len = square_len(&path_geom(&p, b));
+    sweep_of(&mut p, a, b, |_| {}).unwrap();
+    assert_vol(&p, PI * 4.0 * len, 5e-3);
+}
+
+#[test]
+fn spline_sweep_then_shell_and_fillet() {
+    for r in [8.0, 10.0, 6.0, 12.0, 17.721586226130526] {
+        // Shell: the kernel offsets analytic faces only, and the walls along
+        // a spline are B-spline surfaces: a clear refusal, part unchanged.
+        let (mut p, a, b) = circle_and_spline(r, (0.0, 0.0), OriginPlane::YZ, &SESSION_PATH);
+        let len = square_len(&path_geom(&p, b));
+        sweep_of(&mut p, a, b, |_| {}).unwrap();
+        let end = p.body.find_face("Sweep1:End").unwrap();
+        let mut def = crate::part::shell::ShellFeature::new(1.5);
+        def.remove
+            .push(crate::part::shell::face_ref(&p.body, end, None).unwrap());
+        let e = p.add_shell(def).unwrap_err().to_string();
+        assert!(e.contains("free-form faces"), "{e}");
+        assert_eq!(p.features.len(), 1);
+        assert_vol(&p, PI * r * r * len, 5e-3);
+
+        // Fillet: the start cap's round edge, radius 1.
+        let (mut p, a, b) = circle_and_spline(r, (0.0, 0.0), OriginPlane::YZ, &SESSION_PATH);
+        sweep_of(&mut p, a, b, |_| {}).unwrap();
+        let before = volume(&p);
+        let edges: Vec<crate::part::blend::EdgeRef> = p
+            .body
+            .edges()
+            .filter_map(|(e, _)| crate::part::blend::edge_ref(&p.body, e))
+            .filter(|r| r.faces.iter().any(|f| f == "Sweep1:Start"))
+            .collect();
+        assert!(!edges.is_empty());
+        let rho: Real = 1.0;
+        p.add_blend(crate::part::blend::BlendFeature::fillet(edges, rho))
+            .unwrap();
+        // The spandrel (1 − π/4)ρ² turned about the axis at its centroid.
+        let removed = 2.0 * PI * (r - 0.2234 * rho) * (1.0 - PI / 4.0) * rho * rho;
+        assert_vol(&p, before - removed, 1e-3);
     }
 }

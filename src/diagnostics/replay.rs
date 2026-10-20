@@ -150,6 +150,70 @@ fn walk(text: &str, mut visit: impl FnMut(Step, &PartDocument) -> bool) -> Resul
     Ok(())
 }
 
+/// A feature command whose OK (or a field) failed: an `error` line with the
+/// feature it tried (`attempt`).
+#[derive(Clone, Debug)]
+pub struct Attempt {
+    /// Line in the journal (1-based).
+    pub line: usize,
+    /// The last state recorded before it: [`part_at`] of it is the part the
+    /// command saw.
+    pub state: Option<u64>,
+    /// The command (Inventor's name).
+    pub command: String,
+    /// The error the user saw.
+    pub text: String,
+    /// The feature (JSON, as [`crate::part::Feature`] serialises).
+    pub feature: Value,
+}
+
+/// Every failed attempt in journal text, in order.
+pub fn attempts(text: &str) -> Vec<Attempt> {
+    let mut state = None;
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match v.get("kind").and_then(Value::as_str) {
+            Some("state") => state = v.get("seq").and_then(Value::as_u64).or(state),
+            Some("error") => {
+                if let Some(f) = v.get("attempt") {
+                    out.push(Attempt {
+                        line: i + 1,
+                        state,
+                        command: str_of(&v, "command"),
+                        text: str_of(&v, "text"),
+                        feature: f.clone(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Adds an attempted feature to `part` as the command's OK does (a new id
+/// and name when it has none); the feature's error when it fails, with
+/// `part` unchanged.
+pub fn retry(part: &mut PartDocument, feature: &Value) -> Result<String, String> {
+    let mut v = feature.clone();
+    let kind = str_of(&v, "type");
+    if str_of(&v, "id").is_empty()
+        && let Some(o) = v.as_object_mut()
+    {
+        let id = part.next_feature_id(&kind);
+        o.insert("id".into(), Value::String(id.clone()));
+        o.insert("name".into(), Value::String(id));
+    }
+    let f: crate::part::Feature =
+        serde_json::from_value(v).map_err(|e| format!("the attempt is not a feature: {e}"))?;
+    let id = f.id().to_owned();
+    part.insert_feature_checked(f).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
 fn str_of(v: &Value, key: &str) -> String {
     v.get(key)
         .and_then(Value::as_str)

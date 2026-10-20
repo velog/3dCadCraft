@@ -3736,5 +3736,5 @@ pub use coil::{CoilMesh, CoilMotion, CoilZone, coil, coil_boolean, coil_mesh};
 
 mod sweep;
 pub use sweep::{
-    Frame, PathPiece, frame_point, loft, loft_frames, loft_to_point, path_points, sweep,
+    Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_to_point, path_points, sweep,
 };

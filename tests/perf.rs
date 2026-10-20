@@ -363,6 +363,48 @@ fn sweep_part(twist_deg: Real, square: bool) -> PartDocument {
     part
 }
 
+/// The owner's session (2026-10-20): a circle R17.72 on XY along an
+/// interpolation spline on YZ (a sweep along points, smooth B-spline walls).
+fn sweep_spline_part() -> PartDocument {
+    use cadcraft3d::part::{OriginPlane, PathRef, SweepFeature};
+    use cadcraft3d::sketch::Point2;
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::default();
+    let a = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    part.sketches[a]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 17.72)
+        .unwrap();
+    let b = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::YZ), &o)
+        .unwrap();
+    {
+        let s = &mut part.sketches[b].sketch;
+        let ids = [(0.0, 0.0), (0.0, 16.73), (9.20, 44.53), (36.42, 80.02)]
+            .iter()
+            .map(|(x, y)| s.add_point(Point2::new(*x, *y)))
+            .collect();
+        s.add_interp_spline(ids).unwrap();
+    }
+    let r = part.sketches[a].sketch.regions();
+    let path = PathRef::Sketch {
+        sketch: part.sketches[b].id.clone(),
+        curves: part.sketches[b]
+            .sketch
+            .entities()
+            .map(|(id, _)| id)
+            .collect(),
+    };
+    let def = SweepFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], path);
+    part.add_sweep(a, def).unwrap();
+    part
+}
+
 fn loft_part(n: usize) -> PartDocument {
     use cadcraft3d::part::{
         LoftFeature, LoftSection, OriginPlane, PlaneRef, WorkDef, WorkFeature, WorkPlaneDef,
@@ -1263,6 +1305,11 @@ fn speed_budgets() {
             "sweep a square 40 with a 90 deg twist (3 lofted pieces)",
             400.0,
             sweep_part(90.0, true),
+        ),
+        (
+            "sweep a circle R17.7 along a spline (owner's session)",
+            300.0,
+            sweep_spline_part(),
         ),
         (
             "loft square -> circle (2 sections, ruled)",

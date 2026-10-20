@@ -850,29 +850,64 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
                 slanted.push((k, fi, p, t, None));
             }
         }
-        let extra = match here.first().cloned().filter(|_| !at_end) {
-            None => None,
-            Some((side, seam)) => {
+        // The plane through `o` along `d` square to a side's surface: from its face nearest
+        // `near` (any face of a longer side is no guide here).
+        let seam_plane = |side: usize, o: Vec3, d: Vec3, near: Vec3| -> Result<(usize, Vec3, Vec3)> {
+            let fs = if side == 1 { &s1 } else { &s2 };
+            let nn = fs
+                .iter()
+                .filter_map(|f| project(f, near, None))
+                .min_by(|a, b| a.0.dist(near).total_cmp(&b.0.dist(near)))
+                .map(|x| x.1)
+                .ok_or_else(|| KernelError::Failed("seam normal".into()))?;
+            Ok((side, o, d.cross(nn).normalized().ok_or_else(|| KernelError::Failed("seam plane".into()))?))
+        };
+        let (a1, a2) = edge_sides(&vertex_edges(k));
+        let no_fit = || unsupported("the ball doesn't fit along the edge");
+        let s = match here.first().cloned().filter(|_| !at_end) {
+            None => solve(&a1, &a2, p, t, r, sigma, cusp, None, tol * 100.0).ok_or_else(no_fit)?,
+            Some((side, seam)) if matches!(seam.curve(), mt::Curve::Line(_)) => {
                 // The plane through the seam square to that side's surface.
                 let o = from_p3(seam.front().point());
                 let d = (from_p3(seam.back().point()) - o).normalized().ok_or_else(|| KernelError::Failed("seam".into()))?;
-                if !matches!(seam.curve(), mt::Curve::Line(_)) {
-                    return Err(unsupported("a curved seam where the edge chain turns"));
+                let extra = seam_plane(side, o, d, p)?;
+                solve(&a1, &a2, p, t, r, sigma, cusp, Some(extra), tol * 100.0).ok_or_else(no_fit)?
+            }
+            Some((side, seam)) => {
+                // 3DCadCraft patch: a curved seam (the walls of a sweep along a spline meet
+                // along B-spline curves). The contact must lie on the seam: the plane along the
+                // seam's tangent, square to the side, at the seam point nearest the last
+                // contact, until the contact stays on the seam (a fixed point: the contact is
+                // then the seam point itself, both on the side's surface).
+                use mt::{BoundedCurve, ParametricCurve, SearchNearestParameter};
+                let curve = seam.curve();
+                let (lo, hi) = curve.range_tuple();
+                let at_vertex = verts.get(k).is_some_and(|v| seam.back() == v);
+                let mut ts = if at_vertex { hi } else { lo };
+                // The seam is a crease between two faces of the side: the nearer of the two
+                // flips from one to the other across it and the solve never settles. The faces
+                // of one edge at the vertex both reach the seam (it bounds them).
+                let one = vertex_edges(k).last().copied().unwrap_or(0);
+                let (a1, a2) = edge_sides(&[one]);
+                let mut best: Option<Section> = None;
+                for _ in 0..16 {
+                    let o = from_p3(curve.subs(ts));
+                    let dv = curve.der(ts);
+                    let d = Vec3::new(dv.x, dv.y, dv.z).normalized().ok_or_else(|| KernelError::Failed("seam".into()))?;
+                    let extra = seam_plane(side, o, d, o)?;
+                    let s = solve(&a1, &a2, p, t, r, sigma, cusp, Some(extra), tol * 100.0).ok_or_else(no_fit)?;
+                    let q = if side == 1 { s.q1 } else { s.q2 };
+                    let next = curve.search_nearest_parameter(p3(q), ts, 100).ok_or_else(no_fit)?;
+                    best = Some(s);
+                    let off = from_p3(curve.subs(next)).dist(q);
+                    ts = next.clamp(lo.min(hi), lo.max(hi));
+                    if off <= size * 1e-8 {
+                        break;
+                    }
                 }
-                let fs = if side == 1 { &s1 } else { &s2 };
-                // The side's normal at the joint: from its face nearest the joint (any face of a
-                // longer side is no guide here).
-                let nn = fs
-                    .iter()
-                    .filter_map(|f| project(f, p, None))
-                    .min_by(|a, b| a.0.dist(p).total_cmp(&b.0.dist(p)))
-                    .map(|x| x.1)
-                    .ok_or_else(|| KernelError::Failed("seam normal".into()))?;
-                Some((side, o, d.cross(nn).normalized().ok_or_else(|| KernelError::Failed("seam plane".into()))?))
+                best.ok_or_else(no_fit)?
             }
         };
-        let (a1, a2) = edge_sides(&vertex_edges(k));
-        let s = solve(&a1, &a2, p, t, r, sigma, cusp, extra, tol * 100.0).ok_or_else(|| unsupported("the ball doesn't fit along the edge"))?;
         // A seam on the other side too must pass through that side's contact.
         if let Some((side, seam)) = here.get(1).filter(|_| !at_end) {
             let q = if *side == 1 { s.q1 } else { s.q2 };

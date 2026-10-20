@@ -133,28 +133,28 @@ pub fn sweep(
         guarded("sweep", || sk::sweep(&pl, &prof.region, &segs))?
     } else {
         let pts = path_points(path);
-        // A whole circle as one edge (one vertex) breaks the kernel's path
-        // sweep ("two same vertices"): arcs of a quarter turn at most, as
-        // for lofts.
-        let q = quartered(prof);
-        let body = guarded("sweep", || sk::sweep_path(&pl, &q.region, &pts))?;
-        return named(body, plane, &q.names, prefix);
+        // A whole circle is one edge with a single vertex: the kernel's
+        // point-path sweep builds walls between the segments' start vertices
+        // and panicked on it ("This wire is not simple"). Quarter arcs work.
+        let prof = split_closed_arcs(prof);
+        let body = guarded("sweep", || sk::sweep_path(&pl, &prof.region, &pts))?;
+        return named(body, plane, &prof.names, prefix);
     };
     named(body, plane, &prof.names, prefix)
 }
 
-/// `prof` with every arc split into pieces of at most a quarter turn (the
-/// names repeat per piece).
-fn quartered(prof: &ExactProfile) -> ExactProfile {
+/// The profile with every arc cut into pieces of at most a quarter turn
+/// (names repeated per piece, as [`super::profile`] does for B-splines).
+fn split_closed_arcs(prof: &ExactProfile) -> ExactProfile {
     let id = [[1.0, 0.0], [0.0, 1.0]];
     let zero = sg::Vec2::new(0.0, 0.0);
     let (on, hn) = split_names(prof);
     let (outer, counts) = map_loop(&prof.region.outer, id, zero, true);
     let mut names = expand(&on, &counts);
-    let mut holes = Vec::new();
-    for (h, hnames) in prof.region.holes.iter().zip(&hn) {
+    let mut holes = Vec::with_capacity(prof.region.holes.len());
+    for (h, n) in prof.region.holes.iter().zip(&hn) {
         let (segs, c) = map_loop(h, id, zero, true);
-        names.extend(expand(hnames, &c));
+        names.extend(expand(n, &c));
         holes.push(sg::Loop2 { segs });
     }
     ExactProfile {
@@ -165,6 +165,93 @@ fn quartered(prof: &ExactProfile) -> ExactProfile {
         names,
         starts: prof.starts.clone(),
     }
+}
+
+/// Where a profile swept along `path` (kept at its angle to the path, as
+/// the kernel does: rotation-minimising frames) would fold over itself: the
+/// first path station whose bend radius is smaller than the profile's reach
+/// towards the bend's centre. `Err` names the place in user terms (Inventor
+/// refuses self-intersecting sweeps too).
+pub fn check_bend(plane: &Plane, prof: &ExactProfile, path: &[PathPiece]) -> Result<(), String> {
+    let pts: Vec<Point3> = path_points(path)
+        .into_iter()
+        .map(|p| Point3::new(p.x, p.y, p.z))
+        .collect();
+    let n = pts.len();
+    if n < 3 {
+        return Ok(());
+    }
+    let start = pts[0];
+    // Points around the profile's boundary, as vectors from the path start.
+    let mut q: Vec<Vector3> = Vec::new();
+    for lp in std::iter::once(&prof.region.outer).chain(&prof.region.holes) {
+        for s in &lp.segs {
+            for j in 0..16 {
+                let p = s.point_at(j as Real / 16.0);
+                q.push(plane.point_at(p.x, p.y) - start);
+            }
+        }
+    }
+    let size = q.iter().map(|v| v.norm()).fold(0.0, Real::max).max(1e-9);
+    let tangent = |i: usize| -> Option<Vector3> {
+        let a = pts[i.saturating_sub(1)];
+        let b = pts[(i + 1).min(n - 1)];
+        (b - a).try_normalize(1e-12)
+    };
+    let reflect = |v: Vector3, w: Vector3| -> Vector3 {
+        let c = w.dot(&w);
+        if c > 1e-24 {
+            v - w * (2.0 / c * w.dot(&v))
+        } else {
+            v
+        }
+    };
+    let Some(mut t) = tangent(0) else {
+        return Ok(());
+    };
+    let mut along = 0.0;
+    for i in 1..n - 1 {
+        // Carry the profile from station i - 1 to i (double reflection).
+        let v1 = pts[i] - pts[i - 1];
+        along += v1.norm();
+        let Some(tn) = tangent(i) else { continue };
+        let tl = reflect(t, v1);
+        let v2 = tn - tl;
+        for v in q.iter_mut() {
+            *v = reflect(reflect(*v, v1), v2);
+        }
+        t = tn;
+        // The bend at station i: the circle through it and its neighbours
+        // (a corner is mitred by the kernel, not bent).
+        let (a, b) = (pts[i - 1] - pts[i], pts[i + 1] - pts[i]);
+        let (la, lb) = (a.norm(), b.norm());
+        if la < 1e-6 || lb < 1e-6 {
+            continue;
+        }
+        let turn = (-a.dot(&b) / (la * lb)).clamp(-1.0, 1.0).acos();
+        if turn > 0.35 || turn < 1e-9 {
+            continue;
+        }
+        let axb = a.cross(&b);
+        let d = 2.0 * axb.norm_squared();
+        if d < 1e-30 {
+            continue;
+        }
+        let c = (b * a.norm_squared() - a * b.norm_squared()).cross(&axb) / d;
+        let r = c.norm();
+        let Some(towards) = c.try_normalize(1e-15) else {
+            continue;
+        };
+        let reach = q.iter().map(|v| v.dot(&towards)).fold(Real::MIN, Real::max);
+        if reach >= r - 1e-6 * size {
+            return Err(format!(
+                "the profile is larger than the path's bend: {along:.2} mm along the path it \
+                 bends with radius {r:.2} mm, but the profile reaches {reach:.2} mm towards the \
+                 bend, so the sweep would cross itself (use a smaller profile or a gentler path)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Every point of a path, in order (arcs within 0.01 mm of their chords).
