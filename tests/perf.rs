@@ -1264,7 +1264,7 @@ fn speed_budgets() {
             p.add_pattern(pattern_grid(10, 10, 20.0)).unwrap();
         }),
     ));
-    // Large patterns (docs/PERF.md, "Масиви с хиляди копия"): the whole part
+    // Large patterns (docs/PERF.md, log: "patterns with thousands of copies"): the whole part
     // is rebuilt (empty cache; the plate and its hole take milliseconds),
     // plus the preview's edge polylines (what the dialog waits for; OK
     // reuses the preview's part).

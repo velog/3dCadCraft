@@ -1041,7 +1041,7 @@ impl CadCraftApp {
                 let location = |in_lib: bool| if in_lib { "Both" } else { "Document" };
                 ui.add_enabled(false, egui::Label::new("Lighting"))
                     .on_disabled_hover_text(
-                        "Lighting styles — предстои (docs/FEATURES.md, раздел 2.15)",
+                        "Lighting styles — planned (docs/FEATURES.md, section 2.15)",
                     );
                 egui::CollapsingHeader::new("Material")
                     .default_open(true)
@@ -1095,7 +1095,7 @@ impl CadCraftApp {
                         todo.push(Do::Purge);
                     }
                     ui.add_enabled(false, egui::Button::new("Save to Library"))
-                        .on_disabled_hover_text("Предстои — docs/FEATURES.md, раздел 2.15");
+                        .on_disabled_hover_text("Planned — docs/FEATURES.md, section 2.15");
                 });
             });
         self.mat.show_styles = open;

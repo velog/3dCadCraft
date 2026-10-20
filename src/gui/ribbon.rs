@@ -967,7 +967,7 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
         &Kind::Planned(section) => {
             icon_button(ui, cmd.icon, cmd.label, cmd.size, false, false, false).on_hover_text(
                 name(&format!(
-                    "Предстои — docs/FEATURES.md, раздел {section}{key}"
+                    "Planned — docs/FEATURES.md, section {section}{key}"
                 )),
             );
             None

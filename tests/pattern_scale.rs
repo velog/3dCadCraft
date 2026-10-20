@@ -1,5 +1,5 @@
-//! Feature patterns of many instances (docs/PERF.md, "Масиви с хиляди
-//! копия"): a through hole r1 on a 5n × 5n × 3 plate patterned n × n at 5,
+//! Feature patterns of many instances (docs/PERF.md, log entry
+//! "patterns with thousands of copies"): a through hole r1 on a 5n × 5n × 3 plate patterned n × n at 5,
 //! a circular pattern of holes on a ring, a pattern of joined bosses, and
 //! a fillet after 2500 holes. Each checks that the exact kernel
 //! built it (one valid body), the volume against the analytic value within

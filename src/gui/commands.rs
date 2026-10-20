@@ -280,7 +280,7 @@ impl Command {
     /// `None` when it can.
     pub fn unavailable(&self, env: Env) -> Option<String> {
         if let Some(s) = self.planned {
-            Some(format!("Предстои — docs/FEATURES.md, раздел {s}"))
+            Some(format!("Planned — docs/FEATURES.md, section {s}"))
         } else if self.held {
             self.key.map(|k| format!("Hold {k} and drag"))
         } else if !self.envs.has(env) {

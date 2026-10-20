@@ -139,7 +139,7 @@ pub struct BlendFeature {
     /// Equations of the numeric fields.
     #[serde(default, skip_serializing_if = "FeatureParams::is_empty")]
     pub params: FeatureParams,
-    /// **Cone at small rounds** (`docs/spec/2.5-chamfer.md` §2б): where the
+    /// **Cone at small rounds** (`docs/spec/2.5-chamfer.md` §2b): where the
     /// blend is larger than an arc of the loop, follow the arc as a cone up
     /// to its apex; off: the neighbouring planes run on through the corner
     /// and cut the round.

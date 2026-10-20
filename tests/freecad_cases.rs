@@ -1,5 +1,5 @@
 //! Test recipes from FreeCAD's issue tracker (`docs/FREECAD_ISSUES.md`,
-//! "Тестове, които трябва да добавим"; the recipe number and the FreeCAD
+//! "Tests we should add"; the recipe number and the FreeCAD
 //! issue are in each test's comment). Only the issue *text* was used —
 //! never FreeCAD/OCCT code. Cases for features we do not have yet (Pattern,
 //! Hole, Loft, Sphere primitives…) come with those features.

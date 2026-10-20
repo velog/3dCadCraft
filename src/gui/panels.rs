@@ -163,7 +163,7 @@ impl CadCraftApp {
                                 self.selection == Selection::Document(d.id),
                                 format!("{}  ({:?})", d.name, d.data.kind()),
                             );
-                            if r.on_hover_text("Отваряне на още документи — предстои")
+                            if r.on_hover_text("Opening more documents — planned")
                                 .clicked()
                             {
                                 cmds.push(BrowserCmd::Select(Selection::Document(d.id)));
@@ -1055,7 +1055,7 @@ impl CadCraftApp {
                             ui.label(format!("Assembly · {} occurrence(s)", a.occurrences.len()))
                         }
                     };
-                    ui.label(RichText::new("Редакция на още документи — предстои").weak());
+                    ui.label(RichText::new("Editing more documents — planned").weak());
                 }
             }
         });
