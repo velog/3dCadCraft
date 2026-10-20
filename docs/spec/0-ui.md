@@ -1,315 +1,315 @@
-# 0. Интерфейс, визия, поведение и насочване
+# 0. Interface, look, behaviour and guidance
 
-Изисквания към цялото приложение. Разположението на екрана, мишката, клавишите и речникът за мигриращи потребители са в [UI.md](../UI.md). Тук е описано **как изглежда** и **как се държи** всичко и **как програмата води потребителя**.
+Requirements for the whole application. The screen layout, the mouse, the keys and the glossary for migrating users are in [UI.md](../UI.md). This file describes **how** everything **looks**, **how it behaves** and **how the program guides the user**.
 
-Статус: ✅ готово · 🟡 частично · ⬜ предстои.
+Status: ✅ done · 🟡 partial · ⬜ to do.
 
-## 1. Принципи
+## 1. Principles
 
-1. **Работният поток на Inventor, собствена визия.** Потребител на Inventor трябва да намира командите на същото място, със същите имена и в същия ред на кликовете. Иконите, цветовете и графиката са собствени.
-2. **Видимо състояние.** Във всеки момент се вижда в какъв режим е програмата, какво се очаква като следваща стъпка и какво ще стане при клик (преглед, знак до курсора).
-3. **Без изненади и без загуба на работа.** Неуспешна операция не променя модела (правило 5 в `CLAUDE.md`). Всяка промяна се отменя с Undo. Нищо не се изтрива или „поправя“ тихо.
-4. **Една потребителска стъпка е една стъпка в Undo.** Непрекъснатите жестове (влачене, въртене на стойност) се сливат в една стъпка.
-5. **Без модални прозорци, освен където са неизбежни.** Настройките са в панела Properties и се прилагат на живо. Модални са само Edit Dimension и въпросите за потвърждение.
-6. **Обяснимост.** Всяка недостъпна команда казва защо. Всяка грешка казва какво не е наред и с какво. Всяко предупреждение е закачено за елемента, който го причинява.
+1. **Inventor's workflow, our own look.** An Inventor user must find the commands in the same place, with the same names and in the same click order. The icons, colours and graphics are our own.
+2. **Visible state.** At every moment it is visible which mode the program is in, what is expected as the next step and what a click will do (preview, glyph next to the cursor).
+3. **No surprises and no lost work.** A failed operation does not change the model (rule 5 in `CLAUDE.md`). Every change can be undone with Undo. Nothing is deleted or "fixed" silently.
+4. **One user step is one Undo step.** Continuous gestures (dragging, spinning a value) are merged into one step.
+5. **No modal windows, except where unavoidable.** Settings are in the Properties panel and apply live. Only Edit Dimension and confirmation questions are modal.
+6. **Explainability.** Every unavailable command says why. Every error says what is wrong and with what. Every warning is attached to the item that causes it.
 
-## 2. Визуален език
+## 2. Visual language
 
-### 2.1 Обща визия
+### 2.1 General look
 
-| Елемент | Изискване | Статус |
+| Item | Requirement | Status |
 |---|---|---|
-| Тема на интерфейса | тъмни панели (лента, дърво, свойства, лента на състоянието); светъл, неутрален фон на изгледа, за да изпъкват моделът и скицата | ✅ |
-| Тяло | синьо-сив метал, плавно осветяване, тъмни ръбове | ✅ |
-| Обърнати (вътрешни) стени | **червени**. Това е видим сигнал за грешка в ориентацията, никога нормално състояние | ✅ |
-| Мрежа (grid) на скицата | фини линии в равнината на скицата, с ос X червена и ос Y зелена; триада в началото | ✅ |
-| Основни равнини | полупрозрачни, с осветяване при посочване | ✅ |
-| ViewCube | горе вдясно; клик върху стена дава стандартен изглед; Home | ✅ |
-| Сглаждане | MSAA 4× където хардуерът позволява | ✅ |
-| Висок DPI | интерфейсът следва мащаба на системата | ✅ (egui) |
-| Тема по избор (светла/тъмна) и собствена цветова схема | като In-canvas Color Scheme на Inventor | ⬜ |
-| **Икони на командите** | собствени векторни икони (`gui/icons.rs`), двуцветни (контур + акцент, точки в оранжево, премахвано в червено); бледи за недостъпни команди | ✅ |
-| **Лента (ribbon)** | както в Inventor: големи бутони (икона над текст), колони по три малки бутона (икона + текст), колони само с икони за ограниченията (името е в подсказката); падащи бутони показват иконата на текущия вариант; превключвателите (Construction, Relax, DOF) са натиснати, докато са включени; всички панели на таба се побират в 1400 px | ✅ |
-| Икони в дървото на модела | проект, детайл, Origin, равнини, оси, кутия, операции, скици | ✅ |
+| Interface theme | dark panels (ribbon, browser, properties, status bar); a light, neutral view background so the model and the sketch stand out | ✅ |
+| Body | blue-grey metal, smooth lighting, dark edges | ✅ |
+| Reversed (inner) faces | **red**. This is a visible sign of an orientation bug, never a normal state | ✅ |
+| Sketch grid | fine lines in the sketch plane, with a red X axis and a green Y axis; a triad at the origin | ✅ |
+| Origin planes | semi-transparent, highlighted when pointed at | ✅ |
+| ViewCube | top right; a click on a face gives a standard view; Home | ✅ |
+| Anti-aliasing | MSAA 4× where the hardware allows it | ✅ |
+| High DPI | the interface follows the system scale | ✅ (egui) |
+| Selectable theme (light/dark) and a custom colour scheme | like Inventor's In-canvas Color Scheme | ⬜ |
+| **Command icons** | our own vector icons (`gui/icons.rs`), two-coloured (outline + accent, points in orange, removed parts in red); faded for unavailable commands | ✅ |
+| **Ribbon** | as in Inventor: large buttons (icon above text), columns of three small buttons (icon + text), icon-only columns for the constraints (the name is in the tooltip); drop-down buttons show the icon of the current variant; toggles (Construction, Relax, DOF) stay pressed while on; all panels of a tab fit in 1400 px | ✅ |
+| Model browser icons | project, part, Origin, planes, axes, box, features, sketches | ✅ |
 
-### 2.2 Цветове на скицата (значенията са като в Inventor)
+### 2.2 Sketch colours (the meanings are as in Inventor)
 
-| Състояние | Цвят | Статус |
+| State | Colour | Status |
 |---|---|---|
-| Недодефинирана скица / крива | **синьо** | ✅ |
-| Напълно дефинирана скица | **зелено** (цялата скица) | ✅ |
-| Напълно дефинирана отделна крива | **зелено** още преди цялата скица да е дефинирана | ✅ |
-| Излишно ограничение (redundant) | **оранжево** | ✅ |
-| Противоречие, solver-ът не намира решение | **червено**; скицата не се променя | ✅ |
-| Проектирана (референтна) геометрия | **оранжев** пунктир; точките ѝ са оранжеви | ✅ |
-| Неактивна скица (не се редактира) | сиво | ✅ |
-| Посочено / избрано / „горещо“ | **оранжево** осветяване и по-дебела линия | ✅ |
+| Under-constrained sketch / curve | **blue** | ✅ |
+| Fully constrained sketch | **green** (the whole sketch) | ✅ |
+| Fully constrained individual curve | **green** even before the whole sketch is constrained | ✅ |
+| Redundant constraint | **orange** | ✅ |
+| Conflict, the solver finds no solution | **red**; the sketch does not change | ✅ |
+| Projected (reference) geometry | **orange** dashed; its points are orange | ✅ |
+| Inactive sketch (not being edited) | grey | ✅ |
+| Pointed at / selected / "hot" | **orange** highlight and a thicker line | ✅ |
 
-### 2.3 Стилове на линиите
+### 2.3 Line styles
 
-| Вид | Вид на линията | Статус |
+| Kind | Line type | Status |
 |---|---|---|
-| Normal | плътна | ✅ |
-| Construction | пунктир; никога не образува профил | ✅ |
-| Centerline | щрих-точка; ос за Revolve | ✅ |
-| Точка | кръгче | ✅ |
-| Фиксирана точка | плътен черен квадрат | ✅ |
-| Center point (точка за отвори) | кръстче | ⬜ |
-| Контролен полигон на сплайн | тънък сив пунктир | ✅ |
+| Normal | solid | ✅ |
+| Construction | dashed; never forms a profile | ✅ |
+| Centerline | dash-dot; axis for Revolve | ✅ |
+| Point | small circle | ✅ |
+| Fixed point | solid black square | ✅ |
+| Center point (point for holes) | small cross | ⬜ |
+| Spline control polygon | thin grey dashed | ✅ |
 
-### 2.4 Знаци (glyphs) и етикети
+### 2.4 Glyphs and labels
 
-| Знак | Значение | Статус |
+| Glyph | Meaning | Status |
 |---|---|---|
-| `H` `V` `//` `90°` `=` `T` `col` `conc` `sym` `mid` `on` `off` | геометрични ограничения (Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Collinear, Concentric, Symmetric, Midpoint, точка върху крива, Offset). Показват се до геометрията, F8 и F9 ги показват и скриват | ✅ |
-| Етикет на размер | стойност с 2 знака; `Ø` диаметър, `R` радиус, `°` ъгъл; driven е **в скоби** | ✅ |
-| Знаци за степени на свобода | кръст от стрелки (свободна точка), двойна стрелка (плъзгане по посока), дъгова стрелка (въртене), радиална (свободен радиус) | ✅ |
-| Знак до курсора при чертане | какво ще се създаде: „coincident“, „on curve“, „midpoint“, H, V, „90°“, „//“ | ✅ |
-| Етикет на размер при ред Name / Expression / Tolerance | показване като име, израз, толеранс или точна стойност (Value / Name / Expression / Tolerance / Precise Value) | ⬜ |
+| `H` `V` `//` `90°` `=` `T` `col` `conc` `sym` `mid` `on` `off` | geometric constraints (Horizontal, Vertical, Parallel, Perpendicular, Equal, Tangent, Collinear, Concentric, Symmetric, Midpoint, point on curve, Offset). They are shown next to the geometry; F8 and F9 show and hide them | ✅ |
+| Dimension label | value with 2 decimals; `Ø` diameter, `R` radius, `°` angle; driven is **in parentheses** | ✅ |
+| Degree-of-freedom glyphs | cross of arrows (free point), double arrow (sliding along a direction), arc arrow (rotation), radial (free radius) | ✅ |
+| Glyph next to the cursor while drawing | what will be created: "coincident", "on curve", "midpoint", H, V, "90°", "//" | ✅ |
+| Dimension label in Name / Expression / Tolerance mode | shown as name, expression, tolerance or exact value (Value / Name / Expression / Tolerance / Precise Value) | ⬜ |
 
-### 2.5 Прегледи (preview)
+### 2.5 Previews
 
-| Ситуация | Вид | Статус |
+| Situation | Look | Status |
 |---|---|---|
-| Чертане (rubber band) | пунктир в цвета на скицата | ✅ |
-| Trim / Extend / Split | засегнатата крива в червено | ✅ |
-| Offset, Mirror, Move, Copy, Rotate, Scale, Stretch, масиви | бъдещата геометрия, плътна линия | ✅ |
-| Региони в скица | слабо синьо запълване на затворените области | ✅ |
-| Избор на профил (Extrude) | предлаганите региони в бледозелено, избраните в наситено зелено | ✅ |
-| Бъдещо 3D тяло | оранжеви ръбове на живо, докато се сменят настройките | ✅ |
-| Невъзможен резултат | прегледът изчезва и в диалога се появява причината | ✅ |
+| Drawing (rubber band) | dashed in the sketch colour | ✅ |
+| Trim / Extend / Split | the affected curve in red | ✅ |
+| Offset, Mirror, Move, Copy, Rotate, Scale, Stretch, patterns | the future geometry, solid line | ✅ |
+| Regions in a sketch | faint blue fill of the closed areas | ✅ |
+| Profile selection (Extrude) | the offered regions in pale green, the selected ones in saturated green | ✅ |
+| Future 3D body | orange edges, live while the settings change | ✅ |
+| Impossible result | the preview disappears and the reason appears in the dialog | ✅ |
 
-### 2.6 Панел Properties (по образеца на Inventor)
+### 2.6 Properties panel (modelled on Inventor)
 
-| Изискване | Статус |
+| Requirement | Status |
 |---|---|
-| Заглавна лента: икона + име на избраното (или на командата) + бутон `?` (F1) | ✅ (Extrude, Revolve, избрана операция) |
-| Секции със **сгъваеми заглавия** (Input Geometry, Behavior, Output, Advanced Properties…), запомнени отворени/затворени | ✅ |
-| Редове в **две колони**: етикет вляво (подравнен), поле вдясно, еднаква ширина на полетата | 🟡 диалозите на операциите ✅; ⬜ свойствата на скицата |
-| Числовите полета показват единицата и приемат израз; при грешка — червена рамка и подсказка (виж 2.7) | ✅ (виж 2.7). Всички полета, вкл. Box, диалога на Fillet/Chamfer, масивите и настройките на инструментите (`valuefield::ExprValue`, визуално: Box Length `100/2`, Spacing 45) |
-| Избор между варианти — **бутони с икони** в група (като Direction в Inventor), не радиобутони | ✅ (Direction, Output, Operation) |
-| Долу: **OK / Cancel** (и „+“ Apply за следваща операция, където има смисъл) | 🟡 OK / Cancel ✅; ⬜ Apply „+“ |
-| Предупрежденията — в рамка с цвета на предупреждение, над бутоните | ✅ |
+| Title bar: icon + name of the selection (or of the command) + `?` button (F1) | ✅ (Extrude, Revolve, selected feature) |
+| Sections with **collapsible headers** (Input Geometry, Behavior, Output, Advanced Properties…), open/closed state remembered | ✅ |
+| Rows in **two columns**: label on the left (aligned), field on the right, equal field widths | 🟡 the feature dialogs ✅; ⬜ the sketch properties |
+| Numeric fields show the unit and accept an expression; on error — red frame and tooltip (see 2.7) | ✅ (see 2.7). All fields, incl. Box, the Fillet/Chamfer dialog, the patterns and the tool settings (`valuefield::ExprValue`, visually: Box Length `100/2`, Spacing 45) |
+| A choice between variants — **icon buttons** in a group (like Direction in Inventor), not radio buttons | ✅ (Direction, Output, Operation) |
+| At the bottom: **OK / Cancel** (and "+" Apply for the next feature where it makes sense) | 🟡 OK / Cancel ✅; ⬜ Apply "+" |
+| Warnings — in a frame with the warning colour, above the buttons | ✅ |
 
-### 2.7 Полета за стойности (по образеца на Inventor)
+### 2.7 Value fields (modelled on Inventor)
 
-Всяко числово поле — в Properties, в редакцията върху размер и в мини-лентата — е **поле за израз**, не само за число.
+Every numeric field — in Properties, in the in-place dimension edit and in the mini-toolbar — is an **expression field**, not just a number field.
 
-| Изискване | Статус |
+| Requirement | Status |
 |---|---|
-| Приема израз: числа, `+ - * / ^ ( )`, функции, единици (`20*2`, `40 mm / 2`, `width + 5`) — същият език като в Parameters ([0.5](0.5-parameters.md)) | ✅ (Extrude, Revolve; размерите — в редакцията върху размера) |
-| Показва единицата; голо число получава единицата на полето | ✅ |
-| Невалиден израз — червен текст/рамка и причината в подсказката; стойността не се прилага | 🟡 червен текст + причина в подсказката ✅; след Enter полето се връща към старата стойност (Inventor оставя червения текст за поправка) |
-| Израз с име на параметър пази връзката: полето показва `fx:` и параметърът на операцията получава уравнението | ✅ |
-| Ново име в полето (`dist = 20`) създава параметър с това име | ✅ (unit тест; визуално — предстои) |
-| Стрелка `>` до полето отваря меню: **Measure** (измерва разстояние/ъгъл в изгледа), **Show Dimensions** (клик върху размер вмъква името му), **Tolerance** (за размери), **List Parameters** (списък на параметрите — избор вмъква името), **Recently Used** (последните стойности) | 🟡 List Parameters ✅, Recently Used ✅; ⬜ Measure, Show Dimensions, Tolerance |
-| Клик върху показан размер в изгледа, докато полето е активно, вмъква името на размера | ⬜ |
-| Enter прилага, Esc връща старата стойност | ✅ |
+| Accepts an expression: numbers, `+ - * / ^ ( )`, functions, units (`20*2`, `40 mm / 2`, `width + 5`) — the same language as in Parameters ([0.5](0.5-parameters.md)) | ✅ (Extrude, Revolve; dimensions — in the in-place dimension edit) |
+| Shows the unit; a bare number gets the field's unit | ✅ |
+| Invalid expression — red text/frame and the reason in the tooltip; the value is not applied | 🟡 red text + reason in the tooltip ✅; after Enter the field goes back to the old value (Inventor leaves the red text for correction) |
+| An expression with a parameter name keeps the link: the field shows `fx:` and the feature's parameter gets the equation | ✅ |
+| A new name in the field (`dist = 20`) creates a parameter with that name | ✅ (unit test; visual — to do) |
+| A `>` arrow next to the field opens a menu: **Measure** (measures a distance/angle in the view), **Show Dimensions** (a click on a dimension inserts its name), **Tolerance** (for dimensions), **List Parameters** (list of parameters — a choice inserts the name), **Recently Used** (the last values) | 🟡 List Parameters ✅, Recently Used ✅; ⬜ Measure, Show Dimensions, Tolerance |
+| A click on a displayed dimension in the view, while the field is active, inserts the dimension's name | ⬜ |
+| Enter applies, Esc restores the old value | ✅ |
 
-### 2.8 Преглед и манипулатори — задължително правило
+### 2.8 Preview and manipulators — mandatory rule
 
-**Всяка команда, при която е възможно, има преглед на живо и манипулатор** — стрелка или дъга, която се дърпа с мишката в изгледа и сменя размера (както в Inventor). Стойността при дърпане се вижда до курсора и се вписва в полето в Properties; въведена стойност мести манипулатора. Стъпка при дърпане: 1 mm / 1° / 5° (ъгли на Revolve, както в Inventor); с Ctrl — по-фина. ⬜ Прихващане към върхове и стени (To). Манипулаторите се виждат в диалога на командата (промяната е на живо) и при избрана операция в дървото (прилага се при пускане, една стъпка за Undo). Влаченето заменя уравнението на полето с число.
+**Every command for which it is possible has a live preview and a manipulator** — an arrow or an arc that is dragged with the mouse in the view and changes the size (as in Inventor). The value while dragging is shown next to the cursor and is written into the field in Properties; a typed value moves the manipulator. Drag step: 1 mm / 1° / 5° (Revolve angles, as in Inventor); with Ctrl — finer. ⬜ Snapping to vertices and faces (To). The manipulators are visible in the command dialog (the change is live) and when a feature is selected in the browser (applied on release, one Undo step). Dragging replaces the field's equation with a number.
 
-| Команда | Манипулатор | Статус |
+| Command | Manipulator | Status |
 |---|---|---|
-| Extrude | стрелка по нормалата за Distance A (и втора за B при Asymmetric); дъга за Taper | 🟡 стрелки за Distance A/B ✅, дръжка за Taper ✅ (линейна, не дъга); ⬜ при From/To/To Next |
-| Revolve | дъга около оста за ъгъла (втора при Asymmetric) | ✅ |
-| Fillet / Chamfer (3D) | стрелка за радиуса/разстоянието | ⛔ 2.4, 2.5 |
-| Hole | стрелка за дълбочината | ⛔ 2.3 |
-| Размери в скицата | влачене на геометрията (вече има) | ✅ |
-| Мини-лента в изгледа: полето за стойност + OK/Cancel до манипулатора | | ⬜ |
+| Extrude | arrow along the normal for Distance A (and a second one for B with Asymmetric); arc for Taper | 🟡 arrows for Distance A/B ✅, grip for Taper ✅ (linear, not an arc); ⬜ for From/To/To Next |
+| Revolve | arc about the axis for the angle (a second one with Asymmetric) | ✅ |
+| Fillet / Chamfer (3D) | arrow for the radius/distance | ⛔ 2.4, 2.5 |
+| Hole | arrow for the depth | ⛔ 2.3 |
+| Sketch dimensions | dragging the geometry (already exists) | ✅ |
+| Mini-toolbar in the view: the value field + OK/Cancel next to the manipulator | | ⬜ |
 
-### 2.9 Диалог на командата — отделен от Properties
+### 2.9 Command dialog — separate from Properties
 
-Настройките на команда (масив, Extrude, Revolve, Fillet…) **не се смесват** със свойствата на избраното (скица, операция). Докато командата е активна, панелът Properties показва **само нейния диалог**, както в Inventor:
+The settings of a command (pattern, Extrude, Revolve, Fillet…) are **not mixed** with the properties of the selection (sketch, feature). While the command is active, the Properties panel shows **only its dialog**, as in Inventor:
 
-| Изискване | Статус |
+| Requirement | Status |
 |---|---|
-| Заглавна лента: икона, име на командата, `?` | ✅ (Extrude, Revolve, масивите в скица) |
-| **Селектори** за входните данни (Geometry, Direction, Centre, Path, Base, Targets, Profile, Axis…): ред с име и състояние („Select“, „2 curve(s)“, „Line“); активният е оцветен и има `>`; щракванията в изгледа отиват в него | ✅ (масиви; Extrude/Revolve — Profiles/Axis) |
-| След попълване фокусът минава автоматично на следващия празен селектор; клик върху ред го прави активен | ✅ (масиви) |
-| Избраното преди командата става първият вход (pre-selection) | ✅ |
-| Нищо не се създава преди **OK**; прегледът се вижда, щом входът е пълен; Enter = следващ селектор / OK; Esc = Cancel | ✅ (масиви); 🟡 Face Draft, Shell (§4.1) |
-| Грешка/невъзможен резултат — жълта рамка над OK, OK е неактивен | ✅ |
-| Лентата на състоянието казва какво чака активният селектор | ✅ |
-| Всички останали команди на скицата (Move, Copy, Rotate, Mirror, Offset, Fillet…) — със същия модел | 🟡 Move, Copy, Rotate, Mirror, Scale, Stretch, Offset, Polygon, Fillet, Chamfer и Edit Pattern имат свой диалог (заглавие, стъпките като селектори, опции, Done); свойствата на скицата се скриват. ✅ точни стойности за Move/Copy/Rotate (§2.10) |
+| Title bar: icon, command name, `?` | ✅ (Extrude, Revolve, sketch patterns) |
+| **Selectors** for the inputs (Geometry, Direction, Centre, Path, Base, Targets, Profile, Axis…): a row with a name and a state ("Select", "2 curve(s)", "Line"); the active one is coloured and has `>`; clicks in the view go into it | ✅ (patterns; Extrude/Revolve — Profiles/Axis) |
+| Once filled, the focus moves automatically to the next empty selector; a click on a row makes it active | ✅ (patterns) |
+| What was selected before the command becomes the first input (pre-selection) | ✅ |
+| Nothing is created before **OK**; the preview is shown as soon as the input is complete; Enter = next selector / OK; Esc = Cancel | ✅ (patterns); 🟡 Face Draft, Shell (§4.1) |
+| Error/impossible result — yellow frame above OK, OK is disabled | ✅ |
+| The status bar says what the active selector is waiting for | ✅ |
+| All other sketch commands (Move, Copy, Rotate, Mirror, Offset, Fillet…) — with the same model | 🟡 Move, Copy, Rotate, Mirror, Scale, Stretch, Offset, Polygon, Fillet, Chamfer and Edit Pattern have their own dialog (title, the steps as selectors, options, Done); the sketch properties are hidden. ✅ precise values for Move/Copy/Rotate (§2.10) |
 
-### 2.10 Динамично въвеждане (Heads-Up Display)
+### 2.10 Dynamic input (Heads-Up Display)
 
-В Inventor команди като Line, Circle и Rectangle показват полета за стойности до курсора, докато се чертае. Пишете цифри в полето, Tab минава към следващото, а Enter поставя точката. Въведената стойност заключва геометрията и (при включено „Create dimensions from input values“) става размер.
+In Inventor, commands such as Line, Circle and Rectangle show value fields next to the cursor while drawing. You type digits into the field, Tab moves to the next one, and Enter places the point. A typed value locks the geometry and (with "Create dimensions from input values" on) becomes a dimension.
 
-| Поведение | Inventor | Статус |
+| Behaviour | Inventor | Status |
 |---|---|---|
-| Line: Length + Angle след първата точка | полета до курсора; Tab ги сменя | ✅ |
-| Circle (Center Point): Diameter | едно поле | ✅ |
-| Rectangle (Two Point, Center): Width + Height | две полета | ✅ |
-| Писане без кликване в поле | цифрите отиват в активното поле | ✅ (цифри, `.`, `,`, `-`, Backspace) |
-| Tab / Shift+Tab | следващо / предишно поле; въведеното се заключва | ✅ |
-| Enter | поставя точката със заключените стойности | ✅ |
-| Esc | първо изчиства въведеното, после командата | ✅ |
-| Създаване на размери от въведеното | опция в Application Options | 🟡 винаги включено; ъгълът става Angle спрямо предишната линия на веригата, 0/90° → Horizontal/Vertical; ъгъл на самостоятелна линия само я поставя (⬜ размер спрямо оста X) |
-| Полета X/Y за първата точка (координати) | съществуват | ⬜ |
-| Move / Copy: Delta X, Delta Y след базовата точка (Inventor: Precise Input) | съществува | ✅ (до курсора и в диалога: Values + Apply) |
-| Rotate: Angle след референтната точка | поле Angle в диалога | ✅ (до курсора и в диалога) |
-| X / Y на първата точка (Line, Circle, Rectangle, Point, Move/Copy/Rotate) | абсолютни координати в скицата | ✅ (само поставят точката, без размери) |
-| ↑ в поле: последната въведена стойност за това поле | (наше удобство) | ✅ |
-| Arc, Polygon, Slot | съществуват за част от тях | ⬜ |
-| Включване/изключване на HUD | Application Options → Sketch | ⬜ |
+| Line: Length + Angle after the first point | fields next to the cursor; Tab switches between them | ✅ |
+| Circle (Center Point): Diameter | one field | ✅ |
+| Rectangle (Two Point, Center): Width + Height | two fields | ✅ |
+| Typing without clicking into a field | the digits go into the active field | ✅ (digits, `.`, `,`, `-`, Backspace) |
+| Tab / Shift+Tab | next / previous field; the typed value is locked | ✅ |
+| Enter | places the point with the locked values | ✅ |
+| Esc | first clears what was typed, then the command | ✅ |
+| Creating dimensions from the input | an option in Application Options | 🟡 always on; the angle becomes an Angle to the previous line of the chain, 0/90° → Horizontal/Vertical; the angle of a standalone line only places it (⬜ dimension to the X axis) |
+| X/Y fields for the first point (coordinates) | exist | ⬜ |
+| Move / Copy: Delta X, Delta Y after the base point (Inventor: Precise Input) | exists | ✅ (next to the cursor and in the dialog: Values + Apply) |
+| Rotate: Angle after the reference point | Angle field in the dialog | ✅ (next to the cursor and in the dialog) |
+| X / Y of the first point (Line, Circle, Rectangle, Point, Move/Copy/Rotate) | absolute coordinates in the sketch | ✅ (they only place the point, no dimensions) |
+| ↑ in a field: the last value typed into this field | (our convenience) | ✅ |
+| Arc, Polygon, Slot | exist for some of them | ⬜ |
+| Turning the HUD on/off | Application Options → Sketch | ⬜ |
 
-Източници: [Dynamic input (HUD) in sketches](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-EFCB58C4-ACF9-4BE1-BAC0-56246BB32F79.htm), [To Draw 2D Geometry Using Dynamic Input](https://help.autodesk.com/cloudhelp/2019/ENU/Inventor-Help/files/GUID-33A8B11D-A04C-4809-BC82-C0419215915F.htm), [Sketch Tab Reference](https://help.autodesk.com/cloudhelp/2018/ENU/Inventor-Help/files/GUID-1898C432-CFD2-46F1-8BAE-631392DFBF1D.htm).
+Sources: [Dynamic input (HUD) in sketches](https://help.autodesk.com/cloudhelp/2014/ENU/Inventor/files/GUID-EFCB58C4-ACF9-4BE1-BAC0-56246BB32F79.htm), [To Draw 2D Geometry Using Dynamic Input](https://help.autodesk.com/cloudhelp/2019/ENU/Inventor-Help/files/GUID-33A8B11D-A04C-4809-BC82-C0419215915F.htm), [Sketch Tab Reference](https://help.autodesk.com/cloudhelp/2018/ENU/Inventor-Help/files/GUID-1898C432-CFD2-46F1-8BAE-631392DFBF1D.htm).
 
-## 3. Поведение
+## 3. Behaviour
 
-### 3.1 Жизнен цикъл на команда
+### 3.1 Command lifecycle
 
-1. **Старт:** бутон в лентата, клавиш, контекстно меню или двоен клик в дървото. Започването на нова команда приключва предишната. Започването на 3D команда приключва редактирането на скицата.
-2. **Подсказка:** лентата на състоянието казва какво се очаква („Line: click the next point…“). Подсказката се сменя на всяка стъпка.
-3. **Вход:** кликове в изгледа (с прихващане) и стойности в Properties.
-4. **Преглед** на резултата преди потвърждение, където е възможен.
-5. **Потвърждение:**
-   - инструментите за чертане създават геометрията на последния клик и **остават активни** (както в Inventor);
-   - командите с диалог създават резултата с **OK**.
-6. **Отказ:** **Esc** отказва текущия вход, а второ Esc връща към Select. Десен клик → **Done** приключва верига или сплайн. **Cancel** затваря диалога без промяна.
+1. **Start:** a ribbon button, a key, a context menu or a double click in the browser. Starting a new command ends the previous one. Starting a 3D command ends the sketch edit.
+2. **Prompt:** the status bar says what is expected ("Line: click the next point…"). The prompt changes at every step.
+3. **Input:** clicks in the view (with snapping) and values in Properties.
+4. **Preview** of the result before confirmation, where possible.
+5. **Confirmation:**
+   - the drawing tools create the geometry on the last click and **stay active** (as in Inventor);
+   - commands with a dialog create the result with **OK**.
+6. **Cancel:** **Esc** cancels the current input, and a second Esc returns to Select. Right click → **Done** ends a chain or a spline. **Cancel** closes the dialog without a change.
 
-| Изискване | Статус |
+| Requirement | Status |
 |---|---|
-| Всички стъпки по-горе за инструментите в скицата | ✅ |
-| Extrude: диалог, преглед, OK/Cancel | ✅ |
-| Мини-лента (mini-toolbar) в изгледа със стойности, както в Inventor | ⬜ |
-| Манипулатори (стрелки за влачене на дълбочина или ъгъл) | 🟡 Extrude и Revolve ✅ (виж 2.8) |
-| Повторение на последната команда (Enter или десен клик → Repeat) | ✅ |
-| Marking menu (радиално меню с десен бутон; [0.15 §3.6](0.15-context-menus-shortcuts.md)) | 🟡 докато команда с диалог е отворена: контекстно меню с OK / Continue / Back / Cancel / опции (§4.1); радиално ⬜ |
+| All the steps above for the sketch tools | ✅ |
+| Extrude: dialog, preview, OK/Cancel | ✅ |
+| Mini-toolbar in the view with values, as in Inventor | ⬜ |
+| Manipulators (arrows for dragging a depth or an angle) | 🟡 Extrude and Revolve ✅ (see 2.8) |
+| Repeating the last command (Enter or right click → Repeat) | ✅ |
+| Marking menu (radial right-click menu; [0.15 §3.6](0.15-context-menus-shortcuts.md)) | 🟡 while a command with a dialog is open: context menu with OK / Continue / Back / Cancel / options (§4.1); radial ⬜ |
 
-### 3.2 Избор и приоритети при посочване
+### 3.2 Selection and picking priorities
 
-| Правило | Статус |
+| Rule | Status |
 |---|---|
-| Клик избира, **Shift** добавя или маха, **Delete** изтрива избраното | ✅ |
-| В скица приоритетът е: етикет на ограничение > точка > средата на линия (само при чертане) > крива | ✅ |
-| В 3D приоритетът е: **стена пред основна равнина**; при избор на граница (To/From) **връх пред стена** | ✅ |
-| Радиус на прихващане: 12 px за точка, 8 px за крива (`overlay::POINT_SNAP_PX`, `CURVE_SNAP_PX`) | ✅ |
-| Избор с правоъгълник (window / crossing) | ✅ ([0.9](0.9-selection.md)); режими винаги Window / Crossing 🟡 ([0.9a](0.9a-selection-filters.md)) |
-| Филтри за избор (върхове, ръбове, стени, тела, скици, работни елементи, Origin) и сечение със селектора на командата | 🟡 ([0.9a](0.9a-selection-filters.md), чака визуална проверка) |
-| Избор на ред в Properties осветява съответната геометрия | ✅ |
+| Click selects, **Shift** adds or removes, **Delete** deletes the selection | ✅ |
+| In a sketch the priority is: constraint glyph > point > midpoint of a line (only while drawing) > curve | ✅ |
+| In 3D the priority is: **face before origin plane**; when picking a boundary (To/From) **vertex before face** | ✅ |
+| Snap radius: 12 px for a point, 8 px for a curve (`overlay::POINT_SNAP_PX`, `CURVE_SNAP_PX`) | ✅ |
+| Rectangle selection (window / crossing) | ✅ ([0.9](0.9-selection.md)); Always Window / Crossing modes 🟡 ([0.9a](0.9a-selection-filters.md)) |
+| Selection filters (vertices, edges, faces, bodies, sketches, work features, Origin) and intersection with the command's selector | 🟡 ([0.9a](0.9a-selection-filters.md), waiting for a visual check) |
+| Selecting a row in Properties highlights the corresponding geometry | ✅ |
 
-### 3.3 Редакция на място
+### 3.3 In-place editing
 
-- Стойностите в Properties се прилагат веднага и моделът се регенерира. Влаченето на стойност е една стъпка в Undo. ✅
-- Двоен клик върху размер отваря Edit Dimension. ✅
-- Двоен клик върху скица в дървото влиза в редакция на скицата. ✅
-- Двоен клик върху операция отваря нейната редакция. ⬜ (засега е с избор и Properties)
+- Values in Properties apply immediately and the model regenerates. Dragging a value is one Undo step. ✅
+- A double click on a dimension opens Edit Dimension. ✅
+- A double click on a sketch in the browser enters the sketch edit. ✅
+- A double click on a feature opens its edit. ⬜ (for now through selection and Properties)
 
-### 3.3а Изглед: проекция
+### 3.3a View: projection
 
-Inventor (View → Appearance, контекстното меню на ViewCube):
+Inventor (View → Appearance, the ViewCube context menu):
 
-| Режим | Поведение | Статус |
+| Mode | Behaviour | Status |
 |---|---|---|
-| **Orthographic** | паралелна проекция, без перспективно скъсяване (за чертане и мерене) | ✅ |
-| **Perspective** | перспектива (досегашният ни изглед) | ✅ |
-| **Perspective with Ortho Faces** | перспектива, но когато изгледът е точно по стена на ViewCube (Front, Top, …), минава в ортографска | ✅ |
-| Превключване: View → Appearance, десен клик на ViewCube, лентата на състоянието | | 🟡 View → Appearance → Projection ✅, десен клик в изгледа → Projection ✅; ⬜ ViewCube меню |
-| Режимът се помни (Application Options) | | ⬜ |
+| **Orthographic** | parallel projection, no perspective foreshortening (for drawing and measuring) | ✅ |
+| **Perspective** | perspective (our previous view) | ✅ |
+| **Perspective with Ortho Faces** | perspective, but when the view is exactly along a ViewCube face (Front, Top, …), it switches to orthographic | ✅ |
+| Switching: View → Appearance, right click on the ViewCube, the status bar | | 🟡 View → Appearance → Projection ✅, right click in the view → Projection ✅; ⬜ ViewCube menu |
+| The mode is remembered (Application Options) | | ⬜ |
 
-### 3.3б ViewCube
+### 3.3b ViewCube
 
-| Поведение (Inventor: *About the ViewCube*, *ViewCube Menu Reference*) | Статус |
+| Behaviour (Inventor: *About the ViewCube*, *ViewCube Menu Reference*) | Status |
 |---|---|
-| 26 посоки: 6 стени, 12 ръба, 8 ъгъла — посоченото светва, клик завърта изгледа натам | ✅ |
-| При поглед право в стена: 4 стрелки към съседните стени | ✅ |
-| Две дъговидни стрелки: завъртане на изгледа на ±90° около оста на погледа | ✅ |
-| Home (горе вляво от куба) | ✅ |
-| Десен клик: Home, Orthographic / Perspective / Perspective with Ortho Faces, **Set Current View as Home**, Reset Home, Fit | ✅ |
-| Влачене на куба върти изгледа | ⬜ |
-| Плавен преход (анимация) към новия изглед | ⬜ |
-| Надписите на стените се въртят с куба при roll | ⬜ |
+| 26 directions: 6 faces, 12 edges, 8 corners — the one pointed at is highlighted, a click turns the view there | ✅ |
+| When looking straight at a face: 4 arrows to the neighbouring faces | ✅ |
+| Two curved arrows: rotating the view by ±90° about the viewing axis | ✅ |
+| Home (top left of the cube) | ✅ |
+| Right click: Home, Orthographic / Perspective / Perspective with Ortho Faces, **Set Current View as Home**, Reset Home, Fit | ✅ |
+| Dragging the cube rotates the view | ⬜ |
+| Smooth transition (animation) to the new view | ⬜ |
+| The face labels rotate with the cube on roll | ⬜ |
 
 ### 3.4 Undo/Redo
 
-- Всяка промяна на модела (геометрия, ограничения, операции, видимост, споделяне) минава през Undo. ✅
-- Неуспешна операция не оставя следа нито в модела, нито в историята на Undo (`History::cancel`). ✅
-- Undo връща и избора, и режима в смислено състояние (например таба Sketch след изход от скица). ✅
+- Every change to the model (geometry, constraints, features, visibility, sharing) goes through Undo. ✅
+- A failed operation leaves no trace either in the model or in the Undo history (`History::cancel`). ✅
+- Undo also returns the selection and the mode to a sensible state (for example the Sketch tab after leaving a sketch). ✅
 
 ### 3.5 Update / Rebuild All
 
-В Inventor **Update** (лентата Quick Access) преизчислява само остарелите операции (например след размер, сменен при отложено обновяване), а **Rebuild All** (Manage → Update) преизчислява всяка операция на документа, дори да няма промяна. При нас моделът се обновява веднага след всяка промяна, затова Update не е нужен.
+In Inventor, **Update** (the Quick Access toolbar) recomputes only the out-of-date features (for example after a dimension changed with deferred update), while **Rebuild All** (Manage → Update) recomputes every feature of the document even if nothing changed. In our program the model is updated right after every change, so Update is not needed.
 
-| Поведение | Статус |
+| Behaviour | Status |
 |---|---|
-| **Rebuild All**: всички операции на детайла се строят наново, без кеша на регенерацията (`part::BuildCache`); бутон **Rebuild** в лентата горе и в Tools → Update | ✅ визуално |
-| Лентата на състоянието: „Rebuild All: N features in t s“ или колко операции са неуспешни | ✅ |
-| Update (само остарелите) | ⛔ няма отложено обновяване |
+| **Rebuild All**: all features of the part are built again, without the regeneration cache (`part::BuildCache`); **Rebuild** button in the top bar and in Tools → Update | ✅ visually |
+| The status bar: "Rebuild All: N features in t s" or how many features failed | ✅ |
+| Update (only the out-of-date ones) | ⛔ there is no deferred update |
 
-Източник: форум на Autodesk, „RE BUILD ALL vs LOCAL UPDATE“ (поведение по описание на мениджър на общността).
+Source: Autodesk forum, "RE BUILD ALL vs LOCAL UPDATE" (behaviour as described by a community manager).
 
-## 4. Насочване на потребителя (guidance)
+## 4. Guiding the user (guidance)
 
-| Механизъм | Изискване | Статус |
+| Mechanism | Requirement | Status |
 |---|---|---|
-| **Подсказка в лентата на състоянието** | всяка команда, на всяка стъпка, казва какво да се направи; без активна команда показва какво може да се започне („Ready — Start 2D Sketch (S)…“) | ✅ |
-| **Състояние на скицата** | в лентата на състоянието, с цвета на състоянието: „Fully constrained“, „Needs N dimension(s)/constraint(s)“, излишни, противоречие | ✅ |
-| **Подсказки върху командите** | всеки бутон казва какво прави и клавиша си | ✅ |
-| **Недостъпни команди** | сиви, с причина: „Предстои — FEATURES X.Y“ или „Needs Boolean operations (2.13)“ | ✅ |
-| **Съобщения за грешка** | червено в лентата на състоянието, във вида `<Команда>: <причина>` („Extrude: the radius is too large…“). Без технически жаргон и без stack trace | ✅ |
-| **Предупреждения („здраве“)** | „болни“ скици и операции са оранжеви в дървото, а причината е в подсказката и в Properties | ✅ |
-| **Въпроси при конфликт** | размер, който свръхограничава → въпрос дали да е driven | ✅ |
-| **Обяснение в диалога** | какво е изключено и защо (например Join/Cut), какво се чака („Pick the To face…“) | ✅ |
-| **Демо скици** | таб Sketch → панел Demo sketches (rectangle, slot, tangents, lines), за бърз старт | ✅ |
-| **Помощ (F1)** | отваря спецификацията на текущата команда (`docs/spec/…`) със системната програма | 🟡 реализирано, без визуална проверка; пътят е към папката на изходния код (за инсталация трябва да се пакетират документите) |
-| **Търсене на команда** | поле за търсене по име (и по името в Inventor), Alt+S — [0.15 §5.3](0.15-context-menus-shortcuts.md) | ⬜ |
-| **Първо стартиране** | кратко въведение: профил на мишката, къде е Start 2D Sketch | ⬜ |
-| **Обратна връзка при дълги операции** | индикатор за прогрес и възможност за отказ над ~0.5 s | ⬜ |
+| **Status-bar prompt** | every command, at every step, says what to do; without an active command it shows what can be started ("Ready — Start 2D Sketch (S)…") | ✅ |
+| **Sketch state** | in the status bar, in the state's colour: "Fully constrained", "Needs N dimension(s)/constraint(s)", redundant, conflict | ✅ |
+| **Command tooltips** | every button says what it does and its key | ✅ |
+| **Unavailable commands** | grey, with a reason: "Planned — FEATURES X.Y" or "Needs Boolean operations (2.13)" | ✅ |
+| **Error messages** | red in the status bar, in the form `<Command>: <reason>` ("Extrude: the radius is too large…"). No technical jargon and no stack trace | ✅ |
+| **Warnings ("health")** | "sick" sketches and features are orange in the browser, and the reason is in the tooltip and in Properties | ✅ |
+| **Questions on conflict** | a dimension that over-constrains → a question whether it should be driven | ✅ |
+| **Explanation in the dialog** | what is disabled and why (for example Join/Cut), what is awaited ("Pick the To face…") | ✅ |
+| **Demo sketches** | Sketch tab → Demo sketches panel (rectangle, slot, tangents, lines), for a quick start | ✅ |
+| **Help (F1)** | opens the specification of the current command (`docs/spec/…`) with the system program | 🟡 implemented, no visual check; the path points to the source folder (an installation will need the documents packaged) |
+| **Command search** | a search field by name (and by the Inventor name), Alt+S — [0.15 §5.3](0.15-context-menus-shortcuts.md) | ⬜ |
+| **First launch** | a short introduction: mouse profile, where Start 2D Sketch is | ⬜ |
+| **Feedback on long operations** | progress indicator and the option to cancel above ~0.5 s | ⬜ |
 
-### 4.1 Насочване в диалога на команда (общ модул)
+### 4.1 Guidance in a command dialog (shared module)
 
-Всяка 3D команда с диалог води потребителя по входовете си по един и същ начин, както
-панелите и диалозите на Inventor. Логиката е в `command::flow` (без GUI, с тестове), а
-рисуването и събитията — в `gui/command_ui.rs`. Face Draft и Shell вече го използват.
+Every 3D command with a dialog guides the user through its inputs in the same way, like
+Inventor's panels and dialogs. The logic is in `command::flow` (no GUI, with tests), and
+the drawing and events in `gui/command_ui.rs`. Face Draft and Shell already use it.
 
-| Правило | Как | Статус |
+| Rule | How | Status |
 |---|---|---|
-| **Селектор = ред** | име; стрелка; **цветна точка** (същият цвят като осветяването в изгледа: стени — синьо, посока — оранжево, равнина/инструмент — тюркоазено, ръбове — лилаво); състояние („Select“, „3 face(s)“, „XY Plane“); `x` изчиства; червена `*` — задължителен и празен | 🟡 Face Draft, Shell |
-| **Активният селектор** | подчертан и маркиран; само той приема кликовете в изгледа; клик върху ред го прави активен; `x` го изчиства и го прави активен | 🟡 |
-| **Автоматично напред** | след валиден избор селектор за един елемент (посока, равнина, инструмент) минава на следващия празен (иначе на следващия); селектор за много елементи остава | 🟡 |
-| **Десен клик в изгледа** | меню на командата вместо обичайното: **OK**, **Apply (+)** (не при Edit Feature), **Continue**, **Back**, **Cancel**, **Repeat <последната>**, плюс опциите на командата (Draft: Fixed Edge / Fixed Plane / Parting Line, One Way / Symmetric / Asymmetric, Flip pull direction; Shell: Inside / Outside / Center, Sharp / Rounded Corners). OK е неактивно, докато липсва задължителен вход | 🟡 обикновено контекстно меню (радиално ⬜) |
-| **Continue / Back** | Continue: първият празен задължителен селектор, иначе следващият; Back: предишният | 🟡 |
-| **Enter** | докато задължителен селектор е празен — Continue (фокусът отива в него); иначе OK. **Ctrl+Enter** — винаги OK, ако може. Esc — Cancel. Докато диалогът е отворен, Enter/Space **не** повтарят последната команда | 🟡 |
-| **Подсказка до курсора** | жълто етикетче до мишката с това, което чака активният селектор („Select faces to draft“, „Select the pull direction (…)“) | 🟡 |
-| **Лента на състоянието** | `<Команда>: <подсказката на активния селектор>`; щом всичко е избрано — „…, or OK (Enter)“; EN + BG (`gui/i18n.rs`) | 🟡 |
-| **Предварително осветяване** | под курсора свети само това, което активният селектор приема (`PickKind`: стена, плоска стена, равнина, прав ръб, ръб, ос, скица, тяло); за посока — бледа стрелка на кандидата | 🟡 Face Draft |
-| **Глифове на входа** | командата рисува входовете си в изгледа: посоката (стрелка), равнината (контур), ръба, който остава (Fixed Edge), неподвижните ръбове | 🟡 Face Draft |
+| **Selector = row** | name; arrow; **coloured dot** (the same colour as the highlight in the view: faces — blue, direction — orange, plane/tool — turquoise, edges — purple); state ("Select", "3 face(s)", "XY Plane"); `x` clears; red `*` — required and empty | 🟡 Face Draft, Shell |
+| **The active selector** | underlined and marked; only it takes clicks in the view; a click on a row makes it active; `x` clears it and makes it active | 🟡 |
+| **Automatic advance** | after a valid pick, a single-item selector (direction, plane, tool) moves on to the next empty one (otherwise to the next one); a multi-item selector stays | 🟡 |
+| **Right click in the view** | the command's menu instead of the usual one: **OK**, **Apply (+)** (not in Edit Feature), **Continue**, **Back**, **Cancel**, **Repeat <the last one>**, plus the command's options (Draft: Fixed Edge / Fixed Plane / Parting Line, One Way / Symmetric / Asymmetric, Flip pull direction; Shell: Inside / Outside / Center, Sharp / Rounded Corners). OK is disabled while a required input is missing | 🟡 ordinary context menu (radial ⬜) |
+| **Continue / Back** | Continue: the first empty required selector, otherwise the next one; Back: the previous one | 🟡 |
+| **Enter** | while a required selector is empty — Continue (the focus goes to it); otherwise OK. **Ctrl+Enter** — always OK, if possible. Esc — Cancel. While the dialog is open, Enter/Space do **not** repeat the last command | 🟡 |
+| **Prompt next to the cursor** | a yellow label next to the mouse with what the active selector is waiting for ("Select faces to draft", "Select the pull direction (…)") | 🟡 |
+| **Status bar** | `<Command>: <the active selector's prompt>`; once everything is selected — "…, or OK (Enter)"; EN + BG (`gui/i18n.rs`) | 🟡 |
+| **Prehighlight** | under the cursor only what the active selector accepts is highlighted (`PickKind`: face, planar face, plane, straight edge, edge, axis, sketch, body); for a direction — a faint arrow on the candidate | 🟡 Face Draft |
+| **Input glyphs** | the command draws its inputs in the view: the direction (arrow), the plane (outline), the edge that stays (Fixed Edge), the fixed edges | 🟡 Face Draft |
 
-**Как друга команда го приема** (Extrude, Fillet, Hole, Pattern… — още не са преминали):
-1. описва селекторите си като `Vec<Selector>` (ключ, име, подсказка, приемани `PickKind`,
-   единичен/много, задължителен, брой, цвят), както `command::flow::draft_selectors`;
-2. пази само ключа на активния селектор в своята чернова и строи `Flow` всеки кадър;
-3. в диалога рисува редовете с `command_ui::selector_rows` и прилага `RowEvents`;
-4. добавя се в `command_ui::Cmd` (`command_flow`, `command_activate`, `command_ok`,
-   опциите на менюто); така получава Enter, десния клик, подсказката и лентата наготово;
-5. посочването в изгледа пита `Flow::accepts(kind)` и след валиден избор вика `picked()`.
+**How another command adopts it** (Extrude, Fillet, Hole, Pattern… — not migrated yet):
+1. it describes its selectors as `Vec<Selector>` (key, name, prompt, accepted `PickKind`,
+   single/many, required, count, colour), like `command::flow::draft_selectors`;
+2. it keeps only the key of the active selector in its draft and builds a `Flow` every frame;
+3. in the dialog it draws the rows with `command_ui::selector_rows` and applies `RowEvents`;
+4. it is added to `command_ui::Cmd` (`command_flow`, `command_activate`, `command_ok`,
+   the menu options); this gives it Enter, the right click, the prompt and the status bar ready-made;
+5. picking in the view asks `Flow::accepts(kind)` and calls `picked()` after a valid pick.
 
-## 5. Производителност
+## 5. Performance
 
-| Изискване | Статус |
+| Requirement | Status |
 |---|---|
-| Скица до ~200 елемента: решаване и прерисуване при влачене под 16 ms | 🟡 (пълният якобиан е с крайни разлики; планирано е разделяне на клъстери) |
-| Регионите на скицата се изчисляват само при промяна | ✅ (кеш) |
-| Прегледът на Extrude се строи само при промяна на настройките | ✅ (кеш) |
-| Регенерация на детайл с десетки операции под 100 ms | ⬜ (ще се мери с бенчмарк) |
+| Sketch up to ~200 items: solving and redrawing while dragging under 16 ms | 🟡 (the full Jacobian uses finite differences; splitting into clusters is planned) |
+| Sketch regions are computed only on change | ✅ (cache) |
+| The Extrude preview is built only when the settings change | ✅ (cache) |
+| Regenerating a part with dozens of features under 100 ms | ⬜ (will be measured with a benchmark) |
 
-## 6. Език и достъпност
+## 6. Language and accessibility
 
-- Командите са на английски, с имената от Inventor. Преводите идват по-късно (UI.md, раздел 6). 🟡
-- Текстовете в интерфейса избягват знаци, които липсват в шрифта (`→`, `⚠` и др., виж `CLAUDE.md`). ✅
-- Цветът никога не е единственият носител на информация: състоянието на скицата е и в текста, ограниченията имат и етикети. ✅
-- Пълно управление от клавиатурата. ⬜
+- Commands are in English, with Inventor's names. Translations come later (UI.md, section 6). 🟡
+- Interface texts avoid characters missing from the font (`→`, `⚠` etc., see `CLAUDE.md`). ✅
+- Colour is never the only carrier of information: the sketch state is in the text too, the constraints have labels too. ✅
+- Full keyboard control. ⬜
 
-## 6а. Източници
+## 6a. Sources
 
 - Inventor Help (2026): *ViewCube Menu Reference* — Orthographic / Perspective / Perspective with Ortho Faces — GUID-285B9036-0E97-4F18-A6D2-EF78B8B8FAA9
 - Inventor Help (2020): *About the ViewCube* — GUID-B266056E-5E88-42A0-B29C-7BB25C377BD3
 
-## 7. Как се проверява
+## 7. How it is checked
 
-- Всяка видима функция се проверява **в работещото приложение** със скриптовете от `CLAUDE.md` (`tools/gui_launch.sh`, `tools/gui_sim.py`), със снимки.
-- Цветовете и знаците от раздел 2 се сверяват на снимка след всяка промяна в `gui/overlay.rs`.
+- Every visible function is checked **in the running application** with the scripts from `CLAUDE.md` (`tools/gui_launch.sh`, `tools/gui_sim.py`), with screenshots.
+- The colours and glyphs of section 2 are compared on a screenshot after every change in `gui/overlay.rs`.

@@ -1,982 +1,983 @@
-# 3DCadCraft — справочник на потребителя (GUI)
+# 3DCadCraft — user reference (GUI)
 
-Справочникът описва графичния интерфейс **такъв, какъвто е в кода** (`src/gui/*.rs`) към
-2026-10-19. Имената на командите и опциите са на английски, както в Inventor. Където
-`docs/UI.md` казва друго, важи кодът (разликите, намерени при написването, са поправени в
-UI.md на 2026-10-19; виж последния раздел).
+This reference describes the graphical interface **as it is in the code** (`src/gui/*.rs`) as of
+2026-10-19. Command and option names are in English, as in Inventor. Where
+`docs/UI.md` says otherwise, the code wins (the differences found while writing this were fixed in
+UI.md on 2026-10-19; see the last section).
 
-Съдържание:
-1. [Мишка в изгледа](#1-мишка-в-изгледа)
-2. [Контекстни менюта](#2-контекстни-менюта-десен-клик)
-3. [Избор](#3-избор)
-4. [Скица](#4-скица)
-5. [Клавишни комбинации](#5-клавишни-комбинации)
-6. [Полета за стойности](#6-полета-за-стойности)
-7. [Манипулатори и предварителен изглед](#7-манипулатори-и-предварителен-изглед)
-8. [Настройки](#8-настройки)
-9. [Лента (ribbon) и Quick Access](#9-лента-ribbon-и-quick-access)
-10. [Лента на състоянието](#10-лента-на-състоянието)
-11. [Разлики с Inventor](#11-разлики-с-inventor)
-12. [Разлики с docs/UI.md](#12-разлики-с-docsuimd)
+Contents:
+1. [Mouse in the view](#1-mouse-in-the-view)
+2. [Context menus](#2-context-menus-right-click)
+3. [Selection](#3-selection)
+4. [Sketch](#4-sketch)
+5. [Keyboard shortcuts](#5-keyboard-shortcuts)
+6. [Value fields](#6-value-fields)
+7. [Manipulators and preview](#7-manipulators-and-preview)
+8. [Settings](#8-settings)
+9. [Ribbon and Quick Access](#9-ribbon-and-quick-access)
+10. [Status bar](#10-status-bar)
+11. [Differences from Inventor](#11-differences-from-inventor)
+12. [Differences from docs/UI.md](#12-differences-from-docsuimd)
 
-Разположение на прозореца (1400×900 по подразбиране): горе Quick Access + лента; вляво
-**Model** (дърво, ~250 px, разтегля се); вдясно **Properties** (~300 px); в средата 3D
-изгледът с ViewCube горе вдясно и триада X/Y/Z долу вдясно; долу лентата на състоянието.
+Window layout (1400×900 by default): at the top Quick Access + ribbon; on the left
+**Model** (the browser, ~250 px, resizable); on the right **Properties** (~300 px); in the middle the 3D
+view with the ViewCube at the top right and an X/Y/Z triad at the bottom right; at the bottom the status bar.
 
 ---
 
-## 1. Мишка в изгледа
+## 1. Mouse in the view
 
-### 1.1 Навигация (orbit / pan / zoom)
+### 1.1 Navigation (orbit / pan / zoom)
 
-Профилът се сменя от **Tools → Application Options → Navigation**. По подразбиране е
+The profile is changed in **Tools → Application Options → Navigation**. The default is
 **Inventor**.
 
-| Действие | Профил **Inventor** | Профил **Classic (left = orbit)** |
+| Action | Profile **Inventor** | Profile **Classic (left = orbit)** |
 |---|---|---|
-| Orbit | **Shift + среден бутон** (влачене); или задържан **F4** + ляв | ляв бутон (влачене), ако не се влачи точка, манипулатор или дръжка на масив |
-| Pan | **среден бутон** (влачене); или задържан **F2** + ляв | десен или среден бутон (влачене) |
-| Zoom | колелце; или задържан **F3** + ляв (нагоре = приближава) | колелце |
-| Побиране на всичко (Fit) | **двоен клик със средния бутон** | двоен клик (с който и да е бутон) или двоен среден |
-| Home изглед | **F6** или къщичката на ViewCube | същото |
+| Orbit | **Shift + middle button** (drag); or hold **F4** + left | left button (drag), unless dragging a point, a manipulator or a pattern handle |
+| Pan | **middle button** (drag); or hold **F2** + left | right or middle button (drag) |
+| Zoom | wheel; or hold **F3** + left (up = zoom in) | wheel |
+| Zoom to fit everything (Fit) | **double-click with the middle button** | double-click (with any button) or middle double-click |
+| Home view | **F6** or the ViewCube's house | the same |
 
-- Колелцето приближава/отдалечава спрямо **центъра на въртене** (target), не спрямо курсора.
-  Посоката се обръща с *Reverse zoom direction*.
-- F2/F3/F4 действат само в профил Inventor и имат предимство пред влаченето на точки.
-- Orbit минава през полюса: моделът се превърта и изгледът остава обърнат; клик върху
-  ViewCube или F6 връща изправен изглед (и нулира завъртането Roll).
-- Влачене или колелце спира започнал плавен преход на ViewCube.
-- В профил Classic лявото влачене винаги върти, освен ако е започнато върху точка
-  (на скица), манипулатор или дръжка на масив: влачене на цяла крива, на текст на размер и
-  правоъгълник за избор **не работят** в Classic.
+- The wheel zooms in/out about the **centre of rotation** (target), not about the cursor.
+  The direction is reversed with *Reverse zoom direction*.
+- F2/F3/F4 work only in the Inventor profile and take priority over dragging points.
+- Orbit passes over the pole: the model rolls over and the view stays upside down; a click on the
+  ViewCube or F6 returns an upright view (and resets the Roll rotation).
+- A drag or the wheel stops a running ViewCube transition.
+- In the Classic profile a left drag always orbits, unless it starts on a point
+  (of a sketch), a manipulator or a pattern handle: dragging a whole curve, a dimension's text and the
+  selection box **do not work** in Classic.
 
-### 1.2 ViewCube (горе вдясно)
+### 1.2 ViewCube (top right)
 
-| Действие | Резултат |
+| Action | Result |
 |---|---|
-| Клик върху стена / ръб / ъгъл (26 посоки, всяка стена има 3×3 зони) | изглед от тази посока, плавен преход 0,3 s |
-| Клик върху къщичката (горе вляво на куба) | Home: изометрия (yaw −60°, pitch 30°) или зададеното с *Set Current View as Home*, + Fit |
-| Стрелки около куба (само при поглед право към стена) | съседната стена в тази посока |
-| Двете извити стрелки (само при поглед право към стена) | завъртане на образа ±90° (Roll) |
-| Компас (пръстенът под куба): клик върху N / E / S / W | поглед от тази страна, запазва наклона (N = +Y, E = +X, S = −Y, W = −X) |
-| Влачене на куба | свободен Orbit |
-| Влачене на пръстена на компаса | въртене около Z (пръстенът следва мишката) |
-| Десен клик върху куба | меню на ViewCube (раздел 2.6) |
+| Click on a face / edge / corner (26 directions, each face has 3×3 zones) | view from that direction, smooth 0.3 s transition |
+| Click on the house (top left of the cube) | Home: isometric (yaw −60°, pitch 30°) or the one set with *Set Current View as Home*, + Fit |
+| Arrows around the cube (only when looking straight at a face) | the neighbouring face in that direction |
+| The two curved arrows (only when looking straight at a face) | rotate the image by ±90° (Roll) |
+| Compass (the ring under the cube): click on N / E / S / W | look from that side, keeping the tilt (N = +Y, E = +X, S = −Y, W = −X) |
+| Drag the cube | free Orbit |
+| Drag the compass ring | rotate about Z (the ring follows the mouse) |
+| Right-click on the cube | ViewCube menu (section 2.6) |
 
-Кубът е полупрозрачен (50 %), когато мишката е далеч от него. Влачене, започнато върху куба
-или компаса, не избира нищо в модела.
+The cube is semi-transparent (50 %) when the mouse is far from it. A drag that starts on the cube
+or the compass selects nothing in the model.
 
-### 1.3 Изглед в покой (детайл, без команда, без скица)
+### 1.3 Idle view (part, no command, no sketch)
 
-| Мишка | Действие |
+| Mouse | Action |
 |---|---|
-| Курсор над ръб / стена | prehighlight (зелено) + жълт етикет до курсора: `Edge <име> · L <дължина> mm` или `Face <име> · <операция> · <SolidN>` |
-| Ляв клик (приоритет *Faces and Edges*) | избира това под курсора по реда от 3.2 — работна точка, връх, работна ос, крива на видима скица, ръб, стена, работна равнина (синьо); избира и операцията в дървото/Properties (за Box — тялото); при ръб/стена показва **лентата с предложения** (раздел 3.5). Видовете, изключени във филтъра (3.1), не се посочват |
-| Ляв клик върху работна равнина/ос/точка | избира работния елемент (в дървото и Properties). Работните точки и оси имат предимство пред стени и ръбове |
-| **Shift + десен клик** | меню **Selection** до курсора (раздел 3.3а); не отваря обикновеното меню и не започва Pan (и при мишка Classic) |
-| Ляв клик в празно | изчиства избора (старият отива в *Previous Selection*) |
-| **Shift**+клик | добавя към избора (без лента с предложения) |
-| **Ctrl**+клик | превключва (добавя или маха) |
-| Двоен клик върху стена/ръб | **Select Tangencies**: добавя допирателните стени / веригата допирателни ръбове |
-| Влачене от празно място (само профил Inventor) | правоъгълник за избор: **отляво надясно** (плътна синя рамка) = само изцяло вътре (window); **отдясно наляво** (пунктирна зелена) = и пресечените (crossing); в менюто Select може да е винаги Window или винаги Crossing. Взема само включените във филтъра видове. Без клавиш замества избора, Shift добавя, Ctrl превключва |
-| Покой ~0,7 s (в рамките на 3 px) над място с няколко кандидата | **Select Other** (раздел 3.3) |
-| Влачене на манипулатор на избрана операция | сменя стойността ѝ (прилага се при пускане, раздел 7) |
+| Cursor over an edge / face | prehighlight (green) + a yellow label next to the cursor: `Edge <name> · L <length> mm` or `Face <name> · <feature> · <SolidN>` |
+| Left click (priority *Faces and Edges*) | selects what is under the cursor in the order of 3.2 — work point, vertex, work axis, curve of a visible sketch, edge, face, work plane (blue); also selects the feature in the browser/Properties (for Box — the body); for an edge/face it shows the **suggestion bar** (section 3.5). Kinds excluded by the filter (3.1) are not picked |
+| Left click on a work plane/axis/point | selects the work feature (in the browser and Properties). Work points and axes take priority over faces and edges |
+| **Shift + right-click** | the **Selection** menu next to the cursor (section 3.3a); does not open the normal menu and does not start Pan (also with the Classic mouse) |
+| Left click on empty space | clears the selection (the old one goes to *Previous Selection*) |
+| **Shift**+click | adds to the selection (no suggestion bar) |
+| **Ctrl**+click | toggles (adds or removes) |
+| Double-click on a face/edge | **Select Tangencies**: adds the tangent faces / the chain of tangent edges |
+| Drag from empty space (Inventor profile only) | selection box: **left to right** (solid blue frame) = only those fully inside (window); **right to left** (dashed green) = also those crossed (crossing); in the Select menu it can be always Window or always Crossing. It takes only the kinds enabled in the filter. With no key it replaces the selection, Shift adds, Ctrl toggles |
+| Rest for ~0.7 s (within 3 px) over a place with several candidates | **Select Other** (section 3.3) |
+| Drag a manipulator of a selected feature | changes its value (applied on release, section 7) |
 
-### 1.4 Скица в редакция
+### 1.4 Sketch in edit
 
-| Мишка | Инструмент **Select** | Инструмент за чертане / модифициране |
+| Mouse | **Select** tool | Drawing / modify tool |
 |---|---|---|
-| Ляв клик върху крива | избира я; Shift превключва (добавя/маха) | стъпка на инструмента (раздел 4) |
-| Ляв клик върху знак на ограничение / текст на размер | избира го; Shift превключва | — (с инструмент **Dimension** клик върху размер = Edit Dimension) |
-| Ляв клик в празно | изчиства избора | стъпка на инструмента |
-| Двоен клик върху текст на размер | **Edit Dimension** на място | същото |
-| Двоен клик върху крива | избира цялата свързана верига (Shift: добавя към избора) | Spline: двоен клик завършва сплайна |
-| Влачене на точка | местене; решателят прави останалото. Пусната върху друга точка → **Coincident**; върху крива → точка върху кривата (ако решението е възможно) | — |
-| Влачене на крива (не от точка) | мести цялата крива | — |
-| Влачене на текст на размер | мести текста (не геометрията) | — |
-| Влачене на дръжка на сплайн (квадратче) | задава/променя дръжката; сива = неактивна, влачене я активира | — |
-| Влачене от празно (профил Inventor) | правоъгълник window/crossing за криви; Shift добавя, Ctrl превключва | — |
-| Line: натискане върху край на линия/дъга и влачене (>10 px) | — | дъга: **допирателна**, ако влаченето тръгне по продължението (до 45°), иначе **перпендикулярна**; веригата продължава от края на дъгата |
-| Влачене на дръжка на масив (Edit Pattern) | стъпка (стрелка), ъгъл (кръгче), брой (кръгче с „+“) | — |
-| Десен клик | контекстно меню (раздел 2.3) | контекстно меню с **Done** (край на веригата / създаване на сплайна) и **Cancel (Esc)** |
+| Left click on a curve | selects it; Shift toggles (adds/removes) | a step of the tool (section 4) |
+| Left click on a constraint glyph / dimension text | selects it; Shift toggles | — (with the **Dimension** tool a click on a dimension = Edit Dimension) |
+| Left click on empty space | clears the selection | a step of the tool |
+| Double-click on a dimension's text | **Edit Dimension** in place | the same |
+| Double-click on a curve | selects the whole connected chain (Shift: adds to the selection) | Spline: a double-click finishes the spline |
+| Drag a point | moves it; the solver does the rest. Dropped on another point → **Coincident**; on a curve → a point on the curve (if the solution is possible) | — |
+| Drag a curve (not from a point) | moves the whole curve | — |
+| Drag a dimension's text | moves the text (not the geometry) | — |
+| Drag a spline handle (small square) | sets/changes the handle; grey = inactive, dragging activates it | — |
+| Drag from empty space (Inventor profile) | window/crossing box for curves; Shift adds, Ctrl toggles | — |
+| Line: press on the end of a line/arc and drag (>10 px) | — | arc: **tangent** if the drag starts along the continuation (up to 45°), otherwise **perpendicular**; the chain continues from the end of the arc |
+| Drag a pattern handle (Edit Pattern) | spacing (arrow), angle (small circle), count (small circle with "+") | — |
+| Right-click | context menu (section 2.3) | context menu with **Done** (end of the chain / create the spline) and **Cancel (Esc)** |
 
-В Relax Mode влаченето на точка може да промени размерите; променените стават driven.
+In Relax Mode, dragging a point may change dimensions; the changed ones become driven.
 
-### 1.5 Командите за операции
+### 1.5 Feature commands
 
-| Команда | Ляв клик | Влачене | Друго |
+| Command | Left click | Drag | Other |
 |---|---|---|---|
-| **Start 2D Sketch** (избор на равнина) | стена на модела, работна равнина или основна равнина (XY/XZ/YZ) → скицата се създава | — | стените печелят пред основните равнини; Esc отказва |
-| **Extrude / Revolve** | превключва региона под курсора (най-малкият, който го съдържа) в текущата скица; регион от друга видима скица сменя скицата; Extrude: отворена линия/дъга (която не ограничава регион) влиза в отворения профил (Match Shape), втори клик я маха; двоен клик върху размер на профилната скица го редактира на място; десен клик: Continue (Revolve, към оста), OK, Cancel | от празно (профил Inventor): правоъгълник за профили, window/crossing, Shift добавя, Ctrl превключва, без клавиш замества; влачене на стрелка/дъга = манипулатор | Revolve: докато е активен селекторът **Axis**, клик избира линия на скицата (в радиус 8 px); бутони X/Y/Z за основните оси. *From*/*To*: клик върху полето, после стена или връх (връх в радиус 12 px печели) |
-| **Fillet / Chamfer** | Select *Edge*: ръб (втори клик го маха; *Automatic* взема допирателната верига). *Loop*: стена → нейният контур, най-близък до клика. *Feature*: стена → ръбовете на операцията ѝ спрямо другите. *Solid*: бутони в панела. Full Round: средната стена. Variable: прав ръб | — | предварително избраните ръбове влизат в набора |
-| **Shell** | стена → за махане (втори клик я връща; *Automatic* взема и допирателните); стрелката на дебелината се влачи | — | предварително избраните стени влизат в списъка; десен клик → меню на командата |
-| **Combine** | *Base* — тяло (клик върху стена); после *Toolbodies* — тела (втори клик маха тяло) | — | тяло, избрано преди командата, става основа; десен клик → меню: OK, Apply, Continue, Back, Cancel + Join / Cut / Intersect |
-| **Split** | *Split Tool* — работна или основна равнина (основните се показват, докато селекторът е активен), крива на видима скица или стена на повърхнинно тяло; от дървото: Origin → XY / XZ / YZ, ред на работна равнина, ред на скица, Surface Bodies → повърхнина (скица — и от списъка в панела); *Faces* — стена (втори клик я маха); *Solid* — тяло (и ред в Solid Bodies) | — | след единичен селектор минава сам на следващия; десен клик → меню + методите и Keep Flip side |
-| **Draft (Face Draft)** | според активния селектор (свети само приеманото): *Pull Direction* — работна ос, прав ръб, плоска стена, работна или основна равнина (бледа стрелка показва кандидата); *Fixed Plane* / *Parting Tool* — равнина (скица — от списъка в диалога); *Faces* — стена (при Fixed Edge кликът определя неподвижния ръб, лилав); *Static Edges* — ръб (втори клик го маха) | — | след единичен селектор минава сам на следващия празен; десен клик → меню на командата |
-| **Rectangular / Circular Pattern, Mirror** (3D) | селектор *Features*: стена → нейната операция (втори клик я маха; клик върху ред в дървото също); *Solids*: стена → тялото ѝ. *Direction 1/2*: прав ръб или равнина (стена, работна, основна); *Axis*: прав ръб; *Mirror Plane*: равнина | — | след първия избран обект селекторът минава сам на посоката/оста/равнината; бутони за основни/работни оси и равнини в диалога |
-| **Work Plane / Axis / Point / UCS** | работна ос/точка и елементи на UCS (6/8 px) > връх или среда на прав ръб (8 px) > точка/линия/крива на видима скица > ръб (прав = линия, иначе крив ръб) > крива аналитична стена (цилиндър, конус, сфера, тор) > плоска стена / работна / основна равнина; при Axis фасетирана стена на Revolve = оста на Revolve. Втори клик върху същото го маха; несъвместим избор започва отначало | стрелка на отместена равнина, дъга за ъгъл | бутони X/Y/Z/Center в диалога; точка/линия от скица в метод с още входове става скрита работна точка/ос |
-| **Pattern (скица)** | попълва активния селектор (раздел 4.9) | — | Enter: следващ селектор / OK |
+| **Start 2D Sketch** (choosing a plane) | a model face, a work plane or an origin plane (XY/XZ/YZ) → the sketch is created | — | faces win over origin planes; Esc cancels |
+| **Extrude / Revolve** | toggles the region under the cursor (the smallest one containing it) in the current sketch; a region of another visible sketch switches the sketch; Extrude: an open line/arc (one that does not bound a region) joins the open profile (Match Shape), a second click removes it; a double-click on a dimension of the profile sketch edits it in place; right-click: Continue (Revolve, to the axis), OK, Cancel | from empty space (Inventor profile): a box for profiles, window/crossing, Shift adds, Ctrl toggles, no key replaces; dragging an arrow/arc = manipulator | Revolve: while the **Axis** selector is active, a click picks a sketch line (within 8 px); X/Y/Z buttons for the origin axes. *From*/*To*: click the field, then a face or a vertex (a vertex within 12 px wins) |
+| **Fillet / Chamfer** | Select *Edge*: an edge (a second click removes it; *Automatic* takes the tangent chain). *Loop*: a face → its loop nearest to the click. *Feature*: a face → the edges of its feature against the others. *Solid*: buttons in the panel. Full Round: the middle face. Variable: a straight edge | — | pre-selected edges join the set |
+| **Shell** | a face → to remove (a second click returns it; *Automatic* also takes the tangent ones); the thickness arrow can be dragged | — | pre-selected faces join the list; right-click → the command's menu |
+| **Combine** | *Base* — a body (click on a face); then *Toolbodies* — bodies (a second click removes a body) | — | a body selected before the command becomes the base; right-click → menu: OK, Apply, Continue, Back, Cancel + Join / Cut / Intersect |
+| **Split** | *Split Tool* — a work or origin plane (the origin planes are shown while the selector is active), a curve of a visible sketch or a face of a surface body; from the browser: Origin → XY / XZ / YZ, a work plane row, a sketch row, Surface Bodies → a surface (a sketch — also from the list in the panel); *Faces* — a face (a second click removes it); *Solid* — a body (also a row in Solid Bodies) | — | after a single-pick selector it moves on to the next one by itself; right-click → menu + the methods and Keep Flip side |
+| **Draft (Face Draft)** | depending on the active selector (only what it accepts is highlighted): *Pull Direction* — a work axis, a straight edge, a planar face, a work or origin plane (a faint arrow shows the candidate); *Fixed Plane* / *Parting Tool* — a plane (a sketch — from the list in the dialog); *Faces* — a face (with Fixed Edge the click decides the fixed edge, purple); *Static Edges* — an edge (a second click removes it) | — | after a single-pick selector it moves on to the next empty one by itself; right-click → the command's menu |
+| **Rectangular / Circular Pattern, Mirror** (3D) | selector *Features*: a face → its feature (a second click removes it; a click on a browser row too); *Solids*: a face → its body. *Direction 1/2*: a straight edge or a plane (face, work, origin); *Axis*: a straight edge; *Mirror Plane*: a plane | — | after the first picked object the selector moves on to the direction/axis/plane by itself; buttons for origin/work axes and planes in the dialog |
+| **Work Plane / Axis / Point / UCS** | work axis/point and UCS elements (6/8 px) > a vertex or the midpoint of a straight edge (8 px) > a point/line/curve of a visible sketch > an edge (straight = line, otherwise a curved edge) > a curved analytic face (cylinder, cone, sphere, torus) > a planar face / work / origin plane; for Axis a faceted face of a Revolve = the Revolve's axis. A second click on the same thing removes it; an incompatible pick starts over | an offset plane's arrow, an arc for the angle | X/Y/Z/Center buttons in the dialog; a sketch point/line in a method with further inputs becomes a hidden work point/axis |
+| **Pattern (sketch)** | fills the active selector (section 4.9) | — | Enter: next selector / OK |
 
-Във всички команди средният бутон, F2/F3/F4, колелцето и ViewCube работят нормално.
+In every command the middle button, F2/F3/F4, the wheel and the ViewCube work as usual.
 
 ---
 
-## 2. Контекстни менюта (десен клик)
+## 2. Context menus (right-click)
 
-### 2.1 Изглед, без скица (в покой или по време на команда)
+### 2.1 View, no sketch (idle or during a command)
 
-| Точка | Действие |
+| Item | Action |
 |---|---|
-| **Repeat <команда>** | повтаря последната команда; показва се при инструмент Select и без отворени Extrude/Revolve и командите със селектори (при Fillet, Hole, Work и др. още се показва — виж 5.3) |
-| **Appearance ▸** | само извън скица и при избрани обекти: *As Material* (маха замяната), *Document Appearances*, библиотеката по категории — за избраните стени/операции/тела |
-| **Projection ▸** Orthographic / Perspective / Perspective with Ortho Faces | вид проекция |
-| **New Sketch** | нова скица върху стената (или работната равнина) под курсора; иначе сив текст „No face under the cursor“ |
+| **Repeat <command>** | repeats the last command; shown with the Select tool and without an open Extrude/Revolve or a command with selectors (with Fillet, Hole, Work etc. it is still shown — see 5.3) |
+| **Appearance ▸** | only outside a sketch and with selected objects: *As Material* (removes the override), *Document Appearances*, the library by category — for the selected faces/features/bodies |
+| **Projection ▸** Orthographic / Perspective / Perspective with Ortho Faces | projection type |
+| **New Sketch** | a new sketch on the face (or work plane) under the cursor; otherwise grey text "No face under the cursor" |
 
-Няма отделно меню за стена, ръб или тяло: **Edit Feature**, Fillet/Chamfer и др. са в
-лентата с предложения след ляв клик (3.5).
+There is no separate menu for a face, an edge or a body: **Edit Feature**, Fillet/Chamfer etc. are in
+the suggestion bar after a left click (3.5).
 
-### 2.2 Изглед в скица — общи точки
+### 2.2 View in a sketch — common items
 
-Освен 2.1 (Repeat, Projection, New Sketch):
+Besides 2.1 (Repeat, Projection, New Sketch):
 
-| Точка | Кога | Действие |
+| Item | When | Action |
 |---|---|---|
-| **Done** | активен инструмент ≠ Select | край на веригата линии / създаване на сплайна / Geometry → следващ стъпка при трансформации / OK на масив, ако е готов |
-| **Cancel (Esc)** | активен инструмент ≠ Select | като Esc |
-| **Finish 2D Sketch** | винаги в скица | излиза от скицата |
+| **Done** | active tool ≠ Select | end of the line chain / create the spline / Geometry → next step in transforms / OK of a pattern if it is ready |
+| **Cancel (Esc)** | active tool ≠ Select | like Esc |
+| **Finish 2D Sketch** | always in a sketch | leaves the sketch |
 
-### 2.3 В скица: върху размер или знак на ограничение
+### 2.3 In a sketch: on a dimension or a constraint glyph
 
-Заглавие: името на ограничението.
+Title: the constraint's name.
 
-| Точка | Кога | Действие |
+| Item | When | Action |
 |---|---|---|
-| **Edit Dimension...** | размер, който не е driven | отваря полето на място |
-| **Driven Dimension** / **Make Driving** | размер | превключва driven; отказва, ако правенето на driving би преограничило |
-| **Flip Direction** | Horizontal/Vertical Distance, Point–Line Distance, Angle (не driven) | мести геометрията от другата страна |
-| **Reset Position** | преместен текст | връща текста на мястото по подразбиране |
-| **Delete Constraint** | винаги | изтрива ограничението |
+| **Edit Dimension...** | a dimension that is not driven | opens the field in place |
+| **Driven Dimension** / **Make Driving** | a dimension | toggles driven; refuses if making it driving would over-constrain |
+| **Flip Direction** | Horizontal/Vertical Distance, Point–Line Distance, Angle (not driven) | moves the geometry to the other side |
+| **Reset Position** | moved text | returns the text to its default place |
+| **Delete Constraint** | always | deletes the constraint |
 
-### 2.4 В скица: върху крива
+### 2.4 In a sketch: on a curve
 
-Върху **проектирана** крива или точка (Project Geometry): заглавие = източникът (`Sketch1 · Circle`),
-предупреждение при липсващ източник, **Break Link** (става обикновена геометрия), **Replace Reference**
-(щракнете нов източник от същия вид; ограниченията остават), **Delete** (с ограниченията към нея).
-Докато Project Geometry е включен, менюто започва с **Done (Esc)**.
+On a **projected** curve or point (Project Geometry): title = the source (`Sketch1 · Circle`),
+a warning when the source is missing, **Break Link** (becomes plain geometry), **Replace Reference**
+(click a new source of the same kind; the constraints stay), **Delete** (with the constraints on it).
+While Project Geometry is on, the menu starts with **Done (Esc)**.
 
-Заглавие: Line / Circle / Arc / Spline.
+Title: Line / Circle / Arc / Spline.
 
-| Точка | Кога | Действие |
+| Item | When | Action |
 |---|---|---|
-| (сплайн) *Interpolation* / *Control vertex* | сплайн | вид |
-| **Display Curvature** (отметка) | сплайн | гребен на кривината |
-| **Insert Point** | интерполационен сплайн | нова точка на мястото на десния клик |
-| **Delete Point** | десен клик до точка на сплайна (<1,5 mm) | маха я |
-| **Activate Handle** / **Deactivate Handle** | до точка на интерполационен сплайн | дръжка (тангента) в точката |
-| **Reset All Handles** | има дръжки | маха всички |
-| **Close Curve** (отметка) | интерполационен сплайн | затваря / отваря |
-| **Convert to CV** / **Convert to Interpolation** | сплайн | смяна на вида |
-| *Pattern* (+ предупреждение, ако масивът е „болен“) | крива от масив | — |
-| **Edit Pattern...** | масив без проблем | отваря Edit Pattern |
-| **Suppress Element** / **Unsuppress Element** | копие от масив | скрива / връща копието |
-| **Offset Element...** | копие от правоъгълен масив | прозорец *Offset Element*: Along direction 1, Along direction 2 / across; OK / Reset / Cancel |
-| **Delete Pattern** | крива от масив | изтрива масива (копията) |
-| **Break Pattern** | крива от масив | копията стават независима геометрия |
-| **Construction** / **Centerline** / **Normal** | своя (не проектирана) крива, извън масив | стил |
-| **Fix** | своя крива | Fix на точките ѝ на място |
-| **Delete Constraints** | извън масив | маха всички ограничения на кривата и точките ѝ |
-| **Delete** | своя крива | изтрива я (и неизползваните ѝ точки) |
-| **Display Degrees of Freedom** / **Hide Degrees of Freedom** | извън масив | превключва знаците за свобода |
+| (spline) *Interpolation* / *Control vertex* | spline | kind |
+| **Display Curvature** (check) | spline | curvature comb |
+| **Insert Point** | interpolation spline | a new point at the place of the right-click |
+| **Delete Point** | right-click near a spline point (<1.5 mm) | removes it |
+| **Activate Handle** / **Deactivate Handle** | near a point of an interpolation spline | a handle (tangent) at the point |
+| **Reset All Handles** | there are handles | removes them all |
+| **Close Curve** (check) | interpolation spline | closes / opens |
+| **Convert to CV** / **Convert to Interpolation** | spline | changes the kind |
+| *Pattern* (+ a warning if the pattern is "sick") | a curve of a pattern | — |
+| **Edit Pattern...** | a pattern without problems | opens Edit Pattern |
+| **Suppress Element** / **Unsuppress Element** | a pattern copy | hides / restores the copy |
+| **Offset Element...** | a copy of a rectangular pattern | window *Offset Element*: Along direction 1, Along direction 2 / across; OK / Reset / Cancel |
+| **Delete Pattern** | a curve of a pattern | deletes the pattern (the copies) |
+| **Break Pattern** | a curve of a pattern | the copies become independent geometry |
+| **Construction** / **Centerline** / **Normal** | own (not projected) curve, outside a pattern | style |
+| **Fix** | own curve | Fix of its points in place |
+| **Delete Constraints** | outside a pattern | removes all constraints of the curve and its points |
+| **Delete** | own curve | deletes it (and its unused points) |
+| **Display Degrees of Freedom** / **Hide Degrees of Freedom** | outside a pattern | toggles the degree-of-freedom glyphs |
 
-### 2.5 Дърво (Model Browser)
+### 2.5 Browser (Model Browser)
 
-| Възел | Ляв клик | Двоен клик | Десен клик (меню) |
+| Node | Left click | Double-click | Right-click (menu) |
 |---|---|---|---|
-| Проект | избира (Properties: Name, документи, библиотеки, ID) | — | — |
-| Друг документ | избира (само преглед) | — | — |
-| Активен детайл (заглавие) | разгъва/свива | — | — |
-| *Solid Bodies(n)* → тяло `SolidN` | избира тялото (Properties: Box/Solid + валидация) | — | **Material ▸** (материали по категории, с плътност), **Appearance ▸** |
+| Project | selects (Properties: Name, documents, libraries, ID) | — | — |
+| Another document | selects (view only) | — | — |
+| Active part (title) | expands/collapses | — | — |
+| *Solid Bodies(n)* → body `SolidN` | selects the body (Properties: Box/Solid + validation) | — | **Material ▸** (materials by category, with density), **Appearance ▸** |
 | *Surface Bodies(n)* | — | — | — |
 | *Origin* → XY / XZ / YZ Plane | — | — | **New Sketch** |
-| *Origin* → X/Y/Z Axis, Center Point | (само надпис) | — | — |
-| Box | избира тялото | — | **Appearance ▸**, общите (по-долу) |
-| Extrude / Revolve, Hole, Sweep, Loft, Coil, Rib | избира | **Edit Feature** | **Edit Feature**, **Edit Sketch**, **Appearance ▸**, общите |
-| Fillet / Chamfer, Shell, Draft, Thread, Combine, Split, Rectangular / Circular Pattern, Mirror | избира | **Edit Feature** | **Edit Feature**, **Appearance ▸**, общите |
-| Изгледът, докато Face Draft, Shell, Combine, Split или Loft е отворена | — | — | меню на командата: **OK**, **Apply (+)**, **Continue**, **Back**, **Cancel**, **Repeat …** и опциите (вид, посока, Flip / Inside, Outside, Center, Sharp/Rounded) |
-| Работна равнина / ос / точка | избира; отметката = видимост | **Redefine** | **New Sketch** (само равнина), общите |
-| Общите за операция | | | **Rename**, **Suppress Features** / **Unsuppress Features**, **Move EOP Here**, **Delete** |
-| Скица | избира; отметката = видимост | **Edit Sketch** | **Edit Sketch** (или **Finish 2D Sketch**, ако се редактира), **Share Sketch** (използвана, несподелена), **Unshare** (споделена, ≤1 операция), **Redefine**, **Look At**, **Hide**/**Show**, **Rename**, **Delete** |
-| *End of Part* (червена черта) | — (влачи се) | — | **Move EOP to Top**, **Move EOP to End**, **Delete All Features Below EOP** |
+| *Origin* → X/Y/Z Axis, Center Point | (label only) | — | — |
+| Box | selects the body | — | **Appearance ▸**, the common items (below) |
+| Extrude / Revolve, Hole, Sweep, Loft, Coil, Rib | selects | **Edit Feature** | **Edit Feature**, **Edit Sketch**, **Appearance ▸**, the common items |
+| Fillet / Chamfer, Shell, Draft, Thread, Combine, Split, Rectangular / Circular Pattern, Mirror | selects | **Edit Feature** | **Edit Feature**, **Appearance ▸**, the common items |
+| The view while Face Draft, Shell, Combine, Split or Loft is open | — | — | the command's menu: **OK**, **Apply (+)**, **Continue**, **Back**, **Cancel**, **Repeat …** and the options (kind, direction, Flip / Inside, Outside, Center, Sharp/Rounded) |
+| Work plane / axis / point | selects; the check box = visibility | **Redefine** | **New Sketch** (plane only), the common items |
+| Common items for a feature | | | **Rename**, **Suppress Features** / **Unsuppress Features**, **Move EOP Here**, **Delete** |
+| Sketch | selects; the check box = visibility | **Edit Sketch** | **Edit Sketch** (or **Finish 2D Sketch** if it is being edited), **Share Sketch** (used, not shared), **Unshare** (shared, ≤1 feature), **Redefine**, **Look At**, **Hide**/**Show**, **Rename**, **Delete** |
+| *End of Part* (red bar) | — (can be dragged) | — | **Move EOP to Top**, **Move EOP to End**, **Delete All Features Below EOP** |
 
-Докато в 3D Pattern/Mirror е активен селекторът *Features*, клик върху ред на операция в
-дървото я добавя/маха (не я избира). Оранжев надпис с „! “ = проблем (подсказката започва с
-`Warning:`). Сив курсив = под *End of Part* (не се строи); сив зачеркнат = изключена
-(Suppress). Клик върху операция оцветява стените ѝ в изгледа (синьо), посочването — зелено.
+While the *Features* selector is active in 3D Pattern/Mirror, a click on a feature row in the
+browser adds/removes it (it does not select it). An orange label with "! " = a problem (the tooltip starts with
+`Warning:`). Grey italic = below *End of Part* (not built); grey strike-through = suppressed
+(Suppress). A click on a feature colours its faces in the view (blue), hovering — green.
 
-- **Влачене на операция** върху друга: застава над нея (горна половина на реда) или под нея
-  (долна). Забранено местене (над това, от което зависи, или през маркера) се отказва с
-  причината в лентата на състоянието; ако след местенето нещо стане болно, то се връща.
-- **Влачене на *End of Part*** върху операция: маркерът застава над/под нея. Esc прекъсва.
-  Новите операции и скици се вмъкват при маркера.
-- **Rename:** F2 (мишката над дървото), бавен втори клик върху избран ред или менюто;
-  Enter/клик другаде = готово, Esc = отказ. Сменя само името, не id.
-- **Delete** на операция, която взима и други неща (скицата си, зависими) или чупи нещо,
-  отваря *Delete Features*: отметки **Consumed sketches and features** и **Dependent sketches
-  and features** (и двете включени), списък какво още изчезва и кое ще стане болно,
+- **Dragging a feature** onto another: it lands above it (upper half of the row) or below it
+  (lower half). A forbidden move (above something it depends on, or across the marker) is refused with
+  the reason in the status bar; if something becomes sick after the move, it is reverted.
+- **Dragging *End of Part*** onto a feature: the marker lands above/below it. Esc aborts.
+  New features and sketches are inserted at the marker.
+- **Rename:** F2 (mouse over the browser), a slow second click on a selected row, or the menu;
+  Enter/click elsewhere = done, Esc = cancel. Changes only the name, not the id.
+- **Delete** of a feature that takes other things with it (its sketch, dependents) or breaks something
+  opens *Delete Features*: check boxes **Consumed sketches and features** and **Dependent sketches
+  and features** (both on), a list of what else disappears and what will become sick,
   **OK** / **Cancel** (Esc = Cancel).
 
 ### 2.6 ViewCube
 
-| Точка | Действие |
+| Item | Action |
 |---|---|
-| **Home** | Home изглед |
-| Orthographic / Perspective / Perspective with Ortho Faces | проекция |
-| **Set Current View as Home** | текущата посока става Home |
-| **Reset Home** | (ако е зададен) връща изометрията |
-| **Fit (F6 zooms Home)** | побира всичко, без да сменя посоката |
+| **Home** | Home view |
+| Orthographic / Perspective / Perspective with Ortho Faces | projection |
+| **Set Current View as Home** | the current direction becomes Home |
+| **Reset Home** | (if set) returns to the isometric view |
+| **Fit (F6 zooms Home)** | fits everything without changing the direction |
 
-### 2.7 Лента на състоянието, лента, панели
+### 2.7 Status bar, ribbon, panels
 
-Няма контекстни менюта. Командите с варианти в лентата (Circle, Arc, Rectangle, Slot,
-Spline, Fillet, Demo, Projection) отварят менюто си с **ляв** клик.
+No context menus. Ribbon commands with variants (Circle, Arc, Rectangle, Slot,
+Spline, Fillet, Demo, Projection) open their menu with a **left** click.
 
 ---
 
-## 3. Избор
+## 3. Selection
 
-### 3.1 Приоритет и филтри (Quick Access → **Select: …**)
+### 3.1 Priority and filters (Quick Access → **Select: …**)
 
-Спецификация: [spec/0.9a-selection-filters.md](spec/0.9a-selection-filters.md). По
-подразбиране **всичко** се посочва; филтрите изключват видове. Изборът се помни между
-стартиранията (`settings.json` → `options.selection`). Заглавието е `Select: <приоритет>`,
-със `*`, когато някой филтър е изключен.
+Specification: [spec/0.9a-selection-filters.md](spec/0.9a-selection-filters.md). By
+default **everything** is pickable; filters exclude kinds. The choice is remembered between
+launches (`settings.json` → `options.selection`). The title is `Select: <priority>`,
+with `*` when some filter is off.
 
-| Приоритет (Select Priority) | Клик върху стена/ръб/връх избира | Ctrl+A / Invert избират |
+| Priority (Select Priority) | A click on a face/edge/vertex selects | Ctrl+A / Invert select |
 |---|---|---|
-| **Select Faces and Edges** (по подразбиране) | самия обект (скиците и работните елементи също се избират) | всички стени (ако стените са изключени — ръбовете, после върховете) + видимите скици и работни елементи |
-| **Select Features** | операцията, която го е създала | всички операции + скици и работни елементи |
-| **Select Bodies** | тялото (Solid Bodies / Surface Bodies) | всички тела + скици и работни елементи |
-| **Select Sketch Features** | като Faces and Edges, но видимата скица под курсора печели | като Faces and Edges |
+| **Select Faces and Edges** (default) | the object itself (sketches and work features are selected too) | all faces (if faces are off — the edges, then the vertices) + the visible sketches and work features |
+| **Select Features** | the feature that created it | all features + sketches and work features |
+| **Select Bodies** | the body (Solid Bodies / Surface Bodies) | all bodies + sketches and work features |
+| **Select Sketch Features** | like Faces and Edges, but the visible sketch under the cursor wins | like Faces and Edges |
 
-Смяната на приоритета изчиства избора. Останалите точки в менюто:
+Changing the priority clears the selection. The other items of the menu:
 
-| Точка | Действие |
+| Item | Action |
 |---|---|
-| **Filters ▸** | отметки: Faces, Edges, Vertices, Features, Solid Bodies, Surface Bodies, Sketches, Sketch Entities, Work Planes, Work Axes, Work Points, Origin; **Select All Filters** връща всички |
-| **Window / Crossing by Direction**, **Always Window**, **Always Crossing** | как решава правоъгълникът (3D и скица) |
-| **Enable Prehighlight** (отметка, вкл.) | зелено осветяване под курсора; етикетът до курсора се показва и без него |
-| **Select Loop** | контурът на последния избран ръб (или външният контур на избраната стена) |
-| **Select Tangencies** | към последния избран ръб/стена добавя допирателните (също двоен клик) |
-| **Select Invert** | всичко от Select All, което не е избрано |
-| **Select All (Ctrl+A)** | всичко, което минава филтъра (виж таблицата) |
-| **Previous Selection** | връща предишния набор (пази се един; размяна) |
-| **Clear Selection (Esc)** | изчиства избора |
+| **Filters ▸** | check boxes: Faces, Edges, Vertices, Features, Solid Bodies, Surface Bodies, Sketches, Sketch Entities, Work Planes, Work Axes, Work Points, Origin; **Select All Filters** turns them all back on |
+| **Window / Crossing by Direction**, **Always Window**, **Always Crossing** | how the selection box decides (3D and sketch) |
+| **Enable Prehighlight** (check, on) | green highlight under the cursor; the label next to the cursor is shown without it as well |
+| **Select Loop** | the loop of the last selected edge (or the outer loop of the selected face) |
+| **Select Tangencies** | adds the tangent ones to the last selected edge/face (also double-click) |
+| **Select Invert** | everything from Select All that is not selected |
+| **Select All (Ctrl+A)** | everything that passes the filter (see the table) |
+| **Previous Selection** | restores the previous set (one is kept; swap) |
+| **Clear Selection (Esc)** | clears the selection |
 
-**В команда** се посочва само сечението: това, което активният селектор приема, **и** е
-включено във филтъра. Ако филтърът изключва всичко, което селекторът приема, филтърът не
-важи, а лентата на състоянието пише в оранжево `Selection filter ignored: this input takes
-only …`. Менюто Select е достъпно и докато командата е отворена.
+**In a command** only the intersection is pickable: what the active selector accepts **and** what is
+enabled in the filter. If the filter excludes everything the selector accepts, the filter does not
+apply, and the status bar says in orange `Selection filter ignored: this input takes
+only …`. The Select menu is also available while the command is open.
 
-Лентата на състоянието показва `Selected: 3 faces, 1 edge…`. При промяна на тялото
-(регенерация, Undo) изчезналите обекти отпадат от избора; ръбовете винаги отпадат.
+The status bar shows `Selected: 3 faces, 1 edge…`. When the body changes
+(regeneration, Undo), objects that disappeared drop out of the selection; edges always drop out.
 
-### 3.2 Приоритети при посочване
+### 3.2 Picking priorities
 
-| Контекст | Ред (печели първото) |
+| Context | Order (the first wins) |
 |---|---|
-| Изглед в покой (и Select Other) | работна точка (8 px) > връх (8 px) > работна ос (6 px) > крива на видима скица (8 px) > видим ръб (6 px, скритите зад стена не се броят) > стена > работна равнина; при *Select Sketch Features* скицата е първа. Филтрираните видове се прескачат; филтрираната стена пак скрива това зад себе си |
-| Start 2D Sketch / Redefine | стена на модела > работна или основна равнина (най-близката по лъча) |
-| Скица, чертане | точка (12 px; споделя се) > среда на линия (midpoint) > крива (8 px) > свободно + разпознаване |
-| Скица, инструменти за геометрия (ограничения, размер, Trim…) | точка (6 px — малка окръжност се хваща и за кривата) > крива (8 px) |
-| Скица, Select | текст/знак на ограничение > точка (12 px) > крива (8 px) |
-| Extrude From/To, Revolve To | връх на модела (12 px) > работна точка > стена > работна / основна равнина |
-| Примитиви (Box, Cylinder, Sphere, Torus) | първо равнина (стена, основна или работна), после кликове в нея; първият клик се прихваща към началото на скицата (радиусът за точки) |
-| Work Plane/Axis/Point | виж 1.5 |
-| Face Draft, Pull | прав ръб > равнина |
+| Idle view (and Select Other) | work point (8 px) > vertex (8 px) > work axis (6 px) > curve of a visible sketch (8 px) > visible edge (6 px, those hidden behind a face do not count) > face > work plane; with *Select Sketch Features* the sketch comes first. Filtered kinds are skipped; a filtered face still hides what is behind it |
+| Start 2D Sketch / Redefine | model face > work or origin plane (the nearest along the ray) |
+| Sketch, drawing | point (12 px; it is shared) > midpoint of a line > curve (8 px) > free + inference |
+| Sketch, geometry tools (constraints, dimension, Trim…) | point (6 px — a small circle is also caught by its curve) > curve (8 px) |
+| Sketch, Select | constraint text/glyph > point (12 px) > curve (8 px) |
+| Extrude From/To, Revolve To | model vertex (12 px) > work point > face > work / origin plane |
+| Primitives (Box, Cylinder, Sphere, Torus) | first a plane (face, origin or work), then clicks in it; the first click snaps to the sketch origin (the point radius) |
+| Work Plane/Axis/Point | see 1.5 |
+| Face Draft, Pull | straight edge > plane |
 
 ### 3.3 Select Other
 
-При всеки приоритет, при покой на курсора ~0,7 s над място с повече от един кандидат (или
-от менюто Shift + десен клик → **Select Other**), се показва малка лента `< >  k / n  <описание>`:
+With any priority, when the cursor rests ~0.7 s over a place with more than one candidate (or
+from the Shift + right-click menu → **Select Other**), a small bar `< >  k / n  <description>` is shown:
 
-- **←/↑** или `<` — предишен; **→/↓** или `>` — следващ; **Shift + колелце** — смяна
-  (тогава колелцето не мащабира);
-- текущият кандидат свети; **клик върху името** го избира (и операцията му);
-- курсор на повече от 60 px от мястото или Esc я затваря.
+- **←/↑** or `<` — previous; **→/↓** or `>` — next; **Shift + wheel** — cycles
+  (the wheel does not zoom then);
+- the current candidate is highlighted; **a click on the name** selects it (and its feature);
+- moving the cursor more than 60 px from the place, or Esc, closes it.
 
-Кандидати: всички включени във филтъра видове под курсора в реда от 3.2 — работни
-елементи, върхове, скици, ръбовете в радиус 6 px (и скритите), стените по лъча
-(най-близката първа) и стените от двете страни на ръбовете. При *Features* / *Bodies*
-кандидатите са операциите / телата им (без повторения).
+Candidates: all kinds enabled in the filter under the cursor, in the order of 3.2 — work
+features, vertices, sketches, the edges within 6 px (hidden ones too), the faces along the ray
+(nearest first) and the faces on both sides of the edges. With *Features* / *Bodies*
+the candidates are their features / bodies (without repetitions).
 
-### 3.3а Меню Selection (Shift + десен клик)
+### 3.3a Selection menu (Shift + right-click)
 
-Отваря се до курсора; Esc или клик извън него го затваря. Съдържанието следва контекста:
+It opens next to the cursor; Esc or a click outside it closes it. Its content follows the context:
 
-| Контекст | Точки |
+| Context | Items |
 |---|---|
-| Детайл в покой | Select Other, Select Loop, Select Tangencies, Select Invert, Select All, Previous Selection, Clear Selection; Window/Crossing; **Filters ▸** (всички); приоритетите; Enable Prehighlight |
-| Отворена команда | Select Other (⬜ още неактивно); Window/Crossing; **Filters ▸** само с видовете, които активният селектор приема; Enable Prehighlight |
-| Скица | Select All, Select Invert, Clear Selection (кривите на скицата); Window/Crossing; Enable Prehighlight |
+| Idle part | Select Other, Select Loop, Select Tangencies, Select Invert, Select All, Previous Selection, Clear Selection; Window/Crossing; **Filters ▸** (all); the priorities; Enable Prehighlight |
+| Open command | Select Other (⬜ not active yet); Window/Crossing; **Filters ▸** only with the kinds the active selector accepts; Enable Prehighlight |
+| Sketch | Select All, Select Invert, Clear Selection (the sketch's curves); Window/Crossing; Enable Prehighlight |
 
-### 3.4 Скица
+### 3.4 Sketch
 
-Виж 1.4. Ctrl+A в скица избира всички криви. Delete изтрива избраните криви (и точките
-им, които нищо друго не ползва) и избраните ограничения. Копие от масив не може да се
-изтрие поотделно (Suppress Element / Delete Pattern); изтриването на оригинала изтрива
-масива. Автоматично проектираните ръбове на стената не се изтриват; геометрия от **Project Geometry**
-(от скици и кръгли ръбове) се изтрива заедно с ограниченията към нея. Ред в списъка *Constraints* (Properties):
-посочване = осветява геометрията, клик = избор.
+See 1.4. Ctrl+A in a sketch selects all curves. Delete deletes the selected curves (and their points
+that nothing else uses) and the selected constraints. A pattern copy cannot be
+deleted on its own (Suppress Element / Delete Pattern); deleting the original deletes the
+pattern. Automatically projected edges of the face are not deleted; geometry from **Project Geometry**
+(from sketches and circular edges) is deleted together with the constraints on it. A row in the *Constraints* list (Properties):
+hover = highlights the geometry, click = selection.
 
-### 3.5 Лента с предложения (след клик без Shift/Ctrl)
+### 3.5 Suggestion bar (after a click without Shift/Ctrl)
 
-| Избрано | Бутони |
+| Selected | Buttons |
 |---|---|
-| Стена | **New Sketch on this face**, **Extrude this face** (Press/Pull: скица върху стената, профил = регионът под клика, Join навън), **Edit Feature** (стена на основния Box: Properties показва размерите му), **Edit Sketch**, **Look At this face** |
-| Ръб | **Fillet this edge**, **Chamfer this edge**, **Edit Feature** |
+| Face | **New Sketch on this face**, **Extrude this face** (Press/Pull: a sketch on the face, profile = the region under the click, Join outwards), **Edit Feature** (a face of the base Box: Properties shows its sizes), **Edit Sketch**, **Look At this face** |
+| Edge | **Fillet this edge**, **Chamfer this edge**, **Edit Feature** |
 
 ---
 
-## 4. Скица
+## 4. Sketch
 
-### 4.1 Влизане и излизане
+### 4.1 Entering and leaving
 
-- **Start 2D Sketch** (S): появяват се основните равнини, стените светват; клик върху
-  стена, работна равнина или основна равнина. Скицата се създава (с проектиран център и
-  ръбове на стената според опциите), изгледът се обръща към нея (ако е включено) и се
-  отваря табът Sketch.
-- Редакция: двоен клик в дървото, **Edit Sketch** (дърво, Properties, лента на стена).
-- Изход: **Finish Sketch** (лента), **Finish 2D Sketch** (десен клик), бутон в Properties;
-  също всяка команда за операция (E, Extrude, Fillet…).
-- Цвят на скицата / състояние: зелено = напълно дефинирана, синьо = недодефинирана,
-  оранжево = излишни ограничения, червено = конфликт. Отделните напълно ограничени криви са
-  тъмнозелени.
+- **Start 2D Sketch** (S): the origin planes appear, the faces light up; click on a
+  face, a work plane or an origin plane. The sketch is created (with a projected centre and the
+  face's edges according to the options), the view turns towards it (if enabled) and
+  the Sketch tab opens.
+- Editing: double-click in the browser, **Edit Sketch** (browser, Properties, the bar on a face).
+- Leaving: **Finish Sketch** (ribbon), **Finish 2D Sketch** (right-click), a button in Properties;
+  also any feature command (E, Extrude, Fillet…).
+- Sketch colour / state: green = fully defined, blue = under-defined,
+  orange = redundant constraints, red = conflict. Individual fully constrained curves are
+  dark green.
 
-### 4.2 Инструменти за чертане (ред на кликовете)
+### 4.2 Drawing tools (click order)
 
-| Инструмент | Кликове | Бележки |
+| Tool | Clicks | Notes |
 |---|---|---|
-| **Line** (L) | начало, следваща, следваща… | веригата споделя точки; край: Esc, Enter или десен клик → Done. Влачене от край на крива → дъга (1.4). Начало върху окръжност/дъга, ако линията тръгва почти допирателно (до 8°) → Tangent. Курсор близо до точката на допиране от предишната точка (12 px) → знак *tangent*: край върху кривата + Tangent |
-| **Center Point Circle** (C) | център, точка от окръжността | точка върху линия/крива → Tangent към нея |
-| **Tangent Circle** | три линии | вписана окръжност, допирателна към трите |
-| **Three Point Arc** | край, край, точка от дъгата (страна и радиус) | |
-| **Tangent Arc** | край на линия/дъга, край на дъгата | |
-| **Center Point Arc** | център, начало (радиус), край | по-късата дъга в посоката на кликовете |
-| **Two Point Rectangle** (R) | два срещуположни ъгъла | |
-| **Three Point Rectangle** | ъгъл, край на първата страна, съседна страна | |
-| **Two Point Center Rectangle** | център, ъгъл | |
-| **Three Point Center Rectangle** | център, половин страна, съседна страна | |
-| **Center to Center Slot** | център на дъга, център на дъга, ширина | |
-| **Overall Slot** | край, край, ширина | |
-| **Center Point Slot** | център на прореза, център на дъга, ширина | |
-| **Three Point Arc Slot** | начало, край, точка от дъгата, ширина | |
-| **Center Point Arc Slot** | център, начало, край, ширина | |
-| **Polygon** | център, връх (inscribed) или среда на страна (circumscribed) | Properties: *Sides* 3–120 (6), *Inscribed* / *Circumscribed* |
-| **Interpolation Spline** | точки, през които минава | Enter / двоен клик / Done завършва (≥2 точки) |
-| **Control Vertex Spline** | контролни точки | същото |
-| **Point** | един клик | |
+| **Line** (L) | start, next, next… | the chain shares points; end: Esc, Enter or right-click → Done. Dragging from the end of a curve → arc (1.4). A start on a circle/arc, if the line leaves almost tangentially (up to 8°) → Tangent. The cursor near the tangent point from the previous point (12 px) → glyph *tangent*: end on the curve + Tangent |
+| **Center Point Circle** (C) | centre, point on the circle | a point on a line/curve → Tangent to it |
+| **Tangent Circle** | three lines | inscribed circle, tangent to all three |
+| **Three Point Arc** | end, end, point on the arc (side and radius) | |
+| **Tangent Arc** | end of a line/arc, end of the arc | |
+| **Center Point Arc** | centre, start (radius), end | the shorter arc in the direction of the clicks |
+| **Two Point Rectangle** (R) | two opposite corners | |
+| **Three Point Rectangle** | corner, end of the first side, adjacent side | |
+| **Two Point Center Rectangle** | centre, corner | |
+| **Three Point Center Rectangle** | centre, half side, adjacent side | |
+| **Center to Center Slot** | arc centre, arc centre, width | |
+| **Overall Slot** | end, end, width | |
+| **Center Point Slot** | slot centre, arc centre, width | |
+| **Three Point Arc Slot** | start, end, point on the arc, width | |
+| **Center Point Arc Slot** | centre, start, end, width | |
+| **Polygon** | centre, vertex (inscribed) or midpoint of a side (circumscribed) | Properties: *Sides* 3–120 (6), *Inscribed* / *Circumscribed* |
+| **Interpolation Spline** | points it passes through | Enter / double-click / Done finishes (≥2 points) |
+| **Control Vertex Spline** | control points | the same |
+| **Point** | one click | |
 
-Първият клик, хванат в точка или крива, получава Coincident / точка върху крива / Midpoint.
-Format → **Construction** без избрано превключва режим *construction* за новата геометрия
-(в лентата на състоянието се вижда `[construction]`).
+A first click caught on a point or a curve gets Coincident / point on curve / Midpoint.
+Format → **Construction** with nothing selected toggles the *construction* mode for new geometry
+(`[construction]` is shown in the status bar).
 
-### 4.3 Dynamic Input (полета до курсора)
+### 4.3 Dynamic Input (fields next to the cursor)
 
-| Инструмент, стъпка | Полета |
+| Tool, step | Fields |
 |---|---|
-| Line, Center Point Circle, Two Point / Center Rectangle, Point, Move, Copy, Rotate — първа точка | X, Y (координати в скицата) |
-| Line — втора | Length, Angle |
-| Center Point Circle — втора | Diameter |
-| Two Point / Two Point Center Rectangle — втора | Width, Height |
-| Move / Copy — втора | Delta X, Delta Y |
-| Rotate — трета | Angle |
+| Line, Center Point Circle, Two Point / Center Rectangle, Point, Move, Copy, Rotate — first point | X, Y (coordinates in the sketch) |
+| Line — second | Length, Angle |
+| Center Point Circle — second | Diameter |
+| Two Point / Two Point Center Rectangle — second | Width, Height |
+| Move / Copy — second | Delta X, Delta Y |
+| Rotate — third | Angle |
 
-| Клавиш | Действие |
+| Key | Action |
 |---|---|
-| цифри, `.`, `,`, `-` | пишат в активното поле (`,` става `.`) |
-| Backspace | трие знак |
-| **Tab** / **Shift+Tab** | заключва въведеното и минава на следващото / предишното поле |
-| **Enter** | заключва и поставя точката (само ако има въведено или заключено) |
-| **Esc** | изчиства въведеното и заключеното (второ Esc — обичайното) |
-| **↑** | последната стойност, въведена в това поле |
+| digits, `.`, `,`, `-` | type into the active field (`,` becomes `.`) |
+| Backspace | deletes a character |
+| **Tab** / **Shift+Tab** | locks the input and moves to the next / previous field |
+| **Enter** | locks and places the point (only if something is typed or locked) |
+| **Esc** | clears what is typed and locked (a second Esc — the usual) |
+| **↑** | the last value entered in this field |
 
-Заключените стойности (оранжев фон) стават размери: Length → Distance; Angle кратен на
-90° → Horizontal/Vertical, иначе Angle към предишната линия на веригата (за първа линия
-само поставя точката); Diameter → Diameter; Width/Height → Distance. Координатите на първа
-точка само я поставят. Същите полета са и в Properties (*Values*, с **Apply** и `x` =
-„следвай курсора“) за Move/Copy/Rotate.
+Locked values (orange background) become dimensions: Length → Distance; an Angle that is a multiple of
+90° → Horizontal/Vertical, otherwise Angle to the previous line of the chain (for the first line
+it only places the point); Diameter → Diameter; Width/Height → Distance. The coordinates of the first
+point only place it. The same fields are also in Properties (*Values*, with **Apply** and `x` =
+"follow the cursor") for Move/Copy/Rotate.
 
-### 4.4 Разпознаване и прихващане (inference)
+### 4.4 Inference and snapping
 
-- Прихващане: точка 12 px (споделя точката; проектирана точка → Coincident), среда на
-  линия (знак *midpoint* → Midpoint), крива 8 px (*on curve* → точка върху кривата).
-- Разпознаване спрямо предишната точка (Line и сплайни): до 3° от хоризонтала/вертикала →
-  **H** / **V**; иначе спрямо предишната линия на веригата → **//** (Parallel) или **90°**
+- Snapping: point 12 px (shares the point; a projected point → Coincident), midpoint of a
+  line (glyph *midpoint* → Midpoint), curve 8 px (*on curve* → point on the curve).
+- Inference relative to the previous point (Line and splines): within 3° of horizontal/vertical →
+  **H** / **V**; otherwise relative to the previous line of the chain → **//** (Parallel) or **90°**
   (Perpendicular).
-- Point alignment: пунктир до точка със същото X или Y (6 px); при линия → Horizontal/
-  Vertical между точките.
-- **Ctrl** (задържан): без H/V/∥/⊥, без tangent snap и без point alignment за текущия
-  клик. Прихващането към точки, среди и криви **остава**.
-- Бутон **Align** в лентата на състоянието: point alignment вкл./изкл.
-- Настройки: Application Options → *Constraint Settings — Inference* (8.1). Без *Persist*
-  знаците се показват, но ограничения не се създават (позицията остава подравнена).
-- Ако разпознатото ограничение противоречи на другите, линията се създава без него.
+- Point alignment: a dashed line to a point with the same X or Y (6 px); for a line → Horizontal/
+  Vertical between the points.
+- **Ctrl** (held): no H/V/∥/⊥, no tangent snap and no point alignment for the current
+  click. Snapping to points, midpoints and curves **stays**.
+- **Align** button in the status bar: point alignment on/off.
+- Settings: Application Options → *Constraint Settings — Inference* (8.1). Without *Persist*
+  the glyphs are shown but no constraints are created (the position stays aligned).
+- If the inferred constraint contradicts the others, the line is created without it.
 
-### 4.5 Инструменти за ограничения (Constrain)
+### 4.5 Constraint tools (Constrain)
 
-| Ограничение | Ред на избор |
+| Constraint | Selection order |
 |---|---|
-| **Coincident** | точка, после точка или крива (или крива, после точка) |
-| **Collinear** / **Parallel** / **Perpendicular** | линия, линия |
-| **Concentric** | окръжност/дъга, окръжност/дъга |
-| **Fix** | точка или крива (всички нейни точки) |
-| **Horizontal** / **Vertical** | линия; или точка, точка |
-| **Tangent** | крива, крива (линия–окръжност или окръжност–окръжност) |
-| **Symmetric** | точка, точка, линия на симетрия; или линия, линия, линия; или окръжност, окръжност, линия (+ Equal) |
-| **Equal** | линия, линия; или окръжност/дъга, окръжност/дъга |
+| **Coincident** | point, then point or curve (or curve, then point) |
+| **Collinear** / **Parallel** / **Perpendicular** | line, line |
+| **Concentric** | circle/arc, circle/arc |
+| **Fix** | point or curve (all of its points) |
+| **Horizontal** / **Vertical** | line; or point, point |
+| **Tangent** | curve, curve (line–circle or circle–circle) |
+| **Symmetric** | point, point, symmetry line; or line, line, line; or circle, circle, line (+ Equal) |
+| **Equal** | line, line; or circle/arc, circle/arc |
 
-Ограничение, което би преограничило скицата, се отказва (нищо не се променя, грешка в
-лентата на състоянието). Инструментът остава активен.
+A constraint that would over-constrain the sketch is refused (nothing changes, an error in
+the status bar). The tool stays active.
 
-### 4.6 Размери (Dimension, D)
+### 4.6 Dimensions (Dimension, D)
 
-1. Изберете 1–2 обекта (точка, линия, окръжност, дъга; сплайни — не), после клик в празно
-   = място на текста. Размерът се вижда на живо преди поставянето.
-2. Видът следва избора и мястото:
+1. Select 1–2 objects (point, line, circle, arc; not splines), then click on empty space
+   = the text position. The dimension is shown live before it is placed.
+2. The kind follows the selection and the position:
 
-| Избор | Размер |
+| Selection | Dimension |
 |---|---|
-| окръжност | Diameter |
-| дъга | Radius |
-| линия или две точки | място над/под (в X-обхвата, извън Y) → хоризонтален; вляво/вдясно (в Y-обхвата) → вертикален; иначе по линията (aligned) |
-| точка + линия | разстояние точка–линия |
-| две успоредни линии | разстояние |
-| две линии под ъгъл | Angle; квадрантът на мястото избира θ или 180° − θ |
-| точка / линия / център + **centerline**, поставен от другата страна на оста | диаметър спрямо оста (за Revolve) |
+| circle | Diameter |
+| arc | Radius |
+| line or two points | position above/below (within the X range, outside Y) → horizontal; left/right (within the Y range) → vertical; otherwise along the line (aligned) |
+| point + line | point–line distance |
+| two parallel lines | distance |
+| two lines at an angle | Angle; the quadrant of the position chooses θ or 180° − θ |
+| point / line / centre + **centerline**, placed on the other side of the axis | diameter about the axis (for Revolve) |
 
-3. Отваря се полето **Edit Dimension** на място: `име =` + стойност или уравнение (`d0/2`,
-   `10 mm`), `mm`/`deg`; **Enter** или ✔ прилага; **x** или **Esc** запазва измереното;
-   **±** показва толеранса (Type, ±/Upper/Lower, Evaluated size). Неизпълнима стойност →
-   нищо не се променя, грешка `Edit Dimension: …`.
-4. Ако размерът би преограничил: прозорец *Over-constrained* → **Accept** (driven размер,
-   в скоби) / **Cancel**.
+3. The **Edit Dimension** field opens in place: `name =` + a value or an equation (`d0/2`,
+   `10 mm`), `mm`/`deg`; **Enter** or ✔ applies; **x** or **Esc** keeps the measured value;
+   **±** shows the tolerance (Type, ±/Upper/Lower, Evaluated size). An unachievable value →
+   nothing changes, error `Edit Dimension: …`.
+4. If the dimension would over-constrain: an *Over-constrained* window → **Accept** (a driven dimension,
+   in parentheses) / **Cancel**.
 
-Редакция: двоен клик върху текста; Dimension + клик върху размер; десен клик → *Edit
-Dimension...*; списъкът *Constraints* в Properties (поле, `ref` = driven). Driven размер не
-се редактира („make it driving to edit“). Показване: падащото меню в лентата на
-състоянието — Value / Name / Expression / Tolerance. F8/F9 показват/скриват всички
-надписи на ограничения.
+Editing: double-click on the text; Dimension + click on a dimension; right-click → *Edit
+Dimension...*; the *Constraints* list in Properties (field, `ref` = driven). A driven dimension cannot
+be edited ("make it driving to edit"). Display: the drop-down in the status
+bar — Value / Name / Expression / Tolerance. F8/F9 show/hide all
+constraint glyphs.
 
-### 4.7 Relax Mode, DOF, формат
+### 4.7 Relax Mode, DOF, format
 
-- **Relax Mode** (F11, бутон *Relax* в лентата на състоянието, мини бутон в Constrain):
-  при влачене размерите отстъпват; променените стават driven.
-- **Show All Degrees of Freedom** (*DOF* в лентата на състоянието, мини бутон, View →
-  Degrees of Freedom, десен клик върху крива, Properties): лилави двойни стрелки на
-  свободните точки (X и Y или по една посока), дъга със стрелка на въртящи се криви, стрелка
-  на свободен радиус. Properties: `Free points · rotating curves · free radii`.
-- **Format**: Construction / Centerline / Normal за избраните (проектираните не се
-  променят); Construction без избор = режим за новата геометрия.
-- **Slice Graphics** (F7, бутон *Slice*): изрязва модела пред равнината на скицата;
-  изключва се с F7 и при Finish Sketch.
+- **Relax Mode** (F11, the *Relax* button in the status bar, a mini button in Constrain):
+  dimensions give way while dragging; the changed ones become driven.
+- **Show All Degrees of Freedom** (*DOF* in the status bar, a mini button, View →
+  Degrees of Freedom, right-click on a curve, Properties): purple double arrows on
+  free points (X and Y or in one direction), an arc with an arrow on rotating curves, an arrow
+  on a free radius. Properties: `Free points · rotating curves · free radii`.
+- **Format**: Construction / Centerline / Normal for the selected ones (projected ones do not
+  change); Construction with nothing selected = the mode for new geometry.
+- **Slice Graphics** (F7, the *Slice* button): cuts away the model in front of the sketch plane;
+  turned off with F7 and on Finish Sketch.
 
-### 4.8 Модифициране (Modify)
+### 4.8 Modify
 
-| Инструмент | Използване |
+| Tool | Use |
 |---|---|
-| **Trim** (X) | клик върху частта за махане (до най-близките криви). **Shift** = Extend |
-| **Extend** | клик близо до края. **Shift** = Trim |
-| **Split** | клик близо до мястото на разделяне |
-| **Offset** (O) | клик върху крива, после клик за разстоянието. Properties: *Loop Select* (цялата верига, вкл.), *Constrain Offset* (общо отместване, вкл.) |
-| **Move** | геометрия (предварителен избор или клик върху криви + Enter / Done), базова точка, крайна точка. Properties: *Copy* |
-| **Copy** | същото, оригиналът остава (копира и ограниченията) |
-| **Rotate** | геометрия, център, отправна точка, ъгъл |
-| **Mirror** | геометрия, огледална линия (Symmetric ограничения) |
-| **Scale** | геометрия, базова точка; *Scale factor* в Properties (2) |
-| **Stretch** | геометрия, базова точка, крайна точка (размерите се обновяват) |
-| **Fillet** (2D) | две линии (запазват се кликнатите страни) или клик върху ъгъл с точно две линии. *Radius* (2 mm); първото закръгление получава размер, следващите — Equal |
-| **Chamfer** (2D) | същото. *Equal distance* / *Two distances* / *Distance and angle*; Distance 1 (2), Distance 2 (3), Angle (45°) |
+| **Trim** (X) | click on the part to remove (up to the nearest curves). **Shift** = Extend |
+| **Extend** | click near the end. **Shift** = Trim |
+| **Split** | click near the split location |
+| **Offset** (O) | click on a curve, then click for the distance. Properties: *Loop Select* (the whole chain, on), *Constrain Offset* (common offset, on) |
+| **Move** | geometry (pre-selection or clicks on curves + Enter / Done), base point, end point. Properties: *Copy* |
+| **Copy** | the same, the original stays (also copies the constraints) |
+| **Rotate** | geometry, centre, reference point, angle |
+| **Mirror** | geometry, mirror line (Symmetric constraints) |
+| **Scale** | geometry, base point; *Scale factor* in Properties (2) |
+| **Stretch** | geometry, base point, end point (the dimensions update) |
+| **Fillet** (2D) | two lines (the clicked sides are kept) or a click on a corner with exactly two lines. *Radius* (2 mm); the first fillet gets a dimension, the following ones — Equal |
+| **Chamfer** (2D) | the same. *Equal distance* / *Two distances* / *Distance and angle*; Distance 1 (2), Distance 2 (3), Angle (45°) |
 
-Проектирана геометрия не се модифицира („Projected geometry cannot be modified“).
-Трансформациите показват диалог в Properties: селектор *Geometry* (клик = избор наново),
-стъпките, *Values*, **Done** (= Esc).
+Projected geometry is not modified ("Projected geometry cannot be modified").
+The transforms show a dialog in Properties: selector *Geometry* (click = select again),
+the steps, *Values*, **Done** (= Esc).
 
-### 4.9 Масиви в скица (Pattern)
+### 4.9 Sketch patterns (Pattern)
 
-Командата отваря диалог в Properties; предварителният избор е *Geometry*. Кликовете
-попълват активния селектор (`> …`); нищо не се създава преди **OK**; **Cancel** / Esc
-затварят. **Enter**: от Geometry към следващия селектор, иначе OK (ако е готово).
+The command opens a dialog in Properties; the pre-selection is *Geometry*. Clicks
+fill the active selector (`> …`); nothing is created before **OK**; **Cancel** / Esc
+close it. **Enter**: from Geometry to the next selector, otherwise OK (if ready).
 
-| Команда | Селектори | Стойности (по подразбиране) |
+| Command | Selectors | Values (default) |
 |---|---|---|
-| **Rectangular** | Geometry, Direction 1 (линия или бутон X/Y), Direction 2 (по избор; `x` го маха) | Count (3), Spacing / Length (10 mm), Flip, Fitted |
-| **Circular** | Geometry, Centre (точка или **By radius**: Radius 20 mm, at angle 0°) | Count (6), Angle (360°), Flip, Fitted (вкл.) |
-| **Pattern along Path** (мини) | Geometry, Path (линия, дъга, сплайн) | Count (4), Spacing = хорда (10 mm) |
-| **Pattern at Points** (мини) | Geometry, Base point, Targets (точка или клик в празно = нова точка; *Clear targets*) | — |
-| **Mirror** | виж 4.8 | |
+| **Rectangular** | Geometry, Direction 1 (a line or an X/Y button), Direction 2 (optional; `x` removes it) | Count (3), Spacing / Length (10 mm), Flip, Fitted |
+| **Circular** | Geometry, Centre (a point or **By radius**: Radius 20 mm, at angle 0°) | Count (6), Angle (360°), Flip, Fitted (on) |
+| **Pattern along Path** (mini) | Geometry, Path (line, arc, spline) | Count (4), Spacing = chord (10 mm) |
+| **Pattern at Points** (mini) | Geometry, Base point, Targets (a point, or a click on empty space = a new point; *Clear targets*) | — |
+| **Mirror** | see 4.8 | |
 
-Броячът `xN` стои до последното копие. Масивът се редактира с десен клик върху негова
-крива (2.4): Edit Pattern (Geometry *Add Selected* / *Remove Selected*, *Skip elements by
-click*, стойности, дръжки в изгледа, OK / Cancel), Suppress, Offset Element, Delete, Break.
+The counter `xN` sits next to the last copy. A pattern is edited with a right-click on one of its
+curves (2.4): Edit Pattern (Geometry *Add Selected* / *Remove Selected*, *Skip elements by
+click*, values, handles in the view, OK / Cancel), Suppress, Offset Element, Delete, Break.
 
-### 4.9а Project Geometry
+### 4.9a Project Geometry
 
-Sketch → Create → **Project Geometry** (бутонът е превключвател). Клик в изгледа проектира, по приоритет:
-точка от по-ранна скица (до 12 px; центрове, краища, точки на сплайн) → крива от по-ранна скица (до 8 px)
-→ ръб на модела (прав: линия; кръгъл и успореден на скицата: окръжност/дъга). По-ранните скици се
-рисуват докато командата е включена — и скритите (консумирани), в синкаво. Под курсора кандидатът свети.
-**Shift+клик** = като construction. Проекцията е фиксирана, оранжева и следва източника при регенерация
-(в GUI — при Finish Sketch на изходната скица). Своите криви се захващат за проектирана точка с
-Coincident. Окръжност в неуспоредна равнина се отказва: проектирайте центъра. Esc или десен клик →
-**Done** спира. F1 → спецификацията 1.8.
+Sketch → Create → **Project Geometry** (the button is a toggle). A click in the view projects, by priority:
+a point of an earlier sketch (within 12 px; centres, ends, spline points) → a curve of an earlier sketch (within 8 px)
+→ a model edge (straight: a line; circular and parallel to the sketch: a circle/arc). Earlier sketches are
+drawn while the command is on — the hidden (consumed) ones too, in bluish. The candidate under the cursor is highlighted.
+**Shift+click** = as construction. The projection is fixed, orange, and follows the source on regeneration
+(in the GUI — on Finish Sketch of the source sketch). Own curves attach to a projected point with
+Coincident. A circle in a non-parallel plane is refused: project the centre. Esc or right-click →
+**Done** stops it. F1 → specification 1.8.
 
-### 4.10 Свойства на скицата (Properties)
+### 4.10 Sketch properties (Properties)
 
-Име (редактира се), *Plane* + **Redefine**, **Edit/Finish Sketch**, **Look At**;
-*Coordinate System*: Origin (част/връх), Axis edge, *Edge defines the Y axis*, *Flip axis
-direction*; *References* (ред за всяка проекция: `Sketch1 · Point`, `Extrusion1 · edge 1`…; ✔ / `!`
-липсващ източник, **Break Link**, **Replace** (проекции от скици/криви ръбове), **Select** (в редакция),
-`x` = изтрий; посочване осветява); в редакция: *Solver* (състояние, DOF, redundant, итерации), DOF, брой избрани +
-**Delete**, *Constraints* (`x`, избор, стойност, `ref`); **Delete Sketch**.
+Name (editable), *Plane* + **Redefine**, **Edit/Finish Sketch**, **Look At**;
+*Coordinate System*: Origin (part/vertex), Axis edge, *Edge defines the Y axis*, *Flip axis
+direction*; *References* (a row for each projection: `Sketch1 · Point`, `Extrusion1 · edge 1`…; ✔ / `!`
+missing source, **Break Link**, **Replace** (projections from sketches/curved edges), **Select** (in edit),
+`x` = delete; hovering highlights); in edit: *Solver* (state, DOF, redundant, iterations), DOF, number selected +
+**Delete**, *Constraints* (`x`, selection, value, `ref`); **Delete Sketch**.
 
 ---
 
-## 5. Клавишни комбинации
+## 5. Keyboard shortcuts
 
-Клавишите не действат, докато е на фокус текстово поле или е отворен файлов прозорец /
-„Unsaved changes“. Твърдо зададени са (без преназначаване). Еднобуквените (S, E, R, H, L,
-C, D, X, O) действат само сами или с Shift — **никога с Ctrl или Alt** (Alt+S е запазен за
-търсенето на команда, `docs/spec/0.15-context-menus-shortcuts.md` §5.3).
+Keys do nothing while a text field has focus or a file window /
+"Unsaved changes" is open. They are hard-wired (no remapping). The single-letter ones (S, E, R, H, L,
+C, D, X, O) work only alone or with Shift — **never with Ctrl or Alt** (Alt+S is reserved for
+the command search, `docs/spec/0.15-context-menus-shortcuts.md` §5.3).
 
-### 5.1 Таблица
+### 5.1 Table
 
-| Клавиш | Действие | Контекст | Inventor |
+| Key | Action | Context | Inventor |
 |---|---|---|---|
-| **F1** | отваря спецификацията на текущата команда (`docs/spec/…`) с програмата на системата: прозорците за материали/вид → 2.15, Physical Properties → 0.10, работни елементи → 2.10, Shell, Draft, Pattern (2.11) / Mirror (2.12), Fillet, Chamfer, Extrude, Revolve, инструментите на скицата (1.1–1.7), иначе `0-ui.md` | глобално | F1 = помощ |
-| **F2** (задържан) + ляв | Pan | изглед, профил Inventor | същото |
-| **F3** (задържан) + ляв | Zoom (нагоре = приближава) | изглед, профил Inventor | същото |
-| **F4** (задържан) + ляв | Orbit | изглед, профил Inventor | същото |
-| **F6** | Home изглед + Fit | глобално | същото |
-| **F7** | Slice Graphics вкл./изкл. | скица | същото |
-| **F8** | показва надписите на ограниченията | глобално | Show All Constraints |
-| **F9** | скрива надписите | глобално | Hide All Constraints |
-| **F11** | Relax Mode вкл./изкл. | скица | същото |
-| **F11** | Full Screen вкл./изкл. | извън скица | Full Screen (без клавиш по подразбиране) |
-| **Ctrl+0** | Clean Screen вкл./изкл.: само изгледът и Quick Access | глобално | същото |
-| **Esc** | затваря плаващия прозорец под курсора (Parameters, Options, Physical Properties, Styles Editor, браузърите, Adjust, Clear, Offset Element), без да прекъсва командата | курсорът е над прозореца и не се пише в поле | затваря диалога |
-| **Enter** / **Space** | повтаря последната команда | **никаква** отворена команда (панел, избор на равнина/цел, инструмент или диалог на скицата), без избрани криви | Inventor: Enter |
-| **Enter** | **Continue** към празния задължителен селектор, иначе **OK** | Face Draft, Shell, Combine, Split, Loft (извън поле) | Inventor: Enter = Continue / OK |
-| **Enter** | **OK**, ако командата може да завърши; иначе нищо (входът се чака) — Revolve без ос: **Continue** към избора на оста | Extrude, Revolve, примитиви, Fillet, Chamfer, Hole, Thread, работни елементи, Pattern, Mirror, Sweep, Coil, Rib (извън поле) | същото |
-| **Ctrl+Enter** | **OK** (ако може), и докато се пише в поле на панела | всеки панел на операция, Edit Pattern и диалогът за масив в скица | Inventor: Ctrl+Enter |
-| **Enter** | край на веригата / сплайна; Geometry → следваща стъпка при трансформации; масив: следващ селектор / OK | скица | |
-| **Enter** | поставя точката с въведените стойности | Dynamic Input | |
-| **Enter** | прилага | Edit Dimension, файлов прозорец (име/папка) | |
-| **Esc** | прекратява: Select Other, Work/Fillet/Shell/Draft/Pattern/Mirror/Extrude/Revolve (и Edit Feature), избор на равнина, From/To, Edit Pattern; изчиства избора (→ Previous Selection); в скица: първо Esc маха текущите кликове, второ връща Select; масив = Cancel | глобално | |
-| **Esc** | изчиства въведеното | Dynamic Input | |
-| **Esc** | затваря без промяна | Edit Dimension, поле за стойност, файлов прозорец, Unsaved changes, Delete Feature | |
-| **Delete** | изтрива избраните криви и ограничения | скица | Inventor трие и в 3D |
-| **S** | Start 2D Sketch | извън скица | същото |
-| **H** | Hole | извън скица | същото |
-| **E** | Extrude (и излиза от скицата) | глобално | същото |
-| **R** | Revolve | извън скица | същото |
-| **H** | Hole | извън скица | същото |
-| **R** | Two Point Rectangle | скица | същото |
-| **L** | Line | скица | същото |
-| **C** | Center Point Circle | скица | същото (в сглобка C = Constrain) |
-| **D** | Dimension | скица | същото |
-| **X** | Trim | скица | същото |
-| **O** | Offset | скица | същото |
-| **Shift** (задържан) | Trim ↔ Extend | Trim / Extend | същото |
-| **Shift**+клик | добавя (3D) / превключва (скица) | избор | |
-| **Ctrl**+клик | превключва | избор в 3D | |
-| **Shift** / **Ctrl** + правоъгълник | добавя / превключва | избор | |
-| **Ctrl** (задържан) | без разпознаване на H/V/∥/⊥, tangent, alignment | чертане в скица | същото |
-| **Ctrl** (задържан) | по-фина стъпка: 0,1 mm / 1° | влачене на манипулатор | |
-| **Ctrl+Z** | Undo | глобално | същото |
-| **Ctrl+Y**, **Ctrl+Shift+Z** | Redo | глобално | същото |
-| **Ctrl+S** | Save (без файл → Save As) | глобално | същото |
-| **Ctrl+Shift+S** | Save As | глобално | |
-| **Ctrl+O** | Open (пита за незаписани промени) | глобално | същото |
-| **Ctrl+N** | New (празен детайл; пита за незаписани промени) | глобално | същото |
-| **Ctrl+A** | Select All от режима на избор | изглед в покой | |
-| **Ctrl+A** | избира всички криви | скица | |
-| **Tab** / **Shift+Tab** | следващо / предишно поле | Dynamic Input (взема се преди egui) | същото |
-| **↑** | последна стойност на полето | Dynamic Input | |
-| **Backspace**, цифри, `.` `,` `-` | писане | Dynamic Input | |
-| **← ↑** / **→ ↓** | предишен / следващ кандидат | Select Other | |
-| **Shift + колелце** | смяна на кандидата | Select Other | |
+| **F1** | opens the specification of the current command (`docs/spec/…`) with the system's program: the material/appearance windows → 2.15, Physical Properties → 0.10, work features → 2.10, Shell, Draft, Pattern (2.11) / Mirror (2.12), Fillet, Chamfer, Extrude, Revolve, the sketch tools (1.1–1.7), otherwise `0-ui.md` | global | F1 = help |
+| **F2** (held) + left | Pan | view, Inventor profile | the same |
+| **F3** (held) + left | Zoom (up = zoom in) | view, Inventor profile | the same |
+| **F4** (held) + left | Orbit | view, Inventor profile | the same |
+| **F6** | Home view + Fit | global | the same |
+| **F7** | Slice Graphics on/off | sketch | the same |
+| **F8** | shows the constraint glyphs | global | Show All Constraints |
+| **F9** | hides the glyphs | global | Hide All Constraints |
+| **F11** | Relax Mode on/off | sketch | the same |
+| **F11** | Full Screen on/off | outside a sketch | Full Screen (no key by default) |
+| **Ctrl+0** | Clean Screen on/off: only the view and Quick Access | global | the same |
+| **Esc** | closes the floating window under the cursor (Parameters, Options, Physical Properties, Styles Editor, the browsers, Adjust, Clear, Offset Element) without aborting the command | the cursor is over the window and no field is being typed in | closes the dialog |
+| **Enter** / **Space** | repeats the last command | **no** open command (panel, plane/target pick, sketch tool or dialog), no selected curves | Inventor: Enter |
+| **Enter** | **Continue** to the empty required selector, otherwise **OK** | Face Draft, Shell, Combine, Split, Loft (outside a field) | Inventor: Enter = Continue / OK |
+| **Enter** | **OK** if the command can finish; otherwise nothing (input is awaited) — Revolve without an axis: **Continue** to the axis pick | Extrude, Revolve, primitives, Fillet, Chamfer, Hole, Thread, work features, Pattern, Mirror, Sweep, Coil, Rib (outside a field) | the same |
+| **Ctrl+Enter** | **OK** (if possible), also while typing in a panel field | every feature panel, Edit Pattern and the sketch pattern dialog | Inventor: Ctrl+Enter |
+| **Enter** | end of the chain / spline; Geometry → next step in transforms; pattern: next selector / OK | sketch | |
+| **Enter** | places the point with the typed values | Dynamic Input | |
+| **Enter** | applies | Edit Dimension, file window (name/folder) | |
+| **Esc** | aborts: Select Other, Work/Fillet/Shell/Draft/Pattern/Mirror/Extrude/Revolve (and Edit Feature), plane pick, From/To, Edit Pattern; clears the selection (→ Previous Selection); in a sketch: the first Esc removes the current clicks, the second returns to Select; pattern = Cancel | global | |
+| **Esc** | clears the input | Dynamic Input | |
+| **Esc** | closes without changes | Edit Dimension, value field, file window, Unsaved changes, Delete Feature | |
+| **Delete** | deletes the selected curves and constraints | sketch | Inventor deletes in 3D too |
+| **S** | Start 2D Sketch | outside a sketch | the same |
+| **H** | Hole | outside a sketch | the same |
+| **E** | Extrude (and leaves the sketch) | global | the same |
+| **R** | Revolve | outside a sketch | the same |
+| **H** | Hole | outside a sketch | the same |
+| **R** | Two Point Rectangle | sketch | the same |
+| **L** | Line | sketch | the same |
+| **C** | Center Point Circle | sketch | the same (in an assembly C = Constrain) |
+| **D** | Dimension | sketch | the same |
+| **X** | Trim | sketch | the same |
+| **O** | Offset | sketch | the same |
+| **Shift** (held) | Trim ↔ Extend | Trim / Extend | the same |
+| **Shift**+click | adds (3D) / toggles (sketch) | selection | |
+| **Ctrl**+click | toggles | selection in 3D | |
+| **Shift** / **Ctrl** + box | adds / toggles | selection | |
+| **Ctrl** (held) | no H/V/∥/⊥, tangent, alignment inference | drawing in a sketch | the same |
+| **Ctrl** (held) | finer step: 0.1 mm / 1° | dragging a manipulator | |
+| **Ctrl+Z** | Undo | global | the same |
+| **Ctrl+Y**, **Ctrl+Shift+Z** | Redo | global | the same |
+| **Ctrl+S** | Save (no file → Save As) | global | the same |
+| **Ctrl+Shift+S** | Save As | global | |
+| **Ctrl+O** | Open (asks about unsaved changes) | global | the same |
+| **Ctrl+N** | New (empty part; asks about unsaved changes) | global | the same |
+| **Ctrl+A** | Select All of the selection mode | idle view | |
+| **Ctrl+A** | selects all curves | sketch | |
+| **Tab** / **Shift+Tab** | next / previous field | Dynamic Input (taken before egui) | the same |
+| **↑** | last value of the field | Dynamic Input | |
+| **Backspace**, digits, `.` `,` `-` | typing | Dynamic Input | |
+| **← ↑** / **→ ↓** | previous / next candidate | Select Other | |
+| **Shift + wheel** | cycles the candidate | Select Other | |
 
-Не са свързани (за сравнение с Inventor): F5 (Previous View), Home (Zoom All), Alt+S (търсене на команда — идва),
-P/C в сглобка, keymap файл.
+Not bound (for comparison with Inventor): F5 (Previous View), Home (Zoom All), Alt+S (command search — coming),
+P/C in an assembly, a keymap file.
 
-### 5.2 Мишка + клавиш
+### 5.2 Mouse + key
 
-Виж 1.1 (Shift+среден = Orbit) и 1.3–1.4.
+See 1.1 (Shift+middle = Orbit) and 1.3–1.4.
 
-### 5.3 Повтаряне на команда
+### 5.3 Repeating a command
 
-Отделно от Repeat всяка пусната команда (без Undo/Redo и Select) влиза първа в списъка на
-**последните команди** (до 10; `settings.json` → `options.recent_commands`); от него ще четат
-полето за псевдоним и търсенето на команда (spec 0.15 §5.1, §5.3).
+Apart from Repeat, every started command (except Undo/Redo and Select) goes first into the list of
+**recent commands** (up to 10; `settings.json` → `options.recent_commands`); the alias
+field and the command search will read from it (spec 0.15 §5.1, §5.3).
 
-Помнят се: Start 2D Sketch, Extrude, Revolve, Fillet, Chamfer, Shell, Face Draft,
-Rectangular/Circular Pattern, Mirror, Work Plane/Axis/Point и всеки инструмент на скицата (повтаря се само в скица). Повтаря се с
-Enter/Space или **Repeat <име>** в десния клик — само когато не е отворена никаква команда
-(една обща проверка, `gui/keys.rs` `OpenState`); в менюто на команда със селектори Repeat
-първо прекъсва нея.
-
----
-
-## 6. Полета за стойности
-
-Два вида полета:
-
-1. **Полета на операции** (Extrude, Revolve, Fillet/Chamfer, Shell, Draft, работни
-   елементи, Box): показват уравнението, ако има; при фокус целият текст се избира.
-2. **Полета на инструменти** (`ExprValue`: Polygon, 2D Fillet/Chamfer, масиви, Scale,
-   Offset Element, работни диалози, списъкът Constraints, толеранс): същите изрази;
-   резултатът се изчислява веднага (за масивите уравнението се запазва в размера).
-
-| Свойство | Поведение |
-|---|---|
-| Синтаксис | `+ - * / ^ ( )`, функции `sin cos tan asin acos atan sqrt abs floor ceil round min max`, `pi`/`PI`. Пример: `20*2`, `width + 5 mm`, `atan(h / w)` |
-| Единици | `mm cm m in ft um deg rad ul`. Число без единица = единицата на полето (mm; за ъгли градуси; `sin(30)` = sin 30°) |
-| Имена | имената от *Parameters* (`d0`, `length`, потребителски); `име = израз` дава име на полето (заето име → грешка; поле не може да сочи себе си) |
-| Прилагане | **Enter** или напускане на полето (клик другаде, Tab) с валидна промяна |
-| Отказ | **Esc** — връща старата стойност |
-| Грешка | червен текст; подсказка `Invalid: …`; не се прилага |
-| Подсказка | `име = стойност` и „Accepts expressions…“ |
-| Меню **`>`** | **List Parameters** (име + стойност → вмъква името), **Recently Used** (последните 8, общи за всички полета), *Measure* и *Show Dimensions* (сиви, предстоят) |
-| Влачене | `ExprValue` и полетата на операции **не** се влачат. Само полетата *Values* на трансформациите в скица (egui `DragValue`) се влачат с мишката |
-
-Прозорец **Parameters** (Tools → Parameters): колони Parameter Name, Consumed by, Unit,
-Equation, Nominal Value, Tolerance (Evaluated size), Model Value, Comment; секции *Model
-Parameters* и *User Parameters*; клетките се прилагат при напускане/Enter; **Add Numeric**
-добавя потребителски параметър (mm), Unit mm/deg/ul, `x` трие (само ако не се ползва).
-Грешка → `Parameters: …`, промяната се връща.
-
-Внимание: докато в скица има полета на Dynamic Input, Tab не мести фокуса в Properties.
+Remembered: Start 2D Sketch, Extrude, Revolve, Fillet, Chamfer, Shell, Face Draft,
+Rectangular/Circular Pattern, Mirror, Work Plane/Axis/Point and every sketch tool (repeated only in a sketch). It is repeated with
+Enter/Space or **Repeat <name>** in the right-click menu — only when no command is open
+(one shared check, `gui/keys.rs` `OpenState`); in the menu of a command with selectors, Repeat
+aborts that command first.
 
 ---
 
-## 7. Манипулатори и предварителен изглед
+## 6. Value fields
 
-### 7.1 Манипулатори
+Two kinds of fields:
 
-| Къде | Дръжки |
+1. **Feature fields** (Extrude, Revolve, Fillet/Chamfer, Shell, Draft, work
+   features, Box): show the equation if there is one; on focus the whole text is selected.
+2. **Tool fields** (`ExprValue`: Polygon, 2D Fillet/Chamfer, patterns, Scale,
+   Offset Element, work dialogs, the Constraints list, tolerance): the same expressions;
+   the result is computed at once (for patterns the equation is kept in the dimension).
+
+| Property | Behaviour |
 |---|---|
-| Extrude (само Extents = Distance, без From) | стрелка за Distance A (Symmetric: половин стрелка от всяка страна), стрелка B при Asymmetric, дръжка за Taper (и Taper B) до върха |
-| Revolve (Extents = Angle) | дъга около оста с дръжка за Angle A (Flipped — в другата посока, Symmetric — на половин ъгъл), Angle B при Asymmetric |
-| Work Plane — Offset | стрелка за Distance от базовата равнина |
-| Work Plane — Angle to Plane | дъга около ръба за Angle |
+| Syntax | `+ - * / ^ ( )`, functions `sin cos tan asin acos atan sqrt abs floor ceil round min max`, `pi`/`PI`. Example: `20*2`, `width + 5 mm`, `atan(h / w)` |
+| Units | `mm cm m in ft um deg rad ul`. A number without a unit = the field's unit (mm; degrees for angles; `sin(30)` = sin 30°) |
+| Names | the names from *Parameters* (`d0`, `length`, user ones); `name = expression` names the field (a taken name → error; a field cannot refer to itself) |
+| Applying | **Enter** or leaving the field (click elsewhere, Tab) with a valid change |
+| Cancel | **Esc** — restores the old value |
+| Error | red text; tooltip `Invalid: …`; not applied |
+| Tooltip | `name = value` and "Accepts expressions…" |
+| Menu **`>`** | **List Parameters** (name + value → inserts the name), **Recently Used** (the last 8, shared by all fields), *Measure* and *Show Dimensions* (grey, to come) |
+| Dragging | `ExprValue` and feature fields can **not** be dragged. Only the *Values* fields of the sketch transforms (egui `DragValue`) can be dragged with the mouse |
 
-- Показват се в диалога на командата и при избрана операция в дървото (не в скица и не при
-  операция с проблем).
-- Посочване (7 px) показва стойността (`12.00 mm`, `45.0 deg`); влачене я сменя.
-- Стъпка: 1 mm (Ctrl: 0,1 mm, минимум една стъпка); ъгли на Revolve 5° (Ctrl: 1°, до
+The **Parameters** window (Tools → Parameters): columns Parameter Name, Consumed by, Unit,
+Equation, Nominal Value, Tolerance (Evaluated size), Model Value, Comment; sections *Model
+Parameters* and *User Parameters*; cells are applied on leaving/Enter; **Add Numeric**
+adds a user parameter (mm), Unit mm/deg/ul, `x` deletes (only if unused).
+Error → `Parameters: …`, the change is reverted.
+
+Note: while a sketch has Dynamic Input fields, Tab does not move the focus in Properties.
+
+---
+
+## 7. Manipulators and preview
+
+### 7.1 Manipulators
+
+| Where | Handles |
+|---|---|
+| Extrude (only Extents = Distance, without From) | an arrow for Distance A (Symmetric: half an arrow on each side), arrow B with Asymmetric, a handle for Taper (and Taper B) near the tip |
+| Revolve (Extents = Angle) | an arc about the axis with a handle for Angle A (Flipped — in the other direction, Symmetric — at half the angle), Angle B with Asymmetric |
+| Work Plane — Offset | an arrow for the Distance from the base plane |
+| Work Plane — Angle to Plane | an arc about the edge for the Angle |
+
+- They are shown in the command's dialog and when a feature is selected in the browser (not in a sketch and not for
+  a feature with a problem).
+- Hovering (7 px) shows the value (`12.00 mm`, `45.0 deg`); dragging changes it.
+- Step: 1 mm (Ctrl: 0.1 mm, at least one step); Revolve angles 5° (Ctrl: 1°, up to
   360°); Taper 1° (±80°).
-- В диалог на Extrude/Revolve промяната е на живо; на съществуваща операция и на работна
-  равнина — при пускане (една стъпка за Undo). Влаченето заменя уравнението с число.
+- In an Extrude/Revolve dialog the change is live; on an existing feature and on a work
+  plane — on release (one Undo step). Dragging replaces the equation with a number.
 
-### 7.2 Предварителен изглед
+### 7.2 Preview
 
-- Extrude, Revolve, Fillet/Chamfer, Shell, Face Draft, Pattern/Mirror: оранжеви ръбове на резултата,
-  изчислени във фонова нишка („Computing the preview...“). OK е разрешено, докато се смята.
-  Невъзможна операция → жълто поле `Warning: …`, OK е сиво.
-- Профилите на Extrude/Revolve: регионите на скицата светват зелено (избраните по-тъмно);
-  оста на Revolve — зелен пунктир.
-- Fillet/Chamfer: избраните ръбове сини (неактивните набори сиво-сини), под курсора зелен.
-  Shell/Draft: избраните стени сини, под курсора зелена; Draft показва стрелка за посоката.
-  Pattern/Mirror: стените на избраните операции/тела сини; Direction 1 — оранжева стрелка,
-  Direction 2 — синя, оста — дълга линия.
-- Work features: синя равнина / ос / точка на живо.
-- Скица: гумена линия на инструмента, знак на прихващането, размерът на живо, копията на
-  масива.
+- Extrude, Revolve, Fillet/Chamfer, Shell, Face Draft, Pattern/Mirror: orange edges of the result,
+  computed on a background thread ("Computing the preview..."). OK is enabled while it computes.
+  An impossible operation → a yellow box `Warning: …`, OK is grey.
+- Extrude/Revolve profiles: the sketch regions light up green (the selected ones darker);
+  the Revolve axis — a green dashed line.
+- Fillet/Chamfer: the selected edges blue (inactive sets grey-blue), the one under the cursor green.
+  Shell/Draft: the selected faces blue, the one under the cursor green; Draft shows an arrow for the direction.
+  Pattern/Mirror: the faces of the selected features/bodies blue; Direction 1 — an orange arrow,
+  Direction 2 — a blue one, the axis — a long line.
+- Work features: a live blue plane / axis / point.
+- Sketch: the tool's rubber-band line, the snap glyph, the live dimension, the pattern
+  copies.
 
 ---
 
-## 8. Настройки
+## 8. Settings
 
 ### 8.1 Application Options (Tools → Application Options; Sketch → Constraint Settings)
 
-| Група | Опция | Ефект | По подразбиране |
+| Group | Option | Effect | Default |
 |---|---|---|---|
-| Navigation | **Inventor** / **Classic (left = orbit)** | профил на мишката (1.1) | Inventor |
-| | **Reverse zoom direction** | обръща колелцето | изкл. |
-| Language | **Hints in Bulgarian (подсказки на български)** | подсказки в лентата на състоянието на български (командите остават английски); също бутон **БГ** | изкл. |
-| Sketch | **Autoproject part origin on sketch create** | центърът на детайла се проектира в нова скица | вкл. |
-| | **Autoproject edges of the face on sketch create** | ръбовете на стената се проектират | вкл. |
-| | **Look at sketch plane on sketch creation and edit** | изгледът се обръща към скицата | вкл. |
-| | **Grid lines** / **Axes** / **Coordinate system indicator** | рамка на скицата | вкл. |
-| Display | **Show constraint labels** | като F8/F9 | вкл. |
-| | **Thread texture** | козметичните резби (Hole Tapped, Thread) се рисуват като текстура с винтови ивици върху стената; изкл.: нищо не се рисува (данните остават) | вкл. |
-| Constraint Settings — Inference | **Infer constraints** | знаци за разпознаване (Ctrl ги потиска) | вкл. |
-| | **Persist constraints** | създава разпознатите ограничения | вкл. |
-| | **Point alignment** | подравняване (пунктир); с Persist → H/V между точки | вкл. |
-| | Horizontal, Vertical, Parallel, Perpendicular, Midpoint, On Curve | кои разпознавания действат | вкл. |
-| | **Coincident (snap to and share points)** | изкл.: новите линии не се свързват към точки | вкл. |
+| Navigation | **Inventor** / **Classic (left = orbit)** | mouse profile (1.1) | Inventor |
+| | **Reverse zoom direction** | reverses the wheel | off |
+| Language | **Hints in Bulgarian (подсказки на български)** | status-bar hints in Bulgarian (the commands stay in English); also the **БГ** button | off |
+| Sketch | **Autoproject part origin on sketch create** | the part's centre is projected into a new sketch | on |
+| | **Autoproject edges of the face on sketch create** | the face's edges are projected | on |
+| | **Look at sketch plane on sketch creation and edit** | the view turns towards the sketch | on |
+| | **Grid lines** / **Axes** / **Coordinate system indicator** | the sketch frame | on |
+| Display | **Show constraint labels** | like F8/F9 | on |
+| | **Thread texture** | cosmetic threads (Hole Tapped, Thread) are drawn as a texture with helical stripes on the face; off: nothing is drawn (the data stays) | on |
+| Constraint Settings — Inference | **Infer constraints** | inference glyphs (Ctrl suppresses them) | on |
+| | **Persist constraints** | creates the inferred constraints | on |
+| | **Point alignment** | alignment (dashed line); with Persist → H/V between points | on |
+| | Horizontal, Vertical, Parallel, Perpendicular, Midpoint, On Curve | which inferences are active | on |
+| | **Coincident (snap to and share points)** | off: new lines do not connect to points | on |
 
-Всички опции се помнят между стартиранията (`settings.json`, ключ `options`; езикът — в
-`hints_bulgarian`). Прозорецът се разтяга и скролира; помни мястото и размера си.
+All options are remembered between launches (`settings.json`, key `options`; the language — in
+`hints_bulgarian`). The window can be resized and scrolled; it remembers its place and size.
 
 ### 8.2 settings.json
 
-| Ключ | Съдържание |
+| Key | Content |
 |---|---|
-| `hints_bulgarian` | `true`/`false` — език на подсказките |
-| `recent_files` | до 10 пътя (най-новият първи; липсващите не се показват) |
-| `ui` | подредбата: видими панели (`show_browser`, `show_properties`, `show_ribbon`, `show_status_bar`, `show_view_cube`, `show_triad`), `ribbon_minimized`, страни (`browser_side`, `properties_side`: `Left`/`Right`), ширини/височина (`browser_width`, `properties_width`, `status_height`), плаващи прозорци (`windows`: ключ → `x`, `y`, `w`, `h`), главният прозорец (`main_size`, `maximized`) |
-| `options` | Application Options: `mouse` (`Inventor`/`Classic`), `invert_wheel`, `sketch` (опциите на скицата), `inference`, `show_labels`, `thread_texture`, `home_view` |
+| `hints_bulgarian` | `true`/`false` — language of the hints |
+| `recent_files` | up to 10 paths (the newest first; missing ones are not shown) |
+| `ui` | the layout: visible panels (`show_browser`, `show_properties`, `show_ribbon`, `show_status_bar`, `show_view_cube`, `show_triad`), `ribbon_minimized`, sides (`browser_side`, `properties_side`: `Left`/`Right`), widths/height (`browser_width`, `properties_width`, `status_height`), floating windows (`windows`: key → `x`, `y`, `w`, `h`), the main window (`main_size`, `maximized`) |
+| `options` | Application Options: `mouse` (`Inventor`/`Classic`), `invert_wheel`, `sketch` (the sketch options), `inference`, `show_labels`, `thread_texture`, `home_view` |
 
-`ui` и `options` се записват 0,5 s след последната промяна (влаченето на ръб пише
-веднъж) и при затваряне; записът е атомарен и пази другите ключове. Непознати ключове се
-пропускат, липсващи или сгрешени стойности остават по подразбиране (поле по поле, със
-съобщение `Settings: …` в лентата на състоянието). Повреден файл → съобщение, стойности по
-подразбиране и `settings.json.bak` при следващия запис; програмата не пада.
+`ui` and `options` are written 0.5 s after the last change (dragging a border writes
+once) and on close; the write is atomic and keeps the other keys. Unknown keys are
+skipped, missing or wrong values stay at the default (field by field, with a
+`Settings: …` message in the status bar). A corrupt file → a message, default values
+and `settings.json.bak` on the next write; the program does not crash.
 
-Няма материали, шаблони или профили в settings.json. Библиотеките с материали и видове
-са вградени (`data/materials/materials.csv`, `data/appearances/appearances.csv`) и се
-допълват от потребителска папка (8.4); **Reload Library** в Material Browser ги чете
-наново, проблемите при зареждане излизат в лентата на състоянието.
+There are no materials, templates or profiles in settings.json. The material and appearance libraries
+are built in (`data/materials/materials.csv`, `data/appearances/appearances.csv`) and are
+extended from a user folder (8.4); **Reload Library** in the Material Browser reads them
+again, loading problems are shown in the status bar.
 
-### 8.3 Променливи на средата
+### 8.3 Environment variables
 
-| Променлива | Ефект |
+| Variable | Effect |
 |---|---|
-| `CADCRAFT3D_DEMO` = `rectangle` \| `slot` \| `tangents` \| `lines` \| `revolve` | стартира с демо скица (в равнина XY, в редакция) |
-| `CADCRAFT3D_KERNEL=facet` | изключва точното ядро (всичко се строи фасетно; за сравнение) |
-| `RUST_LOG` (напр. `info`, `debug`, `cadcraft3d=trace`) | само вдига нивото на лога; голо ниво (`debug`) важи и за другите библиотеки (по подразбиране: нашият код `info`, другите `warn`) |
-| `CADCRAFT3D_LOG` = `trace` \| `debug` \| `info` \| `warn` \| `error` \| `off` | нивото на лога за нашия код и ядрото |
-| `CADCRAFT3D_DIAG_DIR` | друга папка за `logs/` и `recovery/` (вместо `%APPDATA%\3dcadcraft`) |
-| `CADCRAFT_WRITE_COMPAT=1` | само за тестовете (`cargo test --test compat`): записва нови fixtures |
-| `APPDATA`, `USERPROFILE`/`HOME`, `OneDrive` | откъде се вземат пътищата по-долу |
+| `CADCRAFT3D_DEMO` = `rectangle` \| `slot` \| `tangents` \| `lines` \| `revolve` | starts with a demo sketch (in the XY plane, in edit) |
+| `CADCRAFT3D_KERNEL=facet` | turns off the exact kernel (everything is built faceted; for comparison) |
+| `RUST_LOG` (e.g. `info`, `debug`, `cadcraft3d=trace`) | only raises the log level; a bare level (`debug`) also applies to other libraries (default: our code `info`, others `warn`) |
+| `CADCRAFT3D_LOG` = `trace` \| `debug` \| `info` \| `warn` \| `error` \| `off` | the log level for our code and the kernel |
+| `CADCRAFT3D_DIAG_DIR` | another folder for `logs/` and `recovery/` (instead of `%APPDATA%\3dcadcraft`) |
+| `CADCRAFT_WRITE_COMPAT=1` | tests only (`cargo test --test compat`): writes new fixtures |
+| `APPDATA`, `USERPROFILE`/`HOME`, `OneDrive` | where the paths below come from |
 
-Командният ред: `3dcadcraft [ПРОЕКТ]` — `.3dcadcraft` файл или разпакована папка.
+Command line: `3dcadcraft [PROJECT]` — a `.3dcadcraft` file or an unpacked folder.
 
-### 8.4 Файлове и места
+### 8.4 Files and locations
 
-| Какво | Windows | Linux |
+| What | Windows | Linux |
 |---|---|---|
-| settings.json | `%APPDATA%\3dcadcraft\settings.json` | `~/.config/3dcadcraft/settings.json` (`XDG_CONFIG_HOME` не се ползва) |
-| Начална папка на диалозите | папката на текущия файл, иначе `%USERPROFILE%\Documents` или `%OneDrive%\Documents`, иначе профилът | папката на файла, иначе `~/Documents`, иначе `~` |
-| Потребителски материали / видове | `%APPDATA%\3dcadcraft\materials\materials.csv`, `…\appearances.csv` (колоните като във вградените CSV) | `~/.config/3dcadcraft/materials/…` |
-| F1 (спецификации) | `<папката с изходния код>\docs\spec\…` (пътят е от компилацията) | същото, отваря се с `xdg-open` |
-| Лог на сесията | `%APPDATA%\3dcadcraft\logs\session-YYYYMMDD-HHMMSS.log` (UTC; последните 20 сесии) | `~/.config/3dcadcraft/logs/…` |
-| Дневник на действията | `…\logs\session-YYYYMMDD-HHMMSS-journal.jsonl`; описание на сесията (`clean_exit`) `…\logs\session-….json` | същото |
-| Доклади за срив | `…\logs\crash-YYYYMMDD-HHMMSS.txt` (последните 20) | същото |
-| Автозаписи | `%APPDATA%\3dcadcraft\recovery\<проект>-<хеш>-<време>.3dcadcraft` + `.json` (последните 3 на проект) | `~/.config/3dcadcraft/recovery/…` |
+| settings.json | `%APPDATA%\3dcadcraft\settings.json` | `~/.config/3dcadcraft/settings.json` (`XDG_CONFIG_HOME` is not used) |
+| Start folder of the dialogs | the current file's folder, otherwise `%USERPROFILE%\Documents` or `%OneDrive%\Documents`, otherwise the profile | the file's folder, otherwise `~/Documents`, otherwise `~` |
+| User materials / appearances | `%APPDATA%\3dcadcraft\materials\materials.csv`, `…\appearances.csv` (columns as in the built-in CSVs) | `~/.config/3dcadcraft/materials/…` |
+| F1 (specifications) | `<source code folder>\docs\spec\…` (the path comes from the build) | the same, opened with `xdg-open` |
+| Session log | `%APPDATA%\3dcadcraft\logs\session-YYYYMMDD-HHMMSS.log` (UTC; the last 20 sessions) | `~/.config/3dcadcraft/logs/…` |
+| Action journal | `…\logs\session-YYYYMMDD-HHMMSS-journal.jsonl`; session description (`clean_exit`) `…\logs\session-….json` | the same |
+| Crash reports | `…\logs\crash-YYYYMMDD-HHMMSS.txt` (the last 20) | the same |
+| Autosaves | `%APPDATA%\3dcadcraft\recovery\<project>-<hash>-<time>.3dcadcraft` + `.json` (the last 3 per project) | `~/.config/3dcadcraft/recovery/…` |
 
-**Help** (меню вдясно в Quick Access): **Help** (F1), **Save Diagnostics…** (zip с лога, дневника и описанието на текущата и предишната сесия, докладите за срив, текущия проект и `settings.json`), **Open Logs Folder**. След срив при старт излиза **Restore** (Restore / Open Original / Discard). Подробно: [spec/0.14-diagnostics.md](spec/0.14-diagnostics.md).
+**Help** (menu on the right of Quick Access): **Help** (F1), **Save Diagnostics…** (a zip with the log, the journal and the description of the current and the previous session, the crash reports, the current project and `settings.json`), **Open Logs Folder**. After a crash, on start **Restore** appears (Restore / Open Original / Discard). Details: [spec/0.14-diagnostics.md](spec/0.14-diagnostics.md).
 
-Файлове: **Save** → един `.3dcadcraft` (ZIP); **Save as Folder...** → разпакована папка
-(`име.3dcadcraft/` с `manifest.json`, удобна за git). Open показва и такива папки.
-Проект, пуснат с drag&drop върху прозореца, се отваря (след въпроса за незаписани
-промени). Заглавието е `<файл>[ *] - 3DCadCraft`; `*` = незаписани промени.
+Files: **Save** → one `.3dcadcraft` (ZIP); **Save as Folder...** → an unpacked folder
+(`name.3dcadcraft/` with `manifest.json`, convenient for git). Open shows such folders too.
+A project dropped onto the window (drag&drop) is opened (after the question about unsaved
+changes). The title is `<file>[ *] - 3DCadCraft`; `*` = unsaved changes.
 
-Файлов прозорец: **Up** (от корена на диск в Windows — списък на дисковете), **Home**,
-поле за папка (Enter), списък (клик в папка влиза; клик върху файл го избира; двоен клик
-— отваря/записва), *File name* (Enter), **Save**/**Open**, **Cancel**, **Recent** (при
-Open), Esc. Записът върху съществуващ файл иска второ натискане на Save. Разширението се
-добавя само.
+File window: **Up** (from a drive root on Windows — a list of drives), **Home**,
+a folder field (Enter), a list (a click on a folder enters it; a click on a file selects it; a double-click
+— opens/saves), *File name* (Enter), **Save**/**Open**, **Cancel**, **Recent** (with
+Open), Esc. Saving over an existing file needs a second press of Save. The extension is
+added automatically.
 
 ---
 
-## 9. Лента (ribbon) и Quick Access
+## 9. Ribbon and Quick Access
 
-### 9.1 Quick Access (най-горе)
+### 9.1 Quick Access (at the very top)
 
-| Елемент | Действие |
+| Element | Action |
 |---|---|
-| **File** ▸ | New (Ctrl+N), Open... (Ctrl+O), Open Recent ▸, Save (Ctrl+S), Save As... (Ctrl+Shift+S), Save as Folder..., Export ▸ STL... / STEP... / GLB..., пътят на файла |
-| **View** ▸ | User Interface: отметки **Browser**, **Properties**, **Ribbon**, **Status Bar**, **ViewCube**, **Axis Triad**, **Minimize Ribbon**; **Clean Screen (Ctrl+0)**, **Full Screen (F11)**; страна на **Browser** и **Properties** (Left / Right); **Reset UI Layout**. Редът Quick Access остава видим винаги, затова оттук всичко се връща |
-| **Open**, **Save** | същото като в File |
-| **Undo**, **Redo** | подсказката показва какво (`Undo Drag (Ctrl+Z)`) |
-| **Rebuild** | Rebuild All: всички операции наново, без кеша; резултат в лентата на състоянието |
-| **Select: …** ▸ | режим на избор и действия (3.1) |
-| **Material: <име>** ▸ | материал на детайла (или на избраните тела): категории → материал (плътност в подсказката); **Material Browser...** |
-| **Appearance: <име>[*]** ▸ | вид на избраните стени/операции/тела (без избор — на детайла): *As Material*, *Document Appearances*, библиотека по категории; **Appearance Browser...**, **Adjust...**, **Clear...**. `*` = някои стени/операции/тела имат свой вид |
-| име на документа (`*` при промени) | вдясно: „3DCadCraft“ |
+| **File** ▸ | New (Ctrl+N), Open... (Ctrl+O), Open Recent ▸, Save (Ctrl+S), Save As... (Ctrl+Shift+S), Save as Folder..., Export ▸ STL... / STEP... / GLB..., the file's path |
+| **View** ▸ | User Interface: check boxes **Browser**, **Properties**, **Ribbon**, **Status Bar**, **ViewCube**, **Axis Triad**, **Minimize Ribbon**; **Clean Screen (Ctrl+0)**, **Full Screen (F11)**; side of the **Browser** and **Properties** (Left / Right); **Reset UI Layout**. The Quick Access row always stays visible, so everything can be brought back from here |
+| **Open**, **Save** | the same as in File |
+| **Undo**, **Redo** | the tooltip shows what (`Undo Drag (Ctrl+Z)`) |
+| **Rebuild** | Rebuild All: all features again, without the cache; the result in the status bar |
+| **Select: …** ▸ | selection mode and actions (3.1) |
+| **Material: <name>** ▸ | material of the part (or of the selected bodies): categories → material (density in the tooltip); **Material Browser...** |
+| **Appearance: <name>[*]** ▸ | appearance of the selected faces/features/bodies (with no selection — of the part): *As Material*, *Document Appearances*, the library by category; **Appearance Browser...**, **Adjust...**, **Clear...**. `*` = some faces/features/bodies have their own appearance |
+| document name (`*` with changes) | on the right: "3DCadCraft" |
 
-Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
+Export: STL (triangles in mm), STEP (exact B-rep), GLB (glTF).
 
-### 9.2 Табове
+### 9.2 Tabs
 
-Имената, иконките, клавишите и подсказките на бутоните идват от **регистъра на командите**
-(`src/gui/commands.rs`): всяка команда има неизменим id (`part.extrude`), английско име, името
-в Inventor, българско име, псевдонимите на Inventor, клавиш, място (Tab › Panel), среда (детайл
-/ скица) и раздела от FEATURES, ако още не е готова.
+The names, icons, keys and tooltips of the buttons come from the **command registry**
+(`src/gui/commands.rs`): every command has an immutable id (`part.extrude`), an English name, the name
+in Inventor, a Bulgarian name, Inventor's aliases, a key, a place (Tab › Panel), an environment (part
+/ sketch) and the FEATURES section if it is not ready yet.
 
-Табове: **3D Model**, **Sketch**, **Inspect**, **Tools**, **Manage**, **View** (винаги всички).
-Влизането в скица отваря Sketch, излизането — 3D Model. Сивите команди показват защо в
-подсказката; непредвидените още — „Предстои — docs/FEATURES.md, раздел X“. Клавишът (ако
-има) е в подсказката.
+Tabs: **3D Model**, **Sketch**, **Inspect**, **Tools**, **Manage**, **View** (always all of them).
+Entering a sketch opens Sketch, leaving it — 3D Model. Grey commands say why in
+the tooltip; those not implemented yet say "Planned — docs/FEATURES.md, section X" (Bulgarian UI:
+"Предстои — docs/FEATURES.md, раздел X"). The key (if
+any) is in the tooltip.
 
 **3D Model**
 
-| Панел | Команда | Значение |
+| Panel | Command | Meaning |
 |---|---|---|
-| Sketch | **Start 2D Sketch** (S) | скица върху равнина или стена (сива, докато се избира равнина) |
-| Create | **Extrude** (E) | изтегля затворени региони |
-| | **Revolve** (R) | завърта региони около ос |
-| | **Sweep** | протяга профили по път (крива от скица в друга равнина или ръбове); Guide Rail, Parallel, Taper, Twist |
-| | **Loft** | тяло през сечения по ред (профили, стени, точка в края); Rails, Center Line, Area Loft, условия Direction / Tangent, Map Point, Closed Loop |
-| | **Coil** | навива затворен профил около ос: Pitch and Revolution / Revolution and Height / Pitch and Height, Taper, Right/Left, затворени краища; с Cut прави резба |
-| | **Rib** | ребро (Parallel) или преграда (Normal) от отворени криви до тялото: To Next / Finite, дебелина от страна или симетрично, Draft, бобини, мрежи |
-| | Emboss (2.17) | предстои |
-| Modify | **Hole** (H) | отвор: Simple / Clearance / Tapped / Taper Tapped, гнезда, граници, стандарти (2.3) |
-| | **Fillet** | закръгля ръбове (изпъкнал — реже, вдлъбнат — добавя) |
-| | **Chamfer** | фаска: Distance, Two Distances, Distance and Angle |
-| | **Shell** | черупка; Inside, Outside, Center; Sharp / Rounded Corners |
+| Sketch | **Start 2D Sketch** (S) | a sketch on a plane or a face (grey while a plane is being picked) |
+| Create | **Extrude** (E) | extrudes closed regions |
+| | **Revolve** (R) | revolves regions about an axis |
+| | **Sweep** | sweeps profiles along a path (a sketch curve in another plane, or edges); Guide Rail, Parallel, Taper, Twist |
+| | **Loft** | a body through sections in order (profiles, faces, a point at the end); Rails, Center Line, Area Loft, Direction / Tangent conditions, Map Point, Closed Loop |
+| | **Coil** | winds a closed profile about an axis: Pitch and Revolution / Revolution and Height / Pitch and Height, Taper, Right/Left, closed ends; with Cut it makes a thread |
+| | **Rib** | a rib (Parallel) or a web (Normal) from open curves to the body: To Next / Finite, thickness to one side or symmetric, Draft, bosses, rib networks |
+| | Emboss (2.17) | to come |
+| Modify | **Hole** (H) | hole: Simple / Clearance / Tapped / Taper Tapped, seats, terminations, standards (2.3) |
+| | **Fillet** | rounds edges (convex — cuts, concave — adds) |
+| | **Chamfer** | chamfer: Distance, Two Distances, Distance and Angle |
+| | **Shell** | shell; Inside, Outside, Center; Sharp / Rounded Corners |
 | | **Draft** | Face Draft: Fixed Edge, Fixed Plane, Parting Line; One Way / Symmetric / Asymmetric; Move Parting Line |
-| | **Thread**, **Combine**, **Split** | резба (2.9); обединяване на тела; разделяне на стени и тела (2.13) |
-| | Slot (2.3) | предстои |
-| Work Features | **Plane** | работна равнина; методът следва избора |
-| | **Axis** | работна ос |
-| | **Point** | работна точка (и Grounded X, Y, Z; център на тор/сфера; пробив на крива стена) |
-| | **UCS** | потребителска координатна система: X, Y, Z и ъгли или три точки (център, X, Y); свои равнини, оси и център |
-| Pattern | **Rectangular** | копия на операции или тела в редове по една или две посоки |
-| | **Circular** | копия на равни ъгли около ос |
-| | **Mirror** | огледално копие на операции или тела спрямо равнина |
-| Primitives | **Box**, **Cylinder**, **Sphere**, **Torus** | първо равнина, после кликове в нея (2.1) |
+| | **Thread**, **Combine**, **Split** | thread (2.9); joining bodies; splitting faces and bodies (2.13) |
+| | Slot (2.3) | to come |
+| Work Features | **Plane** | work plane; the method follows the selection |
+| | **Axis** | work axis |
+| | **Point** | work point (also Grounded X, Y, Z; centre of a torus/sphere; piercing a curved face) |
+| | **UCS** | user coordinate system: X, Y, Z and angles, or three points (centre, X, Y); its own planes, axes and centre |
+| Pattern | **Rectangular** | copies of features or bodies in rows along one or two directions |
+| | **Circular** | copies at equal angles about an axis |
+| | **Mirror** | a mirrored copy of features or bodies about a plane |
+| Primitives | **Box**, **Cylinder**, **Sphere**, **Torus** | first a plane, then clicks in it (2.1) |
 
-**Sketch** (командите са активни само в скица)
+**Sketch** (the commands are active only in a sketch)
 
-| Панел | Команди |
+| Panel | Commands |
 |---|---|
-| Create | **Line** (L); **Circle** ▸ Center Point Circle, Tangent Circle; **Arc** ▸ Three Point, Tangent, Center Point; **Rectangle** ▸ Two Point, Three Point, Two Point Center, Three Point Center; **Slot** ▸ Center to Center, Overall, Center Point, Three Point Arc, Center Point Arc; **Spline** ▸ Interpolation, Control Vertex; Ellipse (1.2, предстои); **Point**; **Polygon**; **Fillet** ▸ Fillet, Chamfer; Text (1.2, предстои); **Select** (Esc) |
+| Create | **Line** (L); **Circle** ▸ Center Point Circle, Tangent Circle; **Arc** ▸ Three Point, Tangent, Center Point; **Rectangle** ▸ Two Point, Three Point, Two Point Center, Three Point Center; **Slot** ▸ Center to Center, Overall, Center Point, Three Point Arc, Center Point Arc; **Spline** ▸ Interpolation, Control Vertex; Ellipse (1.2, to come); **Point**; **Polygon**; **Fillet** ▸ Fillet, Chamfer; Text (1.2, to come); **Select** (Esc) |
 | Modify | **Move**, **Copy**, **Rotate**, **Trim** (X), **Extend**, **Split**, **Offset** (O), **Scale**, **Stretch** |
-| Pattern | **Rectangular**, **Circular**, **Mirror**, **Pattern along Path** (мини), **Pattern at Points** (мини) |
-| Constrain | **Dimension** (D); мини: Coincident, Collinear, Concentric, Fix, Parallel, Perpendicular, Horizontal, Vertical, Tangent, Symmetric, Equal; Smooth (G2) (1.3, предстои); **Constraint Settings** (отваря Application Options); **Relax Mode**; **Show DOF**; **Show All**/**Hide All** (F8/F9); **Coordinate System** (Properties на скицата) |
-| Format | мини: **Construction**, **Centerline**, **Normal** |
-| Demo | **Demo** ▸ Rectangle (fully defined), Slot (arcs + tangent lines), Tangent circles, Parallel / perpendicular, Shaft half section (centerline closes it) — работи и извън скица |
+| Pattern | **Rectangular**, **Circular**, **Mirror**, **Pattern along Path** (mini), **Pattern at Points** (mini) |
+| Constrain | **Dimension** (D); mini: Coincident, Collinear, Concentric, Fix, Parallel, Perpendicular, Horizontal, Vertical, Tangent, Symmetric, Equal; Smooth (G2) (1.3, to come); **Constraint Settings** (opens Application Options); **Relax Mode**; **Show DOF**; **Show All**/**Hide All** (F8/F9); **Coordinate System** (the sketch's Properties) |
+| Format | mini: **Construction**, **Centerline**, **Normal** |
+| Demo | **Demo** ▸ Rectangle (fully defined), Slot (arcs + tangent lines), Tangent circles, Parallel / perpendicular, Shaft half section (centerline closes it) — also works outside a sketch |
 | Exit | **Finish Sketch** |
 
 **Inspect**
 
-| Панел | Команда |
+| Panel | Command |
 |---|---|
-| Measure | Measure (0.10) — предстои; **Physical Properties** — прозорец: Requested Accuracy, **Update** (когато стойностите са остарели), `kg` (иначе g), таблица по тела (Include, Solid, Material, Density, Mass, Volume), Mass, Area, Volume, Center of Gravity, Principal Moments, Mass Moments of Inertia, **Clipboard** |
-| Analysis | **Validate Solid** (избира тялото: Properties показва V/E/F, Euler–Poincaré, валидност); Interference (3.5), Curvature (5.4), Draft Analysis (2.8) — предстоят |
+| Measure | Measure (0.10) — to come; **Physical Properties** — a window: Requested Accuracy, **Update** (when the values are out of date), `kg` (otherwise g), a table by body (Include, Solid, Material, Density, Mass, Volume), Mass, Area, Volume, Center of Gravity, Principal Moments, Mass Moments of Inertia, **Clipboard** |
+| Analysis | **Validate Solid** (selects the body: Properties shows V/E/F, Euler–Poincaré, validity); Interference (3.5), Curvature (5.4), Draft Analysis (2.8) — to come |
 
 **Tools**
 
-| Панел | Команда |
+| Panel | Command |
 |---|---|
-| Options | **Application Options**; Document Settings (0.11, предстои) |
-| Material and Appearance | **Material** (Material Browser: Search, *Assign to*, Document Materials, Library по категории, Reload Library), **Appearance** (Appearance Browser: Search, As Material, Document Appearances, Library), **Adjust** (Colour, Opacity, **Apply** = нов Custom вид за целите; статусът подсказва), **Clear** (Clear Appearance Overrides: Faces, Features, Bodies, Part, *Only the selection*, OK/Cancel) |
+| Options | **Application Options**; Document Settings (0.11, to come) |
+| Material and Appearance | **Material** (Material Browser: Search, *Assign to*, Document Materials, Library by category, Reload Library), **Appearance** (Appearance Browser: Search, As Material, Document Appearances, Library), **Adjust** (Colour, Opacity, **Apply** = a new Custom appearance for the targets; the status bar prompts), **Clear** (Clear Appearance Overrides: Faces, Features, Bodies, Part, *Only the selection*, OK/Cancel) |
 | Parameters | **Parameters** (fx) |
 | Update | **Rebuild All** |
-| Automation | Rules (7.5), AI Assistant (7.6) — предстоят |
+| Automation | Rules (7.5), AI Assistant (7.6) — to come |
 | History | **Undo** (Ctrl+Z), **Redo** (Ctrl+Y) |
 
 **Manage**
 
-| Панел | Команда |
+| Panel | Command |
 |---|---|
-| Styles and Standards | **Styles Editor** (Style and Standard Editor: материалите и видовете на документа, Document/Both, Update, Purge; Lighting — сиво), **Update** (стиловете на документа от библиотеката), **Purge** (маха неизползваните), Save (2.15, предстои) |
+| Styles and Standards | **Styles Editor** (Style and Standard Editor: the document's materials and appearances, Document/Both, Update, Purge; Lighting — grey), **Update** (the document's styles from the library), **Purge** (removes the unused ones), Save (2.15, to come) |
 
-Приоритет на вида при рисуване: стена > операция > тяло > детайл > материал.
+Appearance precedence when drawing: face > feature > body > part > material.
 
 **View**
 
-| Панел | Команда |
+| Panel | Command |
 |---|---|
 | Visibility | **Constraints** (F8/F9), **Degrees of Freedom** |
-| Navigate | **Home** (F6), **Look At** (редактираната/избраната скица), **Front** (от −Y), **Top** (от +Z), **Right** (от +X) |
-| Appearance | Visual Style (0.3), Section View (0.3) — предстоят; **Projection** ▸ Orthographic / Perspective / Perspective with Ortho Faces |
-| Windows | **User Interface** ▸ Browser / Properties / Ribbon / Status Bar / ViewCube / Axis Triad (натиснат = видим); **Clean Screen** (Ctrl+0); **Full Screen** (F11 извън скица); **Reset** (Reset UI Layout) |
+| Navigate | **Home** (F6), **Look At** (the edited/selected sketch), **Front** (from −Y), **Top** (from +Z), **Right** (from +X) |
+| Appearance | Visual Style (0.3), Section View (0.3) — to come; **Projection** ▸ Orthographic / Perspective / Perspective with Ortho Faces |
+| Windows | **User Interface** ▸ Browser / Properties / Ribbon / Status Bar / ViewCube / Axis Triad (pressed = visible); **Clean Screen** (Ctrl+0); **Full Screen** (F11 outside a sketch); **Reset** (Reset UI Layout) |
 
-Лентата се свива до табовете с бутона `^` вдясно от табовете или с двоен клик върху
-активния таб (`v` я връща); свита, клик върху таб показва панелите му до избор на команда
-или клик другаде. Ръбовете на дървото, Properties и лентата на състоянието се влачат;
-размерите се помнят. Плаващите прозорци се разтягат (освен малките Offset Element, Adjust,
-Clear) и се отварят там, където са били; при по-малък екран се вкарват вътре.
+The ribbon collapses to the tabs with the `^` button to the right of the tabs or with a double-click on the
+active tab (`v` restores it); when collapsed, a click on a tab shows its panels until a command is chosen
+or you click elsewhere. The borders of the browser, Properties and the status bar can be dragged;
+the sizes are remembered. Floating windows can be resized (except the small Offset Element, Adjust,
+Clear) and open where they were; on a smaller screen they are moved inside.
 
-### 9.3 Диалозите в Properties (кратко)
+### 9.3 Dialogs in Properties (in short)
 
-Всеки диалог има заглавие с икона и **?** (= F1).
+Every dialog has a title with an icon and **?** (= F1).
 
-| Команда | Секции и бутони |
+| Command | Sections and buttons |
 |---|---|
-| Extrude | Input Geometry (Sketch, Profiles), Behavior (From, Direction: Default/Flipped/Symmetric/Asymmetric, Extents: Distance/To/To Next/Through All, Distance A/B), Output (Solid/Surface, Join/Cut/Intersect/New Solid, Solids), Advanced Properties (Taper A/B; Match Shape и Infer iMates — сиви); **OK**, **Cancel**. Cut/Intersect обръща посоката към материала |
+| Extrude | Input Geometry (Sketch, Profiles), Behavior (From, Direction: Default/Flipped/Symmetric/Asymmetric, Extents: Distance/To/To Next/Through All, Distance A/B), Output (Solid/Surface, Join/Cut/Intersect/New Solid, Solids), Advanced Properties (Taper A/B; Match Shape and Infer iMates — grey); **OK**, **Cancel**. Cut/Intersect turns the direction towards the material |
 | Revolve | Input Geometry (Profiles, Axis, Origin axis X/Y/Z), Behavior (Full/Angle, Direction, Angle A/B), Output; **OK**, **Cancel** |
-| Fillet | Type (Constant/Variable/Chord/Full Round), Select (Edge/Loop/Feature/Solid → All Edges/All Fillets/All Rounds), Edges + **Add set** (до 9 набора), Edge chain *Automatic*; Variable: точки по ръба (Start/End/Point, **Add point**, *Smooth radius*); Size; **OK**, **Apply** (създава и продължава), **Cancel** |
-| Chamfer | същото + Method, Flip, *Partial* (един прав ръб: To Start, Chamfer length, To End), Corners *Cone at small rounds* |
-| Shell | `Part > Shell1` (два клика — преименуване), Shell Type Sharp/Rounded Corners, Direction Inside/Outside/Center, Thickness (2 mm), Remove Faces (селектор), Automatic Face Chain, Solid (при много тела), Advanced Properties (приближение — неактивно); **OK**, **Apply**, **Cancel** |
-| Face Draft | Type Fixed Edge/Fixed Plane/Parting Line; селектори Pull Direction / Fixed Plane / Parting Tool / Faces / Static Edges (точка, брой, `x`); Flip, X/Y/Z и работни оси, Sketch (при Parting Line); Automatic Face Chain, Automatic Blending; One Way/Symmetric/Asymmetric, Draft Angle (1°), Draft Angle 2; Move Parting Line (Angle for Top/Both/Bottom, Select Boundary, Clear All); **OK**, **Apply**, **Cancel** |
-| Rectangular Pattern (3D) | Input Geometry (Copy: **Features** / **Solids**, списък), Direction 1 (селектор, Origin axis X/Y/Z и работни оси, Flip, Count, Distribution Incremental/Fitted, Spacing/Length, Midplane), Direction 2 (*Use* + същото), Output (само Solids: Join / New Solid), Creation (Identical; Optimized/Adjust — сиви); **OK**, **Apply**, **Cancel** |
-| Circular Pattern (3D) | Input Geometry, Rotation Axis (селектор, оси, Flip), Placement (Count, Incremental/Fitted, Angle / Total Angle, Midplane; Orientation — сиво), Output, Creation; **OK**, **Apply**, **Cancel** |
-| Mirror (3D) | Input Geometry, Mirror Plane (селектор, Origin plane XY/XZ/YZ), Output (Join / New Solid, *Remove Original*), Creation; **OK**, **Apply**, **Cancel** |
-| Work Plane/Axis/Point/UCS | Input (избраните, `x`), Origin X/Y/Z/Center, Method, Distance (10 mm) / Angle (90°) / X,Y,Z, Grounded (точка), Solution + Next (пробив), Other side (допирателна), Flip Normal (равнина), X/Y/Z/Angle X/Y/Z (UCS); **OK**, **Cancel**. Properties на готов елемент: входове, стойности с изрази, Other side, Flip Normal, Visible, New Sketch, **Redefine**, Delete; двоен клик = Redefine |
-| Избрана операция | същите полета, прилагат се веднага (Undo стъпка); **Edit Feature**, **Delete** |
-| Box (тяло) | Length (X), Width (Y), Height (Z) + Validation |
+| Fillet | Type (Constant/Variable/Chord/Full Round), Select (Edge/Loop/Feature/Solid → All Edges/All Fillets/All Rounds), Edges + **Add set** (up to 9 sets), Edge chain *Automatic*; Variable: points along the edge (Start/End/Point, **Add point**, *Smooth radius*); Size; **OK**, **Apply** (creates and continues), **Cancel** |
+| Chamfer | the same + Method, Flip, *Partial* (one straight edge: To Start, Chamfer length, To End), Corners *Cone at small rounds* |
+| Shell | `Part > Shell1` (two clicks — rename), Shell Type Sharp/Rounded Corners, Direction Inside/Outside/Center, Thickness (2 mm), Remove Faces (selector), Automatic Face Chain, Solid (with several bodies), Advanced Properties (approximation — inactive); **OK**, **Apply**, **Cancel** |
+| Face Draft | Type Fixed Edge/Fixed Plane/Parting Line; selectors Pull Direction / Fixed Plane / Parting Tool / Faces / Static Edges (dot, count, `x`); Flip, X/Y/Z and work axes, Sketch (with Parting Line); Automatic Face Chain, Automatic Blending; One Way/Symmetric/Asymmetric, Draft Angle (1°), Draft Angle 2; Move Parting Line (Angle for Top/Both/Bottom, Select Boundary, Clear All); **OK**, **Apply**, **Cancel** |
+| Rectangular Pattern (3D) | Input Geometry (Copy: **Features** / **Solids**, list), Direction 1 (selector, Origin axis X/Y/Z and work axes, Flip, Count, Distribution Incremental/Fitted, Spacing/Length, Midplane), Direction 2 (*Use* + the same), Output (Solids only: Join / New Solid), Creation (Identical; Optimized/Adjust — grey); **OK**, **Apply**, **Cancel** |
+| Circular Pattern (3D) | Input Geometry, Rotation Axis (selector, axes, Flip), Placement (Count, Incremental/Fitted, Angle / Total Angle, Midplane; Orientation — grey), Output, Creation; **OK**, **Apply**, **Cancel** |
+| Mirror (3D) | Input Geometry, Mirror Plane (selector, Origin plane XY/XZ/YZ), Output (Join / New Solid, *Remove Original*), Creation; **OK**, **Apply**, **Cancel** |
+| Work Plane/Axis/Point/UCS | Input (the selected ones, `x`), Origin X/Y/Z/Center, Method, Distance (10 mm) / Angle (90°) / X,Y,Z, Grounded (point), Solution + Next (piercing), Other side (tangent), Flip Normal (plane), X/Y/Z/Angle X/Y/Z (UCS); **OK**, **Cancel**. Properties of a finished feature: inputs, values with expressions, Other side, Flip Normal, Visible, New Sketch, **Redefine**, Delete; double-click = Redefine |
+| Selected feature | the same fields, applied at once (an Undo step); **Edit Feature**, **Delete** |
+| Box (body) | Length (X), Width (Y), Height (Z) + Validation |
 
 ---
 
-## 10. Лента на състоянието
+## 10. Status bar
 
-Отляво надясно:
+From left to right:
 
-| Елемент | Съдържание |
+| Element | Content |
 |---|---|
-| Състояние / подсказка | Избор на равнина: „Select a planar face or an origin plane…“ / „Select the new plane for …“. В скица: `<скица>: Fully constrained` / `Needs N dimension(s)/constraint(s)` / `Over-constrained (N redundant)` / `Constraints conflict — sketch unchanged` (в цвета на скицата) + подсказката на инструмента (+ `[construction]`). При Fillet/Chamfer, Adjust, Shell, Face Draft, Pattern/Mirror, Work: стъпката на командата. Иначе: `Selected: …` или „Ready — Start 2D Sketch (S), or right-click a face: New Sketch“ |
-| Съобщение | резултат от последната операция (червено = грешка `<Command>: <причина>`), иначе подсказка за навигацията според профила |
-| `mm`, `ISO` | единици и стандарт (само надписи) |
-| `NN ms` | време на кадър (изгладено) |
-| (в скица) падащо меню | Value / Name / Expression / Tolerance на размерите |
-| (в скица) **DOF** | Show All Degrees of Freedom |
-| (в скица) **Slice** | Slice Graphics (F7) |
-| (в скица) **Align** | point alignment (Ctrl го потиска за един клик) |
-| (в скица) **Relax** | Relax Mode (F11) |
-| **БГ** | подсказки на български (записва се) |
-| `Mouse: …` | текущият профил на мишката |
+| State / prompt | Plane pick: "Select a planar face or an origin plane…" / "Select the new plane for …". In a sketch: `<sketch>: Fully constrained` / `Needs N dimension(s)/constraint(s)` / `Over-constrained (N redundant)` / `Constraints conflict — sketch unchanged` (in the sketch's colour) + the tool's prompt (+ `[construction]`). With Fillet/Chamfer, Adjust, Shell, Face Draft, Pattern/Mirror, Work: the command's step. Otherwise: `Selected: …` or "Ready — Start 2D Sketch (S), or right-click a face: New Sketch" |
+| Message | the result of the last operation (red = error `<Command>: <reason>`), otherwise a navigation hint for the profile |
+| `mm`, `ISO` | units and standard (labels only) |
+| `NN ms` | frame time (smoothed) |
+| (in a sketch) drop-down | Value / Name / Expression / Tolerance of the dimensions |
+| (in a sketch) **DOF** | Show All Degrees of Freedom |
+| (in a sketch) **Slice** | Slice Graphics (F7) |
+| (in a sketch) **Align** | point alignment (Ctrl suppresses it for one click) |
+| (in a sketch) **Relax** | Relax Mode (F11) |
+| **БГ** | hints in Bulgarian (saved) |
+| `Mouse: …` | the current mouse profile |
 
 ---
 
-## 11. Разлики с Inventor
+## 11. Differences from Inventor
 
-- Z е нагоре (Inventor по подразбиране Y); FRONT гледа от −Y. Триадата е долу **вдясно**.
-- Профил Classic (ляв бутон върти) няма аналог в Inventor; профилите SolidWorks/Fusion ги
-  няма.
-- Колелцето мащабира спрямо центъра на въртене, не спрямо курсора; F5 (Previous View) и
-  клавишът Home (Zoom All) не са свързани — Fit е двоен клик със средния бутон или менюто
-  на ViewCube.
-- Десният клик е обикновено меню, не marking menu; няма Shift+десен клик за Select Other —
-  тя идва при покой на курсора.
-- Клавишите не се преназначават; само подсказките се превеждат.
-- Повече бързи действия в скицата, взети от други CAD: двоен клик върху крива = верига,
+- Z is up (Inventor uses Y by default); FRONT looks from −Y. The triad is at the bottom **right**.
+- The Classic profile (left button orbits) has no counterpart in Inventor; the SolidWorks/Fusion profiles
+  do not exist.
+- The wheel zooms about the centre of rotation, not about the cursor; F5 (Previous View) and
+  the Home key (Zoom All) are not bound — Fit is a middle-button double-click or the ViewCube
+  menu.
+- The right-click is a plain menu, not a marking menu; there is no Shift+right-click for Select Other —
+  it comes when the cursor rests.
+- Keys cannot be remapped; only the hints are translated.
+- More quick actions in the sketch, taken from other CAD systems: double-click on a curve = chain,
   Pattern along Path, Pattern at Points, Offset Element, Skip elements by click, By radius
-  център, `xN` брояч.
-- Лентата с предложения до избрана стена/ръб (New Sketch, Extrude/Press-Pull, Edit
-  Feature, Edit Sketch, Look At; Fillet/Chamfer) заменя mini-toolbar на Inventor.
-- Един детайл на прозорец; другите документи в проекта само се виждат в дървото.
-- Лентата се свива само до табовете (Inventor има още две междинни състояния); дървото и
-  Properties се закачат отляво или отдясно, но не плават; няма Navigation Bar.
-- Delete действа само в скица; операции се трият от дървото или Properties.
-- В Inventor F6 е Home; тук F6 е и Home, и Fit; Home може да се зададе от менюто на
-  ViewCube и се помни между стартиранията.
+  centre, the `xN` counter.
+- The suggestion bar next to a selected face/edge (New Sketch, Extrude/Press-Pull, Edit
+  Feature, Edit Sketch, Look At; Fillet/Chamfer) replaces Inventor's mini-toolbar.
+- One part per window; the other documents of the project are only visible in the browser.
+- The ribbon collapses only to the tabs (Inventor has two more intermediate states); the browser and
+  Properties dock on the left or the right but do not float; there is no Navigation Bar.
+- Delete works only in a sketch; features are deleted from the browser or Properties.
+- In Inventor F6 is Home; here F6 is both Home and Fit; Home can be set from the
+  ViewCube menu and is remembered between launches.
 
 ---
 
-## 12. Разлики с docs/UI.md
+## 12. Differences from docs/UI.md
 
-**Поправени в `docs/UI.md` на 2026-10-19.** При написването на справочника бяха намерени 21
-разлики; всички са отразени в UI.md (замисленото, но ненаправено, там е отбелязано с ⬜), а
-пропуските са в [ROADMAP.md](ROADMAP.md#интерфейс-пропуски-и-следващи-стъпки). Накратко, за история:
+**Fixed in `docs/UI.md` on 2026-10-19.** While writing this reference, 21
+differences were found; all of them are reflected in UI.md (what is planned but not done is marked there with ⬜), and
+the gaps are in [ROADMAP.md](ROADMAP.md#interface-gaps-and-next-steps). In short, for the record:
 
-- Quick Access: няма бутон New, има Rebuild; табовете са винаги 6, без Assemble/Annotate; в
-  таба Sketch няма панел Insert, има Format/Demo/Exit.
-- Профилите на мишката са в Tools → Application Options → Navigation; профил Classic върти с
-  лявото влачене навсякъде освен от точка/манипулатор/дръжка; F6 = Home + Fit, двоен среден =
-  Fit, клавиш Home не е свързан.
-- Клавишите са твърдо зададени (няма `keymap.toml`); Ctrl+N и Ctrl+Shift+S работят; Space
-  повтаря като Enter; E действа и в скица, R/S зависят от скицата; Delete само в скица; Ctrl
-  потиска само H/V/∥/⊥, tangent и alignment; добавени Ctrl+A в скица, Select Other, фина
-  стъпка на манипулатор, двоен клик = верига.
-- Dynamic Input важи и за Point, центриран правоъгълник, Move, Copy, Rotate; `,` е десетична
-  запетая.
-- Лента на състоянието, контекстни менюта, лентата с предложения (вместо mini-toolbar), Edit
-  Feature (в лентата с предложения, не в десния клик), Export (файлов прозорец), език (само
-  подсказките) и `settings.json` (само език + `recent_files`) — описани както в кода.
-- Остава отворено (не е в UI.md): коментарът в `src/gui/mod.rs` изброява
-  `CADCRAFT3D_DEMO=rectangle|slot|tangents|lines` без `revolve` (ROADMAP U20).
+- Quick Access: there is no New button, there is Rebuild; there are always 6 tabs, without Assemble/Annotate; in
+  the Sketch tab there is no Insert panel, there are Format/Demo/Exit.
+- The mouse profiles are in Tools → Application Options → Navigation; the Classic profile orbits with
+  a left drag everywhere except from a point/manipulator/handle; F6 = Home + Fit, middle double-click =
+  Fit, the Home key is not bound.
+- Keys are hard-wired (there is no `keymap.toml`); Ctrl+N and Ctrl+Shift+S work; Space
+  repeats like Enter; E also works in a sketch, R/S depend on the sketch; Delete only in a sketch; Ctrl
+  suppresses only H/V/∥/⊥, tangent and alignment; added Ctrl+A in a sketch, Select Other, the fine
+  manipulator step, double-click = chain.
+- Dynamic Input also applies to Point, the centred rectangle, Move, Copy, Rotate; `,` is a decimal
+  comma.
+- Status bar, context menus, the suggestion bar (instead of the mini-toolbar), Edit
+  Feature (in the suggestion bar, not in the right-click menu), Export (file window), language (hints
+  only) and `settings.json` (only language + `recent_files`) — described as in the code.
+- Still open (not in UI.md): the comment in `src/gui/mod.rs` lists
+  `CADCRAFT3D_DEMO=rectangle|slot|tangents|lines` without `revolve` (ROADMAP U20).
