@@ -11,6 +11,8 @@ categories = ["graphics", "science", "mathematics"]
 
 [workspace]
 members = [".", "xtask"]
+# Third-party code kept with local fixes (vendor/README.md): not linted as ours.
+exclude = ["vendor"]
 
 [lib]
 name = "cadcraft3d"
@@ -93,3 +95,8 @@ truck-shapeops = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e
 truck-stepio = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
 truck-meshalgo = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
 matext4cgmath = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+
+# SolidCraft's kernel with our speed fixes for large patterns (vendor/README.md, ATTRIBUTION.md):
+# the commit pinned above plus a small patch; drop this when the fixes are upstream.
+[patch."https://github.com/bherbruck/solidcraft"]
+solidcraft-kernel = { path = "vendor/solidcraft-kernel" }

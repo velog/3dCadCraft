@@ -331,22 +331,30 @@ pub(super) fn combine(
             Operation::Cut => {
                 let mut hit = false;
                 let mut gone = Vec::new();
-                // Volume before and after: a tool that only touches the body
-                // (a cut pointing away from it) removes nothing.
-                // One coarse mesh, the same tolerance before and after (planar
-                // faces mesh exactly, so a touching tool changes nothing).
-                let vol = |s: &ExactSolid, tol: Real| s.volume_at(tol).unwrap_or(0.0);
+                // Did the tool remove anything? A tool that only touches the body
+                // (a cut pointing away from it) leaves it as it was: new faces
+                // say yes at once; with as many faces as before, the volumes
+                // decide, meshed fine enough for the tool (a small hole in a
+                // large plate) at the same tolerance before and after.
                 for &i in &targets {
-                    if !exact::meets(&cur[i], &t) {
+                    // Pattern copies (`lenient`): the tool is one compound of
+                    // many pieces, nearly always over the body; `meets` would
+                    // mesh all of it finely (2500 copies: 2.5 s) only to say
+                    // so. A copy clear of the body leaves it as it was.
+                    if !lenient && !exact::meets(&cur[i], &t) {
                         continue;
                     }
-                    let tol = (cur[i].size() * 1e-3).max(1e-3);
-                    let before = vol(&cur[i], tol);
+                    let tol = (cur[i].size().min(t.size()) * 1e-3).max(1e-4);
+                    let vol = |s: &ExactSolid| s.volume_at(tol).unwrap_or(0.0);
                     match exact::boolean(&cur[i], &t, ExactOp::Cut)
                         .map_err(|e| Kernel(format!("Cut failed: {e}")))?
                     {
                         Some(r) => {
-                            if before - vol(&r, tol) > 1e-9 * before.max(1.0) {
+                            let changed = r.face_names.len() != cur[i].face_names.len();
+                            if changed || {
+                                let before = vol(&cur[i]);
+                                before - vol(&r) > 1e-9 * before.max(1.0)
+                            } {
                                 hit = true;
                             }
                             cur[i] = r;
@@ -530,10 +538,14 @@ pub(super) fn pattern(
     Ok((out, made))
 }
 
-/// Whether every copy of `tools` at `places` stays clear of every other
-/// copy: each tool's box is measured once and its corners moved to each
-/// place; a sweep along x compares only boxes whose x ranges overlap.
+/// Whether every copy of `tools` at `places` stays clear of every other:
+/// each tool's box is measured once and moved to each place as an oriented
+/// box; a sweep along x over their axis-aligned hulls finds the candidate
+/// pairs, which are then tested exactly as oriented boxes (separating axes).
+/// The hulls alone are too coarse for rotated copies: a circular pattern of
+/// 1000 holes r0.4 on a ring of 180 (1.13 apart) has hulls that touch.
 fn apart(tools: &[ExactSolid], places: &[(usize, nalgebra::Matrix4<Real>)]) -> bool {
+    use nalgebra::{Matrix3, Vector3};
     let mut local = Vec::with_capacity(tools.len());
     for t in tools {
         match exact::bounds(t) {
@@ -541,31 +553,82 @@ fn apart(tools: &[ExactSolid], places: &[(usize, nalgebra::Matrix4<Real>)]) -> b
             None => return false,
         }
     }
-    let mut boxes: Vec<(Point3, Point3)> = Vec::with_capacity(local.len() * places.len());
+    // (centre, axes as columns, half sizes) and the hull (lo, hi).
+    struct Obb {
+        c: Vector3<Real>,
+        r: Matrix3<Real>,
+        h: Vector3<Real>,
+        lo: Point3,
+        hi: Point3,
+    }
+    let mut boxes: Vec<Obb> = Vec::with_capacity(local.len() * places.len());
     for (_, m) in places {
+        // A rigid placement (moves, turns, mirrors): the moved axes stay
+        // unit and square.
+        let r: Matrix3<Real> = m.fixed_view::<3, 3>(0, 0).into_owned();
         for (lo, hi) in &local {
-            let mut a = Point3::new(Real::INFINITY, Real::INFINITY, Real::INFINITY);
-            let mut b = Point3::new(Real::NEG_INFINITY, Real::NEG_INFINITY, Real::NEG_INFINITY);
-            for c in 0..8 {
-                let q = Point3::new(
-                    if c & 1 == 0 { lo.x } else { hi.x },
-                    if c & 2 == 0 { lo.y } else { hi.y },
-                    if c & 4 == 0 { lo.z } else { hi.z },
-                );
-                let w = m.transform_point(&q);
-                a = a.inf(&w);
-                b = b.sup(&w);
-            }
-            boxes.push((a, b));
+            let c = m.transform_point(&nalgebra::center(lo, hi)).coords;
+            let h = (hi - lo) * 0.5;
+            let ext = Vector3::new(
+                r.row(0).abs().dot(&h.transpose()),
+                r.row(1).abs().dot(&h.transpose()),
+                r.row(2).abs().dot(&h.transpose()),
+            );
+            boxes.push(Obb {
+                c,
+                r,
+                h,
+                lo: Point3::from(c - ext),
+                hi: Point3::from(c + ext),
+            });
         }
     }
-    boxes.sort_by(|p, q| p.0.x.total_cmp(&q.0.x));
-    for (k, (a0, a1)) in boxes.iter().enumerate() {
-        for (b0, b1) in &boxes[k + 1..] {
-            if b0.x > a1.x {
+    // Separating axis test of two oriented boxes (Gottschalk et al.).
+    let meet = |a: &Obb, b: &Obb| -> bool {
+        let rot = a.r.transpose() * b.r;
+        let t = a.r.transpose() * (b.c - a.c);
+        let abs = rot.abs().add_scalar(1e-12);
+        for i in 0..3 {
+            let ra = a.h[i];
+            let rb = (0..3).map(|j| b.h[j] * abs[(i, j)]).sum::<Real>();
+            if t[i].abs() > ra + rb {
+                return false;
+            }
+        }
+        for j in 0..3 {
+            let ra = (0..3).map(|i| a.h[i] * abs[(i, j)]).sum::<Real>();
+            let rb = b.h[j];
+            let tj = (0..3).map(|i| t[i] * rot[(i, j)]).sum::<Real>();
+            if tj.abs() > ra + rb {
+                return false;
+            }
+        }
+        for i in 0..3 {
+            let (i1, i2) = ((i + 1) % 3, (i + 2) % 3);
+            for j in 0..3 {
+                let (j1, j2) = ((j + 1) % 3, (j + 2) % 3);
+                let ra = a.h[i1] * abs[(i2, j)] + a.h[i2] * abs[(i1, j)];
+                let rb = b.h[j1] * abs[(i, j2)] + b.h[j2] * abs[(i, j1)];
+                let d = t[i2] * rot[(i1, j)] - t[i1] * rot[(i2, j)];
+                if d.abs() > ra + rb {
+                    return false;
+                }
+            }
+        }
+        true
+    };
+    boxes.sort_by(|p, q| p.lo.x.total_cmp(&q.lo.x));
+    for (k, a) in boxes.iter().enumerate() {
+        for b in &boxes[k + 1..] {
+            if b.lo.x > a.hi.x {
                 break;
             }
-            if a0.y <= b1.y && b0.y <= a1.y && a0.z <= b1.z && b0.z <= a1.z {
+            if a.lo.y <= b.hi.y
+                && b.lo.y <= a.hi.y
+                && a.lo.z <= b.hi.z
+                && b.lo.z <= a.hi.z
+                && meet(a, b)
+            {
                 return false;
             }
         }
