@@ -15,6 +15,7 @@
 
 pub mod flow;
 pub mod selection;
+pub mod matcher;
 
 use std::time::{Duration, Instant};
 

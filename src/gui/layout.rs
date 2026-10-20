@@ -199,6 +199,9 @@ pub struct AppOptions {
     /// Select Priority, filters (those switched off), box mode, prehighlight
     /// (`docs/spec/0.9a-selection-filters.md`).
     pub selection: crate::command::selection::SelectSettings,
+    /// Registry ids of the recently run commands, newest first (alias
+    /// input and command search, `commands::remember`).
+    pub recent_commands: Vec<String>,
 }
 
 impl Default for AppOptions {
@@ -212,6 +215,7 @@ impl Default for AppOptions {
             thread_texture: true,
             home_view: None,
             selection: Default::default(),
+            recent_commands: Vec::new(),
         }
     }
 }
@@ -713,6 +717,7 @@ impl CadCraftApp {
             thread_texture: self.thread_texture,
             home_view: self.home_view,
             selection: self.select,
+            recent_commands: self.recent_commands.clone(),
         }
     }
 
@@ -729,6 +734,7 @@ impl CadCraftApp {
         }
         self.home_view = o.home_view;
         self.select = o.selection;
+        self.recent_commands = o.recent_commands;
     }
 
     /// Start of a frame: Ctrl+0, F11 (outside a sketch, where F11 is Relax

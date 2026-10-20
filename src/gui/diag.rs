@@ -552,7 +552,7 @@ impl CadCraftApp {
     }
 
     /// Help → Open Logs Folder (Explorer / Finder / xdg-open).
-    fn open_logs_folder(&mut self) {
+    pub(super) fn open_logs_folder(&mut self) {
         let Some(dir) = diagnostics::session()
             .and_then(|s| s.root.as_deref())
             .map(diagnostics::logs_dir)
