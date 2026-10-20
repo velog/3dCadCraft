@@ -44,6 +44,7 @@
 | [0.6-files.md](0.6-files.md) | New, Open, Save, Save As, Export, последни файлове, прозорецът за файлове (и под Windows) |
 | [0.10-physical.md](0.10-physical.md) | Physical Properties: маса, обем, площ, център на тежестта, инерция |
 | [0.9-selection.md](0.9-selection.md) | Избор, филтри, prehighlight, Select Other, контекстни предложения |
+| [0.15-context-menus-shortcuts.md](0.15-context-menus-shortcuts.md) | Десен бутон по вид обект и място, marking menu, клавиши и псевдоними, поле за псевдоним, търсене на команда (Alt+S), мишка, улеснения; план на групите |
 | [0.14-diagnostics.md](0.14-diagnostics.md) | Диагностика: лог на сесията, дневник на действията и replay, автозапис и Restore, доклад за срив, Save Diagnostics |
 | [0.11-presets.md](0.11-presets.md) | Presets: готови набори настройки в панелите на командите (Last Used, No Preset, вградени) |
 | [0.13-ui-layout.md](0.13-ui-layout.md) | Подредба на интерфейса: размер на панелите, свиване на лентата, User Interface, Clean Screen, Full Screen, плаващи прозорци, `settings.json` |
