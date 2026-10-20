@@ -671,6 +671,17 @@ impl HoleSpec {
         }
     }
 
+    /// How deep the bore's cylindrical wall goes for the resolved `depth`
+    /// (below it only the drill point, if any).
+    pub fn wall_bottom(&self, depth: Real) -> Real {
+        let zb = self.bore_bottom(depth);
+        if self.drill_point == DrillPoint::AngleY {
+            zb - self.bore_radius() / (self.point_angle / 2.0).tan()
+        } else {
+            zb
+        }
+    }
+
     /// The hole's tools of revolution, each a profile `[r, z]` with the role
     /// of each segment (from that point to the next): z up out of the
     /// material, from `top` (above the start plane, in the air) down to

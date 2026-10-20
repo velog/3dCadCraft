@@ -286,8 +286,9 @@ impl CadCraftApp {
             .as_ref()
             .map(|(l, _)| l.clone())
             .unwrap_or_default();
+        let in_sketch = self.editing.is_some();
         let part = self.part_mut();
-        journal::with_global(|j| j.state(&label, part));
+        journal::with_global(|j| j.state_in(&label, part, in_sketch));
         let t = ctx.input(|i| i.time);
         crash::set_emergency(
             self.is_dirty(t, true)

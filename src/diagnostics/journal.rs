@@ -59,6 +59,11 @@ pub struct Outcome {
     /// Built by the exact kernel.
     #[serde(default)]
     pub exact: bool,
+    /// Recorded while a sketch was being edited: the body is the one from
+    /// before the edit (the model follows on Finish Sketch), so a replay,
+    /// which regenerates every state, does not compare it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub in_sketch: bool,
 }
 
 impl Outcome {
@@ -95,6 +100,7 @@ impl Outcome {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             exact: part.exact,
+            in_sketch: false,
         }
     }
 
@@ -328,6 +334,12 @@ impl Journal {
     /// previous state, see the module docs). Returns `false` when nothing
     /// changed (no line is written).
     pub fn state(&mut self, label: &str, part: &mut PartDocument) -> bool {
+        self.state_in(label, part, false)
+    }
+
+    /// [`Journal::state`]; `in_sketch`: a sketch is being edited, so the
+    /// body is not regenerated yet ([`Outcome::in_sketch`]).
+    pub fn state_in(&mut self, label: &str, part: &mut PartDocument, in_sketch: bool) -> bool {
         let value = match part_value(part) {
             Ok(v) => v,
             Err(e) => {
@@ -335,7 +347,11 @@ impl Journal {
                 return true;
             }
         };
-        self.state_value(label, value, &Outcome::of(part))
+        let outcome = Outcome {
+            in_sketch,
+            ..Outcome::of(part)
+        };
+        self.state_value(label, value, &outcome)
     }
 
     /// [`Journal::state`] with the part already serialised.

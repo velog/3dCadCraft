@@ -945,6 +945,48 @@ fn speed_budgets() {
             p.add_hole(def).unwrap();
         }),
     ));
+    // The owner's session (`tests/data/m8_modeled_blind_journal.jsonl`): a
+    // tapped M8 10 deep (= the thickness, 118° point) in a 283 × 136 × 10
+    // plate. The plain hole took 6 s (a cap on the far face, the point in
+    // the air), its modeled thread failed after 150 s (release).
+    {
+        use cadcraft3d::diagnostics::replay;
+        use cadcraft3d::part::Feature;
+        let owner = replay::part_at(
+            std::path::Path::new("tests/data/m8_modeled_blind_journal.jsonl"),
+            8,
+        )
+        .unwrap();
+        let k = owner
+            .features
+            .iter()
+            .position(|f| f.id() == "Hole1")
+            .unwrap();
+        rows.push((
+            "hole: owner's M8 10 deep through a 283 mm plate (regenerate)",
+            500.0,
+            median_ms(3, || {
+                let mut p = owner.clone();
+                p.build_cache = Default::default();
+                p.regenerate().unwrap();
+                assert!(p.exact && p.feature_health.is_empty());
+            }),
+        ));
+        rows.push((
+            "hole: owner's M8 made modeled (replace_feature, slabs)",
+            8000.0,
+            median_ms(1, || {
+                let mut p = owner.clone();
+                p.build_cache = Default::default();
+                let Feature::Hole(mut h) = p.features[k].clone() else {
+                    panic!("Hole1 is not a hole")
+                };
+                h.spec.thread.as_mut().unwrap().modeled = true;
+                p.replace_feature(k, Feature::Hole(h)).unwrap();
+                assert!(p.exact && p.feature_health.is_empty());
+            }),
+        ));
+    }
 
     // Extrude / Revolve options (2027): a Box primitive, a Cylinder
     // primitive cut To an inclined work plane, a Sphere primitive joined.

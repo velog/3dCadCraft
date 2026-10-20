@@ -436,19 +436,20 @@ fn modeled_thread_in_a_thin_plate_of_a_large_part() {
 }
 
 #[test]
-fn a_thread_the_kernel_cannot_cut_is_reported() {
-    // 300 mm wide, 3 thick, M3: the kernel's faceted cut fails (the bore's
-    // circles in so large a face are its approximations; SolidCraft's own
-    // whole-body faceted cut fails the same way). The hole is refused with
-    // the reason instead of silently missing its thread.
+fn m3_in_a_300_mm_plate_is_threaded() {
+    // 300 mm wide, 3 thick, M3: the zone's material cut out of so large a
+    // body came out imprecise (planes tilted 1.7e-6 rad, circles 1 µm off)
+    // and the faceted cut failed (refused with "use a cosmetic thread").
+    // Now such slabs are cut out of the body near the zone
+    // (`kernel::exact::slab_threads`); more cases in `tests/hole_threads.rs`.
     let (part, r) = m3_through(300.0, 3.0);
-    match r {
-        Ok(_) => assert!(groove_faces(&part) > 50, "built: it must have its groove"),
-        Err(e) => {
-            assert!(e.contains("cosmetic"), "{e}");
-            assert_eq!(part.features.len(), 1, "the part is unchanged");
-        }
-    }
+    r.unwrap();
+    assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+    assert!(
+        groove_faces(&part) > 50,
+        "{} groove faces",
+        groove_faces(&part)
+    );
 }
 
 #[test]
