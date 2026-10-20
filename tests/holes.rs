@@ -1012,3 +1012,128 @@ fn concentric_to_a_cylindrical_face() {
         "{h:?}"
     );
 }
+
+// ------------------------------------------------- thread texture (2.9) ---
+
+/// A Ø8 shaft 20 long and its side face (clicked near z 20).
+fn shaft_and_side() -> (PartDocument, cadcraft3d::part::shell::FaceRef) {
+    let mut shaft = PartDocument::default();
+    let i = shaft
+        .create_sketch(
+            SketchPlacement::on_origin_plane(OriginPlane::XY),
+            &SketchOptions::default(),
+        )
+        .unwrap();
+    shaft.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 4.0)
+        .unwrap();
+    let r = shaft.sketches[i].sketch.regions();
+    let disc = r.iter().find(|r| r.holes.is_empty()).unwrap();
+    shaft
+        .add_extrude(
+            i,
+            ExtrudeFeature::new(vec![ProfileRef::of(disc, disc.interior_point())], 20.0),
+        )
+        .unwrap();
+    let side = shaft
+        .body
+        .faces()
+        .find(|(_, f)| f.name.as_deref().is_some_and(|n| n.contains(":Side")))
+        .map(|(fid, _)| fid)
+        .unwrap();
+    let face =
+        cadcraft3d::part::shell::face_ref(&shaft.body, side, Some(Point3::new(4.0, 0.0, 19.0)))
+            .unwrap();
+    (shaft, face)
+}
+
+/// The thread texture of a tapped M8 hole: a sleeve on the drill
+/// wall (just inside it), only over the 12 mm thread of a 15 mm hole, with
+/// 12 / 1.25 = 9.6 bands; the Thread command on a Ø8 shaft: outside the
+/// shaft. Display thread in model off: no texture.
+#[test]
+fn thread_texture_on_hole_and_shaft() {
+    use cadcraft3d::part::ThreadBands;
+    use cadcraft3d::part::hole::BAND_LIFT;
+    let mut part = block();
+    let mut t = m8();
+    t.full_depth = false;
+    t.depth = 12.0;
+    let spec = HoleSpec::tapped(t, 15.0);
+    let rd = spec.diameter / 2.0;
+    holes_at(&mut part, spec, &[(20.0, 15.0)]).unwrap();
+    let c = &part.cosmetic_threads[0];
+    assert!(c.internal && c.right_hand);
+    assert!((c.face_radius - rd).abs() < 1e-9, "{c:?}");
+    let b = ThreadBands::of(&part.cosmetic_threads);
+    assert!(!b.triangles.is_empty());
+    for p in &b.positions {
+        let r = ((p.x - 20.0).powi(2) + (p.y - 15.0).powi(2)).sqrt();
+        assert!((r - (rd - BAND_LIFT)).abs() < 1e-9, "r {r}");
+        assert!(p.z <= 20.0 + 1e-9 && p.z >= 8.0 - 1e-9, "z {}", p.z);
+    }
+    let lo = b.phase.iter().copied().fold(f32::MAX, f32::min);
+    let hi = b.phase.iter().copied().fold(f32::MIN, f32::max);
+    // 9.6 bands along the axis plus one turn around.
+    assert!((hi - lo - 10.6).abs() < 1e-4, "span {}", hi - lo);
+
+    let (shaft, face) = shaft_and_side();
+    let ext =
+        ThreadSpec::from_table(&Standards::builtin(), standards::ISO_METRIC, "M8", false).unwrap();
+    let mut on = shaft.clone();
+    on.add_thread(ThreadFeature::new(face.clone(), ext.clone()))
+        .unwrap();
+    let c = &on.cosmetic_threads[0];
+    assert!(!c.internal && (c.face_radius - 4.0).abs() < 1e-6, "{c:?}");
+    let b = ThreadBands::of(&on.cosmetic_threads);
+    assert!(!b.triangles.is_empty());
+    for (p, n) in b.positions.iter().zip(&b.normals) {
+        let r = (p.x * p.x + p.y * p.y).sqrt();
+        assert!((r - (4.0 + BAND_LIFT)).abs() < 1e-6, "r {r}");
+        // Normals point away from the axis (towards the air).
+        assert!(n.x * p.x + n.y * p.y > 0.0);
+    }
+    // Display thread in model off: nothing drawn.
+    let mut th = ThreadFeature::new(face, ext);
+    th.display = false;
+    let mut off = shaft;
+    off.add_thread(th).unwrap();
+    assert!(ThreadBands::of(&off.cosmetic_threads).positions.is_empty());
+}
+
+/// A 2×2 pattern of a tapped hole: every copy has its cosmetic thread (and
+/// so its texture), at the copy's place.
+#[test]
+fn pattern_copies_carry_the_thread_texture() {
+    use cadcraft3d::part::{LineRef, PatternDirection, PatternFeature, PatternKind, PullRef};
+    let mut part = block();
+    holes_at(&mut part, HoleSpec::tapped(m8(), 15.0), &[(10.0, 8.0)]).unwrap();
+    let dir = |axis: usize, count: u32, spacing: Real| {
+        let mut d = PatternDirection::new();
+        d.dir = Some(PullRef::Line(LineRef::Origin(axis)));
+        d.count = count;
+        d.spacing = spacing;
+        d
+    };
+    let mut p = PatternFeature::rectangular();
+    p.features = vec!["Hole1".into()];
+    p.kind = PatternKind::Rectangular {
+        first: dir(0, 2, 20.0),
+        second: Some(dir(1, 2, 14.0)),
+    };
+    part.add_pattern(p).unwrap();
+    assert_eq!(
+        part.cosmetic_threads.len(),
+        4,
+        "{:?}",
+        part.cosmetic_threads
+    );
+    let mut at: Vec<(i64, i64)> = part
+        .cosmetic_threads
+        .iter()
+        .map(|c| (c.start.x.round() as i64, c.start.y.round() as i64))
+        .collect();
+    at.sort();
+    assert_eq!(at, vec![(10, 8), (10, 22), (30, 8), (30, 22)]);
+}

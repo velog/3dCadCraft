@@ -464,6 +464,8 @@ struct CadCraftApp {
     report: Option<Result<SolveReport, String>>,
     sketch_opts: SketchOptions,
     show_labels: bool,
+    /// Application Options → Display → Thread texture (cosmetic threads).
+    thread_texture: bool,
 
     camera: OrbitCamera,
     renderer: Option<ViewportRenderer>,
@@ -685,6 +687,7 @@ impl CadCraftApp {
             report: None,
             sketch_opts: SketchOptions::default(),
             show_labels: true,
+            thread_texture: true,
             camera: OrbitCamera::default(),
             renderer: cc.wgpu_render_state.as_ref().map(ViewportRenderer::new),
             scene_dirty: true,
@@ -4335,6 +4338,10 @@ impl CadCraftApp {
 
         // Faces in their appearance (face > feature > body > part > material).
         material::add_part_meshes(&mut g, self.part());
+        // Cosmetic threads: a banded texture on their faces (one mesh).
+        if self.thread_texture {
+            g.add_thread_bands(&crate::part::ThreadBands::of(&self.part().cosmetic_threads));
+        }
         let body = &self.part().body;
         // Selected (blue) and prehighlighted (green) faces: drawn again just
         // outside the body, so the depth test hides them behind other faces.

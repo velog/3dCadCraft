@@ -19,6 +19,8 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const VERTEX_STRIDE: u64 = 9 * 4;
 /// Transparent faces: position (3) + normal (3) + colour with alpha (4).
 const ALPHA_STRIDE: u64 = 10 * 4;
+/// Thread texture: position (3) + normal (3) + phase (1).
+const THREAD_STRIDE: u64 = 7 * 4;
 /// Background (gamma-encoded, written straight into the target).
 const CLEAR: wgpu::Color = wgpu::Color {
     r: 0.90,
@@ -38,6 +40,9 @@ pub struct SceneGeometry {
     alpha_vertices: Vec<u8>,
     alpha_count: u32,
     alpha_indices: Vec<u32>,
+    thread_vertices: Vec<u8>,
+    thread_count: u32,
+    thread_indices: Vec<u32>,
 }
 
 impl SceneGeometry {
@@ -45,6 +50,30 @@ impl SceneGeometry {
     #[cfg(test)]
     pub fn counts(&self) -> (usize, usize) {
         (self.tri_indices.len(), self.alpha_indices.len())
+    }
+
+    /// Index count of the thread texture's triangles.
+    #[cfg(test)]
+    pub fn thread_count(&self) -> usize {
+        self.thread_indices.len()
+    }
+
+    /// Adds the cosmetic threads' texture sleeves (drawn over the opaque
+    /// faces, modulating their colour with bands at the thread's phase).
+    pub fn add_thread_bands(&mut self, b: &crate::part::ThreadBands) {
+        let base = self.thread_count;
+        self.thread_vertices
+            .reserve(b.positions.len() * THREAD_STRIDE as usize);
+        for ((p, n), ph) in b.positions.iter().zip(&b.normals).zip(&b.phase) {
+            for v in [
+                p.x as f32, p.y as f32, p.z as f32, n.x as f32, n.y as f32, n.z as f32, *ph,
+            ] {
+                self.thread_vertices.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        self.thread_count += b.positions.len() as u32;
+        self.thread_indices
+            .extend(b.triangles.iter().flatten().map(|i| base + i));
     }
 
     /// Adds triangles with a colour per vertex (`colors[i]` for
@@ -139,6 +168,9 @@ struct GpuGeometry {
     alpha_vbuf: Option<wgpu::Buffer>,
     alpha_ibuf: Option<wgpu::Buffer>,
     alpha_index_count: u32,
+    thread_vbuf: Option<wgpu::Buffer>,
+    thread_ibuf: Option<wgpu::Buffer>,
+    thread_index_count: u32,
 }
 
 /// Offscreen render target, recreated when the viewport is resized.
@@ -155,6 +187,7 @@ pub struct ViewportRenderer {
     backfaces: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     transparent: wgpu::RenderPipeline,
+    threads: wgpu::RenderPipeline,
     uniform_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     sample_count: u32,
@@ -335,12 +368,72 @@ impl ViewportRenderer {
             multiview_mask: None,
             cache: None,
         });
+        // Thread texture: a sleeve just off the threaded face, depth-tested
+        // but not written, multiplying the shaded face below by 2 * band
+        // (0.5 = unchanged), so it follows the face's appearance and light.
+        let thread_attributes =
+            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32];
+        let threads = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("thread texture"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_thread"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: THREAD_STRIDE,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &thread_attributes,
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: Topo::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: sample_count,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_thread"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: COLOR_FORMAT,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Dst,
+                            dst_factor: wgpu::BlendFactor::Src,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Zero,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
 
         Self {
             shaded,
             backfaces,
             lines,
             transparent,
+            threads,
             uniform_buf,
             bind_group,
             sample_count,
@@ -368,6 +461,11 @@ impl ViewportRenderer {
             .iter()
             .flat_map(|i| i.to_le_bytes())
             .collect();
+        let thread_index_bytes: Vec<u8> = g
+            .thread_indices
+            .iter()
+            .flat_map(|i| i.to_le_bytes())
+            .collect();
         self.geometry = Some(GpuGeometry {
             tri_vbuf: buffer("tri vertices", &g.tri_vertices, wgpu::BufferUsages::VERTEX),
             tri_ibuf: buffer("tri indices", &index_bytes, wgpu::BufferUsages::INDEX),
@@ -389,6 +487,17 @@ impl ViewportRenderer {
                 wgpu::BufferUsages::INDEX,
             ),
             alpha_index_count: g.alpha_indices.len() as u32,
+            thread_vbuf: buffer(
+                "thread vertices",
+                &g.thread_vertices,
+                wgpu::BufferUsages::VERTEX,
+            ),
+            thread_ibuf: buffer(
+                "thread indices",
+                &thread_index_bytes,
+                wgpu::BufferUsages::INDEX,
+            ),
+            thread_index_count: g.thread_indices.len() as u32,
         });
     }
 
@@ -463,6 +572,13 @@ impl ViewportRenderer {
                         pass.set_pipeline(pipeline);
                         pass.draw_indexed(0..g.tri_index_count, 0, 0..1);
                     }
+                }
+                // Thread texture over the opaque faces, under the edges.
+                if let (Some(vb), Some(ib)) = (&g.thread_vbuf, &g.thread_ibuf) {
+                    pass.set_pipeline(&self.threads);
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..g.thread_index_count, 0, 0..1);
                 }
                 if let Some(vb) = &g.line_vbuf {
                     pass.set_pipeline(&self.lines);
@@ -553,5 +669,62 @@ impl ViewportRenderer {
             color_view,
             depth_view,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::part::{CosmeticThread, ThreadBands};
+
+    /// The viewport shader parses and validates (a broken entry point would
+    /// only show up as a panic when the window opens).
+    #[test]
+    fn viewport_shader_validates() {
+        use wgpu::naga;
+        let src = include_str!("viewport.wgsl");
+        let module = match naga::front::wgsl::parse_str(src) {
+            Ok(m) => m,
+            Err(e) => panic!("{}", e.emit_to_string(src)),
+        };
+        let mut v = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        );
+        if let Err(e) = v.validate(&module) {
+            panic!("{e:?}");
+        }
+        for entry in ["vs_thread", "fs_thread"] {
+            assert!(
+                module.entry_points.iter().any(|p| p.name == entry),
+                "{entry}"
+            );
+        }
+    }
+
+    #[test]
+    fn thread_bands_go_into_their_own_buffer() {
+        let c = CosmeticThread {
+            feature: "Hole1".into(),
+            start: Point3::origin(),
+            axis: -Vector3::z(),
+            radius: 4.0,
+            length: 10.0,
+            pitch: 1.25,
+            shown: true,
+            face_radius: 3.4,
+            internal: true,
+            right_hand: true,
+        };
+        let b = ThreadBands::of(&[c.clone(), c]);
+        let mut g = SceneGeometry::default();
+        g.add_thread_bands(&b);
+        assert_eq!(g.thread_count(), b.triangles.len() * 3);
+        assert_eq!(g.counts(), (0, 0), "not in the opaque or transparent pass");
+        assert_eq!(
+            g.thread_vertices.len(),
+            b.positions.len() * THREAD_STRIDE as usize
+        );
+        assert!(g.thread_indices.iter().all(|&i| i < g.thread_count));
     }
 }

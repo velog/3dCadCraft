@@ -945,6 +945,38 @@ fn speed_budgets() {
             p.add_hole(def).unwrap();
         }),
     ));
+    // Thread texture (2.9): the display mesh of 100 tapped M8 holes (a 10×10
+    // grid in one feature), built once per scene rebuild.
+    {
+        use cadcraft3d::part::standards::{self, Standards};
+        use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, ThreadBands, ThreadSpec};
+        let mut p = PartDocument::with_box("Box1", [200.0, 200.0, 20.0]).unwrap();
+        let pts: Vec<Point3> = (0..100)
+            .map(|i| {
+                Point3::new(
+                    10.0 + 20.0 * (i % 10) as Real,
+                    10.0 + 20.0 * (i / 10) as Real,
+                    20.0,
+                )
+            })
+            .collect();
+        let (k, ids) = p.create_hole_sketch("Box1:Top", &pts).unwrap();
+        let t = ThreadSpec::from_table(&Standards::builtin(), standards::ISO_METRIC, "M8", true)
+            .unwrap();
+        let mut def = HoleFeature::new(HoleSpec::tapped(t, 15.0));
+        def.sketch = p.sketches[k].id.clone();
+        def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+        p.add_hole(def).unwrap();
+        assert_eq!(p.cosmetic_threads.len(), 100);
+        rows.push((
+            "thread texture: mesh of 100 tapped M8 holes (ThreadBands::of)",
+            5.0,
+            median_ms(5, || {
+                let b = ThreadBands::of(&p.cosmetic_threads);
+                assert!(b.triangles.len() >= 100 * 32);
+            }),
+        ));
+    }
 
     // Extrude / Revolve options (2027): a Box primitive, a Cylinder
     // primitive cut To an inclined work plane, a Sphere primitive joined.

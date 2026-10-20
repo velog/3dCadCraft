@@ -50,7 +50,7 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `part` | part environment (primitives Box/Cylinder/Sphere/Torus as sketch + Extrude/Revolve in `primitive.rs`; work planes/axes/points/UCS in `work.rs`, curved-face geometry in `work/surf.rs`; history editing in `history.rs`: End of Part, `insert_feature`, reorder with dependency checks, Suppress, Delete options, Rename): features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`, Sweep `sweep.rs` and Loft `loft.rs` (paths `PathRef`), Coil `coil.rs`, Rib / Web `rib.rs`, Shell `shell.rs`, Face Draft `draft.rs`, Rectangular/Circular Pattern and Mirror of features or solids `pattern.rs`, Hole and Thread `hole.rs` (standards tables `standards.rs`, `data/standards/*.csv`), Combine `combine.rs`, Split `split.rs`; `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `PatternFeature`, `Operation`, `UserParam` |
 | `materials` | material/appearance libraries: built-in CSV (`data/materials/materials.csv`, `data/appearances/appearances.csv`, `include_str!`) + user CSVs in `user_dir()` (`%APPDATA%\3dcadcraft\materials`), same name overrides | `Material`, `Appearance`, `Library` |
 | `part::appearance`, `part::physical` | part material/appearance, overrides by persistent name (`Looks`: bodies, features, faces + hint), document copies, precedence Face > Feature > Body > Part > Material (`Resolver`), Clear/Purge/Update; Physical Properties from the display triangles (mass, COG, inertia) | `Looks`, `LookTarget`, `Resolver`, `physical_properties` |
-| `part::hole`, `part::standards` | Hole and Thread (`Feature::Hole` / `Feature::Thread`): `HoleSpec` (type, seat, termination, drill point, thread, fastener), notes for drawings (`note()`), `HoleInstance` + `group_holes` (`PartDocument::holes`, `hole_groups`); standards tables `data/standards/*.csv` (built in, user override folder) | `HoleFeature`, `HoleSpec`, `ThreadSpec`, `ThreadFeature`, `Standards` |
+| `part::hole`, `part::standards` | Hole and Thread (`Feature::Hole` / `Feature::Thread`): `HoleSpec` (type, seat, termination, drill point, thread, fastener), notes for drawings (`note()`), `HoleInstance` + `group_holes` (`PartDocument::holes`, `hole_groups`); cosmetic-thread display mesh `ThreadBands` (texture sleeves); standards tables `data/standards/*.csv` (built in, user override folder) | `HoleFeature`, `HoleSpec`, `ThreadSpec`, `ThreadFeature`, `ThreadBands`, `Standards` |
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
 | `diagnostics` | session log (`log.rs`, own logger + ring buffer), action journal with JSON-delta part snapshots (`journal.rs`), `replay.rs` (journal → parts, first differing step), autosave + Restore decision (`recovery.rs`), panic hook / crash reports / emergency autosave (`crash.rs`), Save Diagnostics zip (`bundle.rs`); GUI hooks in `gui/diag.rs` | `Journal`, `Outcome`, `Step`, `Autosaver`, `Offer` |
@@ -720,6 +720,15 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   said "Same" (the Thread fit check called an M8 tapped hole a Ø6.6 shaft).
 - **Revolved cones** (drill point, countersink) come back from `sk::face_surface` without
   an analytic cone (our `Surface` is a plane there); don't test for `Surface::Cone`.
+- **Cosmetic thread texture** (`part::hole::ThreadBands`, renderer pipeline `threads`,
+  `viewport.wgsl::fs_thread`): one sleeve per `CosmeticThread` (2 rings, phase
+  `h/P ∓ θ/2π` per vertex), lifted `BAND_LIFT` (0.016 mm > the kernel's 0.01 mm display
+  tolerance + `BAND_SAG`) towards the air, built in `build_scene` only. It is blended as
+  `2·src·dst` over the shaded face (no depth write) so it keeps the appearance and light — no
+  per-face colour lookup. Pattern / Mirror push `c.transformed(&m)` copies into
+  `extra.cosmetic` like holes (a mirror flips the hand). `fwidth` must come before the
+  `discard` (uniform control flow); `renderer::tests::viewport_shader_validates` runs naga on
+  the shader. Option: `AppOptions::thread_texture` (Application Options → Display).
 
 ## Status and next steps
 

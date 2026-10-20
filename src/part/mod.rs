@@ -67,7 +67,8 @@ pub use draft::{DraftExtent, DraftFeature, DraftType, PartingSide, PartingTool, 
 pub use extrude::{Extent, ExtentDirection, ExtrudeFeature, OpenProfile, ProfileRef, TargetRef};
 pub use hole::{
     ClearanceSpec, CosmeticThread, DrillPoint, FastenerFit, HoleCenter, HoleFeature, HoleGroup,
-    HoleInstance, HoleSpec, HoleType, SeatType, Termination, ThreadFeature, ThreadSpec,
+    HoleInstance, HoleSpec, HoleType, SeatType, Termination, ThreadBands, ThreadFeature,
+    ThreadSpec,
 };
 pub use loft::{ConditionKind, LoftCondition, LoftFeature, LoftGuide, LoftSection};
 pub use pattern::{PatternDirection, PatternFeature, PatternKind};
@@ -908,6 +909,14 @@ impl PartDocument {
                                         .filter(|h| p.features.contains(&h.feature))
                                         .cloned()
                                         .collect();
+                                    // Their cosmetic threads too (the
+                                    // thread texture of every copy).
+                                    let threads: Vec<CosmeticThread> = hole_out
+                                        .cosmetic
+                                        .iter()
+                                        .filter(|c| p.features.contains(&c.feature))
+                                        .cloned()
+                                        .collect();
                                     for (k, m) in &places {
                                         for h in &src {
                                             // The copy starts on the face
@@ -916,6 +925,9 @@ impl PartDocument {
                                             let mut c = h.transformed(m);
                                             c.copy.push(*k);
                                             extra.holes.push(c);
+                                        }
+                                        for c in &threads {
+                                            extra.cosmetic.push(c.transformed(m));
                                         }
                                     }
                                 }

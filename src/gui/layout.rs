@@ -192,6 +192,8 @@ pub struct AppOptions {
     pub sketch: SketchOptions,
     pub inference: InferenceSettings,
     pub show_labels: bool,
+    /// Cosmetic threads drawn as a texture on their faces.
+    pub thread_texture: bool,
     /// ViewCube → Set Current View as Home: (yaw, pitch) in degrees.
     pub home_view: Option<(f64, f64)>,
 }
@@ -204,6 +206,7 @@ impl Default for AppOptions {
             sketch: SketchOptions::default(),
             inference: InferenceSettings::default(),
             show_labels: true,
+            thread_texture: true,
             home_view: None,
         }
     }
@@ -703,6 +706,7 @@ impl CadCraftApp {
             sketch: self.sketch_opts.clone(),
             inference: self.tools.inference,
             show_labels: self.show_labels,
+            thread_texture: self.thread_texture,
             home_view: self.home_view,
         }
     }
@@ -714,6 +718,10 @@ impl CadCraftApp {
         self.sketch_opts = o.sketch;
         self.tools.inference = o.inference;
         self.show_labels = o.show_labels;
+        if self.thread_texture != o.thread_texture {
+            self.thread_texture = o.thread_texture;
+            self.scene_dirty = true;
+        }
         self.home_view = o.home_view;
     }
 

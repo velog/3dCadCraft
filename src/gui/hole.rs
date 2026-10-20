@@ -844,15 +844,9 @@ impl CadCraftApp {
         }
     }
 
-    /// The cosmetic threads of the part (a display hint: a helix at the
-    /// thread's other diameter), and the open Hole's centres.
+    /// The open Hole's centres and dimensions. (Cosmetic threads are a
+    /// texture in the 3D scene: `renderer::SceneGeometry::add_thread_bands`.)
     pub(super) fn draw_holes_and_threads(&self, painter: &egui::Painter, rect: Rect) {
-        let stroke = Stroke::new(1.0, Color32::from_rgb(70, 90, 200));
-        for c in self.part().cosmetic_threads.iter().filter(|c| c.shown) {
-            for line in thread_lines(c) {
-                self.draw_visible_polyline(painter, rect, &line, stroke);
-            }
-        }
         if self.hole_draft.is_some() {
             let col = Color32::from_rgb(230, 120, 20);
             for p in self.hole_centres() {
@@ -907,7 +901,8 @@ impl CadCraftApp {
 }
 
 /// A cosmetic thread as lines: a helix of its pitch (at most 40 turns
-/// drawn) and the circles at both ends.
+/// drawn) and the circles at both ends (the Thread command's preview; the
+/// finished thread is a texture in the scene).
 pub(super) fn thread_lines(c: &hole::CosmeticThread) -> Vec<Vec<Point3>> {
     use crate::kernel::Vector3;
     let k = c.axis;
@@ -1158,6 +1153,9 @@ mod tests {
             length: 10.0,
             pitch: 1.25,
             shown: true,
+            face_radius: 3.4,
+            internal: true,
+            right_hand: true,
         };
         let l = thread_lines(&c);
         assert_eq!(l.len(), 3);

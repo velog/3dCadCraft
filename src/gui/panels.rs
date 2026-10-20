@@ -4509,6 +4509,15 @@ impl CadCraftApp {
                 ui.separator();
                 ui.label(RichText::new("Display").strong());
                 ui.checkbox(&mut self.show_labels, "Show constraint labels");
+                if ui
+                    .checkbox(&mut self.thread_texture, "Thread texture")
+                    .on_hover_text(
+                        "Cosmetic threads (tapped holes, Thread) as a banded texture on their faces",
+                    )
+                    .changed()
+                {
+                    self.scene_dirty = true;
+                }
                 ui.separator();
                 ui.label(RichText::new("Constraint Settings — Inference").strong());
                 let k = &mut self.tools.inference;

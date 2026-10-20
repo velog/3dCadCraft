@@ -1189,6 +1189,131 @@ pub struct CosmeticThread {
     pub pitch: Real,
     /// Drawn in the model (Thread: Display thread in model).
     pub shown: bool,
+    /// Radius of the threaded face itself (a hole: the drill; a shaft: its
+    /// radius): the thread texture lies on it.
+    pub face_radius: Real,
+    /// An internal thread (a hole wall, the material outside the cylinder).
+    pub internal: bool,
+    /// Right-hand thread (the bands lean the other way for a left-hand one).
+    pub right_hand: bool,
+}
+
+impl CosmeticThread {
+    /// The thread moved by the rigid motion `m` (Pattern / Mirror copies). A
+    /// mirror (negative determinant) turns a right-hand thread left.
+    pub fn transformed(&self, m: &nalgebra::Matrix4<Real>) -> Self {
+        let a = m.transform_vector(&self.axis);
+        let det = m.fixed_view::<3, 3>(0, 0).determinant();
+        Self {
+            start: m.transform_point(&self.start),
+            axis: a.try_normalize(1e-12).unwrap_or(self.axis),
+            right_hand: if det < 0.0 {
+                !self.right_hand
+            } else {
+                self.right_hand
+            },
+            ..self.clone()
+        }
+    }
+
+    /// Segments around the face for the texture mesh: chords within
+    /// [`BAND_SAG`] of the circle.
+    fn band_segments(&self) -> usize {
+        let r = self.face_radius.max(1e-6);
+        let c = (1.0 - BAND_SAG / r).clamp(-1.0, 1.0);
+        let n = std::f64::consts::PI / c.acos().max(1e-9);
+        (n.ceil() as usize).clamp(16, 192)
+    }
+}
+
+/// Largest chord sag (mm) of the thread texture's own mesh.
+pub const BAND_SAG: Real = 0.004;
+
+/// How far the thread texture floats off its face (mm), towards the air:
+/// more than the display tolerance of the body's triangles (0.01 mm) plus
+/// [`BAND_SAG`], so the face never pokes through it, and small enough not
+/// to be seen as a step at the rim.
+pub const BAND_LIFT: Real = 0.016;
+
+/// The display mesh of cosmetic threads (Inventor shows a thread as a
+/// texture on its face): one sleeve per thread on the threaded face, only
+/// over the thread length, lifted by [`BAND_LIFT`] towards the air. Each
+/// vertex carries the thread's *phase* `h / pitch ∓ θ / 2π`: whole numbers
+/// lie on one helix of the thread, so a shader painting `fract(phase)` as
+/// light/dark draws one band per pitch, leaning with the hand.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ThreadBands {
+    /// Vertices: two per angle step (the thread's start and end).
+    pub positions: Vec<Point3>,
+    /// Unit normals towards the air (front faces, CCW seen from there).
+    pub normals: Vec<Vector3>,
+    /// The thread phase of each vertex (one per pitch).
+    pub phase: Vec<f32>,
+    /// Triangles into `positions`.
+    pub triangles: Vec<[u32; 3]>,
+}
+
+impl ThreadBands {
+    /// The sleeves of every shown thread of `threads`, in one mesh.
+    pub fn of(threads: &[CosmeticThread]) -> Self {
+        let mut out = Self::default();
+        for c in threads.iter().filter(|c| c.shown) {
+            out.add(c);
+        }
+        out
+    }
+
+    fn add(&mut self, c: &CosmeticThread) {
+        use std::f64::consts::TAU;
+        let k = c.axis;
+        if !(c.length.is_finite() && c.length > 1e-9 && c.face_radius > 1e-9) || k.norm() < 0.5 {
+            return;
+        }
+        let any = if k.x.abs() < 0.9 {
+            Vector3::x()
+        } else {
+            Vector3::y()
+        };
+        let u = (any - k * any.dot(&k)).normalize();
+        let w = k.cross(&u);
+        let r = if c.internal {
+            (c.face_radius - BAND_LIFT).max(c.face_radius * 0.5)
+        } else {
+            c.face_radius + BAND_LIFT
+        };
+        let turns = c.length / c.pitch.max(1e-3);
+        let hand = if c.right_hand { 1.0 } else { -1.0 };
+        let n = c.band_segments();
+        let base = self.positions.len() as u32;
+        for i in 0..=n {
+            let t = i as Real / n as Real * TAU;
+            let radial = u * t.cos() + w * t.sin();
+            let normal = if c.internal { -radial } else { radial };
+            for (h, ph) in [(0.0, 0.0), (c.length, turns)] {
+                self.positions.push(c.start + k * h + radial * r);
+                self.normals.push(normal);
+                self.phase.push((ph - hand * i as Real / n as Real) as f32);
+            }
+        }
+        // Quad i: vertices 2i (start), 2i+1 (end), 2i+2, 2i+3. (next − this
+        // around) × (along the axis) points outwards, so a shaft's sleeve is
+        // (a, c, b) and a hole's, seen from the axis, the reverse.
+        for i in 0..n as u32 {
+            let (a, b, c2, d) = (
+                base + 2 * i,
+                base + 2 * i + 1,
+                base + 2 * i + 2,
+                base + 2 * i + 3,
+            );
+            if c.internal {
+                self.triangles.push([a, b, c2]);
+                self.triangles.push([c2, b, d]);
+            } else {
+                self.triangles.push([a, c2, b]);
+                self.triangles.push([c2, d, b]);
+            }
+        }
+    }
 }
 
 /// One hole of the part (drawing data: Hole Table, hole notes).
@@ -1281,6 +1406,111 @@ mod tests {
 
     fn m8() -> ThreadSpec {
         ThreadSpec::from_table(&Standards::builtin(), standards::ISO_METRIC, "M8", true).unwrap()
+    }
+
+    fn cosmetic(internal: bool, right_hand: bool) -> CosmeticThread {
+        CosmeticThread {
+            feature: "Hole1".into(),
+            start: Point3::new(5.0, 0.0, 10.0),
+            axis: -Vector3::z(),
+            radius: 4.0,
+            length: 10.0,
+            pitch: 1.25,
+            shown: true,
+            face_radius: if internal { 3.375 } else { 4.0 },
+            internal,
+            right_hand,
+        }
+    }
+
+    /// Phase difference along the axis at the same angle (vertex pairs).
+    fn axial_bands(b: &ThreadBands) -> Vec<f32> {
+        b.phase.chunks(2).map(|p| p[1] - p[0]).collect()
+    }
+
+    #[test]
+    fn thread_bands_follow_pitch_radius_and_length() {
+        for internal in [true, false] {
+            let c = cosmetic(internal, true);
+            let b = ThreadBands::of(std::slice::from_ref(&c));
+            // One band per pitch: 10 / 1.25 = 8 along the axis everywhere.
+            assert!(axial_bands(&b).iter().all(|d| (d - 8.0).abs() < 1e-5));
+            let want = if internal {
+                3.375 - BAND_LIFT
+            } else {
+                4.0 + BAND_LIFT
+            };
+            for (p, n) in b.positions.iter().zip(&b.normals) {
+                let radial = Vector3::new(p.x - 5.0, p.y, 0.0);
+                assert!((radial.norm() - want).abs() < 1e-9);
+                // Only over the thread: z from 10 down to 0.
+                assert!(p.z > -1e-9 && p.z < 10.0 + 1e-9);
+                // Normals towards the air: into the hole, out of a shaft.
+                assert_eq!(n.dot(&radial) > 0.0, !internal);
+            }
+            // Front faces: each triangle wound CCW seen from its normal.
+            for t in &b.triangles {
+                let [a, q, r] = t.map(|i| b.positions[i as usize]);
+                let n = b.normals[t[0] as usize];
+                assert!((q - a).cross(&(r - a)).dot(&n) > 0.0, "internal {internal}");
+            }
+            // The mesh's own chords stay within BAND_SAG of the sleeve.
+            let seg = c.band_segments() as Real;
+            assert!(want * (1.0 - (std::f64::consts::PI / seg).cos()) <= BAND_SAG + 1e-12);
+            assert_eq!(b.positions.len(), 2 * (c.band_segments() + 1));
+        }
+    }
+
+    #[test]
+    fn thread_bands_lean_with_the_hand_and_hide() {
+        let around = |c: &CosmeticThread| {
+            let b = ThreadBands::of(std::slice::from_ref(c));
+            b.phase[2] - b.phase[0]
+        };
+        let r = around(&cosmetic(true, true));
+        let l = around(&cosmetic(true, false));
+        assert!(r < 0.0 && (r + l).abs() < 1e-6, "{r} {l}");
+        let mut hidden = cosmetic(true, true);
+        hidden.shown = false;
+        assert_eq!(ThreadBands::of(&[hidden]), ThreadBands::default());
+        // Two threads: one mesh with both sleeves.
+        let two = ThreadBands::of(&[cosmetic(true, true), cosmetic(false, true)]);
+        let one = ThreadBands::of(&[cosmetic(true, true)]);
+        assert!(two.positions.len() > one.positions.len());
+        assert!(
+            two.triangles
+                .iter()
+                .flatten()
+                .all(|&i| (i as usize) < two.positions.len())
+        );
+        // A mirror turns a right-hand thread left; a move keeps it.
+        let mut m = nalgebra::Matrix4::<Real>::identity();
+        m[(0, 0)] = -1.0;
+        let c = cosmetic(true, true).transformed(&m);
+        assert!(!c.right_hand && (c.start.x + 5.0).abs() < 1e-12);
+        let t = nalgebra::Matrix4::new_translation(&Vector3::new(1.0, 2.0, 0.0));
+        let c = cosmetic(true, true).transformed(&t);
+        assert!(c.right_hand && (c.start - Point3::new(6.0, 2.0, 10.0)).norm() < 1e-12);
+    }
+
+    #[test]
+    fn thread_bands_of_a_thousand_holes_are_quick() {
+        let threads: Vec<CosmeticThread> = (0..1000)
+            .map(|k| {
+                let mut c = cosmetic(true, true);
+                c.start = Point3::new((k % 32) as Real * 12.0, (k / 32) as Real * 12.0, 10.0);
+                c
+            })
+            .collect();
+        let t = std::time::Instant::now();
+        let b = ThreadBands::of(&threads);
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        assert_eq!(
+            b.positions.len(),
+            1000 * 2 * (threads[0].band_segments() + 1)
+        );
+        // About 1 ms in a debug build; generous for a busy machine.
+        assert!(ms < 500.0, "{ms:.1} ms");
     }
 
     #[test]

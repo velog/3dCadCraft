@@ -654,6 +654,7 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 | | **Look at sketch plane on sketch creation and edit** | изгледът се обръща към скицата | вкл. |
 | | **Grid lines** / **Axes** / **Coordinate system indicator** | рамка на скицата | вкл. |
 | Display | **Show constraint labels** | като F8/F9 | вкл. |
+| | **Thread texture** | козметичните резби (Hole Tapped, Thread) се рисуват като текстура с винтови ивици върху стената; изкл.: нищо не се рисува (данните остават) | вкл. |
 | Constraint Settings — Inference | **Infer constraints** | знаци за разпознаване (Ctrl ги потиска) | вкл. |
 | | **Persist constraints** | създава разпознатите ограничения | вкл. |
 | | **Point alignment** | подравняване (пунктир); с Persist → H/V между точки | вкл. |
@@ -670,7 +671,7 @@ Parameters* и *User Parameters*; клетките се прилагат при 
 | `hints_bulgarian` | `true`/`false` — език на подсказките |
 | `recent_files` | до 10 пътя (най-новият първи; липсващите не се показват) |
 | `ui` | подредбата: видими панели (`show_browser`, `show_properties`, `show_ribbon`, `show_status_bar`, `show_view_cube`, `show_triad`), `ribbon_minimized`, страни (`browser_side`, `properties_side`: `Left`/`Right`), ширини/височина (`browser_width`, `properties_width`, `status_height`), плаващи прозорци (`windows`: ключ → `x`, `y`, `w`, `h`), главният прозорец (`main_size`, `maximized`) |
-| `options` | Application Options: `mouse` (`Inventor`/`Classic`), `invert_wheel`, `sketch` (опциите на скицата), `inference`, `show_labels`, `home_view` |
+| `options` | Application Options: `mouse` (`Inventor`/`Classic`), `invert_wheel`, `sketch` (опциите на скицата), `inference`, `show_labels`, `thread_texture`, `home_view` |
 
 `ui` и `options` се записват 0,5 s след последната промяна (влаченето на ръб пише
 веднъж) и при затваряне; записът е атомарен и пази другите ключове. Непознати ключове се

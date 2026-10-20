@@ -1238,6 +1238,9 @@ pub(super) fn hole(
                     length: len,
                     pitch: t.pitch,
                     shown: true,
+                    face_radius: spec.bore_radius(),
+                    internal: true,
+                    right_hand: t.right_hand,
                 });
             }
         }
@@ -1290,6 +1293,9 @@ pub(super) fn thread(
             length: len,
             pitch: t.pitch,
             shown: th.display,
+            face_radius: cf.radius,
+            internal: cf.internal,
+            right_hand: t.right_hand,
         });
         return Ok((out, None));
     }
