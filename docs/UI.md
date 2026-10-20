@@ -48,7 +48,7 @@
 
 **Лентата (днес еднаква за всеки документ):**
 - **3D Model, Inspect, Tools, Manage, View** и **Sketch**. Tools има панел **Material and Appearance** (Material, Appearance, Adjust, Clear); Manage — **Styles and Standards** (Styles Editor, Update, Purge); Inspect → **Physical Properties**.
-- **Таб Sketch:** панели Create, Modify, Pattern, Constrain, Format, Demo, Exit (панел Insert няма; Project Geometry, Image и др. ⬜).
+- **Таб Sketch:** панели Create (с **Project Geometry**: точки и криви от по-ранни скици, ръбове на модела; Shift = construction; Esc / десен клик → Done спира), Modify, Pattern, Constrain, Format, Demo, Exit (панел Insert няма; Image и др. ⬜).
 - ⬜ **Сглобка:** Assemble, Design (калкулатори), Inspect, Tools, View.
 - ⬜ **Чертеж:** Place Views, Annotate, Sketch, Tools, View.
 

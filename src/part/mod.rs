@@ -34,6 +34,9 @@ pub mod expr;
 pub mod extrude;
 pub mod history;
 pub mod hole;
+pub mod link;
+#[cfg(test)]
+mod link_tests;
 pub mod loft;
 #[cfg(test)]
 mod option_tests;
@@ -70,6 +73,7 @@ pub use hole::{
     HoleInstance, HoleSpec, HoleType, SeatType, Termination, ThreadBands, ThreadFeature,
     ThreadSpec,
 };
+pub use link::{GeometryLink, LinkSource, SketchGeo};
 pub use loft::{ConditionKind, LoftCondition, LoftFeature, LoftGuide, LoftSection};
 pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
@@ -84,7 +88,7 @@ pub use work::{
 };
 
 use crate::kernel::{BRep, KernelError, Plane, Point3, Real};
-use crate::sketch::{EntityId, Point2, PointId, Sketch, SketchError};
+use crate::sketch::{Entity, EntityId, Point2, PointId, Sketch, SketchError};
 
 /// Sketch-related application options (Inventor: Tools → Application
 /// Options → Sketch tab; API `SketchOptions`).
@@ -466,6 +470,10 @@ pub struct PartSketch {
     /// Lines that are projected face edges (reference geometry).
     #[serde(default)]
     pub reference_lines: Vec<EntityId>,
+    /// Projected geometry of other sketches and curved model edges
+    /// (associative, see [`link`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<GeometryLink>,
     /// Visibility in the graphics window.
     #[serde(default = "yes")]
     pub visible: bool,
@@ -487,6 +495,7 @@ impl PartSketch {
             after_features: None,
             shared: false,
             reference_lines: Vec::new(),
+            links: Vec::new(),
             visible: true,
             health: None,
         }
@@ -495,6 +504,33 @@ impl PartSketch {
     /// Is `p` a projected (reference) point?
     pub fn is_projected(&self, p: PointId) -> bool {
         self.projections.iter().any(|pr| pr.point == p)
+            || self.links.iter().any(|l| l.points.contains(&p))
+    }
+
+    /// Is curve `e` projected (reference) geometry: a projected straight
+    /// edge or a linked curve? It cannot be trimmed or edited.
+    pub fn is_reference(&self, e: EntityId) -> bool {
+        self.reference_lines.contains(&e) || self.links.iter().any(|l| l.curve == Some(e))
+    }
+
+    /// The link whose geometry `target` is (a linked point or curve).
+    pub fn link_of(&self, target: RefTarget) -> Option<usize> {
+        self.links.iter().position(|l| match target {
+            RefTarget::Point(p) => l.curve.is_none() && l.points.first() == Some(&p),
+            RefTarget::Curve(c) | RefTarget::Line(c) => l.curve == Some(c),
+        })
+    }
+
+    /// The reference row target of linked point `p` or linked curve `e`:
+    /// the link that owns it.
+    pub fn link_target_of_point(&self, p: PointId) -> Option<RefTarget> {
+        self.links
+            .iter()
+            .find(|l| l.points.contains(&p))
+            .map(|l| match l.curve {
+                Some(c) => RefTarget::Curve(c),
+                None => RefTarget::Point(p),
+            })
     }
 
     fn source_of(&self, p: PointId) -> Option<&PointRef> {
@@ -528,6 +564,7 @@ impl PartSketch {
                 ),
                 ok: alive(sa) && alive(sb),
                 points: vec![a, b],
+                label: None,
             });
         }
         for pr in &self.projections {
@@ -542,6 +579,43 @@ impl PartSketch {
                 },
                 ok: alive(Some(&pr.source)),
                 points: vec![pr.point],
+                label: None,
+            });
+        }
+        for l in &self.links {
+            let kind = match l.curve.and_then(|c| self.sketch.entity(c)) {
+                Some(Entity::Line { .. }) => "Line",
+                Some(Entity::Circle { .. }) => "Circle",
+                Some(Entity::Arc { .. }) => "Arc",
+                Some(Entity::Spline { .. }) => "Spline",
+                None => "Point",
+            };
+            let from = match &l.source {
+                LinkSource::Sketch { sketch, .. } => sketch.clone(),
+                LinkSource::Edge { edge } => edge.faces[0]
+                    .split(':')
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned(),
+            };
+            let what = match &l.source {
+                LinkSource::Sketch { .. } => kind.to_owned(),
+                LinkSource::Edge { .. } => format!("edge ({})", kind.to_lowercase()),
+            };
+            rows.push(Reference {
+                target: match l.curve {
+                    Some(c) => RefTarget::Curve(c),
+                    None => RefTarget::Point(l.points[0]),
+                },
+                source: match &l.source {
+                    LinkSource::Sketch { sketch, .. } => format!("{sketch}: {kind}"),
+                    LinkSource::Edge { edge } => {
+                        format!("Edge {} / {} ({kind})", edge.faces[0], edge.faces[1])
+                    }
+                },
+                ok: l.status.is_none(),
+                points: l.points.clone(),
+                label: Some(format!("{from} · {what}")),
             });
         }
         rows
@@ -567,7 +641,20 @@ impl PartSketch {
     /// geometry, no longer updated from the model. An edge's end points
     /// stay linked while another reference edge uses them.
     pub fn break_link(&mut self, target: RefTarget) -> Result<(), SketchError> {
+        if let Some(k) = self.link_of(target) {
+            let l = self.links.remove(k);
+            for p in l.points {
+                self.sketch.set_fixed(p, false)?;
+            }
+            if let Some(c) = l.curve
+                && self.sketch.is_radius_fixed(c)
+            {
+                self.sketch.set_radius_fixed(c, false)?;
+            }
+            return Ok(());
+        }
         match target {
+            RefTarget::Curve(_) => Err(SketchError::UnknownEntity),
             RefTarget::Point(p) => self.unlink_point(p),
             RefTarget::Line(line) => {
                 let (a, b) = self.sketch.line_points(line)?;
@@ -586,7 +673,37 @@ impl PartSketch {
     /// **Delete** a reference: the projected geometry goes, with its
     /// constraints; end points shared with other curves stay.
     pub fn delete_reference(&mut self, target: RefTarget) -> Result<(), SketchError> {
+        if let Some(k) = self.link_of(target) {
+            let l = self.links.remove(k);
+            if let Some(c) = l.curve {
+                self.sketch.remove_entity(c)?;
+            }
+            for p in l.points {
+                if self.sketch.point(p).is_none() || self.is_projected(p) {
+                    continue;
+                }
+                let used = self.sketch.entities().any(|(_, e)| e.points().contains(&p));
+                if used {
+                    // User curves built on it keep the point (free now);
+                    // the constraints that used the projection go.
+                    let doomed: Vec<_> = self
+                        .sketch
+                        .constraints()
+                        .filter(|(_, c)| c.references_point(p))
+                        .map(|(id, _)| id)
+                        .collect();
+                    for c in doomed {
+                        self.sketch.remove_constraint(c)?;
+                    }
+                    self.sketch.set_fixed(p, false)?;
+                } else {
+                    self.sketch.remove_point(p)?;
+                }
+            }
+            return Ok(());
+        }
         match target {
+            RefTarget::Curve(_) => Err(SketchError::UnknownEntity),
             RefTarget::Point(p) => {
                 self.projections.retain(|pr| pr.point != p);
                 self.sketch.remove_point(p)
@@ -616,6 +733,8 @@ pub enum RefTarget {
     Point(PointId),
     /// A projected edge (reference line).
     Line(EntityId),
+    /// A linked curve (from another sketch or a curved model edge).
+    Curve(EntityId),
 }
 
 /// One projected reference of a sketch, for the References list.
@@ -629,6 +748,9 @@ pub struct Reference {
     pub ok: bool,
     /// Its sketch points (for highlighting).
     pub points: Vec<PointId>,
+    /// Short label for the list (`Sketch1 · Circle`); `None`: the GUI
+    /// derives one from `source`.
+    pub label: Option<String>,
 }
 
 /// Errors of part-modeling operations.
@@ -796,15 +918,15 @@ impl PartDocument {
         for (j, f) in self.features.iter().enumerate().take(limit) {
             // Sketches made at this point of the history follow the body as
             // it was then (Inventor), not the final one.
-            for ps in &mut self.sketches {
-                if ps.after_features == Some(j) {
-                    update_sketch(&body, &works, ps);
+            for k in 0..self.sketches.len() {
+                if self.sketches[k].after_features == Some(j) {
+                    update_sketch(&body, &works, &mut self.sketches, k);
                 }
             }
             // The feature's own sketches follow the body built so far.
             for id in f.sketch_ids() {
-                if let Some(ps) = self.sketches.iter_mut().find(|s| s.id == id) {
-                    update_sketch(&body, &works, ps);
+                if let Some(k) = self.sketches.iter().position(|s| s.id == id) {
+                    update_sketch(&body, &works, &mut self.sketches, k);
                 }
             }
             // Suppressed: as if it were not in the history (its key is not
@@ -1310,13 +1432,14 @@ impl PartDocument {
             .filter(|&k| k <= limit)
             .and_then(|k| self.features.get(k))
             .and_then(|f| f.sketch().map(str::to_owned));
-        for ps in &mut self.sketches {
+        for i in 0..self.sketches.len() {
+            let ps = &self.sketches[i];
             let follows = match ps.after_features {
                 None => limit >= n,
                 Some(k) => k == limit || (limit >= n && k >= n),
             } || edited_sketch.as_deref() == Some(ps.id.as_str());
             if follows {
-                update_sketch(&self.body, &works, ps);
+                update_sketch(&self.body, &works, &mut self.sketches, i);
             }
         }
         self.work = works;
@@ -1696,8 +1819,8 @@ impl PartDocument {
 
     /// Re-resolves every sketch against the current body.
     pub fn update_sketches(&mut self) {
-        for ps in &mut self.sketches {
-            update_sketch(&self.body, &self.work, ps);
+        for i in 0..self.sketches.len() {
+            update_sketch(&self.body, &self.work, &mut self.sketches, i);
         }
     }
 
@@ -1850,7 +1973,7 @@ impl PartDocument {
             .ok_or_else(|| PartError::Feature("the edge no longer exists".into()))?;
         if body.edge_direction(edge).is_none() {
             return Err(PartError::Feature(
-                "Project Geometry: only straight edges can be projected yet".into(),
+                "Project Geometry: a curved edge is projected with project_curved_edge".into(),
             ));
         }
         let name = |v| body.vertex(v).and_then(|x| x.name.clone());
@@ -1904,6 +2027,130 @@ impl PartDocument {
             .map_err(|e| PartError::Feature(e.to_string()))?;
         ps.reference_lines.push(line);
         Ok(line)
+    }
+
+    /// **Project Geometry** of a point or curve of another sketch into
+    /// sketch `index` (Inventor: Project Geometry on sketch geometry). The
+    /// source must come before the target in the history. The projection is
+    /// fixed reference geometry that follows its source at every
+    /// regeneration ([`link`]); `construction` makes the curve construction
+    /// geometry (Shift+click). Projecting the same source again returns the
+    /// existing link. Returns the link's index in `PartSketch::links`.
+    pub fn project_sketch_geometry(
+        &mut self,
+        index: usize,
+        sketch: &str,
+        geo: SketchGeo,
+        construction: bool,
+    ) -> Result<usize, PartError> {
+        let source = LinkSource::Sketch {
+            sketch: sketch.to_owned(),
+            geo,
+        };
+        self.add_link(index, source, construction)
+    }
+
+    /// **Project Geometry** of a circular model edge (circle or arc) into
+    /// sketch `index`: a fixed reference circle/arc that follows the edge
+    /// by the names of its faces. The edge must be parallel to the sketch.
+    pub fn project_curved_edge(
+        &mut self,
+        index: usize,
+        edge: crate::kernel::EdgeId,
+    ) -> Result<usize, PartError> {
+        let r = blend::edge_ref(&self.body, edge).ok_or_else(|| {
+            PartError::Feature("Project Geometry: the edge's faces have no names".into())
+        })?;
+        self.add_link(index, LinkSource::Edge { edge: r }, false)
+    }
+
+    fn add_link(
+        &mut self,
+        index: usize,
+        source: LinkSource,
+        construction: bool,
+    ) -> Result<usize, PartError> {
+        let fail = |m: String| PartError::Feature(format!("Project Geometry: {m}"));
+        if index >= self.sketches.len() {
+            return Err(PartError::NoSketch(index));
+        }
+        if let Some(k) = self.sketches[index]
+            .links
+            .iter()
+            .position(|l| l.source == source)
+        {
+            return Ok(k);
+        }
+        let shape = link::resolve(&source, &self.sketches, index, &self.body).map_err(fail)?;
+        let ps = &mut self.sketches[index];
+        let proj = link::project(&shape, &ps.sketch.plane).map_err(fail)?;
+        let (points, curve) =
+            link::create(&mut ps.sketch, &shape, &proj, construction).map_err(fail)?;
+        ps.links.push(GeometryLink {
+            source,
+            points,
+            curve,
+            status: None,
+        });
+        Ok(ps.links.len() - 1)
+    }
+
+    /// **Replace Reference** (Inventor 2026.1): link `k` of sketch `index`
+    /// takes `source` instead (same kind of geometry); its target geometry
+    /// and the constraints on it stay, and it moves to the new source. On
+    /// failure nothing changes.
+    pub fn relink(&mut self, index: usize, k: usize, source: LinkSource) -> Result<(), PartError> {
+        let fail = |m: String| PartError::Feature(format!("Replace Reference: {m}"));
+        let ps = self.sketches.get(index).ok_or(PartError::NoSketch(index))?;
+        let link = ps
+            .links
+            .get(k)
+            .cloned()
+            .ok_or_else(|| fail("no such reference".into()))?;
+        let shape = link::resolve(&source, &self.sketches, index, &self.body).map_err(fail)?;
+        let proj = link::project(&shape, &ps.sketch.plane).map_err(fail)?;
+        let kind_now = match link.curve.and_then(|c| ps.sketch.entity(c)) {
+            Some(Entity::Line { .. }) => "Line",
+            Some(Entity::Circle { .. }) => "Circle",
+            Some(Entity::Arc { .. }) => "Arc",
+            Some(Entity::Spline { .. }) => "Spline",
+            None => "Point",
+        };
+        if shape.kind() != kind_now {
+            return Err(fail(format!(
+                "pick a {} (the reference is a {})",
+                kind_now.to_lowercase(),
+                kind_now.to_lowercase()
+            )));
+        }
+        let mut trial = ps.sketch.clone();
+        link::place(&mut trial, &link, &proj).map_err(fail)?;
+        let _ = trial.solve();
+        let ps = &mut self.sketches[index];
+        ps.sketch = trial;
+        ps.links[k].source = source;
+        ps.links[k].status = None;
+        Ok(())
+    }
+
+    /// Indices of the sketches that project geometry of sketch `id`.
+    pub fn link_dependents(&self, id: &str) -> Vec<usize> {
+        (0..self.sketches.len())
+            .filter(|&i| {
+                self.sketches[i]
+                    .links
+                    .iter()
+                    .any(|l| l.source.sketch() == Some(id))
+            })
+            .collect()
+    }
+
+    /// Whether sketch `source` may project into sketch `target` (it comes
+    /// first in the history).
+    pub fn can_project_from(&self, target: usize, source: usize) -> bool {
+        source != target
+            && source < self.sketches.len()
+            && link::order_key(&self.sketches, source) < link::order_key(&self.sketches, target)
     }
 
     /// The centres of `def` on the current body: (point on the start
@@ -2020,12 +2267,17 @@ fn pattern_sources<'t>(
 
 /// Re-resolves one sketch against `body`: placement, projected points,
 /// solve; problems go to its `health`.
-fn update_sketch(body: &BRep, works: &placement::WorkGeom, ps: &mut PartSketch) {
+fn update_sketch(body: &BRep, works: &placement::WorkGeom, sketches: &mut [PartSketch], i: usize) {
+    let Some(ps) = sketches.get_mut(i) else {
+        return;
+    };
     match ps.placement.resolve_with(body, works, &ps.sketch.plane) {
         Ok(plane) => {
             ps.sketch.plane = plane;
             ps.health = None;
-            let mut missing = Vec::new();
+            // Geometry projected from other sketches / curved edges.
+            let mut missing = link::apply(sketches, i, body);
+            let ps = &mut sketches[i];
             for pr in &ps.projections {
                 match project(body, works, &ps.sketch.plane, &pr.source) {
                     Some(uv) => {

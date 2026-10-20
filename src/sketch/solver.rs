@@ -180,7 +180,7 @@ impl<'a> System<'a> {
             }
         }
         for (id, e) in &sketch.entities {
-            if matches!(e, Entity::Circle { .. }) {
+            if matches!(e, Entity::Circle { .. }) && !sketch.fixed_radius.contains_key(id) {
                 params.push(Param::Radius(id));
             }
         }

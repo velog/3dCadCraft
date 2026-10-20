@@ -3947,7 +3947,8 @@ impl CadCraftApp {
         } else {
             format!("References ({})", refs.len())
         };
-        let mut action: Option<(bool, crate::part::RefTarget)> = None;
+        let mut action: Option<(super::project::RefAction, crate::part::RefTarget)> = None;
+        let relinking = self.relink.filter(|&(si, _)| si == i).map(|(_, k)| k);
         egui::CollapsingHeader::new(RichText::new(title).strong())
             .id_salt(("sketch_refs", i))
             .default_open(missing > 0)
@@ -3967,17 +3968,20 @@ impl CadCraftApp {
                         .next()
                         .unwrap_or_default()
                         .to_owned();
-                    let short = match r.target {
-                        crate::part::RefTarget::Line(_) => {
+                    let short = match (&r.label, r.target) {
+                        (Some(l), _) => l.clone(),
+                        (None, crate::part::RefTarget::Line(_)) => {
                             let n = edge_no.entry(feature.clone()).or_insert(0);
                             *n += 1;
                             format!("{feature} · edge {n}")
                         }
-                        crate::part::RefTarget::Point(_) if r.source.starts_with("Origin") => {
+                        (None, crate::part::RefTarget::Point(_)) if r.source.starts_with("Origin") => {
                             "Origin · Center Point".to_owned()
                         }
-                        crate::part::RefTarget::Point(_) => format!("{feature} · vertex"),
+                        (None, crate::part::RefTarget::Point(_)) => format!("{feature} · vertex"),
+                        (None, crate::part::RefTarget::Curve(_)) => format!("{feature} · curve"),
                     };
+                    let link = ps.link_of(r.target);
                     let row = ui.horizontal(|ui| {
                         if r.ok {
                             ui.colored_label(Color32::from_rgb(60, 170, 80), "✔");
@@ -3985,23 +3989,52 @@ impl CadCraftApp {
                             ui.colored_label(Color32::from_rgb(230, 140, 0), "!")
                                 .on_hover_text("The source is missing: the geometry is frozen");
                         }
-                        ui.label(RichText::new(short)).on_hover_text(&r.source);
+                        let text = if link.is_some() && link == relinking {
+                            RichText::new(format!("{short} (pick the new source)")).strong()
+                        } else {
+                            RichText::new(short)
+                        };
+                        ui.label(text).on_hover_text(&r.source);
+                        use super::project::RefAction;
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
                                 .small_button("x")
-                                .on_hover_text("Delete the projected geometry")
+                                .on_hover_text(
+                                    "Delete the projected geometry and the constraints that use it",
+                                )
                                 .clicked()
                             {
-                                action = Some((true, r.target));
+                                action = Some((RefAction::Delete, r.target));
                             }
                             if ui
                                 .small_button("Break Link")
                                 .on_hover_text(
-                                    "Keep the geometry, no longer updated from the model",
+                                    "Keep the geometry, no longer updated from its source",
                                 )
                                 .clicked()
                             {
-                                action = Some((false, r.target));
+                                action = Some((RefAction::BreakLink, r.target));
+                            }
+                            if link.is_some()
+                                && ui
+                                    .small_button("Replace")
+                                    .on_hover_text(
+                                        "Replace Reference: click the new source in the view; the constraints stay",
+                                    )
+                                    .clicked()
+                            {
+                                action = Some((RefAction::Replace, r.target));
+                            }
+                            if matches!(
+                                r.target,
+                                crate::part::RefTarget::Line(_) | crate::part::RefTarget::Curve(_)
+                            ) && editing
+                                && ui
+                                    .small_button("Select")
+                                    .on_hover_text("Select the projected curve")
+                                    .clicked()
+                            {
+                                action = Some((RefAction::Select, r.target));
                             }
                         });
                     });
@@ -4010,26 +4043,8 @@ impl CadCraftApp {
                     }
                 }
             });
-        if let Some((delete, target)) = action {
-            self.checkpoint(if delete {
-                "Delete Reference"
-            } else {
-                "Break Link"
-            });
-            let ps = &mut self.part_mut().sketches[i];
-            let r = if delete {
-                ps.delete_reference(target)
-            } else {
-                ps.break_link(target)
-            };
-            match r {
-                Ok(()) => self.solve(),
-                Err(e) => {
-                    self.history.cancel();
-                    let cmd = if delete { "Delete" } else { "Break Link" };
-                    self.file_status = Some(Err(format!("{cmd}: {e}")));
-                }
-            }
+        if let Some((act, target)) = action {
+            self.reference_action(i, target, act);
         }
 
         if editing {
@@ -4302,9 +4317,11 @@ impl CadCraftApp {
                         (Mode::Normal, Some(_)) if self.project_geometry => {
                             ui.colored_label(
                                 WARNING,
-                                super::i18n::tr(
-                                    "Project Geometry: click straight model edges to project them (click the button again to stop)",
-                                ),
+                                super::i18n::tr(if self.relink.is_some() {
+                                    "Replace Reference: click the new source (a point, curve or edge of the same kind; Esc cancels)"
+                                } else {
+                                    "Project Geometry: click points or curves of earlier sketches, or model edges, to project them (Shift: as construction; Esc or right-click > Done ends)"
+                                }),
                             );
                         }
                         (Mode::Normal, Some(i)) => {

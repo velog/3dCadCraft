@@ -472,3 +472,38 @@ fn twisted_sweep_cut_through_a_block() {
         assert_vol(&p, 64000.0 - 100.0 * 40.0, 1e-2);
     }
 }
+
+/// A circle along an interpolation spline (a sampled path): the kernel's
+/// path sweep needs the circle as quarter arcs (one whole-circle edge has a
+/// single vertex and failed with "two same vertices").
+#[test]
+fn circle_along_a_spline() {
+    for (r, top) in [
+        (4.0, (30.0, 55.0)),
+        (2.0, (10.0, 40.0)),
+        (1.0, (-15.0, 30.0)),
+    ] {
+        let (mut p, a, b) = circle_and_path(r, |s| {
+            let p0 = s.add_point(Point2::new(0.0, 0.0));
+            let p1 = s.add_point(Point2::new(top.0 * 0.15, top.1 * 0.5));
+            let p2 = s.add_point(Point2::new(top.0, top.1));
+            s.add_interp_spline(vec![p0, p1, p2]).unwrap();
+        });
+        sweep_of(&mut p, a, b, |_| {}).unwrap();
+        let len = p.sketches[b]
+            .sketch
+            .entities()
+            .find_map(|(e, _)| p.sketches[b].sketch.spline_curve(e))
+            .map(|c| {
+                let d = c.domain();
+                (0..400)
+                    .map(|i| {
+                        let t = |k: usize| d.min + (d.max - d.min) * k as Real / 400.0;
+                        (c.point_at(t(i + 1)) - c.point_at(t(i))).norm()
+                    })
+                    .sum::<Real>()
+            })
+            .unwrap();
+        assert_vol(&p, PI * r * r * len, 0.03);
+    }
+}

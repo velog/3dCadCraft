@@ -407,6 +407,99 @@ fn loft_part(n: usize) -> PartDocument {
     part
 }
 
+/// Project Geometry: `n` circles on XY projected (as circles) into a
+/// sketch on a work plane 20 above, then (`sweep`) the owner's case: a Ø8
+/// circle swept along a spline between two projected centres.
+fn links_part(n: usize, sweep: bool) -> PartDocument {
+    use cadcraft3d::part::{
+        OriginPlane, PathRef, PlaneRef, SketchGeo, SweepFeature, WorkDef, WorkFeature, WorkPlaneDef,
+    };
+    use cadcraft3d::sketch::{Constraint, Entity, Point2};
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::default();
+    let a = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    for k in 0..n {
+        let (x, y) = ((k % 20) as Real * 10.0, (k / 20) as Real * 10.0);
+        part.sketches[a]
+            .sketch
+            .add_circle(Point2::new(x, y), 4.0)
+            .unwrap();
+    }
+    let wp = part
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: if sweep { 55.0 } else { 20.0 },
+        })))
+        .unwrap();
+    let on_wp = SketchPlacement {
+        plane: PlaneRef::Work(wp),
+        ..Default::default()
+    };
+    let b = part.create_sketch(on_wp, &o).unwrap();
+    let id = part.sketches[a].id.clone();
+    if !sweep {
+        let circles: Vec<_> = part.sketches[a].sketch.entities().map(|(e, _)| e).collect();
+        for e in circles {
+            part.project_sketch_geometry(b, &id, SketchGeo::Curve { entity: e }, false)
+                .unwrap();
+        }
+        part.regenerate().unwrap();
+        return part;
+    }
+    part.sketches[b]
+        .sketch
+        .add_circle(Point2::new(0.0, 30.0), 4.0)
+        .unwrap();
+    let c = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::YZ), &o)
+        .unwrap();
+    let center = |p: &PartDocument, k: usize| {
+        p.sketches[k]
+            .sketch
+            .entities()
+            .find_map(|(_, e)| match e {
+                Entity::Circle { center, .. } => Some(*center),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (ca, cb) = (center(&part, a), center(&part, b));
+    let idb = part.sketches[b].id.clone();
+    let ka = part
+        .project_sketch_geometry(c, &id, SketchGeo::Point { point: ca }, false)
+        .unwrap();
+    let kb = part
+        .project_sketch_geometry(c, &idb, SketchGeo::Point { point: cb }, false)
+        .unwrap();
+    let (pa, pb) = (
+        part.sketches[c].links[ka].points[0],
+        part.sketches[c].links[kb].points[0],
+    );
+    let sk = &mut part.sketches[c].sketch;
+    let mid = sk.add_point(Point2::new(4.0, 30.0));
+    sk.add_constraint(Constraint::Fix {
+        point: mid,
+        at: Point2::new(4.0, 30.0),
+    })
+    .unwrap();
+    let spline = sk.add_interp_spline(vec![pa, mid, pb]).unwrap();
+    // Only the first circle (n = 1) is the profile.
+    let r = part.sketches[a].sketch.regions();
+    let pr = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let path = PathRef::Sketch {
+        sketch: part.sketches[c].id.clone(),
+        curves: vec![spline],
+    };
+    part.add_sweep(a, SweepFeature::new(pr, path)).unwrap();
+    part
+}
+
 #[test]
 fn speed_budgets() {
     // (case, budget ms, median ms)
@@ -1142,7 +1235,25 @@ fn speed_budgets() {
         }),
     ));
 
+    let links = links_part(200, false);
+    assert_eq!(links.sketches[1].links.len(), 200);
+    rows.push((
+        "Project Geometry: regenerate 200 circles projected from a sketch",
+        10.0,
+        median_ms(5, || {
+            let mut p = links.clone();
+            p.build_cache = Default::default();
+            p.regenerate().unwrap();
+            assert_eq!(p.sketches[1].health, None);
+        }),
+    ));
+
     for (case, budget, part) in [
+        (
+            "sweep a circle along a spline between projected centres",
+            400.0,
+            links_part(1, true),
+        ),
         (
             "sweep a circle along a quarter arc (exact sweep)",
             150.0,

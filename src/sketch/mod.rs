@@ -237,7 +237,7 @@ pub struct Sketch {
     styles: SecondaryMap<EntityId, Style>,
     /// Driven (reference) dimensions: shown with their measured value, not
     /// used by the solver.
-    #[serde(default)]
+    #[serde(default, with = "unit_set")]
     driven: SecondaryMap<ConstraintId, ()>,
     /// Where each dimension's text sits, as an offset from the dimension's
     /// anchor ([`Sketch::dimension_anchor`]), so it follows the geometry.
@@ -254,6 +254,10 @@ pub struct Sketch {
     /// other splines are control-vertex splines.
     #[serde(default, skip_serializing_if = "SecondaryMap::is_empty")]
     interp: SecondaryMap<EntityId, spline::SplineFit>,
+    /// Circles whose radius is not a degree of freedom (projected circles:
+    /// the radius follows their source, see `part::link`).
+    #[serde(default, skip_serializing_if = "SecondaryMap::is_empty")]
+    fixed_radius: SecondaryMap<EntityId, bool>,
 }
 
 impl Default for Sketch {
@@ -277,6 +281,7 @@ impl Sketch {
             dim_params: SecondaryMap::new(),
             patterns: SlotMap::with_key(),
             interp: SecondaryMap::new(),
+            fixed_radius: SecondaryMap::new(),
         }
     }
 
@@ -380,6 +385,42 @@ impl Sketch {
         let (cv, knots) = self.spline_def(id, &|p| self.points[p].position.coords);
         let cvs: Vec<Point3> = cv.iter().map(|v| Point3::new(v.x, v.y, 0.0)).collect();
         crate::kernel::BSplineCurve::sketch_spline(cvs, &knots).ok()
+    }
+
+    /// Holds (or frees) a circle's radius: a held radius is no degree of
+    /// freedom, the solver keeps it (projected circles).
+    pub fn set_radius_fixed(&mut self, id: EntityId, fixed: bool) -> Result<(), SketchError> {
+        match self.entities.get(id) {
+            Some(Entity::Circle { .. }) => {}
+            Some(_) => return Err(SketchError::WrongEntityKind("set_radius_fixed")),
+            None => return Err(SketchError::UnknownEntity),
+        }
+        if fixed {
+            self.fixed_radius.insert(id, true);
+        } else {
+            self.fixed_radius.remove(id);
+        }
+        Ok(())
+    }
+
+    /// Whether a circle's radius is held (see [`Sketch::set_radius_fixed`]).
+    pub fn is_radius_fixed(&self, id: EntityId) -> bool {
+        self.fixed_radius.contains_key(id)
+    }
+
+    /// Sets a circle's radius (> 0) directly; call [`Sketch::solve`] after.
+    pub fn set_circle_radius(&mut self, id: EntityId, r: Real) -> Result<(), SketchError> {
+        if !(r.is_finite() && r > 0.0) {
+            return Err(SketchError::InvalidValue("circle radius must be positive"));
+        }
+        match self.entities.get_mut(id) {
+            Some(Entity::Circle { radius, .. }) => {
+                *radius = r;
+                Ok(())
+            }
+            Some(_) => Err(SketchError::WrongEntityKind("set_circle_radius")),
+            None => Err(SketchError::UnknownEntity),
+        }
     }
 
     /// The `(start, end)` points of a line entity.
@@ -818,6 +859,7 @@ impl Sketch {
         let entity = self.entities.remove(id).ok_or(SketchError::UnknownEntity)?;
         self.styles.remove(id);
         self.interp.remove(id);
+        self.fixed_radius.remove(id);
         let doomed: Vec<ConstraintId> = self
             .constraints
             .iter()
@@ -908,10 +950,77 @@ impl Sketch {
     }
 }
 
+/// Serde for a `SecondaryMap<K, ()>` (a set of keys). slotmap writes a
+/// unit value as `null`, the same as an empty slot, and then refuses to read
+/// the map back ("inconsistent occupation in Slot"): a sketch with a driven
+/// dimension could be saved but not opened. Written as a map of `true`
+/// (same layout), read by slot version, so files written the old way open.
+mod unit_set {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use slotmap::{Key, KeyData, SecondaryMap};
+
+    #[derive(Deserialize)]
+    struct Slot {
+        #[serde(default)]
+        #[allow(dead_code)]
+        value: Option<serde::de::IgnoredAny>,
+        version: u32,
+    }
+
+    pub fn serialize<K: Key, S: Serializer>(
+        set: &SecondaryMap<K, ()>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut m: SecondaryMap<K, bool> = SecondaryMap::new();
+        for k in set.keys() {
+            m.insert(k, true);
+        }
+        m.serialize(s)
+    }
+
+    pub fn deserialize<'de, K: Key, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<SecondaryMap<K, ()>, D::Error> {
+        let slots: Vec<Slot> = Vec::deserialize(d)?;
+        let mut set = SecondaryMap::new();
+        for (idx, slot) in slots.iter().enumerate().skip(1) {
+            if slot.version % 2 == 1 {
+                let ffi = (u64::from(slot.version) << 32) | idx as u64;
+                set.insert(K::from(KeyData::from_ffi(ffi)), ());
+            }
+        }
+        Ok(set)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+
+    /// A driven dimension survives save/load (slotmap wrote the unit
+    /// value as `null` and refused to read it back), also from a file
+    /// written the old way.
+    #[test]
+    fn driven_dimension_round_trip() {
+        let mut s = Sketch::default();
+        let a = s.add_point(Point2::new(0.0, 0.0));
+        let b = s.add_point(Point2::new(10.0, 0.0));
+        let c = s
+            .add_constraint(Constraint::Distance { a, b, value: 10.0 })
+            .unwrap();
+        let line = s.add_line_between(a, b).unwrap();
+        let d = s.add_constraint(Constraint::Horizontal { line }).unwrap();
+        s.set_driven(c, true).unwrap();
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Sketch = serde_json::from_str(&json).unwrap();
+        assert!(back.is_driven(c) && !back.is_driven(d));
+        assert_eq!(serde_json::to_string(&back).unwrap(), json);
+        let old = json.replace("\"value\":true", "\"value\":null");
+        assert_ne!(old, json);
+        let back: Sketch = serde_json::from_str(&old).unwrap();
+        assert!(back.is_driven(c) && !back.is_driven(d));
+    }
 
     fn p(x: Real, y: Real) -> Point2 {
         Point2::new(x, y)

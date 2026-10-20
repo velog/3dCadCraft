@@ -365,7 +365,7 @@ pub fn default_profiles(ps: &super::PartSketch, regions: &[Region]) -> Vec<Profi
         std::iter::once(&r.outer)
             .chain(&r.holes)
             .flat_map(|l| l.edges.iter())
-            .all(|e| !ps.reference_lines.contains(&e.source))
+            .all(|e| !ps.is_reference(e.source))
     };
     let islands: Vec<&Region> = regions.iter().filter(|r| own(r)).collect();
     let fills_a_hole = |r: &Region| {

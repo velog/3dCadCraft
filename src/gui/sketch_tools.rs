@@ -940,7 +940,7 @@ impl SketchTools {
                 let Snap::OnEntity(e) = pick.snap else {
                     return Err("Click a curve".into());
                 };
-                if ps.reference_lines.contains(&e) {
+                if ps.is_reference(e) {
                     return Err("Projected geometry cannot be modified".into());
                 }
                 let tool = match (self.tool, self.shift) {
@@ -1575,7 +1575,7 @@ impl SketchTools {
             _ => return Err("Select a line".into()),
         };
         for e in [a, b] {
-            if ps.reference_lines.contains(&e) {
+            if ps.is_reference(e) {
                 return Err("Projected geometry cannot be modified".into());
             }
         }

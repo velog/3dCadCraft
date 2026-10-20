@@ -47,6 +47,7 @@ mod panels;
 mod pattern_dialog;
 mod pattern_feature;
 mod presets;
+mod project;
 mod renderer;
 mod ribbon;
 mod select;
@@ -627,6 +628,9 @@ struct CadCraftApp {
     hole_draft: Option<hole::HoleDraft>,
     /// Project Geometry is active in the open sketch.
     project_geometry: bool,
+    /// Replace Reference armed: (sketch, link index); the next Project
+    /// Geometry pick replaces that link's source.
+    relink: Option<(usize, usize)>,
     /// The open Thread command.
     thread_draft: Option<hole::ThreadDraft>,
     /// The open Work Plane / Axis / Point command.
@@ -667,6 +671,8 @@ struct CadCraftApp {
 enum SketchCtx {
     Constraint(ConstraintId),
     Entity(EntityId),
+    /// A projected (reference) point.
+    Point(PointId),
 }
 
 impl CadCraftApp {
@@ -772,6 +778,7 @@ impl CadCraftApp {
             presets: Default::default(),
             hole_draft: None,
             project_geometry: false,
+            relink: None,
             thread_draft: None,
             last_pick: None,
             box_select: None,
@@ -929,6 +936,17 @@ impl CadCraftApp {
 
     /// Finish Sketch.
     fn finish_sketch(&mut self) {
+        // Sketches that project from this one follow it now (Inventor
+        // updates projections when the source sketch is finished).
+        if let Some(i) = self.editing
+            && let Some(id) = self.part().sketches.get(i).map(|s| s.id.clone())
+            && !self.part().link_dependents(&id).is_empty()
+        {
+            let _ = self.part_mut().regenerate();
+            self.scene_dirty = true;
+        }
+        self.project_geometry = false;
+        self.relink = None;
         self.slice = false;
         self.editing = None;
         self.dragging = None;
@@ -1059,6 +1077,8 @@ impl CadCraftApp {
                 DraftDef::Extrude(_) => "2.1-extrude.md",
                 DraftDef::Revolve(_) => "2.2-revolve.md",
             }
+        } else if self.editing.is_some() && self.project_geometry {
+            "1.8-project-geometry.md"
         } else if self.editing.is_some() {
             match self.tools.tool {
                 Tool::Dimension => "1.4-dimensions.md",
@@ -3442,9 +3462,13 @@ impl CadCraftApp {
             }
             Action::FinishSketch => {
                 self.project_geometry = false;
+                self.relink = None;
                 self.finish_sketch()
             }
-            Action::ProjectGeometry => self.project_geometry = !self.project_geometry,
+            Action::ProjectGeometry => {
+                self.project_geometry = !self.project_geometry;
+                self.relink = None;
+            }
             Action::CenterPoint => {
                 self.tools.center_point = !self.tools.center_point;
                 if self.tools.center_point {
@@ -3661,6 +3685,20 @@ impl CadCraftApp {
                     self.solve();
                     ui.close();
                 }
+            }
+            SketchCtx::Point(p) => {
+                let ps = &self.part().sketches[i];
+                let target = ps
+                    .link_target_of_point(p)
+                    .unwrap_or(crate::part::RefTarget::Point(p));
+                self.reference_menu(ui, i, target);
+            }
+            SketchCtx::Entity(e)
+                if self.part().sketches[i]
+                    .link_of(crate::part::RefTarget::Curve(e))
+                    .is_some() =>
+            {
+                self.reference_menu(ui, i, crate::part::RefTarget::Curve(e));
             }
             SketchCtx::Entity(e) => {
                 let ps = &self.part().sketches[i];
@@ -3992,6 +4030,12 @@ impl CadCraftApp {
             let _ = ps.sketch.remove_constraint(c);
         }
         for e in selected {
+            if ps.link_of(crate::part::RefTarget::Curve(e)).is_some() {
+                // Projected geometry from Project Geometry can be deleted
+                // (with the constraints that used it).
+                let _ = ps.delete_reference(crate::part::RefTarget::Curve(e));
+                continue;
+            }
             if !ps.reference_lines.contains(&e) {
                 let points = ps.sketch.entity(e).map(|x| x.points()).unwrap_or_default();
                 let _ = ps.sketch.remove_entity(e);
@@ -4203,6 +4247,8 @@ impl CadCraftApp {
         }
         if pressed(Key::Escape) {
             self.select_other = None;
+            self.project_geometry = false;
+            self.relink = None;
             self.work_draft = None;
             self.blend_draft = None;
             self.shell_draft = None;
@@ -4855,8 +4901,16 @@ impl CadCraftApp {
                     .ray_plane(p, rect, plane)
                     .map(|w| plane.project(&w))
             });
+            let projected_point = self.editing.and_then(|i| {
+                let ps = &self.part().sketches[i];
+                overlay::pick_any_point(&self.camera, rect, &ps.sketch, p, overlay::POINT_PICK_PX)
+                    .filter(|&q| ps.is_projected(q))
+            });
             self.sketch_context = match (label_hit, self.editing) {
                 (Some(c), _) => Some(SketchCtx::Constraint(c)),
+                (None, Some(_)) if projected_point.is_some() => {
+                    projected_point.map(SketchCtx::Point)
+                }
                 (None, Some(i)) => overlay::pick_entity(
                     &self.camera,
                     rect,
@@ -4909,6 +4963,18 @@ impl CadCraftApp {
             if idle && let Some(a) = self.repeatable() {
                 if ui.button(format!("Repeat {}", command_label(a))).clicked() {
                     self.apply(a);
+                    ui.close();
+                }
+                ui.separator();
+            }
+            if self.editing.is_some() && self.project_geometry {
+                if ui
+                    .button("Done (Esc)")
+                    .on_hover_text("End Project Geometry")
+                    .clicked()
+                {
+                    self.project_geometry = false;
+                    self.relink = None;
                     ui.close();
                 }
                 ui.separator();
@@ -5038,7 +5104,7 @@ impl CadCraftApp {
             (Some(i), Some(p))
                 if self.project_geometry && response.clicked_by(PointerButton::Primary) =>
             {
-                self.project_click(i, p, rect)
+                self.project_click(i, p, rect, shift_held)
             }
             _ => false,
         };
@@ -5738,6 +5804,7 @@ impl CadCraftApp {
         if self.edge_sel.is_some() {
             self.edge_toolbar(ui, rect);
         }
+        self.draw_project_hover(&painter, rect, pointer);
         // The References row under the pointer: its geometry lights up.
         if let Some((si, pts)) = self.ref_hover.take()
             && let Some(ps) = self.part().sketches.get(si)
@@ -5775,7 +5842,12 @@ impl CadCraftApp {
             let profile_sketch = self.extrude.as_ref().is_some_and(|d| d.sketch == i);
             // Sketches below the End of Part are rolled back: not drawn.
             let shown = ps.visible && !self.part().sketch_rolled_back(i);
-            if !shown && self.editing != Some(i) && !profile_sketch {
+            // Project Geometry: earlier sketches are pickable, hidden ones too.
+            let source = self.project_geometry
+                && self
+                    .editing
+                    .is_some_and(|t| self.project_sources(t).contains(&i));
+            if !shown && self.editing != Some(i) && !profile_sketch && !source {
                 continue;
             }
             let active = self.editing == Some(i);
@@ -5807,6 +5879,8 @@ impl CadCraftApp {
                 },
                 color: if active {
                     self.sketch_color()
+                } else if source && !shown {
+                    Self::project_source_color()
                 } else {
                     Color32::from_gray(110)
                 },
