@@ -56,7 +56,7 @@ impl Demo {
     }
 
     /// Menu label.
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Demo::Rectangle => "Rectangle (fully defined)",
             Demo::Slot => "Slot (arcs + tangent lines)",

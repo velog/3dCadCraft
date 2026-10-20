@@ -196,6 +196,9 @@ pub struct AppOptions {
     pub thread_texture: bool,
     /// ViewCube → Set Current View as Home: (yaw, pitch) in degrees.
     pub home_view: Option<(f64, f64)>,
+    /// Registry ids of the recently run commands, newest first (alias
+    /// input and command search, `commands::remember`).
+    pub recent_commands: Vec<String>,
 }
 
 impl Default for AppOptions {
@@ -208,6 +211,7 @@ impl Default for AppOptions {
             show_labels: true,
             thread_texture: true,
             home_view: None,
+            recent_commands: Vec::new(),
         }
     }
 }
@@ -708,6 +712,7 @@ impl CadCraftApp {
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
             home_view: self.home_view,
+            recent_commands: self.recent_commands.clone(),
         }
     }
 
@@ -723,6 +728,7 @@ impl CadCraftApp {
             self.scene_dirty = true;
         }
         self.home_view = o.home_view;
+        self.recent_commands = o.recent_commands;
     }
 
     /// Start of a frame: Ctrl+0, F11 (outside a sketch, where F11 is Relax

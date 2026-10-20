@@ -14,6 +14,7 @@
 //! with this history storing commands/deltas instead of full copies.
 
 pub mod flow;
+pub mod matcher;
 
 use std::time::{Duration, Instant};
 

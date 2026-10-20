@@ -30,6 +30,7 @@ mod camera;
 mod coil_rib;
 mod combine_split;
 mod command_ui;
+mod commands;
 mod demos;
 mod diag;
 mod draft;
@@ -489,6 +490,9 @@ struct CadCraftApp {
     dim_display: crate::sketch::DimDisplay,
     /// The last command started, for Repeat.
     last_command: Option<Action>,
+    /// Registry ids of the recently run commands, newest first
+    /// (`commands::remember`; saved in `settings.json` → `options`).
+    recent_commands: Vec<String>,
     /// The Extrude command, while its dialog is open.
     extrude: Option<ExtrudeDraft>,
     /// An Extrude / Revolve waiting while its sketch is edited (breadcrumb).
@@ -705,6 +709,7 @@ impl CadCraftApp {
             prim_draft: None,
             feature_settings: Default::default(),
             last_command: None,
+            recent_commands: Vec::new(),
             dim_display: Default::default(),
             viewport_rect: egui::Rect::NOTHING,
             dim_tol_open: false,
@@ -1081,26 +1086,10 @@ impl CadCraftApp {
         } else if self.editing.is_some() && self.project_geometry {
             "1.8-project-geometry.md"
         } else if self.editing.is_some() {
-            match self.tools.tool {
-                Tool::Dimension => "1.4-dimensions.md",
-                Tool::Constrain(_) => "1.3-constraints.md",
-                Tool::Trim
-                | Tool::Extend
-                | Tool::Split
-                | Tool::Offset
-                | Tool::Move
-                | Tool::Copy
-                | Tool::Rotate
-                | Tool::Scale
-                | Tool::Stretch => "1.6-modify.md",
-                Tool::PatternRect
-                | Tool::PatternCircular
-                | Tool::PatternPoints
-                | Tool::PatternPath
-                | Tool::Mirror => "1.7-patterns.md",
-                Tool::Select => "1.1-sketch.md",
-                _ => "1.2-sketch-geometry.md",
-            }
+            // The tool's spec, from the command registry.
+            commands::by_action(Action::Tool(self.tools.tool))
+                .and_then(|c| c.spec)
+                .unwrap_or("1.2-sketch-geometry.md")
         } else if matches!(self.mode, Mode::PickPlane(_)) {
             "1.1-sketch.md"
         } else {
@@ -3430,6 +3419,8 @@ impl CadCraftApp {
     }
 
     fn apply(&mut self, action: Action) {
+        // The recent-command list (alias input, command search).
+        commands::remember(&mut self.recent_commands, action);
         // Remember commands for Repeat (Inventor: Enter / right-click).
         match action {
             Action::Tool(t) if t != Tool::Select => self.last_command = Some(action),
@@ -3545,6 +3536,49 @@ impl CadCraftApp {
             Action::Parameters => self.show_params = true,
             Action::RebuildAll => self.rebuild_all(),
             Action::Material(c) => self.material_cmd(c),
+            Action::App(c) => self.app_command(c),
+        }
+    }
+
+    /// Menu and key commands without a ribbon button (the same calls as the
+    /// File / Help menus and `shortcuts`).
+    fn app_command(&mut self, c: commands::AppCmd) {
+        use commands::AppCmd;
+        // `request` re-checks the dirty state (forced), so the cached time
+        // is as good as the frame's.
+        let now = self.dirty_cache.0;
+        match c {
+            AppCmd::New => self.request(files::Pending::New, now),
+            AppCmd::Open => self.request(files::Pending::Open, now),
+            AppCmd::Save => self.save(),
+            AppCmd::SaveAs => self.open_dialog(files::DialogPurpose::SaveAs),
+            AppCmd::SaveAsFolder => self.open_dialog(files::DialogPurpose::SaveFolder),
+            AppCmd::Export(f) => self.open_dialog(files::DialogPurpose::Export(f)),
+            AppCmd::Help => self.open_help(),
+            AppCmd::SaveDiagnostics => self.open_dialog(files::DialogPurpose::Diagnostics),
+            AppCmd::OpenLogsFolder => self.open_logs_folder(),
+            AppCmd::SliceGraphics => {
+                if self.editing.is_some() {
+                    self.slice = !self.slice;
+                }
+            }
+            AppCmd::SelectAll => match self.editing {
+                Some(i) => {
+                    self.tools.selected = self.part().sketches[i]
+                        .sketch
+                        .entities()
+                        .map(|(id, _)| id)
+                        .collect();
+                }
+                None if self.extrude.is_none() => self.select_all(),
+                None => {}
+            },
+            AppCmd::Delete => {
+                if self.editing.is_some() {
+                    self.delete_selection();
+                }
+            }
+            AppCmd::ZoomAll => self.fit_view(),
         }
     }
 
@@ -6578,35 +6612,9 @@ impl eframe::App for CadCraftApp {
     }
 }
 
-/// Display name of a repeatable command.
+/// Display name of a repeatable command (from the command registry).
 fn command_label(a: Action) -> &'static str {
-    match a {
-        Action::Tool(t) => t.label(),
-        Action::Extrude => "Extrude",
-        Action::Revolve => "Revolve",
-        Action::Primitive(k) => k.label(),
-        Action::WorkPlane => "Work Plane",
-        Action::WorkAxis => "Work Axis",
-        Action::Fillet => "Fillet",
-        Action::Chamfer => "Chamfer",
-        Action::Shell => "Shell",
-        Action::Sweep => "Sweep",
-        Action::Loft => "Loft",
-        Action::Coil => "Coil",
-        Action::Rib => "Rib",
-        Action::Draft => "Face Draft",
-        Action::Combine => "Combine",
-        Action::Split => "Split",
-        Action::RectPattern => "Rectangular Pattern",
-        Action::CircPattern => "Circular Pattern",
-        Action::MirrorFeature => "Mirror",
-        Action::Hole => "Hole",
-        Action::Thread => "Thread",
-        Action::WorkPoint => "Work Point",
-        Action::Ucs => "UCS",
-        Action::StartSketch => "Start 2D Sketch",
-        _ => "command",
-    }
+    commands::by_action(a).map_or("command", |c| c.name)
 }
 
 /// Has dimension `c` of sketch `i` a placed (non-default) text position?

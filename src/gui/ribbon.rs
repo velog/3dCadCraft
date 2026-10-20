@@ -13,10 +13,10 @@
 
 use eframe::egui::{self, RichText, Sense, Vec2};
 
+use super::commands::{self, Command};
 use super::demos::Demo;
 use super::icons::{self, Icon, Palette};
 use super::layout::{Element, UiCmd};
-use super::material::MatCmd;
 use super::sketch_tools::{ConstraintTool, Tool};
 use super::viewcube::StandardView;
 use crate::sketch::Style;
@@ -116,6 +116,9 @@ pub enum Action {
     /// View → Windows: User Interface toggles, Clean Screen, Full Screen,
     /// Reset UI Layout (`layout.rs`).
     Ui(UiCmd),
+    /// File / Help menu commands and keys without a ribbon button
+    /// (`commands::AppCmd`).
+    App(commands::AppCmd),
 }
 
 /// Minimize ribbon state (Inventor: Minimize to Tabs).
@@ -205,8 +208,12 @@ pub(super) enum Size {
     Mini,
 }
 
-/// One ribbon command.
+/// One ribbon command. Labels, icons, keys and tooltips come from the
+/// command registry (`commands.rs`); this module only lays them out.
 struct Cmd {
+    /// Registry id (empty for a split button's header).
+    #[cfg_attr(not(test), allow(dead_code))]
+    id: &'static str,
     label: &'static str,
     icon: Icon,
     size: Size,
@@ -215,11 +222,20 @@ struct Cmd {
     kind: Kind,
 }
 
+/// A variant of a split button.
+struct Item {
+    #[cfg_attr(not(test), allow(dead_code))]
+    id: &'static str,
+    label: &'static str,
+    icon: Icon,
+    action: Action,
+}
+
 enum Kind {
     /// Implemented: action and tooltip.
     Ready(Action, &'static str),
-    /// Split button: a menu of variants (label, icon, action).
-    Menu(Vec<(&'static str, Icon, Action)>),
+    /// Split button: a menu of variants.
+    Menu(Vec<Item>),
     /// Implemented but not applicable now: why.
     Unavailable(&'static str),
     /// Not implemented yet: FEATURES.md section.
@@ -235,40 +251,87 @@ impl Cmd {
         self.size = Size::Mini;
         self
     }
-}
-
-const fn todo(
-    icon: Icon,
-    label: &'static str,
-    key: Option<&'static str>,
-    section: &'static str,
-) -> Cmd {
-    Cmd {
-        label,
-        icon,
-        size: Size::Small,
-        key,
-        kind: Kind::Planned(section),
+    /// Another label than the registry's (the same command in a second
+    /// place, e.g. View › Visibility).
+    fn label(mut self, label: &'static str) -> Self {
+        self.label = label;
+        self
     }
 }
 
-const fn ready(
-    icon: Icon,
-    label: &'static str,
-    key: Option<&'static str>,
-    action: Action,
-    help: &'static str,
-) -> Cmd {
+/// Icon of a sketch tool (from the command registry).
+pub fn tool_icon(t: Tool) -> Icon {
+    commands::by_action(Action::Tool(t)).map_or(Icon::Select, |c| c.icon)
+}
+
+/// The button of registry command `cmd`.
+fn button(cmd: &'static Command) -> Cmd {
     Cmd {
-        label,
-        icon,
+        id: cmd.id,
+        label: cmd.ribbon_label(),
+        icon: cmd.icon,
         size: Size::Small,
-        key,
-        kind: Kind::Ready(action, help),
+        key: cmd.shown_key(),
+        kind: match (cmd.planned, cmd.action) {
+            (None, Some(a)) => Kind::Ready(a, cmd.tip),
+            (Some(s), _) => Kind::Planned(s),
+            (None, None) => Kind::Planned("?"),
+        },
     }
 }
 
-/// `ready` when `available`, otherwise disabled with `why`.
+/// The button of the registry command with this id (a visible "?" button
+/// if the id is unknown; the tests catch that).
+fn c(id: &'static str) -> Cmd {
+    match commands::by_id(id) {
+        Some(cmd) => button(cmd),
+        None => Cmd {
+            id,
+            label: id,
+            icon: Icon::Settings,
+            size: Size::Small,
+            key: None,
+            kind: Kind::Planned("?"),
+        },
+    }
+}
+
+/// The button of the registry command running `a`.
+fn c_of(a: Action) -> Cmd {
+    match commands::by_action(a) {
+        Some(cmd) => button(cmd),
+        None => c("?"),
+    }
+}
+
+/// Split-button variants from registry ids.
+fn items(ids: &[&'static str]) -> Vec<Item> {
+    ids.iter()
+        .filter_map(|id| commands::by_id(id))
+        .filter_map(|cmd| {
+            Some(Item {
+                id: cmd.id,
+                label: cmd.ribbon_label(),
+                icon: cmd.icon,
+                action: cmd.action?,
+            })
+        })
+        .collect()
+}
+
+/// A split button `label` with the variants `items` (icon of the first).
+fn split(label: &'static str, items: Vec<Item>) -> Cmd {
+    Cmd {
+        id: "",
+        label,
+        icon: items.first().map_or(Icon::Settings, |i| i.icon),
+        size: Size::Small,
+        key: None,
+        kind: Kind::Menu(items),
+    }
+}
+
+/// `cmd` when `available`, otherwise disabled with `why`.
 fn when(available: bool, cmd: Cmd, why: &'static str) -> Cmd {
     if available {
         cmd
@@ -290,64 +353,13 @@ fn panel(title: &'static str, cmds: Vec<Cmd>) -> PanelDef {
     PanelDef { title, cmds }
 }
 
-/// Icon of a sketch tool (also used in split-button menus).
-pub fn tool_icon(t: Tool) -> Icon {
-    use super::sketch_tools::ConstraintTool as C;
-    match t {
-        Tool::Select => Icon::Select,
-        Tool::Line => Icon::Line,
-        Tool::CircleCenter => Icon::CircleCenter,
-        Tool::CircleTangent => Icon::CircleTangent,
-        Tool::ArcThreePoint => Icon::ArcThree,
-        Tool::ArcTangent => Icon::ArcTangent,
-        Tool::ArcCenter => Icon::ArcCenter,
-        Tool::RectTwoPoint => Icon::Rect2,
-        Tool::RectThreePoint => Icon::Rect3,
-        Tool::RectCenter => Icon::RectCenter,
-        Tool::RectCenterThreePoint => Icon::RectCenter3,
-        Tool::SlotCenterToCenter => Icon::SlotCenter,
-        Tool::SlotOverall => Icon::SlotOverall,
-        Tool::SlotCenterPoint => Icon::SlotPoint,
-        Tool::SlotArcThreePoint | Tool::SlotArcCenter => Icon::SlotArc,
-        Tool::Polygon => Icon::Polygon,
-        Tool::SplineCv => Icon::Spline,
-        Tool::SplineInterp => Icon::SplineInterp,
-        Tool::Point => Icon::Point,
-        Tool::Fillet => Icon::Fillet2d,
-        Tool::Chamfer => Icon::Chamfer2d,
-        Tool::Dimension => Icon::Dimension,
-        Tool::Trim => Icon::Trim,
-        Tool::Extend => Icon::Extend,
-        Tool::Split => Icon::Split,
-        Tool::Offset => Icon::Offset,
-        Tool::Move => Icon::Move,
-        Tool::Copy => Icon::Copy,
-        Tool::Rotate => Icon::Rotate,
-        Tool::Mirror => Icon::Mirror,
-        Tool::PatternRect => Icon::PatternRect,
-        Tool::PatternCircular => Icon::PatternCirc,
-        Tool::PatternPoints => Icon::PatternPoints,
-        Tool::PatternPath => Icon::PatternPath,
-        Tool::Scale => Icon::Scale,
-        Tool::Stretch => Icon::Stretch,
-        Tool::Constrain(c) => match c {
-            C::Coincident => Icon::Coincident,
-            C::Collinear => Icon::Collinear,
-            C::Concentric => Icon::Concentric,
-            C::Fix => Icon::Fix,
-            C::Parallel => Icon::Parallel,
-            C::Perpendicular => Icon::Perpendicular,
-            C::Horizontal => Icon::Horizontal,
-            C::Vertical => Icon::Vertical,
-            C::Tangent => Icon::Tangent,
-            C::Symmetric => Icon::Symmetric,
-            C::Equal => Icon::Equal,
-        },
-    }
-}
-
 fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
     let in_sketch = "Only while editing a sketch";
+    let constraints = if st.labels_shown {
+        "sketch.hide_constraints"
+    } else {
+        "sketch.show_constraints"
+    };
     match tab {
         Tab::Model => vec![
             panel(
@@ -355,13 +367,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 vec![
                     when(
                         !st.picking,
-                        ready(
-                            Icon::StartSketch,
-                            "Start 2D Sketch",
-                            Some("S"),
-                            Action::StartSketch,
-                            "Pick an origin plane or a planar face to sketch on",
-                        ),
+                        c("part.start_sketch"),
                         "Select a plane or face in the graphics window (Esc cancels)",
                     )
                     .large(),
@@ -370,834 +376,317 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             panel(
                 "Create",
                 vec![
-                    ready(
-                        Icon::Extrude,
-                        "Extrude",
-                        Some("E"),
-                        Action::Extrude,
-                        "Extrude closed sketch regions into a solid",
-                    )
-                    .large(),
-                    ready(
-                        Icon::Revolve,
-                        "Revolve",
-                        Some("R"),
-                        Action::Revolve,
-                        "Revolve closed sketch regions around an axis",
-                    )
-                    .large(),
-                    ready(
-                        Icon::Sweep,
-                        "Sweep",
-                        None,
-                        Action::Sweep,
-                        "Sweep: move closed profiles along a path (sketch curves or edges)",
-                    ),
-                    ready(
-                        Icon::Loft,
-                        "Loft",
-                        None,
-                        Action::Loft,
-                        "Loft: a body through sections in order (profiles, faces, a point)",
-                    ),
-                    ready(
-                        Icon::Coil,
-                        "Coil",
-                        None,
-                        Action::Coil,
-                        "Coil: screw closed profiles about an axis (springs, threads with Cut)",
-                    ),
-                    ready(
-                        Icon::Rib,
-                        "Rib",
-                        None,
-                        Action::Rib,
-                        "Rib: thin walls from open sketch curves out to the part (ribs and webs)",
-                    ),
-                    todo(Icon::Emboss, "Emboss", None, "2.17"),
+                    c("part.extrude").large(),
+                    c("part.revolve").large(),
+                    c("part.sweep"),
+                    c("part.loft"),
+                    c("part.coil"),
+                    c("part.rib"),
+                    c("part.emboss"),
                 ],
             ),
             panel(
                 "Modify",
                 vec![
-                    ready(
-                        Icon::Hole,
-                        "Hole",
-                        Some("H"),
-                        Action::Hole,
-                        "Hole: click a face, sketch points or a circular edge for the centres (Simple, Clearance, Tapped; Counterbore, Spotface, Countersink)",
-                    )
-                    .large(),
-                    ready(
-                        Icon::FilletEdge,
-                        "Fillet",
-                        None,
-                        Action::Fillet,
-                        "Fillet: round the picked edges (convex: cut, concave: add)",
-                    )
-                    .large(),
-                    ready(
-                        Icon::ChamferEdge,
-                        "Chamfer",
-                        None,
-                        Action::Chamfer,
-                        "Chamfer: bevel the picked edges (Distance, Two Distances, Distance and Angle)",
-                    ),
-                    ready(
-                        Icon::Shell,
-                        "Shell",
-                        None,
-                        Action::Shell,
-                        "Shell: hollow the solid, remove the picked faces (Inside, Outside, Both)",
-                    ),
-                    ready(
-                        Icon::Draft,
-                        "Draft",
-                        None,
-                        Action::Draft,
-                        "Face Draft: tilt faces against a pull direction (Fixed Edge, Fixed Plane)",
-                    ),
-                    ready(
-                        Icon::Thread,
-                        "Thread",
-                        None,
-                        Action::Thread,
-                        "Thread: click a cylindrical face near the end the thread starts at (cosmetic or modeled)",
-                    ),
-                    todo(Icon::SlotFeature, "Slot", None, "2.3"),
-                    ready(
-                        Icon::Combine,
-                        "Combine",
-                        None,
-                        Action::Combine,
-                        "Combine: join, cut or intersect a base body with toolbodies (multi-body parts)",
-                    ),
-                    ready(
-                        Icon::SplitBody,
-                        "Split",
-                        None,
-                        Action::Split,
-                        "Split: split faces, trim a solid, or split it in two (a plane or a sketch)",
-                    ),
+                    c("part.hole").large(),
+                    c("part.fillet").large(),
+                    c("part.chamfer"),
+                    c("part.shell"),
+                    c("part.draft"),
+                    c("part.thread"),
+                    c("part.slot"),
+                    c("part.combine"),
+                    c("part.split"),
                 ],
             ),
             panel(
                 "Work Features",
                 vec![
-                    ready(
-                        Icon::WorkPlane,
-                        "Plane",
-                        None,
-                        Action::WorkPlane,
-                        "Work Plane: pick a plane (offset), two planes (midplane), \
-                         a plane and an edge (angle), a plane and a point, three points, \
-                         a curved face (tangent, torus midplane) or a curve and a point",
-                    )
-                    .large(),
-                    ready(
-                        Icon::WorkAxis,
-                        "Axis",
-                        None,
-                        Action::WorkAxis,
-                        "Work Axis: an edge or sketch line, two points, two planes, a plane \
-                         and a point, a line and a point, a circular or elliptical edge, or a \
-                         cylindrical, conical or toroidal face",
-                    ),
-                    ready(
-                        Icon::WorkPoint,
-                        "Point",
-                        None,
-                        Action::WorkPoint,
-                        "Work Point: a vertex, sketch point or midpoint, three planes, two \
-                         lines, a plane or curved face and a line, a circular edge (centre), a \
-                         sphere or torus (centre); or Grounded at X, Y, Z",
-                    ),
-                    ready(
-                        Icon::Ucs,
-                        "UCS",
-                        None,
-                        Action::Ucs,
-                        "UCS: a coordinate system with its own planes, axes and centre; \
-                         set X, Y, Z and angles, or pick three points (centre, X, Y)",
-                    ),
+                    c("part.work_plane").large(),
+                    c("part.work_axis"),
+                    c("part.work_point"),
+                    c("part.ucs"),
                 ],
             ),
             panel(
                 "Pattern",
                 vec![
-                    ready(
-                        Icon::PatternRect,
-                        "Rectangular",
-                        None,
-                        Action::RectPattern,
-                        "Rectangular Pattern: copy features or solids in rows along one or two directions",
-                    ),
-                    ready(
-                        Icon::PatternCirc,
-                        "Circular",
-                        None,
-                        Action::CircPattern,
-                        "Circular Pattern: copy features or solids at equal angles about an axis",
-                    ),
-                    ready(
-                        Icon::Mirror,
-                        "Mirror",
-                        None,
-                        Action::MirrorFeature,
-                        "Mirror: copy features or solids mirrored across a plane",
-                    ),
+                    c("part.rect_pattern"),
+                    c("part.circ_pattern"),
+                    c("part.mirror"),
                 ],
             ),
             panel(
                 "Primitives",
-                {
-                    use crate::part::PrimitiveKind as P;
-                    vec![
-                        ready(
-                            Icon::Box,
-                            "Box",
-                            None,
-                            Action::Primitive(P::Box),
-                            "Box: pick a plane, click the centre, then a corner (a sketch + Extrude)",
-                        )
-                        .large(),
-                        ready(
-                            Icon::Cylinder,
-                            "Cylinder",
-                            None,
-                            Action::Primitive(P::Cylinder),
-                            "Cylinder: pick a plane, click the centre, then the diameter (a sketch + Extrude)",
-                        ),
-                        ready(
-                            Icon::Sphere,
-                            "Sphere",
-                            None,
-                            Action::Primitive(P::Sphere),
-                            "Sphere: pick a plane, click the centre, then the diameter (a sketch + full Revolve)",
-                        ),
-                        ready(
-                            Icon::Torus,
-                            "Torus",
-                            None,
-                            Action::Primitive(P::Torus),
-                            "Torus: pick a plane, click the centre, the section centre, then the section diameter",
-                        ),
-                    ]
-                },
+                vec![
+                    c("part.box").large(),
+                    c("part.cylinder"),
+                    c("part.sphere"),
+                    c("part.torus"),
+                ],
             ),
         ],
         Tab::Sketch => {
-            let tool = |t: Tool, key: Option<&'static str>, help: &'static str| {
-                when(
-                    st.editing,
-                    ready(tool_icon(t), t.label(), key, Action::Tool(t), help),
-                    in_sketch,
-                )
-            };
-            let menu = |label: &'static str, items: &[Tool]| Cmd {
-                label,
-                icon: tool_icon(items[0]),
-                size: Size::Small,
-                key: None,
-                kind: if st.editing {
-                    Kind::Menu(
-                        items
-                            .iter()
-                            .map(|&t| (t.label(), tool_icon(t), Action::Tool(t)))
-                            .collect(),
-                    )
+            let sk = |id: &'static str| when(st.editing, c(id), in_sketch);
+            let menu = |label: &'static str, ids: &[&'static str]| {
+                let m = split(label, items(ids));
+                if st.editing {
+                    m
                 } else {
-                    Kind::Unavailable(in_sketch)
-                },
+                    Cmd {
+                        kind: Kind::Unavailable(in_sketch),
+                        ..m
+                    }
+                }
             };
-            let mut constrain = vec![
-                tool(
-                    Tool::Dimension,
-                    Some("D"),
-                    "General Dimension: kind follows the selection and placement",
-                )
-                .large(),
-            ];
-            constrain.extend(
-                ConstraintTool::ALL
-                    .iter()
-                    .map(|&c| tool(Tool::Constrain(c), None, "Pick the geometry in order").mini()),
-            );
-            constrain.push(todo(Icon::Smooth, "Smooth (G2)", None, "1.3").mini());
-            constrain.push(
-                ready(
-                    Icon::Settings,
-                    "Constraint Settings",
-                    None,
-                    Action::Options,
-                    "Inference: which constraints are inferred and created while sketching",
-                )
-                .mini(),
-            );
-            constrain.push(
+            let mut constrain = vec![sk("sketch.dimension").large()];
+            constrain.extend(ConstraintTool::ALL.iter().map(|&k| {
                 when(
                     st.editing,
-                    ready(
-                        Icon::Relax,
-                        "Relax Mode",
-                        None,
-                        Action::ToggleRelax,
-                        "Relax Mode (F11): dragging may change dimensions; changed ones become driven",
-                    ),
-                    in_sketch,
-                )
-                .mini(),
-            );
-            constrain.push(
-                when(
-                    st.editing,
-                    ready(
-                        Icon::Dof,
-                        "Show DOF",
-                        None,
-                        Action::ToggleDof,
-                        "Show All Degrees of Freedom",
-                    ),
-                    in_sketch,
-                )
-                .mini(),
-            );
-            constrain.push(
-                ready(
-                    Icon::ShowConstraints,
-                    if st.labels_shown {
-                        "Hide All"
-                    } else {
-                        "Show All"
-                    },
-                    Some(if st.labels_shown { "F9" } else { "F8" }),
-                    Action::ShowConstraints(!st.labels_shown),
-                    "Show or hide all constraint labels",
-                )
-                .mini(),
-            );
-            constrain.push(
-                when(
-                    st.editing,
-                    ready(
-                        Icon::CoordSystem,
-                        "Coordinate System",
-                        None,
-                        Action::EditCoordinateSystem,
-                        "Edit Coordinate System: origin, axis edge and direction (Properties)",
-                    ),
-                    in_sketch,
-                )
-                .mini(),
-            );
-            let format = |icon: Icon, label: &'static str, style: Style, help: &'static str| {
-                when(
-                    st.editing,
-                    ready(icon, label, None, Action::Format(style), help),
+                    c_of(Action::Tool(Tool::Constrain(k))),
                     in_sketch,
                 )
                 .mini()
-            };
+            }));
+            constrain.push(c("sketch.smooth").mini());
+            constrain.push(c("sketch.constraint_settings").mini());
+            constrain.push(sk("sketch.relax").mini());
+            constrain.push(sk("sketch.dof").mini());
+            constrain.push(c(constraints).mini());
+            constrain.push(sk("sketch.coordinate_system").mini());
             vec![
                 panel(
                     "Create",
                     vec![
-                        tool(
-                            Tool::Line,
-                            Some("L"),
-                            "Click points; drag from a curve end for an arc",
-                        )
-                        .large(),
-                        menu("Circle", &[Tool::CircleCenter, Tool::CircleTangent]).large(),
+                        sk("sketch.line").large(),
+                        menu("Circle", &["sketch.circle_center", "sketch.circle_tangent"]).large(),
                         menu(
                             "Arc",
-                            &[Tool::ArcThreePoint, Tool::ArcTangent, Tool::ArcCenter],
+                            &[
+                                "sketch.arc_three",
+                                "sketch.arc_tangent",
+                                "sketch.arc_center",
+                            ],
                         )
                         .large(),
                         menu(
                             "Rectangle",
                             &[
-                                Tool::RectTwoPoint,
-                                Tool::RectThreePoint,
-                                Tool::RectCenter,
-                                Tool::RectCenterThreePoint,
+                                "sketch.rect_two",
+                                "sketch.rect_three",
+                                "sketch.rect_center",
+                                "sketch.rect_center3",
                             ],
                         )
                         .large(),
                         menu(
                             "Slot",
                             &[
-                                Tool::SlotCenterToCenter,
-                                Tool::SlotOverall,
-                                Tool::SlotCenterPoint,
-                                Tool::SlotArcThreePoint,
-                                Tool::SlotArcCenter,
+                                "sketch.slot_cc",
+                                "sketch.slot_overall",
+                                "sketch.slot_center",
+                                "sketch.slot_arc3",
+                                "sketch.slot_arc_center",
                             ],
                         ),
-                        menu("Spline", &[Tool::SplineInterp, Tool::SplineCv]),
-                        todo(Icon::Ellipse, "Ellipse", None, "1.2"),
-                        tool(Tool::Point, None, "Sketch point"),
-                        when(
-                            st.editing,
-                            ready(
-                                Icon::Project,
-                                "Project Geometry",
-                                None,
-                                Action::ProjectGeometry,
-                                "Project points and curves of earlier sketches, or model edges, into this sketch (associative; Shift: construction; Esc ends)",
-                            ),
-                            in_sketch,
-                        )
-                        .mini(),
-                        tool(
-                            Tool::Polygon,
-                            None,
-                            "Sides and inscribed/circumscribed in Properties",
-                        ),
-                        menu("Fillet", &[Tool::Fillet, Tool::Chamfer]),
-                        todo(Icon::Text, "Text", None, "1.2"),
-                        tool(Tool::Select, Some("Esc"), "Select geometry, drag points"),
+                        menu("Spline", &["sketch.spline_interp", "sketch.spline_cv"]),
+                        c("sketch.ellipse"),
+                        sk("sketch.point"),
+                        sk("sketch.project").mini(),
+                        sk("sketch.polygon"),
+                        menu("Fillet", &["sketch.fillet", "sketch.chamfer"]),
+                        c("sketch.text"),
+                        sk("sketch.select"),
                     ],
                 ),
                 panel(
                     "Modify",
                     vec![
-                        tool(
-                            Tool::Move,
-                            None,
-                            "Selected geometry: base point, destination",
-                        ),
-                        tool(
-                            Tool::Copy,
-                            None,
-                            "Copy selected geometry (with its constraints)",
-                        ),
-                        tool(
-                            Tool::Rotate,
-                            None,
-                            "Selected geometry: centre, reference, angle",
-                        ),
-                        tool(
-                            Tool::Trim,
-                            Some("X"),
-                            "Remove the clicked part up to the nearest curves (Shift = Extend)",
-                        ),
-                        tool(
-                            Tool::Extend,
-                            None,
-                            "Extend to the nearest curve (Shift = Trim)",
-                        ),
-                        tool(Tool::Split, None, "Split at the nearest intersection"),
-                        tool(Tool::Offset, Some("O"), "Offset a curve or loop"),
-                        tool(
-                            Tool::Scale,
-                            None,
-                            "Selected geometry about a base point (factor in Properties)",
-                        ),
-                        tool(
-                            Tool::Stretch,
-                            None,
-                            "Move the selected geometry's points; dimensions update",
-                        ),
+                        sk("sketch.move"),
+                        sk("sketch.copy"),
+                        sk("sketch.rotate"),
+                        sk("sketch.trim"),
+                        sk("sketch.extend"),
+                        sk("sketch.split"),
+                        sk("sketch.offset"),
+                        sk("sketch.scale"),
+                        sk("sketch.stretch"),
                     ],
                 ),
                 panel(
                     "Pattern",
                     vec![
-                        when(
-                            st.editing,
-                            ready(
-                                Icon::PatternRect,
-                                "Rectangular",
-                                None,
-                                Action::Tool(Tool::PatternRect),
-                                "Selected geometry along one or two lines (count, spacing in Properties)",
-                            ),
-                            in_sketch,
-                        ),
-                        when(
-                            st.editing,
-                            ready(
-                                Icon::PatternCirc,
-                                "Circular",
-                                None,
-                                Action::Tool(Tool::PatternCircular),
-                                "Selected geometry around a point (count, angle in Properties)",
-                            ),
-                            in_sketch,
-                        ),
-                        tool(
-                            Tool::Mirror,
-                            None,
-                            "Mirror selected geometry about a line (Symmetric constraints)",
-                        ),
-                        tool(
-                            Tool::PatternPath,
-                            None,
-                            "Copies of the selected geometry along a line, arc or spline (equal chords)",
-                        )
-                        .mini(),
-                        tool(
-                            Tool::PatternPoints,
-                            None,
-                            "Copies of the selected geometry at points; each copy follows its point (Inventor: Sketch Driven Pattern)",
-                        )
-                        .mini(),
+                        sk("sketch.rect_pattern"),
+                        sk("sketch.circ_pattern"),
+                        sk("sketch.mirror"),
+                        sk("sketch.path_pattern").mini(),
+                        sk("sketch.point_pattern").mini(),
                     ],
                 ),
                 panel("Constrain", constrain),
                 panel(
                     "Format",
                     vec![
-                        format(
-                            Icon::Construction,
-                            "Construction",
-                            Style::Construction,
-                            "Selected geometry → construction; with nothing selected, toggles construction mode",
-                        ),
-                        format(
-                            Icon::Centerline,
-                            "Centerline",
-                            Style::Centerline,
-                            "Selected geometry → centerline",
-                        ),
-                        format(
-                            Icon::Normal,
-                            "Normal",
-                            Style::Normal,
-                            "Selected geometry → normal",
-                        ),
-                        when(
-                            st.editing,
-                            ready(
-                                Icon::Point,
-                                "Center Point",
-                                None,
-                                Action::CenterPoint,
-                                "New points are Center Points (a cross; Hole takes them as centres)",
-                            ),
-                            in_sketch,
-                        )
-                        .mini(),
+                        sk("sketch.construction").mini(),
+                        sk("sketch.centerline").mini(),
+                        sk("sketch.normal").mini(),
+                        sk("sketch.center_point").mini(),
                     ],
                 ),
                 panel(
                     "Demo",
-                    vec![Cmd {
-                        label: "Demo",
-                        icon: Icon::Demo,
-                        size: Size::Small,
-                        key: None,
-                        kind: Kind::Menu(
-                            Demo::ALL
-                                .iter()
-                                .map(|&d| (d.label(), Icon::Demo, Action::Demo(d)))
-                                .collect(),
-                        ),
-                    }],
+                    vec![split(
+                        "Demo",
+                        items(&[
+                            "demo.rectangle",
+                            "demo.slot",
+                            "demo.tangents",
+                            "demo.lines",
+                            "demo.revolve",
+                        ]),
+                    )],
                 ),
-                panel(
-                    "Exit",
-                    vec![
-                        when(
-                            st.editing,
-                            ready(
-                                Icon::Finish,
-                                "Finish Sketch",
-                                None,
-                                Action::FinishSketch,
-                                "Leave sketch edit mode",
-                            ),
-                            in_sketch,
-                        )
-                        .large(),
-                    ],
-                ),
+                panel("Exit", vec![sk("sketch.finish").large()]),
             ]
         }
         Tab::Inspect => vec![
             panel(
                 "Measure",
-                vec![
-                    todo(Icon::Measure, "Measure", None, "0.10").large(),
-                    ready(
-                        Icon::Mass,
-                        "Physical Properties",
-                        None,
-                        Action::Material(MatCmd::Physical),
-                        "Mass, area, volume, centre of gravity and inertia (iProperties: Physical)",
-                    ),
-                ],
+                vec![c("inspect.measure").large(), c("inspect.physical")],
             ),
             panel(
                 "Analysis",
                 vec![
-                    ready(
-                        Icon::Validate,
-                        "Validate Solid",
-                        None,
-                        Action::SelectBody,
-                        "Euler–Poincaré and manifold check of the body",
-                    ),
-                    todo(Icon::Interference, "Interference", None, "3.5"),
-                    todo(Icon::Curvature, "Curvature", None, "5.4"),
-                    todo(Icon::Draft, "Draft Analysis", None, "2.8"),
+                    c("inspect.validate"),
+                    c("inspect.interference"),
+                    c("inspect.curvature"),
+                    c("inspect.draft_analysis"),
                 ],
             ),
         ],
         Tab::Tools => vec![
             panel(
                 "Options",
-                vec![
-                    ready(
-                        Icon::Options,
-                        "Application Options",
-                        None,
-                        Action::Options,
-                        "Mouse profile, wheel direction, sketch options",
-                    )
-                    .large(),
-                    todo(Icon::Settings, "Document Settings", None, "0.11"),
-                ],
+                vec![c("tools.options").large(), c("tools.document_settings")],
             ),
             panel(
                 "Material and Appearance",
                 vec![
-                    ready(
-                        Icon::Material,
-                        "Material",
-                        None,
-                        Action::Material(MatCmd::MaterialBrowser),
-                        "Material Browser: document and library materials",
-                    ),
-                    ready(
-                        Icon::Appearance,
-                        "Appearance",
-                        None,
-                        Action::Material(MatCmd::AppearanceBrowser),
-                        "Appearance Browser: document and library appearances",
-                    ),
-                    ready(
-                        Icon::AdjustLook,
-                        "Adjust",
-                        None,
-                        Action::Material(MatCmd::Adjust),
-                        "Give the selected faces, features or bodies an appearance or a colour",
-                    ),
-                    ready(
-                        Icon::ClearLook,
-                        "Clear",
-                        None,
-                        Action::Material(MatCmd::Clear),
-                        "Remove appearance overrides from faces, features, bodies",
-                    ),
+                    c("tools.material"),
+                    c("tools.appearance"),
+                    c("tools.adjust"),
+                    c("tools.clear"),
                 ],
             ),
-            panel(
-                "Parameters",
-                vec![
-                    ready(
-                        Icon::Parameters,
-                        "Parameters",
-                        None,
-                        Action::Parameters,
-                        "Parameters (fx): names, equations, tolerances, user parameters",
-                    )
-                    .large(),
-                ],
-            ),
-            panel(
-                "Update",
-                vec![
-                    ready(
-                        Icon::Rebuild,
-                        "Rebuild All",
-                        None,
-                        Action::RebuildAll,
-                        "Recompute every feature of the part from scratch (also clears the build cache)",
-                    )
-                    .large(),
-                ],
-            ),
-            panel(
-                "Automation",
-                vec![
-                    todo(Icon::Rules, "Rules", None, "7.5"),
-                    todo(Icon::Assistant, "AI Assistant", None, "7.6"),
-                ],
-            ),
-            panel(
-                "History",
-                vec![
-                    ready(
-                        Icon::Undo,
-                        "Undo",
-                        Some("Ctrl+Z"),
-                        Action::Undo,
-                        "Undo the last action",
-                    ),
-                    ready(
-                        Icon::Redo,
-                        "Redo",
-                        Some("Ctrl+Y"),
-                        Action::Redo,
-                        "Redo the last undone action",
-                    ),
-                ],
-            ),
+            panel("Parameters", vec![c("tools.parameters").large()]),
+            panel("Update", vec![c("tools.rebuild_all").large()]),
+            panel("Automation", vec![c("tools.rules"), c("tools.assistant")]),
+            panel("History", vec![c("tools.undo"), c("tools.redo")]),
         ],
         Tab::Manage => vec![panel(
             "Styles and Standards",
             vec![
-                ready(
-                    Icon::Styles,
-                    "Styles Editor",
-                    None,
-                    Action::Material(MatCmd::StylesEditor),
-                    "Style and Standard Editor: the document's materials and appearances",
-                )
-                .large(),
-                ready(
-                    Icon::Rebuild,
-                    "Update",
-                    None,
-                    Action::Material(MatCmd::UpdateStyles),
-                    "Update the document's styles from the library",
-                ),
-                ready(
-                    Icon::Purge,
-                    "Purge",
-                    None,
-                    Action::Material(MatCmd::Purge),
-                    "Remove document styles nothing uses",
-                ),
-                todo(Icon::Styles, "Save", None, "2.15"),
+                c("manage.styles_editor").large(),
+                c("manage.update_styles"),
+                c("manage.purge"),
+                c("manage.save_styles"),
             ],
         )],
         Tab::View => vec![
             panel(
                 "Visibility",
                 vec![
-                    ready(
-                        Icon::ShowConstraints,
-                        "Constraints",
-                        Some(if st.labels_shown { "F9" } else { "F8" }),
-                        Action::ShowConstraints(!st.labels_shown),
-                        "Show or hide constraint labels",
-                    ),
-                    ready(
-                        Icon::Dof,
-                        "Degrees of Freedom",
-                        None,
-                        Action::ToggleDof,
-                        "Show All Degrees of Freedom",
-                    ),
+                    c(constraints).label("Constraints"),
+                    c("sketch.dof").label("Degrees of Freedom"),
                 ],
             ),
             panel(
                 "Navigate",
                 vec![
-                    ready(
-                        Icon::Home,
-                        "Home",
-                        Some("F6"),
-                        Action::View(StandardView::Home),
-                        "Home view: isometric, fit all",
-                    )
-                    .large(),
-                    ready(
-                        Icon::LookAt,
-                        "Look At",
-                        None,
-                        Action::LookAt,
-                        "Look straight at the edited/selected sketch",
-                    ),
-                    ready(
-                        Icon::ViewFront,
-                        "Front",
-                        None,
-                        Action::View(StandardView::Front),
-                        "Look from −Y",
-                    ),
-                    ready(
-                        Icon::ViewTop,
-                        "Top",
-                        None,
-                        Action::View(StandardView::Top),
-                        "Look from +Z",
-                    ),
-                    ready(
-                        Icon::ViewRight,
-                        "Right",
-                        None,
-                        Action::View(StandardView::Right),
-                        "Look from +X",
-                    ),
+                    c("view.home").large(),
+                    c("view.look_at"),
+                    c("view.front"),
+                    c("view.top"),
+                    c("view.right"),
                 ],
             ),
             panel(
                 "Appearance",
                 vec![
-                    todo(Icon::VisualStyle, "Visual Style", None, "0.3"),
-                    todo(Icon::Section, "Section View", None, "0.3"),
-                    Cmd {
-                        label: "Projection",
-                        icon: Icon::Ortho,
-                        size: Size::Small,
-                        key: None,
-                        kind: Kind::Menu(
-                            [
-                                super::camera::Projection::Orthographic,
-                                super::camera::Projection::Perspective,
-                                super::camera::Projection::PerspectiveOrthoFaces,
-                            ]
-                            .into_iter()
-                            .map(|p| (p.label(), Icon::Ortho, Action::Projection(p)))
-                            .collect(),
-                        ),
-                    },
+                    c("view.visual_style"),
+                    c("view.section"),
+                    split(
+                        "Projection",
+                        items(&[
+                            "view.orthographic",
+                            "view.perspective",
+                            "view.perspective_ortho",
+                        ]),
+                    ),
                 ],
             ),
             panel(
                 "Windows",
                 vec![
-                    Cmd {
-                        label: "User Interface",
-                        icon: Icon::UiPanels,
-                        size: Size::Small,
-                        key: None,
-                        kind: Kind::Menu(
-                            Element::ALL
-                                .into_iter()
-                                .map(|e| (e.label(), Icon::UiPanels, Action::Ui(UiCmd::Toggle(e))))
-                                .collect(),
-                        ),
-                    },
-                    ready(
-                        Icon::CleanScreen,
-                        "Clean Screen",
-                        Some("Ctrl+0"),
-                        Action::Ui(UiCmd::CleanScreen),
-                        "Only the graphics window (and the Quick Access bar); again to restore",
+                    split(
+                        "User Interface",
+                        items(&[
+                            "view.browser",
+                            "view.properties",
+                            "view.ribbon",
+                            "view.status_bar",
+                            "view.view_cube",
+                            "view.triad",
+                        ]),
                     ),
-                    ready(
-                        Icon::FullScreen,
-                        "Full Screen",
-                        Some("F11 outside a sketch"),
-                        Action::Ui(UiCmd::FullScreen),
-                        "The application fills the screen",
-                    ),
-                    ready(
-                        Icon::ResetLayout,
-                        "Reset",
-                        None,
-                        Action::Ui(UiCmd::ResetLayout),
-                        "Reset UI Layout: panels, sizes and window positions back to the defaults",
-                    ),
+                    c("view.clean_screen"),
+                    c("view.full_screen"),
+                    c("view.reset_layout"),
                 ],
             ),
         ],
     }
+}
+
+/// Every ribbon button and split-button variant as (tab, panel, registry
+/// id), in all states that change what is shown.
+#[cfg(test)]
+pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
+    let mut out = Vec::new();
+    for editing in [false, true] {
+        for labels_shown in [false, true] {
+            let st = State {
+                labels_shown,
+                editing,
+                picking: false,
+                tool: Tool::Select,
+                construction: false,
+                show_dof: false,
+                relax: false,
+                ui_shown: [true; 6],
+                clean: false,
+                full_screen: false,
+                project: false,
+                center_point: false,
+            };
+            for tab in Tab::ALL {
+                for p in panels(tab, &st) {
+                    for cmd in &p.cmds {
+                        if let Kind::Menu(items) = &cmd.kind {
+                            for i in items {
+                                out.push((tab.label(), p.title, i.id));
+                            }
+                        } else if !cmd.id.is_empty() {
+                            out.push((tab.label(), p.title, cmd.id));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// Height of a small row; three rows make a panel.
@@ -1437,17 +926,23 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
         Kind::Menu(items) => {
             let current = items
                 .iter()
-                .find(|(_, _, a)| matches!(a, Action::Tool(t) if *t == active));
-            let icon = current.map_or(cmd.icon, |c| c.1);
+                .find(|i| matches!(i.action, Action::Tool(t) if t == active));
+            let icon = current.map_or(cmd.icon, |c| c.icon);
             let title = match current {
-                Some((label, ..)) if cmd.size != Size::Large => format!("{}: {label}", cmd.label),
+                Some(i) if cmd.size != Size::Large => format!("{}: {}", cmd.label, i.label),
                 _ => cmd.label.to_owned(),
             };
             let r = icon_button(ui, icon, &title, cmd.size, true, current.is_some(), true)
                 .on_hover_text(name("Click for the variants"));
             let mut picked = None;
             egui::Popup::menu(&r).show(|ui| {
-                for (label, icon, action) in items {
+                for Item {
+                    label,
+                    icon,
+                    action,
+                    ..
+                } in items
+                {
                     // User Interface toggles show as pressed while visible.
                     let on = match action {
                         Action::Ui(UiCmd::Toggle(e)) => Element::ALL

@@ -1683,3 +1683,80 @@ fn speed_budgets() {
     }
     assert!(over.is_empty(), "over budget:\n{}", over.join("\n"));
 }
+
+/// Alias input / command search (spec 0.15 §5.1, §5.3): ranking 300
+/// commands on every keystroke stays under 1 ms (the budget of a frame's
+/// share; `docs/PERF.md`).
+#[test]
+fn command_search_per_keystroke() {
+    use cadcraft3d::command::matcher::{Fields, Folded, Query, rank};
+    let words = [
+        "Extrude",
+        "Revolve",
+        "Sweep",
+        "Loft",
+        "Point",
+        "Center",
+        "Two",
+        "Three",
+        "Arc",
+        "Line",
+        "Rectangle",
+        "Pattern",
+        "Circular",
+        "Work",
+        "Plane",
+        "Axis",
+        "Slot",
+        "Spline",
+        "Fillet",
+        "Chamfer",
+    ];
+    let bg = [
+        "Изтегляне",
+        "Завъртане",
+        "Точка",
+        "Масив",
+        "Равнина",
+        "Дъга",
+    ];
+    let cmds: Vec<Folded> = (0..300)
+        .map(|k| {
+            let name = format!(
+                "{} {} {}",
+                words[k % 20],
+                words[(k / 20) % 20],
+                words[(k * 7) % 20]
+            );
+            let b = format!("{} {}", bg[k % 6], bg[(k / 6) % 6]);
+            let alias = format!("{}{}", &words[k % 20][..1], k % 7);
+            let tip =
+                format!("{name}: pick the geometry, then set the options in Properties ({b})");
+            Folded::new(&Fields {
+                aliases: &[alias.as_str()],
+                names: &[name.as_str(), b.as_str()],
+                tip: &tip,
+            })
+        })
+        .collect();
+    let keys = [
+        "e", "ex", "ext", "extr", "extru", "и", "из", "изт", "two p", "rect*", "c?rc", "zzz",
+    ];
+    let ms = median_ms(5, || {
+        let mut hits = 0;
+        for q in keys {
+            let q = Query::new(q);
+            let recent = [3usize, 17, 42];
+            let mut r: Vec<_> = cmds
+                .iter()
+                .enumerate()
+                .filter_map(|(k, c)| rank(&q, c, recent.iter().position(|&x| x == k)))
+                .collect();
+            r.sort_unstable();
+            hits += r.len();
+        }
+        assert!(hits > 0);
+    }) / keys.len() as f64;
+    println!("command search: {ms:.3} ms per keystroke (300 commands)");
+    assert!(ms < 1.0, "command search: {ms:.3} ms per keystroke > 1 ms");
+}
