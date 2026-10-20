@@ -651,62 +651,62 @@ Fill, Weld Symbol, Surface Texture Symbol. [Help]
 Presets are user settings, not document data — store them in the settings folder, never
 in the `.3dcadcraft` file (only the preset *name* used could be recorded per feature). [our note]
 
-## 8. Extrude и Revolve (панелите от 2027)
+## 8. Extrude and Revolve (the 2027 panels)
 
-**Източници:** To Create Extruded Features — GUID-B0CFA8E7-D3F5-48A9-BE6F-C8DF668301BD;
-To Create Revolved Features — GUID-401BABD2-8D5B-4300-BA8D-70037445044F (и двете от 2027,
-прочетени на 2026-10-19). Преразказ с наши думи; подробностите и статусите са в
-[spec/2.1-extrude.md](spec/2.1-extrude.md) и [spec/2.2-revolve.md](spec/2.2-revolve.md).
+**Sources:** To Create Extruded Features — GUID-B0CFA8E7-D3F5-48A9-BE6F-C8DF668301BD;
+To Create Revolved Features — GUID-401BABD2-8D5B-4300-BA8D-70037445044F (both 2027,
+read on 2026-10-19). Paraphrased in our own words; the details and statuses are in
+[spec/2.1-extrude.md](spec/2.1-extrude.md) and [spec/2.2-revolve.md](spec/2.2-revolve.md).
 
-### Панелът
-- Чете се отгоре надолу: изборът в една секция определя какво има в следващата.
-- **Breadcrumb** най-горе: текстът на скицата отваря скицата за редакция, текстът на
-  операцията връща към нея (и така се преименува). Същото е в Hole, Shell и др.
-- **Surface mode** е бутон до breadcrumb (Solid е по подразбиране); при примитиви и в
-  сглобка липсва.
-- Менюто **Advanced Settings**: Hide Presets (скрити по подразбиране), **Predict Boolean
-  Operation** (вкл.) — командата предвижда операцията и посоката и ги показва в прегледа,
-  **Keep sketch visible on (+)** (вкл.) — консумираната скица остава видима за следващата
-  операция при „+“ (Create new feature). При примитивите тази настройка я няма.
-- Видимите размери на скицата се редактират по време на прегледа, без влизане в скицата.
+### The panel
+- It reads top to bottom: the choice in one section decides what the next one contains.
+- **Breadcrumb** at the top: the sketch text opens the sketch for editing, the feature text
+  returns to the feature (and is also how it is renamed). The same holds in Hole, Shell etc.
+- **Surface mode** is a button next to the breadcrumb (Solid is the default); it is missing
+  for primitives and in an assembly.
+- The **Advanced Settings** menu: Hide Presets (hidden by default), **Predict Boolean
+  Operation** (on) — the command predicts the operation and the direction and shows them in
+  the preview, **Keep sketch visible on (+)** (on) — the consumed sketch stays visible for
+  the next feature on "+" (Create new feature). Primitives do not have this setting.
+- The visible sketch dimensions can be edited during the preview, without entering the sketch.
 
 ### Extrude
-- Входове: Profiles (един профил се избира сам; window select), **From** (по подразбиране
-  равнината на скицата; „x“ го сменя със стена или работна равнина). From/To заместват
-  старите Distance from Face и Between.
-- **Extend face to end feature** се включва сам, когато From (или To) не стига профила.
-- Behavior: Default, Flipped, Symmetric (по половин A), Asymmetric (A и B), Distance A/B с
-  манипулатор, **Through All** (без Join), **To** (точка/връх → равнина, успоредна на
-  скицата; стена/равнина → край на нея или на продължението ѝ), **Alternate Solution**
-  (при двусмислена стена — напр. цилиндър — близката или далечната страна; не се показва
-  при планарна), **To Next** (не за базова операция; **Terminator** избира тялото и
-  посоката; следващата стена трябва изцяло да пресича профила).
-- Output: Join, Cut, Intersect, New Solid (по подразбиране за първото тяло); в детайл с
-  много тела — **Solids**, и прегледът чака избора. Базовата операция няма тази секция.
-- Advanced: Taper A, iMate, **Match Shape** за отворен профил (вкл.: „наводняване“ до
-  стените; изкл.: краищата се удължават до детайла и отворът се затваря).
-- **Primitives** (скрит панел): Box (център, ъгъл), Cylinder (център, диаметър) върху
-  равнина или стена; всички опции на Extrude.
+- Inputs: Profiles (a single profile is picked automatically; window select), **From** (the
+  sketch plane by default; "x" replaces it with a face or work plane). From/To replace the
+  old Distance from Face and Between.
+- **Extend face to end feature** turns on by itself when From (or To) does not cover the profile.
+- Behavior: Default, Flipped, Symmetric (half of A each way), Asymmetric (A and B), Distance
+  A/B with a manipulator, **Through All** (no Join), **To** (point/vertex → a plane parallel
+  to the sketch; face/plane → ends on it or on its extension), **Alternate Solution** (for an
+  ambiguous face — e.g. a cylinder — the near or the far side; not shown for a planar face),
+  **To Next** (not for a base feature; **Terminator** picks the body and the direction; the
+  next face must cross the whole profile).
+- Output: Join, Cut, Intersect, New Solid (the default for the first body); in a multi-body
+  part — **Solids**, and the preview waits for the pick. A base feature has no such section.
+- Advanced: Taper A, iMate, **Match Shape** for an open profile (on: "flooding" up to the
+  walls; off: the ends are extended to the part and the opening is closed).
+- **Primitives** (hidden panel): Box (centre, corner), Cylinder (centre, diameter) on a
+  plane or face; all Extrude options.
 
 ### Revolve
-- Без скица командата стартира скица; с една скица с един профил и една ос — и двете се
-  избират сами и прегледът тръгва.
-- **Axis**: десен клик → Continue или селекторът в панела.
-- Behavior: Default, Flipped, Symmetric, Asymmetric; Angle A (манипулаторът стъпва през
-  5°), Angle B, Full, **To** (стена/равнина; удължава се сама; **Minimum Solution** избира
-  най-близкото при двусмислие), **To Next** (Terminator), Extend face to end feature.
-- В детайл с много тела селекторът From/Solids избира тялото.
-- Match Shape за отворен профил: удължава краищата до оста или до габарита.
-- **Sphere** (център, диаметър) и **Torus** (център, център на сечението, диаметър на
-  сечението): само пълно завъртане, само Solid.
+- Without a sketch the command starts a sketch; with one sketch holding one profile and one
+  axis, both are picked automatically and the preview starts.
+- **Axis**: right-click → Continue, or the selector in the panel.
+- Behavior: Default, Flipped, Symmetric, Asymmetric; Angle A (the manipulator steps by 5°),
+  Angle B, Full, **To** (face/plane; extended automatically; **Minimum Solution** picks the
+  nearest one when ambiguous), **To Next** (Terminator), Extend face to end feature.
+- In a multi-body part the From/Solids selector picks the body.
+- Match Shape for an open profile: extends the ends to the axis or to the bounding extent.
+- **Sphere** (centre, diameter) and **Torus** (centre, centre of the section, section
+  diameter): full revolution only, Solid only.
 
-### За нашия клонинг
-- Breadcrumb, менюто и „+“ са общи за всички панели → отделни модули
+### For our clone
+- The breadcrumb, the menu and "+" are shared by all panels → separate modules
   (`gui/breadcrumb.rs`, `gui/feature_cmd.rs`).
-- Предсказването на операцията не бива да се бие с автоматичното обръщане на посоката при
-  Cut: предсказаната операция не се брои за избор на потребителя.
-- „Минималното решение“ при Revolve има смисъл най-вече за равнина през оста (две
-  полуравнини); по подразбиране взимаме по-далечната. [наше решение]
+- Predicting the operation must not fight the automatic direction flip for Cut: the
+  predicted operation does not count as the user's choice.
+- "Minimum solution" for Revolve matters mainly for a plane through the axis (two
+  half-planes); by default we take the farther one. [our decision]
 
 ## 9. Sweep and Loft (Inventor 2027 Help, our summary)
 
@@ -740,23 +740,23 @@ Sweep/Loft go through SolidCraft's `sweep`, `sweep_path`, `loft`, `loft_to_point
 lacks (guide surface, solid sweep, rails, centre line, area loft, G1/G2) refuse clearly rather
 than build an approximation that looks right but is not. [our note]
 
-## 10. Combine и Split (2027)
+## 10. Combine and Split (2027)
 
-**Източник:** To Combine and Split Bodies and Faces — GUID-349C84EE-2D24-4DFC-A239-AFD55E5441AD (2027).
+**Source:** To Combine and Split Bodies and Faces — GUID-349C84EE-2D24-4DFC-A239-AFD55E5441AD (2027).
 
-- Combine съществува само в детайл с няколко тела. Първият селектор (основата) е активен още при
-  отваряне; след избора му активен става селекторът на инструментите, който брои избраното и
-  приема избор с рамка. Резултатът взема вида на основата.
-- Keep Toolbody пази инструмента като самостоятелно тяло, но го скрива; без отметката тялото се
-  изразходва. Изтриването на Combine връща изразходваните тела. Бутон за видимост държи
-  инструментите видими за следващия избор. Apply оставя командата отворена.
-- Split има три поведения: делене на стени (инструмент: 2D/3D скица, работна равнина или
-  повърхнина; избрани стени или всички стени на тяло; скицата може да остане видима — Advanced
-  Settings), отрязване на едната страна (стрелка сочи махнатата страна, Default / Flip) и
-  разделяне на две тела (при едно тяло то се избира само). След делене на стени Face Draft
-  накланя отделните парчета.
-- За нашия клонинг: парчетата на стена носят името ѝ с наставка `~<Split>.<k>`, новото тяло е
-  `<Split>#2`; повърхнина като инструмент чака точните повърхнини.
+- Combine exists only in a part with several bodies. The first selector (the base) is active
+  as soon as the command opens; after it is picked, the tool selector becomes active, counts
+  the picked items and accepts window selection. The result takes the base's appearance.
+- Keep Toolbody keeps the tool as a separate body but hides it; without the checkbox the body
+  is consumed. Deleting the Combine brings the consumed bodies back. A visibility button keeps
+  the tools visible for the next pick. Apply leaves the command open.
+- Split has three behaviours: splitting faces (tool: 2D/3D sketch, work plane or surface;
+  selected faces or all faces of a body; the sketch can stay visible — Advanced Settings),
+  trimming one side away (an arrow points to the removed side, Default / Flip) and splitting
+  into two bodies (with one body it is picked automatically). After a face split, Face Draft
+  tilts the separate pieces.
+- For our clone: the pieces of a face carry its name with the suffix `~<Split>.<k>`, the new
+  body is `<Split>#2`; a surface as the tool waits for exact surfaces.
 
 ## 11. Coil and Rib (Inventor 2027 Help, our summary)
 
