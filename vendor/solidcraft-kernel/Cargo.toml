@@ -1,0 +1,26 @@
+# SolidCraft's kernel crate (https://github.com/bherbruck/solidcraft, commit
+# 4687e3b0734e41d761be0d0a2611e5402f088348, MIT OR Apache-2.0) with our speed fixes for large
+# patterns; see vendor/README.md and ATTRIBUTION.md. The workspace inheritance of the original
+# manifest is spelled out here (same versions and features as its workspace).
+[package]
+name = "solidcraft-kernel"
+description = "SolidCraft B-rep kernel boundary: solids, extrude/revolve/booleans/fillets, tessellation, measures and STEP, behind our own API (implemented with truck)"
+version = "0.9.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+solidcraft-geom = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+thiserror = "2"
+log = "0.4"
+truck-modeling = "0.6"
+truck-shapeops = { version = "0.4", default-features = false }
+truck-meshalgo = { version = "0.4", default-features = false, features = ["tessellation", "analyzers"] }
+truck-stepio = { version = "0.3", default-features = false }
+truck-topology = "0.6"
+spade = { version = "2.15", default-features = false, features = ["std"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1.12"
