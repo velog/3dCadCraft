@@ -39,6 +39,7 @@ mod hole;
 mod hole_panel;
 mod i18n;
 mod icons;
+mod keys;
 mod layout;
 mod loft;
 mod manip;
@@ -1344,9 +1345,13 @@ impl CadCraftApp {
             Feature::Loft(l) => self.edit_loft(l, k),
             Feature::Coil(c) => self.edit_coil(c, k),
             Feature::Rib(r) => self.edit_rib(r, k),
-            // Box and work features are edited in Properties.
             Feature::Work(_) => self.redefine_work(k),
-            Feature::Box(_) => {}
+            // The base box is edited in Properties, which shows it as the
+            // body (its sizes); `Selection::Feature` of a box showed nothing.
+            Feature::Box(_) => {
+                self.selection = Selection::Body;
+                self.file_status = Some(Ok("Edit Feature: the Box sizes are in Properties".into()));
+            }
         }
         if let Some(def) = self.extrude.as_ref().map(|d| d.def.clone()) {
             self.draft_preset_edit(&def);
@@ -2383,8 +2388,7 @@ impl CadCraftApp {
             .find_map(|n: String| self.face_feature(&n))
     }
 
-    /// Suggestions next to a selected edge: Fillet / Chamfer (still to come)
-    /// and Edit Feature.
+    /// Suggestions next to a selected edge: Fillet, Chamfer and Edit Feature.
     fn edge_toolbar(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
         use icons::Icon;
         let Some((e, at)) = self.edge_sel else {
@@ -4140,6 +4144,8 @@ impl CadCraftApp {
 
     /// Global function keys and shortcuts (Inventor defaults, docs/UI.md).
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        // ---- A0 (spec 0.15 §4.4): the panel key of this frame, see `keys`.
+        keys::set_panel_key(ctx, None);
         if ctx.egui_wants_keyboard_input() || self.file_window_open() {
             return; // typing into a text field
         }
@@ -4148,24 +4154,27 @@ impl CadCraftApp {
         }
         let pressed = |k: Key| ctx.input(|i| i.key_pressed(k));
         let (cmd, shift) = ctx.input(|i| (i.modifiers.command, i.modifiers.shift));
+        // Single letters: alone or with Shift, never with Ctrl / Alt.
+        let letter = keys::letter_alias(ctx.input(|i| i.modifiers));
         if pressed(Key::F1) {
             self.open_help();
         }
+        let open = self.open_state();
+        // Enter / Ctrl+Enter in a feature panel: its OK reads the key.
+        keys::set_panel_key(ctx, keys::panel_key(&open, pressed(Key::Enter), cmd));
         // Enter in a command with selectors: Continue / OK (`command_ui`).
-        let flow_open = self.flow_command_open();
-        if flow_open && pressed(Key::Enter) {
+        if open.flow && pressed(Key::Enter) {
             self.command_enter(cmd);
         }
-        // Enter (or Space) with nothing in progress repeats the last command.
+        // Enter (or Space) with nothing open repeats the last command.
         if (pressed(Key::Enter) || pressed(Key::Space))
-            && !flow_open
-            && self.tools.tool == Tool::Select
-            && self.extrude.is_none()
-            && self.tools.selected.is_empty()
+            && !cmd
+            && open.repeat_on_key()
             && let Some(a) = self.repeatable()
         {
             self.apply(a);
         }
+        // ---- end A0
         if pressed(Key::F7) && self.editing.is_some() {
             self.slice = !self.slice;
         }
@@ -4185,16 +4194,16 @@ impl CadCraftApp {
             self.open_dialog(files::DialogPurpose::SaveAs);
         } else if cmd && pressed(Key::S) {
             self.save();
-        } else if !cmd && pressed(Key::S) && self.editing.is_none() {
+        } else if letter && pressed(Key::S) && self.editing.is_none() {
             self.apply(Action::StartSketch);
         }
-        if !cmd && pressed(Key::E) {
+        if letter && pressed(Key::E) {
             self.apply(Action::Extrude);
         }
-        if !cmd && pressed(Key::R) && self.editing.is_none() {
+        if letter && pressed(Key::R) && self.editing.is_none() {
             self.apply(Action::Revolve);
         }
-        if !cmd && pressed(Key::H) && self.editing.is_none() {
+        if letter && pressed(Key::H) && self.editing.is_none() {
             self.apply(Action::Hole);
         }
         // Ctrl+A outside a sketch: everything of the selection mode.
@@ -4235,7 +4244,7 @@ impl CadCraftApp {
                 (Key::O, Tool::Offset),
             ]
             .into_iter()
-            .find(|(k, _)| pressed(*k));
+            .find(|(k, _)| letter && pressed(*k));
             if let Some((_, t)) = tool {
                 self.tools.set_tool(t);
             }
@@ -4960,8 +4969,10 @@ impl CadCraftApp {
                 }
                 ui.separator();
             }
-            let idle = self.tools.tool == Tool::Select && self.extrude.is_none();
-            if idle && let Some(a) = self.repeatable() {
+            // No Repeat while any command is open (spec 0.15 §3.1.1, A0).
+            if self.open_state().repeat_in_menu()
+                && let Some(a) = self.repeatable()
+            {
                 if ui.button(format!("Repeat {}", command_label(a))).clicked() {
                     self.apply(a);
                     ui.close();

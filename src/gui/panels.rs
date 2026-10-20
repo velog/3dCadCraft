@@ -1345,16 +1345,24 @@ impl CadCraftApp {
         // OK while the preview is computed: OK builds the feature itself.
         let ready = preview.is_ok() || pending;
         ui.add_space(4.0);
-        let ctrl_enter = self.ctrl_enter(ui);
+        // Enter: Continue (Revolve without an axis: pick it) or OK; Ctrl+Enter: OK.
+        let key = super::keys::panel_answer(super::keys::take_panel_key(ui), ready);
+        if key == Some(super::keys::PanelAnswer::Continue)
+            && let Some(d) = self.extrude.as_mut()
+            && matches!(d.def, super::DraftDef::Revolve(_))
+            && !d.axis_set
+        {
+            d.axis_pick = true;
+        }
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
                     ready,
                     egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)),
                 )
-                .on_hover_text("Create the feature (Ctrl+Enter)")
+                .on_hover_text("Create the feature (Enter, Ctrl+Enter)")
                 .clicked()
-                || (ready && ctrl_enter)
+                || key == Some(super::keys::PanelAnswer::Ok)
             {
                 self.commit_extrude();
             }
@@ -1610,7 +1618,9 @@ impl CadCraftApp {
                     .weak(),
             );
             ui.horizontal(|ui| {
-                if ui.button("OK").clicked() {
+                if ui.button("OK").on_hover_text("Enter, Ctrl+Enter").clicked()
+                    || super::keys::panel_ok_key(ui, true)
+                {
                     self.commit_edit_pattern();
                 }
                 if ui.button("Cancel").clicked() {
@@ -2003,7 +2013,9 @@ impl CadCraftApp {
                     ready,
                     egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)),
                 )
+                .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
+                || super::keys::panel_ok_key(ui, ready)
             {
                 self.tool_op(|t, ps| t.dialog_ok(ps));
             }
@@ -2614,7 +2626,9 @@ impl CadCraftApp {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
+                || super::keys::panel_ok_key(ui, ok)
             {
                 self.commit_blend(false);
             }
@@ -2814,6 +2828,7 @@ impl CadCraftApp {
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
                 .on_hover_text("Ctrl+Enter or Enter")
                 .clicked()
+                || super::keys::panel_ok_key(ui, ok)
             {
                 self.commit_shell(false);
             }
@@ -3180,6 +3195,7 @@ impl CadCraftApp {
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
                 .on_hover_text("Ctrl+Enter; Enter when every input is there")
                 .clicked()
+                || super::keys::panel_ok_key(ui, ok)
             {
                 self.commit_draft(false);
             }
@@ -3493,7 +3509,9 @@ impl CadCraftApp {
             let ok = preview.is_ok() || matches!(&preview, Err(e) if e == super::PREVIEW_PENDING);
             if ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
+                || super::keys::panel_ok_key(ui, ok)
             {
                 self.commit_pattern(false);
             }

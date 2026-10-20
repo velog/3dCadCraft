@@ -305,7 +305,7 @@ Spline, Fillet, Demo, Projection) отварят менюто си с **ляв**
 
 | Избрано | Бутони |
 |---|---|
-| Стена | **New Sketch on this face**, **Extrude this face** (Press/Pull: скица върху стената, профил = регионът под клика, Join навън), **Edit Feature**, **Edit Sketch**, **Look At this face** |
+| Стена | **New Sketch on this face**, **Extrude this face** (Press/Pull: скица върху стената, профил = регионът под клика, Join навън), **Edit Feature** (стена на основния Box: Properties показва размерите му), **Edit Sketch**, **Look At this face** |
 | Ръб | **Fillet this edge**, **Chamfer this edge**, **Edit Feature** |
 
 ---
@@ -517,7 +517,9 @@ direction*; *References* (ред за всяка проекция: `Sketch1 · P
 ## 5. Клавишни комбинации
 
 Клавишите не действат, докато е на фокус текстово поле или е отворен файлов прозорец /
-„Unsaved changes“. Твърдо зададени са (без преназначаване).
+„Unsaved changes“. Твърдо зададени са (без преназначаване). Еднобуквените (S, E, R, H, L,
+C, D, X, O) действат само сами или с Shift — **никога с Ctrl или Alt** (Alt+S е запазен за
+търсенето на команда, `docs/spec/0.15-context-menus-shortcuts.md` §5.3).
 
 ### 5.1 Таблица
 
@@ -535,10 +537,10 @@ direction*; *References* (ред за всяка проекция: `Sketch1 · P
 | **F11** | Full Screen вкл./изкл. | извън скица | Full Screen (без клавиш по подразбиране) |
 | **Ctrl+0** | Clean Screen вкл./изкл.: само изгледът и Quick Access | глобално | същото |
 | **Esc** | затваря плаващия прозорец под курсора (Parameters, Options, Physical Properties, Styles Editor, браузърите, Adjust, Clear, Offset Element), без да прекъсва командата | курсорът е над прозореца и не се пише в поле | затваря диалога |
-| **Enter** / **Space** | повтаря последната команда | инструмент Select, без Extrude/Revolve/Face Draft/Shell, без избрани криви | Inventor: Enter |
-| **Enter** | **Continue** към празния задължителен селектор, иначе **OK** | Face Draft, Shell (извън поле) | Inventor: Enter = Continue / OK |
-| **Ctrl+Enter** | **OK** (ако може) | Face Draft, Shell | същото |
-| **Ctrl+Enter** | OK на панела Extrude / Revolve (и на примитивите) | отворен панел | Inventor: Ctrl+Enter |
+| **Enter** / **Space** | повтаря последната команда | **никаква** отворена команда (панел, избор на равнина/цел, инструмент или диалог на скицата), без избрани криви | Inventor: Enter |
+| **Enter** | **Continue** към празния задължителен селектор, иначе **OK** | Face Draft, Shell, Combine, Split, Loft (извън поле) | Inventor: Enter = Continue / OK |
+| **Enter** | **OK**, ако командата може да завърши; иначе нищо (входът се чака) — Revolve без ос: **Continue** към избора на оста | Extrude, Revolve, примитиви, Fillet, Chamfer, Hole, Thread, работни елементи, Pattern, Mirror, Sweep, Coil, Rib (извън поле) | същото |
+| **Ctrl+Enter** | **OK** (ако може), и докато се пише в поле на панела | всеки панел на операция, Edit Pattern и диалогът за масив в скица | Inventor: Ctrl+Enter |
 | **Enter** | край на веригата / сплайна; Geometry → следваща стъпка при трансформации; масив: следващ селектор / OK | скица | |
 | **Enter** | поставя точката с въведените стойности | Dynamic Input | |
 | **Enter** | прилага | Edit Dimension, файлов прозорец (име/папка) | |
@@ -549,6 +551,7 @@ direction*; *References* (ред за всяка проекция: `Sketch1 · P
 | **S** | Start 2D Sketch | извън скица | същото |
 | **E** | Extrude (и излиза от скицата) | глобално | същото |
 | **R** | Revolve | извън скица | същото |
+| **H** | Hole | извън скица | същото |
 | **R** | Two Point Rectangle | скица | същото |
 | **L** | Line | скица | същото |
 | **C** | Center Point Circle | скица | същото (в сглобка C = Constrain) |
@@ -575,7 +578,7 @@ direction*; *References* (ред за всяка проекция: `Sketch1 · P
 | **← ↑** / **→ ↓** | предишен / следващ кандидат | Select Other | |
 | **Shift + колелце** | смяна на кандидата | Select Other | |
 
-Не са свързани (за сравнение с Inventor): F5 (Previous View), Home (Zoom All), H (Hole),
+Не са свързани (за сравнение с Inventor): F5 (Previous View), Home (Zoom All), Alt+S (търсене на команда — идва),
 P/C в сглобка, keymap файл.
 
 ### 5.2 Мишка + клавиш
@@ -586,7 +589,9 @@ P/C в сглобка, keymap файл.
 
 Помнят се: Start 2D Sketch, Extrude, Revolve, Fillet, Chamfer, Shell, Face Draft,
 Rectangular/Circular Pattern, Mirror, Work Plane/Axis/Point и всеки инструмент на скицата (повтаря се само в скица). Повтаря се с
-Enter/Space или **Repeat <име>** в десния клик.
+Enter/Space или **Repeat <име>** в десния клик — само когато не е отворена никаква команда
+(една обща проверка, `gui/keys.rs` `OpenState`); в менюто на команда със селектори Repeat
+първо прекъсва нея.
 
 ---
 

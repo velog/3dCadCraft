@@ -850,22 +850,15 @@ impl CadCraftApp {
         }
         ui.horizontal(|ui| {
             let ok = preview.is_ok() || matches!(preview, Err(e) if e == super::PREVIEW_PENDING);
-            // Ctrl+Enter: OK; +: create it and start another (Inventor).
-            let (ctrl_enter, plus) = if ui.ctx().egui_wants_keyboard_input() {
-                (false, false)
-            } else {
-                ui.input(|i| {
-                    (
-                        i.modifiers.command && i.key_pressed(egui::Key::Enter),
-                        i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals),
-                    )
-                })
-            };
+            // Enter / Ctrl+Enter: OK; +: create it and start another (Inventor).
+            let plus = !ui.ctx().egui_wants_keyboard_input()
+                && ui.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals));
+            let key_ok = super::keys::panel_ok_key(ui, ok);
             if (ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
-                .on_hover_text("Ctrl+Enter")
+                .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
-                || (ok && ctrl_enter))
+                || key_ok)
                 && !(ok && plus && apply)
             {
                 match cmd {

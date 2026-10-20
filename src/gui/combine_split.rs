@@ -767,7 +767,9 @@ impl CadCraftApp {
             };
             if ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)))
+                .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
+                || super::keys::panel_ok_key(ui, ok)
             {
                 commit(self, false);
             }
