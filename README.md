@@ -70,9 +70,6 @@ alike). Good places to start: the **Критични** (critical) list at the to
 | [docs/FILE_FORMAT.md](docs/FILE_FORMAT.md) | the `.3dcadcraft` format |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | phases and critical issues |
 
-The documents in `docs/` are currently in Bulgarian; code and comments are
-in English.
-
 ## Licence
 
 Dual-licensed under **MIT** ([LICENSE-MIT](LICENSE-MIT)) **or Apache-2.0**

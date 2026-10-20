@@ -53,10 +53,10 @@ them). On Linux the GUI needs the usual X11/Wayland development packages
 
 ## Languages
 
-- Code, identifiers, comments, commit messages: **English**.
-- Files in `docs/` are currently written in **Bulgarian** (the project
-  started there). English contributions to `docs/` are welcome too; keep
-  command and option names in English, as Inventor uses them.
+Everything in the repository is **English**: code, identifiers, comments,
+commit messages and the documents in `docs/`. Keep command and option names
+as Inventor uses them. The application itself has an English and a Bulgarian
+user interface (`gui/i18n.rs`); new prompts need both.
 
 ## Pull requests
 

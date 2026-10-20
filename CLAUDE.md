@@ -15,8 +15,11 @@ or file formats.
 
 ## Communication
 
-- The project owner writes in **Bulgarian** — answer in Bulgarian.
-- Code, identifiers, comments and rustdoc: **English**. Files in `docs/`: **Bulgarian**.
+- The project owner writes in **Bulgarian** — answer the owner in Bulgarian.
+- Everything in the repository is **English**: code, identifiers, comments, rustdoc, commit
+  messages and every file in `docs/` (the project is public; contributors are not expected to
+  read Bulgarian). Bulgarian appears only in the app's UI translation (`gui/i18n.rs`, `bg`
+  names in `gui/commands.rs`) and in the Bulgarian section of the README.
 - The owner validates work **visually in the running app**, not only by tests: every
   user-facing feature must be reachable in the GUI and checked there (see
   [Visual testing](#visual-testing)).
@@ -190,7 +193,7 @@ Never implement from memory of "how Inventor probably does it".
   year first)
   and the API object model (`Inventor-API`). Use WebSearch/WebFetch; note the GUIDs
   in "Източници".
-- **Content** (template in `docs/spec/README.md`), in Bulgarian and in our own words.
+- **Content** (template in `docs/spec/README.md`), in English and in our own words.
   Never copy Autodesk text. Option and command names stay in English.
   1. purpose;
   2. inputs;
