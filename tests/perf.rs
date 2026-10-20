@@ -1112,6 +1112,86 @@ fn speed_budgets() {
         }),
     ));
 
+    // Split Solid of a box by an extruded arc surface, and by an open
+    // spline (prism of its front side).
+    let (by_surface, by_spline) = {
+        use cadcraft3d::sketch::Point2;
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+        let j = part
+            .create_sketch(
+                SketchPlacement::on_origin_plane(cadcraft3d::part::OriginPlane::XY),
+                &opts,
+            )
+            .unwrap();
+        let sk = &mut part.sketches[j].sketch;
+        let c = sk.add_point(Point2::new(30.0, -60.0));
+        let a = sk.add_point(Point2::new(
+            30.0 + 90.0 * 1.0f64.cos(),
+            -60.0 + 90.0 * 1.0f64.sin(),
+        ));
+        let b = sk.add_point(Point2::new(
+            30.0 + 90.0 * 2.1f64.cos(),
+            -60.0 + 90.0 * 2.1f64.sin(),
+        ));
+        let arc = sk.add_arc(c, a, b).unwrap();
+        let mut ex = ExtrudeFeature::new(Vec::new(), 60.0);
+        ex.direction = ExtentDirection::Symmetric;
+        ex.output = cadcraft3d::part::Output::Surface;
+        ex.operation = Operation::NewSolid;
+        ex.open = Some(cadcraft3d::part::OpenProfile {
+            curves: vec![arc],
+            flip: false,
+            match_shape: false,
+        });
+        let srf = part.add_extrude(j, ex).unwrap();
+        let mut s = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+        let k = s
+            .create_sketch(
+                SketchPlacement::on_origin_plane(cadcraft3d::part::OriginPlane::XY),
+                &opts,
+            )
+            .unwrap();
+        let sk = &mut s.sketches[k].sketch;
+        let ids = [(-10.0, 5.0), (20.0, 5.0), (40.0, 35.0), (70.0, 35.0)]
+            .iter()
+            .map(|q| sk.add_point(Point2::new(q.0, q.1)))
+            .collect();
+        sk.add_spline(ids).unwrap();
+        let sid = s.sketches[k].id.clone();
+        ((part, srf), (s, sid))
+    };
+    rows.push((
+        "split solid of a box by an extruded arc surface (add_split)",
+        BUDGET_SPLIT,
+        median_ms(3, || {
+            let mut p = by_surface.0.clone();
+            p.build_cache = Default::default();
+            let mut s =
+                cadcraft3d::part::SplitFeature::new(cadcraft3d::part::SplitMethod::SplitSolid);
+            s.tool = Some(cadcraft3d::part::SplitToolRef::Surface(
+                by_surface.1.clone(),
+            ));
+            p.add_split(s).unwrap();
+        }),
+    ));
+    rows.push((
+        "split solid of a box by an open spline (add_split)",
+        BUDGET_SPLIT,
+        median_ms(3, || {
+            let mut p = by_spline.0.clone();
+            p.build_cache = Default::default();
+            let mut s =
+                cadcraft3d::part::SplitFeature::new(cadcraft3d::part::SplitMethod::SplitSolid);
+            s.tool = Some(cadcraft3d::part::SplitToolRef::Sketch(by_spline.1.clone()));
+            p.add_split(s).unwrap();
+        }),
+    ));
+
     // Shell with Rounded Corners (outside: the offset's convex edges
     // rounded) of a box open at the top.
     rows.push((

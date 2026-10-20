@@ -126,7 +126,8 @@ impl Segment2 {
         }
     }
 
-    pub(super) fn point(&self, s: Real) -> P2 {
+    /// The point at `s` ∈ [0, 1] along the segment (a spline: on the curve).
+    pub fn point(&self, s: Real) -> P2 {
         match self {
             Segment2::Line { a, b } => a + (b - a) * s,
             Segment2::Arc { c, r, a0, sweep } => {

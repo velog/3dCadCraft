@@ -5584,8 +5584,9 @@ impl CadCraftApp {
         }
 
         // --- overlays ---
-        let hovered_work = match &plane_hover {
-            Some(PlaneRef::Work(id)) => Some(id.as_str()),
+        let hovered_work = match (&plane_hover, &body_hover) {
+            (Some(PlaneRef::Work(id)), _)
+            | (_, Some(combine_split::BodyPick::Plane(PlaneRef::Work(id)))) => Some(id.as_str()),
             _ => None,
         };
         let hovered_work = hovered_work
@@ -5639,6 +5640,25 @@ impl CadCraftApp {
                     overlay::draw_face_highlight(&painter, &self.camera, rect, &mesh);
                 }
             }
+        }
+        // Split's tool selector: the origin planes are shown while it takes
+        // planes (Inventor shows them for the pick), the hovered one lit.
+        if !picking
+            && self
+                .body_cmd_flow()
+                .is_some_and(|f| f.accepts(crate::command::flow::PickKind::Plane))
+        {
+            let hovered_origin = match &body_hover {
+                Some(combine_split::BodyPick::Plane(PlaneRef::Origin(p))) => Some(*p),
+                _ => None,
+            };
+            overlay::draw_origin_planes(
+                &painter,
+                &self.camera,
+                rect,
+                self.origin_plane_half(),
+                hovered_origin,
+            );
         }
         // Selected and prehighlighted faces, the name next to the cursor.
         {

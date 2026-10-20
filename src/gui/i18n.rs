@@ -204,8 +204,8 @@ const TABLE: &[(&str, &str)] = &[
         "Изберете телата-инструменти (втори клик маха тяло)",
     ),
     (
-        "Select the split tool (a work or origin plane, or a sketch)",
-        "Изберете инструмента за рязане (работна или основна равнина, или скица)",
+        "Select the split tool (a work or origin plane, a sketch or a surface body)",
+        "Изберете инструмента за рязане (работна или основна равнина, скица или повърхнина)",
     ),
     ("Select the faces to split", "Изберете стените за разделяне"),
     ("Select the solid", "Изберете тялото"),

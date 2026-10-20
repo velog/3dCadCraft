@@ -694,6 +694,7 @@ pub fn loft_guided(g: &GuidedLoft, prefix: &str) -> Result<ExactSolid, String> {
         body,
         face_names,
         profiles: Vec::new(),
+        sheet: false,
     })
 }
 

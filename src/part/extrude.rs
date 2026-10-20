@@ -980,7 +980,7 @@ fn ray_cylinder(o: &Point3, d: &Vector3, cyl: &Cylinder) -> Option<(Real, Real)>
 }
 
 /// Points along a loop of segments (arcs sampled), for probes.
-fn segments_polygon(segs: &[ProfileSegment]) -> Vec<Point2> {
+pub(crate) fn segments_polygon(segs: &[ProfileSegment]) -> Vec<Point2> {
     let mut out = Vec::new();
     for s in segs {
         match &s.geometry {
@@ -1008,109 +1008,13 @@ fn open_loop(
     sketch: &Sketch,
     operation: super::Operation,
 ) -> Result<(Vec<ProfileSegment>, Option<(Point3, Point3)>), String> {
-    use crate::sketch::Entity;
     let Some((lo, hi)) = body
         .bounding_box()
         .filter(|_| body.solids().any(|(_, s)| !s.open))
     else {
         return Err("an open profile needs a solid body (it cannot be the first feature)".into());
     };
-    // The chain's curves as segments with their end points.
-    struct Piece2 {
-        seg: Segment2,
-        name: String,
-        a: Point2,
-        b: Point2,
-    }
-    let mut pieces = Vec::new();
-    for &e in &op.curves {
-        let pos = |p| sketch.point(p).map(|q| q.position);
-        let name = format!("{}:0", entity_key(e));
-        match sketch.entity(e) {
-            Some(Entity::Line { start, end }) => {
-                let (Some(a), Some(b)) = (pos(*start), pos(*end)) else {
-                    return Err("Match Shape: a curve of the open profile is gone".into());
-                };
-                pieces.push(Piece2 {
-                    seg: Segment2::Line { a, b },
-                    name,
-                    a,
-                    b,
-                });
-            }
-            Some(Entity::Arc { center, start, end }) => {
-                let (Some(c), Some(a), Some(b)) = (pos(*center), pos(*start), pos(*end)) else {
-                    return Err("Match Shape: a curve of the open profile is gone".into());
-                };
-                let r = (a - c).norm();
-                let a0 = (a.y - c.y).atan2(a.x - c.x);
-                let a1 = (b.y - c.y).atan2(b.x - c.x);
-                let sweep = (a1 - a0).rem_euclid(std::f64::consts::TAU);
-                let b = Point2::new(c.x + r * a1.cos(), c.y + r * a1.sin());
-                pieces.push(Piece2 {
-                    seg: Segment2::Arc { c, r, a0, sweep },
-                    name,
-                    a,
-                    b,
-                });
-            }
-            Some(_) => {
-                return Err("Match Shape: open profiles of lines and arcs only (yet)".into());
-            }
-            None => return Err("Match Shape: a curve of the open profile is gone".into()),
-        }
-    }
-    if pieces.is_empty() {
-        return Err("Match Shape: the open profile has no curves".into());
-    }
-    // Order them end to end.
-    let close = |p: Point2, q: Point2| (p - q).norm() < 1e-6;
-    let degree = |p: Point2| {
-        pieces
-            .iter()
-            .map(|c| usize::from(close(c.a, p)) + usize::from(close(c.b, p)))
-            .sum::<usize>()
-    };
-    let start_k = pieces
-        .iter()
-        .position(|c| degree(c.a) == 1 || degree(c.b) == 1)
-        .ok_or("Match Shape: the curves form a closed loop (use it as a profile)")?;
-    let mut used = vec![false; pieces.len()];
-    let mut chain: Vec<ProfileSegment> = Vec::new();
-    let mut at = if degree(pieces[start_k].a) == 1 {
-        pieces[start_k].a
-    } else {
-        pieces[start_k].b
-    };
-    let first = at;
-    let mut end_dir = Vector2::zeros();
-    let mut start_dir = Vector2::zeros();
-    for step in 0..pieces.len() {
-        let Some(k) = (0..pieces.len())
-            .find(|&k| !used[k] && (close(pieces[k].a, at) || close(pieces[k].b, at)))
-        else {
-            return Err("Match Shape: the open profile must be one connected chain".into());
-        };
-        used[k] = true;
-        let c = &pieces[k];
-        let forward = close(c.a, at);
-        let seg = if forward {
-            c.seg.clone()
-        } else {
-            reverse_segment(&c.seg)
-        };
-        let (t0, t1) = segment_tangents(&seg);
-        if step == 0 {
-            start_dir = -t0;
-        }
-        end_dir = t1;
-        at = if forward { c.b } else { c.a };
-        chain.push(ProfileSegment {
-            geometry: seg,
-            name: c.name.clone(),
-        });
-    }
-    let last = at;
+    let (chain, first, last, start_dir, end_dir) = open_chain(op, sketch)?;
     // The frame: the body's box seen in the sketch plane (Join: exactly, so
     // nothing is added outside; else a little larger, to cut through).
     let plane = &sketch.plane;
@@ -1224,6 +1128,113 @@ fn open_loop(
     }
     let bounds = (operation == super::Operation::Join && op.match_shape).then_some((lo, hi));
     Ok((lp, bounds))
+}
+
+/// The open profile's curves ordered end to end: the chain, its first and
+/// last points and the directions leaving it there (outward).
+#[allow(clippy::type_complexity)]
+pub(crate) fn open_chain(
+    op: &OpenProfile,
+    sketch: &Sketch,
+) -> Result<(Vec<ProfileSegment>, Point2, Point2, Vector2, Vector2), String> {
+    use crate::sketch::Entity;
+    // The chain's curves as segments with their end points.
+    struct Piece2 {
+        seg: Segment2,
+        name: String,
+        a: Point2,
+        b: Point2,
+    }
+    let mut pieces = Vec::new();
+    for &e in &op.curves {
+        let pos = |p| sketch.point(p).map(|q| q.position);
+        let name = format!("{}:0", entity_key(e));
+        match sketch.entity(e) {
+            Some(Entity::Line { start, end }) => {
+                let (Some(a), Some(b)) = (pos(*start), pos(*end)) else {
+                    return Err("Match Shape: a curve of the open profile is gone".into());
+                };
+                pieces.push(Piece2 {
+                    seg: Segment2::Line { a, b },
+                    name,
+                    a,
+                    b,
+                });
+            }
+            Some(Entity::Arc { center, start, end }) => {
+                let (Some(c), Some(a), Some(b)) = (pos(*center), pos(*start), pos(*end)) else {
+                    return Err("Match Shape: a curve of the open profile is gone".into());
+                };
+                let r = (a - c).norm();
+                let a0 = (a.y - c.y).atan2(a.x - c.x);
+                let a1 = (b.y - c.y).atan2(b.x - c.x);
+                let sweep = (a1 - a0).rem_euclid(std::f64::consts::TAU);
+                let b = Point2::new(c.x + r * a1.cos(), c.y + r * a1.sin());
+                pieces.push(Piece2 {
+                    seg: Segment2::Arc { c, r, a0, sweep },
+                    name,
+                    a,
+                    b,
+                });
+            }
+            Some(_) => {
+                return Err("Match Shape: open profiles of lines and arcs only (yet)".into());
+            }
+            None => return Err("Match Shape: a curve of the open profile is gone".into()),
+        }
+    }
+    if pieces.is_empty() {
+        return Err("Match Shape: the open profile has no curves".into());
+    }
+    // Order them end to end.
+    let close = |p: Point2, q: Point2| (p - q).norm() < 1e-6;
+    let degree = |p: Point2| {
+        pieces
+            .iter()
+            .map(|c| usize::from(close(c.a, p)) + usize::from(close(c.b, p)))
+            .sum::<usize>()
+    };
+    let start_k = pieces
+        .iter()
+        .position(|c| degree(c.a) == 1 || degree(c.b) == 1)
+        .ok_or("Match Shape: the curves form a closed loop (use it as a profile)")?;
+    let mut used = vec![false; pieces.len()];
+    let mut chain: Vec<ProfileSegment> = Vec::new();
+    let mut at = if degree(pieces[start_k].a) == 1 {
+        pieces[start_k].a
+    } else {
+        pieces[start_k].b
+    };
+    let first = at;
+    let mut end_dir = Vector2::zeros();
+    let mut start_dir = Vector2::zeros();
+    for step in 0..pieces.len() {
+        let Some(k) = (0..pieces.len())
+            .find(|&k| !used[k] && (close(pieces[k].a, at) || close(pieces[k].b, at)))
+        else {
+            return Err("Match Shape: the open profile must be one connected chain".into());
+        };
+        used[k] = true;
+        let c = &pieces[k];
+        let forward = close(c.a, at);
+        let seg = if forward {
+            c.seg.clone()
+        } else {
+            reverse_segment(&c.seg)
+        };
+        let (t0, t1) = segment_tangents(&seg);
+        if step == 0 {
+            start_dir = -t0;
+        }
+        end_dir = t1;
+        at = if forward { c.b } else { c.a };
+        chain.push(ProfileSegment {
+            geometry: seg,
+            name: c.name.clone(),
+        });
+    }
+    let last = at;
+    Ok((chain, first, last, start_dir, end_dir))
 }
 
 /// A segment run the other way.

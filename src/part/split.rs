@@ -1,8 +1,9 @@
 //! **Split** (Inventor: 3D Model → Modify → Split,
 //! `docs/spec/2.13-combine-split.md`): divides faces (Split Face), removes
 //! one side of a solid (Trim Solid) or makes two solids of one (Split
-//! Solid). The tool is an origin / work plane, a planar face's plane or a
-//! 2D sketch; a surface body as tool needs exact surfaces (not yet).
+//! Solid). The tool is an origin / work plane, a planar face's plane, a 2D
+//! sketch or a surface body (Extrude / Revolve with Output Surface): each of
+//! its faces' surfaces, extended (the kernel's `SplitTool::Face`).
 //!
 //! Names (rule 2): pieces of a divided face are `<face>~<id>.<k>` (`k` from
 //! the back of the tool); Trim / Split Solid keep every face's name and
@@ -15,7 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::kernel::exact::{self, ExactOp, ExactSolid, SplitBy};
+use crate::kernel::exact::{self, ExactOp, ExactSolid, SheetSide, SplitBy};
 use crate::kernel::{BRep, Plane, Point3, ProfileSegment, Real, Segment2, Vector3};
 use crate::sketch::{Entity, Style};
 
@@ -136,6 +137,14 @@ pub enum ResolvedTool {
         /// × line direction), when the sketch is one line.
         line: Option<Plane>,
     },
+    /// A surface body (persistent name) and its sides (its triangles in
+    /// the part's B-rep; the front is along their normals).
+    Surface {
+        /// The body's persistent name.
+        name: String,
+        /// Which side of it a point is on.
+        side: SheetSide,
+    },
 }
 
 impl ResolvedTool {
@@ -144,8 +153,55 @@ impl ResolvedTool {
         match self {
             ResolvedTool::Plane(p) => Some(p),
             ResolvedTool::Sketch { line, .. } => line.as_ref(),
+            ResolvedTool::Surface { .. } => None,
         }
     }
+
+    /// Signed distance of `p` from the tool's front side (planes and
+    /// surfaces; `None` for curves).
+    pub fn signed(&self, p: &Point3) -> Option<Real> {
+        match self {
+            ResolvedTool::Surface { side, .. } => Some(side.signed(p)),
+            _ => self.side_plane().map(|pl| pl.signed_distance(p)),
+        }
+    }
+}
+
+/// The triangles of the surface body `name` in `body` (an open solid).
+fn sheet_side(body: &BRep, name: &str) -> Result<SheetSide, String> {
+    let opts = crate::kernel::TessellationOptions::default();
+    let mut tris = Vec::new();
+    let mut found = false;
+    for (_, s) in body.solids() {
+        if s.name.as_deref() != Some(name) {
+            continue;
+        }
+        if !s.open {
+            return Err(format!("{name} is a solid body, not a surface"));
+        }
+        found = true;
+        for sh in &s.shells {
+            for &f in &sh.faces {
+                let Ok(m) = body.face_mesh(f, &opts) else {
+                    continue;
+                };
+                for t in &m.triangles {
+                    let p = |i: u32| m.positions.get(i as usize).copied();
+                    if let (Some(a), Some(b), Some(c)) = (p(t[0]), p(t[1]), p(t[2])) {
+                        tris.push([a, b, c]);
+                    }
+                }
+            }
+        }
+    }
+    if !found {
+        return Err(format!("the surface {name} no longer exists"));
+    }
+    let side = SheetSide::new(tris);
+    if side.is_empty() {
+        return Err(format!("the surface {name} has no area"));
+    }
+    Ok(side)
 }
 
 /// A point at `s` ∈ [0, 1] along a segment (a spline: along its control
@@ -349,23 +405,55 @@ pub fn resolve_tool(
                 line,
             })
         }
-        Some(SplitToolRef::Surface(name)) => Err(format!(
-            "a surface body ({name}) as the tool is not supported yet (surfaces are not exact yet)"
-        )),
+        Some(SplitToolRef::Surface(name)) => Ok(ResolvedTool::Surface {
+            name: name.clone(),
+            side: sheet_side(body, name)?,
+        }),
     }
 }
 
 fn solid_index(cur: &[ExactSolid], name: &str) -> Result<usize, String> {
     if name.is_empty() {
-        return match cur.len() {
-            0 => Err("there is no solid to split".into()),
-            1 => Ok(0),
+        let solids: Vec<usize> = (0..cur.len()).filter(|&i| !cur[i].is_open()).collect();
+        return match solids.as_slice() {
+            [] => Err("there is no solid to split".into()),
+            [i] => Ok(*i),
             _ => Err("select the solid".into()),
         };
     }
     cur.iter()
-        .position(|s| s.name.as_deref() == Some(name))
+        .position(|s| !s.is_open() && s.name.as_deref() == Some(name))
         .ok_or_else(|| format!("the solid {name} no longer exists"))
+}
+
+/// The surface body `name` among the exact bodies.
+fn sheet_of<'a>(cur: &'a [ExactSolid], name: &str) -> Result<&'a ExactSolid, String> {
+    cur.iter()
+        .find(|s| s.is_open() && s.name.as_deref() == Some(name))
+        .ok_or_else(|| format!("the surface {name} no longer exists"))
+}
+
+/// Faces whose box overlaps the surface's box (All Faces with a surface;
+/// the kernel then drops those it does not cross).
+fn near_sheet(s: &ExactSolid, sheet: &ExactSolid) -> Vec<usize> {
+    let Some((lo, hi)) = exact::bounds(sheet) else {
+        return Vec::new();
+    };
+    let eps = 1e-6 * (1.0 + (hi - lo).norm());
+    exact::face_corners(s)
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+        .filter(|(_, pts)| {
+            !pts.is_empty()
+                && (0..3).all(|k| {
+                    let a = pts.iter().map(|p| p[k]).fold(Real::INFINITY, Real::min);
+                    let b = pts.iter().map(|p| p[k]).fold(Real::NEG_INFINITY, Real::max);
+                    a <= hi[k] + eps && b >= lo[k] - eps
+                })
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// Which faces (kernel indices) a plane crosses: corners on both sides.
@@ -421,15 +509,16 @@ fn near_curves(s: &ExactSolid, plane: &Plane, chains: &[Vec<Segment2>]) -> Vec<u
         .collect()
 }
 
-fn split_by(t: &ResolvedTool) -> SplitBy {
-    match t {
+fn split_by(t: &ResolvedTool, cur: &[ExactSolid]) -> Result<SplitBy, String> {
+    Ok(match t {
         ResolvedTool::Plane(p) => SplitBy::Plane(p.clone()),
         ResolvedTool::Sketch { line: Some(p), .. } => SplitBy::Plane(p.clone()),
         ResolvedTool::Sketch { plane, chains, .. } => SplitBy::Curves {
             plane: plane.clone(),
             curves: chains.clone(),
         },
-    }
+        ResolvedTool::Surface { name, .. } => SplitBy::Sheet(sheet_of(cur, name)?.clone()),
+    })
 }
 
 /// The exact build of a Split. User errors and kernel refusals are the
@@ -446,19 +535,25 @@ pub(super) fn build_exact(
     let mut out = cur.to_vec();
     match sp.method {
         SplitMethod::SplitFace => {
-            let by = split_by(&tool);
-            let side = tool.side_plane().cloned();
+            let by = split_by(&tool, &out).map_err(Fail::User)?;
+            let signed = |p: &Point3| tool.signed(p).unwrap_or(0.0);
+            let side: Option<&dyn Fn(&Point3) -> Real> = match &tool {
+                ResolvedTool::Sketch { line: None, .. } => None,
+                _ => Some(&signed),
+            };
             if sp.all_faces {
                 let i = solid_index(&out, &sp.solid).map_err(Fail::User)?;
-                let faces = match &tool {
-                    ResolvedTool::Plane(p) | ResolvedTool::Sketch { line: Some(p), .. } => {
+                let faces = match (&tool, &by) {
+                    (_, SplitBy::Sheet(sheet)) => near_sheet(&out[i], sheet),
+                    (ResolvedTool::Plane(p) | ResolvedTool::Sketch { line: Some(p), .. }, _) => {
                         crossed_by_plane(&out[i], p)
                     }
-                    ResolvedTool::Sketch { plane, chains, .. } => {
+                    (ResolvedTool::Sketch { plane, chains, .. }, _) => {
                         near_curves(&out[i], plane, chains)
                     }
+                    (ResolvedTool::Surface { .. }, _) => Vec::new(),
                 };
-                let r = exact::split_faces_lenient(&out[i], &faces, &by, &sp.id, side.as_ref())
+                let r = exact::split_faces_lenient(&out[i], &faces, &by, &sp.id, side)
                     .map_err(kernel)?
                     .ok_or_else(|| Fail::User("the tool does not cross the body".into()))?;
                 out[i] = r;
@@ -487,28 +582,25 @@ pub(super) fn build_exact(
             }
             for (i, faces) in groups {
                 let idx: Vec<usize> = faces.iter().map(|(f, _)| *f).collect();
-                out[i] =
-                    exact::split_faces(&out[i], &idx, &by, &sp.id, side.as_ref()).map_err(|e| {
-                        // Name the face the tool misses.
-                        let missed = faces
-                            .iter()
-                            .find(|(f, _)| e.contains(&format!("does not cross face {f}")));
-                        match missed {
-                            Some((_, n)) => {
-                                Fail::User(format!("the tool does not cross the face {n}"))
-                            }
-                            None if e.contains("does not cross") => {
-                                Fail::User("the tool does not cross the selected faces".into())
-                            }
-                            None => kernel(e),
+                out[i] = exact::split_faces(&out[i], &idx, &by, &sp.id, side).map_err(|e| {
+                    // Name the face the tool misses.
+                    let missed = faces
+                        .iter()
+                        .find(|(f, _)| e.contains(&format!("does not cross face {f}")));
+                    match missed {
+                        Some((_, n)) => Fail::User(format!("the tool does not cross the face {n}")),
+                        None if e.contains("does not cross") => {
+                            Fail::User("the tool does not cross the selected faces".into())
                         }
-                    })?;
+                        None => kernel(e),
+                    }
+                })?;
             }
             Ok(out)
         }
         SplitMethod::TrimSolid | SplitMethod::SplitSolid => {
             let i = solid_index(&out, &sp.solid).map_err(Fail::User)?;
-            let (back, front) = halves(&out[i], &tool, &sp.id).map_err(|e| match e {
+            let (back, front) = halves(&out[i], &tool, &out, &sp.id).map_err(|e| match e {
                 Halves::User(m) => Fail::User(m),
                 Halves::Kernel(m) => kernel(m),
             })?;
@@ -551,9 +643,14 @@ enum Halves {
 fn halves(
     s: &ExactSolid,
     tool: &ResolvedTool,
+    cur: &[ExactSolid],
     id: &str,
 ) -> Result<(Option<ExactSolid>, Option<ExactSolid>), Halves> {
     let front_id = format!("{id}#2");
+    if let ResolvedTool::Surface { name, side } = tool {
+        let sheet = sheet_of(cur, name).map_err(Halves::User)?;
+        return exact::split_by_sheet(s, sheet, side, id, &front_id).map_err(Halves::Kernel);
+    }
     if let Some(pl) = tool.side_plane() {
         return exact::split_by_plane(s, pl, id, &front_id).map_err(Halves::Kernel);
     }
@@ -567,14 +664,32 @@ fn halves(
         }
         _ => false,
     };
-    if !chains.iter().all(closed) {
-        return Err(Halves::User(
-            "a solid is split by one straight line or closed profiles of the sketch (other open curves: Split Face only)"
-                .into(),
-        ));
-    }
-    // The prism of the closed chains, through the whole body.
     let m = s.measure_full().map_err(Halves::Kernel)?;
+    // Closed chains as they are; one open chain closed on its front side
+    // (left of its direction: sketch normal × tangent) by its tangent
+    // extensions and a frame round the body.
+    let open: Vec<&Vec<Segment2>> = chains.iter().filter(|c| !closed(c)).collect();
+    let loops: Vec<Vec<Segment2>> = match open.as_slice() {
+        [] => {
+            for c in chains {
+                if crosses_itself(&polyline(c, false), true) {
+                    return Err(Halves::User(
+                        "a closed curve of the sketch crosses itself (it bounds no region to split by)"
+                            .into(),
+                    ));
+                }
+            }
+            chains.clone()
+        }
+        [c] if chains.len() == 1 => vec![open_region(plane, c, m.bbox).map_err(Halves::User)?],
+        _ => {
+            return Err(Halves::User(
+                "a solid is split by one open curve chain or by closed profiles (not several open chains, nor both)"
+                    .into(),
+            ));
+        }
+    };
+    // The prism of the closed chains, through the whole body.
     let corners = [m.bbox.0, m.bbox.1];
     let reach = corners
         .iter()
@@ -585,7 +700,7 @@ fn halves(
         + (m.bbox.1 - m.bbox.0).norm()
         + 1.0;
     let mut prism: Option<ExactSolid> = None;
-    for c in chains {
+    for c in &loops {
         let outer: Vec<ProfileSegment> = orient_ccw(c)
             .into_iter()
             .enumerate()
@@ -594,8 +709,18 @@ fn halves(
                 name: format!("{k}"),
             })
             .collect();
-        let prof = exact::profile(&outer, &[]).map_err(Halves::Kernel)?;
-        let p = exact::extrude(plane, &prof, -reach, reach, 0.0, id).map_err(Halves::Kernel)?;
+        // A loop the kernel finds no area in crosses itself (a figure eight).
+        let no_area = |e: String| {
+            if e.contains("no area") {
+                Halves::User(
+                    "a curve of the sketch crosses itself (it bounds no region to split by)".into(),
+                )
+            } else {
+                Halves::Kernel(e)
+            }
+        };
+        let prof = exact::profile(&outer, &[]).map_err(no_area)?;
+        let p = exact::extrude(plane, &prof, -reach, reach, 0.0, id).map_err(no_area)?;
         prism = Some(match prism {
             None => p,
             // Nested profiles alternate (a ring: the outer less the inner).
@@ -630,6 +755,216 @@ fn halves(
     Ok((name_cut(back, id), name_cut(front, &front_id)))
 }
 
+/// Points on a chain (16 per line or arc, 64 per spline), closed or not.
+fn polyline(c: &[Segment2], with_end: bool) -> Vec<crate::sketch::Point2> {
+    let mut v = Vec::new();
+    for g in c {
+        let n = if matches!(g, Segment2::Spline { .. }) {
+            64
+        } else {
+            16
+        };
+        for k in 0..n {
+            v.push(g.point(k as Real / n as Real));
+        }
+    }
+    if with_end && let Some(g) = c.last() {
+        v.push(g.point(1.0));
+    }
+    v
+}
+
+/// Whether two segments meet (cross, touch or overlap), `eps` the length
+/// below which points coincide.
+fn segs_meet(
+    a: crate::sketch::Point2,
+    b: crate::sketch::Point2,
+    c: crate::sketch::Point2,
+    d: crate::sketch::Point2,
+    eps: Real,
+) -> bool {
+    let cross = |u: nalgebra::Vector2<Real>, v: nalgebra::Vector2<Real>| u.x * v.y - u.y * v.x;
+    // Distance from p to segment qr.
+    let dist = |p: crate::sketch::Point2, q: crate::sketch::Point2, r: crate::sketch::Point2| {
+        let e = r - q;
+        let t = if e.norm_squared() > 0.0 {
+            ((p - q).dot(&e) / e.norm_squared()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        (p - (q + e * t)).norm()
+    };
+    let (d1, d2) = (cross(b - a, c - a), cross(b - a, d - a));
+    let (d3, d4) = (cross(d - c, a - c), cross(d - c, b - c));
+    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+    {
+        return true;
+    }
+    // Touching or overlapping: an end on the other segment.
+    dist(a, c, d) < eps || dist(b, c, d) < eps || dist(c, a, b) < eps || dist(d, a, b) < eps
+}
+
+/// Whether a polyline (closed: its last point joined to the first) crosses
+/// or touches itself away from its neighbouring segments.
+fn crosses_itself(pts: &[crate::sketch::Point2], closed: bool) -> bool {
+    let n = pts.len();
+    if n < 4 {
+        return false;
+    }
+    let size = pts.iter().map(|p| p.coords.norm()).fold(1.0, Real::max);
+    let eps = 1e-7 * size;
+    let segs = if closed { n } else { n - 1 };
+    for i in 0..segs {
+        let (a, b) = (pts[i], pts[(i + 1) % n]);
+        for j in i + 2..segs {
+            if closed && (j + 1) % n == i {
+                continue;
+            }
+            let (c, d) = (pts[j], pts[(j + 1) % n]);
+            if segs_meet(a, b, c, d, eps) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The unit direction of a segment leaving its start (`end` false) or
+/// arriving at its end (along the control polygon for a spline: a clamped
+/// spline's end tangent).
+fn seg_dir(g: &Segment2, end: bool) -> Option<nalgebra::Vector2<Real>> {
+    let h = 1e-6;
+    let (p, q) = if end {
+        (g.point(1.0 - h), g.point(1.0))
+    } else {
+        (g.point(0.0), g.point(h))
+    };
+    (q - p).try_normalize(1e-15)
+}
+
+/// One open chain closed into a region on its front side (on its left, the
+/// side of sketch normal × direction, as for a single line): its ends
+/// extended along their tangents to a frame round the body (`bbox`, seen in
+/// the sketch plane, with a margin), and the frame walked counter-clockwise
+/// back to the start. The region is counter-clockwise.
+fn open_region(
+    plane: &Plane,
+    chain: &[Segment2],
+    bbox: (Point3, Point3),
+) -> Result<Vec<Segment2>, String> {
+    use crate::sketch::Point2;
+    let (first, last) = match (chain.first(), chain.last()) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return Err("the sketch has no curves to split with".into()),
+    };
+    let (p0, p1) = (seg_point(first, 0.0), seg_point(last, 1.0));
+    let (Some(t0), Some(t1)) = (seg_dir(first, false), seg_dir(last, true)) else {
+        return Err("a curve of the sketch has no length".into());
+    };
+    let pts = polyline(chain, true);
+    let mut lo = Point2::new(Real::INFINITY, Real::INFINITY);
+    let mut hi = Point2::new(Real::NEG_INFINITY, Real::NEG_INFINITY);
+    for i in 0..8 {
+        let c = Point3::new(
+            if i & 1 == 0 { bbox.0.x } else { bbox.1.x },
+            if i & 2 == 0 { bbox.0.y } else { bbox.1.y },
+            if i & 4 == 0 { bbox.0.z } else { bbox.1.z },
+        );
+        let q = plane.project(&c);
+        lo = lo.inf(&q);
+        hi = hi.sup(&q);
+    }
+    for p in &pts {
+        lo = lo.inf(p);
+        hi = hi.sup(p);
+    }
+    let margin = 1.0 + 0.1 * (hi - lo).norm();
+    lo -= nalgebra::Vector2::new(margin, margin);
+    hi += nalgebra::Vector2::new(margin, margin);
+    // Where a ray from inside leaves the frame.
+    let exit = |p: Point2, d: nalgebra::Vector2<Real>| -> Point2 {
+        let mut t = Real::INFINITY;
+        for (pc, dc, l, h) in [(p.x, d.x, lo.x, hi.x), (p.y, d.y, lo.y, hi.y)] {
+            if dc > 1e-12 {
+                t = t.min((h - pc) / dc);
+            } else if dc < -1e-12 {
+                t = t.min((l - pc) / dc);
+            }
+        }
+        p + d * t.max(0.0)
+    };
+    let e_out = exit(p1, t1);
+    let s_out = exit(p0, -t0);
+    // The extended chain must not cross itself (a curve that turns back
+    // across its own extension, or a self-crossing curve).
+    let mut ext = vec![s_out];
+    ext.extend(pts.iter().copied());
+    ext.push(e_out);
+    ext.dedup_by(|a, b| (*a - *b).norm() < 1e-12);
+    let open_crossing = crosses_itself(&ext, false);
+    if open_crossing {
+        return Err(
+            "the split curve crosses itself or its own extension (it cannot divide the body in two)"
+                .into(),
+        );
+    }
+    // Perimeter parameter (0..4, counter-clockwise from the low corner).
+    let (w, h) = (hi.x - lo.x, hi.y - lo.y);
+    let param = |p: Point2| -> Real {
+        let eps = 1e-9 * (w + h);
+        if (p.y - lo.y).abs() < eps {
+            (p.x - lo.x) / w
+        } else if (p.x - hi.x).abs() < eps {
+            1.0 + (p.y - lo.y) / h
+        } else if (p.y - hi.y).abs() < eps {
+            2.0 + (hi.x - p.x) / w
+        } else {
+            3.0 + (hi.y - p.y) / h
+        }
+    };
+    let corner = |j: i64| match j.rem_euclid(4) {
+        0 => Point2::new(lo.x, lo.y),
+        1 => Point2::new(hi.x, lo.y),
+        2 => Point2::new(hi.x, hi.y),
+        _ => Point2::new(lo.x, hi.y),
+    };
+    let (ue, us) = (param(e_out), param(s_out));
+    let gap = (us - ue).rem_euclid(4.0);
+    let mut walk = vec![e_out];
+    let mut j = ue.floor() as i64 + 1;
+    while (j as Real) < ue + gap - 1e-9 {
+        walk.push(corner(j));
+        j += 1;
+    }
+    walk.push(s_out);
+    let mut out: Vec<Segment2> = Vec::new();
+    let line = |a: Point2, b: Point2| Segment2::Line { a, b };
+    if (s_out - p0).norm() > 1e-9 {
+        out.push(line(s_out, p0));
+    }
+    out.extend(chain.iter().cloned());
+    let mut prev = p1;
+    for q in walk {
+        if (q - prev).norm() > 1e-9 {
+            out.push(line(prev, q));
+        }
+        prev = q;
+    }
+    // `out` starts at s_out (or p0) and ends there: closed.
+    let poly = polyline(&out, false);
+    let area: Real = (0..poly.len())
+        .map(|i| {
+            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum();
+    if area <= 0.0 {
+        return Err("the split curve cannot divide the body in two".into());
+    }
+    Ok(out)
+}
+
 /// A point inside the prism's profile (its centroid; the prisms are of
 /// simple closed curves).
 fn centre_of(p: &ExactSolid) -> Point3 {
@@ -659,6 +994,25 @@ fn orient_ccw(c: &[Segment2]) -> Vec<Segment2> {
 /// Unit normal of the tool's front side for the preview arrow, and a point
 /// to start it at (on the tool, nearest the body's centre).
 pub fn arrow(tool: &ResolvedTool, centre: Point3) -> Option<(Point3, Vector3)> {
+    if let ResolvedTool::Surface { side, .. } = tool {
+        return side.nearest(&centre);
+    }
+    // One open chain: at its middle, towards its front (left) side.
+    if let ResolvedTool::Sketch {
+        plane,
+        chains,
+        line: None,
+    } = tool
+        && let [c] = chains.as_slice()
+        && let Some(g) = c.get(c.len() / 2)
+    {
+        let at = g.point(0.5);
+        let t = g.point(0.5 + 1e-6) - at;
+        let left = nalgebra::Vector2::new(-t.y, t.x).try_normalize(1e-15)?;
+        let p = plane.point_at(at.x, at.y);
+        let q = plane.point_at(at.x + left.x, at.y + left.y);
+        return Some((p, q - p));
+    }
     let pl = tool.side_plane()?;
     let d = pl.signed_distance(&centre);
     Some((centre - pl.normal.into_inner() * d, pl.normal.into_inner()))
@@ -854,4 +1208,59 @@ pub(super) fn draft_pieces(
         out = r;
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sketch::Point2;
+
+    fn spline(pts: &[(Real, Real)]) -> Segment2 {
+        Segment2::Spline {
+            points: pts.iter().map(|p| Point2::new(p.0, p.1)).collect(),
+            reversed: false,
+            knots: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_figure_eight_crosses_itself() {
+        let g = spline(&[
+            (14.0, 0.0),
+            (10.0, -8.0),
+            (-10.0, 8.0),
+            (-14.0, 0.0),
+            (-10.0, -8.0),
+            (10.0, 8.0),
+            (14.0, 0.0),
+        ]);
+        let pts = polyline(std::slice::from_ref(&g), false);
+        assert!(crosses_itself(&pts, true), "{pts:?}");
+        // A circle does not.
+        let c = Segment2::Arc {
+            c: Point2::origin(),
+            r: 5.0,
+            a0: 0.0,
+            sweep: std::f64::consts::TAU,
+        };
+        assert!(!crosses_itself(&polyline(&[c], false), true));
+    }
+
+    #[test]
+    fn an_open_line_closes_on_its_left() {
+        // Along +X at y = 0 across a 40 × 30 box: the region is above.
+        let line = Segment2::Line {
+            a: Point2::new(-5.0, 0.0),
+            b: Point2::new(5.0, 0.0),
+        };
+        let bbox = (
+            Point3::new(-20.0, -15.0, 0.0),
+            Point3::new(20.0, 15.0, 20.0),
+        );
+        let r = open_region(&Plane::xy(), &[line], bbox).unwrap();
+        let pts = polyline(&r, false);
+        assert!(pts.iter().all(|p| p.y >= -1e-9), "{pts:?}");
+        assert!(pts.iter().any(|p| p.y > 15.0));
+        assert!(!crosses_itself(&pts, true));
+    }
 }

@@ -3,7 +3,9 @@
 //! Combine: Base (active first), then Toolbodies (auto-advance), Join / Cut
 //! / Intersect, Keep Toolbody, a toggle that keeps the tools visible.
 //! Split: Split Face / Trim Solid / Split Solid, the tool (a work or origin
-//! plane, or a sketch), the faces (or All Faces + solid) or the solid, Keep
+//! plane, a sketch or a surface body — in the view or the browser; the
+//! origin planes are shown while the tool selector is active), the faces (or
+//! All Faces + solid) or the solid, Keep
 //! Default / Keep Flip with an arrow on the side that goes. Both follow the
 //! shared selector flow (`command::flow`, `gui/command_ui.rs`): Continue /
 //! Back / Enter, the right-click menu, the cursor hint. Preview on a worker
@@ -35,6 +37,8 @@ pub(super) enum BodyPick {
     Plane(PlaneRef),
     /// A sketch (by id).
     Sketch(String),
+    /// A surface body (persistent name).
+    Surface(String),
 }
 
 /// The open Combine command.
@@ -263,7 +267,7 @@ pub(super) fn describe_tool(part: &PartDocument, t: &SplitToolRef) -> String {
             .iter()
             .find(|s| s.id == *id)
             .map_or_else(|| id.clone(), |s| s.name.clone()),
-        SplitToolRef::Surface(n) => n.clone(),
+        SplitToolRef::Surface(n) => format!("{} (surface)", body_label(part, n)),
     }
 }
 
@@ -355,9 +359,17 @@ impl CadCraftApp {
             Some((f, o + dir * t))
         });
         let part = self.part();
+        let open = |f: FaceId| {
+            psel::body_of_face(&part.body, f).filter(|n| {
+                part.body
+                    .solids()
+                    .any(|(_, s)| s.open && s.name.as_deref() == Some(n.as_str()))
+            })
+        };
         if flow.accepts(PickKind::Body) {
+            // Solids only (a surface is not a body to split).
             return face
-                .and_then(|(f, _)| psel::body_of_face(&part.body, f))
+                .and_then(|(f, _)| psel::body_of_face(&part.body, f).filter(|_| open(f).is_none()))
                 .map(BodyPick::Body);
         }
         if flow.accepts(PickKind::Face) {
@@ -368,27 +380,61 @@ impl CadCraftApp {
         {
             return part.sketches.get(i).map(|s| BodyPick::Sketch(s.id.clone()));
         }
+        // A surface body's face under the cursor (nearest along the ray).
+        let surface = face
+            .filter(|_| flow.accepts(PickKind::Surface))
+            .and_then(|(f, at)| open(f).map(|n| (at, n)));
         if flow.accepts(PickKind::Plane) {
-            // Work and origin planes only (Inventor's split tools), even
-            // through a face.
+            // Work and origin planes (Inventor's split tools; model faces
+            // are not), even through a solid face.
             let (o, dir) = self.camera.ray(p, rect)?;
             let work = self
                 .work_plane_under(p, rect)
-                .map(|(id, t)| (t, PlaneRef::Work(id)));
+                .map(|(id, t)| (t, BodyPick::Plane(PlaneRef::Work(id))));
             let half = self.origin_plane_half();
+            let unit = dir.norm().max(1e-12);
+            let surf = surface.map(|(at, n)| ((at - o).norm() / unit, BodyPick::Surface(n)));
             return OriginPlane::ALL
                 .into_iter()
                 .filter_map(|pl| {
                     Some((
                         super::overlay::hit_origin_plane(pl, half, &o, &dir)?,
-                        PlaneRef::Origin(pl),
+                        BodyPick::Plane(PlaneRef::Origin(pl)),
                     ))
                 })
                 .chain(work)
+                .chain(surf)
                 .min_by(|a, b| a.0.total_cmp(&b.0))
-                .map(|(_, pl)| BodyPick::Plane(pl));
+                .map(|(_, pick)| pick);
         }
-        None
+        surface.map(|(_, n)| BodyPick::Surface(n))
+    }
+
+    /// A browser row clicked while Combine / Split is open: an origin or
+    /// work plane, a sketch or a body for the active selector. Returns
+    /// whether the command took it.
+    pub(super) fn body_cmd_browser_pick(&mut self, pick: BodyPick) -> bool {
+        let Some(flow) = self.body_cmd_flow() else {
+            return false;
+        };
+        let part = self.part();
+        let takes = match &pick {
+            BodyPick::Plane(_) => flow.accepts(PickKind::Plane),
+            BodyPick::Sketch(_) => flow.accepts(PickKind::Sketch),
+            BodyPick::Surface(_) => flow.accepts(PickKind::Surface),
+            BodyPick::Body(n) => {
+                flow.accepts(PickKind::Body)
+                    && part
+                        .body
+                        .solids()
+                        .any(|(_, s)| !s.open && s.name.as_deref() == Some(n.as_str()))
+            }
+            BodyPick::Face(..) => false,
+        };
+        if takes {
+            self.body_cmd_pick(pick);
+        }
+        takes
     }
 
     /// A click on what [`Self::body_cmd_hover`] found.
@@ -416,6 +462,10 @@ impl CadCraftApp {
                 d.def.tool = Some(SplitToolRef::Sketch(id));
                 d.picked(many);
             }
+            ("tool", BodyPick::Surface(n)) => {
+                d.def.tool = Some(SplitToolRef::Surface(n));
+                d.picked(many);
+            }
             ("faces", BodyPick::Face(f, at)) => {
                 if let Some(r) = crate::part::shell::face_ref(&body, f, Some(at)) {
                     match d.def.faces.iter().position(|x| x.face == r.face) {
@@ -441,7 +491,7 @@ impl CadCraftApp {
     ) -> Option<super::select::SelItem> {
         use super::select::SelItem;
         match h? {
-            BodyPick::Body(n) => Some(SelItem::Body(n.clone())),
+            BodyPick::Body(n) | BodyPick::Surface(n) => Some(SelItem::Body(n.clone())),
             BodyPick::Face(f, _) => self
                 .part()
                 .body
@@ -473,6 +523,9 @@ impl CadCraftApp {
                 crate::part::shell::face_near(&part.body, &r.face, Point3::from(r.hint))
             })
             .collect();
+        if let Some(SplitToolRef::Surface(n)) = &d.def.tool {
+            v.extend(body_faces(part, n));
+        }
         if !d.def.solid.is_empty() {
             v.extend(body_faces(part, &d.def.solid));
         }
@@ -959,8 +1012,13 @@ impl CadCraftApp {
                 ui.end_row();
             });
         }
-        if matches!(d.def.tool, Some(SplitToolRef::Surface(_))) {
-            ui.label(RichText::new("A surface body as the tool is not supported yet").weak());
+        if d.input == "tool" {
+            ui.label(
+                RichText::new(
+                    "Tool: click a plane, a sketch or a surface in the view, or Origin → XY / XZ / YZ, a work plane, a sketch or a surface body in the browser",
+                )
+                .weak(),
+            );
         }
         let ready = d.flow(many).ready();
         let editing = d.edit.is_some();

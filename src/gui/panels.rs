@@ -50,6 +50,9 @@ enum BrowserCmd {
     CancelRename,
     /// The pointer is over this feature (by id): highlight it in the view.
     Hover(String),
+    /// A row clicked while Combine / Split is open: an input for its active
+    /// selector (an origin plane, a body or a surface).
+    CommandPick(super::combine_split::BodyPick),
 }
 
 const WARNING: Color32 = Color32::from_rgb(230, 140, 0);
@@ -216,6 +219,25 @@ impl CadCraftApp {
             // The pattern command's Features selector takes browser rows.
             BrowserCmd::Select(Selection::Feature(k))
                 if self.pattern_draft.is_some() && self.pattern_pick_browser(k) => {}
+            BrowserCmd::CommandPick(p) => {
+                self.body_cmd_browser_pick(p);
+            }
+            // Split's tool from the browser: a work plane or a sketch row.
+            BrowserCmd::Select(Selection::Feature(k))
+                if self.split_draft.is_some()
+                    && matches!(
+                        self.part().features.get(k),
+                        Some(Feature::Work(w)) if matches!(w.def, crate::part::WorkDef::Plane(_))
+                    )
+                    && self.body_cmd_browser_pick(super::combine_split::BodyPick::Plane(
+                        PlaneRef::Work(self.part().features[k].id().to_owned()),
+                    )) => {}
+            BrowserCmd::Select(Selection::Sketch(i))
+                if self.split_draft.is_some()
+                    && i < self.part().sketches.len()
+                    && self.body_cmd_browser_pick(super::combine_split::BodyPick::Sketch(
+                        self.part().sketches[i].id.clone(),
+                    )) => {}
             BrowserCmd::Select(s) => {
                 // The feature's faces are highlighted in the view.
                 if let Selection::Feature(k) = s
@@ -335,6 +357,9 @@ impl CadCraftApp {
                             .on_hover_text(format!("Created by {id}"));
                         if r.clicked() {
                             cmds.push(BrowserCmd::Select(Selection::Body));
+                            cmds.push(BrowserCmd::CommandPick(
+                                super::combine_split::BodyPick::Body(id.clone()),
+                            ));
                         }
                         r.context_menu(|ui| {
                             let mut v = shown;
@@ -356,9 +381,55 @@ impl CadCraftApp {
                 }
             });
             if surfaces > 0 {
-                ui.horizontal(|ui| {
+                egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    ui.make_persistent_id("surface_bodies"),
+                    true,
+                )
+                .show_header(ui, |ui| {
                     tree_icon(ui, Icon::Part);
                     ui.label(format!("Surface Bodies({surfaces})"));
+                })
+                .body(|ui| {
+                    let mut ids: Vec<String> = part
+                        .body
+                        .solids()
+                        .filter(|(_, s)| s.open)
+                        .filter_map(|(_, s)| s.name.clone())
+                        .collect();
+                    ids.sort();
+                    ids.dedup();
+                    for id in ids {
+                        ui.horizontal(|ui| {
+                            tree_icon(ui, Icon::Part);
+                            let shown = part.body_visible(&id);
+                            let label = part
+                                .features
+                                .iter()
+                                .find(|f| f.id() == id.split('#').next().unwrap_or(&id))
+                                .map_or_else(|| id.clone(), |f| format!("Srf: {}", f.name()));
+                            let text = if shown {
+                                RichText::new(label)
+                            } else {
+                                RichText::new(label).weak()
+                            };
+                            let r = ui
+                                .selectable_label(false, text)
+                                .on_hover_text(format!("Surface body {id} (a Split tool)"));
+                            if r.clicked() {
+                                cmds.push(BrowserCmd::CommandPick(
+                                    super::combine_split::BodyPick::Surface(id.clone()),
+                                ));
+                            }
+                            r.context_menu(|ui| {
+                                let mut v = shown;
+                                if ui.checkbox(&mut v, "Visibility").clicked() {
+                                    cmds.push(BrowserCmd::BodyVisible(id.clone(), v));
+                                    ui.close();
+                                }
+                            });
+                        });
+                    }
                 });
             }
             egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -377,6 +448,11 @@ impl CadCraftApp {
                         let r = ui
                             .selectable_label(false, p.label())
                             .on_hover_text("Right-click: New Sketch");
+                        if r.clicked() {
+                            cmds.push(BrowserCmd::CommandPick(
+                                super::combine_split::BodyPick::Plane(PlaneRef::Origin(p)),
+                            ));
+                        }
                         r.context_menu(|ui| {
                             if ui.button("New Sketch").clicked() {
                                 cmds.push(BrowserCmd::NewSketchOn(PlaneRef::Origin(p)));
