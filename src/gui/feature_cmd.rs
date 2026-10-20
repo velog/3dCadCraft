@@ -270,11 +270,6 @@ impl CadCraftApp {
             .or_else(|| self.extrude.as_ref().map(|d| d.sketch))
     }
 
-    /// Ctrl+Enter = OK in a feature panel.
-    pub(super) fn ctrl_enter(&self, ui: &egui::Ui) -> bool {
-        ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter))
-    }
-
     // ---- primitives --------------------------------------------------------
 
     /// 3D Model → Primitives → Box / Cylinder / Sphere / Torus: pick the

@@ -289,7 +289,9 @@ impl CadCraftApp {
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(ok, egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)))
+                .on_hover_text("Enter, Ctrl+Enter")
                 .clicked()
+                || super::keys::panel_ok_key(ui, ok)
             {
                 self.commit_work();
             }

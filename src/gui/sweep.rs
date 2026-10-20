@@ -1044,7 +1044,9 @@ pub(super) fn buttons(
         let size = egui::vec2(60.0, 22.0);
         if ui
             .add_enabled(ok, egui::Button::new("OK").min_size(size))
+            .on_hover_text("Enter, Ctrl+Enter")
             .clicked()
+            || super::keys::panel_ok_key(ui, ok)
         {
             out = Some(Button::Ok);
         }
