@@ -270,6 +270,14 @@ impl Sketch {
         Ok(id)
     }
 
+    /// Replaces the fit data of an interpolation spline (projected splines
+    /// copy their source's).
+    pub fn set_spline_fit(&mut self, id: EntityId, fit: SplineFit) -> Result<(), SketchError> {
+        self.spline_points(id)?;
+        self.interp.insert(id, fit);
+        Ok(())
+    }
+
     /// Whether a spline passes through its points (else control vertex).
     pub fn is_interp_spline(&self, id: EntityId) -> bool {
         self.interp.contains_key(id)

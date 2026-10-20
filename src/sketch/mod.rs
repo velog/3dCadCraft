@@ -254,6 +254,10 @@ pub struct Sketch {
     /// other splines are control-vertex splines.
     #[serde(default, skip_serializing_if = "SecondaryMap::is_empty")]
     interp: SecondaryMap<EntityId, spline::SplineFit>,
+    /// Circles whose radius is not a degree of freedom (projected circles:
+    /// the radius follows their source, see `part::link`).
+    #[serde(default, skip_serializing_if = "SecondaryMap::is_empty")]
+    fixed_radius: SecondaryMap<EntityId, bool>,
 }
 
 impl Default for Sketch {
@@ -277,6 +281,7 @@ impl Sketch {
             dim_params: SecondaryMap::new(),
             patterns: SlotMap::with_key(),
             interp: SecondaryMap::new(),
+            fixed_radius: SecondaryMap::new(),
         }
     }
 
@@ -380,6 +385,42 @@ impl Sketch {
         let (cv, knots) = self.spline_def(id, &|p| self.points[p].position.coords);
         let cvs: Vec<Point3> = cv.iter().map(|v| Point3::new(v.x, v.y, 0.0)).collect();
         crate::kernel::BSplineCurve::sketch_spline(cvs, &knots).ok()
+    }
+
+    /// Holds (or frees) a circle's radius: a held radius is no degree of
+    /// freedom, the solver keeps it (projected circles).
+    pub fn set_radius_fixed(&mut self, id: EntityId, fixed: bool) -> Result<(), SketchError> {
+        match self.entities.get(id) {
+            Some(Entity::Circle { .. }) => {}
+            Some(_) => return Err(SketchError::WrongEntityKind("set_radius_fixed")),
+            None => return Err(SketchError::UnknownEntity),
+        }
+        if fixed {
+            self.fixed_radius.insert(id, true);
+        } else {
+            self.fixed_radius.remove(id);
+        }
+        Ok(())
+    }
+
+    /// Whether a circle's radius is held (see [`Sketch::set_radius_fixed`]).
+    pub fn is_radius_fixed(&self, id: EntityId) -> bool {
+        self.fixed_radius.contains_key(id)
+    }
+
+    /// Sets a circle's radius (> 0) directly; call [`Sketch::solve`] after.
+    pub fn set_circle_radius(&mut self, id: EntityId, r: Real) -> Result<(), SketchError> {
+        if !(r.is_finite() && r > 0.0) {
+            return Err(SketchError::InvalidValue("circle radius must be positive"));
+        }
+        match self.entities.get_mut(id) {
+            Some(Entity::Circle { radius, .. }) => {
+                *radius = r;
+                Ok(())
+            }
+            Some(_) => Err(SketchError::WrongEntityKind("set_circle_radius")),
+            None => Err(SketchError::UnknownEntity),
+        }
     }
 
     /// The `(start, end)` points of a line entity.
@@ -818,6 +859,7 @@ impl Sketch {
         let entity = self.entities.remove(id).ok_or(SketchError::UnknownEntity)?;
         self.styles.remove(id);
         self.interp.remove(id);
+        self.fixed_radius.remove(id);
         let doomed: Vec<ConstraintId> = self
             .constraints
             .iter()

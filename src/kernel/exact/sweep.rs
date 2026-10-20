@@ -133,9 +133,38 @@ pub fn sweep(
         guarded("sweep", || sk::sweep(&pl, &prof.region, &segs))?
     } else {
         let pts = path_points(path);
-        guarded("sweep", || sk::sweep_path(&pl, &prof.region, &pts))?
+        // A whole circle as one edge (one vertex) breaks the kernel's path
+        // sweep ("two same vertices"): arcs of a quarter turn at most, as
+        // for lofts.
+        let q = quartered(prof);
+        let body = guarded("sweep", || sk::sweep_path(&pl, &q.region, &pts))?;
+        return named(body, plane, &q.names, prefix);
     };
     named(body, plane, &prof.names, prefix)
+}
+
+/// `prof` with every arc split into pieces of at most a quarter turn (the
+/// names repeat per piece).
+fn quartered(prof: &ExactProfile) -> ExactProfile {
+    let id = [[1.0, 0.0], [0.0, 1.0]];
+    let zero = sg::Vec2::new(0.0, 0.0);
+    let (on, hn) = split_names(prof);
+    let (outer, counts) = map_loop(&prof.region.outer, id, zero, true);
+    let mut names = expand(&on, &counts);
+    let mut holes = Vec::new();
+    for (h, hnames) in prof.region.holes.iter().zip(&hn) {
+        let (segs, c) = map_loop(h, id, zero, true);
+        names.extend(expand(hnames, &c));
+        holes.push(sg::Loop2 { segs });
+    }
+    ExactProfile {
+        region: sg::Region2 {
+            outer: sg::Loop2 { segs: outer },
+            holes,
+        },
+        names,
+        starts: prof.starts.clone(),
+    }
 }
 
 /// Every point of a path, in order (arcs within 0.01 mm of their chords).
