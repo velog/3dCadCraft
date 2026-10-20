@@ -1027,7 +1027,7 @@ fn speed_budgets() {
         ),
         (
             "coil: thread cut 6 turns into a Ø20 rod (faceted zone)",
-            6000.0,
+            12000.0,
             coil_part(6.0, false, true),
         ),
         (

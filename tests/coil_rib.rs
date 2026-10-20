@@ -630,11 +630,15 @@ fn bracket(part: &mut PartDocument) {
 
 #[test]
 fn rib_parallel_in_a_bracket_corner() {
-    for (extent, want_area) in [
-        // To Next: the triangle between the diagonal and the inner corner
-        // (3,3): legs 20 → 200.
-        (RibExtent::ToNext, 200.0),
+    // To Next: the triangle between the diagonal and the inner corner
+    // (3,3): legs 20 → 200 mm²; 4 thick (symmetric about y = 15) or to one
+    // side (Side1 / Side2: the same volume, shifted).
+    for (side, want_area) in [
+        (RibSide::Symmetric, 200.0),
+        (RibSide::Side1, 200.0),
+        (RibSide::Side2, 200.0),
     ] {
+        let extent = RibExtent::ToNext;
         let mut part = PartDocument::default();
         bracket(&mut part);
         let v0 = volume(&part);
@@ -643,7 +647,7 @@ fn rib_parallel_in_a_bracket_corner() {
         let sk = &mut part.sketches[k].sketch;
         let l = sk.add_line(Point2::new(3.0, 23.0), Point2::new(23.0, 3.0));
         let mut r = RibFeature::new(vec![l], 4.0);
-        (r.direction, r.extent) = (RibDirection::Parallel, extent);
+        (r.direction, r.extent, r.side) = (RibDirection::Parallel, extent, side);
         part.add_rib(k, r).unwrap();
         healthy(&part);
         near(volume(&part) - v0, want_area * 4.0, 0.002, "gusset");
