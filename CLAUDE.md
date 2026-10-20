@@ -263,7 +263,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
    `--part N out.3dcadcraft` saves the part at state N to open in the app.
 3. Regression test: copy the journal into `tests/` and assert
    `diagnostics::replay::first_difference(&replay(path)?)` is `None` (see `tests/diagnostics.rs`),
-   or build the failing state with `replay::part_at(path, N)`.
+   or build the failing state with `replay::part_at(path, N)`. A failed OK is an `error` line
+   with `command` + `attempt` (the feature it tried): `replay::attempts(text)` lists them (with
+   the state before), `replay::retry(&mut part, &a.feature)` adds one (see `tests/sweep_session.rs`).
+   Journals before 2026-10-20 have only the error text — rebuild the feature by hand there.
 - The kernel's expected panics go through `diagnostics::crash::guard` (no crash report); any new
   `catch_unwind` around kernel calls should use it too.
 
@@ -604,6 +607,14 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `to_brep_with(.., lenient)` (Sweep/Loft steps only): a fitted line/circle missing an end falls back to the
   polyline (an intersection curve of a lofted face failed "edge end vertex is not on its curve");
   strict elsewhere: a concave partial-arc fillet (combos.rs) gave a wrong exact volume when lenient.
+- **Sweep along a spline** (`sk::sweep_path`, point path): a whole circle as one arc panicked it
+  too ("This wire is not simple", owner's session 2026-10-20) — `kernel::exact::sweep` splits the
+  profile's arcs into quarters first. `check_bend` refuses a profile reaching past the centre of
+  a bend (radius of the circle through 3 path points vs the profile carried by the same
+  double-reflection frames) before the kernel sees it. An interpolation spline's end tangent leans
+  towards its next points: the kernel keeps that angle, so the volume is A·L·cos θ0 (not A·L).
+  Fillet of the cap edge works through our `vendor/` patch of `curveblend` (curved seams at chain
+  corners); Shell refuses (B-spline walls cannot be offset).
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans (amber unless something assigned them an appearance).
 - **Two-sided Face Draft** (Symmetric / Asymmetric, Parting Line, Move Parting Line):

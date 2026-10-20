@@ -27,6 +27,13 @@ copy when the pin moves to a commit that has them.
 | `build.rs` `extrude` | above 256 faces the orientation is read off a cap instead of meshing the solid | 10000 holes: 6.2 s → 0.05 s |
 | `surface_kind.rs` `face_surfaces` | every face's surface in one walk (in parallel) | `face_surface(i)` walked to face i each time |
 
+A fix (not about speed): a rolling-ball blend of a closed chain whose corners meet **curved**
+seams. Proposed upstream in `docs/SOLIDCRAFT_ISSUES.md` (Sweep).
+
+| File | Change | Effect |
+|---|---|---|
+| `curveblend.rs` (vertex sections) | a curved seam at a corner of the chain (the walls of a sweep along a spline meet along B-spline curves) was refused ("a curved seam where the edge chain turns"); now the contact is put on the seam by a fixed-point iteration (plane along the seam's tangent at its point nearest the last contact, square to the side), solved against the faces of one edge at the vertex only (with both, the nearer face flips across the crease and the Newton step never settles) | the cap edge of a sweep along a spline can be filleted (1 mm on R6–R17.7 tubes: volume within 0.1 % of Pappus) |
+
 Kernel tests (`cargo test -p solidcraft-kernel --release` in a SolidCraft checkout with this
 `src/`): 476 pass; `issue_851_tests::arc_top_edge_sizes_never_panic` fails on Windows with the
 original source as well.

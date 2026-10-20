@@ -816,8 +816,19 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
         super::ShellDirection::Center => ShellSide::Both,
     };
     let rounded = sh.corners == super::ShellCorners::Rounded;
-    let r = exact::shell_with(&cur[target], &open, sh.thickness, side, rounded, &sh.id)
-        .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?;
+    let r = exact::shell_with(&cur[target], &open, sh.thickness, side, rounded, &sh.id).map_err(
+        |e| {
+            // The kernel offsets analytic faces only; a sweep or loft along
+            // a curve has free-form (B-spline) walls.
+            if e.contains("only bodies with planes") {
+                User(format!(
+                    "free-form faces (a sweep or loft along a curve) cannot be offset yet ({e})"
+                ))
+            } else {
+                User(format!("the geometry kernel cannot build it ({e})"))
+            }
+        },
+    )?;
     // Walls as thick as the part leave no cavity (a cylinder 10 high shelled
     // 10 or 12 from the top, FreeCAD #25050): no inner wall was made. (By
     // names: measuring the volumes took 1.4 s on a rounded disc.)

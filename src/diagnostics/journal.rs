@@ -9,7 +9,7 @@
 //! | `checkpoint` | an Undo step is recorded (a user mutation) | — |
 //! | `command_start` / `command_ok` / `command_cancel` | a feature dialog opens / ends | `dur_ms`, `feature` (definition JSON) |
 //! | `undo` / `redo` | Undo / Redo | — |
-//! | `status` / `error` | the status bar shows a result / an error | `text` |
+//! | `status` / `error` | the status bar shows a result / an error | `text`; an error while a feature dialog is open also `command` and `attempt` (the feature it tried, JSON; [`super::replay::retry`]) |
 //! | `health` | a feature becomes sick or healthy | `feature`, `text` |
 //! | `state` | the part after a mutation (see below) | `seq`, `snap`, `result` |
 //!
@@ -238,6 +238,22 @@ pub fn part_value(part: &mut PartDocument) -> Result<Value, String> {
     let v = serde_json::to_value(&*part).map_err(|e| e.to_string());
     part.body = body;
     v
+}
+
+/// A feature a command tried to add (the `attempt` of an `error` line):
+/// its JSON, with `sketch` set to the profile sketch's id when the dialog
+/// knows it (pass `None` for features without a profile sketch; the sketch,
+/// id and name are assigned on OK, so a dialog's definition has none yet).
+pub fn attempt_json(f: &crate::part::Feature, sketch: Option<&str>) -> Option<Value> {
+    let mut v = serde_json::to_value(f).ok()?;
+    if let (Some(id), Some(o)) = (sketch, v.as_object_mut())
+        && o.get("sketch")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    {
+        o.insert("sketch".into(), json!(id));
+    }
+    Some(v)
 }
 
 // ------------------------------------------------------------- journal ---

@@ -120,10 +120,60 @@ impl CadCraftApp {
             (self.hole_draft.is_some(), "Hole"),
             (self.thread_draft.is_some(), "Thread"),
             (self.work_draft.is_some(), "Work Feature"),
+            (self.sweep_draft.is_some(), "Sweep"),
+            (self.loft_draft.is_some(), "Loft"),
+            (self.coil_draft.is_some(), "Coil"),
+            (self.rib_draft.is_some(), "Rib"),
+            (self.combine_draft.is_some(), "Combine"),
+            (self.split_draft.is_some(), "Split"),
         ]
         .into_iter()
         .find(|(open, _)| *open)
         .map(|(_, n)| n.to_owned())
+    }
+
+    /// The definition in the open feature dialog as a feature (JSON, with
+    /// its profile sketch's id where the dialog holds one): an `error`
+    /// while a dialog is open carries it as `attempt`, so a failed OK can be
+    /// replayed ([`crate::diagnostics::replay::retry`]).
+    fn open_attempt(&self) -> Option<serde_json::Value> {
+        use crate::part::Feature;
+        let sketch_id = |k: Option<usize>| {
+            k.and_then(|k| self.part().sketches.get(k))
+                .map(|s| s.id.clone())
+        };
+        let (f, sketch) = if let Some(d) = &self.extrude {
+            let f = match &d.def {
+                super::DraftDef::Extrude(e) => Feature::Extrude(e.clone()),
+                super::DraftDef::Revolve(r) => Feature::Revolve(r.clone()),
+            };
+            (f, sketch_id(Some(d.sketch)))
+        } else if let Some(d) = &self.sweep_draft {
+            (Feature::Sweep(d.def.clone()), sketch_id(d.sketch))
+        } else if let Some(d) = &self.coil_draft {
+            (Feature::Coil(d.def.clone()), sketch_id(d.sketch))
+        } else if let Some(d) = &self.rib_draft {
+            (Feature::Rib(d.def.clone()), sketch_id(d.sketch))
+        } else if let Some(d) = &self.loft_draft {
+            (Feature::Loft(d.def.clone()), None)
+        } else if let Some(d) = &self.blend_draft {
+            (Feature::Blend(d.def.clone()), None)
+        } else if let Some(d) = &self.shell_draft {
+            (Feature::Shell(d.def.clone()), None)
+        } else if let Some(d) = &self.draft_draft {
+            (Feature::Draft(d.def.clone()), None)
+        } else if let Some(d) = &self.pattern_draft {
+            (Feature::Pattern(d.def.clone()), None)
+        } else if let Some(d) = &self.hole_draft {
+            (Feature::Hole(d.def.clone()), None)
+        } else if let Some(d) = &self.combine_draft {
+            (Feature::Combine(d.def.clone()), None)
+        } else if let Some(d) = &self.split_draft {
+            (Feature::Split(d.def.clone()), None)
+        } else {
+            return None;
+        };
+        journal::attempt_json(&f, sketch.as_deref())
     }
 
     /// A command preview or a drag is in progress: the state is not one
@@ -244,7 +294,14 @@ impl CadCraftApp {
                 }
             }
             Some(Err(text)) => {
-                journal::global_entry("error", "", json!({ "text": text }));
+                // A feature dialog still open: the error is its OK's (or a
+                // field's), and the definition it tried goes with it.
+                let mut extra = json!({ "text": text });
+                if let (Some(name), Some(attempt)) = (self.open_command(), self.open_attempt()) {
+                    extra["command"] = json!(name);
+                    extra["attempt"] = attempt;
+                }
+                journal::global_entry("error", "", extra);
                 log::warn!("status: {text}");
             }
             None => {}
