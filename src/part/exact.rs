@@ -2686,7 +2686,10 @@ mod hollow_box {
             let t = std::time::Instant::now();
             let _ = trial.add_blend(BlendFeature::fillet(picked.clone(), 2.0));
             assert!(trial.exact, "fell back to the faceted kernel");
-            assert!(t.elapsed().as_secs_f64() < 8.0);
+            assert!(
+                t.elapsed().as_secs_f64() < 8.0
+                    || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some()
+            );
         }
     }
 }

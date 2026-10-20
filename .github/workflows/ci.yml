@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Shared runners have no stable timing: results are checked, budgets not.
+  CADCRAFT3D_NO_BUDGETS: "1"
+
+jobs:
+  core:
+    name: Core (Linux, no GUI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+      - run: cargo test --release --no-default-features
+      - run: cargo doc --no-default-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  gui:
+    name: GUI (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --lib
+      - run: cargo build --release

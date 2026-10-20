@@ -756,6 +756,10 @@ fn links_part(n: usize, sweep: bool) -> PartDocument {
 
 #[test]
 fn speed_budgets() {
+    // Shared CI runners have no stable timing (`CADCRAFT3D_NO_BUDGETS=1`).
+    if std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some() {
+        return;
+    }
     // (case, budget ms, median ms)
     let mut rows: Vec<(&str, f64, f64)> = Vec::new();
 
@@ -1760,6 +1764,9 @@ fn speed_budgets() {
 /// share; `docs/PERF.md`).
 #[test]
 fn command_search_per_keystroke() {
+    if std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some() {
+        return;
+    }
     use cadcraft3d::command::matcher::{Fields, Folded, Query, rank};
     let words = [
         "Extrude",

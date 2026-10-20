@@ -3185,7 +3185,8 @@ fn feature_matrix() {
             (Ok(_), Want::Error(text)) => Err(format!("built, but should be refused ({text})")),
             (Err(e), _) => Err(format!("failed: {e}")),
         };
-        let over = ms > c.budget_ms;
+        // `CADCRAFT3D_NO_BUDGETS=1` (shared CI runners): results only.
+        let over = ms > c.budget_ms && std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_none();
         let line = match &verdict {
             Ok(v) => v.clone(),
             Err(e) => format!("FAIL {e}"),
