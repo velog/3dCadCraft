@@ -747,12 +747,15 @@ impl CadCraftApp {
                 Selection::Feature(k),
             ),
         };
-        let used: Vec<usize> = match f.sketch() {
-            Some(s) => (0..part.sketches.len())
-                .filter(|&i| part.sketches[i].id == s)
-                .collect(),
-            None => Vec::new(),
-        };
+        // Every sketch the feature uses (a Loft's sections and centre line,
+        // a Sweep's path): with `sketch()` alone the others fell through to
+        // the end of the tree, below the End of Part.
+        let ids = f.sketch_ids();
+        let mut used: Vec<usize> = (0..part.sketches.len())
+            .filter(|&i| ids.contains(&part.sketches[i].id.as_str()))
+            .collect();
+        // The feature's own sketch first (Edit Sketch in its menu).
+        used.sort_by_key(|&i| Some(part.sketches[i].id.as_str()) != f.sketch());
         for &i in &used {
             if part.sketches[i].shared && !listed[i] {
                 listed[i] = true;
