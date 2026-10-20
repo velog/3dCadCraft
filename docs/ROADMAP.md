@@ -260,7 +260,7 @@
 | U8 | Превеждат се само подсказките в лентата на състоянието (`gui/i18n.rs`); менюта, диалози и грешки са на английски | файлове с преводи, избор на език в Application Options | 0.11 | 🟡 |
 | U9 | Лентата с предложения до избрана стена/ръб заменя mini-toolbar на Inventor, но няма стойности на място в изгледа (напр. Distance при Extrude) | плаващо поле до манипулатора с expression-поле и `>` меню | 2.1, 0.9 | 🟡 |
 | U10 | Десният клик е обикновено меню, не marking menu; върху стена/ръб няма Edit Feature (той е в лентата с предложения) | радиално меню; контекстни точки за стена/ръб/тяло | 0.9 | 🟡 |
-| U11 | Няма Shift+десен клик за Select Other (идва само при покой ~0,7 s) | Shift+десен клик отваря Select Other веднага | 0.9 | ⬜ |
+| U11 | Няма Shift+десен клик за Select Other (идва само при покой ~0,7 s) | Shift+десен клик отваря меню Selection (Select Other, Loop, Tangencies, Invert, All, Previous, Clear, Window/Crossing, филтри, приоритет) | 0.9 | 🟡 реализирано ([0.9a](spec/0.9a-selection-filters.md)); Select Other в команда ⬜; чака визуална проверка |
 | U12 | Колелцето мащабира спрямо центъра на въртене, не спрямо курсора | опция *Zoom towards cursor* (в Inventor е по подразбиране) | 0.3 | ⬜ |
 | U13 | Няма Navigation Bar (Pan / Zoom / Orbit / Look At бутони) | лента в изгледа; после отметка в View → User Interface | 0.3 | ⬜ |
 | U14 | Профили SolidWorks и Fusion | още две таблици в `MousePreset` | 0.3 | ⬜ |

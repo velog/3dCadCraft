@@ -353,8 +353,9 @@ impl CadCraftApp {
         let part = self.part();
         // Points of visible sketches (not their projected references).
         let mut best: Option<(f32, HolePick)> = None;
+        let sketch_on = self.cat_on(crate::command::selection::Category::SketchEntity);
         for (i, ps) in part.sketches.iter().enumerate() {
-            if !ps.visible {
+            if !ps.visible || !sketch_on {
                 continue;
             }
             for (pid, p) in ps.sketch.points() {

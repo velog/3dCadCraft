@@ -759,6 +759,35 @@ fn speed_budgets() {
     // (case, budget ms, median ms)
     let mut rows: Vec<(&str, f64, f64)> = Vec::new();
 
+    // Selection: filtering, resolving and ordering 10k candidates under the
+    // cursor (Select Other over a dense faceted part) stays far below a frame.
+    {
+        use cadcraft3d::command::selection::{
+            Candidate, Category, Filter, Priority, filter_candidates,
+        };
+        let cands: Vec<Candidate> = (0..10_000)
+            .map(|i| Candidate {
+                cat: Category::ALL[i % Category::ALL.len()],
+                dist: ((i * 7919) % 1000) as f32,
+                surface: i % 5 == 0,
+            })
+            .collect();
+        let mut f = Filter::all();
+        f.set(Category::Edge, false);
+        rows.push((
+            "selection: filter + order 10k candidates (x10)",
+            20.0,
+            median_ms(5, || {
+                for p in [Priority::FacesEdges, Priority::Features] {
+                    for _ in 0..5 {
+                        let r = filter_candidates(&cands, p, f);
+                        assert!(!r.is_empty());
+                    }
+                }
+            }),
+        ));
+    }
+
     let rb = rounded_box();
     rows.push((
         "regenerate the rounded box (box, 8 fillets, chamfer chain)",

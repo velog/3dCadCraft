@@ -732,6 +732,9 @@ impl CadCraftApp {
 
     /// The visible work plane hit by the eye ray at `pos`: (id, ray t).
     pub(super) fn work_plane_under(&self, pos: Pos2, rect: Rect) -> Option<(String, Real)> {
+        if !self.cat_on(crate::command::selection::Category::WorkPlane) {
+            return None;
+        }
         let (origin, dir) = self.camera.ray(pos, rect)?;
         let part = self.part();
         self.visible_work()
@@ -748,12 +751,23 @@ impl CadCraftApp {
     pub(super) fn work_axis_or_point_under(&self, pos: Pos2, rect: Rect) -> Option<WpInput> {
         let part = self.part();
         let mut best: Option<(f32, WpInput)> = None;
+        use crate::command::selection::Category;
+        let (points, axes) = (
+            self.cat_on(Category::WorkPoint),
+            self.cat_on(Category::WorkAxis),
+        );
         for it in self.visible_work().flat_map(Self::items) {
             let cand = if let Some(p) = part.work.points.get(&it.id) {
+                if !points {
+                    continue;
+                }
                 let s = self.camera.project(p, rect)?;
                 let d = s.distance(pos);
                 (d <= 8.0).then(|| (d - 2.0, WpInput::Point(PointRef::Work(it.id.clone()))))
             } else if let Some((p, d)) = part.work.axes.get(&it.id) {
+                if !axes {
+                    continue;
+                }
                 let (a, b) = self.item_axis_segment(p, d, it.ucs);
                 let (a, b) = (
                     self.camera.project(&a, rect)?,
@@ -786,6 +800,9 @@ impl CadCraftApp {
     /// The named model vertex or straight-edge midpoint under `pos` (8 px),
     /// not hidden by a face.
     pub(super) fn vertex_under(&self, pos: Pos2, rect: Rect) -> Option<PointRef> {
+        if !self.cat_on(crate::command::selection::Category::Vertex) {
+            return None;
+        }
         let (origin, dir) = self.camera.ray(pos, rect)?;
         let dir = dir.try_normalize(1e-12)?;
         let body = &self.part().body;
@@ -826,6 +843,9 @@ impl CadCraftApp {
     /// A point, line or curve of a visible sketch under `pos`.
     fn sketch_input_under(&self, pos: Pos2, rect: Rect) -> Option<WpInput> {
         use super::overlay;
+        if !self.cat_on(crate::command::selection::Category::SketchEntity) {
+            return None;
+        }
         for ps in self.part().sketches.iter().filter(|s| s.visible) {
             let sk = &ps.sketch;
             if let Some(p) =

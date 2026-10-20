@@ -285,8 +285,9 @@ impl CadCraftApp {
             Some(d) => d.input == SweepInput::Profiles,
             None => loft_takes(PickKind::Region),
         };
+        let sketch_on = self.cat_on(crate::command::selection::Category::SketchEntity);
         // Loft: a sketch point is a point section.
-        if loft_takes(PickKind::SketchPoint) {
+        if loft_takes(PickKind::SketchPoint) && sketch_on {
             for ps in part.sketches.iter().filter(|s| s.visible) {
                 if let Some(pt) = overlay::pick_any_point(
                     &self.camera,
@@ -302,7 +303,12 @@ impl CadCraftApp {
             }
         }
         if want_region {
-            for (i, ps) in part.sketches.iter().enumerate().filter(|(_, s)| s.visible) {
+            for (i, ps) in part
+                .sketches
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.visible && sketch_on)
+            {
                 let sk = &ps.sketch;
                 let Some(world) = self.camera.ray_plane(p, rect, &sk.plane) else {
                     continue;
@@ -333,7 +339,7 @@ impl CadCraftApp {
             if loft_takes(PickKind::PlanarFace)
                 && let Some((o, dir)) = self.camera.ray(p, rect)
                 && let Some(dir) = dir.try_normalize(1e-12)
-                && let Some((f, t)) = self.picker().pick(&o, &dir)
+                && let Some((f, t)) = self.face_hit(&o, &dir)
                 && part.body.face_plane(f).is_some()
                 && let Some(name) = part.body.face(f).and_then(|x| x.name.clone())
             {
@@ -354,7 +360,7 @@ impl CadCraftApp {
         // Path / rail: a sketch curve (its connected chain) or an edge.
         let profile_sketch = self.sweep_draft.as_ref().and_then(|d| d.sketch);
         for (i, ps) in part.sketches.iter().enumerate() {
-            if !ps.visible || Some(i) == profile_sketch {
+            if !ps.visible || Some(i) == profile_sketch || !sketch_on {
                 continue;
             }
             if let Some((e, _)) =

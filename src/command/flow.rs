@@ -40,6 +40,8 @@ pub enum PickKind {
     SketchPoint,
     /// A point on a loft section's outline (Transition: Map Point).
     SectionPoint,
+    /// A model vertex or a work point.
+    Point,
 }
 
 /// One selector row of a command dialog.

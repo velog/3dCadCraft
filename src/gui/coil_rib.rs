@@ -60,7 +60,7 @@ fn coil_flow(d: &CoilDraft) -> Flow {
                 key: "profiles",
                 label: "Profiles",
                 prompt: "click the profile (a closed region of a sketch)",
-                accepts: &[PickKind::Sketch],
+                accepts: &[PickKind::Region],
                 single: false,
                 required: true,
                 count: d.def.profiles.len(),
@@ -70,7 +70,11 @@ fn coil_flow(d: &CoilDraft) -> Flow {
                 key: "axis",
                 label: "Axis",
                 prompt: "click the axis (a line of the sketch or a straight edge), or choose an origin or work axis",
-                accepts: &[PickKind::StraightEdge, PickKind::Axis],
+                accepts: &[
+                    PickKind::StraightEdge,
+                    PickKind::Axis,
+                    PickKind::SketchCurve,
+                ],
                 single: true,
                 required: true,
                 count: usize::from(d.axis_set),
@@ -86,7 +90,7 @@ fn rib_flow(d: &RibDraft) -> Flow {
         key: "profile",
         label: "Profile",
         prompt: "click the profile curves (a second click removes one)",
-        accepts: &[PickKind::Sketch],
+        accepts: &[PickKind::SketchCurve],
         single: false,
         required: true,
         count: d.def.curves.len(),
@@ -97,7 +101,7 @@ fn rib_flow(d: &RibDraft) -> Flow {
             key: "centers",
             label: "Boss Centers",
             prompt: "click sketch points on the profile for bosses (optional), or OK",
-            accepts: &[PickKind::Sketch],
+            accepts: &[PickKind::SketchPoint],
             single: false,
             required: false,
             count: d.def.boss.centers.len(),
@@ -118,6 +122,20 @@ enum Pick {
 }
 
 impl CadCraftApp {
+    /// What the active input of the open Coil or Rib takes.
+    pub(super) fn coil_rib_kinds(&self) -> Option<Vec<PickKind>> {
+        let flow = match (&self.coil_draft, &self.rib_draft) {
+            (Some(d), _) => coil_flow(d),
+            (None, Some(d)) => rib_flow(d),
+            _ => return None,
+        };
+        Some(
+            flow.current()
+                .map(|s| s.accepts.to_vec())
+                .unwrap_or_default(),
+        )
+    }
+
     /// Whether Coil or Rib is open.
     pub(super) fn coil_rib_open(&self) -> bool {
         self.coil_draft.is_some() || self.rib_draft.is_some()
@@ -353,10 +371,12 @@ impl CadCraftApp {
     fn coil_rib_hover(&self, p: Pos2, rect: Rect) -> Option<(Pick, Vec<Vec<Point3>>)> {
         use super::overlay;
         let part = self.part();
+        let sketch_on = self.cat_on(crate::command::selection::Category::SketchEntity);
         if let Some(d) = &self.coil_draft {
             if d.active == "axis" {
                 // A line of the profile sketch, else a straight edge.
                 if let Some(ps) = d.sketch.and_then(|i| part.sketches.get(i))
+                    && sketch_on
                     && let Some((e, _)) = overlay::pick_entity(
                         &self.camera,
                         rect,
@@ -383,7 +403,12 @@ impl CadCraftApp {
                     .ok()?;
                 return Some((Pick::Edge(name), vec![pts]));
             }
-            for (i, ps) in part.sketches.iter().enumerate().filter(|(_, s)| s.visible) {
+            for (i, ps) in part
+                .sketches
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.visible && sketch_on)
+            {
                 let sk = &ps.sketch;
                 let Some(world) = self.camera.ray_plane(p, rect, &sk.plane) else {
                     continue;
@@ -413,6 +438,9 @@ impl CadCraftApp {
             return None;
         }
         let d = self.rib_draft.as_ref()?;
+        if !sketch_on {
+            return None;
+        }
         if d.active == "centers" {
             let ps = d.sketch.and_then(|i| part.sketches.get(i))?;
             let pt =

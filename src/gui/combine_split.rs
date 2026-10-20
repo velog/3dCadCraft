@@ -355,13 +355,23 @@ impl CadCraftApp {
             Some((f, o + dir * t))
         });
         let part = self.part();
+        use crate::command::selection::Category;
         if flow.accepts(PickKind::Body) {
             return face
+                .filter(|(f, _)| {
+                    self.cat_on(if psel::face_on_surface(&part.body, *f) {
+                        Category::SurfaceBody
+                    } else {
+                        Category::SolidBody
+                    })
+                })
                 .and_then(|(f, _)| psel::body_of_face(&part.body, f))
                 .map(BodyPick::Body);
         }
         if flow.accepts(PickKind::Face) {
-            return face.map(|(f, at)| BodyPick::Face(f, at));
+            return face
+                .filter(|_| self.cat_on(Category::Face))
+                .map(|(f, at)| BodyPick::Face(f, at));
         }
         if flow.accepts(PickKind::Sketch)
             && let Some(i) = self.sketch_under(p, rect)
@@ -376,8 +386,10 @@ impl CadCraftApp {
                 .work_plane_under(p, rect)
                 .map(|(id, t)| (t, PlaneRef::Work(id)));
             let half = self.origin_plane_half();
+            let origin_on = self.cat_on(Category::Origin);
             return OriginPlane::ALL
                 .into_iter()
+                .filter(|_| origin_on)
                 .filter_map(|pl| {
                     Some((
                         super::overlay::hit_origin_plane(pl, half, &o, &dir)?,

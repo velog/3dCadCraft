@@ -37,6 +37,45 @@ pub fn faces_of_body(body: &BRep, name: &str) -> Vec<FaceId> {
         .collect()
 }
 
+/// Whether face `f` belongs to a surface body (`Solid::open`).
+pub fn face_on_surface(body: &BRep, f: FaceId) -> bool {
+    body.solids()
+        .any(|(_, s)| s.open && s.shells.iter().any(|sh| sh.faces.contains(&f)))
+}
+
+/// Whether the body named `name` is a surface body.
+pub fn body_is_surface(body: &BRep, name: &str) -> bool {
+    body.solids()
+        .any(|(_, s)| s.open && s.name.as_deref() == Some(name))
+}
+
+/// A face touching the vertex named `name` (for Features / Bodies
+/// priority: a vertex resolves through one of its faces).
+pub fn face_of_vertex(body: &BRep, name: &str) -> Option<FaceId> {
+    let v = body
+        .vertices()
+        .find(|(_, v)| v.name.as_deref() == Some(name))
+        .map(|(id, _)| id)?;
+    body.faces()
+        .find(|(_, f)| {
+            std::iter::once(&f.outer)
+                .chain(&f.inner)
+                .flat_map(|l| &l.coedges)
+                .any(|c| {
+                    body.edge(c.edge)
+                        .is_some_and(|e| e.start == v || e.end == v)
+                })
+        })
+        .map(|(id, _)| id)
+}
+
+/// The edges of the outer loop of face `f` (Select Loop on a face).
+pub fn outer_loop_edges(body: &BRep, f: FaceId) -> Vec<EdgeId> {
+    body.face(f)
+        .map(|x| x.outer.coedges.iter().map(|c| c.edge).collect())
+        .unwrap_or_default()
+}
+
 /// The point halfway along a polyline (by length).
 fn polyline_middle(pts: &[Point3]) -> Option<Point3> {
     let total: Real = pts.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
@@ -338,6 +377,25 @@ mod tests {
     use super::*;
     use crate::part::blend::edge_ref;
     use crate::part::{BlendFeature, PartDocument};
+
+    /// Helpers of the selection model (spec 0.9a): a vertex resolves to a
+    /// face of its feature, a face's outer loop, solid vs surface body.
+    #[test]
+    fn vertex_face_loop_and_surface() {
+        let part = PartDocument::with_box("Box1", [10.0, 10.0, 10.0]).unwrap();
+        let body = &part.body;
+        let v = body.vertices().find_map(|(_, v)| v.name.clone()).unwrap();
+        let f = face_of_vertex(body, &v).unwrap();
+        let name = body.face(f).unwrap().name.clone().unwrap();
+        assert_eq!(feature_id_of_face(&name), Some("Box1"));
+        assert_eq!(feature_id_of_face(&v), Some("Box1"));
+        assert!(face_of_vertex(body, "Nope:V1").is_none());
+        let top = body.find_face("Box1:Top").unwrap();
+        assert_eq!(outer_loop_edges(body, top).len(), 4);
+        assert!(!face_on_surface(body, top));
+        let solid = body_of_face(body, top).unwrap();
+        assert!(!body_is_surface(body, &solid));
+    }
 
     /// A 40 mm box with its 4 vertical edges rounded: the side walls and
     /// the 4 rounds form one tangent ring (8 faces); top and bottom are not
