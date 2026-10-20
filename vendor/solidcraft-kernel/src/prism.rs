@@ -17,7 +17,9 @@ use crate::{BoolOp, KernelError, Result};
 #[path = "prism_lineage.rs"]
 mod lineage;
 
-const MAX_PLANAR_SEGMENTS: usize = 8192;
+// 3DCadCraft: 8192 refused sections of more than ~4000 pattern holes (each circle is two
+// arcs), which then went to the general boolean (24 min for 5041 holes, then a failure).
+const MAX_PLANAR_SEGMENTS: usize = 32_768;
 const MAX_PLANAR_EVENTS: usize = 131_072;
 const MAX_PLANAR_PAIRS: usize = 16_000_000;
 
@@ -693,8 +695,11 @@ fn prism_tagged(b: &Body, d: Vec3, plane: &Plane, tol: f64, index: &LazyIndex) -
     let mut top_h = Vec::new();
     let mut bottom_h = Vec::new();
     let mut walls = std::collections::HashMap::new();
-    let mut wall_work = 262_144;
-    let mut curve_work = 2_000_000usize;
+    // The work budgets grow with the body: a tool of thousands of pattern copies reads every
+    // copy's cap edges (5000 holes ran out of the fixed 2M).
+    let faces = b.face_count();
+    let mut wall_work = 262_144usize.max(faces.saturating_mul(64));
+    let mut curve_work = 2_000_000usize.max(faces.saturating_mul(1_000));
     for (fi, f) in b.solid.face_iter().enumerate() {
         remaining_faces = remaining_faces.checked_sub(1)?;
         curve_work = curve_work.checked_sub(1)?;
@@ -1211,6 +1216,26 @@ fn boolean2d_tagged(a: &Section, b: &Section, op: BoolOp, tol: f64) -> Option<Se
     // a loop closes only when that is the tightest turn too. A loop that still passes a point
     // twice (a hole touching the outline) is split there into simple loops.
     let near = tol * 10.0;
+    // The pieces by where they start, on a grid of `near` cells: the pieces leaving a point are
+    // looked up in the cells around it, not searched for among all of them (quadratic: a
+    // section of 10000 holes spent seconds here).
+    let cell = |p: Vec2| ((p.x / near).floor() as i64, (p.y / near).floor() as i64);
+    let mut starts: std::collections::HashMap<(i64, i64), Vec<usize>> = std::collections::HashMap::new();
+    for (k, (seg, _)) in kept.iter().enumerate() {
+        starts.entry(cell(seg.start())).or_default().push(k);
+    }
+    let leaving_from = |end: Vec2, used: &[bool]| -> Vec<usize> {
+        let (cx, cy) = cell(end);
+        let mut v: Vec<usize> = (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dy| (cx + dx, cy + dy)))
+            .filter_map(|c| starts.get(&c))
+            .flatten()
+            .copied()
+            .filter(|k| !used.get(*k).copied().unwrap_or(true) && kept[*k].0.start().dist(end) < near)
+            .collect();
+        v.sort_unstable();
+        v
+    };
     let mut loops: Vec<(Loop2, Vec<Tag>)> = Vec::new();
     let mut used = vec![false; kept.len()];
     for start in 0..kept.len() {
@@ -1234,8 +1259,7 @@ fn boolean2d_tagged(a: &Section, b: &Section, op: BoolOp, tol: f64) -> Option<Se
             let full_circle =
                 segs.first().is_some_and(|s| matches!(s, Seg2::Arc { sweep, .. } if (sweep.abs() - std::f64::consts::TAU).abs() < 1e-9));
             let closes = end.dist(first) < near && (segs.len() > 1 || full_circle);
-            let leaving: Vec<usize> =
-                (0..kept.len()).filter(|k| !used.get(*k).copied().unwrap_or(true) && kept[*k].0.start().dist(end) < near).collect();
+            let leaving: Vec<usize> = leaving_from(end, &used);
             let next = match leaving.as_slice() {
                 [] if end.dist(first) < near => break,
                 [] => return None,
@@ -1338,6 +1362,26 @@ fn simple_loops(lp: Loop2, tags: Vec<Tag>, near: f64) -> Vec<(Loop2, Vec<Tag>)> 
         }
     }
     out
+}
+
+/// Points sorted along x, for the ones near a segment: only those in its box (grown by the
+/// tolerance) can split it. A stepped section of 1000 bosses split each of its segments against
+/// every end point (quadratic: 29 s).
+struct PointIndex(Vec<Vec2>);
+
+impl PointIndex {
+    fn new(mut pts: Vec<Vec2>) -> Self {
+        pts.sort_by(|a, b| a.x.total_cmp(&b.x));
+        PointIndex(pts)
+    }
+
+    /// The points that may lie within `tol` of `seg` (all of them when it has no box).
+    fn near(&self, seg: &Seg2, tol: f64) -> std::borrow::Cow<'_, [Vec2]> {
+        let Some((lo, hi)) = seg_box(seg, tol) else { return std::borrow::Cow::Borrowed(&self.0) };
+        let first = self.0.partition_point(|p| p.x < lo.x);
+        let last = self.0.partition_point(|p| p.x <= hi.x);
+        std::borrow::Cow::Owned(self.0.get(first..last.max(first)).unwrap_or(&[]).iter().filter(|p| p.y >= lo.y && p.y <= hi.y).copied().collect())
+    }
 }
 
 fn split_seg(seg: &Seg2, pts: &[Vec2], tol: f64) -> Option<Vec<Seg2>> {
@@ -1545,6 +1589,7 @@ fn sew_connected_sections(
             pts.push(sg.end());
         }
     }
+    let pts = PointIndex::new(pts);
     let at = |u: Vec2, z: f64| plane.to_world(u) + d * z;
     let edge = |sg: &Seg2, z: f64| -> EdgeSpec {
         match sg {
@@ -1565,7 +1610,7 @@ fn sew_connected_sections(
                 // The loop's walls in order: the run each joins, its tag and where it ends.
                 let mut around: Vec<(usize, Tag, Vec2)> = Vec::new();
                 for (si, sg0) in lp.segs.iter().enumerate() {
-                    let pieces = split_seg(sg0, &pts, tol)?;
+                    let pieces = split_seg(sg0, &pts.near(sg0, tol), tol)?;
                     let (n, tag) = (pieces.len(), slab.tag(r, l, si));
                     for (k, sg) in pieces.into_iter().enumerate() {
                         remaining = remaining.checked_sub(1)?;
@@ -1662,7 +1707,7 @@ fn sew_connected_sections(
             for lp in std::iter::once(&r.outer).chain(&r.holes) {
                 let mut segs: Vec<Seg2> = Vec::new();
                 for sg in &lp.segs {
-                    segs.extend(split_seg(sg, &pts, tol)?);
+                    segs.extend(split_seg(sg, &pts.near(sg, tol), tol)?);
                 }
                 let segs: Vec<Seg2> = if *up { segs } else { segs.iter().rev().map(Seg2::reversed).collect() };
                 loops.push(segs.iter().map(|sg| edge(sg, *z)).collect::<Vec<_>>());
@@ -1754,6 +1799,12 @@ fn simple_prism_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2
     } else {
         (pa.lo, pa.hi)
     };
+    if !stacked {
+        let v = [area(&pa.section.regions) * (pa.hi - pa.lo), area(&pb.section.regions) * (pb.hi - pb.lo), area(regions) * (hi - lo)];
+        if v.iter().all(|x| x.is_finite()) {
+            VOLUMES.with(|c| c.set(Some(v)));
+        }
+    }
     let base = plane.offset(lo);
     let bodies = match crate::extrude(&base, regions, 0.0, hi - lo) {
         Ok(b) => b,
@@ -1795,8 +1846,9 @@ fn stack_tagged(b: &Body, d: Vec3, plane: &Plane, tol: f64, index: &LazyIndex) -
     }
     let mut events = Vec::new();
     let mut walls = std::collections::HashMap::new();
-    let mut wall_work = 262_144;
-    let mut curve_work = 2_000_000;
+    let faces = b.face_count();
+    let mut wall_work = 262_144usize.max(faces.saturating_mul(64));
+    let mut curve_work = 2_000_000usize.max(faces.saturating_mul(1_000));
     let mut segments = usize::MAX;
     for (fi, f) in b.solid.face_iter().enumerate() {
         let surf = f.oriented_surface();
@@ -1950,6 +2002,18 @@ fn stack_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2]) -> O
 }
 
 thread_local! {
+    /// The volumes of the operands and the result of the last simple prism boolean on this
+    /// thread (section area times length: exact, no mesh), for [`take_volumes`].
+    static VOLUMES: std::cell::Cell<Option<[f64; 3]>> = const { std::cell::Cell::new(None) };
+}
+
+/// The exact volumes `[a, b, result]` of the prism boolean that just ran on this thread, when it
+/// was a simple one (one section each, extruded alike); cleared by the call.
+pub(crate) fn take_volumes() -> Option<[f64; 3]> {
+    VOLUMES.with(|c| c.take())
+}
+
+thread_local! {
     /// Set while [`prism_boolean_free_form`] runs: spline outlines are read as arcs within
     /// [`PLANAR_FIT_TOL`] instead of refusing the prism.
     static FREE_FORM: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -1976,7 +2040,15 @@ pub(crate) fn prism_boolean_free_form(a: &Body, b: &Body, op: BoolOp) -> Option<
 pub(crate) fn prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
     // Each operand's index is built once, and only if it is read as a prism.
     let index = [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)];
-    crate::guard("prism boolean", || Ok(simple_prism_indexed(a, b, op, index).or_else(|| stack_indexed(a, b, op, index)))).ok().flatten()
+    crate::guard("prism boolean", || {
+        Ok(simple_prism_indexed(a, b, op, index).or_else(|| {
+            // Volumes only of the simple route's own result.
+            let _ = take_volumes();
+            stack_indexed(a, b, op, index)
+        }))
+    })
+    .ok()
+    .flatten()
 }
 
 #[cfg(test)]

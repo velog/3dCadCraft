@@ -194,6 +194,24 @@ pub(crate) fn frame_ok(plane: &Plane) -> bool {
         && plane.x.dot(plane.y).abs() <= 1e-8
 }
 
+/// Whether a swept prism faces outward, read off its first planar cap square to `n`: the cap's
+/// outward normal points away from the middle level (`base` is the start cap's height along
+/// `n`, `half` half the length). `None` when no cap is found.
+fn cap_outward(solid: &Solid, n: Vec3, base: f64, half: f64) -> Option<bool> {
+    let mid = base + half;
+    solid.face_iter().find_map(|f| {
+        let mt::Surface::Plane(p) = f.oriented_surface() else { return None };
+        let m = p.normal();
+        let m = Vec3::new(m.x, m.y, m.z).normalized()?;
+        let along = m.dot(n);
+        if along.abs() < 1.0 - 1e-9 {
+            return None;
+        }
+        let h = from_p3(p.origin()).dot(n) - mid;
+        (h.abs() > half * 0.5).then_some(along * h > 0.0)
+    })
+}
+
 /// Extrude each region from `start` to `end` along the plane normal (offsets in mm, `end > start`).
 pub fn extrude(plane: &Plane, regions: &[Region2], start: f64, end: f64) -> Result<Vec<Body>> {
     if !frame_ok(plane) {
@@ -216,7 +234,14 @@ pub fn extrude(plane: &Plane, regions: &[Region2], start: f64, end: f64) -> Resu
         let wires = wires_of(&profile);
         let f = guard("extrude profile", || builder::try_attach_plane(&wires).map_err(|e| KernelError::Invalid(format!("profile: {e}"))))?;
         let solid: Solid = guard("extrude", || Ok(builder::tsweep(&f, v3(n * (hi - lo)))))?;
-        let body = Body::new(solid)?;
+        // Which way the sweep turned the solid is read off a cap: the outward side of the cap
+        // at `lo` faces against the direction, of the one at `hi` along it. Meshing the whole
+        // solid for its volume's sign took seconds for a profile with 10000 holes.
+        let large = solid.face_iter().count() > crate::body::ORIENT_MESH_FACES;
+        let body = match large.then(|| cap_outward(&solid, n, base.origin.dot(n), (hi - lo) * 0.5)).flatten() {
+            Some(outward) => Body::new_placed(solid, !outward, None)?,
+            None => Body::new(solid)?,
+        };
         // tsweep retains each actual input boundary edge on its generated side: one pass over
         // the faces matches topology identity (never face order, surface samples or
         // centroids) for both the face sources and the history. The profile face is the start

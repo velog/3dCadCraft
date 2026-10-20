@@ -120,6 +120,9 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
   Apache-2.0, on truck). It is reached **only** through `kernel::exact`; no truck/solidcraft
   type leaves that module. Every call goes through a guard (panic → error).
 - Our persistent names are built from its exact history (`FaceOrigin`), never from indices.
+- `solidcraft-kernel` is patched (`[patch]` in `Cargo.toml`) to `vendor/solidcraft-kernel`: the
+  pinned commit plus our speed fixes, each listed in `vendor/README.md` and proposed upstream in
+  `docs/SOLIDCRAFT_ISSUES.md`. Change it only there, with a README row; drop it when upstream has them.
 - Anything adapted from another project gets a row in `ATTRIBUTION.md`. Never read or copy
   GPL/LGPL code (OpenCASCADE, FreeCAD, SolveSpace…); never take data from commercial CAD.
 - No `unwrap`/`expect`/`panic`/`unreachable!`/`todo!` in non-test code — enforced by `#![deny(...)]` in `src/lib.rs` (`clippy.toml` allows them in tests); only `gui/demos.rs` has a reasoned allow. Tests use `panic!` instead of `unreachable!` (clippy has no in-tests exemption for it).
@@ -632,6 +635,18 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   hits. Copy k's faces are `<pattern id>#k:<name>` (`exact::transformed`; no profile frames,
   so its edges get generic `E[..]` names). Solid-mode patterns skip the source lookup.
   Kernel failures of a pattern are health (no faceted rebuild).
+- **Patterns of thousands** (`docs/PERF.md`, 5041 holes 7 s, 10000 in 14 s release): never mesh
+  the compound tool or the result more than the display needs. `combine` skips `meets` for
+  `lenient` (pattern) cuts and decides "did it cut" by the face count first (a volume only when
+  equal, at a tolerance from the *smaller* of body and tool: `size·1e-3` of a 355 mm plate
+  missed an r1 hole). `apart` tests copies as oriented boxes (turned AABBs of a circular
+  pattern touch) from `exact::bounds`, whose tolerance follows the box's smallest side (a long
+  Through All tool padded by 2 % of its length hid 1 mm gaps → one Boolean per copy, 22 min).
+  `to_brep` takes all face surfaces in one `sk::face_surfaces` walk and chains loops through a
+  start-vertex map (both were quadratic). Kernel side: `vendor/solidcraft-kernel` (see
+  `vendor/README.md`) — budgets that scale with the operands, no orientation meshes of joined
+  or healed pieces, exact prism volumes; a lost prism history falls to
+  `provenance::trace`, which is quadratic (2500 holes: 9 s) — keep the lineage budgets.
 - **Appearances** (`part::appearance`, GUI in `gui/material.rs`): the scene is built by
   `material::add_part_meshes` from `SolidMesh::face_triangles` (per-face triangle ranges);
   see-through faces go to the renderer's transparent pass (`add_mesh_transparent`: blended,

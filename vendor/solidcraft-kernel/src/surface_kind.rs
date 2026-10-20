@@ -42,6 +42,20 @@ pub enum FaceSurface {
 pub fn face_surface(b: &Body, face: usize) -> Option<FaceSurface> {
     let f = b.solid.face_iter().nth(face)?;
     let tol = (b.size() * 1e-7).max(1e-9) * 100.0;
+    kind_of(f, tol)
+}
+
+/// [`face_surface`] of every face, in face order, in one walk over the faces (asking face by
+/// face walks to each one: quadratic in the face count). The faces are recognised in parallel.
+pub fn face_surfaces(b: &Body) -> Vec<Option<FaceSurface>> {
+    let tol = (b.size() * 1e-7).max(1e-9) * 100.0;
+    let faces: Vec<_> = b.solid.face_iter().collect();
+    // Recognising a curved face samples it (milliseconds): worth the pool from two faces on.
+    let parallel = faces.len() > 1;
+    crate::par::map("face surfaces", &faces, parallel, |f| Ok(kind_of(f, tol))).into_iter().map(|r| r.ok().flatten()).collect()
+}
+
+fn kind_of(f: &truck_modeling::Face, tol: f64) -> Option<FaceSurface> {
     Some(match surf_of(f, tol)? {
         Surf::Plane { n, d } => FaceSurface::Plane { normal: n, point: n * d },
         Surf::Cylinder { o, a, r, .. } => FaceSurface::Cylinder { origin: o, axis: a, radius: r },

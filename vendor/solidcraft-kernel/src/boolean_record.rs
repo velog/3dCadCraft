@@ -169,7 +169,12 @@ pub(crate) fn heal_prism_result(body: &Body, size: f64, keep: &[Vec<Vec3>], coun
     };
     let carried = faces.zip(edges).zip(map).and_then(|((f, e), m)| m.carry(&f, &e));
     let (faces, edges) = carried.unzip();
-    let mut out = record::build(healed, counts, faces, edges.as_ref())?;
+    // Merging coplanar faces keeps every face's side: no orientation mesh of a large result.
+    let mut out = if healed.face_iter().count() > crate::body::ORIENT_MESH_FACES {
+        record::build_placed(healed, counts, faces, edges.as_ref(), false, None)?
+    } else {
+        record::build(healed, counts, faces, edges.as_ref())?
+    };
     out = out.with_face_sources(sources.map(std::sync::Arc::new)).inherit_regularization_protection(body);
     out.splits = body.splits.clone();
     Ok(out)

@@ -448,6 +448,12 @@ fn polyline_mid(pts: &[Vec3]) -> (Vec3, f64) {
     (pts.first().copied().unwrap_or_default(), len)
 }
 
+/// Faces above which a solid whose orientation is known otherwise (pieces already outward, a
+/// heal that keeps every face's side, a sweep read off its cap) skips the orientation mesh of
+/// [`Body::new`] (3DCadCraft: thousands of pattern copies spent seconds there). Smaller ones
+/// keep it, and with it the missing-face count [`Body::unmeshed_faces`] reuses.
+pub(crate) const ORIENT_MESH_FACES: usize = 256;
+
 /// Deflection the orientation mesh uses: coarse enough for a large solid, fine enough that a
 /// small one still tessellates. `unmeshed_faces` counts at the same value, so the count the
 /// orientation mesh produced is reused instead of meshing the body again.

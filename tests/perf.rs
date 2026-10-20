@@ -610,6 +610,36 @@ fn speed_budgets() {
             p.add_pattern(pattern_grid(10, 10, 20.0)).unwrap();
         }),
     ));
+    // Large patterns (docs/PERF.md, "Масиви с хиляди копия"): the whole part
+    // is rebuilt (empty cache; the plate and its hole take milliseconds),
+    // plus the preview's edge polylines (what the dialog waits for; OK
+    // reuses the preview's part).
+    for (n, budget) in [(32u32, 3000.0), (71, 15000.0)] {
+        let side = 5.0 * n as Real;
+        let base = box_with_circle([side, side, 3.0], 2.5, 2.5, 1.0, true, 1.0);
+        let runs = if n > 50 { 1 } else { 3 };
+        rows.push((
+            if n == 32 {
+                "rectangular pattern 32×32 = 1024 holes + preview edges"
+            } else {
+                "rectangular pattern 71×71 = 5041 holes + preview edges"
+            },
+            budget,
+            median_ms(runs, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                let id = p.add_pattern(pattern_grid(n, n, 5.0)).unwrap();
+                let o = cadcraft3d::kernel::TessellationOptions::default();
+                let lines = p
+                    .body
+                    .feature_edges(&id)
+                    .into_iter()
+                    .filter_map(|e| p.body.sample_edge(e, &o).ok())
+                    .count();
+                assert!(p.exact && lines >= 6 * (n * n) as usize - 6);
+            }),
+        ));
+    }
     let mut patterned = holed.clone();
     patterned.add_pattern(pattern_grid(6, 6, 10.0)).unwrap();
     rows.push((

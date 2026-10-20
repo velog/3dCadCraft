@@ -664,19 +664,27 @@ pub fn join_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> {
     }))
 }
 
-/// A box around the solid from a coarse mesh, grown by twice its chord
-/// tolerance so the true surface is inside (as `union_apart` measures).
+/// A box around the solid from a mesh, grown by twice its chord tolerance
+/// so the true surface is inside (as `union_apart` measures). The
+/// tolerance follows the box's smallest side, not the solid's size: a long
+/// thin tool (a Through All hole r0.4, 800 mm long) meshed at its size's
+/// 2 % grew by 32 mm, and copies 1 mm apart looked as if they met.
 pub fn bounds(s: &ExactSolid) -> Option<(Point3, Point3)> {
-    let tol = (s.size() * 0.02).max(1e-3);
-    let bb = guarded("bounds", || s.body.tessellate(tol).map(|m| m.bounds())).ok()?;
-    if bb.is_empty() {
-        return None;
-    }
-    let pad = 2.0 * tol;
-    Some((
-        Point3::new(bb.min.x - pad, bb.min.y - pad, bb.min.z - pad),
-        Point3::new(bb.max.x + pad, bb.max.y + pad, bb.max.z + pad),
-    ))
+    let mesh_box = |tol: Real| {
+        let bb = guarded("bounds", || s.body.tessellate(tol).map(|m| m.bounds())).ok()?;
+        (!bb.is_empty()).then_some((p3(bb.min), p3(bb.max)))
+    };
+    let coarse = (s.size() * 0.02).max(1e-3);
+    let (lo, hi) = mesh_box(coarse)?;
+    let side = (hi - lo).min();
+    let tol = (side * 1e-2).clamp(1e-4, coarse);
+    let (lo, hi) = if tol < coarse {
+        mesh_box(tol)?
+    } else {
+        (lo, hi)
+    };
+    let pad = Vector3::repeat(2.0 * tol);
+    Some((lo - pad, hi + pad))
 }
 
 /// Whether `p` lies inside the solid's material.
@@ -2006,8 +2014,9 @@ pub fn to_brep_with(solids: &[ExactSolid], lenient: bool) -> Result<BRep, String
     Ok(out)
 }
 
-/// The exact kernel's surface of face `i` in our form.
-fn surface_of(body: &sk::Body, i: usize) -> Option<Surface> {
+/// The exact kernel's surface of face `i` in our form; `kind` is the
+/// face's analytic surface (from [`sk::face_surfaces`], all faces at once).
+fn surface_of(body: &sk::Body, i: usize, kind: Option<sk::FaceSurface>) -> Option<Surface> {
     use sk::FaceSurface as F;
     if let Some(p) = body.face_plane(i) {
         let n = w3(p.x.cross(p.y));
@@ -2023,7 +2032,7 @@ fn surface_of(body: &sk::Body, i: usize) -> Option<Surface> {
         };
         t - a * t.dot(a)
     };
-    Some(match sk::face_surface(body, i)? {
+    Some(match kind? {
         F::Plane { normal, point } => {
             let n = w3(normal);
             Surface::Plane(Plane::new(p3(point), n, any_x(&n)).ok()?)
@@ -2329,39 +2338,13 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
         }
     }
 
-    // The faces' surfaces in parallel: recognising a fillet's torus samples
-    // the face (72 hole rounds: 470 ms in one thread).
-    let surfaces: Vec<Option<Surface>> = {
-        let threads = std::thread::available_parallelism()
-            .map_or(1, |n| n.get())
-            .min(nf.max(1));
-        let chunk = nf.div_ceil(threads.max(1)).max(1);
-        let mut out_s: Vec<Option<Surface>> = vec![None; nf];
-        std::thread::scope(|sc| {
-            let handles: Vec<_> = (0..nf)
-                .step_by(chunk)
-                .map(|start| {
-                    let end = (start + chunk).min(nf);
-                    sc.spawn(move || {
-                        (
-                            start,
-                            (start..end)
-                                .map(|f| surface_of(body, f))
-                                .collect::<Vec<_>>(),
-                        )
-                    })
-                })
-                .collect();
-            for h in handles {
-                if let Ok((start, v)) = h.join() {
-                    for (k, sfc) in v.into_iter().enumerate() {
-                        out_s[start + k] = sfc;
-                    }
-                }
-            }
-        });
-        out_s
-    };
+    // The faces' surfaces: recognised in one walk over the kernel's faces
+    // (in parallel there: a fillet's torus samples the face; asking face by
+    // face walked to each one, 5 s for a plate with 5000 holes).
+    let kinds = guarded("face surfaces", || Ok(sk::face_surfaces(body)))?;
+    let surfaces: Vec<Option<Surface>> = (0..nf)
+        .map(|f| surface_of(body, f, kinds.get(f).copied().flatten()))
+        .collect();
     // Faces: loops chained from their coedges.
     let mut face_ids = Vec::with_capacity(nf);
     for f in 0..nf {
@@ -2449,7 +2432,8 @@ fn shells_of(out: &BRep, faces: &[FaceId]) -> Vec<(Shell, Vec<Shell>)> {
     }
     let mut groups: Vec<Vec<FaceId>> = groups.into_values().collect();
     // Deterministic order: by the smallest face position in `faces`.
-    let pos = |f: &FaceId| faces.iter().position(|g| g == f).unwrap_or(usize::MAX);
+    let index: HashMap<FaceId, usize> = faces.iter().enumerate().map(|(i, f)| (*f, i)).collect();
+    let pos = |f: &FaceId| index.get(f).copied().unwrap_or(usize::MAX);
     groups.sort_by_key(|g| g.iter().map(pos).min());
     if groups.len() == 1 {
         return vec![(
@@ -2551,8 +2535,11 @@ fn curve_range(c: &Curve, pts: &[Point3]) -> Result<super::Interval, String> {
 }
 
 /// Orders coedges into closed loops (best effort: leftovers form loops of
-/// their own).
-fn chain_loops(out: &BRep, mut rest: Vec<Coedge>) -> Vec<Loop> {
+/// their own). Each loop starts at the first coedge not used yet and goes on
+/// with the first unused one starting where it ends; the coedges are found
+/// by their start vertex (a plate with 5000 holes has one face of 10000
+/// coedges: a linear search per step took seconds).
+fn chain_loops(out: &BRep, all: Vec<Coedge>) -> Vec<Loop> {
     let ends = |ce: &Coedge| -> Option<(VertexId, VertexId)> {
         let e = out.edge(ce.edge)?;
         Some(match ce.sense {
@@ -2560,23 +2547,42 @@ fn chain_loops(out: &BRep, mut rest: Vec<Coedge>) -> Vec<Loop> {
             Sense::Reversed => (e.end, e.start),
         })
     };
+    let ends: Vec<Option<(VertexId, VertexId)>> = all.iter().map(ends).collect();
+    // Coedges by start vertex, in their order; `next[v]` skips used ones.
+    let mut starting: HashMap<VertexId, Vec<usize>> = HashMap::new();
+    for (i, e) in ends.iter().enumerate() {
+        if let Some((s, _)) = e {
+            starting.entry(*s).or_default().push(i);
+        }
+    }
+    let mut next: HashMap<VertexId, usize> = HashMap::new();
+    let mut used = vec![false; all.len()];
+    let mut take = |v: VertexId, used: &mut [bool]| -> Option<usize> {
+        let list = starting.get(&v)?;
+        let k = next.entry(v).or_insert(0);
+        while *k < list.len() && used[list[*k]] {
+            *k += 1;
+        }
+        let i = *list.get(*k)?;
+        used[i] = true;
+        Some(i)
+    };
     let mut loops = Vec::new();
-    while !rest.is_empty() {
-        let first = rest.remove(0);
-        let Some((start, mut at)) = ends(&first) else {
+    for first in 0..all.len() {
+        if used[first] {
+            continue;
+        }
+        used[first] = true;
+        let Some((start, mut at)) = ends[first] else {
             continue;
         };
-        let mut lp = vec![first];
+        let mut lp = vec![all[first]];
         while at != start {
-            let Some(k) = rest
-                .iter()
-                .position(|ce| ends(ce).is_some_and(|(s, _)| s == at))
-            else {
+            let Some(k) = take(at, &mut used) else {
                 break;
             };
-            let ce = rest.remove(k);
-            at = ends(&ce).map_or(at, |(_, e)| e);
-            lp.push(ce);
+            at = ends[k].map_or(at, |(_, e)| e);
+            lp.push(all[k]);
         }
         loops.push(Loop { coedges: lp });
     }

@@ -30,15 +30,26 @@ struct Outline {
     regions: Vec<Region2>,
     walls: BTreeSet<(usize, usize)>,
     middles: Vec<Vec2>,
+    /// The box of its segments (`None`: one has none), to skip the point tests of outlines
+    /// far apart (a result with 1000 boss tops compared every top with every operand cap).
+    bbox: Option<(Vec2, Vec2)>,
 }
 
 impl Outline {
     fn of(s: &Section) -> Outline {
         let (segs, tags) = s.segments();
+        let bbox = segs.iter().try_fold(None::<(Vec2, Vec2)>, |acc, g| {
+            let (lo, hi) = super::seg_box(g, 0.0)?;
+            Some(Some(match acc {
+                None => (lo, hi),
+                Some((a, b)) => (Vec2::new(a.x.min(lo.x), a.y.min(lo.y)), Vec2::new(b.x.max(hi.x), b.y.max(hi.y))),
+            }))
+        });
         Outline {
             regions: s.regions.clone(),
             walls: tags.iter().filter_map(|t| Some((t.operand, t.wall?))).collect(),
             middles: segs.iter().map(|g| g.point_at(0.5)).collect(),
+            bbox: bbox.flatten(),
         }
     }
 }
@@ -55,6 +66,9 @@ pub(super) struct Context<'a> {
     pub heights: Option<[(f64, f64); 2]>,
     /// Both operands' caps, read once (see [`Context::caps`]).
     caps: std::cell::OnceCell<Option<Vec<Cap>>>,
+    /// Per (operand, wall face): how many of the operand's edges lie between the wall and its
+    /// caps (see [`Context::whole`]), counted once for all walls.
+    cap_edges: std::cell::OnceCell<HashMap<(usize, usize), usize>>,
 }
 
 /// How one piece of the result was built.
@@ -124,7 +138,7 @@ enum Kind {
 
 impl<'a> Context<'a> {
     pub(super) fn new(op: BoolOp, operands: [&'a Body; 2], index: [&'a Index; 2], plane: Plane, tol: f64, heights: Option<[(f64, f64); 2]>) -> Self {
-        Context { op, operands, index, plane, tol, heights, caps: std::cell::OnceCell::new() }
+        Context { op, operands, index, plane, tol, heights, caps: std::cell::OnceCell::new(), cap_edges: std::cell::OnceCell::new() }
     }
 
     /// `body`, made of `pieces` (their shells in order), with its history over the operands
@@ -164,7 +178,10 @@ impl<'a> Context<'a> {
     fn caps(&self) -> Option<Vec<Cap>> {
         let d = self.plane.normal();
         let mut caps = Vec::new();
-        let (mut work, mut segments) = (2_000_000usize, super::MAX_PLANAR_SEGMENTS * 2);
+        // The budgets grow with the operands: a tool of many pieces (2500 pattern copies) reads
+        // two caps per piece, which the fixed budget ran out on (and the history was lost).
+        let faces: usize = self.operands.iter().map(|b| b.face_count()).sum();
+        let (mut work, mut segments) = (2_000_000usize.max(faces.saturating_mul(1_000)), (super::MAX_PLANAR_SEGMENTS * 2).max(faces.saturating_mul(4)));
         for (operand, (body, index)) in self.operands.iter().zip(self.index).enumerate() {
             for (face, f) in body.solid.face_iter().enumerate() {
                 let mt::Surface::Plane(p) = f.oriented_surface() else { continue };
@@ -203,7 +220,16 @@ impl<'a> Context<'a> {
     /// one's outline, clear of the other's, lies inside it.
     fn overlap(&self, x: &Outline, y: &Outline) -> bool {
         let within = |x: &Outline, y: &Outline| x.middles.iter().any(|m| dist_to(&y.regions, *m) > self.tol && inside(&y.regions, *m));
-        !x.walls.is_disjoint(&y.walls) || within(x, y) || within(y, x)
+        // A point inside the other outline lies in its box: outlines whose boxes are apart share
+        // no such point.
+        let near = match (x.bbox, y.bbox) {
+            (Some((a0, a1)), Some((b0, b1))) => {
+                let g = self.tol;
+                a0.x <= b1.x + g && b0.x <= a1.x + g && a0.y <= b1.y + g && b0.y <= a1.y + g
+            }
+            _ => true,
+        };
+        !x.walls.is_disjoint(&y.walls) || (near && (within(x, y) || within(y, x)))
     }
 
     /// The operand wall a segment was read beside.
@@ -222,14 +248,30 @@ impl<'a> Context<'a> {
     fn whole(&self, caps: &[Cap], t: Tag, lo: f64, hi: f64) -> bool {
         let (Some(heights), Some(wall), Some(_), Some(_)) = (self.heights, t.wall, t.start, t.end) else { return false };
         let Some((l, h)) = heights.get(t.operand) else { return false };
-        let Some(index) = self.index.get(t.operand) else { return false };
-        let cap_edges: usize = caps
-            .iter()
-            .filter_map(|c| match c.origin {
-                Face { operand, face } if operand == t.operand => index.between.get(&(face.min(wall), face.max(wall))).map(Vec::len),
-                _ => None,
-            })
-            .sum();
+        // Counted for every wall at once (per wall it was a walk over all the caps: quadratic
+        // for a tool of thousands of pattern copies).
+        let counts = self.cap_edges.get_or_init(|| {
+            let is_cap: std::collections::HashSet<(usize, usize)> = caps
+                .iter()
+                .filter_map(|c| match c.origin {
+                    Face { operand, face } => Some((operand, face)),
+                    _ => None,
+                })
+                .collect();
+            let mut counts: HashMap<(usize, usize), usize> = HashMap::new();
+            for (operand, index) in self.index.iter().enumerate() {
+                for (&(f, g), es) in &index.between {
+                    if is_cap.contains(&(operand, f)) {
+                        *counts.entry((operand, g)).or_insert(0) += es.len();
+                    }
+                    if f != g && is_cap.contains(&(operand, g)) {
+                        *counts.entry((operand, f)).or_insert(0) += es.len();
+                    }
+                }
+            }
+            counts
+        });
+        let cap_edges = counts.get(&(t.operand, wall)).copied().unwrap_or(0);
         (lo - l).abs() < self.tol && (hi - h).abs() < self.tol && cap_edges == 2
     }
 

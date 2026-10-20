@@ -6,6 +6,7 @@ this project's `MIT OR Apache-2.0`.
 | What | Source | Licence | How it is used |
 |---|---|---|---|
 | `solidcraft-kernel`, `solidcraft-geom` | SolidCraft, https://github.com/bherbruck/solidcraft (commit `4687e3b0734e41d761be0d0a2611e5402f088348`) | MIT OR Apache-2.0 | dependency: exact B-rep operations (extrude, revolve, Booleans, fillet, chamfer, …), behind `kernel::exact` |
+| `vendor/solidcraft-kernel` | SolidCraft `crates/kernel` (same commit), copied whole with our speed fixes for large patterns (listed in `vendor/README.md`) | MIT OR Apache-2.0 (licence files in the folder) | replaces the git dependency through `[patch]` in `Cargo.toml` |
 | `truck-*` crates | truck, https://github.com/ricosjp/truck (RICOS Co. Ltd.), with SolidCraft's fixes (`vendor/` in SolidCraft) | Apache-2.0 | dependency of `solidcraft-kernel` (via `[patch.crates-io]`) |
 | Shell Outside / Both as an outward offset less a cavity (open faces pushed out by 2t + 1) | SolidCraft `crates/doc/src/eval.rs` (`FeatureKind::Shell`, same commit) | MIT OR Apache-2.0 | rewritten in `kernel::exact::shell` |
 | Pattern placements (translations, rotation about an axis, reflection `p' = p − 2((p − o)·n)n`, limit of 1000 instances) | SolidCraft `crates/doc/src/eval.rs` (`pattern_matrices`, `rotation`, `mirror_matrix`, same commit) | MIT OR Apache-2.0 | rewritten with nalgebra in `part::pattern` |

@@ -476,10 +476,21 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     // join the sampled shortcut does. A pair the route cannot answer still takes the path below,
     // unchanged.
     let early_prism = matches!(op, BoolOp::Cut | BoolOp::Intersect);
+    let _ = crate::prism::take_volumes();
     let prism = early_prism.then(|| prism_result(a, b, op, size, &counts)).flatten();
+    // A simple prism pair is measured exactly in 2D (section area times length): no mesh of a
+    // tool of many pieces or of the result (3DCadCraft: 2500 pattern copies, 6.5 s).
+    let exact = crate::prism::take_volumes();
     if let Some(Ok(Some(body))) = &prism {
-        let (va0, vb0) = (volume(a), volume(b));
-        let (v0, slack0) = (volume(body), 2e-3 * (va0 + vb0) + 1e-9);
+        let (va0, vb0) = match exact {
+            Some([va, vb, _]) => (va, vb),
+            None => (volume(a), volume(b)),
+        };
+        let v0 = match exact {
+            Some([_, _, v]) => v,
+            None => volume(body),
+        };
+        let slack0 = 2e-3 * (va0 + vb0) + 1e-9;
         // A tool that misses its target, or covers it whole, leaves it as it is, and the
         // sampled shortcut below answers that by reusing the operand itself: the very same body.
         // The 2D route rebuilds it instead - the same shape on new faces - which would turn an
@@ -1008,7 +1019,11 @@ pub(crate) fn join_pieces(pieces: Vec<Body>) -> Result<Option<Body>> {
             let shells: Vec<mt::Shell> = pieces.iter().flat_map(|p| p.solid.boundaries().clone()).collect();
             let solid = guard("pieces", || Solid::try_new(shells).map_err(|e| KernelError::Failed(e.to_string())))?;
             let protected = pieces.iter().any(|piece| piece.regularization_protected);
-            Body::new(solid).map(|mut body| {
+            // Each piece is a body already turned outward: no orientation mesh of a large whole
+            // (3DCadCraft: 2500 pattern copies took 6.5 s here).
+            let large = solid.face_iter().count() > crate::body::ORIENT_MESH_FACES;
+            let body = if large { Body::new_placed(solid, false, None) } else { Body::new(solid) };
+            body.map(|mut body| {
                 body.regularization_protected = protected;
                 Some(body)
             })
