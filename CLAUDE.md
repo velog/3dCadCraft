@@ -538,6 +538,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   neutral planes are drafted group by group, re-found by name on each result (names are
   kept). Automatic Face Chain can reach faces not parallel to the pull (a bottom round →
   the bottom): the kernel refuses those.
+- **`body_key()` runs many times a frame** (every `picker()`, every hidden-line test): it is
+  cached per frame (`body_key_frame`, on only inside `ui`) and never walks face meshes —
+  `BRep::bounding_box` reads every mesh position (2.4 ms on a 2500-hole plate; a selected
+  face made frames take 80 ms). Keep per-frame code off `bounding_box` on big bodies.
 - **Previews** (`preview_async`, `preview_ready`): check `preview_ready(&key)` *before*
   `self.part().clone()` (copying the part every frame made pattern previews crawl); one job at
   a time (a value changed quickly waits for the running job, then starts the newest key). A

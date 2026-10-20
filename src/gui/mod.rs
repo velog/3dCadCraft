@@ -595,6 +595,10 @@ struct CadCraftApp {
     edge_cache: std::cell::RefCell<Option<(String, EdgePolylines)>>,
     /// Picking data of the body (see [`PickCache`]).
     pick_cache: std::cell::RefCell<Option<(String, std::rc::Rc<PickCache>)>>,
+    /// `body_key` of this frame: (caching on, key). `ui` turns it on and
+    /// clears the key when a frame starts (a body rebuilt during the frame
+    /// is seen from the next one); off outside frames (tests).
+    body_key_frame: std::cell::RefCell<(bool, Option<String>)>,
     /// The open Fillet / Chamfer command.
     blend_draft: Option<blend::BlendDraft>,
     /// The open Shell command.
@@ -745,6 +749,7 @@ impl CadCraftApp {
             rest: None,
             edge_cache: std::cell::RefCell::new(None),
             pick_cache: std::cell::RefCell::new(None),
+            body_key_frame: std::cell::RefCell::new((false, None)),
             ref_hover: None,
             confirm_delete: None,
             delete_opts: Default::default(),
@@ -2063,13 +2068,40 @@ impl CadCraftApp {
     /// The visible edges of the body as polylines (cached per body).
     /// A cheap signature of the body: changes when it is rebuilt.
     pub(super) fn body_key(&self) -> String {
+        if let (true, Some(k)) = &*self.body_key_frame.borrow() {
+            return k.clone();
+        }
+        let k = self.compute_body_key();
+        let mut c = self.body_key_frame.borrow_mut();
+        if c.0 {
+            c.1 = Some(k.clone());
+        }
+        k
+    }
+
+    fn compute_body_key(&self) -> String {
+        // Called many times a frame (every `picker()`, every hidden-line
+        // test): no walk over the face meshes. `bounding_box` reads every
+        // mesh position — on a 2500-hole pattern a selected face made frames
+        // take 80 ms. The vertices' box plus the mesh sizes catch a rebuild.
         let body = &self.part().body;
+        let bbox = body
+            .vertices()
+            .fold(None, |b: Option<(Point3, Point3)>, (_, v)| {
+                Some(b.map_or((v.point, v.point), |(lo, hi)| {
+                    (lo.inf(&v.point), hi.sup(&v.point))
+                }))
+            });
+        let mesh: usize = body
+            .faces()
+            .filter_map(|(_, f)| f.mesh.as_ref())
+            .map(|m| m.positions.len())
+            .sum();
         format!(
-            "{}|{}|{}|{:?}|{:?}",
+            "{}|{}|{}|{mesh}|{bbox:?}|{:?}",
             body.edges().count(),
             body.faces().count(),
             body.vertices().count(),
-            body.bounding_box(),
             self.part().hidden_bodies
         )
     }
@@ -6418,6 +6450,7 @@ impl eframe::App for CadCraftApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.body_key_frame.replace((true, None));
         // Expression fields everywhere evaluate against the part's parameters.
         valuefield::set_frame_table(&ctx, self.part().parameter_table());
         self.layout_begin(&ctx);
