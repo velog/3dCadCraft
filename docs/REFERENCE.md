@@ -777,7 +777,7 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | Create | **Extrude** (E) | изтегля затворени региони |
 | | **Revolve** (R) | завърта региони около ос |
 | | **Sweep** | протяга профили по път (крива от скица в друга равнина или ръбове); Guide Rail, Parallel, Taper, Twist |
-| | **Loft** | тяло през сечения по ред (профили, стени, точка в края) |
+| | **Loft** | тяло през сечения по ред (профили, стени, точка в края); Rails, Center Line, Area Loft, условия Direction / Tangent, Map Point, Closed Loop |
 | | **Coil** | навива затворен профил около ос: Pitch and Revolution / Revolution and Height / Pitch and Height, Taper, Right/Left, затворени краища; с Cut прави резба |
 | | **Rib** | ребро (Parallel) или преграда (Normal) от отворени криви до тялото: To Next / Finite, дебелина от страна или симетрично, Draft, бобини, мрежи |
 | | Emboss (2.17) | предстои |

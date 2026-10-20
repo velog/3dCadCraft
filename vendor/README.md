@@ -34,6 +34,15 @@ seams. Proposed upstream in `docs/SOLIDCRAFT_ISSUES.md` (Sweep).
 |---|---|---|
 | `curveblend.rs` (vertex sections) | a curved seam at a corner of the chain (the walls of a sweep along a spline meet along B-spline curves) was refused ("a curved seam where the edge chain turns"); now the contact is put on the seam by a fixed-point iteration (plane along the seam's tangent at its point nearest the last contact, square to the side), solved against the faces of one edge at the vertex only (with both, the nearer face flips across the crease and the Newton step never settles) | the cap edge of a sweep along a spline can be filleted (1 mm on R6–R17.7 tubes: volume within 0.1 % of Pappus) |
 
+Additions for Loft with rails, a centre line, Area Loft, conditions, point mapping and Closed Loop
+(`docs/spec/5.2-loft.md`); not proposed upstream yet (they only expose what the smooth loft
+already does without its own matching).
+
+| File | Change | Effect |
+|---|---|---|
+| `build.rs` `loft_matched`, `matched_wires`; `lib.rs` export | a loft through sections whose segments the caller has already paired (same count, same start, all oriented alike): no re-splitting, no turning to a new start, side face `i` numbered `i` | our stations (rails, map points, a twist the automatic matching would undo) keep their pairing |
+| `build.rs` `loft_matched_ring`; `lib.rs` export | a closed loop of matched sections: two smooth halves (`smooth_loft_faces`) sharing their end wires, closed into one shell without caps | Closed Loop gives a valid ring (the old smooth loft + ruled closing span + Union was invalid) |
+
 Kernel tests (`cargo test -p solidcraft-kernel --release` in a SolidCraft checkout with this
 `src/`): 476 pass; `issue_851_tests::arc_top_edge_sizes_never_panic` fails on Windows with the
 original source as well.

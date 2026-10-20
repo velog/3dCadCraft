@@ -74,7 +74,9 @@ pub use hole::{
     ThreadSpec,
 };
 pub use link::{GeometryLink, LinkSource, SketchGeo};
-pub use loft::{ConditionKind, LoftCondition, LoftFeature, LoftGuide, LoftSection};
+pub use loft::{
+    ConditionKind, LoftCondition, LoftFeature, LoftGuide, LoftSection, MapPoint, PlacedSection,
+};
 pub use pattern::{PatternDirection, PatternFeature, PatternKind};
 pub use placement::{OriginPlane, PlacementError, PlaneRef, PointRef, SketchPlacement};
 pub use primitive::{PrimitiveFeature, PrimitiveKind};

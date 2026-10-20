@@ -1051,6 +1051,94 @@ pub fn loft(sections: &[(Plane, Loop2)]) -> Result<Body> {
     })
 }
 
+/// 3DCadCraft change: a loft through sections whose segments already correspond one to one
+/// (same count, segment `i` of every section joined to segment `i` of the next, all oriented
+/// alike). The caller has matched them (rails, map points, a twist the automatic matching
+/// would undo), so they are neither re-split nor turned to a new start. Side face `i` comes
+/// from segment `i` of every section (profile number `i`).
+pub fn loft_matched(sections: &[(Plane, Loop2)]) -> Result<Body> {
+    let (wires, edge_sources, reversed) = matched_wires(sections, false)?;
+    if wires.len() >= 3
+        && let Ok(b) = guard("loft", || {
+            let faces = smooth_loft_faces(&wires, &edge_sources, true)?;
+            let (Some(w0), Some(w1)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("smooth loft: sections".into())) };
+            cap_and_close(faces, std::slice::from_ref(w0), std::slice::from_ref(w1), reversed)
+        })
+    {
+        return Ok(b);
+    }
+    guard("loft", || {
+        let sides = ruled_loft_faces(&wires, &edge_sources)?;
+        let (Some(first), Some(last)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("loft".into())) };
+        cap_and_close(sides, std::slice::from_ref(first), std::slice::from_ref(last), reversed)
+    })
+}
+
+/// 3DCadCraft change: a closed-loop loft (a ring without caps) through four or more matched
+/// sections (as [`loft_matched`]), the last joined back to the first (not repeated). Built as two smooth
+/// halves that share their end wires, so the side faces close into one shell.
+pub fn loft_matched_ring(sections: &[(Plane, Loop2)]) -> Result<Body> {
+    if sections.len() < 4 {
+        return Err(KernelError::Invalid("a closed loft needs four sections or more".into()));
+    }
+    let (wires, edge_sources, _) = matched_wires(sections, true)?;
+    guard("loft", || {
+        let n = wires.len();
+        let h = n / 2;
+        let (Some(w0), Some(s0)) = (wires.first(), edge_sources.first()) else { return Err(KernelError::Failed("ring loft: sections".into())) };
+        let a_w: Vec<mt::Wire> = wires.iter().take(h + 1).cloned().collect();
+        let a_s: Vec<Vec<Vec<usize>>> = edge_sources.iter().take(h + 1).cloned().collect();
+        let mut b_w: Vec<mt::Wire> = wires.iter().skip(h).cloned().collect();
+        let mut b_s: Vec<Vec<Vec<usize>>> = edge_sources.iter().skip(h).cloned().collect();
+        b_w.push(w0.clone());
+        b_s.push(s0.clone());
+        let mut sides = smooth_loft_faces(&a_w, &a_s, true)?;
+        sides.extend(smooth_loft_faces(&b_w, &b_s, true)?);
+        let (faces, prov): (Vec<mt::Face>, Vec<Option<FaceProv>>) = sides.into_iter().unzip();
+        let history: Option<Vec<FaceProv>> = prov.into_iter().collect();
+        let shell: mt::Shell = faces.clone().into();
+        let solid = Solid::try_new(vec![shell]).or_else(|_| {
+            let flipped: mt::Shell = faces.iter().map(|f| f.inverse()).collect::<Vec<_>>().into();
+            Solid::try_new(vec![flipped])
+        });
+        let solid = solid.map_err(|e| KernelError::Failed(format!("ring loft: {e}")))?;
+        record::attach(Body::new(solid)?, &[], history, Default::default())
+    })
+}
+
+/// The wires of matched sections (see [`loft_matched`]), each edge `i` numbered `i`; in the
+/// canonical order unless `keep_order` (a ring).
+fn matched_wires(sections: &[(Plane, Loop2)], keep_order: bool) -> Result<(Vec<mt::Wire>, Vec<Vec<Vec<usize>>>, bool)> {
+    if sections.len() < 2 || sections.len() > 50 {
+        return Err(KernelError::Invalid("a loft needs 2…50 sections".into()));
+    }
+    let n = sections.first().map_or(0, |(_, l)| l.segs.len());
+    if n == 0 || n > MAX_SEGS {
+        return Err(KernelError::Invalid("empty section".into()));
+    }
+    if sections.iter().any(|(_, l)| l.segs.len() != n) {
+        return Err(KernelError::Invalid("matched sections need the same segment count".into()));
+    }
+    let centre = |(p, l): &(Plane, Loop2)| p.to_world(l.centroid());
+    let (Some(first), Some(last)) = (sections.first(), sections.last()) else { return Err(KernelError::Invalid("no sections".into())) };
+    let step = centre(last) - centre(first);
+    let big = [step.x, step.y, step.z].into_iter().max_by(|a, b| a.abs().total_cmp(&b.abs())).unwrap_or(0.0);
+    let reversed = !keep_order && big < 0.0;
+    let mut ordered: Vec<&(Plane, Loop2)> = sections.iter().collect();
+    if reversed {
+        ordered.reverse();
+    }
+    let mut wires = Vec::with_capacity(ordered.len());
+    let mut sources = Vec::with_capacity(ordered.len());
+    for (p, l) in ordered {
+        // Taken as given: the caller orients every loop counter-clockwise about the direction
+        // the loft runs (which may turn right round, as in a ring), so no loop is turned here.
+        wires.push(uniform_wire(p, l)?);
+        sources.push((0..n).map(|i| vec![i]).collect());
+    }
+    Ok((wires, sources, reversed))
+}
+
 /// The wires of a loft's closed sections, matched: oriented alike, resampled to the same
 /// segment count and turned to start alike; with the profile segments under each wire edge, and
 /// whether the sections were turned round into the canonical order.

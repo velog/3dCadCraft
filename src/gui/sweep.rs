@@ -45,13 +45,19 @@ pub(super) struct SweepDraft {
     pub keep_sketch_visible: bool,
 }
 
-/// The open Loft command.
+/// The open Loft command (its panel and selector flow: `gui/loft.rs`).
 #[derive(Clone, Debug)]
 pub(super) struct LoftDraft {
     /// The feature being defined.
     pub def: LoftFeature,
     /// Edit Feature of this feature index.
     pub edit: Option<usize>,
+    /// The active selector's key (`command::flow::loft_selectors`).
+    pub input: &'static str,
+    /// The open tab.
+    pub tab: super::loft::LoftTab,
+    /// The point set being picked (Transition tab).
+    pub map_set: usize,
 }
 
 const PICK: egui::Color32 = egui::Color32::from_rgb(60, 190, 90);
@@ -100,10 +106,7 @@ impl CadCraftApp {
         self.blend_draft = None;
         self.face_sel = None;
         self.edge_sel = None;
-        self.loft_draft = Some(LoftDraft {
-            def: LoftFeature::new(Vec::new()),
-            edit: None,
-        });
+        self.loft_draft = Some(LoftDraft::new());
     }
 
     /// Edit Feature of a sweep: the panel with its inputs, rolled back.
@@ -123,7 +126,7 @@ impl CadCraftApp {
     /// Edit Feature of a loft.
     pub(super) fn edit_loft(&mut self, def: LoftFeature, k: usize) {
         self.roll_back_to(k);
-        self.loft_draft = Some(LoftDraft { def, edit: Some(k) });
+        self.loft_draft = Some(LoftDraft::editing(def, k));
     }
 
     /// Whether Sweep or Loft is open (the view is not idle).
@@ -132,9 +135,9 @@ impl CadCraftApp {
     }
 
     /// The status-bar prompt of the open Sweep / Loft.
-    pub(super) fn sweep_loft_prompt(&self) -> Option<&'static str> {
+    pub(super) fn sweep_loft_prompt(&self) -> Option<String> {
         if let Some(d) = &self.sweep_draft {
-            return Some(match d.input {
+            let text = match d.input {
                 SweepInput::Profiles if d.def.profiles.is_empty() => {
                     "Sweep: click the profile (a closed region of a sketch)"
                 }
@@ -145,15 +148,10 @@ impl CadCraftApp {
                     "Sweep: click the path (a sketch curve on another plane, or model edges)"
                 }
                 SweepInput::Rail => "Sweep: click the guide rail curve, then OK",
-            });
+            };
+            return Some(super::i18n::tr(text).into_owned());
         }
-        self.loft_draft
-            .as_ref()
-            .map(|d| match d.def.sections.len() {
-                0 => "Loft: click the first section (a closed region, a face or a sketch point)",
-                1 => "Loft: click the next section",
-                _ => "Loft: click more sections in order (a second click removes one), then OK",
-            })
+        self.loft_draft.as_ref().and_then(|_| self.command_prompt())
     }
 
     /// Picks and highlights in the graphics window while Sweep or Loft is
@@ -217,6 +215,23 @@ impl CadCraftApp {
             }
         }
         if let Some(d) = &self.loft_draft {
+            for r in d.def.rails.iter().chain(d.def.center_line.iter()) {
+                path(r);
+            }
+            for m in &d.def.map_points {
+                for q in &m.points {
+                    let c = Point3::from(*q);
+                    let e = 0.6;
+                    out.push(vec![
+                        c - crate::kernel::Vector3::x() * e,
+                        c + crate::kernel::Vector3::x() * e,
+                    ]);
+                    out.push(vec![
+                        c - crate::kernel::Vector3::y() * e,
+                        c + crate::kernel::Vector3::y() * e,
+                    ]);
+                }
+            }
             for s in &d.def.sections {
                 if let LoftSection::Profile { sketch, profile } = s
                     && let Some(ps) = part.sketches.iter().find(|p| &p.id == sketch)
@@ -242,13 +257,36 @@ impl CadCraftApp {
     /// What a click at `p` would pick, with its outline.
     fn sweep_loft_hover(&self, p: Pos2, rect: Rect) -> Option<(Pick, Vec<Vec<Point3>>)> {
         use super::overlay;
+        use crate::command::flow::PickKind;
         let part = self.part();
+        let loft_flow = self.loft_draft.as_ref().map(|d| d.flow());
+        let loft_takes = |k: PickKind| loft_flow.as_ref().is_some_and(|f| f.accepts(k));
+        // Loft, Map Point: the nearest point of the next section's outline.
+        if loft_takes(PickKind::SectionPoint)
+            && let Some(d) = &self.loft_draft
+        {
+            let k = d
+                .def
+                .map_points
+                .get(d.map_set)
+                .map_or(0, |m| m.points.len());
+            let (plane, pts) = d.def.section_outline(&part.sketches, &part.body, k)?;
+            let world = self.camera.ray_plane(p, rect, &plane)?;
+            let q = nearest_on_polyline(&pts, &world)?;
+            let e = 0.8;
+            let x = plane.x_axis.into_inner() * e;
+            let y = plane.y_axis().into_inner() * e;
+            return Some((
+                Pick::MapPoint([q.x, q.y, q.z]),
+                vec![vec![q - x, q + x], vec![q - y, q + y], pts],
+            ));
+        }
         let want_region = match &self.sweep_draft {
             Some(d) => d.input == SweepInput::Profiles,
-            None => true,
+            None => loft_takes(PickKind::Region),
         };
         // Loft: a sketch point is a point section.
-        if self.loft_draft.is_some() {
+        if loft_takes(PickKind::SketchPoint) {
             for ps in part.sketches.iter().filter(|s| s.visible) {
                 if let Some(pt) = overlay::pick_any_point(
                     &self.camera,
@@ -292,7 +330,7 @@ impl CadCraftApp {
                 }
             }
             // Loft: a planar face is a face-loop section.
-            if self.loft_draft.is_some()
+            if loft_takes(PickKind::PlanarFace)
                 && let Some((o, dir)) = self.camera.ray(p, rect)
                 && let Some(dir) = dir.try_normalize(1e-12)
                 && let Some((f, t)) = self.picker().pick(&o, &dir)
@@ -308,6 +346,9 @@ impl CadCraftApp {
                     Vec::new(),
                 ));
             }
+            return None;
+        }
+        if self.loft_draft.is_some() && !loft_takes(PickKind::SketchCurve) {
             return None;
         }
         // Path / rail: a sketch curve (its connected chain) or an edge.
@@ -344,6 +385,53 @@ impl CadCraftApp {
     /// Applies a pick to the active selector (and moves on with Optimize
     /// for Single Selection).
     fn sweep_loft_pick(&mut self, pick: Pick) {
+        if let Some(d) = self.loft_draft.as_mut()
+            && d.input != "sections"
+        {
+            match (d.input, pick) {
+                ("rails", Pick::Path(r)) => {
+                    if let Some(k) = d.def.rails.iter().position(|x| x == &r) {
+                        d.def.rails.remove(k);
+                    } else {
+                        d.def.rails.push(r);
+                    }
+                }
+                ("rails", Pick::Edge(e)) => {
+                    let r = PathRef::Edges(vec![e]);
+                    if let Some(k) = d.def.rails.iter().position(|x| x == &r) {
+                        d.def.rails.remove(k);
+                    } else {
+                        d.def.rails.push(r);
+                    }
+                }
+                ("center", Pick::Path(r)) => {
+                    d.def.center_line = Some(r);
+                    d.picked();
+                }
+                ("center", Pick::Edge(e)) => {
+                    let mut list = match &d.def.center_line {
+                        Some(PathRef::Edges(v)) => v.clone(),
+                        _ => Vec::new(),
+                    };
+                    if let Some(k) = list.iter().position(|x| x == &e) {
+                        list.remove(k);
+                    } else {
+                        list.push(e);
+                    }
+                    d.def.center_line = Some(PathRef::Edges(list));
+                }
+                ("map", Pick::MapPoint(q)) => {
+                    let n = d.def.sections.len();
+                    if let Some(m) = d.def.map_points.get_mut(d.map_set)
+                        && m.points.len() < n
+                    {
+                        m.points.push(q);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         if self.loft_draft.is_some() {
             let sec = match pick {
                 Pick::Region(i, pr) => match self.part().sketches.get(i) {
@@ -355,7 +443,7 @@ impl CadCraftApp {
                 },
                 Pick::Point(sketch, point) => LoftSection::Point { sketch, point },
                 Pick::Face(f) => LoftSection::FaceLoop(f),
-                Pick::Path(_) | Pick::Edge(_) => return,
+                Pick::Path(_) | Pick::Edge(_) | Pick::MapPoint(_) => return,
             };
             let Some(d) = self.loft_draft.as_mut() else {
                 return;
@@ -748,89 +836,6 @@ impl CadCraftApp {
         }
     }
 
-    /// The Loft panel.
-    pub(super) fn loft_dialog(&mut self, ui: &mut egui::Ui) {
-        use crate::part::LoftGuide;
-        let Some(mut d) = self.loft_draft.clone() else {
-            return;
-        };
-        self.panel_header(ui, Icon::Loft, "Loft");
-        let part = self.part();
-        let bodies = part.bodies_before(d.edit.unwrap_or(part.insert_index()));
-        let names: Vec<String> = d
-            .def
-            .sections
-            .iter()
-            .map(|s| describe_section(s, part))
-            .collect();
-        let mut remove = None;
-        psection(ui, "loft_curves", "Curves", |ui| {
-            plabel(ui, "Sections");
-            ui.vertical(|ui| {
-                if names.is_empty() {
-                    ui.label(RichText::new("click in the view").italics());
-                }
-                for (k, n) in names.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.label(format!("{}. {n}", k + 1));
-                        if ui.small_button("x").on_hover_text("Remove").clicked() {
-                            remove = Some(k);
-                        }
-                    });
-                }
-            });
-            ui.end_row();
-            plabel(ui, "Guide");
-            ui.vertical(|ui| {
-                ui.radio_value(&mut d.def.guide, LoftGuide::Rails, "Rails (none)");
-                for t in ["Center Line", "Area Loft"] {
-                    ui.add_enabled(false, egui::RadioButton::new(false, t))
-                        .on_disabled_hover_text("Not supported yet (docs/spec/5.2-loft.md)");
-                }
-            });
-            ui.end_row();
-            plabel(ui, "Closed Loop");
-            ui.checkbox(&mut d.def.closed_loop, "")
-                .on_hover_text("The last section joins the first (at least three sections)");
-            ui.end_row();
-            plabel(ui, "Merge Tangent");
-            ui.checkbox(&mut d.def.merge_tangent_faces, "Faces")
-                .on_hover_text("Three or more sections always give one face per segment");
-            ui.end_row();
-            if bodies.len() > 1 {
-                solids_row(ui, &bodies, &mut d.def.solids);
-            }
-        });
-        if let Some(k) = remove {
-            d.def.sections.remove(k);
-        }
-        psection(ui, "loft_conditions", "Conditions", |ui| {
-            plabel(ui, "Ends");
-            ui.label("Free").on_hover_text(
-                "Tangent, Direction and Smooth (G2) are not supported yet; a point end is a Sharp Point",
-            );
-            ui.end_row();
-            plabel(ui, "Transition");
-            ui.label("Automatic Mapping")
-                .on_hover_text("Manual point sets are not supported yet");
-            ui.end_row();
-        });
-        psection(ui, "loft_output", "Output", |ui| {
-            output_rows(ui, &mut d.def.output, &mut d.def.operation);
-        });
-        self.loft_draft = Some(d.clone());
-        let preview = self.loft_preview();
-        match buttons(ui, &preview, d.edit.is_none()) {
-            Some(Button::Ok) => self.commit_loft(false),
-            Some(Button::Apply) => self.commit_loft(true),
-            Some(Button::Cancel) => {
-                self.loft_draft = None;
-                self.end_feature_edit();
-            }
-            None => {}
-        }
-    }
-
     /// Properties of a Sweep in the browser selection.
     pub(super) fn sweep_properties(&mut self, ui: &mut egui::Ui, k: usize, s: SweepFeature) {
         self.panel_header(ui, Icon::Sweep, &s.name);
@@ -888,6 +893,16 @@ impl CadCraftApp {
                 ui.label(n);
                 ui.end_row();
             }
+            plabel(ui, "Guide");
+            ui.label(match l.guide {
+                crate::part::LoftGuide::Rails if l.rails.is_empty() => "none".to_owned(),
+                crate::part::LoftGuide::Rails => format!("{} rail(s)", l.rails.len()),
+                crate::part::LoftGuide::CenterLine => "Center Line".to_owned(),
+                crate::part::LoftGuide::AreaLoft => {
+                    format!("Area Loft, {} placed section(s)", l.placed.len())
+                }
+            });
+            ui.end_row();
             plabel(ui, "Operation");
             ui.label(l.operation.label());
             ui.end_row();
@@ -906,10 +921,28 @@ enum Pick {
     Edge(crate::part::EdgeRef),
     Point(String, crate::sketch::PointId),
     Face(crate::part::FaceRef),
+    /// A point on a loft section's outline (model space).
+    MapPoint([crate::kernel::Real; 3]),
+}
+
+/// The point of polyline `pts` nearest `q`.
+fn nearest_on_polyline(pts: &[Point3], q: &Point3) -> Option<Point3> {
+    pts.windows(2)
+        .map(|w| {
+            let d = w[1] - w[0];
+            let l2 = d.norm_squared();
+            let t = if l2 > 0.0 {
+                ((q - w[0]).dot(&d) / l2).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            w[0] + d * t
+        })
+        .min_by(|a, b| (a - q).norm().total_cmp(&(b - q).norm()))
 }
 
 #[derive(Clone, Copy)]
-enum Button {
+pub(super) enum Button {
     Ok,
     Apply,
     Cancel,
@@ -938,7 +971,7 @@ fn selector_row(
     ui.end_row();
 }
 
-fn solids_row(ui: &mut egui::Ui, bodies: &[(String, String)], solids: &mut Vec<String>) {
+pub(super) fn solids_row(ui: &mut egui::Ui, bodies: &[(String, String)], solids: &mut Vec<String>) {
     plabel(ui, "Solids");
     let current = solids.first().cloned();
     let shown = current
@@ -963,7 +996,7 @@ fn solids_row(ui: &mut egui::Ui, bodies: &[(String, String)], solids: &mut Vec<S
     ui.end_row();
 }
 
-fn output_rows(ui: &mut egui::Ui, output: &mut Output, op: &mut Operation) {
+pub(super) fn output_rows(ui: &mut egui::Ui, output: &mut Output, op: &mut Operation) {
     plabel(ui, "Output");
     ui.horizontal(|ui| {
         ui.selectable_value(output, Output::Solid, "Solid");
@@ -985,7 +1018,7 @@ fn output_rows(ui: &mut egui::Ui, output: &mut Output, op: &mut Operation) {
     ui.end_row();
 }
 
-fn buttons(
+pub(super) fn buttons(
     ui: &mut egui::Ui,
     preview: &Result<Vec<Vec<Point3>>, String>,
     new: bool,
@@ -1024,7 +1057,7 @@ fn buttons(
     out
 }
 
-fn describe_path(r: &PathRef, part: &crate::part::PartDocument) -> String {
+pub(super) fn describe_path(r: &PathRef, part: &crate::part::PartDocument) -> String {
     match r {
         PathRef::Sketch { curves, .. } if curves.is_empty() => "none".into(),
         PathRef::Sketch { sketch, curves } => {
@@ -1040,7 +1073,7 @@ fn describe_path(r: &PathRef, part: &crate::part::PartDocument) -> String {
     }
 }
 
-fn describe_section(s: &LoftSection, part: &crate::part::PartDocument) -> String {
+pub(super) fn describe_section(s: &LoftSection, part: &crate::part::PartDocument) -> String {
     let name = |id: &str| {
         part.sketches
             .iter()

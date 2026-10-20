@@ -169,16 +169,20 @@ const TABLE: &[(&str, &str)] = &[
         "Sweep: щракнете водещата крива (Guide Rail), после OK",
     ),
     (
-        "Loft: click the first section (a closed region, a face or a sketch point)",
-        "Loft: щракнете първото сечение (затворена област, стена или точка от скица)",
+        "Select the sections in order (closed regions, planar faces, or a sketch point at an end; a second click drops one)",
+        "Изберете сеченията по ред (затворени области, равнинни стени или точка от скица в края; втори клик маха сечението)",
     ),
     (
-        "Loft: click the next section",
-        "Loft: щракнете следващото сечение",
+        "Select rails (sketch curves or edges that touch every section), or OK",
+        "Изберете релси (криви от скица или ръбове, които докосват всяко сечение) или OK",
     ),
     (
-        "Loft: click more sections in order (a second click removes one), then OK",
-        "Loft: щракнете още сечения по ред (втори клик маха сечението), после OK",
+        "Select the centre line (a sketch curve or edges)",
+        "Изберете централната линия (крива от скица или ръбове)",
+    ),
+    (
+        "Click a point on each section's outline, in section order",
+        "Щракнете по една точка от контура на всяко сечение, по реда на сеченията",
     ),
     (
         "Select faces to draft (click near the edge that stays fixed)",

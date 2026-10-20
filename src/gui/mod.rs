@@ -40,6 +40,7 @@ mod hole_panel;
 mod i18n;
 mod icons;
 mod layout;
+mod loft;
 mod manip;
 mod material;
 mod overlay;

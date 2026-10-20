@@ -4378,7 +4378,7 @@ impl CadCraftApp {
                 }
                 (Mode::Normal, None) if self.sweep_loft_open() => {
                     let text = self.sweep_loft_prompt().unwrap_or_default();
-                    ui.add(egui::Label::new(RichText::new(super::i18n::tr(text)).strong()).truncate());
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.shell_draft.is_some() => {
                     let text = self.command_prompt().unwrap_or_default();

@@ -61,7 +61,7 @@ pub struct Frame {
     pub y: Vector3,
 }
 
-fn side_names(names: &[String], prefix: &str) -> impl Fn(&FaceOrigin) -> Option<String> {
+pub(super) fn side_names(names: &[String], prefix: &str) -> impl Fn(&FaceOrigin) -> Option<String> {
     let names = names.to_vec();
     let prefix = prefix.to_owned();
     move |o| match o {
@@ -326,7 +326,7 @@ struct Section {
 
 /// The outer loop's and the holes' segment names of a profile (the profile
 /// numbers them outer loop first).
-fn split_names(prof: &ExactProfile) -> (Vec<String>, Vec<Vec<String>>) {
+pub(super) fn split_names(prof: &ExactProfile) -> (Vec<String>, Vec<Vec<String>>) {
     let mut at = 0;
     let mut take = |n: usize| {
         let v: Vec<String> = prof.names.iter().skip(at).take(n).cloned().collect();

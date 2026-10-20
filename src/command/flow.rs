@@ -32,6 +32,14 @@ pub enum PickKind {
     Sketch,
     /// A solid body.
     Body,
+    /// A closed region of a sketch (a profile).
+    Region,
+    /// A sketch curve (its connected chain).
+    SketchCurve,
+    /// A sketch point.
+    SketchPoint,
+    /// A point on a loft section's outline (Transition: Map Point).
+    SectionPoint,
 }
 
 /// One selector row of a command dialog.
@@ -269,6 +277,10 @@ pub mod colors {
     pub const PLANE: [u8; 3] = [30, 160, 160];
     /// Edges (static edges, fixed edges).
     pub const EDGES: [u8; 3] = [170, 80, 200];
+    /// Curves that guide a shape (rails, a centre line).
+    pub const GUIDES: [u8; 3] = [200, 60, 160];
+    /// Points (map points).
+    pub const POINTS: [u8; 3] = [220, 170, 30];
 }
 
 // ------------------------------------------------- command definitions ---
@@ -392,6 +404,83 @@ pub fn shell_selectors(s: &crate::part::ShellFeature) -> Vec<Selector> {
         count: s.remove.len(),
         color: colors::FACES,
     }]
+}
+
+/// Prompts of the Loft selectors (status bar: `Loft: <prompt>`).
+pub mod loft_prompts {
+    /// Sections.
+    pub const SECTIONS: &str = "Select the sections in order (closed regions, planar faces, or a \
+                                sketch point at an end; a second click drops one)";
+    /// Rails.
+    pub const RAILS: &str = "Select rails (sketch curves or edges that touch every section), or OK";
+    /// Center Line.
+    pub const CENTER: &str = "Select the centre line (a sketch curve or edges)";
+    /// Map Point.
+    pub const MAP: &str = "Click a point on each section's outline, in section order";
+}
+
+const SECTIONS: &[PickKind] = &[
+    PickKind::Region,
+    PickKind::PlanarFace,
+    PickKind::SketchPoint,
+];
+const GUIDE_CURVES: &[PickKind] = &[PickKind::SketchCurve, PickKind::Edge];
+const SECTION_POINTS: &[PickKind] = &[PickKind::SectionPoint];
+
+/// The selectors of Loft (`docs/spec/5.2-loft.md`): Sections, then Rails or
+/// the Center Line (Center Line, Area Loft); with `map` (Transition tab,
+/// manual mapping) the points of the point set `map` instead.
+pub fn loft_selectors(l: &crate::part::LoftFeature, map: Option<usize>) -> Vec<Selector> {
+    use crate::part::LoftGuide;
+    let mut v = vec![Selector {
+        key: "sections",
+        label: "Sections",
+        prompt: loft_prompts::SECTIONS,
+        accepts: SECTIONS,
+        single: false,
+        required: true,
+        count: l.sections.len(),
+        color: colors::FACES,
+    }];
+    match l.guide {
+        LoftGuide::Rails => v.push(Selector {
+            key: "rails",
+            label: "Rails",
+            prompt: loft_prompts::RAILS,
+            accepts: GUIDE_CURVES,
+            single: false,
+            required: false,
+            count: l.rails.len(),
+            color: colors::GUIDES,
+        }),
+        LoftGuide::CenterLine | LoftGuide::AreaLoft => v.push(Selector {
+            key: "center",
+            label: if l.guide == LoftGuide::AreaLoft {
+                "Area Loft"
+            } else {
+                "Center Line"
+            },
+            prompt: loft_prompts::CENTER,
+            accepts: GUIDE_CURVES,
+            single: true,
+            required: true,
+            count: usize::from(l.center_line.as_ref().is_some_and(|c| !c.is_empty())),
+            color: colors::GUIDES,
+        }),
+    }
+    if let Some(k) = map {
+        v.push(Selector {
+            key: "map",
+            label: "Map Point",
+            prompt: loft_prompts::MAP,
+            accepts: SECTION_POINTS,
+            single: false,
+            required: false,
+            count: l.map_points.get(k).map_or(0, |m| m.points.len()),
+            color: colors::POINTS,
+        });
+    }
+    v
 }
 
 const BODIES: &[PickKind] = &[PickKind::Body];
@@ -703,5 +792,27 @@ mod tests {
         assert!(f.ready());
         assert_eq!(f.enter(), EnterAction::Ok);
         assert!(f.accepts(PickKind::Face) && !f.accepts(PickKind::Edge));
+    }
+
+    #[test]
+    fn loft_selectors_follow_the_guide() {
+        use crate::part::{LoftFeature, LoftGuide, PathRef};
+        let mut l = LoftFeature::new(Vec::new());
+        let f = Flow::new(loft_selectors(&l, None), None);
+        assert_eq!(f.active_key(), Some("sections"));
+        assert!(!f.ready());
+        assert!(f.accepts(PickKind::Region) && !f.accepts(PickKind::SketchCurve));
+        l.guide = LoftGuide::CenterLine;
+        let keys: Vec<_> = loft_selectors(&l, None).iter().map(|s| s.key).collect();
+        assert_eq!(keys, ["sections", "center"]);
+        let mut f = Flow::new(loft_selectors(&l, None), Some("center"));
+        assert!(f.accepts(PickKind::SketchCurve));
+        l.center_line = Some(PathRef::Edges(Vec::new()));
+        assert_eq!(loft_selectors(&l, None)[1].count, 0);
+        // Enter with no sections: back to Sections.
+        assert_eq!(f.enter(), EnterAction::Continue);
+        assert_eq!(f.active_key(), Some("sections"));
+        let keys: Vec<_> = loft_selectors(&l, Some(0)).iter().map(|s| s.key).collect();
+        assert_eq!(keys, ["sections", "center", "map"]);
     }
 }

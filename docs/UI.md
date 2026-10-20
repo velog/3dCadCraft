@@ -121,6 +121,7 @@
 | **Ctrl+Enter / +** | в панела Hole / Thread: OK / създава и започва нов със същите настройки | 🟡 чака визуална проверка |
 | (без клавиш) | Coil / Rib (3D Model → Create): Coil — Profiles → Axis (сама при една централна линия; списък за начални и работни оси); Rib — Profile (кривите на скицата) → Boss Centers; клик на ред в панела го прави активен, `x` го изчиства; Esc отказва | 🟡 чака визуална проверка |
 | (без клавиш) | Sweep / Loft (3D Model → Create): селекторите в панела се активират с клик; Optimize for Single Selection минава сам към следващия; Esc отказва | 🟡 чака визуална проверка |
+| Enter / Ctrl+Enter / десен бутон | Loft: табове Curves / Conditions / Transition; селектори Sections → Rails или Center Line → Map Point; Enter = Continue, докато липсва нужен вход, после OK; Ctrl+Enter = OK; в менюто Continue / Back / OK и Rails / Center Line / Area Loft | 🟡 чака визуална проверка |
 | **P / C** | Place / Constrain (в сглобка) | ⬜ |
 | **Ctrl+Z / Ctrl+Y** (и Ctrl+Shift+Z) | Undo / Redo | ✅ |
 | **Ctrl+S / Ctrl+Shift+S** | Save / Save As | ✅ |

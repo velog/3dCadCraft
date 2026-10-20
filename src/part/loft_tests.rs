@@ -363,15 +363,15 @@ fn refusals_and_edits() {
                     curves: Vec::new(),
                 }]
             }),
-            "Rails",
+            "rail 1",
         ),
         (
             Box::new(|d: &mut LoftFeature| d.guide = LoftGuide::CenterLine),
-            "Center Line",
+            "centre line",
         ),
         (
             Box::new(|d: &mut LoftFeature| d.guide = LoftGuide::AreaLoft),
-            "Area Loft",
+            "centre line",
         ),
         (
             Box::new(|d: &mut LoftFeature| {
@@ -444,3 +444,6 @@ fn refusals_and_edits() {
     q.regenerate().unwrap();
     assert!((volume(&q) - v1).abs() < 1e-6);
 }
+
+#[path = "loft_guided_tests.rs"]
+mod guided;

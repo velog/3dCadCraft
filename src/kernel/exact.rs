@@ -3734,6 +3734,12 @@ mod hole_tests;
 mod coil;
 pub use coil::{CoilMesh, CoilMotion, CoilZone, coil, coil_boolean, coil_mesh};
 
+mod loft;
+pub use loft::{
+    GuidedLoft, LoftEnd, LoftPlaced, StationOutline, loft_guided, loft_stations, profile_area,
+    profile_outline,
+};
+
 mod sweep;
 pub use sweep::{
     Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_to_point, path_points, sweep,

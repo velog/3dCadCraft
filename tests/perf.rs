@@ -449,6 +449,218 @@ fn loft_part(n: usize) -> PartDocument {
     part
 }
 
+/// Guided lofts (`docs/spec/5.2-loft.md`): `rails` a Ø20 bottle on two arc
+/// rails, `center` a Ø10 circle along a quarter arc R50, `area` an area loft
+/// of squares 20 → 40 over 100 mm, `direction` two squares with a 60° start,
+/// `ring` a closed loop of six circles.
+fn loft_guided_part(kind: &str) -> PartDocument {
+    use cadcraft3d::kernel::Vector3;
+    use cadcraft3d::part::{
+        ConditionKind, LineRef, LoftCondition, LoftFeature, LoftGuide, LoftSection, OriginPlane,
+        PathRef, PlaneRef, WorkDef, WorkFeature, WorkPlaneDef,
+    };
+    use cadcraft3d::sketch::Point2;
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::default();
+    let on = |part: &mut PartDocument, plane: PlaneRef| -> usize {
+        part.create_sketch(
+            SketchPlacement {
+                plane,
+                ..Default::default()
+            },
+            &o,
+        )
+        .unwrap()
+    };
+    let height = |part: &mut PartDocument, z: Real| -> PlaneRef {
+        if z == 0.0 {
+            return PlaneRef::Origin(OriginPlane::XY);
+        }
+        PlaneRef::Work(
+            part.add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: z,
+            })))
+            .unwrap(),
+        )
+    };
+    let through_z = |part: &mut PartDocument, theta: Real| -> PlaneRef {
+        let want = Vector3::new(theta.cos(), theta.sin(), 0.0);
+        if want.y.abs() < 1e-12 {
+            return PlaneRef::Origin(OriginPlane::XZ);
+        }
+        for angle in [theta, -theta] {
+            let wp = part
+                .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Angle {
+                    base: PlaneRef::Origin(OriginPlane::XZ),
+                    axis: LineRef::Origin(2),
+                    angle,
+                })))
+                .unwrap();
+            if part.work.planes[&wp].normal.dot(&want).abs() < 1e-9 {
+                return PlaneRef::Work(wp);
+            }
+        }
+        panic!("no plane");
+    };
+    let uv = |part: &PartDocument, k: usize, q: Point3| {
+        let c = part.sketches[k].sketch.plane.project(&q);
+        Point2::new(c.x, c.y)
+    };
+    // An arc on sketch k from a to b about centre c (model points), CCW
+    // or not.
+    let arc = |part: &mut PartDocument, k: usize, c: Point3, a: Point3, b: Point3, ccw: bool| {
+        let (c, a, b) = (uv(part, k, c), uv(part, k, a), uv(part, k, b));
+        let s = &mut part.sketches[k].sketch;
+        let (pc, pa, pb) = (s.add_point(c), s.add_point(a), s.add_point(b));
+        let e = if ccw {
+            s.add_arc(pc, pa, pb)
+        } else {
+            s.add_arc(pc, pb, pa)
+        }
+        .unwrap();
+        PathRef::Sketch {
+            sketch: part.sketches[k].id.clone(),
+            curves: vec![e],
+        }
+    };
+    let section = |part: &PartDocument, k: usize| {
+        let r = part.sketches[k].sketch.regions();
+        LoftSection::Profile {
+            sketch: part.sketches[k].id.clone(),
+            profile: ProfileRef::of(&r[0], r[0].interior_point()),
+        }
+    };
+    let square = |part: &mut PartDocument, k: usize, w: Real| {
+        part.sketches[k]
+            .sketch
+            .add_rectangle_two_point(
+                Point2::new(-w / 2.0, -w / 2.0),
+                Point2::new(w / 2.0, w / 2.0),
+            )
+            .unwrap();
+    };
+    let def = match kind {
+        "rails" => {
+            let mut ks = Vec::new();
+            for z in [0.0, 100.0] {
+                let pl = height(&mut part, z);
+                let k = on(&mut part, pl);
+                part.sketches[k]
+                    .sketch
+                    .add_circle(Point2::new(0.0, 0.0), 10.0)
+                    .unwrap();
+                ks.push(k);
+            }
+            let xz = on(&mut part, PlaneRef::Origin(OriginPlane::XZ));
+            // Arcs through (±10, 0), (±20, 50), (±10, 100): centres (∓110, 50).
+            let r1 = arc(
+                &mut part,
+                xz,
+                Point3::new(-110.0, 0.0, 50.0),
+                Point3::new(10.0, 0.0, 0.0),
+                Point3::new(10.0, 0.0, 100.0),
+                true,
+            );
+            let r2 = arc(
+                &mut part,
+                xz,
+                Point3::new(110.0, 0.0, 50.0),
+                Point3::new(-10.0, 0.0, 0.0),
+                Point3::new(-10.0, 0.0, 100.0),
+                false,
+            );
+            let mut d = LoftFeature::new(ks.iter().map(|&k| section(&part, k)).collect());
+            d.rails = vec![r1, r2];
+            d
+        }
+        "center" => {
+            let mut ks = Vec::new();
+            for theta in [0.0, std::f64::consts::FRAC_PI_2] {
+                let pl = through_z(&mut part, theta);
+                let k = on(&mut part, pl);
+                let c = uv(
+                    &part,
+                    k,
+                    Point3::new(50.0 * theta.cos(), 50.0 * theta.sin(), 0.0),
+                );
+                part.sketches[k].sketch.add_circle(c, 5.0).unwrap();
+                ks.push(k);
+            }
+            let xy = on(&mut part, PlaneRef::Origin(OriginPlane::XY));
+            let c = arc(
+                &mut part,
+                xy,
+                Point3::origin(),
+                Point3::new(50.0, 0.0, 0.0),
+                Point3::new(0.0, 50.0, 0.0),
+                true,
+            );
+            let mut d = LoftFeature::new(ks.iter().map(|&k| section(&part, k)).collect());
+            d.guide = LoftGuide::CenterLine;
+            d.center_line = Some(c);
+            d
+        }
+        "area" | "direction" => {
+            let mut ks = Vec::new();
+            for (z, w) in [
+                (0.0, 20.0),
+                (100.0, if kind == "area" { 40.0 } else { 20.0 }),
+            ] {
+                let pl = height(&mut part, z);
+                let k = on(&mut part, pl);
+                square(&mut part, k, w);
+                ks.push(k);
+            }
+            let mut d = LoftFeature::new(ks.iter().map(|&k| section(&part, k)).collect());
+            if kind == "area" {
+                let xz = on(&mut part, PlaneRef::Origin(OriginPlane::XZ));
+                let (a, b) = (
+                    uv(&part, xz, Point3::origin()),
+                    uv(&part, xz, Point3::new(0.0, 0.0, 100.0)),
+                );
+                let e = part.sketches[xz].sketch.add_line(a, b);
+                d.guide = LoftGuide::AreaLoft;
+                d.center_line = Some(PathRef::Sketch {
+                    sketch: part.sketches[xz].id.clone(),
+                    curves: vec![e],
+                });
+            } else {
+                d.conditions = vec![LoftCondition {
+                    kind: ConditionKind::Direction,
+                    angle: 60f64.to_radians(),
+                    weight: 0.5,
+                }];
+            }
+            d
+        }
+        _ => {
+            let mut ks = Vec::new();
+            for i in 0..6 {
+                let theta = std::f64::consts::TAU * i as Real / 6.0;
+                let pl = through_z(&mut part, theta);
+                let k = on(&mut part, pl);
+                let c = uv(
+                    &part,
+                    k,
+                    Point3::new(40.0 * theta.cos(), 40.0 * theta.sin(), 0.0),
+                );
+                part.sketches[k].sketch.add_circle(c, 5.0).unwrap();
+                ks.push(k);
+            }
+            let mut d = LoftFeature::new(ks.iter().map(|&k| section(&part, k)).collect());
+            d.closed_loop = true;
+            d
+        }
+    };
+    part.add_loft(def).unwrap();
+    part
+}
+
 /// Project Geometry: `n` circles on XY projected (as circles) into a
 /// sketch on a work plane 20 above, then (`sweep`) the owner's case: a Ø8
 /// circle swept along a spline between two projected centres.
@@ -1317,6 +1529,31 @@ fn speed_budgets() {
             loft_part(2),
         ),
         ("loft through 4 sections (smooth)", 100.0, loft_part(4)),
+        (
+            "loft with 2 arc rails (Ø20 bottle, 21 stations)",
+            120.0,
+            loft_guided_part("rails"),
+        ),
+        (
+            "loft along a quarter-arc centre line (Ø10)",
+            120.0,
+            loft_guided_part("center"),
+        ),
+        (
+            "area loft, squares 20 -> 40 over 100 mm",
+            60.0,
+            loft_guided_part("area"),
+        ),
+        (
+            "loft with a 60 deg Direction condition",
+            120.0,
+            loft_guided_part("direction"),
+        ),
+        (
+            "closed-loop loft of 6 circles (ring)",
+            250.0,
+            loft_guided_part("ring"),
+        ),
         (
             "coil: Ø2 spring, 5 turns (exact helical sweep)",
             1000.0,

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernel::exact::{self as kx, ExactSolid};
 use crate::kernel::{
-    BRep, Curve, Plane, Point3, ProfileSegment, Real, Segment2, TessellationOptions,
+    BRep, Curve, Plane, Point3, ProfileSegment, Real, Segment2, TessellationOptions, Vector3,
 };
 use crate::sketch::PointId;
 
@@ -245,6 +245,24 @@ impl LoftFeature {
         self.conditions.get(k).copied().unwrap_or_default()
     }
 
+    /// Whether manual point mapping is in use.
+    pub fn manual_mapping(&self) -> bool {
+        !self.automatic_mapping && !self.map_points.is_empty()
+    }
+
+    /// Whether it needs the guided builder (rails, a centre line, Area
+    /// Loft, conditions, point mapping or Closed Loop).
+    pub fn guided(&self) -> bool {
+        (self.guide == LoftGuide::Rails && !self.rails.is_empty())
+            || self.guide != LoftGuide::Rails
+            || self.closed_loop
+            || self.manual_mapping()
+            || self
+                .conditions
+                .iter()
+                .any(|c| matches!(c.kind, ConditionKind::Tangent | ConditionKind::Direction))
+    }
+
     /// The loft's solid, before its operation.
     pub(super) fn build(
         &self,
@@ -256,43 +274,11 @@ impl LoftFeature {
         if self.output == Output::Surface {
             return Err(User("Surface output is not supported yet".into()));
         }
-        match self.guide {
-            LoftGuide::Rails if !self.rails.is_empty() => {
-                return Err(User("Rails are not supported yet".into()));
-            }
-            LoftGuide::CenterLine => {
-                return Err(User("Center Line is not supported yet".into()));
-            }
-            LoftGuide::AreaLoft => return Err(User("Area Loft is not supported yet".into())),
-            LoftGuide::Rails => {}
-        }
-        if !self.automatic_mapping && !self.map_points.is_empty() {
-            return Err(User("manual point mapping is not supported yet".into()));
-        }
         let n = self.sections.len();
         if n < 2 {
             return Err(User("select at least two sections".into()));
         }
-        for (k, c) in self.conditions.iter().enumerate().take(n) {
-            let point = matches!(self.sections.get(k), Some(LoftSection::Point { .. }));
-            match c.kind {
-                ConditionKind::Free => {}
-                ConditionKind::SharpPoint if point => {}
-                ConditionKind::SharpPoint
-                | ConditionKind::TangentPoint
-                | ConditionKind::TangentToPlane
-                    if !point =>
-                {
-                    return Err(User(format!(
-                        "section {} is not a point (point conditions apply to point sections)",
-                        k + 1
-                    )));
-                }
-                kind => {
-                    return Err(User(format!("the condition {kind:?} is not supported yet")));
-                }
-            }
-        }
+        self.check_conditions().map_err(User)?;
         let points: Vec<usize> = (0..n)
             .filter(|&k| matches!(self.sections[k], LoftSection::Point { .. }))
             .collect();
@@ -304,6 +290,13 @@ impl LoftFeature {
         if !points.is_empty() {
             if self.closed_loop {
                 return Err(User("a loft to a point cannot be a closed loop".into()));
+            }
+            if self.guided() {
+                return Err(User(
+                    "a loft to a point with rails, a centre line, conditions or point mapping \
+                     is not supported yet"
+                        .into(),
+                ));
             }
             if n != 2 || points.len() != 1 {
                 return Err(User(
@@ -338,17 +331,216 @@ impl LoftFeature {
         }
         let refs: Vec<(Plane, &kx::ExactProfile)> =
             secs.iter().map(|(p, s)| (p.clone(), s)).collect();
-        let mut s = kx::loft(&refs, &self.id).map_err(kernel)?;
-        if self.closed_loop
-            && let (Some(last), Some(first)) = (refs.last(), refs.first())
-        {
-            // The closing span (last → first), joined at both ends.
-            let close = kx::loft(&[last.clone(), first.clone()], &self.id).map_err(kernel)?;
-            s = kx::boolean(&s, &close, kx::ExactOp::Union)
-                .map_err(|e| User(format!("the geometry kernel cannot close the loop ({e})")))?
-                .ok_or_else(|| User("the loft is empty".into()))?;
+        if self.guided() {
+            let g = self.guided_input(sketches, body, refs).map_err(User)?;
+            return kx::loft_guided(&g, &self.id).map(|s| vec![s]).map_err(User);
         }
+        let s = kx::loft(&refs, &self.id).map_err(kernel)?;
         Ok(vec![s])
+    }
+
+    /// Refuses conditions that do not fit their section or are not built yet.
+    fn check_conditions(&self) -> Result<(), String> {
+        let n = self.sections.len();
+        for (k, c) in self.conditions.iter().enumerate().take(n) {
+            let sec = &self.sections[k];
+            let point = matches!(sec, LoftSection::Point { .. });
+            let end = k == 0 || k + 1 == n;
+            match c.kind {
+                ConditionKind::Free => {}
+                ConditionKind::SharpPoint
+                | ConditionKind::TangentPoint
+                | ConditionKind::TangentToPlane
+                    if !point =>
+                {
+                    return Err(format!(
+                        "section {} is not a point (point conditions apply to point sections)",
+                        k + 1
+                    ));
+                }
+                ConditionKind::SharpPoint => {}
+                ConditionKind::TangentPoint | ConditionKind::TangentToPlane => {
+                    return Err(
+                        "a rounded point (Tangent / Tangent to Plane) is not supported yet: the \
+                         kernel lofts to a point with straight sides only"
+                            .into(),
+                    );
+                }
+                ConditionKind::Smooth => {
+                    return Err(
+                        "the Smooth (G2) condition is not supported yet (use Tangent)".into(),
+                    );
+                }
+                ConditionKind::Tangent | ConditionKind::Direction if point => {
+                    return Err(format!(
+                        "section {} is a point: use a point condition",
+                        k + 1
+                    ));
+                }
+                ConditionKind::Tangent | ConditionKind::Direction if !end => {
+                    return Err(format!(
+                        "section {}: conditions apply to the first and the last section only",
+                        k + 1
+                    ));
+                }
+                ConditionKind::Tangent | ConditionKind::Direction if self.closed_loop => {
+                    return Err("a closed loop has no end sections to take conditions".into());
+                }
+                ConditionKind::Tangent => {
+                    if !matches!(sec, LoftSection::FaceLoop(_)) {
+                        return Err(format!(
+                            "Tangent needs a face loop (section {} is a sketch profile: use \
+                             Direction)",
+                            k + 1
+                        ));
+                    }
+                }
+                ConditionKind::Direction => {
+                    if matches!(sec, LoftSection::FaceLoop(_)) {
+                        return Err(format!(
+                            "Direction applies to sketch sections (section {} is a face loop: \
+                             use Tangent)",
+                            k + 1
+                        ));
+                    }
+                }
+            }
+            if matches!(c.kind, ConditionKind::Tangent | ConditionKind::Direction)
+                && !(0.0..=std::f64::consts::PI).contains(&c.angle)
+            {
+                return Err("the angle must be between 0 and 180 deg".into());
+            }
+            if matches!(c.kind, ConditionKind::Tangent | ConditionKind::Direction)
+                && !(c.weight >= 0.0 && c.weight <= 50.0)
+            {
+                return Err("the weight must be between 0 and 50".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// The guided builder's input.
+    fn guided_input<'a>(
+        &self,
+        sketches: &[PartSketch],
+        body: &BRep,
+        sections: Vec<(Plane, &'a kx::ExactProfile)>,
+    ) -> Result<kx::GuidedLoft<'a>, String> {
+        let n = sections.len();
+        let near = sections
+            .first()
+            .map(|s| s.0.origin)
+            .unwrap_or_else(Point3::origin);
+        let rails = if self.guide == LoftGuide::Rails {
+            self.rails
+                .iter()
+                .enumerate()
+                .map(|(j, r)| {
+                    r.resolve(sketches, body, near)
+                        .map(|g| g.polyline())
+                        .map_err(|e| format!("rail {}: {e}", j + 1))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+        let center = match self.guide {
+            LoftGuide::Rails => None,
+            LoftGuide::CenterLine | LoftGuide::AreaLoft => {
+                let c = self
+                    .center_line
+                    .as_ref()
+                    .filter(|c| !c.is_empty())
+                    .ok_or("select the centre line")?;
+                Some(
+                    c.resolve(sketches, body, near)
+                        .map_err(|e| format!("centre line: {e}"))?
+                        .polyline(),
+                )
+            }
+        };
+        let area = (self.guide == LoftGuide::AreaLoft).then(|| {
+            self.placed
+                .iter()
+                .filter(|p| p.driving)
+                .map(|p| kx::LoftPlaced {
+                    position: p.position,
+                    proportional: p.proportional,
+                    size: p.size,
+                    scale: p.scale,
+                })
+                .collect()
+        });
+        let end = |k: usize| -> Result<kx::LoftEnd, String> {
+            let c = self.condition(k);
+            Ok(match c.kind {
+                ConditionKind::Direction => kx::LoftEnd::Direction {
+                    angle: c.angle,
+                    weight: c.weight,
+                },
+                ConditionKind::Tangent => match self.sections.get(k) {
+                    Some(LoftSection::FaceLoop(f)) => kx::LoftEnd::Tangent {
+                        dirs: tangent_dirs(body, f)?,
+                        weight: c.weight,
+                    },
+                    _ => return Err("Tangent needs a face loop".into()),
+                },
+                _ => kx::LoftEnd::Free,
+            })
+        };
+        let map = if self.manual_mapping() {
+            self.map_points
+                .iter()
+                .map(|m| m.points.iter().map(|p| Point3::from(*p)).collect())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(kx::GuidedLoft {
+            sections,
+            rails,
+            center,
+            area,
+            start: end(0)?,
+            end: end(n - 1)?,
+            map,
+            closed: self.closed_loop,
+        })
+    }
+
+    /// The guided loft's stations (outlines in model space), for previews.
+    pub fn stations(
+        &self,
+        sketches: &[PartSketch],
+        body: &BRep,
+    ) -> Result<Vec<Vec<Point3>>, String> {
+        let secs = (0..self.sections.len())
+            .map(|k| self.profile(sketches, body, k))
+            .collect::<Result<Vec<_>, _>>()?;
+        let refs: Vec<(Plane, &kx::ExactProfile)> =
+            secs.iter().map(|(p, s)| (p.clone(), s)).collect();
+        let g = self.guided_input(sketches, body, refs)?;
+        kx::loft_stations(&g)
+    }
+
+    /// Section `k`'s plane and outer outline (model space; for picking map
+    /// points). `None` for a point section or a missing one.
+    pub fn section_outline(
+        &self,
+        sketches: &[PartSketch],
+        body: &BRep,
+        k: usize,
+    ) -> Option<(Plane, Vec<Point3>)> {
+        let (plane, prof) = self.profile(sketches, body, k).ok()?;
+        let pts = kx::profile_outline(&plane, &prof);
+        Some((plane, pts))
+    }
+
+    /// The area (mm²) of section `k` (Area Loft's driven sections).
+    pub fn section_area(&self, sketches: &[PartSketch], body: &BRep, k: usize) -> Option<Real> {
+        self.profile(sketches, body, k)
+            .ok()
+            .map(|(_, p)| kx::profile_area(&p))
     }
 
     /// A point section's model point.
@@ -396,6 +588,60 @@ impl LoftFeature {
             None => Err("the section no longer exists".into()),
         }
     }
+}
+
+/// Tangent condition of a face-loop section: at points along the face's
+/// outline, the direction its neighbouring face runs on in past the edge.
+fn tangent_dirs(body: &BRep, r: &FaceRef) -> Result<Vec<(Point3, Vector3)>, String> {
+    let f = super::shell::face_near(body, &r.face, Point3::from(r.hint))
+        .ok_or_else(|| format!("the face {} no longer exists", r.face))?;
+    let face = body.face(f).ok_or("the section face no longer exists")?;
+    let opts = TessellationOptions::default();
+    let mut out = Vec::new();
+    for ce in &face.outer.coedges {
+        let Some(adj) = body.edge_faces(ce.edge).into_iter().find(|&g| g != f) else {
+            continue;
+        };
+        let Some(mesh) = body.face(adj).and_then(|x| x.mesh.clone()) else {
+            continue;
+        };
+        let pts = body
+            .sample_edge(ce.edge, &opts)
+            .map_err(|e| e.to_string())?;
+        for w in pts.windows(2) {
+            let q = nalgebra::center(&w[0], &w[1]);
+            let Some(t) = (w[1] - w[0]).try_normalize(1e-12) else {
+                continue;
+            };
+            // The neighbour's triangle nearest the point: its normal and a
+            // point inside it.
+            let best = mesh
+                .triangles
+                .iter()
+                .filter_map(|tri| {
+                    let [a, b, c] = tri.map(|i| mesh.positions.get(i as usize).copied());
+                    let (a, b, c) = (a?, b?, c?);
+                    let g = Point3::from((a.coords + b.coords + c.coords) / 3.0);
+                    let nrm = (b - a).cross(&(c - a)).try_normalize(1e-18)?;
+                    Some(((g - q).norm(), g, nrm))
+                })
+                .min_by(|x, y| x.0.total_cmp(&y.0));
+            let Some((_, inside, nrm)) = best else {
+                continue;
+            };
+            let Some(mut d) = t.cross(&nrm).try_normalize(1e-12) else {
+                continue;
+            };
+            if (q - inside).dot(&d) < 0.0 {
+                d = -d;
+            }
+            out.push((q, d));
+        }
+    }
+    if out.is_empty() {
+        return Err("the section face has no neighbouring faces to be tangent to".into());
+    }
+    Ok(out)
 }
 
 /// The outer loop of a planar face as a profile on its plane: lines and
