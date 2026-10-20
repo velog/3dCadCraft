@@ -153,8 +153,9 @@
 | Shift+клик / Ctrl+клик | добавя към избора / превключва (без лента). В скица Shift превключва, Ctrl+клик не се ползва |
 | влачене от празно място (само профил Inventor) | правоъгълник: отляво надясно — изцяло вътре, отдясно наляво — и пресечените (Shift добавя, Ctrl превключва) |
 | двоен клик върху стена/ръб | **Select Tangencies** — всички допирателни стени/ръбове |
-| Ctrl+A | всичко от режима на избор |
-| **Select: …** (лентата горе, до Undo/Redo) | режим: Faces and Edges / Features / Bodies / Sketch Features; Enable Prehighlight; Select All, Invert Selection, Previous Selection, Select Tangencies |
+| Ctrl+A | всичко, което минава филтъра |
+| **Select: …** (лентата горе, до Undo/Redo; и в команда) | приоритет: Faces and Edges / Features / Bodies / Sketch Features; **Filters ▸** (Faces, Edges, Vertices, Features, Solid/Surface Bodies, Sketches, Sketch Entities, Work Planes/Axes/Points, Origin; Select All Filters); Window/Crossing by Direction / Always Window / Always Crossing; Enable Prehighlight; Select Loop, Select Tangencies, Select Invert, Select All, Previous Selection, Clear Selection. `*` в заглавието = изключен филтър |
+| **Shift + десен клик** в изгледа | меню **Selection** до курсора (по контекста: детайл / команда / скица; [spec/0.9a](spec/0.9a-selection-filters.md)); не започва Pan |
 | Esc | изчиства избора (Previous Selection го връща); затваря Select Other |
 | Extrude/Revolve: влачене от празно място | избор на профили с правоъгълник |
 | **Rebuild** (лентата горе) / Tools → Update → Rebuild All | всички операции наново, без кеша |

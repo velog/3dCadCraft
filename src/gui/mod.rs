@@ -252,20 +252,15 @@ impl ExtrudeDraft {
 }
 
 /// Something in the model that can be picked in the view.
-#[derive(Clone, Debug, PartialEq)]
-enum ModelPick {
-    Edge(crate::kernel::EdgeId),
-    Face(String),
-}
-
 /// Select Other (Inventor): with the cursor resting where several things
 /// overlap, a small control cycles through them.
 #[derive(Clone, Debug)]
 struct SelectOther {
     /// Where the cursor rested.
     at: egui::Pos2,
-    /// Candidates, the default pick first.
-    items: Vec<ModelPick>,
+    /// Candidates (every category that passes the filters), the default
+    /// pick first.
+    items: Vec<select::SelItem>,
     /// The current one.
     index: usize,
 }
@@ -582,14 +577,28 @@ struct CadCraftApp {
     rest: Option<(egui::Pos2, f64)>,
     /// The model edge selected in the view and where the click was.
     edge_sel: Option<(crate::kernel::EdgeId, egui::Pos2)>,
-    /// Selection mode of the idle view (Quick Access Toolbar).
-    select_mode: select::SelectMode,
+    /// Select Priority, the user filter, box mode and prehighlight (Quick
+    /// Access Toolbar, Shift + right-click; persisted in `AppOptions`).
+    select: crate::command::selection::SelectSettings,
+    /// What may be picked this frame: the active selector's kinds ∩ the
+    /// user filter (`update_pick_filter`, start of `viewport`).
+    pick_filter: std::cell::Cell<crate::command::selection::Effective>,
+    /// The open Shift + right-click selection menu: where, the view and its
+    /// content (fixed when it opened).
+    sel_menu: Option<(
+        egui::Pos2,
+        egui::Rect,
+        crate::command::selection::MenuContext,
+    )>,
+    /// It opened this frame (the opening press must not close it).
+    sel_menu_fresh: bool,
+    /// The right button went down with Shift (the selection menu, never a
+    /// pan or the context menu).
+    shift_rmb: bool,
     /// The selected set (several faces, edges, features, bodies, sketches).
     sel: Vec<select::SelItem>,
     /// The set before the last change (Previous Selection).
     prev_sel: Vec<select::SelItem>,
-    /// Highlight what is under the cursor before clicking.
-    prehighlight: bool,
     /// Body signature the set was made on (stale items are dropped).
     sel_key: String,
     /// The selection and the prehighlighted item the scene was built with
@@ -749,10 +758,16 @@ impl CadCraftApp {
             hud_last: Default::default(),
             face_sel: None,
             edge_sel: None,
-            select_mode: select::SelectMode::default(),
+            select: Default::default(),
+            pick_filter: std::cell::Cell::new(crate::command::selection::effective(
+                None,
+                crate::command::selection::Filter::all(),
+            )),
+            sel_menu: None,
+            sel_menu_fresh: false,
+            shift_rmb: false,
             sel: Vec::new(),
             prev_sel: Vec::new(),
-            prehighlight: true,
             sel_key: String::new(),
             scene_sel: (Vec::new(), None),
             select_other: None,
@@ -1568,7 +1583,7 @@ impl CadCraftApp {
         if r.width() < 3.0 && r.height() < 3.0 {
             return;
         }
-        let window = b.x >= a.x;
+        let window = self.select.box_mode.is_window(a.x, b.x);
         let regions = self.sketch_regions(sk);
         let screen =
             |q: crate::sketch::Point2| self.camera.project(&sk.plane.point_at(q.x, q.y), rect);
@@ -1649,7 +1664,7 @@ impl CadCraftApp {
             return Some(crate::part::TargetRef::Point(p));
         }
         let (origin, dir) = self.camera.ray(pos, rect)?;
-        if let Some((f, _)) = self.picker().pick(&origin, &dir) {
+        if let Some((f, _)) = self.face_hit(&origin, &dir) {
             return Some(crate::part::TargetRef::Face(body.face(f)?.name.clone()?));
         }
         // Work and origin planes.
@@ -2058,7 +2073,7 @@ impl CadCraftApp {
     fn box_hits(&self, i: usize, rect: egui::Rect, a: egui::Pos2, b: egui::Pos2) -> Vec<EntityId> {
         let sk = &self.part().sketches[i].sketch;
         let r = egui::Rect::from_two_pos(a, b);
-        let window = b.x >= a.x;
+        let window = self.select.box_mode.is_window(a.x, b.x);
         let seg_hits = |p: egui::Pos2, q: egui::Pos2| {
             if r.contains(p) || r.contains(q) {
                 return true;
@@ -2177,6 +2192,9 @@ impl CadCraftApp {
     /// The visible model edge under `pos` (within `POINT_PICK_PX`); edges
     /// hidden behind a face do not count.
     fn edge_under(&self, pos: egui::Pos2, rect: egui::Rect) -> Option<crate::kernel::EdgeId> {
+        if !self.cat_on(crate::command::selection::Category::Edge) {
+            return None;
+        }
         let (origin, dir) = self.camera.ray(pos, rect)?;
         // Unit direction: ray parameters are then mm, which the occlusion
         // tolerance below assumes (an unscaled ray let hidden edges through).
@@ -2212,75 +2230,6 @@ impl CadCraftApp {
         best.map(|(e, _)| e)
     }
 
-    /// Everything under `pos`: edges near it (also hidden ones), then the
-    /// faces along the eye ray, nearest first.
-    fn candidates_under(&self, pos: egui::Pos2, rect: egui::Rect) -> Vec<ModelPick> {
-        let mut out = Vec::new();
-        if let Some(e) = self.edge_under(pos, rect) {
-            out.push(ModelPick::Edge(e));
-        }
-        let mut near: Vec<(crate::kernel::EdgeId, f32)> = Vec::new();
-        for (e, pts) in self.edge_polylines().iter() {
-            let d = pts
-                .windows(2)
-                .filter_map(|w| {
-                    let a = self.camera.project(&w[0], rect)?;
-                    let b = self.camera.project(&w[1], rect)?;
-                    let ab = b - a;
-                    let t = ((pos - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
-                    Some((a + ab * t).distance(pos))
-                })
-                .fold(f32::INFINITY, f32::min);
-            if d <= overlay::EDGE_PICK_PX {
-                near.push((*e, d));
-            }
-        }
-        near.sort_by(|a, b| a.1.total_cmp(&b.1));
-        for (e, _) in near {
-            if !out.contains(&ModelPick::Edge(e)) {
-                out.push(ModelPick::Edge(e));
-            }
-        }
-        let body = &self.part().body;
-        let mut faces: Vec<crate::kernel::FaceId> = Vec::new();
-        if let Some((origin, dir)) = self.camera.ray(pos, rect) {
-            faces.extend(
-                self.picker()
-                    .hits(&origin, &dir)
-                    .into_iter()
-                    .map(|(f, _)| f),
-            );
-        }
-        // The faces on both sides of the edges (exactly on an edge the ray
-        // may hit neither).
-        let edges: Vec<_> = out
-            .iter()
-            .filter_map(|p| match p {
-                ModelPick::Edge(e) => Some(*e),
-                ModelPick::Face(_) => None,
-            })
-            .collect();
-        for e in edges {
-            faces.extend(self.picker().faces_of(e));
-        }
-        for f in faces {
-            if let Some(name) = body.face(f).and_then(|f| f.name.clone()) {
-                let p = ModelPick::Face(name);
-                if !out.contains(&p) {
-                    out.push(p);
-                }
-            }
-        }
-        out
-    }
-
-    fn pick_label(&self, p: &ModelPick) -> String {
-        match p {
-            ModelPick::Edge(e) => self.edge_description(*e),
-            ModelPick::Face(f) => self.face_description(f),
-        }
-    }
-
     /// Draws the Select Other control and handles its arrows; returns
     /// whether the current candidate was accepted (click on its name).
     fn select_other_ui(&mut self, ui: &mut egui::Ui, rect: egui::Rect) -> bool {
@@ -2288,7 +2237,7 @@ impl CadCraftApp {
             return false;
         };
         let n = so.items.len();
-        let label = self.pick_label(&so.items[so.index]);
+        let label = self.item_label(&so.items[so.index]);
         let pos = egui::pos2(
             (so.at.x + 14.0).min(rect.right() - 260.0),
             (so.at.y - 40.0).max(rect.top() + 4.0),
@@ -4255,7 +4204,8 @@ impl CadCraftApp {
                 self.delete_selection();
             }
         }
-        if pressed(Key::Escape) {
+        // Esc first closes the selection menu (Shift + right-click).
+        if pressed(Key::Escape) && self.sel_menu.take().is_none() {
             self.select_other = None;
             self.project_geometry = false;
             self.relink = None;
@@ -4439,9 +4389,10 @@ impl CadCraftApp {
         rect: egui::Rect,
         with_origin_planes: bool,
     ) -> Option<PlaneRef> {
+        use crate::command::selection::Category;
         let (origin, dir) = self.camera.ray(pos, rect)?;
         let body = &self.part().body;
-        if let Some((f, _)) = self.picker().pick(&origin, &dir)
+        if let Some((f, _)) = self.face_hit(&origin, &dir)
             && let Some(name) = body.face(f).and_then(|f| f.name.clone())
         {
             return Some(PlaneRef::Face(name));
@@ -4449,7 +4400,7 @@ impl CadCraftApp {
         let work = self
             .work_plane_under(pos, rect)
             .map(|(id, t)| (t, PlaneRef::Work(id)));
-        if !with_origin_planes {
+        if !with_origin_planes || !self.cat_on(Category::Origin) {
             return work.map(|(_, p)| p);
         }
         let half = self.origin_plane_half();
@@ -4469,6 +4420,8 @@ impl CadCraftApp {
     fn viewport(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.viewport_rect = rect;
+        // What may be picked this frame: selector kinds ∩ user filter.
+        self.update_pick_filter();
         let pointer = response.hover_pos();
         // --- ViewCube: running transition, cube/compass drags (they own
         // the pointer for the whole drag, before anything else picks) ---
@@ -4543,7 +4496,7 @@ impl CadCraftApp {
         let shell_hover = match (face_cmd, pointer, on_cube) {
             (true, Some(p), None) => self.camera.ray(p, rect).and_then(|(o, dir)| {
                 let dir = dir.try_normalize(1e-12)?;
-                let (f, t) = self.picker().pick(&o, &dir)?;
+                let (f, t) = self.face_hit(&o, &dir)?;
                 Some((f, o + dir * t))
             }),
             _ => None,
@@ -4614,7 +4567,7 @@ impl CadCraftApp {
         let pat_face = match (pat_geom, pointer, on_cube) {
             (true, Some(p), None) => self.camera.ray(p, rect).and_then(|(o, dir)| {
                 let dir = dir.try_normalize(1e-12)?;
-                self.picker().pick(&o, &dir).map(|(f, _)| f)
+                self.face_hit(&o, &dir).map(|(f, _)| f)
             }),
             _ => None,
         };
@@ -4670,7 +4623,8 @@ impl CadCraftApp {
             && self.prim_draft.is_none()
             && self.target_pick.is_none()
             && on_cube.is_none();
-        // Edges first (vertex > edge > face, 0-ui §3.2).
+        // Edges first (vertex > edge > face, 0-ui §3.2); the other
+        // categories come from `sel_item_at` (one pick order, one filter).
         let edge_hover = match (idle, pointer) {
             (true, Some(p)) if self.dragging.is_none() => self.edge_under(p, rect),
             _ => None,
@@ -4682,10 +4636,12 @@ impl CadCraftApp {
             },
             _ => None,
         };
-        // Select Other: resting ~0.7 s over several candidates.
+        // Select Other: resting ~0.7 s over several candidates (every
+        // category that passes the filters, at any priority).
         let now = ui.input(|i| i.time);
         let mut edge_hover = edge_hover;
         let mut face_hover = face_hover;
+        let mut other_hover: Option<select::SelItem> = None;
         if idle {
             match (pointer, self.rest) {
                 (Some(p), Some((at, _))) if p.distance(at) <= 3.0 => {}
@@ -4703,13 +4659,13 @@ impl CadCraftApp {
                 (None, _) => {}
             }
             if self.select_other.is_none()
-                && self.select_mode == select::SelectMode::FacesEdges
+                && self.sel_menu.is_none()
                 && let (Some(p), Some((at, since))) = (pointer, self.rest)
                 && p.distance(at) <= 3.0
                 && now - since > 0.7
                 && self.dragging.is_none()
             {
-                let items = self.candidates_under(p, rect);
+                let items = self.sel_candidates(p, rect);
                 if items.len() > 1 {
                     self.select_other = Some(SelectOther {
                         at: p,
@@ -4722,33 +4678,17 @@ impl CadCraftApp {
                 ui.ctx().request_repaint();
                 let accept = self.select_other_ui(ui, rect);
                 if let Some(so) = &self.select_other {
-                    match &so.items[so.index] {
-                        ModelPick::Edge(e) => {
-                            edge_hover = Some(*e);
-                            face_hover = None;
-                        }
-                        ModelPick::Face(f) => {
-                            edge_hover = None;
-                            face_hover = Some(f.clone());
-                        }
-                    }
+                    let cur = so.items[so.index].clone();
+                    let at = so.at;
+                    (edge_hover, face_hover) = match &cur {
+                        select::SelItem::Edge(e) => (Some(*e), None),
+                        select::SelItem::Face(f) => (None, Some(f.clone())),
+                        _ => (None, None),
+                    };
+                    other_hover = Some(cur.clone());
                     if accept {
-                        let at = so.at;
-                        self.edge_sel = edge_hover.map(|e| (e, at));
-                        self.face_sel = face_hover.clone().map(|f| (f, at));
-                        let item = edge_hover
-                            .map(select::SelItem::Edge)
-                            .or_else(|| face_hover.clone().map(select::SelItem::Face));
-                        self.sel_click(item, false, false);
-                        let k = match (edge_hover, &face_hover) {
-                            (Some(e), _) => self.edge_feature(e),
-                            (_, Some(f)) => self.face_feature(f),
-                            _ => None,
-                        };
-                        if let Some(k) = k {
-                            self.selection = Selection::Feature(k);
-                        }
                         self.select_other = None;
+                        self.idle_select(Some(cur), at, false, false);
                     }
                 }
             } else if pointer.is_some() && self.rest.is_some_and(|(_, s)| now - s < 0.8) {
@@ -4771,67 +4711,21 @@ impl CadCraftApp {
             } else if self.extrude.as_ref().is_some_and(|d| d.axis_pick) {
                 self.axis_pick(p, rect);
             } else if self.extrude.is_some() {
-                self.extrude_pick(p, rect);
-            } else if idle && self.select_mode != select::SelectMode::FacesEdges {
-                let (add, toggle) = ui.input(|k| (k.modifiers.shift, k.modifiers.command));
-                let item = self.sel_item_at(p, rect, edge_hover, face_hover.as_deref());
-                self.face_sel = None;
-                self.edge_sel = None;
-                match &item {
-                    Some(select::SelItem::Feature(id)) => {
-                        if let Some(k) = self.part().features.iter().position(|f| f.id() == id) {
-                            // The base box is shown as the body (browser, Properties).
-                            self.selection = match self.part().features[k] {
-                                crate::part::Feature::Box(_) => Selection::Body,
-                                _ => Selection::Feature(k),
-                            };
-                        }
-                    }
-                    Some(select::SelItem::Sketch(i)) => self.selection = Selection::Sketch(*i),
-                    Some(select::SelItem::Body(_)) => self.selection = Selection::Body,
-                    _ => {}
+                if self.cat_on(crate::command::selection::Category::SketchEntity) {
+                    self.extrude_pick(p, rect);
                 }
-                self.sel_click(item, add, toggle);
-            } else if idle && let Some(id) = self.work_feature_under(p, rect) {
-                self.face_sel = None;
-                self.edge_sel = None;
-                self.sel_click(None, false, false);
-                if let Some(k) = self.part().features.iter().position(|f| f.id() == id) {
-                    self.selection = Selection::Feature(k);
-                }
-            } else if idle && ui.input(|k| k.modifiers.shift || k.modifiers.command) {
-                // Several faces / edges: no suggestion bar.
-                let (add, toggle) = ui.input(|k| (k.modifiers.shift, k.modifiers.command));
-                let item = self.sel_item_at(p, rect, edge_hover, face_hover.as_deref());
-                self.face_sel = None;
-                self.edge_sel = None;
-                self.sel_click(item, add, toggle);
             } else if idle {
+                let (add, toggle) = ui.input(|k| (k.modifiers.shift, k.modifiers.command));
                 let item = self.sel_item_at(p, rect, edge_hover, face_hover.as_deref());
-                self.sel_click(item, false, false);
-                self.edge_sel = edge_hover.map(|e| (e, p));
-                if let Some(k) = edge_hover.and_then(|e| self.edge_feature(e)) {
-                    self.selection = Selection::Feature(k);
-                }
-                self.face_sel = face_hover.clone().map(|f| (f, p));
-                if let Some((f, _)) = &self.face_sel {
-                    self.selection = match self.face_feature(f) {
-                        Some(k)
-                            if !matches!(self.part().features[k], crate::part::Feature::Box(_)) =>
-                        {
-                            Selection::Feature(k)
-                        }
-                        _ => Selection::Body,
-                    };
-                }
+                self.idle_select(item, p, add, toggle);
             }
         }
         // Double click: Select Tangencies (faces and edges).
         if idle
             && response.double_clicked_by(PointerButton::Primary)
-            && self.select_mode == select::SelectMode::FacesEdges
             && let Some(p) = pointer
             && let Some(item) = self.sel_item_at(p, rect, edge_hover, face_hover.as_deref())
+            && matches!(item, select::SelItem::Edge(_) | select::SelItem::Face(_))
         {
             self.face_sel = None;
             self.edge_sel = None;
@@ -4858,6 +4752,10 @@ impl CadCraftApp {
                     .solids()
                     .any(|(_, s)| s.name.as_deref() == Some(n.as_str())),
                 select::SelItem::Sketch(i) => *i < part.sketches.len(),
+                select::SelItem::Vertex(n) => part
+                    .body
+                    .vertices()
+                    .any(|(_, v)| v.name.as_deref() == Some(n.as_str())),
             };
             let sel: Vec<_> = self.sel.iter().filter(|x| alive(x)).cloned().collect();
             let prev: Vec<_> = self.prev_sel.iter().filter(|x| alive(x)).cloned().collect();
@@ -4901,6 +4799,20 @@ impl CadCraftApp {
         if response.secondary_clicked() {
             self.cube_context = on_cube.is_some();
         }
+        // Shift + right-click: the selection menu at the cursor (Inventor).
+        if response.hovered() && ui.input(|i| i.pointer.button_pressed(PointerButton::Secondary)) {
+            self.shift_rmb = ui.input(|i| i.modifiers.shift);
+        }
+        if response.secondary_clicked()
+            && self.shift_rmb
+            && on_cube.is_none()
+            && let Some(p) = pointer
+        {
+            self.select_other = None;
+            let menu = self.shift_menu_context(p, rect);
+            self.sel_menu = Some((p, rect, menu));
+            self.sel_menu_fresh = true;
+        }
         if response.secondary_clicked()
             && let Some(p) = pointer
         {
@@ -4934,115 +4846,118 @@ impl CadCraftApp {
         }
         let sketch_context = self.sketch_context;
         let context_target = self.context_target.clone();
-        response.context_menu(|ui| {
-            if self.cube_context {
-                self.cube_menu(ui);
-                return;
-            }
-            // An open command: its menu (OK, Continue, Back, options…).
-            if self.command_context_menu(ui) {
-                return;
-            }
-            // Extrude / Revolve: Continue (to the axis), OK, Cancel.
-            if self.editing.is_none()
-                && let Some(d) = self.extrude.as_ref()
-            {
-                let revolve_profiles = matches!(d.def, DraftDef::Revolve(_)) && !d.axis_pick;
-                if revolve_profiles
-                    && ui
-                        .button("Continue")
-                        .on_hover_text("Done with the profiles: pick the axis")
-                        .clicked()
+        // Shift + right button: the selection menu instead (spec 0.9a §6).
+        if !self.shift_rmb {
+            response.context_menu(|ui| {
+                if self.cube_context {
+                    self.cube_menu(ui);
+                    return;
+                }
+                // An open command: its menu (OK, Continue, Back, options…).
+                if self.command_context_menu(ui) {
+                    return;
+                }
+                // Extrude / Revolve: Continue (to the axis), OK, Cancel.
+                if self.editing.is_none()
+                    && let Some(d) = self.extrude.as_ref()
                 {
-                    if let Some(d) = self.extrude.as_mut() {
-                        d.axis_pick = true;
+                    let revolve_profiles = matches!(d.def, DraftDef::Revolve(_)) && !d.axis_pick;
+                    if revolve_profiles
+                        && ui
+                            .button("Continue")
+                            .on_hover_text("Done with the profiles: pick the axis")
+                            .clicked()
+                    {
+                        if let Some(d) = self.extrude.as_mut() {
+                            d.axis_pick = true;
+                        }
+                        ui.close();
                     }
-                    ui.close();
+                    if ui.button("OK (Ctrl+Enter)").clicked() {
+                        self.commit_extrude();
+                        ui.close();
+                    }
+                    if ui.button("Cancel (Esc)").clicked() {
+                        self.cancel_extrude();
+                        ui.close();
+                    }
+                    ui.separator();
                 }
-                if ui.button("OK (Ctrl+Enter)").clicked() {
-                    self.commit_extrude();
-                    ui.close();
+                let idle = self.tools.tool == Tool::Select && self.extrude.is_none();
+                if idle && let Some(a) = self.repeatable() {
+                    if ui.button(format!("Repeat {}", command_label(a))).clicked() {
+                        self.apply(a);
+                        ui.close();
+                    }
+                    ui.separator();
                 }
-                if ui.button("Cancel (Esc)").clicked() {
-                    self.cancel_extrude();
-                    ui.close();
+                if self.editing.is_some() && self.project_geometry {
+                    if ui
+                        .button("Done (Esc)")
+                        .on_hover_text("End Project Geometry")
+                        .clicked()
+                    {
+                        self.project_geometry = false;
+                        self.relink = None;
+                        ui.close();
+                    }
+                    ui.separator();
                 }
-                ui.separator();
-            }
-            let idle = self.tools.tool == Tool::Select && self.extrude.is_none();
-            if idle && let Some(a) = self.repeatable() {
-                if ui.button(format!("Repeat {}", command_label(a))).clicked() {
-                    self.apply(a);
-                    ui.close();
-                }
-                ui.separator();
-            }
-            if self.editing.is_some() && self.project_geometry {
-                if ui
-                    .button("Done (Esc)")
-                    .on_hover_text("End Project Geometry")
-                    .clicked()
+                if self.editing.is_some()
+                    && let Some(ctx) = sketch_context
                 {
-                    self.project_geometry = false;
-                    self.relink = None;
-                    ui.close();
+                    self.sketch_context_menu(ui, ctx);
+                    ui.separator();
                 }
-                ui.separator();
-            }
-            if self.editing.is_some()
-                && let Some(ctx) = sketch_context
-            {
-                self.sketch_context_menu(ui, ctx);
-                ui.separator();
-            }
-            if self.editing.is_none() && !self.sel.is_empty() {
-                self.appearance_context_menu(ui);
-            }
-            ui.menu_button("Projection", |ui| {
-                for p in [
-                    camera::Projection::Orthographic,
-                    camera::Projection::Perspective,
-                    camera::Projection::PerspectiveOrthoFaces,
-                ] {
-                    if ui.radio(self.camera.projection == p, p.label()).clicked() {
-                        self.apply(Action::Projection(p));
+                if self.editing.is_none() && !self.sel.is_empty() {
+                    self.appearance_context_menu(ui);
+                }
+                ui.menu_button("Projection", |ui| {
+                    for p in [
+                        camera::Projection::Orthographic,
+                        camera::Projection::Perspective,
+                        camera::Projection::PerspectiveOrthoFaces,
+                    ] {
+                        if ui.radio(self.camera.projection == p, p.label()).clicked() {
+                            self.apply(Action::Projection(p));
+                            ui.close();
+                        }
+                    }
+                });
+                match &context_target {
+                    Some(plane) => {
+                        if ui.button("New Sketch").clicked() {
+                            self.mode = Mode::PickPlane(PickPurpose::NewSketch);
+                            self.plane_picked(plane.clone());
+                            ui.close();
+                        }
+                    }
+                    None => {
+                        ui.label(RichText::new("No face under the cursor").weak());
+                    }
+                }
+                if self.editing.is_some() {
+                    if self.tools.tool != Tool::Select {
+                        if ui
+                            .button("Done")
+                            .on_hover_text("End the line chain / create the spline")
+                            .clicked()
+                        {
+                            self.tool_op(|t, ps| t.finish(ps));
+                            ui.close();
+                        }
+                        if ui.button("Cancel (Esc)").clicked() {
+                            self.tools.escape();
+                            ui.close();
+                        }
+                    }
+                    if ui.button("Finish 2D Sketch").clicked() {
+                        self.finish_sketch();
                         ui.close();
                     }
                 }
             });
-            match &context_target {
-                Some(plane) => {
-                    if ui.button("New Sketch").clicked() {
-                        self.mode = Mode::PickPlane(PickPurpose::NewSketch);
-                        self.plane_picked(plane.clone());
-                        ui.close();
-                    }
-                }
-                None => {
-                    ui.label(RichText::new("No face under the cursor").weak());
-                }
-            }
-            if self.editing.is_some() {
-                if self.tools.tool != Tool::Select {
-                    if ui
-                        .button("Done")
-                        .on_hover_text("End the line chain / create the spline")
-                        .clicked()
-                    {
-                        self.tool_op(|t, ps| t.finish(ps));
-                        ui.close();
-                    }
-                    if ui.button("Cancel (Esc)").clicked() {
-                        self.tools.escape();
-                        ui.close();
-                    }
-                }
-                if ui.button("Finish 2D Sketch").clicked() {
-                    self.finish_sketch();
-                    ui.close();
-                }
-            }
-        });
+        }
 
         // --- sketch tools ---
         let ctrl = ui.input(|i| i.modifiers.ctrl);
@@ -5492,7 +5407,8 @@ impl CadCraftApp {
             {
                 Nav::Orbit
             }
-            MousePreset::Classic if right || middle => Nav::Pan,
+            // Shift + right button opens the selection menu, never a pan.
+            MousePreset::Classic if (right && !self.shift_rmb) || middle => Nav::Pan,
             _ => Nav::None,
         };
         match nav {
@@ -5672,9 +5588,9 @@ impl CadCraftApp {
         // Selected and prehighlighted faces, the name next to the cursor.
         {
             let hover_item = match (idle, pointer) {
-                (true, Some(p)) if self.prehighlight => {
-                    self.sel_item_at(p, rect, edge_hover, face_hover.as_deref())
-                }
+                (true, Some(p)) if self.select.prehighlight => other_hover
+                    .clone()
+                    .or_else(|| self.sel_item_at(p, rect, edge_hover, face_hover.as_deref())),
                 _ => None,
             };
             self.draw_selection(&painter, rect, hover_item.as_ref());
@@ -6061,7 +5977,7 @@ impl CadCraftApp {
         // crosses (Inventor, SolidWorks, Fusion).
         if let (Some(a), Some(b)) = (self.box_select, pointer) {
             let r = egui::Rect::from_two_pos(a, b);
-            let window = b.x >= a.x;
+            let window = self.select.box_mode.is_window(a.x, b.x);
             let (fill, col) = if window {
                 (
                     Color32::from_rgba_unmultiplied(60, 120, 230, 30),

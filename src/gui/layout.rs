@@ -196,6 +196,9 @@ pub struct AppOptions {
     pub thread_texture: bool,
     /// ViewCube → Set Current View as Home: (yaw, pitch) in degrees.
     pub home_view: Option<(f64, f64)>,
+    /// Select Priority, filters (those switched off), box mode, prehighlight
+    /// (`docs/spec/0.9a-selection-filters.md`).
+    pub selection: crate::command::selection::SelectSettings,
 }
 
 impl Default for AppOptions {
@@ -208,6 +211,7 @@ impl Default for AppOptions {
             show_labels: true,
             thread_texture: true,
             home_view: None,
+            selection: Default::default(),
         }
     }
 }
@@ -708,6 +712,7 @@ impl CadCraftApp {
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
             home_view: self.home_view,
+            selection: self.select,
         }
     }
 
@@ -723,6 +728,7 @@ impl CadCraftApp {
             self.scene_dirty = true;
         }
         self.home_view = o.home_view;
+        self.select = o.selection;
     }
 
     /// Start of a frame: Ctrl+0, F11 (outside a sketch, where F11 is Relax
@@ -968,6 +974,7 @@ impl CadCraftApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| self.viewport(ui, frame));
+        self.shift_menu_ui(ui.ctx());
         if let Some(on) = self.full_screen_cmd.take() {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));

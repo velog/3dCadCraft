@@ -42,6 +42,8 @@ pub enum PickKind {
     SectionPoint,
     /// A surface body (Extrude / Revolve with Output Surface).
     Surface,
+    /// A model vertex or a work point.
+    Point,
 }
 
 /// One selector row of a command dialog.

@@ -378,7 +378,7 @@ impl CadCraftApp {
                 }
                 SelItem::Feature(id) => Some(LookTarget::Feature(id.clone())),
                 SelItem::Body(n) => Some(LookTarget::Body(n.clone())),
-                SelItem::Edge(_) | SelItem::Sketch(_) => None,
+                SelItem::Edge(_) | SelItem::Sketch(_) | SelItem::Vertex(_) => None,
             })
             .collect()
     }

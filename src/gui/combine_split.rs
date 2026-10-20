@@ -366,14 +366,18 @@ impl CadCraftApp {
                     .any(|(_, s)| s.open && s.name.as_deref() == Some(n.as_str()))
             })
         };
+        use crate::command::selection::Category;
         if flow.accepts(PickKind::Body) {
             // Solids only (a surface is not a body to split).
             return face
-                .and_then(|(f, _)| psel::body_of_face(&part.body, f).filter(|_| open(f).is_none()))
+                .filter(|(f, _)| self.cat_on(Category::SolidBody) && open(*f).is_none())
+                .and_then(|(f, _)| psel::body_of_face(&part.body, f))
                 .map(BodyPick::Body);
         }
         if flow.accepts(PickKind::Face) {
-            return face.map(|(f, at)| BodyPick::Face(f, at));
+            return face
+                .filter(|_| self.cat_on(Category::Face))
+                .map(|(f, at)| BodyPick::Face(f, at));
         }
         if flow.accepts(PickKind::Sketch)
             && let Some(i) = self.sketch_under(p, rect)
@@ -382,7 +386,7 @@ impl CadCraftApp {
         }
         // A surface body's face under the cursor (nearest along the ray).
         let surface = face
-            .filter(|_| flow.accepts(PickKind::Surface))
+            .filter(|_| flow.accepts(PickKind::Surface) && self.cat_on(Category::SurfaceBody))
             .and_then(|(f, at)| open(f).map(|n| (at, n)));
         if flow.accepts(PickKind::Plane) {
             // Work and origin planes (Inventor's split tools; model faces
@@ -394,8 +398,10 @@ impl CadCraftApp {
             let half = self.origin_plane_half();
             let unit = dir.norm().max(1e-12);
             let surf = surface.map(|(at, n)| ((at - o).norm() / unit, BodyPick::Surface(n)));
+            let origin_on = self.cat_on(Category::Origin);
             return OriginPlane::ALL
                 .into_iter()
+                .filter(|_| origin_on)
                 .filter_map(|pl| {
                     Some((
                         super::overlay::hit_origin_plane(pl, half, &o, &dir)?,

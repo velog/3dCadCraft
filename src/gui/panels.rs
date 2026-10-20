@@ -4318,6 +4318,10 @@ impl CadCraftApp {
             let editing = self.editing.is_some();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(format!("Mouse: {}", self.mouse.label()));
+                if let Some(note) = self.filter_override_note() {
+                    ui.separator();
+                    ui.label(RichText::new(note).color(egui::Color32::from_rgb(200, 120, 20)));
+                }
                 let mut bg = super::i18n::bulgarian();
                 if ui
                     .toggle_value(&mut bg, "БГ")
