@@ -1,99 +1,99 @@
-# 3DCadCraft — описание на проекта
+# 3DCadCraft — project description
 
-## Визия
+## Vision
 
-**3DCadCraft** е параметрична 3D CAD система с отворен код за машиностроителни конструктори, написана изцяло на **Rust**. Обхватът е сравним с Autodesk Inventor и SolidWorks: скици с ограничения, параметрични детайли, сглобки, чертежи. Работи нативно на Linux, Windows и macOS.
+**3DCadCraft** is an open-source parametric 3D CAD system for mechanical designers, written entirely in **Rust**. Its scope is comparable to Autodesk Inventor and SolidWorks: constrained sketches, parametric parts, assemblies, drawings. It runs natively on Linux, Windows and macOS.
 
-Три неща я отличават:
+Three things set it apart:
 
-1. **Собствено, четимо ядро.** B-Rep ядрото е написано от нулата (clean-room) на безопасен Rust, без лицензирани ядра (ShapeManager, Parasolid) и без C++ зависимости. Всеки може да прочете как се смята закръглението или разгъвката.
-2. **Готова за AI агенти от първия ден.** Всяко действие е *команда*, която може да се отмени и сериализира. Същият набор команди е достъпен за GUI, скриптове и външни агенти (JSON-RPC / MCP), без графичен интерфейс.
-3. **Един файл = цял проект.** Проектът (`.3dcadcraft`) съдържа детайли и сглобки в един файл, който се копира без загуби. Библиотеки се ползват с Link, Append и Pack по модела на Blender (виж [FILE_FORMAT.md](FILE_FORMAT.md)).
+1. **Its own, readable kernel.** The B-Rep kernel is written from scratch (clean-room) in safe Rust, with no licensed kernels (ShapeManager, Parasolid) and no C++ dependencies. Anyone can read how a fillet or a flat pattern is computed.
+2. **Ready for AI agents from day one.** Every action is a *command* that can be undone and serialized. The same command set is available to the GUI, to scripts and to external agents (JSON-RPC / MCP), without a graphical interface.
+3. **One file = a whole project.** A project (`.3dcadcraft`) holds parts and assemblies in one file that can be copied without loss. Libraries are used through Link, Append and Pack, following Blender's model (see [FILE_FORMAT.md](FILE_FORMAT.md)).
 
-## Принципи
+## Principles
 
-| Принцип | Как се спазва |
+| Principle | How it is kept |
 |---|---|
-| **Без `unsafe`** | `unsafe_code = "forbid"` за целия проект; FFI към GPU е изолиран в wgpu |
-| **Точност** | `f64`, милиметри и радиани вътрешно, всички сравнения през `Tolerance` |
-| **Проверимост** | всяка структура има инварианти, проверявани при създаване (затворени контури, многообразни обвивки, Ойлер–Поанкаре); визуална диагностика (червени обърнати стени, цветове на скицата) |
-| **Детерминизъм** | еднакъв вход дава еднакъв изход, включително байтовете на записания файл |
-| **Без графика по подразбиране** | ядрото, solver-ът, файловете и API-то се компилират без GUI (`--no-default-features`) |
-| **Clean-room** | функционален ориентир е Inventor, но без копиране на код, документация или файлови формати на Autodesk |
+| **No `unsafe`** | `unsafe_code = "forbid"` for the whole project; FFI to the GPU is isolated in wgpu |
+| **Accuracy** | `f64`, millimetres and radians internally, all comparisons through `Tolerance` |
+| **Verifiability** | every structure has invariants checked on creation (closed loops, manifold shells, Euler–Poincaré); visual diagnostics (red flipped faces, sketch colours) |
+| **Determinism** | the same input gives the same output, including the bytes of the saved file |
+| **No graphics by default** | the kernel, the solver, the files and the API compile without the GUI (`--no-default-features`) |
+| **Clean-room** | Inventor is the functional reference, but no Autodesk code, documentation or file formats are copied |
 
-## Архитектура
+## Architecture
 
 ```text
  ┌─────────── gui (egui + wgpu) ────────────┐   ┌──── api (JSON-RPC / MCP) ────┐
- │ лента, дърво на модела, свойства,         │   │ агенти, скриптове, CI        │
- │ 3D изглед, ViewCube, наслагване на скица   │   │ (без GUI)                    │
+ │ ribbon, model browser, properties,        │   │ agents, scripts, CI          │
+ │ 3D view, ViewCube, sketch overlay         │   │ (no GUI)                     │
  └──────────────────────┬────────────────────┘   └──────────────┬───────────────┘
                         ▼                                       ▼
-                command — Command pattern, Undo/Redo, дърво на операциите
+                command — Command pattern, Undo/Redo, operation tree
                         │
      ┌──────────────────┼────────────────────────┐
      ▼                  ▼                        ▼
   sketch            kernel                    document
-  2D елементи,      B-Rep геометрия            проекти, Part/Assembly,
-  ограничения,      и топология, тесселация,   формат .3dcadcraft,
-  solver (LM)       (булеви, закръгления…)     Link / Append / Pack
+  2D entities,      B-Rep geometry             projects, Part/Assembly,
+  constraints,      and topology, tessellation .3dcadcraft format,
+  solver (LM)       (Booleans, fillets…)       Link / Append / Pack
 ```
 
-### Модули (`src/`)
+### Modules (`src/`)
 
-| Модул | Отговорност | Статус |
+| Module | Responsibility | Status |
 |---|---|---|
-| `kernel` | точки, вектори, криви (Line, Circle, NURBS), повърхнини (Plane, Cylinder), топология `Vertex…Solid`, валидация, тесселация (`mesh.rs`), примитив кутия | 🟡 основата е готова; предстоят тела от скици и булеви операции |
-| `sketch` | 2D скица върху равнина: точки, линии, окръжности, дъги; 10 вида ограничения; solver на Levenberg с минимална норма; анализ на степените на свобода и излишъците | 🟡 ядрото е готово; предстоят инструменти за чертане |
-| `part` | детайл: операции → тяло, скици с дефиниция (равнина + координатна система), автоматична проекция, асоциативност, Redefine, Edit Coordinate System | 🟡 скица върху стена ✅; предстоят Extrude и останалите операции |
-| `document` | проект с много документи, UUID идентичност, ZIP или папка, атомарен запис, версии, Link/Append/Pack | ✅ версия 1 |
-| `command` | Undo/Redo (снимки + сливане на жестове); по-късно Command enum | 🟡 |
-| `api` | JSON-RPC / MCP сървър | ⬜ |
-| `gui` | egui интерфейс в стила на Inventor (виж [UI.md](UI.md)), wgpu рендер, ViewCube, наслагване и влачене на скица, файлове | 🟡 |
+| `kernel` | points, vectors, curves (Line, Circle, NURBS), surfaces (Plane, Cylinder), topology `Vertex…Solid`, validation, tessellation (`mesh.rs`), box primitive | 🟡 the base is done; bodies from sketches and Boolean operations are to do |
+| `sketch` | 2D sketch on a plane: points, lines, circles, arcs; 10 constraint kinds; minimum-norm Levenberg solver; analysis of degrees of freedom and redundancies | 🟡 the core is done; drawing tools are to do |
+| `part` | part: features → body, sketches with a definition (plane + coordinate system), automatic projection, associativity, Redefine, Edit Coordinate System | 🟡 sketch on a face ✅; Extrude and the other features are to do |
+| `document` | project with many documents, UUID identity, ZIP or folder, atomic save, versions, Link/Append/Pack | ✅ version 1 |
+| `command` | Undo/Redo (snapshots + gesture coalescing); later a Command enum | 🟡 |
+| `api` | JSON-RPC / MCP server | ⬜ |
+| `gui` | egui interface in the style of Inventor (see [UI.md](UI.md)), wgpu rendering, ViewCube, sketch overlay and dragging, files | 🟡 |
 
-### Технологии
+### Technologies
 
-| Област | Избор | Защо |
+| Area | Choice | Why |
 |---|---|---|
-| Език | Rust 2024 (≥ 1.88) | безопасност на паметта, производителност, един език за всичко |
-| Линейна алгебра | `nalgebra` | точки и вектори с различни типове, трансформации, SVD/Cholesky за solver-а |
-| Арени и ID | `slotmap` | стабилни типизирани ID без указатели и `unsafe` |
-| Сериализация | `serde` + `serde_json` (`float_roundtrip`) | файлове и API, точни `f64` |
-| Контейнер | `zip` с `zlib-rs` | стандартен ZIP, изцяло на Rust |
-| Идентичност | `uuid` v4 | глобално уникални ID на проекти и документи |
-| GUI | `egui` / `eframe` 0.36 | лек immediate-mode UI, над 60 FPS |
-| 3D рендер | `wgpu` 30 (през eframe) | Vulkan / Metal / DX12 / GL от един код |
+| Language | Rust 2024 (≥ 1.88) | memory safety, performance, one language for everything |
+| Linear algebra | `nalgebra` | distinct types for points and vectors, transformations, SVD/Cholesky for the solver |
+| Arenas and IDs | `slotmap` | stable typed IDs without pointers or `unsafe` |
+| Serialization | `serde` + `serde_json` (`float_roundtrip`) | files and API, exact `f64` |
+| Container | `zip` with `zlib-rs` | standard ZIP, entirely in Rust |
+| Identity | `uuid` v4 | globally unique IDs of projects and documents |
+| GUI | `egui` / `eframe` 0.36 | lightweight immediate-mode UI, above 60 FPS |
+| 3D rendering | `wgpu` 30 (via eframe) | Vulkan / Metal / DX12 / GL from one code base |
 
-## Как да го пуснеш
+## How to run it
 
 ```bash
-cargo run --release                                  # приложението
-cargo run --release -- path/to/project.3dcadcraft    # отвори проект
-CADCRAFT3D_DEMO=slot cargo run --release             # старт с демо скица (rectangle|slot|tangents|lines)
-cargo test --no-default-features                     # тестовете (без GUI)
-cargo run --example make_project -- /tmp/b.3dcadcraft # проект, създаден през API-то
-cargo doc --no-default-features --open               # документацията на кода
+cargo run --release                                  # the application
+cargo run --release -- path/to/project.3dcadcraft    # open a project
+CADCRAFT3D_DEMO=slot cargo run --release             # start with a demo sketch (rectangle|slot|tangents|lines)
+cargo test --no-default-features                     # the tests (no GUI)
+cargo run --example make_project -- /tmp/b.3dcadcraft # a project created through the API
+cargo doc --no-default-features --open               # the code documentation
 ```
 
-## Документи
+## Documents
 
-| Документ | Съдържание |
+| Document | Contents |
 |---|---|
-| [FEATURES.md](FEATURES.md) | всички функции по нива 0–7: какво правят, как работят, настройки, аналог в Inventor, статус |
-| [UI.md](UI.md) | интерфейс в стила на Inventor, мишка, клавиши, речник за мигриращи |
-| [FILE_FORMAT.md](FILE_FORMAT.md) | формат `.3dcadcraft`, сравнение с Inventor/Blender/FreeCAD/Onshape, съвет, гаранции |
-| [ROADMAP.md](ROADMAP.md) | фази на реализация, критерии за приемане, решения на ниво ядро, пречки за сглобките, работни потоци |
-| [../CLAUDE.md](../CLAUDE.md) | правила и рецепти за разработка с Claude (поддържа се заедно с кода) |
+| [FEATURES.md](FEATURES.md) | all features by levels 0–7: what they do, how they work, settings, Inventor equivalent, status |
+| [UI.md](UI.md) | Inventor-style interface, mouse, keys, glossary for users migrating |
+| [FILE_FORMAT.md](FILE_FORMAT.md) | the `.3dcadcraft` format, comparison with Inventor/Blender/FreeCAD/Onshape, recommendation, guarantees |
+| [ROADMAP.md](ROADMAP.md) | implementation phases, acceptance criteria, kernel-level decisions, obstacles for assemblies, workflows |
+| [../CLAUDE.md](../CLAUDE.md) | rules and recipes for development with Claude (maintained together with the code) |
 
-## Имена
+## Names
 
-| Какво | Име |
+| What | Name |
 |---|---|
-| Продукт | **3DCadCraft** |
-| Програма | `3dcadcraft` |
-| Rust пакет и библиотека | `cadcraft3d` (Cargo не позволява име, което започва с цифра) |
-| Файлове на проекти | `*.3dcadcraft` (MIME `application/vnd.3dcadcraft.project+zip`) |
+| Product | **3DCadCraft** |
+| Program | `3dcadcraft` |
+| Rust package and library | `cadcraft3d` (Cargo does not allow a name that starts with a digit) |
+| Project files | `*.3dcadcraft` (MIME `application/vnd.3dcadcraft.project+zip`) |
 
-## Лиценз
+## License
 
-MIT OR Apache-2.0, по избор на ползвателя, както е обичайно в Rust екосистемата.
+MIT OR Apache-2.0, at the user's option, as is customary in the Rust ecosystem.
