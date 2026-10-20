@@ -40,6 +40,8 @@ pub struct ExactSolid {
     /// The profiles of the extrusions in its history, for vertex and edge
     /// names (`<prefix>:VS:<segment>`, `<prefix>:StartEdge:<segment>`).
     profiles: Vec<ProfileFrame>,
+    /// A surface body (Output Surface), even where its sheet closes.
+    sheet: bool,
 }
 
 /// An extruded profile: its feature prefix, sketch plane and the start
@@ -249,6 +251,7 @@ pub fn box_named(a: Point3, b: Point3, prefix: &str) -> Result<ExactSolid, Strin
         })
         .collect();
     Ok(ExactSolid {
+        sheet: false,
         name: Some(prefix.to_owned()),
         body,
         face_names,
@@ -493,6 +496,7 @@ pub fn extrude(
         face_names
     };
     Ok(ExactSolid {
+        sheet: false,
         name: Some(prefix.to_owned()),
         body,
         face_names,
@@ -589,6 +593,7 @@ pub fn revolve(
         _ => None,
     });
     Ok(ExactSolid {
+        sheet: false,
         name: Some(prefix.to_owned()),
         body,
         face_names,
@@ -607,6 +612,7 @@ pub fn boolean(a: &ExactSolid, b: &ExactSolid, op: ExactOp) -> Result<Option<Exa
     Ok(r.map(|body| {
         let face_names = names_from(&body, &[a, b], &|_| None);
         ExactSolid {
+            sheet: false,
             name: a.name.clone(),
             body,
             face_names,
@@ -630,6 +636,7 @@ pub fn union_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> 
     let refs: Vec<&ExactSolid> = solids.iter().collect();
     let face_names = names_from(&body, &refs, &|_| None);
     Ok(Some(ExactSolid {
+        sheet: false,
         name: solids[0].name.clone(),
         body,
         face_names,
@@ -654,6 +661,7 @@ pub fn join_apart(solids: &[ExactSolid]) -> Result<Option<ExactSolid>, String> {
     let refs: Vec<&ExactSolid> = solids.iter().collect();
     let face_names = names_from(&body, &refs, &|_| None);
     Ok(Some(ExactSolid {
+        sheet: false,
         name: solids[0].name.clone(),
         body,
         face_names,
@@ -705,6 +713,7 @@ pub fn lumps(s: &ExactSolid) -> Vec<ExactSolid> {
             .map(|body| {
                 let face_names = names_from(&body, &[s], &|_| None);
                 ExactSolid {
+                    sheet: false,
                     name: s.name.clone(),
                     body,
                     face_names,
@@ -923,6 +932,7 @@ fn blend_result(s: &ExactSolid, body: sk::Body, prefix: &str, role: &str) -> Exa
         })
         .collect();
     ExactSolid {
+        sheet: false,
         name: s.name.clone(),
         body,
         face_names,
@@ -1061,6 +1071,7 @@ pub fn shell_with(
                     })
                     .collect();
                 return Ok(ExactSolid {
+                    sheet: false,
                     name: s.name.clone(),
                     body,
                     face_names,
@@ -1104,6 +1115,7 @@ pub fn shell_with(
             let body = guarded("shell", || sk::offset_faces(&s.body, &walls, out))?;
             let face_names = names_from(&body, &[s], &|_| None);
             let o = ExactSolid {
+                sheet: false,
                 name: s.name.clone(),
                 body,
                 face_names,
@@ -1118,6 +1130,7 @@ pub fn shell_with(
             s.clone()
         };
         let lined = ExactSolid {
+            sheet: false,
             name: s.name.clone(),
             body: s.body.clone(),
             face_names: (0..s.face_names.len())
@@ -1129,6 +1142,7 @@ pub fn shell_with(
             let body = guarded("shell", || sk::offset_faces(&lined.body, &walls, -inn))?;
             let face_names = names_from(&body, &[&lined], &|_| None);
             let c = ExactSolid {
+                sheet: false,
                 face_names,
                 body,
                 ..lined
@@ -1146,6 +1160,7 @@ pub fn shell_with(
             let body = guarded("shell", || sk::offset_faces(&cavity.body, &open_pts, push))?;
             let face_names = names_from(&body, &[&cavity], &|_| None);
             cavity = ExactSolid {
+                sheet: false,
                 face_names,
                 body,
                 ..cavity
@@ -1427,6 +1442,7 @@ pub fn draft(
     let body = guarded("draft", || sk::draft(&s.body, &pts, &pl, d3(&pull), angle))?;
     let face_names = names_from(&body, &[s], &|_| None);
     Ok(ExactSolid {
+        sheet: false,
         name: s.name.clone(),
         body,
         face_names,
@@ -1496,6 +1512,7 @@ pub fn draft_two_sided(
         let face_names = names_from(&body, &[s], &|_| None);
         let origin = face_origins(&body, &[s]);
         let part = ExactSolid {
+            sheet: false,
             name: s.name.clone(),
             body,
             face_names,
@@ -1546,6 +1563,7 @@ pub fn draft_two_sided(
             .ok_or_else(|| "the drafted halves do not join".to_owned())?;
             let face_names = names_from(&r, &[&a, &b], &|_| None);
             ExactSolid {
+                sheet: false,
                 name: s.name.clone(),
                 body: r,
                 face_names,
@@ -1596,6 +1614,7 @@ pub fn transformed(
         .map(|n| n.map(|n| format!("{rename}:{n}")))
         .collect();
     Ok(ExactSolid {
+        sheet: false,
         name: body.map(str::to_owned).or_else(|| s.name.clone()),
         body: placed,
         face_names,
@@ -1668,6 +1687,7 @@ pub fn revolved_tool(
         _ => None,
     });
     Ok(ExactSolid {
+        sheet: false,
         name: Some(prefix.to_owned()),
         body,
         face_names,
@@ -1717,6 +1737,7 @@ pub fn helix_tool(
     })?;
     let n = body.face_count();
     Ok(ExactSolid {
+        sheet: false,
         name: Some(prefix.to_owned()),
         body,
         face_names: vec![Some(format!("{prefix}:{name}")); n],
@@ -1950,6 +1971,7 @@ fn threaded_piece(
         }
     }
     Ok(Some(ExactSolid {
+        sheet: false,
         name: s.name.clone(),
         body,
         face_names,
@@ -1975,6 +1997,7 @@ pub fn moved(s: &ExactSolid, m: &nalgebra::Matrix4<Real>) -> Result<ExactSolid, 
         face_names
     };
     Ok(ExactSolid {
+        sheet: false,
         name: s.name.clone(),
         body,
         face_names,
@@ -1997,6 +2020,8 @@ pub enum SplitBy {
         /// The chains, in sketch coordinates.
         curves: Vec<Vec<Segment2>>,
     },
+    /// A surface body of one face: the face's surface, extended.
+    Sheet(ExactSolid),
 }
 
 /// Split Face (SolidCraft's `split_faces_with_map`): divides the faces
@@ -2010,7 +2035,7 @@ pub fn split_faces(
     faces: &[usize],
     tool: &SplitBy,
     prefix: &str,
-    side: Option<&Plane>,
+    side: Option<&dyn Fn(&Point3) -> Real>,
 ) -> Result<ExactSolid, String> {
     let pieces_of = |segs: &[Segment2]| -> Result<Vec<sg::Seg2>, String> {
         let mut v = Vec::new();
@@ -2040,8 +2065,19 @@ pub fn split_faces(
                 )
             })?
         }
+        SplitBy::Sheet(sheet) => {
+            // One surface (a full revolve's sectors share it): its first face.
+            let [face] = sheet::distinct_faces(sheet)?[..] else {
+                return Err(
+                    "not supported yet: a surface of several faces as the tool of Split Face"
+                        .into(),
+                );
+            };
+            sheet::split_faces_by(&s.body, faces, sheet, face)?
+        }
     };
     let mut out = ExactSolid {
+        sheet: false,
         name: s.name.clone(),
         body,
         face_names: Vec::new(),
@@ -2053,7 +2089,7 @@ pub fn split_faces(
     let mut by_source: HashMap<usize, Vec<(Real, usize)>> = HashMap::new();
     for (i, &src) in origin.iter().enumerate().take(n) {
         let h = match (side, samples.get(i).copied().flatten()) {
-            (Some(pl), Some(p)) => pl.signed_distance(&p),
+            (Some(pl), Some(p)) => pl(&p),
             _ => i as Real,
         };
         by_source.entry(src).or_default().push((h, i));
@@ -2114,6 +2150,7 @@ pub fn split_by_plane(
             .map(|n| n.or_else(|| Some(format!("{cut}:Cut"))))
             .collect();
         let part = ExactSolid {
+            sheet: false,
             name: s.name.clone(),
             body,
             face_names,
@@ -2160,7 +2197,7 @@ pub fn split_faces_lenient(
     faces: &[usize],
     tool: &SplitBy,
     prefix: &str,
-    side: Option<&Plane>,
+    side: Option<&dyn Fn(&Point3) -> Real>,
 ) -> Result<Option<ExactSolid>, String> {
     let mut left = faces.to_vec();
     while !left.is_empty() {
@@ -2597,7 +2634,7 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
         shells.extend(cavities);
         let solid = out.solids.insert(Solid {
             shells,
-            open: false,
+            open: s.is_open(),
             name: s.name.clone(),
         });
         name_edges_and_vertices(out, solid, &s.profiles);
@@ -3733,6 +3770,9 @@ mod hole_tests;
 
 mod coil;
 pub use coil::{CoilMesh, CoilMotion, CoilZone, coil, coil_boolean, coil_mesh};
+
+mod sheet;
+pub use sheet::{SheetSide, extrude_sheet, revolve_sheet, sheet_nearest, split_by_sheet};
 
 mod sweep;
 pub use sweep::{

@@ -50,7 +50,7 @@ pub(super) fn extrude(
     sketch: &Sketch,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
     if e.output == Output::Surface {
-        return Ok(None);
+        return extrude_surface(e, body, works, sketch);
     }
     let plane = &sketch.plane;
     let mut out = Vec::new();
@@ -101,6 +101,66 @@ pub(super) fn extrude(
                 })?;
         }
         out.push(tool);
+    }
+    Ok(Some(out))
+}
+
+/// Extrude with Output Surface: the walls of each profile (its loops) and
+/// of the open curves, as exact sheets (`exact::extrude_sheet`), one surface
+/// body per profile. `Ok(None)` for what sheets do not cover yet (a taper, a
+/// termination that is not parallel to the sketch).
+fn extrude_surface(
+    e: &ExtrudeFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    sketch: &Sketch,
+) -> Result<Option<Vec<ExactSolid>>, Fail> {
+    use crate::kernel::ProfileSegment;
+    let plane = &sketch.plane;
+    // (prefix, levels, chains)
+    let mut parts: Vec<(
+        String,
+        Vec<crate::kernel::ExtrudeLevel>,
+        Vec<Vec<ProfileSegment>>,
+    )> = Vec::new();
+    if !e.profiles.is_empty() {
+        let mut closed = e.clone();
+        closed.open = None;
+        for piece in closed.pieces(body, works, sketch).map_err(User)? {
+            if piece.span.clip.is_some() || piece.bounds.is_some() {
+                return Ok(None);
+            }
+            let chains = std::iter::once(piece.outer.clone())
+                .chain(piece.holes.iter().cloned())
+                .collect();
+            parts.push((piece.prefix.clone(), piece.span.levels.clone(), chains));
+        }
+    }
+    if let Some(op) = &e.open {
+        let (chain, ..) = super::extrude::open_chain(op, sketch).map_err(User)?;
+        let probes = super::extrude::segments_polygon(&chain);
+        let span = e.span(body, works, plane, &probes).map_err(User)?;
+        if span.clip.is_some() {
+            return Ok(None);
+        }
+        parts.push((prefix(&e.id, parts.len()), span.levels, vec![chain]));
+    }
+    if parts.is_empty() {
+        return Err(User("select at least one profile or open curve".into()));
+    }
+    let mut out = Vec::new();
+    for (pre, levels, chains) in parts {
+        let (Some(first), Some(last)) = (levels.first(), levels.last()) else {
+            return Err(User("the extrusion has no depth".into()));
+        };
+        if levels.iter().any(|l| l.inset.abs() > 1e-12) {
+            // A tapered surface: not with sheets yet.
+            return Ok(None);
+        }
+        out.push(
+            exact::extrude_sheet(plane, &chains, first.offset, last.offset, &pre)
+                .map_err(Kernel)?,
+        );
     }
     Ok(Some(out))
 }
@@ -256,9 +316,6 @@ pub(super) fn revolve(
     works: &super::placement::WorkGeom,
     sketch: &Sketch,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
-    if r.output == Output::Surface {
-        return Ok(None);
-    }
     let axis = resolve_axis(&r.axis, sketch).map_err(User)?;
     let (start, sweep) = r.sweep_in(body, works, sketch).map_err(User)?;
     let regions = sketch.regions();
@@ -268,6 +325,27 @@ pub(super) fn revolve(
             .resolve(&regions)
             .ok_or_else(|| User(format!("profile #{} no longer exists in the sketch", n + 1)))?;
         let (outer, holes) = kernel_profile(region);
+        if r.output == Output::Surface {
+            // The walls only, as an exact sheet (`exact::revolve_sheet`).
+            let chains: Vec<_> = std::iter::once(outer)
+                .chain(holes)
+                .flat_map(|lp| off_axis(lp, axis.origin, axis.dir))
+                .collect();
+            out.push(
+                exact::revolve_sheet(
+                    &sketch.plane,
+                    &chains,
+                    axis.origin,
+                    axis.dir,
+                    start,
+                    sweep,
+                    REVOLVE_SHEET_SENSE,
+                    &prefix(&r.id, n),
+                )
+                .map_err(Kernel)?,
+            );
+            continue;
+        }
         let prof = exact::profile(&outer, &holes).map_err(Kernel)?;
         out.push(
             exact::revolve(
@@ -2638,4 +2716,53 @@ mod edit_feature {
         };
         assert_eq!(now.edges.len(), 2);
     }
+}
+
+/// The turning sense of a surface revolve against a solid one (checked by
+/// `revolve_surface_lies_where_the_solid_does`).
+const REVOLVE_SHEET_SENSE: Real = 1.0;
+
+/// A profile loop without its lines on the revolve axis, as the open chains
+/// between them (a surface revolve: an edge on the axis sweeps no face, and
+/// the kernel takes a curve from the axis back to it, not a closed one
+/// touching it). A loop off the axis stays as it is.
+fn off_axis(
+    lp: Vec<crate::kernel::ProfileSegment>,
+    origin: nalgebra::Point2<Real>,
+    dir: nalgebra::Vector2<Real>,
+) -> Vec<Vec<crate::kernel::ProfileSegment>> {
+    use crate::kernel::Segment2;
+    let Some(d) = dir.try_normalize(1e-15) else {
+        return vec![lp];
+    };
+    let size = lp
+        .iter()
+        .map(|s| s.geometry.point(0.0).coords.norm())
+        .fold(1.0, Real::max);
+    let on = |p: nalgebra::Point2<Real>| {
+        let v = p - origin;
+        (v.x * d.y - v.y * d.x).abs() < 1e-9 * size
+    };
+    let on_axis = |s: &crate::kernel::ProfileSegment| matches!(&s.geometry, Segment2::Line { a, b } if on(*a) && on(*b));
+    let Some(first) = lp.iter().position(on_axis) else {
+        return vec![lp];
+    };
+    // Start right after an axis line, then cut at every other one.
+    let n = lp.len();
+    let mut out = Vec::new();
+    let mut cur = Vec::new();
+    for k in 1..=n {
+        let s = &lp[(first + k) % n];
+        if on_axis(s) {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+        } else {
+            cur.push(s.clone());
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }

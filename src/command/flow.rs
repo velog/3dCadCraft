@@ -32,6 +32,8 @@ pub enum PickKind {
     Sketch,
     /// A solid body.
     Body,
+    /// A surface body (Extrude / Revolve with Output Surface).
+    Surface,
 }
 
 /// One selector row of a command dialog.
@@ -395,7 +397,7 @@ pub fn shell_selectors(s: &crate::part::ShellFeature) -> Vec<Selector> {
 }
 
 const BODIES: &[PickKind] = &[PickKind::Body];
-const SPLIT_TOOLS: &[PickKind] = &[PickKind::Plane, PickKind::Sketch];
+const SPLIT_TOOLS: &[PickKind] = &[PickKind::Plane, PickKind::Sketch, PickKind::Surface];
 
 /// Prompts of the Combine and Split selectors.
 pub mod body_prompts {
@@ -404,7 +406,8 @@ pub mod body_prompts {
     /// Combine: Toolbodies.
     pub const TOOLS: &str = "Select the toolbodies (a second click drops one)";
     /// Split: the tool.
-    pub const TOOL: &str = "Select the split tool (a work or origin plane, or a sketch)";
+    pub const TOOL: &str =
+        "Select the split tool (a work or origin plane, a sketch or a surface body)";
     /// Split Face: the faces.
     pub const FACES: &str = "Select the faces to split";
     /// Split: the solid.

@@ -960,6 +960,18 @@ impl PartDocument {
             // The tools this step applies (kept for later patterns).
             let mut made: Vec<pattern::ToolSet> = Vec::new();
             let mut extra = exact::HoleOutput::default();
+            // Surface bodies (exact sheets) never take part in another
+            // feature's Booleans or blends: only Split sees them (its tool).
+            let sheets: Vec<ExactSolid> = if use_exact && !matches!(f, Feature::Split(_)) {
+                let (open, closed): (Vec<ExactSolid>, Vec<ExactSolid>) =
+                    std::mem::take(&mut solids)
+                        .into_iter()
+                        .partition(ExactSolid::is_open);
+                solids = closed;
+                open
+            } else {
+                Vec::new()
+            };
             // `Ok(Some(solids))`: the new exact solids; `Ok(None)`: done by
             // the faceted kernel (`body` updated); `Err`: the feature fails.
             let step: Result<Option<Vec<ExactSolid>>, exact::Fail> = match BuildStep::of(f) {
@@ -1223,7 +1235,18 @@ impl PartDocument {
                                 Sweep::Extrude(e) => exact::extrude(e, &body, &works, &ps.sketch),
                                 Sweep::Revolve(r) => exact::revolve(r, &body, &works, &ps.sketch),
                             };
+                            let surface = match sweep {
+                                Sweep::Extrude(e) => e.output == Output::Surface,
+                                Sweep::Revolve(r) => r.output == Output::Surface,
+                            };
                             match built {
+                                // Surface output: new surface bodies, no
+                                // operation (and nothing to pattern).
+                                Ok(Some(added)) if surface => {
+                                    let mut next = solids.clone();
+                                    next.extend(added);
+                                    Ok(Some(next))
+                                }
                                 Ok(Some(added)) => {
                                     made.push(pattern::ToolSet {
                                         tools: added.clone(),
@@ -1269,6 +1292,14 @@ impl PartDocument {
                     }
                 }
             };
+            // The surface bodies go back (after the solids).
+            let step = step.map(|o| {
+                o.map(|mut next| {
+                    next.extend(sheets.iter().cloned());
+                    next
+                })
+            });
+            solids.extend(sheets);
             let took = started.elapsed();
             if took.as_millis() > 200 {
                 log::info!(

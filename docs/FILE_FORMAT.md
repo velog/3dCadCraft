@@ -162,6 +162,8 @@ name.3dcadcraft/           ← разпакувана форма: папка с�
 
 Ревизия 13 (2026-10-20): Combine и Split (`Feature::Combine`, `Feature::Split`), списък на скритите тела `hidden_bodies` в детайла. Фикстура `tests/compat/r13/combine_split_r13.3dcadcraft`.
 
+**Split с повърхнина и с отворени криви (2026-10-20) — без нова ревизия.** `SplitToolRef::Surface(<име на тяло>)` е от ревизия 13; повърхнината идва от Extrude / Revolve с `output: "Surface"`, отворените криви на Extrude Surface — от съществуващото поле `open` (`OpenProfile.curves`). Нищо ново в данните, затова `FORMAT_REVISION` остава 14 (следващият свободен номер след origin/main е 15). По-стара програма отваря файла, но строи такава повърхнина с фасетираното ядро (отворените криви там се затварят с рамка, Match Shape), а Split с повърхнина там е „not supported yet“.
+
 ## 7. Как да го пробваш
 
 ```bash

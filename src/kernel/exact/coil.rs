@@ -195,6 +195,7 @@ pub fn coil(
                 _ => None,
             });
             ExactSolid {
+                sheet: false,
                 name: Some(prefix.to_owned()),
                 body,
                 face_names,
@@ -209,6 +210,7 @@ pub fn coil(
             })?;
             let n = body.face_count();
             ExactSolid {
+                sheet: false,
                 name: Some(prefix.to_owned()),
                 body,
                 face_names: vec![None; n],
@@ -433,6 +435,7 @@ pub fn coil_boolean(
             }
         }
         Ok(Some(ExactSolid {
+            sheet: false,
             name: s.name.clone(),
             body,
             face_names,

@@ -292,9 +292,15 @@ pub fn step_text(part: &PartDocument, name: &str) -> Result<String, String> {
     }
     let r = Resolver::new(part);
     let srgb = |a: &Appearance| a.color.map(|c| c as f32 / 255.0);
-    let paint: Vec<crate::kernel::exact::StepPaint> = part
+    // Solids only: surface bodies (Split tools) are construction geometry.
+    let solids: Vec<crate::kernel::exact::ExactSolid> = part
         .exact_bodies
         .0
+        .iter()
+        .filter(|s| !s.is_open())
+        .cloned()
+        .collect();
+    let paint: Vec<crate::kernel::exact::StepPaint> = solids
         .iter()
         .map(|s| {
             let (body_look, _) = r.body_look(s.name.as_deref());
@@ -340,7 +346,7 @@ pub fn step_text(part: &PartDocument, name: &str) -> Result<String, String> {
             }
         })
         .collect();
-    crate::kernel::exact::step_text_painted(&part.exact_bodies.0, name, &paint)
+    crate::kernel::exact::step_text_painted(&solids, name, &paint)
 }
 
 /// The file content for `format`.

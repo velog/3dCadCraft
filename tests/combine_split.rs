@@ -709,26 +709,25 @@ fn split_refusals_leave_the_part_unchanged() {
     let mut sp = split(SplitMethod::SplitFace, far);
     sp.faces.push(face_ref(&part, &front, [0.0, -15.0, 5.0]));
     refused(part.add_split(sp), "does not cross");
-    // A surface body tool: not yet.
+    // A surface body that does not exist.
     refused(
         part.add_split(split(
             SplitMethod::SplitSolid,
             SplitToolRef::Surface("Srf1".into()),
         )),
-        "not supported yet",
+        "no longer exists",
     );
-    // An open chain of two lines cannot split a solid (Split Face only).
+    // Two separate open chains cannot split a solid (one chain can).
     let i = part
         .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
         .unwrap();
     let sk = &mut part.sketches[i].sketch;
-    sk.add_line(Point2::new(-30.0, 0.0), Point2::new(0.0, 0.0));
-    let l2 = sk.add_line(Point2::new(0.0, 0.0), Point2::new(0.0, 30.0));
-    let _ = l2;
+    sk.add_line(Point2::new(-30.0, 0.0), Point2::new(-5.0, 0.0));
+    sk.add_line(Point2::new(5.0, 0.0), Point2::new(5.0, 30.0));
     let s = part.sketches[i].id.clone();
     refused(
         part.add_split(split(SplitMethod::SplitSolid, SplitToolRef::Sketch(s))),
-        "Split Face only",
+        "several open chains",
     );
     assert_eq!(part.features.len(), n);
     check(&part, 24000.0, 1e-6);

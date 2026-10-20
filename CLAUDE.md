@@ -45,7 +45,7 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 
 | Module | Responsibility | Key types |
 |---|---|---|
-| `kernel` | B-Rep geometry + topology, validation, tessellation (`mesh.rs`), queries & persistent names (`query.rs`), extrude, revolve (`revolve.rs`), BSP CSG on tagged polygons (`csg.rs`), polygons ↔ B-Rep and Booleans (`facet.rs`), exact kernel boundary (`exact.rs`: SolidCraft/truck → our B-Rep) | `BRep`, `Curve`, `Surface`, `Plane`, `Face`, `Tolerance`, `BoolOp` |
+| `kernel` | B-Rep geometry + topology, validation, tessellation (`mesh.rs`), queries & persistent names (`query.rs`), extrude, revolve (`revolve.rs`), BSP CSG on tagged polygons (`csg.rs`), polygons ↔ B-Rep and Booleans (`facet.rs`), exact kernel boundary (`exact.rs`: SolidCraft/truck → our B-Rep; surface bodies and Split by a surface in `exact/sheet.rs`) | `BRep`, `Curve`, `Surface`, `Plane`, `Face`, `Tolerance`, `BoolOp` |
 | `sketch` | 2D sketch on a plane (dimension names/equations/tolerances in `dimparam.rs`): points, lines, circles, arcs, CV splines, styles (construction/centerline), ~20 constraint/dimension kinds, driven dims, Levenberg solver with DOF/redundancy analysis; composite shapes (`shapes.rs`), Modify ops (`modify.rs`: trim/extend/split/offset/move/copy/rotate/mirror/scale/stretch), 2D fillet/chamfer (`corner.rs`), associative rectangular/circular patterns (`pattern.rs`), profiles/regions (`profile.rs`: `Sketch::regions`), per-geometry DOF analysis (`dof_analysis`) | `Sketch`, `Constraint`, `Shape`, `SolveReport`, `DofAnalysis` |
 | `part` | part environment (primitives Box/Cylinder/Sphere/Torus as sketch + Extrude/Revolve in `primitive.rs`; Project Geometry of other sketches' points/curves and circular model edges in `link.rs` (`GeometryLink`, `PartSketch::links`); work planes/axes/points/UCS in `work.rs`, curved-face geometry in `work/surf.rs`; history editing in `history.rs`: End of Part, `insert_feature`, reorder with dependency checks, Suppress, Delete options, Rename): features → body (Box, Extrude `extrude.rs`, Revolve `revolve.rs`, Sweep `sweep.rs` and Loft `loft.rs` (paths `PathRef`), Coil `coil.rs`, Rib / Web `rib.rs`, Shell `shell.rs`, Face Draft `draft.rs`, Rectangular/Circular Pattern and Mirror of features or solids `pattern.rs`, Hole and Thread `hole.rs` (standards tables `standards.rs`, `data/standards/*.csv`), Combine `combine.rs`, Split `split.rs`; `boolean.rs`: Operation/Output applied at regeneration), sketches with placement (plane + coordinate system), projections, associativity, Redefine, Edit Coordinate System; parameters (`expr.rs` unit-aware expressions, `params.rs` model/user parameter table) | `PartDocument`, `PartSketch`, `ExtrudeFeature`, `RevolveFeature`, `PatternFeature`, `Operation`, `UserParam` |
 | `materials` | material/appearance libraries: built-in CSV (`data/materials/materials.csv`, `data/appearances/appearances.csv`, `include_str!`) + user CSVs in `user_dir()` (`%APPDATA%\3dcadcraft\materials`), same name overrides | `Material`, `Appearance`, `Library` |
@@ -630,6 +630,26 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   corners); Shell refuses (B-spline walls cannot be offset).
 - **Surface bodies** (`Solid::open`) are drawn amber and two-sided; they never take
   part in Booleans (amber unless something assigned them an appearance).
+- **Exact surface bodies** (`kernel/exact/sheet.rs`): Extrude / Revolve with Output Surface build
+  `extrude_sheet` / `revolve_sheet` into an `ExactSolid` with `sheet = true` (`is_open()`: a full
+  revolve's sheet *closes* but is still a surface). `build_features` takes them out of `solids`
+  before every step except Split and puts them back after it — a new step never sees them, so it
+  cannot Boolean or blend them. A revolve profile's lines on the axis are dropped (`off_axis`):
+  the kernel refuses a closed curve touching the axis.
+- **Split by a surface** (`exact::split_by_sheet`): each sheet face that reaches the body's box
+  splits with its *extended* surface (planes/cylinders through the kernel's `Plane` / one-arc
+  `Curves` tools — `SplitTool::Face` of a revolved cylinder took 10 s), faces on a surface already
+  used are skipped (a full revolve comes in 3 sectors; splitting a part again along its own
+  section never returned), parts are sorted by `SheetSide` (nearest sheet triangle) and joined
+  per side. The Trim arrow and the classification use the same `SheetSide` (from the B-rep).
+- **Split Solid / Trim by an open chain** (spline, lines + arcs): `split.rs::open_region` extends
+  both ends along their tangents to a frame round the body and closes the region on the chain's
+  *left* (= front, like the single-line plane); prism Booleans. Self-crossing is tested on true
+  curve points (`Segment2::point`, not the control polygon) and must count *touching* segments —
+  a symmetric figure eight meets itself exactly at a sample point.
+- **Volumes of curved parts in tests**: `volume_at(1e-3)` is ~1e-4 off for a cylinder section
+  (inscribed mesh) and the replay journal's recorded volumes are coarser still (a loft: 7178.7 vs
+  7189.5); compare a split's sum with the whole measured the same way.
 - **Two-sided Face Draft** (Symmetric / Asymmetric, Parting Line, Move Parting Line):
   `kernel::exact::draft_two_sided` splits by the plane (`sk::split_by_plane`), finds each
   half's pieces of the chosen faces by history origin (not by name: both pieces share it),

@@ -143,7 +143,7 @@
 | Размери | преглед на живо, трети клик поставя, редакция върху самия размер, допуски (Symmetric/Deviation/Limits/Max/Min/Basic, Evaluated size), показване Value/Name/Expression/Tolerance, диаметрален размер към централна линия |
 | Revolve | ос от скицата или X/Y/Z, Full/Angle/Symmetric/Asymmetric, Solid/Surface ([spec](spec/2.2-revolve.md)) |
 | Булеви | Join/Cut/Intersect/New Solid в Extrude и Revolve: BSP CSG + сглобяване в B-Rep с имената на стените ([spec](spec/2.13-booleans.md)) |
-| Combine / Split | Combine (Join/Cut/Intersect, Keep Toolbody), Split Face / Trim Solid / Split Solid с равнина или скица; чака визуална проверка ([spec](spec/2.13-combine-split.md)) |
+| Combine / Split | Combine (Join/Cut/Intersect, Keep Toolbody), Split Face / Trim Solid / Split Solid с равнина, скица (и отворени вериги/сплайни за тела) или точна повърхнина (Extrude/Revolve Surface); избор и от дървото; чака визуална проверка ([spec](spec/2.13-combine-split.md)) |
 | Дърво | празен детайл, ред на историята, Solid Bodies / Surface Bodies ([spec](spec/2.16-browser.md)) |
 
 | Точно ядро (етап A) | SolidCraft/truck зад `kernel::exact`: Box, Extrude, Revolve, булеви, Fillet, Chamfer; имена от историята; резерва към фасетираното ядро ([SOLIDCRAFT.md](SOLIDCRAFT.md)) |
