@@ -1,160 +1,161 @@
-# Известни проблеми в SolidCraft (за нашите тестове)
+# Known issues in SolidCraft (for our tests)
 
-Преглед на проблемите и PR-ите в [tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft)
-(преди `bherbruck/solidcraft`) към 2026-10-19. Нашата закачена версия е `4687e3b`
-(2026-10-14 05:47 UTC). Отбелязано е:
-- **≤pin**: поправено преди нея, т.е. поправката е при нас;
-- **след**: поправено по-късно, ще дойде с нова версия;
-- **ОТВОРЕН**: не е поправено никъде.
+A review of the issues and PRs in [tangency-labs/solidcraft](https://github.com/tangency-labs/solidcraft)
+(formerly `bherbruck/solidcraft`) as of 2026-10-19. Our pinned version is `4687e3b`
+(2026-10-14 05:47 UTC). Marked as:
+- **≤pin**: fixed before it, i.e. we have the fix;
+- **after**: fixed later, will come with a new version;
+- **OPEN**: not fixed anywhere.
 
-Номерата са на техните проблеми. Текстът е наш преразказ.
+The numbers are their issue numbers. The text is our own retelling.
 
 ## Shell
-- #142 ОТВОРЕН: седловидни ъгли (изпъкнал и вдлъбнат ръб в един връх), ъгли с ≥4 стени до криви стени.
-- #566 ОТВОРЕН: огънат профил, тави от листов метал, вал с шпонков канал (крива стена под наклон към равнини).
-- #1494 ОТВОРЕН: кутия 47.5×45×30 + цилиндър r7.5 с ос по долния преден ръб, Shell 1 mm.
-- #319 / #476 ≤pin: диск със закръглен ръб по-малък от дебелината.
-- #342 ≤pin: закръгление равно на дебелината не се отказваше под Windows.
-- #2178 ОТВОРЕН: Shell след екструзия с отрицателен наклон.
-- #1972 ОТВОРЕН: половин сфера, Shell върху скритата половина.
-- #2258 ОТВОРЕН: дъгообразен блок, цилиндричен отвор, Shell 2, после отворът преместен с 5 → „Cut: no result“.
-- Още не става: Shell по-дебел от стена или стъпало, Shell на половин пръстен.
+- #142 OPEN: saddle corners (a convex and a concave edge at one vertex), corners with ≥4 faces next to curved faces.
+- #566 OPEN: a bent profile, sheet-metal trays, a shaft with a keyway (a curved face at an angle to planes).
+- #1494 OPEN: box 47.5×45×30 + cylinder r7.5 with its axis along the bottom front edge, Shell 1 mm.
+- #319 / #476 ≤pin: a disc with a filleted edge smaller than the thickness.
+- #342 ≤pin: a fillet equal to the thickness was not refused on Windows.
+- #2178 OPEN: Shell after an extrusion with a negative taper.
+- #1972 OPEN: half a sphere, Shell on the hidden half.
+- #2258 OPEN: an arched block, a cylindrical hole, Shell 2, then the hole moved by 5 → "Cut: no result".
+- Not working yet: Shell thicker than a wall or a step, Shell of a half ring.
 
-## Draft и наклон
-- #547 / #603 ≤pin: наклон на цилиндрична стена (R10×20, 5° → пресечен конус).
-- #390 ОТВОРЕН: наклон на челото на фланец.
-- #1126 ОТВОРЕН: стена, чиито съседи не са перпендикулярни: излиза извън ръба.
-- #1183 ОТВОРЕН: шестоъгълни джобове с наклон в плоча със закръглени ъгли R10 (R8 работи).
-- #2810 ОТВОРЕН, тих грешен резултат: наклонена екструзия на контур само от дъги с остри ъгли.
+## Draft and taper
+- #547 / #603 ≤pin: draft of a cylindrical face (R10×20, 5° → truncated cone).
+- #390 OPEN: draft of a flange's end face.
+- #1126 OPEN: a face whose neighbours are not perpendicular: it goes beyond the edge.
+- #1183 OPEN: hexagonal pockets with a draft in a plate with R10 rounded corners (R8 works).
+- #2810 OPEN, silent wrong result: tapered extrusion of a contour made only of arcs with sharp corners.
 
 ## Fillet
 - ≤pin: #851, #556/#646, #237/#238, #334, #796.
-- След: #1080/#1124 (твърде голямо закръгление се приемаше), #1113, #884, #1668.
-- ОТВОРЕНИ: #431 (1 mm по контур от линии и малки дъги r0.3), #1207 (вдлъбнат ръб към частична дъга на бобина Ø40), #1039, #1488 (тънки ленти след повторен опит на булевата операция чупят всички следващи закръгления), #2811 (бързина: всеки ръб триангулира цялото тяло).
+- After: #1080/#1124 (a fillet that is too large was accepted), #1113, #884, #1668.
+- OPEN: #431 (1 mm along a contour of lines and small arcs r0.3), #1207 (a concave edge to a partial arc of a Ø40 boss), #1039, #1488 (thin strips after a retried Boolean break all following fillets), #2811 (speed: every edge triangulates the whole body).
 
 ## Chamfer
-- След: #814 (шестоъгълен отвор), #1574 (ръб на отвор до долната стена добавяше материал), #1428.
-- ОТВОРЕНИ: #1293 (oracle 63), #1390, #2719 (фаска = радиуса на ъгъла дава сфера с ръбове извън нея; трябва конус), #1986, #2797 (Two Distances / Distance+Angle на ръб равнина–цилиндър).
+- After: #814 (hexagonal hole), #1574 (an edge of a hole next to the bottom face added material), #1428.
+- OPEN: #1293 (oracle 63), #1390, #2719 (chamfer = the corner radius gives a sphere with edges outside it; it should be a cone), #1986, #2797 (Two Distances / Distance+Angle on a plane–cylinder edge).
 
-## Булеви операции
+## Booleans
 - ≤pin: #69, #260, #308, #487/#506, #545, #707.
-- След: #788 (кръстосани отвори с еднакъв радиус), #1212.
-- ОТВОРЕНИ:
-  - #423 тих грешен резултат: Through All реже зад равнината на скицата;
-  - #451: кухият инструмент маха тяло в кухината;
-  - #1279: инструмент коаксиален със съществуващ отвор на 0.1 mm;
-  - #1647: кутия ∩ цилиндър;
-  - #1648: сфера ∪ кутия;
-  - #1649: допуск, който не зависи от положението;
-  - #1865: обединение по цилиндрични стени;
-  - #1983: фасетиран резултат в тялото → следващите булеви висят;
-  - #2963 / #2826 / #2591: изрязване, което свършва точно в равнината на стена → стена с нулева дебелина;
-  - #2231 / #2040: екструзия от стена със закръглени краища;
-  - #1691: Split Body през фаска губи 0.6 % обем.
+- After: #788 (crossed holes of equal radius), #1212.
+- OPEN:
+  - #423 silent wrong result: Through All cuts behind the sketch plane;
+  - #451: a hollow tool removes a body inside the cavity;
+  - #1279: a tool coaxial with an existing hole at 0.1 mm;
+  - #1647: box ∩ cylinder;
+  - #1648: sphere ∪ box;
+  - #1649: a tolerance that does not depend on the position;
+  - #1865: union along cylindrical faces;
+  - #1983: a faceted result in the body → the following Booleans hang;
+  - #2963 / #2826 / #2591: a cut ending exactly in the plane of a face → a zero-thickness face;
+  - #2231 / #2040: extrusion from a face with rounded ends;
+  - #1691: Split Body through a chamfer loses 0.6 % of the volume.
 
 ## Sweep, Loft, Coil, Thread
-- ≤pin: #881 (loft на многоъгълници с еднакъв брой върхове).
-- След: #1184 (пръстеновидно сечение → плътно тяло), #1213.
-- ОТВОРЕНИ: #2847 (сечения завъртени > 90°), #1140, #1391, #2954 (sweep cut с усукване 30°), #793 (coil, разделен с равнина), #2038 (моделирана резба фасетира тялото), #2705/#2969 (допуск на диаметъра на резбата), #1024 (тестовете за резба падат под Windows).
-- Coil при нас: #793 — тест `coil_split_by_a_plane_solidcraft_793` в `tests/coil_rib.rs` (Cut с
-  кутия през половината спирала, валидно тяло, половината обем); #2038 — Coil Cut фасетира само
-  пръстена около спиралата (`kernel::exact::coil_boolean`); тест
-  `coil_cuts_a_thread_into_a_cylinder` проверява, че торците на вала остават точни.
-- Намерено от нас (сесия на собственика, 2026-10-20; за докладване): `sweep_path` (протегляне по
-  точки — сплайн като път) с **пълна окръжност като една дъга** (едно ребро, един връх) пада с
-  panic „This wire is not simple“ / „Two same vertices cannot construct an edge“ в
-  `smooth_walls` и в `ruled`: стените се строят между началните върхове на сегментите. При нас:
-  дъгите се делят на четвъртини преди извикването (`kernel::exact::sweep`, `split_closed_arcs`);
-  тестове `circle_along_a_spline_*` в `src/part/sweep_tests.rs` и `tests/sweep_session.rs`.
-- Намерено от нас: `curveblend` (закръгление на затворена верига по произволни повърхнини)
-  отказваше **крив шев** в ъгъл на веригата („a curved seam where the edge chain turns“) — а
-  стените на протегляне по сплайн се срещат по B-сплайн шевове, т.е. ръбът на капака не можеше
-  да се закръгли. Наш патч във `vendor/` (`curveblend.rs`): равнина по допирателната на шева в
-  най-близката до контакта точка, докато контактът легне на шева (неподвижна точка); стените
-  само на едното ребро при върха (иначе по-близката от двете стени се сменя през гънката и
-  решението не се установява). Тест `spline_sweep_then_shell_and_fillet`.
-- Shell на тяло с B-сплайн стени (протегляне/loft по крива): `offset` приема само равнини,
-  цилиндри, конуси, сфери и тори — ясен отказ при нас („free-form faces … cannot be offset
-  yet“).
+- ≤pin: #881 (loft of polygons with the same number of vertices).
+- After: #1184 (a ring-shaped section → a solid body), #1213.
+- OPEN: #2847 (sections rotated > 90°), #1140, #1391, #2954 (sweep cut with a 30° twist), #793 (coil split by a plane), #2038 (a modeled thread facets the body), #2705/#2969 (thread diameter tolerance), #1024 (the thread tests fail on Windows).
+- Coil on our side: #793 — test `coil_split_by_a_plane_solidcraft_793` in `tests/coil_rib.rs` (Cut with
+  a box through half of the helix, a valid body, half the volume); #2038 — Coil Cut facets only
+  the ring around the helix (`kernel::exact::coil_boolean`); the test
+  `coil_cuts_a_thread_into_a_cylinder` checks that the shaft's end faces stay exact.
+- Found by us (the owner's session, 2026-10-20; to report): `sweep_path` (sweep by points — a
+  spline as the path) with a **full circle as one arc** (one edge, one vertex) fails with the
+  panic "This wire is not simple" / "Two same vertices cannot construct an edge" in
+  `smooth_walls` and in `ruled`: the walls are built between the start vertices of the segments.
+  On our side: the arcs are split into quarters before the call (`kernel::exact::sweep`,
+  `split_closed_arcs`); tests `circle_along_a_spline_*` in `src/part/sweep_tests.rs` and
+  `tests/sweep_session.rs`.
+- Found by us: `curveblend` (a blend of a closed chain over arbitrary surfaces) refused a
+  **curved seam** at a corner of the chain ("a curved seam where the edge chain turns") — and the
+  faces of a sweep along a spline meet along B-spline seams, i.e. the edge of the cap could not
+  be filleted. Our patch in `vendor/` (`curveblend.rs`): a plane along the seam's tangent at the
+  point nearest the contact, until the contact lies on the seam (a fixed point); the faces of
+  only one of the edges at the vertex (otherwise the nearer of the two faces switches across the
+  crease and the solution does not settle). Test `spline_sweep_then_shell_and_fillet`.
+- Shell of a body with B-spline faces (sweep/loft along a curve): `offset` accepts only planes,
+  cylinders, cones, spheres and tori — a clear refusal on our side ("free-form faces … cannot be
+  offset yet").
 
 ## Hole
-- #559 ОТВОРЕН: отвор 1 mm в ръба 2 mm на издълбана кутия. При нас: тест в `tests/matrix.rs` („shell, then a Ø1 hole into its rim (#559)“) — минава.
-- Моделирана резба (#2038 фасетира тялото): при нас се фасетира само зоната около резбата (`kernel::exact::cut_threads`); тестове `tapped_m8_modeled_*` в `tests/holes.rs` проверяват, че страните и отворът под резбата остават точни.
-- Допуск на диаметъра на резбата (#2705/#2969): размерите от таблицата се пазят непроменени, хлабината за печат е отделно поле; Thread проверява, че размерът отговаря на стената (тест `thread_on_a_shaft_cosmetic_and_modeled`, `printing_clearance_widens_a_modeled_thread`).
-- Отвор с връх 118°, Distance = дебелината на плоча 283 × 136 × 10 (сесията на собственика,
-  2026-10-20): Cut на инструмента (капак точно върху долната стена, конусът извън тялото) — 6.1 s,
-  при 150 мм плоча невалиден резултат (ръб, използван 0× напред и 2× назад), при 50 мм 1.4 s.
-  Плосък връх или дълбочина ≠ дебелината — 7–80 ms. При нас инструментът минава през тялото
-  (`part::exact::hole`, тест `plain_hole_depth_around_the_thickness` в `tests/hole_threads.rs`).
-  За предлагане: ранен път за капак, легнал в стена на тялото.
-- Моделирана резба на слоеве (2026-10-20, `kernel::exact::slab_threads`). Наблюдения за
-  `faceted_boolean`, за предлагане:
-  1. Времето расте по-бързо от дължината на канала: M8 с 11 оборота в една зона — 13.6 s, на
-     слоеве по 2 оборота — 0.2–0.7 s на слой.
-  2. `polybool::Sources::edge` връщаше `None` за ръб между две стени, между които има няколко
-     ръба (окръжност, разделена на дъги от равнина извън шева на цилиндъра): проверката гледа
-     хордата между краищата на ръба, а фасетите на дъга не лежат на нея. Едно `None` маха
-     историята на целия резултат (всички имена на стени). Наш патч в `vendor/`: такъв ръб е без
-     произход (`Some(vec![])`).
-  3. Пресичане на голямо тяло (плоча 300 мм) с малък пръстен дава неточен резултат: равнините
-     на пръстена наклонени с 1.7e-6 rad, окръжностите отместени с ~1 µm (допусците следват
-     размера на операндите). Фасетираната операция на такова парче отказва винаги („not
-     oriented and closed“ или отрицателен обем на сечението). При нас: парчето се изрязва
-     наново от тялото в кутия около зоната (`near_zone`).
-  4. Равнина на слоя на ~0.04 mm от стена на тялото или близо до ред фасети на цилиндъра
-     (средата на инструмента на отвора) прави тънки ленти и отказ; при нас равнините се
-     държат далеч от стените (`ThreadGroove::avoid`) и се местят при отказ.
-- #2904 ОТВОРЕН, тих: далечно тяло проваля зенкера.
-- След: #2401, #950.
+- #559 OPEN: a 1 mm hole in the 2 mm rim of a hollowed box. On our side: a test in `tests/matrix.rs` ("shell, then a Ø1 hole into its rim (#559)") — it passes.
+- Modeled thread (#2038 facets the body): on our side only the zone around the thread is faceted (`kernel::exact::cut_threads`); tests `tapped_m8_modeled_*` in `tests/holes.rs` check that the sides and the hole below the thread stay exact.
+- Thread diameter tolerance (#2705/#2969): the sizes from the table are kept unchanged, the printing clearance is a separate field; Thread checks that the size fits the face (tests `thread_on_a_shaft_cosmetic_and_modeled`, `printing_clearance_widens_a_modeled_thread`).
+- A hole with a 118° point, Distance = the thickness of a 283 × 136 × 10 plate (the owner's
+  session, 2026-10-20): Cut of the tool (a cap exactly on the bottom face, the cone outside the
+  body) — 6.1 s, with a 150 mm plate an invalid result (an edge used 0× forward and 2× backward),
+  with 50 mm 1.4 s. A flat point or a depth ≠ the thickness — 7–80 ms. On our side the tool passes
+  through the body (`part::exact::hole`, test `plain_hole_depth_around_the_thickness` in
+  `tests/hole_threads.rs`). To propose: an early path for a cap lying in a face of the body.
+- Modeled thread in slabs (2026-10-20, `kernel::exact::slab_threads`). Observations about
+  `faceted_boolean`, to propose:
+  1. The time grows faster than the length of the groove: M8 with 11 turns in one zone — 13.6 s,
+     in slabs of 2 turns — 0.2–0.7 s per slab.
+  2. `polybool::Sources::edge` returned `None` for an edge between two faces that have several
+     edges between them (a circle split into arcs by a plane away from the cylinder's seam): the
+     check looks at the chord between the edge's ends, and the facets of an arc do not lie on it.
+     One `None` removes the history of the whole result (all face names). Our patch in `vendor/`:
+     such an edge has no origin (`Some(vec![])`).
+  3. Intersecting a large body (a 300 mm plate) with a small ring gives an inaccurate result: the
+     ring's planes tilted by 1.7e-6 rad, the circles shifted by ~1 µm (the tolerances follow the
+     size of the operands). The faceted operation on such a piece always refuses ("not
+     oriented and closed" or a negative section volume). On our side: the piece is cut again
+     from the body in a box around the zone (`near_zone`).
+  4. A slab plane ~0.04 mm from a face of the body or near a row of the cylinder's facets (the
+     middle of the hole's tool) makes thin strips and a refusal; on our side the planes are kept
+     away from the faces (`ThreadGroove::avoid`) and moved on a refusal.
+- #2904 OPEN, silent: a distant body breaks the counterbore.
+- After: #2401, #950.
 
-## Pattern и Mirror
-- ≤pin: #261/#276 (масив от отвори беше свръхлинеен; поправено само за Cut). Над ~2000 копия пак
-  беше свръхлинеен — виж „Бързина на масиви с хиляди копия“ по-долу (наш патч).
-- ОТВОРЕНИ: #2076 (масив от Join е квадратичен: 225 щифта 527 s), #2358 (135 зенкера 19 min), #2341, #1669 (Mirror на cut + loft), #2755 (копията пренебрегват `targets`).
+## Pattern and Mirror
+- ≤pin: #261/#276 (a pattern of holes was superlinear; fixed only for Cut). Above ~2000 copies it
+  was superlinear again — see "Speed of patterns with thousands of copies" below (our patch).
+- OPEN: #2076 (a pattern of Joins is quadratic: 225 pins 527 s), #2358 (135 counterbores 19 min), #2341, #1669 (Mirror of cut + loft), #2755 (the copies ignore `targets`).
 
-## Бързина на масиви с хиляди копия (наш патч, за предлагане)
-Плоча 5n×5n×3 с отвор r1, масив n×n през 5 mm (release, един Cut с всички копия, събрани с
-`join_apart`). Преди: 2500 отвора 31 s, 5041 — 24 min и после грешка „lumps: topology exceeds
-the shell grouping limit“. С промените в `vendor/solidcraft-kernel` (списък в `vendor/README.md`)
-и нашите: 2500 → 2.2 s, 5041 → 6–7 s, 10000 → 14 s. Предложения към SolidCraft, всяко със
-измерен ефект при 2500 отвора:
-1. `ops::join_pieces`: парчетата са тела, вече обърнати навън — `Body::new_placed(solid, false,
-   None)` вместо `Body::new` (мрежа на цялото съставно тяло само за знака на обема): −6.5 s.
-2. `boolean_whole`, ранният призматичен път: обемите за проверката на правдоподобност да идват от
-   2D сеченията (площ × дължина, точно), не от мрежи на инструмента от хиляди парчета и на
-   резултата: −6.5 s и −1.3 s.
-3. `recorded::heal_prism_result`: сливането на копланарни стени запазва страните им —
-   `record::build_placed` вместо `record::build`: −1.3 s.
-4. Бюджети, които растат с операндите: `prism_lineage::Context::caps` (иначе над ~2000 отвора
-   историята се губи и имената минават през `provenance::trace`, който е квадратичен: 9–25 s),
-   `prism_tagged` / `stack_tagged` (`curve_work`, `wall_work`) и `MAX_PLANAR_SEGMENTS` (8192 →
-   32768; иначе над ~4000 отвора призматичният път се отказва).
-5. Квадратични места: `prism_lineage::Context::whole` (обхожда всички капаци за всяка стена:
-   10000 отвора 11.7 s → 0.85 s), веригата на `boolean2d_tagged` (търси следващото парче сред
-   всички: 3.5 s → < 0.1 s), `Outline::overlap` без проверка на кутии (400 издатини: 2 s → 0),
-   `sew_connected_sections` (всяка отсечка срещу всички крайни точки), `face_surface(i)`
-   (`face_iter().nth(i)` — добавена `face_surfaces` за всички наведнъж).
-6. `build::extrude`: посоката на тялото от капак вместо мрежа на цялото тяло (10000 отвора:
+## Speed of patterns with thousands of copies (our patch, to propose)
+A 5n×5n×3 plate with an r1 hole, an n×n pattern at 5 mm (release, one Cut with all copies gathered
+with `join_apart`). Before: 2500 holes 31 s, 5041 — 24 min and then the error "lumps: topology exceeds
+the shell grouping limit". With the changes in `vendor/solidcraft-kernel` (list in `vendor/README.md`)
+and ours: 2500 → 2.2 s, 5041 → 6–7 s, 10000 → 14 s. Proposals to SolidCraft, each with its
+measured effect at 2500 holes:
+1. `ops::join_pieces`: the pieces are bodies already oriented outward — `Body::new_placed(solid, false,
+   None)` instead of `Body::new` (a mesh of the whole compound body just for the sign of the volume): −6.5 s.
+2. `boolean_whole`, the early prismatic path: the volumes for the plausibility check should come from
+   the 2D sections (area × length, exact), not from meshes of a tool of thousands of pieces and of the
+   result: −6.5 s and −1.3 s.
+3. `recorded::heal_prism_result`: merging coplanar faces keeps their sides —
+   `record::build_placed` instead of `record::build`: −1.3 s.
+4. Budgets that grow with the operands: `prism_lineage::Context::caps` (otherwise above ~2000 holes
+   the history is lost and the names go through `provenance::trace`, which is quadratic: 9–25 s),
+   `prism_tagged` / `stack_tagged` (`curve_work`, `wall_work`) and `MAX_PLANAR_SEGMENTS` (8192 →
+   32768; otherwise above ~4000 holes the prismatic path gives up).
+5. Quadratic spots: `prism_lineage::Context::whole` (walks all caps for every face:
+   10000 holes 11.7 s → 0.85 s), the chain of `boolean2d_tagged` (looks for the next piece among
+   all: 3.5 s → < 0.1 s), `Outline::overlap` without a box check (400 bosses: 2 s → 0),
+   `sew_connected_sections` (every segment against all end points), `face_surface(i)`
+   (`face_iter().nth(i)` — `face_surfaces` added for all at once).
+6. `build::extrude`: the body's direction from a cap instead of a mesh of the whole body (10000 holes:
    6.2 s → 0.05 s).
-Още остава: `surf_of` на цилиндрична стена ~2.4 ms (търсене на параметри по ръбовете) — при
-10000 стени 6 s дори паралелно; Join на масив издатини минава през общия път с мрежи на двата
-операнда и `sew_touching_with_sources` (1024 издатини: 9.8 s, от 39 s).
+Still remaining: `surf_of` of a cylindrical face ~2.4 ms (parameter search along the edges) — for
+10000 faces 6 s even in parallel; Join of a pattern of bosses goes through the general path with meshes
+of both operands and `sew_touching_with_sources` (1024 bosses: 9.8 s, from 39 s).
 
-## STEP, триангулация, бързина
-- STEP ОТВОРЕНИ: #1985 (износът не свършва), #1452 (`same_sense` на цилиндър), #1706, #1374/#1400.
-- Триангулация ОТВОРЕНИ: #1666 (STL на loft), #2356, #818 (сляпо изрязване разделя всички вертикални ръбове; същото виждаме и след Shell).
-- Бързина ОТВОРЕНИ: #1219 (закръгление на отвор, недокоснато от изрязването, го прави 350× по-бавно), #742, #1093, #1856.
+## STEP, triangulation, speed
+- STEP OPEN: #1985 (the export does not finish), #1452 (`same_sense` of a cylinder), #1706, #1374/#1400.
+- Triangulation OPEN: #1666 (STL of a loft), #2356, #818 (a blind cut splits all vertical edges; we see the same after Shell).
+- Speed OPEN: #1219 (a fillet of a hole untouched by the cut makes it 350× slower), #742, #1093, #1856.
 
-## Тестове, които трябва да добавим при нас
-1. Изрязване, което свършва точно в равнината на стена или по допирателния ръб на закръгление: брой стени, без стени с нулева дебелина (#2963, #2591).
-2. Through All от скица в равнината на стена: нищо зад равнината не се променя (#423).
-3. Сфера ∪ кутия (#1648), кръстосани цилиндри, и преместени с (1000, −700, 300) (#1649), кутия ∩ цилиндър (#1647).
-4. Инструмент коаксиален със съществуващ отвор на 0.1 mm (#1279); кръстосани отвори с еднакъв радиус (#788).
-5. Shell: кутия + цилиндър по ръб (#1494); диск със закръгление < / = / > дебелината (#319, #342); след наклонена екструзия (#2178).
-6. Фаска на ръб на отвор до друга стена, на кръговия ръб на капак, фаска = радиуса на ъгъла (#1574, #1293, #2719).
-7. Fillet: вдлъбнат ръб към частична дъга (#1207), след Join с повторен опит (#1488), контур с малки дъги (#431).
-8. Draft на цилиндрична стена (#547), на стена с наклонени съседи (#1126), наклонен контур само от дъги (#2810).
-9. Loft: многоъгълници връх към връх (#881), пръстеновидно сечение (#1184), сечения завъртени > 90° (#2847).
-10. Split Body през конуса на фаска: обемите на парчетата се събират (#1691).
-11. Бързина: отвор до недокоснато закръгление (#1219), масив от 100+ Join и зенкери (#2076, #2358).
-12. STEP: закръгленията и изрязаните дъги остават аналитични повърхнини (#612, #1198).
+## Tests we should add on our side
+1. A cut ending exactly in the plane of a face or along a fillet's tangent edge: face count, no zero-thickness faces (#2963, #2591).
+2. Through All from a sketch in the plane of a face: nothing behind the plane changes (#423).
+3. Sphere ∪ box (#1648), crossed cylinders, and moved by (1000, −700, 300) (#1649), box ∩ cylinder (#1647).
+4. A tool coaxial with an existing hole at 0.1 mm (#1279); crossed holes of equal radius (#788).
+5. Shell: box + cylinder along an edge (#1494); a disc with a fillet < / = / > the thickness (#319, #342); after a tapered extrusion (#2178).
+6. Chamfer of a hole edge next to another face, of a cap's circular edge, chamfer = the corner radius (#1574, #1293, #2719).
+7. Fillet: a concave edge to a partial arc (#1207), after a Join with a retry (#1488), a contour with small arcs (#431).
+8. Draft of a cylindrical face (#547), of a face with inclined neighbours (#1126), a tapered contour made only of arcs (#2810).
+9. Loft: polygons vertex to vertex (#881), a ring-shaped section (#1184), sections rotated > 90° (#2847).
+10. Split Body through the cone of a chamfer: the volumes of the pieces add up (#1691).
+11. Speed: a hole next to an untouched fillet (#1219), a pattern of 100+ Joins and counterbores (#2076, #2358).
+12. STEP: fillets and cut arcs stay analytic surfaces (#612, #1198).

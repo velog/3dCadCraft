@@ -1,195 +1,199 @@
-# Бързодействие
+# Performance
 
-Всяка нова функция получава случай в `tests/perf.rs` с **бюджет** (медиана от няколко
-пускания, тестов профил: нашият crate с opt-level 1, зависимостите с 3). Случай над бюджета
-не се „оправя“ с вдигане на числото: търси се по-бързо решение (първо как го правят други
-системи, виж `CLAUDE.md`). Идеята за дневник на бързодействието е от SolidCraft (`docs/perf.md`).
+Every new feature gets a case in `tests/perf.rs` with a **budget** (median of several
+runs, test profile: our crate at opt-level 1, dependencies at 3). A case over budget is
+not "fixed" by raising the number: look for a faster solution (first how other systems do
+it, see `CLAUDE.md`). The idea of a performance log comes from SolidCraft (`docs/perf.md`).
 
-Целеви времена за интерактивна работа:
+Target times for interactive work:
 
-| Какво | Цел |
+| What | Target |
 |---|---|
-| кадър в покой (посочване, осветяване) | < 33 ms |
-| предварителен изглед на команда | < 300 ms (смята се във фонова нишка; над това интерфейсът показва „Computing the preview...“) |
-| OK / регенерация на типичен детайл | < 1 s |
+| idle frame (hover, highlighting) | < 33 ms |
+| command preview | < 300 ms (computed on a background thread; above that the UI shows "Computing the preview...") |
+| OK / regeneration of a typical part | < 1 s |
 
-## Бюджети (`tests/perf.rs`)
+## Budgets (`tests/perf.rs`)
 
-| Случай | Бюджет | Измерено (2026-10-14) |
+| Case | Budget | Measured (2026-10-14) |
 |---|---|---|
-| регенерация на тестовия детайл (кутия, 8 закръгления, фаска по веригата) | 400 ms | 135 ms |
-| празна кутия (кутия, скица на стена, Cut) | 50 ms | 3.5 ms |
-| закръгление r2 на 20-те ръба под ръба на джоба | 600 ms | 187 ms |
-| фаска 2 на същите ръбове (клинове) | 1200 ms | 371 ms |
-| Face Draft 3° на страните и вертикалните закръгления на кутия (`add_draft`) | 200 ms | 55 ms (2026-10-19) |
-| Face Draft 3° Symmetric спрямо z = 10 (разделяне, наклон на двете половини, сливане) | 700 ms | 350 ms (2026-10-19, под натоварване) |
-| Shell 2 Outside с Rounded Corners на кутия без горната стена | 400 ms | 190 ms (2026-10-19, под натоварване) |
-| Combine: Cut на цилиндрично тяло от кутия (`add_combine`, цялата регенерация) | 300 ms | 28 ms (2026-10-20) |
-| Split Solid на кутия с 4 вертикални закръгления с наклонена равнина (`add_split`) | 1500 ms | 0.87 s (2026-10-20; самото `split_body` е ~0.8 s; класификацията на частите по обем добавяше 1.4 s — сменена с точка от ръб) |
-| Split Face, All Faces на същата кутия с равнина z = 10 | 500 ms | 110–130 ms (2026-10-20) |
-| Split Solid на кутия 60×40×20 с повърхнина от екструдирана дъга | 500 ms | 18.5 ms (2026-10-20; цилиндър през бързия инструмент на ядрото — `SplitTool::Face` на завъртян цилиндър беше 10 s) |
-| Split Solid на същата кутия с отворен сплайн (призма на предната страна) | 500 ms | 284 ms (2026-10-20) |
-| Shell 1.5 на тестовия детайл, горната стена махната (`add_shell`, цялата регенерация) | 600 ms | 370 ms (2026-10-19) |
-| Rectangular Pattern 6×6 на отвор в плоча (`add_pattern`, цялата регенерация) | 2500 ms | 77–81 ms (2026-10-20; преди 373 ms) |
-| Rectangular Pattern 10×10 на издатина (Join, SolidCraft #2076) | 3000 ms | 1.3–1.4 s (2026-10-20; преди 2.2 s) |
-| Rectangular Pattern 32×32 = 1024 отвора + ръбовете на предварителния изглед | 3000 ms | 1.46–1.49 s (2026-10-20) |
-| Rectangular Pattern 71×71 = 5041 отвора + ръбовете на предварителния изглед | 15000 ms | 7.7–7.9 s (2026-10-20; преди 24 min и грешка) |
-| Mirror на тялото с 36-те отвора, Join през дясната стена (само огледалото) | 1500 ms | 260 ms (2026-10-19) |
-| Physical Properties на закръглената празна кутия (Low) | 100 ms | 0.5 ms (2026-10-19) |
-| външният вид на всички стени на същата кутия (`Resolver::face_looks`) | 20 ms | < 0.1 ms (2026-10-19) |
-| STEP износ с цветове: `exact::face_point` само за разделени имена (иначе 2.5 s) | 200 ms | в бюджета (2026-10-19) |
-| Presets: 100 кадъра на реда Preset (списък с вградените + проверка за звездичка, 20 набора) | 30 ms | 2.5 ms (2026-10-19) |
-| Hole: 36 отвора Ø5.5 с цилиндрично зенкероване в една операция (`add_hole`) | 2500 ms | 1620 ms (2026-10-19) |
-| Hole: M8 с моделирана резба 10 mm (`add_hole`, цялата регенерация) | 12000 ms | 5100 ms (2026-10-19); 4.7 s на слоеве при натоварена машина (2026-10-20) |
-| Hole: M8 10 дълбок през плоча 283 × 136 × 10, връх 118° (сесията на собственика, регенерация) | 500 ms | 6–9 ms (2026-10-20; преди 6.1 s в release) |
-| Hole: същият M8 направен моделиран (`replace_feature`, зоната на слоеве) | 8000 ms | 2.0 s сам, 4.6 s при натоварена машина; release 1.6 s (2026-10-20; преди отказ след 150 s в release) |
-| Дневник: 1000 действия (ред checkpoint + разлика на детайла + обем) на закръглената кутия | 1000 ms | 425 ms (2026-10-19) |
-| Пренареждане: операция 30 от 30 най-отгоре + регенерация (15 блока, 14 отвора; 28 стъпки се строят наново) | 4000 ms | 2.0 s при натоварена машина (2026-10-19) |
-| End of Part: до 15 от 30 и обратно до края (кешът е топъл) | 300 ms | 1–3 ms (2026-10-19) |
-| Регенерация на кутия с 30 работни елемента (10 равнини, 10 оси, 10 точки, верига) | 20 ms | 2.7 ms (2026-10-19) |
-| Sweep: кръг по четвърт дъга (точно протегляне) | 150 ms | 46 ms (2026-10-19) |
-| Sweep: квадрат 40 с усукване 90° (3 парчета loft + Join) | 400 ms | 113 ms (2026-10-19) |
-| Sweep: кръг R17.7 по интерполационен сплайн (сесията на собственика; по точки, гладки B-сплайн стени) | 300 ms | 104 ms release, 114 ms тестов профил (2026-10-20) |
-| Loft квадрат → кръг (2 сечения) | 60 ms | 10 ms (2026-10-19) |
-| Loft през 4 сечения (гладък) | 100 ms | 20 ms (2026-10-19) |
-| Loft с 2 дъгови релси (бутилка Ø20, 21 станции) | 120 ms | 26 ms (2026-10-20) |
-| Loft по централна линия четвърт дъга (Ø10) | 120 ms | 23 ms (2026-10-20) |
-| Area Loft, квадрати 20 → 40 на 100 mm | 60 ms | 9 ms (2026-10-20) |
-| Loft с условие Direction 60° | 120 ms | 27 ms (2026-10-20) |
-| Closed Loop от 6 окръжности (пръстен) | 250 ms | 62 ms (2026-10-20) |
-| Coil: пружина Ø2, 5 навивки (точно `sweep_helix`) | 1000 ms | 630 ms при натоварена машина (2026-10-20) |
-| Coil: пружина Ø2, 5 навивки, затворени краища (`sweep_path`) | 1000 ms | 790 ms при натоварена машина (2026-10-20) |
-| Coil: резба Cut, 6 навивки в Ø20 (фасетирана зона на слоеве, по нишка на слой; беше 12 s в една зона; бюджетът е като на моделираната резба M8) | 12000 ms | ~5 s сам, 6.5–12 s при натоварена машина (2026-10-20) |
-| Rib: мрежа от 3 прегради в отворена кутия | 1500 ms | 340 ms (2026-10-20) |
-| Rib: преграда с 2 бобини в отворена кутия | 1500 ms | 850 ms (2026-10-20) |
-| Project Geometry: регенерация на 200 окръжности, проектирани от друга скица | 10 ms | 0.1 ms (2026-10-20) |
-| Sweep на окръжност по сплайн между проектирани центрове (сценарият на собственика) | 400 ms | 67 ms (2026-10-20) |
-| Избор: филтър + приоритет + ред на 10 000 кандидата под курсора, ×10 (`command::selection::filter_candidates`) | 20 ms | 3.8 ms (2026-10-20, под натоварване) |
-| Търсене на команда: едно натискане над 300 команди (`command_search_per_keystroke`, отделен тест) | 1 ms | 0.23 ms (2026-10-20) |
+| regeneration of the test part (box, 8 fillets, chamfer along the chain) | 400 ms | 135 ms |
+| hollow box (box, sketch on a face, Cut) | 50 ms | 3.5 ms |
+| fillet r2 of the 20 edges below the pocket edge | 600 ms | 187 ms |
+| chamfer 2 of the same edges (wedges) | 1200 ms | 371 ms |
+| Face Draft 3° of the sides and the vertical fillets of a box (`add_draft`) | 200 ms | 55 ms (2026-10-19) |
+| Face Draft 3° Symmetric about z = 10 (split, draft of both halves, merge) | 700 ms | 350 ms (2026-10-19, under load) |
+| Shell 2 Outside with Rounded Corners on a box without its top face | 400 ms | 190 ms (2026-10-19, under load) |
+| Combine: Cut of a cylindrical body from a box (`add_combine`, the whole regeneration) | 300 ms | 28 ms (2026-10-20) |
+| Split Solid of a box with 4 vertical fillets by an inclined plane (`add_split`) | 1500 ms | 0.87 s (2026-10-20; `split_body` itself is ~0.8 s; classifying the pieces by volume added 1.4 s — replaced with a point from an edge) |
+| Split Face, All Faces of the same box with the plane z = 10 | 500 ms | 110–130 ms (2026-10-20) |
+| Split Solid of a 60×40×20 box with a surface from an extruded arc | 500 ms | 18.5 ms (2026-10-20; a cylinder through the kernel's fast tool — `SplitTool::Face` of a rotated cylinder was 10 s) |
+| Split Solid of the same box with an open spline (a prism on the front side) | 500 ms | 284 ms (2026-10-20) |
+| Shell 1.5 of the test part, top face removed (`add_shell`, the whole regeneration) | 600 ms | 370 ms (2026-10-19) |
+| Rectangular Pattern 6×6 of a hole in a plate (`add_pattern`, the whole regeneration) | 2500 ms | 77–81 ms (2026-10-20; before 373 ms) |
+| Rectangular Pattern 10×10 of a boss (Join, SolidCraft #2076) | 3000 ms | 1.3–1.4 s (2026-10-20; before 2.2 s) |
+| Rectangular Pattern 32×32 = 1024 holes + the preview edges | 3000 ms | 1.46–1.49 s (2026-10-20) |
+| Rectangular Pattern 71×71 = 5041 holes + the preview edges | 15000 ms | 7.7–7.9 s (2026-10-20; before 24 min and an error) |
+| Mirror of the body with the 36 holes, Join through the right face (the mirror only) | 1500 ms | 260 ms (2026-10-19) |
+| Physical Properties of the filleted hollow box (Low) | 100 ms | 0.5 ms (2026-10-19) |
+| the appearance of all faces of the same box (`Resolver::face_looks`) | 20 ms | < 0.1 ms (2026-10-19) |
+| STEP export with colours: `exact::face_point` only for split names (otherwise 2.5 s) | 200 ms | within budget (2026-10-19) |
+| Presets: 100 frames of the Preset row (list with the built-in ones + asterisk check, 20 presets) | 30 ms | 2.5 ms (2026-10-19) |
+| Hole: 36 holes Ø5.5 with a counterbore in one feature (`add_hole`) | 2500 ms | 1620 ms (2026-10-19) |
+| Hole: M8 with a modeled thread 10 mm (`add_hole`, the whole regeneration) | 12000 ms | 5100 ms (2026-10-19); 4.7 s in slabs on a loaded machine (2026-10-20) |
+| Hole: M8 10 deep through a 283 × 136 × 10 plate, 118° point (the owner's session, regeneration) | 500 ms | 6–9 ms (2026-10-20; before 6.1 s in release) |
+| Hole: the same M8 made modeled (`replace_feature`, the zone in slabs) | 8000 ms | 2.0 s alone, 4.6 s on a loaded machine; release 1.6 s (2026-10-20; before a refusal after 150 s in release) |
+| Journal: 1000 actions (checkpoint line + part delta + volume) on the filleted box | 1000 ms | 425 ms (2026-10-19) |
+| Reorder: feature 30 of 30 to the top + regeneration (15 blocks, 14 holes; 28 steps are rebuilt) | 4000 ms | 2.0 s on a loaded machine (2026-10-19) |
+| End of Part: to 15 of 30 and back to the end (warm cache) | 300 ms | 1–3 ms (2026-10-19) |
+| Regeneration of a box with 30 work features (10 planes, 10 axes, 10 points, a chain) | 20 ms | 2.7 ms (2026-10-19) |
+| Sweep: circle along a quarter arc (exact sweep) | 150 ms | 46 ms (2026-10-19) |
+| Sweep: square 40 with a 90° twist (3 loft pieces + Join) | 400 ms | 113 ms (2026-10-19) |
+| Sweep: circle R17.7 along an interpolation spline (the owner's session; by points, smooth B-spline faces) | 300 ms | 104 ms release, 114 ms test profile (2026-10-20) |
+| Loft square → circle (2 sections) | 60 ms | 10 ms (2026-10-19) |
+| Loft through 4 sections (smooth) | 100 ms | 20 ms (2026-10-19) |
+| Loft with 2 arc rails (bottle Ø20, 21 stations) | 120 ms | 26 ms (2026-10-20) |
+| Loft along a quarter-arc centerline (Ø10) | 120 ms | 23 ms (2026-10-20) |
+| Area Loft, squares 20 → 40 over 100 mm | 60 ms | 9 ms (2026-10-20) |
+| Loft with a Direction 60° condition | 120 ms | 27 ms (2026-10-20) |
+| Closed Loop of 6 circles (ring) | 250 ms | 62 ms (2026-10-20) |
+| Coil: spring Ø2, 5 turns (exact `sweep_helix`) | 1000 ms | 630 ms on a loaded machine (2026-10-20) |
+| Coil: spring Ø2, 5 turns, closed ends (`sweep_path`) | 1000 ms | 790 ms on a loaded machine (2026-10-20) |
+| Coil: Cut thread, 6 turns in Ø20 (faceted zone in slabs, one thread per slab; it was 12 s in one zone; the budget is the same as for the M8 modeled thread) | 12000 ms | ~5 s alone, 6.5–12 s on a loaded machine (2026-10-20) |
+| Rib: a network of 3 ribs in an open box | 1500 ms | 340 ms (2026-10-20) |
+| Rib: a rib with 2 bosses in an open box | 1500 ms | 850 ms (2026-10-20) |
+| Project Geometry: regeneration of 200 circles projected from another sketch | 10 ms | 0.1 ms (2026-10-20) |
+| Sweep of a circle along a spline between projected centres (the owner's scenario) | 400 ms | 67 ms (2026-10-20) |
+| Selection: filter + priority + order of 10 000 candidates under the cursor, ×10 (`command::selection::filter_candidates`) | 20 ms | 3.8 ms (2026-10-20, under load) |
+| Command search: one keystroke over 300 commands (`command_search_per_keystroke`, a separate test) | 1 ms | 0.23 ms (2026-10-20) |
 
-## Дневник
+## Log
 
-- **2026-10-20** — сесията на собственика (`tests/data/m8_modeled_blind_journal.jsonl`): M8, 10
-  дълбок = дебелината на плоча 283 × 136 × 10, връх 118°. (1) Самият отвор: 6.1 s в Cut на ядрото
-  (капак точно върху долната стена, конусът във въздуха; в 150 мм плоча невалиден резултат).
-  Инструментът сега минава през тялото като при Through All: 6–9 ms. (2) Моделираната резба:
-  отказ след 150 s (release) — каналът спираше с ъглите си точно върху долната стена; сега
-  излиза навън. Зоната в едно парче се реже за 13.6 s (release), на слоеве по 2 оборота
-  паралелно (`kernel::exact::slab_threads`) — 1.6 s. Слоеве, изрязани от много голямо тяло
-  (M3 в плоча 300 мм), излизат неточни и се изрязват наново от тялото в кутия около зоната
-  (`near_zone`, иначе отказ за 80–370 s). Тестове: `tests/hole_threads.rs`.
+- **2026-10-20** — the owner's session (`tests/data/m8_modeled_blind_journal.jsonl`): M8, 10
+  deep = the thickness of a 283 × 136 × 10 plate, 118° point. (1) The hole itself: 6.1 s in the
+  kernel's Cut (a cap exactly on the bottom face, the cone in the air; in a 150 mm plate an
+  invalid result). The tool now passes through the body as with Through All: 6–9 ms. (2) The
+  modeled thread: a refusal after 150 s (release) — the groove stopped with its corners exactly
+  on the bottom face; now it runs out. The zone in one piece is cut in 13.6 s (release), in
+  slabs of 2 turns in parallel (`kernel::exact::slab_threads`) — 1.6 s. Slabs cut from a very
+  large body (M3 in a 300 mm plate) come out inaccurate and are cut again from the body in a
+  box around the zone (`near_zone`, otherwise a refusal after 80–370 s). Tests:
+  `tests/hole_threads.rs`.
 
-- **2026-10-20** — масиви с хиляди копия (Rectangular/Circular Pattern на отвор, Join на
-  издатини). Сонда: `cargo run --release --no-default-features --example pattern_probe -- hole 10 20 32 50 71 100`
-  (също `boss`, `circ`); тестове `tests/pattern_scale.rs` (по-големите с `--ignored`). Release,
-  плоча 5n×5n×3 с отвор r1, n×n през 5 mm (`add_pattern` + ръбовете на изгледа):
+- **2026-10-20** — patterns with thousands of copies (Rectangular/Circular Pattern of a hole,
+  Join of bosses). Probe: `cargo run --release --no-default-features --example pattern_probe -- hole 10 20 32 50 71 100`
+  (also `boss`, `circ`); tests `tests/pattern_scale.rs` (the larger ones with `--ignored`).
+  Release, plate 5n×5n×3 with a hole r1, n×n at 5 mm (`add_pattern` + the view edges):
 
-  | Отвори | Преди | След |
+  | Holes | Before | After |
   |---|---|---|
   | 100 | 0.43 s | 0.06 s |
   | 400 | 2.1 s | 0.21 s |
   | 1024 | ~9 s | 0.8–1.5 s |
   | 2500 | 31 s | 2.2–3.3 s |
-  | 5041 | 24 min, после грешка | 6.1–7.7 s |
+  | 5041 | 24 min, then an error | 6.1–7.7 s |
   | 10000 | — | 14–20 s |
-  | Circular 1000 (r0.4, през 1.2 mm) | > 10 min (по един Boolean на копие) | 0.5 s |
+  | Circular 1000 (r0.4, at 1.2 mm) | > 10 min (one Boolean per copy) | 0.5 s |
   | Circular 5000 | — | 9.3 s |
-  | Join 400 издатини | 13 s | 1.9–4.9 s |
-  | Join 1024 издатини | 35–39 s | 9.8 s |
+  | Join 400 bosses | 13 s | 1.9–4.9 s |
+  | Join 1024 bosses | 35–39 s | 9.8 s |
 
-  Къде отиваше времето при 2500 (31 s): мрежа на съставния инструмент за знака на обема в
-  `join_apart` (6.5 s), обемите на инструмента и резултата за проверката на Boolean (6.5 + 1.3 s),
-  `meets` (2.5 s), загубена история → `provenance::trace` (9 s, квадратичен), мрежа на
-  резултата при „лекуването“ (1.3 s), `to_brep` (3.6 s). Поправено при нас: без `meets` за
-  копия, „изряза ли нещо“ по броя стени, кутии на копията като ориентирани кутии с точен
-  допуск (иначе Circular = по един Boolean на копие), `to_brep` без квадратични места.
-  Поправено в ядрото (`vendor/solidcraft-kernel`, `vendor/README.md`): бюджети, растящи с
-  операндите, без мрежи само за посоката, точни обеми на призмите, квадратичните места.
-  При 5041 сега: Boolean ~4 s (2D призматичен път), `to_brep` ~4 s (от тях 3 s разпознаване на
-  повърхнините — `surf_of` ~2.4 ms на стена, паралелно), предварителният изглед на ръбовете 0.05 s.
+  Where the time went at 2500 (31 s): a mesh of the compound tool for the sign of the volume in
+  `join_apart` (6.5 s), the volumes of the tool and the result for the Boolean check (6.5 + 1.3 s),
+  `meets` (2.5 s), lost history → `provenance::trace` (9 s, quadratic), a mesh of the result
+  during "healing" (1.3 s), `to_brep` (3.6 s). Fixed on our side: no `meets` for copies, "did it
+  cut anything" by the face count, the copies' boxes as oriented boxes with an exact tolerance
+  (otherwise Circular = one Boolean per copy), `to_brep` without quadratic spots. Fixed in the
+  kernel (`vendor/solidcraft-kernel`, `vendor/README.md`): budgets that grow with the operands,
+  no meshes just for the direction, exact volumes of the prisms, the quadratic spots.
+  At 5041 now: Boolean ~4 s (2D prismatic path), `to_brep` ~4 s (of which 3 s is surface
+  recognition — `surf_of` ~2.4 ms per face, in parallel), the edge preview 0.05 s.
 
-- **2026-10-19** — пренареждане в дървото: проверката на зависимостите (низовете на 30
-  операции) отнема < 1 ms; цената е регенерацията от преместеното място нататък. Плоча с 29
-  отвора в едно тяло: всеки Cut ~0.8 s (расте с броя стени), местене най-отгоре = 16–27 s
-  (колкото Rebuild All) — затова случаят в `perf.rs` е с отделни блокове. Подобрение за
-  по-късно: независими съседни операции (разменени без общи стени) могат да ползват кеша.
+- **2026-10-19** — reordering in the browser: the dependency check (the strings of 30
+  features) takes < 1 ms; the cost is the regeneration from the moved place on. A plate with 29
+  holes in one body: each Cut ~0.8 s (grows with the face count), a move to the top = 16–27 s
+  (as long as Rebuild All) — that is why the case in `perf.rs` uses separate blocks. Improvement
+  for later: independent neighbouring features (swapped without shared faces) could use the cache.
 
-- **2026-10-14** — точното ядро (SolidCraft/truck): тестовият детайл от секунди и ~20 000
-  стени (фасетирано ядро) до 135 ms и 26 стени.
-- **2026-10-14** — Fillet/Chamfer, които точното ядро отказва, вече не строят целия детайл
-  с фасетираното ядро (13–19 s на предварителен изглед, замръзване, възможен срив), а дават
-  грешка за < 1 s. Предварителният изглед на Extrude/Revolve/Fillet/Chamfer е във фонова нишка.
+- **2026-10-14** — the exact kernel (SolidCraft/truck): the test part from seconds and ~20 000
+  faces (faceted kernel) to 135 ms and 26 faces.
+- **2026-10-14** — Fillet/Chamfer that the exact kernel refuses no longer build the whole part
+  with the faceted kernel (13–19 s per preview, freezing, a possible crash), but give an error in
+  < 1 s. The Extrude/Revolve/Fillet/Chamfer preview runs on a background thread.
 
-- **2026-10-14** — много профили в един Cut (решетки, отвори): инструментите се събират с
-  `union_apart` на SolidCraft (без пресичане) и тялото се реже веднъж: 36 кръгли отвора
-  30 s → 1.2 s, шахматна решетка 12×12 2.3 s → 0.2 s.
-- **2026-10-14** — кеш на стъпките на регенерацията (`part::BuildCache`): ключ = предишната
-  стъпка + операцията + скицата ѝ (геометрия и равнина); при нова или променена операция се
-  строи само тя и тези след нея. Edit Feature в матрицата 141 → 93 ms; 36 отвора с фаска
+- **2026-10-14** — many profiles in one Cut (grids, holes): the tools are gathered with
+  SolidCraft's `union_apart` (no intersection) and the body is cut once: 36 round holes
+  30 s → 1.2 s, a 12×12 checkerboard grid 2.3 s → 0.2 s.
+- **2026-10-14** — a cache of the regeneration steps (`part::BuildCache`): key = the previous
+  step + the feature + its sketch (geometry and plane); for a new or changed feature only it and
+  those after it are built. Edit Feature in the matrix 141 → 93 ms; 36 holes with a chamfer
   5.4 → 4.2 s.
 
-- **2026-10-14** — `to_brep`: разпознаването на повърхнините (`surface_of`) за всяка стена е
-  независимо и тежко при закръгления (тор); прави се паралелно (`std::thread::scope`):
-  36 закръглени отвора 469 → ~80 ms, целият превод 0.9 → 0.5 s. Точка за всяка окръжност
-  вместо за всяка половинка: същият резултат, без ускорение (ядрото слива половинките само).
+- **2026-10-14** — `to_brep`: surface recognition (`surface_of`) for each face is independent
+  and heavy with fillets (torus); it is done in parallel (`std::thread::scope`):
+  36 filleted holes 469 → ~80 ms, the whole conversion 0.9 → 0.5 s. A point for each circle
+  instead of each half: the same result, no speed-up (the kernel merges the halves itself).
 
-- **2026-10-14** — решаване на скици: Якобианът е **оредена матрица** (всяко уравнение се
-  диференцира само по неизвестните, които чете); рангът — Гаусово изключване с частичен
-  избор на водещ елемент вместо SVD; анализът на степените на свобода — проверка „това
-  движение в пространството на редовете ли е“ вместо собствено разлагане на JᵀJ; над 150
-  неизвестни стъпката се решава с разредено LDLᵀ разлагане (наредба по минимална степен).
-  Масив 10×10 правоъгълника (808 неизвестни): решаване 438 → 2 ms, анализ на DOF
-  730 → 4 ms, стъпка при влачене 416 → 12 ms. Опитано: спрегнати градиенти (Якоби и SSOR) —
-  ~500 итерации, 40–50 ms (матрицата на недоопределена скица е почти сингулярна). В тестовете бързият ранг и анализът се сравняват с бавните (SVD/eigen).
-- **2026-10-14** — тестовете за бързина мереха кеша на регенерацията (0 ms): клонингът
-  вече получава празен кеш (`p.build_cache = Default::default()`).
+- **2026-10-14** — sketch solving: the Jacobian is a **sparse matrix** (every equation is
+  differentiated only over the unknowns it reads); the rank — Gaussian elimination with partial
+  pivoting instead of SVD; the degrees-of-freedom analysis — a check "is this motion in the row
+  space" instead of an eigendecomposition of JᵀJ; above 150 unknowns the step is solved with a
+  sparse LDLᵀ factorization (minimum-degree ordering). A 10×10 pattern of rectangles (808
+  unknowns): solve 438 → 2 ms, DOF analysis 730 → 4 ms, a drag step 416 → 12 ms. Tried:
+  conjugate gradients (Jacobi and SSOR) — ~500 iterations, 40–50 ms (the matrix of an
+  under-constrained sketch is nearly singular). In the tests the fast rank and analysis are
+  compared with the slow ones (SVD/eigen).
+- **2026-10-14** — the speed tests measured the regeneration cache (0 ms): the clone now gets
+  an empty cache (`p.build_cache = Default::default()`).
 
-- **2026-10-19** — Shell: на тестовия детайл (26 стени, закръгления и фаска) самото ядро
-  отнема ~230 ms. Тялото не е изпъкнало, затова `sk::shell` минава по общия път: триангулация
-  плюс булево изрязване на кухината. Нашите стъпки (точки върху стените, имена) ~6 ms,
-  `to_brep` ~27 ms. Предварителният изглед е във фонова нишка.
-- **2026-10-19** — Shell, отказан от ядрото с „the rim would have no thickness“ (закръгление
-  при махнатата стена ≥ дебелината): резервният път вече не се пуска след отказа, който е
-  геометрично доказан. Отказът 6.9 s → 78 ms.
-- **2026-10-19** — масиви и огледало: копията на една операция се правят с
-  `sk::transform_matrix` (под 3 ms за 100 копия) и се събират с `union_apart` в един
-  инструмент, тялото се реже/слива веднъж. 100 издатини (SolidCraft #2076, там 225 щифта
-  за 527 s): `union_apart` ~0.3 s, обединението с плочата ~1.0 s, `to_brep` ~70 ms.
-  Времената се люшкат с натоварването на машината (паралелни компилации).
+- **2026-10-19** — Shell: on the test part (26 faces, fillets and a chamfer) the kernel itself
+  takes ~230 ms. The body is not convex, so `sk::shell` takes the general path: triangulation
+  plus a Boolean cut of the cavity. Our steps (points on the faces, names) ~6 ms,
+  `to_brep` ~27 ms. The preview runs on a background thread.
+- **2026-10-19** — Shell refused by the kernel with "the rim would have no thickness" (a fillet
+  at the removed face ≥ the thickness): the fallback path is no longer run after the refusal,
+  which is geometrically proven. The refusal 6.9 s → 78 ms.
+- **2026-10-19** — patterns and mirror: the copies of one feature are made with
+  `sk::transform_matrix` (under 3 ms for 100 copies) and gathered with `union_apart` into one
+  tool, the body is cut/joined once. 100 bosses (SolidCraft #2076, there 225 pins
+  in 527 s): `union_apart` ~0.3 s, the union with the plate ~1.0 s, `to_brep` ~70 ms.
+  The times swing with the machine's load (parallel compilations).
 
-- **2026-10-19** — Hole: един стъпаловиден инструмент на отвор (зенкер + отвор в един
-  профил) правеше 36 зенкерувани отвора за 43 s (времето растеше като n^1.4). Като SolidCraft:
-  първо всички гнезда (един Boolean), после всички отвори през дъната им (втори Boolean) —
-  1.6 s.
-- **2026-10-19** — моделирана резба: Boolean на точното ядро с гладката винтова повърхнина
-  на `sweep_helix` (B-spline) — 2.5 s за половин оборот през отвор, над 60 s щом пресече
-  равнина, 8 оборота не завършиха за 15 min. Вместо това само зоната около резбата (пръстен
-  около отвора) се реже фасетирано (`faceted_boolean` с мрежа на канала, 36 сечения на
-  оборот), а останалото тяло остава точно: M8 × 10 mm за ~5 s (зоните на различни отвори се
-  режат паралелно). Резбите се режат след всички операции (кешира се).
+- **2026-10-19** — Hole: one stepped tool per hole (counterbore + hole in one profile) made 36
+  counterbored holes in 43 s (the time grew as n^1.4). Like SolidCraft: first all seats (one
+  Boolean), then all holes through their floors (a second Boolean) — 1.6 s.
+- **2026-10-19** — modeled thread: a Boolean of the exact kernel with the smooth helical surface
+  of `sweep_helix` (B-spline) — 2.5 s for half a turn through a hole, over 60 s once it crosses a
+  plane, 8 turns did not finish in 15 min. Instead only the zone around the thread (a ring around
+  the hole) is cut faceted (`faceted_boolean` with a mesh of the groove, 36 sections per turn),
+  and the rest of the body stays exact: M8 × 10 mm in ~5 s (the zones of different holes are cut
+  in parallel). Threads are cut after all features (cached).
 
-## Отворени
+## Open
 
-- Масиви: разпознаването на цилиндричните стени в `to_brep` (`sk::face_surfaces`, ~2.4 ms на
-  стена) е половината от времето над 5000 копия; Join на издатини (общият път на SolidCraft с
-  мрежи на двата операнда, `sew_touching_with_sources`) — 1024 за 9.8 s. Виж
+- Patterns: recognizing the cylindrical faces in `to_brep` (`sk::face_surfaces`, ~2.4 ms per
+  face) is half of the time above 5000 copies; Join of bosses (SolidCraft's general path with
+  meshes of both operands, `sew_touching_with_sources`) — 1024 in 9.8 s. See
   `docs/SOLIDCRAFT_ISSUES.md`.
 
-- Моделирана резба: на слоеве ~0.2–0.7 s на слой от 2 оборота (фасетираната булева операция),
-  паралелно; отказал слой (според положението на равнината му) се реже пак — още един кръг.
-  По-бърз начин: каналът построен директно като стени на зоната, без булева операция.
+- Modeled thread: in slabs ~0.2–0.7 s per slab of 2 turns (the faceted Boolean), in parallel; a
+  refused slab (depending on the position of its plane) is cut again — one more round. A faster
+  way: the groove built directly as faces of the zone, without a Boolean.
 
-- Фаска на 72 полуокръжни ръба (36 отвора): ~3 s в самото ядро (SolidCraft строи инструмент за
-  всеки ръб и ги обединява един по един). **Опитано и отхвърлено (2026-10-14):** завъртян
-  инструмент за всяка окръжност, събрани с `union_apart`, едно рязане — 100 s (рязането със
-  съставен инструмент от 36 тела е много по-скъпо за truck от 36 малки). Следващо: по групи от
-  близки отвори, или паралелно по независими области.
-- Булеви операции със сфера или тор в `tests/boolean_identity.rs`: до ~50 s за двойка
-  (цилиндър/сфера, тор/цилиндър). Да се проучи как SolidCraft ги ускорява (и дали времето е
-  в самата операция или в измерването/триангулацията) преди да се дадат на потребителя.
-- Shell 2 на диск r20 × 5 със закръглен горен ръб r1 (махнато дъно): ~850 ms в `sk::shell`
-  (заоблената стена се отмества и изражда в остър ъгъл). В матрицата е с бюджет 1500 ms.
-- Примитиви (2026-10-19): кутия, цилиндър с Cut до наклонена работна равнина (изтегляне
-  отвъд + сечение с полупространство) и сфера с Join — ~2.9 s общо в тестовия профил (сам,
-  без други компилации), бюджет 4000 ms. Най-скъпи са булевите операции на truck със сферата;
-  ускорение: един Boolean вместо две при отрязването (полупространството направо като Cut).
+- Chamfer of 72 semicircular edges (36 holes): ~3 s in the kernel itself (SolidCraft builds a
+  tool for each edge and unites them one by one). **Tried and rejected (2026-10-14):** a revolved
+  tool for each circle, gathered with `union_apart`, one cut — 100 s (cutting with a compound
+  tool of 36 bodies is much more expensive for truck than 36 small ones). Next: in groups of
+  nearby holes, or in parallel over independent regions.
+- Booleans with a sphere or a torus in `tests/boolean_identity.rs`: up to ~50 s per pair
+  (cylinder/sphere, torus/cylinder). Investigate how SolidCraft speeds them up (and whether the
+  time is in the operation itself or in the measuring/triangulation) before giving them to the
+  user.
+- Shell 2 of a disc r20 × 5 with a filleted top edge r1 (bottom removed): ~850 ms in `sk::shell`
+  (the rounded face is offset and degenerates into a sharp corner). In the matrix it has a
+  budget of 1500 ms.
+- Primitives (2026-10-19): a box, a cylinder with a Cut to an inclined work plane (extrusion
+  beyond + intersection with a half-space) and a sphere with Join — ~2.9 s in total in the test
+  profile (alone, without other compilations), budget 4000 ms. The most expensive are truck's
+  Booleans with the sphere; speed-up: one Boolean instead of two for the cut-off (the half-space
+  directly as a Cut).
