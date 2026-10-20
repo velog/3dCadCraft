@@ -1252,7 +1252,20 @@ pub(super) fn hole(
                 (d, false)
             }
         };
-        let parts = spec.tools(depth, top, point);
+        // A bore whose wall reaches the far side of the body (a blind depth
+        // equal to or past a plate's thickness): its bottom and drill point
+        // lie in the air and cut nothing, but a cap on the far face or a
+        // cone crossing nothing sent the kernel down its slow general path
+        // (283 × 136 × 10 plate, depth 10, 118°: 6.1 s, sometimes a
+        // non-manifold edge). The tool runs out past the body as Through
+        // All does; the thread keeps the given depth.
+        let reaches = |d: Real| d >= far - 1e-6 * size;
+        let (tool_depth, tool_point) = if point && reaches(spec.wall_bottom(depth)) {
+            (far + margin, false)
+        } else {
+            (depth, point)
+        };
+        let parts = spec.tools(tool_depth, top, tool_point);
         let last = parts.len().saturating_sub(1);
         for (j, prof) in parts.iter().enumerate() {
             let pts: Vec<[Real; 2]> = prof.iter().map(|x| x.0).collect();
@@ -1286,8 +1299,13 @@ pub(super) fn hole(
                 let section = t.internal_groove(spec.bore_radius()).map_err(User)?;
                 let w0 = section[0][1].abs().max(section[3][1].abs());
                 let p = t.pitch;
-                // Through: the groove runs out below the body.
-                let base = if through && len >= far - 1e-6 {
+                // Through (or a blind bore reaching the far side): the groove
+                // runs out below the body. Stopping square there put the
+                // groove's lowest corners exactly on the far face, and the
+                // faceted cut failed after 150 s ("shell is not oriented
+                // and closed").
+                let open_end = through || reaches(spec.wall_bottom(depth));
+                let base = if open_end && reaches(len) {
                     -len - p
                 } else {
                     -len + w0
@@ -1317,6 +1335,9 @@ pub(super) fn hole(
                     ],
                     prefix: h.id.clone(),
                     name: format!("Thread:{n}"),
+                    // The start face, the far side, a seat's floor, the
+                    // bore's bottom.
+                    avoid: vec![0.0, -far, -spec.seat_depth, -spec.wall_bottom(depth)],
                 });
             } else {
                 out.cosmetic.push(CosmeticThread {
@@ -1431,6 +1452,8 @@ pub(super) fn thread(
         zone: [zone_r[0], zone_r[1], base - w - 0.25 * p, z1 + w + 0.25 * p],
         prefix: th.id.clone(),
         name: "Thread".into(),
+        // The face's ends and the thread's.
+        avoid: vec![0.0, len, -a, cf.length - a],
     });
     Ok((out, ring))
 }

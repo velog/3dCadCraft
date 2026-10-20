@@ -949,7 +949,16 @@ impl CadCraftApp {
         self.project_geometry = false;
         self.relink = None;
         self.slice = false;
-        self.editing = None;
+        // The features using the sketch follow it now (Inventor updates the
+        // model on Finish Sketch). Without this the body stayed as it was
+        // until Rebuild All, and the session journal recorded that stale
+        // body after every edit in the sketch (the replay then "differed").
+        if self.editing.take().is_some() {
+            if let Err(e) = self.part_mut().regenerate() {
+                self.file_status = Some(Err(e.to_string()));
+            }
+            self.scene_dirty = true;
+        }
         self.dragging = None;
         self.arc_drag = None;
         self.tools.set_tool(Tool::Select);

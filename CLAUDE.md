@@ -759,6 +759,24 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   rest and a ring zone around the thread and cuts only the zone with `faceted_boolean`
   (36 stations a turn; zones in parallel). Grooves are recorded per feature and cut after
   the last feature (`finish_threads`, cached), so no later Boolean meets a faceted zone.
+- **Thread zones are cut in slabs** (`exact::slab_threads`, 2 turns each, parallel): the
+  faceted Boolean grows faster than the groove (M8 × 11 turns in one zone 13.6 s, slabs 1.6 s).
+  A slab's mesh is only the stations reaching into it (`GrooveHelix`, stations on a fixed
+  10° grid so neighbours share triangles). Slabs fail by chance where a plane lies near a
+  face of the body (`ThreadGroove::avoid`) or a row of the bore's facets: a failed slab moves
+  its planes, then merges. Every slab must pass our `to_brep` + `validate_solid`. A slab cut
+  out of a very large body is imprecise (planes tilted 1e-6, circles 1 µm off: the kernel's
+  tolerances follow operand size) and always fails: `square_to` detects it, `near_zone` cuts
+  it again from the body in a box around the zone.
+- **A bore reaching the far side** (Distance ≥ the thickness) is cut as Through All: its cap on
+  the far face / cone in the air sent the kernel's Cut down a 6 s path (sometimes invalid), and
+  a groove "stopping square" there put its corners exactly on the far face (150 s, then refused).
+- **`faceted_boolean` history**: one edge whose origin `Sources::edge` could not tell (`None`)
+  dropped the whole result's history (all face names). Patched in `vendor/` (no origin instead).
+- **Replay vs. sketch edits**: the GUI does not regenerate while a sketch is open, so states
+  journaled then carry the old body; they are marked `in_sketch` and the replay does not compare
+  them. Finish Sketch regenerates. A replay "difference" on an old journal at Edit Dimension /
+  Drag inside a sketch is this, not non-determinism.
 - **Thread zones are matched by their box, not their middle**: the zone's top used to
   follow the hole tool's start margin (1 % of the part), so on a thin plate of a large part
   its middle lay above the plate and the groove was skipped silently (the owner's "the thread

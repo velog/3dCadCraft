@@ -52,7 +52,7 @@
 - ⬜ **Сглобка:** Assemble, Design (калкулатори), Inspect, Tools, View.
 - ⬜ **Чертеж:** Place Views, Annotate, Sketch, Tools, View.
 
-Както в Inventor, влизането в скица отваря таба Sketch, а „Finish Sketch“ връща в 3D Model.
+Както в Inventor, влизането в скица отваря таба Sketch, а „Finish Sketch“ връща в 3D Model и обновява модела (операциите, които ползват скицата, я следват; докато скицата е отворена, тялото остава старото).
 
 ## 2. Мишка
 

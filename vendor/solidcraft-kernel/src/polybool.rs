@@ -637,7 +637,13 @@ impl Sources {
         };
         match along.as_slice() {
             [edge] => Some(vec![EdgeOrigin::Edge { operand: x, edge: *edge }]),
-            _ => None,
+            // 3DCadCraft: several edges between the same two faces (a circle
+            // split into arcs where a plane cuts a cylinder off its seam) are
+            // told apart by their end points' chord, which an arc's facets
+            // do not lie on. Such an edge gets no origin instead of `None`,
+            // which dropped the whole result's history (every face name of
+            // a modeled thread cut in slabs).
+            _ => Some(Vec::new()),
         }
     }
 }

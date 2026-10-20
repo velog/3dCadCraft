@@ -9,7 +9,8 @@ commit `4687e3b0734e41d761be0d0a2611e5402f088348`, MIT OR Apache-2.0 (`LICENSE-M
 why); `Cargo.toml` spells out the original's workspace inheritance. Everything
 else (`solidcraft-geom`, the truck crates) still comes from the pinned commit.
 
-The changes make feature patterns of thousands of copies fast (see `docs/PERF.md`,
+The changes make feature patterns of thousands of copies fast (and keep the face history of
+faceted Booleans, last row) (see `docs/PERF.md`,
 "Масиви с хиляди копия"); they are proposed upstream in `docs/SOLIDCRAFT_ISSUES.md`. Drop this
 copy when the pin moves to a commit that has them.
 
@@ -26,6 +27,7 @@ copy when the pin moves to a commit that has them.
 | `prism.rs` `sew_connected_sections` | points that may split a segment taken from a sorted index | quadratic → n log n (bosses) |
 | `build.rs` `extrude` | above 256 faces the orientation is read off a cap instead of meshing the solid | 10000 holes: 6.2 s → 0.05 s |
 | `surface_kind.rs` `face_surfaces` | every face's surface in one walk (in parallel) | `face_surface(i)` walked to face i each time |
+| `polybool.rs` `Sources::edge` | an edge between two faces that share several edges (a circle split into arcs), whose chord test finds none or several, gets no origin (`Some(vec![])`) instead of `None` | one such edge dropped the whole result's history: a modeled thread cut in slabs lost every face name (not a speed change) |
 
 A fix (not about speed): a rolling-ball blend of a closed chain whose corners meet **curved**
 seams. Proposed upstream in `docs/SOLIDCRAFT_ISSUES.md` (Sweep).

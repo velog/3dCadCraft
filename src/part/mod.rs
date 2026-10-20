@@ -819,6 +819,11 @@ pub struct PartDocument {
     /// faceted one, see [`PartDocument::regenerate`]).
     #[serde(skip)]
     pub exact: bool,
+    /// Why the last regeneration left the exact kernel: the feature id and
+    /// the kernel's message (runtime only). The faceted rebuild shows it as
+    /// that feature's health instead of "needs the exact geometry kernel".
+    #[serde(skip)]
+    pub exact_failure: Option<(String, String)>,
     /// Edit Feature rolls the part back: only the features before this
     /// index are built (Inventor shows the model as it was before the
     /// edited feature). Runtime only.
@@ -893,9 +898,19 @@ impl PartDocument {
         // Parameters first: equations set dimensions and feature values.
         self.sync_parameters();
         self.evaluate_parameters();
+        self.exact_failure = None;
         self.exact = exact::enabled() && self.build_features(true)?;
         if !self.exact {
             self.build_features(false)?;
+            // A feature only the exact kernel builds, which made it give up:
+            // its health says why (a kernel failure), not that it needs the
+            // exact kernel.
+            if let Some((id, msg)) = &self.exact_failure
+                && let Some(h) = self.feature_health.get_mut(id)
+                && h.contains("needs the exact geometry kernel")
+            {
+                *h = format!("the geometry kernel failed: {msg}");
+            }
         }
         Ok(())
     }
@@ -1341,6 +1356,8 @@ impl PartDocument {
                             ) =>
                         {
                             log::warn!("exact kernel: {}: invalid result: {why}", f.id());
+                            self.exact_failure =
+                                Some((f.id().to_owned(), format!("invalid result ({why})")));
                             return Ok(false);
                         }
                         Some(why) => {
@@ -1366,6 +1383,7 @@ impl PartDocument {
                     }
                     Err(msg) => {
                         log::warn!("exact kernel: {}: {msg}", f.id());
+                        self.exact_failure = Some((f.id().to_owned(), msg));
                         return Ok(false);
                     }
                 },
@@ -1375,6 +1393,7 @@ impl PartDocument {
                 }
                 Err(exact::Fail::Kernel(msg)) => {
                     log::warn!("exact kernel: {}: {msg}", f.id());
+                    self.exact_failure = Some((f.id().to_owned(), msg));
                     return Ok(false);
                 }
             }

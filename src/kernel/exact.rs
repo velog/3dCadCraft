@@ -1771,6 +1771,11 @@ pub struct ThreadGroove {
     pub prefix: String,
     /// Name of the groove walls after the prefix (`Thread:1`).
     pub name: String,
+    /// Where (z) the body has faces square to the axis in the zone (the
+    /// start face, the far face, a seat's floor): the slabs of
+    /// [`cut_threads`] keep their planes away from them (a plane 0.04 mm
+    /// under the start face left a sliver whose faceted cut failed).
+    pub avoid: Vec<Real>,
 }
 
 impl ThreadGroove {
@@ -1862,17 +1867,22 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
         let zbox = g.zone_box();
         meshes.push((zbox, m, format!("{}:{}", g.prefix, g.name)));
     }
-    let zone = match union_apart(&zones)? {
-        Some(z) => z,
-        None => {
-            let mut it = zones.into_iter();
-            let mut z = it.next().ok_or("no thread zone")?;
-            for t in it {
-                z = boolean(&z, &t, ExactOp::Union)?.ok_or("thread zones")?;
-            }
-            z
-        }
+    // Zones apart from each other (the usual case): each one in slabs.
+    let apart = if zones.len() == 1 {
+        Some(zones[0].clone())
+    } else {
+        union_apart(&zones)?
     };
+    if let Some(whole) = apart {
+        return slab_threads(s, grooves, &whole);
+    }
+    // Zones that overlap (threads closer than their zones): one piece of
+    // material for all of them.
+    let mut it = zones.into_iter();
+    let mut zone = it.next().ok_or("no thread zone")?;
+    for t in it {
+        zone = boolean(&zone, &t, ExactOp::Union)?.ok_or("thread zones")?;
+    }
     let inside = boolean(&zone, s, ExactOp::Intersect)?
         .ok_or_else(|| "the thread is not in the material".to_owned())?;
     let rest = boolean(s, &zone, ExactOp::Cut)?;
@@ -1906,7 +1916,9 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
     let results: Vec<Result<Option<ExactSolid>, String>> = std::thread::scope(|sc| {
         let handles: Vec<_> = jobs
             .iter()
-            .map(|(piece, mesh, names)| sc.spawn(move || threaded_piece(s, piece, mesh, names)))
+            .map(|(piece, mesh, names)| {
+                sc.spawn(move || threaded_piece(s, piece, mesh, names, None))
+            })
             .collect();
         handles
             .into_iter()
@@ -1925,20 +1937,490 @@ pub fn cut_threads(s: &ExactSolid, grooves: &[ThreadGroove]) -> Result<Vec<Exact
     Ok(out)
 }
 
+/// Turns of a groove per slab of its zone in [`slab_threads`].
+const SLAB_TURNS: Real = 2.0;
+
+/// Rounds of [`slab_threads`]: the first cut, then repairs of failed slabs.
+const SLAB_ROUNDS: usize = 6;
+
+/// A groove's helix as stations `THREAD_STATIONS` per turn from its start
+/// (the last one at its end), so a run of stations is the same triangles
+/// as in the whole groove: neighbouring slabs cut the groove along their
+/// common plane identically.
+struct GrooveHelix {
+    /// The section's corners at station 0 (world).
+    corners: Vec<Point3>,
+    /// A point on the axis and the unit axis the section turns about.
+    origin: Point3,
+    turn: Vector3,
+    /// Rise per radian along `turn` (negative for a left-handed thread).
+    rise: Real,
+    /// Total angle and the number of the last station.
+    total: Real,
+    last: usize,
+    /// Axial extent of the section about its station (along the groove axis).
+    lo: Real,
+    hi: Real,
+    /// Where the section's middle starts along the groove axis.
+    base: Real,
+    pitch: Real,
+}
+
+impl GrooveHelix {
+    fn new(g: &ThreadGroove) -> Result<Self, String> {
+        let k3 = g
+            .axis
+            .try_normalize(1e-12)
+            .ok_or_else(|| "the thread axis has no direction".to_owned())?;
+        let base = g.origin + k3 * g.base;
+        let pl = axial_frame(base, k3, 0.0)?;
+        let corners = g
+            .section
+            .iter()
+            .map(|q| {
+                let w = pl.to_world(sg::Vec2::new(q[0], q[1]));
+                Point3::new(w.x, w.y, w.z)
+            })
+            .collect();
+        let (turn, rise) = if g.left_hand {
+            (-k3, -g.pitch / std::f64::consts::TAU)
+        } else {
+            (k3, g.pitch / std::f64::consts::TAU)
+        };
+        let total = std::f64::consts::TAU * g.turns;
+        // The last station is at the end (never a sliver of a station after
+        // the one before it).
+        let last = (g.turns * THREAD_STATIONS as Real - 1e-3).ceil().max(1.0) as usize;
+        let lo = g
+            .section
+            .iter()
+            .map(|q| q[1])
+            .fold(Real::INFINITY, Real::min);
+        let hi = g
+            .section
+            .iter()
+            .map(|q| q[1])
+            .fold(Real::NEG_INFINITY, Real::max);
+        Ok(Self {
+            corners,
+            origin: base,
+            turn,
+            rise,
+            total,
+            last,
+            lo,
+            hi,
+            base: g.base,
+            pitch: g.pitch,
+        })
+    }
+
+    fn angle(&self, i: usize) -> Real {
+        if i >= self.last {
+            self.total
+        } else {
+            (std::f64::consts::TAU * i as Real / THREAD_STATIONS as Real).min(self.total)
+        }
+    }
+
+    /// The section's axial extent at station `i` (from the groove origin).
+    fn extent(&self, i: usize) -> (Real, Real) {
+        let z = self.base + self.pitch * self.angle(i) / std::f64::consts::TAU;
+        (z + self.lo, z + self.hi)
+    }
+
+    /// The closed mesh of stations `i0..=i1`, wound outward.
+    fn mesh(&self, i0: usize, i1: usize) -> sg::Mesh {
+        let m = self.corners.len();
+        let mut mesh = sg::Mesh::default();
+        let axis = nalgebra::Unit::new_unchecked(self.turn);
+        for i in i0..=i1 {
+            let a = self.angle(i);
+            let rot = nalgebra::Rotation3::from_axis_angle(&axis, a);
+            let lift = self.turn * (self.rise * a);
+            for c in &self.corners {
+                let p = self.origin + rot * (c - self.origin) + lift;
+                mesh.positions.push(v3(&p));
+            }
+        }
+        let n = i1 - i0;
+        let id = |i: usize, j: usize| u32::try_from(i * m + j % m).unwrap_or(0);
+        for i in 0..n {
+            for j in 0..m {
+                mesh.triangles
+                    .push([id(i, j), id(i + 1, j), id(i + 1, j + 1)]);
+                mesh.triangles
+                    .push([id(i, j), id(i + 1, j + 1), id(i, j + 1)]);
+            }
+        }
+        for j in 1..m - 1 {
+            mesh.triangles.push([id(0, 0), id(0, j), id(0, j + 1)]);
+            mesh.triangles.push([id(n, 0), id(n, j + 1), id(n, j)]);
+        }
+        if mesh.measure().volume < 0.0 {
+            for t in &mut mesh.triangles {
+                t.swap(1, 2);
+            }
+        }
+        mesh.tri_face = vec![0; mesh.triangles.len()];
+        mesh
+    }
+
+    /// The stations whose groove reaches into `[a, b]` along the axis, with
+    /// one more at each end (its end caps lie outside the band).
+    fn stations(&self, a: Real, b: Real) -> Option<(usize, usize)> {
+        let i0 = (0..=self.last)
+            .rev()
+            .find(|&i| self.extent(i).1 < a)
+            .unwrap_or(0);
+        let i1 = (0..=self.last)
+            .find(|&i| self.extent(i).0 > b)
+            .unwrap_or(self.last);
+        (i1 > i0 && self.extent(i0).0 <= b && self.extent(i1).1 >= a).then_some((i0, i1))
+    }
+}
+
+/// [`cut_threads`] for zones apart from each other: every zone in slabs
+/// across its axis ([`SLAB_TURNS`] turns high, after the Coil's slabs),
+/// each slab's material cut with only the part of its groove that reaches
+/// into it. The faceted Boolean grows faster than the groove's length
+/// (owner's M8 × 10 in a 283 × 136 × 10 plate: 13.6 s in one zone, ~1.5 s
+/// in slabs), so short pieces on parallel workers are much faster; the rest
+/// of the body (outside the zones) is made meanwhile.
+///
+/// A slab's faceted Boolean sometimes fails ("shell is not oriented and
+/// closed", a negative intersection volume, a result our B-rep refuses),
+/// depending on where its planes lie (a plane near a row of the body's
+/// facets makes slivers). A failed slab is cut again with its planes moved,
+/// then merged with a neighbour (see [`SLAB_ROUNDS`]); at worst the zone is
+/// one piece, as it was cut before the slabs.
+fn slab_threads(
+    s: &ExactSolid,
+    grooves: &[ThreadGroove],
+    whole: &ExactSolid,
+) -> Result<Vec<ExactSolid>, String> {
+    type Slab = Result<(bool, Vec<ExactSolid>), String>;
+    /// One groove's slabs: the planes between them (along the axis) and the
+    /// latest result of each.
+    struct Plan<'a> {
+        k: usize,
+        g: &'a ThreadGroove,
+        helix: GrooveHelix,
+        planes: Vec<Real>,
+        moved: Vec<bool>,
+        tol: Real,
+        name: String,
+        done: Vec<Option<Slab>>,
+        /// The body near the zone, once a slab cut out of `s` came out
+        /// imprecise (see [`near_zone`]).
+        local: Option<ExactSolid>,
+    }
+    let mut plans = Vec::new();
+    for (k, g) in grooves.iter().enumerate() {
+        let [r1, z0, z1] = [g.zone[1], g.zone[2], g.zone[3]];
+        let n = ((z1 - z0) / (SLAB_TURNS * g.pitch))
+            .ceil()
+            .clamp(1.0, 400.0) as usize;
+        // One facet tolerance for every slab of a zone (the zone's size, as
+        // the whole zone was faceted), so the slabs facet its walls alike.
+        let tol = ((4.0 * r1 * r1 + (z1 - z0) * (z1 - z0)).sqrt() * 5e-4).clamp(2e-3, 1e-2);
+        // Inner planes off the even division (a symmetric zone put one in
+        // the middle of the plate, at a row of the bore's facets, and both
+        // slabs beside it failed) and away from the body's square faces.
+        let h = (z1 - z0) / n as Real;
+        let mut planes: Vec<Real> = (0..=n)
+            .map(|j| {
+                let z = z0 + h * j as Real;
+                if j == 0 || j == n { z } else { z + 0.137 * h }
+            })
+            .collect();
+        for z in planes.iter_mut().take(n).skip(1) {
+            *z = clear_of(*z, &g.avoid, 0.3 * h);
+        }
+        for j in 1..n {
+            // Still in order, and no slab thinner than a tenth.
+            let (lo, hi) = (planes[j - 1] + 0.1 * h, planes[j + 1] - 0.1 * h);
+            planes[j] = planes[j].clamp(lo, hi.max(lo));
+        }
+        plans.push(Plan {
+            k,
+            g,
+            helix: GrooveHelix::new(g)?,
+            planes,
+            moved: vec![false; n + 1],
+            tol,
+            name: format!("{}:{}", g.prefix, g.name),
+            done: (0..n).map(|_| None).collect(),
+            local: None,
+        });
+    }
+    // A slab's material (an exact Boolean with the body), then the faceted
+    // cut of every piece of it, which our B-rep must take as well (one slab
+    // in 54 of nine M6 holes had a vertex off its edge).
+    let slab = |p: &Plan, j: usize| -> Slab {
+        let (g, a, b) = (p.g, p.planes[j], p.planes[j + 1]);
+        let Some((i0, i1)) = p.helix.stations(a, b) else {
+            return Ok((false, Vec::new()));
+        };
+        let ring = revolved_tool(
+            g.origin,
+            g.axis,
+            0.4 + 0.613 * p.k as Real,
+            &[
+                [g.zone[0], a],
+                [g.zone[1], a],
+                [g.zone[1], b],
+                [g.zone[0], b],
+            ],
+            &["ThreadZone"; 4],
+            &g.prefix,
+        )?;
+        let Some(inside) = boolean(p.local.as_ref().unwrap_or(s), &ring, ExactOp::Intersect)?
+        else {
+            return Ok((false, Vec::new()));
+        };
+        if p.local.is_none() && !square_to(&inside, &g.axis) {
+            return Err(IMPRECISE.into());
+        }
+        let mesh = p.helix.mesh(i0, i1);
+        let names = vec![p.name.clone(); mesh.triangles.len()];
+        let mut out = Vec::new();
+        for piece in lumps(&inside) {
+            let Some(cut) = threaded_piece(s, &piece, &mesh, &names, Some(p.tol))? else {
+                continue;
+            };
+            let shown = to_brep(std::slice::from_ref(&cut))?;
+            for (sid, _) in shown.solids() {
+                shown
+                    .validate_solid(sid)
+                    .map_err(|e| format!("a threaded slab is not a valid solid ({e:?})"))?;
+            }
+            out.push(cut);
+        }
+        Ok((true, out))
+    };
+    let lost = "thread: internal error in the geometry kernel";
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let mut rest = None;
+    for round in 0..SLAB_ROUNDS {
+        // Every slab without a good result, on parallel workers (the rest
+        // of the body beside them, the first time).
+        let todo: Vec<(usize, usize)> = plans
+            .iter()
+            .enumerate()
+            .flat_map(|(pi, p)| {
+                (0..p.done.len())
+                    .filter(|&j| !matches!(p.done[j], Some(Ok(_))))
+                    .map(move |j| (pi, j))
+            })
+            .collect();
+        if todo.is_empty() {
+            break;
+        }
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<std::sync::Mutex<Option<Slab>>> =
+            todo.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        let plans_ref = &plans;
+        let made = std::thread::scope(|sc| {
+            let r = (round == 0).then(|| sc.spawn(|| boolean(s, whole, ExactOp::Cut)));
+            for _ in 0..workers.clamp(1, todo.len()) {
+                sc.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(&(pi, j)) = todo.get(i) else { break };
+                        let out = slab(&plans_ref[pi], j);
+                        if let Some(slot) = slots.get(i)
+                            && let Ok(mut slot) = slot.lock()
+                        {
+                            *slot = Some(out);
+                        }
+                    }
+                });
+            }
+            r.map(|h| h.join().unwrap_or_else(|_| Err(lost.to_owned())))
+        });
+        if let Some(r) = made {
+            rest = Some(r?);
+        }
+        for (&(pi, j), slot) in todo.iter().zip(slots) {
+            let r = slot
+                .into_inner()
+                .map_err(|_| lost.to_owned())?
+                .unwrap_or_else(|| Err(lost.to_owned()));
+            if let Err(e) = &r {
+                log::debug!(
+                    "thread {}: slab {j} of {} failed (round {round}): {e}",
+                    plans[pi].name,
+                    plans[pi].done.len()
+                );
+            }
+            plans[pi].done[j] = Some(r);
+        }
+        if round + 1 == SLAB_ROUNDS {
+            break;
+        }
+        // Imprecise slabs: their zone is cut out of the body near it from
+        // now on (as they were, without moving planes).
+        let want: Vec<usize> = (0..plans.len())
+            .filter(|&pi| {
+                plans[pi].local.is_none()
+                    && plans[pi]
+                        .done
+                        .iter()
+                        .any(|d| matches!(d, Some(Err(e)) if e == IMPRECISE))
+            })
+            .collect();
+        let near: Vec<Result<Option<ExactSolid>, String>> = std::thread::scope(|sc| {
+            let jobs: Vec<_> = want
+                .iter()
+                .map(|&pi| {
+                    let g = plans[pi].g;
+                    sc.spawn(move || near_zone(s, g))
+                })
+                .collect();
+            jobs.into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err(lost.to_owned())))
+                .collect()
+        });
+        for (&pi, l) in want.iter().zip(near) {
+            let p = &mut plans[pi];
+            let Some(l) = l? else {
+                return Err("the thread is not in the material".into());
+            };
+            p.local = Some(l);
+            for d in &mut p.done {
+                if matches!(d, Some(Err(e)) if e == IMPRECISE) {
+                    *d = None;
+                }
+            }
+        }
+        // The inner planes beside a failed slab move by about half a slab
+        // (once each: small steps did not get off a row of facets); a
+        // failed slab whose planes have moved already is merged with its
+        // upper neighbour (the lower one for the last slab), one merge per
+        // zone and round. The slabs beside a changed plane are redone.
+        for p in &mut plans {
+            let n = p.done.len();
+            if n == 1 {
+                continue;
+            }
+            let failed: Vec<usize> = (0..n)
+                .filter(|&j| matches!(p.done[j], Some(Err(_))))
+                .collect();
+            let mut merge = None;
+            let mut moves = Vec::new();
+            for &j in &failed {
+                let fresh: Vec<usize> = [j, j + 1]
+                    .into_iter()
+                    .filter(|&q| q > 0 && q < n && !p.moved[q])
+                    .collect();
+                if fresh.is_empty() {
+                    merge.get_or_insert(j);
+                }
+                moves.extend(fresh);
+            }
+            moves.sort_unstable();
+            moves.dedup();
+            for q in moves {
+                p.moved[q] = true;
+                let (lo, hi) = (p.planes[q - 1], p.planes[q + 1]);
+                let z = clear_of(p.planes[q] + 0.23 * (hi - lo), &p.g.avoid, 0.15 * (hi - lo));
+                if z > lo + 0.05 * (hi - lo) && z < hi - 0.05 * (hi - lo) {
+                    p.planes[q] = z;
+                }
+                p.done[q - 1] = None;
+                p.done[q] = None;
+            }
+            if let Some(j) = merge {
+                let q = if j + 1 < n { j + 1 } else { j };
+                p.planes.remove(q);
+                p.moved.remove(q);
+                p.done.remove(q);
+                p.done[q - 1] = None;
+            }
+        }
+    }
+    let mut out: Vec<ExactSolid> = rest.ok_or(lost)?.into_iter().collect();
+    let mut any = false;
+    for p in plans {
+        for r in p.done {
+            let (hit, pieces) = r.unwrap_or_else(|| Err(lost.to_owned()))?;
+            any |= hit;
+            out.extend(pieces);
+        }
+    }
+    if !any {
+        return Err("the thread is not in the material".into());
+    }
+    Ok(out)
+}
+
+/// `z` moved `gap` away from the nearest of `avoid` it is closer than
+/// `gap` to (upwards when on it).
+fn clear_of(z: Real, avoid: &[Real], gap: Real) -> Real {
+    let mut z = z;
+    for &a in avoid {
+        if (z - a).abs() < gap {
+            z = if z < a { a - gap } else { a + gap };
+        }
+    }
+    z
+}
+
+/// A slab out of a large body that is not as exact as the ring it was cut
+/// with (see [`square_to`]); it is cut again out of [`near_zone`].
+const IMPRECISE: &str = "the slab of the thread zone is not precise";
+
+/// Whether the faces of `piece` that should be square to `axis` (the
+/// slab's planes, within 1e-4 rad) are square to it to 1e-9. Out of a
+/// 300 mm plate an M3 slab came out with its planes tilted 1.7e-6 rad and
+/// its circles 1 µm off (the kernel's tolerances follow the operands'
+/// size), and its faceted cut failed every time; out of a 150 mm plate it
+/// was exact.
+fn square_to(piece: &ExactSolid, axis: &Vector3) -> bool {
+    let Some(k) = axis.try_normalize(1e-12) else {
+        return true;
+    };
+    let Ok(faces) = guarded("faces", || piece.body.faces(1e-2)) else {
+        return true;
+    };
+    faces.iter().filter_map(|f| f.plane_normal).all(|n| {
+        let off = Vector3::new(n.x, n.y, n.z).cross(&k).norm();
+        !(1e-9..1e-4).contains(&off)
+    })
+}
+
+/// `s` in a box around the zone of `g`: the box's planes meet only the
+/// body's own planar faces near the zone (the bore's cylinder lies inside
+/// it), so slabs cut out of it are as exact as out of a small part. Slower
+/// to cut than `s` itself, so only for slabs that came out imprecise.
+fn near_zone(s: &ExactSolid, g: &ThreadGroove) -> Result<Option<ExactSolid>, String> {
+    let (lo, hi) = g.zone_box();
+    let pad = Vector3::repeat(0.37 * g.pitch + 0.05);
+    let b = box_named(lo - pad, hi + pad, &g.prefix)?;
+    boolean(s, &b, ExactOp::Intersect)
+}
+
 /// One zone's material less its grooves (faceted), named.
 fn threaded_piece(
     s: &ExactSolid,
     piece: &ExactSolid,
     mesh: &sg::Mesh,
     groove_names: &[String],
+    tol: Option<Real>,
 ) -> Result<Option<ExactSolid>, String> {
     if mesh.triangles.is_empty() {
         return Ok(Some(piece.clone()));
     }
-    let tol = (piece.body.size() * 5e-4).clamp(2e-3, 1e-2);
+    // A slab (`tol` given) is not retried finer here: a failure is about
+    // where its planes cut the groove, and `slab_threads` moves them.
+    let (tol, factors): (Real, &[Real]) = match tol {
+        Some(t) => (t, &[1.0]),
+        None => ((piece.body.size() * 5e-4).clamp(2e-3, 1e-2), &[1.0, 0.5]),
+    };
     let mut last = String::new();
     let mut made = None;
-    for f in [1.0, 0.5] {
+    for &f in factors {
         match guarded("thread", || {
             sk::faceted_boolean(&piece.body, mesh, sk::BoolOp::Cut, tol * f)
         }) {

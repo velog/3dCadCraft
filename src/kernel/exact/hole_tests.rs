@@ -121,21 +121,28 @@ fn cut_threads_facets_only_the_zone() {
         zone: [rb - 0.2 * p, 4.0 + 0.3 * p, -6.0 - 2.0 * p, 3.0 * p],
         prefix: "Hole1".into(),
         name: "Thread:1".into(),
+        avoid: vec![0.0, -6.0],
     };
     let pieces = cut_threads(&b, std::slice::from_ref(&g)).unwrap();
-    assert_eq!(pieces.len(), 2, "the exact rest and the threaded zone");
+    // The exact rest, then the zone in slabs (2 turns each: 12.25 mm of
+    // zone in 5, the top one in the air).
+    assert_eq!(pieces.len(), 1 + 4, "the exact rest and the slabs");
     let v: Real = pieces.iter().map(|s| s.measure().unwrap().0).sum();
     assert!(v < v0, "{v} {v0}");
     // The rest keeps its exact faces: the box sides are 4 of its faces,
-    // and it has few faces; the zone has many planar facets.
+    // and it has few faces; the slabs have many planar facets, and every
+    // slab in the material has groove faces.
     let rest_faces = pieces[0].measure().unwrap().2;
     assert!(rest_faces < 20, "{rest_faces}");
-    assert!(
-        pieces[1]
-            .names()
-            .iter()
-            .any(|n| n.as_deref() == Some("Hole1:Thread:1"))
-    );
+    let grooved = pieces[1..]
+        .iter()
+        .filter(|s| {
+            s.names()
+                .iter()
+                .any(|n| n.as_deref() == Some("Hole1:Thread:1"))
+        })
+        .count();
+    assert!(grooved >= 3, "{grooved} slabs with the groove");
     let brep = to_brep(&pieces).unwrap();
     for (sid, _) in brep.solids() {
         brep.validate_solid(sid).unwrap();

@@ -134,7 +134,13 @@ fn walk(text: &str, mut visit: impl FnMut(Step, &PartDocument) -> bool) -> Resul
         match rebuild(&v, &mut current, &mut cache) {
             Ok(p) => {
                 let got = Outcome::of(&p);
-                step.difference = step.recorded.as_ref().and_then(|r| r.difference(&got));
+                // A state recorded inside a sketch kept the body from before
+                // the edit (no regeneration until Finish Sketch).
+                step.difference = step
+                    .recorded
+                    .as_ref()
+                    .filter(|r| !r.in_sketch)
+                    .and_then(|r| r.difference(&got));
                 step.replayed = Some(got);
                 part = p;
             }
