@@ -207,7 +207,7 @@ pub fn sketch_chains(ps: &super::PartSketch) -> Vec<Vec<Segment2>> {
     let mut open: Vec<(Segment2, PointId, PointId)> = Vec::new();
     let mut chains: Vec<Vec<Segment2>> = Vec::new();
     for (id, e) in sk.entities() {
-        if sk.style(id) == Style::Construction || ps.reference_lines.contains(&id) {
+        if sk.style(id) == Style::Construction || ps.is_reference(id) {
             continue;
         }
         match e {

@@ -764,28 +764,6 @@ impl CadCraftApp {
         }
     }
 
-    /// Project Geometry: a click at `p` on a straight model edge projects
-    /// it into sketch `i` (one Undo step). Returns whether the click was
-    /// taken.
-    pub(super) fn project_click(&mut self, i: usize, p: egui::Pos2, rect: Rect) -> bool {
-        let Some(e) = self.edge_under(p, rect) else {
-            return false;
-        };
-        self.checkpoint("Project Geometry");
-        match self.part_mut().project_edge(i, e) {
-            Ok(_) => {
-                let _ = self.part_mut().sketches[i].sketch.solve();
-                self.file_status = None;
-                self.scene_dirty = true;
-            }
-            Err(err) => {
-                self.history.cancel();
-                self.file_status = Some(Err(err.to_string()));
-            }
-        }
-        true
-    }
-
     /// Cancel / Esc of Hole: a sketch kept visible for this hole is
     /// unshared again (Inventor).
     pub(super) fn cancel_hole(&mut self) {

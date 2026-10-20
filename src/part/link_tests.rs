@@ -618,10 +618,17 @@ fn owner_scenario_sweep_along_spline_between_projected_centres() {
         p.sketches[c].sketch.point(pb).unwrap().position,
         Point2::new(30.0, 55.0),
     );
-    // The spline snaps to the projected points (shares them: coincident).
+    // The spline's ends snap to the projected points: own points held
+    // Coincident to them (as the Spline tool does on a projected point).
     let sk = &mut p.sketches[c].sketch;
+    let ea = sk.add_point(Point2::new(0.5, 0.5));
+    let eb = sk.add_point(Point2::new(29.0, 54.0));
+    sk.add_constraint(Constraint::Coincident { a: ea, b: pa })
+        .unwrap();
+    sk.add_constraint(Constraint::Coincident { a: eb, b: pb })
+        .unwrap();
     let mid = sk.add_point(Point2::new(4.0, 30.0));
-    let spline = sk.add_interp_spline(vec![pa, mid, pb]).unwrap();
+    let spline = sk.add_interp_spline(vec![ea, mid, eb]).unwrap();
     sk.add_constraint(Constraint::Fix {
         point: mid,
         at: Point2::new(4.0, 30.0),
@@ -664,6 +671,11 @@ fn owner_scenario_sweep_along_spline_between_projected_centres() {
     p.regenerate().unwrap();
     close(
         p.sketches[c].sketch.point(pb).unwrap().position,
+        Point2::new(20.0, 55.0),
+    );
+    // The spline end follows through its Coincident constraint.
+    close(
+        p.sketches[c].sketch.point(eb).unwrap().position,
         Point2::new(20.0, 55.0),
     );
     assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);

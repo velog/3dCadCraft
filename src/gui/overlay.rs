@@ -168,6 +168,13 @@ pub fn draw_sketch(
             }
             continue;
         }
+        // Geometry from Project Geometry (other sketches, curved edges):
+        // the reference colour, solid (dashed when construction).
+        let color = if ps.is_reference(id) && !hot {
+            style.reference
+        } else {
+            color
+        };
         match sketch.style(id) {
             Style::Normal => {
                 painter.add(Shape::line(pts, Stroke::new(width, color)));

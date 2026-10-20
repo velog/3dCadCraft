@@ -228,7 +228,7 @@ impl CadCraftApp {
         if !matches!(
             sk.entity(e),
             Some(crate::sketch::Entity::Line { .. } | crate::sketch::Entity::Arc { .. })
-        ) || ps.reference_lines.contains(&e)
+        ) || ps.is_reference(e)
         {
             return false;
         }
