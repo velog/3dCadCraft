@@ -409,6 +409,22 @@ fn center_line_needs_a_curve() {
     assert!(p.features.iter().all(|f| !matches!(f, Feature::Loft(_))));
 }
 
+#[test]
+fn a_folding_loft_is_refused() {
+    // Circles larger than the bend of the centre line: the stations would
+    // cross each other on the inner side — a self-intersecting solid.
+    for (big, r, deg) in [(8.0, 10.0, 90.0), (5.0, 6.0, 60.0), (12.0, 15.0, 120.0)] {
+        let (mut p, s0, s1, c) = arc_center_line(big, r, Real::to_radians(deg));
+        let e = loft_of(&mut p, &[s0, s1], |d| {
+            d.guide = LoftGuide::CenterLine;
+            d.center_line = Some(c);
+        })
+        .unwrap_err();
+        assert!(e.contains("would cross itself"), "{e}");
+        assert!(p.features.iter().all(|f| !matches!(f, Feature::Loft(_))));
+    }
+}
+
 // ------------------------------------------------------------ Area Loft ---
 
 /// Squares `a` at z = 0 and `b` at z = h, the Z axis as the centre line.
