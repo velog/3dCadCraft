@@ -126,7 +126,7 @@ UI.md на 2026-10-19; виж последния раздел).
 
 | Точка | Действие |
 |---|---|
-| **Repeat <команда>** | повтаря последната команда (само без активна команда; виж 5.3) |
+| **Repeat <команда>** | повтаря последната команда; показва се при инструмент Select и без отворени Extrude/Revolve и командите със селектори (при Fillet, Hole, Work и др. още се показва — виж 5.3) |
 | **Appearance ▸** | само извън скица и при избрани обекти: *As Material* (маха замяната), *Document Appearances*, библиотеката по категории — за избраните стени/операции/тела |
 | **Projection ▸** Orthographic / Perspective / Perspective with Ortho Faces | вид проекция |
 | **New Sketch** | нова скица върху стената (или работната равнина) под курсора; иначе сив текст „No face under the cursor“ |
@@ -199,10 +199,10 @@ UI.md на 2026-10-19; виж последния раздел).
 | *Origin* → XY / XZ / YZ Plane | — | — | **New Sketch** |
 | *Origin* → X/Y/Z Axis, Center Point | (само надпис) | — | — |
 | Box | избира тялото | — | **Appearance ▸**, общите (по-долу) |
-| Extrude / Revolve, Hole | избира | **Edit Feature** | **Edit Feature**, **Edit Sketch**, **Appearance ▸**, общите |
-| Fillet / Chamfer, Shell, Draft, Thread, Rectangular / Circular Pattern, Mirror | избира | **Edit Feature** | **Edit Feature**, **Appearance ▸**, общите |
-| Изгледът, докато Face Draft или Shell е отворена | — | — | меню на командата: **OK**, **Apply (+)**, **Continue**, **Back**, **Cancel**, **Repeat …** и опциите (вид, посока, Flip / Inside, Outside, Center, Sharp/Rounded) |
-| Работна равнина / ос / точка | избира; отметката = видимост | — | **New Sketch** (само равнина), общите |
+| Extrude / Revolve, Hole, Sweep, Loft, Coil, Rib | избира | **Edit Feature** | **Edit Feature**, **Edit Sketch**, **Appearance ▸**, общите |
+| Fillet / Chamfer, Shell, Draft, Thread, Combine, Split, Rectangular / Circular Pattern, Mirror | избира | **Edit Feature** | **Edit Feature**, **Appearance ▸**, общите |
+| Изгледът, докато Face Draft, Shell, Combine, Split или Loft е отворена | — | — | меню на командата: **OK**, **Apply (+)**, **Continue**, **Back**, **Cancel**, **Repeat …** и опциите (вид, посока, Flip / Inside, Outside, Center, Sharp/Rounded) |
+| Работна равнина / ос / точка | избира; отметката = видимост | **Redefine** | **New Sketch** (само равнина), общите |
 | Общите за операция | | | **Rename**, **Suppress Features** / **Unsuppress Features**, **Move EOP Here**, **Delete** |
 | Скица | избира; отметката = видимост | **Edit Sketch** | **Edit Sketch** (или **Finish 2D Sketch**, ако се редактира), **Share Sketch** (използвана, несподелена), **Unshare** (споделена, ≤1 операция), **Redefine**, **Look At**, **Hide**/**Show**, **Rename**, **Delete** |
 | *End of Part* (червена черта) | — (влачи се) | — | **Move EOP to Top**, **Move EOP to End**, **Delete All Features Below EOP** |
@@ -535,9 +535,10 @@ direction*; *References* (ред за всяка проекция: `Sketch1 · P
 | **F11** | Full Screen вкл./изкл. | извън скица | Full Screen (без клавиш по подразбиране) |
 | **Ctrl+0** | Clean Screen вкл./изкл.: само изгледът и Quick Access | глобално | същото |
 | **Esc** | затваря плаващия прозорец под курсора (Parameters, Options, Physical Properties, Styles Editor, браузърите, Adjust, Clear, Offset Element), без да прекъсва командата | курсорът е над прозореца и не се пише в поле | затваря диалога |
-| **Enter** / **Space** | повтаря последната команда | инструмент Select, без Extrude/Revolve/Face Draft/Shell, без избрани криви | Inventor: Enter |
-| **Enter** | **Continue** към празния задължителен селектор, иначе **OK** | Face Draft, Shell (извън поле) | Inventor: Enter = Continue / OK |
-| **Ctrl+Enter** | **OK** (ако може) | Face Draft, Shell | същото |
+| **Enter** / **Space** | повтаря последната команда | инструмент Select, без избрани криви, без отворени Extrude/Revolve и командите със селектори (Face Draft, Shell, Combine, Split, Loft). Внимание: при отворени Fillet, Hole, Work, Sweep, Coil, Rib, Pattern, Thread още повтаря (грешка, спец. 0.15 група A) | Inventor: Enter |
+| **Enter** | **Continue** към празния задължителен селектор, иначе **OK** | Face Draft, Shell, Combine, Split, Loft (извън поле) | Inventor: Enter = Continue / OK |
+| **Ctrl+Enter** | **OK** (ако може) | Face Draft, Shell, Combine, Split, Loft, Hole | същото |
+| **+** / **=** | Apply | Hole | |
 | **Ctrl+Enter** | OK на панела Extrude / Revolve (и на примитивите) | отворен панел | Inventor: Ctrl+Enter |
 | **Enter** | край на веригата / сплайна; Geometry → следваща стъпка при трансформации; масив: следващ селектор / OK | скица | |
 | **Enter** | поставя точката с въведените стойности | Dynamic Input | |
@@ -547,8 +548,10 @@ direction*; *References* (ред за всяка проекция: `Sketch1 · P
 | **Esc** | затваря без промяна | Edit Dimension, поле за стойност, файлов прозорец, Unsaved changes, Delete Feature | |
 | **Delete** | изтрива избраните криви и ограничения | скица | Inventor трие и в 3D |
 | **S** | Start 2D Sketch | извън скица | същото |
+| **H** | Hole | извън скица | същото |
 | **E** | Extrude (и излиза от скицата) | глобално | същото |
 | **R** | Revolve | извън скица | същото |
+| **F2** | Rename на избрания ред | мишката над дървото | същото |
 | **R** | Two Point Rectangle | скица | същото |
 | **L** | Line | скица | същото |
 | **C** | Center Point Circle | скица | същото (в сглобка C = Constrain) |
@@ -575,8 +578,8 @@ direction*; *References* (ред за всяка проекция: `Sketch1 · P
 | **← ↑** / **→ ↓** | предишен / следващ кандидат | Select Other | |
 | **Shift + колелце** | смяна на кандидата | Select Other | |
 
-Не са свързани (за сравнение с Inventor): F5 (Previous View), Home (Zoom All), H (Hole),
-P/C в сглобка, keymap файл.
+Не са свързани (за сравнение с Inventor): F5 (Previous View), Home (Zoom All), P/C в сглобка,
+keymap файл. Пълният списък на пропуските: [spec/0.15-context-menus-shortcuts.md](spec/0.15-context-menus-shortcuts.md).
 
 ### 5.2 Мишка + клавиш
 
@@ -584,8 +587,8 @@ P/C в сглобка, keymap файл.
 
 ### 5.3 Повтаряне на команда
 
-Помнят се: Start 2D Sketch, Extrude, Revolve, Fillet, Chamfer, Shell, Face Draft,
-Rectangular/Circular Pattern, Mirror, Work Plane/Axis/Point и всеки инструмент на скицата (повтаря се само в скица). Повтаря се с
+Помни се една команда: Start 2D Sketch, Extrude, Revolve, Hole, Thread, Fillet, Chamfer, Shell, Face Draft,
+Sweep, Loft, Coil, Rib, Combine, Split, Rectangular/Circular Pattern, Mirror, Work Plane/Axis/Point, UCS и всеки инструмент на скицата (повтаря се само в скица). Повтаря се с
 Enter/Space или **Repeat <име>** в десния клик.
 
 ---
@@ -781,12 +784,13 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | | **Coil** | навива затворен профил около ос: Pitch and Revolution / Revolution and Height / Pitch and Height, Taper, Right/Left, затворени краища; с Cut прави резба |
 | | **Rib** | ребро (Parallel) или преграда (Normal) от отворени криви до тялото: To Next / Finite, дебелина от страна или симетрично, Draft, бобини, мрежи |
 | | Emboss (2.17) | предстои |
-| Modify | Hole (H, 2.3) | предстои |
+| Modify | **Hole** (H) | отвор: Simple / Clearance / Tapped / Taper Tapped, гнезда, граници, стандарти (2.3) |
 | | **Fillet** | закръгля ръбове (изпъкнал — реже, вдлъбнат — добавя) |
 | | **Chamfer** | фаска: Distance, Two Distances, Distance and Angle |
 | | **Shell** | черупка; Inside, Outside, Center; Sharp / Rounded Corners |
 | | **Draft** | Face Draft: Fixed Edge, Fixed Plane, Parting Line; One Way / Symmetric / Asymmetric; Move Parting Line |
-| | Thread (2.9), Slot (2.3), Combine (2.13), Split (2.13) | предстоят |
+| | **Thread**, **Combine**, **Split** | резба (2.9); обединяване на тела; разделяне на стени и тела (2.13) |
+| | Slot (2.3) | предстои |
 | Work Features | **Plane** | работна равнина; методът следва избора |
 | | **Axis** | работна ос |
 | | **Point** | работна точка (и Grounded X, Y, Z; център на тор/сфера; пробив на крива стена) |
@@ -794,7 +798,7 @@ Export: STL (триъгълници в mm), STEP (точен B-rep), GLB (glTF).
 | Pattern | **Rectangular** | копия на операции или тела в редове по една или две посоки |
 | | **Circular** | копия на равни ъгли около ос |
 | | **Mirror** | огледално копие на операции или тела спрямо равнина |
-| Primitives | Box (2.1) | предстои |
+| Primitives | **Box**, **Cylinder**, **Sphere**, **Torus** | първо равнина, после кликове в нея (2.1) |
 
 **Sketch** (командите са активни само в скица)
 
