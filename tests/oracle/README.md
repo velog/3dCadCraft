@@ -1,20 +1,20 @@
-# Еталонни тестове (oracle)
+# Reference tests (oracle)
 
-Случаите са взети от [SolidCraft](https://github.com/bherbruck/solidcraft) `tests/oracle/`
-(commit `4687e3b0734e41d761be0d0a2611e5402f088348`, MIT OR Apache-2.0, виж
-[ATTRIBUTION.md](../../ATTRIBUTION.md)). Без `reference.stl`.
+The cases are taken from [SolidCraft](https://github.com/bherbruck/solidcraft) `tests/oracle/`
+(commit `4687e3b0734e41d761be0d0a2611e5402f088348`, MIT OR Apache-2.0, see
+[ATTRIBUTION.md](../../ATTRIBUTION.md)), without `reference.stl`.
 
-Всяка папка е един случай:
+Each folder is one case:
 
-- `recipe.json`: детайлът (скици в координатите на скицата, операции с параметрите им,
-  стени и ръбове, посочени с точка в света);
-- `expected.json`: какво трябва да измери детайлът и откъде идват числата
-  (`"source": "analytic"` с формулите в `method`, или FreeCAD, пуснат като отделна програма).
+- `recipe.json`: the part (sketches in sketch coordinates, features with their parameters,
+  faces and edges picked by a point in world space);
+- `expected.json`: what the part must measure and where the numbers come from
+  (`"source": "analytic"` with the formulas in `method`, or FreeCAD run as a separate program).
 
-Изпълнител: `tests/oracle.rs` (`cargo test --test oracle -- --nocapture` показва таблицата).
-Сравнява брой тела (точно), обем и площ (относително 1e-3), център на масата и габарит
-(1e-3 × диагонала), брой стени (слети, точно). Операции, които още нямаме, правят случая
-„пропуснат“; провалите, които още не са поправени, са в `known_failures.txt` (с причина).
-Случай от списъка, който започне да минава, също проваля теста: махни го от списъка.
+Runner: `tests/oracle.rs` (`cargo test --test oracle -- --nocapture` prints the table).
+It compares the number of bodies (exactly), volume and area (relative 1e-3), centre of mass and
+bounding box (1e-3 × the diagonal), and the number of faces (merged, exactly). Features we do
+not have yet mark the case "skipped"; failures not fixed yet are listed in `known_failures.txt`
+(with the reason). A listed case that starts to pass also fails the test: remove it from the list.
 
-**Никога не променяй `expected.json`, за да съвпадне с програмата.**
+**Never change `expected.json` to match the program.**
