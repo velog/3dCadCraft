@@ -29,8 +29,9 @@ use crate::kernel::{Plane, Point3, Real, Transform3, Vector3};
 /// An open assembly command.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum AsmTool {
-    /// Place: every click puts the document down as a new occurrence.
-    Place(DocumentId),
+    /// Place: every click puts the document down as a new occurrence
+    /// (named after `AsmUi::place_name`).
+    Place(DocRef),
     /// Free Move: drag any component (grounded ones too).
     FreeMove,
     /// Free Rotate: the component turned (after the first click).
@@ -80,10 +81,15 @@ pub(super) struct AsmUi {
     drag: Option<AsmDrag>,
     /// The turn given to the next placed occurrences (right-click → Rotate).
     place_turn: Option<Transform3>,
-    /// The Place Component window is open.
-    pub place_window: bool,
-    /// Picking triangles per part document (by its body signature).
-    meshes: std::cell::RefCell<HashMap<DocumentId, (String, Arc<PickMesh>)>>,
+    /// The Place Component window, while it is open.
+    pub place: Option<super::place::PlaceDialog>,
+    /// The name the placed occurrences get (`bracket` → `bracket:1`).
+    pub place_name: String,
+    /// The part files the assembly links (loaded once, reloaded when the
+    /// file changes on disk).
+    pub libs: super::place::LibCache,
+    /// Picking triangles per component (by its body signature).
+    meshes: std::cell::RefCell<HashMap<DocRef, (String, Arc<PickMesh>)>>,
     /// The (selection, hover) the scene was last built with.
     scene_state: (Vec<u32>, Option<u32>),
     /// The assembly a component was opened from (browser *Return*).
@@ -130,17 +136,15 @@ impl CadCraftApp {
     }
 
     /// The picking triangles of a component (cached by body signature).
-    fn asm_mesh(&self, r: DocRef) -> Option<Arc<PickMesh>> {
-        let part = asm::part_of(&self.project, r)?;
-        let sig = part.body_signature();
-        let mut cache = self.asm.meshes.borrow_mut();
-        if let Some((k, m)) = cache.get(&r.document)
+    pub(super) fn asm_mesh(&self, r: DocRef) -> Option<Arc<PickMesh>> {
+        let sig = self.with_part(r, |p| p.body_signature())?;
+        if let Some((k, m)) = self.asm.meshes.borrow().get(&r)
             && *k == sig
         {
             return Some(m.clone());
         }
-        let m = Arc::new(PickMesh::of(part));
-        cache.insert(r.document, (sig, m.clone()));
+        let m = Arc::new(self.with_part(r, PickMesh::of)?);
+        self.asm.meshes.borrow_mut().insert(r, (sig, m.clone()));
         Some(m)
     }
 
@@ -162,21 +166,27 @@ impl CadCraftApp {
 
     // ---- documents ---------------------------------------------------------
 
-    /// File → New Assembly: an empty assembly in the open project, made
-    /// the active document.
+    /// File → New Assembly: a new file (tab) holding an empty assembly,
+    /// as Inventor's new `.iam`; Place links part files into it.
     pub(super) fn new_assembly(&mut self) {
-        let n = (1..)
-            .map(|k| format!("Assembly{k}"))
-            .find(|n| !self.project.documents().iter().any(|d| &d.name == n))
-            .unwrap_or_else(|| "Assembly".into());
-        self.checkpoint("New Assembly");
-        let id = self
-            .project
-            .add_document(n, DocumentData::Assembly(AssemblyDocument::default()));
-        self.asm.came_from = None;
-        self.activate_document(id);
+        self.add_blank_tab();
+        let mut project = crate::document::Project::new("Assembly1");
+        let id = project.add_document(
+            "Assembly1",
+            DocumentData::Assembly(AssemblyDocument::default()),
+        );
+        self.project = project;
+        self.part_id = id;
+        self.asm = Default::default();
+        self.file_path.clear();
+        self.history.clear();
+        self.editing = None;
+        self.selection = super::Selection::Body;
+        self.after_restore();
+        self.fit_view();
+        self.mark_saved();
         self.file_status = Some(Ok(
-            "New assembly: Assemble > Place puts the project's parts in it".into(),
+            "New assembly: Assemble > Place (P) picks a part file to place".into(),
         ));
     }
 
@@ -191,7 +201,7 @@ impl CadCraftApp {
         self.asm.drag = None;
         self.asm.sel.clear();
         self.asm.hover = None;
-        self.asm.place_window = false;
+        self.asm.place = None;
         self.part_id = id;
         if let Some(DocumentData::Part(p)) = self.project.document_mut(id).map(|d| &mut d.data) {
             let _ = p.regenerate();
@@ -218,10 +228,12 @@ impl CadCraftApp {
         else {
             return;
         };
-        if r.library.is_some() {
-            self.file_status = Some(Err(
-                "Open: a library document opens from its own file".into()
-            ));
+        // A linked part file opens in a tab of its own (Inventor: Open).
+        if let Some(lib) = r.library {
+            match self.library_path(lib) {
+                Some(path) => self.open_path(&path),
+                None => self.file_status = Some(Err("Open: the part file was not found".into())),
+            }
             return;
         }
         self.asm.came_from = Some(self.part_id);
@@ -252,7 +264,7 @@ impl CadCraftApp {
         match action {
             Action::AsmPlace => {
                 self.asm.tool = None;
-                self.asm.place_window = true;
+                self.open_place_dialog();
             }
             Action::AsmFreeMove => {
                 self.asm.tool =
@@ -327,10 +339,8 @@ impl CadCraftApp {
     }
 
     /// Places `doc` at `at` (its origin there, with the current turn).
-    fn place_at(&mut self, doc: DocumentId, at: Point3, grounded_origin: bool) {
-        let Some(base) = self.project.document(doc).map(|d| d.name.clone()) else {
-            return;
-        };
+    fn place_at(&mut self, doc: DocRef, at: Point3, grounded_origin: bool) {
+        let base = self.asm.place_name.clone();
         let turn = self.asm.place_turn.unwrap_or_else(Transform3::identity);
         let t = if grounded_origin {
             turn
@@ -341,7 +351,7 @@ impl CadCraftApp {
         self.edit_assembly("Place", |a| {
             // The first component of an assembly is grounded (Inventor).
             let ground = grounded_origin || a.occurrences.is_empty();
-            placed = a.place(DocRef::local(doc), &base, t, ground);
+            placed = a.place(doc, &base, t, ground);
         });
         self.asm.sel = vec![placed];
         if grounded_origin {
@@ -368,9 +378,6 @@ impl CadCraftApp {
             return;
         };
         for o in a.occurrences.iter().filter(|o| o.visible) {
-            let Some(part) = asm::part_of(&self.project, o.component) else {
-                continue;
-            };
             let tint = if self.asm.sel.contains(&o.id) {
                 Some(SEL_TINT)
             } else if self.asm.hover == Some(o.id) {
@@ -378,7 +385,9 @@ impl CadCraftApp {
             } else {
                 None
             };
-            super::material::add_part_meshes_at(g, part, Some(&o.transform), tint);
+            self.with_part(o.component, |part| {
+                super::material::add_part_meshes_at(g, part, Some(&o.transform), tint)
+            });
         }
     }
 
@@ -396,7 +405,11 @@ impl CadCraftApp {
         cube_drag: bool,
     ) {
         let ctx = ui.ctx().clone();
-        let modal = self.asm.place_window;
+        let modal = self.asm.place.is_some();
+        // A linked part file saved meanwhile: reload it.
+        if self.poll_libraries() {
+            self.scene_dirty = true;
+        }
         // Keys: Esc ends the command (then clears the selection), Delete
         // deletes the selected components.
         if response.hovered() || self.asm.tool.is_some() {
@@ -501,11 +514,12 @@ impl CadCraftApp {
             && !on_cube
             && !modal
             && let Some(at) = self.place_point(p, rect)
-            && let Some(local) = self.asm_mesh(DocRef::local(doc)).and_then(|m| m.bbox)
+            && let Some(mesh) = self.asm_mesh(doc)
         {
+            // The part itself, see-through, where the click would put it.
             let turn = self.asm.place_turn.unwrap_or_else(Transform3::identity);
             let t = Transform3::translation(at.x, at.y, at.z) * turn;
-            self.draw_box(&painter, rect, local, &t);
+            super::place::draw_ghost(&painter, &self.camera, rect, &mesh, &t);
         }
         if let Some((c, r)) = circle {
             let stroke = Stroke::new(1.5, Color32::from_rgb(90, 200, 110));
@@ -698,51 +712,10 @@ impl CadCraftApp {
         }
     }
 
-    /// The outline of box `local` moved by `t`.
-    fn draw_box(
-        &self,
-        painter: &egui::Painter,
-        rect: Rect,
-        local: (Point3, Point3),
-        t: &Transform3,
-    ) {
-        let (a, b) = local;
-        let corner = |k: usize| {
-            t * Point3::new(
-                if k & 1 == 0 { a.x } else { b.x },
-                if k & 2 == 0 { a.y } else { b.y },
-                if k & 4 == 0 { a.z } else { b.z },
-            )
-        };
-        let stroke = Stroke::new(1.5, Color32::from_rgb(255, 160, 50));
-        for (i, j) in [
-            (0, 1),
-            (2, 3),
-            (4, 5),
-            (6, 7),
-            (0, 2),
-            (1, 3),
-            (4, 6),
-            (5, 7),
-            (0, 4),
-            (1, 5),
-            (2, 6),
-            (3, 7),
-        ] {
-            if let (Some(p), Some(q)) = (
-                self.camera.project(&corner(i), rect),
-                self.camera.project(&corner(j), rect),
-            ) {
-                painter.line_segment([p, q], stroke);
-            }
-        }
-    }
-
     fn asm_cursor_hint(&self) -> Option<String> {
         match self.asm.tool? {
-            AsmTool::Place(doc) => {
-                let name = self.project.document(doc)?.name.clone();
-                let next = self.assembly()?.next_name(&name);
+            AsmTool::Place(_) => {
+                let next = self.assembly()?.next_name(&self.asm.place_name);
                 Some(format!("Place {next}"))
             }
             AsmTool::FreeMove => Some("Free Move".into()),
@@ -854,86 +827,6 @@ impl CadCraftApp {
             self.delete_occurrences(ids);
             ui.close();
         }
-    }
-
-    // ---- Place Component window -------------------------------------------------
-
-    /// Place Component: the project's parts; *From File...* copies the
-    /// parts of another project in.
-    pub(super) fn place_window(&mut self, ctx: &egui::Context) {
-        if !self.asm.place_window {
-            return;
-        }
-        let parts = asm::placeable(&self.project);
-        let mut open = true;
-        let mut chosen = None;
-        let w = egui::Window::new("Place Component")
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false);
-        self.layout.place("place_component", ctx.content_rect(), false, w).show(ctx, |ui| {
-            if parts.is_empty() {
-                ui.label("This project has no parts yet.");
-            } else {
-                ui.label("Parts of this project (placed live: editing a part updates every occurrence):");
-            }
-            for (id, name) in &parts {
-                ui.horizontal(|ui| {
-                    super::panels::tree_icon(ui, Icon::Part);
-                    if ui.button(name).clicked() {
-                        chosen = Some(*id);
-                    }
-                });
-            }
-            ui.separator();
-            if ui
-                .button("From File...")
-                .on_hover_text("Copy the parts of another .3dcadcraft project into this one (Append), then pick one")
-                .clicked()
-            {
-                self.open_dialog(super::files::DialogPurpose::PlaceFrom);
-            }
-        });
-        if let Some(doc) = chosen {
-            self.asm.place_window = false;
-            self.asm.tool = Some(AsmTool::Place(doc));
-        } else if !open {
-            self.asm.place_window = false;
-        }
-    }
-
-    /// *From File...*: every part of the project at `path` copied in.
-    pub(super) fn place_from_file(&mut self, path: &std::path::Path) {
-        let source = match crate::document::Project::load(path) {
-            Ok(p) => p,
-            Err(e) => {
-                self.file_status = Some(Err(format!("Place: {e}")));
-                return;
-            }
-        };
-        let parts: Vec<(String, DocumentData)> = source
-            .documents()
-            .iter()
-            .filter(|d| matches!(d.data, DocumentData::Part(_)))
-            .map(|d| (d.name.clone(), d.data.clone()))
-            .collect();
-        if parts.is_empty() {
-            self.file_status = Some(Err(format!("Place: {} has no parts", path.display())));
-            return;
-        }
-        self.checkpoint("Place from File");
-        let n = parts.len();
-        for (name, mut data) in parts {
-            if let DocumentData::Part(p) = &mut data {
-                let _ = p.regenerate();
-            }
-            self.project.add_document(name, data);
-        }
-        self.file_status = Some(Ok(format!(
-            "Place: {n} part(s) copied from {}; pick one in Place Component",
-            path.display()
-        )));
-        self.asm.place_window = true;
     }
 
     // ---- browser and Properties --------------------------------------------------

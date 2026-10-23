@@ -25,8 +25,6 @@ pub(super) enum DialogPurpose {
     /// Parameters → Export CSV / Import CSV.
     ExportParams,
     ImportParams,
-    /// Assemble › Place › From File: a project whose parts are copied in.
-    PlaceFrom,
 }
 
 impl DialogPurpose {
@@ -39,16 +37,13 @@ impl DialogPurpose {
             DialogPurpose::Diagnostics => "Save Diagnostics".into(),
             DialogPurpose::ExportParams => "Export Parameters".into(),
             DialogPurpose::ImportParams => "Import Parameters".into(),
-            DialogPurpose::PlaceFrom => "Place Component from File".into(),
         }
     }
 
     /// Extensions listed and given to a typed name.
     fn extensions(self) -> &'static [&'static str] {
         match self {
-            DialogPurpose::Open | DialogPurpose::SaveAs | DialogPurpose::PlaceFrom => {
-                &[FILE_EXTENSION]
-            }
+            DialogPurpose::Open | DialogPurpose::SaveAs => &[FILE_EXTENSION],
             DialogPurpose::SaveFolder => &[],
             DialogPurpose::Export(ExportFormat::Stl) => &["stl"],
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
@@ -59,10 +54,7 @@ impl DialogPurpose {
     }
 
     fn saves(self) -> bool {
-        !matches!(
-            self,
-            DialogPurpose::Open | DialogPurpose::ImportParams | DialogPurpose::PlaceFrom
-        )
+        !matches!(self, DialogPurpose::Open | DialogPurpose::ImportParams)
     }
 }
 
@@ -269,6 +261,8 @@ pub(super) enum Pending {
     Close,
     /// Close the active document tab.
     CloseTab,
+    /// Assemble › Place, after the assembly was saved.
+    Place,
 }
 
 /// The user's home folder: `USERPROFILE` on Windows (Git Bash / MSYS set
@@ -423,7 +417,7 @@ impl CadCraftApp {
                 crate::diagnostics::stamp(std::time::SystemTime::now())
             ),
             DialogPurpose::ExportParams => format!("{stem}-parameters.csv"),
-            DialogPurpose::ImportParams | DialogPurpose::PlaceFrom => String::new(),
+            DialogPurpose::ImportParams => String::new(),
         };
         self.file_dialog = Some(FileDialog::new(purpose, start_dir(&self.file_path), name));
     }
@@ -450,6 +444,7 @@ impl CadCraftApp {
             }
             Pending::Open => self.open_dialog(DialogPurpose::Open),
             Pending::CloseTab => self.close_active_tab(),
+            Pending::Place => self.open_place_dialog(),
             Pending::Close => {
                 // Every changed tab asks in turn.
                 if let Some(k) = self.dirty_other_tab() {
@@ -816,7 +811,6 @@ impl CadCraftApp {
                 self.save_project(true);
             }
             DialogPurpose::Diagnostics => self.save_diagnostics(&path),
-            DialogPurpose::PlaceFrom => self.place_from_file(&path),
             DialogPurpose::ExportParams => {
                 let text = self.part().parameters_csv();
                 self.file_status = Some(

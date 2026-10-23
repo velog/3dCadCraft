@@ -764,7 +764,7 @@ Robustness in touching and nearly coincident cases is achieved with tolerances a
 
 **What it does.** Places parts and subassemblies in an assembly: from the same project, from a linked library (Link) or as a copy (Append). The first component is usually **grounded**.
 
-**How it works.** `Occurrence { id, name, component: DocRef, transform, grounded, visible }` in the file format; a part placed N times is stored once. Step A1 (2026-10-23, waiting for a visual check): File → New Assembly, Place (parts of the project, live; *From File…* copies parts of another project in), Place Grounded at Origin and 90° turns, the first component grounded, names `Part:k`, selection and prehighlight, Free Move / Free Rotate, Grounded / Visibility / Open / Delete, browser tree, Properties with position and rotation (`src/assembly.rs`, `src/gui/assembly.rs`).
+**How it works.** `Occurrence { id, name, component: DocRef, transform, grounded, visible }` in the file format; a part placed N times is stored once. Step A1 (2026-10-23, waiting for a visual check): File → New Assembly (its own file), Place (a file browser with a preview; part files are linked, named after the file), Place Grounded at Origin and 90° turns, the first component grounded, names `Part:k`, selection and prehighlight, Free Move / Free Rotate, Grounded / Visibility / Open / Delete, browser tree, Properties with position and rotation (`src/assembly.rs`, `src/gui/assembly.rs`).
 
 **Settings.** Position on placement, "place at the origin, grounded" (Place Grounded at Origin), number of copies, name.
 

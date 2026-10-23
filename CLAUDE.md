@@ -909,7 +909,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (File / View / Help / Undo / Options are valid everywhere; `Envs::ANY` means *part + sketch*). Ribbon
   tabs follow `Tab::shown(assembly)`. A new viewport feature for parts must stay below that hand-over.
   Occurrence meshes are the part's display meshes moved per occurrence on a scene rebuild
-  (`material::add_part_meshes_at`); picking caches `PickMesh` per document by `body_signature()`.
+  (`material::add_part_meshes_at`); picking caches `PickMesh` per `DocRef` by `body_signature()`.
+  Components are reached only through `with_part(DocRef, f)` (`gui/place.rs`): a part of the same file
+  or a **linked part file** (owner's choice 2026-10-23: Inventor's file model — the assembly is its own
+  file, Place links part files by a relative path; `LibCache` loads + regenerates each file once and
+  reloads it when its time changes). Linking needs a saved assembly (`Pending::Place` after Save As).
 
 ## Status and next steps
 

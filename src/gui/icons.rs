@@ -176,6 +176,7 @@ pub enum Icon {
     Project,
     // assembly
     Assembly,
+    Folder,
     Place,
     FreeMove,
     FreeRotate,
@@ -1063,6 +1064,30 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
         Project => {
             p.rect(2.0, 3.0, 14.0, 13.0, ink);
             p.block([4.0, 8.0, 5.0, 3.5, 3.0], acc, soft);
+        }
+        Folder => {
+            p.fill(
+                &[
+                    (1.5, 4.0),
+                    (6.0, 4.0),
+                    (7.5, 5.5),
+                    (14.5, 5.5),
+                    (14.5, 13.0),
+                    (1.5, 13.0),
+                ],
+                soft,
+            );
+            p.closed(
+                &[
+                    (1.5, 4.0),
+                    (6.0, 4.0),
+                    (7.5, 5.5),
+                    (14.5, 5.5),
+                    (14.5, 13.0),
+                    (1.5, 13.0),
+                ],
+                ink,
+            );
         }
         Assembly => {
             p.block([1.5, 9.0, 6.0, 5.0, 3.5], ink, soft);

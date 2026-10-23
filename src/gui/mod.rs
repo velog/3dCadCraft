@@ -56,6 +56,7 @@ mod overlay;
 mod panels;
 mod pattern_dialog;
 mod pattern_feature;
+mod place;
 mod presets;
 mod project;
 mod renderer;

@@ -165,6 +165,11 @@ impl PickMesh {
         Self { tris, bbox }
     }
 
+    /// Every triangle (face, corners) in part coordinates.
+    pub fn triangles(&self) -> &[(FaceId, [Point3; 3])] {
+        &self.tris
+    }
+
     /// The nearest face the ray `o + t·d` (t > 0, part coordinates) hits.
     pub fn hit(&self, o: &Point3, d: &Vector3) -> Option<(FaceId, Real)> {
         let mut best: Option<(FaceId, Real)> = None;
