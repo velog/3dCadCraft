@@ -142,11 +142,35 @@ pub(super) struct WorkDraft {
     /// Work plane: Fixed — frozen at this frame (origin, normal, X), no
     /// longer following its inputs (`grounded` set).
     pub frame: Option<[[Real; 3]; 3]>,
+    /// An explicitly chosen method (`methods`): only its inputs, in order;
+    /// `None` = Automatic (the method follows the picks).
+    pub method: Option<&'static str>,
 }
 
 /// English → Bulgarian for this module's prompts (kept here, beside the
 /// prompts, so the shared table in `i18n.rs` does not need to change).
 const PROMPTS_BG: &[(&str, &str)] = &[
+    (
+        "select a plane or a planar face",
+        "изберете равнина или равнинна стена",
+    ),
+    (
+        "select a straight edge, an axis or a sketch line",
+        "изберете прав ръб, ос или линия от скица",
+    ),
+    (
+        "select a vertex, a work point or a sketch point",
+        "изберете връх, работна точка или точка от скица",
+    ),
+    (
+        "select a curved edge or a sketch curve",
+        "изберете крив ръб или крива от скица",
+    ),
+    ("select a curved face", "изберете крива стена"),
+    (
+        "these inputs do not make the chosen method",
+        "тези входове не дават избрания метод",
+    ),
     (
         "select a plane, an edge, a point or a curved face",
         "изберете равнина, ръб, точка или крива стена",
@@ -231,6 +255,91 @@ pub(super) fn tr(s: &str) -> Cow<'_, str> {
 
 const NO_METHOD: &str = "this combination is no method of the command";
 
+/// One input of an explicitly chosen method.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Slot {
+    /// A plane or planar face.
+    Plane,
+    /// A straight edge, axis or sketch line.
+    Line,
+    /// A vertex, work point or sketch point.
+    Point,
+    /// A curved edge or sketch curve.
+    Curve,
+    /// A curved face (cylinder, cone, sphere, torus, revolved).
+    Surface,
+}
+
+impl Slot {
+    /// Whether pick `i` can fill this input.
+    pub(super) fn takes(self, i: &WpInput) -> bool {
+        matches!(
+            (self, i),
+            (Slot::Plane, WpInput::Plane(_))
+                | (Slot::Line, WpInput::Line(_) | WpInput::SketchLine(..))
+                | (Slot::Point, WpInput::Point(_) | WpInput::SketchPoint(..))
+                | (Slot::Curve, WpInput::Curve(_) | WpInput::SketchCurve(..))
+                | (Slot::Surface, WpInput::Surface(..) | WpInput::Revolved(_))
+        )
+    }
+
+    /// What to pick next (status bar, cursor hint).
+    pub(super) fn prompt(self) -> &'static str {
+        match self {
+            Slot::Plane => "select a plane or a planar face",
+            Slot::Line => "select a straight edge, an axis or a sketch line",
+            Slot::Point => "select a vertex, a work point or a sketch point",
+            Slot::Curve => "select a curved edge or a sketch curve",
+            Slot::Surface => "select a curved face",
+        }
+    }
+}
+
+/// The methods a Work Plane / Axis / Point can be made by explicitly
+/// (Inventor's drop-down under the command), with their inputs in order.
+pub(super) fn methods(kind: WorkKind) -> &'static [(&'static str, &'static [Slot])] {
+    use Slot::*;
+    match kind {
+        WorkKind::Plane => &[
+            ("Offset from Plane", &[Plane]),
+            ("Parallel to Plane Through Point", &[Plane, Point]),
+            ("Midplane Between Two Planes", &[Plane, Plane]),
+            ("Midplane of Torus", &[Surface]),
+            ("Angle to Plane Around Edge", &[Plane, Line]),
+            ("Three Points", &[Point, Point, Point]),
+            ("Two Coplanar Edges", &[Line, Line]),
+            ("Tangent to Surface Through Edge", &[Surface, Line]),
+            ("Tangent to Surface Through Point", &[Surface, Point]),
+            (
+                "Tangent to Surface and Parallel to Plane",
+                &[Surface, Plane],
+            ),
+            ("Normal to Axis Through Point", &[Line, Point]),
+            ("Normal to Curve at Point", &[Curve, Point]),
+        ],
+        WorkKind::Axis => &[
+            ("On Line or Edge", &[Line]),
+            ("Parallel to Line Through Point", &[Line, Point]),
+            ("Through Two Points", &[Point, Point]),
+            ("Intersection of Two Planes", &[Plane, Plane]),
+            ("Normal to Plane Through Point", &[Plane, Point]),
+            ("Through Center of Circular or Elliptical Edge", &[Curve]),
+            ("Through Revolved Face", &[Surface]),
+        ],
+        WorkKind::Point => &[
+            ("On Vertex, Sketch Point, or Midpoint", &[Point]),
+            ("Intersection of Three Planes", &[Plane, Plane, Plane]),
+            ("Intersection of Two Lines", &[Line, Line]),
+            ("Intersection of Plane and Line", &[Plane, Line]),
+            ("Center Point of Loop of Edges", &[Curve]),
+            ("Center Point of Torus", &[Surface]),
+            ("Center Point of Sphere", &[Surface]),
+            ("Intersection of Surface and Line", &[Surface, Line]),
+        ],
+        WorkKind::Ucs => &[],
+    }
+}
+
 /// Id of the in-line work feature that stands for pick `k` in a preview.
 fn inline_id(k: usize) -> String {
     format!("__inline{k}")
@@ -251,7 +360,15 @@ impl WorkDraft {
             ucs: [0.0; 6],
             edit: None,
             frame: None,
+            method: None,
         }
+    }
+
+    /// The inputs of the chosen method (empty for Automatic).
+    pub(super) fn slots(&self) -> &'static [Slot] {
+        self.method
+            .and_then(|m| methods(self.kind).iter().find(|(n, _)| *n == m))
+            .map_or(&[], |(_, s)| s)
     }
 
     /// Redefine of an existing work feature: its values come along, its
@@ -331,7 +448,25 @@ impl WorkDraft {
     /// The definition the picks make (in-line inputs under their preview
     /// ids), or what is still needed.
     pub(super) fn def(&self) -> Result<WorkDef, &'static str> {
-        self.def_with(&inline_id)
+        self.checked(self.def_with(&inline_id))
+    }
+
+    /// With a chosen method: the inferred definition only when it is that
+    /// method; otherwise what its next input is.
+    pub(super) fn checked(
+        &self,
+        r: Result<WorkDef, &'static str>,
+    ) -> Result<WorkDef, &'static str> {
+        let slots = self.slots();
+        let (Some(m), false) = (self.method, self.grounded) else {
+            return r;
+        };
+        match r {
+            Ok(d) if d.method() == m => Ok(d),
+            _ => Err(slots
+                .get(self.picks.len())
+                .map_or("these inputs do not make the chosen method", |s| s.prompt())),
+        }
     }
 
     /// The definition, with `inline(k)` the id of pick k's in-line feature.
@@ -593,6 +728,14 @@ impl WorkDraft {
     pub(super) fn pick(&mut self, input: WpInput) {
         if let Some(k) = self.picks.iter().position(|p| *p == input) {
             self.picks.remove(k);
+            return;
+        }
+        // A chosen method takes only its inputs, in order.
+        let slots = self.slots();
+        if !slots.is_empty() {
+            if slots.get(self.picks.len()).is_some_and(|s| s.takes(&input)) {
+                self.picks.push(input);
+            }
             return;
         }
         self.picks.push(input.clone());
@@ -1428,12 +1571,12 @@ impl CadCraftApp {
             ids.push((k, id));
         }
         let def = d
-            .def_with(&|k| {
+            .checked(d.def_with(&|k| {
                 ids.iter()
                     .find(|(i, _)| *i == k)
                     .map(|(_, id)| id.clone())
                     .unwrap_or_else(|| inline_id(k))
-            })
+            }))
             .map_err(str::to_owned)?;
         let mut w = WorkFeature::new(def);
         w.flip = d.flip;
@@ -1488,6 +1631,35 @@ fn ucs_color(id: &str) -> Color32 {
 mod tests {
     use super::*;
     use crate::part::OriginPlane;
+
+    /// An explicit method takes only its inputs, in order: wrong kinds are
+    /// ignored, the prompt names the next input, a different inferred
+    /// method is not accepted; Automatic keeps the inference.
+    #[test]
+    fn explicit_method_takes_its_inputs_in_order() {
+        let mut d = WorkDraft::new(WorkKind::Plane);
+        d.method = Some("Angle to Plane Around Edge");
+        assert_eq!(d.def(), Err(Slot::Plane.prompt()));
+        // A point does not fit the first input (a plane): ignored.
+        d.pick(WpInput::Point(PointRef::PartOrigin));
+        assert!(d.picks.is_empty());
+        d.pick(WpInput::Plane(PlaneRef::Origin(OriginPlane::XY)));
+        assert_eq!(d.def(), Err(Slot::Line.prompt()));
+        d.pick(WpInput::Line(LineRef::Origin(0)));
+        assert_eq!(d.def().unwrap().method(), "Angle to Plane Around Edge");
+        // A chosen method different from what two planes would make.
+        let mut m = WorkDraft::new(WorkKind::Plane);
+        m.method = Some("Parallel to Plane Through Point");
+        m.pick(WpInput::Plane(PlaneRef::Origin(OriginPlane::XY)));
+        m.pick(WpInput::Plane(PlaneRef::Origin(OriginPlane::YZ)));
+        assert_eq!(m.picks.len(), 1, "the second input must be a point");
+        // Every listed method name is one the definitions report.
+        for kind in [WorkKind::Plane, WorkKind::Axis, WorkKind::Point] {
+            for (name, slots) in methods(kind) {
+                assert!(!slots.is_empty(), "{name}");
+            }
+        }
+    }
 
     /// Fixed work plane: the draft gives the frozen frame; Redefine keeps
     /// it; without a frame it asks for the inputs.

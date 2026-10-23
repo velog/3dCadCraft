@@ -158,6 +158,35 @@ impl CadCraftApp {
             d.picks.remove(k);
         }
         psection(ui, "wp_method", "Method", |ui| {
+            // Automatic (the method follows the picks) or an explicit one
+            // that takes only its inputs, in order.
+            let list = super::work::methods(d.kind);
+            if !list.is_empty() {
+                plabel(ui, "Method");
+                let current = d.method.unwrap_or("Automatic");
+                egui::ComboBox::from_id_salt("wp_method_pick")
+                    .selected_text(current)
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(d.method.is_none(), "Automatic")
+                            .clicked()
+                        {
+                            d.method = None;
+                        }
+                        for (name, _) in list {
+                            if ui
+                                .selectable_label(d.method == Some(*name), *name)
+                                .clicked()
+                                && d.method != Some(*name)
+                            {
+                                d.method = Some(*name);
+                                d.picks.clear();
+                            }
+                        }
+                    });
+                ui.end_row();
+            }
             if d.kind == WorkKind::Axis {
                 plabel(ui, "Fixed");
                 let was = d.grounded;
