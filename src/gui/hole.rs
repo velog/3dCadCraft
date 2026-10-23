@@ -77,6 +77,9 @@ pub(super) struct HoleDim {
     pub value: Real,
     /// Its equation, if typed as one.
     pub expr: Option<String>,
+    /// Follows dimension `dims[k]` of the same command (`d2 = d1` once both
+    /// are in the hole's sketch).
+    pub link: Option<usize>,
 }
 
 impl HoleDim {
@@ -180,6 +183,15 @@ impl HoleDraft {
         }
         d.value = value;
         d.expr = expr;
+        // The dimensions that follow this one move their centres too.
+        let followers: Vec<usize> = (0..self.dims.len())
+            .filter(|&k| k != j && self.dims[k].link == Some(j))
+            .collect();
+        for k in followers {
+            let link = self.dims[k].link;
+            self.set_dim(k, value, None);
+            self.dims[k].link = link;
+        }
     }
 
     /// The edge dimensions of the clicked centres as dimensions of sketch
@@ -190,8 +202,10 @@ impl HoleDraft {
         i: usize,
         ids: &[PointId],
     ) -> Result<(), String> {
+        let mut made: Vec<Option<crate::sketch::ConstraintId>> = Vec::new();
         for d in &self.dims {
             let Some(&point) = ids.get(d.center) else {
+                made.push(None);
                 continue;
             };
             let line = part
@@ -212,6 +226,23 @@ impl HoleDraft {
             ps.sketch.set_dimension_label(c, Some(plane.project(&mid)));
             if let Some(dp) = ps.sketch.dim_param_mut(c) {
                 dp.expr = d.expr.clone();
+            }
+            made.push(Some(c));
+        }
+        // `d2 = d1`: a linked dimension's equation is its source's name.
+        if self.dims.iter().any(|d| d.link.is_some()) {
+            part.sync_parameters();
+            for (k, d) in self.dims.iter().enumerate() {
+                let (Some(Some(c)), Some(Some(src))) =
+                    (made.get(k), d.link.and_then(|j| made.get(j)))
+                else {
+                    continue;
+                };
+                let sk = &mut part.sketches[i].sketch;
+                let name = sk.dim_param(*src).name;
+                if let Some(dp) = sk.dim_param_mut(*c) {
+                    dp.expr = Some(name);
+                }
             }
         }
         let _ = part.sketches[i].sketch.solve();
@@ -550,6 +581,7 @@ impl CadCraftApp {
                     ends,
                     value: 0.0,
                     expr: None,
+                    link: None,
                 };
                 dim.value = (p - dim.foot(p)).norm();
                 if dim.value < 1e-9 {
@@ -1155,6 +1187,7 @@ mod tests {
             ends: [pa, pb],
             value: 9.0,
             expr: None,
+            link: None,
         });
         // The panel's field: 12 from the edge.
         d.set_dim(0, 12.0, None);

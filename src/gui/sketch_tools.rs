@@ -651,6 +651,15 @@ impl SketchTools {
     }
 
     /// A drawing tool (picks positions, may snap and infer)?
+    /// Tools that take a line's midpoint as a point (Horizontal / Vertical
+    /// constraints, General Dimension).
+    pub fn takes_midpoints(&self) -> bool {
+        matches!(
+            self.tool,
+            Tool::Constrain(ConstraintTool::Horizontal | ConstraintTool::Vertical)
+        )
+    }
+
     pub fn drawing(&self) -> bool {
         self.tool != Tool::Select && !self.picks_geometry()
     }
@@ -1856,8 +1865,9 @@ impl SketchTools {
                 Some(x) if x.is_circular() => 'c',
                 _ => 's',
             },
-            // Constraint tools never get midpoint or tangent snaps.
-            Snap::None | Snap::Midpoint(_) | Snap::Tangent(_) => '-',
+            // Horizontal / Vertical take a line's midpoint (`takes_midpoints`).
+            Snap::Midpoint(_) => 'm',
+            Snap::None | Snap::Tangent(_) => '-',
         };
         let ks: String = self.picks.iter().map(|p| kind(p.snap)).collect();
         // `ks` fixes the kind of every pick used below; a mismatch would
@@ -1912,7 +1922,10 @@ impl SketchTools {
             )),
             (Horizontal, "l") => Ok(Some(vec![Constraint::Horizontal { line: en(0) }])),
             (Vertical, "l") => Ok(Some(vec![Constraint::Vertical { line: en(0) }])),
-            (Horizontal | Vertical, "p") => Ok(None),
+            (Horizontal | Vertical, "p" | "m") => Ok(None),
+            // A point and a line's midpoint (or two midpoints): aligned
+            // through a point held at the middle (built below).
+            (Horizontal | Vertical, "pm" | "mp" | "mm") => Ok(Some(Vec::new())),
             (Horizontal, "pp") => Ok(Some(vec![Constraint::HorizontalPoints {
                 a: pt(0),
                 b: pt(1),
@@ -1959,9 +1972,35 @@ impl SketchTools {
         };
         let picks = std::mem::take(&mut self.picks);
         let tangent = (tool == Tangent).then(|| (en_of(&picks[0]), en_of(&picks[1])));
+        let to_middle = matches!(tool, Horizontal | Vertical)
+            && picks.len() == 2
+            && picks.iter().any(|p| matches!(p.snap, Snap::Midpoint(_)));
         commit_constraints(ps, tool.label(), |sketch| {
             if let Some((a, b)) = tangent {
                 sketch.add_tangent(a, b)?;
+            }
+            if to_middle {
+                let mut ids = Vec::new();
+                for p in &picks {
+                    ids.push(match p.snap {
+                        Snap::Point(q) => q,
+                        Snap::Midpoint(line) => {
+                            let (a, b) = sketch
+                                .line_geometry(line)
+                                .ok_or(SketchError::UnknownEntity)?;
+                            let m = sketch.add_point(Point2::from((a.coords + b.coords) / 2.0));
+                            sketch.add_constraint(Constraint::Midpoint { point: m, line })?;
+                            m
+                        }
+                        _ => return Err(SketchError::UnknownEntity),
+                    });
+                }
+                let (a, b) = (ids[0], ids[1]);
+                sketch.add_constraint(if tool == Horizontal {
+                    Constraint::HorizontalPoints { a, b }
+                } else {
+                    Constraint::VerticalPoints { a, b }
+                })?;
             }
             for c in constraints {
                 sketch.add_constraint(c)?;
@@ -3556,6 +3595,73 @@ mod tests {
         ps.sketch.solve().unwrap();
         let (a, b) = ps.sketch.line_geometry(line).unwrap();
         assert_relative_eq!((b.x - a.x).abs(), 40.0, epsilon = 1e-6);
+    }
+
+    /// A point inside a square: Vertical to the bottom line's midpoint and
+    /// Horizontal to the right line's midpoint put it in the centre.
+    #[test]
+    fn horizontal_and_vertical_to_line_midpoints() {
+        let mut ps = sketch();
+        let mut t = SketchTools::default();
+        t.set_tool(Tool::Line);
+        for (x, y) in [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0)] {
+            t.click(&mut ps, pick(x, y)).unwrap();
+        }
+        t.escape();
+        let lines: Vec<EntityId> = ps.sketch.entities().map(|(id, _)| id).collect();
+        let (bottom, right) = (lines[0], lines[1]);
+        for c in [
+            Constraint::Horizontal { line: bottom },
+            Constraint::Vertical { line: right },
+        ] {
+            ps.sketch.add_constraint(c).unwrap();
+        }
+        let p = ps.sketch.add_point(Point2::new(7.0, 13.0));
+        let mid = |line| Pick {
+            pos: Point2::new(0.0, 0.0),
+            snap: Snap::Midpoint(line),
+            infer: None,
+            align: Align::default(),
+        };
+        t.set_tool(Tool::Constrain(ConstraintTool::Vertical));
+        let k = at_point(&ps, p);
+        t.click(&mut ps, k).unwrap();
+        t.click(&mut ps, mid(bottom)).unwrap();
+        t.set_tool(Tool::Constrain(ConstraintTool::Horizontal));
+        let k = at_point(&ps, p);
+        t.click(&mut ps, k).unwrap();
+        t.click(&mut ps, mid(right)).unwrap();
+        let (a, b) = ps.sketch.line_geometry(bottom).unwrap();
+        let (c, d) = ps.sketch.line_geometry(right).unwrap();
+        let q = ps.sketch.point(p).unwrap().position;
+        assert_relative_eq!(q.x, (a.x + b.x) / 2.0, epsilon = 1e-6);
+        assert_relative_eq!(q.y, (c.y + d.y) / 2.0, epsilon = 1e-6);
+    }
+
+    /// A standalone point dimensioned to a line, to another point and to a
+    /// fixed point.
+    #[test]
+    fn standalone_point_dimensions() {
+        for fixed_other in [false, true] {
+            let mut ps = sketch();
+            let mut t = SketchTools::default();
+            let p = ps.sketch.add_point(Point2::new(10.0, 12.0));
+            let q = ps.sketch.add_point(Point2::new(-5.0, -7.0));
+            if fixed_other {
+                ps.sketch.set_fixed(q, true).unwrap();
+            }
+            t.set_tool(Tool::Dimension);
+            let k = at_point(&ps, p);
+            t.click(&mut ps, k).unwrap();
+            let k = at_point(&ps, q);
+            t.click(&mut ps, k).unwrap();
+            let r = t.click(&mut ps, pick(30.0, 30.0));
+            assert!(
+                r.is_ok() && t.over_prompt.is_none(),
+                "fixed {fixed_other}: {r:?}"
+            );
+            assert_eq!(ps.sketch.constraints().count(), 1);
+        }
     }
 
     #[test]

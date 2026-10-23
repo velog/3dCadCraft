@@ -4263,7 +4263,7 @@ impl CadCraftApp {
         let point = (!drawing || k.coincident)
             .then(|| overlay::pick_any_point(&self.camera, rect, &ps.sketch, pointer, point_px))
             .flatten();
-        let midpoint = (drawing && k.infer && k.midpoint)
+        let midpoint = ((drawing && k.infer && k.midpoint) || self.tools.takes_midpoints())
             .then(|| {
                 overlay::pick_midpoint(
                     &self.camera,
@@ -5392,7 +5392,29 @@ impl CadCraftApp {
                     }
                     None => self.tools.selected.clear(),
                 }
-            } else if let Some(pick) = cursor_pick {
+            } else if let Some(mut pick) = cursor_pick {
+                // Automatic projection (Inventor): Dimension / a constraint
+                // on a model edge projects it and takes the projected line.
+                let wants_edge = self.tools.picks_geometry()
+                    && pick.snap == Snap::None
+                    && (self.tools.tool != Tool::Dimension || self.tools.pick_count() < 2);
+                if wants_edge
+                    && let (Some(i), Some(p)) = (in_sketch, pointer)
+                    && let Some(e) = self.edge_under(p, rect)
+                    && self.part().body.edge_direction(e).is_some()
+                {
+                    self.checkpoint("Project Geometry");
+                    match self.part_mut().project_edge(i, e) {
+                        Ok(line) => {
+                            self.solve();
+                            pick.snap = Snap::OnEntity(line);
+                        }
+                        Err(err) => {
+                            self.history.cancel();
+                            self.file_status = Some(Err(format!("Project Geometry: {err}")));
+                        }
+                    }
+                }
                 self.hud_click(pick);
             }
         }

@@ -92,7 +92,8 @@ impl HoleDraft {
                 foot: x.foot(p),
                 ends: x.ends,
                 value: x.value,
-                expr: x.expr.clone(),
+                // A link shows as the dimension it follows (`= #1`).
+                expr: x.link.map(|k| format!("= #{}", k + 1)).or(x.expr.clone()),
             });
         }
         let Some(c) = &self.sk else { return out };
@@ -166,6 +167,14 @@ impl HoleDraft {
             DimRef::Draft(j) => {
                 if j < self.dims.len() {
                     self.dims.remove(j);
+                    // Links to it go; later indices shift.
+                    for x in &mut self.dims {
+                        x.link = match x.link {
+                            Some(k) if k == j => None,
+                            Some(k) if k > j => Some(k - 1),
+                            other => other,
+                        };
+                    }
                 }
             }
             DimRef::Sketch(id) => {
@@ -177,6 +186,50 @@ impl HoleDraft {
             }
         }
         self.redefine = None;
+    }
+
+    /// `target` follows `source` (a click on `source` while `target` is
+    /// edited in place): `d2 = d1`. A sketch dimension takes the source's
+    /// parameter name as its equation.
+    pub(super) fn link_dims(&mut self, target: DimRef, source: DimRef) -> Result<(), String> {
+        if target == source {
+            return Ok(());
+        }
+        let views = self.dim_views();
+        let value = views
+            .iter()
+            .find(|v| v.r == source)
+            .map(|v| v.value)
+            .ok_or("that dimension is gone")?;
+        let sketch_name = |s: &Self, id: ConstraintId| {
+            s.sk.as_ref()
+                .map(|c| c.sketch.dim_param(id).name)
+                .filter(|n| !n.is_empty())
+        };
+        match (target, source) {
+            (DimRef::Draft(t), DimRef::Draft(s)) => {
+                // No loops: the source must not follow the target.
+                if self.dims.get(s).and_then(|x| x.link) == Some(t) {
+                    return Err("these dimensions would follow each other".into());
+                }
+                self.set_dim(t, value, None);
+                if let Some(x) = self.dims.get_mut(t) {
+                    x.link = Some(s);
+                }
+            }
+            (DimRef::Draft(t), DimRef::Sketch(id)) => {
+                let name = sketch_name(self, id).ok_or("that dimension has no name yet")?;
+                self.set_dim(t, value, Some(name));
+            }
+            (DimRef::Sketch(t), DimRef::Sketch(id)) => {
+                let name = sketch_name(self, id).ok_or("that dimension has no name yet")?;
+                self.set_dim_value(DimRef::Sketch(t), value, Some(name));
+            }
+            (DimRef::Sketch(_), DimRef::Draft(_)) => {
+                return Err("click a dimension that is already in the hole's sketch".into());
+            }
+        }
+        Ok(())
     }
 
     /// Moves a centre to `at` (model point on its face).
@@ -329,6 +382,8 @@ impl CadCraftApp {
         let Some(index) = self.part().sketches.iter().position(|s| s.id == id) else {
             return;
         };
+        // Every dimension has its parameter name (`d2 = d1` links by it).
+        self.part_mut().sync_parameters();
         let sketch = self.part().sketches[index].sketch.clone();
         if let Some(d) = self.hole_draft.as_mut() {
             d.sk = Some(SketchCopy {
@@ -487,6 +542,21 @@ impl CadCraftApp {
         if response.secondary_clicked() {
             if let Some(d) = self.hole_draft.as_mut() {
                 d.dim_menu = Some((r, p));
+            }
+            return true;
+        }
+        // A click on another dimension while one is edited: it follows it.
+        if response.clicked_by(egui::PointerButton::Primary)
+            && let Some(d) = self.hole_draft.as_mut()
+            && let Some((target, ..)) = d.inplace.clone()
+            && target != r
+        {
+            match d.link_dims(target, r) {
+                Ok(()) => {
+                    d.inplace = None;
+                    self.file_status = None;
+                }
+                Err(e) => self.file_status = Some(Err(format!("Hole: {e}"))),
             }
             return true;
         }
@@ -722,6 +792,7 @@ mod tests {
                 ends,
                 value: 0.0,
                 expr: None,
+                link: None,
             };
             x.value = (d.points[0] - x.foot(d.points[0])).norm();
             d.dims.push(x);
@@ -782,6 +853,41 @@ mod tests {
                 .filter(|(t, _)| matches!(t, HoleHandle::Free(_)))
                 .count(),
             1
+        );
+    }
+
+    /// `d2 = d1`: one dimension follows another of the same command and
+    /// keeps following at OK (its equation is the other's name).
+    #[test]
+    fn a_dimension_follows_another() {
+        let (mut part, mut d) = holed();
+        d.link_dims(DimRef::Draft(1), DimRef::Draft(0)).unwrap();
+        assert!((d.dims[1].value - 9.0).abs() < 1e-9);
+        assert!(
+            d.link_dims(DimRef::Draft(0), DimRef::Draft(1)).is_err(),
+            "no loop"
+        );
+        d.set_dim(0, 6.0, None);
+        assert!((d.dims[1].value - 6.0).abs() < 1e-9, "the follower moved");
+        assert!((d.points[0].x - 6.0).abs() < 1e-9 && (d.points[0].y - 6.0).abs() < 1e-9);
+        let def = d.build(&mut part).unwrap();
+        part.add_hole(def).unwrap();
+        let sk = &part.sketches[0].sketch;
+        let ids: Vec<_> = sk
+            .constraints()
+            .filter(|(_, c)| matches!(c, Constraint::PointLineDistance { .. }))
+            .map(|(id, _)| id)
+            .collect();
+        let (n0, e1) = (sk.dim_param(ids[0]).name, sk.dim_param(ids[1]).expr);
+        assert_eq!(e1.as_deref(), Some(n0.as_str()));
+        // The source changed through its parameter: the hole stays on the
+        // diagonal.
+        part.set_parameter_expr(&n0, "11").unwrap();
+        part.regenerate().unwrap();
+        let o = part.holes()[0].origin;
+        assert!(
+            (o.x - 11.0).abs() < 1e-6 && (o.y - 11.0).abs() < 1e-6,
+            "{o:?}"
         );
     }
 
