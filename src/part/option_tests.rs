@@ -880,3 +880,57 @@ fn revolve_to_with_minimum_solution() {
     assert!(p.add_revolve(0, r).is_err());
     assert_eq!(serde_json::to_string(&p.features).unwrap(), before);
 }
+
+// ---------------------------------------------- Revolve around a work axis ---
+
+/// A rectangle x 10..20, z 0..5 on XZ around a work axis parallel to Z at
+/// x = a: a ring of radii 10 − a .. 20 − a, height 5. An axis off the
+/// sketch plane is refused (the part unchanged).
+#[test]
+fn revolve_around_a_work_axis() {
+    use super::WorkAxisDef;
+    for a in [0.0, 2.0, 5.0, 8.0, -3.0] {
+        let mut part = PartDocument::default();
+        part.add_work(WorkFeature::new(WorkDef::Axis(WorkAxisDef::Fixed {
+            origin: [a, 0.0, 0.0],
+            dir: [0.0, 0.0, 1.0],
+        })))
+        .unwrap();
+        let axis = part.features[0].id().to_owned();
+        let xz = SketchPlacement::on_origin_plane(OriginPlane::XZ);
+        let i = part.create_sketch(xz, &opts()).unwrap();
+        let sk = &mut part.sketches[i].sketch;
+        // On XZ the sketch x is world X, y is world Z.
+        sk.add_rectangle_two_point(Point2::new(10.0, 0.0), Point2::new(20.0, 5.0))
+            .unwrap();
+        let r = sk.regions();
+        let pr = ProfileRef::of(&r[0], r[0].interior_point());
+        part.add_revolve(i, RevolveFeature::new(vec![pr], AxisRef::Work(axis)))
+            .unwrap();
+        let (r0, r1) = (10.0 - a, 20.0 - a);
+        close(
+            exact_volume(&part),
+            PI * (r1 * r1 - r0 * r0) * 5.0,
+            "ring around the work axis",
+        );
+    }
+    // Off the plane: refused, nothing added.
+    let mut part = PartDocument::default();
+    part.add_work(WorkFeature::new(WorkDef::Axis(WorkAxisDef::Fixed {
+        origin: [0.0, 3.0, 0.0],
+        dir: [0.0, 0.0, 1.0],
+    })))
+    .unwrap();
+    let axis = part.features[0].id().to_owned();
+    let xz = SketchPlacement::on_origin_plane(OriginPlane::XZ);
+    let i = part.create_sketch(xz, &opts()).unwrap();
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(10.0, 0.0), Point2::new(20.0, 5.0))
+        .unwrap();
+    let r = sk.regions();
+    let pr = ProfileRef::of(&r[0], r[0].interior_point());
+    let n = part.features.len();
+    let err = part.add_revolve(i, RevolveFeature::new(vec![pr], AxisRef::Work(axis)));
+    assert!(err.is_err());
+    assert_eq!(part.features.len(), n);
+}

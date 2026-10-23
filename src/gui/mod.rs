@@ -1995,7 +1995,7 @@ impl CadCraftApp {
             let h = match &d.def {
                 DraftDef::Extrude(e) => manip::extrude_handles(e, sk),
                 DraftDef::Revolve(_) if !d.axis_set => Vec::new(),
-                DraftDef::Revolve(r) => manip::revolve_handles(r, sk),
+                DraftDef::Revolve(r) => manip::revolve_handles(r, sk, &part.work),
             };
             return Some((ManipOwner::Draft, h));
         }
@@ -2016,7 +2016,7 @@ impl CadCraftApp {
             .sketch;
         let h = match f {
             Feature::Extrude(e) => manip::extrude_handles(e, sk),
-            Feature::Revolve(r) => manip::revolve_handles(r, sk),
+            Feature::Revolve(r) => manip::revolve_handles(r, sk, &part.work),
             _ => Vec::new(),
         };
         Some((ManipOwner::Feature(k), h))
@@ -6049,7 +6049,8 @@ impl CadCraftApp {
             && d.axis_set
             && let DraftDef::Revolve(r) = &d.def
             && let Some(ps) = self.part().sketches.get(d.sketch)
-            && let Ok(ax) = crate::part::revolve::resolve_axis(&r.axis, &ps.sketch)
+            && let Ok(ax) =
+                crate::part::revolve::resolve_axis_in(&r.axis, &ps.sketch, &self.part().work)
         {
             let dir = ax.dir.normalize();
             let reach = self.camera.distance * 0.6;
@@ -6080,7 +6081,9 @@ impl CadCraftApp {
                                 .sketch;
                             Some(match &f {
                                 crate::part::Feature::Extrude(e) => manip::extrude_handles(e, sk),
-                                crate::part::Feature::Revolve(r) => manip::revolve_handles(r, sk),
+                                crate::part::Feature::Revolve(r) => {
+                                    manip::revolve_handles(r, sk, &part.work)
+                                }
                                 _ => Vec::new(),
                             })
                         })

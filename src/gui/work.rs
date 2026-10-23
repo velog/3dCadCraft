@@ -275,6 +275,10 @@ impl WorkDraft {
                 d.grounded = true;
                 d.frame = Some([*origin, *normal, *x_axis]);
             }
+            WorkDef::Axis(WorkAxisDef::Fixed { origin, dir }) => {
+                d.grounded = true;
+                d.frame = Some([*origin, *dir, *dir]);
+            }
             WorkDef::Ucs(UcsDef::Offsets {
                 x,
                 y,
@@ -451,6 +455,12 @@ impl WorkDraft {
                 Ok(WorkDef::Plane(d))
             }
             WorkKind::Axis => {
+                if self.grounded {
+                    let Some([origin, dir, _]) = self.frame else {
+                        return Err("select the axis's inputs first, then Fixed");
+                    };
+                    return Ok(WorkDef::Axis(WorkAxisDef::Fixed { origin, dir }));
+                }
                 let d = match &picks[..] {
                     [] => {
                         return Err(

@@ -138,5 +138,12 @@
     "features": 5,
     "sketches": 4,
     "exact": true
+  },
+  "r15/revolve_work_r15.3dcadcraft": {
+    "volume": 3139.535488560142,
+    "faces": 12,
+    "features": 2,
+    "sketches": 1,
+    "exact": true
   }
 }

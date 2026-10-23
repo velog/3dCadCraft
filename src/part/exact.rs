@@ -12,7 +12,7 @@ use crate::sketch::Sketch;
 use super::blend::{BlendFeature, BlendKind, ChamferMethod, EdgeRef, FilletType};
 use super::boolean::{Operation, Output};
 use super::extrude::{ExtrudeFeature, kernel_profile};
-use super::revolve::{RevolveFeature, resolve_axis};
+use super::revolve::RevolveFeature;
 
 /// Why an exact build failed.
 #[derive(Debug)]
@@ -316,7 +316,7 @@ pub(super) fn revolve(
     works: &super::placement::WorkGeom,
     sketch: &Sketch,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
-    let axis = resolve_axis(&r.axis, sketch).map_err(User)?;
+    let axis = super::revolve::resolve_axis_in(&r.axis, sketch, works).map_err(User)?;
     let (start, sweep) = r.sweep_in(body, works, sketch).map_err(User)?;
     let regions = sketch.regions();
     let mut out = Vec::new();

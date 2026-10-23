@@ -23,6 +23,9 @@ pub enum AxisRef {
     SketchLine(EntityId),
     /// An origin axis (0 = X, 1 = Y, 2 = Z); must lie in the sketch plane.
     Origin(usize),
+    /// A work axis (feature id); must lie in the sketch plane (format
+    /// revision 15).
+    Work(String),
 }
 
 /// How far a revolve goes.
@@ -162,7 +165,7 @@ impl RevolveFeature {
             .to
             .as_ref()
             .ok_or("To: pick the face, plane or point the revolve ends at")?;
-        let (o, a) = self.world_axis(sketch)?;
+        let (o, a) = self.world_axis_in(sketch, works)?;
         let perp = |v: Vector3| v - a * v.dot(&a);
         // The profile's own half-plane.
         let regions = sketch.regions();
@@ -302,7 +305,7 @@ impl RevolveFeature {
         works: &WorkGeom,
         sketch: &Sketch,
     ) -> Result<(), String> {
-        let axis = resolve_axis(&self.axis, sketch)?;
+        let axis = resolve_axis_in(&self.axis, sketch, works)?;
         let (start, sweep) = self.sweep_in(body, works, sketch)?;
         let regions = sketch.regions();
         for (n, pr) in self.profiles.iter().enumerate() {
@@ -334,7 +337,16 @@ impl RevolveFeature {
 impl RevolveFeature {
     /// The axis of revolution in model space: a point and a unit direction.
     pub fn world_axis(&self, sketch: &Sketch) -> Result<(crate::kernel::Point3, Vector3), String> {
-        let a = resolve_axis(&self.axis, sketch)?;
+        self.world_axis_in(sketch, &WorkGeom::new())
+    }
+
+    /// [`Self::world_axis`] with the part's work axes.
+    pub fn world_axis_in(
+        &self,
+        sketch: &Sketch,
+        works: &WorkGeom,
+    ) -> Result<(crate::kernel::Point3, Vector3), String> {
+        let a = resolve_axis_in(&self.axis, sketch, works)?;
         let pl = &sketch.plane;
         let o = pl.point_at(a.origin.x, a.origin.y);
         let d = pl.x_axis.into_inner() * a.dir.x + pl.y_axis().into_inner() * a.dir.y;
@@ -345,9 +357,49 @@ impl RevolveFeature {
     }
 }
 
-/// The axis in sketch coordinates.
+/// The axis in sketch coordinates (without the part's work geometry: a
+/// work axis is refused; use [`resolve_axis_in`]).
 pub fn resolve_axis(axis: &AxisRef, sketch: &Sketch) -> Result<RevolveAxis, String> {
+    resolve_axis_in(axis, sketch, &WorkGeom::new())
+}
+
+/// A model-space line (point, direction) that lies in the sketch plane,
+/// in sketch coordinates.
+fn line_in_sketch(
+    sketch: &Sketch,
+    p: crate::kernel::Point3,
+    d: Vector3,
+    what: &str,
+) -> Result<RevolveAxis, String> {
+    let plane = &sketch.plane;
+    let n = plane.normal.into_inner();
+    let scale = 1.0 + (p - plane.origin).norm();
+    if d.dot(&n).abs() > 1e-9 * d.norm().max(1.0) || (p - plane.origin).dot(&n).abs() > 1e-6 * scale
+    {
+        return Err(format!("{what} does not lie in the sketch plane"));
+    }
+    let o = plane.project(&p);
+    let e = plane.project(&(p + d));
+    Ok(RevolveAxis {
+        origin: o,
+        dir: e - o,
+    })
+}
+
+/// The axis in sketch coordinates, with the part's work axes.
+pub fn resolve_axis_in(
+    axis: &AxisRef,
+    sketch: &Sketch,
+    works: &WorkGeom,
+) -> Result<RevolveAxis, String> {
     match axis {
+        AxisRef::Work(id) => {
+            let (p, d) = works
+                .axes
+                .get(id)
+                .ok_or_else(|| format!("work axis '{id}' no longer exists"))?;
+            line_in_sketch(sketch, *p, *d, "the work axis")
+        }
         AxisRef::SketchLine(id) => {
             let Some(Entity::Line { start, end }) = sketch.entity(*id) else {
                 return Err("the revolve axis line no longer exists".into());
@@ -365,21 +417,16 @@ pub fn resolve_axis(axis: &AxisRef, sketch: &Sketch) -> Result<RevolveAxis, Stri
             })
         }
         AxisRef::Origin(k) => {
-            let plane = &sketch.plane;
             let d = [Vector3::x(), Vector3::y(), Vector3::z()]
                 .get(*k)
                 .copied()
                 .ok_or("unknown origin axis")?;
-            let off = plane.origin.coords.dot(&plane.normal);
-            if d.dot(&plane.normal).abs() > 1e-9 || off.abs() > 1e-6 {
-                return Err("the origin axis does not lie in the sketch plane".into());
-            }
-            let o = plane.project(&crate::kernel::Point3::origin());
-            let e = plane.project(&crate::kernel::Point3::from(d));
-            Ok(RevolveAxis {
-                origin: o,
-                dir: e - o,
-            })
+            line_in_sketch(
+                sketch,
+                crate::kernel::Point3::origin(),
+                d,
+                "the origin axis",
+            )
         }
     }
 }

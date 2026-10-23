@@ -592,6 +592,7 @@ pub fn auto_axis(sketch: &Sketch) -> Option<CoilAxis> {
     match super::revolve::auto_axis(sketch)? {
         super::AxisRef::SketchLine(id) => Some(CoilAxis::Sketch(id)),
         super::AxisRef::Origin(k) => Some(CoilAxis::Line(LineRef::Origin(k))),
+        super::AxisRef::Work(id) => Some(CoilAxis::Line(LineRef::Work(id))),
     }
 }
 

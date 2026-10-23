@@ -28,6 +28,8 @@ enum BrowserCmd {
     Share(usize, bool),
     /// Show / hide a feature (work planes).
     FeatureVisible(usize, bool),
+    /// Ground a work point where it is now (Inventor's Ground).
+    GroundPoint(usize),
     /// Appearance → … on a feature or body (`None`: remove the override).
     Look(crate::part::appearance::LookTarget, Option<String>),
     /// Material → … on a body.
@@ -272,6 +274,22 @@ impl CadCraftApp {
                 if let Some(Feature::Work(w)) = self.part_mut().features.get_mut(k) {
                     w.visible = v;
                 }
+            }
+            BrowserCmd::GroundPoint(k) => {
+                let Some(Feature::Work(w)) = self.part().features.get(k).cloned() else {
+                    return;
+                };
+                let Some(p) = self.part().work.points.get(&w.id).copied() else {
+                    self.file_status = Some(Err("Ground: the point has no position".into()));
+                    return;
+                };
+                let mut g = w.clone();
+                g.def = crate::part::WorkDef::Point(crate::part::WorkPointDef::Fixed {
+                    x: p.x,
+                    y: p.y,
+                    z: p.z,
+                });
+                self.edit_feature(k, Feature::Work(g));
             }
             BrowserCmd::Look(t, a) => self.assign_appearance(&[t], a.as_deref()),
             BrowserCmd::BodyMaterial(b, m) => self.assign_material(&[b], m.as_deref()),
@@ -659,6 +677,20 @@ impl CadCraftApp {
             && ui.button("New Sketch").clicked()
         {
             cmds.push(BrowserCmd::NewSketchOn(PlaneRef::Work(w.id.clone())));
+            ui.close();
+        }
+        if let Feature::Work(w) = f
+            && matches!(w.def, crate::part::WorkDef::Point(_))
+            && !matches!(
+                w.def,
+                crate::part::WorkDef::Point(crate::part::WorkPointDef::Fixed { .. })
+            )
+            && ui
+                .button("Ground")
+                .on_hover_text("Fix the point where it is now (it no longer follows its inputs)")
+                .clicked()
+        {
+            cmds.push(BrowserCmd::GroundPoint(k));
             ui.close();
         }
         if !matches!(f, Feature::Work(_))
@@ -1242,6 +1274,7 @@ impl CadCraftApp {
             .is_empty();
         let ps = self.part().sketches.get(d.sketch);
         let sketch = ps.map_or_else(String::new, |s| s.name.clone());
+        let wax = work_axes(self.part());
         let axis_text = match &d.def {
             super::DraftDef::Revolve(r) if d.axis_set => {
                 Some(axis_label(&r.axis, ps.map(|p| &p.sketch)))
@@ -1295,7 +1328,9 @@ impl CadCraftApp {
                             d.axis_pick = true;
                         }
                         ui.end_row();
-                        if let Some(axis) = origin_axis_buttons(ui) {
+                        if let Some(axis) =
+                            origin_axis_buttons(ui).or_else(|| work_axis_buttons(ui, &wax))
+                        {
                             r.axis = axis;
                             d.axis_set = true;
                             d.axis_pick = false;
@@ -2103,6 +2138,7 @@ impl CadCraftApp {
             warning_box(ui, h);
         }
         let mut axis_change = None;
+        let wax = work_axes(self.part());
         psection(ui, &format!("feature_input_{k}"), "Input Geometry", |ui| {
             plabel(ui, "Sketch");
             ui.label(&sketch);
@@ -2120,7 +2156,7 @@ impl CadCraftApp {
                     plabel(ui, "Axis");
                     ui.label(axis_label(&r.axis, ps.as_ref().map(|p| &p.sketch)));
                     ui.end_row();
-                    axis_change = origin_axis_buttons(ui);
+                    axis_change = origin_axis_buttons(ui).or_else(|| work_axis_buttons(ui, &wax));
                 }
                 Feature::Box(_)
                 | Feature::Work(_)
@@ -4781,7 +4817,43 @@ fn axis_label(axis: &crate::part::AxisRef, sketch: Option<&crate::sketch::Sketch
                 "Sketch line".to_owned()
             }
         }
+        crate::part::AxisRef::Work(id) => format!("Work axis {id}"),
     }
+}
+
+/// The part's work axes (id, display name), for the revolve axis rows.
+fn work_axes(part: &crate::part::PartDocument) -> Vec<(String, String)> {
+    part.features
+        .iter()
+        .filter_map(|f| match f {
+            Feature::Work(w) if matches!(w.def, crate::part::WorkDef::Axis(_)) => {
+                Some((w.id.clone(), w.name.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Work axes as revolve axes (one grid row, only when the part has some).
+fn work_axis_buttons(ui: &mut egui::Ui, axes: &[(String, String)]) -> Option<crate::part::AxisRef> {
+    if axes.is_empty() {
+        return None;
+    }
+    let mut out = None;
+    plabel(ui, "Work axis");
+    ui.horizontal_wrapped(|ui| {
+        for (id, name) in axes {
+            if ui
+                .small_button(name)
+                .on_hover_text("Revolve around this work axis (must lie in the sketch plane)")
+                .clicked()
+            {
+                out = Some(crate::part::AxisRef::Work(id.clone()));
+            }
+        }
+    });
+    ui.end_row();
+    out
 }
 
 /// Origin axes as revolve axes (one grid row); returns the one clicked.

@@ -228,13 +228,17 @@ pub fn extrude_handles(def: &ExtrudeFeature, sk: &Sketch) -> Vec<Handle> {
 }
 
 /// Revolve handles (only for the Angle extent).
-pub fn revolve_handles(def: &RevolveFeature, sk: &Sketch) -> Vec<Handle> {
+pub fn revolve_handles(
+    def: &RevolveFeature,
+    sk: &Sketch,
+    works: &crate::part::placement::WorkGeom,
+) -> Vec<Handle> {
     if def.extent != RevolveExtent::Angle {
         return Vec::new();
     }
     let (Some(c3), Ok(ax)) = (
         base(sk, &def.profiles),
-        crate::part::revolve::resolve_axis(&def.axis, sk),
+        crate::part::revolve::resolve_axis_in(&def.axis, sk, works),
     ) else {
         return Vec::new();
     };
