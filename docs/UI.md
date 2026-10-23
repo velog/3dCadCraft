@@ -202,7 +202,13 @@ right-click → OK / Place Grounded at Origin / Rotate 90° about X, Y, Z; Esc e
 drag inside the green circle = free turn, on its rim = turn in the screen plane. **Delete** deletes the
 selected occurrences, **Esc** ends the command or clears the selection, double-click (view or browser) opens
 the component's part file in its own tab. Right-click a component: Grounded,
-Visibility, Open, Delete. 🟡 waiting for a visual check.
+Visibility, Open, Delete. **C** = Constrain: the Place Constraint panel (Mate with Mate / Flush, Angle, Insert with
+Opposed / Aligned), click selection 1 then 2 in the view (an edge within a few pixels wins over its face;
+blue / violet / green under the cursor), Offset or Angle field, Show Preview, Predict Offset and Orientation;
+OK (Enter) / Apply / Cancel (Esc), the same in the view's right-click menu. A constraint that conflicts is
+refused. The browser's *Relationships* folder lists them (red = sick: its face or edge is gone); double-click
+edits, right-click Suppress / Delete. Dragging a constrained component moves it only along its free degrees
+of freedom. 🟡 waiting for a visual check.
 
 ### Help, log and recovery
 

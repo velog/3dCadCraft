@@ -71,8 +71,10 @@ impl CadCraftApp {
         self.project = t.project;
         self.part_id = t.part_id;
         self.asm = Default::default();
+        self.cons = Default::default();
         self.history = t.history;
         self.file_path = t.file_path;
+        self.asm_refresh_status();
         self.saved_sig = t.saved_sig;
         self.camera = t.camera;
         self.selection = t.selection;

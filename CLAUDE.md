@@ -914,6 +914,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   or a **linked part file** (owner's choice 2026-10-23: Inventor's file model — the assembly is its own
   file, Place links part files by a relative path; `LibCache` loads + regenerates each file once and
   reloads it when its time changes). Linking needs a saved assembly (`Pending::Place` after Save As).
+- **Assembly constraints (A2)**: data in `AssemblyDocument::constraints` (`assembly::relation`), solved by
+  `assembly::solve` (6 unknowns per free component, turn about its own origin scaled by 50 mm, min-norm
+  Levenberg, dragged component weighted). GUI changes go through `asm_try` (solve a copy, commit only when
+  it converges — rule 5); drags call `asm_solve(Some(id))` after each move. Plane normals are *outward*
+  (face sense); a circular edge's normal is the outward normal of its planar face (a hole rim points out
+  of the hole), which Insert's Opposed / Aligned rely on.
 
 ## Status and next steps
 

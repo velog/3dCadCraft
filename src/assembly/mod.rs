@@ -9,6 +9,12 @@
 
 use std::sync::Arc;
 
+pub mod relation;
+pub mod solve;
+
+pub use relation::{Constraint, ConstraintKind, Geom, GeomRef};
+pub use solve::{Solved, solve};
+
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Occurrence, Project};
 use crate::kernel::{FaceId, Point3, Real, TessellationOptions, Transform3, Vector3};
 use crate::part::PartDocument;
@@ -80,9 +86,11 @@ impl AssemblyDocument {
         id
     }
 
-    /// Removes the occurrence `id` (Delete); `None` if there is none.
+    /// Removes the occurrence `id` (Delete) and the constraints that use
+    /// it; `None` if there is none.
     pub fn remove(&mut self, id: u32) -> Option<Occurrence> {
         let i = self.occurrences.iter().position(|o| o.id == id)?;
+        self.constraints.retain(|c| !c.uses(id));
         Some(self.occurrences.remove(i))
     }
 }

@@ -4538,7 +4538,7 @@ impl CadCraftApp {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     match (self.mode, self.editing) {
                         _ if self.is_assembly() => {
-                            let prompt = self.asm_prompt();
+                            let prompt = self.constrain_prompt().unwrap_or_else(|| self.asm_prompt());
                             let text = super::i18n::tr(&prompt);
                             ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                         }

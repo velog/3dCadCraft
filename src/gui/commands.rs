@@ -1259,11 +1259,14 @@ pub static COMMANDS: &[Command] = &[
         .tip("Ground the selected components (they keep their place) or free them again")
         .spec("3.1-assemblies.md"),
     c("asm.constrain", "Constrain", "Ограничение", Icon::Coincident)
+        .run(Action::AsmConstrain)
+        .inv("Place Constraint")
         .alias(&["C"])
+        .bound()
         .at(&[A_RELATIONSHIPS])
         .env(ASSEMBLY)
-        .tip("Mate, Flush, Angle, Tangent, Insert or Symmetry between two components")
-        .todo("3.2"),
+        .tip("Mate (or Flush), Angle or Insert between faces or edges of two components; Tangent and Symmetry are planned")
+        .spec("3.1-assemblies.md"),
     c("asm.joint", "Joint", "Съединение", Icon::Rotate)
         .alias(&["J"])
         .at(&[A_RELATIONSHIPS])

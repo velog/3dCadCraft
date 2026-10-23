@@ -1512,6 +1512,69 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Assembly solver (docs/spec/3.1 §3.2, A2): a stack of 30 cubes, each
+    // mated on the one below and flush on two sides (90 constraints, 174
+    // unknowns), solved from scattered places.
+    {
+        use cadcraft3d::assembly::{self, Constraint, ConstraintKind, Geom, GeomRef};
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+        use cadcraft3d::kernel::{Transform3, Vector3};
+        let geom = |r: &GeomRef| -> Result<Geom, String> {
+            let GeomRef::Face { name, .. } = r else {
+                return Err("face".into());
+            };
+            let (p, n) = match name.as_str() {
+                "Top" => (Point3::new(10.0, 10.0, 20.0), Vector3::z()),
+                "Bottom" => (Point3::new(10.0, 10.0, 0.0), -Vector3::z()),
+                "Left" => (Point3::new(0.0, 10.0, 10.0), -Vector3::x()),
+                _ => (Point3::new(10.0, 0.0, 10.0), -Vector3::y()),
+            };
+            Ok(Geom::Plane { p, n })
+        };
+        let face = |o: u32, n: &str| GeomRef::Face {
+            occurrence: o,
+            name: n.into(),
+            hint: [0.0; 3],
+        };
+        let mut asm = AssemblyDocument::default();
+        let r = DocRef::local(DocumentId::new_random());
+        for i in 0..30u32 {
+            let k = i as Real;
+            let t = Transform3::new(
+                Vector3::new(7.0 * k, -3.0 * k, 25.0 * k + 4.0),
+                Vector3::new(0.05 * k.sin(), 0.04, 0.1 * k.cos()),
+            );
+            asm.place(r, "Cube", t, i == 0);
+        }
+        for i in 1..30u32 {
+            for (kind, a, b) in [
+                (ConstraintKind::Mate, "Top", "Bottom"),
+                (ConstraintKind::Flush, "Left", "Left"),
+                (ConstraintKind::Flush, "Front", "Front"),
+            ] {
+                asm.add_constraint(Constraint {
+                    id: 0,
+                    name: String::new(),
+                    kind,
+                    a: face(i, a),
+                    b: face(i + 1, b),
+                    value: 0.0,
+                    expr: None,
+                    aligned: false,
+                    suppressed: false,
+                });
+            }
+        }
+        rows.push((
+            "assembly: solve a stack of 30 cubes (87 constraints)",
+            500.0,
+            median_ms(3, || {
+                let s = assembly::solve(&asm, &geom, None);
+                assert!(s.converged, "{}", s.residual);
+                assert!(s.dof.values().all(|&d| d == 0));
+            }),
+        ));
+    }
     // Parameters (docs/spec/0.5): 300 user parameters chained with units
     // and if() (each follows the one before), evaluated as every rebuild
     // does.

@@ -238,7 +238,7 @@ rough cost per focused session:
 | Step | Content | Rough cost | Status |
 |---|---|---|---|
 | A1 | `AssemblyDocument`, Place / Ground / Move / Rotate, browser, instanced display, picking in the occurrence's frame | ~250–350k tokens | 🟡 2026-10-23: done except GPU instancing (meshes are transformed per occurrence on a scene rebuild) and Free Rotate's handles; waiting for a visual check |
-| A2 | Solver core + Mate / Flush / Angle / Insert, DOF per occurrence, sick relations | ~300–400k | ⬜ |
+| A2 | Solver core + Mate / Flush / Angle / Insert, DOF per occurrence, sick relations | ~300–400k | 🟡 2026-10-23: done (Undirected Angle only, no DOF glyph); waiting for a visual check |
 | A3 | Joints on the same solver, joint origins, limits, dragging | ~150–250k | ⬜ |
 | A4 | Tangent, Symmetry, limits while dragging, Drive / Animate | ~150–200k | ⬜ |
 | A5 | Pattern Component, BOM, Interference, subassemblies | ~300k+ | ⬜ |

@@ -65,6 +65,8 @@ pub enum Action {
     AsmFreeRotate,
     /// Assemble › Grounded: toggle on the selected occurrences.
     AsmGround,
+    /// Assemble › Constrain: Mate / Flush, Angle, Insert.
+    AsmConstrain,
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch

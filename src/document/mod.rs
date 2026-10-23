@@ -249,6 +249,10 @@ impl Occurrence {
 pub struct AssemblyDocument {
     /// Placed components.
     pub occurrences: Vec<Occurrence>,
+    /// Constraints between them (`assembly::relation`). Older builds
+    /// ignore them (the components keep their saved places).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<crate::assembly::Constraint>,
 }
 
 /// The payload of a document.
@@ -521,6 +525,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            constraints: Vec::new(),
         })
     }
 

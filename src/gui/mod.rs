@@ -34,6 +34,7 @@ mod coil_rib;
 mod combine_split;
 mod command_ui;
 mod commands;
+mod constrain;
 mod demos;
 mod diag;
 mod doc_tabs;
@@ -577,6 +578,8 @@ struct CadCraftApp {
     file_status: Option<Result<String, String>>,
     /// The assembly environment (`assembly.rs`).
     asm: assembly::AsmUi,
+    /// Assembly constraints (`constrain.rs`).
+    cons: constrain::ConstrainUi,
 
     tab: Tab,
     mouse: MousePreset,
@@ -816,6 +819,7 @@ impl CadCraftApp {
             window_title: String::new(),
             file_status: None,
             asm: Default::default(),
+            cons: Default::default(),
             tab: Tab::Model,
             mouse: MousePreset::Inventor,
             invert_wheel: false,
@@ -3443,10 +3447,12 @@ impl CadCraftApp {
                         self.project = project;
                         self.part_id = id;
                         self.asm = Default::default();
+                        self.cons = Default::default();
                         self.history.clear();
                         self.editing = None;
                         self.selection = Selection::Body;
                         self.after_restore();
+                        self.asm_refresh_status();
                         self.fit_view();
                         Ok(msg)
                     }
@@ -3625,9 +3631,11 @@ impl CadCraftApp {
             _ => {}
         }
         match action {
-            Action::AsmPlace | Action::AsmFreeMove | Action::AsmFreeRotate | Action::AsmGround => {
-                self.asm_apply(action)
-            }
+            Action::AsmPlace
+            | Action::AsmFreeMove
+            | Action::AsmFreeRotate
+            | Action::AsmGround
+            | Action::AsmConstrain => self.asm_apply(action),
             Action::StartSketch => {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);

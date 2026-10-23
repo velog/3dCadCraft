@@ -175,6 +175,11 @@ Target times for interactive work:
 
 ## Open
 
+- Assembly solver (A2, 2026-10-23): dense finite-difference Jacobian, 30 components / 87 constraints
+  185 ms (budget 500 ms); it runs every frame while a constrained component is dragged. Faster: analytic
+  derivatives of the residuals and a sparse solve (as the sketch solver), or solving only the components
+  connected to the dragged one.
+
 - Countersinks (ROADMAP K4, 2026-10-23): a cone tool through truck's general Boolean, ~0.33 s per
   hole and superlinear in one feature (36 holes ~40 s). `exact::cone_tool` (a tapered disc, as
   SolidCraft builds countersinks) instead of a tool of revolution: 0.87 → 0.33 s for one hole.

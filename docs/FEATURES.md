@@ -770,7 +770,7 @@ Robustness in touching and nearly coincident cases is achieved with tolerances a
 
 **Inventor equivalent.** Place, Place from Content Center, Place Grounded at Origin.
 
-## 3.2 Assembly constraints — ⬜ · L
+## 3.2 Assembly constraints — 🟡 (A2: Mate / Flush, Angle, Insert; waiting for a visual check) · L
 
 | Constraint | Meaning |
 |---|---|

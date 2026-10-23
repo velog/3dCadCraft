@@ -464,6 +464,7 @@ impl CadCraftApp {
         self.project = project;
         self.part_id = id;
         self.asm = Default::default();
+        self.cons = Default::default();
         self.file_path.clear();
         self.history.clear();
         self.editing = None;

@@ -115,7 +115,7 @@ impl CadCraftApp {
         }
     }
 
-    fn assembly_mut(&mut self) -> Option<&mut AssemblyDocument> {
+    pub(super) fn assembly_mut(&mut self) -> Option<&mut AssemblyDocument> {
         match self.project.document_mut(self.part_id).map(|d| &mut d.data) {
             Some(DocumentData::Assembly(a)) => Some(a),
             _ => None,
@@ -149,6 +149,10 @@ impl CadCraftApp {
     }
 
     /// The occurrence under the screen point and the model point hit.
+    pub(super) fn asm_pick_pub(&self, pos: Pos2, rect: Rect) -> Option<(Hit, Point3)> {
+        self.asm_pick(pos, rect)
+    }
+
     fn asm_pick(&self, pos: Pos2, rect: Rect) -> Option<(Hit, Point3)> {
         let a = self.assembly()?;
         let (o, d) = self.camera.ray(pos, rect)?;
@@ -178,6 +182,7 @@ impl CadCraftApp {
         self.project = project;
         self.part_id = id;
         self.asm = Default::default();
+        self.cons = Default::default();
         self.file_path.clear();
         self.history.clear();
         self.editing = None;
@@ -214,6 +219,7 @@ impl CadCraftApp {
             super::ribbon::Tab::Model
         };
         self.after_restore();
+        self.asm_refresh_status();
         self.scene_dirty = true;
         self.fit_view();
     }
@@ -277,6 +283,7 @@ impl CadCraftApp {
                     _ => Some(AsmTool::FreeRotate(target)),
                 };
             }
+            Action::AsmConstrain => self.start_constrain(),
             Action::AsmGround => {
                 let ids = self.asm.sel.clone();
                 if ids.is_empty() {
@@ -378,6 +385,13 @@ impl CadCraftApp {
             return;
         };
         for o in a.occurrences.iter().filter(|o| o.visible) {
+            // The Constrain preview moves components before OK.
+            let place = self
+                .cons
+                .preview
+                .as_ref()
+                .and_then(|p| p.get(&o.id).copied())
+                .unwrap_or(o.transform);
             let tint = if self.asm.sel.contains(&o.id) {
                 Some(SEL_TINT)
             } else if self.asm.hover == Some(o.id) {
@@ -386,7 +400,7 @@ impl CadCraftApp {
                 None
             };
             self.with_part(o.component, |part| {
-                super::material::add_part_meshes_at(g, part, Some(&o.transform), tint)
+                super::material::add_part_meshes_at(g, part, Some(&place), tint)
             });
         }
     }
@@ -409,6 +423,14 @@ impl CadCraftApp {
         // A linked part file saved meanwhile: reload it.
         if self.poll_libraries() {
             self.scene_dirty = true;
+            self.asm_solve(None);
+        }
+        let constraining = self.cons.draft.is_some();
+        if constraining
+            && (response.hovered() || ctx.memory(|m| m.focused().is_none()))
+            && ui.input(|i| i.key_pressed(egui::Key::Escape))
+        {
+            self.cancel_constrain();
         }
         // Keys: Esc ends the command (then clears the selection), Delete
         // deletes the selected components.
@@ -424,6 +446,11 @@ impl CadCraftApp {
             if ui.input(|i| i.key_pressed(egui::Key::Delete)) && !ctx.egui_wants_keyboard_input() {
                 let ids = self.asm.sel.clone();
                 self.delete_occurrences(&ids);
+                if ids.is_empty()
+                    && let Some(c) = self.cons.selected
+                {
+                    self.delete_constraint(c);
+                }
             }
         }
         let hit = match (pointer, on_cube, modal) {
@@ -433,7 +460,11 @@ impl CadCraftApp {
         if self.asm.drag.is_none() {
             self.asm.hover = hit.map(|(h, _)| h.occurrence);
         }
-        let primary_click = response.clicked_by(PointerButton::Primary) && !on_cube && !modal;
+        let primary_click =
+            response.clicked_by(PointerButton::Primary) && !on_cube && !modal && !constraining;
+        // Constrain takes the clicks (drawn and handled after the scene).
+        let constrain_click =
+            response.clicked_by(PointerButton::Primary) && !on_cube && !modal && constraining;
         let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.shift);
 
         // --- clicks ---
@@ -459,14 +490,21 @@ impl CadCraftApp {
                             self.asm.sel.push(id);
                         }
                     }
-                    Some((h, _)) => self.asm.sel = vec![h.occurrence],
-                    None if !ctrl => self.asm.sel.clear(),
+                    Some((h, _)) => {
+                        self.asm.sel = vec![h.occurrence];
+                        self.cons.selected = None;
+                    }
+                    None if !ctrl => {
+                        self.asm.sel.clear();
+                        self.cons.selected = None;
+                    }
                     None => {}
                 },
             }
         }
         if response.double_clicked_by(PointerButton::Primary)
             && self.asm.tool.is_none()
+            && !constraining
             && let Some((h, _)) = hit
         {
             self.open_component(h.occurrence);
@@ -478,6 +516,7 @@ impl CadCraftApp {
         if response.drag_started_by(PointerButton::Primary)
             && !on_cube
             && !modal
+            && !constraining
             && let Some(press) = ui.input(|i| i.pointer.press_origin())
         {
             self.asm.drag = self.start_drag(press, rect, circle);
@@ -498,7 +537,24 @@ impl CadCraftApp {
         self.asm_navigate(ui, response, rect, cube_drag, busy);
 
         // --- context menu ---
-        response.context_menu(|ui| self.asm_context_menu(ui, hit.map(|(h, _)| h.occurrence)));
+        response.context_menu(|ui| {
+            if self.cons.draft.is_some() {
+                if ui.button("OK").clicked() {
+                    self.commit_constrain_pub(true);
+                    ui.close();
+                }
+                if ui.button("Apply").clicked() {
+                    self.commit_constrain_pub(false);
+                    ui.close();
+                }
+                if ui.button("Cancel").clicked() {
+                    self.cancel_constrain();
+                    ui.close();
+                }
+                return;
+            }
+            self.asm_context_menu(ui, hit.map(|(h, _)| h.occurrence))
+        });
 
         // --- 3D ---
         let state = (self.asm.sel.clone(), self.asm.hover);
@@ -528,6 +584,8 @@ impl CadCraftApp {
                 painter.circle_filled(c + egui::vec2(dx, dy), 3.5, stroke.color);
             }
         }
+        let on_view = !on_cube && !modal;
+        self.constrain_view(&painter, rect, pointer.filter(|_| on_view), constrain_click);
         if let (Some(p), Some(text)) = (pointer, self.asm_cursor_hint()) {
             super::command_ui::cursor_hint(&painter, rect, p, &text);
         }
@@ -621,6 +679,8 @@ impl CadCraftApp {
                         o.transform = t;
                     }
                 });
+                // Constrained components follow or snap back.
+                self.asm_solve(Some(d.id));
             }
             DragKind::Trackball { pivot } => {
                 if delta.length() < 0.5 {
@@ -635,6 +695,7 @@ impl CadCraftApp {
                         asm::rotate_about(o, pivot, axis, angle);
                     }
                 });
+                self.asm_solve(Some(d.id));
                 if let Some(x) = self.asm.drag.as_mut() {
                     x.last = now;
                 }
@@ -654,6 +715,7 @@ impl CadCraftApp {
                         asm::rotate_about(o, pivot, back, -da);
                     }
                 });
+                self.asm_solve(Some(d.id));
                 if let Some(x) = self.asm.drag.as_mut() {
                     x.last = now;
                 }
@@ -874,6 +936,7 @@ impl CadCraftApp {
                         } else {
                             self.asm.sel = vec![id];
                         }
+                        self.cons.selected = None;
                     }
                     if r.double_clicked() {
                         open = Some(id);
@@ -893,6 +956,7 @@ impl CadCraftApp {
             }
         });
         let _ = menu;
+        self.relationships_tree(ui);
         if let Some(id) = open {
             self.open_component(id);
         }
@@ -900,6 +964,13 @@ impl CadCraftApp {
 
     /// Properties of the selected occurrence (or of the assembly).
     pub(super) fn assembly_properties(&mut self, ui: &mut egui::Ui) {
+        if self.cons.draft.is_some() {
+            self.constrain_panel(ui);
+            return;
+        }
+        if self.constraint_properties(ui) {
+            return;
+        }
         let Some(a) = self.assembly() else {
             return;
         };
@@ -937,6 +1008,14 @@ impl CadCraftApp {
                 if ui.checkbox(&mut v, "").changed() {
                     self.toggle_visible(&[o.id]);
                 }
+                ui.end_row();
+                ui.label("Degrees of freedom");
+                ui.label(if o.grounded {
+                    "0 (grounded)".to_owned()
+                } else {
+                    let n = self.cons.last.dof.get(&o.id).copied().unwrap_or(6);
+                    format!("{n} of 6")
+                });
                 ui.end_row();
             });
         ui.separator();
@@ -979,6 +1058,7 @@ impl CadCraftApp {
                     x.transform = t;
                 }
             });
+            self.asm_solve(Some(o.id));
         }
     }
 }
