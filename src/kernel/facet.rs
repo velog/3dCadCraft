@@ -666,19 +666,26 @@ impl BRep {
     }
 
     fn edges_where(&self, mine: impl Fn(&str) -> bool) -> Vec<EdgeId> {
-        let mut uses: HashMap<EdgeId, Vec<(bool, Option<SurfaceId>)>> = HashMap::new();
-        for (_, face) in self.faces() {
+        type Use = (bool, Option<SurfaceId>, super::FaceId);
+        let mut uses: HashMap<EdgeId, Vec<Use>> = HashMap::new();
+        for (fid, face) in self.faces() {
             let mine = mine(face.name.as_deref().unwrap_or(""));
             for lp in std::iter::once(&face.outer).chain(&face.inner) {
                 for ce in &lp.coedges {
-                    uses.entry(ce.edge).or_default().push((mine, face.facet_of));
+                    uses.entry(ce.edge)
+                        .or_default()
+                        .push((mine, face.facet_of, fid));
                 }
             }
         }
+        // Hidden: edges between facets of one curved face, and seams between
+        // kernel pieces of one curved surface (a cylinder in halves).
         let mut out: Vec<EdgeId> = uses
             .into_iter()
             .filter(|(_, u)| {
-                u.iter().any(|x| x.0) && !(u.len() == 2 && u[0].1.is_some() && u[0].1 == u[1].1)
+                u.iter().any(|x| x.0)
+                    && !(u.len() == 2 && u[0].1.is_some() && u[0].1 == u[1].1)
+                    && !(u.len() == 2 && self.is_smooth_seam(u[0].2, u[1].2))
             })
             .map(|(e, _)| e)
             .collect();

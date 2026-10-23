@@ -566,6 +566,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   neutral planes are drafted group by group, re-found by name on each result (names are
   kept). Automatic Face Chain can reach faces not parallel to the pull (a bottom round →
   the bottom): the kernel refuses those.
+- **One visible face / edge from kernel pieces** (`kernel::smooth`): truck has no periodic faces or
+  closed edges, so a cylinder comes in 2+ faces and a circle in 2+ arcs. Faces on the same *curved*
+  analytic surface sharing an edge are one `smooth_group`; the edge between them is a seam
+  (`is_smooth_seam`) — hidden in `visible_edges` / `feature_edges` and in `tessellate_solid`'s edge
+  lines. Selection draws `item_faces` = every face of the name and its group, an edge every piece of
+  `edge_group` (same circle / line, same visible faces). Planes are never merged (Split Face cuts
+  them on purpose). Geometry and names stay per piece — this is display and selection only.
 - **`body_key()` runs many times a frame** (every `picker()`, every hidden-line test): it is
   cached per frame (`body_key_frame`, on only inside `ui`) and never walks face meshes —
   `BRep::bounding_box` reads every mesh position (2.4 ms on a 2500-hole plate; a selected

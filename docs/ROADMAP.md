@@ -31,7 +31,7 @@ Goal: under 16 ms per frame while picking and with Slice on a part with a modele
 
 | # | Problem | How it should be | Where to look |
 |---|---|---|---|
-| D1 | Cylinders and holes show as 2–3 faces with seam lines; picking lights one piece | the kernel (truck) has no periodic faces or closed edges, so a circle is ≥ 2 arcs and a cylinder ≥ 2 faces — show and select them as **one** face / one edge: hide seams between pieces of one analytic surface, a click selects every piece, Properties and names treat them as one (Measure already does) | `kernel::exact::to_brep`, `BRep::feature_edges`, `gui/select.rs`, the kernel's own merge in `vendor/solidcraft-kernel/src/topo.rs` |
+| D1 | Cylinders and holes show as 2–3 faces with seam lines; picking lights one piece | the kernel (truck) has no periodic faces or closed edges, so a circle is ≥ 2 arcs and a cylinder ≥ 2 faces — show and select them as **one** face / one edge: hide seams between pieces of one analytic surface, a click selects every piece, Properties and names treat them as one (Measure already does) | `kernel::exact::to_brep`, `BRep::feature_edges`, `gui/select.rs`, the kernel's own merge in `vendor/solidcraft-kernel/src/topo.rs` — 🟡 done 2026-10-23 (`kernel::smooth`): seams between pieces of one cylinder / cone / sphere / torus are neither drawn nor pickable, a face selects its whole smooth group, an edge every arc of its circle; planes keep their edges (Split Face); test `tests/smooth_display.rs`; waiting for a visual check |
 
 ### Working rule: SolidCraft first
 

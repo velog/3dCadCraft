@@ -173,7 +173,11 @@ impl BRep {
         }
         let smooth = |e: &EdgeId| {
             edge_faces.get(e).is_some_and(|f| {
-                f.len() == 2 && (f[0].0 == f[1].0 || (f[0].1.is_some() && f[0].1 == f[1].1))
+                f.len() == 2
+                    && (f[0].0 == f[1].0
+                        || (f[0].1.is_some() && f[0].1 == f[1].1)
+                        // A seam between kernel pieces of one curved surface.
+                        || self.is_smooth_seam(f[0].0, f[1].0))
             })
         };
 

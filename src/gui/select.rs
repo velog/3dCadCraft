@@ -345,7 +345,21 @@ impl CadCraftApp {
     pub(super) fn item_faces(&self, item: &SelItem) -> Vec<FaceId> {
         let body = &self.part().body;
         match item {
-            SelItem::Face(n) => body.find_face(n).into_iter().collect(),
+            // Every piece of the visible face (a cylinder in halves).
+            SelItem::Face(n) => {
+                let mut out: Vec<FaceId> = Vec::new();
+                for f in body
+                    .faces()
+                    .filter(|(_, x)| x.name.as_deref() == Some(n.as_str()))
+                {
+                    for g in body.smooth_group(f.0) {
+                        if !out.contains(&g) {
+                            out.push(g);
+                        }
+                    }
+                }
+                out
+            }
             SelItem::Feature(id) => psel::faces_of_feature(body, id),
             SelItem::Body(n) => psel::faces_of_body(body, n),
             SelItem::Edge(_) | SelItem::Sketch(_) | SelItem::Vertex(_) => Vec::new(),
@@ -743,10 +757,14 @@ impl CadCraftApp {
         hover: Option<&SelItem>,
     ) {
         let polys = self.edge_polylines();
-        // Edges are drawn on top of the view, without their hidden pieces.
+        // Edges are drawn on top of the view, without their hidden pieces;
+        // every kernel piece of the visible edge (a circle in arcs).
+        let body = &self.part().body;
         let line = |e: EdgeId, color: Color32| {
-            if let Some((_, pts)) = polys.iter().find(|(id, _)| *id == e) {
-                self.draw_visible_polyline(painter, rect, pts, egui::Stroke::new(4.0, color));
+            for g in body.edge_group(e) {
+                if let Some((_, pts)) = polys.iter().find(|(id, _)| *id == g) {
+                    self.draw_visible_polyline(painter, rect, pts, egui::Stroke::new(4.0, color));
+                }
             }
         };
         let sketch = |i: usize, color: Color32| {

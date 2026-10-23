@@ -41,6 +41,7 @@ mod facet;
 mod mesh;
 mod query;
 mod revolve;
+pub mod smooth;
 
 pub use extrude::{ExtrudeLevel, ProfileSegment, Segment2};
 pub use facet::{BoolOp, FaceTag};
