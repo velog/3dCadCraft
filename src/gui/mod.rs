@@ -421,6 +421,8 @@ enum ManipOwner {
     Shell,
     /// The open Hole dialog (arrows of the centres, `hole_dims`).
     Hole,
+    /// The open Fillet / Chamfer dialog (size arrows, `blend_handles`).
+    Blend,
 }
 
 impl ManipOwner {
@@ -428,7 +430,7 @@ impl ManipOwner {
     fn live(self) -> bool {
         matches!(
             self,
-            ManipOwner::Draft | ManipOwner::Shell | ManipOwner::Hole
+            ManipOwner::Draft | ManipOwner::Shell | ManipOwner::Hole | ManipOwner::Blend
         )
     }
 }
@@ -496,6 +498,8 @@ struct CadCraftApp {
     show_params: bool,
     /// Text being typed in Parameters cells (key: column + name).
     param_buf: std::collections::HashMap<String, String>,
+    /// Parameters table filter: All, User, Model, Used, Unused.
+    param_filter: u8,
     /// The in-place dimension editor shows its tolerance part.
     dim_tol_open: bool,
     /// How dimension texts are shown (status bar: Value / Name / …).
@@ -758,6 +762,7 @@ impl CadCraftApp {
             dim_tol_open: false,
             show_params: false,
             param_buf: Default::default(),
+            param_filter: 0,
             target_pick: None,
             extrude_preview: Default::default(),
             preview_job: Default::default(),
@@ -1997,6 +2002,10 @@ impl CadCraftApp {
             let hs: Vec<_> = self.hole_handles().into_iter().map(|(_, h)| h).collect();
             return (!hs.is_empty()).then_some((ManipOwner::Hole, hs));
         }
+        if self.blend_draft.is_some() {
+            let hs = self.blend_handles();
+            return (!hs.is_empty()).then_some((ManipOwner::Blend, hs));
+        }
         if let Some(d) = &self.work_draft {
             return match d.def() {
                 Ok(WorkDef::Plane(WorkPlaneDef::Offset { base, distance })) => {
@@ -3003,6 +3012,21 @@ impl CadCraftApp {
                 }
             }
             ManipOwner::Hole => {}
+            ManipOwner::Blend => {
+                if let Some(d) = self.blend_draft.as_mut()
+                    && v > 0.0
+                {
+                    let mut f = crate::part::Feature::Blend(d.def.clone());
+                    set_feature_field_value(&mut f, field, v);
+                    if let crate::part::Feature::Blend(mut b) = f {
+                        // A dragged value replaces a typed equation.
+                        if let Some(p) = b.params.0.get_mut(field) {
+                            p.expr = None;
+                        }
+                        d.def = b;
+                    }
+                }
+            }
             ManipOwner::Shell => {
                 if let Some(d) = self.shell_draft.as_mut()
                     && v > 0.0
@@ -5008,6 +5032,40 @@ impl CadCraftApp {
             }
             _ => None,
         };
+        // A click on another dimension while one is edited (in the box or in
+        // a value field just used) puts its *name* there: `d3 = d1`
+        // follows d1, not only its value (Inventor).
+        if response.clicked_by(PointerButton::Primary)
+            && let Some(c) = label_hit
+            && let Some(name) = self.dimension_name_for_link(c)
+        {
+            let field = valuefield::recent_field(ui.ctx(), ui.input(|i| i.time));
+            let into_box = self
+                .tools
+                .dim_edit
+                .as_ref()
+                .is_some_and(|e| e.constraint != c);
+            if into_box && let Some(e) = self.tools.dim_edit.as_mut() {
+                // A plain value is replaced, an equation gets the name added.
+                if crate::part::expr::is_plain_number(&e.text) || e.text.trim().is_empty() {
+                    e.text = name;
+                } else {
+                    e.text.push_str(&name);
+                }
+                e.focused = false;
+                response.flags.remove(
+                    egui::response::Flags::CLICKED | egui::response::Flags::FAKE_PRIMARY_CLICKED,
+                );
+            } else if self.tools.dim_edit.is_none()
+                && let Some(id) = field
+            {
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(measure_pick::result_id(id), name));
+                response.flags.remove(
+                    egui::response::Flags::CLICKED | egui::response::Flags::FAKE_PRIMARY_CLICKED,
+                );
+            }
+        }
         // Extrude / Revolve open: a double click on a dimension of the
         // profile sketch edits it in place (the preview follows).
         if self.editing.is_none()
@@ -6526,6 +6584,24 @@ impl CadCraftApp {
         }
     }
 
+    /// The parameter name of dimension `c` of the shown sketch (named
+    /// first if it has no name yet), for a link to it.
+    fn dimension_name_for_link(&mut self, c: ConstraintId) -> Option<String> {
+        let i = self.dim_sketch()?;
+        let is_dim = self.part().sketches[i]
+            .sketch
+            .constraint(c)
+            .is_some_and(crate::sketch::Constraint::is_dimension);
+        if !is_dim {
+            return None;
+        }
+        if self.part().sketches[i].sketch.dim_param(c).name.is_empty() {
+            self.part_mut().sync_parameters();
+        }
+        let n = self.part().sketches[i].sketch.dim_param(c).name;
+        (!n.is_empty()).then_some(n)
+    }
+
     /// Screen position of the text of dimension `c` in the edited sketch.
     fn dimension_screen_pos(&self, c: ConstraintId) -> Option<egui::Pos2> {
         let sk = &self.part().sketches.get(self.dim_sketch()?)?.sketch;
@@ -6597,6 +6673,19 @@ impl CadCraftApp {
                                     }
                                 }
                             });
+                            let recent = valuefield::recent(ui.ctx());
+                            ui.menu_button("Recently Used", |ui| {
+                                if recent.is_empty() {
+                                    ui.label(RichText::new("Nothing yet").weak());
+                                }
+                                for t in recent {
+                                    if ui.button(&t).clicked() {
+                                        text = t;
+                                        focused = false;
+                                        ui.close();
+                                    }
+                                }
+                            });
                             if ui
                                 .button("Measure")
                                 .on_hover_text(
@@ -6609,7 +6698,7 @@ impl CadCraftApp {
                             }
                         })
                         .response
-                        .on_hover_text("Parameters, Measure");
+                        .on_hover_text("Parameters, Recently Used, Measure");
                         // Enter in the value field applies (not Enter in the
                         // tolerance fields below).
                         if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -6662,6 +6751,7 @@ impl CadCraftApp {
             self.solve();
         }
         if apply {
+            valuefield::remember(ctx, &text);
             self.apply_dimension_text(i, edit.constraint, &text);
         } else if (cancel || ctx.input(|i| i.key_pressed(Key::Escape)))
             && self.measure_pick.is_none()
@@ -6778,6 +6868,7 @@ impl eframe::App for CadCraftApp {
         self.measure_window(&ctx);
         self.measure_requests(&ctx);
         self.measure_pick_window(&ctx);
+        valuefield::draw_whip(&ctx);
         self.alias_window(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);

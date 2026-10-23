@@ -5416,8 +5416,26 @@ impl CadCraftApp {
             Unit(usize, Unit),
             Add,
             Delete(String),
+            Link(String, String),
+            Purge,
         }
+        use super::valuefield::ParamDrag;
         let mut edits: Vec<Edit> = Vec::new();
+        // Filter: names some equation uses (Used / Unused).
+        let referenced: std::collections::HashSet<String> = rows
+            .iter()
+            .filter_map(|r| r.expr.as_deref())
+            .flat_map(crate::part::expr::names_in)
+            .collect();
+        let mut filter = self.param_filter;
+        let shown = |r: &crate::part::params::ParamRow| match filter {
+            1 => matches!(r.owner, ParamOwner::User(_)),
+            2 => !matches!(r.owner, ParamOwner::User(_)),
+            3 => referenced.contains(&r.name),
+            4 => !referenced.contains(&r.name),
+            _ => true,
+        };
+        let rows: Vec<_> = rows.iter().filter(|r| shown(r)).cloned().collect();
         let buf = &mut self.param_buf;
         self.layout.place("parameters", ctx.content_rect(), true, egui::Window::new("Parameters")
             .open(&mut open)
@@ -5425,7 +5443,7 @@ impl CadCraftApp {
             .resizable(true))
             .show(ctx, |ui| {
                 // A text cell that applies on Enter / focus loss.
-                let mut cell = |ui: &mut egui::Ui, key: String, current: &str, width: f32, bad: bool| -> Option<String> {
+                let mut cell = |ui: &mut egui::Ui, key: String, current: &str, width: f32, bad: bool| -> (Option<String>, egui::Response) {
                     let text = buf.entry(key.clone()).or_insert_with(|| current.to_owned());
                     let mut te = egui::TextEdit::singleline(text).desired_width(width);
                     if bad {
@@ -5438,9 +5456,24 @@ impl CadCraftApp {
                     if r.lost_focus() {
                         let t = text.clone();
                         buf.remove(&key);
-                        return (t != current).then_some(t);
+                        return ((t != current).then_some(t), r);
                     }
-                    None
+                    (None, r)
+                };
+                // Pick whip: a parameter dropped on a row's name or equation
+                // links that row to it.
+                let drop_on = |ui: &egui::Ui, resp: &egui::Response, target: &str| -> Option<String> {
+                    if resp.dnd_hover_payload::<ParamDrag>().is_some_and(|p| p.0 != target) {
+                        ui.painter().rect_stroke(
+                            resp.rect.expand(2.0),
+                            2.0,
+                            egui::Stroke::new(2.0, Color32::from_rgb(230, 120, 20)),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    resp.dnd_release_payload::<ParamDrag>()
+                        .filter(|p| p.0 != target)
+                        .map(|p| p.0.clone())
                 };
                 egui::ScrollArea::vertical().max_height(520.0).show(ui, |ui| {
                     egui::Grid::new("params")
@@ -5474,8 +5507,33 @@ impl CadCraftApp {
                                     ui.label(RichText::new(this).strong().color(Color32::from_rgb(120, 170, 240)));
                                     ui.end_row();
                                 }
-                                if let Some(n) = cell(ui, format!("n:{}", r.name), &r.name, 80.0, false) {
+                                let (renamed, name_resp) = ui
+                                    .horizontal(|ui| {
+                                        let h = ui
+                                            .add(
+                                                egui::Label::new(
+                                                    RichText::new("@")
+                                                        .strong()
+                                                        .color(Color32::from_rgb(230, 120, 20)),
+                                                )
+                                                .sense(egui::Sense::drag()),
+                                            )
+                                            .on_hover_text(
+                                                "Pick whip: drag onto another parameter or onto any \
+                                                 value field to make it follow this one",
+                                            );
+                                        h.dnd_set_drag_payload(ParamDrag(r.name.clone()));
+                                        if h.drag_started() {
+                                            super::valuefield::whip_start(ui.ctx(), h.rect.center());
+                                        }
+                                        cell(ui, format!("n:{}", r.name), &r.name, 80.0, false)
+                                    })
+                                    .inner;
+                                if let Some(n) = renamed {
                                     edits.push(Edit::Rename(r.name.clone(), n));
+                                }
+                                if let Some(src) = drop_on(ui, &name_resp, &r.name) {
+                                    edits.push(Edit::Link(r.name.clone(), src));
                                 }
                                 ui.label(&r.consumed_by);
                                 match r.owner {
@@ -5498,7 +5556,10 @@ impl CadCraftApp {
                                     }
                                 }
                                 let err = errors.get(&r.name);
-                                let eq = cell(ui, format!("e:{}", r.name), &r.equation(), 150.0, err.is_some());
+                                let (eq, eq_resp) = cell(ui, format!("e:{}", r.name), &r.equation(), 150.0, err.is_some());
+                                if let Some(src) = drop_on(ui, &eq_resp, &r.name) {
+                                    edits.push(Edit::Link(r.name.clone(), src));
+                                }
                                 if let Some(e) = err {
                                     ui.ctx().debug_text(e.clone());
                                 }
@@ -5532,7 +5593,7 @@ impl CadCraftApp {
                                         ui.label("");
                                     }
                                     _ => {
-                                        if let Some(c) = cell(ui, format!("c:{}", r.name), &r.comment, 120.0, false) {
+                                        if let (Some(c), _) = cell(ui, format!("c:{}", r.name), &r.comment, 120.0, false) {
                                             edits.push(Edit::Comment(r.owner.clone(), c));
                                         }
                                     }
@@ -5558,14 +5619,32 @@ impl CadCraftApp {
                     if ui.button("Add Numeric").clicked() {
                         edits.push(Edit::Add);
                     }
+                    if ui
+                        .button("Purge Unused")
+                        .on_hover_text("Delete the user parameters nothing uses")
+                        .clicked()
+                    {
+                        edits.push(Edit::Purge);
+                    }
+                    egui::ComboBox::from_id_salt("param_filter")
+                        .width(90.0)
+                        .selected_text(["All", "User", "Model", "Used", "Unused"][filter.min(4) as usize])
+                        .show_ui(ui, |ui| {
+                            for (k, t) in ["All", "User", "Model", "Used", "Unused"].iter().enumerate() {
+                                ui.selectable_value(&mut filter, k as u8, *t);
+                            }
+                        })
+                        .response
+                        .on_hover_text("Filter");
                     ui.label(
-                        RichText::new("Equations: + − * / ^ ( ), sin cos tan asin acos atan sqrt abs floor ceil round min max, PI; units mm cm m in ft um deg rad ul; names of other parameters. A bare number takes the parameter's unit; changing the unit converts the value.")
+                        RichText::new("Drag @ onto a parameter or a value field to link them. Equations: + − * / ^ ( ), sin cos tan asin acos atan sinh cosh tanh sqrt abs floor ceil round sign exp ln log pow min max, PI, E; units mm cm m in ft um deg rad ul; names of other parameters. A bare number takes the parameter's unit; changing the unit converts the value.")
                             .small()
                             .weak(),
                     );
                 });
             });
         self.show_params = open;
+        self.param_filter = filter;
         if edits.is_empty() {
             return;
         }
@@ -5615,6 +5694,11 @@ impl CadCraftApp {
                     Ok(())
                 }
                 Edit::Delete(n) => part.delete_user_parameter(&n),
+                Edit::Link(t, s) => part.link_parameter(&t, &s),
+                Edit::Purge => {
+                    part.purge_unused_parameters();
+                    Ok(())
+                }
             };
             if let Err(e) = r {
                 err = Some(e.to_string());

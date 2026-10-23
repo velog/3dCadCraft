@@ -227,12 +227,20 @@ impl HoleDraft {
     pub(super) fn handles(
         &self,
         part: &PartDocument,
-        size: Real,
+        size: &dyn Fn(Point3, Vector3) -> Real,
     ) -> Vec<(HoleHandle, manip::Handle)> {
         let views = self.dim_views();
-        let len = size.max(1e-3);
         let mut out = Vec::new();
-        for (c, p, n) in self.centres(part) {
+        let centres = self.centres(part);
+        for (c, p, n) in centres.iter().copied() {
+            // A fixed screen length, shorter than half the way to the
+            // nearest other centre (arrows of close holes must not cross).
+            let near = centres
+                .iter()
+                .filter(|(o, ..)| *o != c)
+                .map(|(_, q, _)| (q - p).norm())
+                .fold(Real::INFINITY, Real::min);
+            let len = size(p, n).min(0.45 * near).max(1e-3);
             let mut dirs: Vec<Vector3> = Vec::new();
             for v in views.iter().filter(|v| v.centre == c) {
                 let Some(dir) = (v.p - v.foot).try_normalize(1e-12) else {
@@ -336,9 +344,28 @@ impl CadCraftApp {
         let Some(d) = &self.hole_draft else {
             return Vec::new();
         };
-        // About 50 px long whatever the zoom.
-        let size = self.camera.distance * (self.camera.fov_y * 0.5).tan() * 0.4;
-        d.handles(self.part(), size)
+        // About 40 px long whatever the zoom: mm per pixel at the centre,
+        // measured along the face (the larger of two directions on it).
+        let rect = self.viewport_rect;
+        let size = |p: Point3, n: Vector3| {
+            let any = if n.x.abs() < 0.9 {
+                Vector3::x()
+            } else {
+                Vector3::y()
+            };
+            let u = n.cross(&any).normalize();
+            let v = n.cross(&u);
+            let Some(o) = self.camera.project(&p, rect) else {
+                return 1.0;
+            };
+            let px = [u, v]
+                .iter()
+                .filter_map(|w| self.camera.project(&(p + w), rect))
+                .map(|q| q.distance(o) as Real)
+                .fold(0.0, Real::max);
+            40.0 / px.max(1e-6)
+        };
+        d.handles(self.part(), &size)
     }
 
     /// A drag of a Hole arrow: `h` is the handle as it was at the press.
@@ -548,35 +575,45 @@ impl CadCraftApp {
             return;
         };
         let table = self.part().parameter_table();
-        let mut done: Option<bool> = None;
+        // The same field as everywhere (rule 13): expressions, the `>` menu
+        // with List Parameters, Recently Used and Measure.
         let id = egui::Id::new("hole_dim_inplace");
+        let mut commit: Option<String> = None;
+        let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         egui::Area::new(egui::Id::new("hole_dim_inplace_area"))
-            .fixed_pos(at - egui::vec2(45.0, 10.0))
+            .fixed_pos(at - egui::vec2(70.0, 12.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                let Some(d) = self.hole_draft.as_mut() else {
-                    return;
-                };
-                let Some((_, text, focus)) = d.inplace.as_mut() else {
-                    return;
-                };
-                let resp = ui.add(egui::TextEdit::singleline(text).id(id).desired_width(90.0));
-                if std::mem::take(focus) {
-                    resp.request_focus();
-                }
-                if resp.lost_focus() {
-                    done = Some(ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                }
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let spec = super::valuefield::FieldSpec {
+                            id,
+                            value: v.value,
+                            unit: crate::part::expr::Unit::Mm,
+                            name: None,
+                            expr: v.expr.as_deref(),
+                            table: &table,
+                        };
+                        commit = super::valuefield::value_field(ui, &spec);
+                        if let Some(d) = self.hole_draft.as_mut()
+                            && let Some((_, _, focus)) = d.inplace.as_mut()
+                            && std::mem::take(focus)
+                        {
+                            ui.memory_mut(|m| m.request_focus(id.with("te")));
+                        }
+                        close |= ui.small_button("x").on_hover_text("Close (Esc)").clicked();
+                    });
+                });
             });
-        let Some(apply) = done else { return };
-        let text = self
-            .hole_draft
-            .as_mut()
-            .and_then(|d| d.inplace.take())
-            .map(|(_, t, _)| t)
-            .unwrap_or_default();
-        if !apply {
+        if close && commit.is_none() {
+            if let Some(d) = self.hole_draft.as_mut() {
+                d.inplace = None;
+            }
             return;
+        }
+        let Some(text) = commit else { return };
+        if let Some(d) = self.hole_draft.as_mut() {
+            d.inplace = None;
         }
         match crate::part::params::eval_field_in(&table, &text, crate::part::expr::Unit::Mm, None) {
             Ok((_, value, _)) if value > 0.0 => {
@@ -732,13 +769,13 @@ mod tests {
         assert!((part.holes()[0].origin.y - 15.0).abs() < 1e-6);
         assert!((part.holes()[0].origin.x - 12.0).abs() < 1e-6);
         // Arrows: one along each dimension, no free ones.
-        let hs = e.handles(&part, 5.0);
+        let hs = e.handles(&part, &|_, _| 5.0);
         assert_eq!(hs.len(), 2);
         assert!(hs.iter().all(|(t, _)| matches!(t, HoleHandle::Dim(_))));
         e.delete_dim(front);
         assert_eq!(e.dim_views().len(), 1);
         // One dimension left: one free arrow along the edge it keeps.
-        let hs = e.handles(&part, 5.0);
+        let hs = e.handles(&part, &|_, _| 5.0);
         assert_eq!(hs.len(), 2);
         assert_eq!(
             hs.iter()
@@ -755,7 +792,7 @@ mod tests {
         let (part, mut d) = holed();
         let keep = d.dims.clone();
         d.dims.clear();
-        let hs = d.handles(&part, 5.0);
+        let hs = d.handles(&part, &|_, _| 5.0);
         assert_eq!(hs.len(), 2);
         let (a, b) = (&hs[0].1, &hs[1].1);
         let (Some(u), Some(v)) = (a.arrow, b.arrow) else {

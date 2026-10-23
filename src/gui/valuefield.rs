@@ -24,12 +24,69 @@ pub struct FieldSpec<'a> {
     pub table: &'a [ParamRow],
 }
 
+/// The drag payload of a parameter's pick whip (Parameters table `@`).
+#[derive(Clone, Debug)]
+pub struct ParamDrag(pub String);
+
+fn whip_id() -> egui::Id {
+    egui::Id::new("param_whip_from")
+}
+
+/// A pick whip drag began at screen point `from`.
+pub fn whip_start(ctx: &egui::Context, from: egui::Pos2) {
+    ctx.data_mut(|d| d.insert_temp(whip_id(), from));
+}
+
+/// The whip line from the `@` to the pointer while a parameter is dragged.
+pub fn draw_whip(ctx: &egui::Context) {
+    if !egui::DragAndDrop::has_payload_of_type::<ParamDrag>(ctx) {
+        return;
+    }
+    let (Some(from), Some(to)) = (
+        ctx.data(|d| d.get_temp::<egui::Pos2>(whip_id())),
+        ctx.pointer_latest_pos(),
+    ) else {
+        return;
+    };
+    let name = egui::DragAndDrop::payload::<ParamDrag>(ctx).map(|p| p.0.clone());
+    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, whip_id()));
+    let col = Color32::from_rgb(230, 120, 20);
+    p.line_segment([from, to], egui::Stroke::new(2.0, col));
+    p.circle_filled(to, 4.0, col);
+    if let Some(n) = name {
+        p.text(
+            to + egui::vec2(8.0, -8.0),
+            egui::Align2::LEFT_BOTTOM,
+            n,
+            egui::FontId::proportional(13.0),
+            col,
+        );
+    }
+}
+
+fn active_field_id() -> egui::Id {
+    egui::Id::new("value_field_active")
+}
+
+/// The field that had the keyboard focus within the last 2 s (a click in
+/// the view takes the focus away before it is seen as a click).
+pub fn recent_field(ctx: &egui::Context, now: f64) -> Option<egui::Id> {
+    let (id, t) = ctx.data(|d| d.get_temp::<(egui::Id, f64)>(active_field_id()))?;
+    (now - t < 2.0).then_some(id)
+}
+
 /// Recently used values (shared by all fields).
 fn recent_id() -> egui::Id {
     egui::Id::new("value_field_recent")
 }
 
-fn remember(ctx: &egui::Context, text: &str) {
+/// The recently used values, newest first (the `>` menu of every field).
+pub fn recent(ctx: &egui::Context) -> Vec<String> {
+    ctx.data(|d| d.get_temp(recent_id())).unwrap_or_default()
+}
+
+/// Notes a value as used (it heads the Recently Used list).
+pub fn remember(ctx: &egui::Context, text: &str) {
     ctx.data_mut(|d| {
         let list = d.get_temp_mut_or_default::<Vec<String>>(recent_id());
         list.retain(|t| t != text);
@@ -64,6 +121,26 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
             te = te.text_color(Color32::from_rgb(230, 70, 60));
         }
         let mut r = ui.add(te);
+        // The field last typed in (a click on a dimension in the view then
+        // puts its name here, `recent_field`).
+        if r.has_focus() {
+            let t = ui.input(|i| i.time);
+            ui.data_mut(|d| d.insert_temp(active_field_id(), (spec.id, t)));
+        }
+        // Pick whip: a parameter dropped here becomes the field's value.
+        if r.dnd_hover_payload::<ParamDrag>().is_some() {
+            ui.painter().rect_stroke(
+                r.rect.expand(2.0),
+                2.0,
+                egui::Stroke::new(2.0, Color32::from_rgb(230, 120, 20)),
+                egui::StrokeKind::Outside,
+            );
+        }
+        if let Some(p) = r.dnd_release_payload::<ParamDrag>()
+            && Some(p.0.as_str()) != spec.name
+        {
+            commit = Some(p.0.clone());
+        }
         if r.gained_focus() {
             // Edit the equation (or the plain value), all selected.
             let start = shown.clone();

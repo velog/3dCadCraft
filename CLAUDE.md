@@ -118,6 +118,13 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     gets a live preview and drag handles in the viewport (arrow for distances, arc
     for angles) that edit the same value as Properties; every numeric field accepts
     expressions and parameter names, with the `>` menu (`docs/spec/0-ui.md` §2.7–2.8).
+13. **Every numeric input is the sketch's field** (owner's rule, 2026-10-23): no plain `TextEdit` /
+    `DragValue` for a number anywhere — panels, in-place boxes in the view, tool dialogs all go through
+    `valuefield::value_field` / `ExprValue` / `field_row`, so each one has the same additions:
+    expressions with units, parameter names, the `>` menu (List Parameters, Recently Used, Measure),
+    a parameter dropped on it by the pick whip, and a tolerance where the value is a dimension.
+    Dynamic Input next to the cursor follows the same evaluation (`expr::eval` with the parameters).
+    Panels live inside the Properties scroll area; viewport handles keep a fixed size on screen.
 
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 

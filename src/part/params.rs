@@ -215,7 +215,7 @@ fn chamfer_fields(method: super::ChamferMethod) -> Vec<(&'static str, Unit)> {
 }
 
 /// Parameter fields of a fillet's further edge sets (set k → `radius<k+2>`).
-const SET_RADII: [&str; 8] = [
+pub const SET_RADII: [&str; 8] = [
     "radius2", "radius3", "radius4", "radius5", "radius6", "radius7", "radius8", "radius9",
 ];
 
@@ -879,6 +879,42 @@ impl PartDocument {
             .collect()
     }
 
+    /// Pick whip (After Effects): parameter `target` follows `source` — its
+    /// equation becomes `source`. A circular link is refused and leaves
+    /// everything as it was.
+    pub fn link_parameter(&mut self, target: &str, source: &str) -> Result<(), PartError> {
+        if target == source {
+            return Err(PartError::Feature(format!(
+                "'{target}' cannot follow itself"
+            )));
+        }
+        self.set_parameter_expr(target, source)
+    }
+
+    /// User parameters no equation, dimension or feature field uses.
+    pub fn unused_user_parameters(&self) -> Vec<String> {
+        let table = self.parameter_table();
+        self.user_params
+            .iter()
+            .filter(|u| {
+                !table.iter().any(|r| {
+                    r.name != u.name
+                        && r.expr
+                            .as_deref()
+                            .is_some_and(|e| expr::names_in(e).contains(&u.name))
+                })
+            })
+            .map(|u| u.name.clone())
+            .collect()
+    }
+
+    /// Purge Unused: deletes every unused user parameter; their names.
+    pub fn purge_unused_parameters(&mut self) -> Vec<String> {
+        let gone = self.unused_user_parameters();
+        self.user_params.retain(|u| !gone.contains(&u.name));
+        gone
+    }
+
     /// Deletes user parameter `name`; refused while an equation uses it.
     pub fn delete_user_parameter(&mut self, name: &str) -> Result<(), PartError> {
         let users = self.parameter_users(name);
@@ -1166,6 +1202,27 @@ mod box_params {
 
     /// The box's sizes are parameters: an equation on a user parameter
     /// follows it (they were plain numbers, not parametric).
+    /// Pick whip: a link makes the target follow the source; a circular
+    /// link is refused; Purge Unused keeps what is used.
+    #[test]
+    fn link_and_purge() {
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let a = part.add_user_parameter(Unit::Mm);
+        part.set_parameter_expr(&a, "25").unwrap();
+        let b = part.add_user_parameter(Unit::Mm);
+        let c = part.add_user_parameter(Unit::Mm);
+        part.link_parameter(&b, &a).unwrap();
+        assert!((part.user_params[1].value - 25.0).abs() < 1e-12);
+        let before = part.user_params.clone();
+        assert!(part.link_parameter(&a, &b).is_err(), "a circle");
+        assert_eq!(part.user_params, before, "unchanged after the refusal");
+        assert!(part.link_parameter(&a, &a).is_err());
+        part.set_feature_field(0, "width", &b).unwrap();
+        assert_eq!(part.unused_user_parameters(), vec![c.clone()]);
+        assert_eq!(part.purge_unused_parameters(), vec![c]);
+        assert_eq!(part.user_params.len(), 2);
+    }
+
     #[test]
     fn box_size_follows_a_user_parameter() {
         let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();

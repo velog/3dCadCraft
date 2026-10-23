@@ -324,6 +324,12 @@ impl Parser<'_> {
                         unit: false,
                     });
                 }
+                if n == "E" {
+                    return Ok(Q {
+                        v: std::f64::consts::E,
+                        unit: false,
+                    });
+                }
                 if unit_factor(&n).is_some() {
                     return Err(format!("'{n}' is a unit, a value must come before it"));
                 }
@@ -386,6 +392,39 @@ fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
                 ..x
             }
         }
+        "sinh" => ratio(one()?.v.sinh()),
+        "cosh" => ratio(one()?.v.cosh()),
+        "tanh" => ratio(one()?.v.tanh()),
+        "asinh" => ratio(one()?.v.asinh()),
+        "acosh" => ratio(one()?.v.acosh()),
+        "atanh" => ratio(one()?.v.atanh()),
+        "exp" => ratio(one()?.v.exp()),
+        "ln" | "log" => {
+            let x = one()?;
+            if x.v <= 0.0 {
+                return Err(format!("{f} of a value that is not positive"));
+            }
+            ratio(if f == "ln" { x.v.ln() } else { x.v.log10() })
+        }
+        "sign" => {
+            let x = one()?;
+            ratio(if x.v > 0.0 {
+                1.0
+            } else if x.v < 0.0 {
+                -1.0
+            } else {
+                0.0
+            })
+        }
+        "pow" => {
+            let [x, y] = a else {
+                return Err("pow() takes two arguments".into());
+            };
+            Q {
+                v: x.v.powf(y.v),
+                unit: x.unit,
+            }
+        }
         "min" if !a.is_empty() => Q {
             v: a.iter().map(|q| q.v).fold(Real::INFINITY, Real::min),
             unit: a.iter().any(|q| q.unit),
@@ -439,6 +478,7 @@ pub fn names_in(text: &str) -> Vec<String> {
                 && unit_factor(n).is_none()
                 && n != "PI"
                 && n != "pi"
+                && n != "E"
             {
                 out.push(n.clone());
             }
@@ -464,6 +504,18 @@ pub fn valid_name(name: &str) -> bool {
         && !matches!(
             name,
             "PI" | "pi"
+                | "E"
+                | "sinh"
+                | "cosh"
+                | "tanh"
+                | "asinh"
+                | "acosh"
+                | "atanh"
+                | "exp"
+                | "ln"
+                | "log"
+                | "sign"
+                | "pow"
                 | "sin"
                 | "cos"
                 | "tan"
@@ -626,5 +678,19 @@ mod unit_tests {
         assert!((v - 35.4).abs() < 1e-9, "1 in + 1 cm");
         assert_eq!(Unit::ALL.len(), 8);
         assert!(Unit::Rad.is_angle() && Unit::Ft.is_length() && !Unit::Ul.is_length());
+        // More functions and E.
+        for (t, v) in [
+            ("pow(2, 10)", 1024.0),
+            ("ln(E)", 1.0),
+            ("log(1000)", 3.0),
+            ("exp(0)", 1.0),
+            ("sign(-3)", -1.0),
+            ("tanh(0)", 0.0),
+        ] {
+            let (x, _) = eval(t, Unit::Ul, &none).unwrap();
+            assert!((x - v).abs() < 1e-12, "{t} = {x}");
+        }
+        assert!(eval("ln(0)", Unit::Ul, &none).is_err());
+        assert!(!valid_name("pow") && !valid_name("E"));
     }
 }

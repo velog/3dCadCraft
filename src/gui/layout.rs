@@ -1053,7 +1053,15 @@ impl CadCraftApp {
                 // (which moved the view under the cursor mid-command).
                 ui.set_max_width(ui.available_width());
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                self.properties(ui)
+                // Long command panels scroll (Hole, Loft…: they outgrew the
+                // window).
+                egui::ScrollArea::vertical()
+                    .id_salt("properties_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_max_width(ui.available_width());
+                        self.properties(ui)
+                    })
             });
             LayoutUi::note(&mut self.layout.s.properties_width, r.response.rect.width());
         }

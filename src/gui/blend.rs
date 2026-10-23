@@ -475,3 +475,188 @@ impl CadCraftApp {
         }
     }
 }
+
+/// The direction on face `name` square to the edge (unit tangent `t`) at
+/// `p`, pointing into the face, and the face's outward normal there (from
+/// its display mesh: the nearest vertex, the side its vertices lie on).
+fn into_face(
+    body: &crate::kernel::BRep,
+    name: &str,
+    p: Point3,
+) -> Option<(crate::kernel::Vector3, Vec<Point3>)> {
+    let mut best: Option<(f64, crate::kernel::Vector3)> = None;
+    let mut pts = Vec::new();
+    for (_, f) in body
+        .faces()
+        .filter(|(_, f)| f.name.as_deref() == Some(name))
+    {
+        let Some(m) = &f.mesh else { continue };
+        for (q, n) in m.positions.iter().zip(&m.normals) {
+            let d = (q - p).norm();
+            if best.as_ref().is_none_or(|b| d < b.0) {
+                best = Some((d, *n));
+            }
+            pts.push(*q);
+        }
+    }
+    best.map(|(_, n)| (n, pts))
+}
+
+impl CadCraftApp {
+    /// The arrows of the open Fillet / Chamfer (`handles_for`); a drag sets
+    /// the value (`ManipOwner::Blend`).
+    pub(super) fn blend_handles(&self) -> Vec<crate::gui::manip::Handle> {
+        match &self.blend_draft {
+            Some(d) => handles_for(&self.part().body, d),
+            None => Vec::new(),
+        }
+    }
+}
+
+/// On the first edge of the active set, along the face(s) square to the
+/// edge, as long as the radius / distance(s).
+fn handles_for(body: &crate::kernel::BRep, d: &BlendDraft) -> Vec<crate::gui::manip::Handle> {
+    use crate::gui::manip::{DragGeom, Handle};
+    use crate::part::{BlendKind, ChamferMethod};
+    let edges = if d.set == 0 {
+        &d.def.edges
+    } else {
+        match d.def.sets.get(d.set - 1) {
+            Some(s) => &s.edges,
+            None => return Vec::new(),
+        }
+    };
+    let Some(e) = edges.first() else {
+        return Vec::new();
+    };
+    let p = Point3::from(e.hint);
+    let (Some((na, pa)), Some((nb, pb))) = (
+        into_face(body, &e.faces[0], p),
+        into_face(body, &e.faces[1], p),
+    ) else {
+        return Vec::new();
+    };
+    let t = na.cross(&nb);
+    if t.norm() < 1e-6 {
+        return Vec::new(); // tangent faces: no corner to size
+    }
+    // On face `n` (its points `pts`): square to the edge, into the face.
+    let along = |n: &crate::kernel::Vector3, pts: &[Point3]| {
+        let mut dir = t.cross(n).normalize();
+        let side: f64 = pts.iter().map(|q| (q - p).dot(&dir)).sum();
+        if side < 0.0 {
+            dir = -dir;
+        }
+        dir
+    };
+    let arrow = |field: &'static str, dir: crate::kernel::Vector3, v: f64| Handle {
+        field,
+        path: vec![p, p + dir * v],
+        grip: p + dir * v,
+        geom: DragGeom::Linear {
+            origin: p,
+            dir,
+            scale: 1.0,
+        },
+        arrow: Some(dir),
+        angle: false,
+        signed: false,
+    };
+    let (da, db) = (along(&na, &pa), along(&nb, &pb));
+    match &d.def.kind {
+        BlendKind::Fillet { radius } => {
+            if matches!(
+                d.def.fillet_type,
+                FilletType::Variable | FilletType::FullRound
+            ) {
+                return Vec::new();
+            }
+            let (field, r) = if d.set == 0 {
+                ("radius", *radius)
+            } else {
+                let Some(s) = d.def.sets.get(d.set - 1) else {
+                    return Vec::new();
+                };
+                let Some(f) = crate::part::params::SET_RADII.get(d.set - 1) else {
+                    return Vec::new();
+                };
+                (*f, s.radius)
+            };
+            vec![arrow(field, da, r)]
+        }
+        BlendKind::Chamfer {
+            method,
+            distance,
+            distance2,
+            flip,
+            ..
+        } => {
+            let (first, second) = if *flip { (db, da) } else { (da, db) };
+            match method {
+                ChamferMethod::Distance => {
+                    vec![arrow("distance", da, *distance)]
+                }
+                ChamferMethod::TwoDistances => vec![
+                    arrow("distance", first, *distance),
+                    arrow("distance2", second, *distance2),
+                ],
+                ChamferMethod::DistanceAngle => vec![arrow("distance", first, *distance)],
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+    use crate::part::PartDocument;
+
+    /// The radius arrow of a box edge lies on one of its faces, square to
+    /// the edge, as long as the radius; a chamfer with two distances has
+    /// one arrow on each face.
+    #[test]
+    fn arrows_of_a_box_edge() {
+        let part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        // Top / Front edge: y = 0, z = 20, along x.
+        let e = EdgeRef {
+            faces: ["Box1:Top".into(), "Box1:Front".into()],
+            hint: [20.0, 0.0, 20.0],
+        };
+        let mut d = BlendDraft::fillet();
+        d.def.edges.push(e.clone());
+        if let crate::part::BlendKind::Fillet { radius } = &mut d.def.kind {
+            *radius = 3.0;
+        }
+        let hs = handles_for(&part.body, &d);
+        assert_eq!(hs.len(), 1);
+        let h = &hs[0];
+        assert_eq!(h.field, "radius");
+        let tip = h.grip;
+        // On the top face (z = 20), 3 mm into it (y = 3).
+        assert!(
+            (tip.z - 20.0).abs() < 1e-6 && (tip.y - 3.0).abs() < 1e-6,
+            "{tip:?}"
+        );
+        let mut c = BlendDraft::chamfer();
+        c.def.edges.push(e);
+        if let crate::part::BlendKind::Chamfer {
+            method,
+            distance,
+            distance2,
+            ..
+        } = &mut c.def.kind
+        {
+            *method = crate::part::ChamferMethod::TwoDistances;
+            *distance = 2.0;
+            *distance2 = 4.0;
+        }
+        let hs = handles_for(&part.body, &c);
+        assert_eq!(hs.len(), 2);
+        let (a, b) = (hs[0].grip, hs[1].grip);
+        assert!(
+            (a.y - 2.0).abs() < 1e-6 && (a.z - 20.0).abs() < 1e-6,
+            "{a:?}"
+        );
+        assert!((b.z - 16.0).abs() < 1e-6 && b.y.abs() < 1e-6, "{b:?}");
+    }
+}
