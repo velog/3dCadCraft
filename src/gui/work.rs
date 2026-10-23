@@ -922,7 +922,29 @@ impl CadCraftApp {
             super::Selection::Feature(k) => part.features.get(k).map(|f| f.id().to_owned()),
             _ => None,
         };
+        // A work feature whose handle is dragged is drawn where it would go
+        // (the feature itself changes on release).
+        let dragged = match &self.manip_drag {
+            Some((super::ManipOwner::Feature(k), _, v)) if v.is_finite() => {
+                match self.pending_work(*k) {
+                    Some(Feature::Work(pw)) => Some(pw),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(pw) = &dragged
+            && let Ok(WorkResult::Plane(_, plane)) = self.compute_work(&pw.def)
+        {
+            let fill = Color32::from_rgba_unmultiplied(60, 150, 255, 70);
+            self.draw_plane_rect(painter, rect, &plane, fill, true, &pw.name, false);
+        }
         for w in self.visible_work() {
+            if dragged.as_ref().is_some_and(|pw| pw.id == w.id)
+                && matches!(w.def, WorkDef::Plane(_))
+            {
+                continue;
+            }
             let hot = hovered == Some(w.id.as_str()) || selected.as_deref() == Some(w.id.as_str());
             for it in Self::items(w) {
                 let color = if it.ucs {

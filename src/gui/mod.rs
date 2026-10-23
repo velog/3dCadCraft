@@ -1976,8 +1976,13 @@ impl CadCraftApp {
         }
         if let Selection::Feature(k) = self.selection
             && self.editing.is_none()
-            && let Some(Feature::Work(w)) = part.features.get(k)
+            && let Some(Feature::Work(_)) = part.features.get(k)
         {
+            // While its handle is dragged the arrow follows the pending value
+            // (the feature itself changes on release).
+            let Some(Feature::Work(w)) = self.pending_work(k) else {
+                return None;
+            };
             return match &w.def {
                 WorkDef::Plane(WorkPlaneDef::Offset { base, distance }) => {
                     Some((ManipOwner::Feature(k), offset(base, *distance)?))
@@ -2015,6 +2020,19 @@ impl CadCraftApp {
             _ => Vec::new(),
         };
         Some((ManipOwner::Feature(k), h))
+    }
+
+    /// Work feature `k` as it would be with the value of its dragged handle
+    /// (unchanged when nothing is dragged).
+    pub(super) fn pending_work(&self, k: usize) -> Option<crate::part::Feature> {
+        let mut f = self.part().features.get(k).cloned()?;
+        if let Some((ManipOwner::Feature(kk), h, v)) = &self.manip_drag
+            && *kk == k
+            && v.is_finite()
+        {
+            crate::part::params::set_feature_field_value(&mut f, h.field, *v);
+        }
+        Some(f)
     }
 
     /// Handles of the interpolation splines of sketch `i`: the set ones,
