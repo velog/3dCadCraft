@@ -687,6 +687,48 @@ struct Item {
     ucs: bool,
 }
 
+impl CadCraftApp {
+    /// The selectable inputs of work feature `k` (Show Inputs): every name
+    /// in its definition that is a face, a vertex or another feature of
+    /// the part.
+    pub(super) fn work_inputs(&self, k: usize) -> Vec<super::select::SelItem> {
+        use super::select::SelItem;
+        let part = self.part();
+        let Some(Feature::Work(w)) = part.features.get(k) else {
+            return Vec::new();
+        };
+        let Ok(json) = serde_json::to_value(&w.def) else {
+            return Vec::new();
+        };
+        let mut names = Vec::new();
+        fn strings(v: &serde_json::Value, out: &mut Vec<String>) {
+            match v {
+                serde_json::Value::String(s) => out.push(s.clone()),
+                serde_json::Value::Array(a) => a.iter().for_each(|x| strings(x, out)),
+                serde_json::Value::Object(o) => o.values().for_each(|x| strings(x, out)),
+                _ => {}
+            }
+        }
+        strings(&json, &mut names);
+        let mut out: Vec<SelItem> = Vec::new();
+        for n in names {
+            let item = if part.body.find_face(&n).is_some() {
+                SelItem::Face(n)
+            } else if part.body.find_vertex(&n).is_some() {
+                SelItem::Vertex(n)
+            } else if n != w.id && part.features.iter().any(|f| f.id() == n) {
+                SelItem::Feature(n)
+            } else {
+                continue;
+            };
+            if !out.contains(&item) {
+                out.push(item);
+            }
+        }
+        out
+    }
+}
+
 /// Whether Object Visibility shows work features of `def`'s kind.
 fn kind_shown(vis: &super::layout::ObjectVisibility, def: &WorkDef) -> bool {
     match def {

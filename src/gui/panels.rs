@@ -30,6 +30,8 @@ enum BrowserCmd {
     FeatureVisible(usize, bool),
     /// Ground a work point where it is now (Inventor's Ground).
     GroundPoint(usize),
+    /// Show Inputs: select what a work feature is built from.
+    ShowInputs(usize),
     /// Appearance → … on a feature or body (`None`: remove the override).
     Look(crate::part::appearance::LookTarget, Option<String>),
     /// Material → … on a body.
@@ -273,6 +275,17 @@ impl CadCraftApp {
                 self.checkpoint("Visibility");
                 if let Some(Feature::Work(w)) = self.part_mut().features.get_mut(k) {
                     w.visible = v;
+                }
+            }
+            BrowserCmd::ShowInputs(k) => {
+                let items = self.work_inputs(k);
+                if items.is_empty() {
+                    self.file_status = Some(Ok(
+                        "Show Inputs: built from the origin or fixed in space".into(),
+                    ));
+                } else {
+                    self.sel = items;
+                    self.scene_dirty = true;
                 }
             }
             BrowserCmd::GroundPoint(k) => {
@@ -677,6 +690,15 @@ impl CadCraftApp {
             && ui.button("New Sketch").clicked()
         {
             cmds.push(BrowserCmd::NewSketchOn(PlaneRef::Work(w.id.clone())));
+            ui.close();
+        }
+        if matches!(f, Feature::Work(_))
+            && ui
+                .button("Show Inputs")
+                .on_hover_text("Select the faces, edges and work features it is built from")
+                .clicked()
+        {
+            cmds.push(BrowserCmd::ShowInputs(k));
             ui.close();
         }
         if let Feature::Work(w) = f
