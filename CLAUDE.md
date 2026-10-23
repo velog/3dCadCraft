@@ -580,6 +580,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   digit / sign (then the field is an expression evaluated with the part's parameters).
 - **Parameter units** (`part::expr::Unit`, format revision 17): every unit is a factor to mm / rad
   (`from_display` / `to_display`); test `is_angle()` / `is_length()`, never `== Unit::Deg`.
+- **Quantities** (`part/units.rs`): equations carry a dimension per value (`Dim`, powers of mm kg s K rad
+  A cd mol) and are checked against the parameter's `UnitDef` (`Unit::def()` or a user parameter's
+  `unit_spec`). `expr::eval` takes `Vars` returning `(value, dim)`; `eval_simple` gives every name the
+  target's dimension (only where that is true). A *bare* result takes the target's unit; a unitless
+  target accepts anything (old files had `count = d0 / 10`-style mixes). Names: a parameter wins over a
+  unit of the same name; after a number a name is a unit. Physical properties are values
+  (`eval_all_with` fixed), never equations, and no Dimension / Feature row may reach them.
 - **One visible face / edge from kernel pieces** (`kernel::smooth`): truck has no periodic faces or
   closed edges, so a cylinder comes in 2+ faces and a circle in 2+ arcs. Faces on the same *curved*
   analytic surface sharing an edge are one `smooth_group`; the edge between them is a seam

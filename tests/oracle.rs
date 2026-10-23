@@ -52,7 +52,7 @@ fn num(ctx: &Ctx, v: &Value) -> Result<Real, String> {
         Value::Number(n) => n.as_f64().ok_or_else(|| "bad number".into()),
         Value::String(s) => {
             let vars = |n: &str| ctx.params.get(n).copied();
-            cadcraft3d::part::expr::eval(s, cadcraft3d::part::expr::Unit::Mm, &vars)
+            cadcraft3d::part::expr::eval_simple(s, cadcraft3d::part::expr::Unit::Mm, &vars)
                 .map(|(v, _)| v)
                 .map_err(|e| format!("cannot evaluate '{s}': {e}"))
         }

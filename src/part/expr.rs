@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 
+use super::units::{self, Dim, UnitDef};
 use crate::kernel::Real;
 
 /// The kind of quantity a parameter holds.
@@ -96,6 +97,34 @@ impl Unit {
     }
 }
 
+impl Unit {
+    /// As a general unit (factor and dimension).
+    pub fn def(self) -> UnitDef {
+        let dim = if self.is_length() {
+            units::parse_spec("mm")
+                .map(|u| u.dim)
+                .unwrap_or(units::NONE)
+        } else if self.is_angle() {
+            units::parse_spec("rad")
+                .map(|u| u.dim)
+                .unwrap_or(units::NONE)
+        } else {
+            units::NONE
+        };
+        UnitDef {
+            factor: self.factor(),
+            offset: 0.0,
+            dim,
+        }
+    }
+}
+
+impl From<Unit> for UnitDef {
+    fn from(u: Unit) -> Self {
+        u.def()
+    }
+}
+
 /// An expression error, for the status bar / a red table cell.
 pub type ExprError = String;
 
@@ -168,37 +197,50 @@ fn lex(s: &str) -> Result<Vec<Tok>, ExprError> {
     Ok(out)
 }
 
-/// Units recognised after a value: (name, factor to internal units, is angle).
-fn unit_factor(name: &str) -> Option<(Real, bool)> {
-    Some(match name {
-        "mm" => (1.0, false),
-        "cm" => (10.0, false),
-        "m" => (1000.0, false),
-        "in" => (25.4, false),
-        "ft" => (304.8, false),
-        "um" => (0.001, false),
-        "deg" => (std::f64::consts::PI / 180.0, true),
-        "rad" => (1.0, true),
-        "ul" => (1.0, false),
-        _ => return None,
-    })
+/// The units of the first build (`mm cm m in ft um deg rad ul`): a
+/// parameter cannot be named after them.
+fn reserved_unit(name: &str) -> bool {
+    matches!(
+        name,
+        "mm" | "cm" | "m" | "in" | "ft" | "um" | "deg" | "rad" | "ul"
+    )
 }
+
+/// What names stand for while parsing: a parameter's internal value and
+/// dimension.
+pub type Vars<'a> = dyn Fn(&str) -> Option<(Real, Dim)> + 'a;
 
 struct Parser<'a> {
     toks: Vec<Tok>,
     pos: usize,
-    vars: &'a dyn Fn(&str) -> Option<Real>,
-    /// Unit of a bare number at the top level.
-    unit: Unit,
+    vars: &'a Vars<'a>,
+    /// Unit of the parameter being evaluated (bare numbers take it).
+    unit: UnitDef,
     /// Names the expression uses (for dependency order).
     used: Vec<String>,
 }
 
-/// A value and whether it carries a unit (a bare number does not).
+/// A value (internal units) and its dimension; a bare number has none.
 #[derive(Clone, Copy)]
 struct Q {
     v: Real,
-    unit: bool,
+    dim: Dim,
+}
+
+impl Q {
+    fn bare(v: Real) -> Self {
+        Self {
+            v,
+            dim: units::NONE,
+        }
+    }
+    fn is_bare(&self) -> bool {
+        self.dim == units::NONE
+    }
+}
+
+fn angle_dim() -> Dim {
+    Unit::Rad.def().dim
 }
 
 impl Parser<'_> {
@@ -213,14 +255,35 @@ impl Parser<'_> {
             false
         }
     }
-    /// A bare number meeting a value with a unit in a sum takes the unit
-    /// of the parameter (`d0 + 3` = d0 + 3 mm, `a + 15` = a + 15°).
-    fn align(&self, x: Q, y: Q) -> (Real, Real, bool) {
-        match (x.unit, y.unit) {
-            (true, false) => (x.v, self.unit.from_display(y.v), true),
-            (false, true) => (self.unit.from_display(x.v), y.v, true),
-            (u, _) => (x.v, y.v, u),
+    /// A bare number meeting a quantity in a sum takes the parameter's
+    /// unit when that is the same kind (`d0 + 3` = d0 + 3 mm, `a + 15` =
+    /// a + 15°), degrees for an angle, else the base unit.
+    fn as_like(&self, bare: Real, other: Dim) -> Real {
+        if units::compatible(self.unit.dim, other) && self.unit.dim != units::NONE {
+            bare * self.unit.factor
+        } else if other == angle_dim() {
+            bare.to_radians()
+        } else {
+            bare
         }
+    }
+    fn sum(&self, x: Q, y: Q, plus: bool) -> Result<Q, ExprError> {
+        let (a, b, dim) = match (x.is_bare(), y.is_bare()) {
+            (false, true) => (x.v, self.as_like(y.v, x.dim), x.dim),
+            (true, false) => (self.as_like(x.v, y.dim), y.v, y.dim),
+            _ if units::compatible(x.dim, y.dim) => (x.v, y.v, x.dim),
+            _ => {
+                return Err(format!(
+                    "cannot add {} and {}",
+                    units::category(x.dim),
+                    units::category(y.dim)
+                ));
+            }
+        };
+        Ok(Q {
+            v: if plus { a + b } else { a - b },
+            dim,
+        })
     }
     fn expr(&mut self) -> Result<Q, ExprError> {
         let mut q = self.term()?;
@@ -230,11 +293,7 @@ impl Parser<'_> {
                 return Ok(q);
             }
             let r = self.term()?;
-            let (a, b, unit) = self.align(q, r);
-            q = Q {
-                v: if plus { a + b } else { a - b },
-                unit,
-            };
+            q = self.sum(q, r, plus)?;
         }
     }
     fn term(&mut self) -> Result<Q, ExprError> {
@@ -244,17 +303,16 @@ impl Parser<'_> {
                 let r = self.unary()?;
                 q = Q {
                     v: q.v * r.v,
-                    unit: q.unit || r.unit,
+                    dim: units::mul(q.dim, r.dim),
                 };
             } else if self.eat('/') {
                 let d = self.unary()?;
                 if d.v == 0.0 {
                     return Err("division by zero".into());
                 }
-                // length / length is a ratio; length / number a length
                 q = Q {
                     v: q.v / d.v,
-                    unit: q.unit && !d.unit,
+                    dim: units::div(q.dim, d.dim),
                 };
             } else {
                 return Ok(q);
@@ -272,31 +330,47 @@ impl Parser<'_> {
         let base = self.atom()?;
         if self.eat('^') {
             let e = self.unary()?;
-            return Ok(Q {
-                v: base.v.powf(e.v),
-                unit: base.unit,
-            });
+            return power(base, e);
         }
         Ok(base)
     }
-    /// Applies a unit name following a value, if there is one.
-    fn unit_suffix(&mut self, q: Q) -> Q {
-        if let Some(Tok::Name(n)) = self.peek().cloned()
-            && let Some((f, _)) = unit_factor(&n)
+    /// A unit after a value (`10 mm`, `5 N`, `2 mm^2`), if there is one.
+    fn unit_suffix(&mut self, q: Q) -> Result<Q, ExprError> {
+        let Some(Tok::Name(n)) = self.peek().cloned() else {
+            return Ok(q);
+        };
+        let Some(u) = units::named(&n) else {
+            return Ok(q);
+        };
+        self.pos += 1;
+        // `mm^2`: the power belongs to the unit.
+        let mut u = u;
+        if self.peek() == Some(&Tok::Op('^'))
+            && let Some(Tok::Num(e)) = self.toks.get(self.pos + 1).cloned()
+            && e.fract() == 0.0
+            && e.abs() < 10.0
         {
-            self.pos += 1;
-            return Q {
-                v: q.v * f,
-                unit: n != "ul",
+            self.pos += 2;
+            let e = e as i8;
+            u = UnitDef {
+                factor: u.factor.powi(e as i32),
+                offset: 0.0,
+                dim: units::pow(u.dim, e),
             };
         }
-        q
+        if !q.is_bare() {
+            return Err(format!("a unit ('{n}') follows a value that has one"));
+        }
+        Ok(Q {
+            v: u.from_display(q.v),
+            dim: u.dim,
+        })
     }
     fn atom(&mut self) -> Result<Q, ExprError> {
         match self.peek().cloned() {
             Some(Tok::Num(v)) => {
                 self.pos += 1;
-                Ok(self.unit_suffix(Q { v, unit: false }))
+                self.unit_suffix(Q::bare(v))
             }
             Some(Tok::Op('(')) => {
                 self.pos += 1;
@@ -304,7 +378,11 @@ impl Parser<'_> {
                 if !self.eat(')') {
                     return Err("missing ')'".into());
                 }
-                Ok(self.unit_suffix(q))
+                if q.is_bare() {
+                    self.unit_suffix(q)
+                } else {
+                    Ok(q)
+                }
             }
             Some(Tok::Name(n)) => {
                 self.pos += 1;
@@ -319,28 +397,54 @@ impl Parser<'_> {
                     return call(&n, &args);
                 }
                 if n == "PI" || n == "pi" {
-                    return Ok(Q {
-                        v: std::f64::consts::PI,
-                        unit: false,
-                    });
+                    return Ok(Q::bare(std::f64::consts::PI));
                 }
                 if n == "E" {
+                    return Ok(Q::bare(std::f64::consts::E));
+                }
+                // A parameter first; else a unit on its own is one of it
+                // (`9.81 m/s^2`: `s` is one second).
+                if let Some((v, dim)) = (self.vars)(&n) {
+                    self.used.push(n.clone());
+                    return Ok(Q { v, dim });
+                }
+                if let Some(u) = units::named(&n) {
+                    if u.offset != 0.0 {
+                        return Err(format!("'{n}' needs a value before it (20 {n})"));
+                    }
                     return Ok(Q {
-                        v: std::f64::consts::E,
-                        unit: false,
+                        v: u.factor,
+                        dim: u.dim,
                     });
                 }
-                if unit_factor(&n).is_some() {
-                    return Err(format!("'{n}' is a unit, a value must come before it"));
-                }
                 self.used.push(n.clone());
-                let v = (self.vars)(&n).ok_or_else(|| format!("unknown parameter '{n}'"))?;
-                Ok(self.unit_suffix(Q { v, unit: true }))
+                Err(format!("unknown parameter '{n}'"))
             }
             Some(Tok::Op(c)) => Err(format!("unexpected '{c}'")),
             None => Err("incomplete expression".into()),
         }
     }
+}
+
+/// `base ^ e`: the exponent is a ratio; a quantity only to whole powers.
+fn power(base: Q, e: Q) -> Result<Q, ExprError> {
+    if !e.is_bare() {
+        return Err("an exponent cannot have a unit".into());
+    }
+    if base.is_bare() {
+        return Ok(Q::bare(base.v.powf(e.v)));
+    }
+    let r = e.v.round();
+    if (e.v - r).abs() > 1e-9 || r.abs() > 9.0 {
+        return Err(format!(
+            "{} can only be raised to a whole power",
+            units::category(base.dim)
+        ));
+    }
+    Ok(Q {
+        v: base.v.powf(e.v),
+        dim: units::pow(base.dim, r as i8),
+    })
 }
 
 fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
@@ -353,22 +457,69 @@ fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
     };
     // Trigonometry takes radians; a bare number is read as degrees
     // (sin(30) = sin(30 deg)), as Inventor users write it.
-    let angle = || one().map(|q| if q.unit { q.v } else { q.v.to_radians() });
-    let ratio = |v: Real| Q { v, unit: false };
-    let angle_out = |v: Real| Q { v, unit: true };
+    let angle = || {
+        one().and_then(|q| {
+            if q.is_bare() {
+                Ok(q.v.to_radians())
+            } else if units::compatible(q.dim, units::NONE) {
+                Ok(q.v)
+            } else {
+                Err(format!(
+                    "{f}() takes an angle, not {}",
+                    units::category(q.dim)
+                ))
+            }
+        })
+    };
+    // Functions of a ratio (exp, ln, asin…).
+    let ratio_in = || {
+        one().and_then(|q| {
+            if units::compatible(q.dim, units::NONE) {
+                Ok(q.v)
+            } else {
+                Err(format!(
+                    "{f}() takes a ratio, not {}",
+                    units::category(q.dim)
+                ))
+            }
+        })
+    };
+    let ratio = Q::bare;
+    let angle_out = |v: Real| Q {
+        v,
+        dim: angle_dim(),
+    };
+    let same = |name: &str| -> Result<Dim, ExprError> {
+        let d0 = a.first().map_or(units::NONE, |q| q.dim);
+        if a.iter()
+            .all(|q| q.is_bare() || units::compatible(q.dim, d0))
+        {
+            Ok(a.iter()
+                .find(|q| !q.is_bare())
+                .map_or(units::NONE, |q| q.dim))
+        } else {
+            Err(format!("{name}() takes values of one kind"))
+        }
+    };
     Ok(match f {
         "sin" => ratio(angle()?.sin()),
         "cos" => ratio(angle()?.cos()),
         "tan" => ratio(angle()?.tan()),
-        "asin" => angle_out(one()?.v.asin()),
-        "acos" => angle_out(one()?.v.acos()),
-        "atan" => angle_out(one()?.v.atan()),
+        "asin" => angle_out(ratio_in()?.asin()),
+        "acos" => angle_out(ratio_in()?.acos()),
+        "atan" => angle_out(ratio_in()?.atan()),
         "sqrt" => {
             let x = one()?;
             if x.v < 0.0 {
                 return Err("sqrt of a negative value".into());
             }
-            Q { v: x.v.sqrt(), ..x }
+            if x.dim.iter().any(|p| p % 2 != 0) {
+                return Err(format!("sqrt of {} has no unit", units::category(x.dim)));
+            }
+            Q {
+                v: x.v.sqrt(),
+                dim: std::array::from_fn(|k| x.dim[k] / 2),
+            }
         }
         "abs" => {
             let x = one()?;
@@ -392,19 +543,19 @@ fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
                 ..x
             }
         }
-        "sinh" => ratio(one()?.v.sinh()),
-        "cosh" => ratio(one()?.v.cosh()),
-        "tanh" => ratio(one()?.v.tanh()),
-        "asinh" => ratio(one()?.v.asinh()),
-        "acosh" => ratio(one()?.v.acosh()),
-        "atanh" => ratio(one()?.v.atanh()),
-        "exp" => ratio(one()?.v.exp()),
+        "sinh" => ratio(ratio_in()?.sinh()),
+        "cosh" => ratio(ratio_in()?.cosh()),
+        "tanh" => ratio(ratio_in()?.tanh()),
+        "asinh" => ratio(ratio_in()?.asinh()),
+        "acosh" => ratio(ratio_in()?.acosh()),
+        "atanh" => ratio(ratio_in()?.atanh()),
+        "exp" => ratio(ratio_in()?.exp()),
         "ln" | "log" => {
-            let x = one()?;
-            if x.v <= 0.0 {
+            let x = ratio_in()?;
+            if x <= 0.0 {
                 return Err(format!("{f} of a value that is not positive"));
             }
-            ratio(if f == "ln" { x.v.ln() } else { x.v.log10() })
+            ratio(if f == "ln" { x.ln() } else { x.log10() })
         }
         "sign" => {
             let x = one()?;
@@ -420,30 +571,32 @@ fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
             let [x, y] = a else {
                 return Err("pow() takes two arguments".into());
             };
-            Q {
-                v: x.v.powf(y.v),
-                unit: x.unit,
-            }
+            power(*x, *y)?
         }
         "min" if !a.is_empty() => Q {
             v: a.iter().map(|q| q.v).fold(Real::INFINITY, Real::min),
-            unit: a.iter().any(|q| q.unit),
+            dim: same("min")?,
         },
         "max" if !a.is_empty() => Q {
             v: a.iter().map(|q| q.v).fold(Real::NEG_INFINITY, Real::max),
-            unit: a.iter().any(|q| q.unit),
+            dim: same("max")?,
         },
         _ => return Err(format!("unknown function '{f}'")),
     })
 }
 
-/// Evaluates `text` for a parameter of `unit`, looking names up in `vars`.
-/// Returns the value (internal units) and the names it used.
+/// Evaluates `text` for a parameter of `unit`, looking names up in `vars`
+/// (their internal values and dimensions). Returns the value (internal
+/// units) and the names it used. The result must be of the parameter's
+/// kind: `Force / Length` into N/m converts from N/mm, into a length it is
+/// an error; a bare result takes the parameter's unit; a unitless
+/// parameter takes any value (as it always did).
 pub fn eval(
     text: &str,
-    unit: Unit,
-    vars: &dyn Fn(&str) -> Option<Real>,
+    unit: impl Into<UnitDef>,
+    vars: &Vars<'_>,
 ) -> Result<(Real, Vec<String>), ExprError> {
+    let unit = unit.into();
     let toks = lex(text)?;
     if toks.is_empty() {
         return Err("empty expression".into());
@@ -459,23 +612,45 @@ pub fn eval(
     if p.pos != p.toks.len() {
         return Err("unexpected text at the end".into());
     }
-    // A bare result takes the parameter's unit ("45" for an angle = 45°).
-    let v = if q.unit { q.v } else { unit.from_display(q.v) };
+    let v = if q.is_bare() {
+        unit.from_display(q.v)
+    } else if unit.dim == units::NONE || units::compatible(q.dim, unit.dim) {
+        q.v
+    } else {
+        return Err(format!(
+            "the result is {}, the parameter is {}",
+            units::category(q.dim),
+            units::category(unit.dim)
+        ));
+    };
     if !v.is_finite() {
         return Err("the result is not a finite number".into());
     }
     Ok((v, p.used))
 }
 
+/// [`eval`] where every name has the dimension of `unit` (fields that
+/// only meet values of their own kind, tests).
+pub fn eval_simple(
+    text: &str,
+    unit: impl Into<UnitDef>,
+    vars: &dyn Fn(&str) -> Option<Real>,
+) -> Result<(Real, Vec<String>), ExprError> {
+    let unit = unit.into();
+    eval(text, unit, &|n| vars(n).map(|v| (v, unit.dim)))
+}
+
 /// The parameter names an expression refers to (no evaluation errors for
-/// unknown names).
+/// unknown names). A unit right after a value (`10 mm`) is not one.
 pub fn names_in(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     if let Ok(toks) = lex(text) {
         for (i, t) in toks.iter().enumerate() {
+            let after_value = i > 0 && matches!(toks[i - 1], Tok::Num(_) | Tok::Op(')'));
             if let Tok::Name(n) = t
                 && toks.get(i + 1) != Some(&Tok::Op('('))
-                && unit_factor(n).is_none()
+                && !(after_value && units::named(n).is_some())
+                && !reserved_unit(n)
                 && n != "PI"
                 && n != "pi"
                 && n != "E"
@@ -489,10 +664,13 @@ pub fn names_in(text: &str) -> Vec<String> {
 
 /// Is `text` a plain number (possibly with a unit), not an equation?
 pub fn is_plain_number(text: &str) -> bool {
-    matches!(
-        lex(text).as_deref(),
-        Ok([Tok::Num(_)]) | Ok([Tok::Num(_), Tok::Name(_)]) | Ok([Tok::Op('-'), Tok::Num(_)])
-    )
+    match lex(text).as_deref() {
+        Ok([Tok::Num(_)]) | Ok([Tok::Op('-'), Tok::Num(_)]) => true,
+        Ok([Tok::Num(_), Tok::Name(n)]) | Ok([Tok::Op('-'), Tok::Num(_), Tok::Name(n)]) => {
+            units::named(n).is_some()
+        }
+        _ => false,
+    }
 }
 
 /// Is `name` usable as a parameter name?
@@ -500,59 +678,49 @@ pub fn valid_name(name: &str) -> bool {
     let mut cs = name.chars();
     cs.next().is_some_and(|c| c.is_alphabetic() || c == '_')
         && cs.all(|c| c.is_alphanumeric() || c == '_')
-        && unit_factor(name).is_none()
-        && !matches!(
-            name,
-            "PI" | "pi"
-                | "E"
-                | "sinh"
-                | "cosh"
-                | "tanh"
-                | "asinh"
-                | "acosh"
-                | "atanh"
-                | "exp"
-                | "ln"
-                | "log"
-                | "sign"
-                | "pow"
-                | "sin"
-                | "cos"
-                | "tan"
-                | "asin"
-                | "acos"
-                | "atan"
-                | "sqrt"
-                | "abs"
-                | "floor"
-                | "ceil"
-                | "round"
-                | "min"
-                | "max"
-        )
+        && !reserved_unit(name)
+        && !FUNCTIONS.contains(&name)
+        && !matches!(name, "PI" | "pi" | "E")
 }
 
+/// The functions of an expression (also the suggestions while typing).
+pub const FUNCTIONS: &[&str] = &[
+    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+    "sqrt", "abs", "floor", "ceil", "round", "sign", "exp", "ln", "log", "pow", "min", "max",
+];
+
 /// Evaluates a set of named expressions in dependency order. Returns the
-/// values, and per-name errors (cycles, unknown names, bad syntax). A name
+/// values (internal units, with their dimensions), and per-name errors
+/// (cycles, unknown names, bad syntax, a result of the wrong kind). A name
 /// whose expression fails keeps no value, and so do the names using it.
 pub fn eval_all(
-    exprs: &[(String, String, Unit)],
-) -> (HashMap<String, Real>, HashMap<String, ExprError>) {
+    exprs: &[(String, String, UnitDef)],
+) -> (HashMap<String, (Real, Dim)>, HashMap<String, ExprError>) {
+    eval_all_with(exprs, &HashMap::new())
+}
+
+/// [`eval_all`] with read-only values `fixed` the expressions may use
+/// (the part's physical properties).
+pub fn eval_all_with(
+    exprs: &[(String, String, UnitDef)],
+    fixed: &HashMap<String, (Real, Dim)>,
+) -> (HashMap<String, (Real, Dim)>, HashMap<String, ExprError>) {
     let by_name: HashMap<&str, usize> = exprs
         .iter()
         .enumerate()
         .map(|(i, (n, _, _))| (n.as_str(), i))
         .collect();
-    let mut values: HashMap<String, Real> = HashMap::new();
+    let mut values: HashMap<String, (Real, Dim)> = fixed.clone();
     let mut errors: HashMap<String, ExprError> = HashMap::new();
     // 0 = new, 1 = in progress, 2 = done
     let mut state = vec![0u8; exprs.len()];
+    type Values = HashMap<String, (Real, Dim)>;
     fn visit(
         i: usize,
-        exprs: &[(String, String, Unit)],
+        exprs: &[(String, String, UnitDef)],
         by_name: &HashMap<&str, usize>,
         state: &mut [u8],
-        values: &mut HashMap<String, Real>,
+        values: &mut Values,
         errors: &mut HashMap<String, ExprError>,
     ) {
         if state[i] == 2 {
@@ -580,7 +748,7 @@ pub fn eval_all(
         if !errors.contains_key(name) {
             match eval(text, *unit, &|n| values.get(n).copied()) {
                 Ok((v, _)) => {
-                    values.insert(name.clone(), v);
+                    values.insert(name.clone(), (v, unit.dim));
                 }
                 Err(e) => {
                     errors.insert(name.clone(), e);
@@ -592,6 +760,11 @@ pub fn eval_all(
     for i in 0..exprs.len() {
         visit(i, exprs, &by_name, &mut state, &mut values, &mut errors);
     }
+    for k in fixed.keys() {
+        if !by_name.contains_key(k.as_str()) {
+            values.remove(k);
+        }
+    }
     (values, errors)
 }
 
@@ -601,8 +774,8 @@ mod tests {
 
     fn ev(s: &str, u: Unit) -> Real {
         let vars = |n: &str| match n {
-            "d0" => Some(40.0),
-            "a" => Some(30f64.to_radians()),
+            "d0" => Some((40.0, Unit::Mm.def().dim)),
+            "a" => Some((30f64.to_radians(), Unit::Deg.def().dim)),
             _ => None,
         };
         eval(s, u, &vars).unwrap().0
@@ -631,7 +804,7 @@ mod tests {
         assert_eq!(ev("max(1, 5, 3)", Unit::Ul), 5.0);
         assert!((ev("2 * PI", Unit::Ul) - std::f64::consts::TAU).abs() < 1e-12);
         assert!((ev("90°", Unit::Deg) - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
-        for bad in ["", "2 +", "(1", "foo", "1 / 0", "2 3", "mm"] {
+        for bad in ["", "2 +", "(1", "foo", "1 / 0", "2 3", "1 kg"] {
             assert!(eval(bad, Unit::Mm, &|_| None).is_err(), "{bad}");
         }
         assert!(is_plain_number("12.5") && is_plain_number("3 mm") && !is_plain_number("d0/2"));
@@ -640,13 +813,13 @@ mod tests {
 
     #[test]
     fn dependency_order_and_cycles() {
-        let e = |n: &str, t: &str| (n.to_owned(), t.to_owned(), Unit::Mm);
+        let e = |n: &str, t: &str| (n.to_owned(), t.to_owned(), Unit::Mm.def());
         let (v, err) = eval_all(&[e("c", "b * 2"), e("b", "a + 1"), e("a", "10")]);
-        assert_eq!((v["a"], v["b"], v["c"]), (10.0, 11.0, 22.0));
+        assert_eq!((v["a"].0, v["b"].0, v["c"].0), (10.0, 11.0, 22.0));
         assert!(err.is_empty());
         let (v, err) = eval_all(&[e("x", "y"), e("y", "x"), e("z", "5")]);
         assert!(err.contains_key("x") && err.contains_key("y"));
-        assert_eq!(v["z"], 5.0);
+        assert_eq!(v["z"].0, 5.0);
     }
 }
 
@@ -658,7 +831,7 @@ mod unit_tests {
     /// mm / rad and back.
     #[test]
     fn parameter_units_convert() {
-        let none = |_: &str| None;
+        let none = |_: &str| -> Option<(Real, Dim)> { None };
         for (u, typed, internal) in [
             (Unit::Mm, "2", 2.0),
             (Unit::Cm, "2", 20.0),
@@ -692,5 +865,55 @@ mod unit_tests {
         }
         assert!(eval("ln(0)", Unit::Ul, &none).is_err());
         assert!(!valid_name("pow") && !valid_name("E"));
+    }
+}
+
+#[cfg(test)]
+mod dim_tests {
+    use super::*;
+
+    fn spec(s: &str) -> UnitDef {
+        units::parse_spec(s).unwrap_or_else(|e| panic!("{s}: {e}"))
+    }
+
+    /// Units in equations, checked and converted by dimension: a force over
+    /// a length into N/m converts from N/mm; a wrong kind is an error.
+    #[test]
+    fn quantities_in_equations() {
+        let force = spec("N");
+        let len = spec("mm");
+        let vars = |n: &str| match n {
+            "F" => Some((force.from_display(500.0), force.dim)),
+            "L" => Some((len.from_display(250.0), len.dim)),
+            _ => None,
+        };
+        let shown = |text: &str, unit: &str| {
+            let u = spec(unit);
+            let (v, _) = eval(text, u, &vars).unwrap_or_else(|e| panic!("{text}: {e}"));
+            u.to_display(v)
+        };
+        let close = |a: Real, b: Real| (a - b).abs() <= 1e-9 * b.abs().max(1.0);
+        assert!(close(shown("F / L", "N/mm"), 2.0));
+        assert!(close(shown("F / L", "N/m"), 2000.0));
+        assert!(close(shown("F * L", "N*m"), 125.0));
+        assert!(close(shown("5 N / 2 mm", "N/mm"), 2.5));
+        assert!(close(shown("100 km/h", "m/s"), 100.0 / 3.6));
+        assert!(close(shown("2 kg * 9.81 m/s^2", "N"), 19.62));
+        assert!(close(shown("10 mm^2 * 3 mm", "mm^3"), 30.0));
+        assert!(close(shown("sqrt(16 mm^2)", "mm"), 4.0));
+        assert!(close(shown("F / (10 mm^2)", "MPa"), 50.0));
+        assert!(close(shown("20 degC", "degF"), 68.0));
+        // A bare number takes the parameter's unit.
+        assert!(close(shown("3", "N/m"), 3.0));
+        // Wrong kinds.
+        let bad = |text: &str, unit: &str| eval(text, spec(unit), &vars).is_err();
+        assert!(bad("F / L", "mm"), "a force per length is not a length");
+        assert!(bad("F + L", "N"), "cannot add a force and a length");
+        assert!(bad("L ^ 1.5", "mm"), "whole powers only");
+        assert!(bad("sin(L)", "ul"), "sin of a length");
+        // A unitless parameter takes any value (as before).
+        assert!(eval("L / 10", spec("ul"), &vars).is_ok());
+        assert!(names_in("F / L * 2 mm").contains(&"F".to_owned()));
+        assert!(!names_in("2 mm + 3 kg").contains(&"mm".to_owned()));
     }
 }

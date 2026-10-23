@@ -510,6 +510,8 @@ struct CadCraftApp {
     param_buf: std::collections::HashMap<String, String>,
     /// Parameters table filter: All, User, Model, Used, Unused.
     param_filter: u8,
+    /// The body the table's physical properties were measured on.
+    param_phys_key: String,
     /// The in-place dimension editor shows its tolerance part.
     dim_tol_open: bool,
     /// How dimension texts are shown (status bar: Value / Name / …).
@@ -777,6 +779,7 @@ impl CadCraftApp {
             show_params: false,
             param_buf: Default::default(),
             param_filter: 0,
+            param_phys_key: String::new(),
             target_pick: None,
             extrude_preview: Default::default(),
             preview_job: Default::default(),
@@ -2767,11 +2770,11 @@ impl CadCraftApp {
         }
         // The field's value: an expression with the part's parameters (the
         // field's unit for bare numbers: degrees for angles, mm otherwise).
-        let params: std::collections::HashMap<String, f64> = self
+        let params: std::collections::HashMap<String, (f64, crate::part::units::Dim)> = self
             .part()
             .parameter_table()
             .into_iter()
-            .map(|r| (r.name, r.value))
+            .map(|r| (r.name.clone(), (r.value, r.def().dim)))
             .collect();
         let angle = |hud: &Hud, names: &[&str]| {
             names.get(hud.focus).is_some_and(|n| n.starts_with("Angle"))

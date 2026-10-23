@@ -53,6 +53,7 @@ pub mod shell;
 pub mod split;
 pub mod standards;
 pub mod sweep;
+pub mod units;
 pub mod work;
 
 use std::collections::HashMap;
@@ -815,6 +816,10 @@ pub struct PartDocument {
     /// Parameters whose equation failed at the last evaluation.
     #[serde(skip)]
     pub param_errors: HashMap<String, String>,
+    /// Mass (kg), volume, area, centre of gravity of the last regeneration
+    /// that needed them (`params::PHYSICAL`; runtime only).
+    #[serde(skip)]
+    pub physical_values: Option<[Real; 6]>,
     /// Work planes, axes and points as computed at the last regeneration
     /// (by feature id); sick ones are missing.
     #[serde(skip)]
@@ -915,6 +920,13 @@ impl PartDocument {
             {
                 *h = format!("the geometry kernel failed: {msg}");
             }
+        }
+        // Equations on the physical properties: measured on the new body,
+        // then those user parameters evaluated again (no size depends on
+        // them, `evaluate_parameters` refuses that).
+        if self.uses_physical() {
+            self.update_physical();
+            self.evaluate_parameters();
         }
         Ok(())
     }

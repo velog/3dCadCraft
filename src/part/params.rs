@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::expr::{self, Unit};
+use super::units::{self, UnitDef};
 use super::{Feature, PartDocument, PartError};
 use crate::kernel::Real;
 use crate::sketch::{ConstraintId, Tolerance};
@@ -30,6 +31,28 @@ pub struct UserParam {
     /// Last evaluated value (internal units).
     #[serde(default)]
     pub value: Real,
+    /// A unit specification beyond [`Unit`] (`N/m`, `kg`, `MPa`, `km/h`):
+    /// it wins over `unit`, which then holds the nearest old kind for older
+    /// builds (format revision 18).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_spec: Option<String>,
+}
+
+impl UserParam {
+    /// The parameter's unit.
+    pub fn def(&self) -> UnitDef {
+        self.unit_spec
+            .as_deref()
+            .and_then(|s| units::parse_spec(s).ok())
+            .unwrap_or_else(|| self.unit.def())
+    }
+
+    /// The unit as shown and typed.
+    pub fn unit_label(&self) -> String {
+        self.unit_spec
+            .clone()
+            .unwrap_or_else(|| self.unit.label().to_owned())
+    }
 }
 
 /// Name and equation of one numeric field of a feature.
@@ -57,6 +80,8 @@ impl FeatureParams {
 /// Where a parameter lives.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParamOwner {
+    /// A physical property of the part (`PHYSICAL[k]`, read only).
+    Physical(usize),
     /// A dimension of a sketch.
     Dimension {
         /// Sketch index.
@@ -94,6 +119,9 @@ pub struct ParamRow {
     pub tol: Option<Tolerance>,
     /// Comment.
     pub comment: String,
+    /// A unit specification beyond `unit` (user parameters, physical
+    /// properties).
+    pub spec: Option<String>,
 }
 
 impl ParamRow {
@@ -101,8 +129,56 @@ impl ParamRow {
     pub fn equation(&self) -> String {
         self.expr
             .clone()
-            .unwrap_or_else(|| format_value(self.value, self.unit))
+            .unwrap_or_else(|| format_in(self.value, self.def(), &self.unit_label()))
     }
+
+    /// The row's unit.
+    pub fn def(&self) -> UnitDef {
+        self.spec
+            .as_deref()
+            .and_then(|s| units::parse_spec(s).ok())
+            .unwrap_or_else(|| self.unit.def())
+    }
+
+    /// The unit as shown.
+    pub fn unit_label(&self) -> String {
+        self.spec
+            .clone()
+            .unwrap_or_else(|| self.unit.label().to_owned())
+    }
+
+    /// The value as shown in the row's unit.
+    pub fn shown(&self) -> String {
+        format_in(self.value, self.def(), &self.unit_label())
+    }
+}
+
+/// A value in a unit with its label (`12.5 mm`, `3.2 N/m`, `5` unitless).
+pub fn format_in(v: Real, def: UnitDef, label: &str) -> String {
+    let d = def.to_display(v);
+    let s = format!("{d:.6}");
+    let s = s.trim_end_matches('0').trim_end_matches('.').to_owned();
+    if label.is_empty() || label == "ul" {
+        s
+    } else {
+        format!("{s} {label}")
+    }
+}
+
+/// The part's physical properties as read-only parameters: name, unit,
+/// how it is read from the result.
+pub const PHYSICAL: [(&str, &str); 6] = [
+    ("PartMass", "kg"),
+    ("PartVolume", "mm^3"),
+    ("PartArea", "mm^2"),
+    ("PartCogX", "mm"),
+    ("PartCogY", "mm"),
+    ("PartCogZ", "mm"),
+];
+
+/// Whether `name` is one of [`PHYSICAL`].
+pub fn is_physical(name: &str) -> bool {
+    PHYSICAL.iter().any(|(n, _)| *n == name)
 }
 
 /// A value as typed in its unit (`12.5 mm`, `30 deg`).
@@ -599,6 +675,7 @@ impl PartDocument {
                     value: if unit.is_angle() { value.abs() } else { value },
                     tol: Some(p.tol),
                     comment: p.comment.clone(),
+                    spec: None,
                 });
             }
         }
@@ -617,6 +694,7 @@ impl PartDocument {
                     value: feature_value(f, field).unwrap_or_default(),
                     tol: None,
                     comment: String::new(),
+                    spec: None,
                 });
             }
         }
@@ -630,9 +708,73 @@ impl PartDocument {
                 value: u.value,
                 tol: None,
                 comment: u.comment.clone(),
+                spec: u.unit_spec.clone(),
             });
         }
+        // The physical properties of the last regeneration (read only).
+        if let Some(vals) = &self.physical_values {
+            for (k, (name, unit)) in PHYSICAL.iter().enumerate() {
+                rows.push(ParamRow {
+                    name: (*name).to_owned(),
+                    owner: ParamOwner::Physical(k),
+                    consumed_by: "Physical properties".to_owned(),
+                    unit: if *unit == "mm" { Unit::Mm } else { Unit::Ul },
+                    expr: None,
+                    value: vals[k],
+                    tol: None,
+                    comment: String::new(),
+                    spec: Some((*unit).to_owned()),
+                });
+            }
+        }
         rows
+    }
+
+    /// The physical-property values for the equations (internal units with
+    /// their dimensions).
+    pub fn physical_fixed(&self) -> std::collections::HashMap<String, (Real, units::Dim)> {
+        let mut out = std::collections::HashMap::new();
+        if let Some(vals) = &self.physical_values {
+            for (k, (name, unit)) in PHYSICAL.iter().enumerate() {
+                if let Ok(u) = units::parse_spec(unit) {
+                    out.insert((*name).to_owned(), (vals[k], u.dim));
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether some equation uses a physical property.
+    pub fn uses_physical(&self) -> bool {
+        self.user_params
+            .iter()
+            .map(|u| u.expr.as_str())
+            .chain(
+                self.parameter_table()
+                    .iter()
+                    .filter_map(|r| r.expr.as_deref())
+                    .collect::<Vec<_>>(),
+            )
+            .any(|e| expr::names_in(e).iter().any(|n| is_physical(n)))
+    }
+
+    /// Computes the physical properties of the body as it is now (mass with
+    /// the materials' densities, display accuracy).
+    pub fn update_physical(&mut self) {
+        self.physical_values =
+            super::physical::physical_properties(self, super::physical::Accuracy::default())
+                .ok()
+                .map(|p| {
+                    let t = &p.total;
+                    [
+                        t.mass / 1000.0,
+                        t.volume,
+                        t.area,
+                        t.center.x,
+                        t.center.y,
+                        t.center.z,
+                    ]
+                });
     }
 
     /// Evaluates every equation in dependency order and writes the results
@@ -641,18 +783,34 @@ impl PartDocument {
     pub fn evaluate_parameters(&mut self) {
         self.apply_pattern_counts();
         let rows = self.parameter_table();
-        let mut list: Vec<(String, String, Unit)> = rows
+        let list = self.equations(&rows);
+        let fixed = self.physical_fixed();
+        let (values, mut errors) = expr::eval_all_with(&list, &fixed);
+        // A size cannot follow the part's mass / volume / area: it would
+        // change what it follows (and the part would build differently
+        // each time). Only user parameters may use them.
+        let geometry: Vec<&ParamRow> = rows
             .iter()
-            .map(|r| (r.name.clone(), r.equation(), r.unit))
+            .filter(|r| {
+                matches!(
+                    r.owner,
+                    ParamOwner::Dimension { .. } | ParamOwner::Feature { .. }
+                )
+            })
             .collect();
-        for u in &self.user_params {
-            if let Some(e) = list.iter_mut().find(|e| e.0 == u.name) {
-                e.1 = u.expr.clone();
+        for r in geometry {
+            if let Some(p) = physical_dependency(&r.name, &list) {
+                errors.insert(
+                    r.name.clone(),
+                    format!("a size cannot depend on {p} (it would change it)"),
+                );
             }
         }
-        let (values, errors) = expr::eval_all(&list);
         for r in &rows {
-            let Some(&v) = values.get(&r.name) else {
+            if errors.contains_key(&r.name) {
+                continue;
+            }
+            let Some(&(v, _)) = values.get(&r.name) else {
                 continue;
             };
             match &r.owner {
@@ -671,6 +829,22 @@ impl PartDocument {
         self.param_errors = errors.into_iter().collect();
     }
 
+    /// The equations of the table (physical properties are values, not
+    /// equations).
+    fn equations(&self, rows: &[ParamRow]) -> Vec<(String, String, UnitDef)> {
+        let mut list: Vec<(String, String, UnitDef)> = rows
+            .iter()
+            .filter(|r| !matches!(r.owner, ParamOwner::Physical(_)))
+            .map(|r| (r.name.clone(), r.equation(), r.def()))
+            .collect();
+        for u in &self.user_params {
+            if let Some(e) = list.iter_mut().find(|e| e.0 == u.name) {
+                e.1 = u.expr.clone();
+            }
+        }
+        list
+    }
+
     /// Sketch patterns whose count has an equation: rebuilt with the
     /// evaluated count (rounded, at least 1; 2 for circular). Runs before
     /// the dimensions are evaluated, since a rebuild renews the pattern's
@@ -685,16 +859,8 @@ impl PartDocument {
             return;
         }
         let rows = self.parameter_table();
-        let mut list: Vec<(String, String, Unit)> = rows
-            .iter()
-            .map(|r| (r.name.clone(), r.equation(), r.unit))
-            .collect();
-        for u in &self.user_params {
-            if let Some(e) = list.iter_mut().find(|e| e.0 == u.name) {
-                e.1 = u.expr.clone();
-            }
-        }
-        let (values, _) = expr::eval_all(&list);
+        let list = self.equations(&rows);
+        let (values, _) = expr::eval_all_with(&list, &self.physical_fixed());
         let lookup = |n: &str| values.get(n).copied();
         let count = |e: &Option<String>| -> Option<usize> {
             let (v, _) = expr::eval(e.as_deref()?, Unit::Ul, &lookup).ok()?;
@@ -750,11 +916,17 @@ impl PartDocument {
         let before = self.clone();
         let plain = expr::is_plain_number(text);
         // Check it alone first (clear message for a typo).
-        let (value, _) = expr::eval(text, row.unit, &|n| {
-            self.parameter_table()
-                .into_iter()
+        if matches!(row.owner, ParamOwner::Physical(_)) {
+            return Err(PartError::Feature(format!(
+                "{name} is a physical property of the part (read only)"
+            )));
+        }
+        let table = self.parameter_table();
+        let (value, _) = expr::eval(text, row.def(), &|n| {
+            table
+                .iter()
                 .find(|r| r.name == n)
-                .map(|r| r.value)
+                .map(|r| (r.value, r.def().dim))
         })
         .map_err(|e| PartError::Feature(format!("{name}: {e}")))?;
         let stored = (!plain).then(|| text.to_owned());
@@ -778,6 +950,7 @@ impl PartDocument {
                 self.user_params[i].expr = text.to_owned();
                 self.user_params[i].value = value;
             }
+            ParamOwner::Physical(_) => {}
         }
         self.evaluate_parameters();
         if let Some(e) = self.param_errors.get(name).cloned() {
@@ -819,6 +992,11 @@ impl PartDocument {
                 }
             }
             ParamOwner::User(i) => self.user_params[i].name = new.to_owned(),
+            ParamOwner::Physical(_) => {
+                return Err(PartError::Feature(format!(
+                    "{old} is a physical property; it keeps its name"
+                )));
+            }
         }
         // Equations that used the old name.
         for ps in &mut self.sketches {
@@ -862,8 +1040,62 @@ impl PartDocument {
             unit,
             comment: String::new(),
             value,
+            unit_spec: None,
         });
         name
+    }
+
+    /// Sets user parameter `i`'s unit from a specification (`N/m`, `kg`,
+    /// `mm`). A plain value of the same kind keeps its size (25.4 mm →
+    /// 1 in); of another kind it keeps its number; an equation stays as
+    /// typed and is evaluated again. A bad specification changes nothing.
+    pub fn set_user_unit(&mut self, i: usize, spec: &str) -> Result<(), PartError> {
+        let spec = spec.trim();
+        let new = units::parse_spec(spec).map_err(PartError::Feature)?;
+        let Some(p) = self.user_params.get(i) else {
+            return Err(PartError::Feature("no such user parameter".into()));
+        };
+        let old = p.def();
+        let (name, expr, value) = (p.name.clone(), p.expr.clone(), p.value);
+        let before = self.user_params[i].clone();
+        // An old kind when the specification is one (files stay readable by
+        // older builds), else the nearest old kind and the specification.
+        let legacy = Unit::ALL.into_iter().find(|u| u.label() == spec);
+        {
+            let p = &mut self.user_params[i];
+            match legacy {
+                Some(u) => {
+                    p.unit = u;
+                    p.unit_spec = None;
+                }
+                None => {
+                    p.unit = if new.dim == Unit::Mm.def().dim {
+                        Unit::Mm
+                    } else if new.is_angle() {
+                        Unit::Deg
+                    } else {
+                        Unit::Ul
+                    };
+                    p.unit_spec = Some(spec.to_owned());
+                }
+            }
+        }
+        let label = self.user_params[i].unit_label();
+        let r = if expr::is_plain_number(&expr) {
+            let shown = if units::compatible(old.dim, new.dim) {
+                new.to_display(value)
+            } else {
+                old.to_display(value)
+            };
+            let text = format_in(new.from_display(shown), new, &label);
+            self.set_parameter_expr(&name, &text)
+        } else {
+            self.set_parameter_expr(&name, &expr)
+        };
+        if r.is_err() {
+            self.user_params[i] = before;
+        }
+        r
     }
 
     /// Parameters whose equations use `name`.
@@ -934,6 +1166,28 @@ impl PartDocument {
     }
 }
 
+/// The physical property `name`'s equation reaches through other
+/// equations, if any.
+fn physical_dependency(name: &str, list: &[(String, String, UnitDef)]) -> Option<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut todo = vec![name.to_owned()];
+    while let Some(n) = todo.pop() {
+        let Some((_, text, _)) = list.iter().find(|e| e.0 == n) else {
+            continue;
+        };
+        for dep in expr::names_in(text) {
+            if is_physical(&dep) {
+                return Some(dep);
+            }
+            if !seen.contains(&dep) {
+                seen.push(dep.clone());
+                todo.push(dep);
+            }
+        }
+    }
+    None
+}
+
 /// Splits field input `name = expr` into the new name and the expression
 /// (`None` when there is no valid assignment).
 pub fn split_assignment(text: &str) -> (Option<String>, String) {
@@ -951,9 +1205,10 @@ pub fn split_assignment(text: &str) -> (Option<String>, String) {
 pub fn eval_field_in(
     table: &[ParamRow],
     text: &str,
-    unit: Unit,
+    unit: impl Into<UnitDef>,
     own: Option<&str>,
 ) -> Result<(Option<String>, Real, Option<String>), String> {
+    let unit: UnitDef = unit.into();
     let (name, body) = split_assignment(text);
     if let Some(n) = &name
         && Some(n.as_str()) != own
@@ -963,9 +1218,18 @@ pub fn eval_field_in(
     }
     let (value, used) = expr::eval(&body, unit, &|n| {
         (Some(n) != own)
-            .then(|| table.iter().find(|r| r.name == n).map(|r| r.value))
+            .then(|| {
+                table
+                    .iter()
+                    .find(|r| r.name == n)
+                    .map(|r| (r.value, r.def().dim))
+            })
             .flatten()
     })?;
+    // A feature field (a size) cannot follow a physical property.
+    if let Some(p) = used.iter().find(|n| is_physical(n)) {
+        return Err(format!("a size cannot depend on {p} (it would change it)"));
+    }
     if let Some(o) = own
         && used.iter().any(|u| u == o)
     {
@@ -1202,6 +1466,70 @@ mod box_params {
 
     /// The box's sizes are parameters: an equation on a user parameter
     /// follows it (they were plain numbers, not parametric).
+    /// The part's volume as a read-only parameter: a user parameter
+    /// follows it after each regeneration; a size may not (it would change
+    /// what it follows); units of the result are checked (`mm^3` into cm^3).
+    #[test]
+    fn physical_properties_in_equations() {
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let v = part.add_user_parameter(Unit::Ul);
+        part.user_params[0].unit_spec = Some("cm^3".into());
+        part.set_parameter_expr(&v, "PartVolume").ok();
+        part.user_params[0].expr = "PartVolume".into();
+        part.regenerate().unwrap();
+        let shown = super::super::units::parse_spec("cm^3")
+            .unwrap()
+            .to_display(part.user_params[0].value);
+        assert!((shown - 24.0).abs() < 1e-6, "{shown} cm^3");
+        assert!(part.parameter("PartMass").is_some());
+        // A size following the volume (through a length) is refused.
+        let w = part.add_user_parameter(Unit::Mm);
+        part.user_params[1].expr = "PartVolume / 1000 mm^2".into();
+        part.regenerate().unwrap();
+        assert!((part.user_params[1].value - 24.0).abs() < 1e-6);
+        let e = part.set_feature_field(0, "width", &w).unwrap_err();
+        assert!(e.to_string().contains("PartVolume"), "{e}");
+        assert!(
+            part.set_parameter_expr("PartMass", "5").is_err(),
+            "read only"
+        );
+    }
+
+    /// Unit specifications: a plain value keeps its size within a kind, an
+    /// equation of the wrong kind is refused and nothing changes.
+    #[test]
+    fn user_parameter_units() {
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let k = part.add_user_parameter(Unit::Mm);
+        part.set_parameter_expr(&k, "25.4").unwrap();
+        part.set_user_unit(0, "in").unwrap();
+        assert_eq!(part.user_params[0].expr, "1 in");
+        assert!(part.user_params[0].unit_spec.is_none(), "an old kind");
+        part.set_user_unit(0, "N/m").unwrap();
+        assert_eq!(part.user_params[0].unit_spec.as_deref(), Some("N/m"));
+        assert_eq!(
+            part.user_params[0].expr, "1 N/m",
+            "another kind keeps the number"
+        );
+        let f = part.add_user_parameter(Unit::Ul);
+        part.set_user_unit(1, "N").unwrap();
+        part.set_parameter_expr(&f, "500").unwrap();
+        // 500 N over a 40 mm box length = 12.5 N/mm = 12500 N/m.
+        part.set_parameter_expr(&k, &format!("{f} / 40 mm"))
+            .unwrap();
+        let shown = part.user_params[0]
+            .def()
+            .to_display(part.user_params[0].value);
+        assert!((shown - 12_500.0).abs() < 1e-6, "{shown}");
+        let before = part.user_params.clone();
+        assert!(
+            part.set_user_unit(0, "mm").is_err(),
+            "N/m equation into a length"
+        );
+        assert_eq!(part.user_params, before);
+        assert!(part.set_user_unit(0, "furlong").is_err());
+    }
+
     /// Pick whip: a link makes the target follow the source; a circular
     /// link is refused; Purge Unused keeps what is used.
     #[test]

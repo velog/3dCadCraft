@@ -5400,9 +5400,15 @@ impl CadCraftApp {
     /// its equation, value, tolerance and comment (Inventor's table).
     pub(super) fn parameters_window(&mut self, ctx: &egui::Context) {
         use crate::part::expr::Unit;
-        use crate::part::params::{ParamOwner, format_value};
+        use crate::part::params::ParamOwner;
         if !self.show_params {
             return;
+        }
+        // The physical properties of the body as it is now (read-only rows).
+        let key = self.body_key();
+        if key != self.param_phys_key {
+            self.param_phys_key = key;
+            self.part_mut().update_physical();
         }
         let mut open = true;
         let rows = self.part().parameter_table();
@@ -5413,7 +5419,7 @@ impl CadCraftApp {
             Expr(String, String),
             Eval(usize, crate::sketch::ConstraintId, crate::sketch::EvalSize),
             Comment(ParamOwner, String),
-            Unit(usize, Unit),
+            UnitSpec(usize, String),
             Add,
             Delete(String),
             Link(String, String),
@@ -5526,7 +5532,13 @@ impl CadCraftApp {
                                         if h.drag_started() {
                                             super::valuefield::whip_start(ui.ctx(), h.rect.center());
                                         }
-                                        cell(ui, format!("n:{}", r.name), &r.name, 80.0, false)
+                                        if matches!(r.owner, ParamOwner::Physical(_)) {
+                                            // Measured: read only.
+                                            let l = ui.label(RichText::new(&r.name).italics());
+                                            (None, l)
+                                        } else {
+                                            cell(ui, format!("n:{}", r.name), &r.name, 80.0, false)
+                                        }
                                     })
                                     .inner;
                                 if let Some(n) = renamed {
@@ -5538,25 +5550,44 @@ impl CadCraftApp {
                                 ui.label(&r.consumed_by);
                                 match r.owner {
                                     ParamOwner::User(i) => {
-                                        let mut u = r.unit;
-                                        egui::ComboBox::from_id_salt(("unit", i))
-                                            .width(52.0)
-                                            .selected_text(u.label())
-                                            .show_ui(ui, |ui| {
-                                                for x in Unit::ALL {
-                                                    ui.selectable_value(&mut u, x, x.label());
+                                        // Unit Specification (`N/m`, `kg`, `MPa`)
+                                        // typed, or picked by kind (Inventor's
+                                        // Unit Type).
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 1.0;
+                                            let (typed, _) = cell(ui, format!("u:{}", r.name), &r.unit_label(), 56.0, false);
+                                            if let Some(t) = typed {
+                                                edits.push(Edit::UnitSpec(i, t));
+                                            }
+                                            ui.menu_button("...", |ui| {
+                                                for (kind, list) in crate::part::units::CATEGORIES {
+                                                    ui.menu_button(*kind, |ui| {
+                                                        for u in *list {
+                                                            if ui.button(*u).clicked() {
+                                                                edits.push(Edit::UnitSpec(i, (*u).to_owned()));
+                                                                ui.close();
+                                                            }
+                                                        }
+                                                    });
                                                 }
-                                            });
-                                        if u != r.unit {
-                                            edits.push(Edit::Unit(i, u));
-                                        }
+                                            })
+                                            .response
+                                            .on_hover_text("Unit Type: pick a unit by kind, or type one (N/m, kg/m^3, km/h)");
+                                        });
                                     }
                                     _ => {
-                                        ui.label(r.unit.label());
+                                        ui.label(r.unit_label());
                                     }
                                 }
                                 let err = errors.get(&r.name);
-                                let (eq, eq_resp) = cell(ui, format!("e:{}", r.name), &r.equation(), 150.0, err.is_some());
+                                let (eq, eq_resp) = if matches!(r.owner, ParamOwner::Physical(_)) {
+                                    let l = ui
+                                        .label(RichText::new("(measured)").weak())
+                                        .on_hover_text("Measured on the body after each rebuild; use it in user parameters, not in sizes");
+                                    (None, l)
+                                } else {
+                                    cell(ui, format!("e:{}", r.name), &r.equation(), 150.0, err.is_some())
+                                };
                                 if let Some(src) = drop_on(ui, &eq_resp, &r.name) {
                                     edits.push(Edit::Link(r.name.clone(), src));
                                 }
@@ -5566,7 +5597,7 @@ impl CadCraftApp {
                                 if let Some(t) = eq {
                                     edits.push(Edit::Expr(r.name.clone(), t));
                                 }
-                                ui.label(format_value(r.value, r.unit));
+                                ui.label(r.shown());
                                 match (&r.owner, r.tol) {
                                     (ParamOwner::Dimension { sketch, constraint }, Some(t)) => {
                                         let mut ev = t.eval;
@@ -5581,11 +5612,11 @@ impl CadCraftApp {
                                         if ev != t.eval {
                                             edits.push(Edit::Eval(*sketch, *constraint, ev));
                                         }
-                                        ui.label(format_value(r.value + t.offset(), r.unit));
+                                        ui.label(crate::part::params::format_in(r.value + t.offset(), r.def(), &r.unit_label()));
                                     }
                                     _ => {
                                         ui.label("");
-                                        ui.label(format_value(r.value, r.unit));
+                                        ui.label(r.shown());
                                     }
                                 }
                                 match r.owner {
@@ -5672,23 +5703,11 @@ impl CadCraftApp {
                             }
                         }
                         ParamOwner::User(i) => part.user_params[i].comment = c,
-                        ParamOwner::Feature { .. } => {}
+                        ParamOwner::Feature { .. } | ParamOwner::Physical(_) => {}
                     }
                     Ok(())
                 }
-                Edit::Unit(i, u) => {
-                    // A plain value keeps its size in the new unit (25.4 mm →
-                    // 1 in); an equation stays as typed and is evaluated again.
-                    let p = &mut part.user_params[i];
-                    p.unit = u;
-                    if crate::part::expr::is_plain_number(&p.expr) {
-                        p.expr = format_value(p.value, u);
-                        Ok(())
-                    } else {
-                        let (n, e) = (p.name.clone(), p.expr.clone());
-                        part.set_parameter_expr(&n, &e)
-                    }
-                }
+                Edit::UnitSpec(i, t) => part.set_user_unit(i, &t),
                 Edit::Add => {
                     part.add_user_parameter(Unit::Mm);
                     Ok(())
