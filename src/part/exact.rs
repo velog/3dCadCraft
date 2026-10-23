@@ -1157,6 +1157,44 @@ fn face_contains(body: &BRep, f: crate::kernel::FaceId, q: Point3) -> bool {
     })
 }
 
+/// Whether the ring of radius `rad` about `c` (square to `dir`) lies on one
+/// planar face of `body` square to `dir` — where a 90° countersink can be the
+/// kernel's chamfer of the bore's rim.
+fn ring_on_square_face(
+    body: &BRep,
+    c: Point3,
+    dir: crate::kernel::Vector3,
+    rad: Real,
+    size: Real,
+) -> bool {
+    use crate::kernel::Surface;
+    let u = perpendicular(dir);
+    let v = dir.cross(&u);
+    body.faces().any(|(fid, f)| {
+        let Some(Surface::Plane(pl)) = body.surface(f.surface) else {
+            return false;
+        };
+        let n = pl.normal.into_inner();
+        if n.dot(&dir).abs() < 1.0 - 1e-9 || (c - pl.origin).dot(&n).abs() > 1e-6 * size {
+            return false;
+        }
+        (0..8).all(|k| {
+            let a = k as Real * std::f64::consts::FRAC_PI_4;
+            face_contains(body, fid, c + (u * a.cos() + v * a.sin()) * rad)
+        })
+    })
+}
+
+/// A unit vector square to `d`.
+fn perpendicular(d: crate::kernel::Vector3) -> crate::kernel::Vector3 {
+    let a = if d.x.abs() < 0.9 {
+        crate::kernel::Vector3::x()
+    } else {
+        crate::kernel::Vector3::y()
+    };
+    d.cross(&a).normalize()
+}
+
 /// How far the body reaches from `o` along `dir` (mm, ≥ 0).
 fn reach(points: &[Point3], o: Point3, dir: crate::kernel::Vector3) -> Real {
     points
@@ -1188,7 +1226,7 @@ pub(super) fn hole(
     body: &BRep,
     cur: &[ExactSolid],
 ) -> Result<(Vec<ExactSolid>, HoleOutput, Vec<super::pattern::ToolSet>), Fail> {
-    use super::hole::{CosmeticThread, HoleInstance, Termination};
+    use super::hole::{CosmeticThread, HoleInstance, SeatType, Termination};
     let spec = &h.spec;
     spec.validate().map_err(User)?;
     let places = hole_placements(h, ps, body).map_err(User)?;
@@ -1199,6 +1237,13 @@ pub(super) fn hole(
     let points = body_points(body);
     let mut rays: Option<super::rib::Rays> = None;
     let (mut seats, mut bores) = (Vec::new(), Vec::new());
+    // 90° countersinks on a face square to the hole: the kernel's chamfer of
+    // the bore's rim after the bores (36 holes 5 s instead of ~40 s with cone
+    // tools, ROADMAP K4). Their cone tools are kept for Pattern / Mirror and
+    // as the fallback when the chamfer fails.
+    let (mut deferred, mut rims) = (Vec::new(), Vec::new());
+    let right_angle = |a: Real| (a - std::f64::consts::FRAC_PI_2).abs() < 1e-9;
+    let r_bore = spec.bore_radius();
     let mut out = HoleOutput::default();
     for (k, (o, dir, face)) in places.iter().enumerate() {
         let n = k + 1;
@@ -1267,6 +1312,20 @@ pub(super) fn hole(
             (depth, point)
         };
         let mut parts = spec.tools(tool_depth, top, tool_point);
+        let side = perpendicular(*dir);
+        let mut start_rim = (spec.seat == SeatType::Countersink
+            && right_angle(spec.csink_angle)
+            && face.is_some()
+            && !spec.flip
+            && !spec.symmetric
+            && ring_on_square_face(body, *o, *dir, spec.csink_diameter / 2.0, size))
+        .then(|| exact::CircleChamfer {
+            center: *o,
+            at: *o + side * r_bore,
+            distance: spec.csink_diameter / 2.0 - r_bore,
+            name: format!("{}:CSink:{n}", h.id),
+        });
+        let mut far_rim = None;
         // Far side countersink: where the bore last leaves the material
         // (within its depth), cut with the seats.
         if spec.far_csink {
@@ -1280,7 +1339,21 @@ pub(super) fn hole(
                 .filter(|&t| t > 1e-6 && t <= reach_to + 1e-6 * size)
                 .fold(None, |a: Option<Real>, t| Some(a.map_or(t, |a| a.max(t))));
             match exit {
-                Some(e) => parts.insert(parts.len() - 1, spec.far_tool(e, margin)),
+                Some(e) => {
+                    // `e` counts from `o` (the ray started 1e-4·size above it).
+                    let c = *o + *dir * e;
+                    let rf = spec.far_diameter() / 2.0;
+                    if right_angle(spec.far_angle()) && ring_on_square_face(body, c, *dir, rf, size)
+                    {
+                        far_rim = Some(exact::CircleChamfer {
+                            center: c,
+                            at: c + side * r_bore,
+                            distance: rf - r_bore,
+                            name: format!("{}:FarCSink:{n}", h.id),
+                        });
+                    }
+                    parts.insert(parts.len() - 1, spec.far_tool(e, margin));
+                }
                 None => {
                     return Err(User(
                         "the far side countersink needs a hole that comes out of the body".into(),
@@ -1323,8 +1396,16 @@ pub(super) fn hole(
             } else {
                 exact::revolved_tool(*o, up, seam, &pts, &refs, &h.id).map_err(Kernel)?
             };
+            let rim = match prof[1].1 {
+                "CSink" if cone => start_rim.take(),
+                "FarCSink" if cone => far_rim.take(),
+                _ => None,
+            };
             if j == last {
                 bores.push(tool);
+            } else if let Some(rim) = rim {
+                deferred.push(tool);
+                rims.push(rim);
             } else {
                 seats.push(tool);
             }
@@ -1408,7 +1489,8 @@ pub(super) fn hole(
     // Seats first, then the bores through their floors; each stage is one
     // Boolean (`combine` joins tools apart from each other). Both stages are
     // kept as tool sets, in that order, so Pattern / Mirror can copy holes.
-    let sets: Vec<super::pattern::ToolSet> = [&seats, &bores]
+    let all_seats: Vec<ExactSolid> = seats.iter().chain(&deferred).cloned().collect();
+    let sets: Vec<super::pattern::ToolSet> = [&all_seats, &bores]
         .into_iter()
         .filter(|t| !t.is_empty())
         .map(|t| super::pattern::ToolSet {
@@ -1422,8 +1504,50 @@ pub(super) fn hole(
     } else {
         combine(cur.to_vec(), seats, Operation::Cut, &h.solids, false)?
     };
-    let next = combine(next, bores, Operation::Cut, &h.solids, false)?;
-    Ok((next, out, sets))
+    let next = combine(next, bores.clone(), Operation::Cut, &h.solids, false)?;
+    if rims.is_empty() {
+        return Ok((next, out, sets));
+    }
+    match chamfer_rims(&next, &rims, &h.id) {
+        Ok(done) => Ok((done, out, sets)),
+        Err(e) => {
+            log::debug!("{}: countersink chamfer failed ({e}), cutting cones", h.id);
+            let next = combine(cur.to_vec(), all_seats, Operation::Cut, &h.solids, false)?;
+            let next = combine(next, bores, Operation::Cut, &h.solids, false)?;
+            Ok((next, out, sets))
+        }
+    }
+}
+
+/// The chamfers of [`hole`]'s rims, each on the solid whose box holds its
+/// circle.
+fn chamfer_rims(
+    solids: &[ExactSolid],
+    rims: &[exact::CircleChamfer],
+    prefix: &str,
+) -> Result<Vec<ExactSolid>, String> {
+    let mut left: Vec<&exact::CircleChamfer> = rims.iter().collect();
+    let mut out = Vec::with_capacity(solids.len());
+    for s in solids {
+        let mine: Vec<exact::CircleChamfer> = match exact::bounds(s) {
+            Some((lo, hi)) if !s.is_open() => {
+                let inside = |p: &Point3| (0..3).all(|i| p[i] >= lo[i] && p[i] <= hi[i]);
+                let (a, b): (Vec<_>, Vec<_>) = left.into_iter().partition(|c| inside(&c.at));
+                left = b;
+                a.into_iter().cloned().collect()
+            }
+            _ => Vec::new(),
+        };
+        out.push(if mine.is_empty() {
+            s.clone()
+        } else {
+            exact::chamfer_circles(s, &mine, prefix)?
+        });
+    }
+    if !left.is_empty() {
+        return Err("a countersink rim is on no solid".into());
+    }
+    Ok(out)
 }
 
 /// Thread (`docs/spec/2.9-thread.md`): a cosmetic thread changes nothing;

@@ -1407,12 +1407,12 @@ fn speed_budgets() {
         }),
     ));
     // Countersinks at both ends: a ray per hole finds where it leaves the
-    // plate; the cones (tapered discs, `exact::cone_tool`) go with the
-    // seats. Six holes: the kernel's general Boolean meets cones slowly and
-    // more than linearly (36 in one feature: ~40 s, ROADMAP K4).
+    // plate. 90° on faces square to the hole: the kernel's chamfer of each
+    // bore rim after the bores (cone tools through the general Boolean:
+    // 6 holes 2.3 s, 36 holes ~40 s, ROADMAP K4).
     rows.push((
         "hole: 6 holes chamfered at both ends (countersink + far side)",
-        6000.0,
+        1000.0,
         median_ms(3, || {
             use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, SeatType, Termination};
             let mut p = plate.clone();
@@ -1426,6 +1426,34 @@ fn speed_budgets() {
             s.seat = SeatType::Countersink;
             s.csink_diameter = 7.0;
             s.far_csink = true;
+            let mut def = HoleFeature::new(s);
+            def.sketch = p.sketches[k].id.clone();
+            def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+            p.add_hole(def).unwrap();
+            assert!(p.feature_health.is_empty());
+        }),
+    ));
+    rows.push((
+        "hole: 36 countersunk 90° Ø5.5 holes in one feature (rim chamfers)",
+        5000.0,
+        median_ms(3, || {
+            use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, SeatType, Termination};
+            let mut p = plate.clone();
+            p.build_cache = Default::default();
+            let pts: Vec<Point3> = (0..36)
+                .map(|i| {
+                    Point3::new(
+                        10.0 + 16.0 * (i % 6) as Real,
+                        10.0 + 16.0 * (i / 6) as Real,
+                        10.0,
+                    )
+                })
+                .collect();
+            let (k, ids) = p.create_hole_sketch("Box1:Top", &pts).unwrap();
+            let mut s = HoleSpec::simple(5.5, 10.0);
+            s.termination = Termination::ThroughAll;
+            s.seat = SeatType::Countersink;
+            s.csink_diameter = 11.0;
             let mut def = HoleFeature::new(s);
             def.sketch = p.sketches[k].id.clone();
             def.centers = ids.into_iter().map(HoleCenter::Point).collect();

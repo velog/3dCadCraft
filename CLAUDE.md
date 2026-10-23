@@ -876,7 +876,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   back on failure; `rev` keys the preview). Arrows go through `ManipOwner::Hole`: the dragged target is
   found once by grip (`hole_drag`, cleared on release) because `Handle::field` cannot name it.
 - **Countersinks** are tapered discs (`exact::cone_tool`, as SolidCraft's `extrude_tapered`): a tool of
-  revolution with the same cone took 2.6× longer in the Boolean. Cones still take truck's general path
+  revolution with the same cone took 2.6× longer in the Boolean. A **90°** countersink whose ring lies on
+  one planar face square to the hole (`ring_on_square_face`) is instead the kernel's equal chamfer of the
+  bore rim after the bores (`exact::chamfer_circles`, faces renamed `<id>:CSink:k` / `FarCSink:k`; 36
+  holes 40 s → 2.3 s); its cone tool still goes into the `ToolSet` (Pattern / Mirror copy it) and is cut
+  when the chamfer fails. The far side's `Rays::exits` distance counts from `o`, not from the probe start. Cones still take truck's general path
   (ROADMAP K4: ~0.33 s a hole, more than linear in one feature) — measure before adding cone tools.
 - **Hole data for drawings**: `PartDocument::holes()` (filled during regeneration, also from
   cache hits via `CachedStep::extra`). Pattern / Mirror must push `h.transformed(&m)` copies

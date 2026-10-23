@@ -884,6 +884,76 @@ pub fn chamfer(
     Ok(blend_result(s, body, prefix, "Bevel"))
 }
 
+/// One circular edge for [`chamfer_circles`].
+#[derive(Clone, Debug)]
+pub struct CircleChamfer {
+    /// The circle's centre.
+    pub center: Point3,
+    /// A point on the circle (picks the edge).
+    pub at: Point3,
+    /// Equal setback on both faces (mm).
+    pub distance: Real,
+    /// The name of the new face (`Hole1:CSink:1`).
+    pub name: String,
+}
+
+/// Equal chamfers of circular edges, each new face named after its circle
+/// (90° countersinks of holes: the kernel's chamfer of a bore's rim is ~10×
+/// faster than cutting a cone tool). Circles of one distance go in one call.
+pub fn chamfer_circles(
+    s: &ExactSolid,
+    circles: &[CircleChamfer],
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    let mut cur = s.clone();
+    let mut done = vec![false; circles.len()];
+    for i in 0..circles.len() {
+        if done[i] {
+            continue;
+        }
+        let d = circles[i].distance;
+        let group: Vec<usize> = (i..circles.len())
+            .filter(|&j| !done[j] && (circles[j].distance - d).abs() <= 1e-9 * d.max(1.0))
+            .collect();
+        let pts: Vec<sg::Vec3> = group.iter().map(|&j| v3(&circles[j].at)).collect();
+        let body = guarded("chamfer", || sk::chamfer(&cur.body, &pts, d))?;
+        let mut next = blend_result(&cur, body, prefix, "Bevel");
+        let new: Vec<usize> = next
+            .face_names
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| {
+                n.as_deref().is_some_and(|n| {
+                    n.starts_with(&format!("{prefix}:Bevel"))
+                        || n.starts_with(&format!("{prefix}:Corner"))
+                })
+            })
+            .map(|(f, _)| f)
+            .collect();
+        if !new.is_empty() {
+            let samples = face_samples(&next)?;
+            for f in new {
+                let Some(p) = samples.get(f).copied().flatten() else {
+                    continue;
+                };
+                let near = group.iter().copied().min_by(|&a, &b| {
+                    let da = (circles[a].center - p).norm();
+                    let db = (circles[b].center - p).norm();
+                    da.total_cmp(&db)
+                });
+                if let Some(j) = near {
+                    next.face_names[f] = Some(circles[j].name.clone());
+                }
+            }
+        }
+        for &j in &group {
+            done[j] = true;
+        }
+        cur = next;
+    }
+    Ok(cur)
+}
+
 /// The second size of a chamfer.
 #[derive(Clone, Copy, Debug)]
 pub enum ChamferSecond {

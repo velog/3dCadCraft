@@ -746,6 +746,66 @@ fn pattern_and_mirror_of_a_hole_feature() {
     assert_eq!(part.features.len(), n);
 }
 
+/// 90° countersinks on faces square to the hole are the kernel's chamfer of
+/// each bore rim (ROADMAP K4): four holes chamfered at both ends with
+/// different sizes keep the cone's volume and the names `CSink:<k>` /
+/// `FarCSink:<k>`; a Rectangular Pattern of such a hole still copies the
+/// cones (the feature's tool set keeps them).
+#[test]
+fn countersinks_as_rim_chamfers() {
+    use cadcraft3d::part::{LineRef, PatternDirection, PatternFeature, PatternKind, PullRef};
+    let r: Real = 2.5;
+    let frustum = |rc: Real| {
+        let h = rc - r; // 45°
+        PI * h / 3.0 * (rc * rc + rc * r + r * r) - PI * r * r * h
+    };
+    let mut s = HoleSpec::simple(2.0 * r, 10.0);
+    s.termination = Termination::ThroughAll;
+    s.seat = SeatType::Countersink;
+    s.csink_diameter = 9.0;
+    s.far_csink = true;
+    s.far_csink_diameter = 7.0;
+    let one = PI * r * r * 20.0 + frustum(4.5) + frustum(3.5);
+    let mut part = block();
+    let centers = [(8.0, 8.0), (32.0, 8.0), (8.0, 22.0), (32.0, 22.0)];
+    holes_at(&mut part, s.clone(), &centers).unwrap();
+    check(&part, BLOCK - 4.0 * one, 3e-4);
+    for k in 1..=4 {
+        for role in ["CSink", "FarCSink", "Bore"] {
+            let n = format!("Hole1:{role}:{k}");
+            assert!(
+                part.body
+                    .faces()
+                    .any(|(_, f)| f.name.as_deref() == Some(n.as_str())),
+                "{n}"
+            );
+        }
+    }
+    assert!(
+        !part.body.faces().any(|(_, f)| f
+            .name
+            .as_deref()
+            .is_some_and(|n| n.contains("Bevel") || n.contains("Corner"))),
+        "every chamfer face is named after its hole"
+    );
+
+    // One hole patterned 2× along X: the copy is countersunk too.
+    let mut part = block();
+    holes_at(&mut part, s, &[(10.0, 15.0)]).unwrap();
+    let mut d = PatternDirection::new();
+    d.dir = Some(PullRef::Line(LineRef::Origin(0)));
+    d.count = 2;
+    d.spacing = 20.0;
+    let mut p = PatternFeature::rectangular();
+    p.features = vec!["Hole1".into()];
+    p.kind = PatternKind::Rectangular {
+        first: d,
+        second: None,
+    };
+    part.add_pattern(p).unwrap();
+    check(&part, BLOCK - 2.0 * one, 3e-4);
+}
+
 /// Two blind 118° holes in one feature (the GUI test's case): a valid body
 /// (a cone tip's edges were run twice the same way: a non-manifold edge).
 #[test]
