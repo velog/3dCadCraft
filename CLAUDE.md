@@ -838,6 +838,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   of the Hole panel become `project_segment` reference lines (associative, by vertex names)
   plus `PointLineDistance` dimensions of the hole's sketch at OK; `PartDocument::project_edge`
   is also the sketch's Project Geometry (straight edges only).
+- **Document tabs** (`gui/doc_tabs.rs`): the active document stays in the app's fields (`project`,
+  `part_id`, `history`, `file_path`, `saved_sig`, camera, selection); the others are `DocTab`s in `tabs`
+  (the active slot is `None`). `switch_tab` first calls `leave_document` (Finish Sketch, every draft
+  cancelled) — a new draft field must be cleared there too, or it points into the wrong document. An
+  inactive tab cannot change, so its `dirty` is taken once at the switch. New / Open / drop add a tab
+  (no "save changes?"); quit asks tab by tab (`quit_dropped`).
 - **Measure into a field** (`gui/measure_pick.rs`): a field asks through egui temp data
   (`request_id` → `(field id, unit)`), the answer comes back as `result_id(field id)` and `value_field`
   takes it as its commit; the Edit Dimension box sets `DimEdit::text`. While it runs, the view's click is

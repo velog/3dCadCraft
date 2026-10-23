@@ -1065,6 +1065,8 @@ impl CadCraftApp {
             });
             LayoutUi::note(&mut self.layout.s.properties_width, r.response.rect.width());
         }
+        // Document tabs above the view (`doc_tabs`).
+        egui::Panel::top(self.layout.panel_id("doc_tabs")).show(ui, |ui| self.tab_bar(ui));
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| self.viewport(ui, frame));

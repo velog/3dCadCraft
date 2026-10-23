@@ -104,6 +104,7 @@ By default they are **as in Inventor**. Today they are **hard-coded**; remapping
 | **Enter** / **Space** (with no command open and no curves selected) | repeats the last command; right click → Repeat (hidden while a command is open) | 🟡 |
 | **Enter** / **Ctrl+Enter** in a feature panel | Enter = OK when OK is enabled (Revolve without an axis: Continue to the axis); Ctrl+Enter = OK, also while typing in a field | 🟡 |
 | letters (S, E, R, H, L, C, D, X, O) | only alone or with Shift; with Ctrl or Alt they start nothing (Alt+S is the command search) | 🟡 |
+| **Ctrl+Tab / Ctrl+Shift+Tab** | next / previous document tab | 🟡 |
 | **Alt+S** | the "Search commands" field in the Quick Access (↑/↓/Tab, Enter starts, Esc clears / leaves) | 🟡 |
 | letters with *Show command alias input dialog* on | open the field next to the cursor; Enter / Space starts the highlighted command, Esc closes | 🟡 |
 | **S** (outside a sketch) | new 2D sketch (Start 2D Sketch) | ✅ |

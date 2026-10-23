@@ -251,7 +251,10 @@ pub(super) fn target_path(dir: &Path, name: &str, exts: &[&str]) -> Option<PathB
 pub(super) enum Pending {
     New,
     Open,
+    /// Quit the application.
     Close,
+    /// Close the active document tab.
+    CloseTab,
 }
 
 /// The user's home folder: `USERPROFILE` on Windows (Git Bash / MSYS set
@@ -409,9 +412,14 @@ impl CadCraftApp {
         self.file_dialog = Some(FileDialog::new(purpose, start_dir(&self.file_path), name));
     }
 
-    /// New / Open / Close: asks to save unsaved changes first.
+    /// New / Open open a tab of their own; Close / Close Tab ask to save
+    /// unsaved changes first.
     pub(super) fn request(&mut self, what: Pending, now: f64) {
-        if self.is_dirty(now, true) {
+        let closes = matches!(what, Pending::Close | Pending::CloseTab);
+        if what == Pending::Close {
+            self.quit_dropped.clear();
+        }
+        if closes && self.is_dirty(now, true) {
             self.unsaved_prompt = Some(what);
         } else {
             self.run_pending(what);
@@ -420,10 +428,20 @@ impl CadCraftApp {
 
     fn run_pending(&mut self, what: Pending) {
         match what {
-            Pending::New => self.new_project(),
+            Pending::New => {
+                self.add_blank_tab();
+                self.new_project();
+            }
             Pending::Open => self.open_dialog(DialogPurpose::Open),
+            Pending::CloseTab => self.close_active_tab(),
             Pending::Close => {
-                self.close_ok = true;
+                // Every changed tab asks in turn.
+                if let Some(k) = self.dirty_other_tab() {
+                    self.switch_tab(k);
+                    self.unsaved_prompt = Some(Pending::Close);
+                } else {
+                    self.close_ok = true;
+                }
             }
         }
     }
@@ -444,8 +462,30 @@ impl CadCraftApp {
         self.file_status = Some(Ok("New project".into()));
     }
 
-    /// Opens `path` (from the dialog, the recent list or a drop).
+    /// Opens `path` (from the dialog, the recent list or a drop) in a tab of
+    /// its own; a file already open comes forward.
     pub(super) fn open_path(&mut self, path: &Path) {
+        if let Some(k) = self.tab_of_path(path) {
+            self.switch_tab(k);
+            self.file_status = Some(Ok(format!("'{}' is already open", self.document_title())));
+            return;
+        }
+        let prev = self.active_tab;
+        let n = self.tab_count();
+        self.add_blank_tab();
+        let added = self.tab_count() > n;
+        self.open_path_here(path);
+        if added && !matches!(self.file_status, Some(Ok(_))) {
+            // It failed: the empty tab goes, the old document is back.
+            let status = self.file_status.take();
+            self.close_active_tab();
+            self.switch_tab(prev);
+            self.file_status = status;
+        }
+    }
+
+    /// Opens `path` into the active tab.
+    fn open_path_here(&mut self, path: &Path) {
         let before = std::mem::replace(&mut self.file_path, path.display().to_string());
         self.open_project();
         if matches!(self.file_status, Some(Ok(_))) {
@@ -482,8 +522,13 @@ impl CadCraftApp {
         }
         // Closing the window with unsaved changes: ask first.
         if ctx.input(|i| i.viewport().close_requested()) && !self.close_ok {
+            self.quit_dropped.clear();
             if self.is_dirty(now, true) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.unsaved_prompt = Some(Pending::Close);
+            } else if let Some(k) = self.dirty_other_tab() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.switch_tab(k);
                 self.unsaved_prompt = Some(Pending::Close);
             } else {
                 self.close_ok = true;
@@ -505,12 +550,8 @@ impl CadCraftApp {
                 })
         });
         if let Some(p) = dropped {
-            if self.is_dirty(now, true) {
-                self.dropped = Some(p);
-                self.unsaved_prompt = Some(Pending::Open);
-            } else {
-                self.open_path(&p);
-            }
+            // A tab of its own: nothing to save first.
+            self.open_path(&p);
         }
         self.unsaved_window(ctx);
         self.dialog_window(ctx);
@@ -555,9 +596,14 @@ impl CadCraftApp {
             }
             Some(1) => {
                 self.unsaved_prompt = None;
+                if what == Pending::Close {
+                    // Quit: this tab's changes are dropped, the next asks.
+                    self.quit_dropped.push(self.active_tab);
+                }
                 self.after_unsaved(what);
             }
             Some(_) => {
+                self.quit_dropped.clear();
                 self.unsaved_prompt = None;
                 self.dropped = None;
             }

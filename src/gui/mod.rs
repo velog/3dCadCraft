@@ -35,6 +35,7 @@ mod command_ui;
 mod commands;
 mod demos;
 mod diag;
+mod doc_tabs;
 mod draft;
 mod feature_cmd;
 mod files;
@@ -466,6 +467,15 @@ struct CadCraftApp {
     /// not name a part (a programming error), so the GUI never panics.
     fallback_part: PartDocument,
     history: History<Project>,
+    /// Open documents (`doc_tabs`): the active one is `None` here (it lives
+    /// in the fields above), the others wait in their slot.
+    tabs: Vec<Option<doc_tabs::DocTab>>,
+    /// Index of the active document in `tabs`.
+    active_tab: usize,
+    /// Tabs whose changes the quit was told to drop (Don't Save).
+    quit_dropped: Vec<usize>,
+    /// Ctrl+Tab steps taken from the raw input this frame.
+    tab_step: i32,
 
     /// Index of the sketch in edit mode.
     editing: Option<usize>,
@@ -735,6 +745,10 @@ impl CadCraftApp {
             part_id,
             fallback_part: PartDocument::default(),
             history: History::default(),
+            tabs: vec![None],
+            active_tab: 0,
+            quit_dropped: Vec::new(),
+            tab_step: 0,
             editing: None,
             mode: Mode::Normal,
             selection: Selection::Body,
@@ -4312,6 +4326,7 @@ impl CadCraftApp {
     fn shortcuts(&mut self, ctx: &egui::Context) {
         // ---- A0 (spec 0.15 §4.4): the panel key of this frame, see `keys`.
         keys::set_panel_key(ctx, None);
+        self.tab_keys(ctx);
         // Esc ends a measure into a field, and only that.
         if self.measure_pick.is_some()
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape))
@@ -6830,6 +6845,21 @@ impl eframe::App for CadCraftApp {
     /// While Dynamic Input fields are shown, Tab moves between them: take it
     /// before egui uses it to move its widget focus.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // Ctrl+Tab / Ctrl+Shift+Tab: document tabs (`doc_tabs`).
+        raw_input.events.retain(|e| match e {
+            egui::Event::Key {
+                key: Key::Tab,
+                pressed,
+                modifiers,
+                ..
+            } if modifiers.command => {
+                if *pressed {
+                    self.tab_step += if modifiers.shift { -1 } else { 1 };
+                }
+                false
+            }
+            _ => true,
+        });
         if self.hud_fields().is_empty() {
             return;
         }
