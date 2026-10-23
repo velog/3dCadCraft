@@ -360,7 +360,7 @@ impl CadCraftApp {
             .part()
             .bodies_before(d.edit.unwrap_or(self.part().insert_index()));
         let table = self.part().parameter_table();
-        let mut dim_changes: Vec<(usize, Real, Option<String>)> = Vec::new();
+        let mut dim_changes: Vec<(super::hole_dims::DimRef, Real, Option<String>)> = Vec::new();
         psection(ui, "hole_input", "Input Geometry", |ui| {
             plabel(ui, "Positions");
             ui.horizontal(|ui| {
@@ -462,8 +462,13 @@ impl CadCraftApp {
                 ui.label(f);
                 ui.end_row();
             }
-            for (j, x) in d.dims.iter().enumerate() {
-                plabel(ui, &format!("Centre {} dim", x.center + 1));
+            for x in d.dim_views() {
+                let label = match x.centre {
+                    super::hole_dims::CentreRef::Draft(k) => format!("Centre {} dim", k + 1),
+                    super::hole_dims::CentreRef::Sketch(_) => "Centre dim".to_owned(),
+                };
+                plabel(ui, &label);
+                let j = x.r;
                 let mut v = x.value;
                 let mut eq = x.expr.clone();
                 super::valuefield::set_frame_table(ui.ctx(), table.clone());
@@ -473,7 +478,9 @@ impl CadCraftApp {
                         .range(0.0..=1e6)
                         .suffix(" mm"),
                 );
-                r.on_hover_text(format!("Distance to the edge {} - {}", x.a, x.b));
+                r.on_hover_text(
+                    "Distance to the edge (double-click the value in the view to edit it;                      right-click it to Redefine or Delete)",
+                );
                 if (v - x.value).abs() > 1e-12 || eq != x.expr {
                     dim_changes.push((j, v, eq));
                 }
@@ -495,7 +502,7 @@ impl CadCraftApp {
             }
         });
         for (j, v, eq) in dim_changes {
-            d.set_dim(j, v, eq);
+            d.set_dim_value(j, v, eq);
         }
         if let Some(name) = rename
             && let Some(k) = d.edit

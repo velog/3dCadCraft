@@ -39,6 +39,7 @@ mod draft;
 mod feature_cmd;
 mod files;
 mod hole;
+mod hole_dims;
 mod hole_panel;
 mod i18n;
 mod icons;
@@ -48,6 +49,7 @@ mod loft;
 mod manip;
 mod material;
 mod measure;
+mod measure_pick;
 mod overlay;
 mod panels;
 mod pattern_dialog;
@@ -417,12 +419,17 @@ enum ManipOwner {
     Work,
     /// The open Shell dialog (thickness arrow).
     Shell,
+    /// The open Hole dialog (arrows of the centres, `hole_dims`).
+    Hole,
 }
 
 impl ManipOwner {
     /// A dialog's handle: its value follows the drag live.
     fn live(self) -> bool {
-        matches!(self, ManipOwner::Draft | ManipOwner::Shell)
+        matches!(
+            self,
+            ManipOwner::Draft | ManipOwner::Shell | ManipOwner::Hole
+        )
     }
 }
 
@@ -579,6 +586,10 @@ struct CadCraftApp {
     pattern_drag: Option<(sketch_tools::PatGrip, String)>,
     /// A manipulator being dragged: whose, the handle, its current value.
     manip_drag: Option<(ManipOwner, manip::Handle, f64)>,
+    /// What the Hole arrow being dragged moves (`hole_dims`).
+    hole_drag: Option<hole_dims::HoleHandle>,
+    /// Measure into a field (the `>` menu, Edit Dimension), `measure_pick`.
+    measure_pick: Option<measure_pick::MeasurePick>,
     /// What a right-click inside the edited sketch hit.
     sketch_context: Option<SketchCtx>,
     /// Where the last right-click hit the sketch plane (sketch coordinates).
@@ -778,6 +789,8 @@ impl CadCraftApp {
             cube_context: false,
             view_cube: Default::default(),
             manip_drag: None,
+            hole_drag: None,
+            measure_pick: None,
             pattern_drag: None,
             context_point: None,
             combs: Default::default(),
@@ -1368,6 +1381,7 @@ impl CadCraftApp {
             Feature::Hole(h) => {
                 self.roll_back_to(k);
                 self.hole_draft = Some(hole::HoleDraft::editing(h, k));
+                self.hole_load_sketch();
             }
             Feature::Thread(t) => {
                 self.roll_back_to(k);
@@ -1979,6 +1993,10 @@ impl CadCraftApp {
             )])
         };
         use crate::part::{WorkDef, WorkPlaneDef};
+        if self.hole_draft.is_some() {
+            let hs: Vec<_> = self.hole_handles().into_iter().map(|(_, h)| h).collect();
+            return (!hs.is_empty()).then_some((ManipOwner::Hole, hs));
+        }
         if let Some(d) = &self.work_draft {
             return match d.def() {
                 Ok(WorkDef::Plane(WorkPlaneDef::Offset { base, distance })) => {
@@ -2984,6 +3002,7 @@ impl CadCraftApp {
                     }
                 }
             }
+            ManipOwner::Hole => {}
             ManipOwner::Shell => {
                 if let Some(d) = self.shell_draft.as_mut()
                     && v > 0.0
@@ -4269,6 +4288,13 @@ impl CadCraftApp {
     fn shortcuts(&mut self, ctx: &egui::Context) {
         // ---- A0 (spec 0.15 §4.4): the panel key of this frame, see `keys`.
         keys::set_panel_key(ctx, None);
+        // Esc ends a measure into a field, and only that.
+        if self.measure_pick.is_some()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape))
+        {
+            self.measure_pick = None;
+            return;
+        }
         // Alt+S: the command search, also from a text field or a command.
         self.search_shortcut(ctx);
         if ctx.egui_wants_keyboard_input() || self.file_window_open() {
@@ -4602,7 +4628,8 @@ impl CadCraftApp {
     }
 
     fn viewport(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        let (rect, mut response) =
+            ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.viewport_rect = rect;
         // What may be picked this frame: selector kinds ∩ user filter.
         self.update_pick_filter();
@@ -4627,6 +4654,10 @@ impl CadCraftApp {
             None
         };
 
+        // Measure into a field takes the click first (`measure_pick`).
+        if on_cube.is_none() {
+            self.measure_pick_click(&mut response, rect);
+        }
         // --- picking a sketch plane ---
         let picking = matches!(self.mode, Mode::PickPlane(_));
         let plane_hover = match (picking, pointer, on_cube) {
@@ -4705,7 +4736,13 @@ impl CadCraftApp {
             }
             _ => None,
         };
+        // A placement dimension's value: edit in place / its menu.
+        let on_hole_dim = self.hole_draft.is_some()
+            && on_cube.is_none()
+            && pointer.is_some_and(|p| self.hole_dim_at(p, rect).is_some());
+        let dim_took = on_hole_dim && self.hole_dim_input(&response, pointer, rect);
         if self.hole_draft.is_some()
+            && !dim_took
             && response.clicked_by(PointerButton::Primary)
             && let Some(pick) = hole_hover.clone()
         {
@@ -5040,7 +5077,7 @@ impl CadCraftApp {
         let sketch_context = self.sketch_context;
         let context_target = self.context_target.clone();
         // Shift + right button: the selection menu instead (spec 0.9a §6).
-        if !self.shift_rmb {
+        if !self.shift_rmb && !on_hole_dim {
             response.context_menu(|ui| {
                 if self.cube_context {
                     self.cube_menu(ui);
@@ -5366,7 +5403,9 @@ impl CadCraftApp {
                 && m.2 != v
             {
                 m.2 = v;
-                if owner.live() {
+                if owner == ManipOwner::Hole {
+                    self.hole_manip(&h, v);
+                } else if owner.live() {
                     self.manip_apply(owner, h.field, v);
                 }
             }
@@ -5377,6 +5416,7 @@ impl CadCraftApp {
             if !owner.live() && v.is_finite() {
                 self.manip_apply(owner, h.field, v);
             }
+            self.hole_drag = None;
             self.history.break_coalescing();
         }
         // Idle view: a box from empty space selects (window / crossing).
@@ -5865,7 +5905,9 @@ impl CadCraftApp {
                 self.scene_dirty = true;
             }
             self.draw_holes_and_threads(&painter, rect);
+            self.hole_dim_windows(ui.ctx(), rect);
             self.draw_measure(&painter, rect);
+            self.draw_measure_pick(&painter, rect);
             self.sweep_loft_view(
                 &painter,
                 rect,
@@ -6515,6 +6557,7 @@ impl CadCraftApp {
         let mut tol_changed = false;
         let mut text = edit.text.clone();
         let mut focused = edit.focused;
+        let mut measure = false;
         egui::Area::new(egui::Id::new("dim_inplace"))
             .order(egui::Order::Foreground)
             .fixed_pos(pos - egui::vec2(70.0, 14.0))
@@ -6534,6 +6577,39 @@ impl CadCraftApp {
                             focused = true;
                         }
                         ui.label(if angle { "deg" } else { "mm" });
+                        // The `>` menu: a parameter's name, or a measured value.
+                        ui.menu_button(">", |ui| {
+                            ui.menu_button("List Parameters", |ui| {
+                                let rows = self.part().parameter_table();
+                                if rows.iter().all(|p| p.name == name) {
+                                    ui.label(RichText::new("No parameters yet").weak());
+                                }
+                                for p in rows.iter().filter(|p| p.name != name) {
+                                    let label = format!(
+                                        "{}   {}",
+                                        p.name,
+                                        crate::part::params::format_value(p.value, p.unit)
+                                    );
+                                    if ui.button(label).clicked() {
+                                        text = p.name.clone();
+                                        focused = false;
+                                        ui.close();
+                                    }
+                                }
+                            });
+                            if ui
+                                .button("Measure")
+                                .on_hover_text(
+                                    "Pick two points, a line, a circle, an edge or a face in the                                      view and use the value",
+                                )
+                                .clicked()
+                            {
+                                measure = true;
+                                ui.close();
+                            }
+                        })
+                        .response
+                        .on_hover_text("Parameters, Measure");
                         // Enter in the value field applies (not Enter in the
                         // tolerance fields below).
                         if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -6565,6 +6641,9 @@ impl CadCraftApp {
             e.text = text.clone();
             e.focused = focused;
         }
+        if measure {
+            self.start_measure_into(measure_pick::MeasureInto::DimEdit);
+        }
         if tol_changed {
             self.checkpoint("Tolerance");
             let ps = &mut self.part_mut().sketches[i];
@@ -6584,7 +6663,9 @@ impl CadCraftApp {
         }
         if apply {
             self.apply_dimension_text(i, edit.constraint, &text);
-        } else if cancel || ctx.input(|i| i.key_pressed(Key::Escape)) {
+        } else if (cancel || ctx.input(|i| i.key_pressed(Key::Escape)))
+            && self.measure_pick.is_none()
+        {
             self.tools.dim_edit = None;
         }
     }
@@ -6695,6 +6776,8 @@ impl eframe::App for CadCraftApp {
         self.parameters_window(&ctx);
         self.material_windows(&ctx);
         self.measure_window(&ctx);
+        self.measure_requests(&ctx);
+        self.measure_pick_window(&ctx);
         self.alias_window(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);

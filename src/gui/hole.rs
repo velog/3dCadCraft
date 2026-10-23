@@ -111,6 +111,14 @@ pub(super) struct HoleDraft {
     pub kept: Option<String>,
     /// Positions selector mode: clicks add centres (default) or remove them.
     pub remove: bool,
+    /// Edit Feature: the hole's sketch, whose dimensions are edited here.
+    pub sk: Option<super::hole_dims::SketchCopy>,
+    /// Redefine: the next edge click replaces this dimension's edge.
+    pub redefine: Option<super::hole_dims::DimRef>,
+    /// The in-place edit box: dimension, text, focus still to take.
+    pub inplace: Option<(super::hole_dims::DimRef, String, bool)>,
+    /// A dimension's right-click menu, at a screen point.
+    pub dim_menu: Option<(super::hole_dims::DimRef, egui::Pos2)>,
 }
 
 impl HoleDraft {
@@ -125,6 +133,10 @@ impl HoleDraft {
             to_pick: false,
             kept: None,
             remove: false,
+            sk: None,
+            redefine: None,
+            inplace: None,
+            dim_menu: None,
         }
     }
 
@@ -170,6 +182,42 @@ impl HoleDraft {
         d.expr = expr;
     }
 
+    /// The edge dimensions of the clicked centres as dimensions of sketch
+    /// `i`, whose points `ids` are the centres in `points` order.
+    pub(super) fn add_dims(
+        &self,
+        part: &mut PartDocument,
+        i: usize,
+        ids: &[PointId],
+    ) -> Result<(), String> {
+        for d in &self.dims {
+            let Some(&point) = ids.get(d.center) else {
+                continue;
+            };
+            let line = part
+                .project_segment(i, &d.a, &d.b)
+                .map_err(|e| e.to_string())?;
+            let ps = &mut part.sketches[i];
+            let c = ps
+                .sketch
+                .add_constraint(Constraint::PointLineDistance {
+                    point,
+                    line,
+                    value: d.value,
+                })
+                .map_err(|e| e.to_string())?;
+            let plane = ps.sketch.plane.clone();
+            let p = self.points[d.center];
+            let mid = Point3::from((p.coords + d.foot(p).coords) / 2.0);
+            ps.sketch.set_dimension_label(c, Some(plane.project(&mid)));
+            if let Some(dp) = ps.sketch.dim_param_mut(c) {
+                dp.expr = d.expr.clone();
+            }
+        }
+        let _ = part.sketches[i].sketch.solve();
+        Ok(())
+    }
+
     /// The feature as it will be added to `part`: its face centres become
     /// Center Points of a sketch on the face, their edge dimensions
     /// projected edges and point-to-line dimensions of that sketch.
@@ -179,31 +227,7 @@ impl HoleDraft {
             let (i, ids) = part
                 .create_hole_sketch(face, &self.points)
                 .map_err(|e| e.to_string())?;
-            for d in &self.dims {
-                let Some(&point) = ids.get(d.center) else {
-                    continue;
-                };
-                let line = part
-                    .project_segment(i, &d.a, &d.b)
-                    .map_err(|e| e.to_string())?;
-                let ps = &mut part.sketches[i];
-                let c = ps
-                    .sketch
-                    .add_constraint(Constraint::PointLineDistance {
-                        point,
-                        line,
-                        value: d.value,
-                    })
-                    .map_err(|e| e.to_string())?;
-                let plane = ps.sketch.plane.clone();
-                let p = self.points[d.center];
-                let mid = Point3::from((p.coords + d.foot(p).coords) / 2.0);
-                ps.sketch.set_dimension_label(c, Some(plane.project(&mid)));
-                if let Some(dp) = ps.sketch.dim_param_mut(c) {
-                    dp.expr = d.expr.clone();
-                }
-            }
-            let _ = part.sketches[i].sketch.solve();
+            self.add_dims(part, i, &ids)?;
             def.sketch = part.sketches[i].id.clone();
             let mut centers: Vec<HoleCenter> = ids.into_iter().map(HoleCenter::Point).collect();
             centers.extend(
@@ -508,6 +532,11 @@ impl CadCraftApp {
                     |x| matches!(x, HoleCenter::Axis(f) if f.face == face),
                 );
             }
+            HolePick::Edge(a, b, ends) if d.redefine.is_some() => {
+                if let Some(r) = d.redefine {
+                    self.hole_redefine(r, a, b, ends);
+                }
+            }
             HolePick::Edge(a, b, ends) => {
                 // A dimension from the last clicked centre (two at most).
                 let Some(k) = d.points.len().checked_sub(1) else {
@@ -635,7 +664,15 @@ impl CadCraftApp {
                 "Hole: click a face, a sketch point or a circular edge for the centres".into(),
             );
         }
-        let key = format!("hole|{:?}|{:?}|{:?}|{:?}", d.edit, d.def, d.face, d.points);
+        let key = format!(
+            "hole|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
+            d.edit,
+            d.def,
+            d.face,
+            d.points,
+            d.dims.iter().map(|x| (x.value, &x.a)).collect::<Vec<_>>(),
+            d.sk.as_ref().map(|c| c.rev)
+        );
         // Cached or still computing: no copy of the part this frame.
         if let Some(r) = self.preview_ready(&key) {
             return r;
@@ -643,6 +680,11 @@ impl CadCraftApp {
         let mut trial = self.part().clone();
         let d = d.clone();
         self.preview_async(key, move || {
+            if let Some(c) = &d.sk
+                && let Some(ps) = trial.sketches.get_mut(c.index)
+            {
+                ps.sketch = c.sketch.clone();
+            }
             let built = match d.edit {
                 Some(k) => trial.replace_feature(k, Feature::Hole(d.def.clone())),
                 None => {
@@ -700,20 +742,33 @@ impl CadCraftApp {
         self.checkpoint(cmd);
         let n_sketches = self.part().sketches.len();
         let mut d = d;
+        // Edit Feature: the dimensions edited on the copy go into the sketch.
+        let old_sketch = d.sk.as_ref().and_then(|c| {
+            let ps = self.part_mut().sketches.get_mut(c.index)?;
+            Some((c.index, std::mem::replace(&mut ps.sketch, c.sketch.clone())))
+        });
         if d.edit.is_some() && !d.points.is_empty() {
             // Edit Feature: centres clicked on the face become Center Points
             // of the hole's sketch.
-            if let Some(ps) = self
-                .part_mut()
+            // Their edge dimensions become dimensions of that sketch.
+            if let Some(i) = self
+                .part()
                 .sketches
-                .iter_mut()
-                .find(|s| s.id == d.def.sketch)
+                .iter()
+                .position(|s| s.id == d.def.sketch)
             {
-                for p in std::mem::take(&mut d.points) {
-                    let q = ps.sketch.plane.project(&p);
-                    let id = ps.sketch.add_center_point(q);
-                    d.def.centers.push(HoleCenter::Point(id));
+                let mut ids = Vec::new();
+                for p in &d.points {
+                    let ps = &mut self.part_mut().sketches[i];
+                    let q = ps.sketch.plane.project(p);
+                    ids.push(ps.sketch.add_center_point(q));
                 }
+                if let Err(e) = d.add_dims(self.part_mut(), i, &ids) {
+                    self.file_status = Some(Err(format!("{cmd}: {e}")));
+                }
+                d.def.centers.extend(ids.into_iter().map(HoleCenter::Point));
+                d.points.clear();
+                d.dims.clear();
             }
         }
         let built = match d.edit {
@@ -726,6 +781,11 @@ impl CadCraftApp {
             },
         };
         if built.is_err() {
+            if let Some((i, sk)) = old_sketch
+                && let Some(ps) = self.part_mut().sketches.get_mut(i)
+            {
+                ps.sketch = sk;
+            }
             // The sketch made for the centres goes with the failure.
             while self.part().sketches.len() > n_sketches {
                 let last = self.part().sketches.len() - 1;
@@ -912,40 +972,8 @@ impl CadCraftApp {
                     );
                 }
             }
-            // The centres' dimensions to model edges: the edge, the
-            // perpendicular and the value (edited in the panel).
-            if let Some(d) = &self.hole_draft {
-                let dim = Color32::from_rgb(20, 90, 200);
-                for x in &d.dims {
-                    let Some(&p) = d.points.get(x.center) else {
-                        continue;
-                    };
-                    let f = x.foot(p);
-                    let (Some(a), Some(b)) =
-                        (self.camera.project(&p, rect), self.camera.project(&f, rect))
-                    else {
-                        continue;
-                    };
-                    if let (Some(e0), Some(e1)) = (
-                        self.camera.project(&x.ends[0], rect),
-                        self.camera.project(&x.ends[1], rect),
-                    ) {
-                        painter.line_segment([e0, e1], Stroke::new(3.0, dim));
-                    }
-                    painter.arrow(b, a - b, Stroke::new(1.5, dim));
-                    let text = match &x.expr {
-                        Some(e) => format!("{e} = {}", hole::num(x.value, 3)),
-                        None => hole::num(x.value, 3),
-                    };
-                    painter.text(
-                        egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0) - egui::vec2(0.0, 8.0),
-                        egui::Align2::CENTER_BOTTOM,
-                        text,
-                        egui::FontId::proportional(13.0),
-                        dim,
-                    );
-                }
-            }
+            // The centres' dimensions to model edges (`hole_dims`).
+            self.draw_hole_dims(painter, rect);
         }
     }
 }

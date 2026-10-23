@@ -831,6 +831,16 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   of the Hole panel become `project_segment` reference lines (associative, by vertex names)
   plus `PointLineDistance` dimensions of the hole's sketch at OK; `PartDocument::project_edge`
   is also the sketch's Project Geometry (straight edges only).
+- **Measure into a field** (`gui/measure_pick.rs`): a field asks through egui temp data
+  (`request_id` → `(field id, unit)`), the answer comes back as `result_id(field id)` and `value_field`
+  takes it as its commit; the Edit Dimension box sets `DimEdit::text`. While it runs, the view's click is
+  removed from the `Response` (`flags`), so the open command does not pick the same click; Esc is taken
+  at the top of `shortcuts`.
+- **Hole placement dimensions** (`gui/hole_dims.rs`): `DimRef::Draft` (this command's clicks,
+  `HoleDraft::dims`) and `DimRef::Sketch` (the hole sketch's `PointLineDistance`, on the working copy
+  `HoleDraft::sk`, loaded by `hole_load_sketch` on Edit Feature, written into the part at OK and put
+  back on failure; `rev` keys the preview). Arrows go through `ManipOwner::Hole`: the dragged target is
+  found once by grip (`hole_drag`, cleared on release) because `Handle::field` cannot name it.
 - **Hole data for drawings**: `PartDocument::holes()` (filled during regeneration, also from
   cache hits via `CachedStep::extra`). Pattern / Mirror must push `h.transformed(&m)` copies
   (with the element index in `copy`) into `hole_instances` at their place in the loop.

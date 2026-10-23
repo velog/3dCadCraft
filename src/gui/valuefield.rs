@@ -48,7 +48,9 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
     };
     let buf_id = spec.id.with("buf");
     let te_id = spec.id.with("te");
-    let mut commit = None;
+    // A value measured for this field (`>` → Measure) comes in as typed.
+    let mut commit: Option<String> =
+        ui.data_mut(|d| d.remove_temp(super::measure_pick::result_id(spec.id)));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         let editing: Option<String> = ui.data(|d| d.get_temp(buf_id));
@@ -128,8 +130,17 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
                     }
                 }
             });
-            ui.add_enabled(false, egui::Button::new("Measure"))
-                .on_disabled_hover_text("Measure (FEATURES 0.10)");
+            if ui
+                .button("Measure")
+                .on_hover_text(
+                    "Pick two points, a line, a circle, an edge or a face in the view and use                      the value",
+                )
+                .clicked()
+            {
+                let req = (spec.id, spec.unit);
+                ui.data_mut(|d| d.insert_temp(super::measure_pick::request_id(), req));
+                ui.close();
+            }
             ui.add_enabled(false, egui::Button::new("Show Dimensions"))
                 .on_disabled_hover_text("Pick a dimension in the graphics window (planned)");
         })
