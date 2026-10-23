@@ -65,6 +65,30 @@ pub fn tr(s: &str) -> Cow<'_, str> {
 /// English → Bulgarian. Command names (before the colon) stay English.
 const TABLE: &[(&str, &str)] = &[
     (
+        "Place: click in the view to place an occurrence (on a component or the XY plane); right-click for OK, Place Grounded at Origin or a 90° turn; Esc ends",
+        "Place: щракнете в изгледа, за да поставите екземпляр (върху компонент или в равнината XY); десен бутон за OK, Place Grounded at Origin или завъртане на 90°; Esc приключва",
+    ),
+    (
+        "Free Move: drag a component in the view plane (grounded ones too); Esc ends",
+        "Free Move: влачете компонент в равнината на изгледа (и фиксираните); Esc приключва",
+    ),
+    (
+        "Free Rotate: click the component to turn; Esc ends",
+        "Free Rotate: щракнете компонента, който да завъртите; Esc приключва",
+    ),
+    (
+        "Free Rotate: drag inside the circle to turn freely, on its rim to turn in the screen plane; click another component to switch; Esc ends",
+        "Free Rotate: влачете вътре в окръжността за свободно завъртане, по ръба ѝ — в равнината на екрана; щракнете друг компонент, за да смените; Esc приключва",
+    ),
+    (
+        "The assembly is empty. Assemble > Place (P) puts a part of the project in it",
+        "Сглобяването е празно. Assemble > Place (P) поставя детайл от проекта",
+    ),
+    (
+        "Click a component to select it (Ctrl adds), drag one that is not grounded to move it; double-click opens its part",
+        "Щракнете компонент, за да го изберете (Ctrl добавя), влачете нефиксиран, за да го преместите; двойно щракване отваря детайла му",
+    ),
+    (
         "Project Geometry: click points or curves of earlier sketches, or model edges, to project them (Shift: as construction; Esc or right-click > Done ends)",
         "Project Geometry: щракнете точки или криви от по-ранни скици или ръбове на модела, за да ги проектирате (Shift: като construction; Esc или десен клик > Done спира)",
     ),

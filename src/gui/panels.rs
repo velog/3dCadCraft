@@ -68,7 +68,7 @@ const WARNING: Color32 = Color32::from_rgb(230, 140, 0);
 const SLOW_CLICK_S: f64 = 0.5;
 
 /// A 16 px browser icon before the next widget in a horizontal row.
-fn tree_icon(ui: &mut egui::Ui, icon: Icon) {
+pub(super) fn tree_icon(ui: &mut egui::Ui, icon: Icon) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
     super::icons::paint(ui.painter(), r, icon, &super::icons::Palette::ENABLED);
 }
@@ -147,6 +147,30 @@ impl CadCraftApp {
         ui.separator();
         self.browser_hover = None;
         let mut cmds = Vec::new();
+        let mut activate = None;
+        if let Some(back) = self
+            .asm
+            .came_from
+            .and_then(|id| self.project.document(id))
+            .map(|d| d.name.clone())
+            && ui
+                .button(format!("Return to {back}"))
+                .on_hover_text("Back to the assembly this part was opened from")
+                .clicked()
+        {
+            self.return_to_assembly();
+            return;
+        }
+        let docs: Vec<(
+            crate::document::DocumentId,
+            String,
+            crate::document::DocumentKind,
+        )> = self
+            .project
+            .documents()
+            .iter()
+            .map(|d| (d.id, d.name.clone(), d.data.kind()))
+            .collect();
         egui::ScrollArea::vertical().show(ui, |ui| {
             let project_label = RichText::new(self.project.name.clone()).strong();
             ui.horizontal(|ui| {
@@ -159,20 +183,28 @@ impl CadCraftApp {
                 }
             });
             ui.indent("docs", |ui| {
-                for d in self.project.documents() {
-                    if d.id == self.part_id {
-                        self.part_tree(ui, &d.name, &mut cmds);
+                for (id, name, kind) in &docs {
+                    if *id == self.part_id {
+                        if self.is_assembly() {
+                            self.assembly_tree(ui, name);
+                        } else {
+                            self.part_tree(ui, name, &mut cmds);
+                        }
                     } else {
                         ui.horizontal(|ui| {
-                            tree_icon(ui, Icon::Part);
+                            let assembly = *kind == crate::document::DocumentKind::Assembly;
+                            tree_icon(ui, if assembly { Icon::Assembly } else { Icon::Part });
                             let r = ui.selectable_label(
-                                self.selection == Selection::Document(d.id),
-                                format!("{}  ({:?})", d.name, d.data.kind()),
+                                self.selection == Selection::Document(*id),
+                                name.clone(),
                             );
-                            if r.on_hover_text("Opening more documents — planned")
-                                .clicked()
-                            {
-                                cmds.push(BrowserCmd::Select(Selection::Document(d.id)));
+                            let r = r.on_hover_text(
+                                "Double-click to open (make it the active document)",
+                            );
+                            if r.double_clicked() {
+                                activate = Some(*id);
+                            } else if r.clicked() {
+                                cmds.push(BrowserCmd::Select(Selection::Document(*id)));
                             }
                         });
                     }
@@ -217,6 +249,10 @@ impl CadCraftApp {
                 BrowserCmd::StartRename(t) => self.start_rename(&ctx, t),
                 c => self.browser_cmd(c),
             }
+        }
+        if let Some(id) = activate {
+            self.asm.came_from = None;
+            self.activate_document(id);
         }
     }
 
@@ -1075,6 +1111,10 @@ impl CadCraftApp {
     pub(super) fn properties(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Properties").strong());
         ui.separator();
+        if self.is_assembly() {
+            self.assembly_properties(ui);
+            return;
+        }
         if self.extrude.is_some() {
             self.sync_extrude_direction();
             self.extrude_dialog(ui);
@@ -4497,6 +4537,11 @@ impl CadCraftApp {
                 ui.label("mm");
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     match (self.mode, self.editing) {
+                        _ if self.is_assembly() => {
+                            let prompt = self.asm_prompt();
+                            let text = super::i18n::tr(&prompt);
+                            ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                        }
                         (Mode::PickPlane(PickPurpose::NewSketch), _) => {
                             ui.colored_label(
                                 WARNING,

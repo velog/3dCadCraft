@@ -30,6 +30,7 @@
 )]
 
 pub mod api;
+pub mod assembly;
 pub mod command;
 pub mod diagnostics;
 pub mod document;

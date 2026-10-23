@@ -57,6 +57,14 @@ pub enum Action {
     ToggleRelax,
     /// Extrude command (opens its dialog).
     Extrude,
+    /// Assemble › Place: place a part as occurrences.
+    AsmPlace,
+    /// Assemble › Free Move.
+    AsmFreeMove,
+    /// Assemble › Free Rotate.
+    AsmFreeRotate,
+    /// Assemble › Grounded: toggle on the selected occurrences.
+    AsmGround,
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch
@@ -158,11 +166,17 @@ pub struct State {
     pub project: bool,
     /// Format → Center Point is on.
     pub center_point: bool,
+    /// The active document is an assembly.
+    pub assembly: bool,
+    /// The assembly command that is open (shown pressed).
+    pub asm_tool: Option<Action>,
 }
 
 /// Ribbon tabs of the part environment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
+    /// Assembly: place, position, relationships.
+    Assemble,
     /// Features: create, modify, work features, patterns.
     Model,
     /// 2D sketch tools and constraints.
@@ -178,7 +192,8 @@ pub enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 6] = [
+    const ALL: [Tab; 7] = [
+        Tab::Assemble,
         Tab::Model,
         Tab::Sketch,
         Tab::Inspect,
@@ -187,6 +202,16 @@ impl Tab {
         Tab::View,
     ];
 
+    /// Whether the tab belongs to the environment (an assembly has no
+    /// 3D Model / Sketch tabs, a part no Assemble tab).
+    pub fn shown(self, assembly: bool) -> bool {
+        match self {
+            Tab::Assemble => assembly,
+            Tab::Model | Tab::Sketch => !assembly,
+            _ => true,
+        }
+    }
+
     /// The tab with this label (a command's `Place::Ribbon`).
     pub fn by_label(label: &str) -> Option<Tab> {
         Tab::ALL.into_iter().find(|t| t.label() == label)
@@ -194,6 +219,7 @@ impl Tab {
 
     fn label(self) -> &'static str {
         match self {
+            Tab::Assemble => "Assemble",
             Tab::Model => "3D Model",
             Tab::Sketch => "Sketch",
             Tab::Inspect => "Inspect",
@@ -368,6 +394,22 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
         "sketch.show_constraints"
     };
     match tab {
+        Tab::Assemble => vec![
+            panel("Component", vec![c("asm.place").large(), c("asm.create")]),
+            panel(
+                "Position",
+                vec![c("asm.free_move"), c("asm.free_rotate"), c("asm.ground")],
+            ),
+            panel(
+                "Relationships",
+                vec![c("asm.constrain").large(), c("asm.joint").large()],
+            ),
+            panel(
+                "Pattern",
+                vec![c("asm.pattern"), c("asm.mirror"), c("asm.copy")],
+            ),
+            panel("Manage", vec![c("asm.bom").large()]),
+        ],
         Tab::Model => vec![
             panel(
                 "Sketch",
@@ -686,6 +728,8 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 full_screen: false,
                 project: false,
                 center_point: false,
+                assembly: false,
+                asm_tool: None,
             };
             for tab in Tab::ALL {
                 for p in panels(tab, &st) {
@@ -707,6 +751,23 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
     out
 }
 
+/// In an assembly, the part's commands of the shared tabs (Inspect,
+/// Tools…) are greyed with the reason.
+fn for_env(mut panels: Vec<PanelDef>, st: &State) -> Vec<PanelDef> {
+    if !st.assembly {
+        return panels;
+    }
+    for p in &mut panels {
+        for cmd in &mut p.cmds {
+            let valid = commands::by_id(cmd.id).is_none_or(|c| c.valid_in(commands::Env::Assembly));
+            if !valid && matches!(cmd.kind, Kind::Ready(..)) {
+                cmd.kind = Kind::Unavailable("Not available in an assembly");
+            }
+        }
+    }
+    panels
+}
+
 /// Height of a small row; three rows make a panel.
 const ROW: f32 = 22.0;
 const PANEL_H: f32 = ROW * 3.0 + 4.0;
@@ -715,7 +776,7 @@ const PANEL_H: f32 = ROW * 3.0 + 4.0;
 /// command, if any.
 pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Option<Action> {
     ui.horizontal(|ui| {
-        for t in Tab::ALL {
+        for t in Tab::ALL.into_iter().filter(|t| t.shown(st.assembly)) {
             let was = *tab == t;
             let r = ui.selectable_value(tab, t, RichText::new(t.label()).strong());
             if r.double_clicked() && was {
@@ -749,7 +810,7 @@ pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Op
     let mut clicked = None;
     egui::ScrollArea::horizontal().show(ui, |ui| {
         ui.horizontal_top(|ui| {
-            for p in panels(*tab, st) {
+            for p in for_env(panels(*tab, st), st) {
                 ui.vertical(|ui| {
                     ui.horizontal_top(|ui| {
                         ui.set_min_height(PANEL_H);
@@ -933,6 +994,9 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                 Action::ProjectGeometry => st.project,
                 Action::CenterPoint => st.center_point,
                 Action::ToggleDof => st.show_dof,
+                Action::AsmFreeMove | Action::AsmFreeRotate | Action::AsmPlace => {
+                    st.asm_tool == Some(*action)
+                }
                 Action::Ui(UiCmd::CleanScreen) => st.clean,
                 Action::Ui(UiCmd::FullScreen) => st.full_screen,
                 _ => false,

@@ -339,7 +339,7 @@ impl Project {
             // a path taken from the file, so a crafted manifest cannot point
             // the reader outside the project ("zip slip").
             let bytes = read(&document_entry_name(entry.id))?;
-            let doc: Document = serde_json::from_slice(&bytes).map_err(|e| {
+            let mut doc: Document = serde_json::from_slice(&bytes).map_err(|e| {
                 if manifest.format_revision > FORMAT_REVISION {
                     ProjectError::NewerRevision {
                         path: path.to_path_buf(),
@@ -357,6 +357,10 @@ impl Project {
                     path,
                     format!("document {} is stored under id {}", doc.id, entry.id),
                 ));
+            }
+            // Occurrences of files before ids get theirs.
+            if let super::DocumentData::Assembly(a) = &mut doc.data {
+                a.fix_ids();
             }
             documents.push(doc);
         }

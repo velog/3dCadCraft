@@ -45,17 +45,20 @@ pub enum Env {
     Part,
     /// A 2D sketch in edit.
     Sketch,
+    /// An assembly is the active document.
+    Assembly,
 }
 
 impl Env {
     /// Every environment (for tests and the keymap's filter).
-    pub const ALL: [Env; 2] = [Env::Part, Env::Sketch];
+    pub const ALL: [Env; 3] = [Env::Part, Env::Sketch, Env::Assembly];
 
     /// English name, as in messages ("not available in a sketch").
     pub fn label(self) -> &'static str {
         match self {
             Env::Part => "a part",
             Env::Sketch => "a sketch",
+            Env::Assembly => "an assembly",
         }
     }
 }
@@ -69,14 +72,17 @@ impl Envs {
     pub const PART: Envs = Envs(1);
     /// Only while a sketch is edited.
     pub const SKETCH: Envs = Envs(2);
-    /// Everywhere.
+    /// The part and its sketches (not an assembly).
     pub const ANY: Envs = Envs(3);
+    /// Only in an assembly.
+    pub const ASSEMBLY: Envs = Envs(4);
 
     /// Whether `e` is in the set.
     pub const fn has(self, e: Env) -> bool {
         let bit = match e {
             Env::Part => 1,
             Env::Sketch => 2,
+            Env::Assembly => 4,
         };
         self.0 & bit != 0
     }
@@ -100,6 +106,8 @@ pub enum Place {
 pub enum AppCmd {
     /// File → New.
     New,
+    /// File → New Assembly: an assembly document in the open project.
+    NewAssembly,
     /// File → Open.
     Open,
     /// File → Save.
@@ -278,6 +286,18 @@ impl Command {
         self.action.is_some() && self.planned.is_none()
     }
 
+    /// Whether it runs in `env`. The application's own commands (File,
+    /// Help, View, Undo / Redo, Options) run in an assembly too; part
+    /// exports do not (they export the part).
+    pub fn valid_in(&self, env: Env) -> bool {
+        self.envs.has(env)
+            || (env == Env::Assembly
+                && (self.id.starts_with("view.")
+                    || self.id.starts_with("help.")
+                    || (self.id.starts_with("file.") && !self.id.starts_with("file.export"))
+                    || matches!(self.id, "tools.undo" | "tools.redo" | "tools.options")))
+    }
+
     /// Why it cannot run in `env` (for grey items and red alias text), or
     /// `None` when it can.
     pub fn unavailable(&self, env: Env) -> Option<String> {
@@ -285,7 +305,7 @@ impl Command {
             Some(format!("Planned — docs/FEATURES.md, section {s}"))
         } else if self.held {
             self.key.map(|k| format!("Hold {k} and drag"))
-        } else if !self.envs.has(env) {
+        } else if !self.valid_in(env) {
             Some(format!("not available in {}", env.label()))
         } else {
             None
@@ -318,6 +338,10 @@ const T_AUTO: Place = Place::Ribbon("Tools", "Automation");
 const T_HISTORY: Place = Place::Ribbon("Tools", "History");
 const G_STYLES: Place = Place::Ribbon("Manage", "Styles and Standards");
 const V_VIS: Place = Place::Ribbon("View", "Visibility");
+const A_COMPONENT: Place = Place::Ribbon("Assemble", "Component");
+const A_POSITION: Place = Place::Ribbon("Assemble", "Position");
+const A_RELATIONSHIPS: Place = Place::Ribbon("Assemble", "Relationships");
+const A_PATTERN: Place = Place::Ribbon("Assemble", "Pattern");
 const V_NAV: Place = Place::Ribbon("View", "Navigate");
 const V_LOOK: Place = Place::Ribbon("View", "Appearance");
 const V_WIN: Place = Place::Ribbon("View", "Windows");
@@ -327,6 +351,7 @@ const HELP: Place = Place::Menu("Help");
 const KEY: Place = Place::Keyboard;
 
 const PART: Envs = Envs::PART;
+const ASSEMBLY: Envs = Envs::ASSEMBLY;
 const SKETCH: Envs = Envs::SKETCH;
 
 const fn c(id: &'static str, name: &'static str, bg: &'static str, icon: Icon) -> Command {
@@ -1200,7 +1225,78 @@ pub static COMMANDS: &[Command] = &[
         .env(SKETCH)
         .tip("Delete the selected sketch geometry and constraints")
         .spec("1.1-sketch.md"),
+    // ---- Assemble (docs/spec/3.1-assemblies.md) ---------------------------
+    c("asm.place", "Place", "Поставяне на компонент", Icon::Place)
+        .run(Action::AsmPlace)
+        .inv("Place Component")
+        .alias(&["P"])
+        .bound()
+        .at(&[A_COMPONENT])
+        .env(ASSEMBLY)
+        .tip("Place a part as a new occurrence: click in the view for each one, right-click for OK, Place Grounded at Origin or a 90° turn")
+        .spec("3.1-assemblies.md"),
+    c("asm.create", "Create", "Създаване на компонент", Icon::Part)
+        .at(&[A_COMPONENT])
+        .env(ASSEMBLY)
+        .tip("Create a new part inside the assembly")
+        .todo("3.10"),
+    c("asm.free_move", "Free Move", "Свободно преместване", Icon::FreeMove)
+        .run(Action::AsmFreeMove)
+        .at(&[A_POSITION])
+        .env(ASSEMBLY)
+        .tip("Drag a component in the view plane (grounded ones too); without the command a drag moves components that are not grounded")
+        .spec("3.1-assemblies.md"),
+    c("asm.free_rotate", "Free Rotate", "Свободно завъртане", Icon::FreeRotate)
+        .run(Action::AsmFreeRotate)
+        .at(&[A_POSITION])
+        .env(ASSEMBLY)
+        .tip("Click a component, then drag inside the circle to turn it freely or on its rim to turn it in the screen plane")
+        .spec("3.1-assemblies.md"),
+    c("asm.ground", "Grounded", "Фиксиран", Icon::Ground)
+        .run(Action::AsmGround)
+        .at(&[A_POSITION])
+        .env(ASSEMBLY)
+        .tip("Ground the selected components (they keep their place) or free them again")
+        .spec("3.1-assemblies.md"),
+    c("asm.constrain", "Constrain", "Ограничение", Icon::Coincident)
+        .alias(&["C"])
+        .at(&[A_RELATIONSHIPS])
+        .env(ASSEMBLY)
+        .tip("Mate, Flush, Angle, Tangent, Insert or Symmetry between two components")
+        .todo("3.2"),
+    c("asm.joint", "Joint", "Съединение", Icon::Rotate)
+        .alias(&["J"])
+        .at(&[A_RELATIONSHIPS])
+        .env(ASSEMBLY)
+        .tip("Rigid, Rotational, Slider, Cylindrical, Planar or Ball joint between two components")
+        .todo("3.3"),
+    c("asm.pattern", "Pattern", "Масив от компоненти", Icon::PatternRect)
+        .at(&[A_PATTERN])
+        .env(ASSEMBLY)
+        .tip("Pattern components")
+        .todo("3.7"),
+    c("asm.mirror", "Mirror", "Огледало на компоненти", Icon::Mirror)
+        .at(&[A_PATTERN])
+        .env(ASSEMBLY)
+        .tip("Mirror components about a plane")
+        .todo("3.7"),
+    c("asm.copy", "Copy", "Копиране на компоненти", Icon::Copy)
+        .at(&[A_PATTERN])
+        .env(ASSEMBLY)
+        .tip("Copy components as new documents")
+        .todo("3.8"),
+    c("asm.bom", "Bill of Materials", "Спецификация", Icon::Parameters)
+        .short("BOM")
+        .at(&[Place::Ribbon("Assemble", "Manage")])
+        .env(ASSEMBLY)
+        .tip("The parts list of the assembly")
+        .todo("3.6"),
     // ---- File / Help -----------------------------------------------------
+    c("file.new_assembly", "New Assembly", "Ново сглобяване", Icon::Assembly)
+        .run(Action::App(AppCmd::NewAssembly))
+        .at(&[FILE])
+        .tip("A new assembly in the open project; place the project's parts in it")
+        .spec("3.1-assemblies.md"),
     c("file.new", "New", "Нов проект", Icon::Part)
         .run(Action::App(AppCmd::New))
         .key("Ctrl+N")
@@ -1357,7 +1453,7 @@ pub fn search(query: &str, env: Env, recent: &[String]) -> Vec<Hit> {
                 cmd,
                 tier,
                 score,
-                valid: cmd.envs.has(env),
+                valid: cmd.valid_in(env),
                 ready: cmd.ready() && !cmd.held,
             })
         })
@@ -1405,7 +1501,7 @@ mod tests {
     fn aliases_are_unique_per_environment() {
         for env in Env::ALL {
             let mut seen = std::collections::HashMap::new();
-            for c in COMMANDS.iter().filter(|c| c.envs.has(env)) {
+            for c in COMMANDS.iter().filter(|c| c.valid_in(env)) {
                 for a in c.aliases {
                     let key = a.to_ascii_uppercase();
                     if let Some(other) = seen.insert(key, c.id) {

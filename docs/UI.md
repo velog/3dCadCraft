@@ -190,6 +190,17 @@ As in Inventor's panels ([spec/0-ui.md §4.1](spec/0-ui.md)):
 | Shell: the arrow in the view | dragging changes the thickness (Ctrl — finer step) |
 | Shell: the name at the top (`Part > Shell1`) | a click marks it, a second click — rename |
 
+### In an assembly (Assemble tab, [spec/3.1-assemblies.md](spec/3.1-assemblies.md))
+
+**File → New Assembly** adds an assembly to the open project; the browser lists the project's documents
+(double-click one to make it active). **P** = Place (pick a part, click in the view for each occurrence;
+right-click → OK / Place Grounded at Origin / Rotate 90° about X, Y, Z; Esc ends). Click selects a component
+(Ctrl adds), a drag moves one that is not grounded, **Free Move** moves grounded ones too, **Free Rotate**:
+drag inside the green circle = free turn, on its rim = turn in the screen plane. **Delete** deletes the
+selected occurrences, **Esc** ends the command or clears the selection, double-click (view or browser) opens
+the component's part; *Return to …* at the top of the browser goes back. Right-click a component: Grounded,
+Visibility, Open, Delete. 🟡 waiting for a visual check.
+
 ### Help, log and recovery
 
 The **Help** menu (on the right in Quick Access): **Help** (F1), **Save Diagnostics…** (a zip for a problem report, through the program's file dialog), **Open Logs Folder** (`%APPDATA%\3dcadcraft\logs`). The program writes a log and an action journal for every session, autosaves into `%APPDATA%\3dcadcraft\recovery` (every 5 minutes and after OK, never over the user's file) and, on a crash, `crash-….txt`. If the previous session did not close cleanly, **Restore** appears at start-up: "Restore the autosaved version of …?" — **Restore** / **Open Original** / **Discard** 🟡 ([spec/0.14-diagnostics.md](spec/0.14-diagnostics.md)).

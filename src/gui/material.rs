@@ -165,6 +165,17 @@ pub(super) fn face_paint(look: &Appearance, source: LookSource, open: bool) -> F
 /// appearance (opaque faces in the shaded pass with the red back-face
 /// check; see-through ones in the transparent pass), plus the edges.
 pub(super) fn add_part_meshes(g: &mut SceneGeometry, part: &PartDocument) {
+    add_part_meshes_at(g, part, None, None);
+}
+
+/// [`add_part_meshes`] moved by `place` (an assembly occurrence) and
+/// blended half way to `tint` (its selection colour).
+pub(super) fn add_part_meshes_at(
+    g: &mut SceneGeometry,
+    part: &PartDocument,
+    place: Option<&crate::kernel::Transform3>,
+    tint: Option<[f32; 3]>,
+) {
     let body = &part.body;
     let looks = Resolver::new(part).face_looks();
     let fallback = (Appearance::fallback(), LookSource::Material);
@@ -174,7 +185,10 @@ pub(super) fn add_part_meshes(g: &mut SceneGeometry, part: &PartDocument) {
             continue;
         }
         let mesh = match body.tessellate_solid(id, &TessellationOptions::default()) {
-            Ok(m) => m,
+            Ok(m) => match place {
+                Some(t) => moved(m, t),
+                None => m,
+            },
             Err(e) => {
                 log::error!("tessellation failed: {e}");
                 continue;
@@ -187,7 +201,12 @@ pub(super) fn add_part_meshes(g: &mut SceneGeometry, part: &PartDocument) {
         let mut clear: Vec<([f32; 4], Vec<[u32; 3]>)> = Vec::new();
         for (fid, range) in &mesh.face_triangles {
             let (look, src) = looks.get(fid).unwrap_or(&fallback);
-            let paint = face_paint(look, *src, solid.open);
+            let mut paint = face_paint(look, *src, solid.open);
+            if let Some(c) = tint {
+                for (x, t) in paint.rgb.iter_mut().zip(c) {
+                    *x = 0.5 * (*x + t);
+                }
+            }
             let tris = &f.triangles[range.clone()];
             if paint.alpha < 0.999 {
                 let c = [paint.rgb[0], paint.rgb[1], paint.rgb[2], paint.alpha];
@@ -221,6 +240,25 @@ pub(super) fn add_part_meshes(g: &mut SceneGeometry, part: &PartDocument) {
             g.add_polyline(edge, [0.02, 0.02, 0.04]);
         }
     }
+}
+
+/// `m` moved by the rigid transform `t`.
+fn moved(
+    mut m: crate::kernel::SolidMesh,
+    t: &crate::kernel::Transform3,
+) -> crate::kernel::SolidMesh {
+    for p in &mut m.faces.positions {
+        *p = t * *p;
+    }
+    for n in &mut m.faces.normals {
+        *n = t * *n;
+    }
+    for e in &mut m.edges {
+        for p in e {
+            *p = t * *p;
+        }
+    }
+    m
 }
 
 // ---- small widgets ------------------------------------------------------------

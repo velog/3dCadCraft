@@ -1000,7 +1000,16 @@ impl CadCraftApp {
                 full_screen: self.layout.full_screen,
                 project: self.project_geometry,
                 center_point: self.tools.center_point,
+                assembly: self.is_assembly(),
+                asm_tool: self.asm_tool_action(),
             };
+            if !self.tab.shown(state.assembly) {
+                self.tab = if state.assembly {
+                    super::ribbon::Tab::Assemble
+                } else {
+                    super::ribbon::Tab::Model
+                };
+            }
             let mut fold = super::ribbon::Fold {
                 minimized: self.layout.s.ribbon_minimized,
                 peek: self.layout.ribbon_peek,

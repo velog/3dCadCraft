@@ -1461,6 +1461,57 @@ fn speed_budgets() {
             assert!(p.feature_health.is_empty());
         }),
     ));
+    // Assembly picking (docs/spec/3.1, A1): the occurrence under the cursor
+    // every frame — 100 occurrences of the 36-hole plate, the ray taken into
+    // each occurrence's frame against the part's cached triangles.
+    {
+        use cadcraft3d::assembly::{self, PickMesh};
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentData, Project};
+        use cadcraft3d::kernel::{Transform3, Vector3};
+        use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, Termination};
+        let mut p = plate.clone();
+        let pts: Vec<Point3> = (0..36)
+            .map(|i| {
+                Point3::new(
+                    10.0 + 16.0 * (i % 6) as Real,
+                    10.0 + 16.0 * (i / 6) as Real,
+                    10.0,
+                )
+            })
+            .collect();
+        let (k, ids) = p.create_hole_sketch("Box1:Top", &pts).unwrap();
+        let mut s = HoleSpec::simple(5.5, 10.0);
+        s.termination = Termination::ThroughAll;
+        let mut def = HoleFeature::new(s);
+        def.sketch = p.sketches[k].id.clone();
+        def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+        p.add_hole(def).unwrap();
+        let mut project = Project::new("perf");
+        let part = project.add_document("Plate", DocumentData::Part(p));
+        let mut asm = AssemblyDocument::default();
+        for i in 0..100 {
+            let t =
+                Transform3::translation(110.0 * (i % 10) as Real, 110.0 * (i / 10) as Real, 0.0);
+            asm.place(DocRef::local(part), "Plate", t, i == 0);
+        }
+        let mesh = std::sync::Arc::new(PickMesh::of(
+            assembly::part_of(&project, DocRef::local(part)).unwrap(),
+        ));
+        rows.push((
+            "assembly: pick among 100 occurrences of the 36-hole plate (one frame)",
+            16.0,
+            median_ms(5, || {
+                let f = |_r: DocRef| Some(mesh.clone());
+                let h = assembly::pick(
+                    &asm,
+                    &Point3::new(555.0, 555.0, 50.0),
+                    &Vector3::new(0.0, 0.0, -1.0),
+                    &f,
+                );
+                assert!(h.is_some());
+            }),
+        ));
+    }
     // Parameters (docs/spec/0.5): 300 user parameters chained with units
     // and if() (each follows the one before), evaluated as every rebuild
     // does.

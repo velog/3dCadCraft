@@ -881,6 +881,33 @@ pub struct PartDocument {
 }
 
 impl PartDocument {
+    /// A cheap signature of the body (no walk over face meshes): the
+    /// vertices' box, the element counts, the mesh sizes and the hidden
+    /// bodies. It changes on every rebuild; caches of display or picking
+    /// data are keyed by it.
+    pub fn body_signature(&self) -> String {
+        let body = &self.body;
+        let bbox = body
+            .vertices()
+            .fold(None, |b: Option<(Point3, Point3)>, (_, v)| {
+                Some(b.map_or((v.point, v.point), |(lo, hi)| {
+                    (lo.inf(&v.point), hi.sup(&v.point))
+                }))
+            });
+        let mesh: usize = body
+            .faces()
+            .filter_map(|(_, f)| f.mesh.as_ref())
+            .map(|m| m.positions.len())
+            .sum();
+        format!(
+            "{}|{}|{}|{mesh}|{bbox:?}|{:?}",
+            body.edges().count(),
+            body.faces().count(),
+            body.vertices().count(),
+            self.hidden_bodies
+        )
+    }
+
     /// A part consisting of one box primitive.
     pub fn with_box(name: impl Into<String>, size: [Real; 3]) -> Result<Self, PartError> {
         let name = name.into();

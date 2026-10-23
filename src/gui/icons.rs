@@ -174,6 +174,12 @@ pub enum Icon {
     Origin,
     Sketch,
     Project,
+    // assembly
+    Assembly,
+    Place,
+    FreeMove,
+    FreeRotate,
+    Ground,
     // property panel choices
     DirDefault,
     DirFlipped,
@@ -1057,6 +1063,32 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
         Project => {
             p.rect(2.0, 3.0, 14.0, 13.0, ink);
             p.block([4.0, 8.0, 5.0, 3.5, 3.0], acc, soft);
+        }
+        Assembly => {
+            p.block([1.5, 9.0, 6.0, 5.0, 3.5], ink, soft);
+            p.block([8.0, 4.5, 5.0, 4.5, 3.0], acc, soft);
+        }
+        Place => {
+            p.block([2.0, 9.5, 7.0, 5.0, 3.0], ink, soft);
+            p.line(&[(12.5, 1.5), (12.5, 7.0)], hot);
+            p.head((12.5, 8.0), (0.0, 1.0), hot);
+        }
+        FreeMove => {
+            p.block([3.5, 9.5, 6.0, 4.5, 3.0], acc, soft);
+            p.line(&[(8.0, 1.5), (8.0, 5.0)], hot);
+            p.head((8.0, 1.0), (0.0, -1.0), hot);
+            p.line(&[(11.5, 9.0), (15.0, 9.0)], hot);
+            p.head((15.5, 9.0), (1.0, 0.0), hot);
+        }
+        FreeRotate => {
+            p.block([4.5, 8.0, 5.5, 4.5, 2.5], acc, soft);
+            p.arc(8.0, 8.0, 6.5, 200.0, 340.0, hot);
+            p.head((14.0, 6.0), (0.4, 1.0), hot);
+        }
+        Ground => {
+            p.disc(8.0, 4.5, 3.0, warn);
+            p.line(&[(8.0, 7.5), (8.0, 12.5)], ink);
+            p.line(&[(2.0, 14.0), (14.0, 14.0)], ink);
         }
         // Direction: the sketch plane (a line) and where the feature goes.
         DirDefault => {

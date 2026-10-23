@@ -63,10 +63,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     // The same part placed twice: stored once, referenced by ID.
     let place = |name: &str, z: f64, grounded| Occurrence {
-        name: name.into(),
-        component: DocRef::local(plate),
-        transform: Transform3::translation(0.0, 0.0, z),
         grounded,
+        ..Occurrence::new(
+            name,
+            DocRef::local(plate),
+            Transform3::translation(0.0, 0.0, z),
+        )
     };
     project.add_document(
         "Stack",

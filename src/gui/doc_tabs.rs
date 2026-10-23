@@ -34,7 +34,7 @@ impl CadCraftApp {
     }
 
     /// Ends what is open in the active document (before it is left).
-    fn leave_document(&mut self) {
+    pub(super) fn leave_document(&mut self) {
         self.finish_sketch();
         self.cancel_hole();
         self.cancel_extrude();
@@ -70,6 +70,7 @@ impl CadCraftApp {
     fn load_tab(&mut self, t: DocTab) {
         self.project = t.project;
         self.part_id = t.part_id;
+        self.asm = Default::default();
         self.history = t.history;
         self.file_path = t.file_path;
         self.saved_sig = t.saved_sig;

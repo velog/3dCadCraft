@@ -25,6 +25,8 @@ pub(super) enum DialogPurpose {
     /// Parameters → Export CSV / Import CSV.
     ExportParams,
     ImportParams,
+    /// Assemble › Place › From File: a project whose parts are copied in.
+    PlaceFrom,
 }
 
 impl DialogPurpose {
@@ -37,13 +39,16 @@ impl DialogPurpose {
             DialogPurpose::Diagnostics => "Save Diagnostics".into(),
             DialogPurpose::ExportParams => "Export Parameters".into(),
             DialogPurpose::ImportParams => "Import Parameters".into(),
+            DialogPurpose::PlaceFrom => "Place Component from File".into(),
         }
     }
 
     /// Extensions listed and given to a typed name.
     fn extensions(self) -> &'static [&'static str] {
         match self {
-            DialogPurpose::Open | DialogPurpose::SaveAs => &[FILE_EXTENSION],
+            DialogPurpose::Open | DialogPurpose::SaveAs | DialogPurpose::PlaceFrom => {
+                &[FILE_EXTENSION]
+            }
             DialogPurpose::SaveFolder => &[],
             DialogPurpose::Export(ExportFormat::Stl) => &["stl"],
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
@@ -54,7 +59,10 @@ impl DialogPurpose {
     }
 
     fn saves(self) -> bool {
-        !matches!(self, DialogPurpose::Open | DialogPurpose::ImportParams)
+        !matches!(
+            self,
+            DialogPurpose::Open | DialogPurpose::ImportParams | DialogPurpose::PlaceFrom
+        )
     }
 }
 
@@ -415,7 +423,7 @@ impl CadCraftApp {
                 crate::diagnostics::stamp(std::time::SystemTime::now())
             ),
             DialogPurpose::ExportParams => format!("{stem}-parameters.csv"),
-            DialogPurpose::ImportParams => String::new(),
+            DialogPurpose::ImportParams | DialogPurpose::PlaceFrom => String::new(),
         };
         self.file_dialog = Some(FileDialog::new(purpose, start_dir(&self.file_path), name));
     }
@@ -460,6 +468,7 @@ impl CadCraftApp {
         let id = project.add_document("Part1", DocumentData::Part(PartDocument::default()));
         self.project = project;
         self.part_id = id;
+        self.asm = Default::default();
         self.file_path.clear();
         self.history.clear();
         self.editing = None;
@@ -807,6 +816,7 @@ impl CadCraftApp {
                 self.save_project(true);
             }
             DialogPurpose::Diagnostics => self.save_diagnostics(&path),
+            DialogPurpose::PlaceFrom => self.place_from_file(&path),
             DialogPurpose::ExportParams => {
                 let text = self.part().parameters_csv();
                 self.file_status = Some(
@@ -878,6 +888,14 @@ impl CadCraftApp {
                 }
             });
         });
+        if ui
+            .button("New Assembly")
+            .on_hover_text("An assembly in this project: place the project's parts in it")
+            .clicked()
+        {
+            self.new_assembly();
+            ui.close();
+        }
         ui.separator();
         if ui.button("Save           Ctrl+S").clicked() {
             self.save();

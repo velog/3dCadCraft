@@ -56,6 +56,7 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `part::hole`, `part::standards` | Hole and Thread (`Feature::Hole` / `Feature::Thread`): `HoleSpec` (type, seat, termination, drill point, thread, fastener), notes for drawings (`note()`), `HoleInstance` + `group_holes` (`PartDocument::holes`, `hole_groups`); cosmetic-thread display mesh `ThreadBands` (texture sleeves); standards tables `data/standards/*.csv` (built in, user override folder) | `HoleFeature`, `HoleSpec`, `ThreadSpec`, `ThreadFeature`, `ThreadBands`, `Standards` |
 | `part::measure` | Measure (GUI-free): one item → length / radius / area / volume / position, two → minimum distance (closest pair with box pruning, adapted from SolidCraft `measure_sel.rs`), centre distance, angle; exact for lines, circles (pieces of one circle measured whole), planes, cylinders; window in `gui/measure.rs` | `Target`, `Item`, `Measurement` |
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
+| `assembly` | assemblies, step A1 (`docs/spec/3.1-assemblies.md`), GUI-free: `AssemblyDocument` place / names `Part:k` / ids (never reused, `fix_ids` on load) / remove, `move_by`, `rotate_about`, `PickMesh` (a part's triangles, local) and `pick` (ray into each occurrence's frame), boxes; GUI `gui/assembly.rs` (`AsmUi`: selection, Place / Free Move / Free Rotate, browser tree, Properties, scene) | `Occurrence`, `PickMesh`, `Hit` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
 | `diagnostics` | session log (`log.rs`, own logger + ring buffer), action journal with JSON-delta part snapshots (`journal.rs`), `replay.rs` (journal → parts, first differing step), autosave + Restore decision (`recovery.rs`), panic hook / crash reports / emergency autosave (`crash.rs`), Save Diagnostics zip (`bundle.rs`); GUI hooks in `gui/diag.rs` | `Journal`, `Outcome`, `Step`, `Autosaver`, `Offer` |
 | `command` | Undo/Redo (snapshot history, coalesced gestures); selector flow of command dialogs (`flow.rs`: active selector, auto-advance, Continue/Back/Enter, accepted `PickKind`s, Face Draft/Shell selector lists — GUI-free); one selection model (`selection.rs`: categories, user `Filter`, Select `Priority`, `effective` = selector kinds ∩ filter, pick order, `box_takes`, Shift + right-click menu content); later the Command enum | `History<T>`, `Flow`, `Selector`, `Filter`, `Priority` |
@@ -899,6 +900,16 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `extra.cosmetic` like holes (a mirror flips the hand). `fwidth` must come before the
   `discard` (uniform control flow); `renderer::tests::viewport_shader_validates` runs naga on
   the shader. Option: `AppOptions::thread_texture` (Application Options → Display).
+
+- **Assemblies (A1)**: the active document is `part_id` — a part *or* an assembly of the same project
+  (`activate_document`; the browser's other documents open on double-click). While an assembly is
+  active, `part()` is the empty stand-in, `viewport` hands over to `assembly_viewport` right after the
+  ViewCube, `build_scene` to `assembly_scene`, Properties / the status prompt / the browser tree to
+  `gui/assembly.rs`, and `apply` refuses commands whose `Command::valid_in(Env::Assembly)` is false
+  (File / View / Help / Undo / Options are valid everywhere; `Envs::ANY` means *part + sketch*). Ribbon
+  tabs follow `Tab::shown(assembly)`. A new viewport feature for parts must stay below that hand-over.
+  Occurrence meshes are the part's display meshes moved per occurrence on a scene rebuild
+  (`material::add_part_meshes_at`); picking caches `PickMesh` per document by `body_signature()`.
 
 ## Status and next steps
 

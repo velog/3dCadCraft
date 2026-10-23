@@ -24,6 +24,7 @@
 //! sketch on the box's top face.
 
 mod alias_input;
+mod assembly;
 mod blend;
 mod breadcrumb;
 mod browser_edit;
@@ -573,6 +574,8 @@ struct CadCraftApp {
     window_title: String,
     /// Result of the last file operation, shown in the status bar.
     file_status: Option<Result<String, String>>,
+    /// The assembly environment (`assembly.rs`).
+    asm: assembly::AsmUi,
 
     tab: Tab,
     mouse: MousePreset,
@@ -811,6 +814,7 @@ impl CadCraftApp {
             dropped: None,
             window_title: String::new(),
             file_status: None,
+            asm: Default::default(),
             tab: Tab::Model,
             mouse: MousePreset::Inventor,
             invert_wheel: false,
@@ -929,6 +933,22 @@ impl CadCraftApp {
 
     /// Re-validates UI state after the project was replaced (undo, open).
     fn after_restore(&mut self) {
+        // Undo of New Assembly / Place from File: the active document may
+        // be gone.
+        if self.project.document(self.part_id).is_none()
+            && let Some(d) = self.project.documents().first()
+        {
+            self.part_id = d.id;
+        }
+        if let Some(a) = self.assembly() {
+            let ids: Vec<u32> = a.occurrences.iter().map(|o| o.id).collect();
+            self.asm.sel.retain(|i| ids.contains(i));
+            if self.tab == Tab::Model || self.tab == Tab::Sketch {
+                self.tab = Tab::Assemble;
+            }
+        } else if self.tab == Tab::Assemble {
+            self.tab = Tab::Model;
+        }
         let n = self.part().sketches.len();
         if self.editing.is_some_and(|i| i >= n) {
             self.editing = None;
@@ -2232,26 +2252,7 @@ impl CadCraftApp {
         // test): no walk over the face meshes. `bounding_box` reads every
         // mesh position — on a 2500-hole pattern a selected face made frames
         // take 80 ms. The vertices' box plus the mesh sizes catch a rebuild.
-        let body = &self.part().body;
-        let bbox = body
-            .vertices()
-            .fold(None, |b: Option<(Point3, Point3)>, (_, v)| {
-                Some(b.map_or((v.point, v.point), |(lo, hi)| {
-                    (lo.inf(&v.point), hi.sup(&v.point))
-                }))
-            });
-        let mesh: usize = body
-            .faces()
-            .filter_map(|(_, f)| f.mesh.as_ref())
-            .map(|m| m.positions.len())
-            .sum();
-        format!(
-            "{}|{}|{}|{mesh}|{bbox:?}|{:?}",
-            body.edges().count(),
-            body.faces().count(),
-            body.vertices().count(),
-            self.part().hidden_bodies
-        )
+        self.part().body_signature()
     }
 
     /// The picking data of the current body.
@@ -3404,10 +3405,24 @@ impl CadCraftApp {
         let path = std::path::PathBuf::from(self.file_path.trim());
         self.file_status = Some(match Project::load(&path) {
             Ok(mut project) => {
+                // A top-level assembly (placed in no other) opens first,
+                // else the first part.
+                let used: Vec<DocumentId> = project
+                    .documents()
+                    .iter()
+                    .flat_map(|d| d.data.references())
+                    .map(|r| r.document)
+                    .collect();
                 let part = project
                     .documents()
                     .iter()
-                    .find(|d| matches!(d.data, DocumentData::Part(_)))
+                    .find(|d| matches!(d.data, DocumentData::Assembly(_)) && !used.contains(&d.id))
+                    .or_else(|| {
+                        project
+                            .documents()
+                            .iter()
+                            .find(|d| matches!(d.data, DocumentData::Part(_)))
+                    })
                     .map(|d| d.id);
                 match part {
                     Some(id) => {
@@ -3426,6 +3441,7 @@ impl CadCraftApp {
                         }
                         self.project = project;
                         self.part_id = id;
+                        self.asm = Default::default();
                         self.history.clear();
                         self.editing = None;
                         self.selection = Selection::Body;
@@ -3445,6 +3461,16 @@ impl CadCraftApp {
     /// Fits the body and the visible sketches (an empty part shows the
     /// origin at a sensible scale).
     fn fit_view(&mut self) {
+        if self.is_assembly() {
+            match self.assembly_box() {
+                Some((lo, hi)) if nalgebra::distance(&lo, &hi) > 1.0 => self.camera.fit(lo, hi),
+                _ => self.camera.fit(
+                    Point3::new(-50.0, -50.0, -50.0),
+                    Point3::new(50.0, 50.0, 50.0),
+                ),
+            }
+            return;
+        }
         let part = self.part();
         let mut bb = part.body.bounding_box();
         for (i, ps) in part.sketches.iter().enumerate() {
@@ -3561,6 +3587,14 @@ impl CadCraftApp {
     }
 
     fn apply(&mut self, action: Action) {
+        // In an assembly only its own and the application's commands run.
+        if self.is_assembly()
+            && let Some(c) = commands::by_action(action)
+            && !c.valid_in(commands::Env::Assembly)
+        {
+            self.file_status = Some(Err(format!("{}: not available in an assembly", c.name)));
+            return;
+        }
         // The recent-command list (alias input, command search).
         commands::remember(&mut self.recent_commands, action);
         // Remember commands for Repeat (Inventor: Enter / right-click).
@@ -3590,6 +3624,9 @@ impl CadCraftApp {
             _ => {}
         }
         match action {
+            Action::AsmPlace | Action::AsmFreeMove | Action::AsmFreeRotate | Action::AsmGround => {
+                self.asm_apply(action)
+            }
             Action::StartSketch => {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);
@@ -3691,6 +3728,7 @@ impl CadCraftApp {
         let now = self.dirty_cache.0;
         match c {
             AppCmd::New => self.request(files::Pending::New, now),
+            AppCmd::NewAssembly => self.new_assembly(),
             AppCmd::Open => self.request(files::Pending::Open, now),
             AppCmd::Save => self.save(),
             AppCmd::SaveAs => self.open_dialog(files::DialogPurpose::SaveAs),
@@ -4611,6 +4649,10 @@ impl CadCraftApp {
         g.add_line(&o, &Point3::new(0.0, 30.0, 0.0), [0.1, 0.7, 0.1]);
         g.add_line(&o, &Point3::new(0.0, 0.0, 30.0), [0.1, 0.2, 0.9]);
 
+        if self.is_assembly() {
+            self.assembly_scene(&mut g);
+            return g;
+        }
         // Faces in their appearance (face > feature > body > part > material).
         material::add_part_meshes(&mut g, self.part());
         // Cosmetic threads: a banded texture on their faces (one mesh).
@@ -4686,6 +4728,49 @@ impl CadCraftApp {
             .map(|(_, p)| p)
     }
 
+    /// Uploads a changed scene and draws the 3D view into `rect`.
+    fn render_view(
+        &mut self,
+        ui: &egui::Ui,
+        frame: &eframe::Frame,
+        rect: egui::Rect,
+        painter: &egui::Painter,
+    ) {
+        let scene = std::mem::take(&mut self.scene_dirty).then(|| self.build_scene());
+        let slice = self.slice_plane();
+        match (frame.wgpu_render_state(), self.renderer.as_mut()) {
+            (Some(rs), Some(renderer)) => {
+                if let Some(scene) = scene {
+                    renderer.upload(rs, &scene);
+                }
+                let ppp = ui.ctx().pixels_per_point();
+                let size = [
+                    (rect.width() * ppp).round() as u32,
+                    (rect.height() * ppp).round() as u32,
+                ];
+                let aspect = (rect.width() / rect.height().max(1.0)) as f64;
+                let tex = renderer.render(
+                    rs,
+                    size,
+                    &self.camera.view_projection(aspect),
+                    &self.camera.eye(),
+                    slice,
+                );
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                painter.image(tex, rect, uv, Color32::WHITE);
+            }
+            _ => {
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "wgpu is not available",
+                    egui::FontId::proportional(18.0),
+                    Color32::RED,
+                );
+            }
+        }
+    }
+
     fn viewport(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
         let (rect, mut response) =
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
@@ -4713,6 +4798,18 @@ impl CadCraftApp {
             None
         };
 
+        if self.is_assembly() {
+            self.assembly_viewport(
+                ui,
+                frame,
+                rect,
+                &response,
+                pointer,
+                on_cube.is_some(),
+                cube_drag,
+            );
+            return;
+        }
         // Measure into a field takes the click first (`measure_pick`).
         if on_cube.is_none() {
             self.measure_pick_click(&mut response, rect);
@@ -5843,39 +5940,7 @@ impl CadCraftApp {
 
         // --- 3D ---
         let painter = ui.painter_at(rect);
-        let scene = std::mem::take(&mut self.scene_dirty).then(|| self.build_scene());
-        let slice = self.slice_plane();
-        match (frame.wgpu_render_state(), self.renderer.as_mut()) {
-            (Some(rs), Some(renderer)) => {
-                if let Some(scene) = scene {
-                    renderer.upload(rs, &scene);
-                }
-                let ppp = ui.ctx().pixels_per_point();
-                let size = [
-                    (rect.width() * ppp).round() as u32,
-                    (rect.height() * ppp).round() as u32,
-                ];
-                let aspect = (rect.width() / rect.height().max(1.0)) as f64;
-                let tex = renderer.render(
-                    rs,
-                    size,
-                    &self.camera.view_projection(aspect),
-                    &self.camera.eye(),
-                    slice,
-                );
-                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                painter.image(tex, rect, uv, Color32::WHITE);
-            }
-            _ => {
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "wgpu is not available",
-                    egui::FontId::proportional(18.0),
-                    Color32::RED,
-                );
-            }
-        }
+        self.render_view(ui, frame, rect, &painter);
 
         // --- overlays ---
         let hovered_work = match (&plane_hover, &body_hover) {
@@ -6964,6 +7029,7 @@ impl eframe::App for CadCraftApp {
         self.show_dims_window(&ctx);
         valuefield::draw_whip(&ctx);
         self.alias_window(&ctx);
+        self.place_window(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);
         self.layout_end(&ctx);

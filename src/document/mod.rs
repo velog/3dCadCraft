@@ -197,6 +197,11 @@ impl DocRef {
 /// One placed instance of a part or sub-assembly.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Occurrence {
+    /// Stable identity inside its assembly (occurrence paths, relations);
+    /// never reused. 0 only in files written before ids existed:
+    /// [`AssemblyDocument::fix_ids`] numbers those on load.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub id: u32,
     /// Display name, e.g. "Bolt:3".
     pub name: String,
     /// What is placed.
@@ -205,10 +210,41 @@ pub struct Occurrence {
     pub transform: Transform3,
     /// Grounded occurrences are never moved by the assembly solver.
     pub grounded: bool,
+    /// Shown in the view (Inventor's per-occurrence Visibility).
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub visible: bool,
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_yes(v: &bool) -> bool {
+    *v
+}
+
+impl Occurrence {
+    /// A visible, not grounded occurrence of `component` (id 0 until an
+    /// assembly takes it, see `AssemblyDocument::place`).
+    pub fn new(name: impl Into<String>, component: DocRef, transform: Transform3) -> Self {
+        Self {
+            id: 0,
+            name: name.into(),
+            component,
+            transform,
+            grounded: false,
+            visible: true,
+        }
+    }
 }
 
 /// An assembly: occurrences of other documents. The same part may be placed
-/// many times; it is stored once.
+/// many times; it is stored once. Editing operations are in
+/// [`crate::assembly`].
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AssemblyDocument {
     /// Placed components.
@@ -476,10 +512,13 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, &component)| Occurrence {
-                    name: format!("Component:{}", i + 1),
-                    component,
-                    transform: Transform3::identity(),
+                    id: i as u32 + 1,
                     grounded: i == 0,
+                    ..Occurrence::new(
+                        format!("Component:{}", i + 1),
+                        component,
+                        Transform3::identity(),
+                    )
                 })
                 .collect(),
         })
