@@ -58,6 +58,13 @@ pub enum LinkSource {
         /// The edge.
         edge: EdgeRef,
     },
+    /// A work feature (format revision 16): a work point → a point, a work
+    /// axis → a line along it, a work plane → its line of intersection with
+    /// the sketch plane.
+    Work {
+        /// The work feature id.
+        id: String,
+    },
 }
 
 impl LinkSource {
@@ -65,7 +72,7 @@ impl LinkSource {
     pub fn sketch(&self) -> Option<&str> {
         match self {
             LinkSource::Sketch { sketch, .. } => Some(sketch),
-            LinkSource::Edge { .. } => None,
+            LinkSource::Edge { .. } | LinkSource::Work { .. } => None,
         }
     }
 }
@@ -253,8 +260,13 @@ pub fn resolve(
     sketches: &[PartSketch],
     i: usize,
     body: &BRep,
+    works: &super::placement::WorkGeom,
 ) -> Result<Shape3, String> {
     match source {
+        LinkSource::Work { id } => {
+            let plane = &sketches.get(i).ok_or("no such sketch")?.sketch.plane;
+            work_shape(works, id, plane, body)
+        }
         LinkSource::Sketch { sketch, geo } => {
             let k = sketches
                 .iter()
@@ -273,6 +285,49 @@ pub fn resolve(
         }
         LinkSource::Edge { edge } => edge_shape(body, edge),
     }
+}
+
+/// A work feature as a shape for sketch `plane`: a point; an axis as a
+/// segment along it (half a model diagonal each way, 50 mm at least); a
+/// plane as the segment of its intersection line with the sketch plane.
+pub fn work_shape(
+    works: &super::placement::WorkGeom,
+    id: &str,
+    plane: &Plane,
+    body: &BRep,
+) -> Result<Shape3, String> {
+    let half = body
+        .bounding_box()
+        .map_or(50.0, |(a, b)| ((b - a).norm() * 0.5).max(50.0));
+    if let Some(p) = works.points.get(id) {
+        return Ok(Shape3::Point(*p));
+    }
+    if let Some((p, d)) = works.axes.get(id) {
+        let d = d
+            .try_normalize(1e-12)
+            .ok_or("the work axis has no direction")?;
+        // Centred on the sketch: the point of the axis nearest its origin.
+        let c = p + d * (plane.origin - p).dot(&d);
+        return Ok(Shape3::Line(c - d * half, c + d * half));
+    }
+    if let Some(w) = works.planes.get(id) {
+        let (n1, n2) = (plane.normal.into_inner(), w.normal.into_inner());
+        let dir = n1.cross(&n2);
+        let s = dir.norm();
+        if s < 1e-9 {
+            return Err("the work plane is parallel to the sketch: they do not cross".into());
+        }
+        let dir = dir / s;
+        // A point on both planes: solve in the span of the two normals.
+        let (h1, h2) = (n1.dot(&plane.origin.coords), n2.dot(&w.origin.coords));
+        let k = n1.dot(&n2);
+        let det = 1.0 - k * k;
+        let (a, b) = ((h1 - k * h2) / det, (h2 - k * h1) / det);
+        let q = Point3::from(n1 * a + n2 * b);
+        let c = q + dir * (plane.origin - q).dot(&dir);
+        return Ok(Shape3::Line(c - dir * half, c + dir * half));
+    }
+    Err(format!("work feature {id} no longer exists"))
 }
 
 /// `shape` on `plane` (sketch coordinates); circles and arcs need a
@@ -441,7 +496,12 @@ pub fn place(sketch: &mut Sketch, link: &GeometryLink, proj: &Projected) -> Resu
 /// Updates every link of sketch `i` from its sources (regeneration step).
 /// Links whose target geometry the user deleted are dropped; sick links
 /// keep their geometry frozen and return their messages.
-pub fn apply(sketches: &mut [PartSketch], i: usize, body: &BRep) -> Vec<String> {
+pub fn apply(
+    sketches: &mut [PartSketch],
+    i: usize,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+) -> Vec<String> {
     let Some(ps) = sketches.get_mut(i) else {
         return Vec::new();
     };
@@ -456,7 +516,7 @@ pub fn apply(sketches: &mut [PartSketch], i: usize, body: &BRep) -> Vec<String> 
     let shapes: Vec<Result<Shape3, String>> = sketches[i]
         .links
         .iter()
-        .map(|l| resolve(&l.source, sketches, i, body))
+        .map(|l| resolve(&l.source, sketches, i, body, works))
         .collect();
     let ps = &mut sketches[i];
     let plane = ps.sketch.plane.clone();
@@ -479,5 +539,6 @@ pub fn describe_source(source: &LinkSource) -> String {
     match source {
         LinkSource::Sketch { sketch, .. } => sketch.clone(),
         LinkSource::Edge { edge } => format!("Edge {} / {}", edge.faces[0], edge.faces[1]),
+        LinkSource::Work { id } => id.clone(),
     }
 }

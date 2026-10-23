@@ -680,3 +680,109 @@ fn owner_scenario_sweep_along_spline_between_projected_centres() {
     );
     assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
 }
+
+// ------------------------------------------- Project Geometry: work features ---
+
+/// A projected work point / axis / plane in a sketch on XY: a point at the
+/// work point's XY, a line along the axis, the plane's crossing line; each
+/// follows its work feature; a plane parallel to the sketch is refused; a
+/// deleted work feature leaves the projection sick (frozen).
+#[test]
+fn project_work_point_axis_plane() {
+    use crate::part::{WorkAxisDef, WorkPointDef};
+    for (x, y, z) in [(3.0, 4.0, 10.0), (-7.0, 2.0, 0.0), (12.5, -1.0, 5.0)] {
+        let mut p = PartDocument::default();
+        let pt = p
+            .add_work(WorkFeature::new(WorkDef::Point(WorkPointDef::Fixed {
+                x,
+                y,
+                z,
+            })))
+            .unwrap();
+        let ax = p
+            .add_work(WorkFeature::new(WorkDef::Axis(WorkAxisDef::Fixed {
+                origin: [0.0, y, z],
+                dir: [1.0, 0.0, 0.0],
+            })))
+            .unwrap();
+        // A plane square to X at x (YZ offset).
+        let wp = p
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::YZ),
+                distance: x,
+            })))
+            .unwrap();
+        let k = on(&mut p, OriginPlane::XY, |_| {});
+        let lp = p.project_work(k, &pt).unwrap();
+        let la = p.project_work(k, &ax).unwrap();
+        let lw = p.project_work(k, &wp).unwrap();
+        let sk = &p.sketches[k].sketch;
+        let at = |id| sk.point(id).unwrap().position;
+        let q = at(p.sketches[k].links[lp].points[0]);
+        assert!((q - Point2::new(x, y)).norm() < 1e-9, "point at its XY");
+        let (a0, a1) = (
+            p.sketches[k].links[la].points[0],
+            p.sketches[k].links[la].points[1],
+        );
+        assert!(
+            (at(a0).y - y).abs() < 1e-9 && (at(a1).y - y).abs() < 1e-9,
+            "axis along X at y"
+        );
+        let (w0, w1) = (
+            p.sketches[k].links[lw].points[0],
+            p.sketches[k].links[lw].points[1],
+        );
+        assert!(
+            (at(w0).x - x).abs() < 1e-9 && (at(w1).x - x).abs() < 1e-9,
+            "plane x = const"
+        );
+        // The work point moves: the projection follows.
+        let kpt = p.features.iter().position(|f| f.id() == pt).unwrap();
+        let mut moved = p.features[kpt].clone();
+        if let crate::part::Feature::Work(w) = &mut moved {
+            w.def = WorkDef::Point(WorkPointDef::Fixed { x: x + 1.0, y, z });
+        }
+        p.replace_feature(kpt, moved).unwrap();
+        let sk = &p.sketches[k].sketch;
+        let q = sk
+            .point(p.sketches[k].links[lp].points[0])
+            .unwrap()
+            .position;
+        assert!(
+            (q - Point2::new(x + 1.0, y)).norm() < 1e-9,
+            "follows the work point"
+        );
+    }
+    // A work plane parallel to the sketch: refused, nothing added.
+    let mut p = PartDocument::default();
+    let wp = plane_at(&mut p, 5.0);
+    let k = on(&mut p, OriginPlane::XY, |_| {});
+    assert!(p.project_work(k, &wp).is_err());
+    assert!(p.sketches[k].links.is_empty());
+    // Deleting the projected work feature: the link is sick, its point stays.
+    let mut p = PartDocument::default();
+    let pt = p
+        .add_work(WorkFeature::new(WorkDef::Point(
+            crate::part::WorkPointDef::Fixed {
+                x: 1.0,
+                y: 2.0,
+                z: 0.0,
+            },
+        )))
+        .unwrap();
+    let k = on(&mut p, OriginPlane::XY, |_| {});
+    let l = p.project_work(k, &pt).unwrap();
+    let kpt = p.features.iter().position(|f| f.id() == pt).unwrap();
+    p.remove_feature(kpt);
+    p.regenerate().unwrap();
+    assert!(p.sketches[k].links[l].status.is_some(), "sick link");
+    let q = p.sketches[k]
+        .sketch
+        .point(p.sketches[k].links[l].points[0])
+        .unwrap()
+        .position;
+    assert!(
+        (q - Point2::new(1.0, 2.0)).norm() < 1e-9,
+        "frozen where it was"
+    );
+}

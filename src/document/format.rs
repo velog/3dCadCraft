@@ -95,7 +95,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   `PartDocument::hidden_bodies` (2026-10-20).
 /// - 14: Coil and Rib / Web (`Feature::Coil`, `Feature::Rib`) (2026-10-20).
 /// - 15: Revolve around a work axis (`AxisRef::Work`) (2026-10-23).
-pub const FORMAT_REVISION: u32 = 15;
+/// - 16: Project Geometry of work features (`LinkSource::Work`) (2026-10-23).
+pub const FORMAT_REVISION: u32 = 16;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

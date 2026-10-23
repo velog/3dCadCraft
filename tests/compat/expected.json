@@ -145,5 +145,12 @@
     "features": 2,
     "sketches": 1,
     "exact": true
+  },
+  "r16/project_work_r16.3dcadcraft": {
+    "volume": 112.84143934238364,
+    "faces": 4,
+    "features": 3,
+    "sketches": 1,
+    "exact": true
   }
 }

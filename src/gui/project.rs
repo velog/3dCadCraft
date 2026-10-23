@@ -24,7 +24,7 @@ use crate::kernel::EdgeId;
 use crate::part::{LinkSource, SketchGeo};
 
 /// What a Project Geometry click would take.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum ProjPick {
     /// Geometry of sketch `sketch` (index).
     Sketch {
@@ -35,6 +35,8 @@ pub(super) enum ProjPick {
     },
     /// A model edge.
     Edge(EdgeId),
+    /// A work point / axis / plane (by id).
+    Work(String),
 }
 
 impl CadCraftApp {
@@ -59,7 +61,7 @@ impl CadCraftApp {
                     continue;
                 };
                 let d = s.distance(p);
-                if d <= overlay::POINT_SNAP_PX && best.is_none_or(|(bd, _)| d < bd) {
+                if d <= overlay::POINT_SNAP_PX && best.as_ref().is_none_or(|(bd, _)| d < *bd) {
                     let geo = SketchGeo::Point { point: id };
                     best = Some((d, ProjPick::Sketch { sketch: j, geo }));
                 }
@@ -77,7 +79,7 @@ impl CadCraftApp {
                     .camera
                     .project(&sk.to_world(&at), rect)
                     .map_or(f32::MAX, |s| s.distance(p));
-                if best.is_none_or(|(bd, _)| d < bd) {
+                if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
                     let geo = SketchGeo::Curve { entity: e };
                     best = Some((d, ProjPick::Sketch { sketch: j, geo }));
                 }
@@ -86,7 +88,16 @@ impl CadCraftApp {
         if let Some((_, pick)) = best {
             return Some(pick);
         }
-        self.edge_under(p, rect).map(ProjPick::Edge)
+        // Work points and axes are thin: they win over the edges under
+        // them; a work plane only where no edge is.
+        if let Some(id) = self.work_feature_under(p, rect)
+            && !self.part().work.planes.contains_key(&id)
+        {
+            return Some(ProjPick::Work(id));
+        }
+        self.edge_under(p, rect)
+            .map(ProjPick::Edge)
+            .or_else(|| self.work_feature_under(p, rect).map(ProjPick::Work))
     }
 
     /// Project Geometry: a click at `p` projects what is under it into
@@ -105,6 +116,7 @@ impl CadCraftApp {
                     }),
                     ProjPick::Edge(e) => crate::part::blend::edge_ref(&self.part().body, e)
                         .map(|edge| LinkSource::Edge { edge }),
+                    ProjPick::Work(id) => Some(LinkSource::Work { id }),
                 };
                 let Some(source) = source else {
                     self.file_status = Some(Err(
@@ -145,6 +157,7 @@ impl CadCraftApp {
                 self.part_mut().project_edge(i, e).map(|_| ())
             }
             ProjPick::Edge(e) => self.part_mut().project_curved_edge(i, e).map(|_| ()),
+            ProjPick::Work(id) => self.part_mut().project_work(i, &id).map(|_| ()),
         };
         match r {
             Ok(()) => {
@@ -199,6 +212,31 @@ impl CadCraftApp {
                         .filter_map(|q| self.camera.project(q, rect))
                         .collect();
                     painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
+                }
+            }
+            Some(ProjPick::Work(id)) => {
+                let part = self.part();
+                if let Ok(shape) = crate::part::link::work_shape(
+                    &part.work,
+                    &id,
+                    &part.sketches[i].sketch.plane,
+                    &part.body,
+                ) {
+                    match shape {
+                        crate::part::link::Shape3::Point(q) => {
+                            if let Some(s) = self.camera.project(&q, rect) {
+                                painter.circle_stroke(s, 7.0, Stroke::new(2.5, col));
+                            }
+                        }
+                        crate::part::link::Shape3::Line(a, b) => {
+                            if let (Some(a), Some(b)) =
+                                (self.camera.project(&a, rect), self.camera.project(&b, rect))
+                            {
+                                painter.line_segment([a, b], Stroke::new(3.5, col));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             None => {}

@@ -168,6 +168,8 @@ Revision 13 (2026-10-20): Combine and Split (`Feature::Combine`, `Feature::Split
 
 **Revision 15 (2026-10-23): Revolve around a work axis.** `AxisRef::Work(<work feature id>)`: the axis of a Revolve can be a work axis lying in the sketch plane. An older build cannot read the new variant, hence the revision. Fixture: `tests/compat/r15/revolve_work_r15.3dcadcraft` (a ring around a work axis parallel to Z).
 
+**Revision 16 (2026-10-23): Project Geometry of work features.** `LinkSource::Work { id }` in a sketch's `links`: a work point, axis or plane projected into the sketch (point, line along the axis, line of intersection with the plane). An older build cannot read the new variant, hence the revision. Fixture: `tests/compat/r16/project_work_r16.3dcadcraft` (a work point and axis projected into an XY sketch, a boss on the point).
+
 ## 7. How to try it
 
 ```bash

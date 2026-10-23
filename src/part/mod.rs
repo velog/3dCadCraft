@@ -600,10 +600,12 @@ impl PartSketch {
                     .next()
                     .unwrap_or_default()
                     .to_owned(),
+                LinkSource::Work { id } => id.clone(),
             };
             let what = match &l.source {
                 LinkSource::Sketch { .. } => kind.to_owned(),
                 LinkSource::Edge { .. } => format!("edge ({})", kind.to_lowercase()),
+                LinkSource::Work { .. } => format!("work feature ({})", kind.to_lowercase()),
             };
             rows.push(Reference {
                 target: match l.curve {
@@ -615,6 +617,7 @@ impl PartSketch {
                     LinkSource::Edge { edge } => {
                         format!("Edge {} / {} ({kind})", edge.faces[0], edge.faces[1])
                     }
+                    LinkSource::Work { id } => format!("{id} ({kind})"),
                 },
                 ok: l.status.is_none(),
                 points: l.points.clone(),
@@ -2117,6 +2120,17 @@ impl PartDocument {
         self.add_link(index, LinkSource::Edge { edge: r }, false)
     }
 
+    /// **Project Geometry** of a work point / axis / plane into sketch
+    /// `index`: a fixed reference point or line that follows it.
+    pub fn project_work(&mut self, index: usize, id: &str) -> Result<usize, PartError> {
+        if !self.features.iter().any(|f| f.id() == id) {
+            return Err(PartError::Feature(format!(
+                "Project Geometry: work feature {id} does not exist"
+            )));
+        }
+        self.add_link(index, LinkSource::Work { id: id.to_owned() }, false)
+    }
+
     fn add_link(
         &mut self,
         index: usize,
@@ -2134,7 +2148,8 @@ impl PartDocument {
         {
             return Ok(k);
         }
-        let shape = link::resolve(&source, &self.sketches, index, &self.body).map_err(fail)?;
+        let shape =
+            link::resolve(&source, &self.sketches, index, &self.body, &self.work).map_err(fail)?;
         let ps = &mut self.sketches[index];
         let proj = link::project(&shape, &ps.sketch.plane).map_err(fail)?;
         let (points, curve) =
@@ -2160,7 +2175,8 @@ impl PartDocument {
             .get(k)
             .cloned()
             .ok_or_else(|| fail("no such reference".into()))?;
-        let shape = link::resolve(&source, &self.sketches, index, &self.body).map_err(fail)?;
+        let shape =
+            link::resolve(&source, &self.sketches, index, &self.body, &self.work).map_err(fail)?;
         let proj = link::project(&shape, &ps.sketch.plane).map_err(fail)?;
         let kind_now = match link.curve.and_then(|c| ps.sketch.entity(c)) {
             Some(Entity::Line { .. }) => "Line",
@@ -2329,7 +2345,7 @@ fn update_sketch(body: &BRep, works: &placement::WorkGeom, sketches: &mut [PartS
             ps.sketch.plane = plane;
             ps.health = None;
             // Geometry projected from other sketches / curved edges.
-            let mut missing = link::apply(sketches, i, body);
+            let mut missing = link::apply(sketches, i, body, works);
             let ps = &mut sketches[i];
             for pr in &ps.projections {
                 match project(body, works, &ps.sketch.plane, &pr.source) {

@@ -416,6 +416,44 @@ fn history_r7() -> PartDocument {
 /// to a smaller square) joined to it.
 /// Revision 14: a Coil (closed ends, left hand) beside a plate with a Web
 /// across it (To Next) and a boss.
+/// Revision 16: a work point and a work axis projected into a sketch
+/// (`LinkSource::Work`), a boss extruded from a circle on the point.
+fn project_work_r16() -> PartDocument {
+    use cadcraft3d::part::{WorkAxisDef, WorkDef, WorkFeature, WorkPointDef};
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let mut part = PartDocument::default();
+    let pt = part
+        .add_work(WorkFeature::new(WorkDef::Point(WorkPointDef::Fixed {
+            x: 10.0,
+            y: 5.0,
+            z: 0.0,
+        })))
+        .unwrap();
+    let ax = part
+        .add_work(WorkFeature::new(WorkDef::Axis(WorkAxisDef::Fixed {
+            origin: [0.0, -5.0, 0.0],
+            dir: [1.0, 0.0, 0.0],
+        })))
+        .unwrap();
+    let i = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    let l = part.project_work(i, &pt).unwrap();
+    part.project_work(i, &ax).unwrap();
+    let c = part.sketches[i].links[l].points[0];
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_circle_at(c, 3.0).unwrap();
+    let r = sk.regions();
+    let pr = ProfileRef::of(&r[0], r[0].interior_point());
+    part.add_extrude(i, ExtrudeFeature::new(vec![pr], 4.0))
+        .unwrap();
+    part
+}
+
 /// Revision 15: a ring revolved around a work axis (`AxisRef::Work`).
 fn revolve_work_r15() -> PartDocument {
     use cadcraft3d::part::{AxisRef, RevolveFeature, WorkAxisDef, WorkDef, WorkFeature};
@@ -935,6 +973,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("WorkR8");
             project.add_document("Part1", DocumentData::Part(work_r8()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r16/project_work_r16.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ProjectWorkR16");
+            project.add_document("Part1", DocumentData::Part(project_work_r16()));
             project.save(&f).unwrap();
         }
         let f = root().join("r15/revolve_work_r15.3dcadcraft");
