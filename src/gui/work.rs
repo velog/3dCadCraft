@@ -687,6 +687,16 @@ struct Item {
     ucs: bool,
 }
 
+/// Whether Object Visibility shows work features of `def`'s kind.
+fn kind_shown(vis: &super::layout::ObjectVisibility, def: &WorkDef) -> bool {
+    match def {
+        WorkDef::Plane(_) => vis.work_planes,
+        WorkDef::Axis(_) => vis.work_axes,
+        WorkDef::Point(_) => vis.work_points,
+        WorkDef::Ucs(_) => vis.ucs,
+    }
+}
+
 impl CadCraftApp {
     /// Centre of the model and the half size of drawn work features.
     fn work_extent(&self) -> (Point3, Real) {
@@ -736,9 +746,12 @@ impl CadCraftApp {
         }
     }
 
+    /// Work features drawn now: shown on their own and their kind switched
+    /// on in View → Object Visibility.
     fn visible_work(&self) -> impl Iterator<Item = &crate::part::WorkFeature> {
-        self.part().features.iter().filter_map(|f| match f {
-            Feature::Work(w) if w.visible => Some(w),
+        let vis = self.obj_vis;
+        self.part().features.iter().filter_map(move |f| match f {
+            Feature::Work(w) if w.visible && kind_shown(&vis, &w.def) => Some(w),
             _ => None,
         })
     }
@@ -1542,5 +1555,34 @@ mod tests {
             }
         }
         assert!(PROMPTS_BG.iter().any(|(en, _)| *en == NO_METHOD));
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    use crate::gui::layout::{ObjectVisibility, VisKind};
+
+    /// Object Visibility: origin planes off, user geometry on by default;
+    /// each switch hides its kind only.
+    #[test]
+    fn object_visibility_switches() {
+        let mut v = ObjectVisibility::default();
+        assert!(!v.get(VisKind::OriginPlanes));
+        let plane = WorkDef::Plane(WorkPlaneDef::Fixed {
+            origin: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+            x_axis: [1.0, 0.0, 0.0],
+        });
+        let axis = WorkDef::Axis(WorkAxisDef::Fixed {
+            origin: [0.0; 3],
+            dir: [0.0, 0.0, 1.0],
+        });
+        assert!(kind_shown(&v, &plane) && kind_shown(&v, &axis));
+        v.toggle(VisKind::WorkPlanes);
+        assert!(!kind_shown(&v, &plane));
+        assert!(kind_shown(&v, &axis), "the axes are not touched");
+        v.toggle(VisKind::WorkPlanes);
+        assert!(kind_shown(&v, &plane));
     }
 }

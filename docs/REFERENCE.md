@@ -467,6 +467,14 @@ be edited ("make it driving to edit"). Display: the drop-down in the status
 bar — Value / Name / Expression / Tolerance. F8/F9 show/hide all
 constraint glyphs.
 
+### 4.6a Object Visibility (View → Visibility)
+
+**Object Visibility** ▾ switches whole kinds of construction geometry: **Origin Planes**
+(off by default; on, XY / XZ / YZ are always drawn — otherwise only while a command picks a
+plane), **User Work Planes**, **User Work Axes**, **User Work Points**, **UCS Triads** (on). A
+feature hidden on its own (its browser check box) stays hidden; a switched-off kind cannot be
+picked. Remembered with the Application Options.
+
 ### 4.7 Relax Mode, DOF, format
 
 - **Relax Mode** (F11, the *Relax* button in the status bar, a mini button in Constrain):

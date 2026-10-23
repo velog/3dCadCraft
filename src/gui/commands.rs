@@ -27,7 +27,7 @@ use std::sync::OnceLock;
 use super::camera::Projection;
 use super::demos::Demo;
 use super::icons::Icon;
-use super::layout::{Element, UiCmd};
+use super::layout::{Element, UiCmd, VisKind};
 use super::material::MatCmd;
 use super::ribbon::Action;
 use super::sketch_tools::{ConstraintTool as Ct, Tool};
@@ -1056,6 +1056,31 @@ pub static COMMANDS: &[Command] = &[
         .at(&[V_LOOK])
         .tip("Perspective, but orthographic while looking straight at a ViewCube face")
         .spec("0.3-view.md"),
+    c("view.vis_origin_planes", "Origin Planes", "Основни равнини (видимост)", Icon::WorkPlane)
+        .run(Action::Ui(UiCmd::ObjVis(VisKind::OriginPlanes)))
+        .at(&[V_VIS])
+        .tip("Show or hide the origin planes XY, XZ, YZ (Object Visibility)")
+        .spec("2.10-work-features.md"),
+    c("view.vis_work_planes", "User Work Planes", "Работни равнини (видимост)", Icon::WorkPlane)
+        .run(Action::Ui(UiCmd::ObjVis(VisKind::WorkPlanes)))
+        .at(&[V_VIS])
+        .tip("Show or hide every user work plane (a plane hidden on its own stays hidden)")
+        .spec("2.10-work-features.md"),
+    c("view.vis_work_axes", "User Work Axes", "Работни оси (видимост)", Icon::WorkAxis)
+        .run(Action::Ui(UiCmd::ObjVis(VisKind::WorkAxes)))
+        .at(&[V_VIS])
+        .tip("Show or hide every user work axis")
+        .spec("2.10-work-features.md"),
+    c("view.vis_work_points", "User Work Points", "Работни точки (видимост)", Icon::WorkPoint)
+        .run(Action::Ui(UiCmd::ObjVis(VisKind::WorkPoints)))
+        .at(&[V_VIS])
+        .tip("Show or hide every user work point")
+        .spec("2.10-work-features.md"),
+    c("view.vis_ucs", "UCS Triads", "UCS (видимост)", Icon::Ucs)
+        .run(Action::Ui(UiCmd::ObjVis(VisKind::Ucs)))
+        .at(&[V_VIS])
+        .tip("Show or hide the UCS triads and their planes")
+        .spec("2.10-work-features.md"),
     c("view.browser", "Browser", "Дърво на модела (показване)", Icon::UiPanels)
         .run(Action::Ui(UiCmd::Toggle(Element::Browser)))
         .at(&[V_WIN, VIEW])

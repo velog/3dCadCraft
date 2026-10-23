@@ -148,6 +148,8 @@ pub struct State {
     pub relax: bool,
     /// Which [`Element`]s are visible (in `Element::ALL` order).
     pub ui_shown: [bool; 6],
+    /// View → Object Visibility switches.
+    pub obj_vis: super::layout::ObjectVisibility,
     /// Clean Screen on.
     pub clean: bool,
     /// Full Screen on.
@@ -596,6 +598,16 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             panel(
                 "Visibility",
                 vec![
+                    split(
+                        "Object Visibility",
+                        items(&[
+                            "view.vis_origin_planes",
+                            "view.vis_work_planes",
+                            "view.vis_work_axes",
+                            "view.vis_work_points",
+                            "view.vis_ucs",
+                        ]),
+                    ),
                     c(constraints).label("Constraints"),
                     c("sketch.dof").label("Degrees of Freedom"),
                 ],
@@ -664,6 +676,7 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 show_dof: false,
                 relax: false,
                 ui_shown: [true; 6],
+                obj_vis: Default::default(),
                 clean: false,
                 full_screen: false,
                 project: false,
@@ -949,6 +962,7 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                             .iter()
                             .position(|x| x == e)
                             .is_some_and(|k| st.ui_shown[k]),
+                        Action::Ui(UiCmd::ObjVis(k)) => st.obj_vis.get(*k),
                         _ => false,
                     };
                     if icon_button(ui, *icon, label, Size::Small, true, on, false).clicked() {

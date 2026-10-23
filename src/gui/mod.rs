@@ -466,6 +466,8 @@ struct CadCraftApp {
     show_labels: bool,
     /// Application Options → Display → Thread texture (cosmetic threads).
     thread_texture: bool,
+    /// View → Object Visibility (persisted with the Application Options).
+    obj_vis: layout::ObjectVisibility,
 
     camera: OrbitCamera,
     renderer: Option<ViewportRenderer>,
@@ -717,6 +719,7 @@ impl CadCraftApp {
             sketch_opts: SketchOptions::default(),
             show_labels: true,
             thread_texture: true,
+            obj_vis: Default::default(),
             camera: OrbitCamera::default(),
             renderer: cc.wgpu_render_state.as_ref().map(ViewportRenderer::new),
             scene_dirty: true,
@@ -5713,11 +5716,14 @@ impl CadCraftApp {
             }
         }
         // Split's tool selector: the origin planes are shown while it takes
-        // planes (Inventor shows them for the pick), the hovered one lit.
+        // planes (Inventor shows them for the pick), the hovered one lit;
+        // also always while View → Object Visibility shows them.
         if !picking
-            && self
-                .body_cmd_flow()
-                .is_some_and(|f| f.accepts(crate::command::flow::PickKind::Plane))
+            && self.work_draft.is_none()
+            && (self.obj_vis.origin_planes
+                || self
+                    .body_cmd_flow()
+                    .is_some_and(|f| f.accepts(crate::command::flow::PickKind::Plane)))
         {
             let hovered_origin = match &body_hover {
                 Some(combine_split::BodyPick::Plane(PlaneRef::Origin(p))) => Some(*p),

@@ -199,6 +199,8 @@ pub struct AppOptions {
     /// Select Priority, filters (those switched off), box mode, prehighlight
     /// (`docs/spec/0.9a-selection-filters.md`).
     pub selection: crate::command::selection::SelectSettings,
+    /// View → Object Visibility.
+    pub object_visibility: ObjectVisibility,
     /// Registry ids of the recently run commands, newest first (alias
     /// input and command search, `commands::remember`).
     pub recent_commands: Vec<String>,
@@ -215,8 +217,73 @@ impl Default for AppOptions {
             thread_texture: true,
             home_view: None,
             selection: Default::default(),
+            object_visibility: ObjectVisibility::default(),
             recent_commands: Vec::new(),
         }
+    }
+}
+
+/// View → Object Visibility: which kinds of construction geometry are
+/// drawn at all (Inventor's global switches; a feature hidden on its own
+/// stays hidden).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ObjectVisibility {
+    /// The origin planes XY / XZ / YZ (otherwise shown only while a command
+    /// picks a plane).
+    pub origin_planes: bool,
+    /// User work planes.
+    pub work_planes: bool,
+    /// User work axes.
+    pub work_axes: bool,
+    /// User work points.
+    pub work_points: bool,
+    /// UCS triads.
+    pub ucs: bool,
+}
+
+impl Default for ObjectVisibility {
+    fn default() -> Self {
+        Self {
+            origin_planes: false,
+            work_planes: true,
+            work_axes: true,
+            work_points: true,
+            ucs: true,
+        }
+    }
+}
+
+/// One switch of [`ObjectVisibility`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VisKind {
+    OriginPlanes,
+    WorkPlanes,
+    WorkAxes,
+    WorkPoints,
+    Ucs,
+}
+
+impl ObjectVisibility {
+    pub fn get(&self, k: VisKind) -> bool {
+        match k {
+            VisKind::OriginPlanes => self.origin_planes,
+            VisKind::WorkPlanes => self.work_planes,
+            VisKind::WorkAxes => self.work_axes,
+            VisKind::WorkPoints => self.work_points,
+            VisKind::Ucs => self.ucs,
+        }
+    }
+
+    pub fn toggle(&mut self, k: VisKind) {
+        let v = match k {
+            VisKind::OriginPlanes => &mut self.origin_planes,
+            VisKind::WorkPlanes => &mut self.work_planes,
+            VisKind::WorkAxes => &mut self.work_axes,
+            VisKind::WorkPoints => &mut self.work_points,
+            VisKind::Ucs => &mut self.ucs,
+        };
+        *v = !*v;
     }
 }
 
@@ -224,6 +291,8 @@ impl Default for AppOptions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiCmd {
     Toggle(Element),
+    /// View → Object Visibility switch.
+    ObjVis(VisKind),
     MinimizeRibbon,
     CleanScreen,
     FullScreen,
@@ -718,6 +787,7 @@ impl CadCraftApp {
             thread_texture: self.thread_texture,
             home_view: self.home_view,
             selection: self.select,
+            object_visibility: self.obj_vis,
             recent_commands: self.recent_commands.clone(),
         }
     }
@@ -735,6 +805,7 @@ impl CadCraftApp {
         }
         self.home_view = o.home_view;
         self.select = o.selection;
+        self.obj_vis = o.object_visibility;
         self.recent_commands = o.recent_commands;
     }
 
@@ -822,6 +893,7 @@ impl CadCraftApp {
                 self.full_screen_cmd = Some(self.layout.full_screen);
             }
             UiCmd::ResetLayout => self.layout.reset(),
+            UiCmd::ObjVis(k) => self.obj_vis.toggle(k),
         }
     }
 
@@ -908,6 +980,7 @@ impl CadCraftApp {
                 show_dof: self.show_dof,
                 relax: self.relax,
                 ui_shown: Element::ALL.map(|e| self.layout.visible(e)),
+                obj_vis: self.obj_vis,
                 clean: self.layout.clean,
                 full_screen: self.layout.full_screen,
                 project: self.project_geometry,
