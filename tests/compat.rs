@@ -1153,3 +1153,93 @@ fn old_files_still_open() {
         problems.join("\n")
     );
 }
+
+/// The face names of a fixture after regeneration (sorted, with repeats:
+/// a face split in pieces keeps its name on each).
+fn face_names(path: &Path) -> Result<Vec<String>, String> {
+    let mut project = Project::load(path).map_err(|e| e.to_string())?;
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Part(_)))
+        .map(|d| d.id)
+        .ok_or("no part")?;
+    let Some(DocumentData::Part(part)) = project.document_mut(id).map(|d| &mut d.data) else {
+        return Err("no part".into());
+    };
+    part.regenerate().map_err(|e| e.to_string())?;
+    let mut names: Vec<String> = part
+        .body
+        .faces()
+        .map(|(_, f)| f.name.clone().unwrap_or_else(|| "?".into()))
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+/// Old files give the same **face names** (`docs/KERNEL_API.md` §3): the
+/// fillets, holes, appearances and sketches of a part refer to them, so a
+/// kernel that names faces differently breaks old files even with the same
+/// volume. Recorded in `tests/compat/names.json` (new fixtures with
+/// `CADCRAFT_WRITE_COMPAT=1`; never edit recorded entries).
+#[test]
+fn face_names_stay() {
+    let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
+    let path = root().join("names.json");
+    let mut recorded: BTreeMap<String, Vec<String>> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(root())
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .flat_map(|d| {
+            std::fs::read_dir(d)
+                .unwrap()
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("3dcadcraft"))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    files.sort();
+    let mut problems = Vec::new();
+    let mut added = false;
+    for f in &files {
+        let key = f
+            .strip_prefix(root())
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let got = match face_names(f) {
+            Ok(n) => n,
+            Err(e) => {
+                problems.push(format!("{key}: {e}"));
+                continue;
+            }
+        };
+        match recorded.get(&key) {
+            Some(want) if *want == got => {}
+            Some(want) => {
+                let lost: Vec<&String> = want.iter().filter(|n| !got.contains(n)).collect();
+                let new: Vec<&String> = got.iter().filter(|n| !want.contains(n)).collect();
+                problems.push(format!("{key}: names changed; lost {lost:?}, new {new:?}"));
+            }
+            None if write => {
+                recorded.insert(key, got);
+                added = true;
+            }
+            None => problems.push(format!(
+                "{key}: names not recorded (CADCRAFT_WRITE_COMPAT=1)"
+            )),
+        }
+    }
+    if added {
+        std::fs::write(&path, serde_json::to_string_pretty(&recorded).unwrap()).unwrap();
+    }
+    assert!(
+        problems.is_empty(),
+        "face names changed:\n{}",
+        problems.join("\n")
+    );
+}

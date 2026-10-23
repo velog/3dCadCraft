@@ -128,6 +128,12 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
 
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 
+- **The boundary's contract is `docs/KERNEL_API.md`** (every operation, the naming history it must
+  give, the truck workarounds to drop with another kernel). SolidCraft paused its truck kernel work
+  (its #3992) for solidcore (a Rust port of NVIDIA's SMLib); keep the boundary clean for that.
+  `tests/compat/names.json` holds the face names of every old fixture (`face_names_stay`): a changed
+  name breaks old files even with the same volume.
+
 - Geometry is moving to `solidcraft-kernel` (git dependency pinned in `Cargo.toml`, MIT OR
   Apache-2.0, on truck). It is reached **only** through `kernel::exact`; no truck/solidcraft
   type leaves that module. Every call goes through a guard (panic → error).
