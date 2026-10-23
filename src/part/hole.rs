@@ -437,6 +437,17 @@ pub struct HoleSpec {
     /// off, the hole must meet the face itself.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub extend_to: bool,
+    /// Far side countersink (our addition, as SolidWorks / Fusion): a cone
+    /// where the bore leaves the body; `far_csink_diameter`,
+    /// `far_csink_angle`. An older build ignores it (the hole stays plain).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub far_csink: bool,
+    /// Its diameter at the far face.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub far_csink_diameter: Real,
+    /// Its included angle (radians, 90° when not set).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub far_csink_angle: Real,
 }
 
 fn is_true(v: &bool) -> bool {
@@ -478,6 +489,9 @@ impl HoleSpec {
             extend_start: false,
             symmetric: false,
             extend_to: true,
+            far_csink: false,
+            far_csink_diameter: 0.0,
+            far_csink_angle: 0.0,
         }
     }
 
@@ -646,6 +660,17 @@ impl HoleSpec {
         } else if matches!(self.hole_type, HoleType::Tapped) {
             return Err("select the thread".into());
         }
+        if self.far_csink {
+            if !(self.far_diameter().is_finite() && self.far_diameter() / 2.0 > r) {
+                return Err("the far side countersink must be wider than the hole".into());
+            }
+            let a = self.far_angle();
+            if !(a > 1e-3 && a < std::f64::consts::PI - 1e-3) {
+                return Err(
+                    "the far side countersink angle must be between 0 and 180 degrees".into(),
+                );
+            }
+        }
         Ok(())
     }
 
@@ -680,6 +705,42 @@ impl HoleSpec {
         } else {
             zb
         }
+    }
+
+    /// The far side countersink's diameter (twice the bore + 1 mm when not
+    /// set: a 0.5 mm chamfer).
+    pub fn far_diameter(&self) -> Real {
+        if self.far_csink_diameter > 0.0 {
+            self.far_csink_diameter
+        } else {
+            2.0 * self.bore_radius() + 1.0
+        }
+    }
+
+    /// The far side countersink's included angle (90° when not set).
+    pub fn far_angle(&self) -> Real {
+        if self.far_csink_angle > 0.0 {
+            self.far_csink_angle
+        } else {
+            csink_angle()
+        }
+    }
+
+    /// The far side countersink as a tool profile `(r, z)` (z along the
+    /// hole's up, the far face at `-exit`): from `margin` past the face into
+    /// the air to just inside the bore.
+    pub fn far_tool(&self, exit: Real, margin: Real) -> Vec<([Real; 2], &'static str)> {
+        let half = self.far_angle() / 2.0;
+        let rf = self.far_diameter() / 2.0;
+        let r_end = 0.9 * self.bore_radius();
+        let z_end = -exit + (rf - r_end) / half.tan();
+        let zb = -exit - margin;
+        vec![
+            ([0.0, z_end], "FarCSinkEnd"),
+            ([r_end, z_end], "FarCSink"),
+            ([rf + margin * half.tan(), zb], "FarBottom"),
+            ([0.0, zb], "Axis"),
+        ]
     }
 
     /// The hole's tools of revolution, each a profile `[r, z]` with the role
@@ -832,6 +893,13 @@ impl HoleSpec {
                 n(self.csink_angle.to_degrees())
             )),
         }
+        if self.far_csink {
+            lines.push(format!(
+                "FAR SIDE ⌵ Ø{} X {}°",
+                n(self.far_diameter()),
+                n(self.far_angle().to_degrees())
+            ));
+        }
         lines
     }
 }
@@ -914,6 +982,12 @@ impl HoleFeature {
             }
             SeatType::None => {}
         }
+        if s.far_csink {
+            v.extend([
+                ("far_csink_diameter", Unit::Mm),
+                ("far_csink_angle", Unit::Deg),
+            ]);
+        }
         if let Some(t) = s.tapped_thread() {
             if !t.full_depth {
                 v.push(("thread_depth", Unit::Mm));
@@ -936,6 +1010,8 @@ impl HoleFeature {
             "seat_depth" => s.seat_depth,
             "csink_diameter" => s.csink_diameter,
             "csink_angle" => s.csink_angle,
+            "far_csink_diameter" => s.far_diameter(),
+            "far_csink_angle" => s.far_angle(),
             "thread_depth" => s.thread.as_ref()?.depth,
             "thread_clearance" => s.thread.as_ref()?.clearance,
             _ => return None,
@@ -953,6 +1029,8 @@ impl HoleFeature {
             "seat_depth" => s.seat_depth = v,
             "csink_diameter" => s.csink_diameter = v,
             "csink_angle" => s.csink_angle = v,
+            "far_csink_diameter" => s.far_csink_diameter = v,
+            "far_csink_angle" => s.far_csink_angle = v,
             "thread_depth" => {
                 if let Some(t) = s.thread.as_mut() {
                     t.depth = v;

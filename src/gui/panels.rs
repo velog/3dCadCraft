@@ -4698,7 +4698,7 @@ impl CadCraftApp {
                 ui.label(RichText::new("Prompted Interaction").strong());
                 ui.checkbox(&mut self.alias_input, "Show command alias input dialog")
                     .on_hover_text(
-                        "A letter typed over the view opens a field next to the cursor with the                          matching commands; Enter or Space starts one (off: a letter starts its                          command at once)",
+                        "A letter typed over the view opens a field next to the cursor with the matching commands; Enter or Space starts one (off: a letter starts its command at once)",
                     );
                 ui.separator();
                 ui.label(RichText::new("Constraint Settings — Inference").strong());

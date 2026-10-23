@@ -1138,3 +1138,43 @@ fn pattern_copies_carry_the_thread_texture() {
     at.sort();
     assert_eq!(at, vec![(10, 8), (10, 22), (30, 8), (30, 22)]);
 }
+
+/// Far side countersink (our addition): a 90° cone where a Through All
+/// bore leaves the block, alone and with a countersink at the start too
+/// (chamfered at both ends); a blind hole that stays inside is refused.
+#[test]
+fn far_side_countersink() {
+    let r: Real = 3.0;
+    let frustum = |rf: Real| {
+        let h = rf - r; // 45°
+        PI * h / 3.0 * (rf * rf + rf * r + r * r) - PI * r * r * h
+    };
+    for (near, rf) in [(false, 4.0), (true, 4.0), (false, 5.5)] {
+        let mut s = HoleSpec::simple(2.0 * r, 10.0);
+        s.termination = Termination::ThroughAll;
+        s.far_csink = true;
+        s.far_csink_diameter = 2.0 * rf;
+        let mut expected = BLOCK - PI * r * r * 20.0 - frustum(rf);
+        if near {
+            s.seat = SeatType::Countersink;
+            s.csink_diameter = 2.0 * rf;
+            expected -= frustum(rf);
+        }
+        let mut part = block();
+        holes_at(&mut part, s, &[(20.0, 15.0)]).unwrap();
+        check(&part, expected, 2e-4);
+        assert!(
+            part.body
+                .faces()
+                .any(|(_, f)| f.name.as_deref() == Some("Hole1:FarCSink:1")),
+            "the far cone is named"
+        );
+    }
+    let mut s = HoleSpec::simple(6.0, 8.0);
+    s.far_csink = true;
+    let mut part = block();
+    assert!(
+        holes_at(&mut part, s, &[(20.0, 15.0)]).is_err(),
+        "a blind hole has no far side"
+    );
+}

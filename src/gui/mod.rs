@@ -6726,7 +6726,7 @@ impl CadCraftApp {
                             if ui
                                 .button("Measure")
                                 .on_hover_text(
-                                    "Pick two points, a line, a circle, an edge or a face in the                                      view and use the value",
+                                    "Pick two points, a line, a circle, an edge or a face in the view and use the value",
                                 )
                                 .clicked()
                             {

@@ -241,6 +241,12 @@ impl Rays {
         out
     }
 
+    /// Where the ray (starting in the air) leaves the material: every
+    /// second crossing.
+    pub fn exits(&self, p: Point3, d: Vector3) -> Vec<Real> {
+        self.hits(p, d).into_iter().skip(1).step_by(2).collect()
+    }
+
     /// Where the ray enters the material and leaves it again: `(0, exit)`
     /// when it starts inside; `None` when it never meets the body.
     pub fn entry(&self, p: Point3, d: Vector3) -> Option<(Real, Real)> {

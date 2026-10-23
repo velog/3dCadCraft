@@ -503,10 +503,17 @@ impl CadCraftApp {
             if d.inplace.as_ref().is_some_and(|(r, ..)| *r == v.r) {
                 continue; // the edit box is there
             }
-            let text = match &v.expr {
+            let mut text = match &v.expr {
+                Some(e) if e.starts_with('=') => {
+                    format!("{e} ({})", crate::part::hole::num(v.value, 3))
+                }
                 Some(e) => format!("{e} = {}", crate::part::hole::num(v.value, 3)),
                 None => crate::part::hole::num(v.value, 3),
             };
+            // This command's dimensions are numbered as in the panel.
+            if let DimRef::Draft(j) = v.r {
+                text = format!("#{}: {text}", j + 1);
+            }
             if let Some(at) = self.hole_dim_label(&v, rect) {
                 let g = painter.layout_no_wrap(text, egui::FontId::proportional(13.0), col);
                 let r = egui::Rect::from_center_size(at, g.size() + egui::vec2(6.0, 2.0));

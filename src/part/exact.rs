@@ -1197,6 +1197,7 @@ pub(super) fn hole(
         .map_or(1.0, |(lo, hi)| (hi - lo).norm().max(1.0));
     let margin = (size * 0.01).max(0.1);
     let points = body_points(body);
+    let mut rays: Option<super::rib::Rays> = None;
     let (mut seats, mut bores) = (Vec::new(), Vec::new());
     let mut out = HoleOutput::default();
     for (k, (o, dir, face)) in places.iter().enumerate() {
@@ -1265,7 +1266,28 @@ pub(super) fn hole(
         } else {
             (depth, point)
         };
-        let parts = spec.tools(tool_depth, top, tool_point);
+        let mut parts = spec.tools(tool_depth, top, tool_point);
+        // Far side countersink: where the bore last leaves the material
+        // (within its depth), cut with the seats.
+        if spec.far_csink {
+            let rays = rays.get_or_insert_with(|| super::rib::Rays::of(body, &h.solids));
+            let start = *o + up * (1e-4 * size);
+            let exits = rays.exits(start, *dir);
+            let reach_to = if tool_point { depth } else { tool_depth };
+            let exit = exits
+                .into_iter()
+                .map(|t| t - 1e-4 * size)
+                .filter(|&t| t > 1e-6 && t <= reach_to + 1e-6 * size)
+                .fold(None, |a: Option<Real>, t| Some(a.map_or(t, |a| a.max(t))));
+            match exit {
+                Some(e) => parts.insert(parts.len() - 1, spec.far_tool(e, margin)),
+                None => {
+                    return Err(User(
+                        "the far side countersink needs a hole that comes out of the body".into(),
+                    ));
+                }
+            }
+        }
         let last = parts.len().saturating_sub(1);
         for (j, prof) in parts.iter().enumerate() {
             let pts: Vec<[Real; 2]> = prof.iter().map(|x| x.0).collect();

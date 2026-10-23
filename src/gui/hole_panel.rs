@@ -462,13 +462,50 @@ impl CadCraftApp {
                 ui.label(f);
                 ui.end_row();
             }
+            let mut unlink: Option<usize> = None;
             for x in d.dim_views() {
-                let label = match x.centre {
-                    super::hole_dims::CentreRef::Draft(k) => format!("Centre {} dim", k + 1),
-                    super::hole_dims::CentreRef::Sketch(_) => "Centre dim".to_owned(),
+                // Dimensions of this command are numbered #1, #2… (as in the
+                // view); the sketch's carry their parameter names.
+                let label = match (x.r, x.centre) {
+                    (super::hole_dims::DimRef::Draft(j), super::hole_dims::CentreRef::Draft(k)) => {
+                        format!("#{} (centre {})", j + 1, k + 1)
+                    }
+                    (super::hole_dims::DimRef::Sketch(id), _) => {
+                        d.sk.as_ref()
+                            .map(|c| c.sketch.dim_param(id).name)
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| "Centre dim".to_owned())
+                    }
+                    _ => "Centre dim".to_owned(),
                 };
                 plabel(ui, &label);
                 let j = x.r;
+                // A dimension that follows another one of this command.
+                let follows = match j {
+                    super::hole_dims::DimRef::Draft(k) => d.dims.get(k).and_then(|y| y.link),
+                    _ => None,
+                };
+                if let (Some(src), super::hole_dims::DimRef::Draft(k)) = (follows, j) {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("= #{}   ({})", src + 1, hole::num(x.value, 3)))
+                                .strong(),
+                        )
+                        .on_hover_text(format!(
+                            "Follows dimension #{}; at OK its equation is that dimension's name",
+                            src + 1
+                        ));
+                        if ui
+                            .small_button("x")
+                            .on_hover_text("Stop following (keep the value)")
+                            .clicked()
+                        {
+                            unlink = Some(k);
+                        }
+                    });
+                    ui.end_row();
+                    continue;
+                }
                 let mut v = x.value;
                 let mut eq = x.expr.clone();
                 super::valuefield::set_frame_table(ui.ctx(), table.clone());
@@ -478,13 +515,20 @@ impl CadCraftApp {
                         .range(0.0..=1e6)
                         .suffix(" mm"),
                 );
-                r.on_hover_text(
-                    "Distance to the edge (double-click the value in the view to edit it;                      right-click it to Redefine or Delete)",
-                );
+                r.on_hover_text(concat!(
+                    "Distance to the edge. In the view: double-click the value to edit it, ",
+                    "click another dimension meanwhile to follow it (d2 = d1), ",
+                    "right-click for Redefine / Delete"
+                ));
                 if (v - x.value).abs() > 1e-12 || eq != x.expr {
                     dim_changes.push((j, v, eq));
                 }
                 ui.end_row();
+            }
+            if let Some(k) = unlink
+                && let Some(y) = d.dims.get_mut(k)
+            {
+                y.link = None;
             }
             if bodies.len() > 1 {
                 plabel(ui, "Solids");
@@ -729,6 +773,11 @@ impl CadCraftApp {
                 "The hole starts above its start plane even inside the material (removes leftover slivers)",
             );
             ui.end_row();
+            plabel(ui, "Far side");
+            ui.checkbox(&mut spec.far_csink, "Countersink").on_hover_text(
+                "A countersink (chamfer) where the hole comes out of the body; its size is in Dimensions",
+            );
+            ui.end_row();
         });
         if let Some(t) = spec
             .thread
@@ -783,6 +832,8 @@ impl CadCraftApp {
                 ),
                 ("csink_diameter", "CSink diameter"),
                 ("csink_angle", "CSink angle"),
+                ("far_csink_diameter", "Far CSink diameter"),
+                ("far_csink_angle", "Far CSink angle"),
                 ("thread_depth", "Thread depth"),
                 ("thread_clearance", "Thread clearance"),
             ] {
@@ -1141,6 +1192,8 @@ fn field_label(field: &str) -> &'static str {
         "seat_depth" => "Seat depth",
         "csink_diameter" => "CSink diameter",
         "csink_angle" => "CSink angle",
+        "far_csink_diameter" => "Far CSink diameter",
+        "far_csink_angle" => "Far CSink angle",
         "thread_depth" => "Thread depth",
         "thread_clearance" | "clearance" => "Thread clearance",
         "offset" => "Offset",

@@ -210,7 +210,7 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
             if ui
                 .button("Measure")
                 .on_hover_text(
-                    "Pick two points, a line, a circle, an edge or a face in the view and use                      the value",
+                    "Pick two points, a line, a circle, an edge or a face in the view and use the value",
                 )
                 .clicked()
             {

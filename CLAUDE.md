@@ -641,6 +641,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   feature JSON (minus id/name/type/sketch) or its sketch's placement/projections. Keep new
   reference fields as plain persistent names so reorder/suppress/delete see them.
 - **Python file edits on Windows** write CRLF unless `newline=''` is passed; the repo is LF.
+  In a Python string a `\` at the end of a line is a line continuation: a Rust string continuation
+  written through a script came out as a run of spaces. Use `concat!` or one-line strings there, and
+  never "fix" text with a regex whose `\s` can cross lines (it joined code into comments).
 - **Work features on curved faces** (`part/work/surf.rs`) use the face's *infinite* analytic
   surface (`facet_of` for faceted faces); two-solution methods store `other` / `index`, never a
   hint point. Sketch points/lines used with other inputs become hidden in-line work points/axes

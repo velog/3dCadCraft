@@ -148,7 +148,7 @@ impl CadCraftApp {
                 });
                 ui.label(
                     RichText::new(if self.measure.loop_mode {
-                        "Click an edge: the length of the loop it belongs to (with a face                          selected too: that face's loop)."
+                        "Click an edge: the length of the loop it belongs to (with a face selected too: that face's loop)."
                     } else {
                         "Click a face, edge, vertex or body; click a second one for the \
                          distance and angle (a third click starts again)."
