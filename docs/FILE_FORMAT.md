@@ -166,6 +166,8 @@ Revision 13 (2026-10-20): Combine and Split (`Feature::Combine`, `Feature::Split
 
 **Split with a surface and with open curves (2026-10-20) — no new revision.** `SplitToolRef::Surface(<body name>)` is from revision 13; the surface comes from Extrude / Revolve with `output: "Surface"`, the open curves of Extrude Surface from the existing field `open` (`OpenProfile.curves`). Nothing new in the data, so `FORMAT_REVISION` stays 14 (the next free number after origin/main is 15). An older program opens the file, but builds such a surface with the faceted kernel (there the open curves are closed with a frame, Match Shape), and Split with a surface is "not supported yet" there.
 
+**Revision 15 (2026-10-23): Revolve around a work axis.** `AxisRef::Work(<work feature id>)`: the axis of a Revolve can be a work axis lying in the sketch plane. An older build cannot read the new variant, hence the revision. Fixture: `tests/compat/r15/revolve_work_r15.3dcadcraft` (a ring around a work axis parallel to Z).
+
 ## 7. How to try it
 
 ```bash
