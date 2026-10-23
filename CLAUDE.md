@@ -869,6 +869,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `HoleDraft::sk`, loaded by `hole_load_sketch` on Edit Feature, written into the part at OK and put
   back on failure; `rev` keys the preview). Arrows go through `ManipOwner::Hole`: the dragged target is
   found once by grip (`hole_drag`, cleared on release) because `Handle::field` cannot name it.
+- **Countersinks** are tapered discs (`exact::cone_tool`, as SolidCraft's `extrude_tapered`): a tool of
+  revolution with the same cone took 2.6× longer in the Boolean. Cones still take truck's general path
+  (ROADMAP K4: ~0.33 s a hole, more than linear in one feature) — measure before adding cone tools.
 - **Hole data for drawings**: `PartDocument::holes()` (filled during regeneration, also from
   cache hits via `CachedStep::extra`). Pattern / Mirror must push `h.transformed(&m)` copies
   (with the element index in `copy`) into `hole_instances` at their place in the loop.

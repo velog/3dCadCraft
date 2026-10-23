@@ -1640,6 +1640,67 @@ fn axial_frame(origin: Point3, axis: Vector3, seam: Real) -> Result<sg::Plane, S
     sg::Plane::new(v3(&origin), d3(&x), d3(&k)).ok_or_else(|| "degenerate hole axis".to_owned())
 }
 
+/// A cone (a countersink) as SolidCraft builds it: a disc of radius `r0` at
+/// `z0` along `axis` from `origin`, extruded to `z1` with a taper that
+/// ends at radius `r1`. A tool of revolution with the same cone took about
+/// 1 s per hole in the Boolean (the kernel meets a revolved line and a
+/// plane on its general path); this one a few ms. Faces:
+/// `<prefix>:<names[0]>` at `z0`, `names[1]` the cone, `names[2]` at `z1`.
+#[allow(clippy::too_many_arguments)]
+pub fn cone_tool(
+    origin: Point3,
+    axis: Vector3,
+    seam: Real,
+    (r0, z0): (Real, Real),
+    (r1, z1): (Real, Real),
+    names: [&str; 3],
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    let len = (z1 - z0).abs();
+    if !(r0 > 0.0 && r1 > 0.0 && len > 1e-9) {
+        return Err("the countersink is not valid".into());
+    }
+    let k = axis
+        .try_normalize(1e-12)
+        .ok_or_else(|| "the hole axis has no direction".to_owned())?;
+    // The disc's plane: square to the axis at z0 (its normal is the axis);
+    // `seam` turns its x like a tool of revolution's profile plane.
+    let any = if k.x.abs() < 0.9 {
+        Vector3::x()
+    } else {
+        Vector3::y()
+    };
+    let u0 = (any - k * any.dot(&k)).normalize();
+    let u = u0 * seam.cos() + k.cross(&u0) * seam.sin();
+    let w = k.cross(&u);
+    let base = sg::Plane::new(v3(&(origin + k * z0)), d3(&u), d3(&w))
+        .ok_or("degenerate countersink plane")?;
+    let region = sg::Region2 {
+        outer: sg::Loop2::circle(sg::Vec2::new(0.0, 0.0), r0),
+        holes: Vec::new(),
+    };
+    let taper = ((r1 - r0) / len).atan();
+    let sign = (z1 - z0).signum();
+    let body = guarded("countersink", || {
+        sk::extrude_tapered(&base, &region, len, sign, taper)
+    })?;
+    let face_names = names_from(&body, &[], &|o| match o {
+        FaceOrigin::Profile { .. } => Some(format!("{prefix}:{}", names[1])),
+        FaceOrigin::Cap { end } => Some(format!(
+            "{prefix}:{}",
+            if *end { names[2] } else { names[0] }
+        )),
+        _ => None,
+    });
+    Ok(ExactSolid {
+        sheet: false,
+        name: None,
+        body,
+        face_names,
+        profiles: Vec::new(),
+    })
+}
+
 /// A tool of revolution (a drilled hole with its seats, after SolidCraft's
 /// `hole_tools_and_prisms`): `profile` is a closed polygon `[r, z]` in the
 /// half plane through the axis (z along `axis` from `origin`, r ≥ 0), its

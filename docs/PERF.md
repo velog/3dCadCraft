@@ -175,6 +175,12 @@ Target times for interactive work:
 
 ## Open
 
+- Countersinks (ROADMAP K4, 2026-10-23): a cone tool through truck's general Boolean, ~0.33 s per
+  hole and superlinear in one feature (36 holes ~40 s). `exact::cone_tool` (a tapered disc, as
+  SolidCraft builds countersinks) instead of a tool of revolution: 0.87 → 0.33 s for one hole.
+  Rejected: cropping truck's interference meshes, bores first, chamfers of the bore circles.
+  Budget case: 6 holes chamfered at both ends, 3.0 s (budget 6 s).
+
 - Patterns: recognizing the cylindrical faces in `to_brep` (`sk::face_surfaces`, ~2.4 ms per
   face) is half of the time above 5000 copies; Join of bosses (SolidCraft's general path with
   meshes of both operands, `sew_touching_with_sources`) — 1024 in 9.8 s. See

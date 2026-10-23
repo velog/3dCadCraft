@@ -1290,7 +1290,13 @@ fn speed_budgets() {
                     .into_iter()
                     .filter_map(|e| p.body.sample_edge(e, &o).ok())
                     .count();
-                assert!(p.exact && lines >= 6 * (n * n) as usize - 6);
+                // Every hole's edges: its two circles (2 arcs each); the
+                // seams between the wall's kernel pieces are not drawn
+                // since `kernel::smooth` (they were 2 more per hole).
+                assert!(
+                    p.exact && lines >= 4 * (n * n) as usize - 4,
+                    "{lines} lines"
+                );
             }),
         ));
     }
@@ -1400,6 +1406,55 @@ fn speed_budgets() {
             p.add_hole(def).unwrap();
         }),
     ));
+    // Countersinks at both ends: a ray per hole finds where it leaves the
+    // plate; the cones (tapered discs, `exact::cone_tool`) go with the
+    // seats. Six holes: the kernel's general Boolean meets cones slowly and
+    // more than linearly (36 in one feature: ~40 s, ROADMAP K4).
+    rows.push((
+        "hole: 6 holes chamfered at both ends (countersink + far side)",
+        6000.0,
+        median_ms(3, || {
+            use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, SeatType, Termination};
+            let mut p = plate.clone();
+            p.build_cache = Default::default();
+            let pts: Vec<Point3> = (0..6)
+                .map(|i| Point3::new(10.0 + 16.0 * i as Real, 10.0, 10.0))
+                .collect();
+            let (k, ids) = p.create_hole_sketch("Box1:Top", &pts).unwrap();
+            let mut s = HoleSpec::simple(5.5, 10.0);
+            s.termination = Termination::ThroughAll;
+            s.seat = SeatType::Countersink;
+            s.csink_diameter = 7.0;
+            s.far_csink = true;
+            let mut def = HoleFeature::new(s);
+            def.sketch = p.sketches[k].id.clone();
+            def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+            p.add_hole(def).unwrap();
+            assert!(p.feature_health.is_empty());
+        }),
+    ));
+    // Parameters (docs/spec/0.5): 300 user parameters chained with units
+    // and if() (each follows the one before), evaluated as every rebuild
+    // does.
+    {
+        use cadcraft3d::part::expr::Unit;
+        let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let mut prev = p.add_user_parameter(Unit::Mm);
+        p.set_parameter_expr(&prev, "10 mm").unwrap();
+        for i in 0..299 {
+            let n = p.add_user_parameter(if i % 3 == 0 { Unit::Cm } else { Unit::Mm });
+            p.user_params.last_mut().unwrap().expr =
+                format!("if({prev} > 5 mm and {prev} < 1 km, {prev} + 1 mm, 2 mm) * 1");
+            prev = n;
+        }
+        p.evaluate_parameters();
+        assert!(p.param_errors.is_empty(), "{:?}", p.param_errors);
+        rows.push((
+            "parameters: evaluate 300 chained equations with units and if()",
+            30.0,
+            median_ms(5, || p.evaluate_parameters()),
+        ));
+    }
     rows.push((
         "hole: tapped M8 modeled thread 10 deep (add_hole)",
         12000.0,

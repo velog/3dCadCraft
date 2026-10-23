@@ -1294,7 +1294,35 @@ pub(super) fn hole(
             let names: Vec<String> = prof.iter().map(|x| format!("{}:{n}", x.1)).collect();
             let refs: Vec<&str> = names.iter().map(String::as_str).collect();
             let seam = 0.2 + 0.613 * k as Real + 0.29 * j as Real;
-            let tool = exact::revolved_tool(*o, up, seam, &pts, &refs, &h.id).map_err(Kernel)?;
+            // Countersinks (start and far side) as tapered discs: a cone of
+            // revolution sent the Boolean down a slow path (~1 s a hole).
+            let cone = prof.len() == 4
+                && prof[0].0[0] == 0.0
+                && prof[3].0[0] == 0.0
+                && matches!(prof[1].1, "CSink" | "FarCSink");
+            let tool = if cone {
+                // Start: wide end at the top (point 1), narrow inside the bore
+                // (point 2). Far side: wide below the far face (point 2).
+                let n: Vec<&str> = names.iter().map(String::as_str).collect();
+                let (wide, narrow, caps) = if prof[1].1 == "CSink" {
+                    (prof[1].0, prof[2].0, [n[0], n[1], n[2]])
+                } else {
+                    (prof[2].0, prof[1].0, [n[2], n[1], n[0]])
+                };
+                exact::cone_tool(
+                    *o,
+                    up,
+                    seam,
+                    (wide[0], wide[1]),
+                    (narrow[0], narrow[1]),
+                    caps,
+                    &h.id,
+                )
+                .or_else(|_| exact::revolved_tool(*o, up, seam, &pts, &refs, &h.id))
+                .map_err(Kernel)?
+            } else {
+                exact::revolved_tool(*o, up, seam, &pts, &refs, &h.id).map_err(Kernel)?
+            };
             if j == last {
                 bores.push(tool);
             } else {
