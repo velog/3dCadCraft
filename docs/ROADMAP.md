@@ -27,6 +27,19 @@ Area: view speed. Found by the owner on 2026-10-20 on a hole with a modeled thre
 
 Goal: under 16 ms per frame while picking and with Slice on a part with a modeled thread and with a pattern of 2500 holes. Every fix comes with a speed test in `tests/perf.rs`.
 
+### Display: one circle / one cylinder (the owner, 2026-10-23)
+
+| # | Problem | How it should be | Where to look |
+|---|---|---|---|
+| D1 | Cylinders and holes show as 2–3 faces with seam lines; picking lights one piece | the kernel (truck) has no periodic faces or closed edges, so a circle is ≥ 2 arcs and a cylinder ≥ 2 faces — show and select them as **one** face / one edge: hide seams between pieces of one analytic surface, a click selects every piece, Properties and names treat them as one (Measure already does) | `kernel::exact::to_brep`, `BRep::feature_edges`, `gui/select.rs`, the kernel's own merge in `vendor/solidcraft-kernel/src/topo.rs` |
+
+### Working rule: SolidCraft first
+
+Before a new feature or a fix, read how SolidCraft does it (`crates/doc/src/eval*.rs` for how each
+feature calls the kernel, `crates/engine`, `crates/io`, `crates/mcp`) and adapt it with an
+`ATTRIBUTION.md` row; invent our own only where it has none. Most of our kernel failures were in
+*how* we called the kernel, which SolidCraft had already solved.
+
 ## Kernel-level decisions
 
 The decisions that determine everything else are made now, while changing them is cheap.
@@ -210,6 +223,25 @@ Implemented and covered by tests; **waiting for a visual check** in the applicat
 - The STEP file opens correctly in FreeCAD and Fusion.
 
 ## Phase 3 — Assemblies and drawings
+
+**Decision (2026-10-23, spec [3.1-assemblies](spec/3.1-assemblies.md)):** constraints and joints run on
+**one simultaneous solver** — 6 unknowns per non-grounded occurrence, every constraint a few
+residuals, every joint a predefined set of the same residuals plus its driven values — built like
+the sketch solver (sparse Levenberg, rank / DOF analysis). From SolidCraft (MIT/Apache) we take the
+joint frame algebra, the snap origins (face centre, circle centre, point, frame; re-found by
+persistent name), occurrence transforms, `world_bodies` and the URDF export — **not** its placement
+solver (it walks the joint graph and only checks closed loops; Inventor solves loops). Steps and
+rough cost per focused session:
+
+| Step | Content | Rough cost | Status |
+|---|---|---|---|
+| A1 | `AssemblyDocument`, Place / Ground / Move / Rotate, browser, instanced display, picking in the occurrence's frame | ~250–350k tokens | ⬜ next, in a session of its own |
+| A2 | Solver core + Mate / Flush / Angle / Insert, DOF per occurrence, sick relations | ~300–400k | ⬜ |
+| A3 | Joints on the same solver, joint origins, limits, dragging | ~150–250k | ⬜ |
+| A4 | Tangent, Symmetry, limits while dragging, Drive / Animate | ~150–200k | ⬜ |
+| A5 | Pattern Component, BOM, Interference, subassemblies | ~300k+ | ⬜ |
+
+Before each step: verify its rows against the Inventor 2027 help (spec §7).
 
 | Task | Number |
 |---|---|
