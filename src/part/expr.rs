@@ -35,11 +35,15 @@ pub enum Unit {
     Ft,
     /// Angle shown in radians (format revision 17).
     Rad,
+    /// True / False (format revision 18).
+    Bool,
+    /// A text (format revision 18).
+    Text,
 }
 
 impl Unit {
     /// Every unit, in the order the Parameters table offers them.
-    pub const ALL: [Unit; 8] = [
+    pub const ALL: [Unit; 10] = [
         Unit::Mm,
         Unit::Cm,
         Unit::M,
@@ -48,6 +52,8 @@ impl Unit {
         Unit::Deg,
         Unit::Rad,
         Unit::Ul,
+        Unit::Bool,
+        Unit::Text,
     ];
 
     /// The name typed after a value and shown in the table.
@@ -61,6 +67,8 @@ impl Unit {
             Unit::Deg => "deg",
             Unit::Rad => "rad",
             Unit::Ul => "ul",
+            Unit::Bool => "bool",
+            Unit::Text => "text",
         }
     }
 
@@ -77,7 +85,7 @@ impl Unit {
     /// Internal units (mm, rad) per displayed unit.
     fn factor(self) -> Real {
         match self {
-            Unit::Mm | Unit::Ul | Unit::Rad => 1.0,
+            Unit::Mm | Unit::Ul | Unit::Rad | Unit::Bool | Unit::Text => 1.0,
             Unit::Cm => 10.0,
             Unit::M => 1000.0,
             Unit::In => 25.4,
@@ -115,6 +123,11 @@ impl Unit {
             factor: self.factor(),
             offset: 0.0,
             dim,
+            logic: match self {
+                Unit::Bool => units::Logic::Bool,
+                Unit::Text => units::Logic::Text,
+                _ => units::Logic::Num,
+            },
         }
     }
 }
@@ -132,7 +145,10 @@ pub type ExprError = String;
 enum Tok {
     Num(Real),
     Name(String),
+    Str(String),
     Op(char),
+    /// `<`, `>`, `<=`, `>=`, `==`, `!=`.
+    Cmp(&'static str),
 }
 
 fn lex(s: &str) -> Result<Vec<Tok>, ExprError> {
@@ -181,6 +197,42 @@ fn lex(s: &str) -> Result<Vec<Tok>, ExprError> {
                 i += 1;
             }
             out.push(Tok::Name(cs[start..i].iter().collect()));
+        } else if c == '"' {
+            // A text: "Steel" ("" inside is a quote).
+            let mut t = String::new();
+            i += 1;
+            loop {
+                match cs.get(i) {
+                    None => return Err("a text is missing its closing \"".into()),
+                    Some('"') if cs.get(i + 1) == Some(&'"') => {
+                        t.push('"');
+                        i += 2;
+                    }
+                    Some('"') => {
+                        i += 1;
+                        break;
+                    }
+                    Some(&ch) => {
+                        t.push(ch);
+                        i += 1;
+                    }
+                }
+            }
+            out.push(Tok::Str(t));
+        } else if "<>=!".contains(c) {
+            let two = cs.get(i + 1) == Some(&'=');
+            let op = match (c, two) {
+                ('<', true) => "<=",
+                ('>', true) => ">=",
+                ('=', true) => "==",
+                ('!', true) => "!=",
+                ('<', false) => "<",
+                ('>', false) => ">",
+                ('=', false) => "==",
+                _ => return Err("'!' must be followed by '=' (or write not)".into()),
+            };
+            out.push(Tok::Cmp(op));
+            i += if two { 2 } else { 1 };
         } else if "+-*/^(),".contains(c) {
             out.push(Tok::Op(c));
             i += 1;
@@ -206,9 +258,45 @@ fn reserved_unit(name: &str) -> bool {
     )
 }
 
-/// What names stand for while parsing: a parameter's internal value and
-/// dimension.
-pub type Vars<'a> = dyn Fn(&str) -> Option<(Real, Dim)> + 'a;
+/// Words of the language a parameter cannot be named after.
+fn keyword(name: &str) -> bool {
+    matches!(
+        name,
+        "PI" | "pi" | "E" | "if" | "and" | "or" | "not" | "true" | "false" | "True" | "False"
+    )
+}
+
+/// A value of an equation: a quantity (internal units, dimension), true /
+/// false, or a text.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Value {
+    /// A quantity: internal value and dimension.
+    Num(Real, Dim),
+    /// True / false.
+    Bool(bool),
+    /// A text.
+    Text(String),
+}
+
+impl From<(Real, Dim)> for Value {
+    fn from((v, d): (Real, Dim)) -> Self {
+        Value::Num(v, d)
+    }
+}
+
+impl Value {
+    /// The number (1 / 0 for true / false, 0 for a text).
+    pub fn number(&self) -> Real {
+        match self {
+            Value::Num(v, _) => *v,
+            Value::Bool(b) => Real::from(u8::from(*b)),
+            Value::Text(_) => 0.0,
+        }
+    }
+}
+
+/// What names stand for while parsing: a parameter's value.
+pub type Vars<'a> = dyn Fn(&str) -> Option<Value> + 'a;
 
 struct Parser<'a> {
     toks: Vec<Tok>,
@@ -218,13 +306,25 @@ struct Parser<'a> {
     unit: UnitDef,
     /// Names the expression uses (for dependency order).
     used: Vec<String>,
+    /// Inside the branch of `if` that is not taken: its arithmetic errors
+    /// (`if(x == 0, 0, 1/x)`) do not count.
+    skip: u32,
+}
+
+/// What a value is.
+#[derive(Clone, Debug, PartialEq)]
+enum K {
+    Num,
+    Bool,
+    Text(String),
 }
 
 /// A value (internal units) and its dimension; a bare number has none.
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug)]
 struct Q {
     v: Real,
     dim: Dim,
+    k: K,
 }
 
 impl Q {
@@ -232,10 +332,47 @@ impl Q {
         Self {
             v,
             dim: units::NONE,
+            k: K::Num,
+        }
+    }
+    fn num(v: Real, dim: Dim) -> Self {
+        Self { v, dim, k: K::Num }
+    }
+    fn boolean(b: bool) -> Self {
+        Self {
+            v: Real::from(u8::from(b)),
+            dim: units::NONE,
+            k: K::Bool,
+        }
+    }
+    fn text(t: String) -> Self {
+        Self {
+            v: 0.0,
+            dim: units::NONE,
+            k: K::Text(t),
         }
     }
     fn is_bare(&self) -> bool {
-        self.dim == units::NONE
+        self.k == K::Num && self.dim == units::NONE
+    }
+    fn what(&self) -> String {
+        match &self.k {
+            K::Num => units::category(self.dim),
+            K::Bool => "true / false".into(),
+            K::Text(_) => "a text".into(),
+        }
+    }
+    fn number(&self, op: &str) -> Result<(), ExprError> {
+        match self.k {
+            K::Num => Ok(()),
+            _ => Err(format!("{op} needs numbers, not {}", self.what())),
+        }
+    }
+    fn truth(&self, op: &str) -> Result<bool, ExprError> {
+        match self.k {
+            K::Bool => Ok(self.v != 0.0),
+            _ => Err(format!("{op} needs true / false, not {}", self.what())),
+        }
     }
 }
 
@@ -255,9 +392,21 @@ impl Parser<'_> {
             false
         }
     }
-    /// A bare number meeting a quantity in a sum takes the parameter's
-    /// unit when that is the same kind (`d0 + 3` = d0 + 3 mm, `a + 15` =
-    /// a + 15°), degrees for an angle, else the base unit.
+    fn eat_word(&mut self, w: &str) -> bool {
+        if matches!(self.peek(), Some(Tok::Name(n)) if n == w) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+    /// An error, unless inside the branch of `if` not taken.
+    fn fail(&self, e: ExprError, dummy: Q) -> Result<Q, ExprError> {
+        if self.skip > 0 { Ok(dummy) } else { Err(e) }
+    }
+    /// A bare number meeting a quantity takes the parameter's unit when that
+    /// is the same kind (`d0 + 3` = d0 + 3 mm, `a + 15` = a + 15°), degrees
+    /// for an angle, else the base unit.
     fn as_like(&self, bare: Real, other: Dim) -> Real {
         if units::compatible(self.unit.dim, other) && self.unit.dim != units::NONE {
             bare * self.unit.factor
@@ -267,25 +416,92 @@ impl Parser<'_> {
             bare
         }
     }
-    fn sum(&self, x: Q, y: Q, plus: bool) -> Result<Q, ExprError> {
-        let (a, b, dim) = match (x.is_bare(), y.is_bare()) {
-            (false, true) => (x.v, self.as_like(y.v, x.dim), x.dim),
-            (true, false) => (self.as_like(x.v, y.dim), y.v, y.dim),
-            _ if units::compatible(x.dim, y.dim) => (x.v, y.v, x.dim),
-            _ => {
-                return Err(format!(
-                    "cannot add {} and {}",
-                    units::category(x.dim),
-                    units::category(y.dim)
-                ));
-            }
-        };
-        Ok(Q {
-            v: if plus { a + b } else { a - b },
-            dim,
-        })
+    /// Two numbers made comparable: (a, b, dimension).
+    fn align(&self, x: &Q, y: &Q, op: &str) -> Result<(Real, Real, Dim), ExprError> {
+        x.number(op)?;
+        y.number(op)?;
+        match (x.is_bare(), y.is_bare()) {
+            (false, true) => Ok((x.v, self.as_like(y.v, x.dim), x.dim)),
+            (true, false) => Ok((self.as_like(x.v, y.dim), y.v, y.dim)),
+            _ if units::compatible(x.dim, y.dim) => Ok((x.v, y.v, x.dim)),
+            _ => Err(format!(
+                "cannot {op} {} and {}",
+                units::category(x.dim),
+                units::category(y.dim)
+            )),
+        }
     }
+    // or := and ('or' and)*
     fn expr(&mut self) -> Result<Q, ExprError> {
+        let mut q = self.and()?;
+        while self.eat_word("or") {
+            let r = self.and()?;
+            let (a, b) = match (q.truth("or"), r.truth("or")) {
+                (Ok(a), Ok(b)) => (a, b),
+                (Err(e), _) | (_, Err(e)) => return self.fail(e, Q::boolean(false)),
+            };
+            q = Q::boolean(a || b);
+        }
+        Ok(q)
+    }
+    fn and(&mut self) -> Result<Q, ExprError> {
+        let mut q = self.not()?;
+        while self.eat_word("and") {
+            let r = self.not()?;
+            let (a, b) = match (q.truth("and"), r.truth("and")) {
+                (Ok(a), Ok(b)) => (a, b),
+                (Err(e), _) | (_, Err(e)) => return self.fail(e, Q::boolean(false)),
+            };
+            q = Q::boolean(a && b);
+        }
+        Ok(q)
+    }
+    fn not(&mut self) -> Result<Q, ExprError> {
+        if self.eat_word("not") {
+            let q = self.not()?;
+            return match q.truth("not") {
+                Ok(b) => Ok(Q::boolean(!b)),
+                Err(e) => self.fail(e, Q::boolean(false)),
+            };
+        }
+        self.cmp()
+    }
+    // cmp := sum (op sum)?
+    fn cmp(&mut self) -> Result<Q, ExprError> {
+        let a = self.sum()?;
+        let Some(Tok::Cmp(op)) = self.peek().cloned() else {
+            return Ok(a);
+        };
+        self.pos += 1;
+        let b = self.sum()?;
+        // Texts and true / false compare for equality.
+        let eq_only = |o: &str| matches!(o, "==" | "!=");
+        let r = match (&a.k, &b.k) {
+            (K::Text(x), K::Text(y)) if eq_only(op) => Ok((x == y) == (op == "==")),
+            (K::Bool, K::Bool) if eq_only(op) => Ok((a.v == b.v) == (op == "==")),
+            (K::Num, K::Num) => self.align(&a, &b, "compare").map(|(x, y, _)| {
+                let tol = 1e-9 * x.abs().max(y.abs()).max(1.0);
+                match op {
+                    "<" => x < y - tol,
+                    ">" => x > y + tol,
+                    "<=" => x <= y + tol,
+                    ">=" => x >= y - tol,
+                    "==" => (x - y).abs() <= tol,
+                    _ => (x - y).abs() > tol,
+                }
+            }),
+            _ => Err(format!(
+                "cannot compare {} and {} with {op}",
+                a.what(),
+                b.what()
+            )),
+        };
+        match r {
+            Ok(v) => Ok(Q::boolean(v)),
+            Err(e) => self.fail(e, Q::boolean(false)),
+        }
+    }
+    fn sum(&mut self) -> Result<Q, ExprError> {
         let mut q = self.term()?;
         loop {
             let plus = self.eat('+');
@@ -293,35 +509,44 @@ impl Parser<'_> {
                 return Ok(q);
             }
             let r = self.term()?;
-            q = self.sum(q, r, plus)?;
+            // Texts join with `+`.
+            if let (K::Text(x), K::Text(y), true) = (&q.k, &r.k, plus) {
+                q = Q::text(format!("{x}{y}"));
+                continue;
+            }
+            q = match self.align(&q, &r, "add") {
+                Ok((a, b, dim)) => Q::num(if plus { a + b } else { a - b }, dim),
+                Err(e) => self.fail(e, Q::bare(0.0))?,
+            };
         }
     }
     fn term(&mut self) -> Result<Q, ExprError> {
         let mut q = self.unary()?;
         loop {
-            if self.eat('*') {
-                let r = self.unary()?;
-                q = Q {
-                    v: q.v * r.v,
-                    dim: units::mul(q.dim, r.dim),
-                };
-            } else if self.eat('/') {
-                let d = self.unary()?;
-                if d.v == 0.0 {
-                    return Err("division by zero".into());
-                }
-                q = Q {
-                    v: q.v / d.v,
-                    dim: units::div(q.dim, d.dim),
-                };
-            } else {
+            let times = self.eat('*');
+            if !times && !self.eat('/') {
                 return Ok(q);
             }
+            let r = self.unary()?;
+            if let Err(e) = q.number("* and /").and(r.number("* and /")) {
+                q = self.fail(e, Q::bare(0.0))?;
+                continue;
+            }
+            q = if times {
+                Q::num(q.v * r.v, units::mul(q.dim, r.dim))
+            } else if r.v == 0.0 {
+                self.fail("division by zero".into(), Q::bare(0.0))?
+            } else {
+                Q::num(q.v / r.v, units::div(q.dim, r.dim))
+            };
         }
     }
     fn unary(&mut self) -> Result<Q, ExprError> {
         if self.eat('-') {
             let q = self.unary()?;
+            if let Err(e) = q.number("-") {
+                return self.fail(e, Q::bare(0.0));
+            }
             return Ok(Q { v: -q.v, ..q });
         }
         if self.eat('+') {
@@ -330,7 +555,10 @@ impl Parser<'_> {
         let base = self.atom()?;
         if self.eat('^') {
             let e = self.unary()?;
-            return power(base, e);
+            return match power(&base, &e) {
+                Ok(q) => Ok(q),
+                Err(err) => self.fail(err, Q::bare(0.0)),
+            };
         }
         Ok(base)
     }
@@ -356,21 +584,70 @@ impl Parser<'_> {
                 factor: u.factor.powi(e as i32),
                 offset: 0.0,
                 dim: units::pow(u.dim, e),
+                logic: units::Logic::Num,
             };
         }
         if !q.is_bare() {
             return Err(format!("a unit ('{n}') follows a value that has one"));
         }
-        Ok(Q {
-            v: u.from_display(q.v),
-            dim: u.dim,
-        })
+        Ok(Q::num(u.from_display(q.v), u.dim))
+    }
+    /// `if(condition, then, else)`: only the branch taken counts.
+    fn if_call(&mut self) -> Result<Q, ExprError> {
+        let c = self.expr()?;
+        let take = match c.truth("if") {
+            Ok(b) => b,
+            Err(e) => self.fail(e, Q::boolean(true))?.v != 0.0,
+        };
+        if !self.eat(',') {
+            return Err("if() takes a condition, a value and another value".into());
+        }
+        let branch = |p: &mut Self, taken: bool| -> Result<Q, ExprError> {
+            if !taken {
+                p.skip += 1;
+            }
+            let r = p.expr();
+            if !taken {
+                p.skip -= 1;
+            }
+            r
+        };
+        let a = branch(self, take)?;
+        if !self.eat(',') {
+            return Err("if() takes a condition, a value and another value".into());
+        }
+        let b = branch(self, !take)?;
+        if !self.eat(')') {
+            return Err("missing ')'".into());
+        }
+        // Both branches of one kind (a bare number fits a quantity).
+        let same = match (&a.k, &b.k) {
+            (K::Num, K::Num) => a.is_bare() || b.is_bare() || units::compatible(a.dim, b.dim),
+            (K::Bool, K::Bool) | (K::Text(_), K::Text(_)) => true,
+            _ => false,
+        };
+        if !same {
+            return self.fail(
+                format!(
+                    "the two values of if() differ: {} and {}",
+                    a.what(),
+                    b.what()
+                ),
+                Q::bare(0.0),
+            );
+        }
+        let r = if take { a } else { b };
+        Ok(r)
     }
     fn atom(&mut self) -> Result<Q, ExprError> {
         match self.peek().cloned() {
             Some(Tok::Num(v)) => {
                 self.pos += 1;
                 self.unit_suffix(Q::bare(v))
+            }
+            Some(Tok::Str(t)) => {
+                self.pos += 1;
+                Ok(Q::text(t))
             }
             Some(Tok::Op('(')) => {
                 self.pos += 1;
@@ -387,6 +664,9 @@ impl Parser<'_> {
             Some(Tok::Name(n)) => {
                 self.pos += 1;
                 if self.eat('(') {
+                    if n == "if" {
+                        return self.if_call();
+                    }
                     let mut args = vec![self.expr()?];
                     while self.eat(',') {
                         args.push(self.expr()?);
@@ -394,40 +674,48 @@ impl Parser<'_> {
                     if !self.eat(')') {
                         return Err("missing ')'".into());
                     }
-                    return call(&n, &args);
+                    return match call(&n, &args) {
+                        Ok(q) => Ok(q),
+                        Err(e) => self.fail(e, Q::bare(0.0)),
+                    };
                 }
-                if n == "PI" || n == "pi" {
-                    return Ok(Q::bare(std::f64::consts::PI));
-                }
-                if n == "E" {
-                    return Ok(Q::bare(std::f64::consts::E));
+                match n.as_str() {
+                    "PI" | "pi" => return Ok(Q::bare(std::f64::consts::PI)),
+                    "E" => return Ok(Q::bare(std::f64::consts::E)),
+                    "true" | "True" => return Ok(Q::boolean(true)),
+                    "false" | "False" => return Ok(Q::boolean(false)),
+                    _ => {}
                 }
                 // A parameter first; else a unit on its own is one of it
                 // (`9.81 m/s^2`: `s` is one second).
-                if let Some((v, dim)) = (self.vars)(&n) {
+                if let Some(v) = (self.vars)(&n) {
                     self.used.push(n.clone());
-                    return Ok(Q { v, dim });
+                    return Ok(match v {
+                        Value::Num(v, dim) => Q::num(v, dim),
+                        Value::Bool(b) => Q::boolean(b),
+                        Value::Text(t) => Q::text(t),
+                    });
                 }
                 if let Some(u) = units::named(&n) {
                     if u.offset != 0.0 {
                         return Err(format!("'{n}' needs a value before it (20 {n})"));
                     }
-                    return Ok(Q {
-                        v: u.factor,
-                        dim: u.dim,
-                    });
+                    return Ok(Q::num(u.factor, u.dim));
                 }
                 self.used.push(n.clone());
                 Err(format!("unknown parameter '{n}'"))
             }
             Some(Tok::Op(c)) => Err(format!("unexpected '{c}'")),
+            Some(Tok::Cmp(c)) => Err(format!("unexpected '{c}'")),
             None => Err("incomplete expression".into()),
         }
     }
 }
 
 /// `base ^ e`: the exponent is a ratio; a quantity only to whole powers.
-fn power(base: Q, e: Q) -> Result<Q, ExprError> {
+fn power(base: &Q, e: &Q) -> Result<Q, ExprError> {
+    base.number("^")?;
+    e.number("^")?;
     if !e.is_bare() {
         return Err("an exponent cannot have a unit".into());
     }
@@ -441,16 +729,16 @@ fn power(base: Q, e: Q) -> Result<Q, ExprError> {
             units::category(base.dim)
         ));
     }
-    Ok(Q {
-        v: base.v.powf(e.v),
-        dim: units::pow(base.dim, r as i8),
-    })
+    Ok(Q::num(base.v.powf(e.v), units::pow(base.dim, r as i8)))
 }
 
 fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
+    for q in a {
+        q.number(&format!("{f}()"))?;
+    }
     let one = || {
         if a.len() == 1 {
-            Ok(a[0])
+            Ok(a[0].clone())
         } else {
             Err(format!("{f}() takes one argument"))
         }
@@ -485,10 +773,7 @@ fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
         })
     };
     let ratio = Q::bare;
-    let angle_out = |v: Real| Q {
-        v,
-        dim: angle_dim(),
-    };
+    let angle_out = |v: Real| Q::num(v, angle_dim());
     let same = |name: &str| -> Result<Dim, ExprError> {
         let d0 = a.first().map_or(units::NONE, |q| q.dim);
         if a.iter()
@@ -501,6 +786,7 @@ fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
             Err(format!("{name}() takes values of one kind"))
         }
     };
+    let keep = |x: Q, v: Real| Q::num(v, x.dim);
     Ok(match f {
         "sin" => ratio(angle()?.sin()),
         "cos" => ratio(angle()?.cos()),
@@ -516,32 +802,27 @@ fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
             if x.dim.iter().any(|p| p % 2 != 0) {
                 return Err(format!("sqrt of {} has no unit", units::category(x.dim)));
             }
-            Q {
-                v: x.v.sqrt(),
-                dim: std::array::from_fn(|k| x.dim[k] / 2),
-            }
+            Q::num(x.v.sqrt(), std::array::from_fn(|k| x.dim[k] / 2))
         }
         "abs" => {
             let x = one()?;
-            Q { v: x.v.abs(), ..x }
+            let v = x.v.abs();
+            keep(x, v)
         }
         "floor" => {
             let x = one()?;
-            Q {
-                v: x.v.floor(),
-                ..x
-            }
+            let v = x.v.floor();
+            keep(x, v)
         }
         "ceil" => {
             let x = one()?;
-            Q { v: x.v.ceil(), ..x }
+            let v = x.v.ceil();
+            keep(x, v)
         }
         "round" => {
             let x = one()?;
-            Q {
-                v: x.v.round(),
-                ..x
-            }
+            let v = x.v.round();
+            keep(x, v)
         }
         "sinh" => ratio(ratio_in()?.sinh()),
         "cosh" => ratio(ratio_in()?.cosh()),
@@ -571,31 +852,31 @@ fn call(f: &str, a: &[Q]) -> Result<Q, ExprError> {
             let [x, y] = a else {
                 return Err("pow() takes two arguments".into());
             };
-            power(*x, *y)?
+            power(x, y)?
         }
-        "min" if !a.is_empty() => Q {
-            v: a.iter().map(|q| q.v).fold(Real::INFINITY, Real::min),
-            dim: same("min")?,
-        },
-        "max" if !a.is_empty() => Q {
-            v: a.iter().map(|q| q.v).fold(Real::NEG_INFINITY, Real::max),
-            dim: same("max")?,
-        },
+        "min" if !a.is_empty() => Q::num(
+            a.iter().map(|q| q.v).fold(Real::INFINITY, Real::min),
+            same("min")?,
+        ),
+        "max" if !a.is_empty() => Q::num(
+            a.iter().map(|q| q.v).fold(Real::NEG_INFINITY, Real::max),
+            same("max")?,
+        ),
         _ => return Err(format!("unknown function '{f}'")),
     })
 }
 
-/// Evaluates `text` for a parameter of `unit`, looking names up in `vars`
-/// (their internal values and dimensions). Returns the value (internal
-/// units) and the names it used. The result must be of the parameter's
-/// kind: `Force / Length` into N/m converts from N/mm, into a length it is
-/// an error; a bare result takes the parameter's unit; a unitless
-/// parameter takes any value (as it always did).
-pub fn eval(
+/// Evaluates `text` for a parameter of `unit` to its value, looking names
+/// up in `vars`; also the names it used. The result must be of the
+/// parameter's kind: `Force / Length` into N/m converts from N/mm, into a
+/// length it is an error; a bare result takes the parameter's unit; a
+/// unitless parameter takes any number; true / false and text parameters
+/// take only those.
+pub fn eval_value(
     text: &str,
     unit: impl Into<UnitDef>,
     vars: &Vars<'_>,
-) -> Result<(Real, Vec<String>), ExprError> {
+) -> Result<(Value, Vec<String>), ExprError> {
     let unit = unit.into();
     let toks = lex(text)?;
     if toks.is_empty() {
@@ -607,26 +888,56 @@ pub fn eval(
         vars,
         unit,
         used: Vec::new(),
+        skip: 0,
     };
     let q = p.expr()?;
     if p.pos != p.toks.len() {
         return Err("unexpected text at the end".into());
     }
-    let v = if q.is_bare() {
-        unit.from_display(q.v)
-    } else if unit.dim == units::NONE || units::compatible(q.dim, unit.dim) {
-        q.v
-    } else {
-        return Err(format!(
-            "the result is {}, the parameter is {}",
-            units::category(q.dim),
-            units::category(unit.dim)
-        ));
+    let value = match (unit.logic, q.k) {
+        (units::Logic::Bool, K::Bool) => Value::Bool(q.v != 0.0),
+        (units::Logic::Text, K::Text(t)) => Value::Text(t),
+        (units::Logic::Num, K::Num) => {
+            let v = if q.dim == units::NONE {
+                unit.from_display(q.v)
+            } else if unit.dim == units::NONE || units::compatible(q.dim, unit.dim) {
+                q.v
+            } else {
+                return Err(format!(
+                    "the result is {}, the parameter is {}",
+                    units::category(q.dim),
+                    units::category(unit.dim)
+                ));
+            };
+            if !v.is_finite() {
+                return Err("the result is not a finite number".into());
+            }
+            Value::Num(v, unit.dim)
+        }
+        (want, got) => {
+            let got = match got {
+                K::Num => units::category(q.dim),
+                K::Bool => "true / false".into(),
+                K::Text(_) => "a text".into(),
+            };
+            let want = match want {
+                units::Logic::Bool => "true / false",
+                units::Logic::Text => "a text",
+                units::Logic::Num => "a number",
+            };
+            return Err(format!("the result is {got}, the parameter is {want}"));
+        }
     };
-    if !v.is_finite() {
-        return Err("the result is not a finite number".into());
-    }
-    Ok((v, p.used))
+    Ok((value, p.used))
+}
+
+/// [`eval_value`] as a number (true / false as 1 / 0).
+pub fn eval(
+    text: &str,
+    unit: impl Into<UnitDef>,
+    vars: &Vars<'_>,
+) -> Result<(Real, Vec<String>), ExprError> {
+    eval_value(text, unit, vars).map(|(v, used)| (v.number(), used))
 }
 
 /// [`eval`] where every name has the dimension of `unit` (fields that
@@ -637,7 +948,7 @@ pub fn eval_simple(
     vars: &dyn Fn(&str) -> Option<Real>,
 ) -> Result<(Real, Vec<String>), ExprError> {
     let unit = unit.into();
-    eval(text, unit, &|n| vars(n).map(|v| (v, unit.dim)))
+    eval(text, unit, &|n| vars(n).map(|v| Value::Num(v, unit.dim)))
 }
 
 /// The parameter names an expression refers to (no evaluation errors for
@@ -651,9 +962,7 @@ pub fn names_in(text: &str) -> Vec<String> {
                 && toks.get(i + 1) != Some(&Tok::Op('('))
                 && !(after_value && units::named(n).is_some())
                 && !reserved_unit(n)
-                && n != "PI"
-                && n != "pi"
-                && n != "E"
+                && !keyword(n)
             {
                 out.push(n.clone());
             }
@@ -673,6 +982,14 @@ pub fn is_plain_number(text: &str) -> bool {
     }
 }
 
+/// Is `text` a plain value: a number (with a unit), `true` / `false` or a
+/// text in quotes (not an equation)?
+pub fn is_plain_value(text: &str) -> bool {
+    is_plain_number(text)
+        || matches!(lex(text).as_deref(), Ok([Tok::Str(_)]))
+        || matches!(lex(text).as_deref(), Ok([Tok::Name(n)]) if matches!(n.as_str(), "true" | "false" | "True" | "False"))
+}
+
 /// Is `name` usable as a parameter name?
 pub fn valid_name(name: &str) -> bool {
     let mut cs = name.chars();
@@ -680,22 +997,23 @@ pub fn valid_name(name: &str) -> bool {
         && cs.all(|c| c.is_alphanumeric() || c == '_')
         && !reserved_unit(name)
         && !FUNCTIONS.contains(&name)
-        && !matches!(name, "PI" | "pi" | "E")
+        && !keyword(name)
 }
 
 /// The functions of an expression (also the suggestions while typing).
 pub const FUNCTIONS: &[&str] = &[
-    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
-    "sqrt", "abs", "floor", "ceil", "round", "sign", "exp", "ln", "log", "pow", "min", "max",
+    "if", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh",
+    "atanh", "sqrt", "abs", "floor", "ceil", "round", "sign", "exp", "ln", "log", "pow", "min",
+    "max",
 ];
 
 /// Evaluates a set of named expressions in dependency order. Returns the
-/// values (internal units, with their dimensions), and per-name errors
-/// (cycles, unknown names, bad syntax, a result of the wrong kind). A name
-/// whose expression fails keeps no value, and so do the names using it.
+/// values and per-name errors (cycles, unknown names, bad syntax, a result
+/// of the wrong kind). A name whose expression fails keeps no value, and so
+/// do the names using it.
 pub fn eval_all(
     exprs: &[(String, String, UnitDef)],
-) -> (HashMap<String, (Real, Dim)>, HashMap<String, ExprError>) {
+) -> (HashMap<String, Value>, HashMap<String, ExprError>) {
     eval_all_with(exprs, &HashMap::new())
 }
 
@@ -703,18 +1021,18 @@ pub fn eval_all(
 /// (the part's physical properties).
 pub fn eval_all_with(
     exprs: &[(String, String, UnitDef)],
-    fixed: &HashMap<String, (Real, Dim)>,
-) -> (HashMap<String, (Real, Dim)>, HashMap<String, ExprError>) {
+    fixed: &HashMap<String, Value>,
+) -> (HashMap<String, Value>, HashMap<String, ExprError>) {
     let by_name: HashMap<&str, usize> = exprs
         .iter()
         .enumerate()
         .map(|(i, (n, _, _))| (n.as_str(), i))
         .collect();
-    let mut values: HashMap<String, (Real, Dim)> = fixed.clone();
+    let mut values: HashMap<String, Value> = fixed.clone();
     let mut errors: HashMap<String, ExprError> = HashMap::new();
     // 0 = new, 1 = in progress, 2 = done
     let mut state = vec![0u8; exprs.len()];
-    type Values = HashMap<String, (Real, Dim)>;
+    type Values = HashMap<String, Value>;
     fn visit(
         i: usize,
         exprs: &[(String, String, UnitDef)],
@@ -746,9 +1064,9 @@ pub fn eval_all_with(
             }
         }
         if !errors.contains_key(name) {
-            match eval(text, *unit, &|n| values.get(n).copied()) {
+            match eval_value(text, *unit, &|n| values.get(n).cloned()) {
                 Ok((v, _)) => {
-                    values.insert(name.clone(), (v, unit.dim));
+                    values.insert(name.clone(), v);
                 }
                 Err(e) => {
                     errors.insert(name.clone(), e);
@@ -774,8 +1092,8 @@ mod tests {
 
     fn ev(s: &str, u: Unit) -> Real {
         let vars = |n: &str| match n {
-            "d0" => Some((40.0, Unit::Mm.def().dim)),
-            "a" => Some((30f64.to_radians(), Unit::Deg.def().dim)),
+            "d0" => Some(Value::Num(40.0, Unit::Mm.def().dim)),
+            "a" => Some(Value::Num(30f64.to_radians(), Unit::Deg.def().dim)),
             _ => None,
         };
         eval(s, u, &vars).unwrap().0
@@ -815,11 +1133,14 @@ mod tests {
     fn dependency_order_and_cycles() {
         let e = |n: &str, t: &str| (n.to_owned(), t.to_owned(), Unit::Mm.def());
         let (v, err) = eval_all(&[e("c", "b * 2"), e("b", "a + 1"), e("a", "10")]);
-        assert_eq!((v["a"].0, v["b"].0, v["c"].0), (10.0, 11.0, 22.0));
+        assert_eq!(
+            (v["a"].number(), v["b"].number(), v["c"].number()),
+            (10.0, 11.0, 22.0)
+        );
         assert!(err.is_empty());
         let (v, err) = eval_all(&[e("x", "y"), e("y", "x"), e("z", "5")]);
         assert!(err.contains_key("x") && err.contains_key("y"));
-        assert_eq!(v["z"].0, 5.0);
+        assert_eq!(v["z"].number(), 5.0);
     }
 }
 
@@ -831,7 +1152,7 @@ mod unit_tests {
     /// mm / rad and back.
     #[test]
     fn parameter_units_convert() {
-        let none = |_: &str| -> Option<(Real, Dim)> { None };
+        let none = |_: &str| -> Option<Value> { None };
         for (u, typed, internal) in [
             (Unit::Mm, "2", 2.0),
             (Unit::Cm, "2", 20.0),
@@ -849,7 +1170,7 @@ mod unit_tests {
         // A unit in the text wins over the parameter's.
         let (v, _) = eval("1 in + 1", Unit::Cm, &none).unwrap();
         assert!((v - 35.4).abs() < 1e-9, "1 in + 1 cm");
-        assert_eq!(Unit::ALL.len(), 8);
+        assert_eq!(Unit::ALL.len(), 10);
         assert!(Unit::Rad.is_angle() && Unit::Ft.is_length() && !Unit::Ul.is_length());
         // More functions and E.
         for (t, v) in [
@@ -883,8 +1204,8 @@ mod dim_tests {
         let force = spec("N");
         let len = spec("mm");
         let vars = |n: &str| match n {
-            "F" => Some((force.from_display(500.0), force.dim)),
-            "L" => Some((len.from_display(250.0), len.dim)),
+            "F" => Some(Value::Num(force.from_display(500.0), force.dim)),
+            "L" => Some(Value::Num(len.from_display(250.0), len.dim)),
             _ => None,
         };
         let shown = |text: &str, unit: &str| {
@@ -915,5 +1236,72 @@ mod dim_tests {
         assert!(eval("L / 10", spec("ul"), &vars).is_ok());
         assert!(names_in("F / L * 2 mm").contains(&"F".to_owned()));
         assert!(!names_in("2 mm + 3 kg").contains(&"mm".to_owned()));
+    }
+}
+
+#[cfg(test)]
+mod logic_tests {
+    use super::*;
+
+    /// `if`, comparisons, and / or / not, true / false and texts, with
+    /// kinds checked.
+    #[test]
+    fn decisions_in_equations() {
+        let len = Unit::Mm.def();
+        let vars = |n: &str| match n {
+            "Width" => Some(Value::Num(150.0, len.dim)),
+            "Heavy" => Some(Value::Bool(true)),
+            "Material" => Some(Value::Text("Steel".into())),
+            _ => None,
+        };
+        let num = |t: &str, u: Unit| eval(t, u, &vars).unwrap_or_else(|e| panic!("{t}: {e}")).0;
+        let val = |t: &str, u: Unit| {
+            eval_value(t, u, &vars)
+                .unwrap_or_else(|e| panic!("{t}: {e}"))
+                .0
+        };
+        assert_eq!(num("if(Width > 100 mm, 5 mm, 3 mm)", Unit::Mm), 5.0);
+        assert_eq!(
+            num("if(Width > 20 cm, 5, 3)", Unit::Mm),
+            3.0,
+            "units compared"
+        );
+        assert_eq!(num("if(Heavy and Width >= 150, 8, 4)", Unit::Ul), 8.0);
+        assert_eq!(num("if(not Heavy or Width < 1, 8, 4)", Unit::Ul), 4.0);
+        assert_eq!(num("if(Material == \"Steel\", 7.85, 2.7)", Unit::Ul), 7.85);
+        assert_eq!(val("Width > 1 m", Unit::Bool), Value::Bool(false));
+        assert_eq!(
+            val("Material + \" S235\"", Unit::Text),
+            Value::Text("Steel S235".into())
+        );
+        assert_eq!(
+            val("\"say \"\"hi\"\"\"", Unit::Text),
+            Value::Text("say \"hi\"".into())
+        );
+        // Only the branch taken counts: no division by zero here.
+        assert_eq!(
+            num("if(Width == 0, 0, 1 / Width * 1 mm^2)", Unit::Mm),
+            1.0 / 150.0
+        );
+        // Kinds checked.
+        let bad = |t: &str, u: Unit| eval_value(t, u, &vars).is_err();
+        assert!(
+            bad("if(Width, 1, 2)", Unit::Ul),
+            "a condition is true / false"
+        );
+        assert!(
+            bad("if(Heavy, 5 mm, 3 kg)", Unit::Mm),
+            "branches of one kind"
+        );
+        assert!(bad("Width > 1 kg", Unit::Bool), "a length against a mass");
+        assert!(bad("Heavy", Unit::Mm), "true / false into a length");
+        assert!(bad("Width", Unit::Bool));
+        assert!(
+            bad("Material < \"Z\"", Unit::Bool),
+            "texts compare for equality only"
+        );
+        assert!(!valid_name("if") && !valid_name("true") && !valid_name("and"));
+        assert!(names_in("if(Heavy and Width > 2 mm, 1, 0)").contains(&"Heavy".to_owned()));
+        assert!(is_plain_value("true") && is_plain_value("\"x\"") && !is_plain_value("not Heavy"));
     }
 }

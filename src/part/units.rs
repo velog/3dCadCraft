@@ -74,6 +74,20 @@ pub struct UnitDef {
     pub offset: Real,
     /// What kind of quantity it is.
     pub dim: Dim,
+    /// A number, true / false or a text parameter.
+    pub logic: Logic,
+}
+
+/// What a parameter holds besides numbers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Logic {
+    /// A quantity.
+    #[default]
+    Num,
+    /// True / False.
+    Bool,
+    /// A text.
+    Text,
 }
 
 impl UnitDef {
@@ -82,6 +96,7 @@ impl UnitDef {
             factor,
             offset: 0.0,
             dim,
+            logic: Logic::Num,
         }
     }
 
@@ -245,6 +260,7 @@ pub fn named(name: &str) -> Option<UnitDef> {
                 factor: 1.0,
                 offset: 273.15,
                 dim: only(TH, 1),
+                logic: Logic::Num,
             });
         }
         "degF" | "°F" => {
@@ -252,6 +268,7 @@ pub fn named(name: &str) -> Option<UnitDef> {
                 factor: 5.0 / 9.0,
                 offset: 273.15 - 32.0 * 5.0 / 9.0,
                 dim: only(TH, 1),
+                logic: Logic::Num,
             });
         }
         _ => {}
@@ -452,6 +469,7 @@ pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("Luminosity", &["cd", "lm", "lx"]),
     ("Substance", &["mol"]),
     ("Unitless", &["ul", "percent"]),
+    ("True / False and Text", &["bool", "text"]),
 ];
 
 #[cfg(test)]
@@ -493,7 +511,7 @@ mod tests {
         assert_eq!(parse_spec("").unwrap().dim, NONE);
         assert_eq!(category(parse_spec("kN").unwrap().dim), "a force");
         for (_, units) in CATEGORIES {
-            for u in *units {
+            for u in units.iter().filter(|u| !matches!(**u, "bool" | "text")) {
                 assert!(parse_spec(u).is_ok(), "{u}");
             }
         }

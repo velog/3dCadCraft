@@ -416,6 +416,46 @@ fn history_r7() -> PartDocument {
 /// to a smaller square) joined to it.
 /// Revision 14: a Coil (closed ends, left hand) beside a plate with a Web
 /// across it (To Next) and a boss.
+/// Revision 18: a true / false and a text parameter, a size chosen by
+/// `if()` on them, and a boss suppressed by a condition (Suppress if).
+fn logic_r18() -> PartDocument {
+    use cadcraft3d::part::expr::Unit;
+    use cadcraft3d::part::{Operation, ProfileRef};
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let heavy = part.add_user_parameter(Unit::Bool);
+    part.set_parameter_expr(&heavy, "false").unwrap();
+    let mat = part.add_user_parameter(Unit::Text);
+    part.set_parameter_expr(&mat, "\"Al\"").unwrap();
+    let w = part.add_user_parameter(Unit::Mm);
+    part.set_parameter_expr(
+        &w,
+        &format!("if({heavy} or {mat} == \"Steel\", 40 mm, 25 mm)"),
+    )
+    .unwrap();
+    part.set_feature_field(0, "width", &w).unwrap();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let j = part
+        .create_sketch(SketchPlacement::on_face("Box1:Top"), &o)
+        .unwrap();
+    let c = part.sketches[j]
+        .sketch
+        .plane
+        .project(&Point3::new(20.0, 12.0, 20.0));
+    part.sketches[j].sketch.add_circle(c, 5.0).unwrap();
+    let rg = part.sketches[j].sketch.regions();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 10.0);
+    ex.operation = Operation::Join;
+    part.add_extrude(j, ex).unwrap();
+    let k = part.last_inserted();
+    part.set_suppress_if(k, Some(&format!("not {heavy}")))
+        .unwrap();
+    part.regenerate().unwrap();
+    part
+}
 /// Revision 17: user parameters in cm, in and rad (`Unit::Cm` / `In` / `Rad`)
 /// driving the box (length 6 cm, width 1 in + 5 mm).
 fn units_r17() -> PartDocument {
@@ -989,6 +1029,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("WorkR8");
             project.add_document("Part1", DocumentData::Part(work_r8()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r18/logic_r18.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("LogicR18");
+            project.add_document("Part1", DocumentData::Part(logic_r18()));
             project.save(&f).unwrap();
         }
         let f = root().join("r17/units_r17.3dcadcraft");

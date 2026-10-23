@@ -519,6 +519,8 @@ struct CadCraftApp {
     param_search: String,
     /// Multi-Value list being edited: user parameter index, text.
     param_values_edit: Option<(usize, String)>,
+    /// The Suppress if window: feature index, condition text.
+    suppress_if_edit: Option<(usize, String)>,
     /// The in-place dimension editor shows its tolerance part.
     dim_tol_open: bool,
     /// How dimension texts are shown (status bar: Value / Name / …).
@@ -793,6 +795,7 @@ impl CadCraftApp {
             param_cols: [80.0, 150.0, 120.0],
             param_search: String::new(),
             param_values_edit: None,
+            suppress_if_edit: None,
             target_pick: None,
             extrude_preview: Default::default(),
             preview_job: Default::default(),
@@ -2784,11 +2787,11 @@ impl CadCraftApp {
         }
         // The field's value: an expression with the part's parameters (the
         // field's unit for bare numbers: degrees for angles, mm otherwise).
-        let params: std::collections::HashMap<String, (f64, crate::part::units::Dim)> = self
+        let params: std::collections::HashMap<String, crate::part::expr::Value> = self
             .part()
             .parameter_table()
             .into_iter()
-            .map(|r| (r.name.clone(), (r.value, r.def().dim)))
+            .map(|r| (r.name.clone(), r.as_value()))
             .collect();
         let angle = |hud: &Hud, names: &[&str]| {
             names.get(hud.focus).is_some_and(|n| n.starts_with("Angle"))
@@ -2801,7 +2804,7 @@ impl CadCraftApp {
                 crate::part::expr::Unit::Mm
             };
             if let Ok((v, _)) =
-                crate::part::expr::eval(hud.text.trim(), unit, &|n| params.get(n).copied())
+                crate::part::expr::eval(hud.text.trim(), unit, &|n| params.get(n).cloned())
             {
                 hud.vals[hud.focus] = Some(unit.to_display(v));
             }
@@ -6952,6 +6955,7 @@ impl eframe::App for CadCraftApp {
 
         self.options_window(&ctx);
         self.parameters_window(&ctx);
+        self.suppress_if_window(&ctx);
         self.material_windows(&ctx);
         self.measure_window(&ctx);
         self.measure_requests(&ctx);

@@ -587,6 +587,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   target accepts anything (old files had `count = d0 / 10`-style mixes). Names: a parameter wins over a
   unit of the same name; after a number a name is a unit. Physical properties are values
   (`eval_all_with` fixed), never equations, and no Dimension / Feature row may reach them.
+- **Decisions** (format revision 18): `expr::Value` is a number with its dimension, true / false or a
+  text; `UnitDef::logic` says which a parameter holds. `if()` evaluates only the taken branch for errors
+  (`Parser::skip`); `split_assignment` must not split `==` / `<=`. Suppress if conditions live in
+  `PartDocument::suppress_if` (by feature id) and are evaluated in `evaluate_parameters` into
+  `cond_suppressed` (with dependents) — every place that asks "is it suppressed" uses `is_suppressed`.
 - **One visible face / edge from kernel pieces** (`kernel::smooth`): truck has no periodic faces or
   closed edges, so a cylinder comes in 2+ faces and a circle in 2+ arcs. Faces on the same *curved*
   analytic surface sharing an edge are one `smooth_group`; the edge between them is a seam

@@ -39,6 +39,9 @@ pub struct UserParam {
     /// Multi-Value: the values to choose from (each an equation).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<String>,
+    /// The evaluated text of a Text parameter (runtime).
+    #[serde(skip)]
+    pub text: String,
 }
 
 /// Key flag and display precision of a parameter (any kind).
@@ -136,6 +139,8 @@ pub struct ParamRow {
     /// A unit specification beyond `unit` (user parameters, physical
     /// properties).
     pub spec: Option<String>,
+    /// The text of a Text parameter.
+    pub text: Option<String>,
 }
 
 impl ParamRow {
@@ -161,9 +166,23 @@ impl ParamRow {
             .unwrap_or_else(|| self.unit.label().to_owned())
     }
 
-    /// The value as shown in the row's unit.
+    /// The value as shown in the row's unit (True / False, "text").
     pub fn shown(&self) -> String {
-        format_in(self.value, self.def(), &self.unit_label())
+        match self.def().logic {
+            units::Logic::Bool => if self.value > 0.5 { "True" } else { "False" }.to_owned(),
+            units::Logic::Text => format!("\"{}\"", self.text.clone().unwrap_or_default()),
+            units::Logic::Num => format_in(self.value, self.def(), &self.unit_label()),
+        }
+    }
+
+    /// The row's value for other equations.
+    pub fn as_value(&self) -> expr::Value {
+        let def = self.def();
+        match def.logic {
+            units::Logic::Bool => expr::Value::Bool(self.value > 0.5),
+            units::Logic::Text => expr::Value::Text(self.text.clone().unwrap_or_default()),
+            units::Logic::Num => expr::Value::Num(self.value, def.dim),
+        }
     }
 }
 
@@ -701,6 +720,7 @@ impl PartDocument {
                     tol: Some(p.tol),
                     comment: p.comment.clone(),
                     spec: None,
+                    text: None,
                 });
             }
         }
@@ -720,6 +740,7 @@ impl PartDocument {
                     tol: None,
                     comment: String::new(),
                     spec: None,
+                    text: None,
                 });
             }
         }
@@ -734,6 +755,7 @@ impl PartDocument {
                 tol: None,
                 comment: u.comment.clone(),
                 spec: u.unit_spec.clone(),
+                text: (u.unit == Unit::Text).then(|| u.text.clone()),
             });
         }
         // The physical properties of the last regeneration (read only).
@@ -749,6 +771,7 @@ impl PartDocument {
                     tol: None,
                     comment: String::new(),
                     spec: Some((*unit).to_owned()),
+                    text: None,
                 });
             }
         }
@@ -757,12 +780,12 @@ impl PartDocument {
 
     /// The physical-property values for the equations (internal units with
     /// their dimensions).
-    pub fn physical_fixed(&self) -> std::collections::HashMap<String, (Real, units::Dim)> {
+    pub fn physical_fixed(&self) -> std::collections::HashMap<String, expr::Value> {
         let mut out = std::collections::HashMap::new();
         if let Some(vals) = &self.physical_values {
             for (k, (name, unit)) in PHYSICAL.iter().enumerate() {
                 if let Ok(u) = units::parse_spec(unit) {
-                    out.insert((*name).to_owned(), (vals[k], u.dim));
+                    out.insert((*name).to_owned(), expr::Value::Num(vals[k], u.dim));
                 }
             }
         }
@@ -835,9 +858,13 @@ impl PartDocument {
             if errors.contains_key(&r.name) {
                 continue;
             }
-            let Some(&(v, _)) = values.get(&r.name) else {
+            let Some(val) = values.get(&r.name) else {
                 continue;
             };
+            let v = val.number();
+            if let (ParamOwner::User(i), expr::Value::Text(t)) = (&r.owner, val) {
+                self.user_params[*i].text = t.clone();
+            }
             match &r.owner {
                 ParamOwner::Dimension { sketch, constraint } if r.expr.is_some() => {
                     let _ = self.sketches[*sketch]
@@ -851,7 +878,76 @@ impl PartDocument {
                 _ => {}
             }
         }
+        // Suppress if: the features whose condition is true, and what
+        // depends on them.
+        let mut cond = std::collections::BTreeSet::new();
+        for (id, text) in &self.suppress_if {
+            let label = format!("Suppress if ({id})");
+            if let Some(p) = expr::names_in(text).iter().find_map(|n| {
+                if is_physical(n) {
+                    Some(n.clone())
+                } else {
+                    physical_dependency(n, &list)
+                }
+            }) {
+                errors.insert(
+                    label,
+                    format!("a condition cannot depend on {p} (it would change it)"),
+                );
+                continue;
+            }
+            match expr::eval_value(text, Unit::Bool, &|n| values.get(n).cloned()) {
+                Ok((expr::Value::Bool(true), _)) => {
+                    if let Some(k) = self.feature_index(id) {
+                        cond.insert(id.clone());
+                        for j in self.dependents(k) {
+                            cond.insert(self.features[j].id().to_owned());
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    errors.insert(label, e);
+                }
+            }
+        }
+        self.cond_suppressed = cond;
         self.param_errors = errors.into_iter().collect();
+    }
+
+    /// Sets feature `k`'s Suppress if condition (`None` removes it). Refused,
+    /// with nothing changed, when it is not a true / false equation of the
+    /// parameters.
+    pub fn set_suppress_if(&mut self, k: usize, text: Option<&str>) -> Result<(), PartError> {
+        let id = self
+            .features
+            .get(k)
+            .map(|f| f.id().to_owned())
+            .ok_or_else(|| PartError::Feature("the feature no longer exists".into()))?;
+        let before = self.clone();
+        match text.map(str::trim).filter(|t| !t.is_empty()) {
+            None => {
+                self.suppress_if.remove(&id);
+            }
+            Some(t) => {
+                let table = self.parameter_table();
+                expr::eval_value(t, Unit::Bool, &|n| {
+                    table.iter().find(|r| r.name == n).map(ParamRow::as_value)
+                })
+                .map_err(|e| PartError::Feature(format!("Suppress if: {e}")))?;
+                self.suppress_if.insert(id.clone(), t.to_owned());
+            }
+        }
+        let label = format!("Suppress if ({id})");
+        if let Err(e) = self.regenerate() {
+            *self = before;
+            return Err(e);
+        }
+        if let Some(e) = self.param_errors.get(&label).cloned() {
+            *self = before;
+            return Err(PartError::Feature(format!("Suppress if: {e}")));
+        }
+        Ok(())
     }
 
     /// The equations of the table (physical properties are values, not
@@ -886,7 +982,7 @@ impl PartDocument {
         let rows = self.parameter_table();
         let list = self.equations(&rows);
         let (values, _) = expr::eval_all_with(&list, &self.physical_fixed());
-        let lookup = |n: &str| values.get(n).copied();
+        let lookup = |n: &str| values.get(n).cloned();
         let count = |e: &Option<String>| -> Option<usize> {
             let (v, _) = expr::eval(e.as_deref()?, Unit::Ul, &lookup).ok()?;
             v.is_finite()
@@ -948,10 +1044,7 @@ impl PartDocument {
         }
         let table = self.parameter_table();
         let (value, _) = expr::eval(text, row.def(), &|n| {
-            table
-                .iter()
-                .find(|r| r.name == n)
-                .map(|r| (r.value, r.def().dim))
+            table.iter().find(|r| r.name == n).map(ParamRow::as_value)
         })
         .map_err(|e| PartError::Feature(format!("{name}: {e}")))?;
         let stored = (!plain).then(|| text.to_owned());
@@ -1026,6 +1119,9 @@ impl PartDocument {
         if let Some(meta) = self.param_meta.remove(old) {
             self.param_meta.insert(new.to_owned(), meta);
         }
+        for e in self.suppress_if.values_mut() {
+            *e = rename_in(e, old, new);
+        }
         // Equations that used the old name.
         for ps in &mut self.sketches {
             let ids: Vec<ConstraintId> = ps.sketch.constraints().map(|(id, _)| id).collect();
@@ -1070,6 +1166,7 @@ impl PartDocument {
             value,
             unit_spec: None,
             values: Vec::new(),
+            text: String::new(),
         });
         name
     }
@@ -1188,7 +1285,11 @@ impl PartDocument {
     /// typed and is evaluated again. A bad specification changes nothing.
     pub fn set_user_unit(&mut self, i: usize, spec: &str) -> Result<(), PartError> {
         let spec = spec.trim();
-        let new = units::parse_spec(spec).map_err(PartError::Feature)?;
+        let legacy = Unit::ALL.into_iter().find(|u| u.label() == spec);
+        let new = match legacy {
+            Some(u) => u.def(),
+            None => units::parse_spec(spec).map_err(PartError::Feature)?,
+        };
         let Some(p) = self.user_params.get(i) else {
             return Err(PartError::Feature("no such user parameter".into()));
         };
@@ -1197,7 +1298,6 @@ impl PartDocument {
         let before = self.user_params[i].clone();
         // An old kind when the specification is one (files stay readable by
         // older builds), else the nearest old kind and the specification.
-        let legacy = Unit::ALL.into_iter().find(|u| u.label() == spec);
         {
             let p = &mut self.user_params[i];
             match legacy {
@@ -1218,7 +1318,15 @@ impl PartDocument {
             }
         }
         let label = self.user_params[i].unit_label();
-        let r = if expr::is_plain_number(&expr) {
+        let r = if new.logic != old.logic && expr::is_plain_value(&expr) {
+            // To or from true / false or a text: a plain value starts over.
+            let start = match new.logic {
+                units::Logic::Bool => "false".to_owned(),
+                units::Logic::Text => "\"\"".to_owned(),
+                units::Logic::Num => format_in(new.from_display(0.0), new, &label),
+            };
+            self.set_parameter_expr(&name, &start)
+        } else if expr::is_plain_number(&expr) {
             let shown = if units::compatible(old.dim, new.dim) {
                 new.to_display(value)
             } else {
@@ -1237,7 +1345,8 @@ impl PartDocument {
 
     /// Parameters whose equations use `name`.
     pub fn parameter_users(&self, name: &str) -> Vec<String> {
-        self.parameter_table()
+        let mut out: Vec<String> = self
+            .parameter_table()
             .into_iter()
             .filter(|r| {
                 r.expr
@@ -1245,7 +1354,13 @@ impl PartDocument {
                     .is_some_and(|e| expr::names_in(e).iter().any(|n| n == name))
             })
             .map(|r| r.name)
-            .collect()
+            .collect();
+        for (id, e) in &self.suppress_if {
+            if expr::names_in(e).iter().any(|n| n == name) {
+                out.push(format!("Suppress if ({id})"));
+            }
+        }
+        out
     }
 
     /// Pick whip (After Effects): parameter `target` follows `source` — its
@@ -1271,7 +1386,10 @@ impl PartDocument {
                         && r.expr
                             .as_deref()
                             .is_some_and(|e| expr::names_in(e).contains(&u.name))
-                })
+                }) && !self
+                    .suppress_if
+                    .values()
+                    .any(|e| expr::names_in(e).contains(&u.name))
             })
             .map(|u| u.name.clone())
             .collect()
@@ -1349,7 +1467,18 @@ fn csv_fields(line: &str) -> Vec<String> {
 /// Splits field input `name = expr` into the new name and the expression
 /// (`None` when there is no valid assignment).
 pub fn split_assignment(text: &str) -> (Option<String>, String) {
-    if let Some((lhs, rhs)) = text.split_once('=') {
+    let cs: Vec<char> = text.chars().collect();
+    let at = (0..cs.len()).find(|&i| {
+        cs[i] == '='
+            && cs.get(i + 1) != Some(&'=')
+            && !(i > 0 && matches!(cs[i - 1], '<' | '>' | '!' | '='))
+    });
+    let split = at.map(|i| {
+        let lhs: String = cs[..i].iter().collect();
+        let rhs: String = cs[i + 1..].iter().collect();
+        (lhs, rhs)
+    });
+    if let Some((lhs, rhs)) = split.as_ref().map(|(a, b)| (a.as_str(), b.as_str())) {
         let lhs = lhs.trim();
         if expr::valid_name(lhs) {
             return (Some(lhs.to_owned()), rhs.trim().to_owned());
@@ -1376,12 +1505,7 @@ pub fn eval_field_in(
     }
     let (value, used) = expr::eval(&body, unit, &|n| {
         (Some(n) != own)
-            .then(|| {
-                table
-                    .iter()
-                    .find(|r| r.name == n)
-                    .map(|r| (r.value, r.def().dim))
-            })
+            .then(|| table.iter().find(|r| r.name == n).map(ParamRow::as_value))
             .flatten()
     })?;
     // A feature field (a size) cannot follow a physical property.
@@ -1686,6 +1810,57 @@ mod box_params {
         );
         assert_eq!(part.user_params, before);
         assert!(part.set_user_unit(0, "furlong").is_err());
+    }
+
+    /// Suppress if: a true / false parameter decides a feature; its
+    /// dependents go with it; a condition that is not true / false is
+    /// refused; the parameter cannot be purged while a condition uses it.
+    #[test]
+    fn suppress_if_conditions() {
+        use crate::part::{ExtrudeFeature, Operation, ProfileRef, SketchOptions, SketchPlacement};
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let j = part
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &o)
+            .unwrap();
+        let c = part.sketches[j]
+            .sketch
+            .plane
+            .project(&crate::kernel::Point3::new(20.0, 15.0, 20.0));
+        part.sketches[j].sketch.add_circle(c, 5.0).unwrap();
+        let rg = part.sketches[j].sketch.regions();
+        let mut ex =
+            ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 10.0);
+        ex.operation = Operation::Join;
+        part.add_extrude(j, ex).unwrap();
+        let k = part.last_inserted();
+        let heavy = part.add_user_parameter(Unit::Bool);
+        part.set_parameter_expr(&heavy, "true").unwrap();
+        let faces = |p: &PartDocument| p.body.faces().count();
+        let with_boss = faces(&part);
+        part.set_suppress_if(k, Some(&format!("not {heavy}")))
+            .unwrap();
+        assert!(!part.is_suppressed(k));
+        part.set_parameter_expr(&heavy, "false").unwrap();
+        part.regenerate().unwrap();
+        assert!(part.is_suppressed(k), "the condition is true now");
+        assert!(faces(&part) < with_boss);
+        assert!(
+            part.unused_user_parameters().is_empty(),
+            "the condition uses it"
+        );
+        let before = part.suppress_if.clone();
+        assert!(
+            part.set_suppress_if(k, Some("d0 + 1")).is_err(),
+            "not true / false"
+        );
+        assert_eq!(part.suppress_if, before);
+        part.set_suppress_if(k, None).unwrap();
+        assert!(!part.is_suppressed(k));
     }
 
     /// Multi-Value: the list is checked value by value; a bad one changes

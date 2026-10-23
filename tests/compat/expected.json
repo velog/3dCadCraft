@@ -159,5 +159,12 @@
     "features": 1,
     "sketches": 0,
     "exact": true
+  },
+  "r18/logic_r18.3dcadcraft": {
+    "volume": 19999.999999999985,
+    "faces": 6,
+    "features": 2,
+    "sketches": 1,
+    "exact": true
   }
 }

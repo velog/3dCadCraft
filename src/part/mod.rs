@@ -854,6 +854,15 @@ pub struct PartDocument {
     /// (format revision 7).
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub suppressed: std::collections::BTreeSet<String>,
+    /// Suppress if: per feature id, a true / false equation; while it is
+    /// true the feature (and what depends on it) is suppressed (format
+    /// revision 18).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub suppress_if: std::collections::BTreeMap<String, String>,
+    /// The features [`Self::suppress_if`] suppressed at the last evaluation
+    /// (with their dependents; runtime).
+    #[serde(skip)]
+    pub cond_suppressed: std::collections::BTreeSet<String>,
     /// Exact build steps already made (see [`BuildCache`]).
     #[serde(skip)]
     pub build_cache: BuildCache,
@@ -969,7 +978,7 @@ impl PartDocument {
             // Suppressed: as if it were not in the history (its key is not
             // chained either, so the following steps match a history
             // without it).
-            if self.suppressed.contains(f.id()) {
+            if self.suppressed.contains(f.id()) || self.cond_suppressed.contains(f.id()) {
                 continue;
             }
             let used: Vec<&crate::sketch::Sketch> = f
@@ -1802,6 +1811,7 @@ impl PartDocument {
         }
         let removed = self.features.remove(k);
         self.suppressed.remove(removed.id());
+        self.suppress_if.remove(removed.id());
         if self.features.is_empty() {
             // `regenerate` keeps a body without features (old files store
             // the body directly), so the last feature's body goes here.

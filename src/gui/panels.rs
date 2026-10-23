@@ -40,6 +40,8 @@ enum BrowserCmd {
     BodyVisible(String, bool),
     /// Suppress (true) / Unsuppress Features.
     Suppress(usize, bool),
+    /// Suppress if... (the condition window for feature k).
+    SuppressIf(usize),
     /// Move the End of Part so that this many features are built.
     MoveEop(usize),
     /// Delete All Features Below EOP.
@@ -321,6 +323,13 @@ impl CadCraftApp {
                 }
             }
             BrowserCmd::Suppress(k, on) => self.set_suppressed(k, on),
+            BrowserCmd::SuppressIf(k) => {
+                let id = self.part().features.get(k).map(|f| f.id().to_owned());
+                let text = id
+                    .and_then(|id| self.part().suppress_if.get(&id).cloned())
+                    .unwrap_or_default();
+                self.suppress_if_edit = Some((k, text));
+            }
             BrowserCmd::MoveEop(at) => self.move_eop(at),
             BrowserCmd::DeleteBelowEop => self.delete_below_eop(),
             BrowserCmd::MoveFeature(from, to) => self.move_feature(from, to),
@@ -620,6 +629,12 @@ impl CadCraftApp {
             Some(_) => format!("! {}", f.name()),
             None => f.name().to_owned(),
         };
+        // A condition decides it: `?` before the name.
+        let label = if part.suppress_if.contains_key(id) {
+            format!("? {label}")
+        } else {
+            label
+        };
         let mut text = RichText::new(label);
         if sick.is_some() {
             text = text.color(WARNING);
@@ -636,6 +651,9 @@ impl CadCraftApp {
         };
         if suppressed {
             tip.push_str("\nSuppressed (not built)");
+        }
+        if let Some(c) = part.suppress_if.get(id) {
+            tip.push_str(&format!("\nSuppress if: {c}"));
         }
         if rolled {
             tip.push_str("\nBelow the End of Part (rolled back)");
@@ -746,6 +764,36 @@ impl CadCraftApp {
             .clicked()
         {
             cmds.push(BrowserCmd::Suppress(k, !sup));
+            ui.close();
+        }
+        let cond = part.suppress_if.contains_key(f.id());
+        if ui
+            .button(if cond {
+                "Suppress if... (set)"
+            } else {
+                "Suppress if..."
+            })
+            .on_hover_text(
+                "Suppress it while a true / false equation holds (not Heavy, Width < 100 mm)",
+            )
+            .clicked()
+        {
+            cmds.push(BrowserCmd::SuppressIf(k));
+            ui.close();
+        }
+        let cond = part.suppress_if.contains_key(f.id());
+        if ui
+            .button(if cond {
+                "Suppress if... (set)"
+            } else {
+                "Suppress if..."
+            })
+            .on_hover_text(
+                "Suppress it while a true / false equation holds (not Heavy, Width < 100 mm)",
+            )
+            .clicked()
+        {
+            cmds.push(BrowserCmd::SuppressIf(k));
             ui.close();
         }
         if ui
@@ -5398,6 +5446,70 @@ fn extrude_options(
 impl CadCraftApp {
     /// Manage → **Parameters** (fx): every model and user parameter with
     /// its equation, value, tolerance and comment (Inventor's table).
+    /// The Suppress if window: a true / false equation for a feature (empty
+    /// removes it).
+    pub(super) fn suppress_if_window(&mut self, ctx: &egui::Context) {
+        let Some((k, mut text)) = self.suppress_if_edit.clone() else {
+            return;
+        };
+        let name = self
+            .part()
+            .features
+            .get(k)
+            .map(|f| f.name().to_owned())
+            .unwrap_or_default();
+        let mut apply = false;
+        let mut close = false;
+        egui::Window::new(format!("Suppress if: {name}"))
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("Suppressed while this is true (empty: never):");
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut text)
+                        .desired_width(300.0)
+                        .hint_text("not Heavy    Width < 100 mm    Material == \"Al\""),
+                );
+                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    apply = true;
+                }
+                ui.label(
+                    RichText::new(
+                        "and, or, not, < > <= >= == !=, if(), true / false and text parameters",
+                    )
+                    .small()
+                    .weak(),
+                );
+                ui.horizontal(|ui| {
+                    apply |= ui.button("OK").clicked();
+                    close |= ui.button("Cancel").clicked();
+                });
+            });
+        if apply {
+            self.checkpoint("Suppress if");
+            let t = text.trim().to_owned();
+            match self
+                .part_mut()
+                .set_suppress_if(k, (!t.is_empty()).then_some(t.as_str()))
+            {
+                Ok(()) => {
+                    self.suppress_if_edit = None;
+                    self.file_status = None;
+                    self.scene_dirty = true;
+                }
+                Err(e) => {
+                    self.history.cancel();
+                    self.file_status = Some(Err(e.to_string()));
+                    self.suppress_if_edit = Some((k, text));
+                }
+            }
+        } else if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.suppress_if_edit = None;
+        } else {
+            self.suppress_if_edit = Some((k, text));
+        }
+    }
+
     pub(super) fn parameters_window(&mut self, ctx: &egui::Context) {
         use crate::part::expr::Unit;
         use crate::part::params::ParamOwner;

@@ -136,9 +136,9 @@ impl PartDocument {
 
     /// Is feature `k` suppressed?
     pub fn is_suppressed(&self, k: usize) -> bool {
-        self.features
-            .get(k)
-            .is_some_and(|f| self.suppressed.contains(f.id()))
+        self.features.get(k).is_some_and(|f| {
+            self.suppressed.contains(f.id()) || self.cond_suppressed.contains(f.id())
+        })
     }
 
     /// Index of the feature with persistent id `id`.

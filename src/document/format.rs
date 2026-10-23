@@ -97,7 +97,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 15: Revolve around a work axis (`AxisRef::Work`) (2026-10-23).
 /// - 16: Project Geometry of work features (`LinkSource::Work`) (2026-10-23).
 /// - 17: parameter units cm, m, in, ft, rad (`Unit::Cm` …) (2026-10-23).
-pub const FORMAT_REVISION: u32 = 17;
+/// - 18: true / false and text parameters (`Unit::Bool`, `Unit::Text`),
+///   Suppress if conditions (`PartDocument::suppress_if`) (2026-10-23).
+pub const FORMAT_REVISION: u32 = 18;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

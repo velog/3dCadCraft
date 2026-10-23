@@ -172,6 +172,8 @@ Revision 13 (2026-10-20): Combine and Split (`Feature::Combine`, `Feature::Split
 
 **Revision 17 (2026-10-23): more parameter units.** `Unit::Cm`, `M`, `In`, `Ft`, `Rad` for user parameters (a bare number in the equation takes the unit; the value is stored in mm / rad as before). An older build cannot read the new variants, hence the revision. Fixture: `tests/compat/r17/units_r17.3dcadcraft` (a box driven by parameters in cm and in, one in rad).
 
+**Revision 18 (2026-10-23): decisions.** True / false and text user parameters (`Unit::Bool`, `Unit::Text`; values `true`, `"Steel"`, equations with `if()`, comparisons, `and` / `or` / `not`) and **Suppress if** conditions per feature id (`PartDocument::suppress_if`). An older build cannot read the new units, hence the revision. Fixture: `tests/compat/r18/logic_r18.3dcadcraft` (a box width from `if(Heavy or Material == "Steel", 40 mm, 25 mm)` and a boss suppressed while `not Heavy`).
+
 ## 7. How to try it
 
 ```bash
