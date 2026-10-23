@@ -154,36 +154,58 @@ fn thread_choice(
     out
 }
 
-/// The hole's cross-section (Inventor's dimension picture): the tool's
-/// profile, mirrored, scaled into a small frame, with its main values.
-fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(220.0, 120.0), egui::Sense::hover());
+/// The hole's section with its sizes (Inventor's dimension picture): the
+/// seat, the bore, the drill point and the far side countersink. Every
+/// size the hole takes as a field is a label that opens its expression
+/// field right there (Enter applies, Esc closes); the commit goes with the
+/// panel's other fields (`fx.commits`).
+fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Feature) {
+    use crate::part::params::{feature_field_param, feature_field_unit, feature_value};
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(250.0, 150.0), egui::Sense::hover());
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 2.0, Color32::from_gray(235));
+    let through = !matches!(spec.termination, Termination::Distance);
+    let r = spec.bore_radius();
+    // A through hole is drawn in a plate it leaves (so the far side shows).
     let depth = match spec.termination {
         Termination::Distance => spec.depth.max(1e-3),
-        _ => (spec.bore_radius() * 4.0).max(1.0),
+        _ => (r * 5.0).max(1.0),
     };
-    let tools = spec.tools(depth, 0.0, true);
+    let mut tools = spec.tools(depth, 0.0, !through);
+    if spec.far_csink && through {
+        tools.insert(tools.len() - 1, spec.far_tool(depth, 0.0));
+    }
     let pts: Vec<[Real; 2]> = tools.iter().flatten().map(|x| x.0).collect();
     let rmax = pts.iter().map(|q| q[0]).fold(1e-3, Real::max);
-    let zmin = pts.iter().map(|q| q[1]).fold(0.0, Real::min);
-    let frame = rect.shrink2(egui::vec2(60.0, 14.0));
+    let zmin = pts.iter().map(|q| q[1]).fold(0.0, Real::min).min(-depth);
+    let frame = rect.shrink2(egui::vec2(70.0, 18.0));
     let sx = (frame.width() as Real / 2.0) / rmax;
     let sz = frame.height() as Real / (-zmin).max(1e-3);
     let s = sx.min(sz);
     let cx = frame.center().x;
     let top = frame.top();
     let to = |r: Real, z: Real| egui::pos2(cx + (r * s) as f32, top - (z * s) as f32);
-    // The material: a block from the face down.
+    // The material: a block from the face down (to the far face when the
+    // hole goes through).
+    let bottom = if through {
+        to(0.0, -depth).y
+    } else {
+        rect.bottom() - 4.0
+    };
     let block = egui::Rect::from_min_max(
         egui::pos2(rect.left() + 8.0, top),
-        egui::pos2(rect.right() - 8.0, rect.bottom() - 4.0),
+        egui::pos2(rect.right() - 8.0, bottom),
     );
     p.rect_filled(block, 0.0, Color32::from_rgb(190, 200, 215));
     for t in &tools {
         for side in [1.0, -1.0] {
-            let poly: Vec<egui::Pos2> = t.iter().map(|q| to(side * q.0[0], q.0[1])).collect();
+            let poly: Vec<egui::Pos2> = t
+                .iter()
+                .map(|q| {
+                    let a = to(side * q.0[0], q.0[1]);
+                    egui::pos2(a.x, a.y.clamp(top - 4.0, bottom + 4.0))
+                })
+                .collect();
             p.add(egui::Shape::convex_polygon(
                 poly.clone(),
                 Color32::from_gray(245),
@@ -195,49 +217,154 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec) {
             ));
         }
     }
-    let font = egui::FontId::proportional(11.0);
-    let ink = Color32::from_gray(20);
-    let r = spec.bore_radius();
-    p.text(
-        to(0.0, zmin) + egui::vec2(0.0, 2.0),
-        egui::Align2::CENTER_TOP,
-        format!("Ø{}", hole::num(2.0 * r, 2)),
-        font.clone(),
-        ink,
-    );
+    // The sizes: (field, text, anchor, alignment).
+    let n = |v: Real| hole::num(v, 2);
+    let mut labels: Vec<(&'static str, String, egui::Pos2, egui::Align2)> = vec![(
+        "diameter",
+        format!("Ø{}", n(2.0 * r)),
+        to(0.0, -depth / 2.0),
+        egui::Align2::CENTER_CENTER,
+    )];
     let depth_text = match spec.termination {
-        Termination::Distance => hole::num(spec.depth, 2),
+        Termination::Distance => n(spec.depth),
         Termination::ThroughAll => "THRU".into(),
         Termination::To(_) => "To".into(),
     };
-    p.text(
-        to(rmax, -depth / 2.0) + egui::vec2(6.0, 0.0),
-        egui::Align2::LEFT_CENTER,
+    labels.push((
+        "depth",
         format!("depth {depth_text}"),
-        font.clone(),
-        ink,
-    );
-    let seat = match spec.seat {
-        SeatType::Counterbore | SeatType::Spotface => Some(format!(
-            "Ø{} x {}",
-            hole::num(spec.seat_diameter, 2),
-            hole::num(spec.seat_depth, 2)
-        )),
-        SeatType::Countersink => Some(format!(
-            "Ø{} x {}°",
-            hole::num(spec.csink_diameter, 2),
-            hole::num(spec.csink_angle.to_degrees(), 1)
-        )),
-        SeatType::None => None,
+        egui::pos2(to(rmax, 0.0).x + 6.0, to(0.0, -depth / 2.0).y),
+        egui::Align2::LEFT_CENTER,
+    ));
+    let corner = egui::pos2(rect.left() + 10.0, rect.top() + 3.0);
+    match spec.seat {
+        SeatType::Counterbore | SeatType::Spotface => {
+            labels.push((
+                "seat_diameter",
+                format!("Ø{}", n(spec.seat_diameter)),
+                corner,
+                egui::Align2::LEFT_TOP,
+            ));
+            labels.push((
+                "seat_depth",
+                format!("depth {}", n(spec.seat_depth)),
+                egui::pos2(rect.right() - 10.0, rect.top() + 3.0),
+                egui::Align2::RIGHT_TOP,
+            ));
+        }
+        SeatType::Countersink => {
+            labels.push((
+                "csink_diameter",
+                format!("Ø{}", n(spec.csink_diameter)),
+                corner,
+                egui::Align2::LEFT_TOP,
+            ));
+            labels.push((
+                "csink_angle",
+                format!("{}°", hole::num(spec.csink_angle.to_degrees(), 1)),
+                egui::pos2(rect.right() - 10.0, rect.top() + 3.0),
+                egui::Align2::RIGHT_TOP,
+            ));
+        }
+        SeatType::None => {}
+    }
+    if !through && spec.drill_point.angled() {
+        labels.push((
+            "point_angle",
+            format!("{}°", hole::num(spec.point_angle.to_degrees(), 1)),
+            egui::pos2(cx, rect.bottom() - 3.0),
+            egui::Align2::CENTER_BOTTOM,
+        ));
+    }
+    if spec.far_csink && through {
+        labels.push((
+            "far_csink_diameter",
+            format!("Ø{}", n(spec.far_diameter())),
+            egui::pos2(rect.left() + 10.0, rect.bottom() - 3.0),
+            egui::Align2::LEFT_BOTTOM,
+        ));
+        labels.push((
+            "far_csink_angle",
+            format!("{}°", hole::num(spec.far_angle().to_degrees(), 1)),
+            egui::pos2(rect.right() - 10.0, rect.bottom() - 3.0),
+            egui::Align2::RIGHT_BOTTOM,
+        ));
+    }
+    let takes = |field: &str| match f {
+        Feature::Hole(h) => h.fields().iter().any(|(x, _)| *x == field),
+        _ => false,
     };
-    if let Some(sv) = seat {
-        p.text(
-            egui::pos2(rect.left() + 10.0, rect.top() + 2.0),
-            egui::Align2::LEFT_TOP,
-            sv,
-            font,
-            ink,
+    let font = egui::FontId::proportional(11.0);
+    let ink = Color32::from_gray(20);
+    let blue = Color32::from_rgb(20, 90, 200);
+    let edit_id = egui::Id::new(("hole_picture_edit", fx.key.as_str()));
+    let editing: Option<&'static str> = ui.data(|d| d.get_temp(edit_id));
+    let mut open: Option<&'static str> = None;
+    for (field, text, at, align) in &labels {
+        let editable = takes(field);
+        let g = p.layout_no_wrap(
+            text.clone(),
+            font.clone(),
+            if editable { blue } else { ink },
         );
+        let lr = align.anchor_size(*at, g.size()).expand(2.0);
+        if editable {
+            p.rect_filled(lr, 2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 190));
+        }
+        p.galley(lr.min + egui::vec2(2.0, 2.0), g, ink);
+        if !editable {
+            continue;
+        }
+        let resp = ui
+            .interact(lr, edit_id.with(*field), egui::Sense::click())
+            .on_hover_text("Click to edit (expressions and parameters)");
+        if resp.hovered() {
+            p.rect_stroke(lr, 2.0, Stroke::new(1.0, blue), egui::StrokeKind::Outside);
+        }
+        if resp.clicked() {
+            open = Some(field);
+        }
+        if editing == Some(*field) {
+            // The field itself, over the label.
+            let pm = feature_field_param(f, field);
+            let name = pm
+                .as_ref()
+                .map(|p| p.name.as_str())
+                .filter(|n| !n.is_empty());
+            let fs = super::valuefield::FieldSpec {
+                id: egui::Id::new(("field", fx.key.as_str(), *field)),
+                value: feature_value(f, field).unwrap_or_default(),
+                unit: feature_field_unit(f, field).unwrap_or_default(),
+                name,
+                expr: pm.as_ref().and_then(|p| p.expr.as_deref()),
+                table: fx.table,
+            };
+            let mut done = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            egui::Area::new(edit_id.with(("area", *field)))
+                .fixed_pos(lr.left_top() - egui::vec2(4.0, 4.0))
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if let Some(t) = super::valuefield::value_field(ui, &fs) {
+                                fx.commits.push((field, t));
+                                done = true;
+                            }
+                            done |= ui.small_button("x").on_hover_text("Close (Esc)").clicked();
+                        });
+                    });
+                });
+            if done {
+                ui.data_mut(|d| d.remove::<&'static str>(edit_id));
+            }
+        }
+    }
+    if let Some(field) = open {
+        ui.data_mut(|d| d.insert_temp(edit_id, field));
+        // The value is ready to type over.
+        ui.memory_mut(|m| {
+            m.request_focus(egui::Id::new(("field", fx.key.as_str(), field)).with("te"))
+        });
     }
 }
 
@@ -844,7 +971,7 @@ impl CadCraftApp {
                 }
             }
         });
-        dimension_picture(ui, &spec);
+        dimension_picture(ui, &spec, &mut fx, &snapshot);
         ui.label(RichText::new(format!("Note: {}", spec.note_ascii())).weak())
             .on_hover_text("The hole note a drawing writes (the symbols as text here)");
         // Invalid values in red (Inventor), e.g. a thread longer than the hole.
