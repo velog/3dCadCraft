@@ -382,6 +382,8 @@ impl CadCraftApp {
     /// Click in the idle view: no modifier replaces the selection, Shift
     /// adds, Ctrl toggles; a click on nothing clears it (without Ctrl/Shift).
     pub(super) fn sel_click(&mut self, item: Option<SelItem>, add: bool, toggle: bool) {
+        // Measure: a plain click adds the second item (`measure_click`).
+        let add = self.measure_click(add, toggle);
         if !add && !toggle {
             self.remember_selection();
             self.sel.clear();

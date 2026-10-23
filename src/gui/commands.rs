@@ -124,6 +124,8 @@ pub enum AppCmd {
     Delete,
     /// Zoom All: fit the model into the view.
     ZoomAll,
+    /// Inspect → Measure (M): the Measure window.
+    Measure,
 }
 
 /// One command of the registry.
@@ -880,8 +882,12 @@ pub static COMMANDS: &[Command] = &[
         .spec("1.1-sketch.md"),
     // ---- Inspect ---------------------------------------------------------
     c("inspect.measure", "Measure", "Измерване", Icon::Measure)
+        .run(Action::App(AppCmd::Measure))
         .at(&[I_MEASURE])
-        .todo("0.10"),
+        .tip("Length, area, volume, radius of the selection; distance and angle of two items")
+        .spec("0.10-physical.md")
+        .key("m")
+        .bound(),
     c("inspect.physical", "Physical Properties", "Физични свойства (маса, център на тежестта)", Icon::Mass)
         .run(Action::Material(MatCmd::Physical))
         .inv("iProperties: Physical")

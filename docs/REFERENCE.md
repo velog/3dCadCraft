@@ -563,7 +563,7 @@ the command search, `docs/spec/0.15-context-menus-shortcuts.md` §5.3).
 | **F11** | Relax Mode on/off | sketch | the same |
 | **F11** | Full Screen on/off | outside a sketch | Full Screen (no key by default) |
 | **Ctrl+0** | Clean Screen on/off: only the view and Quick Access | global | the same |
-| **Esc** | closes the floating window under the cursor (Parameters, Options, Physical Properties, Styles Editor, the browsers, Adjust, Clear, Offset Element) without aborting the command | the cursor is over the window and no field is being typed in | closes the dialog |
+| **Esc** | closes the floating window under the cursor (Parameters, Options, Physical Properties, Measure, Styles Editor, the browsers, Adjust, Clear, Offset Element) without aborting the command | the cursor is over the window and no field is being typed in | closes the dialog |
 | **Enter** / **Space** | repeats the last command | **no** open command (panel, plane/target pick, sketch tool or dialog), no selected curves | Inventor: Enter |
 | **Enter** | **Continue** to the empty required selector, otherwise **OK** | Face Draft, Shell, Combine, Split, Loft (outside a field) | Inventor: Enter = Continue / OK |
 | **Enter** | **OK** if the command can finish; otherwise nothing (input is awaited) — Revolve without an axis: **Continue** to the axis pick | Extrude, Revolve, primitives, Fillet, Chamfer, Hole, Thread, work features, Pattern, Mirror, Sweep, Coil, Rib (outside a field) | the same |
@@ -855,7 +855,7 @@ any) is in the tooltip.
 
 | Panel | Command |
 |---|---|
-| Measure | Measure (0.10) — to come; **Physical Properties** — a window: Requested Accuracy, **Update** (when the values are out of date), `kg` (otherwise g), a table by body (Include, Solid, Material, Density, Mass, Volume), Mass, Area, Volume, Center of Gravity, Principal Moments, Mass Moments of Inertia, **Clipboard** |
+| Measure | **Measure** (`M`) — a window: one item → length / radius / diameter / arc angle / area / volume / position; two → minimum distance (drawn in the view), dX/dY/dZ, centre distance, angle; while it is open a plain click adds the item (the third starts a new pair); **Physical Properties** — a window: Requested Accuracy, **Update** (when the values are out of date), `kg` (otherwise g), a table by body (Include, Solid, Material, Density, Mass, Volume), Mass, Area, Volume, Center of Gravity, Principal Moments, Mass Moments of Inertia, **Clipboard** |
 | Analysis | **Validate Solid** (selects the body: Properties shows V/E/F, Euler–Poincaré, validity); Interference (3.5), Curvature (5.4), Draft Analysis (2.8) — to come |
 
 **Tools**

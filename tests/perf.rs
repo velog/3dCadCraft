@@ -1296,6 +1296,24 @@ fn speed_budgets() {
     }
     let mut patterned = holed.clone();
     patterned.add_pattern(pattern_grid(6, 6, 10.0)).unwrap();
+    // Measure (0.10): the heaviest pair — the 36-hole body against a point
+    // above it and against its own top face (triangles × triangles).
+    {
+        use cadcraft3d::part::measure::{Target, measure};
+        let body = patterned.body.clone();
+        rows.push((
+            "measure: 36-hole plate body vs. its top face (closest pair)",
+            300.0,
+            median_ms(3, || {
+                let m = measure(
+                    &body,
+                    &[Target::Body("Box1".into()), Target::Face("Box1:Top".into())],
+                )
+                .unwrap();
+                assert!(m.distance.is_some());
+            }),
+        ));
+    }
     rows.push((
         "mirror the 36-hole plate as a solid, Join across its right face",
         1500.0,

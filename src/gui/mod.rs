@@ -45,6 +45,7 @@ mod layout;
 mod loft;
 mod manip;
 mod material;
+mod measure;
 mod overlay;
 mod panels;
 mod pattern_dialog;
@@ -673,6 +674,8 @@ struct CadCraftApp {
     list_hover: Option<ConstraintId>,
     /// Materials, appearances, Physical Properties (`material.rs`).
     mat: material::MaterialUi,
+    /// Inspect → Measure window.
+    measure: measure::MeasureUi,
     /// Journal, autosave and Restore (`diag.rs`).
     diag: diag::DiagUi,
     /// Panels, floating windows, User Interface toggles (`layout.rs`).
@@ -808,6 +811,7 @@ impl CadCraftApp {
             sketch_context: None,
             list_hover: None,
             mat: material::MaterialUi::load(),
+            measure: Default::default(),
             diag: diag::DiagUi::new(),
             layout: layout::LayoutUi::default(),
             full_screen_cmd: None,
@@ -1044,7 +1048,9 @@ impl CadCraftApp {
     /// F1: opens the specification of what the user is doing
     /// (`docs/spec/…`), as Inventor's F1 opens the help of the command.
     fn open_help(&mut self) {
-        let file = if let Some(f) = self.mat.help_file() {
+        let file = if self.measure.open {
+            "0.10-physical.md"
+        } else if let Some(f) = self.mat.help_file() {
             f
         } else if self.work_draft.is_some()
             || matches!(self.selection, Selection::Feature(k)
@@ -3541,6 +3547,7 @@ impl CadCraftApp {
                 }
             }
             AppCmd::ZoomAll => self.fit_view(),
+            AppCmd::Measure => self.toggle_measure(),
         }
     }
 
@@ -4188,6 +4195,9 @@ impl CadCraftApp {
             self.save();
         } else if letter && pressed(Key::S) && self.editing.is_none() {
             self.apply(Action::StartSketch);
+        }
+        if letter && pressed(Key::M) && self.editing.is_none() {
+            self.apply(Action::App(commands::AppCmd::Measure));
         }
         if letter && pressed(Key::E) {
             self.apply(Action::Extrude);
@@ -5711,6 +5721,7 @@ impl CadCraftApp {
                 self.scene_dirty = true;
             }
             self.draw_holes_and_threads(&painter, rect);
+            self.draw_measure(&painter, rect);
             self.sweep_loft_view(
                 &painter,
                 rect,
@@ -6536,6 +6547,7 @@ impl eframe::App for CadCraftApp {
         self.options_window(&ctx);
         self.parameters_window(&ctx);
         self.material_windows(&ctx);
+        self.measure_window(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);
         self.layout_end(&ctx);

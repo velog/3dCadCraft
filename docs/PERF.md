@@ -69,6 +69,10 @@ Target times for interactive work:
 
 ## Log
 
+- **2026-10-23** — Measure (0.10): the closest pair of the 36-hole plate body against its top face
+  took 1027 ms brute force (every sampled point × every triangle), 3.1 ms with box pruning (a
+  triangle whose box is farther than the best pair is skipped; touching ends the search). Budget
+  300 ms (`tests/perf.rs`).
 - **2026-10-20** — the owner's session (`tests/data/m8_modeled_blind_journal.jsonl`): M8, 10
   deep = the thickness of a 283 × 136 × 10 plate, 118° point. (1) The hole itself: 6.1 s in the
   kernel's Cut (a cap exactly on the bottom face, the cone in the air; in a 150 mm plate an

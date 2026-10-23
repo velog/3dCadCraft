@@ -38,6 +38,7 @@ pub mod link;
 #[cfg(test)]
 mod link_tests;
 pub mod loft;
+pub mod measure;
 #[cfg(test)]
 mod option_tests;
 pub mod params;

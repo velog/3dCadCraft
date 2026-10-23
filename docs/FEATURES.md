@@ -174,7 +174,7 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
 **Specification:** [spec/0.10-physical.md](spec/0.10-physical.md)
 
-**State (2026-10-19):** Inspect → Physical Properties: mass per body and total (g / kg), volume, area, centre of gravity, inertia tensor about the centre of gravity, principal moments and axes, Requested Accuracy, Update, Include per body, Clipboard (`part::physical`). Measure ⬜. Waiting for a visual check.
+**State (2026-10-19):** Inspect → Physical Properties: mass per body and total (g / kg), volume, area, centre of gravity, inertia tensor about the centre of gravity, principal moments and axes, Requested Accuracy, Update, Include per body, Clipboard (`part::physical`). Measure 🟡 (Inspect → Measure, `M`: length, radius, area, volume, position of one item; minimum and centre distance and angle of two; spec §3.1). Waiting for a visual check.
 
 **What it does.**
 - **Measure:** distance, angle, radius, chain length, area.

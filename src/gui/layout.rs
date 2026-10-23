@@ -519,6 +519,7 @@ const ESCAPE_CLOSES: &[&str] = &[
     "clear_looks",
     "styles",
     "physical",
+    "measure",
     "offset",
 ];
 
@@ -803,6 +804,7 @@ impl CadCraftApp {
             "options" => self.show_options = false,
             "parameters" => self.show_params = false,
             "offset" => self.offset_edit = None,
+            "measure" => self.measure.open = false,
             other => self.mat.close_window(other),
         }
     }
