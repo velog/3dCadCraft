@@ -760,6 +760,8 @@ Robustness in touching and nearly coincident cases is achieved with tolerances a
 
 ## 3.1 Placing components — 🟡 (data) · M
 
+**Specification:** [spec/3.1-assemblies.md](spec/3.1-assemblies.md) (3.1–3.3)
+
 **What it does.** Places parts and subassemblies in an assembly: from the same project, from a linked library (Link) or as a copy (Append). The first component is usually **grounded**.
 
 **How it works.** `Occurrence { component: DocRef, transform, grounded }` already exists in the file format. A part placed N times is stored once.

@@ -70,6 +70,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [2.6-shell.md](2.6-shell.md) | Shell: Remove Faces, Inside / Outside / Both, closed cavity |
 | [2.7-rib.md](2.7-rib.md) | Rib / Web: ribs and webs from open profiles, To Next / Finite, Draft, bosses, networks |
 | [5.3-coil.md](5.3-coil.md) | Coil: springs and helical grooves, three methods, Taper, closed ends, thread with Cut |
+| [3.1-assemblies.md](3.1-assemblies.md) | Assemblies: placing components, constraints (Mate, Flush, Angle, Tangent, Insert, Symmetry), joints; one solver for both; what is taken from SolidCraft; plan and cost |
 | [5.1-sweep.md](5.1-sweep.md) | Sweep: profile along a path (sketch or edges), Guide Rail, Parallel, Taper, Twist |
 | [5.2-loft.md](5.2-loft.md) | Loft: sections (sketches, faces, point), Closed Loop, conditions, transition |
 | [2.11-patterns.md](2.11-patterns.md) | Rectangular Pattern and Circular Pattern of features and bodies |
