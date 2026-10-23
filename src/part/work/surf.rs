@@ -130,8 +130,9 @@ fn tangent_about(
 }
 
 /// **Tangent to Surface Through Edge**: the plane through the line
-/// (`p`, `d`) tangent to a cylinder (line parallel to its axis) or a
-/// sphere.
+/// (`p`, `d`) tangent to a cylinder (line parallel to its axis), a sphere,
+/// or a cone (line through its apex: every tangent plane of a cone holds
+/// the apex; a generator of the cone gives one plane, a line outside two).
 pub(super) fn tangent_through_line(
     s: &Surface,
     p: Point3,
@@ -148,11 +149,55 @@ pub(super) fn tangent_through_line(
             tangent_about(c.origin, a, c.radius, p, true, other)
         }
         Surface::Sphere(sp) => tangent_about(sp.center, d, sp.radius, p, false, other),
+        Surface::Cone(c) => tangent_cone_through_line(c, p, d, other),
         other_s => Err(format!(
-            "a tangent plane through an edge needs a cylinder or a sphere, not {}",
+            "a tangent plane through an edge needs a cylinder, a sphere or a cone, not {}",
             kind(other_s)
         )),
     }
+}
+
+/// A plane through the line (`p`, `d`, unit) tangent to cone `c`: the line
+/// must pass through the apex. The plane's normal `n` is square to `d` and
+/// makes the cone's angle with the axis (`n·a = −sin α`, the outward
+/// normal along a generator); `other` takes the second root.
+fn tangent_cone_through_line(
+    c: &crate::kernel::Cone,
+    p: Point3,
+    d: Vector3,
+    other: bool,
+) -> Result<Plane, String> {
+    let alpha = c.half_angle;
+    if alpha.abs() < 1e-9 {
+        return Err("the cone has no apex (half-angle 0)".into());
+    }
+    let mut a = c.axis.into_inner();
+    let apex = c.origin - a * (c.radius / alpha.tan());
+    let scale = c.radius.max(1.0);
+    let w = apex - p;
+    if (w - d * w.dot(&d)).norm() > 1e-6 * scale {
+        return Err(
+            "the edge must pass through the cone's apex (every tangent plane of a cone holds it)"
+                .into(),
+        );
+    }
+    // The cone opens along `a` from the apex.
+    if alpha < 0.0 {
+        a = -a;
+    }
+    let sin_a = alpha.abs().sin();
+    let e1 = perpendicular(&d);
+    let e2 = d.cross(&e1);
+    let (a1, a2) = (a.dot(&e1), a.dot(&e2));
+    let r = (a1 * a1 + a2 * a2).sqrt();
+    if r + 1e-9 < sin_a {
+        return Err("the edge runs inside the cone: no plane through it touches the cone".into());
+    }
+    let base = a2.atan2(a1);
+    let spread = (-sin_a / r).clamp(-1.0, 1.0).acos();
+    let theta = if other { base - spread } else { base + spread };
+    let n = e1 * theta.cos() + e2 * theta.sin();
+    plane(apex, n, d)
 }
 
 /// Signed distance-like value of `p` from the surface (0 on it).
@@ -621,6 +666,70 @@ mod tests {
         let s = cyl([0.0; 3], [0.0, 0.0, 1.0], 5.0);
         assert!(tangent_through_line(&s, Point3::new(9.0, 0.0, 0.0), Vector3::x(), false).is_err());
         assert!(tangent_through_line(&s, Point3::new(1.0, 0.0, 0.0), Vector3::z(), false).is_err());
+    }
+
+    /// Cones: a line through the apex gives planes through the line that
+    /// touch the cone (normal at the cone's angle to the axis); a generator
+    /// gives the one tangent plane along it; a line inside or off the apex
+    /// is refused.
+    #[test]
+    fn tangent_through_line_on_cones() {
+        use crate::kernel::Cone;
+        for (alpha_deg, dir) in [
+            (30.0, [1.0, 0.0, 0.2]),
+            (20.0, [0.0, 1.0, -0.1]),
+            (45.0, [1.0, 1.0, 0.0]),
+            (10.0, [1.0, 0.0, 0.5]),
+            (35.0, [-1.0, 0.3, 0.0]),
+        ] {
+            let alpha: Real = Real::to_radians(alpha_deg);
+            let c = Cone {
+                origin: Point3::new(0.0, 0.0, 10.0),
+                axis: crate::kernel::UnitVector3::new_normalize(Vector3::z()),
+                x_axis: crate::kernel::UnitVector3::new_normalize(Vector3::x()),
+                radius: 10.0 * alpha.tan(),
+                half_angle: alpha,
+            };
+            // Apex at the origin, the cone opens towards +Z.
+            let s = Surface::Cone(c);
+            let d = Vector3::from(dir).normalize();
+            let outside = d.dot(&Vector3::z()).abs() < alpha.cos();
+            for other in [false, true] {
+                let r = tangent_through_line(&s, Point3::origin() + d * 3.0, d, other);
+                if !outside {
+                    assert!(r.is_err());
+                    continue;
+                }
+                let p = r.unwrap();
+                assert_relative_eq!(on_plane(&p, &Point3::origin()), 0.0, epsilon = 1e-9);
+                assert_relative_eq!(
+                    on_plane(&p, &(Point3::origin() + d * 5.0)),
+                    0.0,
+                    epsilon = 1e-9
+                );
+                // Normal at the cone's angle to the axis: tangent.
+                assert_relative_eq!(
+                    p.normal.dot(&Vector3::z()).abs(),
+                    alpha.sin(),
+                    epsilon = 1e-9
+                );
+            }
+        }
+        let c = Cone {
+            origin: Point3::new(0.0, 0.0, 10.0),
+            axis: crate::kernel::UnitVector3::new_normalize(Vector3::z()),
+            x_axis: crate::kernel::UnitVector3::new_normalize(Vector3::x()),
+            radius: 5.0,
+            half_angle: (0.5 as Real).atan(),
+        };
+        let s = Surface::Cone(c);
+        // A generator: both roots give the same plane.
+        let g = Vector3::new(0.5, 0.0, 1.0).normalize();
+        let a = tangent_through_line(&s, Point3::origin(), g, false).unwrap();
+        let b = tangent_through_line(&s, Point3::origin(), g, true).unwrap();
+        assert_relative_eq!(a.normal.dot(&b.normal), 1.0, epsilon = 1e-6);
+        // Not through the apex.
+        assert!(tangent_through_line(&s, Point3::new(1.0, 1.0, 0.0), Vector3::x(), false).is_err());
     }
 
     /// Spheres: the plane contains the line and is at distance r from the

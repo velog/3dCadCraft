@@ -108,7 +108,7 @@ Every numeric field — in Properties, in the in-place dimension edit and in the
 
 ### 2.8 Preview and manipulators — mandatory rule
 
-**Every command for which it is possible has a live preview and a manipulator** — an arrow or an arc that is dragged with the mouse in the view and changes the size (as in Inventor). The value while dragging is shown next to the cursor and is written into the field in Properties; a typed value moves the manipulator. Drag step: 1 mm / 1° / 5° (Revolve angles, as in Inventor); with Ctrl — finer. ⬜ Snapping to vertices and faces (To). The manipulators are visible in the command dialog (the change is live) and when a feature is selected in the browser (applied on release, one Undo step). Dragging replaces the field's equation with a number.
+**Every command for which it is possible has a live preview and a manipulator** — an arrow or an arc that is dragged with the mouse in the view and changes the size (as in Inventor). The value while dragging is shown next to the cursor and is written into the field in Properties; a typed value moves the manipulator. Drag step: 1 mm / 1° / 5° (Revolve angles, as in Inventor); with Ctrl — finer. ⬜ Snapping to vertices and faces (To). The manipulators are visible in the command dialog (the change is live) and when a feature is selected in the browser (applied on release, one Undo step). Dragging replaces the field's equation with a number. Values that may be negative go through zero: a work plane's offset and angle; a one-sided Extrude distance dragged through its profile flips the direction and keeps a positive distance (Inventor); a thickness or two-sided distance stays positive (`Handle::signed`).
 
 | Command | Manipulator | Status |
 |---|---|---|

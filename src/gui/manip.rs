@@ -67,6 +67,9 @@ pub struct Handle {
     pub arrow: Option<Vector3>,
     /// Angle (shown in degrees) or length.
     pub angle: bool,
+    /// The value may go through zero to negative (a work plane's offset
+    /// and angle; an Extrude distance, where negative flips the direction).
+    pub signed: bool,
 }
 
 /// The base point of a profile: a point inside its first region.
@@ -105,6 +108,7 @@ pub fn plane_offset_handle(origin: Point3, n: Vector3, distance: Real) -> Handle
         },
         arrow: Some(if distance < 0.0 { -n } else { n }),
         angle: false,
+        signed: true,
     }
 }
 
@@ -135,6 +139,7 @@ pub fn plane_angle_handle(
         },
         arrow: None,
         angle: true,
+        signed: true,
     }
 }
 
@@ -148,6 +153,10 @@ pub fn extrude_handles(def: &ExtrudeFeature, sk: &Sketch) -> Vec<Handle> {
     };
     let n = sk.plane.normal.into_inner();
     let side = sk.plane.x_axis.into_inner();
+    let one_sided = matches!(
+        def.direction,
+        ExtentDirection::Default | ExtentDirection::Flipped
+    );
     let mut out = Vec::new();
     let mut arrow = |field: &'static str,
                      dir: Vector3,
@@ -166,6 +175,8 @@ pub fn extrude_handles(def: &ExtrudeFeature, sk: &Sketch) -> Vec<Handle> {
             },
             arrow: Some(dir),
             angle: false,
+            // One-sided distances go through the profile (a flip, Inventor).
+            signed: field == "distance" && one_sided,
         });
         if let Some((tf, t)) = taper {
             let depth = d / scale;
@@ -184,6 +195,7 @@ pub fn extrude_handles(def: &ExtrudeFeature, sk: &Sketch) -> Vec<Handle> {
                 },
                 arrow: None,
                 angle: true,
+                signed: false,
             });
         }
     };
@@ -259,6 +271,7 @@ pub fn revolve_handles(def: &RevolveFeature, sk: &Sketch) -> Vec<Handle> {
         },
         arrow: None,
         angle: true,
+        signed: false,
     };
     let (a, b) = (def.angle, def.angle_b);
     match def.direction {
@@ -334,7 +347,8 @@ pub fn snap(h: &Handle, v: Real, fine: bool) -> Real {
     match h.geom {
         DragGeom::Linear { .. } => {
             let step = if fine { 0.1 } else { 1.0 };
-            ((v / step).round() * step).max(step)
+            let r = (v / step).round() * step;
+            if h.signed { r } else { r.max(step) }
         }
         DragGeom::Taper { .. } => {
             let step = 1f64.to_radians();
@@ -342,7 +356,12 @@ pub fn snap(h: &Handle, v: Real, fine: bool) -> Real {
         }
         DragGeom::Angle { .. } => {
             let step = (if fine { 1.0_f64 } else { 5.0 }).to_radians();
-            ((v / step).round() * step).clamp(step, TAU)
+            let r = (v / step).round() * step;
+            if h.signed {
+                r.clamp(-TAU, TAU)
+            } else {
+                r.clamp(step, TAU)
+            }
         }
     }
 }
@@ -426,6 +445,22 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A work plane's offset and angle go through zero; an Extrude's
+    /// one-sided distance is signed (the flip), its taper and two-sided
+    /// distances are not.
+    #[test]
+    fn signed_handles_go_negative() {
+        let off = plane_offset_handle(Point3::origin(), Vector3::z(), 5.0);
+        assert!(off.signed);
+        assert_eq!(snap(&off, -3.4, false), -3.0);
+        assert_eq!(snap(&off, 0.2, false), 0.0);
+        let ang = plane_angle_handle(Point3::origin(), Vector3::z(), Vector3::x(), 0.5);
+        assert!(snap(&ang, -0.5, false) < 0.0);
+        let mut plain = off.clone();
+        plain.signed = false;
+        assert_eq!(snap(&plain, -3.4, false), 1.0, "unsigned stays at one step");
+    }
 
     #[test]
     fn linear_and_angle_drags() {

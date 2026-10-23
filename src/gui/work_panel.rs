@@ -158,6 +158,29 @@ impl CadCraftApp {
             d.picks.remove(k);
         }
         psection(ui, "wp_method", "Method", |ui| {
+            if d.kind == WorkKind::Plane {
+                plabel(ui, "Fixed");
+                let was = d.grounded;
+                ui.checkbox(&mut d.grounded, "")
+                    .on_hover_text("Fixed in space where it is now (no longer follows its inputs)");
+                // Freeze the plane the picks give now.
+                if d.grounded && !was {
+                    let mut probe = d.clone();
+                    probe.grounded = false;
+                    match self.preview_draft(&probe) {
+                        Some(Ok(WorkResult::Plane(_, pl))) => {
+                            let v = |a: crate::kernel::Vector3| [a.x, a.y, a.z];
+                            d.frame = Some([
+                                [pl.origin.x, pl.origin.y, pl.origin.z],
+                                v(pl.normal.into_inner()),
+                                v(pl.x_axis.into_inner()),
+                            ]);
+                        }
+                        _ => d.grounded = false,
+                    }
+                }
+                ui.end_row();
+            }
             if d.kind == WorkKind::Point {
                 plabel(ui, "Grounded");
                 let was = d.grounded;

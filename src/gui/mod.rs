@@ -2882,12 +2882,39 @@ impl CadCraftApp {
     /// feature (one Undo step).
     fn manip_apply(&mut self, owner: ManipOwner, field: &str, v: f64) {
         use crate::part::params::set_feature_field_value;
+        // A one-sided Extrude dragged through its profile flips direction
+        // and keeps a positive distance (Inventor); zero is not a distance.
+        let flip_extrude = |f: &mut crate::part::Feature, v: f64| -> Option<f64> {
+            if let crate::part::Feature::Extrude(e) = f
+                && field == "distance"
+            {
+                if v.abs() < 1e-9 {
+                    return None;
+                }
+                if v < 0.0 {
+                    e.direction = match e.direction {
+                        crate::part::ExtentDirection::Default => {
+                            crate::part::ExtentDirection::Flipped
+                        }
+                        crate::part::ExtentDirection::Flipped => {
+                            crate::part::ExtentDirection::Default
+                        }
+                        other => other,
+                    };
+                    return Some(-v);
+                }
+            }
+            Some(v)
+        };
         match owner {
             ManipOwner::Draft => {
                 if let Some(d) = self.extrude.as_mut() {
                     let mut f = match d.def.clone() {
                         DraftDef::Extrude(e) => crate::part::Feature::Extrude(e),
                         DraftDef::Revolve(r) => crate::part::Feature::Revolve(r),
+                    };
+                    let Some(v) = flip_extrude(&mut f, v) else {
+                        return;
                     };
                     set_feature_field_value(&mut f, field, v);
                     d.def = match f {
@@ -2899,6 +2926,9 @@ impl CadCraftApp {
             }
             ManipOwner::Feature(k) => {
                 if let Some(mut f) = self.part().features.get(k).cloned() {
+                    let Some(v) = flip_extrude(&mut f, v) else {
+                        return;
+                    };
                     set_feature_field_value(&mut f, field, v);
                     self.edit_feature(k, f);
                 }

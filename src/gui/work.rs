@@ -139,6 +139,9 @@ pub(super) struct WorkDraft {
     pub ucs: [Real; 6],
     /// Redefine of feature k (same id and name).
     pub edit: Option<usize>,
+    /// Work plane: Fixed — frozen at this frame (origin, normal, X), no
+    /// longer following its inputs (`grounded` set).
+    pub frame: Option<[[Real; 3]; 3]>,
 }
 
 /// English → Bulgarian for this module's prompts (kept here, beside the
@@ -247,6 +250,7 @@ impl WorkDraft {
             flip: false,
             ucs: [0.0; 6],
             edit: None,
+            frame: None,
         }
     }
 
@@ -262,6 +266,14 @@ impl WorkDraft {
             WorkDef::Point(WorkPointDef::Fixed { x, y, z }) => {
                 d.grounded = true;
                 d.xyz = [*x, *y, *z];
+            }
+            WorkDef::Plane(WorkPlaneDef::Fixed {
+                origin,
+                normal,
+                x_axis,
+            }) => {
+                d.grounded = true;
+                d.frame = Some([*origin, *normal, *x_axis]);
             }
             WorkDef::Ucs(UcsDef::Offsets {
                 x,
@@ -345,6 +357,16 @@ impl WorkDraft {
         let other = self.other;
         match self.kind {
             WorkKind::Plane => {
+                if self.grounded {
+                    let Some([origin, normal, x_axis]) = self.frame else {
+                        return Err("select the plane's inputs first, then Fixed");
+                    };
+                    return Ok(WorkDef::Plane(WorkPlaneDef::Fixed {
+                        origin,
+                        normal,
+                        x_axis,
+                    }));
+                }
                 let d = match &picks[..] {
                     [] => return Err("select a plane, an edge, a point or a curved face"),
                     [I::Plane(p)] => WorkPlaneDef::Offset {
@@ -1401,6 +1423,30 @@ fn ucs_color(id: &str) -> Color32 {
 mod tests {
     use super::*;
     use crate::part::OriginPlane;
+
+    /// Fixed work plane: the draft gives the frozen frame; Redefine keeps
+    /// it; without a frame it asks for the inputs.
+    #[test]
+    fn fixed_plane_from_the_draft() {
+        let mut d = WorkDraft::new(WorkKind::Plane);
+        d.grounded = true;
+        assert!(d.def().is_err());
+        let frame = [[1.0, 2.0, 3.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]];
+        d.frame = Some(frame);
+        let def = d.def().unwrap();
+        assert_eq!(
+            def,
+            WorkDef::Plane(WorkPlaneDef::Fixed {
+                origin: frame[0],
+                normal: frame[1],
+                x_axis: frame[2],
+            })
+        );
+        let w = WorkFeature::new(def);
+        let r = WorkDraft::redefine(0, &w);
+        assert!(r.grounded);
+        assert_eq!(r.frame, Some(frame));
+    }
 
     fn face(n: &str, k: SurfKind) -> WpInput {
         WpInput::Surface(n.into(), k)

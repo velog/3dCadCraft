@@ -259,6 +259,7 @@ impl CadCraftApp {
             },
             arrow: Some(dir),
             angle: false,
+            signed: false,
         }]
     }
 }
