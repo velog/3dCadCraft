@@ -5424,6 +5424,9 @@ impl CadCraftApp {
             Delete(String),
             Link(String, String),
             Purge,
+            Key(String, bool),
+            Precision(String, Option<u8>),
+            Values(usize, Vec<String>),
         }
         use super::valuefield::ParamDrag;
         let mut edits: Vec<Edit> = Vec::new();
@@ -5434,30 +5437,127 @@ impl CadCraftApp {
             .flat_map(crate::part::expr::names_in)
             .collect();
         let mut filter = self.param_filter;
-        let shown = |r: &crate::part::params::ParamRow| match filter {
-            1 => matches!(r.owner, ParamOwner::User(_)),
-            2 => !matches!(r.owner, ParamOwner::User(_)),
-            3 => referenced.contains(&r.name),
-            4 => !referenced.contains(&r.name),
-            _ => true,
+        let meta = self.part().param_meta.clone();
+        let is_key = |n: &str| meta.get(n).is_some_and(|m| m.key);
+        let search = self.param_search.to_lowercase();
+        let shown = |r: &crate::part::params::ParamRow| {
+            let kind = match filter {
+                1 => matches!(r.owner, ParamOwner::User(_)),
+                2 => !matches!(r.owner, ParamOwner::User(_)),
+                3 => referenced.contains(&r.name),
+                4 => !referenced.contains(&r.name),
+                5 => is_key(&r.name),
+                _ => true,
+            };
+            let found = search.is_empty()
+                || r.name.to_lowercase().contains(&search)
+                || r.comment.to_lowercase().contains(&search)
+                || r.consumed_by.to_lowercase().contains(&search)
+                || r.equation().to_lowercase().contains(&search);
+            kind && found
         };
+        // Used by: the parameters whose equations name a row.
+        let mut used_by: std::collections::HashMap<String, Vec<String>> = Default::default();
+        for r in &rows {
+            if let Some(e) = &r.expr {
+                for n in crate::part::expr::names_in(e) {
+                    used_by.entry(n).or_default().push(r.name.clone());
+                }
+            }
+        }
+        // Suggestions while typing an equation: parameters, functions.
+        let mut suggest: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
+        suggest.extend(crate::part::expr::FUNCTIONS.iter().map(|f| format!("{f}(")));
+        suggest.extend(["PI".to_owned(), "E".to_owned()]);
+        let user_values: Vec<Vec<String>> = self
+            .part()
+            .user_params
+            .iter()
+            .map(|u| u.values.clone())
+            .collect();
         let rows: Vec<_> = rows.iter().filter(|r| shown(r)).cloned().collect();
+        let mut cols = self.param_cols;
+        let mut font = self.param_font;
+        let mut search_text = self.param_search.clone();
+        let mut values_edit = self.param_values_edit.clone();
+        let mut csv: Option<bool> = None;
         let buf = &mut self.param_buf;
+        // The window keeps the size the user gave it (`layout.place`); the
+        // table scrolls inside it both ways.
         self.layout.place("parameters", ctx.content_rect(), true, egui::Window::new("Parameters")
             .open(&mut open)
-            .default_width(860.0)
+            .default_size(egui::vec2(900.0, 480.0))
+            .min_size(egui::vec2(360.0, 200.0))
             .resizable(true))
             .show(ctx, |ui| {
+                // The table's own text size (A- / A+).
+                for f in ui.style_mut().text_styles.values_mut() {
+                    f.size *= font;
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Search");
+                    ui.add(egui::TextEdit::singleline(&mut search_text).desired_width(160.0).hint_text("name, equation, comment"));
+                    if !search_text.is_empty() && ui.small_button("x").clicked() {
+                        search_text.clear();
+                    }
+                    ui.separator();
+                    if ui.small_button("A-").on_hover_text("Smaller text").clicked() {
+                        font = (font - 0.1).max(0.7);
+                    }
+                    if ui.small_button("A+").on_hover_text("Larger text").clicked() {
+                        font = (font + 0.1).min(2.5);
+                    }
+                });
+                ui.separator();
                 // A text cell that applies on Enter / focus loss.
                 let mut cell = |ui: &mut egui::Ui, key: String, current: &str, width: f32, bad: bool| -> (Option<String>, egui::Response) {
                     let text = buf.entry(key.clone()).or_insert_with(|| current.to_owned());
-                    let mut te = egui::TextEdit::singleline(text).desired_width(width);
+                    let mut te = egui::TextEdit::singleline(text).desired_width(width * font);
                     if bad {
                         te = te.text_color(Color32::from_rgb(230, 70, 60));
                     }
                     let r = ui.add(te);
                     if !r.has_focus() && !r.lost_focus() && *text != current {
                         *text = current.to_owned(); // changed elsewhere
+                    }
+                    // An equation cell: the names / functions that start with
+                    // the word being typed (a click puts it in).
+                    if key.starts_with("e:") && r.has_focus() {
+                        let word_at = text
+                            .char_indices()
+                            .rev()
+                            .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+                            .map_or(0, |(i, c)| i + c.len_utf8());
+                        let word = text[word_at..].to_lowercase();
+                        let list: Vec<&String> = if word.is_empty() {
+                            Vec::new()
+                        } else {
+                            suggest
+                                .iter()
+                                .filter(|s| s.to_lowercase().starts_with(&word) && s.to_lowercase() != word)
+                                .take(8)
+                                .collect()
+                        };
+                        if !list.is_empty() {
+                            let mut pick = None;
+                            egui::Area::new(egui::Id::new(("param_suggest", key.as_str())))
+                                .fixed_pos(r.rect.left_bottom())
+                                .order(egui::Order::Foreground)
+                                .show(ui.ctx(), |ui| {
+                                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                        for s in &list {
+                                            if ui.selectable_label(false, s.as_str()).clicked() {
+                                                pick = Some((*s).clone());
+                                            }
+                                        }
+                                    });
+                                });
+                            if let Some(s) = pick {
+                                text.truncate(word_at);
+                                text.push_str(&s);
+                                r.request_focus();
+                            }
+                        }
                     }
                     if r.lost_focus() {
                         let t = text.clone();
@@ -5481,15 +5581,21 @@ impl CadCraftApp {
                         .filter(|p| p.0 != target)
                         .map(|p| p.0.clone())
                 };
-                egui::ScrollArea::vertical().max_height(520.0).show(ui, |ui| {
+                let table_h = (ui.available_height() - 64.0).max(80.0);
+                egui::ScrollArea::both()
+                    .id_salt("params_scroll")
+                    .auto_shrink([false, false])
+                    .max_height(table_h)
+                    .show(ui, |ui| {
                     egui::Grid::new("params")
                         .striped(true)
-                        .num_columns(9)
+                        .num_columns(10)
                         .spacing([10.0, 4.0])
                         .show(ui, |ui| {
-                            for h in [
+                            for (k, h) in [
                                 "Parameter Name",
                                 "Consumed by",
+                                "Used by",
                                 "Unit",
                                 "Equation",
                                 "Nominal Value",
@@ -5497,8 +5603,30 @@ impl CadCraftApp {
                                 "Model Value",
                                 "Comment",
                                 "",
-                            ] {
-                                ui.label(RichText::new(h).strong());
+                            ]
+                            .iter()
+                            .enumerate()
+                            {
+                                // Name, Equation and Comment widen by dragging
+                                // the bar after their title.
+                                let col = match k {
+                                    0 => Some(0),
+                                    4 => Some(1),
+                                    8 => Some(2),
+                                    _ => None,
+                                };
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(*h).strong());
+                                    if let Some(c) = col {
+                                        let bar = ui
+                                            .add(egui::Label::new(RichText::new("|").weak()).sense(egui::Sense::drag()))
+                                            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+                                            .on_hover_text("Drag to widen the column");
+                                        if bar.dragged() {
+                                            cols[c] = (cols[c] + bar.drag_delta().x).clamp(40.0, 600.0);
+                                        }
+                                    }
+                                });
                             }
                             ui.end_row();
                             let mut section = "";
@@ -5537,7 +5665,10 @@ impl CadCraftApp {
                                             let l = ui.label(RichText::new(&r.name).italics());
                                             (None, l)
                                         } else {
-                                            cell(ui, format!("n:{}", r.name), &r.name, 80.0, false)
+                                            if is_key(&r.name) {
+                                                ui.label(RichText::new("★").color(Color32::from_rgb(230, 170, 20)));
+                                            }
+                                            cell(ui, format!("n:{}", r.name), &r.name, cols[0], false)
                                         }
                                     })
                                     .inner;
@@ -5547,7 +5678,41 @@ impl CadCraftApp {
                                 if let Some(src) = drop_on(ui, &name_resp, &r.name) {
                                     edits.push(Edit::Link(r.name.clone(), src));
                                 }
+                                // The row's menu: Key, precision, Multi-Value.
+                                name_resp.context_menu(|ui| {
+                                    let key_on = is_key(&r.name);
+                                    if ui.button(if key_on { "Unmark Key" } else { "Mark as Key" }).clicked() {
+                                        edits.push(Edit::Key(r.name.clone(), !key_on));
+                                        ui.close();
+                                    }
+                                    ui.menu_button("Precision", |ui| {
+                                        if ui.button("Default").clicked() {
+                                            edits.push(Edit::Precision(r.name.clone(), None));
+                                            ui.close();
+                                        }
+                                        for d in 0..=6u8 {
+                                            if ui.button(format!("{d} decimals")).clicked() {
+                                                edits.push(Edit::Precision(r.name.clone(), Some(d)));
+                                                ui.close();
+                                            }
+                                        }
+                                    });
+                                    if let ParamOwner::User(i) = r.owner {
+                                        let list = user_values.get(i).cloned().unwrap_or_default();
+                                        if ui.button("Edit Multi-Value List...").clicked() {
+                                            let text = if list.is_empty() { r.equation() } else { list.join("; ") };
+                                            values_edit = Some((i, text));
+                                            ui.close();
+                                        }
+                                        if !list.is_empty() && ui.button("Make Single Value").clicked() {
+                                            edits.push(Edit::Values(i, Vec::new()));
+                                            ui.close();
+                                        }
+                                    }
+                                });
                                 ui.label(&r.consumed_by);
+                                let users = used_by.get(&r.name).map(|v| v.join(", ")).unwrap_or_default();
+                                ui.label(RichText::new(&users).weak()).on_hover_text(if users.is_empty() { "No equation uses it".to_owned() } else { format!("Used in: {users}") });
                                 match r.owner {
                                     ParamOwner::User(i) => {
                                         // Unit Specification (`N/m`, `kg`, `MPa`)
@@ -5586,7 +5751,26 @@ impl CadCraftApp {
                                         .on_hover_text("Measured on the body after each rebuild; use it in user parameters, not in sizes");
                                     (None, l)
                                 } else {
-                                    cell(ui, format!("e:{}", r.name), &r.equation(), 150.0, err.is_some())
+                                    match r.owner {
+                                        // Multi-Value: pick one of the list.
+                                        ParamOwner::User(i) if user_values.get(i).is_some_and(|v| !v.is_empty()) => {
+                                            let list = user_values[i].clone();
+                                            let cur = r.equation();
+                                            let resp = egui::ComboBox::from_id_salt(("multi", i))
+                                                .width(cols[1] * font)
+                                                .selected_text(&cur)
+                                                .show_ui(ui, |ui| {
+                                                    for v in &list {
+                                                        if ui.selectable_label(*v == cur, v.as_str()).clicked() && *v != cur {
+                                                            edits.push(Edit::Expr(r.name.clone(), v.clone()));
+                                                        }
+                                                    }
+                                                })
+                                                .response;
+                                            (None, resp)
+                                        }
+                                        _ => cell(ui, format!("e:{}", r.name), &r.equation(), cols[1], err.is_some()),
+                                    }
                                 };
                                 if let Some(src) = drop_on(ui, &eq_resp, &r.name) {
                                     edits.push(Edit::Link(r.name.clone(), src));
@@ -5597,7 +5781,15 @@ impl CadCraftApp {
                                 if let Some(t) = eq {
                                     edits.push(Edit::Expr(r.name.clone(), t));
                                 }
-                                ui.label(r.shown());
+                                let shown_value = |v: crate::kernel::Real| match meta.get(&r.name).and_then(|m| m.precision) {
+                                    Some(d) => {
+                                        let x = r.def().to_display(v);
+                                        let l = r.unit_label();
+                                        if l.is_empty() || l == "ul" { format!("{x:.*}", d as usize) } else { format!("{x:.*} {l}", d as usize) }
+                                    }
+                                    None => crate::part::params::format_in(v, r.def(), &r.unit_label()),
+                                };
+                                ui.label(shown_value(r.value));
                                 match (&r.owner, r.tol) {
                                     (ParamOwner::Dimension { sketch, constraint }, Some(t)) => {
                                         let mut ev = t.eval;
@@ -5612,11 +5804,11 @@ impl CadCraftApp {
                                         if ev != t.eval {
                                             edits.push(Edit::Eval(*sketch, *constraint, ev));
                                         }
-                                        ui.label(crate::part::params::format_in(r.value + t.offset(), r.def(), &r.unit_label()));
+                                        ui.label(shown_value(r.value + t.offset()));
                                     }
                                     _ => {
                                         ui.label("");
-                                        ui.label(r.shown());
+                                        ui.label(shown_value(r.value));
                                     }
                                 }
                                 match r.owner {
@@ -5624,7 +5816,7 @@ impl CadCraftApp {
                                         ui.label("");
                                     }
                                     _ => {
-                                        if let (Some(c), _) = cell(ui, format!("c:{}", r.name), &r.comment, 120.0, false) {
+                                        if let (Some(c), _) = cell(ui, format!("c:{}", r.name), &r.comment, cols[2], false) {
                                             edits.push(Edit::Comment(r.owner.clone(), c));
                                         }
                                     }
@@ -5659,21 +5851,67 @@ impl CadCraftApp {
                     }
                     egui::ComboBox::from_id_salt("param_filter")
                         .width(90.0)
-                        .selected_text(["All", "User", "Model", "Used", "Unused"][filter.min(4) as usize])
+                        .selected_text(["All", "User", "Model", "Used", "Unused", "Key"][filter.min(5) as usize])
                         .show_ui(ui, |ui| {
-                            for (k, t) in ["All", "User", "Model", "Used", "Unused"].iter().enumerate() {
+                            for (k, t) in ["All", "User", "Model", "Used", "Unused", "Key"].iter().enumerate() {
                                 ui.selectable_value(&mut filter, k as u8, *t);
                             }
                         })
                         .response
                         .on_hover_text("Filter");
-                    ui.label(
-                        RichText::new("Drag @ onto a parameter or a value field to link them. Equations: + − * / ^ ( ), sin cos tan asin acos atan sinh cosh tanh sqrt abs floor ceil round sign exp ln log pow min max, PI, E; units mm cm m in ft um deg rad ul; names of other parameters. A bare number takes the parameter's unit; changing the unit converts the value.")
-                            .small()
-                            .weak(),
-                    );
+                    ui.separator();
+                    if ui.button("Export CSV...").on_hover_text("Name, Unit, Equation, Value, Comment (opens in Excel)").clicked() {
+                        csv = Some(true);
+                    }
+                    if ui.button("Import CSV...").on_hover_text("Known names take the equation and comment; new names become user parameters").clicked() {
+                        csv = Some(false);
+                    }
                 });
+                ui.label(
+                    RichText::new("Drag @ onto a parameter or a value field to link them; right-click a name for Key, Precision, Multi-Value. Equations: + − * / ^ ( ), sin cos tan asin acos atan sinh cosh tanh sqrt abs floor ceil round sign exp ln log pow min max, PI, E; units after a value (10 mm, 5 N / 2 mm, 9.81 m/s^2); names of other parameters. A bare number takes the parameter's unit.")
+                        .small()
+                        .weak(),
+                );
             });
+        // The Multi-Value list being edited.
+        if let Some((i, mut text)) = values_edit.take() {
+            let mut keep = true;
+            egui::Window::new("Multi-Value List")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("Values separated by ';' (each a value or an equation):");
+                    ui.add(egui::TextEdit::singleline(&mut text).desired_width(320.0));
+                    ui.horizontal(|ui| {
+                        if ui.button("OK").clicked() {
+                            let list: Vec<String> = text
+                                .split(';')
+                                .map(|v| v.trim().to_owned())
+                                .filter(|v| !v.is_empty())
+                                .collect();
+                            edits.push(Edit::Values(i, list));
+                            keep = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+            if keep {
+                values_edit = Some((i, text));
+            }
+        }
+        self.param_values_edit = values_edit;
+        self.param_cols = cols;
+        self.param_font = font;
+        self.param_search = search_text;
+        if let Some(export) = csv {
+            self.open_dialog(if export {
+                super::files::DialogPurpose::ExportParams
+            } else {
+                super::files::DialogPurpose::ImportParams
+            });
+        }
         self.show_params = open;
         self.param_filter = filter;
         if edits.is_empty() {
@@ -5714,6 +5952,23 @@ impl CadCraftApp {
                 }
                 Edit::Delete(n) => part.delete_user_parameter(&n),
                 Edit::Link(t, s) => part.link_parameter(&t, &s),
+                Edit::Key(n, on) => {
+                    let m = part.param_meta.entry(n.clone()).or_default();
+                    m.key = on;
+                    if *m == crate::part::params::ParamMeta::default() {
+                        part.param_meta.remove(&n);
+                    }
+                    Ok(())
+                }
+                Edit::Precision(n, d) => {
+                    let m = part.param_meta.entry(n.clone()).or_default();
+                    m.precision = d;
+                    if *m == crate::part::params::ParamMeta::default() {
+                        part.param_meta.remove(&n);
+                    }
+                    Ok(())
+                }
+                Edit::Values(i, list) => part.set_user_values(i, list),
                 Edit::Purge => {
                     part.purge_unused_parameters();
                     Ok(())

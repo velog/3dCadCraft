@@ -22,6 +22,9 @@ pub(super) enum DialogPurpose {
     Export(ExportFormat),
     /// Help -> Save Diagnostics (a zip, `gui/diag.rs`).
     Diagnostics,
+    /// Parameters → Export CSV / Import CSV.
+    ExportParams,
+    ImportParams,
 }
 
 impl DialogPurpose {
@@ -32,6 +35,8 @@ impl DialogPurpose {
             DialogPurpose::SaveFolder => "Save as Folder".into(),
             DialogPurpose::Export(f) => format!("Export {}", f.extension().to_uppercase()),
             DialogPurpose::Diagnostics => "Save Diagnostics".into(),
+            DialogPurpose::ExportParams => "Export Parameters".into(),
+            DialogPurpose::ImportParams => "Import Parameters".into(),
         }
     }
 
@@ -44,11 +49,12 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
             DialogPurpose::Export(ExportFormat::Glb) => &["glb"],
             DialogPurpose::Diagnostics => &["zip"],
+            DialogPurpose::ExportParams | DialogPurpose::ImportParams => &["csv"],
         }
     }
 
     fn saves(self) -> bool {
-        self != DialogPurpose::Open
+        !matches!(self, DialogPurpose::Open | DialogPurpose::ImportParams)
     }
 }
 
@@ -408,6 +414,8 @@ impl CadCraftApp {
                 "3dcadcraft-diagnostics-{}.zip",
                 crate::diagnostics::stamp(std::time::SystemTime::now())
             ),
+            DialogPurpose::ExportParams => format!("{stem}-parameters.csv"),
+            DialogPurpose::ImportParams => String::new(),
         };
         self.file_dialog = Some(FileDialog::new(purpose, start_dir(&self.file_path), name));
     }
@@ -755,7 +763,7 @@ impl CadCraftApp {
                             d.note = Some("Pick a drive or type a full path".into())
                         }
                         None => d.note = Some("Type a file name".into()),
-                        Some(p) if d.purpose == DialogPurpose::Open => {
+                        Some(p) if !d.purpose.saves() => {
                             if p.exists() {
                                 done = Some(p);
                             } else {
@@ -799,6 +807,35 @@ impl CadCraftApp {
                 self.save_project(true);
             }
             DialogPurpose::Diagnostics => self.save_diagnostics(&path),
+            DialogPurpose::ExportParams => {
+                let text = self.part().parameters_csv();
+                self.file_status = Some(
+                    std::fs::write(&path, text)
+                        .map(|()| format!("Parameters exported to {}", path.display()))
+                        .map_err(|e| format!("Export Parameters: {e}")),
+                );
+            }
+            DialogPurpose::ImportParams => {
+                let r = std::fs::read_to_string(&path).map_err(|e| e.to_string());
+                self.checkpoint("Import Parameters");
+                let r = r.and_then(|t| {
+                    self.part_mut()
+                        .import_parameters_csv(&t)
+                        .map_err(|e| e.to_string())
+                });
+                match r {
+                    Ok(n) => {
+                        let _ = self.part_mut().regenerate();
+                        self.scene_dirty = true;
+                        self.solve();
+                        self.file_status = Some(Ok(format!("{n} parameters imported")));
+                    }
+                    Err(e) => {
+                        self.history.cancel();
+                        self.file_status = Some(Err(format!("Import Parameters: {e}")));
+                    }
+                }
+            }
             DialogPurpose::Export(f) => {
                 let name = path
                     .file_stem()

@@ -218,8 +218,14 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
                 ui.data_mut(|d| d.insert_temp(super::measure_pick::request_id(), req));
                 ui.close();
             }
-            ui.add_enabled(false, egui::Button::new("Show Dimensions"))
-                .on_disabled_hover_text("Pick a dimension in the graphics window (planned)");
+            if ui
+                .button("Show Dimensions")
+                .on_hover_text("Click a feature on the model, then one of its dimensions: its name goes here")
+                .clicked()
+            {
+                ui.data_mut(|d| d.insert_temp(super::show_dims::request_id(), spec.id));
+                ui.close();
+            }
         })
         .response
         .on_hover_text("Parameters, recent values");

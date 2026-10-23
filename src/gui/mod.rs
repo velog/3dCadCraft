@@ -61,6 +61,7 @@ mod renderer;
 mod ribbon;
 mod select;
 mod shell;
+mod show_dims;
 mod sketch_tools;
 mod sweep;
 mod valuefield;
@@ -512,6 +513,12 @@ struct CadCraftApp {
     param_filter: u8,
     /// The body the table's physical properties were measured on.
     param_phys_key: String,
+    /// Parameters table: text size, column widths (persisted), search text.
+    param_font: f32,
+    param_cols: [f32; 3],
+    param_search: String,
+    /// Multi-Value list being edited: user parameter index, text.
+    param_values_edit: Option<(usize, String)>,
     /// The in-place dimension editor shows its tolerance part.
     dim_tol_open: bool,
     /// How dimension texts are shown (status bar: Value / Name / …).
@@ -606,6 +613,8 @@ struct CadCraftApp {
     hole_drag: Option<hole_dims::HoleHandle>,
     /// Measure into a field (the `>` menu, Edit Dimension), `measure_pick`.
     measure_pick: Option<measure_pick::MeasurePick>,
+    /// Show Dimensions for a field (the `>` menu), `show_dims`.
+    show_dims: Option<show_dims::ShowDims>,
     /// What a right-click inside the edited sketch hit.
     sketch_context: Option<SketchCtx>,
     /// Where the last right-click hit the sketch plane (sketch coordinates).
@@ -780,6 +789,10 @@ impl CadCraftApp {
             param_buf: Default::default(),
             param_filter: 0,
             param_phys_key: String::new(),
+            param_font: 1.0,
+            param_cols: [80.0, 150.0, 120.0],
+            param_search: String::new(),
+            param_values_edit: None,
             target_pick: None,
             extrude_preview: Default::default(),
             preview_job: Default::default(),
@@ -813,6 +826,7 @@ impl CadCraftApp {
             manip_drag: None,
             hole_drag: None,
             measure_pick: None,
+            show_dims: None,
             pattern_drag: None,
             context_point: None,
             combs: Default::default(),
@@ -5053,6 +5067,24 @@ impl CadCraftApp {
         // A click on another dimension while one is edited (in the box or in
         // a value field just used) puts its *name* there: `d3 = d1`
         // follows d1, not only its value (Inventor).
+        // Show Dimensions: a dimension's name goes into its field; a face
+        // picks the feature whose dimensions show.
+        if self.show_dims.is_some() && response.clicked_by(PointerButton::Primary) {
+            let named = label_hit.and_then(|c| self.dimension_name_for_link(c));
+            let took = match (named, pointer) {
+                (Some(n), _) => {
+                    self.show_dims_pick(ui.ctx(), n);
+                    true
+                }
+                (None, Some(p)) => self.show_dims_face(p, rect),
+                _ => false,
+            };
+            if took {
+                response.flags.remove(
+                    egui::response::Flags::CLICKED | egui::response::Flags::FAKE_PRIMARY_CLICKED,
+                );
+            }
+        }
         if response.clicked_by(PointerButton::Primary)
             && let Some(c) = label_hit
             && let Some(name) = self.dimension_name_for_link(c)
@@ -6125,7 +6157,8 @@ impl CadCraftApp {
             );
         }
         for (i, ps) in self.part().sketches.iter().enumerate() {
-            let profile_sketch = self.extrude.as_ref().is_some_and(|d| d.sketch == i);
+            let profile_sketch = self.extrude.as_ref().is_some_and(|d| d.sketch == i)
+                || self.show_dims.as_ref().is_some_and(|s| s.sketch == Some(i));
             // Sketches below the End of Part are rolled back: not drawn.
             let shown = ps.visible && !self.part().sketch_rolled_back(i);
             // Project Geometry: earlier sketches are pickable, hidden ones too.
@@ -6923,6 +6956,8 @@ impl eframe::App for CadCraftApp {
         self.measure_window(&ctx);
         self.measure_requests(&ctx);
         self.measure_pick_window(&ctx);
+        self.show_dims_requests(&ctx);
+        self.show_dims_window(&ctx);
         valuefield::draw_whip(&ctx);
         self.alias_window(&ctx);
         self.offset_window(&ctx);

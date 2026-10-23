@@ -799,6 +799,10 @@ pub struct PartDocument {
     /// Next model-parameter number (`d<N>`).
     #[serde(default)]
     pub next_param: usize,
+    /// Key flag and display precision per parameter name (the Parameters
+    /// table; renames carry them).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub param_meta: std::collections::BTreeMap<String, params::ParamMeta>,
     /// The part's material (`None`: Generic), see [`appearance`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,

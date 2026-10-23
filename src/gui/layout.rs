@@ -196,6 +196,10 @@ pub struct AppOptions {
     pub thread_texture: bool,
     /// Show command alias input dialog (spec 0.15 §5.1, G6).
     pub alias_input: bool,
+    /// Parameters table: text size (1 = normal) and the widths of the
+    /// Name, Equation and Comment columns.
+    pub param_font: f32,
+    pub param_cols: [f32; 3],
     /// ViewCube → Set Current View as Home: (yaw, pitch) in degrees.
     pub home_view: Option<(f64, f64)>,
     /// Select Priority, filters (those switched off), box mode, prehighlight
@@ -218,6 +222,8 @@ impl Default for AppOptions {
             show_labels: true,
             thread_texture: true,
             alias_input: false,
+            param_font: 1.0,
+            param_cols: [80.0, 150.0, 120.0],
             home_view: None,
             selection: Default::default(),
             object_visibility: ObjectVisibility::default(),
@@ -789,6 +795,8 @@ impl CadCraftApp {
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
             alias_input: self.alias_input,
+            param_font: self.param_font,
+            param_cols: self.param_cols,
             home_view: self.home_view,
             selection: self.select,
             object_visibility: self.obj_vis,
@@ -808,6 +816,8 @@ impl CadCraftApp {
             self.scene_dirty = true;
         }
         self.alias_input = o.alias_input;
+        self.param_font = o.param_font.clamp(0.7, 2.5);
+        self.param_cols = o.param_cols.map(|w| w.clamp(40.0, 600.0));
         self.home_view = o.home_view;
         self.select = o.selection;
         self.obj_vis = o.object_visibility;

@@ -268,6 +268,7 @@ impl CadCraftApp {
     pub(super) fn dim_sketch(&self) -> Option<usize> {
         self.editing
             .or_else(|| self.extrude.as_ref().map(|d| d.sketch))
+            .or_else(|| self.show_dims.as_ref().and_then(|s| s.sketch))
     }
 
     // ---- primitives --------------------------------------------------------

@@ -36,6 +36,20 @@ pub struct UserParam {
     /// builds (format revision 18).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit_spec: Option<String>,
+    /// Multi-Value: the values to choose from (each an equation).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+}
+
+/// Key flag and display precision of a parameter (any kind).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ParamMeta {
+    /// A key parameter (the table's Key filter).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub key: bool,
+    /// Decimals shown (`None`: up to 6, trailing zeros cut).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precision: Option<u8>,
 }
 
 impl UserParam {
@@ -651,6 +665,17 @@ impl PartDocument {
     pub fn parameter_table(&self) -> Vec<ParamRow> {
         let mut rows = Vec::new();
         for (i, ps) in self.sketches.iter().enumerate() {
+            // `Sketch1/Extrusion1`: the sketch and the features it feeds.
+            let users: Vec<&str> = self
+                .consumers(&ps.id)
+                .into_iter()
+                .filter_map(|k| self.features.get(k).map(feature_name))
+                .collect();
+            let consumed_by = if users.is_empty() {
+                ps.name.clone()
+            } else {
+                format!("{}/{}", ps.name, users.join(", "))
+            };
             for (id, c) in ps.sketch.constraints() {
                 if !c.is_dimension() || ps.sketch.is_driven(id) {
                     continue;
@@ -668,7 +693,7 @@ impl PartDocument {
                         sketch: i,
                         constraint: id,
                     },
-                    consumed_by: ps.name.clone(),
+                    consumed_by: consumed_by.clone(),
                     unit,
                     expr: p.expr.clone(),
                     // Angles are shown unsigned.
@@ -998,6 +1023,9 @@ impl PartDocument {
                 )));
             }
         }
+        if let Some(meta) = self.param_meta.remove(old) {
+            self.param_meta.insert(new.to_owned(), meta);
+        }
         // Equations that used the old name.
         for ps in &mut self.sketches {
             let ids: Vec<ConstraintId> = ps.sketch.constraints().map(|(id, _)| id).collect();
@@ -1041,8 +1069,117 @@ impl PartDocument {
             comment: String::new(),
             value,
             unit_spec: None,
+            values: Vec::new(),
         });
         name
+    }
+
+    /// Multi-Value: user parameter `i` chooses from `list` (each checked as
+    /// its equation; the current value becomes the first if it is not in
+    /// the list). An empty list makes it a single value again.
+    pub fn set_user_values(&mut self, i: usize, list: Vec<String>) -> Result<(), PartError> {
+        let Some(u) = self.user_params.get(i) else {
+            return Err(PartError::Feature("no such user parameter".into()));
+        };
+        let (name, cur) = (u.name.clone(), u.expr.clone());
+        let before = self.clone();
+        for v in &list {
+            if let Err(e) = self.set_parameter_expr(&name, v) {
+                *self = before;
+                return Err(e);
+            }
+        }
+        // Back to the value it had (or the first when that is not offered).
+        let pick = if list.contains(&cur) || list.is_empty() {
+            cur
+        } else {
+            list[0].clone()
+        };
+        self.set_parameter_expr(&name, &pick)?;
+        self.user_params[i].values = list;
+        Ok(())
+    }
+
+    /// The Parameters table as CSV: Name, Unit, Equation, Value, Comment
+    /// (a header row; fields quoted when they hold a comma or a quote).
+    pub fn parameters_csv(&self) -> String {
+        let q = |s: &str| {
+            if s.contains([',', '"', '\n']) {
+                format!("\"{}\"", s.replace('"', "\"\""))
+            } else {
+                s.to_owned()
+            }
+        };
+        let mut out = String::from("Name,Unit,Equation,Value,Comment\n");
+        for r in self.parameter_table() {
+            let value = format_in(r.value, r.def(), "");
+            out.push_str(&format!(
+                "{},{},{},{},{}\n",
+                q(&r.name),
+                q(&r.unit_label()),
+                q(&r.equation()),
+                q(&value),
+                q(&r.comment)
+            ));
+        }
+        out
+    }
+
+    /// Reads [`parameters_csv`](Self::parameters_csv) back: a known name
+    /// takes the equation and comment, an unknown one becomes a user
+    /// parameter with its unit; physical rows are skipped. All or nothing:
+    /// a row that fails leaves the part as it was. Returns the rows used.
+    pub fn import_parameters_csv(&mut self, text: &str) -> Result<usize, PartError> {
+        let before = self.clone();
+        let r = self.import_rows(text);
+        if r.is_err() {
+            *self = before;
+        }
+        r
+    }
+
+    fn import_rows(&mut self, text: &str) -> Result<usize, PartError> {
+        let mut n = 0;
+        for (k, line) in text.lines().enumerate() {
+            let f = csv_fields(line);
+            if k == 0 && f.first().is_some_and(|x| x.eq_ignore_ascii_case("name")) {
+                continue;
+            }
+            let [name, unit, eq, ..] = f.as_slice() else {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                return Err(PartError::Feature(format!(
+                    "line {}: too few fields",
+                    k + 1
+                )));
+            };
+            let comment = f.get(4).cloned().unwrap_or_default();
+            if is_physical(name) {
+                continue;
+            }
+            let row = self.parameter(name);
+            if row.is_none() {
+                if !expr::valid_name(name) {
+                    return Err(PartError::Feature(format!(
+                        "line {}: '{name}' is not a valid name",
+                        k + 1
+                    )));
+                }
+                let made = self.add_user_parameter(Unit::Ul);
+                self.rename_parameter(&made, name)?;
+                let i = self.user_params.len() - 1;
+                self.set_user_unit(i, unit)
+                    .map_err(|e| PartError::Feature(format!("line {}: {e}", k + 1)))?;
+            }
+            self.set_parameter_expr(name, eq)
+                .map_err(|e| PartError::Feature(format!("line {}: {e}", k + 1)))?;
+            if let Some(i) = self.user_params.iter().position(|u| &u.name == name) {
+                self.user_params[i].comment = comment;
+            }
+            n += 1;
+        }
+        Ok(n)
     }
 
     /// Sets user parameter `i`'s unit from a specification (`N/m`, `kg`,
@@ -1186,6 +1323,27 @@ fn physical_dependency(name: &str, list: &[(String, String, UnitDef)]) -> Option
         }
     }
     None
+}
+
+/// The fields of one CSV line (quotes `"…"` with `""` inside).
+fn csv_fields(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    let mut cs = line.chars().peekable();
+    while let Some(c) = cs.next() {
+        match (c, quoted) {
+            ('"', true) if cs.peek() == Some(&'"') => {
+                cur.push('"');
+                cs.next();
+            }
+            ('"', _) => quoted = !quoted,
+            (',', false) => out.push(std::mem::take(&mut cur).trim().to_owned()),
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur.trim().to_owned());
+    out
 }
 
 /// Splits field input `name = expr` into the new name and the expression
@@ -1528,6 +1686,66 @@ mod box_params {
         );
         assert_eq!(part.user_params, before);
         assert!(part.set_user_unit(0, "furlong").is_err());
+    }
+
+    /// Multi-Value: the list is checked value by value; a bad one changes
+    /// nothing; the current value stays when it is in the list.
+    #[test]
+    fn multi_value_lists() {
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let k = part.add_user_parameter(Unit::Mm);
+        part.set_parameter_expr(&k, "8 mm").unwrap();
+        let list: Vec<String> = ["6 mm", "8 mm", "10 mm"].map(String::from).to_vec();
+        part.set_user_values(0, list.clone()).unwrap();
+        assert_eq!(part.user_params[0].values, list);
+        assert!((part.user_params[0].value - 8.0).abs() < 1e-12, "kept");
+        let before = part.user_params.clone();
+        assert!(
+            part.set_user_values(0, vec!["6 mm".into(), "3 kg".into()])
+                .is_err()
+        );
+        assert_eq!(part.user_params, before);
+        part.set_user_values(0, Vec::new()).unwrap();
+        assert!(part.user_params[0].values.is_empty());
+    }
+
+    /// CSV round trip: export, change, import back (known names take the
+    /// equation, new ones become user parameters with their units); a bad
+    /// row changes nothing.
+    #[test]
+    fn parameters_csv_round_trip() {
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let k = part.add_user_parameter(Unit::Mm);
+        part.set_parameter_expr(&k, "12").unwrap();
+        part.user_params[0].comment = "wall, outer".into();
+        let csv = part.parameters_csv();
+        assert!(csv.contains("\"wall, outer\""), "{csv}");
+        assert!(csv.starts_with("Name,Unit,Equation"));
+        let text = format!("{csv}Force,N,500 N,500,load\n{k},mm,15 mm,15,\n");
+        assert_eq!(
+            part.import_parameters_csv(&text).unwrap(),
+            csv.lines().count() - 1 + 2
+        );
+        assert_eq!(part.user_params[0].expr, "15 mm");
+        let force = part.user_params.iter().find(|u| u.name == "Force").unwrap();
+        assert_eq!(force.unit_spec.as_deref(), Some("N"));
+        assert_eq!(force.comment, "load");
+        let before = part.user_params.clone();
+        assert!(
+            part.import_parameters_csv("Name,Unit,Equation\nBad,mm,1 kg\n")
+                .is_err()
+        );
+        assert_eq!(part.user_params, before, "nothing changed");
+        // A rename carries the key flag.
+        part.param_meta.insert(
+            "Force".into(),
+            super::ParamMeta {
+                key: true,
+                precision: Some(2),
+            },
+        );
+        part.rename_parameter("Force", "Load").unwrap();
+        assert!(part.param_meta.get("Load").is_some_and(|m| m.key));
     }
 
     /// Pick whip: a link makes the target follow the source; a circular
