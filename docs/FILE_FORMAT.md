@@ -170,6 +170,8 @@ Revision 13 (2026-10-20): Combine and Split (`Feature::Combine`, `Feature::Split
 
 **Revision 16 (2026-10-23): Project Geometry of work features.** `LinkSource::Work { id }` in a sketch's `links`: a work point, axis or plane projected into the sketch (point, line along the axis, line of intersection with the plane). An older build cannot read the new variant, hence the revision. Fixture: `tests/compat/r16/project_work_r16.3dcadcraft` (a work point and axis projected into an XY sketch, a boss on the point).
 
+**Revision 17 (2026-10-23): more parameter units.** `Unit::Cm`, `M`, `In`, `Ft`, `Rad` for user parameters (a bare number in the equation takes the unit; the value is stored in mm / rad as before). An older build cannot read the new variants, hence the revision. Fixture: `tests/compat/r17/units_r17.3dcadcraft` (a box driven by parameters in cm and in, one in rad).
+
 ## 7. How to try it
 
 ```bash

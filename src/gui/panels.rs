@@ -1793,7 +1793,7 @@ impl CadCraftApp {
                             };
                             ui.horizontal(|ui| {
                                 if ui
-                                    .add(egui::DragValue::new(&mut v).speed(0.1).suffix(unit))
+                                    .add(super::valuefield::ExprValue::new(&mut v).suffix(unit))
                                     .changed()
                                 {
                                     self.hud.vals[k] = Some(v);
@@ -4695,6 +4695,12 @@ impl CadCraftApp {
                     self.scene_dirty = true;
                 }
                 ui.separator();
+                ui.label(RichText::new("Prompted Interaction").strong());
+                ui.checkbox(&mut self.alias_input, "Show command alias input dialog")
+                    .on_hover_text(
+                        "A letter typed over the view opens a field next to the cursor with the                          matching commands; Enter or Space starts one (off: a letter starts its                          command at once)",
+                    );
+                ui.separator();
                 ui.label(RichText::new("Constraint Settings — Inference").strong());
                 let k = &mut self.tools.inference;
                 ui.checkbox(&mut k.infer, "Infer constraints")
@@ -5479,7 +5485,7 @@ impl CadCraftApp {
                                             .width(52.0)
                                             .selected_text(u.label())
                                             .show_ui(ui, |ui| {
-                                                for x in [Unit::Mm, Unit::Deg, Unit::Ul] {
+                                                for x in Unit::ALL {
                                                     ui.selectable_value(&mut u, x, x.label());
                                                 }
                                             });
@@ -5553,7 +5559,7 @@ impl CadCraftApp {
                         edits.push(Edit::Add);
                     }
                     ui.label(
-                        RichText::new("Equations: + − * / ^ ( ), sin cos tan sqrt abs min max…, units mm cm m in deg rad; names of other parameters.")
+                        RichText::new("Equations: + − * / ^ ( ), sin cos tan asin acos atan sqrt abs floor ceil round min max, PI; units mm cm m in ft um deg rad ul; names of other parameters. A bare number takes the parameter's unit; changing the unit converts the value.")
                             .small()
                             .weak(),
                     );
@@ -5592,10 +5598,17 @@ impl CadCraftApp {
                     Ok(())
                 }
                 Edit::Unit(i, u) => {
+                    // A plain value keeps its size in the new unit (25.4 mm →
+                    // 1 in); an equation stays as typed and is evaluated again.
                     let p = &mut part.user_params[i];
                     p.unit = u;
-                    p.expr = format_value(p.value, u);
-                    Ok(())
+                    if crate::part::expr::is_plain_number(&p.expr) {
+                        p.expr = format_value(p.value, u);
+                        Ok(())
+                    } else {
+                        let (n, e) = (p.name.clone(), p.expr.clone());
+                        part.set_parameter_expr(&n, &e)
+                    }
                 }
                 Edit::Add => {
                     part.add_user_parameter(Unit::Mm);

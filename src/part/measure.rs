@@ -107,6 +107,57 @@ pub fn measure(body: &BRep, targets: &[Target]) -> Result<Measurement, String> {
     Ok(out)
 }
 
+/// Length of one kernel edge piece (a line, an arc, a sampled curve).
+fn piece_length(body: &BRep, e: EdgeId) -> Option<Real> {
+    let edge = body.edge(e)?;
+    Some(match body.curve(edge.curve)? {
+        Curve::Line(_) => (body.vertex(edge.end)?.point - body.vertex(edge.start)?.point).norm(),
+        Curve::Circle(c) => {
+            let s = body.sample_edge(e, &TessellationOptions::default()).ok()?;
+            let sweep: Real = s
+                .windows(2)
+                .map(|w| {
+                    let (u, v) = (w[0] - c.center, w[1] - c.center);
+                    u.cross(&v).norm().atan2(u.dot(&v))
+                })
+                .sum();
+            c.radius * sweep.min(std::f64::consts::TAU)
+        }
+        Curve::BSpline(_) => {
+            let s = body.sample_edge(e, &TessellationOptions::default()).ok()?;
+            s.windows(2).map(|w| (w[1] - w[0]).norm()).sum()
+        }
+    })
+}
+
+/// Measure Loop (Inventor): the length of the closed loop edge `e` belongs
+/// to — the boundary loop of face `face` when given (by name), else of a
+/// planar face first (the outline of a flat face), with the loop's edges.
+pub fn loop_length(body: &BRep, e: EdgeId, face: Option<&str>) -> Option<(Real, Vec<EdgeId>)> {
+    let mut loops: Vec<(u8, Vec<EdgeId>)> = Vec::new();
+    for (fid, f) in body.faces() {
+        for lp in std::iter::once(&f.outer).chain(&f.inner) {
+            if lp.coedges.iter().any(|c| c.edge == e) {
+                let rank = if face.is_some() && f.name.as_deref() == face {
+                    0
+                } else if matches!(surface_of(body, fid), Some(Surface::Plane(_))) {
+                    1
+                } else {
+                    2
+                };
+                loops.push((rank, lp.coedges.iter().map(|c| c.edge).collect()));
+            }
+        }
+    }
+    loops.sort_by_key(|(rank, _)| *rank);
+    let (_, edges) = loops.into_iter().next()?;
+    let len = edges
+        .iter()
+        .map(|x| piece_length(body, *x))
+        .sum::<Option<Real>>()?;
+    Some((len, edges))
+}
+
 /// Two parallel planar faces: the plane-to-plane distance (exact).
 fn exact_distance(
     a: &Item,
@@ -600,6 +651,18 @@ mod tests {
             .unwrap();
             assert!(close(m.center_distance.unwrap(), 10.0, 1e-9));
         }
+    }
+
+    #[test]
+    fn loop_of_a_box_top_and_of_a_hole() {
+        let p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let b = &p.body;
+        let e = edge_between(b, "Box1:Top", "Box1:Front");
+        let (len, edges) = loop_length(b, e, Some("Box1:Top")).unwrap();
+        assert!(close(len, 140.0, 1e-9), "{len}");
+        assert_eq!(edges.len(), 4);
+        let (len, _) = loop_length(b, e, Some("Box1:Front")).unwrap();
+        assert!(close(len, 120.0, 1e-9), "{len}");
     }
 
     #[test]

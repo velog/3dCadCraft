@@ -96,7 +96,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 14: Coil and Rib / Web (`Feature::Coil`, `Feature::Rib`) (2026-10-20).
 /// - 15: Revolve around a work axis (`AxisRef::Work`) (2026-10-23).
 /// - 16: Project Geometry of work features (`LinkSource::Work`) (2026-10-23).
-pub const FORMAT_REVISION: u32 = 16;
+/// - 17: parameter units cm, m, in, ft, rad (`Unit::Cm` …) (2026-10-23).
+pub const FORMAT_REVISION: u32 = 17;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

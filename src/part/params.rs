@@ -596,11 +596,7 @@ impl PartDocument {
                     unit,
                     expr: p.expr.clone(),
                     // Angles are shown unsigned.
-                    value: if unit == Unit::Deg {
-                        value.abs()
-                    } else {
-                        value
-                    },
+                    value: if unit.is_angle() { value.abs() } else { value },
                     tol: Some(p.tol),
                     comment: p.comment.clone(),
                 });
@@ -859,7 +855,7 @@ impl PartDocument {
             .map(|k| format!("User{k}"))
             .find(|n| !rows.iter().any(|r| &r.name == n))
             .unwrap_or_default();
-        let value = unit.from_display(if unit == Unit::Deg { 0.0 } else { 1.0 });
+        let value = unit.from_display(if unit.is_angle() { 0.0 } else { 1.0 });
         self.user_params.push(UserParam {
             name: name.clone(),
             expr: format_value(value, unit),

@@ -23,10 +23,12 @@
 //! Set `CADCRAFT3D_DEMO=rectangle|slot|tangents|lines` to start with a demo
 //! sketch on the box's top face.
 
+mod alias_input;
 mod blend;
 mod breadcrumb;
 mod browser_edit;
 mod camera;
+mod cmd_search;
 mod coil_rib;
 mod combine_split;
 mod command_ui;
@@ -466,6 +468,10 @@ struct CadCraftApp {
     show_labels: bool,
     /// Application Options → Display → Thread texture (cosmetic threads).
     thread_texture: bool,
+    /// Application Options → Show command alias input dialog (G6).
+    alias_input: bool,
+    /// The open alias field (`alias_input`).
+    alias: alias_input::AliasInput,
     /// View → Object Visibility (persisted with the Application Options).
     obj_vis: layout::ObjectVisibility,
 
@@ -492,6 +498,8 @@ struct CadCraftApp {
     /// Registry ids of the recently run commands, newest first
     /// (`commands::remember`; saved in `settings.json` → `options`).
     recent_commands: Vec<String>,
+    /// The command search field (Alt+S, `cmd_search`).
+    cmd_search: cmd_search::CmdSearch,
     /// The Extrude command, while its dialog is open.
     extrude: Option<ExtrudeDraft>,
     /// An Extrude / Revolve waiting while its sketch is edited (breadcrumb).
@@ -719,6 +727,8 @@ impl CadCraftApp {
             sketch_opts: SketchOptions::default(),
             show_labels: true,
             thread_texture: true,
+            alias_input: false,
+            alias: Default::default(),
             obj_vis: Default::default(),
             camera: OrbitCamera::default(),
             renderer: cc.wgpu_render_state.as_ref().map(ViewportRenderer::new),
@@ -731,6 +741,7 @@ impl CadCraftApp {
             feature_settings: Default::default(),
             last_command: None,
             recent_commands: Vec::new(),
+            cmd_search: Default::default(),
             dim_display: Default::default(),
             viewport_rect: egui::Rect::NOTHING,
             dim_tol_open: false,
@@ -2671,10 +2682,19 @@ impl CadCraftApp {
             return false;
         }
         let mut typed = String::new();
+        // A value starts with a digit, a sign, a point or a bracket; after
+        // that the field takes an expression too (`10+5`, `d0*2`, `1 in`):
+        // letters then belong to the field, not to the shortcuts.
+        let started = !self.hud.text.is_empty();
         ctx.input_mut(|i| {
             i.events.retain(|e| match e {
                 egui::Event::Text(t)
-                    if t.chars().all(|c| c.is_ascii_digit() || ".,-".contains(c)) =>
+                    if t.chars().all(|c| {
+                        c.is_ascii_digit()
+                            || ".,-(".contains(c)
+                            || (started || !typed.is_empty())
+                                && (c.is_ascii_alphanumeric() || "_+*/^() ".contains(c))
+                    }) =>
                 {
                     typed.push_str(t);
                     false
@@ -2704,9 +2724,28 @@ impl CadCraftApp {
             self.hud.text.pop();
             took = true;
         }
+        // The field's value: an expression with the part's parameters (the
+        // field's unit for bare numbers: degrees for angles, mm otherwise).
+        let params: std::collections::HashMap<String, f64> = self
+            .part()
+            .parameter_table()
+            .into_iter()
+            .map(|r| (r.name, r.value))
+            .collect();
+        let angle = |hud: &Hud, names: &[&str]| {
+            names.get(hud.focus).is_some_and(|n| n.starts_with("Angle"))
+        };
+        let names = self.hud_fields();
         let lock = |hud: &mut Hud| {
-            if let Ok(v) = hud.text.trim().parse::<f64>() {
-                hud.vals[hud.focus] = Some(v);
+            let unit = if angle(hud, names) {
+                crate::part::expr::Unit::Deg
+            } else {
+                crate::part::expr::Unit::Mm
+            };
+            if let Ok((v, _)) =
+                crate::part::expr::eval(hud.text.trim(), unit, &|n| params.get(n).copied())
+            {
+                hud.vals[hud.focus] = Some(unit.to_display(v));
             }
             hud.text.clear();
         };
@@ -4230,10 +4269,16 @@ impl CadCraftApp {
     fn shortcuts(&mut self, ctx: &egui::Context) {
         // ---- A0 (spec 0.15 §4.4): the panel key of this frame, see `keys`.
         keys::set_panel_key(ctx, None);
+        // Alt+S: the command search, also from a text field or a command.
+        self.search_shortcut(ctx);
         if ctx.egui_wants_keyboard_input() || self.file_window_open() {
             return; // typing into a text field
         }
         if self.hud_keys(ctx) {
+            return;
+        }
+        // A letter with the alias field on opens it instead of starting.
+        if keys::letter_alias(ctx.input(|i| i.modifiers)) && self.alias_start(ctx) {
             return;
         }
         let pressed = |k: Key| ctx.input(|i| i.key_pressed(k));
@@ -4451,6 +4496,7 @@ impl CadCraftApp {
                     ui.set_min_width(200.0);
                     self.help_menu(ui);
                 });
+                self.command_search(ui);
                 ui.label(RichText::new("3DCadCraft").weak());
             });
         });
@@ -5060,6 +5106,7 @@ impl CadCraftApp {
                 }
                 if self.editing.is_none() && !self.sel.is_empty() {
                     self.appearance_context_menu(ui);
+                    self.measure_context(ui);
                 }
                 ui.menu_button("Projection", |ui| {
                     for p in [
@@ -6648,6 +6695,7 @@ impl eframe::App for CadCraftApp {
         self.parameters_window(&ctx);
         self.material_windows(&ctx);
         self.measure_window(&ctx);
+        self.alias_window(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);
         self.layout_end(&ctx);

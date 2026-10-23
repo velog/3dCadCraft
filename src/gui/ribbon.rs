@@ -187,6 +187,11 @@ impl Tab {
         Tab::View,
     ];
 
+    /// The tab with this label (a command's `Place::Ribbon`).
+    pub fn by_label(label: &str) -> Option<Tab> {
+        Tab::ALL.into_iter().find(|t| t.label() == label)
+    }
+
     fn label(self) -> &'static str {
         match self {
             Tab::Model => "3D Model",

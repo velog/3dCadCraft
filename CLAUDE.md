@@ -566,6 +566,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   neutral planes are drafted group by group, re-found by name on each result (names are
   kept). Automatic Face Chain can reach faces not parallel to the pull (a bottom round →
   the bottom): the kernel refuses those.
+- **Command search and alias field** (`gui/cmd_search.rs`, `gui/alias_input.rs`): both run a command
+  through `start_command` (ribbon tab forward + `apply`). Alt+S is read at the very top of `shortcuts`
+  (before the "text field focused" return). The alias field takes the letter's `Text` *and* `Key`
+  events, or the single-letter shortcuts fire as well. Dynamic Input takes letters only after a first
+  digit / sign (then the field is an expression evaluated with the part's parameters).
+- **Parameter units** (`part::expr::Unit`, format revision 17): every unit is a factor to mm / rad
+  (`from_display` / `to_display`); test `is_angle()` / `is_length()`, never `== Unit::Deg`.
 - **One visible face / edge from kernel pieces** (`kernel::smooth`): truck has no periodic faces or
   closed edges, so a cylinder comes in 2+ faces and a circle in 2+ arcs. Faces on the same *curved*
   analytic surface sharing an edge are one `smooth_group`; the edge between them is a seam

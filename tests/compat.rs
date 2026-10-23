@@ -416,6 +416,22 @@ fn history_r7() -> PartDocument {
 /// to a smaller square) joined to it.
 /// Revision 14: a Coil (closed ends, left hand) beside a plate with a Web
 /// across it (To Next) and a boss.
+/// Revision 17: user parameters in cm, in and rad (`Unit::Cm` / `In` / `Rad`)
+/// driving the box (length 6 cm, width 1 in + 5 mm).
+fn units_r17() -> PartDocument {
+    use cadcraft3d::part::expr::Unit;
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let a = part.add_user_parameter(Unit::Cm);
+    part.set_parameter_expr(&a, "6").unwrap();
+    let b = part.add_user_parameter(Unit::In);
+    part.set_parameter_expr(&b, "1 + 5 mm").unwrap();
+    let c = part.add_user_parameter(Unit::Rad);
+    part.set_parameter_expr(&c, "PI / 4").unwrap();
+    part.set_feature_field(0, "length", &a).unwrap();
+    part.set_feature_field(0, "width", &b).unwrap();
+    part.regenerate().unwrap();
+    part
+}
 /// Revision 16: a work point and a work axis projected into a sketch
 /// (`LinkSource::Work`), a boss extruded from a circle on the point.
 fn project_work_r16() -> PartDocument {
@@ -973,6 +989,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("WorkR8");
             project.add_document("Part1", DocumentData::Part(work_r8()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r17/units_r17.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("UnitsR17");
+            project.add_document("Part1", DocumentData::Part(units_r17()));
             project.save(&f).unwrap();
         }
         let f = root().join("r16/project_work_r16.3dcadcraft");

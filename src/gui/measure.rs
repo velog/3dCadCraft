@@ -17,6 +17,10 @@ pub(super) struct MeasureUi {
     /// The last result and what it was computed from (body + selection):
     /// the closest pair is too heavy for every frame.
     cache: std::cell::RefCell<Option<(String, Result<Measurement, String>)>>,
+    /// Measure Loop: a picked edge gives the length of its loop.
+    pub loop_mode: bool,
+    /// Accumulate: values added with "Add to Accumulate" (label, mm).
+    pub acc: Vec<(String, f64)>,
 }
 
 /// The measurable targets of the selection (the last two), and whether
@@ -45,6 +49,48 @@ impl CadCraftApp {
     /// Inspect → Measure: opens (or closes) the window.
     pub(super) fn toggle_measure(&mut self) {
         self.measure.open = !self.measure.open;
+    }
+
+    /// The right-click menu's Measure: opens the window on the selection.
+    pub(super) fn measure_context(&mut self, ui: &mut egui::Ui) {
+        if ui
+            .button("Measure")
+            .on_hover_text("Measure the selection (M)")
+            .clicked()
+        {
+            self.measure.open = true;
+            ui.close();
+        }
+    }
+
+    /// Measure Loop of the selected edge: (length, edge count).
+    fn measured_loop(&self) -> Option<(f64, usize)> {
+        let e = self.sel.iter().rev().find_map(|s| match s {
+            SelItem::Edge(e) => Some(*e),
+            _ => None,
+        })?;
+        // A selected face chooses which of the edge's two loops.
+        let face = self.sel.iter().find_map(|s| match s {
+            SelItem::Face(n) => Some(n.as_str()),
+            _ => None,
+        });
+        measure::loop_length(&self.part().body, e, face).map(|(l, es)| (l, es.len()))
+    }
+
+    /// The value "Add to Accumulate" takes: the loop, the distance of a
+    /// pair, else a length or an area.
+    fn accumulable(&self, m: Option<&Measurement>) -> Option<(String, f64)> {
+        if self.measure.loop_mode {
+            return self.measured_loop().map(|(l, _)| ("Loop".to_owned(), l));
+        }
+        let m = m?;
+        if let Some((d, ..)) = m.distance {
+            return Some(("Distance".to_owned(), d));
+        }
+        let it = m.items.last()?;
+        it.length
+            .map(|l| ("Length".to_owned(), l))
+            .or(it.area.map(|a| ("Area".to_owned(), a)))
     }
 
     /// The measurement of the current selection (cached per body and
@@ -95,14 +141,32 @@ impl CadCraftApp {
                     .resizable(true),
             )
             .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.measure.loop_mode, false, "Measure");
+                    ui.selectable_value(&mut self.measure.loop_mode, true, "Loop")
+                        .on_hover_text("Click an edge: the length of its closed loop");
+                });
                 ui.label(
-                    RichText::new(
+                    RichText::new(if self.measure.loop_mode {
+                        "Click an edge: the length of the loop it belongs to (with a face                          selected too: that face's loop)."
+                    } else {
                         "Click a face, edge, vertex or body; click a second one for the \
-                         distance and angle (a third click starts again).",
-                    )
+                         distance and angle (a third click starts again)."
+                    })
                     .weak(),
                 );
                 ui.separator();
+                if self.measure.loop_mode {
+                    match self.measured_loop() {
+                        Some((l, n)) => {
+                            ui.label(RichText::new(format!("Loop length: {}", mm(l))).strong());
+                            ui.label(RichText::new(format!("{n} edge pieces")).weak());
+                        }
+                        None => {
+                            ui.label("Select an edge.");
+                        }
+                    }
+                }
                 match &result {
                     None => {
                         ui.label("Nothing selected.");
@@ -110,6 +174,7 @@ impl CadCraftApp {
                     Some(Err(e)) => {
                         ui.colored_label(Color32::from_rgb(200, 120, 0), format!("Measure: {e}"));
                     }
+                    Some(Ok(_)) if self.measure.loop_mode => {}
                     Some(Ok(m)) => {
                         egui::Grid::new("measure_grid")
                             .num_columns(2)
@@ -182,6 +247,30 @@ impl CadCraftApp {
                     );
                 }
                 ui.separator();
+                // Accumulate (Inventor): a running sum of measured values.
+                let value = self.accumulable(result.as_ref().and_then(|r| r.as_ref().ok()));
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(value.is_some(), egui::Button::new("Add to Accumulate"))
+                        .clicked()
+                        && let Some(v) = value
+                    {
+                        self.measure.acc.push(v);
+                    }
+                    if ui
+                        .add_enabled(!self.measure.acc.is_empty(), egui::Button::new("Clear Accumulate"))
+                        .clicked()
+                    {
+                        self.measure.acc.clear();
+                    }
+                });
+                if !self.measure.acc.is_empty() {
+                    let total: f64 = self.measure.acc.iter().map(|(_, v)| v).sum();
+                    let parts: Vec<String> =
+                        self.measure.acc.iter().map(|(k, v)| format!("{k} {v:.3}")).collect();
+                    ui.label(RichText::new(format!("Accumulate: {total:.3}")).strong())
+                        .on_hover_text(parts.join(" + "));
+                }
                 if ui.button("Clear Selection").clicked() {
                     self.sel.clear();
                 }

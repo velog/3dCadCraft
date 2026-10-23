@@ -24,32 +24,75 @@ pub enum Unit {
     Deg,
     /// Unitless.
     Ul,
+    /// Length shown in centimetres (format revision 17).
+    Cm,
+    /// Length shown in metres (format revision 17).
+    M,
+    /// Length shown in inches (format revision 17).
+    In,
+    /// Length shown in feet (format revision 17).
+    Ft,
+    /// Angle shown in radians (format revision 17).
+    Rad,
 }
 
 impl Unit {
-    /// Display label (Inventor's Unit/Type column).
+    /// Every unit, in the order the Parameters table offers them.
+    pub const ALL: [Unit; 8] = [
+        Unit::Mm,
+        Unit::Cm,
+        Unit::M,
+        Unit::In,
+        Unit::Ft,
+        Unit::Deg,
+        Unit::Rad,
+        Unit::Ul,
+    ];
+
+    /// The name typed after a value and shown in the table.
     pub fn label(self) -> &'static str {
         match self {
             Unit::Mm => "mm",
+            Unit::Cm => "cm",
+            Unit::M => "m",
+            Unit::In => "in",
+            Unit::Ft => "ft",
             Unit::Deg => "deg",
+            Unit::Rad => "rad",
             Unit::Ul => "ul",
+        }
+    }
+
+    /// An angle (stored in radians).
+    pub fn is_angle(self) -> bool {
+        matches!(self, Unit::Deg | Unit::Rad)
+    }
+
+    /// A length (stored in millimetres).
+    pub fn is_length(self) -> bool {
+        matches!(self, Unit::Mm | Unit::Cm | Unit::M | Unit::In | Unit::Ft)
+    }
+
+    /// Internal units (mm, rad) per displayed unit.
+    fn factor(self) -> Real {
+        match self {
+            Unit::Mm | Unit::Ul | Unit::Rad => 1.0,
+            Unit::Cm => 10.0,
+            Unit::M => 1000.0,
+            Unit::In => 25.4,
+            Unit::Ft => 304.8,
+            Unit::Deg => std::f64::consts::PI / 180.0,
         }
     }
 
     /// Internal value of a bare number typed in this unit.
     pub fn from_display(self, v: Real) -> Real {
-        match self {
-            Unit::Deg => v.to_radians(),
-            _ => v,
-        }
+        v * self.factor()
     }
 
     /// Display value of an internal value.
     pub fn to_display(self, v: Real) -> Real {
-        match self {
-            Unit::Deg => v.to_degrees(),
-            _ => v,
-        }
+        v / self.factor()
     }
 }
 
@@ -552,5 +595,36 @@ mod tests {
         let (v, err) = eval_all(&[e("x", "y"), e("y", "x"), e("z", "5")]);
         assert!(err.contains_key("x") && err.contains_key("y"));
         assert_eq!(v["z"], 5.0);
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    /// A bare number takes the parameter's unit; every unit converts to
+    /// mm / rad and back.
+    #[test]
+    fn parameter_units_convert() {
+        let none = |_: &str| None;
+        for (u, typed, internal) in [
+            (Unit::Mm, "2", 2.0),
+            (Unit::Cm, "2", 20.0),
+            (Unit::M, "0.5", 500.0),
+            (Unit::In, "2", 50.8),
+            (Unit::Ft, "1", 304.8),
+            (Unit::Rad, "1", 1.0),
+            (Unit::Deg, "90", std::f64::consts::FRAC_PI_2),
+            (Unit::Ul, "3", 3.0),
+        ] {
+            let (v, _) = eval(typed, u, &none).unwrap();
+            assert!((v - internal).abs() < 1e-9, "{u:?}");
+            assert!((u.to_display(v) - typed.parse::<Real>().unwrap()).abs() < 1e-9);
+        }
+        // A unit in the text wins over the parameter's.
+        let (v, _) = eval("1 in + 1", Unit::Cm, &none).unwrap();
+        assert!((v - 35.4).abs() < 1e-9, "1 in + 1 cm");
+        assert_eq!(Unit::ALL.len(), 8);
+        assert!(Unit::Rad.is_angle() && Unit::Ft.is_length() && !Unit::Ul.is_length());
     }
 }

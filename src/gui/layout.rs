@@ -194,6 +194,8 @@ pub struct AppOptions {
     pub show_labels: bool,
     /// Cosmetic threads drawn as a texture on their faces.
     pub thread_texture: bool,
+    /// Show command alias input dialog (spec 0.15 §5.1, G6).
+    pub alias_input: bool,
     /// ViewCube → Set Current View as Home: (yaw, pitch) in degrees.
     pub home_view: Option<(f64, f64)>,
     /// Select Priority, filters (those switched off), box mode, prehighlight
@@ -215,6 +217,7 @@ impl Default for AppOptions {
             inference: InferenceSettings::default(),
             show_labels: true,
             thread_texture: true,
+            alias_input: false,
             home_view: None,
             selection: Default::default(),
             object_visibility: ObjectVisibility::default(),
@@ -785,6 +788,7 @@ impl CadCraftApp {
             inference: self.tools.inference,
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
+            alias_input: self.alias_input,
             home_view: self.home_view,
             selection: self.select,
             object_visibility: self.obj_vis,
@@ -803,6 +807,7 @@ impl CadCraftApp {
             self.thread_texture = o.thread_texture;
             self.scene_dirty = true;
         }
+        self.alias_input = o.alias_input;
         self.home_view = o.home_view;
         self.select = o.selection;
         self.obj_vis = o.object_visibility;

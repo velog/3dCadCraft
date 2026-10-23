@@ -152,5 +152,12 @@
     "features": 3,
     "sketches": 1,
     "exact": true
+  },
+  "r17/units_r17.3dcadcraft": {
+    "volume": 36480.0,
+    "faces": 6,
+    "features": 1,
+    "sketches": 0,
+    "exact": true
   }
 }
