@@ -387,6 +387,76 @@ impl CadCraftApp {
                 }
             });
             ui.end_row();
+            // Add / Remove: what a click on a centre does (Inventor's
+            // Positions selector; Ctrl+click removes there).
+            plabel(ui, "Mode");
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut d.remove, false, "Add")
+                    .on_hover_text("Clicks add centres");
+                ui.radio_value(&mut d.remove, true, "Remove")
+                    .on_hover_text("Clicks on centres remove them");
+            });
+            ui.end_row();
+            // The centres one by one, each removable (the sketch of an
+            // existing hole is hidden, so its points cannot be clicked).
+            let mut drop_center: Option<usize> = None;
+            for (k, c) in d.def.centers.iter().enumerate() {
+                plabel(ui, &format!("Centre {}", k + 1));
+                ui.horizontal(|ui| {
+                    ui.label(match c {
+                        crate::part::HoleCenter::Point(_) => "sketch point",
+                        crate::part::HoleCenter::Concentric(_) => "concentric to an edge",
+                        crate::part::HoleCenter::Axis(_) => "on a cylinder's axis",
+                    });
+                    if ui
+                        .small_button("x")
+                        .on_hover_text("Remove this centre")
+                        .clicked()
+                    {
+                        drop_center = Some(k);
+                    }
+                });
+                ui.end_row();
+            }
+            if let Some(k) = drop_center {
+                d.def.centers.remove(k);
+                if !d
+                    .def
+                    .centers
+                    .iter()
+                    .any(|c| matches!(c, crate::part::HoleCenter::Point(_)))
+                    && d.edit.is_none()
+                {
+                    d.def.sketch.clear();
+                }
+            }
+            let mut drop_point: Option<usize> = None;
+            for k in 0..d.points.len() {
+                plabel(ui, &format!("New centre {}", k + 1));
+                ui.horizontal(|ui| {
+                    ui.label("clicked on the face");
+                    if ui
+                        .small_button("x")
+                        .on_hover_text("Remove this centre")
+                        .clicked()
+                    {
+                        drop_point = Some(k);
+                    }
+                });
+                ui.end_row();
+            }
+            if let Some(k) = drop_point {
+                d.points.remove(k);
+                d.dims.retain(|x| x.center != k);
+                for x in &mut d.dims {
+                    if x.center > k {
+                        x.center -= 1;
+                    }
+                }
+                if d.points.is_empty() {
+                    d.face = None;
+                }
+            }
             if let Some(f) = &d.face {
                 plabel(ui, "Face");
                 ui.label(f);

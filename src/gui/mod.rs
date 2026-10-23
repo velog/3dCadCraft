@@ -642,6 +642,9 @@ struct CadCraftApp {
     pattern_draft: Option<pattern_feature::PatternDraft>,
     /// The open Hole command.
     hole_draft: Option<hole::HoleDraft>,
+    /// The Hole whose sketch was opened from its panel: Finish Sketch
+    /// reopens the panel (feature id).
+    hole_return: Option<String>,
     /// Project Geometry is active in the open sketch.
     project_geometry: bool,
     /// Replace Reference armed: (sketch, link index); the next Project
@@ -691,6 +694,8 @@ enum SketchCtx {
     Entity(EntityId),
     /// A projected (reference) point.
     Point(PointId),
+    /// A point of the sketch itself (Center Point / normal point).
+    OwnPoint(PointId),
 }
 
 impl CadCraftApp {
@@ -802,6 +807,7 @@ impl CadCraftApp {
             pattern_draft: None,
             presets: Default::default(),
             hole_draft: None,
+            hole_return: None,
             project_geometry: false,
             relink: None,
             thread_draft: None,
@@ -993,6 +999,7 @@ impl CadCraftApp {
         self.tab = Tab::Model;
         // Breadcrumb: back to the command that opened the sketch.
         self.resume_suspended_draft();
+        self.resume_hole();
     }
 
     fn look_at_sketch(&mut self, i: usize) {
@@ -3697,6 +3704,33 @@ impl CadCraftApp {
                     .unwrap_or(crate::part::RefTarget::Point(p));
                 self.reference_menu(ui, i, target);
             }
+            SketchCtx::OwnPoint(p) => {
+                // Format → Center Point on an existing point (Inventor converts
+                // selected points with the Center Point button).
+                let center = self.part().sketches[i].sketch.center_points().contains(&p);
+                let label = if center {
+                    "Convert to Normal Point"
+                } else {
+                    "Convert to Center Point"
+                };
+                if ui
+                    .button(label)
+                    .on_hover_text("Center Points are hole centres (a cross)")
+                    .clicked()
+                {
+                    let style = if center {
+                        crate::sketch::PointStyle::Normal
+                    } else {
+                        crate::sketch::PointStyle::Center
+                    };
+                    self.checkpoint("Center Point");
+                    if let Err(e) = self.part_mut().sketches[i].sketch.set_point_style(p, style) {
+                        self.history.cancel();
+                        self.file_status = Some(Err(format!("Center Point: {e}")));
+                    }
+                    ui.close();
+                }
+            }
             SketchCtx::Entity(e)
                 if self.part().sketches[i]
                     .link_of(crate::part::RefTarget::Curve(e))
@@ -4876,16 +4910,25 @@ impl CadCraftApp {
                     .ray_plane(p, rect, plane)
                     .map(|w| plane.project(&w))
             });
-            let projected_point = self.editing.and_then(|i| {
+            let point_under = self.editing.and_then(|i| {
                 let ps = &self.part().sketches[i];
                 overlay::pick_any_point(&self.camera, rect, &ps.sketch, p, overlay::POINT_PICK_PX)
-                    .filter(|&q| ps.is_projected(q))
+                    .map(|q| (q, ps.is_projected(q)))
+                    // A curve's end or centre keeps the curve's menu; only
+                    // standalone points get the point menu.
+                    .filter(|&(q, projected)| {
+                        projected || !ps.sketch.entities().any(|(_, e)| e.points().contains(&q))
+                    })
             });
             self.sketch_context = match (label_hit, self.editing) {
                 (Some(c), _) => Some(SketchCtx::Constraint(c)),
-                (None, Some(_)) if projected_point.is_some() => {
-                    projected_point.map(SketchCtx::Point)
-                }
+                (None, Some(_)) if point_under.is_some() => point_under.map(|(q, projected)| {
+                    if projected {
+                        SketchCtx::Point(q)
+                    } else {
+                        SketchCtx::OwnPoint(q)
+                    }
+                }),
                 (None, Some(i)) => overlay::pick_entity(
                     &self.camera,
                     rect,

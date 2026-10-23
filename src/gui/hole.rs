@@ -109,6 +109,8 @@ pub(super) struct HoleDraft {
     /// A sketch shared for this hole by Keep sketch visible on (+): Cancel
     /// unshares it (sketch id).
     pub kept: Option<String>,
+    /// Positions selector mode: clicks add centres (default) or remove them.
+    pub remove: bool,
 }
 
 impl HoleDraft {
@@ -122,6 +124,20 @@ impl HoleDraft {
             edit: None,
             to_pick: false,
             kept: None,
+            remove: false,
+        }
+    }
+
+    /// Adds centre `c`, or removes it in Remove mode (a click on what is
+    /// already in / not in the list does nothing).
+    fn pick_center(&mut self, c: HoleCenter, same: impl Fn(&HoleCenter) -> bool) {
+        let at = self.def.centers.iter().position(same);
+        match (self.remove, at) {
+            (true, Some(k)) => {
+                self.def.centers.remove(k);
+            }
+            (false, None) => self.def.centers.push(c),
+            _ => {}
         }
     }
 
@@ -281,6 +297,33 @@ pub(super) fn unused_center_points(part: &PartDocument) -> Option<(String, Vec<P
         })
 }
 
+/// The Center Points of `def`'s sketch that neither `def` nor another hole
+/// uses (new points added while its sketch was open).
+pub(super) fn new_center_points(part: &PartDocument, def: &HoleFeature) -> Vec<PointId> {
+    let Some(ps) = part.sketches.iter().find(|s| s.id == def.sketch) else {
+        return Vec::new();
+    };
+    let used: Vec<PointId> = part
+        .features
+        .iter()
+        .filter_map(|f| match f {
+            Feature::Hole(h) if h.sketch == ps.id && h.id != def.id => Some(h.centers.iter()),
+            _ => None,
+        })
+        .flatten()
+        .chain(def.centers.iter())
+        .filter_map(|c| match c {
+            HoleCenter::Point(p) => Some(*p),
+            _ => None,
+        })
+        .collect();
+    ps.sketch
+        .center_points()
+        .into_iter()
+        .filter(|p| !used.contains(p) && !ps.is_projected(*p))
+        .collect()
+}
+
 pub(super) fn fitting_thread(
     tables: &Standards,
     table: &str,
@@ -433,13 +476,6 @@ impl CadCraftApp {
             }
             return;
         }
-        if d.edit.is_some() {
-            // Centres of an existing hole are edited in its sketch.
-            self.file_status = Some(Err(
-                "Hole: edit the centres in the hole's sketch (Edit Sketch)".into(),
-            ));
-            return;
-        }
         match pick {
             HolePick::SketchPoint(i, pid) => {
                 let Some(id) = ids.get(i) else { return };
@@ -448,11 +484,7 @@ impl CadCraftApp {
                 }
                 d.def.sketch = id.clone();
                 let c = HoleCenter::Point(pid);
-                if let Some(k) = d.def.centers.iter().position(|x| *x == c) {
-                    d.def.centers.remove(k);
-                } else {
-                    d.def.centers.push(c);
-                }
+                d.pick_center(c.clone(), |x| *x == c);
                 if !d
                     .def
                     .centers
@@ -463,25 +495,18 @@ impl CadCraftApp {
                 }
             }
             HolePick::Circle(r) => {
-                let c = HoleCenter::Concentric(r.clone());
-                if let Some(k) = d.def.centers.iter().position(|x| match x {
-                    HoleCenter::Concentric(e) => e.faces == r.faces,
-                    _ => false,
-                }) {
-                    d.def.centers.remove(k);
-                } else {
-                    d.def.centers.push(c);
-                }
+                let faces = r.faces.clone();
+                d.pick_center(
+                    HoleCenter::Concentric(r),
+                    |x| matches!(x, HoleCenter::Concentric(e) if e.faces == faces),
+                );
             }
             HolePick::Cylinder(r) => {
-                if let Some(k) = d.def.centers.iter().position(|x| match x {
-                    HoleCenter::Axis(f) => f.face == r.face,
-                    _ => false,
-                }) {
-                    d.def.centers.remove(k);
-                } else {
-                    d.def.centers.push(HoleCenter::Axis(r));
-                }
+                let face = r.face.clone();
+                d.pick_center(
+                    HoleCenter::Axis(r),
+                    |x| matches!(x, HoleCenter::Axis(f) if f.face == face),
+                );
             }
             HolePick::Edge(a, b, ends) => {
                 // A dimension from the last clicked centre (two at most).
@@ -512,7 +537,10 @@ impl CadCraftApp {
                 }
             }
             HolePick::Face(name, at) => {
-                if !d.def.sketch.is_empty() || !option(&ALLOW_CREATE) {
+                // Edit Feature of a hole on sketch points: new clicks become
+                // Center Points of that sketch at OK (`commit_hole`).
+                let editing_points = d.edit.is_some() && !d.def.sketch.is_empty();
+                if (!d.def.sketch.is_empty() && !editing_points) || !option(&ALLOW_CREATE) {
                     return;
                 }
                 match &d.face {
@@ -524,9 +552,13 @@ impl CadCraftApp {
                     }
                     _ => {
                         d.face = Some(name);
-                        // A click on a centre removes it (and its dimensions).
-                        if let Some(k) = d.points.iter().position(|p| (p - at).norm() < 0.01 * size)
-                        {
+                        // In Remove mode a click on a centre removes it (and
+                        // its dimensions); in Add mode it adds one.
+                        let near = d.points.iter().position(|p| (p - at).norm() < 0.01 * size);
+                        if d.remove != near.is_some() {
+                            return;
+                        }
+                        if let Some(k) = near {
                             d.points.remove(k);
                             d.dims.retain(|x| x.center != k);
                             for x in &mut d.dims {
@@ -667,6 +699,23 @@ impl CadCraftApp {
         };
         self.checkpoint(cmd);
         let n_sketches = self.part().sketches.len();
+        let mut d = d;
+        if d.edit.is_some() && !d.points.is_empty() {
+            // Edit Feature: centres clicked on the face become Center Points
+            // of the hole's sketch.
+            if let Some(ps) = self
+                .part_mut()
+                .sketches
+                .iter_mut()
+                .find(|s| s.id == d.def.sketch)
+            {
+                for p in std::mem::take(&mut d.points) {
+                    let q = ps.sketch.plane.project(&p);
+                    let id = ps.sketch.add_center_point(q);
+                    d.def.centers.push(HoleCenter::Point(id));
+                }
+            }
+        }
         let built = match d.edit {
             Some(k) => self
                 .part_mut()
@@ -746,7 +795,29 @@ impl CadCraftApp {
         if self.hole_draft.is_some() {
             return; // the commit failed; its reason is in the status bar
         }
-        self.edit_hole_sketch(d.edit.unwrap_or(n));
+        let k = d.edit.unwrap_or(n);
+        // Finish Sketch comes back to this hole's panel (`resume_hole`).
+        self.hole_return = self.part().features.get(k).map(|f| f.id().to_owned());
+        self.edit_hole_sketch(k);
+    }
+
+    /// After Finish Sketch of a sketch opened from the Hole panel: the panel
+    /// opens again (Edit Feature) and the sketch's new Center Points that no
+    /// hole uses yet become centres (Inventor selects them).
+    pub(super) fn resume_hole(&mut self) {
+        let Some(id) = self.hole_return.take() else {
+            return;
+        };
+        let Some(k) = self.part().features.iter().position(|f| f.id() == id) else {
+            return;
+        };
+        self.edit_feature_dialog(k);
+        let part = self.part().clone();
+        if let Some(d) = self.hole_draft.as_mut() {
+            for p in new_center_points(&part, &d.def) {
+                d.def.centers.push(HoleCenter::Point(p));
+            }
+        }
     }
 
     /// **Edit Sketch** of Hole feature `k` (browser menu, breadcrumb).
@@ -1092,6 +1163,68 @@ mod tests {
         part.sketches[i].visible = true;
         let (_, left) = unused_center_points(&part).unwrap();
         assert_eq!(left, vec![ids[1]]);
+    }
+
+    /// Positions in Add mode only add, in Remove mode only remove.
+    #[test]
+    fn positions_add_and_remove_modes() {
+        let mut d = HoleDraft::new();
+        let a = HoleCenter::Point(PointId::default());
+        d.pick_center(a.clone(), |x| *x == a);
+        d.pick_center(a.clone(), |x| *x == a);
+        assert_eq!(d.def.centers.len(), 1, "Add mode: a second click keeps it");
+        d.remove = true;
+        let other = HoleCenter::Axis(crate::part::FaceRef {
+            face: "F".into(),
+            hint: [0.0; 3],
+        });
+        d.pick_center(other.clone(), |x| *x == other);
+        assert_eq!(d.def.centers.len(), 1, "Remove mode never adds");
+        d.pick_center(a.clone(), |x| *x == a);
+        assert!(d.def.centers.is_empty());
+    }
+
+    /// Center Points added to a hole's sketch later are found as new
+    /// centres; points used by this hole or by another one are not.
+    #[test]
+    fn new_center_points_of_the_hole_sketch() {
+        let mut part = PartDocument::with_box("Box1", [60.0, 30.0, 20.0]).unwrap();
+        let (i, ids) = part
+            .create_hole_sketch(
+                "Box1:Top",
+                &[
+                    Point3::new(10.0, 10.0, 20.0),
+                    Point3::new(30.0, 10.0, 20.0),
+                    Point3::new(50.0, 10.0, 20.0),
+                ],
+            )
+            .unwrap();
+        let sid = part.sketches[i].id.clone();
+        let hole = |c: &[PointId]| {
+            let mut def = HoleFeature::new(HoleSpec::simple(4.0, 5.0));
+            def.sketch = sid.clone();
+            def.centers = c.iter().map(|p| HoleCenter::Point(*p)).collect();
+            def
+        };
+        part.add_hole(hole(&[ids[0]])).unwrap();
+        part.add_hole(hole(&[ids[1]])).unwrap();
+        let second = match part.features.last() {
+            Some(Feature::Hole(h)) => h.clone(),
+            _ => panic!("no hole"),
+        };
+        assert_eq!(new_center_points(&part, &second), vec![ids[2]]);
+        // A point added in the sketch afterwards (Edit Sketch).
+        let extra = part.sketches[i]
+            .sketch
+            .add_center_point(crate::sketch::Point2::new(5.0, 25.0));
+        let found = new_center_points(&part, &second);
+        assert_eq!(found, vec![ids[2], extra]);
+        // A normal point is not a centre.
+        part.sketches[i]
+            .sketch
+            .set_point_style(extra, crate::sketch::PointStyle::Normal)
+            .unwrap();
+        assert_eq!(new_center_points(&part, &second), vec![ids[2]]);
     }
 
     #[test]
