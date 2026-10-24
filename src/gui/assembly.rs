@@ -279,6 +279,7 @@ impl CadCraftApp {
                 (egui::Key::C, Action::AsmConstrain),
                 (egui::Key::V, Action::AsmFreeMove),
                 (egui::Key::G, Action::AsmFreeRotate),
+                (egui::Key::J, Action::AsmJoint),
             ] {
                 if pressed(k) {
                     self.apply(a);
@@ -399,6 +400,7 @@ impl CadCraftApp {
             }
             Action::AsmConstrain => self.start_constrain(),
             Action::AsmUpdate => self.update_assembly(),
+            Action::AsmJoint => self.start_joint(),
             Action::AsmGround => {
                 let ids = self.asm.sel.clone();
                 if ids.is_empty() {

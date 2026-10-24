@@ -787,7 +787,7 @@ Robustness in touching and nearly coincident cases is achieved with tolerances a
 
 **Settings.** Offset, minimum/maximum (limits of motion), mate/flush solution, preview.
 
-## 3.3 Joints — ⬜ · L
+## 3.3 Joints — 🟡 (A3: Rigid, Rotational, Slider, Cylindrical, Planar, Ball, limits; waiting for a visual check) · L
 
 A more intuitive way: one operation sets both the *position* and the *motion*.
 

@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use nalgebra::{DMatrix, DVector};
 
-use super::relation::{Geom, GeomRef, residuals};
+use super::relation::{Constraint, Geom, GeomRef, residuals};
 use crate::document::AssemblyDocument;
 use crate::kernel::{Real, Transform3, Vector3};
 
@@ -49,11 +49,14 @@ pub fn solve(
     heavy: Option<u32>,
 ) -> Solved {
     let mut out = Solved::default();
-    // Active constraints with their local geometry.
-    let mut cons = Vec::new();
+    // Active constraints with their local geometry (joint origins as frames).
+    let mut cons: Vec<(Constraint, Geom, Geom)> = Vec::new();
     for c in asm.constraints.iter().filter(|c| !c.suppressed) {
         match (local(&c.a), local(&c.b)) {
-            (Ok(a), Ok(b)) => cons.push((c, a, b)),
+            (Ok(a), Ok(b)) if c.kind.is_joint() => {
+                cons.push((c.clone(), a.as_frame(), b.as_frame()))
+            }
+            (Ok(a), Ok(b)) => cons.push((c.clone(), a, b)),
             (Err(e), _) | (_, Err(e)) => out.sick.push((c.id, e)),
         }
     }
@@ -74,18 +77,6 @@ pub fn solve(
         .collect();
     // The assembly's own origin (`relation::ASSEMBLY`) never moves.
     place.insert(super::relation::ASSEMBLY, Transform3::identity());
-    let eval = |place: &HashMap<u32, Transform3>| -> DVector<Real> {
-        let mut r = Vec::new();
-        for (c, a, b) in &cons {
-            let (Some(ta), Some(tb)) = (place.get(&c.a.occurrence()), place.get(&c.b.occurrence()))
-            else {
-                continue;
-            };
-            let _ = residuals(c, &a.moved(ta), &b.moved(tb), &mut r);
-        }
-        DVector::from_vec(r)
-    };
-    let n = blocks.len() * 6;
     // Column weights: a dragged component is expensive to move.
     let weight: Vec<Real> = blocks
         .iter()
@@ -94,80 +85,43 @@ pub fn solve(
             [w; 6]
         })
         .collect();
-    let apply = |place: &mut HashMap<u32, Transform3>, x: &DVector<Real>| {
-        for (k, id) in blocks.iter().enumerate() {
-            let Some(t) = place.get_mut(id) else {
+    let mut r = run(&cons, &blocks, &weight, &mut place);
+    // Joint limits: a value past one is held there and solved again.
+    for _ in 0..3 {
+        let mut held = false;
+        for (c, a, b) in cons.iter_mut() {
+            if !c.kind.is_joint() || c.locked || (c.min.is_none() && c.max.is_none()) {
+                continue;
+            }
+            let (Some(ta), Some(tb)) = (place.get(&c.a.occurrence()), place.get(&c.b.occurrence()))
+            else {
                 continue;
             };
-            let v = |i: usize| x[6 * k + i];
-            let c = t.translation.vector;
-            let rot = Transform3::rotation(Vector3::new(v(3), v(4), v(5)) / L);
-            *t = Transform3::translation(v(0), v(1), v(2))
-                * Transform3::translation(c.x, c.y, c.z)
-                * rot
-                * Transform3::translation(-c.x, -c.y, -c.z)
-                * *t;
-        }
-    };
-    let jacobian = |place: &HashMap<u32, Transform3>, r0: &DVector<Real>| {
-        let mut j = DMatrix::zeros(r0.len(), n);
-        let h = 1e-7;
-        for col in 0..n {
-            let mut p = place.clone();
-            let mut x = DVector::zeros(n);
-            x[col] = h;
-            apply(&mut p, &x);
-            let r = eval(&p);
-            for row in 0..r0.len().min(r.len()) {
-                j[(row, col)] = (r[row] - r0[row]) / h;
+            let fa = super::joint::frame_of(&a.moved(ta));
+            let fb = super::joint::frame_of(&b.moved(tb));
+            let Some(v) = super::joint::measure(c, &fa, &fb) else {
+                continue;
+            };
+            let lo = c.min.unwrap_or(Real::NEG_INFINITY);
+            let hi = c.max.unwrap_or(Real::INFINITY);
+            if v < lo - 1e-9 || v > hi + 1e-9 {
+                c.locked = true;
+                c.value = v.clamp(lo, hi);
+                held = true;
             }
         }
-        j
-    };
-    let norm = |r: &DVector<Real>| r.iter().fold(0.0, |m: Real, v| m.max(v.abs()));
-    let mut r = eval(&place);
-    let mut lambda = 1e-6;
-    if n > 0 {
-        for _ in 0..200 {
-            if norm(&r) < 1e-10 {
-                break;
-            }
-            let j = jacobian(&place, &r);
-            let jw = &j * DMatrix::from_diagonal(&DVector::from_vec(weight.clone()));
-            let mut improved = false;
-            for _ in 0..12 {
-                let a = &jw * jw.transpose() + DMatrix::identity(r.len(), r.len()) * lambda;
-                let Some(y) = a.lu().solve(&r) else {
-                    lambda *= 10.0;
-                    continue;
-                };
-                let mut dx = -(jw.transpose() * y);
-                for (i, w) in weight.iter().enumerate() {
-                    dx[i] *= w;
-                }
-                let mut p = place.clone();
-                apply(&mut p, &dx);
-                let r1 = eval(&p);
-                if r1.norm() < r.norm() {
-                    place = p;
-                    r = r1;
-                    lambda = (lambda / 3.0).max(1e-12);
-                    improved = true;
-                    break;
-                }
-                lambda *= 4.0;
-            }
-            if !improved {
-                break;
-            }
+        if !held {
+            break;
         }
+        r = run(&cons, &blocks, &weight, &mut place);
     }
-    out.residual = norm(&r);
+    let n = blocks.len() * 6;
+    out.residual = r.iter().fold(0.0, |m: Real, v| m.max(v.abs()));
     out.converged = out.residual < 1e-6;
     // Degrees of freedom of each block, the others held (not while
     // dragging: nobody reads them then, and they cost a Jacobian).
     if n > 0 && heavy.is_none() {
-        let j = jacobian(&place, &r);
+        let j = jacobian(&cons, &blocks, &place, &r);
         for (k, id) in blocks.iter().enumerate() {
             let sub = j.columns(6 * k, 6).into_owned();
             let rank = if sub.nrows() == 0 {
@@ -190,6 +144,108 @@ pub fn solve(
         .filter_map(|id| place.get(id).map(|t| (*id, *t)))
         .collect();
     out
+}
+
+fn eval(cons: &[(Constraint, Geom, Geom)], place: &HashMap<u32, Transform3>) -> DVector<Real> {
+    let mut r = Vec::new();
+    for (c, a, b) in cons {
+        let (Some(ta), Some(tb)) = (place.get(&c.a.occurrence()), place.get(&c.b.occurrence()))
+        else {
+            continue;
+        };
+        let _ = residuals(c, &a.moved(ta), &b.moved(tb), &mut r);
+    }
+    DVector::from_vec(r)
+}
+
+/// Moves each block by its six unknowns (translation, turn about its own
+/// origin scaled by `L`).
+fn apply(blocks: &[u32], place: &mut HashMap<u32, Transform3>, x: &DVector<Real>) {
+    for (k, id) in blocks.iter().enumerate() {
+        let Some(t) = place.get_mut(id) else {
+            continue;
+        };
+        let v = |i: usize| x[6 * k + i];
+        let c = t.translation.vector;
+        let rot = Transform3::rotation(Vector3::new(v(3), v(4), v(5)) / L);
+        *t = Transform3::translation(v(0), v(1), v(2))
+            * Transform3::translation(c.x, c.y, c.z)
+            * rot
+            * Transform3::translation(-c.x, -c.y, -c.z)
+            * *t;
+    }
+}
+
+fn jacobian(
+    cons: &[(Constraint, Geom, Geom)],
+    blocks: &[u32],
+    place: &HashMap<u32, Transform3>,
+    r0: &DVector<Real>,
+) -> DMatrix<Real> {
+    let n = blocks.len() * 6;
+    let mut j = DMatrix::zeros(r0.len(), n);
+    let h = 1e-7;
+    for col in 0..n {
+        let mut p = place.clone();
+        let mut x = DVector::zeros(n);
+        x[col] = h;
+        apply(blocks, &mut p, &x);
+        let r = eval(cons, &p);
+        for row in 0..r0.len().min(r.len()) {
+            j[(row, col)] = (r[row] - r0[row]) / h;
+        }
+    }
+    j
+}
+
+/// Levenberg iterations in minimum-norm form; returns the residuals left.
+fn run(
+    cons: &[(Constraint, Geom, Geom)],
+    blocks: &[u32],
+    weight: &[Real],
+    place: &mut HashMap<u32, Transform3>,
+) -> DVector<Real> {
+    let norm = |r: &DVector<Real>| r.iter().fold(0.0, |m: Real, v| m.max(v.abs()));
+    let mut r = eval(cons, place);
+    if blocks.is_empty() {
+        return r;
+    }
+    let mut lambda = 1e-6;
+    let w = DMatrix::from_diagonal(&DVector::from_vec(weight.to_vec()));
+    for _ in 0..200 {
+        if norm(&r) < 1e-10 {
+            break;
+        }
+        let j = jacobian(cons, blocks, place, &r);
+        let jw = &j * &w;
+        let mut improved = false;
+        for _ in 0..12 {
+            let a = &jw * jw.transpose() + DMatrix::identity(r.len(), r.len()) * lambda;
+            let Some(y) = a.lu().solve(&r) else {
+                lambda *= 10.0;
+                continue;
+            };
+            let mut dx = -(jw.transpose() * y);
+            for (i, w) in weight.iter().enumerate() {
+                dx[i] *= w;
+            }
+            let mut p = place.clone();
+            apply(blocks, &mut p, &dx);
+            let r1 = eval(cons, &p);
+            if r1.norm() < r.norm() {
+                *place = p;
+                r = r1;
+                lambda = (lambda / 3.0).max(1e-12);
+                improved = true;
+                break;
+            }
+            lambda *= 4.0;
+        }
+        if !improved {
+            break;
+        }
+    }
+    r
 }
 
 #[cfg(test)]
@@ -271,6 +327,9 @@ mod tests {
             expr: None,
             aligned: false,
             suppressed: false,
+            locked: false,
+            min: None,
+            max: None,
         }
     }
 

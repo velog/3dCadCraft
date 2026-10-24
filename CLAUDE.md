@@ -922,6 +922,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   of the hole), which Insert's Opposed / Aligned rely on. `GeomRef::Origin { occurrence: ASSEMBLY (0) }`
   is the assembly's own origin (identity, never solved); `Work { id }` reads `PartDocument::work`, so
   resolve through `relation::resolve_in(part, r)`, not `resolve_local(body, r)`.
+- **Joints (A3)** are `ConstraintKind` variants (Rigid … Ball, `is_joint()`) with `locked` / `min` / `max`
+  on `Constraint`, so the browser, Suppress / Delete and `asm_try` serve them unchanged. The solver turns
+  their geometry into frames (`Geom::as_frame`, `assembly::joint::frame_of`) *in part coordinates* before
+  moving it — a frame's x axis must turn with the part. A plane face's point is its area-weighted centre
+  (the joint origin snaps there). Limits: a value past one is locked at it and the solve runs again.
 - **iProperties** (`document::iprops`, `gui/iprops.rs`): on `Document::properties` (skipped when empty);
   standard keys in `STANDARD` are stored in files — never rename one.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in

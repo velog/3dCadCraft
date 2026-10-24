@@ -3644,6 +3644,7 @@ impl CadCraftApp {
             | Action::AsmFreeRotate
             | Action::AsmGround
             | Action::AsmUpdate
+            | Action::AsmJoint
             | Action::AsmConstrain => self.asm_apply(action),
             Action::StartSketch => {
                 self.finish_sketch();

@@ -42,6 +42,11 @@ pub(super) struct ConstrainDraft {
     preview: bool,
     /// Edit of an existing constraint.
     edit: Option<u32>,
+    /// Joints: the value is held.
+    locked: bool,
+    /// Joints: limits of the motion.
+    min: Option<Real>,
+    max: Option<Real>,
 }
 
 impl ConstrainDraft {
@@ -58,6 +63,16 @@ impl ConstrainDraft {
             predict: true,
             preview: true,
             edit: None,
+            locked: false,
+            min: None,
+            max: None,
+        }
+    }
+
+    fn joint() -> Self {
+        Self {
+            kind: ConstraintKind::Rotational,
+            ..Self::new()
         }
     }
 
@@ -72,6 +87,9 @@ impl ConstrainDraft {
             expr: self.expr.clone(),
             aligned: self.aligned,
             suppressed: false,
+            locked: self.locked,
+            min: self.min,
+            max: self.max,
         })
     }
 
@@ -85,6 +103,7 @@ impl ConstrainDraft {
             ConstraintKind::Mate | ConstraintKind::Flush => "Mate",
             ConstraintKind::Angle => "Angle",
             ConstraintKind::Insert => "Insert",
+            _ => "Joint",
         }
     }
 }
@@ -223,6 +242,13 @@ impl CadCraftApp {
         self.cons.preview = None;
     }
 
+    /// Assemble › Joint.
+    pub(super) fn start_joint(&mut self) {
+        self.asm.tool = None;
+        self.cons.draft = Some(ConstrainDraft::joint());
+        self.cons.preview = None;
+    }
+
     /// Edit of constraint `id` in the panel.
     pub(super) fn edit_constraint(&mut self, id: u32) {
         let Some(c) = self.assembly().and_then(|a| a.constraint(id)).cloned() else {
@@ -236,6 +262,9 @@ impl CadCraftApp {
         d.expr = c.expr;
         d.typed = true;
         d.aligned = c.aligned;
+        d.locked = c.locked;
+        d.min = c.min;
+        d.max = c.max;
         d.edit = Some(id);
         self.asm.tool = None;
         self.cons.draft = Some(d);
@@ -283,6 +312,7 @@ impl CadCraftApp {
                         kind: x.kind,
                         ..ConstrainDraft::new()
                     };
+                    self.history.break_coalescing();
                 }
             }
             Err(e) => self.file_status = Some(Err(format!("{}: {e}", d.command()))),
@@ -513,6 +543,7 @@ impl CadCraftApp {
             Some(d) => (d.a.clone(), d.b.clone()),
             None => (None, None),
         };
+        let joint = self.cons.draft.as_ref().is_some_and(|d| d.kind.is_joint());
         for (g, col) in [
             (a, Color32::from_rgb(80, 160, 255)),
             (b, Color32::from_rgb(200, 110, 255)),
@@ -520,6 +551,9 @@ impl CadCraftApp {
         ] {
             if let Some(g) = g {
                 self.draw_geom(painter, rect, &g, col);
+                if joint {
+                    self.draw_joint_origin(painter, rect, &g);
+                }
             }
         }
         clicked
@@ -598,6 +632,18 @@ impl CadCraftApp {
     /// The status-bar prompt while Constrain is open.
     pub(super) fn constrain_prompt(&self) -> Option<String> {
         let d = self.cons.draft.as_ref()?;
+        if d.kind.is_joint() {
+            return Some(if d.a.is_none() || d.active == 0 {
+                "Joint: pick the first origin on a component (a face: its centre; a circular edge: its centre; an axis, a point, or Origin / work geometry in the browser)".into()
+            } else if d.b.is_none() {
+                "Joint: pick the second origin, on the component that moves".into()
+            } else {
+                format!(
+                    "Joint ({}): Flip, lock or limit the motion, then OK or Apply (Esc cancels)",
+                    d.kind.label()
+                )
+            });
+        }
         let what = match d.kind {
             ConstraintKind::Insert => "a circular edge",
             ConstraintKind::Angle => "a planar face or a straight edge",
@@ -633,8 +679,140 @@ impl CadCraftApp {
         } else {
             "Place Constraint"
         };
+        let title = if d.kind.is_joint() {
+            if d.edit.is_some() {
+                "Edit Joint"
+            } else {
+                "Place Joint"
+            }
+        } else {
+            title
+        };
         ui.label(RichText::new(title).strong());
         ui.separator();
+        if d.kind.is_joint() {
+            self.joint_fields(ui, &mut d);
+        } else {
+            self.constraint_fields(ui, &mut d);
+        }
+        ui.add_space(4.0);
+        ui.checkbox(&mut d.preview, "Show Preview");
+        ui.separator();
+        let mut action = None;
+        ui.horizontal(|ui| {
+            let ready = d.a.is_some() && d.b.is_some();
+            let ok = ui.add_enabled(ready, egui::Button::new("OK"));
+            if ok.clicked() || super::keys::panel_ok_key(ui, ready) {
+                action = Some(true);
+            }
+            if d.edit.is_none() && ui.add_enabled(ready, egui::Button::new("Apply")).clicked() {
+                action = Some(false);
+            }
+            if ui.button("Cancel").clicked() {
+                self.cancel_constrain();
+            }
+        });
+        if self.cons.draft.is_some() {
+            let repredict = !d.typed && !d.kind.is_joint();
+            self.cons.draft = Some(d);
+            if repredict {
+                self.constrain_predict();
+            }
+        }
+        if let Some(close) = action {
+            self.commit_constrain(close);
+        }
+    }
+
+    /// The joint's part of the panel: type, the two origins, Flip, the
+    /// value (held or free) and the limits.
+    fn joint_fields(&mut self, ui: &mut egui::Ui, d: &mut ConstrainDraft) {
+        ui.label("Type");
+        egui::ComboBox::from_id_salt("joint_type")
+            .selected_text(d.kind.label())
+            .show_ui(ui, |ui| {
+                for k in [
+                    ConstraintKind::Rigid,
+                    ConstraintKind::Rotational,
+                    ConstraintKind::Slider,
+                    ConstraintKind::Cylindrical,
+                    ConstraintKind::Planar,
+                    ConstraintKind::Ball,
+                ] {
+                    if ui.selectable_label(d.kind == k, k.label()).clicked() {
+                        d.kind = k;
+                        d.value = 0.0;
+                        d.locked = false;
+                        d.min = None;
+                        d.max = None;
+                    }
+                }
+            });
+        ui.add_space(4.0);
+        ui.label("Connect");
+        self.selection_rows(ui, d, "origin");
+        ui.checkbox(&mut d.aligned, "Flip").on_hover_text(
+            "The second origin's z the same way as the first (they face each other otherwise)",
+        );
+        let Some(what) = d.kind.joint_value() else {
+            return;
+        };
+        let angle = what == "Angle";
+        let unit = |v: Real| if angle { v.to_degrees() } else { v };
+        let back = |v: Real| if angle { v.to_radians() } else { v };
+        let suffix = if angle { "°" } else { " mm" };
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut d.locked, format!("Lock {}", what.to_lowercase()))
+                .on_hover_text("Hold the value; unticked, the motion is free between the limits");
+            let mut v = unit(d.value);
+            let before = v;
+            ui.add_enabled(d.locked, ExprValue::new(&mut v).suffix(suffix));
+            if v != before {
+                d.value = back(v);
+            }
+        });
+        ui.label("Limits");
+        for (label, slot) in [("Minimum", &mut d.min), ("Maximum", &mut d.max)] {
+            ui.horizontal(|ui| {
+                let mut on = slot.is_some();
+                if ui.checkbox(&mut on, label).changed() {
+                    *slot = on.then_some(0.0);
+                }
+                if let Some(x) = slot.as_mut() {
+                    let mut v = unit(*x);
+                    let before = v;
+                    ui.add(ExprValue::new(&mut v).suffix(suffix));
+                    if v != before {
+                        *x = back(v);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Selection rows 1 and 2 of the panel.
+    fn selection_rows(&self, ui: &mut egui::Ui, d: &mut ConstrainDraft, what: &str) {
+        for (k, (label, g)) in [("1", d.a.clone()), ("2", d.b.clone())]
+            .into_iter()
+            .enumerate()
+        {
+            let text = match &g {
+                Some(g) => format!("{label}  {}", self.geom_label(g)),
+                None => format!("{label}  (pick the {what})"),
+            };
+            if ui
+                .selectable_label(d.active == k, text)
+                .on_hover_text("Click, then pick in the view or the browser")
+                .clicked()
+            {
+                d.active = k;
+            }
+        }
+    }
+
+    /// The constraint's part of the panel (Mate / Angle / Insert).
+    fn constraint_fields(&mut self, ui: &mut egui::Ui, d: &mut ConstrainDraft) {
         ui.label("Type");
         ui.horizontal(|ui| {
             for (label, kind) in [
@@ -712,9 +890,9 @@ impl CadCraftApp {
             ConstraintKind::Angle => {
                 ui.label("Undirected");
             }
+            _ => {}
         });
         ui.add_space(4.0);
-        ui.checkbox(&mut d.preview, "Show Preview");
         if ui
             .checkbox(&mut d.predict, "Predict Orientation")
             .on_hover_text("Mate or Flush from the faces' normals as they are now")
@@ -732,31 +910,6 @@ impl CadCraftApp {
         {
             self.constrain_current_offset = keep;
             d.typed = false;
-        }
-        ui.separator();
-        let mut action = None;
-        ui.horizontal(|ui| {
-            let ready = d.a.is_some() && d.b.is_some();
-            let ok = ui.add_enabled(ready, egui::Button::new("OK"));
-            if ok.clicked() || super::keys::panel_ok_key(ui, ready) {
-                action = Some(true);
-            }
-            if d.edit.is_none() && ui.add_enabled(ready, egui::Button::new("Apply")).clicked() {
-                action = Some(false);
-            }
-            if ui.button("Cancel").clicked() {
-                self.cancel_constrain();
-            }
-        });
-        if self.cons.draft.is_some() {
-            let repredict = !d.typed;
-            self.cons.draft = Some(d);
-            if repredict {
-                self.constrain_predict();
-            }
-        }
-        if let Some(close) = action {
-            self.commit_constrain(close);
         }
     }
 
@@ -835,7 +988,48 @@ impl CadCraftApp {
                     painter.circle(s, 5.0, fill, stroke);
                 }
             }
+            Geom::Frame { p, .. } => {
+                if let Some(s) = pr(p) {
+                    painter.circle(s, 5.0, fill, stroke);
+                }
+            }
         }
+    }
+
+    /// A joint origin as a small triad (x red, y green, z blue) where the
+    /// picked geometry puts it.
+    fn draw_joint_origin(&self, painter: &egui::Painter, rect: Rect, g: &GeomRef) {
+        let Ok(local) = self.asm_local_geom(g) else {
+            return;
+        };
+        let (t, size) = match self.assembly().and_then(|a| a.find(g.occurrence())) {
+            Some(occ) => (
+                self.cons
+                    .preview
+                    .as_ref()
+                    .and_then(|p| p.get(&occ.id).copied())
+                    .unwrap_or(occ.transform),
+                self.asm_mesh(occ.component)
+                    .and_then(|m| m.bbox)
+                    .map_or(30.0, |(lo, hi)| (hi - lo).norm() * 0.15),
+            ),
+            None => (Transform3::identity(), 20.0),
+        };
+        let f = crate::assembly::joint::frame_of(&local.as_frame().moved(&t));
+        let y = f.z.cross(&f.x);
+        let Some(o) = self.camera.project(&f.p, rect) else {
+            return;
+        };
+        for (axis, col) in [
+            (f.x, Color32::from_rgb(235, 80, 70)),
+            (y, Color32::from_rgb(90, 200, 110)),
+            (f.z, Color32::from_rgb(80, 160, 255)),
+        ] {
+            if let Some(e) = self.camera.project(&(f.p + axis * size), rect) {
+                painter.line_segment([o, e], Stroke::new(2.5, col));
+            }
+        }
+        painter.circle_filled(o, 4.0, Color32::WHITE);
     }
 
     // ---- browser and Properties ----------------------------------------------
@@ -875,6 +1069,37 @@ impl CadCraftApp {
         ui.label(format!("{}: {}", self.geom_label(&c.b), c.b.label()));
         if let Some((_, e)) = self.cons.last.sick.iter().find(|(id, _)| *id == c.id) {
             ui.colored_label(Color32::from_rgb(235, 80, 70), format!("Sick: {e}"));
+        }
+        if c.kind.is_joint() {
+            ui.label(format!("Joint type: {}", c.kind.label()));
+            if let Some(what) = c.kind.joint_value() {
+                let unit = |v: Real| if what == "Angle" { v.to_degrees() } else { v };
+                let sfx = if what == "Angle" { "°" } else { " mm" };
+                ui.label(if c.locked {
+                    format!("{what}: {:.3}{sfx} (locked)", unit(c.value))
+                } else {
+                    format!("{what}: free")
+                });
+                if c.min.is_some() || c.max.is_some() {
+                    let f = |x: Option<Real>| {
+                        x.map_or("—".to_owned(), |v| format!("{:.3}{sfx}", unit(v)))
+                    };
+                    ui.label(format!("Limits: {} … {}", f(c.min), f(c.max)));
+                }
+            }
+            let mut s = c.suppressed;
+            if ui.checkbox(&mut s, "Suppress").changed() {
+                self.toggle_constraint_suppress(c.id);
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Edit...").clicked() {
+                    self.edit_constraint(c.id);
+                }
+                if ui.button("Delete").clicked() {
+                    self.delete_constraint(c.id);
+                }
+            });
+            return true;
         }
         let angle = c.kind == ConstraintKind::Angle;
         let mut v = if angle { c.value.to_degrees() } else { c.value };

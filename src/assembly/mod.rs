@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+pub mod joint;
 pub mod relation;
 pub mod solve;
 

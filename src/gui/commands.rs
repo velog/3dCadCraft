@@ -1272,11 +1272,13 @@ pub static COMMANDS: &[Command] = &[
         .tip("Mate (or Flush), Angle or Insert between faces or edges of two components; Tangent and Symmetry are planned")
         .spec("3.1-assemblies.md"),
     c("asm.joint", "Joint", "Съединение", Icon::Rotate)
+        .run(Action::AsmJoint)
         .alias(&["J"])
+        .bound()
         .at(&[A_RELATIONSHIPS])
         .env(ASSEMBLY)
-        .tip("Rigid, Rotational, Slider, Cylindrical, Planar or Ball joint between two components")
-        .todo("3.3"),
+        .tip("Rigid, Rotational, Slider, Cylindrical, Planar or Ball joint between origins of two components (face or circle centres, axes, points)")
+        .spec("3.1-assemblies.md"),
     c("asm.pattern", "Pattern", "Масив от компоненти", Icon::PatternRect)
         .at(&[A_PATTERN])
         .env(ASSEMBLY)

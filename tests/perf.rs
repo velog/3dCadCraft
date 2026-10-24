@@ -1562,9 +1562,40 @@ fn speed_budgets() {
                     expr: None,
                     aligned: false,
                     suppressed: false,
+                    locked: false,
+                    min: None,
+                    max: None,
                 });
             }
         }
+        // The same stack held by 29 Rotational joints with limits (A3): each
+        // cube turns on the one below, 0..90°.
+        let mut chain = asm.clone();
+        chain.constraints.clear();
+        for i in 1..30u32 {
+            chain.add_constraint(Constraint {
+                id: 0,
+                name: String::new(),
+                kind: ConstraintKind::Rotational,
+                a: face(i, "Top"),
+                b: face(i + 1, "Bottom"),
+                value: 0.0,
+                expr: None,
+                aligned: false,
+                suppressed: false,
+                locked: false,
+                min: Some(0.0),
+                max: Some(std::f64::consts::FRAC_PI_2),
+            });
+        }
+        rows.push((
+            "assembly: 29 Rotational joints with limits (a turning stack)",
+            500.0,
+            median_ms(3, || {
+                let s = assembly::solve(&chain, &geom, None);
+                assert!(s.converged, "{}", s.residual);
+            }),
+        ));
         rows.push((
             "assembly: solve a stack of 30 cubes (87 constraints)",
             500.0,

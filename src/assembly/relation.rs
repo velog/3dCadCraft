@@ -165,6 +165,18 @@ pub enum ConstraintKind {
     /// planes mated (Opposed) or flush (Aligned) at an offset; the turn
     /// about the axis stays free.
     Insert,
+    /// Joint: the two origins together, nothing free (`joint`).
+    Rigid,
+    /// Joint: one turn about the origins' z.
+    Rotational,
+    /// Joint: one slide along z.
+    Slider,
+    /// Joint: a turn about and a slide along z.
+    Cylindrical,
+    /// Joint: moves in the plane of the first origin, turns about z.
+    Planar,
+    /// Joint: the origins' points together, every turn free.
+    Ball,
 }
 
 impl ConstraintKind {
@@ -175,6 +187,12 @@ impl ConstraintKind {
             ConstraintKind::Flush => "Flush",
             ConstraintKind::Angle => "Angle",
             ConstraintKind::Insert => "Insert",
+            ConstraintKind::Rigid => "Rigid",
+            ConstraintKind::Rotational => "Rotational",
+            ConstraintKind::Slider => "Slider",
+            ConstraintKind::Cylindrical => "Cylindrical",
+            ConstraintKind::Planar => "Planar",
+            ConstraintKind::Ball => "Ball",
         }
     }
 }
@@ -203,6 +221,16 @@ pub struct Constraint {
     /// Suppressed: kept, but not solved.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub suppressed: bool,
+    /// Joints: the value (angle / distance) is held; otherwise it is free
+    /// between the limits. Constraints always hold their value.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
+    /// Joints: the smallest value the motion may reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<Real>,
+    /// Joints: the largest value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<Real>,
 }
 
 impl Constraint {
@@ -283,6 +311,15 @@ pub enum Geom {
         /// Where.
         p: Point3,
     },
+    /// A joint origin (`joint::frame_of`).
+    Frame {
+        /// Origin.
+        p: Point3,
+        /// Unit z.
+        z: Vector3,
+        /// Unit x.
+        x: Vector3,
+    },
 }
 
 impl Geom {
@@ -297,6 +334,21 @@ impl Geom {
                 r,
             },
             Geom::Point { p } => Geom::Point { p: t * p },
+            Geom::Frame { p, z, x } => Geom::Frame {
+                p: t * p,
+                z: t * z,
+                x: t * x,
+            },
+        }
+    }
+
+    /// As a joint origin (in the same coordinates).
+    pub fn as_frame(&self) -> Geom {
+        let f = super::joint::frame_of(self);
+        Geom::Frame {
+            p: f.p,
+            z: f.z,
+            x: f.x,
         }
     }
 
@@ -307,6 +359,7 @@ impl Geom {
             Geom::Plane { n, .. } | Geom::Circle { n, .. } => n,
             Geom::Axis { d, .. } => d,
             Geom::Point { .. } => Vector3::zeros(),
+            Geom::Frame { z, .. } => z,
         }
     }
 
@@ -315,6 +368,7 @@ impl Geom {
         match *self {
             Geom::Axis { p, d } => Some((p, d)),
             Geom::Circle { c, n, .. } => Some((c, n)),
+            Geom::Frame { p, z, .. } => Some((p, z)),
             Geom::Plane { .. } | Geom::Point { .. } => None,
         }
     }
@@ -343,6 +397,21 @@ fn face_normal(body: &BRep, f: crate::kernel::FaceId) -> Option<(Point3, Vector3
             Sense::Reversed => -n,
         },
     ))
+}
+
+/// The area-weighted centre of face `f`'s triangles.
+fn face_centre(body: &BRep, f: crate::kernel::FaceId) -> Option<Point3> {
+    let mesh = body
+        .face_mesh(f, &crate::kernel::TessellationOptions::default())
+        .ok()?;
+    let (mut sum, mut area) = (Vector3::zeros(), 0.0);
+    for t in &mesh.triangles {
+        let [a, b, c] = t.map(|i| mesh.positions[i as usize]);
+        let w = (b - a).cross(&(c - a)).norm() / 2.0;
+        sum += (a.coords + b.coords + c.coords) / 3.0 * w;
+        area += w;
+    }
+    (area > 1e-12).then(|| Point3::from(sum / area))
 }
 
 /// The geometry `r` names in `part` (part coordinates): its faces and
@@ -397,7 +466,10 @@ pub fn resolve_local(body: &BRep, r: &GeomRef) -> Result<Geom, String> {
             match body.surface(exact) {
                 Some(Surface::Plane(_)) => {
                     let (o, n) = face_normal(body, f).ok_or("the face is not planar")?;
-                    let p = hint - n * (hint - o).dot(&n);
+                    // The piece's centre (a joint origin snaps there; any
+                    // point of the plane does for the constraints).
+                    let at = face_centre(body, f).unwrap_or(hint);
+                    let p = at - n * (at - o).dot(&n);
                     Ok(Geom::Plane { p, n })
                 }
                 Some(Surface::Cylinder(c)) => Ok(Geom::Axis {
@@ -459,6 +531,12 @@ pub fn resolve(project: &Project, asm: &AssemblyDocument, r: &GeomRef) -> Result
 /// it holds (some are dependent: `nA + nB` has rank 2).
 pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Result<(), String> {
     use ConstraintKind::*;
+    if c.kind.is_joint() {
+        let fa = super::joint::frame_of(a);
+        let fb = super::joint::frame_of(b);
+        super::joint::residuals(c, &fa, &fb, out);
+        return Ok(());
+    }
     let d = c.value;
     let vec3 = |out: &mut Vec<Real>, v: Vector3| out.extend([v.x, v.y, v.z]);
     // The offset of point `q` from the line (p, u), as a vector.
@@ -483,6 +561,7 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
                     out.push(n.dot(&(q - p)) - d);
                 }
                 Geom::Plane { .. } => return Err("two planes".into()),
+                Geom::Frame { .. } => return Err("a joint origin".into()),
             }
         }
         (Mate | Flush, Geom::Point { p: q }, other)
@@ -513,6 +592,8 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
             vec3(out, (cb - ca) - na * d);
         }
         (Insert, _, _) => return Err("Insert needs two circular edges".into()),
+        // Joints returned above.
+        (Rigid | Rotational | Slider | Cylindrical | Planar | Ball, _, _) => {}
     }
     Ok(())
 }
@@ -554,6 +635,7 @@ pub fn accepts(kind: ConstraintKind, g: &Geom) -> bool {
         ConstraintKind::Mate | ConstraintKind::Flush => true,
         ConstraintKind::Angle => !matches!(g, Geom::Circle { .. } | Geom::Point { .. }),
         ConstraintKind::Insert => matches!(g, Geom::Circle { .. }),
+        _ => true,
     }
 }
 

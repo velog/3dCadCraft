@@ -69,6 +69,8 @@ pub enum Action {
     AsmConstrain,
     /// Assemble › Update: reload the linked part files, solve again.
     AsmUpdate,
+    /// Assemble › Joint.
+    AsmJoint,
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch
