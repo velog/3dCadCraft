@@ -71,6 +71,8 @@ pub enum Action {
     AsmUpdate,
     /// Assemble › Joint.
     AsmJoint,
+    /// Assemble › Bill of Materials.
+    AsmBom,
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch

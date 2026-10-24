@@ -1302,10 +1302,11 @@ pub static COMMANDS: &[Command] = &[
         .spec("3.1-assemblies.md"),
     c("asm.bom", "Bill of Materials", "Спецификация", Icon::Parameters)
         .short("BOM")
+        .run(Action::AsmBom)
         .at(&[Place::Ribbon("Assemble", "Manage")])
         .env(ASSEMBLY)
-        .tip("The parts list of the assembly")
-        .todo("3.6"),
+        .tip("The parts of the assembly with their quantities and iProperties: Model Data, Structured, Parts Only; Export to CSV")
+        .spec("3.6-bom.md"),
     // ---- File / Help -----------------------------------------------------
     c("file.new_assembly", "New Assembly", "Ново сглобяване", Icon::Assembly)
         .run(Action::App(AppCmd::NewAssembly))

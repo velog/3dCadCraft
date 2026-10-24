@@ -401,6 +401,7 @@ impl CadCraftApp {
             Action::AsmConstrain => self.start_constrain(),
             Action::AsmUpdate => self.update_assembly(),
             Action::AsmJoint => self.start_joint(),
+            Action::AsmBom => self.open_bom(),
             Action::AsmGround => {
                 let ids = self.asm.sel.clone();
                 if ids.is_empty() {

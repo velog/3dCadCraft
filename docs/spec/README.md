@@ -49,6 +49,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [0.14-diagnostics.md](0.14-diagnostics.md) | Diagnostics: session log, action journal and replay, autosave and Restore, crash report, Save Diagnostics |
 | [0.15-context-menus-shortcuts.md](0.15-context-menus-shortcuts.md) | Right-click, keys, aliases, command search, command registry (G0) |
 | [0.11-presets.md](0.11-presets.md) | Presets: ready-made sets of settings in command panels (Last Used, No Preset, built-in) |
+| [3.6-bom.md](3.6-bom.md) | Bill of Materials: Model Data / Structured / Parts Only, BOM Structure, merge, Export |
 | [0.16-iproperties.md](0.16-iproperties.md) | iProperties: General, Summary, Project, Status and custom properties of every document |
 | [0.13-ui-layout.md](0.13-ui-layout.md) | Interface layout: panel sizes, ribbon collapsing, User Interface, Clean Screen, Full Screen, floating windows, `settings.json` |
 | [0-ui.md](0-ui.md) | Interface: look, colours, glyphs, command behaviour, selection, guiding the user, performance |

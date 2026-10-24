@@ -214,6 +214,10 @@ pub struct Occurrence {
     /// Shown in the view (Inventor's per-occurrence Visibility).
     #[serde(default = "yes", skip_serializing_if = "is_yes")]
     pub visible: bool,
+    /// BOM Structure of this occurrence only (Reference), over its
+    /// document's (`docs/spec/3.6-bom.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bom: Option<iprops::BomStructure>,
 }
 
 fn is_zero(v: &u32) -> bool {
@@ -239,6 +243,7 @@ impl Occurrence {
             transform,
             grounded: false,
             visible: true,
+            bom: None,
         }
     }
 }

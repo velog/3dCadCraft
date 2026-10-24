@@ -927,6 +927,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   their geometry into frames (`Geom::as_frame`, `assembly::joint::frame_of`) *in part coordinates* before
   moving it — a frame's x axis must turn with the part. A plane face's point is its area-weighted centre
   (the joint origin snaps there). Limits: a value past one is locked at it and the solve runs again.
+- **BOM** (`assembly::bom`, `gui/bom.rs`): computed every frame from the occurrences and each component's
+  iProperties (`bom_info` through `with_part` / `part_file`); only `IProperties::bom_structure` and
+  `Occurrence::bom` are stored.
 - **iProperties** (`document::iprops`, `gui/iprops.rs`): on `Document::properties` (skipped when empty);
   standard keys in `STANDARD` are stored in files — never rename one.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in

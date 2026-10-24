@@ -816,7 +816,9 @@ Finds the overlapping volumes between components, shows them in red and gives th
 
 **Inventor equivalent.** Analyze Interference.
 
-## 3.6 Bill of materials (BOM) — ⬜ · M
+## 3.6 Bill of materials (BOM) — 🟡 (first level; waiting for a visual check) · M
+
+**Specification:** [spec/3.6-bom.md](spec/3.6-bom.md)
 
 **What it does.** A list of the components with quantities.
 

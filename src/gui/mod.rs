@@ -27,6 +27,7 @@ mod alias_input;
 mod asm_browser;
 mod assembly;
 mod blend;
+mod bom;
 mod breadcrumb;
 mod browser_edit;
 mod camera;
@@ -586,6 +587,10 @@ struct CadCraftApp {
     constrain_current_offset: bool,
     /// The iProperties window (`iprops.rs`).
     iprops: Option<iprops::IPropsWin>,
+    /// The Bill of Materials window (`bom.rs`) and the CSV waiting for its
+    /// Export file name.
+    bom: Option<bom::BomWin>,
+    bom_export: Option<String>,
 
     tab: Tab,
     mouse: MousePreset,
@@ -828,6 +833,8 @@ impl CadCraftApp {
             cons: Default::default(),
             constrain_current_offset: false,
             iprops: None,
+            bom: None,
+            bom_export: None,
             tab: Tab::Model,
             mouse: MousePreset::Inventor,
             invert_wheel: false,
@@ -3645,6 +3652,7 @@ impl CadCraftApp {
             | Action::AsmGround
             | Action::AsmUpdate
             | Action::AsmJoint
+            | Action::AsmBom
             | Action::AsmConstrain => self.asm_apply(action),
             Action::StartSketch => {
                 self.finish_sketch();
@@ -7057,6 +7065,9 @@ impl eframe::App for CadCraftApp {
         self.alias_window(&ctx);
         self.place_window(&ctx);
         self.iprops_window(&ctx);
+        if self.is_assembly() {
+            self.bom_window(&ctx);
+        }
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);
         self.layout_end(&ctx);

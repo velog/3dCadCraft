@@ -81,6 +81,44 @@ impl DesignState {
     }
 }
 
+/// How a component counts in a bill of materials (`docs/spec/3.6-bom.md`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BomStructure {
+    /// Listed and counted (the default).
+    #[default]
+    Normal,
+    /// Not listed; an assembly's children move up a level.
+    Phantom,
+    /// Not listed, not counted (construction, skeletons).
+    Reference,
+    /// Bought: listed; an assembly is one item, its children not listed.
+    Purchased,
+    /// An assembly that cannot be taken apart (a weldment): one item.
+    Inseparable,
+}
+
+impl BomStructure {
+    /// Every value, in dialog order.
+    pub const ALL: [BomStructure; 5] = [
+        BomStructure::Normal,
+        BomStructure::Phantom,
+        BomStructure::Reference,
+        BomStructure::Purchased,
+        BomStructure::Inseparable,
+    ];
+
+    /// Label as Inventor shows it.
+    pub fn label(self) -> &'static str {
+        match self {
+            BomStructure::Normal => "Normal",
+            BomStructure::Phantom => "Phantom",
+            BomStructure::Reference => "Reference",
+            BomStructure::Purchased => "Purchased",
+            BomStructure::Inseparable => "Inseparable",
+        }
+    }
+}
+
 /// A custom property's value and type.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
@@ -137,6 +175,13 @@ pub struct IProperties {
     /// Custom properties, in the order added.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom: Vec<CustomProperty>,
+    /// How the document counts in a BOM.
+    #[serde(default, skip_serializing_if = "is_normal")]
+    pub bom_structure: BomStructure,
+}
+
+fn is_normal(b: &BomStructure) -> bool {
+    *b == BomStructure::Normal
 }
 
 fn is_default_state(s: &DesignState) -> bool {
@@ -146,7 +191,10 @@ fn is_default_state(s: &DesignState) -> bool {
 impl IProperties {
     /// Nothing set (skipped in files).
     pub fn is_empty(&self) -> bool {
-        self.standard.is_empty() && is_default_state(&self.design_state) && self.custom.is_empty()
+        self.standard.is_empty()
+            && is_default_state(&self.design_state)
+            && self.custom.is_empty()
+            && is_normal(&self.bom_structure)
     }
 
     /// The properties of a new document: Author and Designer = the login

@@ -1606,6 +1606,40 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Bill of Materials (docs/spec/3.6): 2000 occurrences of 50 parts,
+    // merged by part number, as the window computes them every frame.
+    {
+        use cadcraft3d::assembly::bom::{self, BomView, ComponentInfo};
+        use cadcraft3d::document::iprops::IProperties;
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+        use cadcraft3d::kernel::Transform3;
+        let parts: Vec<DocRef> = (0..50)
+            .map(|_| DocRef::local(DocumentId::new_random()))
+            .collect();
+        let mut asm = AssemblyDocument::default();
+        for i in 0..2000 {
+            asm.place(parts[i % 50], "P", Transform3::identity(), i == 0);
+        }
+        let info = |r: DocRef| {
+            let k = parts.iter().position(|p| *p == r).unwrap_or(0);
+            let mut props = IProperties::default();
+            props.set("description", &format!("Part {k}"));
+            ComponentInfo {
+                file_name: format!("part{k}"),
+                props,
+                material: None,
+                missing: false,
+            }
+        };
+        rows.push((
+            "bom: 2000 occurrences of 50 parts, Structured, merged (one frame)",
+            16.0,
+            median_ms(5, || {
+                let r = bom::rows(&asm, BomView::Structured, true, &info);
+                assert_eq!(r.len(), 50);
+            }),
+        ));
+    }
     // Parameters (docs/spec/0.5): 300 user parameters chained with units
     // and if() (each follows the one before), evaluated as every rebuild
     // does.

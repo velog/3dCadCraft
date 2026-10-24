@@ -25,6 +25,8 @@ pub(super) enum DialogPurpose {
     /// Parameters → Export CSV / Import CSV.
     ExportParams,
     ImportParams,
+    /// Bill of Materials → Export (CSV).
+    ExportBom,
 }
 
 impl DialogPurpose {
@@ -37,6 +39,7 @@ impl DialogPurpose {
             DialogPurpose::Diagnostics => "Save Diagnostics".into(),
             DialogPurpose::ExportParams => "Export Parameters".into(),
             DialogPurpose::ImportParams => "Import Parameters".into(),
+            DialogPurpose::ExportBom => "Export Bill of Materials".into(),
         }
     }
 
@@ -49,7 +52,9 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
             DialogPurpose::Export(ExportFormat::Glb) => &["glb"],
             DialogPurpose::Diagnostics => &["zip"],
-            DialogPurpose::ExportParams | DialogPurpose::ImportParams => &["csv"],
+            DialogPurpose::ExportParams
+            | DialogPurpose::ImportParams
+            | DialogPurpose::ExportBom => &["csv"],
         }
     }
 
@@ -417,6 +422,7 @@ impl CadCraftApp {
                 crate::diagnostics::stamp(std::time::SystemTime::now())
             ),
             DialogPurpose::ExportParams => format!("{stem}-parameters.csv"),
+            DialogPurpose::ExportBom => format!("{stem}-bom.csv"),
             DialogPurpose::ImportParams => String::new(),
         };
         self.file_dialog = Some(FileDialog::new(purpose, start_dir(&self.file_path), name));
@@ -815,6 +821,14 @@ impl CadCraftApp {
                 self.save_project(true);
             }
             DialogPurpose::Diagnostics => self.save_diagnostics(&path),
+            DialogPurpose::ExportBom => {
+                let text = self.bom_export.take().unwrap_or_default();
+                self.file_status = Some(
+                    std::fs::write(&path, text)
+                        .map(|()| format!("Bill of Materials exported to {}", path.display()))
+                        .map_err(|e| format!("Export Bill of Materials: {e}")),
+                );
+            }
             DialogPurpose::ExportParams => {
                 let text = self.part().parameters_csv();
                 self.file_status = Some(
