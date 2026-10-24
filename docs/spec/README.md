@@ -49,6 +49,9 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [0.14-diagnostics.md](0.14-diagnostics.md) | Diagnostics: session log, action journal and replay, autosave and Restore, crash report, Save Diagnostics |
 | [0.15-context-menus-shortcuts.md](0.15-context-menus-shortcuts.md) | Right-click, keys, aliases, command search, command registry (G0) |
 | [0.11-presets.md](0.11-presets.md) | Presets: ready-made sets of settings in command panels (Last Used, No Preset, built-in) |
+| [4-drawings.md](4-drawings.md) | Drawings: sheets, views (HLR), annotations, tables, output — research document and stages D1–D6 |
+| [6.1-frame-generator.md](6.1-frame-generator.md) | Frames (Frame Generator) — research document and stages F1–F4 |
+| [6.3-content-center.md](6.3-content-center.md) | Library of standard components (Content Center) — research document and stages L1–L5 |
 | [5.6-sheet-metal.md](5.6-sheet-metal.md) | Sheet Metal: rules, features, flat pattern, DXF — research document and stages (nothing implemented yet) |
 | [3.6-bom.md](3.6-bom.md) | Bill of Materials: Model Data / Structured / Parts Only, BOM Structure, merge, Export |
 | [0.16-iproperties.md](0.16-iproperties.md) | iProperties: General, Summary, Project, Status and custom properties of every document |

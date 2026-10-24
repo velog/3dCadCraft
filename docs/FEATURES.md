@@ -876,6 +876,8 @@ Used for handing models to suppliers without revealing the details.
 
 # Level 4 — Drawings (2D documentation)
 
+**Specification (research first):** [spec/4-drawings.md](spec/4-drawings.md) — views and HLR plan, annotations, tables, output, stages D1–D6.
+
 > A drawing will be a new kind of document (`DocumentData::Drawing`) in the same project and will be **associative**: a change in the model updates the views and dimensions.
 
 ## 4.1 Sheets, formats, standards — ⬜ · M
@@ -1070,6 +1072,8 @@ Inventor 2027 improved working with point clouds: sections, point size, coordina
 
 ## 6.1 Steel structures (Frame Generator) — ⬜ · L
 
+**Specification (research first):** [spec/6.1-frame-generator.md](spec/6.1-frame-generator.md) — stages F1–F4.
+
 **What it does.** Places **standard profiles** on a skeleton (lines in a 3D sketch, or edges): I/H beams, channels, angles, tubes.
 
 **End treatment:**
@@ -1097,6 +1101,8 @@ Generators that **calculate** and **model** standard machine elements:
 **How it works.** The calculation modules are pure logic (tested with examples from the standards), and the output is ordinary parts and assemblies in the project.
 
 ## 6.3 Standard parts library (Content Center) — ⬜ · L
+
+**Specification (research first):** [spec/6.3-content-center.md](spec/6.3-content-center.md) — stages L1–L5.
 
 **What it does.** Thousands of standard parts: bolts, nuts, washers, bearings, profiles, seals per ISO/DIN/ANSI. New in Inventor 2027: publishing **whole assemblies** to the library.
 
