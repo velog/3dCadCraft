@@ -1003,6 +1003,8 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 
 ## 5.6 Sheet Metal — ⬜ · XL
 
+**Specification (research first):** [spec/5.6-sheet-metal.md](spec/5.6-sheet-metal.md) — Inventor's rules, features and flat pattern option by option, what SolidCraft's sheet module already does, stages S1–S5.
+
 **What it does.** Parts from sheet stock that are **unfolded** into a flat pattern for laser/punching and bent on a press brake.
 
 **Sheet metal rules (Sheet Metal Rules / Styles):**
