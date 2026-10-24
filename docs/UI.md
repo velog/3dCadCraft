@@ -203,7 +203,8 @@ drag inside the green circle = free turn, on its rim = turn in the screen plane.
 selected occurrences, **Esc** ends the command or clears the selection, double-click (view or browser) opens
 the component's part file in its own tab. Right-click a component: Grounded,
 Visibility, Open, iProperties, Copy / Paste, Delete. **V** = Free Move, **G** = Free Rotate, **J** = Joint (Type, the two origins — a face's centre, a circle's
-centre, an axis or Origin / work geometry from the browser, shown as a red-green-blue triad — Flip, Lock
+centre, an edge's midpoint or end (white dots; **hold Shift** to keep the face under the cursor), an axis or
+Origin / work geometry from the browser, shown as a red-green-blue triad — Flip, Lock
 the angle / distance, Minimum / Maximum limits). **Ctrl+C / Ctrl+V**
 copies components: one pasted component hangs on the cursor with the same orientation, several are pasted
 beside the originals. **Assemble › Update** reads the linked part files again and solves. Every browser node

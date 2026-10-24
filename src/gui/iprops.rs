@@ -1,6 +1,8 @@
 //! The iProperties window (`docs/spec/0.16-iproperties.md`): General,
 //! Summary, Project, Status, Custom and Physical tabs for any document of
-//! the project — or, read only, for a linked part file of an assembly.
+//! the project — or for a linked part file of an assembly: its changes are
+//! kept until Apply (or closing the window) and then written into the part
+//! file (its open tab, if it is open).
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -15,8 +17,10 @@ use crate::document::{DocumentId, Project};
 /// The open window.
 pub(super) struct IPropsWin {
     doc: DocumentId,
-    /// A linked part file shown read only (its path and project).
+    /// A linked part file (its path and project as loaded).
     linked: Option<(PathBuf, Rc<Project>)>,
+    /// Changes to a linked part file not written yet.
+    pending: Option<IProperties>,
     tab: usize,
     new_name: String,
     new_type: usize,
@@ -36,6 +40,7 @@ impl IPropsWin {
         Self {
             doc,
             linked,
+            pending: None,
             tab: 1,
             new_name: String::new(),
             new_type: 0,
@@ -81,7 +86,11 @@ impl CadCraftApp {
         };
         let (props, name, kind) = match &w.linked {
             Some((_, p)) => match p.document(w.doc) {
-                Some(d) => (d.properties.clone(), d.name.clone(), d.data.kind()),
+                Some(d) => (
+                    w.pending.clone().unwrap_or_else(|| d.properties.clone()),
+                    d.name.clone(),
+                    d.data.kind(),
+                ),
                 None => return,
             },
             None => match self.project.document(w.doc) {
@@ -100,8 +109,9 @@ impl CadCraftApp {
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
             .map_or_else(|| name.clone(), str::to_owned);
-        let readonly = w.linked.is_some();
+        let linked = w.linked.is_some();
         let mut edited = props.clone();
+        let mut apply = false;
         let mut open = true;
         let mut physical = false;
         let title = format!("{file_name} iProperties");
@@ -120,13 +130,21 @@ impl CadCraftApp {
                     }
                 });
                 ui.separator();
-                if readonly {
-                    ui.colored_label(
-                        Color32::from_rgb(200, 120, 20),
-                        "A linked part file: open the part to change its iProperties.",
-                    );
+                if linked {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(
+                            Color32::from_rgb(200, 120, 20),
+                            "A linked part file: Apply writes the changes into it.",
+                        );
+                        if ui
+                            .add_enabled(w.pending.is_some(), egui::Button::new("Apply"))
+                            .clicked()
+                        {
+                            apply = true;
+                        }
+                    });
                 }
-                ui.add_enabled_ui(!readonly, |ui| match w.tab {
+                ui.vertical(|ui| match w.tab {
                     0 => general_tab(ui, &name, kind, path.as_deref()),
                     1 => standard_tab(ui, &mut edited, Tab::Summary, &file_name),
                     2 => standard_tab(ui, &mut edited, Tab::Project, &file_name),
@@ -155,10 +173,26 @@ impl CadCraftApp {
                     ui.colored_label(Color32::from_rgb(235, 80, 70), format!("iProperties: {e}"));
                 }
             });
-        if edited != props && !readonly {
-            self.checkpoint("iProperties");
-            if let Some(d) = self.project.document_mut(w.doc) {
-                d.properties = edited;
+        if edited != props {
+            if linked {
+                w.pending = Some(edited);
+            } else {
+                self.checkpoint("iProperties");
+                if let Some(d) = self.project.document_mut(w.doc) {
+                    d.properties = edited;
+                }
+            }
+        }
+        // A linked part file: written on Apply or when the window closes.
+        if (apply || !open)
+            && let (Some(p), Some((path, _))) = (w.pending.take(), w.linked.clone())
+        {
+            match self.set_linked_props(&path, w.doc, p) {
+                Ok((msg, project)) => {
+                    w.linked = Some((path, project));
+                    self.file_status = Some(Ok(msg));
+                }
+                Err(e) => self.file_status = Some(Err(format!("iProperties: {e}"))),
             }
         }
         if physical {

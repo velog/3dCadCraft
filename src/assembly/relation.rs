@@ -46,6 +46,56 @@ pub enum GeomRef {
         /// The work feature's id.
         id: String,
     },
+    /// A point snapped on a planar face — its centre, the middle or an end
+    /// of one of its edges, the centre of a round edge — with the face's
+    /// normal: a joint origin (Inventor's joint snaps).
+    FacePoint {
+        /// The occurrence's id.
+        occurrence: u32,
+        /// The face's persistent name.
+        face: String,
+        /// A point on the face when it was picked (part coordinates).
+        hint: [Real; 3],
+        /// Where on it.
+        at: FaceSnap,
+    },
+}
+
+/// Where a [`GeomRef::FacePoint`] lies on its face.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "snap")]
+pub enum FaceSnap {
+    /// The face's centre.
+    Center,
+    /// The middle of an edge (x along the edge).
+    EdgeMiddle {
+        /// The edge.
+        edge: EdgeRef,
+    },
+    /// An end of an edge (`end`: the end vertex, else the start).
+    EdgeEnd {
+        /// The edge.
+        edge: EdgeRef,
+        /// The end vertex.
+        end: bool,
+    },
+    /// The centre of a round edge.
+    CircleCenter {
+        /// The edge.
+        edge: EdgeRef,
+    },
+}
+
+impl FaceSnap {
+    /// Short name (panel, browser).
+    pub fn label(&self) -> &'static str {
+        match self {
+            FaceSnap::Center => "centre",
+            FaceSnap::EdgeMiddle { .. } => "edge midpoint",
+            FaceSnap::EdgeEnd { .. } => "vertex",
+            FaceSnap::CircleCenter { .. } => "circle centre",
+        }
+    }
 }
 
 /// The "occurrence" of the assembly's own origin geometry (never a real
@@ -136,7 +186,8 @@ impl GeomRef {
             GeomRef::Face { occurrence, .. }
             | GeomRef::Edge { occurrence, .. }
             | GeomRef::Origin { occurrence, .. }
-            | GeomRef::Work { occurrence, .. } => *occurrence,
+            | GeomRef::Work { occurrence, .. }
+            | GeomRef::FacePoint { occurrence, .. } => *occurrence,
         }
     }
 
@@ -147,6 +198,7 @@ impl GeomRef {
             GeomRef::Edge { edge, .. } => format!("{} | {}", edge.faces[0], edge.faces[1]),
             GeomRef::Origin { item, .. } => item.label().to_owned(),
             GeomRef::Work { id, .. } => id.clone(),
+            GeomRef::FacePoint { face, at, .. } => format!("{face} ({})", at.label()),
         }
     }
 }
@@ -399,6 +451,69 @@ fn face_normal(body: &BRep, f: crate::kernel::FaceId) -> Option<(Point3, Vector3
     ))
 }
 
+/// A joint origin on a planar face: the snapped point, the face's outward
+/// normal, x along the snapped edge (else square to the normal).
+fn face_point(
+    body: &BRep,
+    occurrence: u32,
+    face: &str,
+    hint: [Real; 3],
+    at: &FaceSnap,
+) -> Result<Geom, String> {
+    let plane = resolve_local(
+        body,
+        &GeomRef::Face {
+            occurrence,
+            name: face.to_owned(),
+            hint,
+        },
+    )?;
+    let Geom::Plane { p: centre, n } = plane else {
+        return Err(format!("the face {face} is not planar"));
+    };
+    let edge_pts = |e: &EdgeRef| -> Result<Vec<Point3>, String> {
+        let id = crate::part::draft::edge_of(body, e).ok_or_else(|| {
+            format!(
+                "the edge between {} and {} no longer exists",
+                e.faces[0], e.faces[1]
+            )
+        })?;
+        body.sample_edge(id, &crate::kernel::TessellationOptions::default())
+            .map_err(|x| x.to_string())
+    };
+    let along = |pts: &[Point3]| -> Option<Vector3> {
+        let (a, b) = (pts.first()?, pts.last()?);
+        let d = b - a;
+        let d = d - n * n.dot(&d);
+        d.try_normalize(1e-9)
+    };
+    let (p, x) = match at {
+        FaceSnap::Center => (centre, None),
+        FaceSnap::EdgeMiddle { edge } => {
+            let pts = edge_pts(edge)?;
+            let mid = crate::part::select::polyline_middle(&pts).unwrap_or(centre);
+            (mid, along(&pts))
+        }
+        FaceSnap::EdgeEnd { edge, end } => {
+            let pts = edge_pts(edge)?;
+            let v = if *end { pts.last() } else { pts.first() };
+            (v.copied().unwrap_or(centre), along(&pts))
+        }
+        FaceSnap::CircleCenter { edge } => match resolve_local(
+            body,
+            &GeomRef::Edge {
+                occurrence,
+                edge: edge.clone(),
+            },
+        )? {
+            Geom::Circle { c, .. } => (c, None),
+            _ => return Err("the edge is not round".into()),
+        },
+    };
+    let x = x.unwrap_or_else(|| super::joint::frame_of(&Geom::Plane { p, n }).x);
+    Ok(Geom::Frame { p, z: n, x })
+}
+
 /// The area-weighted centre of face `f`'s triangles.
 fn face_centre(body: &BRep, f: crate::kernel::FaceId) -> Option<Point3> {
     let mesh = body
@@ -443,6 +558,12 @@ pub fn resolve_local(body: &BRep, r: &GeomRef) -> Result<Geom, String> {
     match r {
         GeomRef::Origin { item, .. } => Ok(item.geom()),
         GeomRef::Work { id, .. } => Err(format!("the work feature {id} needs its part")),
+        GeomRef::FacePoint {
+            occurrence,
+            face,
+            hint,
+            at,
+        } => face_point(body, *occurrence, face, *hint, at),
         GeomRef::Face { name, hint, .. } => {
             let hint = Point3::from(*hint);
             // The piece of that name nearest the pick.
@@ -689,7 +810,7 @@ mod tests {
             .expect("a rim edge");
         let rim = GeomRef::Edge {
             occurrence: 1,
-            edge: e,
+            edge: e.clone(),
         };
         let Geom::Circle { c, n, r } = resolve_local(&p.body, &rim).unwrap() else {
             panic!("not a circle");
@@ -706,6 +827,56 @@ mod tests {
         };
         assert!(d.cross(&Vector3::z()).norm() < 1e-9);
         assert!(((a - Point3::new(20.0, 15.0, 0.0)).xy()).norm() < 1e-6);
+        // Joint origins on the top face: the middle of its front edge (x
+        // along the edge), a vertex, the hole's centre.
+        let front = p
+            .body
+            .edges()
+            .find_map(|(e, _)| {
+                let r = crate::part::blend::edge_ref(&p.body, e)?;
+                let mut f = r.faces.clone();
+                f.sort();
+                (f == ["Box1:Front".to_owned(), "Box1:Top".to_owned()]).then_some(r)
+            })
+            .expect("the front top edge");
+        let at = |snap| GeomRef::FacePoint {
+            occurrence: 1,
+            face: "Box1:Top".into(),
+            hint: [5.0, 5.0, 20.0],
+            at: snap,
+        };
+        let Geom::Frame { p: m, z, x } = resolve_local(
+            &p.body,
+            &at(FaceSnap::EdgeMiddle {
+                edge: front.clone(),
+            }),
+        )
+        .unwrap() else {
+            panic!("not a frame");
+        };
+        assert!((m - Point3::new(20.0, 0.0, 20.0)).norm() < 1e-6, "{m}");
+        assert!((z - Vector3::z()).norm() < 1e-9 && x.cross(&Vector3::x()).norm() < 1e-9);
+        let Geom::Frame { p: v, .. } = resolve_local(
+            &p.body,
+            &at(FaceSnap::EdgeEnd {
+                edge: front,
+                end: true,
+            }),
+        )
+        .unwrap() else {
+            panic!("not a frame");
+        };
+        assert!(
+            (v.y).abs() < 1e-6
+                && (v.z - 20.0).abs() < 1e-6
+                && (v.x.abs() < 1e-6 || (v.x - 40.0).abs() < 1e-6)
+        );
+        let Geom::Frame { p: c, .. } =
+            resolve_local(&p.body, &at(FaceSnap::CircleCenter { edge: e.clone() })).unwrap()
+        else {
+            panic!("not a frame");
+        };
+        assert!((c - Point3::new(20.0, 15.0, 20.0)).norm() < 1e-6, "{c}");
         let gone = GeomRef::Face {
             occurrence: 1,
             name: "Box1:Nowhere".into(),

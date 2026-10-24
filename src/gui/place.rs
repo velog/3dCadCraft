@@ -130,6 +130,62 @@ impl CadCraftApp {
         flat.exists().then_some(flat)
     }
 
+    /// Writes the iProperties of document `doc` of the part file `path`:
+    /// into its tab when it is open (unsaved there, as any edit), else into
+    /// the file itself. The assembly's copy is updated at once. Returns the
+    /// message and the project as it is now.
+    pub(super) fn set_linked_props(
+        &mut self,
+        path: &Path,
+        doc: DocumentId,
+        props: crate::document::iprops::IProperties,
+    ) -> Result<(String, Rc<Project>), String> {
+        let key = path.canonicalize().map_err(|e| e.to_string())?;
+        let same = |p: &str| {
+            !p.trim().is_empty() && Path::new(p.trim()).canonicalize().is_ok_and(|c| c == key)
+        };
+        let mut done = None;
+        for t in self.tabs.iter_mut().flatten() {
+            if same(&t.file_path) {
+                let d = t
+                    .project
+                    .document_mut(doc)
+                    .ok_or("the part is not in its file")?;
+                d.properties = props.clone();
+                t.dirty = true;
+                done = Some(Rc::new(t.project.clone()));
+            }
+        }
+        let msg;
+        let project = match done {
+            Some(p) => {
+                msg = format!(
+                    "iProperties changed in the open {} (save it there)",
+                    key.display()
+                );
+                p
+            }
+            None => {
+                let mut p = Project::load(&key).map_err(|e| e.to_string())?;
+                let d = p.document_mut(doc).ok_or("the part is not in its file")?;
+                d.properties = props;
+                p.save(&key).map_err(|e| e.to_string())?;
+                msg = format!("iProperties saved into {}", key.display());
+                Rc::new(load_regenerated(&key)?)
+            }
+        };
+        let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
+        self.asm.libs.files.borrow_mut().insert(
+            key,
+            LibEntry {
+                project: project.clone(),
+                modified,
+                checked: Instant::now(),
+            },
+        );
+        Ok((msg, project))
+    }
+
     /// [`Self::part_file`] for the iProperties window.
     pub(super) fn part_file_pub(&self, path: &Path) -> Result<Rc<Project>, String> {
         self.part_file(path)

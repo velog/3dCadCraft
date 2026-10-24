@@ -77,7 +77,7 @@ pub fn outer_loop_edges(body: &BRep, f: FaceId) -> Vec<EdgeId> {
 }
 
 /// The point halfway along a polyline (by length).
-fn polyline_middle(pts: &[Point3]) -> Option<Point3> {
+pub(crate) fn polyline_middle(pts: &[Point3]) -> Option<Point3> {
     let total: Real = pts.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
     let mut left = total / 2.0;
     for w in pts.windows(2) {

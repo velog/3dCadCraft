@@ -125,6 +125,7 @@ impl CadCraftApp {
         let mut edits: Vec<(DocRef, &'static str, String)> = Vec::new();
         let mut structures: Vec<(DocRef, BomStructure)> = Vec::new();
         let mut overrides: Vec<(u32, bool)> = Vec::new();
+        let mut open_props: Option<u32> = None;
         let win = egui::Window::new(format!("Bill of Materials [{}]", self.document_title()))
             .id(egui::Id::new("bom_window"))
             .open(&mut open)
@@ -223,8 +224,16 @@ impl CadCraftApp {
                         };
                         if r.missing {
                             ui.colored_label(Color32::from_rgb(235, 80, 70), &r.part_number);
-                        } else {
+                        } else if local {
                             cell(ui, "part_number", &r.part_number);
+                        } else {
+                            // A linked part file: its iProperties window writes into it.
+                            ui.horizontal(|ui| {
+                                ui.label(&r.part_number);
+                                if ui.small_button("...").on_hover_text("iProperties of the part file").clicked() {
+                                    open_props = Some(r.occurrences[0]);
+                                }
+                            });
                         }
                         let mut s = r.structure;
                         ui.add_enabled_ui(local, |ui| {
@@ -285,6 +294,9 @@ impl CadCraftApp {
                     }
                 }
             }
+        }
+        if let Some(occ) = open_props {
+            self.open_component_iproperties(occ);
         }
         if export {
             self.bom_export = Some(bom::to_csv(&rows, &w.extra));

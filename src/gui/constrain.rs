@@ -125,6 +125,11 @@ pub(super) struct ConstrainUi {
     hover: Option<GeomRef>,
     /// Origin / work geometry under the cursor in the browser.
     pub browser_hover: Option<GeomRef>,
+    /// Joint: the face held by Shift (occurrence, face) — only its snaps
+    /// are offered while Shift is down.
+    locked: Option<(u32, crate::kernel::FaceId)>,
+    /// Joint: the snap points of the face under the cursor (screen).
+    snap_dots: Vec<Pos2>,
 }
 
 const PICK_PX: f32 = 7.0;
@@ -535,7 +540,27 @@ impl CadCraftApp {
             return false;
         }
         self.constrain_preview();
-        self.cons.hover = pointer.and_then(|p| self.geom_under(p, rect));
+        let joint = self.cons.draft.as_ref().is_some_and(|d| d.kind.is_joint());
+        self.cons.snap_dots.clear();
+        self.cons.hover = match pointer {
+            Some(p) if joint => self.joint_snap_under(p, rect, shift_down(painter)),
+            Some(p) => self.geom_under(p, rect),
+            None => None,
+        };
+        // The face held by Shift, and the snaps offered on it.
+        if let Some((occ, f)) = self.cons.locked
+            && let Some(name) = self.face_name(occ, f)
+        {
+            let g = GeomRef::Face {
+                occurrence: occ,
+                name,
+                hint: [0.0; 3],
+            };
+            self.draw_geom(painter, rect, &g, Color32::from_rgb(255, 200, 60));
+        }
+        for d in &self.cons.snap_dots {
+            painter.circle_filled(*d, 3.0, Color32::from_rgb(230, 230, 230));
+        }
         if clicked && let Some(g) = self.cons.hover.clone() {
             self.constrain_pick(g);
         }
@@ -559,13 +584,137 @@ impl CadCraftApp {
         clicked
     }
 
+    /// The persistent name of face `f` of occurrence `occ`'s part.
+    fn face_name(&self, occ: u32, f: crate::kernel::FaceId) -> Option<String> {
+        let o = self.assembly()?.find(occ)?;
+        self.with_part(o.component, |p| p.body.face(f).and_then(|x| x.name.clone()))?
+    }
+
+    /// The snap points of planar face `f` of occurrence `occ` (part
+    /// coordinates): its centre, the middles and ends of its straight edges,
+    /// the centres of its round edges.
+    fn face_snaps(
+        &self,
+        occ: u32,
+        f: crate::kernel::FaceId,
+    ) -> Option<(String, Vec<(relation::FaceSnap, Point3)>)> {
+        use relation::FaceSnap;
+        let o = self.assembly()?.find(occ)?;
+        self.with_part(o.component, |p| {
+            let body = &p.body;
+            let name = body.face(f)?.name.clone()?;
+            let centre = relation::resolve_local(
+                body,
+                &GeomRef::Face {
+                    occurrence: occ,
+                    name: name.clone(),
+                    hint: [0.0; 3],
+                },
+            )
+            .ok()?;
+            let Geom::Plane { p: c, .. } = centre else {
+                return None;
+            };
+            let mut v = vec![(FaceSnap::Center, c)];
+            let opts = crate::kernel::TessellationOptions::default();
+            for e in crate::part::select::edges_of_face(body, f) {
+                let Some(r) = crate::part::blend::edge_ref(body, e) else {
+                    continue;
+                };
+                let Some(x) = body.edge(e) else {
+                    continue;
+                };
+                match body.curve(x.curve) {
+                    Some(crate::kernel::Curve::Circle(ci)) => {
+                        if !v.iter().any(|(_, q)| (q - ci.center).norm() < 1e-6) {
+                            v.push((FaceSnap::CircleCenter { edge: r }, ci.center));
+                        }
+                    }
+                    Some(crate::kernel::Curve::Line(_)) => {
+                        let Ok(pts) = body.sample_edge(e, &opts) else {
+                            continue;
+                        };
+                        if let Some(m) = crate::part::select::polyline_middle(&pts) {
+                            v.push((FaceSnap::EdgeMiddle { edge: r.clone() }, m));
+                        }
+                        for (end, q) in [(false, pts.first()), (true, pts.last())] {
+                            if let Some(q) = q
+                                && !v.iter().any(|(_, w)| (w - q).norm() < 1e-6)
+                            {
+                                v.push((
+                                    FaceSnap::EdgeEnd {
+                                        edge: r.clone(),
+                                        end,
+                                    },
+                                    *q,
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some((name, v))
+        })?
+    }
+
+    /// Joint origins under the cursor: on the planar face under it (or the
+    /// one Shift holds) the nearest snap within 20 px — centre, edge middle,
+    /// vertex, circle centre — else its centre; elsewhere an edge or axis.
+    fn joint_snap_under(&mut self, pos: Pos2, rect: Rect, shift: bool) -> Option<GeomRef> {
+        let hit = self.asm_pick_pub(pos, rect);
+        if !shift {
+            self.cons.locked = None;
+        }
+        let face = match (self.cons.locked, hit) {
+            (Some(l), _) => Some(l),
+            (None, Some((h, _))) => Some((h.occurrence, h.face)),
+            (None, None) => None,
+        };
+        let Some((occ, f)) = face else {
+            return self.geom_under(pos, rect);
+        };
+        let Some((name, snaps)) = self.face_snaps(occ, f) else {
+            // Not planar (a cylinder): its axis, or the edge under the cursor.
+            return self.geom_under(pos, rect);
+        };
+        if shift && self.cons.locked.is_none() {
+            self.cons.locked = Some((occ, f));
+        }
+        let t = self.assembly()?.find(occ)?.transform;
+        let mut best: Option<(f32, relation::FaceSnap, Point3)> = None;
+        for (s, q) in &snaps {
+            let Some(sp) = self.camera.project(&(t * q), rect) else {
+                continue;
+            };
+            self.cons.snap_dots.push(sp);
+            let d = (sp - pos).length();
+            if d < 20.0 && best.as_ref().is_none_or(|b| d < b.0) {
+                best = Some((d, s.clone(), *q));
+            }
+        }
+        let (at, q) = match best {
+            Some((_, s, q)) => (s, q),
+            None => (relation::FaceSnap::Center, snaps[0].1),
+        };
+        Some(GeomRef::FacePoint {
+            occurrence: occ,
+            face: name,
+            hint: [q.x, q.y, q.z],
+            at,
+        })
+    }
+
     /// Outlines a picked face (its triangles), edge (its polyline), or an
     /// origin / work plane (a square), axis (a line) or point (a ring).
     pub(super) fn draw_geom(&self, painter: &egui::Painter, rect: Rect, g: &GeomRef, col: Color32) {
         let Some(a) = self.assembly() else {
             return;
         };
-        if matches!(g, GeomRef::Origin { .. } | GeomRef::Work { .. }) {
+        if matches!(
+            g,
+            GeomRef::Origin { .. } | GeomRef::Work { .. } | GeomRef::FacePoint { .. }
+        ) {
             self.draw_reference(painter, rect, g, col);
             return;
         }
@@ -625,7 +774,7 @@ impl CadCraftApp {
                 }
                 painter.add(egui::Shape::mesh(m));
             }
-            GeomRef::Origin { .. } | GeomRef::Work { .. } => {}
+            GeomRef::Origin { .. } | GeomRef::Work { .. } | GeomRef::FacePoint { .. } => {}
         }
     }
 
@@ -634,7 +783,7 @@ impl CadCraftApp {
         let d = self.cons.draft.as_ref()?;
         if d.kind.is_joint() {
             return Some(if d.a.is_none() || d.active == 0 {
-                "Joint: pick the first origin on a component (a face: its centre; a circular edge: its centre; an axis, a point, or Origin / work geometry in the browser)".into()
+                "Joint: pick the first origin on a component: on a face its centre, an edge's midpoint or end, a circle's centre (white dots; hold Shift to keep that face), or an axis, or Origin / work geometry in the browser".into()
             } else if d.b.is_none() {
                 "Joint: pick the second origin, on the component that moves".into()
             } else {
@@ -926,6 +1075,7 @@ impl CadCraftApp {
             GeomRef::Edge { .. } => format!("{occ} edge"),
             GeomRef::Origin { item, .. } => format!("{occ} {}", item.label()),
             GeomRef::Work { id, .. } => format!("{occ} {id}"),
+            GeomRef::FacePoint { at, .. } => format!("{occ} face {}", at.label()),
         }
     }
 
@@ -1151,4 +1301,9 @@ fn seg_dist(p: Pos2, a: Pos2, b: Pos2) -> (f32, f32) {
         ((p - a).dot(ab) / len2).clamp(0.0, 1.0)
     };
     ((a + ab * s - p).length(), s)
+}
+
+/// Whether Shift is held (Joint: hold the face under the cursor).
+fn shift_down(painter: &egui::Painter) -> bool {
+    painter.ctx().input(|i| i.modifiers.shift)
 }
