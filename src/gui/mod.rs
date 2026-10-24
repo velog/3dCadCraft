@@ -41,6 +41,7 @@ mod demos;
 mod diag;
 mod doc_tabs;
 mod draft;
+mod drive;
 mod feature_cmd;
 mod files;
 mod hole;
@@ -590,6 +591,8 @@ struct CadCraftApp {
     /// The Bill of Materials window (`bom.rs`) and the CSV waiting for its
     /// Export file name.
     bom: Option<bom::BomWin>,
+    /// The Drive window (`drive.rs`).
+    drive: Option<drive::DriveWin>,
     bom_export: Option<String>,
 
     tab: Tab,
@@ -834,6 +837,7 @@ impl CadCraftApp {
             constrain_current_offset: false,
             iprops: None,
             bom: None,
+            drive: None,
             bom_export: None,
             tab: Tab::Model,
             mouse: MousePreset::Inventor,
@@ -4833,6 +4837,18 @@ impl CadCraftApp {
         };
 
         if self.is_assembly() {
+            // The ViewCube: clicks and its menu, as in a part.
+            if response.clicked()
+                && let Some(hit) = on_cube
+            {
+                self.cube_clicked(hit);
+            }
+            if response.secondary_clicked() {
+                self.cube_context = on_cube.is_some();
+            }
+            if self.cube_context {
+                response.context_menu(|ui| self.cube_menu(ui));
+            }
             self.assembly_viewport(
                 ui,
                 frame,
@@ -4842,6 +4858,14 @@ impl CadCraftApp {
                 on_cube.is_some(),
                 cube_drag,
             );
+            let painter = ui.painter_at(rect);
+            if self.layout.visible(layout::Element::Triad) {
+                viewcube::draw_triad(&painter, &self.camera, rect);
+            }
+            if self.layout.visible(layout::Element::ViewCube) {
+                let cube_active = self.view_cube.dragging();
+                viewcube::draw(&painter, &self.camera, rect, pointer, cube_active);
+            }
             return;
         }
         // Measure into a field takes the click first (`measure_pick`).
@@ -7067,6 +7091,7 @@ impl eframe::App for CadCraftApp {
         self.iprops_window(&ctx);
         if self.is_assembly() {
             self.bom_window(&ctx);
+            self.drive_window(&ctx);
         }
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);

@@ -15,7 +15,7 @@ pub mod relation;
 pub mod solve;
 
 pub use relation::{Constraint, ConstraintKind, Geom, GeomRef};
-pub use solve::{Solved, solve};
+pub use solve::{Drag, Solved, solve};
 
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Occurrence, Project};
 use crate::kernel::{FaceId, Point3, Real, TessellationOptions, Transform3, Vector3};

@@ -283,6 +283,20 @@ pub struct Constraint {
     /// Joints: the largest value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<Real>,
+    /// Constraints with limits: the offset is where the component rests
+    /// (it springs back there after a drag); off, it stays where it was
+    /// dropped between the limits (Inventor's Use Offset As Resting
+    /// Position).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub resting: bool,
+}
+
+impl Constraint {
+    /// Whether its value is held now: always without limits; with limits
+    /// only when the solver locked it at a limit (or at rest).
+    pub fn holds_value(&self) -> bool {
+        self.locked || (!self.kind.is_joint() && self.min.is_none() && self.max.is_none())
+    }
 }
 
 impl Constraint {
@@ -659,6 +673,9 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
         return Ok(());
     }
     let d = c.value;
+    // With limits the value is free between them (the solver holds it at a
+    // limit it passes).
+    let hold = c.holds_value();
     let vec3 = |out: &mut Vec<Real>, v: Vector3| out.extend([v.x, v.y, v.z]);
     // The offset of point `q` from the line (p, u), as a vector.
     let off_line = |p: Point3, u: Vector3, q: Point3| {
@@ -669,17 +686,25 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
         (Mate | Flush, Geom::Plane { p: pa, n: na }, Geom::Plane { p: pb, n: nb }) => {
             let s = if c.kind == Mate { 1.0 } else { -1.0 };
             vec3(out, na + nb * s);
-            out.push(na.dot(&(pb - pa)) - d);
+            if hold {
+                out.push(na.dot(&(pb - pa)) - d);
+            }
         }
         (Mate | Flush, Geom::Plane { p, n }, other)
         | (Mate | Flush, other, Geom::Plane { p, n }) => {
             match *other {
                 // A circle's centre or a point on the plane (at the offset).
-                Geom::Circle { c: q, .. } | Geom::Point { p: q } => out.push(n.dot(&(q - p)) - d),
+                Geom::Circle { c: q, .. } | Geom::Point { p: q } => {
+                    if hold {
+                        out.push(n.dot(&(q - p)) - d)
+                    }
+                }
                 // The axis in the plane (at the offset).
                 Geom::Axis { p: q, d: u } => {
                     out.push(n.dot(&u));
-                    out.push(n.dot(&(q - p)) - d);
+                    if hold {
+                        out.push(n.dot(&(q - p)) - d);
+                    }
                 }
                 Geom::Plane { .. } => return Err("two planes".into()),
                 Geom::Frame { .. } => return Err("a joint origin".into()),
@@ -705,18 +730,56 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
             vec3(out, off_line(pa, ua, pb));
         }
         (Angle, x, y) => {
-            out.push(x.direction().dot(&y.direction()) - d.cos());
+            if hold {
+                out.push(x.direction().dot(&y.direction()) - d.cos());
+            }
         }
         (Insert, Geom::Circle { c: ca, n: na, .. }, Geom::Circle { c: cb, n: nb, .. }) => {
             let s = if c.aligned { -1.0 } else { 1.0 };
             vec3(out, na + nb * s);
-            vec3(out, (cb - ca) - na * d);
+            if hold {
+                vec3(out, (cb - ca) - na * d);
+            } else {
+                vec3(out, off_line(*ca, *na, *cb));
+            }
         }
         (Insert, _, _) => return Err("Insert needs two circular edges".into()),
         // Joints returned above.
         (Rigid | Rotational | Slider | Cylindrical | Planar | Ball, _, _) => {}
     }
     Ok(())
+}
+
+/// The value a constraint or joint has as the components stand (world
+/// geometry): an offset, an angle, a joint's turn or slide; `None` where
+/// it has none.
+pub fn measure(c: &Constraint, a: &Geom, b: &Geom) -> Option<Real> {
+    use ConstraintKind::*;
+    if c.kind.is_joint() {
+        let fa = super::joint::frame_of(a);
+        let fb = super::joint::frame_of(b);
+        return super::joint::measure(c, &fa, &fb);
+    }
+    match (c.kind, a, b) {
+        (Mate | Flush, Geom::Plane { p: pa, n: na }, Geom::Plane { p: pb, .. }) => {
+            Some(na.dot(&(pb - pa)))
+        }
+        (
+            Mate | Flush,
+            Geom::Plane { p, n },
+            Geom::Circle { c: q, .. } | Geom::Axis { p: q, .. } | Geom::Point { p: q },
+        )
+        | (
+            Mate | Flush,
+            Geom::Circle { c: q, .. } | Geom::Axis { p: q, .. } | Geom::Point { p: q },
+            Geom::Plane { p, n },
+        ) => Some(n.dot(&(q - p))),
+        (Angle, x, y) => Some(x.direction().dot(&y.direction()).clamp(-1.0, 1.0).acos()),
+        (Insert, Geom::Circle { c: ca, n: na, .. }, Geom::Circle { c: cb, .. }) => {
+            Some(na.dot(&(cb - ca)))
+        }
+        _ => None,
+    }
 }
 
 /// What the current positions say for a new constraint between `a` and `b`

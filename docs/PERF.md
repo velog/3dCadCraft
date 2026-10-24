@@ -175,10 +175,10 @@ Target times for interactive work:
 
 ## Open
 
-- Assembly solver (A2, 2026-10-23): dense finite-difference Jacobian, 30 components / 87 constraints
-  185 ms (budget 500 ms); it runs every frame while a constrained component is dragged. Faster: analytic
-  derivatives of the residuals and a sparse solve (as the sketch solver), or solving only the components
-  connected to the dragged one.
+- Assembly solver: v1 (dense, 2026-10-23) took 185 ms for 30 components. v2 (2026-10-24): passes along
+  the constraint graph, per-constraint Jacobians — 30 cubes 1.2 ms, 200 / 500 / 1000 cubes with the first
+  Mate changed 7 / 20 / 45 ms (budgets 40 / 100 / 200 ms). Loops still solve densely over their
+  components: a 1000-part loop would be slow (sparse LDLᵀ as in the sketch solver if it ever matters).
 
 - Countersinks (ROADMAP K4, 2026-10-23): a cone tool through truck's general Boolean, ~0.33 s per
   hole and superlinear in one feature (36 holes ~40 s). `exact::cone_tool` (a tapered disc, as

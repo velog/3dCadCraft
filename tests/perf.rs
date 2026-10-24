@@ -1565,6 +1565,7 @@ fn speed_budgets() {
                     locked: false,
                     min: None,
                     max: None,
+                    resting: false,
                 });
             }
         }
@@ -1586,11 +1587,12 @@ fn speed_budgets() {
                 locked: false,
                 min: Some(0.0),
                 max: Some(std::f64::consts::FRAC_PI_2),
+                resting: false,
             });
         }
         rows.push((
             "assembly: 29 Rotational joints with limits (a turning stack)",
-            500.0,
+            50.0,
             median_ms(3, || {
                 let s = assembly::solve(&chain, &geom, None);
                 assert!(s.converged, "{}", s.residual);
@@ -1598,11 +1600,100 @@ fn speed_budgets() {
         ));
         rows.push((
             "assembly: solve a stack of 30 cubes (87 constraints)",
-            500.0,
+            50.0,
             median_ms(3, || {
                 let s = assembly::solve(&asm, &geom, None);
                 assert!(s.converged, "{}", s.residual);
                 assert!(s.dof.values().all(|&d| d == 0));
+            }),
+        ));
+    }
+    // Large assemblies (the owner, 2026-10-24): a stack of N cubes, each
+    // mated on the one below and flush on two sides, already solved; the
+    // first Mate's offset changes by 5 mm and every cube above must follow.
+    for n in [200u32, 500, 1000] {
+        use cadcraft3d::assembly::{self, Constraint, ConstraintKind, Geom, GeomRef};
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+        use cadcraft3d::kernel::{Transform3, Vector3};
+        let geom = |r: &GeomRef| -> Result<Geom, String> {
+            let GeomRef::Face { name, .. } = r else {
+                return Err("face".into());
+            };
+            let (p, n) = match name.as_str() {
+                "Top" => (Point3::new(10.0, 10.0, 20.0), Vector3::z()),
+                "Bottom" => (Point3::new(10.0, 10.0, 0.0), -Vector3::z()),
+                "Left" => (Point3::new(0.0, 10.0, 10.0), -Vector3::x()),
+                _ => (Point3::new(10.0, 0.0, 10.0), -Vector3::y()),
+            };
+            Ok(Geom::Plane { p, n })
+        };
+        let face = |o: u32, n: &str| GeomRef::Face {
+            occurrence: o,
+            name: n.into(),
+            hint: [0.0; 3],
+        };
+        let mut asm = AssemblyDocument::default();
+        let r = DocRef::local(DocumentId::new_random());
+        for i in 0..n {
+            asm.place(
+                r,
+                "Cube",
+                Transform3::translation(0.0, 0.0, 20.0 * i as Real),
+                i == 0,
+            );
+        }
+        for i in 1..n {
+            for (kind, a, b) in [
+                (ConstraintKind::Mate, "Top", "Bottom"),
+                (ConstraintKind::Flush, "Left", "Left"),
+                (ConstraintKind::Flush, "Front", "Front"),
+            ] {
+                asm.add_constraint(Constraint {
+                    id: 0,
+                    name: String::new(),
+                    kind,
+                    a: face(i, a),
+                    b: face(i + 1, b),
+                    value: 0.0,
+                    expr: None,
+                    aligned: false,
+                    suppressed: false,
+                    locked: false,
+                    min: None,
+                    max: None,
+                    resting: false,
+                });
+            }
+        }
+        // The first Mate now 5 mm apart.
+        asm.constraints[0].value = 5.0;
+        let label: &'static str = match n {
+            200 => "assembly: 200 stacked cubes, the first Mate changed (update)",
+            500 => "assembly: 500 stacked cubes, the first Mate changed (update)",
+            _ => "assembly: 1000 stacked cubes, the first Mate changed (update)",
+        };
+        let budget = match n {
+            200 => 40.0,
+            500 => 100.0,
+            _ => 200.0,
+        };
+        rows.push((
+            label,
+            budget,
+            median_ms(3, || {
+                let s = assembly::solve(&asm, &geom, None);
+                assert!(s.converged, "{}", s.residual);
+                let top = s
+                    .transforms
+                    .iter()
+                    .find(|(id, _)| *id == n)
+                    .map(|x| x.1)
+                    .unwrap();
+                let z = (top * Point3::origin()).z;
+                assert!(
+                    (z - (20.0 * (n - 1) as Real + 5.0)).abs() < 1e-6,
+                    "top at {z}"
+                );
             }),
         ));
     }

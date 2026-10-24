@@ -221,7 +221,11 @@ blue / violet / green under the cursor), Offset or Angle field, Show Preview, Pr
 OK (Enter) / Apply / Cancel (Esc), the same in the view's right-click menu. A constraint that conflicts is
 refused. The browser's *Relationships* folder lists them (red = sick: its face or edge is gone); double-click
 edits, right-click Suppress / Delete. Dragging a constrained component moves it only along its free degrees
-of freedom. 🟡 waiting for a visual check.
+of freedom (the grabbed point follows the cursor as far as the constraints allow; a component free to turn
+turns). Constraints can have Minimum / Maximum limits (and Use Offset As Resting Position); right-click a
+constraint or joint → **Drive...** animates its value (Start, End, Steps, Pause, Repetitions,
+Start/End/Start; |< < || > >|), closing puts everything back. The ViewCube and the axis triad are in the
+assembly view too. 🟡 waiting for a visual check.
 
 ### Help, log and recovery
 

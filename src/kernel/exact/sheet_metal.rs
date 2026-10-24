@@ -109,9 +109,8 @@ fn rule_of(rv: &RuleValues) -> sd::RuleValues {
 /// (bends, rims it cannot place) `<prefix>:Bend:<k>` in face order.
 fn named_solid(m: &sd::SheetBody, prefix: &str, flat: bool) -> Result<ExactSolid, String> {
     let body = guarded("sheet metal", || {
-        if flat { m.flat_solid() } else { m.solid() }.map_err(|e| {
-            solidcraft_kernel::KernelError::Failed(e.to_string())
-        })
+        if flat { m.flat_solid() } else { m.solid() }
+            .map_err(|e| solidcraft_kernel::KernelError::Failed(e.to_string()))
     })?;
     let mut s = ExactSolid {
         sheet: false,
@@ -125,7 +124,9 @@ fn named_solid(m: &sd::SheetBody, prefix: &str, flat: bool) -> Result<ExactSolid
     s.face_names = samples
         .iter()
         .map(|p| {
-            let named = p.and_then(|p| m.panel_face_at(v3(&p), m.t * 0.2)).map(|(n, _)| n);
+            let named = p
+                .and_then(|p| m.panel_face_at(v3(&p), m.t * 0.2))
+                .map(|(n, _)| n);
             Some(match named {
                 Some(n) => format!("{prefix}:{n}"),
                 None => {
@@ -152,7 +153,7 @@ pub fn face(
     curves: &[BaseCurve],
     flip: bool,
 ) -> Result<(ExactSolid, SheetModel), String> {
-    if !(rv.thickness > 0.0) {
+    if rv.thickness.is_nan() || rv.thickness <= 0.0 {
         return Err("the sheet thickness must be positive".into());
     }
     let mut pl = plane_of(plane)?;
@@ -268,7 +269,10 @@ mod tests {
         let pts = [p(0.0, 0.0), p(w, 0.0), p(w, h), p(0.0, h)];
         let segs: Vec<ProfileSegment> = (0..4)
             .map(|i| ProfileSegment {
-                geometry: Segment2::Line { a: pts[i], b: pts[(i + 1) % 4] },
+                geometry: Segment2::Line {
+                    a: pts[i],
+                    b: pts[(i + 1) % 4],
+                },
                 name: format!("L{i}:0"),
             })
             .collect();
@@ -303,8 +307,15 @@ mod tests {
         .enumerate()
         .map(|(i, (a, b))| (format!("L{i}"), *a, *b))
         .collect();
-        let (s, m) =
-            face("Face1", &rv, &Plane::xy(), &rect(100.0, 60.0), &curves, false).unwrap();
+        let (s, m) = face(
+            "Face1",
+            &rv,
+            &Plane::xy(),
+            &rect(100.0, 60.0),
+            &curves,
+            false,
+        )
+        .unwrap();
         let v = s.volume_at(1e-3).unwrap();
         assert!((v - 100.0 * 60.0 * 2.0).abs() < 1e-6 * v, "{v}");
         assert!(s.face_names.iter().all(Option::is_some));

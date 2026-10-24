@@ -196,6 +196,7 @@ mod tests {
             locked: false,
             min: None,
             max: None,
+            resting: false,
         });
         a
     }
@@ -243,9 +244,15 @@ mod tests {
         for (id, t) in &s.transforms {
             b.find_mut(*id).unwrap().transform = *t;
         }
-        let o = b.find_mut(2).unwrap();
-        o.transform = Transform3::translation(0.0, 0.0, 12.0) * o.transform;
-        let s = solve::solve(&b, &geom, Some(2));
+        // The bottom centre pulled 12 mm up the slide.
+        let t = b.find(2).unwrap().transform;
+        let p = Point3::new(10.0, 10.0, 0.0);
+        let drag = solve::Drag {
+            occurrence: 2,
+            local: p,
+            target: t * p + Vector3::new(0.0, 0.0, 12.0),
+        };
+        let s = solve::solve(&b, &geom, Some(&drag));
         assert!(s.converged, "{}", s.residual);
         let z = (s.transforms[0].1 * Point3::new(10.0, 10.0, 0.0)).z;
         assert!((z - 25.0).abs() < 1e-6, "slid to {z}");

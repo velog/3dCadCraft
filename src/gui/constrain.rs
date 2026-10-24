@@ -44,9 +44,11 @@ pub(super) struct ConstrainDraft {
     edit: Option<u32>,
     /// Joints: the value is held.
     locked: bool,
-    /// Joints: limits of the motion.
+    /// Limits of the motion (joints and constraints).
     min: Option<Real>,
     max: Option<Real>,
+    /// Constraints with limits: Use Offset As Resting Position.
+    resting: bool,
 }
 
 impl ConstrainDraft {
@@ -66,6 +68,7 @@ impl ConstrainDraft {
             locked: false,
             min: None,
             max: None,
+            resting: false,
         }
     }
 
@@ -90,6 +93,7 @@ impl ConstrainDraft {
             locked: self.locked,
             min: self.min,
             max: self.max,
+            resting: self.resting,
         })
     }
 
@@ -157,7 +161,7 @@ impl CadCraftApp {
 
     /// Solves `a` as the active assembly would be (its references resolved
     /// in this document's components).
-    fn solve_copy(&self, a: &AssemblyDocument, heavy: Option<u32>) -> Solved {
+    fn solve_copy(&self, a: &AssemblyDocument, drag: Option<&asm::Drag>) -> Solved {
         let local = |r: &GeomRef| -> Result<Geom, String> {
             if let GeomRef::Origin {
                 occurrence: relation::ASSEMBLY,
@@ -174,12 +178,12 @@ impl CadCraftApp {
                 .ok_or_else(|| format!("{name}: its part file was not found"))?
                 .map_err(|e| format!("{name}: {e}"))
         };
-        asm::solve(a, &local, heavy)
+        asm::solve(a, &local, drag)
     }
 
     /// Solves the active assembly and moves its components (no Undo step:
     /// call it after the change's checkpoint). `heavy` is being dragged.
-    pub(super) fn asm_solve(&mut self, heavy: Option<u32>) {
+    pub(super) fn asm_solve(&mut self, drag: Option<&asm::Drag>) {
         let Some(a) = self.assembly() else {
             return;
         };
@@ -187,7 +191,7 @@ impl CadCraftApp {
             self.cons.last = Solved::default();
             return;
         }
-        let s = self.solve_copy(a, heavy);
+        let s = self.solve_copy(a, drag);
         if let Some(a) = self.assembly_mut() {
             for (id, t) in &s.transforms {
                 if let Some(o) = a.find_mut(*id) {
@@ -270,6 +274,7 @@ impl CadCraftApp {
         d.locked = c.locked;
         d.min = c.min;
         d.max = c.max;
+        d.resting = c.resting;
         d.edit = Some(id);
         self.asm.tool = None;
         self.cons.draft = Some(d);
@@ -1060,6 +1065,34 @@ impl CadCraftApp {
             self.constrain_current_offset = keep;
             d.typed = false;
         }
+        // Limits: the offset (angle) moves freely between them when dragged.
+        let angle = d.kind == ConstraintKind::Angle;
+        let unit = |v: Real| if angle { v.to_degrees() } else { v };
+        let back = |v: Real| if angle { v.to_radians() } else { v };
+        let suffix = if angle { "°" } else { " mm" };
+        ui.add_space(4.0);
+        ui.label("Limits");
+        for (label, slot) in [("Minimum", &mut d.min), ("Maximum", &mut d.max)] {
+            ui.horizontal(|ui| {
+                let mut on = slot.is_some();
+                if ui.checkbox(&mut on, label).changed() {
+                    *slot = on.then_some(d.value);
+                }
+                if let Some(x) = slot.as_mut() {
+                    let mut v = unit(*x);
+                    let before = v;
+                    ui.add(ExprValue::new(&mut v).suffix(suffix));
+                    if v != before {
+                        *x = back(v);
+                    }
+                }
+            });
+        }
+        if d.min.is_some() || d.max.is_some() {
+            ui.checkbox(&mut d.resting, "Use Offset As Resting Position").on_hover_text(
+                "On: the component springs back to the offset after a drag. Off: it stays where it is dropped between the limits",
+            );
+        }
     }
 
     pub(super) fn geom_label(&self, g: &GeomRef) -> String {
@@ -1245,6 +1278,13 @@ impl CadCraftApp {
                 if ui.button("Edit...").clicked() {
                     self.edit_constraint(c.id);
                 }
+                if ui
+                    .button("Drive...")
+                    .on_hover_text("Animate its value")
+                    .clicked()
+                {
+                    self.open_drive(c.id);
+                }
                 if ui.button("Delete").clicked() {
                     self.delete_constraint(c.id);
                 }
@@ -1281,6 +1321,13 @@ impl CadCraftApp {
         ui.horizontal(|ui| {
             if ui.button("Edit...").clicked() {
                 self.edit_constraint(c.id);
+            }
+            if ui
+                .button("Drive...")
+                .on_hover_text("Animate its value")
+                .clicked()
+            {
+                self.open_drive(c.id);
             }
             if ui.button("Delete").clicked() {
                 self.delete_constraint(c.id);

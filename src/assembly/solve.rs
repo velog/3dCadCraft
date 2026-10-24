@@ -3,22 +3,33 @@
 //! small rotation about its own origin, applied to its current placement
 //! and re-linearised each iteration (no gimbal lock). Constraints are a
 //! few scalar residuals on their geometry moved into the assembly
-//! (`relation::residuals`). Levenberg steps in minimum-norm form
-//! (`dx = −Jᵀ(JJᵀ + λI)⁻¹r`): components move as little as the
-//! constraints allow, so free degrees of freedom keep their place — and a
-//! dragged component weighs more, so the others follow it.
+//! (`relation::residuals`), each depending on at most two components, so
+//! its Jacobian is taken by finite differences over those twelve unknowns
+//! only.
 //!
-//! Sizes are small (tens of components), so the Jacobian is dense and
-//! taken by finite differences; the degrees of freedom come from the rank
-//! of each component's block (the others held).
+//! Large assemblies (1000 components) solve in passes:
+//! 1. **along the graph**: from the fixed components (grounded, the
+//!    assembly's origin) outwards, each component is solved alone against
+//!    the constraints to components already placed — a chain or a tree is
+//!    done in one sweep;
+//! 2. **loops**: constraints still unmet (a four-bar linkage) are solved
+//!    together over the components they connect;
+//! 3. **limits**: a value past its limit is held there and the passes run
+//!    again.
+//!
+//! Steps are Levenberg in minimum-norm form (`dx = −Jᵀ(JJᵀ + λI)⁻¹r`), so
+//! components move as little as the constraints allow. A **drag** pulls a
+//! point of one component towards the cursor (a soft goal), then the result
+//! is projected back onto the constraints exactly: a constrained component
+//! moves only along its free directions, and its partners follow.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use nalgebra::{DMatrix, DVector};
 
-use super::relation::{Constraint, Geom, GeomRef, residuals};
+use super::relation::{self, Constraint, Geom, GeomRef, residuals};
 use crate::document::AssemblyDocument;
-use crate::kernel::{Real, Transform3, Vector3};
+use crate::kernel::{Point3, Real, Transform3, Vector3};
 
 /// The result of a solve.
 #[derive(Clone, Debug, Default)]
@@ -36,208 +47,175 @@ pub struct Solved {
     pub dof: HashMap<u32, usize>,
 }
 
+/// A drag: the point `local` of component `occurrence` (its own
+/// coordinates) should come to `target` (assembly coordinates).
+#[derive(Clone, Copy, Debug)]
+pub struct Drag {
+    /// The dragged component.
+    pub occurrence: u32,
+    /// The grabbed point, in the component's coordinates.
+    pub local: Point3,
+    /// Where the cursor puts it.
+    pub target: Point3,
+}
+
 /// Length scale of the rotation unknowns: a turn of 1/L radian counts like
 /// a move of 1 mm.
-const L: Real = 50.0;
+const L: Real = 500.0;
+/// Weight of the drag goal against the constraints.
+const GOAL: Real = 1e-2;
+const TOL: Real = 1e-10;
 
-/// Solves the constraints of `asm`. `local` gives a reference's geometry in
-/// its part's coordinates; `heavy` is a component being dragged (it moves
-/// last).
-pub fn solve(
-    asm: &AssemblyDocument,
-    local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
-    heavy: Option<u32>,
-) -> Solved {
-    let mut out = Solved::default();
-    // Active constraints with their local geometry (joint origins as frames).
-    let mut cons: Vec<(Constraint, Geom, Geom)> = Vec::new();
-    for c in asm.constraints.iter().filter(|c| !c.suppressed) {
-        match (local(&c.a), local(&c.b)) {
-            (Ok(a), Ok(b)) if c.kind.is_joint() => {
-                cons.push((c.clone(), a.as_frame(), b.as_frame()))
-            }
-            (Ok(a), Ok(b)) => cons.push((c.clone(), a, b)),
-            (Err(e), _) | (_, Err(e)) => out.sick.push((c.id, e)),
-        }
-    }
-    // Unknown blocks: components used by a constraint, not grounded.
-    let mut blocks: Vec<u32> = Vec::new();
-    for (c, _, _) in &cons {
-        for id in [c.a.occurrence(), c.b.occurrence()] {
-            let free = asm.find(id).is_some_and(|o| !o.grounded);
-            if free && !blocks.contains(&id) {
-                blocks.push(id);
-            }
-        }
-    }
-    let mut place: HashMap<u32, Transform3> = asm
-        .occurrences
-        .iter()
-        .map(|o| (o.id, o.transform))
-        .collect();
-    // The assembly's own origin (`relation::ASSEMBLY`) never moves.
-    place.insert(super::relation::ASSEMBLY, Transform3::identity());
-    // Column weights: a dragged component is expensive to move.
-    let weight: Vec<Real> = blocks
-        .iter()
-        .flat_map(|id| {
-            let w = if Some(*id) == heavy { 1e-3 } else { 1.0 };
-            [w; 6]
-        })
-        .collect();
-    let mut r = run(&cons, &blocks, &weight, &mut place);
-    // Joint limits: a value past one is held there and solved again.
-    for _ in 0..3 {
-        let mut held = false;
-        for (c, a, b) in cons.iter_mut() {
-            if !c.kind.is_joint() || c.locked || (c.min.is_none() && c.max.is_none()) {
-                continue;
-            }
-            let (Some(ta), Some(tb)) = (place.get(&c.a.occurrence()), place.get(&c.b.occurrence()))
-            else {
-                continue;
-            };
-            let fa = super::joint::frame_of(&a.moved(ta));
-            let fb = super::joint::frame_of(&b.moved(tb));
-            let Some(v) = super::joint::measure(c, &fa, &fb) else {
-                continue;
-            };
-            let lo = c.min.unwrap_or(Real::NEG_INFINITY);
-            let hi = c.max.unwrap_or(Real::INFINITY);
-            if v < lo - 1e-9 || v > hi + 1e-9 {
-                c.locked = true;
-                c.value = v.clamp(lo, hi);
-                held = true;
-            }
-        }
-        if !held {
-            break;
-        }
-        r = run(&cons, &blocks, &weight, &mut place);
-    }
-    let n = blocks.len() * 6;
-    out.residual = r.iter().fold(0.0, |m: Real, v| m.max(v.abs()));
-    out.converged = out.residual < 1e-6;
-    // Degrees of freedom of each block, the others held (not while
-    // dragging: nobody reads them then, and they cost a Jacobian).
-    if n > 0 && heavy.is_none() {
-        let j = jacobian(&cons, &blocks, &place, &r);
-        for (k, id) in blocks.iter().enumerate() {
-            let sub = j.columns(6 * k, 6).into_owned();
-            let rank = if sub.nrows() == 0 {
-                0
-            } else {
-                let sv = sub.svd(false, false).singular_values;
-                let top = sv.iter().cloned().fold(0.0, Real::max);
-                sv.iter().filter(|&&s| s > 1e-6 * top.max(1e-9)).count()
-            };
-            out.dof.insert(*id, 6 - rank.min(6));
-        }
-    }
-    for o in &asm.occurrences {
-        if !o.grounded && !out.dof.contains_key(&o.id) {
-            out.dof.insert(o.id, 6);
-        }
-    }
-    out.transforms = blocks
-        .iter()
-        .filter_map(|id| place.get(id).map(|t| (*id, *t)))
-        .collect();
-    out
+/// One active constraint with its local geometry.
+struct Con {
+    c: Constraint,
+    a: Geom,
+    b: Geom,
 }
 
-fn eval(cons: &[(Constraint, Geom, Geom)], place: &HashMap<u32, Transform3>) -> DVector<Real> {
-    let mut r = Vec::new();
-    for (c, a, b) in cons {
-        let (Some(ta), Some(tb)) = (place.get(&c.a.occurrence()), place.get(&c.b.occurrence()))
-        else {
-            continue;
-        };
-        let _ = residuals(c, &a.moved(ta), &b.moved(tb), &mut r);
+impl Con {
+    fn ends(&self) -> [u32; 2] {
+        [self.c.a.occurrence(), self.c.b.occurrence()]
     }
-    DVector::from_vec(r)
+
+    fn res(&self, ta: &Transform3, tb: &Transform3, out: &mut Vec<Real>) {
+        let _ = residuals(&self.c, &self.a.moved(ta), &self.b.moved(tb), out);
+    }
 }
 
-/// Moves each block by its six unknowns (translation, turn about its own
+/// Moves a placement by six unknowns (translation, turn about its own
 /// origin scaled by `L`).
-fn apply(blocks: &[u32], place: &mut HashMap<u32, Transform3>, x: &DVector<Real>) {
-    for (k, id) in blocks.iter().enumerate() {
-        let Some(t) = place.get_mut(id) else {
+fn nudge(t: &Transform3, v: &[Real]) -> Transform3 {
+    let c = t.translation.vector;
+    Transform3::translation(v[0], v[1], v[2])
+        * Transform3::translation(c.x, c.y, c.z)
+        * Transform3::rotation(Vector3::new(v[3], v[4], v[5]) / L)
+        * Transform3::translation(-c.x, -c.y, -c.z)
+        * t
+}
+
+type Place = HashMap<u32, Transform3>;
+
+fn at(place: &Place, id: u32) -> Transform3 {
+    place.get(&id).copied().unwrap_or_else(Transform3::identity)
+}
+
+/// The rows of one residual source and their derivatives by the unknowns of
+/// its components that are in `col` (finite differences).
+fn rows(
+    place: &Place,
+    ids: &[u32],
+    col: &HashMap<u32, usize>,
+    f: &dyn Fn(&[Transform3], &mut Vec<Real>),
+    j: &mut Vec<(usize, usize, Real)>,
+    r: &mut Vec<Real>,
+) {
+    let ts: Vec<Transform3> = ids.iter().map(|&id| at(place, id)).collect();
+    let row0 = r.len();
+    let mut base = Vec::new();
+    f(&ts, &mut base);
+    let h = 1e-7;
+    for (k, &id) in ids.iter().enumerate() {
+        let Some(&c) = col.get(&id) else {
             continue;
         };
-        let v = |i: usize| x[6 * k + i];
-        let c = t.translation.vector;
-        let rot = Transform3::rotation(Vector3::new(v(3), v(4), v(5)) / L);
-        *t = Transform3::translation(v(0), v(1), v(2))
-            * Transform3::translation(c.x, c.y, c.z)
-            * rot
-            * Transform3::translation(-c.x, -c.y, -c.z)
-            * *t;
-    }
-}
-
-fn jacobian(
-    cons: &[(Constraint, Geom, Geom)],
-    blocks: &[u32],
-    place: &HashMap<u32, Transform3>,
-    r0: &DVector<Real>,
-) -> DMatrix<Real> {
-    let n = blocks.len() * 6;
-    let mut j = DMatrix::zeros(r0.len(), n);
-    let h = 1e-7;
-    for col in 0..n {
-        let mut p = place.clone();
-        let mut x = DVector::zeros(n);
-        x[col] = h;
-        apply(blocks, &mut p, &x);
-        let r = eval(cons, &p);
-        for row in 0..r0.len().min(r.len()) {
-            j[(row, col)] = (r[row] - r0[row]) / h;
+        // Both ends one component: differentiate it once.
+        if ids[..k].contains(&id) {
+            continue;
+        }
+        for i in 0..6 {
+            let mut v = [0.0; 6];
+            v[i] = h;
+            let moved = nudge(&ts[k], &v);
+            let tt: Vec<Transform3> = ids
+                .iter()
+                .zip(&ts)
+                .map(|(&x, t)| if x == id { moved } else { *t })
+                .collect();
+            let mut out = Vec::new();
+            f(&tt, &mut out);
+            for (q, (x, y)) in out.iter().zip(&base).enumerate() {
+                let d = (x - y) / h;
+                if d != 0.0 {
+                    j.push((row0 + q, 6 * c + i, d));
+                }
+            }
         }
     }
-    j
+    r.extend(base);
 }
 
-/// Levenberg iterations in minimum-norm form; returns the residuals left.
-fn run(
-    cons: &[(Constraint, Geom, Geom)],
-    blocks: &[u32],
-    weight: &[Real],
-    place: &mut HashMap<u32, Transform3>,
-) -> DVector<Real> {
-    let norm = |r: &DVector<Real>| r.iter().fold(0.0, |m: Real, v| m.max(v.abs()));
-    let mut r = eval(cons, place);
-    if blocks.is_empty() {
-        return r;
+/// Levenberg on the components `set` for the constraints `cons`, with an
+/// optional drag goal. Returns the largest constraint residual left.
+fn lm(cons: &[&Con], set: &[u32], place: &mut Place, drag: Option<&Drag>, iters: usize) -> Real {
+    let col: HashMap<u32, usize> = set.iter().enumerate().map(|(k, &b)| (b, k)).collect();
+    let n = set.len() * 6;
+    let eval = |place: &Place| -> (Vec<Real>, Vec<(usize, usize, Real)>, usize) {
+        let (mut r, mut j) = (Vec::new(), Vec::new());
+        for k in cons {
+            rows(
+                place,
+                &k.ends(),
+                &col,
+                &|t, o| k.res(&t[0], &t[1], o),
+                &mut j,
+                &mut r,
+            );
+        }
+        let m = r.len();
+        if let Some(d) = drag {
+            rows(
+                place,
+                &[d.occurrence],
+                &col,
+                &|t, o| {
+                    let w = t[0] * d.local - d.target;
+                    o.extend([w.x * GOAL, w.y * GOAL, w.z * GOAL]);
+                },
+                &mut j,
+                &mut r,
+            );
+        }
+        (r, j, m)
+    };
+    let worst = |r: &[Real], m: usize| r.iter().take(m).fold(0.0, |x: Real, v| x.max(v.abs()));
+    let sq = |r: &[Real]| r.iter().map(|v| v * v).sum::<Real>();
+    let (mut r, mut j, mut m) = eval(place);
+    if n == 0 {
+        return worst(&r, m);
     }
     let mut lambda = 1e-6;
-    let w = DMatrix::from_diagonal(&DVector::from_vec(weight.to_vec()));
-    for _ in 0..200 {
-        if norm(&r) < 1e-10 {
+    for _ in 0..iters {
+        if r.iter().fold(0.0, |x: Real, v| x.max(v.abs())) < TOL {
             break;
         }
-        let j = jacobian(cons, blocks, place, &r);
-        let jw = &j * &w;
+        let mut jm = DMatrix::zeros(r.len(), n);
+        for &(a, b, v) in &j {
+            jm[(a, b)] = v;
+        }
+        let rv = DVector::from_column_slice(&r);
+        let jjt = &jm * jm.transpose();
         let mut improved = false;
         for _ in 0..12 {
-            let a = &jw * jw.transpose() + DMatrix::identity(r.len(), r.len()) * lambda;
-            let Some(y) = a.lu().solve(&r) else {
+            let a = &jjt + DMatrix::identity(r.len(), r.len()) * lambda;
+            let Some(y) = a.lu().solve(&rv) else {
                 lambda *= 10.0;
                 continue;
             };
-            let mut dx = -(jw.transpose() * y);
-            for (i, w) in weight.iter().enumerate() {
-                dx[i] *= w;
+            let dx = -(jm.transpose() * y);
+            let old: Vec<(u32, Transform3)> = set.iter().map(|&id| (id, at(place, id))).collect();
+            for (k, (id, t)) in old.iter().enumerate() {
+                place.insert(*id, nudge(t, &dx.as_slice()[6 * k..6 * k + 6]));
             }
-            let mut p = place.clone();
-            apply(blocks, &mut p, &dx);
-            let r1 = eval(cons, &p);
-            if r1.norm() < r.norm() {
-                *place = p;
-                r = r1;
+            let (r1, j1, m1) = eval(place);
+            if sq(&r1) < sq(&r) {
+                (r, j, m) = (r1, j1, m1);
                 lambda = (lambda / 3.0).max(1e-12);
                 improved = true;
                 break;
+            }
+            for (id, t) in old {
+                place.insert(id, t);
             }
             lambda *= 4.0;
         }
@@ -245,7 +223,267 @@ fn run(
             break;
         }
     }
-    r
+    worst(&r, m)
+}
+
+/// The passes over the whole assembly (see the module docs).
+fn passes(cons: &[Con], free: &HashSet<u32>, place: &mut Place, order: &[u32]) -> Real {
+    // 1. Along the graph: each component against the ones placed before it.
+    let mut placed: HashSet<u32> = HashSet::new();
+    for &id in order {
+        let mine: Vec<&Con> = cons
+            .iter()
+            .filter(|k| {
+                let [a, b] = k.ends();
+                (a == id && (b == id || !free.contains(&b) || placed.contains(&b)))
+                    || (b == id && (!free.contains(&a) || placed.contains(&a)))
+            })
+            .collect();
+        if !mine.is_empty() {
+            lm(&mine, &[id], place, None, 60);
+        }
+        placed.insert(id);
+    }
+    // 2. Loops: what is still unmet, over the components it connects.
+    let unmet = |place: &Place| -> Vec<usize> {
+        cons.iter()
+            .enumerate()
+            .filter(|(_, k)| {
+                let mut r = Vec::new();
+                let [a, b] = k.ends();
+                k.res(&at(place, a), &at(place, b), &mut r);
+                r.iter().any(|v| v.abs() > 1e-7)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    };
+    let bad = unmet(place);
+    if !bad.is_empty() {
+        // The free components joined (through free components) to them.
+        let mut set: Vec<u32> = Vec::new();
+        let mut queue: VecDeque<u32> = bad
+            .iter()
+            .flat_map(|&i| cons[i].ends())
+            .filter(|id| free.contains(id))
+            .collect();
+        let mut seen: HashSet<u32> = HashSet::new();
+        while let Some(id) = queue.pop_front() {
+            if !seen.insert(id) {
+                continue;
+            }
+            set.push(id);
+            for k in cons {
+                let [a, b] = k.ends();
+                for (x, y) in [(a, b), (b, a)] {
+                    if x == id && free.contains(&y) && !seen.contains(&y) {
+                        queue.push_back(y);
+                    }
+                }
+            }
+        }
+        let mine: Vec<&Con> = cons
+            .iter()
+            .filter(|k| k.ends().iter().any(|e| seen.contains(e)))
+            .collect();
+        lm(&mine, &set, place, None, 200);
+    }
+    cons.iter().fold(0.0, |m: Real, k| {
+        let mut r = Vec::new();
+        let [a, b] = k.ends();
+        k.res(&at(place, a), &at(place, b), &mut r);
+        r.iter().fold(m, |m, v| m.max(v.abs()))
+    })
+}
+
+/// The free components in the order of the graph: breadth first from the
+/// fixed ones (and the assembly's origin), the rest after them.
+/// An island without a fixed component starts from `first` (the dragged
+/// one) when it is there, so the others follow it.
+fn graph_order(cons: &[Con], free: &HashSet<u32>, blocks: &[u32], first: Option<u32>) -> Vec<u32> {
+    let mut adj: HashMap<u32, Vec<u32>> = HashMap::new();
+    for k in cons {
+        let [a, b] = k.ends();
+        adj.entry(a).or_default().push(b);
+        adj.entry(b).or_default().push(a);
+    }
+    let mut order = Vec::new();
+    let mut seen: HashSet<u32> = HashSet::new();
+    let mut queue: VecDeque<u32> = VecDeque::new();
+    // Start from every fixed component that has constraints.
+    let mut fixed: Vec<u32> = adj
+        .keys()
+        .copied()
+        .filter(|id| !free.contains(id))
+        .collect();
+    fixed.sort_unstable();
+    queue.extend(fixed);
+    let visit = |queue: &mut VecDeque<u32>, order: &mut Vec<u32>, seen: &mut HashSet<u32>| {
+        while let Some(id) = queue.pop_front() {
+            for &n in adj.get(&id).map(Vec::as_slice).unwrap_or(&[]) {
+                if free.contains(&n) && seen.insert(n) {
+                    order.push(n);
+                    queue.push_back(n);
+                }
+            }
+        }
+    };
+    visit(&mut queue, &mut order, &mut seen);
+    // Islands with no fixed component: from their first block.
+    for &b in first.iter().chain(blocks) {
+        if seen.insert(b) {
+            order.push(b);
+            queue.push_back(b);
+            visit(&mut queue, &mut order, &mut seen);
+        }
+    }
+    order
+}
+
+/// Solves the constraints of `asm`. `local` gives a reference's geometry in
+/// its part's coordinates; `drag` pulls a point of one component.
+pub fn solve(
+    asm: &AssemblyDocument,
+    local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
+    drag: Option<&Drag>,
+) -> Solved {
+    let mut out = Solved::default();
+    let mut cons: Vec<Con> = Vec::new();
+    for c in asm.constraints.iter().filter(|c| !c.suppressed) {
+        match (local(&c.a), local(&c.b)) {
+            (Ok(a), Ok(b)) => {
+                let mut c = c.clone();
+                // At rest unless dragged (Use Offset As Resting Position).
+                if c.resting && drag.is_none() {
+                    c.locked = true;
+                }
+                let (a, b) = if c.kind.is_joint() {
+                    (a.as_frame(), b.as_frame())
+                } else {
+                    (a, b)
+                };
+                cons.push(Con { c, a, b });
+            }
+            (Err(e), _) | (_, Err(e)) => out.sick.push((c.id, e)),
+        }
+    }
+    // Free components: used by a constraint, not grounded.
+    let mut blocks: Vec<u32> = Vec::new();
+    for k in &cons {
+        for id in k.ends() {
+            let free = asm.find(id).is_some_and(|o| !o.grounded);
+            if free && !blocks.contains(&id) {
+                blocks.push(id);
+            }
+        }
+    }
+    let free: HashSet<u32> = blocks.iter().copied().collect();
+    let mut place: Place = asm
+        .occurrences
+        .iter()
+        .map(|o| (o.id, o.transform))
+        .collect();
+    place.insert(relation::ASSEMBLY, Transform3::identity());
+    // A drag first pulls the dragged component's group, softly.
+    if let Some(d) = drag
+        && free.contains(&d.occurrence)
+    {
+        let group = connected(&cons, &free, d.occurrence);
+        let mine: Vec<&Con> = cons
+            .iter()
+            .filter(|k| k.ends().iter().any(|e| group.contains(e)))
+            .collect();
+        lm(&mine, &group, &mut place, Some(d), 40);
+    }
+    let order = graph_order(&cons, &free, &blocks, drag.map(|d| d.occurrence));
+    let mut worst = passes(&cons, &free, &mut place, &order);
+    // Limits: a value past one is held there; then solve again.
+    for _ in 0..3 {
+        let mut held = false;
+        for k in cons.iter_mut() {
+            if k.c.locked || (k.c.min.is_none() && k.c.max.is_none()) {
+                continue;
+            }
+            let [a, b] = k.ends();
+            let (ga, gb) = (k.a.moved(&at(&place, a)), k.b.moved(&at(&place, b)));
+            let Some(v) = relation::measure(&k.c, &ga, &gb) else {
+                continue;
+            };
+            let lo = k.c.min.unwrap_or(Real::NEG_INFINITY);
+            let hi = k.c.max.unwrap_or(Real::INFINITY);
+            if v < lo - 1e-9 || v > hi + 1e-9 {
+                k.c.locked = true;
+                k.c.value = v.clamp(lo, hi);
+                held = true;
+            }
+        }
+        if !held {
+            break;
+        }
+        worst = passes(&cons, &free, &mut place, &order);
+    }
+    out.residual = worst;
+    out.converged = worst < 1e-6;
+    // Degrees of freedom of each block, the others held (not while
+    // dragging: nobody reads them then).
+    if drag.is_none() {
+        for &id in &blocks {
+            let mine: Vec<&Con> = cons.iter().filter(|k| k.ends().contains(&id)).collect();
+            let col: HashMap<u32, usize> = [(id, 0)].into_iter().collect();
+            let (mut r, mut j) = (Vec::new(), Vec::new());
+            for k in &mine {
+                rows(
+                    &place,
+                    &k.ends(),
+                    &col,
+                    &|t, o| k.res(&t[0], &t[1], o),
+                    &mut j,
+                    &mut r,
+                );
+            }
+            let mut m = DMatrix::zeros(r.len(), 6);
+            for (a, b, v) in j {
+                m[(a, b)] = v;
+            }
+            let rank = if r.is_empty() {
+                0
+            } else {
+                let sv = m.svd(false, false).singular_values;
+                let top = sv.iter().cloned().fold(0.0, Real::max);
+                sv.iter().filter(|&&s| s > 1e-6 * top.max(1e-9)).count()
+            };
+            out.dof.insert(id, 6 - rank.min(6));
+        }
+    }
+    for o in &asm.occurrences {
+        if !o.grounded && !out.dof.contains_key(&o.id) {
+            out.dof.insert(o.id, 6);
+        }
+    }
+    out.transforms = blocks.iter().map(|id| (*id, at(&place, *id))).collect();
+    out
+}
+
+/// The free components joined to `start` through constraints between free
+/// components.
+fn connected(cons: &[Con], free: &HashSet<u32>, start: u32) -> Vec<u32> {
+    let mut seen: HashSet<u32> = HashSet::new();
+    let mut out = Vec::new();
+    let mut queue = VecDeque::from([start]);
+    while let Some(id) = queue.pop_front() {
+        if !seen.insert(id) {
+            continue;
+        }
+        out.push(id);
+        for k in cons {
+            let [a, b] = k.ends();
+            for (x, y) in [(a, b), (b, a)] {
+                if x == id && free.contains(&y) && !seen.contains(&y) {
+                    queue.push_back(y);
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -330,6 +568,7 @@ mod tests {
             locked: false,
             min: None,
             max: None,
+            resting: false,
         }
     }
 
@@ -486,12 +725,86 @@ mod tests {
         assert!(c.x.abs() < 1e-6 && c.y.abs() < 1e-6, "{c}");
     }
 
+    /// A Mate with limits 0..10: dragged 30 up it stops at 10; dropped there
+    /// it stays (no resting position); with Use Offset As Resting Position
+    /// it springs back to its offset when solved without a drag.
+    #[test]
+    fn mate_limits_stop_a_drag() {
+        let mut a = two_cubes();
+        let mut c = con(ConstraintKind::Mate, face(1, "Top"), face(2, "Bottom"), 0.0);
+        c.min = Some(0.0);
+        c.max = Some(10.0);
+        a.add_constraint(c.clone());
+        a.add_constraint(con(
+            ConstraintKind::Flush,
+            face(1, "Left"),
+            face(2, "Left"),
+            0.0,
+        ));
+        a.add_constraint(con(
+            ConstraintKind::Flush,
+            face(1, "Front"),
+            face(2, "Front"),
+            0.0,
+        ));
+        let s = solve(&a, &cube_geom, None);
+        assert!(s.converged, "{}", s.residual);
+        applied(&mut a, &s);
+        let t = a.find(2).unwrap().transform;
+        let p = Point3::new(10.0, 10.0, 0.0);
+        let drag = Drag {
+            occurrence: 2,
+            local: p,
+            target: t * p + Vector3::new(0.0, 0.0, 30.0),
+        };
+        let s = solve(&a, &cube_geom, Some(&drag));
+        assert!(s.converged, "{}", s.residual);
+        applied(&mut a, &s);
+        let z = (a.find(2).unwrap().transform * p).z;
+        assert!((z - 30.0).abs() < 1e-6, "stopped at the limit: {z}");
+        // Dropped: solved again without a drag it stays at 10 above.
+        let s = solve(&a, &cube_geom, None);
+        applied(&mut a, &s);
+        assert!(((a.find(2).unwrap().transform * p).z - 30.0).abs() < 1e-6);
+        // Resting position: back to the offset 0.
+        a.constraints[0].resting = true;
+        let s = solve(&a, &cube_geom, None);
+        applied(&mut a, &s);
+        assert!(((a.find(2).unwrap().transform * p).z - 20.0).abs() < 1e-6);
+    }
+
+    /// A component left free to turn (Insert) turns when a point of it is
+    /// dragged sideways: the grabbed point moves round the axis.
+    #[test]
+    fn dragging_turns_a_component_about_its_free_axis() {
+        let mut a = two_cubes();
+        a.add_constraint(con(ConstraintKind::Insert, rim(1), rim(2), 0.0));
+        let s = solve(&a, &cube_geom, None);
+        applied(&mut a, &s);
+        let t = a.find(2).unwrap().transform;
+        // A corner of the second cube, pulled sideways.
+        let p = Point3::new(20.0, 10.0, 10.0);
+        let w0 = t * p;
+        let drag = Drag {
+            occurrence: 2,
+            local: p,
+            target: w0 + Vector3::new(0.0, 8.0, 0.0),
+        };
+        let s = solve(&a, &cube_geom, Some(&drag));
+        assert!(s.converged, "{}", s.residual);
+        applied(&mut a, &s);
+        let w1 = a.find(2).unwrap().transform * p;
+        // Same distance from the axis (x = y = 10), turned towards +y.
+        let r = |w: Point3| ((w.x - 10.0).powi(2) + (w.y - 10.0).powi(2)).sqrt();
+        assert!((r(w0) - r(w1)).abs() < 1e-6, "{w0} {w1}");
+        assert!(w1.y - w0.y > 3.0, "turned: {w0} -> {w1}");
+    }
+
     #[test]
     fn a_dragged_component_pulls_its_partner() {
         // Both free (the first grounded one is freed): mating them and
         // dragging the second moves the first along.
         let mut a = two_cubes();
-        a.find_mut(1).unwrap().grounded = false;
         a.add_constraint(con(
             ConstraintKind::Mate,
             face(1, "Top"),
@@ -500,12 +813,19 @@ mod tests {
         ));
         let s = solve(&a, &cube_geom, None);
         applied(&mut a, &s);
+        // Now the first one is freed too.
+        a.find_mut(1).unwrap().grounded = false;
         // Drag cube 2 up by 10: the first follows (it is the light one).
         let before1 = a.find(1).unwrap().transform;
-        let o2 = a.find_mut(2).unwrap();
-        o2.transform = Transform3::translation(0.0, 0.0, 10.0) * o2.transform;
-        let z2 = (a.find(2).unwrap().transform * Point3::origin()).z;
-        let s = solve(&a, &cube_geom, Some(2));
+        // The cube's own origin pulled 10 up.
+        let t2 = a.find(2).unwrap().transform;
+        let z2 = (t2 * Point3::origin()).z + 10.0;
+        let drag = Drag {
+            occurrence: 2,
+            local: Point3::origin(),
+            target: t2 * Point3::origin() + Vector3::new(0.0, 0.0, 10.0),
+        };
+        let s = solve(&a, &cube_geom, Some(&drag));
         assert!(s.converged);
         applied(&mut a, &s);
         let z2_after = (a.find(2).unwrap().transform * Point3::origin()).z;

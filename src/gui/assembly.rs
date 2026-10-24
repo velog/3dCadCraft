@@ -674,8 +674,12 @@ impl CadCraftApp {
         // --- navigation ---
         self.asm_navigate(ui, response, rect, cube_drag, busy);
 
-        // --- context menu ---
+        // --- context menu (the ViewCube's own when it was clicked) ---
+        let cube_menu = self.cube_context;
         response.context_menu(|ui| {
+            if cube_menu {
+                return;
+            }
             if self.cons.draft.is_some() {
                 if ui.button("OK").clicked() {
                     self.commit_constrain_pub(true);
@@ -813,15 +817,33 @@ impl CadCraftApp {
                 let Some(q) = self.camera.ray_plane(now, rect, &plane) else {
                     return;
                 };
-                let v = q - grab;
-                let t = Transform3::translation(v.x, v.y, v.z) * d.start;
-                self.edit_assembly("Free Move", |a| {
-                    if let Some(o) = a.find_mut(d.id) {
-                        o.transform = t;
-                    }
+                // A grounded one (Free Move) is put where it is dragged and
+                // the others solved after it.
+                let constrained = self.assembly().is_some_and(|a| {
+                    a.find(d.id).is_some_and(|o| !o.grounded)
+                        && a.constraints.iter().any(|c| !c.suppressed && c.uses(d.id))
                 });
-                // Constrained components follow or snap back.
-                self.asm_solve(Some(d.id));
+                if constrained {
+                    // The grabbed point follows the cursor as far as the
+                    // constraints let it: the component moves (or turns)
+                    // along its free directions, its partners follow.
+                    let drag = asm::Drag {
+                        occurrence: d.id,
+                        local: d.start.inverse() * grab,
+                        target: q,
+                    };
+                    self.checkpoint("Free Move");
+                    self.asm_solve(Some(&drag));
+                } else {
+                    let v = q - grab;
+                    let t = Transform3::translation(v.x, v.y, v.z) * d.start;
+                    self.edit_assembly("Free Move", |a| {
+                        if let Some(o) = a.find_mut(d.id) {
+                            o.transform = t;
+                        }
+                    });
+                    self.asm_solve(None);
+                }
             }
             DragKind::Trackball { pivot } => {
                 if delta.length() < 0.5 {
@@ -836,7 +858,7 @@ impl CadCraftApp {
                         asm::rotate_about(o, pivot, axis, angle);
                     }
                 });
-                self.asm_solve(Some(d.id));
+                self.asm_solve(None);
                 if let Some(x) = self.asm.drag.as_mut() {
                     x.last = now;
                 }
@@ -856,7 +878,7 @@ impl CadCraftApp {
                         asm::rotate_about(o, pivot, back, -da);
                     }
                 });
-                self.asm_solve(Some(d.id));
+                self.asm_solve(None);
                 if let Some(x) = self.asm.drag.as_mut() {
                     x.last = now;
                 }
@@ -1144,7 +1166,7 @@ impl CadCraftApp {
                     x.transform = t;
                 }
             });
-            self.asm_solve(Some(o.id));
+            self.asm_solve(None);
         }
     }
 }

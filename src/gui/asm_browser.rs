@@ -22,6 +22,7 @@ enum TreeCmd {
     EditConstraint(u32),
     SuppressConstraint(u32),
     DeleteConstraint(u32),
+    Drive(u32),
 }
 
 impl CadCraftApp {
@@ -177,6 +178,7 @@ impl CadCraftApp {
                 TreeCmd::EditConstraint(id) => self.edit_constraint(id),
                 TreeCmd::SuppressConstraint(id) => self.toggle_constraint_suppress(id),
                 TreeCmd::DeleteConstraint(id) => self.delete_constraint(id),
+                TreeCmd::Drive(id) => self.open_drive(id),
             }
         }
     }
@@ -269,6 +271,14 @@ impl CadCraftApp {
             r.context_menu(|ui| {
                 if ui.button("Edit").clicked() {
                     cmds.push(TreeCmd::EditConstraint(id));
+                    ui.close();
+                }
+                if ui
+                    .button("Drive...")
+                    .on_hover_text("Animate its value")
+                    .clicked()
+                {
+                    cmds.push(TreeCmd::Drive(id));
                     ui.close();
                 }
                 let s = if suppressed { "Unsuppress" } else { "Suppress" };
