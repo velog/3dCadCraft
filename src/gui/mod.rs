@@ -57,6 +57,7 @@ mod manip;
 mod material;
 mod measure;
 mod measure_pick;
+mod new_file;
 mod overlay;
 mod panels;
 mod pattern_dialog;
@@ -593,6 +594,8 @@ struct CadCraftApp {
     bom: Option<bom::BomWin>,
     /// The Drive window (`drive.rs`).
     drive: Option<drive::DriveWin>,
+    /// The Create New File window is open (`new_file.rs`).
+    new_file: bool,
     bom_export: Option<String>,
 
     tab: Tab,
@@ -838,6 +841,7 @@ impl CadCraftApp {
             iprops: None,
             bom: None,
             drive: None,
+            new_file: false,
             bom_export: None,
             tab: Tab::Model,
             mouse: MousePreset::Inventor,
@@ -3758,7 +3762,7 @@ impl CadCraftApp {
         // is as good as the frame's.
         let now = self.dirty_cache.0;
         match c {
-            AppCmd::New => self.request(files::Pending::New, now),
+            AppCmd::New => self.open_new_file(),
             AppCmd::NewAssembly => self.new_assembly(),
             AppCmd::Open => self.request(files::Pending::Open, now),
             AppCmd::Save => self.save(),
@@ -4519,8 +4523,7 @@ impl CadCraftApp {
             self.request(files::Pending::Open, now);
         }
         if cmd && pressed(Key::N) {
-            let now = ctx.input(|i| i.time);
-            self.request(files::Pending::New, now);
+            self.open_new_file();
         }
         if cmd && (pressed(Key::Y) || (shift && pressed(Key::Z))) {
             self.redo();
@@ -7089,6 +7092,7 @@ impl eframe::App for CadCraftApp {
         self.alias_window(&ctx);
         self.place_window(&ctx);
         self.iprops_window(&ctx);
+        self.new_file_window(&ctx);
         if self.is_assembly() {
             self.bom_window(&ctx);
             self.drive_window(&ctx);

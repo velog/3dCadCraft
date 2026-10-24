@@ -192,7 +192,7 @@ As in Inventor's panels ([spec/0-ui.md §4.1](spec/0-ui.md)):
 
 ### In an assembly (Assemble tab, [spec/3.1-assemblies.md](spec/3.1-assemblies.md))
 
-**File → New Assembly** opens a new assembly file in a tab of its own (as Inventor's `.iam`). **P** = Place:
+**File → New… (Ctrl+N)** opens Create New File: tiles Part, Assembly (Sheet Metal and Drawing greyed until they come); Assembly opens a new assembly file in a tab of its own (as Inventor's `.iam`). **P** = Place:
 the assembly is saved first if it is new, then a browser like Explorer lists folders and `.3dcadcraft` files
 with a shaded preview of the selected part (drag it to turn it); **Place** (or a double-click) *links* the part
 file — it stays its own file, saving it updates the assembly — and occurrences are named after the file
@@ -215,8 +215,8 @@ panel, remembered): on, the offset is the distance the components have now; off,
 The label column of Properties is wider or narrower by dragging its border. **Assemble › BOM**: the Bill of
 Materials (tabs Model Data / Structured / Parts Only, Part Number Row Merge, click a header to sort, Columns for
 custom iProperties, edit Part Number / Stock Number / Description / BOM Structure of the file's own components,
-*Ref* per occurrence in Model Data, Export… to CSV). **C** = Constrain: the Place Constraint panel (Mate with Mate / Flush, Angle, Insert with
-Opposed / Aligned), click selection 1 then 2 in the view (an edge within a few pixels wins over its face;
+*Ref* per occurrence in Model Data, Export… to CSV). **C** = Constrain: the Place Constraint panel (Mate with Mate / Flush, Angle, Tangent with Inside / Outside,
+Insert with Opposed / Aligned, Symmetry with a third selection — the plane), click selection 1 then 2 in the view (an edge within a few pixels wins over its face;
 blue / violet / green under the cursor), Offset or Angle field, Show Preview, Predict Offset and Orientation;
 OK (Enter) / Apply / Cancel (Esc), the same in the view's right-click menu. A constraint that conflicts is
 refused. The browser's *Relationships* folder lists them (red = sick: its face or edge is gone); double-click

@@ -49,6 +49,8 @@ pub(super) struct ConstrainDraft {
     max: Option<Real>,
     /// Constraints with limits: Use Offset As Resting Position.
     resting: bool,
+    /// Symmetry: the plane (third selection).
+    plane: Option<GeomRef>,
 }
 
 impl ConstrainDraft {
@@ -69,6 +71,7 @@ impl ConstrainDraft {
             min: None,
             max: None,
             resting: false,
+            plane: None,
         }
     }
 
@@ -80,6 +83,9 @@ impl ConstrainDraft {
     }
 
     fn constraint(&self) -> Option<Constraint> {
+        if self.kind == ConstraintKind::Symmetry && self.plane.is_none() {
+            return None;
+        }
         Some(Constraint {
             id: 0,
             name: String::new(),
@@ -94,12 +100,13 @@ impl ConstrainDraft {
             min: self.min,
             max: self.max,
             resting: self.resting,
+            plane: self.plane.clone(),
         })
     }
 
     /// Whether `g` is one of its selections.
     pub(super) fn has(&self, g: &GeomRef) -> bool {
-        self.a.as_ref() == Some(g) || self.b.as_ref() == Some(g)
+        self.a.as_ref() == Some(g) || self.b.as_ref() == Some(g) || self.plane.as_ref() == Some(g)
     }
 
     fn command(&self) -> &'static str {
@@ -107,6 +114,8 @@ impl ConstrainDraft {
             ConstraintKind::Mate | ConstraintKind::Flush => "Mate",
             ConstraintKind::Angle => "Angle",
             ConstraintKind::Insert => "Insert",
+            ConstraintKind::Tangent => "Tangent",
+            ConstraintKind::Symmetry => "Symmetry",
             _ => "Joint",
         }
     }
@@ -275,6 +284,7 @@ impl CadCraftApp {
         d.min = c.min;
         d.max = c.max;
         d.resting = c.resting;
+        d.plane = c.plane;
         d.edit = Some(id);
         self.asm.tool = None;
         self.cons.draft = Some(d);
@@ -436,6 +446,16 @@ impl CadCraftApp {
             }));
             return;
         }
+        if d.active == 2 {
+            // Symmetry's plane: any plane, of any component or the origin.
+            if !matches!(geom, Ok(Geom::Plane { .. })) {
+                self.file_status = Some(Err("Symmetry: the third selection is a plane".into()));
+                return;
+            }
+            d.plane = Some(g);
+            self.constrain_predict();
+            return;
+        }
         let other = if d.active == 0 { &d.b } else { &d.a };
         if other
             .as_ref()
@@ -452,6 +472,9 @@ impl CadCraftApp {
             d.active = 1;
         } else {
             d.b = Some(g);
+            if d.kind == ConstraintKind::Symmetry && d.plane.is_none() {
+                d.active = 2;
+            }
         }
         self.constrain_predict();
     }
@@ -808,11 +831,13 @@ impl CadCraftApp {
                 "{}: pick the first selection, {what} of a component",
                 d.command()
             )
-        } else if d.b.is_none() {
+        } else if d.b.is_none() || d.active == 1 {
             format!(
                 "{}: pick the second selection, {what} of another component",
                 d.command()
             )
+        } else if d.kind == ConstraintKind::Symmetry && (d.plane.is_none() || d.active == 2) {
+            "Symmetry: pick the plane the two mirror about (a face, a work plane, or an Origin plane in the browser)".into()
         } else {
             format!(
                 "{}: set the offset, then OK or Apply (Esc cancels)",
@@ -968,11 +993,13 @@ impl CadCraftApp {
     /// The constraint's part of the panel (Mate / Angle / Insert).
     fn constraint_fields(&mut self, ui: &mut egui::Ui, d: &mut ConstrainDraft) {
         ui.label("Type");
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for (label, kind) in [
                 ("Mate", ConstraintKind::Mate),
                 ("Angle", ConstraintKind::Angle),
+                ("Tangent", ConstraintKind::Tangent),
                 ("Insert", ConstraintKind::Insert),
+                ("Symmetry", ConstraintKind::Symmetry),
             ] {
                 let on = d.kind == kind
                     || (kind == ConstraintKind::Mate && d.kind == ConstraintKind::Flush);
@@ -980,6 +1007,7 @@ impl CadCraftApp {
                     d.kind = kind;
                     d.a = None;
                     d.b = None;
+                    d.plane = None;
                     d.active = 0;
                     d.typed = false;
                     d.value = 0.0;
@@ -988,17 +1016,18 @@ impl CadCraftApp {
         });
         ui.add_space(4.0);
         ui.label("Selections");
-        for (k, (label, g)) in [("1", d.a.clone()), ("2", d.b.clone())]
-            .into_iter()
-            .enumerate()
-        {
+        let mut rows = vec![("1", d.a.clone()), ("2", d.b.clone())];
+        if d.kind == ConstraintKind::Symmetry {
+            rows.push(("Plane", d.plane.clone()));
+        }
+        for (k, (label, g)) in rows.into_iter().enumerate() {
             let text = match &g {
                 Some(g) => format!("{label}  {}", self.geom_label(g)),
                 None => format!("{label}  (pick)"),
             };
             if ui
                 .selectable_label(d.active == k, text)
-                .on_hover_text("Click, then pick in the view")
+                .on_hover_text("Click, then pick in the view (planes also in the browser)")
                 .clicked()
             {
                 d.active = k;
@@ -1043,6 +1072,14 @@ impl CadCraftApp {
             }
             ConstraintKind::Angle => {
                 ui.label("Undirected");
+            }
+            ConstraintKind::Tangent => {
+                if ui.selectable_label(d.aligned, "Inside").clicked() {
+                    d.aligned = true;
+                }
+                if ui.selectable_label(!d.aligned, "Outside").clicked() {
+                    d.aligned = false;
+                }
             }
             _ => {}
         });
@@ -1166,7 +1203,12 @@ impl CadCraftApp {
                     painter.line_segment([a, b], stroke);
                 }
             }
-            Geom::Point { p } | Geom::Circle { c: p, .. } => {
+            Geom::Cylinder { p, d, .. } => {
+                if let (Some(a), Some(b)) = (pr(p - d * size / 2.0), pr(p + d * size / 2.0)) {
+                    painter.line_segment([a, b], stroke);
+                }
+            }
+            Geom::Point { p } | Geom::Circle { c: p, .. } | Geom::Sphere { c: p, .. } => {
                 if let Some(s) = pr(p) {
                     painter.circle(s, 5.0, fill, stroke);
                 }

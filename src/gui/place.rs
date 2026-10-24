@@ -352,12 +352,13 @@ impl CadCraftApp {
         let mut cancel = false;
         let w = egui::Window::new("Place Component")
             .open(&mut open)
-            .resizable(false)
+            .resizable(true)
             .collapsible(false)
-            .default_width(760.0);
+            .default_size([860.0, 520.0])
+            .min_size([600.0, 380.0]);
         let r = self
             .layout
-            .place("place_component", ctx.content_rect(), false, w)
+            .place("place_component", ctx.content_rect(), true, w)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Up").on_hover_text("The folder above").clicked()
@@ -373,13 +374,17 @@ impl CadCraftApp {
                     ui.label(RichText::new(d.dir.display().to_string()).monospace());
                 });
                 ui.separator();
+                // The list and the preview share the window half and half,
+                // down to the buttons.
+                let list_h = (ui.available_height() - 70.0).max(220.0);
+                let half = (ui.available_width() - 16.0) / 2.0;
                 ui.horizontal_top(|ui| {
                     // Folders and part files.
                     ui.vertical(|ui| {
-                        ui.set_width(330.0);
+                        ui.set_width(half);
                         egui::ScrollArea::vertical()
                             .id_salt("place_files")
-                            .max_height(330.0)
+                            .max_height(list_h)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 for (name, is_dir) in &d.entries {
@@ -411,8 +416,9 @@ impl CadCraftApp {
                     ui.separator();
                     // Preview of the selected part.
                     ui.vertical(|ui| {
+                        let side = half.min(list_h - 70.0).max(160.0);
                         let (rect, resp) =
-                            ui.allocate_exact_size(egui::vec2(360.0, 260.0), Sense::drag());
+                            ui.allocate_exact_size(egui::vec2(half, side), Sense::drag());
                         let painter = ui.painter_at(rect);
                         painter.rect_filled(rect, 4.0, Color32::from_rgb(38, 41, 46));
                         d.yaw += resp.drag_delta().x * 0.01;

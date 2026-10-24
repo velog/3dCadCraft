@@ -217,6 +217,12 @@ pub enum ConstraintKind {
     /// planes mated (Opposed) or flush (Aligned) at an offset; the turn
     /// about the axis stays free.
     Insert,
+    /// A round face (cylinder, sphere) touching a plane or another round
+    /// face: Outside (side by side) or Inside (one in the other, `aligned`).
+    Tangent,
+    /// The second selection the mirror image of the first about a plane
+    /// (the third selection, `Constraint::plane`).
+    Symmetry,
     /// Joint: the two origins together, nothing free (`joint`).
     Rigid,
     /// Joint: one turn about the origins' z.
@@ -239,6 +245,8 @@ impl ConstraintKind {
             ConstraintKind::Flush => "Flush",
             ConstraintKind::Angle => "Angle",
             ConstraintKind::Insert => "Insert",
+            ConstraintKind::Tangent => "Tangent",
+            ConstraintKind::Symmetry => "Symmetry",
             ConstraintKind::Rigid => "Rigid",
             ConstraintKind::Rotational => "Rotational",
             ConstraintKind::Slider => "Slider",
@@ -289,6 +297,9 @@ pub struct Constraint {
     /// Position).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub resting: bool,
+    /// Symmetry: the plane the two selections mirror about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane: Option<GeomRef>,
 }
 
 impl Constraint {
@@ -302,7 +313,9 @@ impl Constraint {
 impl Constraint {
     /// Whether it uses occurrence `id`.
     pub fn uses(&self, id: u32) -> bool {
-        self.a.occurrence() == id || self.b.occurrence() == id
+        self.a.occurrence() == id
+            || self.b.occurrence() == id
+            || self.plane.as_ref().is_some_and(|p| p.occurrence() == id)
     }
 }
 
@@ -377,6 +390,22 @@ pub enum Geom {
         /// Where.
         p: Point3,
     },
+    /// A cylinder: its axis and radius.
+    Cylinder {
+        /// A point on the axis.
+        p: Point3,
+        /// Unit axis.
+        d: Vector3,
+        /// Radius.
+        r: Real,
+    },
+    /// A sphere.
+    Sphere {
+        /// Centre.
+        c: Point3,
+        /// Radius.
+        r: Real,
+    },
     /// A joint origin (`joint::frame_of`).
     Frame {
         /// Origin.
@@ -400,6 +429,12 @@ impl Geom {
                 r,
             },
             Geom::Point { p } => Geom::Point { p: t * p },
+            Geom::Cylinder { p, d, r } => Geom::Cylinder {
+                p: t * p,
+                d: t * d,
+                r,
+            },
+            Geom::Sphere { c, r } => Geom::Sphere { c: t * c, r },
             Geom::Frame { p, z, x } => Geom::Frame {
                 p: t * p,
                 z: t * z,
@@ -424,7 +459,8 @@ impl Geom {
         match *self {
             Geom::Plane { n, .. } | Geom::Circle { n, .. } => n,
             Geom::Axis { d, .. } => d,
-            Geom::Point { .. } => Vector3::zeros(),
+            Geom::Point { .. } | Geom::Sphere { .. } => Vector3::zeros(),
+            Geom::Cylinder { d, .. } => d,
             Geom::Frame { z, .. } => z,
         }
     }
@@ -435,7 +471,8 @@ impl Geom {
             Geom::Axis { p, d } => Some((p, d)),
             Geom::Circle { c, n, .. } => Some((c, n)),
             Geom::Frame { p, z, .. } => Some((p, z)),
-            Geom::Plane { .. } | Geom::Point { .. } => None,
+            Geom::Cylinder { p, d, .. } => Some((p, d)),
+            Geom::Plane { .. } | Geom::Point { .. } | Geom::Sphere { .. } => None,
         }
     }
 
@@ -443,7 +480,7 @@ impl Geom {
     pub fn point(&self) -> Option<Point3> {
         match *self {
             Geom::Point { p } => Some(p),
-            Geom::Circle { c, .. } => Some(c),
+            Geom::Circle { c, .. } | Geom::Sphere { c, .. } => Some(c),
             _ => None,
         }
     }
@@ -607,9 +644,14 @@ pub fn resolve_local(body: &BRep, r: &GeomRef) -> Result<Geom, String> {
                     let p = at - n * (at - o).dot(&n);
                     Ok(Geom::Plane { p, n })
                 }
-                Some(Surface::Cylinder(c)) => Ok(Geom::Axis {
+                Some(Surface::Cylinder(c)) => Ok(Geom::Cylinder {
                     p: c.origin,
                     d: c.axis.into_inner(),
+                    r: c.radius,
+                }),
+                Some(Surface::Sphere(s)) => Ok(Geom::Sphere {
+                    c: s.center,
+                    r: s.radius,
                 }),
                 Some(Surface::Cone(c)) => Ok(Geom::Axis {
                     p: c.origin,
@@ -706,6 +748,18 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
                         out.push(n.dot(&(q - p)) - d);
                     }
                 }
+                // A cylinder's axis in the plane, a sphere's centre on it.
+                Geom::Cylinder { p: q, d: u, .. } => {
+                    out.push(n.dot(&u));
+                    if hold {
+                        out.push(n.dot(&(q - p)) - d);
+                    }
+                }
+                Geom::Sphere { c: q, .. } => {
+                    if hold {
+                        out.push(n.dot(&(q - p)) - d)
+                    }
+                }
                 Geom::Plane { .. } => return Err("two planes".into()),
                 Geom::Frame { .. } => return Err("a joint origin".into()),
             }
@@ -744,6 +798,9 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
             }
         }
         (Insert, _, _) => return Err("Insert needs two circular edges".into()),
+        (Tangent, x, y) => tangent(c, x, y, hold, out)?,
+        // Needs the plane: `residuals_sym`.
+        (Symmetry, _, _) => return Err("Symmetry needs its plane".into()),
         // Joints returned above.
         (Rigid | Rotational | Slider | Cylindrical | Planar | Ball, _, _) => {}
     }
@@ -777,6 +834,15 @@ pub fn measure(c: &Constraint, a: &Geom, b: &Geom) -> Option<Real> {
         (Angle, x, y) => Some(x.direction().dot(&y.direction()).clamp(-1.0, 1.0).acos()),
         (Insert, Geom::Circle { c: ca, n: na, .. }, Geom::Circle { c: cb, .. }) => {
             Some(na.dot(&(cb - ca)))
+        }
+        (Tangent, _, _) => {
+            // The offset is the residual's gap with the value 0.
+            let mut probe = c.clone();
+            probe.value = 0.0;
+            probe.locked = true;
+            let mut r = Vec::new();
+            tangent(&probe, a, b, true, &mut r).ok()?;
+            r.last().copied()
         }
         _ => None,
     }
@@ -819,8 +885,130 @@ pub fn accepts(kind: ConstraintKind, g: &Geom) -> bool {
         ConstraintKind::Mate | ConstraintKind::Flush => true,
         ConstraintKind::Angle => !matches!(g, Geom::Circle { .. } | Geom::Point { .. }),
         ConstraintKind::Insert => matches!(g, Geom::Circle { .. }),
+        ConstraintKind::Tangent => matches!(
+            g,
+            Geom::Plane { .. } | Geom::Cylinder { .. } | Geom::Sphere { .. }
+        ),
         _ => true,
     }
+}
+
+/// Tangent: a round face touching a plane or another round face, at the
+/// offset; Outside (side by side) unless `aligned` (Inside).
+fn tangent(
+    c: &Constraint,
+    a: &Geom,
+    b: &Geom,
+    hold: bool,
+    out: &mut Vec<Real>,
+) -> Result<(), String> {
+    let inside = c.aligned;
+    let gap = |x: Real| if hold { out_push(x - c.value) } else { None };
+    let vec3 = |out: &mut Vec<Real>, v: Vector3| out.extend([v.x, v.y, v.z]);
+    let off_line = |p: Point3, u: Vector3, q: Point3| {
+        let w = q - p;
+        w - u * u.dot(&w)
+    };
+    match (a, b) {
+        (Geom::Plane { p, n }, round) | (round, Geom::Plane { p, n }) => {
+            let s = if inside { -1.0 } else { 1.0 };
+            match *round {
+                Geom::Cylinder { p: q, d, r } => {
+                    out.push(n.dot(&d));
+                    if let Some(x) = gap(n.dot(&(q - p)) - s * r) {
+                        out.push(x);
+                    }
+                }
+                Geom::Sphere { c: q, r } => {
+                    if let Some(x) = gap(n.dot(&(q - p)) - s * r) {
+                        out.push(x);
+                    }
+                }
+                _ => return Err("Tangent needs a cylinder or a sphere with the plane".into()),
+            }
+        }
+        (
+            Geom::Cylinder {
+                p: pa,
+                d: da,
+                r: ra,
+            },
+            Geom::Cylinder {
+                p: pb,
+                d: db,
+                r: rb,
+            },
+        ) => {
+            vec3(out, da.cross(db));
+            let want = if inside { (ra - rb).abs() } else { ra + rb };
+            if let Some(x) = gap(off_line(*pa, *da, *pb).norm() - want) {
+                out.push(x);
+            }
+        }
+        (Geom::Sphere { c: ca, r: ra }, Geom::Sphere { c: cb, r: rb }) => {
+            let want = if inside { (ra - rb).abs() } else { ra + rb };
+            if let Some(x) = gap((cb - ca).norm() - want) {
+                out.push(x);
+            }
+        }
+        (Geom::Cylinder { p, d, r: ra }, Geom::Sphere { c, r: rb })
+        | (Geom::Sphere { c, r: rb }, Geom::Cylinder { p, d, r: ra }) => {
+            let want = if inside { (ra - rb).abs() } else { ra + rb };
+            if let Some(x) = gap(off_line(*p, *d, *c).norm() - want) {
+                out.push(x);
+            }
+        }
+        _ => return Err("Tangent needs round faces (cylinders, spheres) or a plane".into()),
+    }
+    Ok(())
+}
+
+fn out_push(x: Real) -> Option<Real> {
+    Some(x)
+}
+
+/// Symmetry: `b` the mirror image of `a` about the plane `s` (world
+/// geometry).
+pub fn residuals_sym(
+    c: &Constraint,
+    a: &Geom,
+    b: &Geom,
+    s: &Geom,
+    out: &mut Vec<Real>,
+) -> Result<(), String> {
+    if c.kind != ConstraintKind::Symmetry {
+        return residuals(c, a, b, out);
+    }
+    let Geom::Plane { p: ps, n: ns } = *s else {
+        return Err("the symmetry plane must be a plane".into());
+    };
+    let mp = |q: Point3| q - ns * (2.0 * ns.dot(&(q - ps)));
+    let mv = |v: Vector3| v - ns * (2.0 * ns.dot(&v));
+    let vec3 = |out: &mut Vec<Real>, v: Vector3| out.extend([v.x, v.y, v.z]);
+    let off_line = |p: Point3, u: Vector3, q: Point3| {
+        let w = q - p;
+        w - u * u.dot(&w)
+    };
+    match (a, b) {
+        (Geom::Plane { p: pa, n: na }, Geom::Plane { p: pb, n: nb }) => {
+            let (m, n) = (mp(*pa), mv(*na));
+            vec3(out, nb - n);
+            out.push(n.dot(&(pb - m)));
+        }
+        (x, y) if x.line().is_some() && y.line().is_some() => {
+            let (pa, da) = x.line().ok_or("not an axis")?;
+            let (pb, db) = y.line().ok_or("not an axis")?;
+            let (m, u) = (mp(pa), mv(da));
+            vec3(out, db.cross(&u));
+            vec3(out, off_line(m, u, pb));
+        }
+        (x, y) if x.point().is_some() && y.point().is_some() => {
+            let (pa, pb) = (x.point().ok_or("no point")?, y.point().ok_or("no point")?);
+            vec3(out, pb - mp(pa));
+        }
+        _ => return Err("Symmetry needs two planes, two axes or two points".into()),
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -885,10 +1073,10 @@ mod tests {
             name: "Hole1:Bore:1".into(),
             hint: [23.0, 15.0, 10.0],
         };
-        let Geom::Axis { p: a, d } = resolve_local(&p.body, &bore).unwrap() else {
-            panic!("not an axis");
+        let Geom::Cylinder { p: a, d, r } = resolve_local(&p.body, &bore).unwrap() else {
+            panic!("not a cylinder");
         };
-        assert!(d.cross(&Vector3::z()).norm() < 1e-9);
+        assert!(d.cross(&Vector3::z()).norm() < 1e-9 && (r - 3.0).abs() < 1e-6);
         assert!(((a - Point3::new(20.0, 15.0, 0.0)).xy()).norm() < 1e-6);
         // Joint origins on the top face: the middle of its front edge (x
         // along the edge), a vertex, the hole's centre.

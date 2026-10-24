@@ -66,20 +66,49 @@ const L: Real = 500.0;
 const GOAL: Real = 1e-2;
 const TOL: Real = 1e-10;
 
-/// One active constraint with its local geometry.
+/// One active constraint with its local geometry (and Symmetry's plane).
 struct Con {
     c: Constraint,
     a: Geom,
     b: Geom,
+    s: Option<(u32, Geom)>,
 }
 
 impl Con {
-    fn ends(&self) -> [u32; 2] {
-        [self.c.a.occurrence(), self.c.b.occurrence()]
+    /// The components it reads: its two selections' and the plane's.
+    fn ends(&self) -> Vec<u32> {
+        let mut v = vec![self.c.a.occurrence(), self.c.b.occurrence()];
+        if let Some((id, _)) = &self.s {
+            v.push(*id);
+        }
+        v
     }
 
-    fn res(&self, ta: &Transform3, tb: &Transform3, out: &mut Vec<Real>) {
-        let _ = residuals(&self.c, &self.a.moved(ta), &self.b.moved(tb), out);
+    /// Its residuals with the placements `ts` (in `ends` order).
+    fn res_ts(&self, ts: &[Transform3], out: &mut Vec<Real>) {
+        let (a, b) = (self.a.moved(&ts[0]), self.b.moved(&ts[1]));
+        match (&self.s, ts.get(2)) {
+            (Some((_, s)), Some(t)) => {
+                let _ = relation::residuals_sym(&self.c, &a, &b, &s.moved(t), out);
+            }
+            _ => {
+                let _ = residuals(&self.c, &a, &b, out);
+            }
+        }
+    }
+
+    fn res(&self, place: &Place, out: &mut Vec<Real>) {
+        let ts: Vec<Transform3> = self.ends().iter().map(|&id| at(place, id)).collect();
+        self.res_ts(&ts, out);
+    }
+
+    /// Ready to solve for `id` when every other component it reads is
+    /// fixed or placed already.
+    fn ready_for(&self, id: u32, free: &HashSet<u32>, placed: &HashSet<u32>) -> bool {
+        let e = self.ends();
+        e.contains(&id)
+            && e.iter()
+                .all(|x| *x == id || !free.contains(x) || placed.contains(x))
     }
 }
 
@@ -157,7 +186,7 @@ fn lm(cons: &[&Con], set: &[u32], place: &mut Place, drag: Option<&Drag>, iters:
                 place,
                 &k.ends(),
                 &col,
-                &|t, o| k.res(&t[0], &t[1], o),
+                &|t, o| k.res_ts(t, o),
                 &mut j,
                 &mut r,
             );
@@ -233,11 +262,7 @@ fn passes(cons: &[Con], free: &HashSet<u32>, place: &mut Place, order: &[u32]) -
     for &id in order {
         let mine: Vec<&Con> = cons
             .iter()
-            .filter(|k| {
-                let [a, b] = k.ends();
-                (a == id && (b == id || !free.contains(&b) || placed.contains(&b)))
-                    || (b == id && (!free.contains(&a) || placed.contains(&a)))
-            })
+            .filter(|k| k.ready_for(id, free, &placed))
             .collect();
         if !mine.is_empty() {
             lm(&mine, &[id], place, None, 60);
@@ -250,8 +275,7 @@ fn passes(cons: &[Con], free: &HashSet<u32>, place: &mut Place, order: &[u32]) -
             .enumerate()
             .filter(|(_, k)| {
                 let mut r = Vec::new();
-                let [a, b] = k.ends();
-                k.res(&at(place, a), &at(place, b), &mut r);
+                k.res(place, &mut r);
                 r.iter().any(|v| v.abs() > 1e-7)
             })
             .map(|(i, _)| i)
@@ -273,10 +297,12 @@ fn passes(cons: &[Con], free: &HashSet<u32>, place: &mut Place, order: &[u32]) -
             }
             set.push(id);
             for k in cons {
-                let [a, b] = k.ends();
-                for (x, y) in [(a, b), (b, a)] {
-                    if x == id && free.contains(&y) && !seen.contains(&y) {
-                        queue.push_back(y);
+                let e = k.ends();
+                if e.contains(&id) {
+                    for &y in &e {
+                        if free.contains(&y) && !seen.contains(&y) {
+                            queue.push_back(y);
+                        }
                     }
                 }
             }
@@ -289,8 +315,7 @@ fn passes(cons: &[Con], free: &HashSet<u32>, place: &mut Place, order: &[u32]) -
     }
     cons.iter().fold(0.0, |m: Real, k| {
         let mut r = Vec::new();
-        let [a, b] = k.ends();
-        k.res(&at(place, a), &at(place, b), &mut r);
+        k.res(place, &mut r);
         r.iter().fold(m, |m, v| m.max(v.abs()))
     })
 }
@@ -302,9 +327,14 @@ fn passes(cons: &[Con], free: &HashSet<u32>, place: &mut Place, order: &[u32]) -
 fn graph_order(cons: &[Con], free: &HashSet<u32>, blocks: &[u32], first: Option<u32>) -> Vec<u32> {
     let mut adj: HashMap<u32, Vec<u32>> = HashMap::new();
     for k in cons {
-        let [a, b] = k.ends();
-        adj.entry(a).or_default().push(b);
-        adj.entry(b).or_default().push(a);
+        let e = k.ends();
+        for &x in &e {
+            for &y in &e {
+                if x != y {
+                    adj.entry(x).or_default().push(y);
+                }
+            }
+        }
     }
     let mut order = Vec::new();
     let mut seen: HashSet<u32> = HashSet::new();
@@ -349,6 +379,17 @@ pub fn solve(
     let mut out = Solved::default();
     let mut cons: Vec<Con> = Vec::new();
     for c in asm.constraints.iter().filter(|c| !c.suppressed) {
+        // Symmetry's plane.
+        let plane = match &c.plane {
+            Some(r) => match local(r) {
+                Ok(g) => Some((r.occurrence(), g)),
+                Err(e) => {
+                    out.sick.push((c.id, e));
+                    continue;
+                }
+            },
+            None => None,
+        };
         match (local(&c.a), local(&c.b)) {
             (Ok(a), Ok(b)) => {
                 let mut c = c.clone();
@@ -361,7 +402,7 @@ pub fn solve(
                 } else {
                     (a, b)
                 };
-                cons.push(Con { c, a, b });
+                cons.push(Con { c, a, b, s: plane });
             }
             (Err(e), _) | (_, Err(e)) => out.sick.push((c.id, e)),
         }
@@ -403,7 +444,7 @@ pub fn solve(
             if k.c.locked || (k.c.min.is_none() && k.c.max.is_none()) {
                 continue;
             }
-            let [a, b] = k.ends();
+            let (a, b) = (k.c.a.occurrence(), k.c.b.occurrence());
             let (ga, gb) = (k.a.moved(&at(&place, a)), k.b.moved(&at(&place, b)));
             let Some(v) = relation::measure(&k.c, &ga, &gb) else {
                 continue;
@@ -435,7 +476,7 @@ pub fn solve(
                     &place,
                     &k.ends(),
                     &col,
-                    &|t, o| k.res(&t[0], &t[1], o),
+                    &|t, o| k.res_ts(t, o),
                     &mut j,
                     &mut r,
                 );
@@ -475,10 +516,12 @@ fn connected(cons: &[Con], free: &HashSet<u32>, start: u32) -> Vec<u32> {
         }
         out.push(id);
         for k in cons {
-            let [a, b] = k.ends();
-            for (x, y) in [(a, b), (b, a)] {
-                if x == id && free.contains(&y) && !seen.contains(&y) {
-                    queue.push_back(y);
+            let e = k.ends();
+            if e.contains(&id) {
+                for &y in &e {
+                    if free.contains(&y) && !seen.contains(&y) {
+                        queue.push_back(y);
+                    }
                 }
             }
         }
@@ -501,6 +544,14 @@ mod tests {
         let GeomRef::Face { name, .. } = r else {
             return circle_geom(r);
         };
+        if name == "Shaft" {
+            // A Ø10 shaft along the cube's z through its middle.
+            return Ok(Geom::Cylinder {
+                p: Point3::new(10.0, 10.0, 0.0),
+                d: Vector3::z(),
+                r: 5.0,
+            });
+        }
         let (p, n) = match name.as_str() {
             "Top" => (Point3::new(10.0, 10.0, 20.0), Vector3::z()),
             "Bottom" => (Point3::new(10.0, 10.0, 0.0), -Vector3::z()),
@@ -569,6 +620,7 @@ mod tests {
             min: None,
             max: None,
             resting: false,
+            plane: None,
         }
     }
 
@@ -798,6 +850,52 @@ mod tests {
         let r = |w: Point3| ((w.x - 10.0).powi(2) + (w.y - 10.0).powi(2)).sqrt();
         assert!((r(w0) - r(w1)).abs() < 1e-6, "{w0} {w1}");
         assert!(w1.y - w0.y > 3.0, "turned: {w0} -> {w1}");
+    }
+
+    /// Tangent: a shaft lying on a top face (its axis parallel to it, 5 mm
+    /// above); Symmetry: a face mirrored about the assembly's YZ plane.
+    #[test]
+    fn tangent_and_symmetry() {
+        use crate::assembly::relation::{ASSEMBLY, OriginItem};
+        let mut a = two_cubes();
+        a.add_constraint(con(
+            ConstraintKind::Tangent,
+            face(1, "Top"),
+            face(2, "Shaft"),
+            0.0,
+        ));
+        let s = solve(&a, &cube_geom, None);
+        assert!(s.converged, "{}", s.residual);
+        applied(&mut a, &s);
+        let t = a.find(2).unwrap().transform;
+        let (p, d) = (t * Point3::new(10.0, 10.0, 0.0), t * Vector3::z());
+        assert!(d.z.abs() < 1e-6, "the axis lies flat: {d}");
+        assert!((p.z - 25.0).abs() < 1e-6, "5 above the top: {p}");
+        // Inside a bigger round would be |r1 - r2|; Outside against the
+        // plane from below:
+        let mut a = two_cubes();
+        let mut c = con(
+            ConstraintKind::Symmetry,
+            face(1, "Right"),
+            face(2, "Left"),
+            0.0,
+        );
+        c.plane = Some(GeomRef::Origin {
+            occurrence: ASSEMBLY,
+            item: OriginItem::YzPlane,
+        });
+        a.add_constraint(c);
+        let s = solve(&a, &cube_geom, None);
+        assert!(s.converged, "{}", s.residual);
+        applied(&mut a, &s);
+        let t = a.find(2).unwrap().transform;
+        // Cube 1's right face (x = 20) mirrored: x = -20, facing -x.
+        let left = t * Point3::new(0.0, 10.0, 10.0);
+        let n = t * -Vector3::x();
+        assert!(
+            (left.x + 20.0).abs() < 1e-6 && (n + Vector3::x()).norm() < 1e-6,
+            "{left} {n}"
+        );
     }
 
     #[test]

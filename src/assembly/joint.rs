@@ -40,7 +40,8 @@ pub fn frame_of(g: &Geom) -> Frame {
         Geom::Plane { p, n } => (p, n),
         Geom::Circle { c, n, .. } => (c, n),
         Geom::Axis { p, d } => (p, d),
-        Geom::Point { p } => (p, Vector3::z()),
+        Geom::Point { p } | Geom::Sphere { c: p, .. } => (p, Vector3::z()),
+        Geom::Cylinder { p, d, .. } => (p, d),
         Geom::Frame { p, z, x } => return Frame { p, z, x },
     };
     let z = z.try_normalize(1e-12).unwrap_or(Vector3::z());
@@ -135,7 +136,7 @@ pub fn residuals(c: &Constraint, a: &Frame, b: &Frame, out: &mut Vec<Real>) {
             out.push(a.z.dot(&(b.p - a.p)));
         }
         Ball => vec3(out, b.p - a.p),
-        Mate | Flush | Angle | Insert => {}
+        Mate | Flush | Angle | Insert | Tangent | Symmetry => {}
     }
 }
 
@@ -197,6 +198,7 @@ mod tests {
             min: None,
             max: None,
             resting: false,
+            plane: None,
         });
         a
     }

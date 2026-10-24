@@ -876,8 +876,8 @@ impl CadCraftApp {
     /// The File menu.
     pub(super) fn file_menu(&mut self, ui: &mut egui::Ui) {
         let now = ui.input(|i| i.time);
-        if ui.button("New            Ctrl+N").clicked() {
-            self.request(Pending::New, now);
+        if ui.button("New...         Ctrl+N").clicked() {
+            self.open_new_file();
             ui.close();
         }
         if ui.button("Open...        Ctrl+O").clicked() {
@@ -906,14 +906,6 @@ impl CadCraftApp {
             .clicked()
         {
             self.open_iproperties(self.part_id);
-            ui.close();
-        }
-        if ui
-            .button("New Assembly")
-            .on_hover_text("An assembly in this project: place the project's parts in it")
-            .clicked()
-        {
-            self.new_assembly();
             ui.close();
         }
         ui.separator();
