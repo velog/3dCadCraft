@@ -42,6 +42,9 @@ slotmap = { version = "1.1", features = ["serde"] }
 # truck, Apache-2.0), pinned to a reviewed commit. See ATTRIBUTION.md.
 solidcraft-kernel = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
 solidcraft-geom = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+# Sheet metal (5.6): SolidCraft's sheet body model (flat pattern, bends, flanges),
+# reached only through `kernel::exact::sheet_metal`. See ATTRIBUTION.md.
+solidcraft-doc = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
 
 # --- Serialization (file format + JSON-RPC/MCP payloads) -------------------
 serde = { version = "1.0", features = ["derive"] }

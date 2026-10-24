@@ -4392,6 +4392,8 @@ pub use loft::{
 mod sheet;
 pub use sheet::{SheetSide, extrude_sheet, revolve_sheet, sheet_nearest, split_by_sheet};
 
+pub mod sheet_metal;
+
 mod sweep;
 pub use sweep::{
     Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_to_point, path_points, sweep,
