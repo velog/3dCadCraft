@@ -24,6 +24,7 @@
 //! sketch on the box's top face.
 
 mod alias_input;
+mod asm_browser;
 mod assembly;
 mod blend;
 mod breadcrumb;
@@ -46,6 +47,7 @@ mod hole_dims;
 mod hole_panel;
 mod i18n;
 mod icons;
+mod iprops;
 mod keys;
 mod layout;
 mod loft;
@@ -580,6 +582,10 @@ struct CadCraftApp {
     asm: assembly::AsmUi,
     /// Assembly constraints (`constrain.rs`).
     cons: constrain::ConstrainUi,
+    /// Constraints keep the current distance (else 0); remembered.
+    constrain_current_offset: bool,
+    /// The iProperties window (`iprops.rs`).
+    iprops: Option<iprops::IPropsWin>,
 
     tab: Tab,
     mouse: MousePreset,
@@ -820,6 +826,8 @@ impl CadCraftApp {
             file_status: None,
             asm: Default::default(),
             cons: Default::default(),
+            constrain_current_offset: false,
+            iprops: None,
             tab: Tab::Model,
             mouse: MousePreset::Inventor,
             invert_wheel: false,
@@ -3635,6 +3643,7 @@ impl CadCraftApp {
             | Action::AsmFreeMove
             | Action::AsmFreeRotate
             | Action::AsmGround
+            | Action::AsmUpdate
             | Action::AsmConstrain => self.asm_apply(action),
             Action::StartSketch => {
                 self.finish_sketch();
@@ -4451,6 +4460,13 @@ impl CadCraftApp {
         if pressed(Key::F9) {
             self.show_labels = false;
         }
+        // The assembly's own letters and Ctrl+C / Ctrl+V; the part's
+        // letters below do nothing there.
+        let in_asm = self.is_assembly();
+        if in_asm {
+            self.assembly_keys(ctx, letter);
+        }
+        let letter = letter && !in_asm;
         if cmd && shift && pressed(Key::S) {
             self.open_dialog(files::DialogPurpose::SaveAs);
         } else if cmd && pressed(Key::S) {
@@ -4471,7 +4487,7 @@ impl CadCraftApp {
             self.apply(Action::Hole);
         }
         // Ctrl+A outside a sketch: everything of the selection mode.
-        if cmd && pressed(Key::A) && self.editing.is_none() && self.extrude.is_none() {
+        if cmd && pressed(Key::A) && self.editing.is_none() && self.extrude.is_none() && !in_asm {
             self.select_all();
         }
         // Ctrl+A in a sketch: select all its curves.
@@ -7039,6 +7055,7 @@ impl eframe::App for CadCraftApp {
         valuefield::draw_whip(&ctx);
         self.alias_window(&ctx);
         self.place_window(&ctx);
+        self.iprops_window(&ctx);
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);
         self.layout_end(&ctx);

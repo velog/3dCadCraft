@@ -72,6 +72,8 @@ pub fn solve(
         .iter()
         .map(|o| (o.id, o.transform))
         .collect();
+    // The assembly's own origin (`relation::ASSEMBLY`) never moves.
+    place.insert(super::relation::ASSEMBLY, Transform3::identity());
     let eval = |place: &HashMap<u32, Transform3>| -> DVector<Real> {
         let mut r = Vec::new();
         for (c, a, b) in &cons {
@@ -199,6 +201,9 @@ mod tests {
 
     /// Two blocks: geometry given directly (part coordinates): a 20 mm cube.
     fn cube_geom(r: &GeomRef) -> Result<Geom, String> {
+        if let GeomRef::Origin { item, .. } = r {
+            return Ok(item.geom());
+        }
         let GeomRef::Face { name, .. } = r else {
             return circle_geom(r);
         };
@@ -378,6 +383,48 @@ mod tests {
         let t = a.find(2).unwrap().transform;
         let cos = (t * Vector3::x()).dot(&Vector3::x());
         assert!((cos - 30f64.to_radians().cos()).abs() < 1e-6);
+    }
+
+    /// The origin planes of a component flush with the assembly's own
+    /// (occurrence `ASSEMBLY`): it lands on the origin, square to it.
+    #[test]
+    fn origin_planes_flush_with_the_assembly_origin() {
+        use crate::assembly::relation::{ASSEMBLY, OriginItem};
+        let mut a = two_cubes();
+        let o = |occurrence, item| GeomRef::Origin { occurrence, item };
+        for item in [
+            OriginItem::XyPlane,
+            OriginItem::XzPlane,
+            OriginItem::YzPlane,
+        ] {
+            a.add_constraint(con(
+                ConstraintKind::Flush,
+                o(ASSEMBLY, item),
+                o(2, item),
+                0.0,
+            ));
+        }
+        let s = solve(&a, &cube_geom, None);
+        assert!(s.converged, "{}", s.residual);
+        assert_eq!(s.dof[&2], 0);
+        applied(&mut a, &s);
+        let t = a.find(2).unwrap().transform;
+        assert!((t * Point3::new(1.0, 2.0, 3.0) - Point3::new(1.0, 2.0, 3.0)).norm() < 1e-6);
+        // A component's centre point on the assembly's Z axis: a Mate of a
+        // point and an axis.
+        let mut a = two_cubes();
+        a.add_constraint(con(
+            ConstraintKind::Mate,
+            o(ASSEMBLY, OriginItem::ZAxis),
+            o(2, OriginItem::Center),
+            0.0,
+        ));
+        let s = solve(&a, &cube_geom, None);
+        assert!(s.converged);
+        assert_eq!(s.dof[&2], 4, "it slides along Z and turns freely");
+        applied(&mut a, &s);
+        let c = a.find(2).unwrap().transform * Point3::origin();
+        assert!(c.x.abs() < 1e-6 && c.y.abs() < 1e-6, "{c}");
     }
 
     #[test]

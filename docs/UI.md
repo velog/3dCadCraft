@@ -202,7 +202,14 @@ right-click → OK / Place Grounded at Origin / Rotate 90° about X, Y, Z; Esc e
 drag inside the green circle = free turn, on its rim = turn in the screen plane. **Delete** deletes the
 selected occurrences, **Esc** ends the command or clears the selection, double-click (view or browser) opens
 the component's part file in its own tab. Right-click a component: Grounded,
-Visibility, Open, Delete. **C** = Constrain: the Place Constraint panel (Mate with Mate / Flush, Angle, Insert with
+Visibility, Open, iProperties, Copy / Paste, Delete. **V** = Free Move, **G** = Free Rotate. **Ctrl+C / Ctrl+V**
+copies components: one pasted component hangs on the cursor with the same orientation, several are pasted
+beside the originals. **Assemble › Update** reads the linked part files again and solves. Every browser node
+folds open and shut: *Relationships*, the assembly's *Origin*, and each component with its *Origin* (planes,
+axes, centre point), its part's work features and its constraints; with Constrain open a click on such a
+row is a selection (it lights up in the view under the cursor). **Use the current distance** (Constrain
+panel, remembered): on, the offset is the distance the components have now; off, they snap together at 0.
+The label column of Properties is wider or narrower by dragging its border. **C** = Constrain: the Place Constraint panel (Mate with Mate / Flush, Angle, Insert with
 Opposed / Aligned), click selection 1 then 2 in the view (an edge within a few pixels wins over its face;
 blue / violet / green under the cursor), Offset or Angle field, Show Preview, Predict Offset and Orientation;
 OK (Enter) / Apply / Cancel (Esc), the same in the view's right-click menu. A constraint that conflicts is

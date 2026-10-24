@@ -30,13 +30,113 @@ pub enum GeomRef {
         /// The edge.
         edge: EdgeRef,
     },
+    /// An origin plane, axis or the centre point of a component's part;
+    /// occurrence [`ASSEMBLY`] is the assembly's own origin.
+    Origin {
+        /// The occurrence's id, or [`ASSEMBLY`].
+        occurrence: u32,
+        /// Which one.
+        item: OriginItem,
+    },
+    /// A work plane, axis or point of the part, by its id (`WorkPlane1`,
+    /// `UCS1:XY`).
+    Work {
+        /// The occurrence's id.
+        occurrence: u32,
+        /// The work feature's id.
+        id: String,
+    },
+}
+
+/// The "occurrence" of the assembly's own origin geometry (never a real
+/// occurrence id: those start at 1). It never moves.
+pub const ASSEMBLY: u32 = 0;
+
+/// The origin geometry of a part or of the assembly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OriginItem {
+    /// The YZ plane (normal +X).
+    YzPlane,
+    /// The XZ plane (normal -Y).
+    XzPlane,
+    /// The XY plane (normal +Z).
+    XyPlane,
+    /// The X axis.
+    XAxis,
+    /// The Y axis.
+    YAxis,
+    /// The Z axis.
+    ZAxis,
+    /// The origin point.
+    Center,
+}
+
+impl OriginItem {
+    /// Every item, in browser order (as Inventor's Origin folder).
+    pub const ALL: [OriginItem; 7] = [
+        OriginItem::YzPlane,
+        OriginItem::XzPlane,
+        OriginItem::XyPlane,
+        OriginItem::XAxis,
+        OriginItem::YAxis,
+        OriginItem::ZAxis,
+        OriginItem::Center,
+    ];
+
+    /// Browser label.
+    pub fn label(self) -> &'static str {
+        match self {
+            OriginItem::YzPlane => "YZ Plane",
+            OriginItem::XzPlane => "XZ Plane",
+            OriginItem::XyPlane => "XY Plane",
+            OriginItem::XAxis => "X Axis",
+            OriginItem::YAxis => "Y Axis",
+            OriginItem::ZAxis => "Z Axis",
+            OriginItem::Center => "Center Point",
+        }
+    }
+
+    /// Its geometry (part or assembly coordinates).
+    pub fn geom(self) -> Geom {
+        let o = Point3::origin();
+        match self {
+            OriginItem::YzPlane => Geom::Plane {
+                p: o,
+                n: Vector3::x(),
+            },
+            OriginItem::XzPlane => Geom::Plane {
+                p: o,
+                n: -Vector3::y(),
+            },
+            OriginItem::XyPlane => Geom::Plane {
+                p: o,
+                n: Vector3::z(),
+            },
+            OriginItem::XAxis => Geom::Axis {
+                p: o,
+                d: Vector3::x(),
+            },
+            OriginItem::YAxis => Geom::Axis {
+                p: o,
+                d: Vector3::y(),
+            },
+            OriginItem::ZAxis => Geom::Axis {
+                p: o,
+                d: Vector3::z(),
+            },
+            OriginItem::Center => Geom::Point { p: o },
+        }
+    }
 }
 
 impl GeomRef {
     /// The occurrence it belongs to.
     pub fn occurrence(&self) -> u32 {
         match self {
-            GeomRef::Face { occurrence, .. } | GeomRef::Edge { occurrence, .. } => *occurrence,
+            GeomRef::Face { occurrence, .. }
+            | GeomRef::Edge { occurrence, .. }
+            | GeomRef::Origin { occurrence, .. }
+            | GeomRef::Work { occurrence, .. } => *occurrence,
         }
     }
 
@@ -45,6 +145,8 @@ impl GeomRef {
         match self {
             GeomRef::Face { name, .. } => name.clone(),
             GeomRef::Edge { edge, .. } => format!("{} | {}", edge.faces[0], edge.faces[1]),
+            GeomRef::Origin { item, .. } => item.label().to_owned(),
+            GeomRef::Work { id, .. } => id.clone(),
         }
     }
 }
@@ -176,6 +278,11 @@ pub enum Geom {
         /// Radius.
         r: Real,
     },
+    /// A point (an origin's centre, a work point).
+    Point {
+        /// Where.
+        p: Point3,
+    },
 }
 
 impl Geom {
@@ -189,6 +296,7 @@ impl Geom {
                 n: t * n,
                 r,
             },
+            Geom::Point { p } => Geom::Point { p: t * p },
         }
     }
 
@@ -198,6 +306,7 @@ impl Geom {
         match *self {
             Geom::Plane { n, .. } | Geom::Circle { n, .. } => n,
             Geom::Axis { d, .. } => d,
+            Geom::Point { .. } => Vector3::zeros(),
         }
     }
 
@@ -206,7 +315,16 @@ impl Geom {
         match *self {
             Geom::Axis { p, d } => Some((p, d)),
             Geom::Circle { c, n, .. } => Some((c, n)),
-            Geom::Plane { .. } => None,
+            Geom::Plane { .. } | Geom::Point { .. } => None,
+        }
+    }
+
+    /// The point of a point, or a circle's centre.
+    pub fn point(&self) -> Option<Point3> {
+        match *self {
+            Geom::Point { p } => Some(p),
+            Geom::Circle { c, .. } => Some(c),
+            _ => None,
         }
     }
 }
@@ -227,9 +345,35 @@ fn face_normal(body: &BRep, f: crate::kernel::FaceId) -> Option<(Point3, Vector3
     ))
 }
 
-/// The geometry `r` names in `body` (part coordinates).
+/// The geometry `r` names in `part` (part coordinates): its faces and
+/// edges, origin and work features.
+pub fn resolve_in(part: &crate::part::PartDocument, r: &GeomRef) -> Result<Geom, String> {
+    match r {
+        GeomRef::Origin { item, .. } => Ok(item.geom()),
+        GeomRef::Work { id, .. } => {
+            let w = &part.work;
+            if let Some(pl) = w.planes.get(id) {
+                Ok(Geom::Plane {
+                    p: pl.origin,
+                    n: pl.normal.into_inner(),
+                })
+            } else if let Some((p, d)) = w.axes.get(id) {
+                Ok(Geom::Axis { p: *p, d: *d })
+            } else if let Some(p) = w.points.get(id) {
+                Ok(Geom::Point { p: *p })
+            } else {
+                Err(format!("the work feature {id} no longer exists"))
+            }
+        }
+        _ => resolve_local(&part.body, r),
+    }
+}
+
+/// The geometry `r` names in `body` (part coordinates; faces and edges).
 pub fn resolve_local(body: &BRep, r: &GeomRef) -> Result<Geom, String> {
     match r {
+        GeomRef::Origin { item, .. } => Ok(item.geom()),
+        GeomRef::Work { id, .. } => Err(format!("the work feature {id} needs its part")),
         GeomRef::Face { name, hint, .. } => {
             let hint = Point3::from(*hint);
             // The piece of that name nearest the pick.
@@ -308,7 +452,7 @@ pub fn resolve(project: &Project, asm: &AssemblyDocument, r: &GeomRef) -> Result
         .ok_or("the component no longer exists")?;
     let part =
         super::part_of(project, o.component).ok_or_else(|| format!("{} shows no part", o.name))?;
-    resolve_local(&part.body, r).map_err(|e| format!("{}: {e}", o.name))
+    resolve_in(part, r).map_err(|e| format!("{}: {e}", o.name))
 }
 
 /// The residuals of constraint `c` for its two world geometries: zero when
@@ -331,14 +475,26 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
         (Mate | Flush, Geom::Plane { p, n }, other)
         | (Mate | Flush, other, Geom::Plane { p, n }) => {
             match *other {
-                // A circle's centre on the plane (at the offset).
-                Geom::Circle { c: q, .. } => out.push(n.dot(&(q - p)) - d),
+                // A circle's centre or a point on the plane (at the offset).
+                Geom::Circle { c: q, .. } | Geom::Point { p: q } => out.push(n.dot(&(q - p)) - d),
                 // The axis in the plane (at the offset).
                 Geom::Axis { p: q, d: u } => {
                     out.push(n.dot(&u));
                     out.push(n.dot(&(q - p)) - d);
                 }
                 Geom::Plane { .. } => return Err("two planes".into()),
+            }
+        }
+        (Mate | Flush, Geom::Point { p: q }, other)
+        | (Mate | Flush, other, Geom::Point { p: q }) => {
+            match other {
+                // Two points together.
+                Geom::Point { p: r } => vec3(out, q - r),
+                // A point on an axis (a circle's axis).
+                _ => {
+                    let (pa, ua) = other.line().ok_or("not an axis")?;
+                    vec3(out, off_line(pa, ua, *q));
+                }
             }
         }
         (Mate | Flush, x, y) => {
@@ -374,11 +530,11 @@ pub fn predict(kind: ConstraintKind, a: &Geom, b: &Geom) -> (ConstraintKind, Rea
         (
             Mate | Flush,
             Geom::Plane { p, n },
-            Geom::Circle { c: q, .. } | Geom::Axis { p: q, .. },
+            Geom::Circle { c: q, .. } | Geom::Axis { p: q, .. } | Geom::Point { p: q },
         )
         | (
             Mate | Flush,
-            Geom::Circle { c: q, .. } | Geom::Axis { p: q, .. },
+            Geom::Circle { c: q, .. } | Geom::Axis { p: q, .. } | Geom::Point { p: q },
             Geom::Plane { p, n },
         ) => (Mate, n.dot(&(q - p))),
         (Angle, x, y) => (
@@ -396,7 +552,7 @@ pub fn predict(kind: ConstraintKind, a: &Geom, b: &Geom) -> (ConstraintKind, Rea
 pub fn accepts(kind: ConstraintKind, g: &Geom) -> bool {
     match kind {
         ConstraintKind::Mate | ConstraintKind::Flush => true,
-        ConstraintKind::Angle => !matches!(g, Geom::Circle { .. }),
+        ConstraintKind::Angle => !matches!(g, Geom::Circle { .. } | Geom::Point { .. }),
         ConstraintKind::Insert => matches!(g, Geom::Circle { .. }),
     }
 }

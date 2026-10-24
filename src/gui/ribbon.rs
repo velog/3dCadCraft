@@ -67,6 +67,8 @@ pub enum Action {
     AsmGround,
     /// Assemble › Constrain: Mate / Flush, Angle, Insert.
     AsmConstrain,
+    /// Assemble › Update: reload the linked part files, solve again.
+    AsmUpdate,
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch
@@ -410,7 +412,10 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 "Pattern",
                 vec![c("asm.pattern"), c("asm.mirror"), c("asm.copy")],
             ),
-            panel("Manage", vec![c("asm.bom").large()]),
+            panel(
+                "Manage",
+                vec![c("asm.update").large(), c("asm.bom").large()],
+            ),
         ],
         Tab::Model => vec![
             panel(

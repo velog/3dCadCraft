@@ -1242,12 +1242,16 @@ pub static COMMANDS: &[Command] = &[
         .todo("3.10"),
     c("asm.free_move", "Free Move", "Свободно преместване", Icon::FreeMove)
         .run(Action::AsmFreeMove)
+        .alias(&["V"])
+        .bound()
         .at(&[A_POSITION])
         .env(ASSEMBLY)
         .tip("Drag a component in the view plane (grounded ones too); without the command a drag moves components that are not grounded")
         .spec("3.1-assemblies.md"),
     c("asm.free_rotate", "Free Rotate", "Свободно завъртане", Icon::FreeRotate)
         .run(Action::AsmFreeRotate)
+        .alias(&["G"])
+        .bound()
         .at(&[A_POSITION])
         .env(ASSEMBLY)
         .tip("Click a component, then drag inside the circle to turn it freely or on its rim to turn it in the screen plane")
@@ -1288,6 +1292,12 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("Copy components as new documents")
         .todo("3.8"),
+    c("asm.update", "Update", "Обновяване", Icon::Rebuild)
+        .run(Action::AsmUpdate)
+        .at(&[Place::Ribbon("Assemble", "Manage")])
+        .env(ASSEMBLY)
+        .tip("Read the linked part files again (changes saved in them come in) and solve the constraints")
+        .spec("3.1-assemblies.md"),
     c("asm.bom", "Bill of Materials", "Спецификация", Icon::Parameters)
         .short("BOM")
         .at(&[Place::Ribbon("Assemble", "Manage")])

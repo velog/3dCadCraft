@@ -461,6 +461,9 @@ impl CadCraftApp {
     pub(super) fn new_project(&mut self) {
         let mut project = Project::new("Untitled");
         let id = project.add_document("Part1", DocumentData::Part(PartDocument::default()));
+        if let Some(d) = project.document_mut(id) {
+            d.properties = crate::document::iprops::IProperties::new_document();
+        }
         self.project = project;
         self.part_id = id;
         self.asm = Default::default();
@@ -883,6 +886,14 @@ impl CadCraftApp {
                 }
             });
         });
+        if ui
+            .button("iProperties...")
+            .on_hover_text("Title, part number, status and custom properties of this document")
+            .clicked()
+        {
+            self.open_iproperties(self.part_id);
+            ui.close();
+        }
         if ui
             .button("New Assembly")
             .on_hover_text("An assembly in this project: place the project's parts in it")

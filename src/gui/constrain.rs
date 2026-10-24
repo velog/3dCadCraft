@@ -13,7 +13,6 @@ use std::sync::Arc;
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke};
 
 use super::CadCraftApp;
-use super::icons::Icon;
 use super::valuefield::ExprValue;
 use crate::assembly::relation::{self, Constraint, ConstraintKind, Geom, GeomRef};
 use crate::assembly::{self as asm, Solved};
@@ -76,6 +75,11 @@ impl ConstrainDraft {
         })
     }
 
+    /// Whether `g` is one of its selections.
+    pub(super) fn has(&self, g: &GeomRef) -> bool {
+        self.a.as_ref() == Some(g) || self.b.as_ref() == Some(g)
+    }
+
     fn command(&self) -> &'static str {
         match self.kind {
             ConstraintKind::Mate | ConstraintKind::Flush => "Mate",
@@ -100,6 +104,8 @@ pub(super) struct ConstrainUi {
     edges: std::cell::RefCell<HashMap<DocRef, (String, Arc<EdgeList>)>>,
     /// The geometry under the cursor while picking.
     hover: Option<GeomRef>,
+    /// Origin / work geometry under the cursor in the browser.
+    pub browser_hover: Option<GeomRef>,
 }
 
 const PICK_PX: f32 = 7.0;
@@ -108,12 +114,19 @@ impl CadCraftApp {
     /// A reference's geometry in its part's coordinates (parts of this
     /// file or linked part files).
     pub(super) fn asm_local_geom(&self, r: &GeomRef) -> Result<Geom, String> {
+        if let GeomRef::Origin {
+            occurrence: relation::ASSEMBLY,
+            item,
+        } = r
+        {
+            return Ok(item.geom());
+        }
         let a = self.assembly().ok_or("no assembly")?;
         let o = a
             .find(r.occurrence())
             .ok_or("the component no longer exists")?;
         let name = o.name.clone();
-        self.with_part(o.component, |p| relation::resolve_local(&p.body, r))
+        self.with_part(o.component, |p| relation::resolve_in(p, r))
             .ok_or_else(|| format!("{name}: its part file was not found"))?
             .map_err(|e| format!("{name}: {e}"))
     }
@@ -122,11 +135,18 @@ impl CadCraftApp {
     /// in this document's components).
     fn solve_copy(&self, a: &AssemblyDocument, heavy: Option<u32>) -> Solved {
         let local = |r: &GeomRef| -> Result<Geom, String> {
+            if let GeomRef::Origin {
+                occurrence: relation::ASSEMBLY,
+                item,
+            } = r
+            {
+                return Ok(item.geom());
+            }
             let o = a
                 .find(r.occurrence())
                 .ok_or("the component no longer exists")?;
             let name = o.name.clone();
-            self.with_part(o.component, |p| relation::resolve_local(&p.body, r))
+            self.with_part(o.component, |p| relation::resolve_in(p, r))
                 .ok_or_else(|| format!("{name}: its part file was not found"))?
                 .map_err(|e| format!("{name}: {e}"))
         };
@@ -204,7 +224,7 @@ impl CadCraftApp {
     }
 
     /// Edit of constraint `id` in the panel.
-    fn edit_constraint(&mut self, id: u32) {
+    pub(super) fn edit_constraint(&mut self, id: u32) {
         let Some(c) = self.assembly().and_then(|a| a.constraint(id)).cloned() else {
             return;
         };
@@ -362,7 +382,7 @@ impl CadCraftApp {
 
     /// A click on `g` fills the active selection (both on different
     /// components), then predicts the offset and the solution.
-    fn constrain_pick(&mut self, g: GeomRef) {
+    pub(super) fn constrain_pick(&mut self, g: GeomRef) {
         let geom = self.asm_local_geom(&g);
         let Some(d) = self.cons.draft.as_mut() else {
             return;
@@ -396,15 +416,18 @@ impl CadCraftApp {
         self.constrain_predict();
     }
 
-    /// Predict Offset and Orientation: Mate or Flush from the normals and
-    /// the offset (or angle) as it is now, while no value was typed.
+    /// Predict Orientation: Mate or Flush from the normals. The offset is
+    /// the distance as it is now when *Use the current distance* is on
+    /// (remembered between sessions), else 0 (the parts snap together); an
+    /// angle is always measured. A typed value is left alone.
     fn constrain_predict(&mut self) {
         let Some(d) = self.cons.draft.clone() else {
             return;
         };
-        if !d.predict || d.typed {
+        if d.typed {
             return;
         }
+        let keep = self.constrain_current_offset;
         let (Some(a), Some(b)) = (&d.a, &d.b) else {
             return;
         };
@@ -420,10 +443,14 @@ impl CadCraftApp {
         };
         let (kind, value) = relation::predict(d.kind, &ga, &gb);
         if let Some(x) = self.cons.draft.as_mut() {
-            if matches!(x.kind, ConstraintKind::Mate | ConstraintKind::Flush) {
+            if x.predict && matches!(x.kind, ConstraintKind::Mate | ConstraintKind::Flush) {
                 x.kind = kind;
             }
-            x.value = value;
+            x.value = if keep || x.kind == ConstraintKind::Angle {
+                value
+            } else {
+                0.0
+            };
             x.expr = None;
         }
     }
@@ -498,11 +525,16 @@ impl CadCraftApp {
         clicked
     }
 
-    /// Outlines a picked face (its triangles) or edge (its polyline).
-    fn draw_geom(&self, painter: &egui::Painter, rect: Rect, g: &GeomRef, col: Color32) {
+    /// Outlines a picked face (its triangles), edge (its polyline), or an
+    /// origin / work plane (a square), axis (a line) or point (a ring).
+    pub(super) fn draw_geom(&self, painter: &egui::Painter, rect: Rect, g: &GeomRef, col: Color32) {
         let Some(a) = self.assembly() else {
             return;
         };
+        if matches!(g, GeomRef::Origin { .. } | GeomRef::Work { .. }) {
+            self.draw_reference(painter, rect, g, col);
+            return;
+        }
         let Some(occ) = a.find(g.occurrence()) else {
             return;
         };
@@ -559,6 +591,7 @@ impl CadCraftApp {
                 }
                 painter.add(egui::Shape::mesh(m));
             }
+            GeomRef::Origin { .. } | GeomRef::Work { .. } => {}
         }
     }
 
@@ -683,10 +716,21 @@ impl CadCraftApp {
         ui.add_space(4.0);
         ui.checkbox(&mut d.preview, "Show Preview");
         if ui
-            .checkbox(&mut d.predict, "Predict Offset and Orientation")
+            .checkbox(&mut d.predict, "Predict Orientation")
+            .on_hover_text("Mate or Flush from the faces' normals as they are now")
             .changed()
-            && d.predict
         {
+            d.typed = false;
+        }
+        let mut keep = self.constrain_current_offset;
+        if ui
+            .checkbox(&mut keep, "Use the current distance")
+            .on_hover_text(
+                "On: the offset is the distance the components have now. Off: they snap together at 0. Remembered for every constraint.",
+            )
+            .changed()
+        {
+            self.constrain_current_offset = keep;
             d.typed = false;
         }
         ui.separator();
@@ -705,7 +749,7 @@ impl CadCraftApp {
             }
         });
         if self.cons.draft.is_some() {
-            let repredict = d.predict && !d.typed;
+            let repredict = !d.typed;
             self.cons.draft = Some(d);
             if repredict {
                 self.constrain_predict();
@@ -716,113 +760,87 @@ impl CadCraftApp {
         }
     }
 
-    fn geom_label(&self, g: &GeomRef) -> String {
-        let occ = self
-            .assembly()
-            .and_then(|a| a.find(g.occurrence()))
-            .map_or("?".to_owned(), |o| o.name.clone());
-        let kind = match g {
-            GeomRef::Face { .. } => "face",
-            GeomRef::Edge { .. } => "edge",
+    pub(super) fn geom_label(&self, g: &GeomRef) -> String {
+        let occ = if g.occurrence() == relation::ASSEMBLY {
+            "Assembly".to_owned()
+        } else {
+            self.assembly()
+                .and_then(|a| a.find(g.occurrence()))
+                .map_or("?".to_owned(), |o| o.name.clone())
         };
-        format!("{occ} {kind}")
+        match g {
+            GeomRef::Face { .. } => format!("{occ} face"),
+            GeomRef::Edge { .. } => format!("{occ} edge"),
+            GeomRef::Origin { item, .. } => format!("{occ} {}", item.label()),
+            GeomRef::Work { id, .. } => format!("{occ} {id}"),
+        }
+    }
+
+    /// An origin or work plane / axis / point drawn where it is in the
+    /// assembly, sized by its component.
+    fn draw_reference(&self, painter: &egui::Painter, rect: Rect, g: &GeomRef, col: Color32) {
+        let Ok(local) = self.asm_local_geom(g) else {
+            return;
+        };
+        let (t, size) = if g.occurrence() == relation::ASSEMBLY {
+            let size = self
+                .assembly_box()
+                .map_or(60.0, |(lo, hi)| (hi - lo).norm() * 0.4);
+            (Transform3::identity(), size.max(20.0))
+        } else {
+            let Some(occ) = self.assembly().and_then(|a| a.find(g.occurrence())) else {
+                return;
+            };
+            let t = self
+                .cons
+                .preview
+                .as_ref()
+                .and_then(|p| p.get(&occ.id).copied())
+                .unwrap_or(occ.transform);
+            let size = self
+                .asm_mesh(occ.component)
+                .and_then(|m| m.bbox)
+                .map_or(40.0, |(lo, hi)| (hi - lo).norm() * 0.6);
+            (t, size.max(10.0))
+        };
+        let geom = local.moved(&t);
+        let stroke = Stroke::new(2.0, col);
+        let fill = Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 50);
+        let pr = |p: Point3| self.camera.project(&p, rect);
+        match geom {
+            Geom::Plane { p, n } => {
+                let u = if n.x.abs() < 0.9 {
+                    n.cross(&crate::kernel::Vector3::x())
+                } else {
+                    n.cross(&crate::kernel::Vector3::y())
+                }
+                .normalize();
+                let v = n.cross(&u);
+                let h = size / 2.0;
+                let pts: Vec<Pos2> = [(-h, -h), (h, -h), (h, h), (-h, h)]
+                    .iter()
+                    .filter_map(|&(a, b)| pr(p + u * a + v * b))
+                    .collect();
+                if pts.len() == 4 {
+                    painter.add(egui::Shape::convex_polygon(pts, fill, stroke));
+                }
+            }
+            Geom::Axis { p, d } => {
+                if let (Some(a), Some(b)) = (pr(p - d * size / 2.0), pr(p + d * size / 2.0)) {
+                    painter.line_segment([a, b], stroke);
+                }
+            }
+            Geom::Point { p } | Geom::Circle { c: p, .. } => {
+                if let Some(s) = pr(p) {
+                    painter.circle(s, 5.0, fill, stroke);
+                }
+            }
+        }
     }
 
     // ---- browser and Properties ----------------------------------------------
 
-    /// The Relationships folder of the assembly browser.
-    pub(super) fn relationships_tree(&mut self, ui: &mut egui::Ui) {
-        let Some(a) = self.assembly() else {
-            return;
-        };
-        if a.constraints.is_empty() {
-            return;
-        }
-        let rows: Vec<(u32, String, bool, Option<String>, String)> = a
-            .constraints
-            .iter()
-            .map(|c| {
-                let names = |r: &GeomRef| {
-                    a.find(r.occurrence())
-                        .map_or("?".to_owned(), |o| o.name.clone())
-                };
-                let sick = self
-                    .cons
-                    .last
-                    .sick
-                    .iter()
-                    .find(|(id, _)| *id == c.id)
-                    .map(|(_, e)| e.clone());
-                (
-                    c.id,
-                    c.name.clone(),
-                    c.suppressed,
-                    sick,
-                    format!("{}, {}", names(&c.a), names(&c.b)),
-                )
-            })
-            .collect();
-        let conflict = !self.cons.last.converged && !self.cons.last.transforms.is_empty();
-        ui.horizontal(|ui| {
-            super::panels::tree_icon(ui, Icon::Coincident);
-            ui.label("Relationships");
-        });
-        let mut edit = None;
-        let mut suppress = None;
-        let mut delete = None;
-        ui.indent("relationships", |ui| {
-            for (id, name, suppressed, sick, between) in rows {
-                ui.horizontal(|ui| {
-                    let mut text = RichText::new(format!("{name} ({between})"));
-                    if suppressed {
-                        text = text.weak();
-                    } else if sick.is_some() || conflict {
-                        text = text.color(Color32::from_rgb(235, 80, 70));
-                    }
-                    let r = ui.selectable_label(self.cons.selected == Some(id), text);
-                    let r = match &sick {
-                        Some(e) => r.on_hover_text(format!("Sick: {e}")),
-                        None => r,
-                    };
-                    if r.clicked() {
-                        self.cons.selected = Some(id);
-                        self.asm.sel.clear();
-                    }
-                    if r.double_clicked() {
-                        edit = Some(id);
-                    }
-                    r.context_menu(|ui| {
-                        if ui.button("Edit").clicked() {
-                            edit = Some(id);
-                            ui.close();
-                        }
-                        if ui
-                            .button(if suppressed { "Unsuppress" } else { "Suppress" })
-                            .clicked()
-                        {
-                            suppress = Some(id);
-                            ui.close();
-                        }
-                        if ui.button("Delete").clicked() {
-                            delete = Some(id);
-                            ui.close();
-                        }
-                    });
-                });
-            }
-        });
-        if let Some(id) = edit {
-            self.edit_constraint(id);
-        }
-        if let Some(id) = suppress {
-            self.toggle_constraint_suppress(id);
-        }
-        if let Some(id) = delete {
-            self.delete_constraint(id);
-        }
-    }
-
-    fn toggle_constraint_suppress(&mut self, id: u32) {
+    pub(super) fn toggle_constraint_suppress(&mut self, id: u32) {
         let r = self.asm_try("Suppress Constraint", |a| {
             if let Some(c) = a.constraint_mut(id) {
                 c.suppressed = !c.suppressed;

@@ -44,6 +44,7 @@ use uuid::Uuid;
 use crate::kernel::Transform3;
 pub use crate::part::{PartDocument, PartSketch};
 
+pub mod iprops;
 pub use format::{FILE_EXTENSION, FORMAT_REVISION, FORMAT_VERSION, SaveOptions};
 pub use library::Resolver;
 
@@ -313,6 +314,9 @@ pub struct Document {
     pub name: String,
     /// Contents.
     pub data: DocumentData,
+    /// iProperties (`iprops`): title, part number, custom ones…
+    #[serde(default, skip_serializing_if = "iprops::IProperties::is_empty")]
+    pub properties: iprops::IProperties,
 }
 
 /// A link to another `.3dcadcraft` project used as a library.
@@ -367,6 +371,7 @@ impl Project {
             id,
             name: name.into(),
             data,
+            properties: Default::default(),
         });
         id
     }

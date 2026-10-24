@@ -19,7 +19,6 @@ use std::sync::Arc;
 use eframe::egui::{self, Color32, PointerButton, Pos2, Rect, RichText, Stroke};
 
 use super::CadCraftApp;
-use super::icons::Icon;
 use super::ribbon::Action;
 use super::valuefield::ExprValue;
 use crate::assembly::{self as asm, Hit, PickMesh};
@@ -94,6 +93,8 @@ pub(super) struct AsmUi {
     scene_state: (Vec<u32>, Option<u32>),
     /// The assembly a component was opened from (browser *Return*).
     pub came_from: Option<DocumentId>,
+    /// Copied occurrences (Ctrl+C): component, placement, name.
+    clipboard: Vec<(DocRef, Transform3, String)>,
 }
 
 /// Selected occurrences: blue; under the cursor: green (as faces in a
@@ -179,6 +180,9 @@ impl CadCraftApp {
             "Assembly1",
             DocumentData::Assembly(AssemblyDocument::default()),
         );
+        if let Some(d) = project.document_mut(id) {
+            d.properties = crate::document::iprops::IProperties::new_document();
+        }
         self.project = project;
         self.part_id = id;
         self.asm = Default::default();
@@ -226,7 +230,7 @@ impl CadCraftApp {
 
     /// Opens the component of occurrence `id`: its part becomes the active
     /// document; the browser's *Return* comes back.
-    fn open_component(&mut self, id: u32) {
+    pub(super) fn open_component(&mut self, id: u32) {
         let Some(r) = self
             .assembly()
             .and_then(|a| a.find(id))
@@ -263,6 +267,116 @@ impl CadCraftApp {
             .reduce(|(a, b), (c, d)| (a.inf(&c), b.sup(&d)))
     }
 
+    /// The assembly's keys (Inventor's defaults): P Place, C Constrain,
+    /// V Free Move, G Free Rotate, Ctrl+C / Ctrl+V copy and paste
+    /// components.
+    pub(super) fn assembly_keys(&mut self, ctx: &egui::Context, letter: bool) {
+        let pressed = |k: egui::Key| ctx.input(|i| i.key_pressed(k));
+        let cmd = ctx.input(|i| i.modifiers.command);
+        if letter && !cmd {
+            for (k, a) in [
+                (egui::Key::P, Action::AsmPlace),
+                (egui::Key::C, Action::AsmConstrain),
+                (egui::Key::V, Action::AsmFreeMove),
+                (egui::Key::G, Action::AsmFreeRotate),
+            ] {
+                if pressed(k) {
+                    self.apply(a);
+                }
+            }
+        }
+        let (copy, paste) = ctx.input(|i| {
+            let ev = |f: fn(&egui::Event) -> bool| i.events.iter().any(f);
+            (
+                ev(|e| matches!(e, egui::Event::Copy))
+                    || (i.modifiers.command && i.key_pressed(egui::Key::C)),
+                ev(|e| matches!(e, egui::Event::Paste(_)))
+                    || (i.modifiers.command && i.key_pressed(egui::Key::V)),
+            )
+        });
+        if copy {
+            self.copy_occurrences();
+            // Something in the system clipboard, so Ctrl+V arrives as a paste.
+            ctx.copy_text("3DCadCraft components".into());
+        }
+        if paste {
+            self.paste_occurrences();
+        }
+    }
+
+    /// Ctrl+C: the selected components.
+    pub(super) fn copy_occurrences(&mut self) {
+        let Some(a) = self.assembly() else {
+            return;
+        };
+        let list: Vec<(DocRef, Transform3, String)> = self
+            .asm
+            .sel
+            .iter()
+            .filter_map(|id| a.find(*id))
+            .map(|o| {
+                let base = o
+                    .name
+                    .rsplit_once(':')
+                    .filter(|(_, k)| k.parse::<u32>().is_ok())
+                    .map_or(o.name.as_str(), |(b, _)| b)
+                    .to_owned();
+                (o.component, o.transform, base)
+            })
+            .collect();
+        if list.is_empty() {
+            return;
+        }
+        self.file_status = Some(Ok(format!(
+            "Copied {} component(s): Ctrl+V pastes",
+            list.len()
+        )));
+        self.asm.clipboard = list;
+    }
+
+    /// Ctrl+V: one copied component hangs on the cursor as in Place (same
+    /// orientation); several are pasted at once beside the originals.
+    pub(super) fn paste_occurrences(&mut self) {
+        let list = self.asm.clipboard.clone();
+        match list.as_slice() {
+            [] => {}
+            [(r, t, base)] => {
+                self.asm.place = None;
+                self.cons.draft = None;
+                self.asm.place_name = base.clone();
+                self.asm.place_turn = Some(Transform3::from_parts(
+                    nalgebra::Translation3::identity(),
+                    t.rotation,
+                ));
+                self.asm.tool = Some(AsmTool::Place(*r));
+            }
+            many => {
+                // Beside the copied ones: shifted by their width along X.
+                let boxes: Vec<(Point3, Point3)> = many
+                    .iter()
+                    .filter_map(|(r, t, _)| {
+                        let local = self.asm_mesh(*r)?.bbox?;
+                        let o = crate::document::Occurrence::new("", *r, *t);
+                        Some(asm::occurrence_box(&o, local))
+                    })
+                    .collect();
+                let dx = boxes
+                    .iter()
+                    .copied()
+                    .reduce(|(a, b), (c, d)| (a.inf(&c), b.sup(&d)))
+                    .map_or(10.0, |(lo, hi)| (hi.x - lo.x) * 1.2 + 5.0);
+                let mut new = Vec::new();
+                self.edit_assembly("Paste", |a| {
+                    for (r, t, base) in &many.to_vec() {
+                        let t = Transform3::translation(dx, 0.0, 0.0) * t;
+                        new.push(a.place(*r, base, t, false));
+                    }
+                });
+                self.asm.sel = new;
+            }
+        }
+    }
+
     // ---- commands ------------------------------------------------------------
 
     /// Runs an Assemble command.
@@ -284,6 +398,7 @@ impl CadCraftApp {
                 };
             }
             Action::AsmConstrain => self.start_constrain(),
+            Action::AsmUpdate => self.update_assembly(),
             Action::AsmGround => {
                 let ids = self.asm.sel.clone();
                 if ids.is_empty() {
@@ -294,6 +409,26 @@ impl CadCraftApp {
             }
             _ => {}
         }
+    }
+
+    /// Assemble › Update: every linked part file read again, the
+    /// constraints solved (one Undo step when something moved).
+    pub(super) fn update_assembly(&mut self) {
+        self.asm.libs = Default::default();
+        if !self.is_assembly() {
+            return;
+        }
+        self.checkpoint("Update");
+        self.asm_solve(None);
+        self.scene_dirty = true;
+        let sick = self.cons.last.sick.len();
+        self.file_status = Some(if sick == 0 {
+            Ok("Update: the part files were read again and the constraints solved".into())
+        } else {
+            Err(format!(
+                "Update: {sick} constraint(s) lost their geometry (red in Relationships)"
+            ))
+        });
     }
 
     /// The Assemble command that is open (the ribbon shows it pressed).
@@ -586,6 +721,9 @@ impl CadCraftApp {
         }
         let on_view = !on_cube && !modal;
         self.constrain_view(&painter, rect, pointer.filter(|_| on_view), constrain_click);
+        if let Some(g) = self.cons.browser_hover.clone() {
+            self.draw_geom(&painter, rect, &g, Color32::from_rgb(110, 220, 120));
+        }
         if let (Some(p), Some(text)) = (pointer, self.asm_cursor_hint()) {
             super::command_ui::cursor_hint(&painter, rect, p, &text);
         }
@@ -843,7 +981,15 @@ impl CadCraftApp {
         let ids = self.asm.sel.clone();
         if !ids.is_empty() {
             self.occurrence_menu(ui, &ids);
+            if ui.button("Copy        Ctrl+C").clicked() {
+                self.copy_occurrences();
+                ui.close();
+            }
             ui.separator();
+        }
+        if !self.asm.clipboard.is_empty() && ui.button("Paste       Ctrl+V").clicked() {
+            self.paste_occurrences();
+            ui.close();
         }
         if ui.button("Place...").clicked() {
             self.asm_apply(Action::AsmPlace);
@@ -865,7 +1011,7 @@ impl CadCraftApp {
 
     /// Grounded / Visibility / Open / Delete for occurrences (view and
     /// browser menus).
-    fn occurrence_menu(&mut self, ui: &mut egui::Ui, ids: &[u32]) {
+    pub(super) fn occurrence_menu(&mut self, ui: &mut egui::Ui, ids: &[u32]) {
         let Some(a) = self.assembly() else {
             return;
         };
@@ -885,6 +1031,10 @@ impl CadCraftApp {
             self.open_component(ids[0]);
             ui.close();
         }
+        if ids.len() == 1 && ui.button("iProperties...").clicked() {
+            self.open_component_iproperties(ids[0]);
+            ui.close();
+        }
         if ui.button("Delete").clicked() {
             self.delete_occurrences(ids);
             ui.close();
@@ -892,75 +1042,6 @@ impl CadCraftApp {
     }
 
     // ---- browser and Properties --------------------------------------------------
-
-    /// The active assembly's tree in the browser.
-    pub(super) fn assembly_tree(&mut self, ui: &mut egui::Ui, name: &str) {
-        let Some(a) = self.assembly() else {
-            return;
-        };
-        let rows: Vec<(u32, String, bool, bool)> = a
-            .occurrences
-            .iter()
-            .map(|o| (o.id, o.name.clone(), o.grounded, o.visible))
-            .collect();
-        ui.horizontal(|ui| {
-            super::panels::tree_icon(ui, Icon::Assembly);
-            ui.label(RichText::new(name).strong());
-        });
-        let mut menu: Option<Vec<u32>> = None;
-        let mut open = None;
-        ui.indent("occurrences", |ui| {
-            for (id, label, grounded, visible) in rows {
-                ui.horizontal(|ui| {
-                    super::panels::tree_icon(ui, Icon::Part);
-                    if grounded {
-                        super::panels::tree_icon(ui, Icon::Ground);
-                    }
-                    let mut text = RichText::new(&label);
-                    if !visible {
-                        text = text.weak();
-                    }
-                    let r = ui.selectable_label(self.asm.sel.contains(&id), text);
-                    let r = if grounded {
-                        r.on_hover_text("Grounded")
-                    } else {
-                        r
-                    };
-                    if r.clicked() {
-                        if ui.input(|i| i.modifiers.command || i.modifiers.shift) {
-                            if let Some(k) = self.asm.sel.iter().position(|&i| i == id) {
-                                self.asm.sel.remove(k);
-                            } else {
-                                self.asm.sel.push(id);
-                            }
-                        } else {
-                            self.asm.sel = vec![id];
-                        }
-                        self.cons.selected = None;
-                    }
-                    if r.double_clicked() {
-                        open = Some(id);
-                    }
-                    if r.hovered() {
-                        self.asm.hover = Some(id);
-                    }
-                    r.context_menu(|ui| {
-                        if !self.asm.sel.contains(&id) {
-                            self.asm.sel = vec![id];
-                        }
-                        menu = Some(self.asm.sel.clone());
-                        let ids = self.asm.sel.clone();
-                        self.occurrence_menu(ui, &ids);
-                    });
-                });
-            }
-        });
-        let _ = menu;
-        self.relationships_tree(ui);
-        if let Some(id) = open {
-            self.open_component(id);
-        }
-    }
 
     /// Properties of the selected occurrence (or of the assembly).
     pub(super) fn assembly_properties(&mut self, ui: &mut egui::Ui) {
@@ -992,24 +1073,25 @@ impl CadCraftApp {
             .map_or_else(|| "(missing)".to_owned(), |d| d.name.clone());
         ui.label(RichText::new(&o.name).strong());
         egui::Grid::new("occurrence_props")
+            .min_col_width(super::panels::label_width(ui.ctx()))
             .num_columns(2)
             .show(ui, |ui| {
-                ui.label("Component");
+                super::panels::plabel(ui, "Component");
                 ui.label(component);
                 ui.end_row();
                 let mut g = o.grounded;
-                ui.label("Grounded");
+                super::panels::plabel(ui, "Grounded");
                 if ui.checkbox(&mut g, "").changed() {
                     self.toggle_ground(&[o.id]);
                 }
                 ui.end_row();
                 let mut v = o.visible;
-                ui.label("Visibility");
+                super::panels::plabel(ui, "Visibility");
                 if ui.checkbox(&mut v, "").changed() {
                     self.toggle_visible(&[o.id]);
                 }
                 ui.end_row();
-                ui.label("Degrees of freedom");
+                super::panels::plabel(ui, "Degrees of freedom");
                 ui.label(if o.grounded {
                     "0 (grounded)".to_owned()
                 } else {
@@ -1033,13 +1115,14 @@ impl CadCraftApp {
         ];
         let before = vals;
         egui::Grid::new("occurrence_pos")
+            .min_col_width(super::panels::label_width(ui.ctx()))
             .num_columns(2)
             .show(ui, |ui| {
                 for (k, label) in ["X", "Y", "Z", "Rotation X", "Rotation Y", "Rotation Z"]
                     .into_iter()
                     .enumerate()
                 {
-                    ui.label(label);
+                    super::panels::plabel(ui, label);
                     let suffix = if k < 3 { " mm" } else { "°" };
                     ui.add(ExprValue::new(&mut vals[k]).suffix(suffix));
                     ui.end_row();

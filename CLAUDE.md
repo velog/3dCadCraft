@@ -919,7 +919,14 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   Levenberg, dragged component weighted). GUI changes go through `asm_try` (solve a copy, commit only when
   it converges — rule 5); drags call `asm_solve(Some(id))` after each move. Plane normals are *outward*
   (face sense); a circular edge's normal is the outward normal of its planar face (a hole rim points out
-  of the hole), which Insert's Opposed / Aligned rely on.
+  of the hole), which Insert's Opposed / Aligned rely on. `GeomRef::Origin { occurrence: ASSEMBLY (0) }`
+  is the assembly's own origin (identity, never solved); `Work { id }` reads `PartDocument::work`, so
+  resolve through `relation::resolve_in(part, r)`, not `resolve_local(body, r)`.
+- **iProperties** (`document::iprops`, `gui/iprops.rs`): on `Document::properties` (skipped when empty);
+  standard keys in `STANDARD` are stored in files — never rename one.
+- **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
+  egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
+  `min_col_width(label_width(ctx))` and `plabel`.
 
 ## Status and next steps
 

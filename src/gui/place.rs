@@ -130,6 +130,11 @@ impl CadCraftApp {
         flat.exists().then_some(flat)
     }
 
+    /// [`Self::part_file`] for the iProperties window.
+    pub(super) fn part_file_pub(&self, path: &Path) -> Result<Rc<Project>, String> {
+        self.part_file(path)
+    }
+
     /// The project in the part file `path` (cached, its parts regenerated).
     fn part_file(&self, path: &Path) -> Result<Rc<Project>, String> {
         let key = path.canonicalize().map_err(|e| e.to_string())?;

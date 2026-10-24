@@ -95,7 +95,9 @@ impl CadCraftApp {
                 i.consume_key(egui::Modifiers::NONE, Key::Escape),
             )
         });
-        let env = if self.editing.is_some() {
+        let env = if self.is_assembly() {
+            commands::Env::Assembly
+        } else if self.editing.is_some() {
             commands::Env::Sketch
         } else {
             commands::Env::Part

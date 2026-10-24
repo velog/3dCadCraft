@@ -79,6 +79,8 @@ pub struct UiSettings {
     /// Inner size of the main window when not maximized (points).
     pub main_size: Option<[f32; 2]>,
     pub maximized: bool,
+    /// Width of the label column of Properties (dragged at its border).
+    pub props_label_width: Option<f32>,
 }
 
 /// Default widths of the side panels (today's layout).
@@ -105,6 +107,7 @@ impl Default for UiSettings {
             windows: BTreeMap::new(),
             main_size: None,
             maximized: false,
+            props_label_width: None,
         }
     }
 }
@@ -210,6 +213,9 @@ pub struct AppOptions {
     /// Registry ids of the recently run commands, newest first (alias
     /// input and command search, `commands::remember`).
     pub recent_commands: Vec<String>,
+    /// Assembly constraints take the distance (angle) the components have
+    /// now; off: they snap together at 0.
+    pub constrain_current_offset: bool,
 }
 
 impl Default for AppOptions {
@@ -228,6 +234,7 @@ impl Default for AppOptions {
             selection: Default::default(),
             object_visibility: ObjectVisibility::default(),
             recent_commands: Vec::new(),
+            constrain_current_offset: false,
         }
     }
 }
@@ -801,6 +808,7 @@ impl CadCraftApp {
             selection: self.select,
             object_visibility: self.obj_vis,
             recent_commands: self.recent_commands.clone(),
+            constrain_current_offset: self.constrain_current_offset,
         }
     }
 
@@ -822,11 +830,16 @@ impl CadCraftApp {
         self.select = o.selection;
         self.obj_vis = o.object_visibility;
         self.recent_commands = o.recent_commands;
+        self.constrain_current_offset = o.constrain_current_offset;
     }
 
     /// Start of a frame: Ctrl+0, F11 (outside a sketch, where F11 is Relax
     /// Mode), Escape over a floating window, the load warning.
     pub(super) fn layout_begin(&mut self, ctx: &egui::Context) {
+        // The Properties label column (`panels::plabel` drags it).
+        if let Some(w) = self.layout.s.props_label_width {
+            super::panels::seed_label_width(ctx, w);
+        }
         if let Some(w) = self.layout.warning.take() {
             self.file_status = Some(Err(w));
         }
@@ -856,6 +869,9 @@ impl CadCraftApp {
     /// size, save when due.
     pub(super) fn layout_end(&mut self, ctx: &egui::Context) {
         self.layout.record_windows(ctx);
+        if let Some(w) = super::panels::dragged_label_width(ctx) {
+            LayoutUi::note(&mut self.layout.s.props_label_width, w);
+        }
         let (inner, maxed, full) = ctx.input(|i| {
             let v = i.viewport();
             (v.inner_rect, v.maximized, v.fullscreen)

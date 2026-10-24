@@ -13,6 +13,8 @@ use crate::sketch::{Constraint, SolveStatus};
 /// Browser actions, collected while drawing and applied afterwards.
 enum BrowserCmd {
     Select(Selection),
+    /// The iProperties window of a document.
+    IProperties(crate::document::DocumentId),
     NewSketchOn(PlaneRef),
     Edit(usize),
     Finish,
@@ -206,6 +208,12 @@ impl CadCraftApp {
                             } else if r.clicked() {
                                 cmds.push(BrowserCmd::Select(Selection::Document(*id)));
                             }
+                            r.context_menu(|ui| {
+                                if ui.button("iProperties...").clicked() {
+                                    cmds.push(BrowserCmd::IProperties(*id));
+                                    ui.close();
+                                }
+                            });
                         });
                     }
                 }
@@ -258,6 +266,7 @@ impl CadCraftApp {
 
     fn browser_cmd(&mut self, cmd: BrowserCmd) {
         match cmd {
+            BrowserCmd::IProperties(d) => self.open_iproperties(d),
             // The pattern command's Features selector takes browser rows.
             BrowserCmd::Select(Selection::Feature(k))
                 if self.pattern_draft.is_some() && self.pattern_pick_browser(k) => {}
@@ -387,7 +396,12 @@ impl CadCraftApp {
         )
         .show_header(ui, |ui| {
             tree_icon(ui, Icon::Part);
-            ui.label(RichText::new(name).strong());
+            ui.label(RichText::new(name).strong()).context_menu(|ui| {
+                if ui.button("iProperties...").clicked() {
+                    cmds.push(BrowserCmd::IProperties(self.part_id));
+                    ui.close();
+                }
+            });
         })
         .body(|ui| {
             let bodies = part.body.solids().filter(|(_, s)| !s.open).count();
@@ -4825,8 +4839,32 @@ impl CadCraftApp {
     }
 }
 
-/// Width of the label column in property rows.
+/// Default width of the label column in property rows.
 const LABEL_W: f32 = 82.0;
+
+fn label_width_id() -> egui::Id {
+    egui::Id::new("props_label_width")
+}
+
+/// The label column's width now (dragged by the user, see [`plabel`]).
+pub(super) fn label_width(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(label_width_id()))
+        .unwrap_or(LABEL_W)
+}
+
+/// Sets the width from the saved layout (until the user drags it).
+pub(super) fn seed_label_width(ctx: &egui::Context, w: f32) {
+    ctx.data_mut(|d| {
+        if d.get_temp::<f32>(label_width_id()).is_none() {
+            d.insert_temp(label_width_id(), w.clamp(40.0, 400.0));
+        }
+    });
+}
+
+/// The width when the user changed it (to save it).
+pub(super) fn dragged_label_width(ctx: &egui::Context) -> Option<f32> {
+    ctx.data(|d| d.get_temp::<f32>(label_width_id()))
+}
 
 /// A collapsible section; `body` gets a two-column grid (label, field).
 pub(super) fn psection<R>(
@@ -4847,7 +4885,7 @@ pub(super) fn psection<R>(
     .body(|ui| {
         egui::Grid::new(("pgrid", id))
             .num_columns(2)
-            .min_col_width(LABEL_W)
+            .min_col_width(label_width(ui.ctx()))
             .spacing([8.0, 6.0])
             .show(ui, body)
             .inner
@@ -4857,16 +4895,39 @@ pub(super) fn psection<R>(
 }
 
 /// A label cell of a property row (left column of a [`psection`] grid).
+/// Its right border drags the column wider or narrower in every panel
+/// (the width is remembered in the layout).
 pub(super) fn plabel(ui: &mut egui::Ui, text: &str) {
     let color = ui.visuals().weak_text_color();
-    ui.allocate_ui_with_layout(
-        egui::vec2(LABEL_W, 18.0),
+    let w = label_width(ui.ctx());
+    let r = ui.allocate_ui_with_layout(
+        egui::vec2(w, 18.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.set_min_width(LABEL_W);
-            ui.label(RichText::new(text).color(color));
+            ui.set_min_width(w);
+            ui.set_max_width(w);
+            ui.add(egui::Label::new(RichText::new(text).color(color)).truncate());
         },
     );
+    let rect = r.response.rect;
+    let handle = egui::Rect::from_min_max(
+        egui::pos2(rect.right() + 1.0, rect.top()),
+        egui::pos2(rect.right() + 7.0, rect.bottom()),
+    );
+    let id = ui.id().with(("plabel_split", text));
+    let h = ui.interact(handle, id, egui::Sense::drag());
+    if h.hovered() || h.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
+        ui.painter().vline(
+            handle.center().x,
+            handle.y_range(),
+            ui.visuals().widgets.hovered.fg_stroke,
+        );
+    }
+    if h.dragged() {
+        let nw = (w + h.drag_delta().x).clamp(40.0, 400.0);
+        ui.ctx().data_mut(|d| d.insert_temp(label_width_id(), nw));
+    }
 }
 
 /// A group of icon buttons choosing one value (Inventor's Direction and
