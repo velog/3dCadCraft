@@ -99,7 +99,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 17: parameter units cm, m, in, ft, rad (`Unit::Cm` …) (2026-10-23).
 /// - 18: true / false and text parameters (`Unit::Bool`, `Unit::Text`),
 ///   Suppress if conditions (`PartDocument::suppress_if`) (2026-10-23).
-pub const FORMAT_REVISION: u32 = 18;
+/// - 19: sheet metal: `Feature::SheetFace` / `SheetFlange`,
+///   `PartDocument::sheet_metal` (2026-10-25).
+pub const FORMAT_REVISION: u32 = 19;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

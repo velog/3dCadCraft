@@ -2966,3 +2966,109 @@ fn off_axis(
     }
     out
 }
+
+/// Sheet metal Face (`docs/spec/5.6-sheet-metal.md`): the first profile of
+/// the sketch as a plate of the rule's thickness; the sketch's lines name
+/// its edges. Returns the solid and the sheet's state.
+pub(super) fn sheet_face(
+    sf: &super::sheet_metal::SheetFaceFeature,
+    sketch: &Sketch,
+    rule: &super::sheet_metal::SheetMetalDefaults,
+) -> Result<(ExactSolid, super::sheet_metal::SheetState), Fail> {
+    use crate::kernel::exact::sheet_metal as ksm;
+    use crate::sketch::Entity;
+    rule.validate().map_err(User)?;
+    let regions = sketch.regions();
+    let pr = sf
+        .profiles
+        .first()
+        .ok_or_else(|| User("select the profile".into()))?;
+    let region = pr
+        .resolve(&regions)
+        .ok_or_else(|| User("the profile no longer exists in the sketch".into()))?;
+    let (outer, holes) = kernel_profile(region);
+    let prof = exact::profile(&outer, &holes).map_err(User)?;
+    let curves: Vec<ksm::BaseCurve> = sketch
+        .entities()
+        .filter_map(|(id, e)| match e {
+            Entity::Line { start, end } => {
+                let (a, b) = (sketch.point(*start)?, sketch.point(*end)?);
+                Some((
+                    super::extrude::entity_key(id),
+                    [a.position.x, a.position.y],
+                    [b.position.x, b.position.y],
+                ))
+            }
+            _ => None,
+        })
+        .collect();
+    let (solid, model) = ksm::face(
+        &sf.id,
+        &rule.values(),
+        &sketch.plane,
+        &prof,
+        &curves,
+        sf.flip,
+    )
+    .map_err(User)?;
+    let faces = solid.face_names.len();
+    Ok((solid, super::sheet_metal::SheetState { model, faces }))
+}
+
+/// Sheet metal Flange: bends on the named edges of its sheet; the sheet's
+/// solid is rebuilt from its model.
+pub(super) fn sheet_flange(
+    fl: &super::sheet_metal::SheetFlangeFeature,
+    solids: &[ExactSolid],
+    metal: &std::collections::HashMap<String, super::sheet_metal::SheetState>,
+    rule: &super::sheet_metal::SheetMetalDefaults,
+) -> Result<(Vec<ExactSolid>, super::sheet_metal::SheetState), Fail> {
+    use crate::kernel::exact::sheet_metal as ksm;
+    let k = solids
+        .iter()
+        .position(|s| s.name.as_deref() == Some(fl.body.as_str()))
+        .ok_or_else(|| User(format!("the sheet {} no longer exists", fl.body)))?;
+    let state = metal
+        .get(&fl.body)
+        .ok_or_else(|| User(format!("{} is not a sheet metal body", fl.body)))?;
+    if solids[k].face_names.len() != state.faces {
+        return Err(User(
+            "a feature after the sheet changed it (holes and cuts are not in the sheet model yet): put the flanges before them"
+                .into(),
+        ));
+    }
+    if fl.edges.is_empty() {
+        return Err(User("select the edges".into()));
+    }
+    if !(fl.height.is_finite() && fl.height > 0.0) {
+        return Err(User("the height must be positive".into()));
+    }
+    let mut edges = Vec::with_capacity(fl.edges.len());
+    for e in &fl.edges {
+        let at = ksm::edge_point(&state.model, &e.name, Point3::from(e.hint))
+            .ok_or_else(|| User(format!("the edge {} no longer exists", e.name)))?;
+        edges.push(ksm::FlangeEdge {
+            at,
+            height: fl.height,
+            angle: fl.angle,
+        });
+    }
+    let radius = fl.radius.unwrap_or(rule.values().bend_radius);
+    let (solid, model, notes) = ksm::flanges(
+        &state.model,
+        &fl.body,
+        &fl.id,
+        &edges,
+        radius,
+        fl.position.kernel_pub(),
+        fl.flip,
+    )
+    .map_err(User)?;
+    for n in notes {
+        log::info!("{}: {n}", fl.id);
+    }
+    let faces = solid.face_names.len();
+    let mut next = solids.to_vec();
+    next[k] = solid;
+    Ok((next, super::sheet_metal::SheetState { model, faces }))
+}

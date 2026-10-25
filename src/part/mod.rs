@@ -49,6 +49,7 @@ pub mod primitive;
 pub mod revolve;
 pub mod rib;
 pub mod select;
+pub mod sheet_metal;
 pub mod shell;
 pub mod split;
 pub mod standards;
@@ -185,6 +186,10 @@ pub enum Feature {
     Coil(CoilFeature),
     /// Rib / Web: thin walls from open profiles (format revision 14).
     Rib(RibFeature),
+    /// Sheet metal Face: a plate from a sketch profile (format revision 19).
+    SheetFace(sheet_metal::SheetFaceFeature),
+    /// Sheet metal Flange: bends on sheet edges (format revision 19).
+    SheetFlange(sheet_metal::SheetFlangeFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -215,6 +220,8 @@ struct CachedStep {
     extra: exact::HoleOutput,
     /// Health of other features (the modeled threads' finishing step).
     healths: Vec<(String, String)>,
+    /// The sheet metal models after the step (by sheet body).
+    metal: HashMap<String, sheet_metal::SheetState>,
 }
 
 impl std::fmt::Debug for BuildCache {
@@ -286,6 +293,8 @@ enum BuildStep<'a> {
     Loft(&'a LoftFeature),
     Coil(&'a CoilFeature),
     Rib(&'a RibFeature),
+    SheetFace(&'a sheet_metal::SheetFaceFeature),
+    SheetFlange(&'a sheet_metal::SheetFlangeFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -307,6 +316,8 @@ impl<'a> BuildStep<'a> {
             Feature::Loft(l) => Self::Loft(l),
             Feature::Coil(c) => Self::Coil(c),
             Feature::Rib(r) => Self::Rib(r),
+            Feature::SheetFace(f) => Self::SheetFace(f),
+            Feature::SheetFlange(f) => Self::SheetFlange(f),
         }
     }
 }
@@ -331,6 +342,8 @@ impl Feature {
             Feature::Loft(l) => &l.id,
             Feature::Coil(c) => &c.id,
             Feature::Rib(r) => &r.id,
+            Feature::SheetFace(f) => &f.id,
+            Feature::SheetFlange(f) => &f.id,
         }
     }
 
@@ -353,6 +366,8 @@ impl Feature {
             Feature::Loft(l) => &l.name,
             Feature::Coil(c) => &c.name,
             Feature::Rib(r) => &r.name,
+            Feature::SheetFace(f) => &f.name,
+            Feature::SheetFlange(f) => &f.name,
         }
     }
 
@@ -375,6 +390,8 @@ impl Feature {
             Feature::Loft(l) => &mut l.name,
             Feature::Coil(c) => &mut c.name,
             Feature::Rib(r) => &mut r.name,
+            Feature::SheetFace(f) => &mut f.name,
+            Feature::SheetFlange(f) => &mut f.name,
         };
         *n = name.to_owned();
     }
@@ -389,6 +406,8 @@ impl Feature {
             Feature::Loft(l) => l.operation == Operation::NewSolid,
             Feature::Coil(c) => c.operation == Operation::NewSolid,
             Feature::Rib(_) => false,
+            Feature::SheetFace(_) => true,
+            Feature::SheetFlange(_) => false,
             Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
@@ -417,6 +436,8 @@ impl Feature {
             Feature::Loft(l) => l.sketch_ids().first().copied(),
             Feature::Coil(c) => Some(&c.sketch),
             Feature::Rib(r) => Some(&r.sketch),
+            Feature::SheetFace(f) => Some(&f.sketch),
+            Feature::SheetFlange(_) => None,
         }
     }
 
@@ -806,6 +827,13 @@ pub struct PartDocument {
     /// The part's material (`None`: Generic), see [`appearance`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
+    /// Sheet Metal Defaults: set for a sheet metal part (5.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet_metal: Option<sheet_metal::SheetMetalDefaults>,
+    /// The sheet metal models of the last regeneration, by sheet body
+    /// (runtime only).
+    #[serde(skip)]
+    pub sheet_models: HashMap<String, sheet_metal::SheetState>,
     /// The part's appearance (`None`: As Material).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub appearance: Option<String>,
@@ -988,6 +1016,9 @@ impl PartDocument {
         let mut tools: HashMap<String, Vec<pattern::ToolSet>> = HashMap::new();
         // Holes, cosmetic and modeled threads of the features so far.
         let mut hole_out = exact::HoleOutput::default();
+        // Sheet metal models by sheet body.
+        let mut metal: HashMap<String, sheet_metal::SheetState> = HashMap::new();
+        let rule = sheet_metal::rule_of(self);
         for (j, f) in self.features.iter().enumerate().take(limit) {
             // Sketches made at this point of the history follow the body as
             // it was then (Inventor), not the final one.
@@ -1014,7 +1045,16 @@ impl PartDocument {
                 .filter_map(|id| self.sketches.iter().find(|s| s.id == id))
                 .map(|ps| &ps.sketch)
                 .collect();
-            let key = step_key(prev_key, f, &used);
+            let mut key = step_key(prev_key, f, &used);
+            // Sheet metal steps also follow the rule (a new thickness
+            // rebuilds them).
+            if matches!(f, Feature::SheetFace(_) | Feature::SheetFlange(_)) {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                key.hash(&mut h);
+                serde_json::to_vec(&rule).unwrap_or_default().hash(&mut h);
+                key = h.finish();
+            }
             prev_key = key;
             let cacheable = use_exact && !matches!(f, Feature::Work(_));
             if cacheable && let Some(hit) = self.build_cache.get(key) {
@@ -1027,6 +1067,7 @@ impl PartDocument {
                     tools.insert(f.id().to_owned(), hit.tools);
                 }
                 hole_out.append(hit.extra);
+                metal = hit.metal;
                 continue;
             }
             let started = std::time::Instant::now();
@@ -1254,6 +1295,32 @@ impl PartDocument {
                 BuildStep::Rib(_) => Err(exact::Fail::User(
                     "Rib needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
+                BuildStep::SheetFace(sf) if use_exact => {
+                    match self.sketches.iter().find(|s| s.id == sf.sketch) {
+                        None => Err(exact::Fail::User(format!("sketch {} is missing", sf.sketch))),
+                        Some(ps) => match exact::sheet_face(sf, &ps.sketch, &rule) {
+                            Ok((solid, state)) => {
+                                metal.insert(sf.id.clone(), state);
+                                let mut next = solids.clone();
+                                next.push(solid);
+                                Ok(Some(next))
+                            }
+                            Err(e) => Err(e),
+                        },
+                    }
+                }
+                BuildStep::SheetFlange(fl) if use_exact => {
+                    match exact::sheet_flange(fl, &solids, &metal, &rule) {
+                        Ok((next, state)) => {
+                            metal.insert(fl.body.clone(), state);
+                            Ok(Some(next))
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                BuildStep::SheetFace(_) | BuildStep::SheetFlange(_) => Err(exact::Fail::User(
+                    "sheet metal needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
+                )),
                 BuildStep::Swept(_) => Err(exact::Fail::User(
                     "Sweep needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
@@ -1465,6 +1532,7 @@ impl PartDocument {
                     tools: made.clone(),
                     extra: extra.clone(),
                     healths: Vec::new(),
+                    metal: metal.clone(),
                 });
             }
             if !made.is_empty() {
@@ -1496,6 +1564,7 @@ impl PartDocument {
                                 tools: Vec::new(),
                                 extra: exact::HoleOutput::default(),
                                 healths: failed.clone(),
+                                metal: metal.clone(),
                             });
                             (Some((next, b)), failed)
                         }
@@ -1525,6 +1594,7 @@ impl PartDocument {
         }
         self.hole_instances = hole_out.holes;
         self.cosmetic_threads = hole_out.cosmetic;
+        self.sheet_models = metal;
         if !self.features.is_empty() {
             self.body = body;
         }
@@ -1578,6 +1648,8 @@ impl PartDocument {
                 Feature::Loft(l) => (l.output == Output::Solid).then(|| l.id.clone()),
                 Feature::Split(sp) => Some(sp.new_body()),
                 Feature::Coil(c) => (c.output == Output::Solid).then(|| c.id.clone()),
+                Feature::SheetFace(f) => Some(f.id.clone()),
+                Feature::SheetFlange(_) => None,
                 Feature::Work(_)
                 | Feature::Blend(_)
                 | Feature::Shell(_)
@@ -2378,6 +2450,8 @@ fn pattern_sources<'t>(
             | Feature::Thread(_)
             | Feature::Combine(_)
             | Feature::Split(_)
+            | Feature::SheetFace(_)
+            | Feature::SheetFlange(_)
             | Feature::Pattern(_) => format!(
                 "{} cannot be patterned on its own (pattern the solid)",
                 f.name()

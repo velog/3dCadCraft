@@ -456,6 +456,34 @@ fn logic_r18() -> PartDocument {
     part.regenerate().unwrap();
     part
 }
+/// Revision 19: a sheet metal part — a 100 × 60 Face, 2 mm (the default
+/// rule), with a 25 mm Flange on its front edge.
+fn sheet_r19() -> PartDocument {
+    use cadcraft3d::part::sheet_metal::SheetFlangeFeature;
+    use cadcraft3d::part::{OriginPlane, ProfileRef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 60.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    p.add_sheet_face(i, prof, false).unwrap();
+    let (body, edge) = p.sheet_edge_at(Point3::new(50.0, 0.0, 2.0)).unwrap();
+    p.add_sheet_flange(SheetFlangeFeature::new(&body, vec![edge], 25.0))
+        .unwrap();
+    p
+}
+
 /// Revision 17: user parameters in cm, in and rad (`Unit::Cm` / `In` / `Rad`)
 /// driving the box (length 6 cm, width 1 in + 5 mm).
 fn units_r17() -> PartDocument {
@@ -1029,6 +1057,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("WorkR8");
             project.add_document("Part1", DocumentData::Part(work_r8()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r19/sheet_r19.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("SheetR19");
+            project.add_document("Part1", DocumentData::Part(sheet_r19()));
             project.save(&f).unwrap();
         }
         let f = root().join("r18/logic_r18.3dcadcraft");

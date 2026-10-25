@@ -73,6 +73,16 @@ pub enum Action {
     AsmJoint,
     /// Assemble › Bill of Materials.
     AsmBom,
+    /// 3D Model › Convert to Sheet Metal.
+    SmConvert,
+    /// Sheet Metal › Sheet Metal Defaults.
+    SmDefaults,
+    /// Sheet Metal › Face.
+    SmFace,
+    /// Sheet Metal › Flange.
+    SmFlange,
+    /// Sheet Metal › Create Flat Pattern / Go to Folded Part.
+    SmFlatPattern,
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch
@@ -176,6 +186,10 @@ pub struct State {
     pub center_point: bool,
     /// The active document is an assembly.
     pub assembly: bool,
+    /// The active part is a sheet metal part.
+    pub sheet_metal: bool,
+    /// The view shows the flat pattern.
+    pub flat: bool,
     /// The assembly command that is open (shown pressed).
     pub asm_tool: Option<Action>,
 }
@@ -185,6 +199,8 @@ pub struct State {
 pub enum Tab {
     /// Assembly: place, position, relationships.
     Assemble,
+    /// Sheet metal parts: Face, Flange, Flat Pattern.
+    SheetMetal,
     /// Features: create, modify, work features, patterns.
     Model,
     /// 2D sketch tools and constraints.
@@ -200,8 +216,9 @@ pub enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 7] = [
+    const ALL: [Tab; 8] = [
         Tab::Assemble,
+        Tab::SheetMetal,
         Tab::Model,
         Tab::Sketch,
         Tab::Inspect,
@@ -212,9 +229,10 @@ impl Tab {
 
     /// Whether the tab belongs to the environment (an assembly has no
     /// 3D Model / Sketch tabs, a part no Assemble tab).
-    pub fn shown(self, assembly: bool) -> bool {
+    pub fn shown(self, assembly: bool, sheet_metal: bool) -> bool {
         match self {
             Tab::Assemble => assembly,
+            Tab::SheetMetal => sheet_metal && !assembly,
             Tab::Model | Tab::Sketch => !assembly,
             _ => true,
         }
@@ -228,6 +246,7 @@ impl Tab {
     fn label(self) -> &'static str {
         match self {
             Tab::Assemble => "Assemble",
+            Tab::SheetMetal => "Sheet Metal",
             Tab::Model => "3D Model",
             Tab::Sketch => "Sketch",
             Tab::Inspect => "Inspect",
@@ -402,6 +421,37 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
         "sketch.show_constraints"
     };
     match tab {
+        Tab::SheetMetal => vec![
+            panel("Setup", vec![c("sm.defaults").large()]),
+            panel(
+                "Create",
+                vec![
+                    c("sm.face").large(),
+                    c("sm.contour_flange").large(),
+                    c("sm.flange"),
+                    c("sm.hem"),
+                    c("sm.fold"),
+                    c("sm.bend"),
+                    c("sm.contour_roll"),
+                    c("sm.lofted_flange"),
+                    c("sm.rip"),
+                ],
+            ),
+            panel(
+                "Modify",
+                vec![
+                    c("sm.cut"),
+                    c("sm.corner_seam"),
+                    c("sm.punch"),
+                    c("sm.unfold"),
+                    c("sm.refold"),
+                ],
+            ),
+            panel(
+                "Flat Pattern",
+                vec![c("sm.flat_pattern").large(), c("sm.export_flat")],
+            ),
+        ],
         Tab::Assemble => vec![
             panel("Component", vec![c("asm.place").large(), c("asm.create")]),
             panel(
@@ -485,6 +535,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("part.torus"),
                 ],
             ),
+            panel("Convert", vec![c("sm.convert")]),
         ],
         Tab::Sketch => {
             let sk = |id: &'static str| when(st.editing, c(id), in_sketch);
@@ -741,6 +792,8 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 center_point: false,
                 assembly: false,
                 asm_tool: None,
+                sheet_metal: true,
+                flat: false,
             };
             for tab in Tab::ALL {
                 for p in panels(tab, &st) {
@@ -787,7 +840,10 @@ const PANEL_H: f32 = ROW * 3.0 + 4.0;
 /// command, if any.
 pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Option<Action> {
     ui.horizontal(|ui| {
-        for t in Tab::ALL.into_iter().filter(|t| t.shown(st.assembly)) {
+        for t in Tab::ALL
+            .into_iter()
+            .filter(|t| t.shown(st.assembly, st.sheet_metal))
+        {
             let was = *tab == t;
             let r = ui.selectable_value(tab, t, RichText::new(t.label()).strong());
             if r.double_clicked() && was {
@@ -1005,6 +1061,7 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                 Action::ProjectGeometry => st.project,
                 Action::CenterPoint => st.center_point,
                 Action::ToggleDof => st.show_dof,
+                Action::SmFlatPattern => st.flat,
                 Action::AsmFreeMove | Action::AsmFreeRotate | Action::AsmPlace => {
                     st.asm_tool == Some(*action)
                 }

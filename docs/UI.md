@@ -227,6 +227,15 @@ constraint or joint → **Drive...** animates its value (Start, End, Steps, Paus
 Start/End/Start; |< < || > >|), closing puts everything back. The ViewCube and the axis triad are in the
 assembly view too. 🟡 waiting for a visual check.
 
+### Sheet metal (Sheet Metal tab, [spec/5.6-sheet-metal.md](spec/5.6-sheet-metal.md))
+
+File → New… → **Sheet Metal**, or 3D Model › Convert › **Convert to Sheet Metal**. **Defaults**: thickness,
+K-factor, bend radius and reliefs (unticked values follow the thickness). **Face**: choose the sketch with the
+closed profile, Flip. **Flange**: click sheet edges (green under the cursor, blue dots when taken; again
+removes), Height, Angle, Bend Radius, Bend Position, Flip. **Flat Pattern**: the view shows the part unfolded,
+Properties its extents and bends; again goes back. The other sheet metal commands are listed greyed.
+🟡 waiting for a visual check.
+
 ### Help, log and recovery
 
 The **Help** menu (on the right in Quick Access): **Help** (F1), **Save Diagnostics…** (a zip for a problem report, through the program's file dialog), **Open Logs Folder** (`%APPDATA%\3dcadcraft\logs`). The program writes a log and an action journal for every session, autosaves into `%APPDATA%\3dcadcraft\recovery` (every 5 minutes and after OK, never over the user's file) and, on a crash, `crash-….txt`. If the previous session did not close cleanly, **Restore** appears at start-up: "Restore the autosaved version of …?" — **Restore** / **Open Original** / **Discard** 🟡 ([spec/0.14-diagnostics.md](spec/0.14-diagnostics.md)).

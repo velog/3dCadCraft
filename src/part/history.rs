@@ -672,6 +672,8 @@ impl Feature {
             Feature::Loft(l) => &mut l.name,
             Feature::Coil(c) => &mut c.name,
             Feature::Rib(r) => &mut r.name,
+            Feature::SheetFace(f) => &mut f.name,
+            Feature::SheetFlange(f) => &mut f.name,
         }
     }
 }

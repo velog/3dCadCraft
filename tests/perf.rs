@@ -1566,6 +1566,7 @@ fn speed_budgets() {
                     min: None,
                     max: None,
                     resting: false,
+                    plane: None,
                 });
             }
         }
@@ -1588,6 +1589,7 @@ fn speed_budgets() {
                 min: Some(0.0),
                 max: Some(std::f64::consts::FRAC_PI_2),
                 resting: false,
+                plane: None,
             });
         }
         rows.push((
@@ -1662,6 +1664,7 @@ fn speed_budgets() {
                     min: None,
                     max: None,
                     resting: false,
+                    plane: None,
                 });
             }
         }
@@ -1694,6 +1697,55 @@ fn speed_budgets() {
                     (z - (20.0 * (n - 1) as Real + 5.0)).abs() < 1e-6,
                     "top at {z}"
                 );
+            }),
+        ));
+    }
+    // Sheet metal (docs/spec/5.6, S1): a 200 × 120 Face, 2 mm, and one
+    // Flange on all four of its top edges (corners closed with the rule's
+    // gap), then the flat pattern.
+    {
+        use cadcraft3d::part::sheet_metal::SheetFlangeFeature;
+        use cadcraft3d::part::{OriginPlane, ProfileRef};
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        base.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(200.0, 120.0))
+            .unwrap();
+        let r = base.sketches[i].sketch.regions();
+        let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+        base.add_sheet_face(i, prof, false).unwrap();
+        let picks = [
+            Point3::new(100.0, 0.0, 2.0),
+            Point3::new(200.0, 60.0, 2.0),
+            Point3::new(100.0, 120.0, 2.0),
+            Point3::new(0.0, 60.0, 2.0),
+        ];
+        let mut edges = Vec::new();
+        let mut body = String::new();
+        for p in picks {
+            let (b, e) = base.sheet_edge_at(p).unwrap();
+            body = b;
+            edges.push(e);
+        }
+        rows.push((
+            "sheet metal: Flange on 4 edges of a 200 x 120 Face + flat pattern",
+            200.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_flange(SheetFlangeFeature::new(&body, edges.clone(), 30.0))
+                    .unwrap();
+                assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+                assert_eq!(p.flat_patterns()[0].bends.len(), 4);
             }),
         ));
     }

@@ -133,8 +133,9 @@ impl CadCraftApp {
             && (self.tools.pattern_dialog.is_some()
                 || self.tools.has_dialog()
                 || self.tools.edit_pattern.is_some());
-        let open: [(bool, &'static str); 20] = [
+        let open: [(bool, &'static str); 21] = [
             (matches!(self.mode, super::Mode::PickPlane(_)), "Pick Plane"),
+            (self.sm.draft.is_some(), "Sheet Metal"),
             (self.work_draft.is_some(), "Work Feature"),
             (self.blend_draft.is_some(), "Fillet / Chamfer"),
             (self.shell_draft.is_some(), "Shell"),

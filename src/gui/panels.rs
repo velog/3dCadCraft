@@ -887,6 +887,19 @@ impl CadCraftApp {
             Feature::Sweep(s) => (Icon::Sweep, format!("Sweep of {}", s.sketch)),
             Feature::Coil(c) => (Icon::Coil, format!("Coil of {}", c.sketch)),
             Feature::Rib(r) => (Icon::Rib, format!("Rib of {}", r.sketch)),
+            Feature::SheetFace(f) => (
+                Icon::SheetMetal,
+                format!("Sheet metal Face of {}", f.sketch),
+            ),
+            Feature::SheetFlange(f) => (
+                Icon::SheetMetal,
+                format!(
+                    "Flange on {} edge(s), {:.2} mm at {:.1}°",
+                    f.edges.len(),
+                    f.height,
+                    f.angle.to_degrees()
+                ),
+            ),
             Feature::Loft(l) => (
                 Icon::Loft,
                 format!("Loft through {} sections", l.sections.len()),
@@ -1128,6 +1141,14 @@ impl CadCraftApp {
         if self.is_assembly() {
             self.assembly_properties(ui);
             return;
+        }
+        if self.sm.draft.is_some() {
+            self.sm_panel(ui);
+            return;
+        }
+        if self.sm.flat {
+            self.sm_flat_info(ui);
+            ui.separator();
         }
         if self.extrude.is_some() {
             self.sync_extrude_direction();
@@ -2294,6 +2315,8 @@ impl CadCraftApp {
                 | Feature::Loft(_)
                 | Feature::Coil(_)
                 | Feature::Rib(_)
+                | Feature::SheetFace(_)
+                | Feature::SheetFlange(_)
                 | Feature::Combine(_)
                 | Feature::Split(_) => {}
             }
@@ -2349,6 +2372,18 @@ impl CadCraftApp {
                 if let Some(slot) = pick {
                     self.target_pick = Some((super::TargetOwner::Feature(k), slot));
                 }
+            }
+            Feature::SheetFlange(_) => {
+                psection(ui, &format!("flange_{k}"), "Flange", |ui| {
+                    field_row(ui, &mut fx, "Height", &f, "height");
+                    ui.end_row();
+                    field_row(ui, &mut fx, "Angle", &f, "angle");
+                    ui.end_row();
+                });
+            }
+            Feature::SheetFace(_) => {
+                let t = crate::part::sheet_metal::rule_of(self.part()).thickness;
+                ui.label(format!("Thickness {t:.3} mm (Sheet Metal Defaults)"));
             }
             Feature::Box(_)
             | Feature::Work(_)
@@ -4551,6 +4586,11 @@ impl CadCraftApp {
                 ui.label("mm");
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     match (self.mode, self.editing) {
+                        (Mode::Normal, None) if self.sm.draft.is_some() => {
+                            let prompt = self.sm_prompt().unwrap_or_default();
+                            let text = super::i18n::tr(&prompt);
+                            ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                        }
                         _ if self.is_assembly() => {
                             let prompt = self.constrain_prompt().unwrap_or_else(|| self.asm_prompt());
                             let text = super::i18n::tr(&prompt);

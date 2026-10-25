@@ -14,6 +14,7 @@ use super::ribbon::{Size, icon_button};
 enum Kind {
     Part,
     Assembly,
+    SheetMetal,
 }
 
 impl CadCraftApp {
@@ -61,7 +62,15 @@ impl CadCraftApp {
                     ) {
                         chosen = Some(Kind::Assembly);
                     }
-                    tile(ui, Icon::SheetMetal, "Sheet Metal", "planned (5.6)", false);
+                    if tile(
+                        ui,
+                        Icon::SheetMetal,
+                        "Sheet Metal",
+                        "a part of sheet stock",
+                        true,
+                    ) {
+                        chosen = Some(Kind::SheetMetal);
+                    }
                     tile(ui, Icon::Drawing, "Drawing", "planned (4)", false);
                 });
             });
@@ -70,6 +79,14 @@ impl CadCraftApp {
             Some(Kind::Part) => {
                 self.new_file = false;
                 self.request(super::files::Pending::New, now);
+            }
+            Some(Kind::SheetMetal) => {
+                self.new_file = false;
+                self.add_blank_tab();
+                self.new_project();
+                self.part_mut().make_sheet_metal(None);
+                self.mark_saved();
+                self.tab = super::ribbon::Tab::SheetMetal;
             }
             Some(Kind::Assembly) => {
                 self.new_file = false;

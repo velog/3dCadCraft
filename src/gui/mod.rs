@@ -68,6 +68,7 @@ mod project;
 mod renderer;
 mod ribbon;
 mod select;
+mod sheet_metal;
 mod shell;
 mod show_dims;
 mod sketch_tools;
@@ -163,6 +164,16 @@ enum PickPurpose {
 }
 
 /// The point of segment `a`–`b` nearest to the line through `o` along `d`.
+/// [`closest_on_segment`] for the other GUI modules.
+pub(super) fn closest_on_segment_pub(
+    a: &Point3,
+    b: &Point3,
+    o: &Point3,
+    d: &crate::kernel::Vector3,
+) -> Point3 {
+    closest_on_segment(a, b, o, d)
+}
+
 fn closest_on_segment(a: &Point3, b: &Point3, o: &Point3, d: &crate::kernel::Vector3) -> Point3 {
     let u = b - a;
     let w = a - o;
@@ -596,6 +607,8 @@ struct CadCraftApp {
     drive: Option<drive::DriveWin>,
     /// The Create New File window is open (`new_file.rs`).
     new_file: bool,
+    /// The Sheet Metal environment (`sheet_metal.rs`).
+    sm: sheet_metal::SheetUi,
     bom_export: Option<String>,
 
     tab: Tab,
@@ -842,6 +855,7 @@ impl CadCraftApp {
             bom: None,
             drive: None,
             new_file: false,
+            sm: Default::default(),
             bom_export: None,
             tab: Tab::Model,
             mouse: MousePreset::Inventor,
@@ -1424,6 +1438,13 @@ impl CadCraftApp {
         self.selection = Selection::Feature(k);
         let sketch_of = |app: &Self, id: &str| app.part().sketches.iter().position(|s| s.id == id);
         match f {
+            // Sheet metal: the Face follows its sketch, the Flange is edited
+            // in Properties (height, angle).
+            Feature::SheetFace(_) | Feature::SheetFlange(_) => {
+                self.file_status = Some(Ok(
+                    "Sheet metal: change the values in Properties (Sheet Metal Defaults for the thickness)".into(),
+                ));
+            }
             Feature::Extrude(e) => {
                 let Some(sketch) = sketch_of(self, &e.sketch) else {
                     self.file_status =
@@ -3662,6 +3683,11 @@ impl CadCraftApp {
             | Action::AsmJoint
             | Action::AsmBom
             | Action::AsmConstrain => self.asm_apply(action),
+            Action::SmConvert
+            | Action::SmDefaults
+            | Action::SmFace
+            | Action::SmFlange
+            | Action::SmFlatPattern => self.sm_apply(action),
             Action::StartSketch => {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);
@@ -4692,6 +4718,11 @@ impl CadCraftApp {
 
         if self.is_assembly() {
             self.assembly_scene(&mut g);
+            return g;
+        }
+        // Flat Pattern on: the unfolded sheets instead of the part.
+        if let Some(flat) = self.sm_flat_part() {
+            material::add_part_meshes(&mut g, &flat);
             return g;
         }
         // Faces in their appearance (face > feature > body > part > material).
@@ -6777,6 +6808,14 @@ impl CadCraftApp {
             }
             overlay::draw_snap(&painter, &self.camera, rect, &ps.sketch, &pick);
         }
+        // Sheet metal Flange: sheet edges under the cursor, clicks add them.
+        let sm_click = response.clicked_by(PointerButton::Primary) && on_cube.is_none();
+        self.sm_view(
+            &painter,
+            rect,
+            pointer.filter(|_| on_cube.is_none()),
+            sm_click,
+        );
         if self.layout.visible(layout::Element::Triad) {
             viewcube::draw_triad(&painter, &self.camera, rect);
         }
@@ -7093,6 +7132,7 @@ impl eframe::App for CadCraftApp {
         self.place_window(&ctx);
         self.iprops_window(&ctx);
         self.new_file_window(&ctx);
+        self.sm_defaults_window(&ctx);
         if self.is_assembly() {
             self.bom_window(&ctx);
             self.drive_window(&ctx);

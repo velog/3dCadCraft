@@ -1018,8 +1018,10 @@ impl CadCraftApp {
                 center_point: self.tools.center_point,
                 assembly: self.is_assembly(),
                 asm_tool: self.asm_tool_action(),
+                sheet_metal: self.is_sheet_metal(),
+                flat: self.sm.flat,
             };
-            if !self.tab.shown(state.assembly) {
+            if !self.tab.shown(state.assembly, state.sheet_metal) {
                 self.tab = if state.assembly {
                     super::ribbon::Tab::Assemble
                 } else {

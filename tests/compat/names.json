@@ -310,6 +310,22 @@
     "Box1:Right",
     "Box1:Top"
   ],
+  "r19/sheet_r19.3dcadcraft": [
+    "Face1:Bend:1",
+    "Face1:Bend:2",
+    "Face1:Flange1.1:bottom",
+    "Face1:Flange1.1:rim.bend0",
+    "Face1:Flange1.1:rim.bend1",
+    "Face1:Flange1.1:rim.far",
+    "Face1:Flange1.1:rim.side0",
+    "Face1:Flange1.1:rim.side1",
+    "Face1:Flange1.1:top",
+    "Face1:base:bottom",
+    "Face1:base:rim.2v1",
+    "Face1:base:rim.3v1",
+    "Face1:base:rim.4v1",
+    "Face1:base:top"
+  ],
   "r2/partial_chamfer_r2.3dcadcraft": [
     "Box1:Back",
     "Box1:Bottom",

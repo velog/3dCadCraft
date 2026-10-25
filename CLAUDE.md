@@ -927,6 +927,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   their geometry into frames (`Geom::as_frame`, `assembly::joint::frame_of`) *in part coordinates* before
   moving it — a frame's x axis must turn with the part. A plane face's point is its area-weighted centre
   (the joint origin snaps there). Limits: a value past one is locked at it and the solve runs again.
+- **Sheet metal (S1)**: `kernel::exact::sheet_metal` (SolidCraft's `solidcraft_doc::sheet`, a git dependency
+  at the pinned commit) → `part::sheet_metal` (rule, `Feature::SheetFace` / `SheetFlange`) →
+  `PartDocument::sheet_models` (runtime, one `SheetState` per sheet body, also in `CachedStep::metal`).
+  Sheet steps' cache keys include the rule (a new thickness must rebuild them). Flanges store the sheet's
+  own edge names (`SheetEdge`), resolved through the model. A sheet changed by another feature (Hole, Cut)
+  refuses further flanges (its face count changed) until S2 keeps cuts in the model. GUI `gui/sheet_metal.rs`.
 - **BOM** (`assembly::bom`, `gui/bom.rs`): computed every frame from the occurrences and each component's
   iProperties (`bom_info` through `with_part` / `part_file`); only `IProperties::bom_structure` and
   `Occurrence::bom` are stored.
