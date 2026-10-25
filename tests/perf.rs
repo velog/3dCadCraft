@@ -1749,6 +1749,43 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Convert to Sheet Metal (docs/spec/5.6): a 200 x 120 x 60 box, Top
+    // fixed, its four top edges bent into a tray.
+    {
+        use cadcraft3d::part::EdgeRef;
+        use cadcraft3d::part::sheet_metal::SheetConvertFeature;
+        use cadcraft3d::part::shell::FaceRef;
+        let base = PartDocument::with_box("Box1", [200.0, 120.0, 60.0]).unwrap();
+        let e = |a: &str, b: &str, hint: [f64; 3]| EdgeRef {
+            faces: [a.into(), b.into()],
+            hint,
+        };
+        let def = SheetConvertFeature {
+            id: String::new(),
+            name: String::new(),
+            body: "Box1".into(),
+            face: FaceRef {
+                face: "Box1:Top".into(),
+                hint: [100.0, 60.0, 60.0],
+            },
+            bends: vec![
+                e("Box1:Top", "Box1:Front", [100.0, 0.0, 60.0]),
+                e("Box1:Top", "Box1:Right", [200.0, 60.0, 60.0]),
+                e("Box1:Top", "Box1:Back", [100.0, 120.0, 60.0]),
+                e("Box1:Top", "Box1:Left", [0.0, 60.0, 60.0]),
+            ],
+        };
+        rows.push((
+            "sheet metal: Convert a box to a tray (4 bends) + flat pattern",
+            200.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_convert(def.clone()).unwrap();
+                assert_eq!(p.flat_patterns()[0].bends.len(), 4);
+            }),
+        ));
+    }
     // Bill of Materials (docs/spec/3.6): 2000 occurrences of 50 parts,
     // merged by part number, as the window computes them every frame.
     {

@@ -3017,6 +3017,47 @@ pub(super) fn sheet_face(
 
 /// Sheet metal Flange: bends on the named edges of its sheet; the sheet's
 /// solid is rebuilt from its model.
+/// Convert to Sheet Metal of the solid `sc.body`.
+pub(super) fn sheet_convert(
+    sc: &super::sheet_metal::SheetConvertFeature,
+    solids: &[ExactSolid],
+    rule: &super::sheet_metal::SheetMetalDefaults,
+) -> Result<(Vec<ExactSolid>, super::sheet_metal::SheetState), Fail> {
+    use crate::kernel::exact::sheet_metal as ksm;
+    let k = solids
+        .iter()
+        .position(|s| s.name.as_deref() == Some(sc.body.as_str()))
+        .ok_or_else(|| User(format!("the solid {} no longer exists", sc.body)))?;
+    if sc.bends.is_empty() {
+        return Err(User("select the edges that become bends".into()));
+    }
+    let hint = Point3::from(sc.face.hint);
+    let faces = exact::faces_named(&solids[k], &sc.face.face, hint).map_err(User)?;
+    let face = faces
+        .first()
+        .and_then(|&f| exact::face_point(&solids[k], f))
+        .ok_or_else(|| User(format!("the face {} no longer exists", sc.face.face)))?;
+    let body = exact::to_brep(solids).map_err(User)?;
+    let index: Vec<crate::kernel::SolidId> = body.solids().map(|(id, _)| id).collect();
+    let mut bends = Vec::with_capacity(sc.bends.len());
+    for r in &sc.bends {
+        let (_, pts) = edge_points(&body, &index, r).map_err(User)?;
+        let p = pts.first().map(|(_, p)| *p).ok_or_else(|| {
+            User(format!(
+                "the edge between {} and {} no longer exists",
+                r.faces[0], r.faces[1]
+            ))
+        })?;
+        bends.push(p);
+    }
+    let (solid, model) =
+        ksm::convert(&solids[k], &sc.id, &rule.values(), face, &bends).map_err(User)?;
+    let faces = solid.face_names.len();
+    let mut next = solids.to_vec();
+    next[k] = solid;
+    Ok((next, super::sheet_metal::SheetState { model, faces }))
+}
+
 pub(super) fn sheet_flange(
     fl: &super::sheet_metal::SheetFlangeFeature,
     solids: &[ExactSolid],
@@ -3047,10 +3088,14 @@ pub(super) fn sheet_flange(
     for e in &fl.edges {
         let at = ksm::edge_point(&state.model, &e.name, Point3::from(e.hint))
             .ok_or_else(|| User(format!("the edge {} no longer exists", e.name)))?;
+        let (a, b, _) = ksm::edge_ends(&state.model, at)
+            .ok_or_else(|| User(format!("the edge {} no longer exists", e.name)))?;
+        let offsets = fl.spans((b - a).norm()).map_err(User)?;
         edges.push(ksm::FlangeEdge {
             at,
             height: fl.height,
             angle: fl.angle,
+            offsets,
         });
     }
     let radius = fl.radius.unwrap_or(rule.values().bend_radius);

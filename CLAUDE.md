@@ -933,6 +933,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   Sheet steps' cache keys include the rule (a new thickness must rebuild them). Flanges store the sheet's
   own edge names (`SheetEdge`), resolved through the model. A sheet changed by another feature (Hole, Cut)
   refuses further flanges (its face count changed) until S2 keeps cuts in the model. GUI `gui/sheet_metal.rs`.
+  `solidcraft-doc` is vendored too (`vendor/solidcraft-doc`, rows in `vendor/README.md`): Width Extents are our
+  `add_flanges_spans`. A converted sheet (`Feature::SheetConvert`) has no sketch curves: `ksm::convert` names
+  its base edges `E<k>` and tags its panels `<id>.<k>`, or `edge_name` returns nothing (no flange could be
+  picked on it). `PartDocument::with_box(id, ..)` names the faces `<id>:Top` — use `"Box1"` in tests.
 - **BOM** (`assembly::bom`, `gui/bom.rs`): computed every frame from the occurrences and each component's
   iProperties (`bom_info` through `with_part` / `part_file`); only `IProperties::bom_structure` and
   `Occurrence::bom` are stored.

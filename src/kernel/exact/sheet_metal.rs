@@ -28,6 +28,22 @@ pub struct RuleValues {
     pub corner_relief: Real,
     /// Gap between flanges meeting at a corner.
     pub gap: Real,
+    /// The relief cut where two bends meet at a corner.
+    pub corner_shape: CornerShape,
+}
+
+/// The corner relief where two bends meet at a corner of the base.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CornerShape {
+    /// No cut: both bends end square at the corner.
+    Notch,
+    /// A round relief `corner_relief` across, centred on the corner.
+    #[default]
+    Round,
+    /// A square relief `corner_relief` across.
+    Rectangular,
+    /// No relief: each bend's end is torn straight to its panel.
+    Tear,
 }
 
 /// Where a flange's bend lies against the edge picked (Inventor's Bend
@@ -71,6 +87,9 @@ pub struct FlangeEdge {
     pub height: Real,
     /// Bend angle (radians, 0…π).
     pub angle: Real,
+    /// Held back from the edge's (start, end), mm along it (Width
+    /// extents; 0 = the whole edge).
+    pub offsets: (Real, Real),
 }
 
 /// A bend line of the flat pattern (flat coordinates, for drawings / DXF).
@@ -98,7 +117,12 @@ fn rule_of(rv: &RuleValues) -> sd::RuleValues {
         relief_width: rv.relief_width,
         relief_depth: rv.relief_depth,
         corner_relief: rv.corner_relief,
-        corner_relief_shape: sd::ReliefShape::Round,
+        corner_relief_shape: match rv.corner_shape {
+            CornerShape::Notch => sd::ReliefShape::Notch,
+            CornerShape::Round => sd::ReliefShape::Round,
+            CornerShape::Rectangular => sd::ReliefShape::Rectangular,
+            CornerShape::Tear => sd::ReliefShape::Tear,
+        },
         hem_gap: 0.01,
         gap: rv.gap,
     }
@@ -187,6 +211,52 @@ pub fn edge_name(m: &SheetModel, at: Point3) -> Option<String> {
     m.0.edge_name(v3(&at))
 }
 
+/// The ends of the sheet edge nearest `at` (world), in the order flange
+/// offsets count them, and whether it is on the top face.
+pub fn edge_ends(m: &SheetModel, at: Point3) -> Option<(Point3, Point3, bool)> {
+    m.0.edge_ends(v3(&at))
+        .map(|(a, b, top)| (p3(a), p3(b), top))
+}
+
+/// Convert a solid to a sheet (SolidWorks / Inventor Convert to Sheet
+/// Metal): `face` is a point on the face that stays put, `bends` points on
+/// the sharp edges that become bends; a shelled body keeps its wall
+/// thickness, any other body becomes the outside of a sheet of the rule's
+/// thickness. Faces are named under `prefix`.
+pub fn convert(
+    solid: &ExactSolid,
+    prefix: &str,
+    rv: &RuleValues,
+    face: Point3,
+    bends: &[Point3],
+) -> Result<(ExactSolid, SheetModel), String> {
+    let mb = solidcraft_doc::ModelBody::new(prefix.to_owned(), solid.body.clone(), 0);
+    let picks: Vec<_> = bends.iter().map(v3).collect();
+    let m = crate::diagnostics::crash::guard(|| {
+        sd::convert_body(&mb, "rule", &rule_of(rv), v3(&face), &picks).map_err(|e| e.to_string())
+    })
+    .map_err(|_| "Convert to Sheet Metal: internal error in the sheet metal model".to_owned())??;
+    let mut m = m;
+    // Edge names: the fixed face's straight edges `E<k>` (the base's
+    // outline in order), the panels across the bends `<prefix>.<k>` — so
+    // flanges on the converted sheet store names, as on a Face.
+    let pts = m.base.outer.ccw().polyline(1e-3);
+    let n = pts.len();
+    m.base_curves = (0..n)
+        .filter_map(|k| {
+            let (a, b) = (*pts.get(k)?, *pts.get((k + 1) % n)?);
+            (a.dist(b) > 1e-9).then(|| (format!("E{}", k + 1), a, b))
+        })
+        .collect();
+    for (k, f) in m.flanges.iter_mut().enumerate() {
+        f.tag = format!("{prefix}.{}", k + 1);
+    }
+    let mut s = named_solid(&m, prefix, false)?;
+    // The sheet keeps the solid's name (its appearance, later features).
+    s.name = solid.name.clone();
+    Ok((s, SheetModel(Arc::new(m))))
+}
+
 /// A point on the sheet edge named `name`, nearest `near`.
 pub fn edge_point(m: &SheetModel, name: &str, near: Point3) -> Option<Point3> {
     m.0.edge_by_name(name, v3(&near)).map(p3)
@@ -216,9 +286,10 @@ pub fn flanges(
             angle: e.angle,
         })
         .collect();
+    let spans: Vec<(Real, Real)> = edges.iter().map(|e| e.offsets).collect();
     let n0 = next.flanges.len();
     let notes = crate::diagnostics::crash::guard(|| {
-        next.add_flanges_each(&each, radius, position.key(), flip)
+        next.add_flanges_spans(&each, &spans, radius, position.key(), flip)
             .map(|(_, n)| n)
             .map_err(|e| e.to_string())
     })
@@ -291,6 +362,7 @@ mod tests {
             relief_depth: 1.0,
             corner_relief: 8.0,
             gap: 2.0,
+            corner_shape: CornerShape::Round,
         }
     }
 
@@ -334,6 +406,7 @@ mod tests {
                 at,
                 height: 20.0,
                 angle: std::f64::consts::FRAC_PI_2,
+                offsets: (0.0, 0.0),
             }],
             rv.bend_radius,
             BendPosition::Inside,

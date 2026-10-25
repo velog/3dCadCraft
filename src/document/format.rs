@@ -101,7 +101,10 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   Suppress if conditions (`PartDocument::suppress_if`) (2026-10-23).
 /// - 19: sheet metal: `Feature::SheetFace` / `SheetFlange`,
 ///   `PartDocument::sheet_metal` (2026-10-25).
-pub const FORMAT_REVISION: u32 = 19;
+/// - 20: Convert to Sheet Metal of a solid (`Feature::SheetConvert`), corner
+///   relief shapes (`CornerRelief`), flange Width Extents (`FlangeWidth`)
+///   (2026-10-25).
+pub const FORMAT_REVISION: u32 = 20;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

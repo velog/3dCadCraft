@@ -226,7 +226,7 @@ impl SplitDraft {
 }
 
 /// Edge polylines of the faces `keep` chooses (the preview).
-fn face_edges(part: &PartDocument, keep: impl Fn(&str) -> bool) -> Vec<Vec<Point3>> {
+pub(super) fn face_edges(part: &PartDocument, keep: impl Fn(&str) -> bool) -> Vec<Vec<Point3>> {
     let body = &part.body;
     let opts = TessellationOptions::default();
     let mut seen = std::collections::HashSet::new();

@@ -1229,9 +1229,9 @@ pub static COMMANDS: &[Command] = &[
     c("sm.convert", "Convert to Sheet Metal", "Превръщане в листов материал", Icon::SheetMetal)
         .short("Convert")
         .run(Action::SmConvert)
-        .at(&[Place::Ribbon("3D Model", "Convert")])
+        .at(&[Place::Ribbon("3D Model", "Convert"), Place::Ribbon("Sheet Metal", "Setup")])
         .env(PART)
-        .tip("Make this part a sheet metal part: Sheet Metal Defaults (thickness, bend radius, K-factor) and the Sheet Metal tab")
+        .tip("A solid to sheet metal: pick the face that stays put and the edges that become bends (a shelled solid keeps its walls); a part without solids gets the sheet metal rule and tab")
         .spec("5.6-sheet-metal.md"),
     c("sm.defaults", "Sheet Metal Defaults", "Настройки на листовия материал", Icon::Settings)
         .short("Defaults")

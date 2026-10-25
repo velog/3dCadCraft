@@ -1,0 +1,31 @@
+# SolidCraft's document crate (https://github.com/bherbruck/solidcraft, commit
+# 4687e3b0734e41d761be0d0a2611e5402f088348, MIT OR Apache-2.0) with our sheet metal additions;
+# see vendor/README.md and ATTRIBUTION.md. The workspace inheritance of the original manifest is
+# spelled out here (same versions and features as its workspace).
+[package]
+name = "solidcraft-doc"
+description = "SolidCraft document model: parameters and expressions, sketches and features on a parametric timeline, incremental evaluation"
+version = "0.9.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
+neg_cmp_op_on_partial_ord = "allow"
+
+[dependencies]
+solidcraft-geom = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+solidcraft-sketch = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+solidcraft-kernel = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+thiserror = "2"
+log = "0.4"
+sha2 = "0.10"
+web-time = "1"

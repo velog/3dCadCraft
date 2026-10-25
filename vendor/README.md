@@ -48,3 +48,16 @@ already does without its own matching).
 Kernel tests (`cargo test -p solidcraft-kernel --release` in a SolidCraft checkout with this
 `src/`): 476 pass; `issue_851_tests::arc_top_edge_sizes_never_panic` fails on Windows with the
 original source as well.
+
+## `solidcraft-doc`
+
+SolidCraft's document crate (`crates/doc`, same commit, MIT OR Apache-2.0, licence files in the
+folder), used for its sheet metal model only (`kernel::exact::sheet_metal`). `src/` is the original
+apart from the rows below; `Cargo.toml` spells out the workspace inheritance; the two
+`#[path = "../../../assets/…/library.rs"]` modules (built-in appearance and material tables) are copied
+to `assets/` and their paths point there.
+
+| File | Change | Effect |
+|---|---|---|
+| `sheet.rs` `add_flanges_spans` | `add_flanges_each` with each flange held back from its edge's ends (the flange ends as where a cut-out ends the edge: the base keeps its edge beyond and gets the rule's bend relief) | Flange Width Extents (Edge / Width / Offset) |
+| `sheet.rs` `edge_ends` | the world ends of the sheet edge nearest a point | drag arrows at a flange's ends |

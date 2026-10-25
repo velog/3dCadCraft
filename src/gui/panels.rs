@@ -891,6 +891,14 @@ impl CadCraftApp {
                 Icon::SheetMetal,
                 format!("Sheet metal Face of {}", f.sketch),
             ),
+            Feature::SheetConvert(f) => (
+                Icon::SheetMetal,
+                format!(
+                    "Convert {} to sheet metal ({} bends)",
+                    f.body,
+                    f.bends.len()
+                ),
+            ),
             Feature::SheetFlange(f) => (
                 Icon::SheetMetal,
                 format!(
@@ -2317,6 +2325,7 @@ impl CadCraftApp {
                 | Feature::Rib(_)
                 | Feature::SheetFace(_)
                 | Feature::SheetFlange(_)
+                | Feature::SheetConvert(_)
                 | Feature::Combine(_)
                 | Feature::Split(_) => {}
             }
@@ -2373,13 +2382,40 @@ impl CadCraftApp {
                     self.target_pick = Some((super::TargetOwner::Feature(k), slot));
                 }
             }
-            Feature::SheetFlange(_) => {
+            Feature::SheetFlange(ref fl) => {
+                let extents = fl.extents;
+                let centered = fl.centered;
                 psection(ui, &format!("flange_{k}"), "Flange", |ui| {
                     field_row(ui, &mut fx, "Height", &f, "height");
                     ui.end_row();
                     field_row(ui, &mut fx, "Angle", &f, "angle");
                     ui.end_row();
+                    use crate::part::sheet_metal::FlangeWidth;
+                    match extents {
+                        FlangeWidth::Edge => {}
+                        FlangeWidth::Width => {
+                            field_row(ui, &mut fx, "Width", &f, "width");
+                            ui.end_row();
+                            if !centered {
+                                field_row(ui, &mut fx, "Offset", &f, "offset1");
+                                ui.end_row();
+                            }
+                        }
+                        FlangeWidth::Offset => {
+                            field_row(ui, &mut fx, "Offset 1", &f, "offset1");
+                            ui.end_row();
+                            field_row(ui, &mut fx, "Offset 2", &f, "offset2");
+                            ui.end_row();
+                        }
+                    }
                 });
+            }
+            Feature::SheetConvert(ref c) => {
+                ui.label(format!(
+                    "Fixed face {}, {} bend(s); thickness from Sheet Metal Defaults (a shelled body keeps its walls)",
+                    c.face.face,
+                    c.bends.len()
+                ));
             }
             Feature::SheetFace(_) => {
                 let t = crate::part::sheet_metal::rule_of(self.part()).thickness;

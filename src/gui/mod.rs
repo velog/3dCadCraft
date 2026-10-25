@@ -444,6 +444,8 @@ enum ManipOwner {
     Hole,
     /// The open Fillet / Chamfer dialog (size arrows, `blend_handles`).
     Blend,
+    /// The open sheet metal Flange (Width Extents arrows, `sm_handles`).
+    SheetMetal,
 }
 
 impl ManipOwner {
@@ -451,7 +453,11 @@ impl ManipOwner {
     fn live(self) -> bool {
         matches!(
             self,
-            ManipOwner::Draft | ManipOwner::Shell | ManipOwner::Hole | ManipOwner::Blend
+            ManipOwner::Draft
+                | ManipOwner::Shell
+                | ManipOwner::Hole
+                | ManipOwner::Blend
+                | ManipOwner::SheetMetal
         )
     }
 }
@@ -1440,7 +1446,7 @@ impl CadCraftApp {
         match f {
             // Sheet metal: the Face follows its sketch, the Flange is edited
             // in Properties (height, angle).
-            Feature::SheetFace(_) | Feature::SheetFlange(_) => {
+            Feature::SheetFace(_) | Feature::SheetFlange(_) | Feature::SheetConvert(_) => {
                 self.file_status = Some(Ok(
                     "Sheet metal: change the values in Properties (Sheet Metal Defaults for the thickness)".into(),
                 ));
@@ -2108,6 +2114,10 @@ impl CadCraftApp {
         if self.blend_draft.is_some() {
             let hs = self.blend_handles();
             return (!hs.is_empty()).then_some((ManipOwner::Blend, hs));
+        }
+        if self.sm.draft.is_some() {
+            let hs = self.sm_handles();
+            return (!hs.is_empty()).then_some((ManipOwner::SheetMetal, hs));
         }
         if let Some(d) = &self.work_draft {
             return match d.def() {
@@ -3096,6 +3106,7 @@ impl CadCraftApp {
                 }
             }
             ManipOwner::Hole => {}
+            ManipOwner::SheetMetal => self.sm_manip(field, v),
             ManipOwner::Blend => {
                 if let Some(d) = self.blend_draft.as_mut()
                     && v > 0.0
@@ -6238,6 +6249,8 @@ impl CadCraftApp {
                 Some(self.hole_preview())
             } else if self.thread_draft.is_some() {
                 Some(self.thread_preview())
+            } else if self.sm.draft.is_some() {
+                Some(self.sm_preview())
             } else {
                 None
             };

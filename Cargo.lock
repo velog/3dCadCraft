@@ -3185,7 +3185,6 @@ dependencies = [
 [[package]]
 name = "solidcraft-doc"
 version = "0.9.0"
-source = "git+https://github.com/bherbruck/solidcraft?rev=4687e3b0734e41d761be0d0a2611e5402f088348#4687e3b0734e41d761be0d0a2611e5402f088348"
 dependencies = [
  "log",
  "serde",

@@ -422,7 +422,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
     };
     match tab {
         Tab::SheetMetal => vec![
-            panel("Setup", vec![c("sm.defaults").large()]),
+            panel("Setup", vec![c("sm.defaults").large(), c("sm.convert")]),
             panel(
                 "Create",
                 vec![

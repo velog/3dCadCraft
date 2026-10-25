@@ -173,5 +173,12 @@
     "features": 2,
     "sketches": 1,
     "exact": true
+  },
+  "r20/sheet_r20.3dcadcraft": {
+    "volume": 26511.573675028383,
+    "faces": 32,
+    "features": 3,
+    "sketches": 0,
+    "exact": true
   }
 }

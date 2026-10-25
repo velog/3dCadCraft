@@ -232,7 +232,11 @@ assembly view too. 🟡 waiting for a visual check.
 File → New… → **Sheet Metal**, or 3D Model › Convert › **Convert to Sheet Metal**. **Defaults**: thickness,
 K-factor, bend radius and reliefs (unticked values follow the thickness). **Face**: choose the sketch with the
 closed profile, Flip. **Flange**: click sheet edges (green under the cursor, blue dots when taken; again
-removes), Height, Angle, Bend Radius, Bend Position, Flip. **Flat Pattern**: the view shows the part unfolded,
+removes), Height, Angle, Bend Radius, Bend Position, Flip. **Width Extents** of a Flange: Edge, Width (centred or from an offset) or Offset; the orange arrows at
+the flange's ends drag it narrower (it becomes Offset), the orange lines are the preview. **Convert to Sheet
+Metal** (Setup, or 3D Model › Convert) on a solid: click the base face (orange dot), then the edges that
+become bends (blue dots; again removes), OK. Defaults has the **Corner Relief Shape** (Round, Square, Tear,
+Trim to Bend). **Flat Pattern**: the view shows the part unfolded,
 Properties its extents and bends; again goes back. The other sheet metal commands are listed greyed.
 🟡 waiting for a visual check.
 

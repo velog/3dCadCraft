@@ -103,3 +103,4 @@ matext4cgmath = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3
 # the commit pinned above plus a small patch; drop this when the fixes are upstream.
 [patch."https://github.com/bherbruck/solidcraft"]
 solidcraft-kernel = { path = "vendor/solidcraft-kernel" }
+solidcraft-doc = { path = "vendor/solidcraft-doc" }

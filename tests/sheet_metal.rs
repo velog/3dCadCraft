@@ -354,3 +354,238 @@ fn face_flip_and_valid_flat_patterns() {
         assert!((hi.z - lo.z - 2.0).abs() < 0.5, "flat: {lo} {hi}");
     }
 }
+
+/// Width Extents: a flange held back from the edge's ends, a centred one, a
+/// width from an offset; each narrower than the edge by what was asked, with
+/// bend reliefs cut into the base beside it. Offsets that do not fit fail.
+#[test]
+fn flange_width_extents() {
+    use cadcraft3d::part::sheet_metal::FlangeWidth;
+    let width_of = |p: &PartDocument| {
+        // The flange stands at y ≈ 0..2; its width along x above the plate.
+        let xs: Vec<Real> = p
+            .body
+            .faces()
+            .filter_map(|(_, f)| f.mesh.as_ref())
+            .flat_map(|m| m.positions.iter().copied())
+            .filter(|q| q.z > 10.0)
+            .map(|q| q.x)
+            .collect();
+        let lo = xs.iter().copied().fold(Real::INFINITY, Real::min);
+        let hi = xs.iter().copied().fold(Real::NEG_INFINITY, Real::max);
+        (lo, hi)
+    };
+    let edge = [Point3::new(50.0, 0.0, 2.0)];
+    // Offset 10 / 30.
+    let mut p = rect(100.0, 60.0);
+    flange(&mut p, &edge, 25.0, |d| {
+        d.extents = FlangeWidth::Offset;
+        d.offset1 = 10.0;
+        d.offset2 = 30.0;
+    });
+    check(&p);
+    let (lo, hi) = width_of(&p);
+    let (a, b) = (lo.min(100.0 - hi), lo.max(100.0 - hi));
+    assert!(
+        (a - 10.0).abs() < 0.05 && (b - 30.0).abs() < 0.05,
+        "{lo} {hi}"
+    );
+    // The plate keeps its full 100 mm (a flange held back keeps the base's edge).
+    let (blo, bhi) = bbox(&p);
+    assert!((bhi.x - blo.x - 100.0).abs() < 0.05);
+    // Centred, 40 wide.
+    let mut p = rect(100.0, 60.0);
+    flange(&mut p, &edge, 25.0, |d| {
+        d.extents = FlangeWidth::Width;
+        d.width = 40.0;
+        d.centered = true;
+    });
+    check(&p);
+    let (lo, hi) = width_of(&p);
+    assert!(
+        (lo - 30.0).abs() < 0.05 && (hi - 70.0).abs() < 0.05,
+        "{lo} {hi}"
+    );
+    // Width 20 at 5 from the start.
+    let mut p = rect(100.0, 60.0);
+    flange(&mut p, &edge, 25.0, |d| {
+        d.extents = FlangeWidth::Width;
+        d.width = 20.0;
+        d.offset1 = 5.0;
+    });
+    check(&p);
+    let (lo, hi) = width_of(&p);
+    assert!((hi - lo - 20.0).abs() < 0.05, "{lo} {hi}");
+    assert!(
+        (lo - 5.0).abs() < 0.05 || (100.0 - hi - 5.0).abs() < 0.05,
+        "{lo} {hi}"
+    );
+    // The flat pattern is one sheet with the reliefs.
+    let flat = &p.flat_patterns()[0];
+    assert_eq!(flat.bends.len(), 1);
+    // Too wide: refused, nothing added.
+    let mut p = rect(100.0, 60.0);
+    let n = p.features.len();
+    let (body, e) = p.sheet_edge_at(edge[0]).unwrap();
+    let mut def = SheetFlangeFeature::new(&body, vec![e], 25.0);
+    def.extents = FlangeWidth::Offset;
+    def.offset1 = 60.0;
+    def.offset2 = 50.0;
+    assert!(p.add_sheet_flange(def).is_err());
+    assert_eq!(p.features.len(), n);
+    // The ends are reported for the drag handles: 100 mm apart.
+    let (body, e) = p.sheet_edge_at(edge[0]).unwrap();
+    let (a, b) = p.sheet_edge_ends(&body, &e).unwrap();
+    assert!(((b - a).norm() - 100.0).abs() < 1e-6);
+}
+
+/// Corner Relief Shape: every shape gives a valid tray of four flanges; the
+/// round and square reliefs take material away at the corners.
+#[test]
+fn corner_relief_shapes() {
+    use cadcraft3d::part::sheet_metal::CornerRelief;
+    let mut vols = Vec::new();
+    for shape in CornerRelief::ALL {
+        let rule = SheetMetalDefaults {
+            corner_shape: shape,
+            ..Default::default()
+        };
+        let mut p = plate(
+            &[(0.0, 0.0), (120.0, 0.0), (120.0, 80.0), (0.0, 80.0)],
+            &[],
+            rule,
+        );
+        flange(
+            &mut p,
+            &[
+                Point3::new(60.0, 0.0, 2.0),
+                Point3::new(120.0, 40.0, 2.0),
+                Point3::new(60.0, 80.0, 2.0),
+                Point3::new(0.0, 40.0, 2.0),
+            ],
+            20.0,
+            |_| {},
+        );
+        check(&p);
+        assert_eq!(p.flat_patterns()[0].bends.len(), 4, "{shape:?}");
+        vols.push((shape, volume(&p)));
+    }
+    eprintln!("{vols:?}");
+    let v = |s: CornerRelief| vols.iter().find(|x| x.0 == s).map(|x| x.1).unwrap();
+    assert!(v(CornerRelief::Round) < v(CornerRelief::Trim), "{vols:?}");
+    assert!(v(CornerRelief::Square) < v(CornerRelief::Trim), "{vols:?}");
+}
+
+fn edge(a: &str, b: &str, hint: [Real; 3]) -> cadcraft3d::part::EdgeRef {
+    cadcraft3d::part::EdgeRef {
+        faces: [a.into(), b.into()],
+        hint,
+    }
+}
+
+/// Convert to Sheet Metal of a solid box (Top fixed, the edges to Front
+/// and Back become bends): a U channel of the rule's thickness, flat pattern
+/// with two bends; flanges can be added to it afterwards. Of a shelled box
+/// the walls keep their own thickness.
+#[test]
+fn convert_solid_to_sheet_metal() {
+    use cadcraft3d::part::sheet_metal::SheetConvertFeature;
+    use cadcraft3d::part::shell::FaceRef;
+    let mut p = PartDocument::with_box("Box1", [100.0, 60.0, 40.0]).unwrap();
+    let body = p.exact_bodies.0[0].name.clone().unwrap();
+    let def = SheetConvertFeature {
+        id: String::new(),
+        name: String::new(),
+        body: body.clone(),
+        face: FaceRef {
+            face: "Box1:Top".into(),
+            hint: [50.0, 30.0, 40.0],
+        },
+        bends: vec![
+            edge("Box1:Top", "Box1:Front", [50.0, 0.0, 40.0]),
+            edge("Box1:Top", "Box1:Back", [50.0, 60.0, 40.0]),
+        ],
+    };
+    p.add_sheet_convert(def).unwrap();
+    check(&p);
+    assert!(p.sheet_metal.is_some());
+    let flat = &p.flat_patterns()[0];
+    assert_eq!(flat.bends.len(), 2);
+    // The channel keeps the box's envelope.
+    let (lo, hi) = bbox(&p);
+    assert!(
+        (hi.x - lo.x - 100.0).abs() < 0.1 && (hi.y - lo.y - 60.0).abs() < 0.1,
+        "{lo} {hi}"
+    );
+    assert!((hi.z - lo.z - 40.0).abs() < 0.1, "{lo} {hi}");
+    // Much less than the box: about the three walls of 2 mm.
+    let v = volume(&p);
+    let rough = (100.0 * 60.0 + 2.0 * 100.0 * 38.0) * 2.0;
+    assert!((v - rough).abs() < 0.08 * rough, "{v} vs {rough}");
+    // A flange on the channel's free edge (the bottom of the front wall).
+    let (b, e) = p
+        .sheet_edge_at(Point3::new(50.0, 1.0, 0.0))
+        .expect("an edge at the wall's foot");
+    p.add_sheet_flange(SheetFlangeFeature::new(&b, vec![e], 15.0))
+        .unwrap();
+    check(&p);
+    assert_eq!(p.flat_patterns()[0].bends.len(), 3);
+    // Missing bends: refused, nothing changes.
+    let mut q = PartDocument::with_box("Box1", [100.0, 60.0, 40.0]).unwrap();
+    let n = q.features.len();
+    let bad = SheetConvertFeature {
+        id: String::new(),
+        name: String::new(),
+        body,
+        face: FaceRef {
+            face: "Box1:Top".into(),
+            hint: [50.0, 30.0, 40.0],
+        },
+        bends: Vec::new(),
+    };
+    assert!(q.add_sheet_convert(bad).is_err());
+    assert_eq!(q.features.len(), n);
+    assert!(q.sheet_metal.is_none(), "the rule is not left behind");
+}
+
+/// A shelled box (open at the top, walls 1.5) converted with the bottom
+/// fixed and the bottom's four edges as bends: a tray whose walls keep the
+/// shell's 1.5 mm, not the rule's 2 mm.
+#[test]
+fn convert_shelled_box_keeps_its_walls() {
+    use cadcraft3d::part::sheet_metal::SheetConvertFeature;
+    use cadcraft3d::part::shell::{FaceRef, ShellFeature};
+    let mut p = PartDocument::with_box("Box1", [100.0, 60.0, 30.0]).unwrap();
+    let mut sh = ShellFeature::new(1.5);
+    sh.remove.push(FaceRef {
+        face: "Box1:Top".into(),
+        hint: [50.0, 30.0, 30.0],
+    });
+    p.add_shell(sh).unwrap();
+    let body = p.exact_bodies.0[0].name.clone().unwrap();
+    let def = SheetConvertFeature {
+        id: String::new(),
+        name: String::new(),
+        body,
+        face: FaceRef {
+            face: "Box1:Bottom".into(),
+            hint: [50.0, 30.0, 0.0],
+        },
+        bends: vec![
+            edge("Box1:Bottom", "Box1:Front", [50.0, 0.0, 0.0]),
+            edge("Box1:Bottom", "Box1:Right", [100.0, 30.0, 0.0]),
+            edge("Box1:Bottom", "Box1:Back", [50.0, 60.0, 0.0]),
+            edge("Box1:Bottom", "Box1:Left", [0.0, 30.0, 0.0]),
+        ],
+    };
+    p.add_sheet_convert(def).unwrap();
+    check(&p);
+    let flat = &p.flat_patterns()[0];
+    assert_eq!(flat.bends.len(), 4);
+    let b = cadcraft3d::kernel::exact::to_brep(std::slice::from_ref(&flat.solid)).unwrap();
+    let (lo, hi) = b.bounding_box().unwrap();
+    assert!(
+        (hi.z - lo.z - 1.5).abs() < 0.05,
+        "the shell's wall: {lo} {hi}"
+    );
+}

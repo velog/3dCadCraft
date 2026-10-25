@@ -484,6 +484,47 @@ fn sheet_r19() -> PartDocument {
     p
 }
 
+/// Revision 20: a 100 × 60 × 40 box converted to sheet metal (Top fixed,
+/// its front and back edges bent), Square corner reliefs, and a Flange
+/// 20 wide centred on the front wall's foot.
+fn sheet_r20() -> PartDocument {
+    use cadcraft3d::part::EdgeRef;
+    use cadcraft3d::part::sheet_metal::{
+        CornerRelief, FlangeWidth, SheetConvertFeature, SheetFlangeFeature, SheetMetalDefaults,
+    };
+    use cadcraft3d::part::shell::FaceRef;
+    let mut p = PartDocument::with_box("Box1", [100.0, 60.0, 40.0]).unwrap();
+    p.make_sheet_metal(Some(SheetMetalDefaults {
+        corner_shape: CornerRelief::Square,
+        ..Default::default()
+    }));
+    let e = |a: &str, b: &str, hint: [f64; 3]| EdgeRef {
+        faces: [a.into(), b.into()],
+        hint,
+    };
+    p.add_sheet_convert(SheetConvertFeature {
+        id: String::new(),
+        name: String::new(),
+        body: "Box1".into(),
+        face: FaceRef {
+            face: "Box1:Top".into(),
+            hint: [50.0, 30.0, 40.0],
+        },
+        bends: vec![
+            e("Box1:Top", "Box1:Front", [50.0, 0.0, 40.0]),
+            e("Box1:Top", "Box1:Back", [50.0, 60.0, 40.0]),
+        ],
+    })
+    .unwrap();
+    let (body, edge) = p.sheet_edge_at(Point3::new(50.0, 1.0, 0.0)).unwrap();
+    let mut fl = SheetFlangeFeature::new(&body, vec![edge], 15.0);
+    fl.extents = FlangeWidth::Width;
+    fl.width = 20.0;
+    fl.centered = true;
+    p.add_sheet_flange(fl).unwrap();
+    p
+}
+
 /// Revision 17: user parameters in cm, in and rad (`Unit::Cm` / `In` / `Rad`)
 /// driving the box (length 6 cm, width 1 in + 5 mm).
 fn units_r17() -> PartDocument {
@@ -1057,6 +1098,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("WorkR8");
             project.add_document("Part1", DocumentData::Part(work_r8()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r20/sheet_r20.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("SheetR20");
+            project.add_document("Part1", DocumentData::Part(sheet_r20()));
             project.save(&f).unwrap();
         }
         let f = root().join("r19/sheet_r19.3dcadcraft");

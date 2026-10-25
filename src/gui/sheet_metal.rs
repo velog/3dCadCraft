@@ -3,14 +3,19 @@
 //! rule), **Face** (a plate from a sketch), **Flange** (pick sheet edges;
 //! height, angle, bend radius, Bend Position, Flip), **Flat Pattern** (the
 //! unfolded part in the view, its extents and bends in Properties) — and
-//! Convert to Sheet Metal on the 3D Model tab.
+//! Convert to Sheet Metal (a solid: fixed face + bend edges). Flange's Width
+//! Extents have drag arrows at the flange's ends (`sm_handles`); Flange and
+//! Convert show their result as a preview (`sm_preview`).
 
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke};
 
 use super::CadCraftApp;
 use super::valuefield::ExprValue;
 use crate::kernel::Point3;
-use crate::part::sheet_metal::{FlangePosition, SheetEdge, SheetFlangeFeature, SheetMetalDefaults};
+use crate::part::sheet_metal::{
+    CornerRelief, FlangePosition, FlangeWidth, SheetConvertFeature, SheetEdge, SheetFlangeFeature,
+    SheetMetalDefaults,
+};
 
 /// An open sheet metal command.
 #[derive(Clone, Debug)]
@@ -19,6 +24,8 @@ pub(super) enum SmDraft {
     Face { sketch: Option<usize>, flip: bool },
     /// Flange: the definition so far (its body is the first edge's sheet).
     Flange { def: SheetFlangeFeature },
+    /// Convert to Sheet Metal: the fixed face, then the bend edges.
+    Convert { def: SheetConvertFeature },
 }
 
 /// The environment's state.
@@ -44,6 +51,34 @@ impl CadCraftApp {
         use super::ribbon::Action;
         match a {
             Action::SmConvert => {
+                // A solid that is not a sheet yet: pick its fixed face and
+                // bends (SolidWorks / Solid Edge); else only the rule.
+                let solid = self
+                    .part()
+                    .exact_bodies
+                    .0
+                    .iter()
+                    .filter_map(|s| s.name.clone())
+                    .find(|n| !self.part().sheet_models.contains_key(n));
+                if let Some(body) = solid
+                    && self.part().exact
+                {
+                    self.sm.flat = false;
+                    self.sm.draft = Some(SmDraft::Convert {
+                        def: SheetConvertFeature {
+                            id: String::new(),
+                            name: String::new(),
+                            body,
+                            face: crate::part::shell::FaceRef {
+                                face: String::new(),
+                                hint: [0.0; 3],
+                            },
+                            bends: Vec::new(),
+                        },
+                    });
+                    self.tab = super::ribbon::Tab::SheetMetal;
+                    return;
+                }
                 if self.part().sheet_metal.is_none() {
                     self.checkpoint("Convert to Sheet Metal");
                     self.part_mut().make_sheet_metal(None);
@@ -190,6 +225,75 @@ impl CadCraftApp {
                         ui.end_row();
                     });
                 ui.checkbox(&mut def.flip, "Flip direction");
+                ui.separator();
+                ui.label(RichText::new("Width Extents").strong());
+                egui::ComboBox::from_id_salt("sm_width")
+                    .selected_text(def.extents.label())
+                    .show_ui(ui, |ui| {
+                        for w in FlangeWidth::ALL {
+                            ui.selectable_value(&mut def.extents, w, w.label());
+                        }
+                    });
+                egui::Grid::new("sm_width_grid")
+                    .num_columns(2)
+                    .min_col_width(super::panels::label_width(ui.ctx()))
+                    .show(ui, |ui| match def.extents {
+                        FlangeWidth::Edge => {}
+                        FlangeWidth::Width => {
+                            super::panels::plabel(ui, "Width");
+                            ui.add(ExprValue::new(&mut def.width).suffix(" mm"));
+                            ui.end_row();
+                            super::panels::plabel(ui, "Centered");
+                            ui.checkbox(&mut def.centered, "");
+                            ui.end_row();
+                            if !def.centered {
+                                super::panels::plabel(ui, "Offset");
+                                ui.add(ExprValue::new(&mut def.offset1).suffix(" mm"));
+                                ui.end_row();
+                            }
+                        }
+                        FlangeWidth::Offset => {
+                            super::panels::plabel(ui, "Offset 1");
+                            ui.add(ExprValue::new(&mut def.offset1).suffix(" mm"));
+                            ui.end_row();
+                            super::panels::plabel(ui, "Offset 2");
+                            ui.add(ExprValue::new(&mut def.offset2).suffix(" mm"));
+                            ui.end_row();
+                        }
+                    });
+                ui.weak("Drag the arrows at the flange's ends to make it narrower");
+                if def.extents == FlangeWidth::Width && def.width <= 0.0 {
+                    // A first width: half the first edge.
+                    if let Some(e) = def.edges.first()
+                        && let Some((a, b)) = self.part().sheet_edge_ends(&def.body, e)
+                    {
+                        def.width = ((b - a).norm() * 0.5).round();
+                    }
+                }
+            }
+            SmDraft::Convert { def } => {
+                self.panel_header(ui, super::icons::Icon::SheetMetal, "Convert to Sheet Metal");
+                ui.label(format!("Solid: {}", def.body));
+                ui.horizontal(|ui| {
+                    if def.face.face.is_empty() {
+                        ui.label("Base Face: click the face that stays put");
+                    } else {
+                        ui.label(format!("Base Face: {}", def.face.face));
+                        if ui.small_button("x").on_hover_text("Pick again").clicked() {
+                            def.face.face.clear();
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(format!("Bends: {} edge(s)", def.bends.len()));
+                    if !def.bends.is_empty() && ui.small_button("Clear").clicked() {
+                        def.bends.clear();
+                    }
+                });
+                let t = crate::part::sheet_metal::rule_of(self.part()).thickness;
+                ui.weak(format!(
+                    "Thickness {t:.3} mm (Sheet Metal Defaults); a shelled solid keeps its walls. Edges not picked are cut open."
+                ));
             }
         }
         ui.separator();
@@ -197,6 +301,7 @@ impl CadCraftApp {
             let ready = match &d {
                 SmDraft::Face { sketch, .. } => sketch.is_some(),
                 SmDraft::Flange { def } => !def.edges.is_empty(),
+                SmDraft::Convert { def } => !def.face.face.is_empty() && !def.bends.is_empty(),
             };
             let r = ui.add_enabled(ready, egui::Button::new("OK"));
             if r.clicked() || super::keys::panel_ok_key(ui, ready) {
@@ -221,6 +326,7 @@ impl CadCraftApp {
         self.checkpoint(match d {
             SmDraft::Face { .. } => "Face",
             SmDraft::Flange { .. } => "Flange",
+            SmDraft::Convert { .. } => "Convert to Sheet Metal",
         });
         let r = match d {
             SmDraft::Face {
@@ -237,6 +343,7 @@ impl CadCraftApp {
             }
             SmDraft::Face { sketch: None, .. } => Ok(()),
             SmDraft::Flange { def } => self.part_mut().add_sheet_flange(def).map(|_| ()),
+            SmDraft::Convert { def } => self.part_mut().add_sheet_convert(def).map(|_| ()),
         };
         match r {
             Ok(()) => {
@@ -260,6 +367,9 @@ impl CadCraftApp {
         pointer: Option<Pos2>,
         clicked: bool,
     ) -> bool {
+        if let Some(SmDraft::Convert { .. }) = &self.sm.draft {
+            return self.sm_convert_view(painter, rect, pointer, clicked);
+        }
         if !matches!(self.sm.draft, Some(SmDraft::Flange { .. })) {
             return false;
         }
@@ -307,6 +417,203 @@ impl CadCraftApp {
         took
     }
 
+    /// Convert: a click on a face sets the base face (while it is empty),
+    /// then clicks on edges add / remove bends.
+    fn sm_convert_view(
+        &mut self,
+        painter: &egui::Painter,
+        rect: Rect,
+        pointer: Option<Pos2>,
+        clicked: bool,
+    ) -> bool {
+        let Some(SmDraft::Convert { def }) = &self.sm.draft else {
+            return false;
+        };
+        let want_face = def.face.face.is_empty();
+        let mut took = false;
+        self.sm.hover = None;
+        if let Some(p) = pointer
+            && let Some((o, dir)) = self.camera.ray(p, rect)
+        {
+            if want_face {
+                if let Some((f, t)) = self.face_hit(&o, &dir)
+                    && let Some(name) = self.part().body.face(f).and_then(|x| x.name.clone())
+                {
+                    let opts = crate::kernel::TessellationOptions::default();
+                    let body = &self.part().body;
+                    let lines: Vec<Vec<Pos2>> = crate::part::select::edges_of_face(body, f)
+                        .into_iter()
+                        .filter_map(|e| body.sample_edge(e, &opts).ok())
+                        .map(|pts| {
+                            pts.iter()
+                                .filter_map(|q| self.camera.project(q, rect))
+                                .collect()
+                        })
+                        .collect();
+                    for l in lines {
+                        painter.add(egui::Shape::line(
+                            l,
+                            Stroke::new(3.0, Color32::from_rgb(110, 220, 120)),
+                        ));
+                    }
+                    if clicked {
+                        let hit = o + dir.normalize() * t;
+                        if let Some(SmDraft::Convert { def }) = self.sm.draft.as_mut() {
+                            def.face = crate::part::shell::FaceRef {
+                                face: name,
+                                hint: [hit.x, hit.y, hit.z],
+                            };
+                        }
+                        took = true;
+                    }
+                }
+            } else if let Some(e) = self.edge_under(p, rect)
+                && let Some(r) = crate::part::blend::edge_ref(&self.part().body, e)
+            {
+                let opts = crate::kernel::TessellationOptions::default();
+                if let Ok(pts) = self.part().body.sample_edge(e, &opts) {
+                    let line: Vec<Pos2> = pts
+                        .iter()
+                        .filter_map(|q| self.camera.project(q, rect))
+                        .collect();
+                    painter.add(egui::Shape::line(
+                        line,
+                        Stroke::new(3.0, Color32::from_rgb(110, 220, 120)),
+                    ));
+                }
+                if clicked && let Some(SmDraft::Convert { def }) = self.sm.draft.as_mut() {
+                    match def.bends.iter().position(|b| b.faces == r.faces) {
+                        Some(k) => {
+                            def.bends.remove(k);
+                        }
+                        None => def.bends.push(r),
+                    }
+                    took = true;
+                }
+            }
+        }
+        if let Some(SmDraft::Convert { def }) = &self.sm.draft {
+            for b in &def.bends {
+                if let Some(s) = self.camera.project(&Point3::from(b.hint), rect) {
+                    painter.circle_filled(s, 5.0, Color32::from_rgb(80, 160, 255));
+                }
+            }
+            if !def.face.face.is_empty()
+                && let Some(s) = self.camera.project(&Point3::from(def.face.hint), rect)
+            {
+                painter.circle_filled(s, 6.0, Color32::from_rgb(255, 170, 40));
+            }
+        }
+        took
+    }
+
+    /// Flange's Width Extents arrows: at both ends of its first edge, along
+    /// the edge; dragging one makes the flange Offset-wide.
+    pub(super) fn sm_handles(&self) -> Vec<super::manip::Handle> {
+        use super::manip::{DragGeom, Handle};
+        let Some(SmDraft::Flange { def }) = &self.sm.draft else {
+            return Vec::new();
+        };
+        let Some(e) = def.edges.first() else {
+            return Vec::new();
+        };
+        let Some((a, b)) = self.part().sheet_edge_ends(&def.body, e) else {
+            return Vec::new();
+        };
+        let len = (b - a).norm();
+        if len < 1e-6 {
+            return Vec::new();
+        }
+        let d = (b - a) / len;
+        let (o1, o2) = def.spans(len).unwrap_or((def.offset1, def.offset2));
+        let reach = (len * 0.08).clamp(3.0, 20.0);
+        let handle =
+            |field: &'static str, origin: Point3, dir: crate::kernel::Vector3, off: f64| {
+                let grip = origin + dir * off;
+                Handle {
+                    field,
+                    path: vec![grip - dir * reach, grip],
+                    grip,
+                    geom: DragGeom::Linear {
+                        origin,
+                        dir,
+                        scale: 1.0,
+                    },
+                    arrow: Some(-dir),
+                    angle: false,
+                    signed: false,
+                }
+            };
+        vec![handle("offset1", a, d, o1), handle("offset2", b, -d, o2)]
+    }
+
+    /// A Width Extents arrow was dragged to `v` (mm from its end).
+    pub(super) fn sm_manip(&mut self, field: &str, v: f64) {
+        let ends = match &self.sm.draft {
+            Some(SmDraft::Flange { def }) => def
+                .edges
+                .first()
+                .and_then(|e| self.part().sheet_edge_ends(&def.body, e)),
+            _ => None,
+        };
+        let Some((a, b)) = ends else {
+            return;
+        };
+        let len = (b - a).norm();
+        let Some(SmDraft::Flange { def }) = self.sm.draft.as_mut() else {
+            return;
+        };
+        let (o1, o2) = def.spans(len).unwrap_or((0.0, 0.0));
+        // Dragged ends: the flange is Offset-wide from now on.
+        def.extents = FlangeWidth::Offset;
+        (def.offset1, def.offset2) = (o1, o2);
+        let room = |other: f64| (len - other - 1.0).max(0.0);
+        match field {
+            "offset1" => def.offset1 = v.clamp(0.0, room(def.offset2)),
+            "offset2" => def.offset2 = v.clamp(0.0, room(def.offset1)),
+            _ => {}
+        }
+        for f in ["offset1", "offset2"] {
+            if let Some(p) = def.params.0.get_mut(f) {
+                p.expr = None;
+            }
+        }
+    }
+
+    /// The result of the open Flange / Convert as edge polylines (worker
+    /// thread), or why it fails.
+    pub(super) fn sm_preview(&self) -> Result<Vec<Vec<Point3>>, String> {
+        let (key, feature) = match &self.sm.draft {
+            Some(SmDraft::Flange { def }) if !def.edges.is_empty() => (
+                format!("sm|{def:?}"),
+                crate::part::Feature::SheetFlange(def.clone()),
+            ),
+            Some(SmDraft::Convert { def })
+                if !def.face.face.is_empty() && !def.bends.is_empty() =>
+            {
+                (
+                    format!("sm|{def:?}"),
+                    crate::part::Feature::SheetConvert(def.clone()),
+                )
+            }
+            _ => return Err(String::new()),
+        };
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
+        let mut trial = self.part().clone();
+        self.preview_async(key, move || {
+            let built = match feature {
+                crate::part::Feature::SheetFlange(d) => trial.add_sheet_flange(d),
+                crate::part::Feature::SheetConvert(d) => trial.add_sheet_convert(d),
+                _ => return Err(String::new()),
+            };
+            built
+                .map(|_| super::combine_split::face_edges(&trial, |_| true))
+                .map_err(|e| e.to_string())
+        })
+    }
+
     fn sm_pick_edge(&mut self, at: Point3) {
         let Some((body, edge)) = self.part().sheet_edge_at(at) else {
             self.file_status = Some(Err("Flange: that is not an edge of a sheet".into()));
@@ -341,7 +648,13 @@ impl CadCraftApp {
                 "Flange: click the sheet edges to bend (on the top or bottom face)".into()
             }
             SmDraft::Flange { .. } => {
-                "Flange: more edges, or set the height and angle, then OK".into()
+                "Flange: more edges, drag the end arrows for a narrower flange, then OK".into()
+            }
+            SmDraft::Convert { def } if def.face.face.is_empty() => {
+                "Convert to Sheet Metal: click the face that stays put (the base face)".into()
+            }
+            SmDraft::Convert { .. } => {
+                "Convert to Sheet Metal: click the edges that become bends, then OK".into()
             }
         })
     }
@@ -400,6 +713,16 @@ impl CadCraftApp {
                             ui.end_row();
                         }
                     });
+                ui.horizontal(|ui| {
+                    ui.label("Corner Relief Shape");
+                    egui::ComboBox::from_id_salt("sm_corner")
+                        .selected_text(r.corner_shape.label())
+                        .show_ui(ui, |ui| {
+                            for c in CornerRelief::ALL {
+                                ui.selectable_value(&mut r.corner_shape, c, c.label());
+                            }
+                        });
+                });
                 ui.label(RichText::new("Unfold rule: linear, BA = angle × (R + K × T)").weak());
                 if let Err(e) = r.validate() {
                     ui.colored_label(Color32::from_rgb(235, 80, 70), e);

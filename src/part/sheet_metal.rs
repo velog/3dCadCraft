@@ -36,6 +36,57 @@ pub struct SheetMetalDefaults {
     /// Gap between flanges meeting at a corner; `None`: the thickness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gap: Option<Real>,
+    /// The relief where two bends meet at a corner.
+    #[serde(default, skip_serializing_if = "CornerRelief::is_default")]
+    pub corner_shape: CornerRelief,
+}
+
+/// Corner Relief Shape (Inventor's sheet rule; SolidWorks' Corner Relief
+/// types): what is cut where two bends meet at a corner of the base.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CornerRelief {
+    /// Round, the Corner Relief size across, centred on the corner.
+    #[default]
+    Round,
+    /// Square, the Corner Relief size across.
+    Square,
+    /// Tear: no material removed; each bend tears straight to its panel.
+    Tear,
+    /// None: both bends end square at the corner (Trim to Bend).
+    Trim,
+}
+
+impl CornerRelief {
+    /// Every shape, in menu order.
+    pub const ALL: [CornerRelief; 4] = [
+        CornerRelief::Round,
+        CornerRelief::Square,
+        CornerRelief::Tear,
+        CornerRelief::Trim,
+    ];
+
+    /// Label (Defaults window).
+    pub fn label(self) -> &'static str {
+        match self {
+            CornerRelief::Round => "Round",
+            CornerRelief::Square => "Square",
+            CornerRelief::Tear => "Tear",
+            CornerRelief::Trim => "Trim to Bend",
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == CornerRelief::Round
+    }
+
+    fn kernel(self) -> ksm::CornerShape {
+        match self {
+            CornerRelief::Round => ksm::CornerShape::Round,
+            CornerRelief::Square => ksm::CornerShape::Rectangular,
+            CornerRelief::Tear => ksm::CornerShape::Tear,
+            CornerRelief::Trim => ksm::CornerShape::Notch,
+        }
+    }
 }
 
 fn k_default() -> Real {
@@ -52,6 +103,7 @@ impl Default for SheetMetalDefaults {
             relief_depth: None,
             corner_relief: None,
             gap: None,
+            corner_shape: CornerRelief::Round,
         }
     }
 }
@@ -68,6 +120,7 @@ impl SheetMetalDefaults {
             relief_depth: self.relief_depth.unwrap_or(t * 0.5),
             corner_relief: self.corner_relief.unwrap_or(t * 4.0),
             gap: self.gap.unwrap_or(t),
+            corner_shape: self.corner_shape.kernel(),
         }
     }
 
@@ -146,6 +199,42 @@ pub struct SheetEdge {
     pub hint: [Real; 3],
 }
 
+/// Width Extents of a flange (Inventor: Edge / Width / Offset; SolidWorks:
+/// Edit Flange Profile; Solid Edge: the flange's sides dragged): how much
+/// of each picked edge the flange covers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FlangeWidth {
+    /// The whole edge.
+    #[default]
+    Edge,
+    /// `width` long, `offset1` from the edge's start (or centred).
+    Width,
+    /// Held back `offset1` from the start and `offset2` from the end.
+    Offset,
+}
+
+impl FlangeWidth {
+    /// Every kind, in menu order.
+    pub const ALL: [FlangeWidth; 3] = [FlangeWidth::Edge, FlangeWidth::Width, FlangeWidth::Offset];
+
+    /// Label (panel).
+    pub fn label(self) -> &'static str {
+        match self {
+            FlangeWidth::Edge => "Edge",
+            FlangeWidth::Width => "Width",
+            FlangeWidth::Offset => "Offset",
+        }
+    }
+
+    fn is_edge(&self) -> bool {
+        *self == FlangeWidth::Edge
+    }
+}
+
+fn is_zero(v: &Real) -> bool {
+    *v == 0.0
+}
+
 /// Flange: bends on sheet edges, all with one height and angle.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SheetFlangeFeature {
@@ -170,7 +259,22 @@ pub struct SheetFlangeFeature {
     /// The flange to the other side.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub flip: bool,
-    /// Equations of the fields (`height`, `angle`).
+    /// Width Extents.
+    #[serde(default, skip_serializing_if = "FlangeWidth::is_edge")]
+    pub extents: FlangeWidth,
+    /// Offset from the edge's start (Width, Offset).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset1: Real,
+    /// Offset from the edge's end (Offset).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub offset2: Real,
+    /// The flange's width (Width).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub width: Real,
+    /// Width centred on the edge (Width).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub centered: bool,
+    /// Equations of the fields (`height`, `angle`, `offset1`, `offset2`, `width`).
     #[serde(
         default,
         skip_serializing_if = "super::params::FeatureParams::is_empty"
@@ -182,7 +286,43 @@ impl SheetFlangeFeature {
     /// Its numeric fields (parameters).
     pub fn fields(&self) -> Vec<(&'static str, super::expr::Unit)> {
         use super::expr::Unit;
-        vec![("height", Unit::Mm), ("angle", Unit::Deg)]
+        let mut v = vec![("height", Unit::Mm), ("angle", Unit::Deg)];
+        match self.extents {
+            FlangeWidth::Edge => {}
+            FlangeWidth::Width => {
+                v.push(("width", Unit::Mm));
+                if !self.centered {
+                    v.push(("offset1", Unit::Mm));
+                }
+            }
+            FlangeWidth::Offset => v.extend([("offset1", Unit::Mm), ("offset2", Unit::Mm)]),
+        }
+        v
+    }
+
+    /// How far the flange stays off the start and end of an edge `len`
+    /// long, or why it cannot (the error names the edge's length).
+    pub fn spans(&self, len: Real) -> Result<(Real, Real), String> {
+        let (a, b) = match self.extents {
+            FlangeWidth::Edge => return Ok((0.0, 0.0)),
+            FlangeWidth::Width if self.centered => {
+                let rest = (len - self.width) * 0.5;
+                (rest, rest)
+            }
+            FlangeWidth::Width => (self.offset1, len - self.offset1 - self.width),
+            FlangeWidth::Offset => (self.offset1, self.offset2),
+        };
+        if self.extents == FlangeWidth::Width
+            && self.width.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
+        {
+            return Err("the flange's width must be positive".into());
+        }
+        if !(a >= -1e-9 && b >= -1e-9 && a + b < len - 1e-6) {
+            return Err(format!(
+                "the width and offsets do not fit the edge ({len:.3} mm long)"
+            ));
+        }
+        Ok((a.max(0.0), b.max(0.0)))
     }
 
     /// A field's value.
@@ -190,6 +330,9 @@ impl SheetFlangeFeature {
         match field {
             "height" => Some(self.height),
             "angle" => Some(self.angle),
+            "offset1" => Some(self.offset1),
+            "offset2" => Some(self.offset2),
+            "width" => Some(self.width),
             _ => None,
         }
     }
@@ -199,6 +342,9 @@ impl SheetFlangeFeature {
         match field {
             "height" => self.height = v,
             "angle" => self.angle = v,
+            "offset1" => self.offset1 = v,
+            "offset2" => self.offset2 = v,
+            "width" => self.width = v,
             _ => {}
         }
     }
@@ -215,9 +361,34 @@ impl SheetFlangeFeature {
             radius: None,
             position: FlangePosition::Inside,
             flip: false,
+            extents: FlangeWidth::Edge,
+            offset1: 0.0,
+            offset2: 0.0,
+            width: 0.0,
+            centered: false,
             params: Default::default(),
         }
     }
+}
+
+/// Convert to Sheet Metal of a solid (SolidWorks' Convert to Sheet Metal,
+/// Solid Edge's Transform to Sheet Metal; Inventor converts a thin part by
+/// its base face): the face that stays put and the sharp edges that become
+/// bends. A shelled body keeps its wall thickness; any other body becomes the
+/// outside of a sheet of the rule's thickness. Edges between faces that are
+/// not picked are cut open (rips).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SheetConvertFeature {
+    /// Immutable id (`Convert1`): the prefix of the sheet's face names.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// The solid converted (its persistent name; the sheet keeps it).
+    pub body: String,
+    /// The fixed face.
+    pub face: super::shell::FaceRef,
+    /// The bend edges.
+    pub bends: Vec<super::blend::EdgeRef>,
 }
 
 /// A sheet body's model with the face count the sheet steps left it with:
@@ -283,6 +454,27 @@ impl super::PartDocument {
         Ok(id)
     }
 
+    /// **Convert to Sheet Metal** of a solid (id `Convert<N>`); makes the
+    /// part a sheet metal part first. On failure nothing changes.
+    pub fn add_sheet_convert(
+        &mut self,
+        mut def: SheetConvertFeature,
+    ) -> Result<String, super::PartError> {
+        let had = self.sheet_metal.clone();
+        if self.sheet_metal.is_none() {
+            self.make_sheet_metal(None);
+        }
+        let id = self.next_feature_id("Convert");
+        (def.id, def.name) = (id.clone(), id.clone());
+        match self.insert_feature_checked(super::Feature::SheetConvert(def)) {
+            Ok(_) => Ok(id),
+            Err(e) => {
+                self.sheet_metal = had;
+                Err(e)
+            }
+        }
+    }
+
     /// **Flange** (id `Flange<N>`). On failure nothing changes.
     pub fn add_sheet_flange(
         &mut self,
@@ -314,6 +506,18 @@ impl super::PartDocument {
                     },
                 )
             })
+    }
+
+    /// The ends of a sheet edge (start, end: the order Width Extents count
+    /// them in), for the drag handles of Flange.
+    pub fn sheet_edge_ends(
+        &self,
+        body: &str,
+        e: &SheetEdge,
+    ) -> Option<(crate::kernel::Point3, crate::kernel::Point3)> {
+        let st = self.sheet_models.get(body)?;
+        let at = ksm::edge_point(&st.model, &e.name, crate::kernel::Point3::from(e.hint))?;
+        ksm::edge_ends(&st.model, at).map(|(a, b, _)| (a, b))
     }
 
     /// The flat patterns of the sheet bodies (Create Flat Pattern).
