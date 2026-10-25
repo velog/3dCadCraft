@@ -68,6 +68,11 @@ impl CadCraftApp {
                     self.file_status = Some(Err("Flange: make a Face first".into()));
                     return;
                 }
+                // Edges are picked on the folded part.
+                if self.sm.flat {
+                    self.sm.flat = false;
+                    self.scene_dirty = true;
+                }
                 self.sm.draft = Some(SmDraft::Flange {
                     def: SheetFlangeFeature::new("", Vec::new(), 20.0),
                 });

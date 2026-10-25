@@ -145,7 +145,7 @@ pub fn sweep(
 
 /// The profile with every arc cut into pieces of at most a quarter turn
 /// (names repeated per piece, as [`super::profile`] does for B-splines).
-fn split_closed_arcs(prof: &ExactProfile) -> ExactProfile {
+pub(super) fn split_closed_arcs(prof: &ExactProfile) -> ExactProfile {
     let id = [[1.0, 0.0], [0.0, 1.0]];
     let zero = sg::Vec2::new(0.0, 0.0);
     let (on, hn) = split_names(prof);

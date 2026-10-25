@@ -164,6 +164,9 @@ pub fn face(
             ..plane.clone()
         })?;
     }
+    // A whole circle as one arc (one vertex) cannot be sewn: quarter
+    // turns at most.
+    let prof = super::sweep::split_closed_arcs(prof);
     let mut m = sd::base_flange(prefix, "rule", &rule_of(rv), pl, prof.region.clone());
     m.base_curves = curves
         .iter()
