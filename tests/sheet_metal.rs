@@ -752,6 +752,9 @@ fn unfold_cut_refold() {
     op(
         &mut p,
         SheetOp::Cut {
+            extent: Default::default(),
+            depth: 0.0,
+            across: false,
             sketch: sid,
             profiles: prof,
         },
@@ -789,6 +792,9 @@ fn sheet_cut_then_flange() {
     op(
         &mut p,
         SheetOp::Cut {
+            extent: Default::default(),
+            depth: 0.0,
+            across: false,
             sketch: sid,
             profiles: prof,
         },
@@ -811,6 +817,9 @@ fn sheet_cut_then_flange() {
     let n = p.features.len();
     let bad = p.add_sheet_op(cadcraft3d::part::sheet_metal::SheetOpFeature::new(
         SheetOp::Cut {
+            extent: Default::default(),
+            depth: 0.0,
+            across: false,
             sketch: sid,
             profiles: prof,
         },
@@ -996,4 +1005,274 @@ fn sheet_features_can_be_edited() {
     let body = p.sheet_models.keys().next().unwrap().clone();
     let hem = Feature::SheetOp(SheetOpFeature::new(SheetOp::Unfold { body }));
     assert!(p.replace_feature(k, hem).is_err());
+}
+
+fn circle_cut(p: &mut PartDocument, c: (Real, Real), r: Real) -> (String, Vec<ProfileRef>) {
+    let i = top_sketch(p);
+    p.sketches[i]
+        .sketch
+        .add_circle(Point2::new(c.0, c.1), r)
+        .unwrap();
+    let regions = p.sketches[i].sketch.regions();
+    let prof = regions
+        .iter()
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
+    (p.sketches[i].id.clone(), prof)
+}
+
+/// Cut extents: Thickness (through), Distance (a pocket 1 mm deep: half
+/// the material of the circle goes), Cut Across Bend (a slot from the plate
+/// over the front bend into the flange, in one step).
+#[test]
+fn cut_extents_and_across_bend() {
+    use cadcraft3d::part::sheet_metal::{CutExtent, SheetOp};
+    let base = rect(100.0, 60.0);
+    let v0 = volume(&base);
+    let area = PI * 64.0;
+    for (extent, depth, want) in [
+        (CutExtent::Thickness, 0.0, area * 2.0),
+        (CutExtent::Distance, 1.0, area * 1.0),
+        (CutExtent::ThroughAll, 0.0, area * 2.0),
+    ] {
+        let mut p = base.clone();
+        let (sketch, profiles) = circle_cut(&mut p, (50.0, 30.0), 8.0);
+        op(
+            &mut p,
+            SheetOp::Cut {
+                sketch,
+                profiles,
+                extent,
+                depth,
+                across: false,
+            },
+        );
+        check(&p);
+        let took = v0 - volume(&p);
+        assert!(
+            (took - want).abs() < 0.03 * want,
+            "{extent:?}: {took} vs {want}"
+        );
+    }
+    // Across the front bend: a 10 wide slot from y = 10 down past the edge
+    // (y = -30 in the plate's plane), wrapped into the flange.
+    let mut p = base.clone();
+    flange(&mut p, &[Point3::new(50.0, 0.0, 2.0)], 25.0, |_| {});
+    let v1 = volume(&p);
+    let i = top_sketch(&mut p);
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(45.0, -30.0), Point2::new(55.0, 10.0))
+        .unwrap();
+    let regions = p.sketches[i].sketch.regions();
+    let profiles = vec![ProfileRef::of(&regions[0], regions[0].interior_point())];
+    let sid = p.sketches[i].id.clone();
+    op(
+        &mut p,
+        SheetOp::Cut {
+            sketch: sid,
+            profiles,
+            extent: CutExtent::Thickness,
+            depth: 0.0,
+            across: true,
+        },
+    );
+    check(&p);
+    let took = v1 - volume(&p);
+    // In the flat the material under the slot runs from y = 10 to the
+    // flange's end: the base set back 4 (Inside), the bend's allowance
+    // BA = π/2·(R + K·T), the leg 25 − 4: 10 wide × that × 2 thick.
+    let ba = std::f64::consts::FRAC_PI_2 * (2.0 + 0.44 * 2.0);
+    let len = 10.0 - (4.0 - ba - 21.0);
+    let want = 10.0 * len * 2.0;
+    assert!(
+        (took - want).abs() < 0.02 * want,
+        "across: {took} vs {want}"
+    );
+}
+
+/// Flange corner settings: its own corner relief shape, size and gap, and a
+/// Corner Override (Overlap at one corner), all on one tray feature.
+#[test]
+fn flange_corner_settings() {
+    use cadcraft3d::part::sheet_metal::{CornerOverride, CornerRelief, SeamType};
+    let edges = [
+        Point3::new(60.0, 0.0, 2.0),
+        Point3::new(120.0, 40.0, 2.0),
+        Point3::new(60.0, 80.0, 2.0),
+        Point3::new(0.0, 40.0, 2.0),
+    ];
+    let base = tray();
+    let v_rule = volume(&base);
+    let mut vols = Vec::new();
+    for shape in [CornerRelief::Square, CornerRelief::Trim] {
+        let mut p = rect(120.0, 80.0);
+        flange(&mut p, &edges, 20.0, |d| {
+            d.corner_shape = Some(shape);
+            d.corner_size = Some(10.0);
+            d.corner_gap = Some(3.0);
+        });
+        check(&p);
+        vols.push(volume(&p));
+    }
+    assert!(
+        vols[0] < vols[1],
+        "a 10 mm square relief takes more than none: {vols:?}"
+    );
+    assert!(
+        (vols[1] - v_rule).abs() > 1.0,
+        "the feature's settings were used"
+    );
+    // Overlap at the corner between the first two flanges (front, right).
+    let mut p = rect(120.0, 80.0);
+    flange(&mut p, &edges, 20.0, |d| {
+        d.seams = vec![CornerOverride {
+            a: 0,
+            b: 1,
+            seam: SeamType::Overlap,
+            gap: None,
+            ratio: 1.0,
+        }];
+    });
+    check(&p);
+    let front = flange_points(&p, "Flange1.1")
+        .iter()
+        .map(|q| q.x)
+        .fold(Real::NEG_INFINITY, Real::max);
+    assert!(
+        (front - 120.0).abs() < 0.05,
+        "the front runs over the right flange: {front}"
+    );
+}
+
+/// Seen in the app (2026-10-26): two flanges with an Overlap corner override,
+/// and the base plate was not drawn. Every face of the sheet has triangles.
+#[test]
+fn overlap_corner_keeps_every_face_drawn() {
+    use cadcraft3d::part::sheet_metal::{CornerOverride, SeamType};
+    let mut p = rect(40.0, 25.0);
+    flange(
+        &mut p,
+        &[Point3::new(20.0, 0.0, 2.0), Point3::new(40.0, 12.5, 2.0)],
+        20.0,
+        |d| {
+            d.seams = vec![CornerOverride {
+                a: 0,
+                b: 1,
+                seam: SeamType::Overlap,
+                gap: None,
+                ratio: 1.0,
+            }];
+        },
+    );
+    check(&p);
+    for (_, f) in p.body.faces() {
+        let n = f.mesh.as_ref().map_or(0, |m| m.triangles.len());
+        eprintln!("{:?}: {n}", f.name);
+    }
+    let empty: Vec<_> = p
+        .body
+        .faces()
+        .filter(|(_, f)| f.mesh.as_ref().is_none_or(|m| m.triangles.is_empty()))
+        .filter_map(|(_, f)| f.name.clone())
+        .collect();
+    assert!(empty.is_empty(), "faces without triangles: {empty:?}");
+    // The base's triangles face out of the material (top up, bottom down):
+    // reversed ones are culled in the view (the plate was not drawn).
+    for (_, f) in p.body.faces() {
+        let (Some(n), Some(m)) = (f.name.as_deref(), f.mesh.as_ref()) else {
+            continue;
+        };
+        let want = match n {
+            "Face1:base:top" => 1.0,
+            "Face1:base:bottom" => -1.0,
+            _ => continue,
+        };
+        let mut sum = 0.0;
+        for t in &m.triangles {
+            let [a, b, c] = t.map(|i| m.positions[i as usize]);
+            sum += (b - a).cross(&(c - a)).z;
+        }
+        assert!(
+            sum * want > 0.0,
+            "{n}: triangles face the wrong way ({sum})"
+        );
+    }
+    // What the view draws: the solid's tessellation, every face in it.
+    use cadcraft3d::kernel::TessellationOptions;
+    for (sid, _) in p.body.solids() {
+        let mesh = p
+            .body
+            .tessellate_solid(sid, &TessellationOptions::default())
+            .unwrap();
+        // Normals the shader can light (a NaN made the plate invisible).
+        for (f, r) in &mesh.face_triangles {
+            for t in &mesh.faces.triangles[r.clone()] {
+                for &i in t {
+                    let n = mesh.faces.normals[i as usize];
+                    assert!(
+                        n.iter().all(|x| x.is_finite()) && (n.norm() - 1.0).abs() < 1e-6,
+                        "{:?}: normal {n:?}",
+                        p.body.face(*f).and_then(|x| x.name.clone())
+                    );
+                }
+            }
+        }
+        let drawn: Vec<_> = mesh
+            .face_triangles
+            .iter()
+            .filter(|(_, r)| !r.is_empty())
+            .filter_map(|(f, _)| p.body.face(*f).and_then(|x| x.name.clone()))
+            .collect();
+        for (_, f) in p.body.faces() {
+            let n = f.name.clone().unwrap_or_default();
+            assert!(drawn.contains(&n), "{n} is not drawn: {drawn:?}");
+        }
+    }
+}
+
+/// The owner's session of 2026-10-26 (`tests/data/sheet_cut_across_journal.jsonl`): a rectangle
+/// sketched on a flange's face, running past the face's edge onto the bend. Cut Across Bend did
+/// nothing over the bend, because the projected edge of the face split the rectangle into two
+/// profiles and only the one on the face was picked. A Cut's profiles are now the user's own
+/// curves (`PartSketch::own_regions`): the whole rectangle is one profile and its developed area
+/// is cut, across the bend.
+#[test]
+fn cut_across_bend_from_the_owners_session() {
+    use cadcraft3d::diagnostics::replay;
+    use cadcraft3d::part::Feature;
+    use cadcraft3d::part::sheet_metal::SheetOp;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/sheet_cut_across_journal.jsonl");
+    // The part before the Cut (state 11) and the Cut the owner made (state 12).
+    let before = replay::part_at(&path, 11).unwrap();
+    let mut p = replay::part_at(&path, 12).unwrap();
+    p.regenerate().unwrap();
+    let ps = p.sketches.iter().find(|s| s.id == "Sketch2").unwrap();
+    assert_eq!(ps.sketch.regions().len(), 3, "split by the face's projected edge");
+    let own = ps.own_regions();
+    let rect = own
+        .iter()
+        .find(|r| r.area() < 2000.0)
+        .expect("the rectangle as one profile");
+    assert!((rect.area() - (624.0 + 574.0)).abs() < 5.0, "{}", rect.area());
+    let k = p
+        .features
+        .iter()
+        .position(|f| matches!(f, Feature::SheetOp(_)))
+        .unwrap();
+    let Feature::SheetOp(mut o) = p.features[k].clone() else {
+        panic!("not a sheet op");
+    };
+    if let SheetOp::Cut { across, .. } = &mut o.op {
+        *across = true;
+    }
+    p.replace_feature(k, Feature::SheetOp(o)).unwrap();
+    check(&p);
+    let mut b = before.clone();
+    b.regenerate().unwrap();
+    let took = volume(&b) - volume(&p);
+    let t = 2.0;
+    let want = rect.area() * t;
+    assert!((took - want).abs() < 0.03 * want, "across the bend: {took} vs {want}");
 }

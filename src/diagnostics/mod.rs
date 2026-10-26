@@ -176,11 +176,18 @@ pub fn open_session(logs: &Path, now: SystemTime) -> Result<SessionFiles, String
         n += 1;
     }
     let previous = session_ids(logs).into_iter().next_back().map(|prev| {
-        let clean = std::fs::read_to_string(logs.join(format!("{prev}.json")))
+        let v = std::fs::read_to_string(logs.join(format!("{prev}.json")))
             .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+        let clean = v
+            .as_ref()
             .and_then(|v| v.get("clean_exit")?.as_bool())
             .unwrap_or(false);
+        // What it was doing last (a process killed by an abort, such as a
+        // stack overflow, leaves no crash report: this is the only trace).
+        if !clean && let Some(a) = v.as_ref().and_then(|v| v.get("activity")?.as_str()) {
+            ::log::warn!("previous session {prev} ended while: {a}");
+        }
         (prev, clean)
     });
     let files = SessionFiles {
@@ -201,6 +208,23 @@ pub fn open_session(logs: &Path, now: SystemTime) -> Result<SessionFiles, String
     write_atomic(&files.sidecar, sidecar.to_string().as_bytes())?;
     rotate(logs, KEEP_SESSIONS, KEEP_CRASHES);
     Ok(files)
+}
+
+/// Records what the session is doing now in its sidecar (`activity`, with
+/// the time): the work that starts a kernel computation — a checkpoint, a
+/// preview — so that a session killed without a crash report (an abort, a
+/// stack overflow) still says what it was doing. Not for every frame.
+pub fn activity(what: &str) {
+    let Some(f) = session().and_then(|s| s.files.as_ref()) else {
+        return;
+    };
+    let mut v = std::fs::read_to_string(&f.sidecar)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}));
+    v["activity"] = serde_json::Value::String(format!("{} {what}", iso(SystemTime::now())));
+    let _ = write_atomic(&f.sidecar, v.to_string().as_bytes());
 }
 
 /// Sets `clean_exit` in a session sidecar.

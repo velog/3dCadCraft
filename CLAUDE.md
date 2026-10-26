@@ -1006,6 +1006,19 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   returning the new faces' triangles + edges (`new_faces`), drawn see-through in `sm_view`. The command is
   `Cmd::Sheet` in `command_ui` (right-click menu, Enter, Esc, prompt). Corner Seam corners come from `base_pairs`
   (a corner relief moves the bends' ends off the corner, so `corners()` sees none).
+  A sheet edge is `<panel>:<side>:top|bottom`: a second click switches to the other face's edge
+  (`sm_other_face_edge`), Ctrl+click removes. A Flange's own corner settings (`corner_shape/size/gap`,
+  `seams` by edge index) are applied in `ksm::flanges` by swapping the model's `relief`/`gap` for its call.
+  A sheet metal Cut's profiles are `PartSketch::own_regions` (projected edges do not split them): a rectangle
+  sketched across a face's edge is one profile, which Cut Across Bend carries over the bend (owner's journal
+  `tests/data/sheet_cut_across_journal.jsonl`). Old Cuts still resolve their profiles by the seed point.
+- **Aborts leave no crash report** (owner's Cut crash 2026-10-26: Windows `0xc0000409`, subcode 7 = `abort()`;
+  a stack overflow aborts too). The desktop binary links a 64 MB main-thread stack (`build.rs`; Windows' default is
+  1 MB and OK builds features on the main thread), and `diagnostics::activity` writes the last checkpoint /
+  preview into the session sidecar, which the next start logs as `previous session … ended while: …`. The
+  Windows event log (`Get-WinEvent` Application, id 1000) shows the exception code.
+- **`finish_sketch` must not force the ribbon tab**: it returns to `tab_before_sketch` only when the Sketch tab
+  was showing (it used to jump to 3D Model after every command, since commands call `finish_sketch` first).
 - **Drawings (D1)**: the active document can be a drawing (`is_drawing()`); `viewport` hands over to
   `drawing_viewport` *before* any 3D work and `build_scene` returns nothing, Properties / browser / status
   prompt go to `gui/drawing.rs`, `apply` refuses commands whose `valid_in(Env::Drawing)` is false (File /

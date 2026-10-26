@@ -657,6 +657,19 @@ struct Corner {
     c: Vec2,
 }
 
+/// What a sheet metal Cut removes ([`SheetBody::cut_through`]; 3DCadCraft addition).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CutMode {
+    /// Through the panel the sketch lies on.
+    Face,
+    /// So deep from the sketch's face (a pocket).
+    Depth(f64),
+    /// Through every parallel panel along the normal.
+    All,
+    /// Wrapped across the bends past the sketch's panel.
+    AcrossBends,
+}
+
 /// How a corner between two flanges is closed (3DCadCraft addition: Corner Seam).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SeamKind {
@@ -3123,11 +3136,20 @@ impl SheetBody {
         self.close_corner_as(&k, kind, gap, ratio).map_err(DocError::Invalid)
     }
 
-    /// Cut `regions` (in the world plane `plane`) through the sheet where they meet the material
-    /// of a panel parallel to `plane` and within one thickness of it (3DCadCraft addition: the
-    /// sheet metal Cut, kept in the flat pattern as a cut-out). Unfolded, the flat pattern is cut.
-    /// Returns how many cut-outs were added; an error when the regions meet no such material.
-    pub fn cut_through(&mut self, plane: &Plane, regions: &[Region2]) -> Result<usize> {
+    /// Cut `regions` (in the world plane `plane`) into the sheet (3DCadCraft addition: the sheet
+    /// metal Cut, kept in the flat pattern as cut-outs or pockets). `mode`:
+    /// - `Face`: through the panels parallel to `plane` within one thickness of it, where the
+    ///   regions meet their material;
+    /// - `Depth(d)`: the same panels, `d` deep from the face the sketch lies on (a pocket; the
+    ///   whole thickness and more is a cut-out);
+    /// - `All`: through every panel parallel to `plane`, however far along its normal;
+    /// - `AcrossBends`: on the panel the sketch lies on, the regions mapped into the flat pattern
+    ///   through that panel and cut out there whole, so that a profile running past the panel
+    ///   wraps across the bends beyond it (Inventor's Cut Across Bend).
+    ///
+    /// Unfolded, the flat pattern is cut. Returns how many cut-outs or pockets were added; an
+    /// error when the regions meet no such material.
+    pub fn cut_through(&mut self, plane: &Plane, regions: &[Region2], mode: CutMode) -> Result<usize> {
         let mut work = FlatWork::new();
         let n = plane.normal();
         let candidates: Vec<(Option<usize>, Region2)> = if self.flat {
@@ -3139,21 +3161,70 @@ impl SheetBody {
         } else {
             self.material_panels(Some(plane), &mut work)?
         };
-        let mut added = 0;
+        let reach = self.t + 1e-6;
+        // (panel, its material, distance of its bottom and top face from the plane)
+        let mut near: Vec<(Option<usize>, Region2, f64, f64)> = Vec::new();
         for (pi, panel) in candidates {
-            let w = self.world(pi);
+            let w = if self.flat { self.world(None) } else { self.world(pi) };
             let lo = (apply_point(&w, Vec3::ZERO) - plane.origin).dot(n);
             let hi = (apply_point(&w, Vec3::new(0.0, 0.0, self.t)) - plane.origin).dot(n);
-            let reach = self.t + 1e-6;
-            if lo.abs().min(hi.abs()) > reach && lo.signum() == hi.signum() {
-                continue;
+            let touches = !(lo.abs().min(hi.abs()) > reach && lo.signum() == hi.signum());
+            if touches || mode == CutMode::All {
+                near.push((pi, panel, lo, hi));
             }
-            for r in regions {
-                let flat = self.region_to_flat(pi, plane, r)?;
-                let met = material_boolean(std::slice::from_ref(&panel), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
-                if !met.is_empty() && !self.holes.contains(&flat) {
-                    self.holes.push(flat);
-                    added += 1;
+        }
+        let mut added = 0;
+        if mode == CutMode::AcrossBends {
+            // The panel the sketch lies on: the nearest one the regions meet.
+            near.sort_by(|a, b| a.2.abs().min(a.3.abs()).total_cmp(&b.2.abs().min(b.3.abs())));
+            for (pi, panel, _, _) in &near {
+                let flats = regions.iter().map(|r| self.region_to_flat(*pi, plane, r)).collect::<Result<Vec<_>>>()?;
+                let meets = flats.iter().any(|flat| {
+                    material_boolean(std::slice::from_ref(panel), std::slice::from_ref(flat), kernel::BoolOp::Intersect, &mut work)
+                        .is_ok_and(|m| !m.is_empty())
+                });
+                if meets {
+                    for flat in flats {
+                        if !self.holes.contains(&flat) {
+                            self.holes.push(flat);
+                            added += 1;
+                        }
+                    }
+                    break;
+                }
+            }
+        } else {
+            for (pi, panel, lo, hi) in &near {
+                for r in regions {
+                    let flat = self.region_to_flat(*pi, plane, r)?;
+                    let met = material_boolean(std::slice::from_ref(panel), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
+                    if met.is_empty() {
+                        continue;
+                    }
+                    match mode {
+                        CutMode::Depth(d) if d < self.t - 1e-9 => {
+                            if !(d > 0.0) {
+                                return Err(DocError::Invalid("the cut depth must be positive".into()));
+                            }
+                            // From the face the sketch lies on into the material.
+                            let (z0, z1) = if hi.abs() <= lo.abs() { (self.t - d, self.t) } else { (0.0, d) };
+                            for region in met {
+                                self.record_pocket(region, z0, z1, &mut work)?;
+                                added += 1;
+                            }
+                        }
+                        _ => {
+                            // Only what lies on this panel: a profile running
+                            // past its edge does not reach over the bend (that
+                            // is `AcrossBends`).
+                            for region in met {
+                                if !self.holes.contains(&region) {
+                                    self.holes.push(region);
+                                    added += 1;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

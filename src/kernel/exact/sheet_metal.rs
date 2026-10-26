@@ -383,6 +383,7 @@ pub fn cut(
     prefix: &str,
     plane: &Plane,
     profiles: &[ExactProfile],
+    mode: CutMode,
 ) -> Result<(ExactSolid, SheetModel), String> {
     let pl = plane_of(plane)?;
     let regions: Vec<_> = profiles
@@ -391,12 +392,63 @@ pub fn cut(
         .collect();
     let mut next = (*m.0).clone();
     guarded_sheet("Cut", || {
-        next.cut_through(&pl, &regions)
+        let mode = match mode {
+            CutMode::Face => sd::CutMode::Face,
+            CutMode::Depth(d) => sd::CutMode::Depth(d),
+            CutMode::ThroughAll => sd::CutMode::All,
+            CutMode::AcrossBends => sd::CutMode::AcrossBends,
+        };
+        next.cut_through(&pl, &regions, mode)
             .map(|_| ())
             .map_err(|e| e.to_string())
     })?;
     let s = named_solid(&next, prefix, false)?;
     Ok((s, SheetModel(Arc::new(next))))
+}
+
+/// What a sheet metal Cut removes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CutMode {
+    /// Through the face the sketch lies on.
+    Face,
+    /// So deep from that face (a pocket).
+    Depth(Real),
+    /// Through every parallel wall along the sketch normal.
+    ThroughAll,
+    /// Wrapped across the bends past the sketch's face.
+    AcrossBends,
+}
+
+/// A flange feature's own corner settings (Inventor's Corner section):
+/// the relief where two of its bends meet, its size, the gap, and seams
+/// for single corners (between its flanges `a` and `b`, by edge order).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FlangeCorners {
+    /// Corner relief shape (`None`: the rule's).
+    pub shape: Option<CornerShape>,
+    /// Corner relief size (`None`: the rule's).
+    pub size: Option<Real>,
+    /// Gap between flanges at a corner (`None`: the rule's).
+    pub gap: Option<Real>,
+    /// Corner overrides: (flange a, flange b, seam, gap, overlap ratio).
+    pub seams: Vec<(usize, usize, Seam, Option<Real>, Real)>,
+}
+
+fn shape_of(c: CornerShape) -> sd::ReliefShape {
+    match c {
+        CornerShape::Notch => sd::ReliefShape::Notch,
+        CornerShape::Round => sd::ReliefShape::Round,
+        CornerShape::Rectangular => sd::ReliefShape::Rectangular,
+        CornerShape::Tear => sd::ReliefShape::Tear,
+    }
+}
+
+fn seam_of(s: Seam) -> sd::SeamKind {
+    match s {
+        Seam::Gap => sd::SeamKind::Gap,
+        Seam::Overlap => sd::SeamKind::Overlap,
+        Seam::ReverseOverlap => sd::SeamKind::ReverseOverlap,
+    }
 }
 
 /// How Corner Seam closes a corner.
@@ -451,11 +503,7 @@ pub fn seam(
     if next.flat {
         return Err("refold the sheet before changing its corners".into());
     }
-    let kind = match kind {
-        Seam::Gap => sd::SeamKind::Gap,
-        Seam::Overlap => sd::SeamKind::Overlap,
-        Seam::ReverseOverlap => sd::SeamKind::ReverseOverlap,
-    };
+    let kind = seam_of(kind);
     guarded_sheet("Corner Seam", || {
         next.seam_corner(a, b, kind, gap, ratio)
             .map_err(|e| e.to_string())
@@ -565,6 +613,7 @@ pub fn edge_point(m: &SheetModel, name: &str, near: Point3) -> Option<Point3> {
 /// Flanges on sheet edges (one feature `tag`): every edge trimmed back, the
 /// corners between them closed with the rule's gap. Returns the new solid
 /// and model, and notes on corners left open.
+#[allow(clippy::too_many_arguments)]
 pub fn flanges(
     m: &SheetModel,
     prefix: &str,
@@ -573,10 +622,22 @@ pub fn flanges(
     radius: Real,
     position: BendPosition,
     flip: bool,
+    corners: &FlangeCorners,
 ) -> Result<(ExactSolid, SheetModel, Vec<String>), String> {
     let mut next = (*m.0).clone();
     if next.flat {
         return Err("refold the sheet before adding flanges".into());
+    }
+    // The feature's own corner settings for its corners, the rule's after.
+    let rule = (next.relief, next.relief_size, next.gap);
+    if let Some(s) = corners.shape {
+        next.relief = shape_of(s);
+    }
+    if let Some(v) = corners.size {
+        next.relief_size = v;
+    }
+    if let Some(v) = corners.gap {
+        next.gap = v;
     }
     let each: Vec<sd::EdgeFlange> = edges
         .iter()
@@ -597,6 +658,19 @@ pub fn flanges(
     for (k, f) in next.flanges.iter_mut().enumerate().skip(n0) {
         f.tag = format!("{tag}.{}", k - n0 + 1);
     }
+    let mut notes = notes;
+    for &(a, b, kind, gap, ratio) in &corners.seams {
+        let (ta, tb) = (format!("{tag}.{}", a + 1), format!("{tag}.{}", b + 1));
+        let gap = gap.unwrap_or(next.gap);
+        let r = guarded_sheet("Flange", || {
+            next.seam_corner(&ta, &tb, seam_of(kind), gap, ratio)
+                .map_err(|e| e.to_string())
+        });
+        if let Err(e) = r {
+            notes.push(format!("corner {ta} / {tb}: {e}"));
+        }
+    }
+    (next.relief, next.relief_size, next.gap) = rule;
     let s = named_solid(&next, prefix, false)?;
     Ok((s, SheetModel(Arc::new(next)), notes))
 }
@@ -711,6 +785,7 @@ mod tests {
             rv.bend_radius,
             BendPosition::Inside,
             false,
+            &FlangeCorners::default(),
         )
         .unwrap();
         let (lo, hi) = super::super::bounds(&f).unwrap();

@@ -23,9 +23,9 @@ use super::valuefield::ExprValue;
 use crate::command::flow::{Flow, PickKind, Selector};
 use crate::kernel::{Point3, Vector3};
 use crate::part::sheet_metal::{
-    CornerRelief, FlangePosition, FlangeWidth, FoldLocation, SeamType, SheetConvertFeature,
-    SheetEdge, SheetFaceFeature, SheetFlangeFeature, SheetMetalDefaults, SheetOp, SheetOpFeature,
-    rule_of,
+    CornerOverride, CornerRelief, CutExtent, FlangePosition, FlangeWidth, FoldLocation, SeamType,
+    SheetConvertFeature, SheetEdge, SheetFaceFeature, SheetFlangeFeature, SheetMetalDefaults,
+    SheetOp, SheetOpFeature, rule_of,
 };
 use crate::part::{Feature, PartDocument, PartError, ProfileRef};
 
@@ -120,7 +120,7 @@ impl SmDraft {
             Feature::SheetFlange(f) => vec![sel(
                 "edges",
                 "Edges",
-                "click the sheet edges to bend (a second click removes one)",
+                "click the sheet edges to bend (again: the other face's edge, Ctrl+click removes)",
                 &[PickKind::Edge][..],
                 false,
                 f.edges.len(),
@@ -147,7 +147,7 @@ impl SmDraft {
                 SheetOp::Hem { edges, .. } => vec![sel(
                     "edges",
                     "Edges",
-                    "click the sheet edges to hem (a second click removes one)",
+                    "click the sheet edges to hem (again: the other face's edge, Ctrl+click removes)",
                     &[PickKind::Edge][..],
                     false,
                     edges.len(),
@@ -179,7 +179,7 @@ impl SmDraft {
                 SheetOp::CornerSeam { a, .. } => vec![sel(
                     "corner",
                     "Corner",
-                    "click an edge of a flange next to the corner",
+                    "click a numbered corner dot (or a flange edge next to the corner)",
                     &[PickKind::Edge][..],
                     true,
                     usize::from(!a.is_empty()),
@@ -197,6 +197,9 @@ impl SmDraft {
 pub(super) struct SmPreview {
     tris: Vec<[Point3; 3]>,
     edges: Vec<Vec<Point3>>,
+    /// A Flange's corners between two of its flanges: (edge index a, edge
+    /// index b, the corner) — the rows of its Corner Overrides.
+    corners: Vec<(usize, usize, Point3)>,
 }
 
 type SmResult = Result<SmPreview, String>;
@@ -215,6 +218,8 @@ pub(super) struct SheetUi {
     job: RefCell<Option<(String, Receiver<SmResult>)>>,
     /// The last finished preview.
     ready: RefCell<Option<(String, SmResult)>>,
+    /// The corners of the last good Flange preview (Corner Overrides).
+    corners: RefCell<Vec<(usize, usize, Point3)>>,
 }
 
 /// A pick in the graphics window.
@@ -250,9 +255,38 @@ fn build(
     }
 }
 
-/// The faces of `part` that are not in `before` (by name) or carry `id`:
-/// their triangles and edges.
-fn new_faces(part: &PartDocument, before: &HashSet<String>, id: &str) -> SmPreview {
+/// A face's shape signature: its triangle count and box (a changed face —
+/// a flange a Corner Seam ran on — has another).
+pub(super) type FaceSig = (usize, [i64; 6]);
+
+fn face_sig(f: &crate::kernel::Face) -> Option<FaceSig> {
+    let m = f.mesh.as_ref()?;
+    let mut b = [f64::MAX, f64::MAX, f64::MAX, f64::MIN, f64::MIN, f64::MIN];
+    for p in &m.positions {
+        for k in 0..3 {
+            b[k] = b[k].min(p[k]);
+            b[k + 3] = b[k + 3].max(p[k]);
+        }
+    }
+    // Micrometres: the same face rebuilt compares equal.
+    Some((m.triangles.len(), b.map(|v| (v * 1000.0).round() as i64)))
+}
+
+/// The faces of a part by name with their shape (the preview's "before").
+fn face_sigs(part: &PartDocument) -> std::collections::HashMap<String, Option<FaceSig>> {
+    part.body
+        .faces()
+        .filter_map(|(_, f)| Some((f.name.clone()?, face_sig(f))))
+        .collect()
+}
+
+/// The faces of `part` that are new or changed against `before` (by name
+/// and shape) or carry `id`: their triangles and edges.
+fn new_faces(
+    part: &PartDocument,
+    before: &std::collections::HashMap<String, Option<FaceSig>>,
+    id: &str,
+) -> SmPreview {
     let body = &part.body;
     let opts = crate::kernel::TessellationOptions::default();
     let key = format!("{id}.");
@@ -263,7 +297,8 @@ fn new_faces(part: &PartDocument, before: &HashSet<String>, id: &str) -> SmPrevi
         let Some(n) = f.name.as_deref() else {
             continue;
         };
-        if before.contains(n) && !n.contains(&key) && !n.contains(&key2) {
+        let same = before.get(n).is_some_and(|s| *s == face_sig(f));
+        if same && !n.contains(&key) && !n.contains(&key2) {
             continue;
         }
         if let Some(m) = &f.mesh {
@@ -285,6 +320,18 @@ fn new_faces(part: &PartDocument, before: &HashSet<String>, id: &str) -> SmPrevi
             }
         }
     }
+    // The new feature's corners: tags `<id>.<k>` are its k-th edge.
+    let index = |tag: &str| -> Option<usize> {
+        tag.strip_prefix(&key)?
+            .parse::<usize>()
+            .ok()?
+            .checked_sub(1)
+    };
+    out.corners = part
+        .sheet_corners()
+        .into_iter()
+        .filter_map(|c| Some((index(&c.a)?, index(&c.b)?, c.at + c.up * 2.0)))
+        .collect();
     out
 }
 
@@ -457,15 +504,20 @@ impl CadCraftApp {
                     Feature::SheetOp(SheetOpFeature::new(SheetOp::Cut {
                         sketch: String::new(),
                         profiles: Vec::new(),
+                        extent: Default::default(),
+                        depth: 0.0,
+                        across: false,
                     })),
                     "profiles",
                 );
-                if let Some(i) = self.sm_newest_sketch(&|ps| !ps.sketch.regions().is_empty()) {
+                if let Some(i) = self.sm_newest_sketch(&|ps| !ps.own_regions().is_empty()) {
                     let ps = &self.part().sketches[i];
-                    let regions = self.sketch_regions(&ps.sketch);
+                    let regions = ps.own_regions();
                     if regions.len() == 1
                         && let Feature::SheetOp(o) = &mut d.feature
-                        && let SheetOp::Cut { sketch, profiles } = &mut o.op
+                        && let SheetOp::Cut {
+                            sketch, profiles, ..
+                        } = &mut o.op
                     {
                         *sketch = ps.id.clone();
                         *profiles = vec![ProfileRef::of(&regions[0], regions[0].interior_point())];
@@ -558,6 +610,43 @@ impl CadCraftApp {
         d.active = d.flow().selectors.first().map(|s| s.key).unwrap_or("");
         self.sm.flat = false;
         self.sm.draft = Some(d);
+    }
+
+    /// Properties of a selected sheet metal feature (not being edited): what
+    /// it is and Edit Feature (the command's panel, as a double-click does).
+    pub(super) fn sm_feature_properties(&mut self, ui: &mut egui::Ui, k: usize) {
+        let Some(f) = self.part().features.get(k).cloned() else {
+            return;
+        };
+        self.panel_header(ui, super::icons::Icon::SheetMetal, f.name());
+        let text = match &f {
+            Feature::SheetFlange(fl) => format!(
+                "Flange on {} edge(s), {:.2} mm at {:.1}°",
+                fl.edges.len(),
+                fl.height,
+                fl.angle.to_degrees()
+            ),
+            Feature::SheetOp(o) => o.describe(),
+            Feature::SheetConvert(c) => {
+                format!(
+                    "Convert {} to sheet metal ({} bends)",
+                    c.body,
+                    c.bends.len()
+                )
+            }
+            _ => String::new(),
+        };
+        ui.label(text);
+        if let Some(h) = self.part().feature_health.get(f.id()) {
+            warning_box(ui, h);
+        }
+        if ui
+            .button("Edit Feature")
+            .on_hover_text("Its panel, with the preview (also: double-click it in the browser)")
+            .clicked()
+        {
+            self.sm_edit(k);
+        }
     }
 
     // ---- selector flow (command_ui) ----------------------------------------
@@ -810,13 +899,76 @@ impl CadCraftApp {
                 });
                 psection(ui, "sm_flange_bend", "Bend Properties", |ui| {
                     radius_row(ui, &mut f.radius, rule.bend_radius);
-                    plabel(ui, "Corner");
-                    ui.weak(format!(
-                        "gap {:.2} mm (rule; Corner Seam changes one corner)",
-                        rule.gap
-                    ));
-                    ui.end_row();
                 });
+                let corners = self.sm.corners.borrow().clone();
+                psection(ui, "sm_flange_corner", "Corner", |ui| {
+                    plabel(ui, "Corner Shape");
+                    let shown = f
+                        .corner_shape
+                        .map_or("Default (rule)".to_owned(), |c| c.label().to_owned());
+                    egui::ComboBox::from_id_salt("sm_corner_shape")
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut f.corner_shape, None, "Default (rule)");
+                            for c in CornerRelief::ALL {
+                                ui.selectable_value(&mut f.corner_shape, Some(c), c.label());
+                            }
+                        })
+                        .response
+                        .on_hover_text("The relief cut where two of these bends meet at a corner");
+                    ui.end_row();
+                    override_row(ui, "Relief Size", &mut f.corner_size, rule.corner_relief);
+                    override_row(ui, "Miter Gap", &mut f.corner_gap, rule.gap);
+                });
+                if corners.is_empty() {
+                    if f.edges.len() > 1 {
+                        ui.weak("Corner Overrides: the corners appear with the preview");
+                    }
+                } else {
+                    psection(ui, "sm_flange_overrides", "Corner Overrides", |ui| {
+                        for (k, &(a, b, _)) in corners.iter().enumerate() {
+                            plabel(ui, &format!("Corner {}", k + 1));
+                            let pos = f
+                                .seams
+                                .iter()
+                                .position(|o| (o.a, o.b) == (a, b) || (o.a, o.b) == (b, a));
+                            let current = pos.map(|i| f.seams[i].seam);
+                            let shown = current.map_or("Corner Defaults", |s| s.label());
+                            let mut choice = current;
+                            egui::ComboBox::from_id_salt(("sm_override", k))
+                                .selected_text(shown)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut choice, None, "Corner Defaults");
+                                    for s in SeamType::ALL {
+                                        ui.selectable_value(&mut choice, Some(s), s.label());
+                                    }
+                                })
+                                .response
+                                .on_hover_text(format!(
+                                    "Between the flanges on edges {} and {} (numbered in the view)",
+                                    a + 1,
+                                    b + 1
+                                ));
+                            if choice != current {
+                                match (choice, pos) {
+                                    (None, Some(i)) => {
+                                        f.seams.remove(i);
+                                    }
+                                    (Some(s), Some(i)) => f.seams[i].seam = s,
+                                    (Some(s), None) => f.seams.push(CornerOverride {
+                                        a,
+                                        b,
+                                        seam: s,
+                                        gap: None,
+                                        ratio: 1.0,
+                                    }),
+                                    (None, None) => {}
+                                }
+                            }
+                            ui.end_row();
+                        }
+                    });
+                }
             }
             Feature::SheetConvert(_) => {
                 psection(ui, "sm_convert", "Behavior", |ui| {
@@ -913,19 +1065,62 @@ impl CadCraftApp {
                         ui.end_row();
                     });
                 }
-                SheetOp::Cut { .. } => {
+                SheetOp::Cut { extent, across, .. } => {
                     psection(ui, "sm_cut", "Behavior", |ui| {
-                        plabel(ui, "Cut");
-                        ui.label("Through the face the sketch lies on");
-                        ui.end_row();
                         plabel(ui, "Cut Across Bend");
-                        ui.weak("Unfold, Cut, Refold");
+                        ui.checkbox(across, "").on_hover_text(
+                            "The profile wraps across the bends past the face it lies on (through the thickness)",
+                        );
                         ui.end_row();
+                        if !*across {
+                            plabel(ui, "Extents");
+                            ui.horizontal(|ui| {
+                                for (x, tip) in [
+                                    (CutExtent::Thickness, "Through the face the sketch lies on"),
+                                    (CutExtent::Distance, "So deep into the material (a pocket)"),
+                                    (
+                                        CutExtent::ThroughAll,
+                                        "Through every wall along the sketch normal",
+                                    ),
+                                ] {
+                                    ui.selectable_value(extent, x, x.label()).on_hover_text(tip);
+                                }
+                            });
+                            ui.end_row();
+                            if *extent == CutExtent::Distance {
+                                field_row(ui, &mut fx, "Distance", &snapshot, "depth");
+                            }
+                        }
                     });
                 }
                 SheetOp::CornerSeam {
-                    seam, gap, ratio, ..
+                    body,
+                    a,
+                    b,
+                    seam,
+                    gap,
+                    ratio,
                 } => {
+                    let all = self.part().sheet_corners();
+                    psection(ui, "sm_seam_corners", "Corners", |ui| {
+                        plabel(ui, "Corner");
+                        ui.vertical(|ui| {
+                            if all.is_empty() {
+                                ui.weak("No two flanges meet at a corner");
+                            }
+                            for (k, c) in all.iter().enumerate() {
+                                let on = *a == c.a && *b == c.b;
+                                if ui
+                                    .selectable_label(on, format!("{}  {} / {}", k + 1, c.a, c.b))
+                                    .on_hover_text("Also: click the numbered dot in the view")
+                                    .clicked()
+                                {
+                                    (*body, *a, *b) = (c.body.clone(), c.a.clone(), c.b.clone());
+                                }
+                            }
+                        });
+                        ui.end_row();
+                    });
                     psection(ui, "sm_seam", "Seam", |ui| {
                         plabel(ui, "Type");
                         ui.vertical(|ui| {
@@ -1124,6 +1319,9 @@ impl CadCraftApp {
                         let k = k.clone();
                         *job = None;
                         let same = k == key;
+                        if let Ok(pv) = &r {
+                            *self.sm.corners.borrow_mut() = pv.corners.clone();
+                        }
                         *self.sm.ready.borrow_mut() = Some((k, r.clone()));
                         if same {
                             return Some(r);
@@ -1137,12 +1335,9 @@ impl CadCraftApp {
             }
         }
         let mut trial = self.part().clone();
-        let before: HashSet<String> = trial
-            .body
-            .faces()
-            .filter_map(|(_, f)| f.name.clone())
-            .collect();
+        let before = face_sigs(&trial);
         let (feature, edit, sketch) = (d.feature.clone(), d.edit, d.sketch);
+        crate::diagnostics::activity(&format!("{} preview", d.title()));
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("sheet metal preview".into())
@@ -1190,20 +1385,101 @@ impl CadCraftApp {
         for line in self.sm_chosen() {
             self.draw_visible_polyline(painter, rect, &line, Stroke::new(3.0, CHOSEN));
         }
+        self.sm_draw_corners(painter, rect);
         let mut took = false;
+        let remove = painter
+            .ctx()
+            .input(|i| i.modifiers.command || i.modifiers.ctrl);
         if let Some(p) = pointer {
-            let hover = self.sm_hover(p, rect);
+            let hover = self
+                .sm_corner_hover(p, rect)
+                .or_else(|| self.sm_hover(p, rect));
             if let Some((_, lines)) = &hover {
                 for line in lines {
                     self.draw_visible_polyline(painter, rect, line, Stroke::new(3.0, PICK));
                 }
             }
             if clicked && let Some((pick, _)) = hover {
-                self.sm_pick(pick);
+                self.sm_pick(pick, remove);
                 took = true;
             }
         }
         took
+    }
+
+    /// The corners to show as numbered dots: every corner (Corner Seam), or
+    /// the open Flange's own (its Corner Overrides rows).
+    fn sm_corner_marks(
+        &self,
+    ) -> Vec<(
+        String,
+        Point3,
+        Option<crate::part::sheet_metal::SheetCorner>,
+    )> {
+        match self.sm.draft.as_ref().map(|d| &d.feature) {
+            Some(Feature::SheetOp(o)) if matches!(o.op, SheetOp::CornerSeam { .. }) => self
+                .part()
+                .sheet_corners()
+                .into_iter()
+                .enumerate()
+                .map(|(k, c)| ((k + 1).to_string(), c.at + c.up * 2.0, Some(c)))
+                .collect(),
+            Some(Feature::SheetFlange(_)) => self
+                .sm
+                .corners
+                .borrow()
+                .iter()
+                .enumerate()
+                .map(|(k, &(_, _, at))| ((k + 1).to_string(), at, None))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn sm_draw_corners(&self, painter: &egui::Painter, rect: Rect) {
+        let chosen = match self.sm.draft.as_ref().map(|d| &d.feature) {
+            Some(Feature::SheetOp(o)) => match &o.op {
+                SheetOp::CornerSeam { a, b, .. } => Some((a.clone(), b.clone())),
+                _ => None,
+            },
+            _ => None,
+        };
+        for (label, at, c) in self.sm_corner_marks() {
+            let Some(s) = self.camera.project(&at, rect) else {
+                continue;
+            };
+            let on = c
+                .as_ref()
+                .zip(chosen.as_ref())
+                .is_some_and(|(c, (a, b))| c.a == *a && c.b == *b);
+            let fill = if on { CHOSEN } else { PREVIEW };
+            painter.circle_filled(s, 9.0, fill);
+            painter.circle_stroke(s, 9.0, Stroke::new(1.0, Color32::WHITE));
+            painter.text(
+                s,
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::FontId::proportional(11.0),
+                Color32::WHITE,
+            );
+        }
+    }
+
+    /// Corner Seam: the numbered dot under the cursor.
+    fn sm_corner_hover(&self, p: Pos2, rect: Rect) -> Option<(Pick, Vec<Vec<Point3>>)> {
+        self.sm_corner_marks()
+            .into_iter()
+            .filter_map(|(_, at, c)| {
+                let s = self.camera.project(&at, rect)?;
+                Some((s.distance(p), at, c?))
+            })
+            .filter(|(d, _, _)| *d < 12.0)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, at, c)| {
+                let line = vec![c.at, c.at + c.up * 15.0];
+                let _ = at;
+                (Pick::Corner(c), vec![line])
+            })
     }
 
     fn sm_draw_preview(&self, painter: &egui::Painter, rect: Rect, pv: &SmPreview) {
@@ -1253,9 +1529,13 @@ impl CadCraftApp {
         let edge_line =
             |body: &str, e: &SheetEdge| part.sheet_edge_ends(body, e).map(|(a, b)| vec![a, b]);
         let region_lines =
-            |i: Option<usize>, profiles: &[ProfileRef], out: &mut Vec<Vec<Point3>>| {
+            |i: Option<usize>, profiles: &[ProfileRef], own: bool, out: &mut Vec<Vec<Point3>>| {
                 if let Some(ps) = i.and_then(|i| part.sketches.get(i)) {
-                    let regions = self.sketch_regions(&ps.sketch);
+                    let regions = if own {
+                        ps.own_regions()
+                    } else {
+                        self.sketch_regions(&ps.sketch)
+                    };
                     let pl = &ps.sketch.plane;
                     for pr in profiles {
                         if let Some(r) = pr.resolve(&regions) {
@@ -1274,7 +1554,7 @@ impl CadCraftApp {
                 }
             };
         match &d.feature {
-            Feature::SheetFace(f) => region_lines(d.sketch, &f.profiles, &mut out),
+            Feature::SheetFace(f) => region_lines(d.sketch, &f.profiles, false, &mut out),
             Feature::SheetFlange(f) => {
                 out.extend(f.edges.iter().filter_map(|e| edge_line(&f.body, e)));
             }
@@ -1304,7 +1584,7 @@ impl CadCraftApp {
                 SheetOp::Hem { body, edges, .. } => {
                     out.extend(edges.iter().filter_map(|e| edge_line(body, e)));
                 }
-                SheetOp::Cut { profiles, .. } => region_lines(d.sketch, profiles, &mut out),
+                SheetOp::Cut { profiles, .. } => region_lines(d.sketch, profiles, true, &mut out),
                 SheetOp::Fold { sketch, line, .. } => {
                     if let Some(l) = sketch_line(part, sketch, line) {
                         out.push(l);
@@ -1340,6 +1620,7 @@ impl CadCraftApp {
         let part = self.part();
         let (o, dir) = self.camera.ray(p, rect)?;
         if sel.takes(PickKind::Region) {
+            let cut = matches!(&d.feature, Feature::SheetOp(o) if matches!(o.op, SheetOp::Cut { .. }));
             for (i, ps) in part.sketches.iter().enumerate() {
                 if !(ps.visible || d.sketch == Some(i)) {
                     continue;
@@ -1349,7 +1630,9 @@ impl CadCraftApp {
                     continue;
                 };
                 let uv = sk.plane.project(&world);
-                let regions = self.sketch_regions(sk);
+                // A Cut's profiles ignore projected edges (one rectangle
+                // across a face's edge is one profile).
+                let regions = if cut { ps.own_regions() } else { self.sketch_regions(sk) };
                 if let Some(r) = regions
                     .iter()
                     .filter(|r| r.contains(uv))
@@ -1437,8 +1720,15 @@ impl CadCraftApp {
         None
     }
 
-    /// Applies a pick to the active selector.
-    fn sm_pick(&mut self, pick: Pick) {
+    /// Applies a pick to the active selector (`remove`: Ctrl+click takes
+    /// an edge out).
+    fn sm_pick(&mut self, pick: Pick, remove: bool) {
+        // The same edge on the sheet's other face (a second click switches
+        // between the top and the bottom edge, owner 2026-10-26).
+        let other = match &pick {
+            Pick::SheetEdge(body, e) => self.sm_other_face_edge(body, e),
+            _ => None,
+        };
         let fold_body = match &pick {
             Pick::Line(i, key) => self
                 .part()
@@ -1468,7 +1758,15 @@ impl CadCraftApp {
                 d.sketch = Some(i);
             }
             (Feature::SheetFlange(f), Pick::SheetEdge(body, e)) => {
-                toggle_edge(&mut f.body, &mut f.edges, body, e, &mut status);
+                toggle_edge(
+                    &mut f.body,
+                    &mut f.edges,
+                    body,
+                    e,
+                    other,
+                    remove,
+                    &mut status,
+                );
             }
             (Feature::SheetConvert(c), Pick::Face(name, hit)) => {
                 c.face = crate::part::shell::FaceRef {
@@ -1486,7 +1784,7 @@ impl CadCraftApp {
             }
             (Feature::SheetOp(o), pick) => match (&mut o.op, pick) {
                 (SheetOp::Hem { body, edges, .. }, Pick::SheetEdge(b, e)) => {
-                    toggle_edge(body, edges, b, e, &mut status);
+                    toggle_edge(body, edges, b, e, other, remove, &mut status);
                 }
                 (
                     SheetOp::Fold {
@@ -1509,7 +1807,12 @@ impl CadCraftApp {
                     *sketch = sid.unwrap_or_default();
                     d.sketch = Some(i);
                 }
-                (SheetOp::Cut { sketch, profiles }, Pick::Region(i, pr)) => {
+                (
+                    SheetOp::Cut {
+                        sketch, profiles, ..
+                    },
+                    Pick::Region(i, pr),
+                ) => {
                     let id = sid.unwrap_or_default();
                     if *sketch != id {
                         *sketch = id;
@@ -1542,6 +1845,22 @@ impl CadCraftApp {
         if let Some(s) = status {
             self.file_status = Some(Err(s));
         }
+    }
+
+    /// The edge on the sheet's other face along `e` (top ↔ bottom).
+    fn sm_other_face_edge(&self, body: &str, e: &SheetEdge) -> Option<SheetEdge> {
+        let name = if let Some(s) = e.name.strip_suffix(":top") {
+            format!("{s}:bottom")
+        } else {
+            format!("{}:top", e.name.strip_suffix(":bottom")?)
+        };
+        let (_, _, n, _) = self.part().sheet_edge_frame(body, e)?;
+        let t = rule_of(self.part()).thickness;
+        let at = Point3::from(e.hint) - n * t;
+        Some(SheetEdge {
+            name,
+            hint: [at.x, at.y, at.z],
+        })
     }
 
     // ---- manipulators ------------------------------------------------------
@@ -1871,12 +2190,19 @@ fn radius_row(ui: &mut egui::Ui, radius: &mut Option<f64>, rule: f64) {
     ui.end_row();
 }
 
-/// Adds or removes a sheet edge (all on one sheet).
+/// A click on a sheet edge (all on one sheet): a new edge is added; a
+/// second click on a chosen edge switches it to the same edge on the other
+/// face of the sheet (`other`: top ↔ bottom, which also turns the flange
+/// to the other side); a click on the other face's edge of a chosen one
+/// takes that one instead; with `remove` (Ctrl+click) the edge is taken out.
+#[allow(clippy::too_many_arguments)]
 fn toggle_edge(
     sheet: &mut String,
     edges: &mut Vec<SheetEdge>,
     body: String,
     e: SheetEdge,
+    other: Option<SheetEdge>,
+    remove: bool,
     status: &mut Option<String>,
 ) {
     if sheet.is_empty() || edges.is_empty() {
@@ -1885,12 +2211,46 @@ fn toggle_edge(
         *status = Some("Sheet metal: the edges must be on one sheet".into());
         return;
     }
-    match edges.iter().position(|x| x.name == e.name) {
-        Some(k) => {
+    let same = edges.iter().position(|x| x.name == e.name);
+    let twin = other
+        .as_ref()
+        .and_then(|o| edges.iter().position(|x| x.name == o.name));
+    if remove {
+        edges.retain(|x| x.name != e.name && other.as_ref().is_none_or(|o| x.name != o.name));
+        return;
+    }
+    match (same, twin, other) {
+        (Some(k), _, Some(o)) => edges[k] = o,
+        (Some(k), _, None) => {
             edges.remove(k);
         }
-        None => edges.push(e),
+        (None, Some(k), _) => edges[k] = e,
+        (None, None, _) => edges.push(e),
     }
+}
+
+/// A rule value or the feature's own (a check box and a field).
+fn override_row(ui: &mut egui::Ui, label: &str, slot: &mut Option<f64>, rule: f64) {
+    plabel(ui, label);
+    ui.horizontal(|ui| {
+        let mut own = slot.is_some();
+        if ui
+            .checkbox(&mut own, "")
+            .on_hover_text("Off: the rule's value")
+            .changed()
+        {
+            *slot = own.then_some(rule);
+        }
+        match slot.as_mut() {
+            Some(v) => {
+                ui.add(ExprValue::new(v).suffix(" mm"));
+            }
+            None => {
+                ui.weak(format!("{rule:.3} mm (rule)"));
+            }
+        }
+    });
+    ui.end_row();
 }
 
 /// The world line of sketch line `key` of sketch `sketch`.
@@ -2004,7 +2364,7 @@ mod tests {
             crumb: Default::default(),
         };
         assert!(d.flow().ready());
-        let before = HashSet::new();
+        let before = Default::default();
         let id = build(&mut p, d.feature, None, d.sketch).unwrap();
         let pv = new_faces(&p, &before, &id);
         assert!(
@@ -2014,8 +2374,8 @@ mod tests {
         p
     }
 
-    fn names(p: &PartDocument) -> HashSet<String> {
-        p.body.faces().filter_map(|(_, f)| f.name.clone()).collect()
+    fn names(p: &PartDocument) -> std::collections::HashMap<String, Option<FaceSig>> {
+        face_sigs(p)
     }
 
     /// Every command through its draft: the flow asks for its inputs, then
@@ -2030,11 +2390,18 @@ mod tests {
         let mut d = SmDraft::new(Feature::SheetFlange(f.clone()), "edges");
         assert!(!d.flow().ready());
         let mut status = None;
+        // The same edge on the bottom face (what a second click switches to).
+        let bottom = SheetEdge {
+            name: edge.name.replace(":top", ":bottom"),
+            hint: [edge.hint[0], edge.hint[1], 0.0],
+        };
         toggle_edge(
             &mut f.body,
             &mut f.edges,
             body.clone(),
             edge.clone(),
+            Some(bottom.clone()),
+            false,
             &mut status,
         );
         assert_eq!(f.edges.len(), 1);
@@ -2050,9 +2417,11 @@ mod tests {
             .filter_map(|(_, f)| f.mesh.as_ref())
             .map(|m| m.triangles.len())
             .sum();
+        // The new faces and the changed ones (the plate is set back at the
+        // bend), not the whole part twice.
         assert!(
-            !pv.tris.is_empty() && pv.tris.len() < all,
-            "only the new faces"
+            !pv.tris.is_empty() && pv.tris.len() <= all,
+            "the new and changed faces"
         );
         // Edit Feature: the same draft with a new height replaces it.
         let k = p.features.iter().position(|x| x.id() == id).unwrap();
@@ -2067,12 +2436,45 @@ mod tests {
         let (lo, hi) = q.body.bounding_box().unwrap();
         assert!((hi.z - lo.z - 35.0).abs() < 0.5, "edited height: {lo} {hi}");
         assert_eq!(q.features.len(), p.features.len());
-        // A second click on the same edge removes it.
+        // A second click on the same edge switches it to the bottom face's
+        // edge (the flange then turns to the other side); the bottom edge
+        // builds a flange too.
         toggle_edge(
             &mut f.body,
             &mut f.edges,
             body.clone(),
             edge.clone(),
+            Some(bottom.clone()),
+            false,
+            &mut status,
+        );
+        assert_eq!(f.edges.len(), 1);
+        assert!(f.edges[0].name.ends_with(":bottom"), "{:?}", f.edges);
+        let mut down = base.clone();
+        build(&mut down, Feature::SheetFlange(f.clone()), None, None).unwrap();
+        let (lo, _) = down.body.bounding_box().unwrap();
+        assert!(
+            lo.z < -10.0,
+            "from the bottom edge the flange goes down: {lo}"
+        );
+        // Clicking the top edge again switches back; Ctrl+click removes it.
+        toggle_edge(
+            &mut f.body,
+            &mut f.edges,
+            body.clone(),
+            edge.clone(),
+            Some(bottom.clone()),
+            false,
+            &mut status,
+        );
+        assert!(f.edges[0].name.ends_with(":top"));
+        toggle_edge(
+            &mut f.body,
+            &mut f.edges,
+            body.clone(),
+            edge.clone(),
+            Some(bottom),
+            true,
             &mut status,
         );
         assert!(f.edges.is_empty());
@@ -2152,6 +2554,9 @@ mod tests {
         assert!(d.flow().ready() && d.flow().selectors.is_empty());
         let mut f = Feature::SheetOp(SheetOpFeature::new(SheetOp::Cut {
             sketch: "Sketch2".into(),
+            extent: Default::default(),
+            depth: 0.0,
+            across: false,
             profiles: vec![ProfileRef {
                 sources: Vec::new(),
                 seed: Point2::new(0.0, 0.0),
@@ -2161,5 +2566,42 @@ mod tests {
         assert!(
             matches!(&f, Feature::SheetOp(o) if matches!(&o.op, SheetOp::Cut { profiles, .. } if profiles.is_empty()))
         );
+    }
+}
+
+#[cfg(test)]
+mod journal_tests {
+    use super::*;
+
+    /// The owner's session of 2026-10-26 (`tests/data/sheet_cut_crash_journal.jsonl`): a sketch
+    /// on a flange's face with three regions; Cut was started there before the app aborted
+    /// (no crash report: an abort, see `diagnostics::activity`). Every region's Cut, as the
+    /// panel's preview builds it, either cuts or says why; none takes the process down.
+    #[test]
+    fn cut_on_a_flange_face_from_the_owners_session() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data/sheet_cut_crash_journal.jsonl");
+        let mut p = crate::diagnostics::replay::part_at(&path, 7).unwrap();
+        p.regenerate().unwrap();
+        let i = p.sketches.iter().position(|s| s.id == "Sketch2").unwrap();
+        let regions = p.sketches[i].sketch.regions();
+        assert_eq!(regions.len(), 3);
+        let before = face_sigs(&p);
+        let mut cut = 0;
+        for r in &regions {
+            let mut trial = p.clone();
+            let f = Feature::SheetOp(SheetOpFeature::new(SheetOp::Cut {
+                sketch: "Sketch2".into(),
+                profiles: vec![ProfileRef::of(r, r.interior_point())],
+                extent: Default::default(),
+                depth: 0.0,
+                across: false,
+            }));
+            if let Ok(id) = build(&mut trial, f, None, Some(i)) {
+                assert!(!new_faces(&trial, &before, &id).tris.is_empty());
+                cut += 1;
+            }
+        }
+        assert_eq!(cut, 2, "two regions lie on the flange, one beside it");
     }
 }

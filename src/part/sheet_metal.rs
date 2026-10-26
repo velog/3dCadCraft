@@ -79,6 +79,10 @@ impl CornerRelief {
         *self == CornerRelief::Round
     }
 
+    pub(super) fn kernel_pub(self) -> ksm::CornerShape {
+        self.kernel()
+    }
+
     fn kernel(self) -> ksm::CornerShape {
         match self {
             CornerRelief::Round => ksm::CornerShape::Round,
@@ -199,6 +203,58 @@ pub struct SheetEdge {
     pub hint: [Real; 3],
 }
 
+/// A Corner Override of a Flange (Inventor: Relief Override per corner): the
+/// corner between its flanges on edges `a` and `b` (indices into its edges).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CornerOverride {
+    /// The first flange's edge index (the one that overlaps with Overlap).
+    pub a: usize,
+    /// The other's.
+    pub b: usize,
+    /// The seam.
+    pub seam: SeamType,
+    /// The gap (`None`: the feature's or the rule's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<Real>,
+    /// Overlap: share of the thickness past the other's inner face.
+    #[serde(default = "ratio_default", skip_serializing_if = "is_one")]
+    pub ratio: Real,
+}
+
+/// What a sheet metal Cut removes (Inventor's Cut extents).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CutExtent {
+    /// Through the face the sketch lies on (Thickness).
+    #[default]
+    Thickness,
+    /// `depth` into the material from that face.
+    Distance,
+    /// Through every wall along the sketch normal.
+    ThroughAll,
+}
+
+impl CutExtent {
+    /// Every extent, in menu order.
+    pub const ALL: [CutExtent; 3] = [
+        CutExtent::Thickness,
+        CutExtent::Distance,
+        CutExtent::ThroughAll,
+    ];
+
+    /// Label (panel).
+    pub fn label(self) -> &'static str {
+        match self {
+            CutExtent::Thickness => "Thickness",
+            CutExtent::Distance => "Distance",
+            CutExtent::ThroughAll => "Through All",
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == CutExtent::Thickness
+    }
+}
+
 /// Width Extents of a flange (Inventor: Edge / Width / Offset; SolidWorks:
 /// Edit Flange Profile; Solid Edge: the flange's sides dragged): how much
 /// of each picked edge the flange covers.
@@ -274,6 +330,18 @@ pub struct SheetFlangeFeature {
     /// Width centred on the edge (Width).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub centered: bool,
+    /// Corner relief shape where two of its bends meet (`None`: the rule's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_shape: Option<CornerRelief>,
+    /// Corner relief size (`None`: the rule's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_size: Option<Real>,
+    /// Gap between its flanges at a corner (`None`: the rule's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_gap: Option<Real>,
+    /// Corner Overrides: single corners between two of its flanges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seams: Vec<CornerOverride>,
     /// Equations of the fields (`height`, `angle`, `offset1`, `offset2`, `width`).
     #[serde(
         default,
@@ -366,6 +434,10 @@ impl SheetFlangeFeature {
             offset2: 0.0,
             width: 0.0,
             centered: false,
+            corner_shape: None,
+            corner_size: None,
+            corner_gap: None,
+            seams: Vec::new(),
             params: Default::default(),
         }
     }
@@ -583,6 +655,15 @@ pub enum SheetOp {
         sketch: String,
         /// The profiles.
         profiles: Vec<ProfileRef>,
+        /// How deep.
+        #[serde(default, skip_serializing_if = "CutExtent::is_default")]
+        extent: CutExtent,
+        /// Depth for Distance (mm).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        depth: Real,
+        /// Cut Across Bend: the profile wraps across the bends past its face.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        across: bool,
     },
 }
 
@@ -656,6 +737,11 @@ impl SheetOpFeature {
             }
             SheetOp::Fold { .. } => vec![("angle", Unit::Deg)],
             SheetOp::Contour { .. } => vec![("width", Unit::Mm)],
+            SheetOp::Cut {
+                extent: CutExtent::Distance,
+                across: false,
+                ..
+            } => vec![("depth", Unit::Mm)],
             SheetOp::CornerSeam { gap, .. } => {
                 if gap.is_some() {
                     vec![("gap", Unit::Mm)]
@@ -674,6 +760,7 @@ impl SheetOpFeature {
             (SheetOp::Hem { gap, .. }, "gap") => *gap,
             (SheetOp::Fold { angle, .. }, "angle") => Some(*angle),
             (SheetOp::Contour { width, .. }, "width") => Some(*width),
+            (SheetOp::Cut { depth, .. }, "depth") => Some(*depth),
             (SheetOp::CornerSeam { gap, .. }, "gap") => *gap,
             _ => None,
         }
@@ -686,6 +773,7 @@ impl SheetOpFeature {
             (SheetOp::Hem { gap, .. }, "gap") => *gap = Some(v),
             (SheetOp::Fold { angle, .. }, "angle") => *angle = v,
             (SheetOp::Contour { width, .. }, "width") => *width = v,
+            (SheetOp::Cut { depth, .. }, "depth") => *depth = v,
             (SheetOp::CornerSeam { gap, .. }, "gap") => *gap = Some(v),
             _ => {}
         }

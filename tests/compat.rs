@@ -578,6 +578,9 @@ fn sheet_r21() -> PartDocument {
         .unwrap();
     let sid = p.sketches[j].id.clone();
     p.add_sheet_op(SheetOpFeature::new(SheetOp::Cut {
+        extent: Default::default(),
+        depth: 0.0,
+        across: false,
         sketch: sid.clone(),
         profiles: vec![ProfileRef::of(circle, circle.interior_point())],
     }))

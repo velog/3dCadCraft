@@ -2005,6 +2005,9 @@ fn speed_budgets() {
                 flip: false,
             },
             SheetOp::Cut {
+                extent: Default::default(),
+                depth: 0.0,
+                across: false,
                 sketch: sid.clone(),
                 profiles: holes,
             },

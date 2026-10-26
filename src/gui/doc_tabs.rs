@@ -40,6 +40,11 @@ impl CadCraftApp {
         self.cancel_extrude();
         self.blend_draft = None;
         self.work_draft = None;
+        // A sheet metal command points into this document's part.
+        if self.sm.draft.take().is_some() {
+            self.end_feature_edit();
+        }
+        self.sm.flat = false;
         self.measure_pick = None;
         self.face_sel = None;
         self.edge_sel = None;

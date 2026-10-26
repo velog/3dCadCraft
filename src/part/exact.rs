@@ -3231,9 +3231,22 @@ pub(super) fn sheet_op(
                 ksm::seam(&state.model, body, a, b, seam.kernel(), gap, *ratio).map_err(User)?;
             Ok(replace(k, solid, model, body))
         }
-        SheetOp::Cut { sketch, profiles } => {
+        SheetOp::Cut {
+            sketch,
+            profiles,
+            extent,
+            depth,
+            across,
+        } => {
+            use super::sheet_metal::CutExtent;
+            let mode = match (extent, across) {
+                (_, true) => ksm::CutMode::AcrossBends,
+                (CutExtent::Thickness, false) => ksm::CutMode::Face,
+                (CutExtent::Distance, false) => ksm::CutMode::Depth(*depth),
+                (CutExtent::ThroughAll, false) => ksm::CutMode::ThroughAll,
+            };
             let ps = sketch_of(sketch)?;
-            let regions = ps.sketch.regions();
+            let regions = ps.own_regions();
             let mut profs = Vec::new();
             for pr in profiles {
                 let region = pr
@@ -3253,7 +3266,7 @@ pub(super) fn sheet_op(
                 let Ok((k, state)) = sheet_of(body, solids, metal) else {
                     continue;
                 };
-                match ksm::cut(&state.model, body, &ps.sketch.plane, &profs) {
+                match ksm::cut(&state.model, body, &ps.sketch.plane, &profs, mode) {
                     Ok((solid, model)) => return Ok(replace(k, solid, model, body)),
                     Err(e) => why = e,
                 }
@@ -3353,6 +3366,16 @@ pub(super) fn sheet_flange(
         radius,
         fl.position.kernel_pub(),
         fl.flip,
+        &ksm::FlangeCorners {
+            shape: fl.corner_shape.map(|c| c.kernel_pub()),
+            size: fl.corner_size,
+            gap: fl.corner_gap,
+            seams: fl
+                .seams
+                .iter()
+                .map(|o| (o.a, o.b, o.seam.kernel(), o.gap, o.ratio))
+                .collect(),
+        },
     )
     .map_err(User)?;
     for n in notes {

@@ -627,6 +627,8 @@ struct CadCraftApp {
     bom_export: Option<String>,
 
     tab: Tab,
+    /// The ribbon tab before Edit Sketch (Finish Sketch returns to it).
+    tab_before_sketch: Tab,
     mouse: MousePreset,
     invert_wheel: bool,
     show_options: bool,
@@ -875,6 +877,7 @@ impl CadCraftApp {
             sm: Default::default(),
             bom_export: None,
             tab: Tab::Model,
+            tab_before_sketch: Tab::Model,
             mouse: MousePreset::Inventor,
             invert_wheel: false,
             show_options: false,
@@ -992,6 +995,7 @@ impl CadCraftApp {
     fn checkpoint(&mut self, label: &str) {
         self.history.record(label, self.project.clone());
         self.diag.checkpoint(label);
+        crate::diagnostics::activity(label);
     }
 
     /// Re-validates UI state after the project was replaced (undo, open).
@@ -1106,6 +1110,10 @@ impl CadCraftApp {
         }
         self.editing = Some(i);
         self.selection = Selection::Sketch(i);
+        // Finish Sketch returns to this tab (Sheet Metal stays Sheet Metal).
+        if self.tab != Tab::Sketch {
+            self.tab_before_sketch = self.tab;
+        }
         self.tab = Tab::Sketch;
         self.tools.set_tool(Tool::Select);
         self.part_mut().sketches[i].visible = true;
@@ -1145,7 +1153,21 @@ impl CadCraftApp {
         self.tools.dim_edit = None;
         self.tools.over_prompt = None;
         self.report = None;
-        self.tab = Tab::Model;
+        // Back to the tab the sketch was opened from; no sketch open: the
+        // ribbon stays where the user put it (it jumped to 3D Model after
+        // every sheet metal command, owner 2026-10-26).
+        if self.tab == Tab::Sketch {
+            self.tab = if self.tab_before_sketch.shown(
+                self.is_assembly(),
+                self.is_sheet_metal(),
+                self.is_drawing(),
+            ) && self.tab_before_sketch != Tab::Sketch
+            {
+                self.tab_before_sketch
+            } else {
+                Tab::Model
+            };
+        }
         // Breadcrumb: back to the command that opened the sketch.
         self.resume_suspended_draft();
         self.resume_hole();
@@ -1967,6 +1989,10 @@ impl CadCraftApp {
             return r;
         }
         let mut job = self.preview_job.borrow_mut();
+        crate::diagnostics::activity(&format!(
+            "preview {}",
+            key.chars().take(60).collect::<String>()
+        ));
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("preview".into())
@@ -4643,6 +4669,7 @@ impl CadCraftApp {
             self.pattern_draft = None;
             self.cancel_hole();
             self.thread_draft = None;
+            self.sm.draft = None;
             self.end_feature_edit();
             self.face_sel = None;
             self.edge_sel = None;
@@ -5148,6 +5175,7 @@ impl CadCraftApp {
             && self.extrude.is_none()
             && self.prim_draft.is_none()
             && self.target_pick.is_none()
+            && self.sm.draft.is_none()
             && on_cube.is_none();
         // Edges first (vertex > edge > face, 0-ui §3.2); the other
         // categories come from `sel_item_at` (one pick order, one filter).

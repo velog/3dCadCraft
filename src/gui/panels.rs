@@ -2286,6 +2286,13 @@ impl CadCraftApp {
             self.thread_properties(ui, k, t.clone());
             return;
         }
+        if matches!(
+            f,
+            Feature::SheetFlange(_) | Feature::SheetOp(_) | Feature::SheetConvert(_)
+        ) {
+            self.sm_feature_properties(ui, k);
+            return;
+        }
         let Some(sketch_id) = f.sketch().map(str::to_owned) else {
             return;
         };

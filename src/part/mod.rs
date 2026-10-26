@@ -549,6 +549,23 @@ impl PartSketch {
             || self.links.iter().any(|l| l.points.contains(&p))
     }
 
+    /// The closed regions of the user's own curves only: projected edges
+    /// (reference geometry) do not split them. A sheet metal Cut's profiles:
+    /// a rectangle drawn across the edge of the face it is sketched on is one
+    /// profile (Inventor), so Cut Across Bend can carry it over the bend.
+    pub fn own_regions(&self) -> Vec<crate::sketch::Region> {
+        let mut sk = self.sketch.clone();
+        let refs: Vec<EntityId> = sk
+            .entities()
+            .map(|(id, _)| id)
+            .filter(|&id| self.is_reference(id))
+            .collect();
+        for id in refs {
+            let _ = sk.set_style(id, crate::sketch::Style::Construction);
+        }
+        sk.regions()
+    }
+
     /// Is curve `e` projected (reference) geometry: a projected straight
     /// edge or a linked curve? It cannot be trimmed or edited.
     pub fn is_reference(&self, e: EntityId) -> bool {
