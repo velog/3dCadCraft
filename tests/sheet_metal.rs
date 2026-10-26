@@ -712,6 +712,9 @@ fn contour_flange_channel() {
             sketch: sid,
             width: 50.0,
             flip: false,
+            direction: Default::default(),
+            width2: 0.0,
+            centered: false,
         },
     );
     check(&p);
@@ -1286,4 +1289,76 @@ fn cut_across_bend_from_the_owners_session() {
         (took - want).abs() < 0.03 * want,
         "across the bend: {took} vs {want}"
     );
+}
+
+/// Contour Flange Direction (owner, 2026-10-26: direction and centring were
+/// missing): the width runs along the sketch normal (XZ: −Y), against it, half
+/// each way or by two distances; Position puts the thickness on either side of
+/// the chain or centred on it.
+#[test]
+fn contour_flange_direction_and_position() {
+    use cadcraft3d::part::sheet_metal::{ContourDirection, SheetOp};
+    let build = |direction: ContourDirection, flip: bool, centered: bool| {
+        let mut p = PartDocument::default();
+        p.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = p
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+            .unwrap();
+        let sk = &mut p.sketches[i].sketch;
+        let q: Vec<_> = [(0.0, 30.0), (0.0, 0.0), (60.0, 0.0), (60.0, 30.0)]
+            .iter()
+            .map(|&(x, y)| sk.add_point(Point2::new(x, y)))
+            .collect();
+        for k in 0..3 {
+            sk.add_line_between(q[k], q[k + 1]).unwrap();
+        }
+        let sid = p.sketches[i].id.clone();
+        op(
+            &mut p,
+            SheetOp::Contour {
+                sketch: sid,
+                width: 50.0,
+                flip,
+                direction,
+                width2: 20.0,
+                centered,
+            },
+        );
+        check(&p);
+        p
+    };
+    let t = 2.0;
+    for (d, (y0, y1)) in [
+        (ContourDirection::Default, (-50.0, 0.0)),
+        (ContourDirection::Flipped, (0.0, 50.0)),
+        (ContourDirection::Symmetric, (-25.0, 25.0)),
+        (ContourDirection::Asymmetric, (-50.0, 20.0)),
+    ] {
+        let (lo, hi) = bbox(&build(d, false, false));
+        assert!(
+            (lo.y - y0).abs() < 1e-3 && (hi.y - y1).abs() < 1e-3,
+            "{d:?}: y {} .. {}",
+            lo.y,
+            hi.y
+        );
+    }
+    // Position: outside the U (x −T .. 60+T), inside (0 .. 60), centred.
+    for (flip, centered, (x0, x1)) in [
+        (false, false, (-t, 60.0 + t)),
+        (true, false, (0.0, 60.0)),
+        (false, true, (-t / 2.0, 60.0 + t / 2.0)),
+        (true, true, (-t / 2.0, 60.0 + t / 2.0)),
+    ] {
+        let (lo, hi) = bbox(&build(ContourDirection::Default, flip, centered));
+        assert!(
+            (lo.x - x0).abs() < 1e-3 && (hi.x - x1).abs() < 1e-3,
+            "flip {flip} centred {centered}: x {} .. {}",
+            lo.x,
+            hi.x
+        );
+    }
 }

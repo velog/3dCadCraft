@@ -463,6 +463,55 @@ pub struct SheetConvertFeature {
     pub bends: Vec<super::blend::EdgeRef>,
 }
 
+/// Which way a Contour Flange's width runs from its sketch plane
+/// (Inventor's Direction).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContourDirection {
+    /// Along the sketch normal.
+    #[default]
+    Default,
+    /// Against the sketch normal.
+    Flipped,
+    /// Half each way.
+    Symmetric,
+    /// `width` along the normal, `width2` against it.
+    Asymmetric,
+}
+
+impl ContourDirection {
+    /// Every direction, in panel order.
+    pub const ALL: [ContourDirection; 4] = [
+        ContourDirection::Default,
+        ContourDirection::Flipped,
+        ContourDirection::Symmetric,
+        ContourDirection::Asymmetric,
+    ];
+
+    fn is_default(&self) -> bool {
+        *self == ContourDirection::Default
+    }
+
+    /// Label (panel).
+    pub fn label(self) -> &'static str {
+        match self {
+            ContourDirection::Default => "Default",
+            ContourDirection::Flipped => "Flipped",
+            ContourDirection::Symmetric => "Symmetric",
+            ContourDirection::Asymmetric => "Asymmetric",
+        }
+    }
+
+    /// The width's span along the sketch normal (from, to).
+    pub fn span(self, width: Real, width2: Real) -> (Real, Real) {
+        match self {
+            ContourDirection::Default => (0.0, width),
+            ContourDirection::Flipped => (-width, 0.0),
+            ContourDirection::Symmetric => (-width / 2.0, width / 2.0),
+            ContourDirection::Asymmetric => (-width2, width),
+        }
+    }
+}
+
 /// Where a Fold's sketch line lies in the bend (Inventor's Fold Location).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FoldLocation {
@@ -614,11 +663,20 @@ pub enum SheetOp {
     Contour {
         /// The sketch.
         sketch: String,
-        /// Width along the sketch normal (mm).
+        /// Width along the sketch normal (mm); Asymmetric: the first side.
         width: Real,
-        /// The material on the other side of the chain.
+        /// The material on the other side of the chain (Position Flipped).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         flip: bool,
+        /// Which way the width runs from the sketch plane.
+        #[serde(default, skip_serializing_if = "ContourDirection::is_default")]
+        direction: ContourDirection,
+        /// Asymmetric: the width on the other side (mm).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        width2: Real,
+        /// The thickness centred on the chain (Position Symmetric).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        centered: bool,
     },
     /// Unfold: the whole sheet flat; features after it work on the flat pattern.
     Unfold {
@@ -736,6 +794,10 @@ impl SheetOpFeature {
                 v
             }
             SheetOp::Fold { .. } => vec![("angle", Unit::Deg)],
+            SheetOp::Contour {
+                direction: ContourDirection::Asymmetric,
+                ..
+            } => vec![("width", Unit::Mm), ("width2", Unit::Mm)],
             SheetOp::Contour { .. } => vec![("width", Unit::Mm)],
             SheetOp::Cut {
                 extent: CutExtent::Distance,
@@ -760,6 +822,7 @@ impl SheetOpFeature {
             (SheetOp::Hem { gap, .. }, "gap") => *gap,
             (SheetOp::Fold { angle, .. }, "angle") => Some(*angle),
             (SheetOp::Contour { width, .. }, "width") => Some(*width),
+            (SheetOp::Contour { width2, .. }, "width2") => Some(*width2),
             (SheetOp::Cut { depth, .. }, "depth") => Some(*depth),
             (SheetOp::CornerSeam { gap, .. }, "gap") => *gap,
             _ => None,
@@ -773,6 +836,7 @@ impl SheetOpFeature {
             (SheetOp::Hem { gap, .. }, "gap") => *gap = Some(v),
             (SheetOp::Fold { angle, .. }, "angle") => *angle = v,
             (SheetOp::Contour { width, .. }, "width") => *width = v,
+            (SheetOp::Contour { width2, .. }, "width2") => *width2 = v,
             (SheetOp::Cut { depth, .. }, "depth") => *depth = v,
             (SheetOp::CornerSeam { gap, .. }, "gap") => *gap = Some(v),
             _ => {}

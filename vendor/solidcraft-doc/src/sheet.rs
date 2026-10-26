@@ -3926,6 +3926,57 @@ pub fn base_flange(body: &str, rule: &str, rv: &RuleValues, plane: Plane, region
 /// A sheet from an open chain of lines (contour flange): `pts` in `plane`, the material on the
 /// right of the travel (or the left when `flip`), `width` along the plane normal.
 pub fn contour_flange(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pts: &[Vec2], width: f64, flip: bool) -> Result<SheetBody> {
+    contour_flange_span(body, rule, rv, plane, pts, (0.0, width), flip, false)
+}
+
+/// Offsets an open chain of lines sideways by `d` (positive: left of
+/// travel), mitring the corners (3DCadCraft).
+fn offset_chain(pts: &[Vec2], d: f64) -> Result<Vec<Vec2>> {
+    let left = |a: Vec2, b: Vec2| -> Result<Vec2> {
+        let u = (b - a).normalized().ok_or_else(|| DocError::Invalid("zero-length line in the contour".into()))?;
+        Ok(Vec2::new(-u.y, u.x))
+    };
+    let n = pts.len();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let before = if i > 0 { Some(left(pts[i - 1], pts[i])?) } else { None };
+        let after = if i + 1 < n { Some(left(pts[i], pts[i + 1])?) } else { None };
+        let off = match (before, after) {
+            (Some(a), Some(b)) => {
+                let m = a + b;
+                let c = m.dot(a);
+                if c.abs() < 1e-9 {
+                    return Err(DocError::Invalid("a contour folds back on itself".into()));
+                }
+                m * (d / c)
+            }
+            (Some(a), None) | (None, Some(a)) => a * d,
+            (None, None) => Vec2::new(0.0, 0.0),
+        };
+        out.push(pts[i] + off);
+    }
+    Ok(out)
+}
+
+/// A contour flange whose width runs from `span.0` to `span.1` along the
+/// sketch normal (Inventor's Direction Default / Flipped / Symmetric /
+/// Asymmetric) and whose thickness is centred on the chain when `centered`
+/// (Position Symmetric) — 3DCadCraft.
+#[allow(clippy::too_many_arguments)]
+pub fn contour_flange_span(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pts: &[Vec2], span: (f64, f64), flip: bool, centered: bool) -> Result<SheetBody> {
+    if !(span.1 - span.0 > 1e-9) {
+        return Err(DocError::Invalid("the contour flange's width must be positive".into()));
+    }
+    let shifted;
+    let pts = if centered {
+        // Half the thickness away from the material: the chain is then the
+        // sheet's middle surface (material right of travel unless flipped).
+        let side = if flip { -1.0 } else { 1.0 };
+        shifted = offset_chain(pts, side * rv.thickness / 2.0)?;
+        &shifted[..]
+    } else {
+        pts
+    };
     if pts.len() < 2 {
         return Err(DocError::Invalid("a contour flange needs an open chain of lines".into()));
     }
@@ -3976,7 +4027,7 @@ pub fn contour_flange(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pt
         bend_relief: (rv.relief_width, rv.relief_depth),
         base_curves: Vec::new(),
     };
-    let (y0, y1) = if ysign > 0.0 { (0.0, width) } else { (-width, 0.0) };
+    let (y0, y1) = if ysign > 0.0 { (span.0, span.1) } else { (-span.1, -span.0) };
     // First segment: the base panel.
     let (_, l0) = seg_dir(0)?;
     let end0 = l0 - corners.first().map(|(a, u)| setback(*a, *u)).unwrap_or(0.0);

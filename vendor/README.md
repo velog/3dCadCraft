@@ -59,6 +59,7 @@ to `assets/` and their paths point there.
 
 | File | Change | Effect |
 |---|---|---|
+| `sheet.rs` `contour_flange_span`, `offset_chain` | a contour flange whose width spans `(from, to)` along the sketch normal and whose thickness can be centred on the chain (the chain offset by T/2, corners mitred) | Contour Flange Direction (Default / Flipped / Symmetric / Asymmetric) and Position Centered |
 | `sheet.rs` `add_flanges_spans` | `add_flanges_each` with each flange held back from its edge's ends (the flange ends as where a cut-out ends the edge: the base keeps its edge beyond and gets the rule's bend relief) | Flange Width Extents (Edge / Width / Offset) |
 | `sheet.rs` `edge_ends` | the world ends of the sheet edge nearest a point | drag arrows at a flange's ends |
 | `sheet.rs` `cut_through`, `CutMode` | regions of a world plane cut into the panels parallel to it: through the face's panel (`Face`), as a pocket so deep (`Depth`, `record_pocket`), through every parallel panel (`All`), or mapped through the sketch's panel into the flat whole (`AcrossBends`); unfolded, the flat pattern is cut | the sheet metal Cut (`SheetOp::Cut`) |

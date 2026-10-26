@@ -258,6 +258,9 @@ the sheet. **Unfold** / **Refold**: the whole sheet flat and back (a Cut between
 Properties its extents and bends; again goes back. **Bend**, **Contour Roll**, **Lofted Flange**, **Rip**,
 **Corner Round**, **Corner Chamfer** and **Punch Tool** open their whole panel (selectors take picks, every
 option works in the panel) with OK disabled: the interface comes first, the geometry after the owner's check.
+Corner Round / Corner Chamfer take only the sheet's corner edges (through the thickness): click them, or drag a
+box from empty space (left to right: window, right to left: crossing; Ctrl+box takes them out). **Contour
+Flange**: Direction Default / Flip / Sym / Asym (Distance 2), Position Default / Flipped / Center.
 
 Aliases (type in the view, no command open): SCV Convert, SMD Defaults, SFA Face, SCF Contour Flange, SMF Flange,
 SHM Hem, SFO Fold, SBD Bend, SCR Contour Roll, SLF Lofted Flange, SRP Rip, SCT Cut, SCS Corner Seam, SRD Corner

@@ -323,8 +323,9 @@ pub fn contour(
     rv: &RuleValues,
     plane: &Plane,
     pts: &[[Real; 2]],
-    width: Real,
+    span: (Real, Real),
     flip: bool,
+    centered: bool,
 ) -> Result<(ExactSolid, SheetModel), String> {
     let pl = plane_of(plane)?;
     let pts: Vec<_> = pts
@@ -332,8 +333,17 @@ pub fn contour(
         .map(|p| solidcraft_geom::Vec2::new(p[0], p[1]))
         .collect();
     let mut m = guarded_sheet("Contour Flange", || {
-        sd::contour_flange(prefix, "rule", &rule_of(rv), &pl, &pts, width, flip)
-            .map_err(|e| e.to_string())
+        sd::contour_flange_span(
+            prefix,
+            "rule",
+            &rule_of(rv),
+            &pl,
+            &pts,
+            span,
+            flip,
+            centered,
+        )
+        .map_err(|e| e.to_string())
     })?;
     for (k, f) in m.flanges.iter_mut().enumerate() {
         f.tag = format!("{prefix}.{}", k + 1);

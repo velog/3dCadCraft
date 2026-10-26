@@ -3102,7 +3102,7 @@ pub(super) fn sheet_op(
     rule: &super::sheet_metal::SheetMetalDefaults,
     sketches: &[super::PartSketch],
 ) -> Result<(Vec<ExactSolid>, String, super::sheet_metal::SheetState), Fail> {
-    use super::sheet_metal::{SheetOp, SheetState};
+    use super::sheet_metal::{ContourDirection, SheetOp, SheetState};
     use crate::kernel::exact::sheet_metal as ksm;
     let sketch_of = |id: &str| {
         sketches
@@ -3197,6 +3197,9 @@ pub(super) fn sheet_op(
             sketch,
             width,
             flip,
+            direction,
+            width2,
+            centered,
         } => {
             rule.validate().map_err(User)?;
             let ps = sketch_of(sketch)?;
@@ -3204,8 +3207,14 @@ pub(super) fn sheet_op(
             if !(width.is_finite() && *width > 0.0) {
                 return Err(User("the width must be positive".into()));
             }
+            if *direction == ContourDirection::Asymmetric && !(width2.is_finite() && *width2 >= 0.0)
+            {
+                return Err(User("the second width must not be negative".into()));
+            }
+            let span = direction.span(*width, *width2);
             let (solid, model) =
-                ksm::contour(&op.id, &rv, &ps.sketch.plane, &pts, *width, *flip).map_err(User)?;
+                ksm::contour(&op.id, &rv, &ps.sketch.plane, &pts, span, *flip, *centered)
+                    .map_err(User)?;
             let faces = solid.face_names.len();
             let mut next = solids.to_vec();
             next.push(solid);

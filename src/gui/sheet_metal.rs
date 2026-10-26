@@ -24,9 +24,9 @@ use super::valuefield::ExprValue;
 use crate::command::flow::{Flow, PickKind, Selector};
 use crate::kernel::{Point3, Vector3};
 use crate::part::sheet_metal::{
-    CornerOverride, CornerRelief, CutExtent, FlangePosition, FlangeWidth, FoldLocation, SeamType,
-    SheetConvertFeature, SheetEdge, SheetFaceFeature, SheetFlangeFeature, SheetMetalDefaults,
-    SheetOp, SheetOpFeature, rule_of,
+    ContourDirection, CornerOverride, CornerRelief, CutExtent, FlangePosition, FlangeWidth,
+    FoldLocation, SeamType, SheetConvertFeature, SheetEdge, SheetFaceFeature, SheetFlangeFeature,
+    SheetMetalDefaults, SheetOp, SheetOpFeature, rule_of,
 };
 use crate::part::{Feature, PartDocument, PartError, ProfileRef};
 
@@ -548,6 +548,9 @@ impl CadCraftApp {
                         sketch: String::new(),
                         width: 50.0,
                         flip: false,
+                        direction: Default::default(),
+                        width2: 0.0,
+                        centered: false,
                     })),
                     "profile",
                 );
@@ -1151,15 +1154,88 @@ impl CadCraftApp {
                             radius_row(ui, radius, rule.bend_radius);
                         });
                     }
-                    SheetOp::Contour { flip, .. } => {
+                    SheetOp::Contour {
+                        flip,
+                        direction,
+                        width2,
+                        centered,
+                        width,
+                        ..
+                    } => {
                         psection(ui, "sm_contour", "Behavior", |ui| {
+                            plabel(ui, "Width Extents");
+                            egui::ComboBox::from_id_salt("sm_contour_extents")
+                                .selected_text("Distance")
+                                .show_ui(ui, |ui| {
+                                    let _ = ui.selectable_label(true, "Distance").on_hover_text(
+                                        "From the sketch plane, so far (Direction below)",
+                                    );
+                                    for (t, tip) in [
+                                        ("Edge", "Along a sheet edge the profile starts on"),
+                                        ("Width", "A width along that edge, centred or offset"),
+                                        ("Offset", "Offsets from both ends of that edge"),
+                                        ("From/To", "Between two faces, planes or points"),
+                                    ] {
+                                        ui.add_enabled(false, egui::Button::new(t).frame(false))
+                                            .on_disabled_hover_text(format!(
+                                                "{tip}: needs a contour flange on an existing                                                  sheet's edge, not yet (docs/spec/5.6-sheet-metal.md)"
+                                            ));
+                                    }
+                                });
+                            ui.end_row();
+                            plabel(ui, "Direction");
+                            ui.horizontal(|ui| {
+                                for (d, tip) in [
+                                    (ContourDirection::Default, "Along the sketch's normal"),
+                                    (ContourDirection::Flipped, "Against the sketch's normal"),
+                                    (ContourDirection::Symmetric, "Half the distance each way"),
+                                    (
+                                        ContourDirection::Asymmetric,
+                                        "A distance each way (Distance, Distance 2)",
+                                    ),
+                                ] {
+                                    let short = match d {
+                                        ContourDirection::Default => "Default",
+                                        ContourDirection::Flipped => "Flip",
+                                        ContourDirection::Symmetric => "Sym",
+                                        ContourDirection::Asymmetric => "Asym",
+                                    };
+                                    if ui
+                                        .selectable_label(*direction == d, short)
+                                        .on_hover_text(format!("{}: {tip}", d.label()))
+                                        .clicked()
+                                    {
+                                        *direction = d;
+                                        if d == ContourDirection::Asymmetric && *width2 <= 0.0 {
+                                            *width2 = (*width / 2.0).round();
+                                        }
+                                    }
+                                }
+                            });
+                            ui.end_row();
                             field_row(ui, &mut fx, "Distance", &snapshot, "width");
+                            if *direction == ContourDirection::Asymmetric {
+                                field_row(ui, &mut fx, "Distance 2", &snapshot, "width2");
+                            }
                             plabel(ui, "Position");
-                            direction_row(
-                                ui,
-                                flip,
-                                "The material on the other side of the profile",
-                            );
+                            ui.horizontal(|ui| {
+                                let mut pos = if *centered { 2 } else { u8::from(*flip) };
+                                for (k, name, tip) in [
+                                    (0u8, "Default", "The thickness on the profile's right side"),
+                                    (1, "Flipped", "The thickness on the other side"),
+                                    (
+                                        2,
+                                        "Center",
+                                        "Centered: the thickness centred on the profile (Symmetric)",
+                                    ),
+                                ] {
+                                    ui.selectable_value(&mut pos, k, name).on_hover_text(tip);
+                                }
+                                *centered = pos == 2;
+                                if pos != 2 {
+                                    *flip = pos == 1;
+                                }
+                            });
                             ui.end_row();
                         });
                         psection(ui, "sm_contour_bend", "Bend Properties", |ui| {
@@ -1892,7 +1968,14 @@ impl CadCraftApp {
         for kind in sel.accepts {
             match kind {
                 PickKind::Edge | PickKind::StraightEdge => {
+                    let corners = self
+                        .sm
+                        .draft
+                        .as_ref()
+                        .and_then(|d| d.planned.as_ref())
+                        .is_some_and(|pl| pl.corners_only(sel.key));
                     if let Some(e) = self.edge_under(p, rect)
+                        && (!corners || self.sm_corner_edge(e))
                         && let Ok(pts) = part.body.sample_edge(e, &opts)
                     {
                         let name = part
@@ -1963,6 +2046,94 @@ impl CadCraftApp {
             }
         }
         None
+    }
+
+    /// A corner edge of a sheet: straight, as long as the thickness, between
+    /// two planar faces that are not in one plane (the side faces meeting
+    /// at a corner). Edges along the sheet, bend lines and hole edges are not.
+    fn sm_corner_edge(&self, e: crate::kernel::EdgeId) -> bool {
+        let part = self.part();
+        let body = &part.body;
+        let t = rule_of(part).values().thickness;
+        let Some(x) = body.edge(e) else {
+            return false;
+        };
+        let (Some(a), Some(b)) = (body.vertex(x.start), body.vertex(x.end)) else {
+            return false;
+        };
+        if body.edge_direction(e).is_none() || ((b.point - a.point).norm() - t).abs() > 0.02 * t {
+            return false;
+        }
+        let normals: Vec<Vector3> = self
+            .picker()
+            .faces_of(e)
+            .into_iter()
+            .filter_map(|f| match body.surface(body.face(f)?.surface)? {
+                crate::kernel::Surface::Plane(pl) => Some(pl.normal.into_inner()),
+                _ => None,
+            })
+            .collect();
+        matches!(normals.as_slice(), [n1, n2] if n1.dot(n2).abs() < 0.999)
+    }
+
+    /// The open command takes a box of edges: its active selector takes
+    /// several corner edges (Corner Round, Corner Chamfer).
+    pub(super) fn sm_box_wanted(&self) -> bool {
+        let Some(d) = &self.sm.draft else {
+            return false;
+        };
+        let Some(pl) = &d.planned else {
+            return false;
+        };
+        let flow = d.flow();
+        flow.current()
+            .is_some_and(|s| !s.single && pl.corners_only(s.key))
+    }
+
+    /// A box from `a` to `b` (window left to right, crossing right to
+    /// left, as the idle box): every corner edge it takes goes into the
+    /// active selector; `remove` (Ctrl) takes them out.
+    pub(super) fn sm_box_pick(&mut self, rect: Rect, a: Pos2, b: Pos2, remove: bool) {
+        if !self.sm_box_wanted() {
+            return;
+        }
+        let r = Rect::from_two_pos(a, b);
+        let window = self.select.box_mode.is_window(a.x, b.x);
+        let mut taken = Vec::new();
+        for (e, pts) in self.edge_polylines().iter() {
+            let s: Vec<Pos2> = pts
+                .iter()
+                .filter_map(|q| self.camera.project(q, rect))
+                .collect();
+            let inside = !s.is_empty()
+                && if window {
+                    s.iter().all(|p| r.contains(*p))
+                } else {
+                    s.iter().any(|p| r.contains(*p))
+                };
+            if inside && self.sm_corner_edge(*e) {
+                let name = self
+                    .part()
+                    .body
+                    .edge(*e)
+                    .and_then(|x| x.name.clone())
+                    .unwrap_or_else(|| format!("{e:?}"));
+                taken.push((name, vec![pts.clone()]));
+            }
+        }
+        let Some(d) = self.sm.draft.as_mut() else {
+            return;
+        };
+        let key = d.flow().current().map(|s| s.key);
+        if let (Some(pl), Some(key)) = (d.planned.as_mut(), key) {
+            for item in taken {
+                if remove {
+                    pl.remove(key, &item.0);
+                } else {
+                    pl.add(key, item);
+                }
+            }
+        }
     }
 
     /// Applies a pick to the active selector (`remove`: Ctrl+click takes
@@ -2214,7 +2385,13 @@ impl CadCraftApp {
                         + back * (g + rule.thickness);
                     vec![arrow("length", mid, -out, *length)]
                 }
-                SheetOp::Contour { sketch, width, .. } => {
+                SheetOp::Contour {
+                    sketch,
+                    width,
+                    width2,
+                    direction,
+                    ..
+                } => {
                     let Some(ps) = part.sketches.iter().find(|s| s.id == *sketch) else {
                         return Vec::new();
                     };
@@ -2222,7 +2399,19 @@ impl CadCraftApp {
                         return Vec::new();
                     };
                     let n = ps.sketch.plane.normal.into_inner();
-                    vec![arrow("width", first[0], n, *width)]
+                    let o = first[0];
+                    // Each arrow's length is the field it drags.
+                    match direction {
+                        ContourDirection::Default => vec![arrow("width", o, n, *width)],
+                        ContourDirection::Flipped => vec![arrow("width", o, -n, *width)],
+                        ContourDirection::Symmetric => {
+                            vec![arrow("width", o - n * (*width / 2.0), n, *width)]
+                        }
+                        ContourDirection::Asymmetric => vec![
+                            arrow("width", o, n, *width),
+                            arrow("width2", o, -n, *width2),
+                        ],
+                    }
                 }
                 _ => Vec::new(),
             },

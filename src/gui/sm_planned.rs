@@ -206,6 +206,31 @@ impl Planned {
         }
     }
 
+    /// Adds `item` to selector `key` unless it holds it (a box pick).
+    pub(super) fn add(&mut self, key: &'static str, item: Item) {
+        if !self.items(key).iter().any(|(id, _)| *id == item.0) {
+            self.toggle(key, false, item);
+        }
+    }
+
+    /// Takes item `id` out of selector `key` (Ctrl + box).
+    pub(super) fn remove(&mut self, key: &str, id: &str) {
+        if let Some((_, v)) = self.picks.iter_mut().find(|(k, _)| *k == key) {
+            v.retain(|(i, _)| i != id);
+        }
+    }
+
+    /// Selector `key` takes only the sheet's corner edges (the edges
+    /// through the thickness where two side faces meet): Corner Round's
+    /// sets and Corner Chamfer's corners (owner, 2026-10-26).
+    pub(super) fn corners_only(&self, key: &str) -> bool {
+        match self.kind {
+            PlannedKind::CornerRound => key.starts_with("set"),
+            PlannedKind::CornerChamfer => key == "corners",
+            _ => false,
+        }
+    }
+
     /// Clears selector `key` (its `x`).
     pub(super) fn clear(&mut self, key: &str) {
         self.picks.retain(|(k, _)| *k != key);
