@@ -117,7 +117,9 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   next new variant takes the next free number.
 /// - 27: base views in any orientation (`ViewOrientation::Custom`: ViewCube,
 ///   Custom View) (2026-10-26).
-pub const FORMAT_REVISION: u32 = 27;
+/// - 28: bend tables of flat pattern views (`AnnotationKind::BendTable`)
+///   (2026-10-26).
+pub const FORMAT_REVISION: u32 = 28;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

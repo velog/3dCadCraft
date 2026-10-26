@@ -333,7 +333,8 @@ Texture **ST**, Welding **WS**, Caterpillar **CAT**, End Fill **EF**, FCF **FCF*
 Layers **EL**, Update All Sheets **UAS**, Replace Model Reference **RMR**, Define Border / Title Block / Symbol
 **DBR / DTB / DSS**. Double-click a dimension: Edit Dimension (Text, Precision and Tolerance, Inspection). Parts List **PL** /
 Balloon **B** / Auto Balloon **AB** work (spec 4.4); Drawing View › Sheet Metal View › Flat Pattern and Bend Notes
-**BN** work (spec 4.8): double-click a parts list opens its editor (columns, cell
+**BN** work (spec 4.8); Table **TB** on a flat pattern view makes the bend table (Column Chooser, numeric / alpha
+IDs, prefix, title, tags on the bend lines; double-click: the same plus Reverse Direction); double-click a parts list opens its editor (columns, cell
 overrides in colour, sort / renumber, hidden and custom rows), a balloon its shape / text; drag moves either.
 🟡 waiting for a visual check.
 

@@ -92,7 +92,6 @@ pub enum Planned {
     CenteredPattern,
     AutoCenterlines,
     // Table
-    GeneralTable,
     HoleTableView,
     HoleTableSelection,
     HoleTableFeature,
@@ -108,14 +107,6 @@ pub enum Planned {
 }
 
 // ---- shared pages ------------------------------------------------------------
-
-const WRAP_ROWS: &[Row] = &[
-    Head("Table Wrapping"),
-    Radio("Direction to Wrap Table", &["Left", "Right"], 0),
-    Check("Enable Automatic Wrap", false),
-    Num("Maximum Rows", 20.0, ""),
-    Num("Number of Sections", 1.0, ""),
-];
 
 const HOLE_TABLE_PAGES: &[Page] = &[
     Page(
@@ -210,7 +201,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 52] = [
+    pub const ALL: [Planned; 51] = [
         Self::Overlay,
         Self::DraftView,
         Self::Break,
@@ -251,7 +242,6 @@ impl Planned {
         Self::CenterlineBisector,
         Self::CenteredPattern,
         Self::AutoCenterlines,
-        Self::GeneralTable,
         Self::HoleTableView,
         Self::HoleTableSelection,
         Self::HoleTableFeature,
@@ -308,7 +298,6 @@ impl Planned {
             Self::CenterlineBisector => "Centerline Bisector",
             Self::CenteredPattern => "Centered Pattern",
             Self::AutoCenterlines => "Automated Centerlines",
-            Self::GeneralTable => "Table",
             Self::HoleTableView => "Hole Table - View",
             Self::HoleTableSelection => "Hole Table - Selection",
             Self::HoleTableFeature => "Hole Table - Selected Feature",
@@ -933,36 +922,6 @@ impl Planned {
                     Num("Arc Angle Minimum", 0.0, "°"),
                 ],
             )],
-            Self::GeneralTable => &[
-                Page(
-                    "Source",
-                    &[
-                        Radio(
-                            "Source",
-                            &[
-                                "Empty",
-                                "Select View (iParts / iAssemblies)",
-                                "File (CSV / Excel)",
-                            ],
-                            0,
-                        ),
-                        Sel(
-                            "view",
-                            "Select View",
-                            "select a view of an iPart or iAssembly",
-                        ),
-                        Button("Browse..."),
-                        Combo("Sheet", &["Sheet1"], 0),
-                        Text("Start Cell", "A1"),
-                        Check("Column Headers in First Row", true),
-                        Num("Number of Columns", 3.0, ""),
-                        Num("Number of Rows", 5.0, ""),
-                        Text("Title", "TABLE"),
-                        Sel("place", "Placement", "click where the table goes"),
-                    ],
-                ),
-                Page("Table Wrapping", WRAP_ROWS),
-            ],
             Self::HoleTableView | Self::HoleTableSelection | Self::HoleTableFeature => {
                 HOLE_TABLE_PAGES
             }
@@ -1123,9 +1082,6 @@ impl Planned {
             Self::CenteredPattern => "Centre lines of a circular pattern of holes",
             Self::AutoCenterlines => {
                 "Centre marks and lines on every chosen feature type of the views"
-            }
-            Self::GeneralTable => {
-                "A table of free cells, from a CSV / Excel file or an iPart's table"
             }
             Self::HoleTableView | Self::HoleTableSelection | Self::HoleTableFeature => {
                 "Holes of a view with X / Y from an origin indicator and their descriptions"

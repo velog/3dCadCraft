@@ -452,7 +452,13 @@ pub fn table(pl: &PartsList, rows: &[BomRow]) -> Table {
 /// Row height of a table with text `h` high (Inventor ISO: 6.42 mm for
 /// 3.5 mm text and 0.9 mm row gaps).
 pub fn row_height(h: f64) -> f64 {
-    1.321 * h + 2.0 * 0.9
+    row_height_gap(h, 0.9)
+}
+
+/// Row height for text `h` high with `gap` above and below it (Inventor's
+/// general Table style: 0.889 mm).
+pub fn row_height_gap(h: f64, gap: f64) -> f64 {
+    1.321 * h + 2.0 * gap
 }
 
 /// The rows of each section (indices into the shown rows).
@@ -486,8 +492,13 @@ pub fn bounds(pl: &PartsList, t: &Table, h: f64) -> ([f64; 2], [f64; 2]) {
 
 /// The table drawn: title row, heading row and the shown rows, in sections.
 pub fn table_prims(pl: &PartsList, t: &Table, look: &AnnotationLook) -> Vec<Prim> {
+    table_prims_gap(pl, t, look, 0.9)
+}
+
+/// [`table_prims`] with row gap `gap` (mm).
+pub fn table_prims_gap(pl: &PartsList, t: &Table, look: &AnnotationLook, gap: f64) -> Vec<Prim> {
     let h = look.leader_text.height;
-    let rh = row_height(h);
+    let rh = row_height_gap(h, gap);
     let width = pl.width();
     let shown: Vec<&TableRow> = t.rows.iter().filter(|r| !r.hidden).collect();
     let mut out = Vec::new();
@@ -536,7 +547,9 @@ pub fn table_prims(pl: &PartsList, t: &Table, look: &AnnotationLook) -> Vec<Prim
             y -= rh;
             let mut x = left;
             for (c, s) in pl.columns.iter().zip(&r.cells) {
-                let center = matches!(c.key.as_str(), "item" | "qty" | "unit");
+                // Bend tables centre every value (Inventor's Table style).
+                let center =
+                    matches!(c.key.as_str(), "item" | "qty" | "unit") || c.key.starts_with("bend_");
                 text(&mut out, x, c.width, y, s, center);
                 x += c.width;
             }

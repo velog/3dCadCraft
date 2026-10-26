@@ -80,6 +80,9 @@ pub enum AnnotationKind {
     },
     /// Parts list of a view's assembly (`parts`).
     PartsList(super::parts::PartsList),
+    /// Bend table of a flat pattern view, with its bend tags (`bend_table`,
+    /// format revision 28).
+    BendTable(super::bend_table::BendTable),
     /// Item balloon on a component of an assembly view (`parts`).
     Balloon(super::parts::Balloon),
     /// Text on the sheet.
@@ -242,6 +245,13 @@ pub fn resolve_in<'a>(
             let t = tables.table_of(pl).ok_or(Orphan::NoView)?;
             Ok(Shown {
                 prims: super::parts::table_prims(pl, &t, look),
+                value: None,
+            })
+        }
+        AnnotationKind::BendTable(bt) => {
+            let (pl, lines) = view(bt.view).ok_or(Orphan::NoView)?;
+            Ok(Shown {
+                prims: super::bend_table::prims(bt, lines, pl, look),
                 value: None,
             })
         }
@@ -772,6 +782,7 @@ impl Annotation {
             AnnotationKind::HoleNote { view, .. } => Some(*view),
             AnnotationKind::BendNote { view, .. } => Some(*view),
             AnnotationKind::PartsList(p) => Some(p.view),
+            AnnotationKind::BendTable(b) => Some(b.view),
             AnnotationKind::Balloon(b) => Some(b.view),
             AnnotationKind::Text { .. } | AnnotationKind::LeaderText { .. } => None,
         }

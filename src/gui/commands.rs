@@ -1805,10 +1805,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["AB"])
         .at(&[N_TABLE])
         .tip("Balloons for every component of a view at once, around it or in a row"),
-    dp("drw.table", "Table", "Таблица", Icon::PartsList, Dp::GeneralTable)
+    d("drw.table", "Table", "Таблица", Icon::PartsList)
+        .run(Action::Drawing(DrwCmd::Table))
+        .spec("4.8-sheet-metal-drawings.md")
         .alias(&["TB"])
         .at(&[N_TABLE])
-        .tip("A table of free cells, from a CSV / Excel file or an iPart table"),
+        .tip("A table from a view: on a flat pattern view, the bend table with tags (blank and CSV / Excel tables planned)"),
     dp("drw.hole_table_sel", "Hole Table - Selection", "Таблица на избрани отвори", Icon::PartsList, Dp::HoleTableSelection)
         .alias(&["HTS"])
         .at(&[N_TABLE])

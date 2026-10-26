@@ -285,9 +285,12 @@ impl CadCraftApp {
                 |a| match annot::resolve_in(&a.kind, &view, &self.drw.look, &tables) {
                     Ok(s) => ShownAnn {
                         id: a.id,
-                        area: matches!(a.kind, AnnotationKind::PartsList(_))
-                            .then(|| lines_box(&s.prims))
-                            .flatten(),
+                        area: matches!(
+                            a.kind,
+                            AnnotationKind::PartsList(_) | AnnotationKind::BendTable(_)
+                        )
+                        .then(|| lines_box(&s.prims))
+                        .flatten(),
                         prims: s.prims,
                         orphan: None,
                     },
@@ -892,6 +895,10 @@ impl CadCraftApp {
                                 pl.at[0] += delta[0];
                                 pl.at[1] += delta[1];
                             }
+                            AnnotationKind::BendTable(bt) => {
+                                bt.at[0] += delta[0];
+                                bt.at[1] += delta[1];
+                            }
                             AnnotationKind::Balloon(b) => {
                                 b.at[0] += delta[0];
                                 b.at[1] += delta[1];
@@ -938,6 +945,10 @@ impl CadCraftApp {
             Some(AnnotationKind::LeaderText { tip, at, text }) => (at, text, 3.5, Some(tip)),
             Some(AnnotationKind::PartsList(_)) => {
                 self.open_parts_list_editor(id);
+                return;
+            }
+            Some(AnnotationKind::BendTable(_)) => {
+                self.open_bend_table_edit(id);
                 return;
             }
             Some(AnnotationKind::Balloon(b)) => {

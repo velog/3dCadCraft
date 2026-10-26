@@ -57,6 +57,8 @@ pub struct ViewBend {
     pub angle: f64,
     /// Inner radius (mm).
     pub radius: f64,
+    /// K-factor (from the bend allowance and the thickness).
+    pub kfactor: f64,
 }
 
 impl ViewBend {
@@ -304,6 +306,13 @@ pub fn flat_lines(
     aligned: Option<&Aligned>,
 ) -> Option<ViewLines> {
     let (model, to_flat, bends) = flat_model(part)?;
+    let thickness = part
+        .flat_patterns()
+        .first()
+        .and_then(|f| part.sheet_models.get(&f.body))
+        .map_or(0.0, |st| {
+            crate::kernel::exact::sheet_metal::thickness(&st.model)
+        });
     let mut lines = view_lines_with(&model, frame, aligned);
     let p = |q: &Point3| frame.project(&(to_flat * q));
     lines.bends = bends
@@ -317,6 +326,12 @@ pub fn flat_lines(
             up: b.bend.up,
             angle: b.bend.angle_deg,
             radius: b.bend.radius,
+            // BA = θ (R + k T).
+            kfactor: if thickness > 1e-9 && b.bend.angle_deg > 1e-9 {
+                (b.bend.allowance / b.bend.angle_deg.to_radians() - b.bend.radius) / thickness
+            } else {
+                0.0
+            },
         })
         .collect();
     Some(lines)

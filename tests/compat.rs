@@ -1330,6 +1330,60 @@ fn drawing_r27_project() -> Project {
     project
 }
 
+/// Revision 28: the revision 26 tray drawing with a bend table of its flat
+/// pattern view (alphabetic IDs, a reversed bend, the K-factor column).
+fn drawing_r28_project() -> Project {
+    use cadcraft3d::drawing::AnnotationKind;
+    use cadcraft3d::drawing::bend_table::{BendTable, column};
+    let mut project = drawing_r26_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let flat = d.sheets[0].views[1].id;
+        let mut bt = BendTable::new(flat, [20.0, 80.0]);
+        bt.alpha = true;
+        bt.reversed = vec![1];
+        bt.columns.push(column("bend_kfactor"));
+        d.add_annotation(AnnotationKind::BendTable(bt));
+    }
+    project
+}
+
+/// The revision 28 drawing reads back with its bend table.
+#[test]
+fn drawing_r28_reads() {
+    use cadcraft3d::drawing::AnnotationKind;
+    let f = root().join("r28/drawing_r28.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let bt = d.sheets[0]
+        .annotations
+        .iter()
+        .find_map(|a| match &a.kind {
+            AnnotationKind::BendTable(b) => Some(b.clone()),
+            _ => None,
+        })
+        .expect("a bend table");
+    assert!(bt.alpha);
+    assert_eq!(bt.reversed, vec![1]);
+    assert_eq!(bt.columns.len(), 5);
+    project.validate().unwrap();
+}
+
 /// The revision 27 drawing reads back with its custom orientation.
 #[test]
 fn drawing_r27_reads() {
@@ -1512,6 +1566,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r27_project().save(&f).unwrap();
+        }
+        let f = root().join("r28/drawing_r28.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r28_project().save(&f).unwrap();
         }
         let f = root().join("r22/sheet_r22.3dcadcraft");
         if !f.exists() {

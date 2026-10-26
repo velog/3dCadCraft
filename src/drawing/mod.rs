@@ -13,6 +13,7 @@
 //! model (spec §6.3 h).
 
 pub mod annot;
+pub mod bend_table;
 pub mod hlr;
 pub mod parts;
 pub mod pdf;

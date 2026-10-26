@@ -59,6 +59,8 @@ pub enum DrwCmd {
     BendNote,
     /// Annotate › Parts List.
     PartsList,
+    /// Annotate › Table (a bend table on a flat pattern view).
+    Table,
     /// Annotate › Balloon.
     Balloon,
     /// Annotate › Auto Balloon.
@@ -145,6 +147,8 @@ pub(super) enum DrwTool {
     AutoBalloon,
     /// Bend Notes: click bend lines of flat pattern views.
     BendNote,
+    /// Table: pick a flat pattern view, then place the bend table.
+    BendTable,
 }
 
 /// Tabs of the Drawing View dialog.
@@ -242,6 +246,8 @@ pub(super) struct DrwUi {
     pub planned: Option<super::drawing_planned::PlannedDialog>,
     /// Parts List, Balloon and Auto Balloon.
     pub bom: super::drawing_bom::BomUi,
+    /// The Table dialog of a bend table.
+    pub bend_table: Option<super::drawing_bend::BtDialog>,
     /// This frame's BOM tables of the active sheet.
     pub tables: Arc<crate::drawing::parts::Tables>,
     /// This frame's annotation look (from the drawing's styles).
@@ -270,6 +276,7 @@ impl DrwUi {
         self.styles_editor = None;
         self.planned = None;
         self.bom = Default::default();
+        self.bend_table = None;
         self.cam.fit = true;
         self.fitted = None;
     }
@@ -419,6 +426,7 @@ impl CadCraftApp {
             DrwCmd::HoleNote => self.start_annotation(DrwTool::HoleNote(None)),
             DrwCmd::BendNote => self.start_annotation(DrwTool::BendNote),
             DrwCmd::PartsList => self.open_parts_list(),
+            DrwCmd::Table => self.open_bend_table(),
             DrwCmd::Balloon => self.open_balloon(),
             DrwCmd::AutoBalloon => self.open_auto_balloon(),
             DrwCmd::ExportPdf => self.open_pdf_export(),
@@ -606,6 +614,7 @@ impl CadCraftApp {
             self.drw.text_dialog = None;
             self.drw.pdf_dialog = None;
             self.drw.planned = None;
+            self.drw.bend_table = None;
             self.bom_cancel();
             true
         } else {
@@ -622,6 +631,7 @@ impl CadCraftApp {
             || self.drw.pdf_dialog.is_some()
             || self.drw.planned.is_some()
             || self.drw.bom.open()
+            || self.drw.bend_table.is_some()
     }
 
     /// Status-bar prompt.
@@ -630,6 +640,9 @@ impl CadCraftApp {
             return p.prompt();
         }
         if let Some(p) = self.bom_prompt() {
+            return p;
+        }
+        if let Some(p) = self.bend_table_prompt() {
             return p;
         }
         match &self.drw.tool {
@@ -651,7 +664,9 @@ impl CadCraftApp {
                 "Bend Notes: click bend lines of a flat pattern view (Esc ends)".into()
             }
             // Their prompts come from `bom_prompt` above.
-            Some(DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon) => String::new(),
+            Some(
+                DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon | DrwTool::BendTable,
+            ) => String::new(),
             Some(DrwTool::Base) => {
                 if self.drw.dialog.as_ref().is_some_and(|d| d.orient.custom.is_some()) {
                     "Custom View: drag on the sheet to orbit, Rotate at Angle turns by steps, Finish Custom View ends".into()
@@ -988,6 +1003,7 @@ impl CadCraftApp {
             self.drw.tables = Arc::new(self.bom_tables(&d, d.active_sheet));
         }
         let anns = self.shown_annotations(&views);
+        self.bend_table_sync(&views);
         self.paint_annotations(&painter, rect, &anns);
 
         // A planned command's selector takes the clicks.
@@ -1033,6 +1049,7 @@ impl CadCraftApp {
                 self.bom_tool(&painter, rect, &response, &views)
             }
             Some(DrwTool::BendNote) => self.bend_note_tool(&painter, rect, &response, &views),
+            Some(DrwTool::BendTable) => self.bend_table_tool(&painter, rect, &response, &views),
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
             // Edit View of a base view: its preview and ViewCube.
@@ -1395,6 +1412,7 @@ impl CadCraftApp {
         }
         self.view_dialog_window(ctx);
         self.custom_view_window(ctx);
+        self.bend_table_window(ctx);
         self.sheet_dialog_window(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);
