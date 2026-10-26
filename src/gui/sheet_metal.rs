@@ -19,6 +19,7 @@ use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke};
 use super::CadCraftApp;
 use super::command_ui::{NameCrumb, name_crumb, selector_rows};
 use super::panels::{Fields, field_row, plabel, psection, warning_box};
+use super::sm_planned::{Planned, PlannedKind};
 use super::valuefield::ExprValue;
 use crate::command::flow::{Flow, PickKind, Selector};
 use crate::kernel::{Point3, Vector3};
@@ -53,6 +54,9 @@ pub(super) struct SmDraft {
     pub edit: Option<usize>,
     /// The breadcrumb (a rename is applied on OK).
     pub crumb: NameCrumb,
+    /// A command whose panel is there and its logic not yet
+    /// (`sm_planned`): its panel state; `feature` is then a stand-in.
+    pub planned: Option<Planned>,
 }
 
 impl SmDraft {
@@ -63,11 +67,28 @@ impl SmDraft {
             active,
             edit: None,
             crumb: Default::default(),
+            planned: None,
         }
+    }
+
+    /// A planned command's panel (its first selector active).
+    fn planned(p: Planned) -> Self {
+        let active = p.selectors().first().map_or("", |s| s.key);
+        let mut d = Self::new(
+            Feature::SheetOp(SheetOpFeature::new(SheetOp::Unfold {
+                body: String::new(),
+            })),
+            active,
+        );
+        d.planned = Some(p);
+        d
     }
 
     /// The command's name.
     pub(super) fn title(&self) -> &'static str {
+        if let Some(p) = &self.planned {
+            return p.kind.title();
+        }
         match &self.feature {
             Feature::SheetFace(_) => "Face",
             Feature::SheetFlange(_) => "Flange",
@@ -87,6 +108,9 @@ impl SmDraft {
 
     /// The prefix of a new feature's id.
     fn prefix(&self) -> &'static str {
+        if let Some(p) = &self.planned {
+            return p.kind.prefix();
+        }
         match &self.feature {
             Feature::SheetFace(_) => "Face",
             Feature::SheetFlange(_) => "Flange",
@@ -98,6 +122,9 @@ impl SmDraft {
 
     /// Its selectors (Inventor's Input Geometry rows).
     pub(super) fn flow(&self) -> Flow {
+        if let Some(p) = &self.planned {
+            return Flow::new(p.selectors(), Some(self.active));
+        }
         let sel = |key, label, prompt, accepts, single, count| Selector {
             key,
             label,
@@ -231,6 +258,8 @@ enum Pick {
     Corner(crate::part::sheet_metal::SheetCorner),
     Face(String, Point3),
     Bend(crate::part::EdgeRef),
+    /// A planned command's pick: its name and highlight.
+    Item(String, Vec<Vec<Point3>>),
 }
 
 /// Builds the draft's feature into `part` (a new one, or Edit Feature).
@@ -397,7 +426,11 @@ impl CadCraftApp {
         use super::ribbon::Action;
         let needs_sheet = !matches!(
             a,
-            Action::SmConvert | Action::SmDefaults | Action::SmFace | Action::SmContour
+            Action::SmConvert
+                | Action::SmDefaults
+                | Action::SmFace
+                | Action::SmContour
+                | Action::SmPlanned(PlannedKind::ContourRoll | PlannedKind::LoftedFlange)
         );
         if needs_sheet && self.part().sheet_models.is_empty() {
             self.file_status = Some(Err(format!(
@@ -555,6 +588,9 @@ impl CadCraftApp {
                     }
                 }
                 self.sm_open(d);
+            }
+            Action::SmPlanned(kind) => {
+                self.sm_open(SmDraft::planned(Planned::new(kind, &rule)));
             }
             Action::SmCornerSeam => {
                 self.sm_open(SmDraft::new(
@@ -746,6 +782,10 @@ impl CadCraftApp {
         let Some(d) = self.sm.draft.clone() else {
             return;
         };
+        if d.planned.is_some() {
+            self.file_status = Some(Err(format!("{}: {}", d.title(), Planned::NOT_YET)));
+            return;
+        }
         if !d.flow().ready() {
             return;
         }
@@ -799,7 +839,9 @@ impl CadCraftApp {
         if flow.selectors.is_empty() {
             return Some(format!("{}: OK (Enter)", d.title()));
         }
-        let ok = if flow.ready() {
+        let ok = if d.planned.is_some() {
+            "".into()
+        } else if flow.ready() {
             super::i18n::tr(super::command_ui::OR_OK)
         } else {
             "".into()
@@ -849,123 +891,128 @@ impl CadCraftApp {
                 ev = selector_rows(ui, &flow, &texts);
             });
         }
-        match &mut d.feature {
-            Feature::SheetFace(f) => {
-                psection(ui, "sm_face_behavior", "Behavior", |ui| {
-                    plabel(ui, "Direction");
-                    direction_row(
-                        ui,
-                        &mut f.flip,
-                        "The thickness on the other side of the sketch",
-                    );
-                    ui.end_row();
-                });
-                psection(ui, "sm_face_output", "Output", |ui| {
-                    plabel(ui, "Thickness");
-                    ui.label(format!("{:.3} mm", rule.thickness))
-                        .on_hover_text("From Sheet Metal Defaults");
-                    ui.end_row();
-                });
-            }
-            Feature::SheetFlange(f) => {
-                psection(ui, "sm_flange_width", "Edge Options", |ui| {
-                    plabel(ui, "Width Extents");
-                    ui.horizontal(|ui| {
-                        for (w, tip) in [
-                            (FlangeWidth::Edge, "The whole edge"),
-                            (FlangeWidth::Width, "A width, centred or from an offset"),
-                            (FlangeWidth::Offset, "Offsets from both ends of the edge"),
-                        ] {
-                            if ui
-                                .selectable_label(f.extents == w, w.label())
-                                .on_hover_text(tip)
-                                .clicked()
-                            {
-                                f.extents = w;
-                                if w == FlangeWidth::Width && f.width <= 0.0 {
-                                    f.width = (first_edge * 0.5).round();
-                                    f.centered = true;
+        if let Some(p) = d.planned.as_mut() {
+            p.panel(ui, &rule);
+        } else {
+            match &mut d.feature {
+                Feature::SheetFace(f) => {
+                    psection(ui, "sm_face_behavior", "Behavior", |ui| {
+                        plabel(ui, "Direction");
+                        direction_row(
+                            ui,
+                            &mut f.flip,
+                            "The thickness on the other side of the sketch",
+                        );
+                        ui.end_row();
+                    });
+                    psection(ui, "sm_face_output", "Output", |ui| {
+                        plabel(ui, "Thickness");
+                        ui.label(format!("{:.3} mm", rule.thickness))
+                            .on_hover_text("From Sheet Metal Defaults");
+                        ui.end_row();
+                    });
+                }
+                Feature::SheetFlange(f) => {
+                    psection(ui, "sm_flange_width", "Edge Options", |ui| {
+                        plabel(ui, "Width Extents");
+                        ui.horizontal(|ui| {
+                            for (w, tip) in [
+                                (FlangeWidth::Edge, "The whole edge"),
+                                (FlangeWidth::Width, "A width, centred or from an offset"),
+                                (FlangeWidth::Offset, "Offsets from both ends of the edge"),
+                            ] {
+                                if ui
+                                    .selectable_label(f.extents == w, w.label())
+                                    .on_hover_text(tip)
+                                    .clicked()
+                                {
+                                    f.extents = w;
+                                    if w == FlangeWidth::Width && f.width <= 0.0 {
+                                        f.width = (first_edge * 0.5).round();
+                                        f.centered = true;
+                                    }
                                 }
                             }
-                        }
-                    });
-                    ui.end_row();
-                    match f.extents {
-                        FlangeWidth::Edge => {}
-                        FlangeWidth::Width => {
-                            field_row(ui, &mut fx, "Width", &snapshot, "width");
-                            plabel(ui, "Centered");
-                            ui.checkbox(&mut f.centered, "")
-                                .on_hover_text("Centred on the edge; off: from Offset");
-                            ui.end_row();
-                            if !f.centered {
-                                field_row(ui, &mut fx, "Offset", &snapshot, "offset1");
+                        });
+                        ui.end_row();
+                        match f.extents {
+                            FlangeWidth::Edge => {}
+                            FlangeWidth::Width => {
+                                field_row(ui, &mut fx, "Width", &snapshot, "width");
+                                plabel(ui, "Centered");
+                                ui.checkbox(&mut f.centered, "")
+                                    .on_hover_text("Centred on the edge; off: from Offset");
+                                ui.end_row();
+                                if !f.centered {
+                                    field_row(ui, &mut fx, "Offset", &snapshot, "offset1");
+                                }
+                            }
+                            FlangeWidth::Offset => {
+                                field_row(ui, &mut fx, "Offset 1", &snapshot, "offset1");
+                                field_row(ui, &mut fx, "Offset 2", &snapshot, "offset2");
                             }
                         }
-                        FlangeWidth::Offset => {
-                            field_row(ui, &mut fx, "Offset 1", &snapshot, "offset1");
-                            field_row(ui, &mut fx, "Offset 2", &snapshot, "offset2");
-                        }
-                    }
-                });
-                psection(ui, "sm_flange_height", "Height Extents", |ui| {
-                    field_row(ui, &mut fx, "Distance", &snapshot, "height");
-                    plabel(ui, "Direction");
-                    direction_row(ui, &mut f.flip, "The flange to the other side");
-                    ui.end_row();
-                    field_row(ui, &mut fx, "Angle", &snapshot, "angle");
-                    plabel(ui, "Bend Position");
-                    ui.horizontal(|ui| {
-                        for (p, short) in [
-                            (FlangePosition::Inside, "Inside"),
-                            (FlangePosition::Middle, "Middle"),
-                            (FlangePosition::Outside, "Outside"),
-                        ] {
-                            ui.selectable_value(&mut f.position, p, short)
-                                .on_hover_text(p.label());
-                        }
                     });
-                    ui.end_row();
-                });
-                psection(ui, "sm_flange_bend", "Bend Properties", |ui| {
-                    radius_row(ui, &mut f.radius, rule.bend_radius);
-                });
-                let corners = self.sm.corners.borrow().clone();
-                psection(ui, "sm_flange_corner", "Corner", |ui| {
-                    plabel(ui, "Corner Shape");
-                    let shown = f
-                        .corner_shape
-                        .map_or("Default (rule)".to_owned(), |c| c.label().to_owned());
-                    egui::ComboBox::from_id_salt("sm_corner_shape")
-                        .selected_text(shown)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut f.corner_shape, None, "Default (rule)");
-                            for c in CornerRelief::ALL {
-                                ui.selectable_value(&mut f.corner_shape, Some(c), c.label());
+                    psection(ui, "sm_flange_height", "Height Extents", |ui| {
+                        field_row(ui, &mut fx, "Distance", &snapshot, "height");
+                        plabel(ui, "Direction");
+                        direction_row(ui, &mut f.flip, "The flange to the other side");
+                        ui.end_row();
+                        field_row(ui, &mut fx, "Angle", &snapshot, "angle");
+                        plabel(ui, "Bend Position");
+                        ui.horizontal(|ui| {
+                            for (p, short) in [
+                                (FlangePosition::Inside, "Inside"),
+                                (FlangePosition::Middle, "Middle"),
+                                (FlangePosition::Outside, "Outside"),
+                            ] {
+                                ui.selectable_value(&mut f.position, p, short)
+                                    .on_hover_text(p.label());
                             }
-                        })
-                        .response
-                        .on_hover_text("The relief cut where two of these bends meet at a corner");
-                    ui.end_row();
-                    override_row(ui, "Relief Size", &mut f.corner_size, rule.corner_relief);
-                    override_row(ui, "Miter Gap", &mut f.corner_gap, rule.gap);
-                });
-                if corners.is_empty() {
-                    if f.edges.len() > 1 {
-                        ui.weak("Corner Overrides: the corners appear with the preview");
-                    }
-                } else {
-                    psection(ui, "sm_flange_overrides", "Corner Overrides", |ui| {
-                        for (k, &(a, b, _)) in corners.iter().enumerate() {
-                            plabel(ui, &format!("Corner {}", k + 1));
-                            let pos = f
-                                .seams
-                                .iter()
-                                .position(|o| (o.a, o.b) == (a, b) || (o.a, o.b) == (b, a));
-                            let current = pos.map(|i| f.seams[i].seam);
-                            let shown = current.map_or("Corner Defaults", |s| s.label());
-                            let mut choice = current;
-                            egui::ComboBox::from_id_salt(("sm_override", k))
+                        });
+                        ui.end_row();
+                    });
+                    psection(ui, "sm_flange_bend", "Bend Properties", |ui| {
+                        radius_row(ui, &mut f.radius, rule.bend_radius);
+                    });
+                    let corners = self.sm.corners.borrow().clone();
+                    psection(ui, "sm_flange_corner", "Corner", |ui| {
+                        plabel(ui, "Corner Shape");
+                        let shown = f
+                            .corner_shape
+                            .map_or("Default (rule)".to_owned(), |c| c.label().to_owned());
+                        egui::ComboBox::from_id_salt("sm_corner_shape")
+                            .selected_text(shown)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut f.corner_shape, None, "Default (rule)");
+                                for c in CornerRelief::ALL {
+                                    ui.selectable_value(&mut f.corner_shape, Some(c), c.label());
+                                }
+                            })
+                            .response
+                            .on_hover_text(
+                                "The relief cut where two of these bends meet at a corner",
+                            );
+                        ui.end_row();
+                        override_row(ui, "Relief Size", &mut f.corner_size, rule.corner_relief);
+                        override_row(ui, "Miter Gap", &mut f.corner_gap, rule.gap);
+                    });
+                    if corners.is_empty() {
+                        if f.edges.len() > 1 {
+                            ui.weak("Corner Overrides: the corners appear with the preview");
+                        }
+                    } else {
+                        psection(ui, "sm_flange_overrides", "Corner Overrides", |ui| {
+                            for (k, &(a, b, _)) in corners.iter().enumerate() {
+                                plabel(ui, &format!("Corner {}", k + 1));
+                                let pos = f
+                                    .seams
+                                    .iter()
+                                    .position(|o| (o.a, o.b) == (a, b) || (o.a, o.b) == (b, a));
+                                let current = pos.map(|i| f.seams[i].seam);
+                                let shown = current.map_or("Corner Defaults", |s| s.label());
+                                let mut choice = current;
+                                egui::ComboBox::from_id_salt(("sm_override", k))
                                 .selected_text(shown)
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(&mut choice, None, "Corner Defaults");
@@ -979,266 +1026,304 @@ impl CadCraftApp {
                                     a + 1,
                                     b + 1
                                 ));
-                            if choice != current {
-                                match (choice, pos) {
-                                    (None, Some(i)) => {
-                                        f.seams.remove(i);
+                                if choice != current {
+                                    match (choice, pos) {
+                                        (None, Some(i)) => {
+                                            f.seams.remove(i);
+                                        }
+                                        (Some(s), Some(i)) => f.seams[i].seam = s,
+                                        (Some(s), None) => f.seams.push(CornerOverride {
+                                            a,
+                                            b,
+                                            seam: s,
+                                            gap: None,
+                                            ratio: 1.0,
+                                        }),
+                                        (None, None) => {}
                                     }
-                                    (Some(s), Some(i)) => f.seams[i].seam = s,
-                                    (Some(s), None) => f.seams.push(CornerOverride {
-                                        a,
-                                        b,
-                                        seam: s,
-                                        gap: None,
-                                        ratio: 1.0,
-                                    }),
-                                    (None, None) => {}
                                 }
+                                ui.end_row();
                             }
-                            ui.end_row();
-                        }
-                    });
+                        });
+                    }
                 }
-            }
-            Feature::SheetConvert(_) => {
-                psection(ui, "sm_convert", "Behavior", |ui| {
-                    plabel(ui, "Thickness");
-                    ui.label(format!("{:.3} mm", rule.thickness)).on_hover_text(
-                        "From Sheet Metal Defaults; a shelled solid keeps its own walls",
-                    );
-                    ui.end_row();
-                    plabel(ui, "Other edges");
-                    ui.weak("cut open (rips)");
-                    ui.end_row();
-                });
-            }
-            Feature::SheetOp(o) => match &mut o.op {
-                SheetOp::Hem { gap, flip, .. } => {
-                    psection(ui, "sm_hem", "Shape", |ui| {
-                        plabel(ui, "Type");
-                        ui.horizontal(|ui| {
-                            let _ = ui.selectable_label(true, "Single");
-                            for t in ["Teardrop", "Rolled", "Double"] {
-                                ui.add_enabled(false, egui::Button::new(t))
-                                    .on_disabled_hover_text(
-                                        "Not yet (docs/spec/5.6-sheet-metal.md)",
-                                    );
-                            }
-                        });
-                        ui.end_row();
-                        plabel(ui, "Gap");
-                        ui.horizontal(|ui| {
-                            let mut own = gap.is_some();
-                            if ui
-                                .checkbox(&mut own, "")
-                                .on_hover_text("Off: Thickness × 0.5")
-                                .changed()
-                            {
-                                *gap = own.then_some(rule.thickness * 0.5);
-                            }
-                            if gap.is_none() {
-                                ui.weak(format!("{:.3} mm", rule.thickness * 0.5));
-                            }
-                        });
-                        ui.end_row();
-                        if gap.is_some() {
-                            field_row(ui, &mut fx, "Gap value", &snapshot, "gap");
-                        }
-                        field_row(ui, &mut fx, "Length", &snapshot, "length");
-                        plabel(ui, "Direction");
-                        direction_row(ui, flip, "Fold the hem to the other face");
-                        ui.end_row();
-                    });
-                }
-                SheetOp::Fold {
-                    radius,
-                    location,
-                    flip,
-                    flip_side,
-                    ..
-                } => {
-                    psection(ui, "sm_fold", "Fold", |ui| {
-                        plabel(ui, "Fold Location");
-                        ui.vertical(|ui| {
-                            for l in FoldLocation::ALL {
-                                ui.radio_value(location, l, l.label());
-                            }
-                        });
-                        ui.end_row();
-                        field_row(ui, &mut fx, "Fold Angle", &snapshot, "angle");
-                        plabel(ui, "Flip Controls");
-                        ui.horizontal(|ui| {
-                            ui.toggle_value(flip_side, "Flip Side")
-                                .on_hover_text("The other side of the line moves");
-                            ui.toggle_value(flip, "Flip Direction")
-                                .on_hover_text("Fold the other way (up / down)");
-                        });
-                        ui.end_row();
-                    });
-                    psection(ui, "sm_fold_bend", "Bend Properties", |ui| {
-                        radius_row(ui, radius, rule.bend_radius);
-                    });
-                }
-                SheetOp::Contour { flip, .. } => {
-                    psection(ui, "sm_contour", "Behavior", |ui| {
-                        field_row(ui, &mut fx, "Distance", &snapshot, "width");
-                        plabel(ui, "Position");
-                        direction_row(ui, flip, "The material on the other side of the profile");
-                        ui.end_row();
-                    });
-                    psection(ui, "sm_contour_bend", "Bend Properties", |ui| {
-                        plabel(ui, "Bend Radius");
-                        ui.label(format!("{:.3} mm (rule)", rule.bend_radius));
-                        ui.end_row();
+                Feature::SheetConvert(_) => {
+                    psection(ui, "sm_convert", "Behavior", |ui| {
                         plabel(ui, "Thickness");
-                        ui.label(format!("{:.3} mm (rule)", rule.thickness));
-                        ui.end_row();
-                    });
-                }
-                SheetOp::Cut { extent, across, .. } => {
-                    psection(ui, "sm_cut", "Behavior", |ui| {
-                        // The label column is narrow: the option's name
-                        // goes with its check box.
-                        plabel(ui, "Bends");
-                        ui.checkbox(across, "Cut Across Bend").on_hover_text(
-                            "The profile wraps across the bends past the face it lies on (through the thickness)",
+                        ui.label(format!("{:.3} mm", rule.thickness)).on_hover_text(
+                            "From Sheet Metal Defaults; a shelled solid keeps its own walls",
                         );
                         ui.end_row();
-                        if !*across {
-                            plabel(ui, "Extents");
-                            egui::ComboBox::from_id_salt("sm_cut_extent")
-                                .selected_text(extent.label())
-                                .show_ui(ui, |ui| {
-                                    for (x, tip) in [
-                                        (
-                                            CutExtent::Thickness,
-                                            "Through the face the sketch lies on",
-                                        ),
-                                        (
-                                            CutExtent::Distance,
-                                            "So deep into the material (a pocket)",
-                                        ),
-                                        (
-                                            CutExtent::ThroughAll,
-                                            "Through every wall along the sketch normal",
-                                        ),
-                                    ] {
-                                        ui.selectable_value(extent, x, x.label())
-                                            .on_hover_text(tip);
-                                    }
-                                });
-                            ui.end_row();
-                            if *extent == CutExtent::Distance {
-                                field_row(ui, &mut fx, "Distance", &snapshot, "depth");
-                            }
-                        }
+                        plabel(ui, "Other edges");
+                        ui.weak("cut open (rips)");
+                        ui.end_row();
                     });
                 }
-                SheetOp::CornerSeam {
-                    body,
-                    a,
-                    b,
-                    seam,
-                    gap,
-                    ratio,
-                } => {
-                    let all = self.part().sheet_corners();
-                    psection(ui, "sm_seam_corners", "Corners", |ui| {
-                        plabel(ui, "Corner");
-                        ui.vertical(|ui| {
-                            if all.is_empty() {
-                                ui.weak("No two flanges meet at a corner");
-                            }
-                            for (k, c) in all.iter().enumerate() {
-                                let on = *a == c.a && *b == c.b;
+                Feature::SheetOp(o) => match &mut o.op {
+                    SheetOp::Hem { gap, flip, .. } => {
+                        psection(ui, "sm_hem", "Shape", |ui| {
+                            plabel(ui, "Type");
+                            ui.horizontal(|ui| {
+                                let _ = ui
+                                    .selectable_label(true, "Single")
+                                    .on_hover_text("Folded back flat: Gap and Length");
+                                for (t, tip) in [
+                                    ("Teardrop", "A rounded fold closing in: Radius and Angle"),
+                                    ("Rolled", "Rolled round: Radius and Angle"),
+                                    ("Double", "Folded back twice: Gap and Length"),
+                                ] {
+                                    ui.add_enabled(false, egui::Button::new(t))
+                                        .on_disabled_hover_text(format!(
+                                            "{tip}: not yet (docs/spec/5.6-sheet-metal.md, Hem)"
+                                        ));
+                                }
+                            });
+                            ui.end_row();
+                            plabel(ui, "Gap");
+                            ui.horizontal(|ui| {
+                                let mut own = gap.is_some();
                                 if ui
-                                    .selectable_label(on, format!("{}  {} / {}", k + 1, c.a, c.b))
-                                    .on_hover_text("Also: click the numbered dot in the view")
-                                    .clicked()
+                                    .checkbox(&mut own, "")
+                                    .on_hover_text("Off: Thickness × 0.5")
+                                    .changed()
                                 {
-                                    (*body, *a, *b) = (c.body.clone(), c.a.clone(), c.b.clone());
+                                    *gap = own.then_some(rule.thickness * 0.5);
+                                }
+                                if gap.is_none() {
+                                    ui.weak(format!("{:.3} mm", rule.thickness * 0.5));
+                                }
+                            });
+                            ui.end_row();
+                            if gap.is_some() {
+                                field_row(ui, &mut fx, "Gap value", &snapshot, "gap");
+                            }
+                            field_row(ui, &mut fx, "Length", &snapshot, "length");
+                            plabel(ui, "Direction");
+                            direction_row(ui, flip, "Fold the hem to the other face");
+                            ui.end_row();
+                        });
+                        psection(ui, "sm_hem_width", "Width Extents", |ui| {
+                            plabel(ui, "Type");
+                            ui.horizontal(|ui| {
+                                let _ = ui
+                                    .selectable_label(true, "Edge")
+                                    .on_hover_text("The whole edge");
+                                for (t, tip) in [
+                                    ("Width", "A width, centred or from an offset"),
+                                    ("Offset", "Offsets from two vertices, points or planes"),
+                                    ("From/To", "Between two points or planes on the edge"),
+                                ] {
+                                    ui.add_enabled(false, egui::Button::new(t))
+                                        .on_disabled_hover_text(format!(
+                                            "{tip}: not yet (docs/spec/5.6-sheet-metal.md, Hem)"
+                                        ));
+                                }
+                            });
+                            ui.end_row();
+                        });
+                    }
+                    SheetOp::Fold {
+                        radius,
+                        location,
+                        flip,
+                        flip_side,
+                        ..
+                    } => {
+                        psection(ui, "sm_fold", "Fold", |ui| {
+                            plabel(ui, "Fold Location");
+                            ui.vertical(|ui| {
+                                for l in FoldLocation::ALL {
+                                    ui.radio_value(location, l, l.label());
+                                }
+                            });
+                            ui.end_row();
+                            field_row(ui, &mut fx, "Fold Angle", &snapshot, "angle");
+                            plabel(ui, "Flip Controls");
+                            ui.horizontal(|ui| {
+                                ui.toggle_value(flip_side, "Flip Side")
+                                    .on_hover_text("The other side of the line moves");
+                                ui.toggle_value(flip, "Flip Direction")
+                                    .on_hover_text("Fold the other way (up / down)");
+                            });
+                            ui.end_row();
+                        });
+                        psection(ui, "sm_fold_bend", "Bend Properties", |ui| {
+                            radius_row(ui, radius, rule.bend_radius);
+                        });
+                    }
+                    SheetOp::Contour { flip, .. } => {
+                        psection(ui, "sm_contour", "Behavior", |ui| {
+                            field_row(ui, &mut fx, "Distance", &snapshot, "width");
+                            plabel(ui, "Position");
+                            direction_row(
+                                ui,
+                                flip,
+                                "The material on the other side of the profile",
+                            );
+                            ui.end_row();
+                        });
+                        psection(ui, "sm_contour_bend", "Bend Properties", |ui| {
+                            plabel(ui, "Bend Radius");
+                            ui.label(format!("{:.3} mm (rule)", rule.bend_radius));
+                            ui.end_row();
+                            plabel(ui, "Thickness");
+                            ui.label(format!("{:.3} mm (rule)", rule.thickness));
+                            ui.end_row();
+                        });
+                    }
+                    SheetOp::Cut { extent, across, .. } => {
+                        psection(ui, "sm_cut", "Behavior", |ui| {
+                            // The label column is narrow: the option's name
+                            // goes with its check box.
+                            plabel(ui, "Bends");
+                            ui.checkbox(across, "Cut Across Bend").on_hover_text(
+                            "The profile wraps across the bends past the face it lies on (through the thickness)",
+                        );
+                            ui.end_row();
+                            if !*across {
+                                plabel(ui, "Extents");
+                                egui::ComboBox::from_id_salt("sm_cut_extent")
+                                    .selected_text(extent.label())
+                                    .show_ui(ui, |ui| {
+                                        for (x, tip) in [
+                                            (
+                                                CutExtent::Thickness,
+                                                "Through the face the sketch lies on",
+                                            ),
+                                            (
+                                                CutExtent::Distance,
+                                                "So deep into the material (a pocket)",
+                                            ),
+                                            (
+                                                CutExtent::ThroughAll,
+                                                "Through every wall along the sketch normal",
+                                            ),
+                                        ] {
+                                            ui.selectable_value(extent, x, x.label())
+                                                .on_hover_text(tip);
+                                        }
+                                    });
+                                ui.end_row();
+                                if *extent == CutExtent::Distance {
+                                    field_row(ui, &mut fx, "Distance", &snapshot, "depth");
                                 }
                             }
                         });
-                        ui.end_row();
-                    });
-                    psection(ui, "sm_seam", "Seam", |ui| {
-                        plabel(ui, "Type");
-                        ui.vertical(|ui| {
-                            for (s, tip) in [
-                                (SeamType::SymmetricGap, "Both flanges stop the gap apart"),
-                                (
-                                    SeamType::Overlap,
-                                    "The first flange runs over the other's edge",
-                                ),
-                                (
-                                    SeamType::ReverseOverlap,
-                                    "The other flange runs over the first's edge",
-                                ),
-                            ] {
-                                ui.radio_value(seam, s, s.label()).on_hover_text(tip);
-                            }
-                        });
-                        ui.end_row();
-                        plabel(ui, "Gap");
-                        ui.horizontal(|ui| {
-                            let mut own = gap.is_some();
-                            if ui
-                                .checkbox(&mut own, "")
-                                .on_hover_text("Off: the rule's gap")
-                                .changed()
-                            {
-                                *gap = own.then_some(rule.gap);
-                            }
-                            if gap.is_none() {
-                                ui.weak(format!("{:.3} mm (rule)", rule.gap));
-                            }
-                        });
-                        ui.end_row();
-                        if gap.is_some() {
-                            field_row(ui, &mut fx, "Gap value", &snapshot, "gap");
-                        }
-                        if *seam != SeamType::SymmetricGap {
-                            plabel(ui, "Percent Overlap");
-                            ui.add(ExprValue::new(ratio).range(0.0..=1.0))
-                                .on_hover_text(
-                                    "Of the thickness past the other's inner face (1 = flush)",
-                                );
+                    }
+                    SheetOp::CornerSeam {
+                        body,
+                        a,
+                        b,
+                        seam,
+                        gap,
+                        ratio,
+                    } => {
+                        let all = self.part().sheet_corners();
+                        psection(ui, "sm_seam_corners", "Corners", |ui| {
+                            plabel(ui, "Corner");
+                            ui.vertical(|ui| {
+                                if all.is_empty() {
+                                    ui.weak("No two flanges meet at a corner");
+                                }
+                                for (k, c) in all.iter().enumerate() {
+                                    let on = *a == c.a && *b == c.b;
+                                    if ui
+                                        .selectable_label(
+                                            on,
+                                            format!("{}  {} / {}", k + 1, c.a, c.b),
+                                        )
+                                        .on_hover_text("Also: click the numbered dot in the view")
+                                        .clicked()
+                                    {
+                                        (*body, *a, *b) =
+                                            (c.body.clone(), c.a.clone(), c.b.clone());
+                                    }
+                                }
+                            });
                             ui.end_row();
-                        }
-                    });
+                        });
+                        psection(ui, "sm_seam", "Seam", |ui| {
+                            plabel(ui, "Type");
+                            ui.vertical(|ui| {
+                                for (s, tip) in [
+                                    (SeamType::SymmetricGap, "Both flanges stop the gap apart"),
+                                    (
+                                        SeamType::Overlap,
+                                        "The first flange runs over the other's edge",
+                                    ),
+                                    (
+                                        SeamType::ReverseOverlap,
+                                        "The other flange runs over the first's edge",
+                                    ),
+                                ] {
+                                    ui.radio_value(seam, s, s.label()).on_hover_text(tip);
+                                }
+                            });
+                            ui.end_row();
+                            plabel(ui, "Gap");
+                            ui.horizontal(|ui| {
+                                let mut own = gap.is_some();
+                                if ui
+                                    .checkbox(&mut own, "")
+                                    .on_hover_text("Off: the rule's gap")
+                                    .changed()
+                                {
+                                    *gap = own.then_some(rule.gap);
+                                }
+                                if gap.is_none() {
+                                    ui.weak(format!("{:.3} mm (rule)", rule.gap));
+                                }
+                            });
+                            ui.end_row();
+                            if gap.is_some() {
+                                field_row(ui, &mut fx, "Gap value", &snapshot, "gap");
+                            }
+                            if *seam != SeamType::SymmetricGap {
+                                plabel(ui, "Percent Overlap");
+                                ui.add(ExprValue::new(ratio).range(0.0..=1.0))
+                                    .on_hover_text(
+                                        "Of the thickness past the other's inner face (1 = flush)",
+                                    );
+                                ui.end_row();
+                            }
+                        });
+                    }
+                    SheetOp::Unfold { body } | SheetOp::Refold { body } => {
+                        psection(ui, "sm_unfold", "Sheet", |ui| {
+                            plabel(ui, "Solid");
+                            ui.label(body.as_str());
+                            ui.end_row();
+                            plabel(ui, "Bends");
+                            ui.label("All bends")
+                                .on_hover_text("The whole sheet; choosing single bends is planned");
+                            ui.end_row();
+                        });
+                    }
+                },
+                _ => {}
+            }
+            // Field commits (expressions, parameters).
+            let commits = std::mem::take(&mut fx.commits);
+            drop(fx);
+            for (field, text) in commits {
+                match self.part().apply_draft_field(&mut d.feature, field, &text) {
+                    Ok(()) => self.file_status = None,
+                    Err(e) => self.file_status = Some(Err(format!("{}: {e}", d.title()))),
                 }
-                SheetOp::Unfold { body } | SheetOp::Refold { body } => {
-                    psection(ui, "sm_unfold", "Sheet", |ui| {
-                        plabel(ui, "Solid");
-                        ui.label(body.as_str());
-                        ui.end_row();
-                        plabel(ui, "Bends");
-                        ui.label("All bends")
-                            .on_hover_text("The whole sheet; choosing single bends is planned");
-                        ui.end_row();
-                    });
-                }
-            },
-            _ => {}
-        }
-        // Field commits (expressions, parameters).
-        let commits = std::mem::take(&mut fx.commits);
-        drop(fx);
-        for (field, text) in commits {
-            match self.part().apply_draft_field(&mut d.feature, field, &text) {
-                Ok(()) => self.file_status = None,
-                Err(e) => self.file_status = Some(Err(format!("{}: {e}", d.title()))),
+            }
+            if let Some(k) = ev.activate {
+                d.active = k;
+            }
+            if let Some(k) = ev.clear {
+                sm_clear(&mut d, k);
+                d.active = k;
             }
         }
-        if let Some(k) = ev.activate {
-            d.active = k;
-        }
-        if let Some(k) = ev.clear {
-            sm_clear(&mut d, k);
-            d.active = k;
-        }
         self.sm.draft = Some(d.clone());
+        if d.planned.is_some() {
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(RichText::new(Planned::NOT_YET).weak()).wrap());
+        }
         // The preview's state.
         let preview = self.sm_preview();
         let failed =
@@ -1252,7 +1337,7 @@ impl CadCraftApp {
             Some(Err(e)) if !e.is_empty() => warning_box(ui, e),
             _ => {}
         }
-        let ready = d.flow().ready() && !failed;
+        let ready = d.flow().ready() && !failed && d.planned.is_none();
         ui.horizontal(|ui| {
             let size = egui::vec2(60.0, 22.0);
             if ui
@@ -1282,6 +1367,17 @@ impl CadCraftApp {
 
     /// What each selector row shows.
     fn sm_selector_texts(&self, d: &SmDraft) -> Vec<(&'static str, String)> {
+        if let Some(p) = &d.planned {
+            return p
+                .selectors()
+                .iter()
+                .filter_map(|s| {
+                    let items = p.items(s.key);
+                    // A count: model names are long and widened the panel.
+                    (!items.is_empty()).then(|| (s.key, format!("{} selected", items.len())))
+                })
+                .collect();
+        }
         let sketch_name = |id: &str| {
             self.part()
                 .sketches
@@ -1343,7 +1439,7 @@ impl CadCraftApp {
     /// `None` while inputs are missing.
     fn sm_preview(&self) -> Option<SmResult> {
         let d = self.sm.draft.as_ref()?;
-        if !d.flow().ready() {
+        if !d.flow().ready() || d.planned.is_some() {
             return None;
         }
         let key = format!("{:?}|{:?}|{:?}", d.edit, d.sketch, d.feature);
@@ -1565,6 +1661,9 @@ impl CadCraftApp {
         let Some(d) = &self.sm.draft else {
             return Vec::new();
         };
+        if let Some(p) = &d.planned {
+            return p.chosen();
+        }
         let part = self.part();
         let mut out = Vec::new();
         let edge_line =
@@ -1658,6 +1757,9 @@ impl CadCraftApp {
         let d = self.sm.draft.as_ref()?;
         let flow = d.flow();
         let sel = flow.current()?;
+        if d.planned.is_some() {
+            return self.sm_planned_hover(p, rect, sel);
+        }
         let part = self.part();
         let (o, dir) = self.camera.ray(p, rect)?;
         if sel.takes(PickKind::Region) {
@@ -1766,9 +1868,121 @@ impl CadCraftApp {
         None
     }
 
+    /// What a planned command's active selector would take under `p`: model
+    /// edges, faces, vertices, sketch curves or sketch points, by the
+    /// selector's kinds in order.
+    fn sm_planned_hover(
+        &self,
+        p: Pos2,
+        rect: Rect,
+        sel: &Selector,
+    ) -> Option<(Pick, Vec<Vec<Point3>>)> {
+        use super::overlay;
+        let part = self.part();
+        let (o, dir) = self.camera.ray(p, rect)?;
+        let opts = crate::kernel::TessellationOptions::default();
+        // A small cross marks a point (a size on screen, not in mm).
+        let cross = |c: Point3| -> Vec<Vec<Point3>> {
+            let s = self.camera.distance * 0.012;
+            [Vector3::x(), Vector3::y(), Vector3::z()]
+                .iter()
+                .map(|a| vec![c - a * s, c + a * s])
+                .collect()
+        };
+        for kind in sel.accepts {
+            match kind {
+                PickKind::Edge | PickKind::StraightEdge => {
+                    if let Some(e) = self.edge_under(p, rect)
+                        && let Ok(pts) = part.body.sample_edge(e, &opts)
+                    {
+                        let name = part
+                            .body
+                            .edge(e)
+                            .and_then(|x| x.name.clone())
+                            .unwrap_or_else(|| "edge".into());
+                        return Some((Pick::Item(name, vec![pts.clone()]), vec![pts]));
+                    }
+                }
+                PickKind::Face | PickKind::PlanarFace => {
+                    if let Some((f, _)) = self.face_hit(&o, &dir)
+                        && let Some(name) = part.body.face(f).and_then(|x| x.name.clone())
+                    {
+                        let lines: Vec<Vec<Point3>> =
+                            crate::part::select::edges_of_face(&part.body, f)
+                                .into_iter()
+                                .filter_map(|e| part.body.sample_edge(e, &opts).ok())
+                                .collect();
+                        return Some((Pick::Item(name, lines.clone()), lines));
+                    }
+                }
+                PickKind::Point => {
+                    if let Some(r) = self.vertex_under(p, rect)
+                        && let Ok(at) = crate::part::placement::point_of(&r, &part.body, &part.work)
+                    {
+                        let name = match &r {
+                            crate::part::PointRef::Vertex(n)
+                            | crate::part::PointRef::EdgeMid(n)
+                            | crate::part::PointRef::Work(n) => n.clone(),
+                            crate::part::PointRef::PartOrigin => "Center Point".into(),
+                        };
+                        let lines = cross(at);
+                        return Some((Pick::Item(name, lines.clone()), lines));
+                    }
+                }
+                PickKind::SketchPoint => {
+                    for ps in part.sketches.iter().filter(|s| s.visible) {
+                        let sk = &ps.sketch;
+                        if let Some(id) =
+                            overlay::pick_point(&self.camera, rect, sk, p, overlay::POINT_SNAP_PX)
+                            && let Some(pt) = sk.point(id)
+                        {
+                            let at = sk.plane.point_at(pt.position.x, pt.position.y);
+                            let lines = cross(at);
+                            let name = format!("{} point {:?}", ps.name, id);
+                            return Some((Pick::Item(name, lines.clone()), lines));
+                        }
+                    }
+                }
+                PickKind::SketchCurve => {
+                    for ps in part.sketches.iter().filter(|s| s.visible) {
+                        let sk = &ps.sketch;
+                        if let Some((e, _)) =
+                            overlay::pick_entity(&self.camera, rect, sk, p, overlay::CURVE_SNAP_PX)
+                        {
+                            let line: Vec<Point3> = overlay::polyline(sk, e)
+                                .iter()
+                                .map(|q| sk.plane.point_at(q.x, q.y))
+                                .collect();
+                            let name =
+                                format!("{} {}", ps.name, crate::part::extrude::entity_key(e));
+                            return Some((Pick::Item(name, vec![line.clone()]), vec![line]));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Applies a pick to the active selector (`remove`: Ctrl+click takes
     /// an edge out).
     fn sm_pick(&mut self, pick: Pick, remove: bool) {
+        if let (Some(d), Pick::Item(id, lines)) = (self.sm.draft.as_mut(), &pick)
+            && let Some(p) = d.planned.as_mut()
+        {
+            let flow = Flow::new(p.selectors(), Some(d.active));
+            if let Some(s) = flow.current() {
+                p.toggle(s.key, s.single, (id.clone(), lines.clone()));
+            }
+            let mut flow = Flow::new(p.selectors(), Some(d.active));
+            if flow.picked()
+                && let Some(k) = flow.active_key()
+            {
+                d.active = k;
+            }
+            return;
+        }
         // The same edge on the sheet's other face (a second click switches
         // between the top and the bottom edge, owner 2026-10-26).
         let other = match &pick {
@@ -2338,6 +2552,10 @@ fn sketch_lines(ps: &crate::part::PartSketch) -> Vec<Vec<Point3>> {
 
 /// Clears the selector `key` of a draft.
 fn sm_clear(d: &mut SmDraft, key: &str) {
+    if let Some(p) = d.planned.as_mut() {
+        p.clear(key);
+        return;
+    }
     match (&mut d.feature, key) {
         (Feature::SheetFace(f), "profile") => f.profiles.clear(),
         (Feature::SheetFlange(f), "edges") => f.edges.clear(),
@@ -2408,6 +2626,7 @@ mod tests {
             active: "profile",
             edit: None,
             crumb: Default::default(),
+            planned: None,
         };
         assert!(d.flow().ready());
         let before = Default::default();

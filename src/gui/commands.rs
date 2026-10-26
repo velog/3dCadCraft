@@ -32,6 +32,7 @@ use super::layout::{Element, UiCmd, VisKind};
 use super::material::MatCmd;
 use super::ribbon::Action;
 use super::sketch_tools::{ConstraintTool as Ct, Tool};
+use super::sm_planned::PlannedKind;
 use super::viewcube::StandardView;
 use crate::command::matcher::{self, Fields, Folded, Query, Tier};
 use crate::part::PrimitiveKind as Prim;
@@ -1259,6 +1260,7 @@ pub static COMMANDS: &[Command] = &[
     c("sm.convert", "Convert to Sheet Metal", "Превръщане в листов материал", Icon::SheetMetal)
         .short("Convert")
         .run(Action::SmConvert)
+        .alias(&["SCV"])
         .at(&[Place::Ribbon("3D Model", "Convert"), Place::Ribbon("Sheet Metal", "Setup")])
         .env(PART)
         .tip("A solid to sheet metal: pick the face that stays put and the edges that become bends (a shelled solid keeps its walls); a part without solids gets the sheet metal rule and tab")
@@ -1266,74 +1268,106 @@ pub static COMMANDS: &[Command] = &[
     c("sm.defaults", "Sheet Metal Defaults", "Настройки на листовия материал", Icon::Settings)
         .short("Defaults")
         .run(Action::SmDefaults)
+        .alias(&["SMD"])
         .at(&[Place::Ribbon("Sheet Metal", "Setup")])
         .env(PART)
         .tip("The sheet metal rule of the part: thickness, bend radius, K-factor, reliefs, gap")
         .spec("5.6-sheet-metal.md"),
     c("sm.face", "Face", "Плоча", Icon::SheetMetal)
         .run(Action::SmFace)
+        .alias(&["SFA"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")])
         .env(PART)
         .tip("A sheet from a closed sketch profile, the rule's thickness")
         .spec("5.6-sheet-metal.md"),
     c("sm.flange", "Flange", "Фланец", Icon::SheetMetal)
         .run(Action::SmFlange)
+        .alias(&["SMF"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")])
         .env(PART)
         .tip("Bend flanges on sheet edges: height, angle, bend radius, Bend Position")
         .spec("5.6-sheet-metal.md"),
     c("sm.flat_pattern", "Flat Pattern", "Развивка", Icon::SheetMetal)
         .run(Action::SmFlatPattern)
+        .alias(&["SFP"])
         .at(&[Place::Ribbon("Sheet Metal", "Flat Pattern")])
         .env(PART)
         .tip("Show the part unfolded (its extents and bends in Properties); again: back to the folded part")
         .spec("5.6-sheet-metal.md"),
     c("sm.contour_flange", "Contour Flange", "Контурен фланец", Icon::SheetMetal)
         .run(Action::SmContour)
+        .alias(&["SCF"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("A new sheet from an open chain of sketch lines: every corner a bend of the rule").spec("5.6-sheet-metal.md"),
     c("sm.hem", "Hem", "Подгъв", Icon::SheetMetal)
         .run(Action::SmHem)
+        .alias(&["SHM"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("A single hem folded back on sheet edges: length and gap").spec("5.6-sheet-metal.md"),
     c("sm.fold", "Fold", "Сгъване", Icon::SheetMetal)
         .run(Action::SmFold)
+        .alias(&["SFO"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("Fold the sheet along a sketch line on one of its faces").spec("5.6-sheet-metal.md"),
     c("sm.bend", "Bend", "Огъвка", Icon::SheetMetal)
+        .run(Action::SmPlanned(PlannedKind::Bend))
+        .alias(&["SBD"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("A bend joining two faces").todo("5.6"),
+        .tip("A bend joining two faces by an edge of each; Double Bend for parallel faces (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
     c("sm.contour_roll", "Contour Roll", "Валцоване", Icon::SheetMetal)
+        .run(Action::SmPlanned(PlannedKind::ContourRoll))
+        .alias(&["SCR"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("A rolled sheet from an open profile").todo("5.6"),
+        .tip("A rolled sheet from an open profile turned about an axis (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
     c("sm.lofted_flange", "Lofted Flange", "Преходен фланец", Icon::SheetMetal)
+        .run(Action::SmPlanned(PlannedKind::LoftedFlange))
+        .alias(&["SLF"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("A transition between two profiles (square to round)").todo("5.6"),
+        .tip("A transition between two profiles (square to round), die formed or press brake (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
     c("sm.rip", "Rip", "Разрез", Icon::SheetMetal)
+        .run(Action::SmPlanned(PlannedKind::Rip))
+        .alias(&["SRP"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("Split a closed shape so it unfolds").todo("5.6"),
+        .tip("Split a closed shape so it unfolds: at a point, between two points or a whole face (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
     c("sm.cut", "Cut", "Изрязване", Icon::SheetMetal)
         .run(Action::SmCut)
+        .alias(&["SCT"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Closed sketch profiles cut through the sheet face they lie on (kept in the flat pattern); across bends: Unfold, Cut, Refold").spec("5.6-sheet-metal.md"),
     c("sm.corner_seam", "Corner Seam", "Ъглов шев", Icon::SheetMetal)
         .run(Action::SmCornerSeam)
+        .alias(&["SCS"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Close the corner between two flanges again: Symmetric Gap, Overlap or Reverse Overlap, gap, percent overlap").spec("5.6-sheet-metal.md"),
-    c("sm.punch", "Punch Tool", "Щанца", Icon::SheetMetal)
+    c("sm.corner_round", "Corner Round", "Заобляне на ъгъл", Icon::SheetMetal)
+        .run(Action::SmPlanned(PlannedKind::CornerRound))
+        .alias(&["SRD"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
-        .tip("Louvres, lances, embosses from the punch library").todo("5.6"),
+        .tip("Round the sheet's corners through the thickness, sets of corners with their radii (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
+    c("sm.corner_chamfer", "Corner Chamfer", "Скосяване на ъгъл", Icon::SheetMetal)
+        .run(Action::SmPlanned(PlannedKind::CornerChamfer))
+        .alias(&["SCH"])
+        .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
+        .tip("Chamfer the sheet's corners: one distance, distance and angle, or two distances (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
+    c("sm.punch", "Punch Tool", "Щанца", Icon::SheetMetal)
+        .run(Action::SmPlanned(PlannedKind::Punch))
+        .alias(&["SPT"])
+        .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
+        .tip("Louvres, lances, embosses from the punch library at sketch points (panel only: needs the punch library, 6.3)").spec("5.6-sheet-metal.md"),
     c("sm.unfold", "Unfold", "Разгъване", Icon::SheetMetal)
         .run(Action::SmUnfold)
+        .alias(&["SUF"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Flatten the sheet (all its bends): later features (Cut) work on the flat pattern until Refold").spec("5.6-sheet-metal.md"),
     c("sm.refold", "Refold", "Обратно сгъване", Icon::SheetMetal)
         .run(Action::SmRefold)
+        .alias(&["SRF"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Fold the unfolded sheet again, with what was cut while flat").spec("5.6-sheet-metal.md"),
     c("sm.export_flat", "Export Flat Pattern", "Експорт на развивката", Icon::SheetMetal)
         .short("Export")
         .run(Action::SmExportFlat)
+        .alias(&["SFX"])
         .at(&[Place::Ribbon("Sheet Metal", "Flat Pattern")]).env(PART)
         .tip("The flat pattern as DXF: outline and cut-outs on OUTER, bend lines on BEND_UP / BEND_DOWN").spec("5.6-sheet-metal.md"),
     // ---- Assemble (docs/spec/3.1-assemblies.md) ---------------------------

@@ -76,6 +76,7 @@ mod sheet_metal;
 mod shell;
 mod show_dims;
 mod sketch_tools;
+mod sm_planned;
 mod sweep;
 mod valuefield;
 mod viewcube;
@@ -3764,7 +3765,8 @@ impl CadCraftApp {
             | Action::SmUnfold
             | Action::SmRefold
             | Action::SmExportFlat
-            | Action::SmCornerSeam => self.sm_apply(action),
+            | Action::SmCornerSeam
+            | Action::SmPlanned(_) => self.sm_apply(action),
             Action::StartSketch => {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);

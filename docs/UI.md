@@ -255,7 +255,13 @@ a face of the sheet), Angle, Bend Radius, Fold Location, Flip Side / Flip Direct
 sketch with an open chain of lines, Distance (width), Flip. **Cut**: a sketch with closed profiles on a face of
 the sheet. **Unfold** / **Refold**: the whole sheet flat and back (a Cut between them crosses bends).
 **Export** (Flat Pattern panel): the flat pattern as DXF (layers OUTER, BEND_UP, BEND_DOWN). **Flat Pattern**: the view shows the part unfolded,
-Properties its extents and bends; again goes back. The other sheet metal commands are listed greyed.
+Properties its extents and bends; again goes back. **Bend**, **Contour Roll**, **Lofted Flange**, **Rip**,
+**Corner Round**, **Corner Chamfer** and **Punch Tool** open their whole panel (selectors take picks, every
+option works in the panel) with OK disabled: the interface comes first, the geometry after the owner's check.
+
+Aliases (type in the view, no command open): SCV Convert, SMD Defaults, SFA Face, SCF Contour Flange, SMF Flange,
+SHM Hem, SFO Fold, SBD Bend, SCR Contour Roll, SLF Lofted Flange, SRP Rip, SCT Cut, SCS Corner Seam, SRD Corner
+Round, SCH Corner Chamfer, SPT Punch Tool, SUF Unfold, SRF Refold, SFP Flat Pattern, SFX Export Flat Pattern.
 🟡 waiting for a visual check.
 
 ### Drawings (Place Views / Annotate tabs, [spec/4-drawings.md](spec/4-drawings.md))

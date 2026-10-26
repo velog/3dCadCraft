@@ -133,7 +133,7 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     it has one (e.g. `E`, `RP`, `TH`), otherwise ours, built from the command name (`SMF` Sheet Metal
     Flange, `BV` Base View). Aliases must not collide within one environment (the commands test checks
     it); list them in `docs/UI.md`. On 2026-10-26, 92 implemented commands still had none (Coil, Rib,
-    Combine, Split, primitives, the sheet metal commands, view toggles…): give them aliases in one pass
+    Combine, Split, primitives, view toggles…; the sheet metal ones got theirs on 2026-10-26): give them aliases in one pass
     when `gui/commands.rs` is free, then add a test that fails for an implemented command without one.
 15. **Interface first, then logic** (owner's rule, 2026-10-26): before a new feature's logic, build its
     complete Inventor-like interface — ribbon button with icon and alias, the dialog / panel with
@@ -1012,6 +1012,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   A sheet metal Cut's profiles are `PartSketch::own_regions` (projected edges do not split them): a rectangle
   sketched across a face's edge is one profile, which Cut Across Bend carries over the bend (owner's journal
   `tests/data/sheet_cut_across_journal.jsonl`). Old Cuts still resolve their profiles by the seed point.
+  Commands with a panel and no logic yet (rule 15: Bend, Contour Roll, Lofted Flange, Rip, Corner Round, Corner
+  Chamfer, Punch Tool) are `Action::SmPlanned(kind)`: `gui/sm_planned.rs` holds the panel state (`Planned`, not
+  saved), carried in `SmDraft::planned` with a stand-in `feature`, so selector rows, picks (`Pick::Item`), Esc and
+  prompts are shared; OK stays disabled. A selector row's label is its widget id — two rows must not share one.
 - **Aborts leave no crash report** (owner's Cut crash 2026-10-26: Windows `0xc0000409`, subcode 7 = `abort()`;
   a stack overflow aborts too). The desktop binary links a 64 MB main-thread stack (`build.rs`; Windows' default is
   1 MB and OK builds features on the main thread), and `diagnostics::activity` writes the last checkpoint /

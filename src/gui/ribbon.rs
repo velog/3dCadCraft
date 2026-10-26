@@ -101,6 +101,10 @@ pub enum Action {
     SmExportFlat,
     /// Sheet Metal › Corner Seam.
     SmCornerSeam,
+    /// Sheet Metal commands whose panel is there and logic comes later
+    /// (`gui/sm_planned.rs`): Bend, Contour Roll, Lofted Flange, Rip,
+    /// Corner Round, Corner Chamfer, Punch Tool.
+    SmPlanned(super::sm_planned::PlannedKind),
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch
@@ -534,6 +538,8 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 vec![
                     c("sm.cut"),
                     c("sm.corner_seam"),
+                    c("sm.corner_round"),
+                    c("sm.corner_chamfer"),
                     c("sm.punch"),
                     c("sm.unfold"),
                     c("sm.refold"),
