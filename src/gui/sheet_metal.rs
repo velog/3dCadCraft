@@ -1620,7 +1620,8 @@ impl CadCraftApp {
         let part = self.part();
         let (o, dir) = self.camera.ray(p, rect)?;
         if sel.takes(PickKind::Region) {
-            let cut = matches!(&d.feature, Feature::SheetOp(o) if matches!(o.op, SheetOp::Cut { .. }));
+            let cut =
+                matches!(&d.feature, Feature::SheetOp(o) if matches!(o.op, SheetOp::Cut { .. }));
             for (i, ps) in part.sketches.iter().enumerate() {
                 if !(ps.visible || d.sketch == Some(i)) {
                     continue;
@@ -1632,7 +1633,11 @@ impl CadCraftApp {
                 let uv = sk.plane.project(&world);
                 // A Cut's profiles ignore projected edges (one rectangle
                 // across a face's edge is one profile).
-                let regions = if cut { ps.own_regions() } else { self.sketch_regions(sk) };
+                let regions = if cut {
+                    ps.own_regions()
+                } else {
+                    self.sketch_regions(sk)
+                };
                 if let Some(r) = regions
                     .iter()
                     .filter(|r| r.contains(uv))

@@ -82,6 +82,10 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
 
 ## Log
 
+- 2026-10-26 — **Assembly update, 1000 stacked cubes: 190 → 41 ms** (perf table 91 ms with the sampler). Symmetry
+  (`f9fdede`) made `Con::ends()` return a `Vec`, and `passes` scanned every constraint for every component: 1000 ×
+  3000 allocations per pass. `ends()` is a fixed array again and the passes look constraints up by component.
+
 - **2026-10-23** — Measure (0.10): the closest pair of the 36-hole plate body against its top face
   took 1027 ms brute force (every sampled point × every triangle), 3.1 ms with box pruning (a
   triangle whose box is farther than the best pair is skipped; touching ends the search). Budget

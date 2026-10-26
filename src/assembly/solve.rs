@@ -66,6 +66,33 @@ const L: Real = 500.0;
 const GOAL: Real = 1e-2;
 const TOL: Real = 1e-10;
 
+/// The components a constraint reads (two, or three with a plane).
+#[derive(Clone, Copy)]
+struct Ends([u32; 3], usize);
+
+impl std::ops::Deref for Ends {
+    type Target = [u32];
+    fn deref(&self) -> &[u32] {
+        &self.0[..self.1]
+    }
+}
+
+impl<'a> IntoIterator for &'a Ends {
+    type Item = &'a u32;
+    type IntoIter = std::slice::Iter<'a, u32>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0[..self.1].iter()
+    }
+}
+
+impl IntoIterator for Ends {
+    type Item = u32;
+    type IntoIter = std::iter::Take<std::array::IntoIter<u32, 3>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter().take(self.1)
+    }
+}
+
 /// One active constraint with its local geometry (and Symmetry's plane).
 struct Con {
     c: Constraint,
@@ -75,13 +102,15 @@ struct Con {
 }
 
 impl Con {
-    /// The components it reads: its two selections' and the plane's.
-    fn ends(&self) -> Vec<u32> {
-        let mut v = vec![self.c.a.occurrence(), self.c.b.occurrence()];
-        if let Some((id, _)) = &self.s {
-            v.push(*id);
+    /// The components it reads: its two selections' and the plane's. No
+    /// allocation: it runs for every constraint of every component in the
+    /// passes (a `Vec` here made 1000 parts take 190 ms instead of 45).
+    fn ends(&self) -> Ends {
+        let (a, b) = (self.c.a.occurrence(), self.c.b.occurrence());
+        match &self.s {
+            Some((id, _)) => Ends([a, b, *id], 3),
+            None => Ends([a, b, 0], 2),
         }
-        v
     }
 
     /// Its residuals with the placements `ts` (in `ends` order).
@@ -98,8 +127,12 @@ impl Con {
     }
 
     fn res(&self, place: &Place, out: &mut Vec<Real>) {
-        let ts: Vec<Transform3> = self.ends().iter().map(|&id| at(place, id)).collect();
-        self.res_ts(&ts, out);
+        let e = self.ends();
+        let mut ts = [Transform3::identity(); 3];
+        for (t, &id) in ts.iter_mut().zip(e.iter()) {
+            *t = at(place, id);
+        }
+        self.res_ts(&ts[..e.len()], out);
     }
 
     /// Ready to solve for `id` when every other component it reads is
@@ -257,11 +290,26 @@ fn lm(cons: &[&Con], set: &[u32], place: &mut Place, drag: Option<&Drag>, iters:
 
 /// The passes over the whole assembly (see the module docs).
 fn passes(cons: &[Con], free: &HashSet<u32>, place: &mut Place, order: &[u32]) -> Real {
+    // The constraints of each component (scanning all of them for every
+    // component was quadratic).
+    let mut of: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, k) in cons.iter().enumerate() {
+        for id in k.ends() {
+            let v = of.entry(id).or_default();
+            if v.last() != Some(&i) {
+                v.push(i);
+            }
+        }
+    }
+    let none: Vec<usize> = Vec::new();
     // 1. Along the graph: each component against the ones placed before it.
     let mut placed: HashSet<u32> = HashSet::new();
     for &id in order {
-        let mine: Vec<&Con> = cons
+        let mine: Vec<&Con> = of
+            .get(&id)
+            .unwrap_or(&none)
             .iter()
+            .map(|&i| &cons[i])
             .filter(|k| k.ready_for(id, free, &placed))
             .collect();
         if !mine.is_empty() {
@@ -296,13 +344,10 @@ fn passes(cons: &[Con], free: &HashSet<u32>, place: &mut Place, order: &[u32]) -
                 continue;
             }
             set.push(id);
-            for k in cons {
-                let e = k.ends();
-                if e.contains(&id) {
-                    for &y in &e {
-                        if free.contains(&y) && !seen.contains(&y) {
-                            queue.push_back(y);
-                        }
+            for &i in of.get(&id).unwrap_or(&none) {
+                for y in cons[i].ends() {
+                    if free.contains(&y) && !seen.contains(&y) {
+                        queue.push_back(y);
                     }
                 }
             }

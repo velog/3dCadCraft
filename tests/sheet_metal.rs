@@ -1249,13 +1249,21 @@ fn cut_across_bend_from_the_owners_session() {
     let mut p = replay::part_at(&path, 12).unwrap();
     p.regenerate().unwrap();
     let ps = p.sketches.iter().find(|s| s.id == "Sketch2").unwrap();
-    assert_eq!(ps.sketch.regions().len(), 3, "split by the face's projected edge");
+    assert_eq!(
+        ps.sketch.regions().len(),
+        3,
+        "split by the face's projected edge"
+    );
     let own = ps.own_regions();
     let rect = own
         .iter()
         .find(|r| r.area() < 2000.0)
         .expect("the rectangle as one profile");
-    assert!((rect.area() - (624.0 + 574.0)).abs() < 5.0, "{}", rect.area());
+    assert!(
+        (rect.area() - (624.0 + 574.0)).abs() < 5.0,
+        "{}",
+        rect.area()
+    );
     let k = p
         .features
         .iter()
@@ -1274,5 +1282,8 @@ fn cut_across_bend_from_the_owners_session() {
     let took = volume(&b) - volume(&p);
     let t = 2.0;
     let want = rect.area() * t;
-    assert!((took - want).abs() < 0.03 * want, "across the bend: {took} vs {want}");
+    assert!(
+        (took - want).abs() < 0.03 * want,
+        "across the bend: {took} vs {want}"
+    );
 }
