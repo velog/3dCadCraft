@@ -67,6 +67,19 @@ Target times for interactive work:
 | Selection: filter + priority + order of 10 000 candidates under the cursor, ×10 (`command::selection::filter_candidates`) | 20 ms | 3.8 ms (2026-10-20, under load) |
 | Command search: one keystroke over 300 commands (`command_search_per_keystroke`, a separate test) | 1 ms | 0.23 ms (2026-10-20) |
 
+## Resource log
+
+Every budget case also records what its median run used and what the machine had (owner's request,
+2026-10-26): `cpu` (CPU time of the test process, all threads), `cores` (cpu / wall: how many cores it kept
+busy), `peak MB` (highest resident memory during the run, sampled every 5 ms), `machine` (the whole machine's CPU
+load over the run) and `others` (the part other programs caused). The table prints them; every run also writes
+`target/perf-log/perf-<unix time>.jsonl` — its first line is the machine (CPU model, logical / physical cores,
+RAM total / free, OS), then one line per case. A missed budget while other programs used more than 25 % of the
+machine says so in the failure message: rerun on a quiet machine before looking for a slowdown.
+
+The process's CPU time includes every test of the `perf` binary running at the same time; for exact per-case
+numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --nocapture`.
+
 ## Log
 
 - **2026-10-23** — Measure (0.10): the closest pair of the 36-hole plate body against its top face

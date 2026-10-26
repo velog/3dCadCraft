@@ -139,6 +139,13 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     status prompts, right-click menu), laid out as close to Inventor 2027 as we can. Options whose logic
     is not there yet are shown but disabled, with the spec row in the tooltip (like rule 7 for the
     ribbon). The owner checks the interface visually; only then the logic is implemented row by row.
+16. **Every change is checked in the running app by the agent** (owner's rule, 2026-10-26): each new
+    feature, fix or interface change is driven through the real GUI with the scripted tools
+    ([Visual testing](#visual-testing): `tools/gui_win.py` on Windows, `gui_sim.py` on Linux) —
+    launch, perform the user's clicks / keys, screenshot, read the screenshot against the spec. Any
+    mismatch (layout, wording, missing option, wrong result, error) is fixed and checked again until
+    it matches; only then the work is reported done, with what was checked. The owner's own check
+    comes after that, as the final validation.
 
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 
@@ -684,6 +691,14 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `options_snapshot`/`apply_options`; loading is field by field (`lenient`), so an old file
   keeps its other values. egui's Ctrl+0/Ctrl+± zoom is off (`zoom_with_keyboard`): Ctrl+0 is
   Clean Screen. F11 is Relax Mode in a sketch and Full Screen elsewhere.
+- **Resizable egui windows**: never size a list from `available_height()` minus an *estimate* of what
+  follows — one pixel too much and the window grows every frame to the screen's height (the file dialog
+  did). Lay the bottom out first with `egui::Panel::bottom(id).show(ui, ..)`, then give the list the rest;
+  a `right_to_left` layout also takes all remaining height. A `CENTER_CENTER` pivot does not centre a
+  window on its first frame (its size is unknown): use `LEFT_TOP` at `centre − default_size / 2`.
+- **Main window state** (`UiSettings::main_pos` / `maximized` / `full_screen`, `layout::startup_window`):
+  Full Screen is turned on by `full_screen_cmd` on the first frame — given to the window builder together
+  with a position, Windows dropped the frame but kept the old place and size.
 - **Insertion goes through `PartDocument::insert_feature`** (all `add_*` via
   `insert_feature_checked`): a new feature lands at the End of Part (`eop`), sketches after
   it shift, the marker moves below it. Never `features.push` and never assume the new feature
@@ -978,6 +993,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `kind` tag; regeneration in `part/exact.rs::sheet_op`) — a new sheet operation is a new `SheetOp` variant
   (format revision), not a new `Feature` variant. SolidCraft's hem rolls *round* the edge (past it by
   gap + T); a fold line through an existing bend is refused by the kernel.
+  GUI (`gui/sheet_metal.rs`): one `SmDraft` holds the `Feature` being defined (`SheetFace` / `SheetFlange` /
+  `SheetConvert` / `SheetOp`) — its `flow()` is the selector list, `build()` makes it (new or Edit Feature through
+  `replace_feature`, which must list each sheet feature type), the preview is its own worker job (`SheetUi::job`)
+  returning the new faces' triangles + edges (`new_faces`), drawn see-through in `sm_view`. The command is
+  `Cmd::Sheet` in `command_ui` (right-click menu, Enter, Esc, prompt). Corner Seam corners come from `base_pairs`
+  (a corner relief moves the bends' ends off the corner, so `corners()` sees none).
 - **BOM** (`assembly::bom`, `gui/bom.rs`): computed every frame from the occurrences and each component's
   iProperties (`bom_info` through `with_part` / `part_file`); only `IProperties::bom_structure` and
   `Occurrence::bom` are stored.

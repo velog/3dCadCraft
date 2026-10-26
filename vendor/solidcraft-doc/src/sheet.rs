@@ -3172,6 +3172,19 @@ impl SheetBody {
         Some((apply_point(&w, Vec3::new(a.x, a.y, z)), apply_point(&w, Vec3::new(b.x, b.y, z)), top))
     }
 
+    /// The sheet edge nearest `pick` with its frame (world): its ends, the normal of the face it
+    /// was picked on (pointing away from the sheet) and the direction out of the panel square to
+    /// the edge (3DCadCraft addition: manipulators of Flange and Hem).
+    pub fn edge_frame(&self, pick: Vec3) -> Option<(Vec3, Vec3, Vec3, Vec3)> {
+        let (panel, a, b, top, _) = self.edge_at(pick)?;
+        let w = self.world(panel);
+        let z = if top { self.t } else { 0.0 };
+        let d = (b - a).normalized()?;
+        let n = apply_vector(&w, Vec3::Z) * if top { 1.0 } else { -1.0 };
+        let out = apply_vector(&w, Vec3::new(d.y, -d.x, 0.0));
+        Some((apply_point(&w, Vec3::new(a.x, a.y, z)), apply_point(&w, Vec3::new(b.x, b.y, z)), n, out))
+    }
+
     pub fn edge_name(&self, pick: Vec3) -> Option<String> {
         let (panel, a, b, top, _) = self.edge_at(pick)?;
         self.edge_name_of(panel, a, b, top)

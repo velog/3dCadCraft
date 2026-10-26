@@ -196,6 +196,8 @@ enum Cmd {
     Split,
     /// Loft (`gui/loft.rs`).
     Loft,
+    /// The sheet metal commands (`gui/sheet_metal.rs`).
+    Sheet,
 }
 
 impl CadCraftApp {
@@ -210,6 +212,8 @@ impl CadCraftApp {
             Some(Cmd::Split)
         } else if self.loft_draft.is_some() {
             Some(Cmd::Loft)
+        } else if self.sm.draft.is_some() {
+            Some(Cmd::Sheet)
         } else {
             None
         }
@@ -227,6 +231,7 @@ impl CadCraftApp {
             }),
             Cmd::Combine | Cmd::Split => self.body_cmd_flow(),
             Cmd::Loft => self.loft_draft.as_ref().map(|d| d.flow()),
+            Cmd::Sheet => self.sm_flow(),
         }
     }
 
@@ -245,6 +250,7 @@ impl CadCraftApp {
             Cmd::Combine => "Combine",
             Cmd::Split => "Split",
             Cmd::Loft => "Loft",
+            Cmd::Sheet => return self.sm_prompt(),
         };
         let p = super::i18n::tr(flow.prompt());
         // A finished command also offers OK (Shell's input is optional).
@@ -270,6 +276,7 @@ impl CadCraftApp {
                     d.set_active(key);
                 }
             }
+            Some(Cmd::Sheet) => self.sm_activate(key),
             Some(Cmd::Shell) | None => {}
         }
     }
@@ -281,6 +288,7 @@ impl CadCraftApp {
             Some(Cmd::Combine) => self.commit_combine(keep_open),
             Some(Cmd::Split) => self.commit_split(keep_open),
             Some(Cmd::Loft) => self.commit_loft(keep_open),
+            Some(Cmd::Sheet) => self.sm_commit(keep_open),
             None => {}
         }
     }
@@ -289,6 +297,9 @@ impl CadCraftApp {
         self.draft_draft = None;
         self.shell_draft = None;
         self.loft_draft = None;
+        if self.sm.draft.take().is_some() {
+            self.end_feature_edit();
+        }
         self.close_body_cmds();
         self.end_feature_edit();
     }
@@ -333,6 +344,7 @@ impl CadCraftApp {
                 .is_some_and(|d| d.edit.is_some()),
             Cmd::Split => self.split_draft.as_ref().is_some_and(|d| d.edit.is_some()),
             Cmd::Loft => self.loft_draft.as_ref().is_some_and(|d| d.edit.is_some()),
+            Cmd::Sheet => self.sm.draft.as_ref().is_some_and(|d| d.edit.is_some()),
         };
         let repeat = self
             .repeatable()
@@ -354,6 +366,7 @@ impl CadCraftApp {
                 .as_ref()
                 .map(|d| d.menu_options())
                 .unwrap_or_default(),
+            Cmd::Sheet => self.sm_menu_options(),
         };
         let Some(choice) = command_menu(ui, &flow, !editing, repeat, &options) else {
             return true;
@@ -399,6 +412,7 @@ impl CadCraftApp {
                         d.menu_option(k);
                     }
                 }
+                Cmd::Sheet => self.sm_menu_option(k),
             },
         }
         true

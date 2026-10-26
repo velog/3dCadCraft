@@ -97,6 +97,8 @@ pub enum Action {
     SmRefold,
     /// Sheet Metal › Export Flat Pattern (DXF).
     SmExportFlat,
+    /// Sheet Metal › Corner Seam.
+    SmCornerSeam,
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch

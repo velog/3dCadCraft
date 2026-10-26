@@ -961,6 +961,23 @@ impl super::PartDocument {
         ksm::edge_ends(&st.model, at).map(|(a, b, _)| (a, b))
     }
 
+    /// A sheet edge's frame for the manipulators: (start, end, the normal of
+    /// the face it was picked on, the direction out of its panel).
+    pub fn sheet_edge_frame(
+        &self,
+        body: &str,
+        e: &SheetEdge,
+    ) -> Option<(
+        crate::kernel::Point3,
+        crate::kernel::Point3,
+        crate::kernel::Vector3,
+        crate::kernel::Vector3,
+    )> {
+        let st = self.sheet_models.get(body)?;
+        let at = ksm::edge_point(&st.model, &e.name, crate::kernel::Point3::from(e.hint))?;
+        ksm::edge_frame(&st.model, at)
+    }
+
     /// The flat patterns of the sheet bodies (Create Flat Pattern).
     pub fn flat_patterns(&self) -> Vec<FlatPattern> {
         let mut v: Vec<FlatPattern> = self

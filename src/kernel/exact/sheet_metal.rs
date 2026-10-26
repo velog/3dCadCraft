@@ -498,6 +498,26 @@ pub fn edge_ends(m: &SheetModel, at: Point3) -> Option<(Point3, Point3, bool)> {
         .map(|(a, b, top)| (p3(a), p3(b), top))
 }
 
+/// The sheet edge nearest `at` with its frame: ends, the normal of the face
+/// it lies on (away from the sheet) and the direction out of its panel.
+pub fn edge_frame(
+    m: &SheetModel,
+    at: Point3,
+) -> Option<(
+    Point3,
+    Point3,
+    crate::kernel::Vector3,
+    crate::kernel::Vector3,
+)> {
+    let (a, b, n, o) = m.0.edge_frame(v3(&at))?;
+    Some((
+        p3(a),
+        p3(b),
+        crate::kernel::Vector3::new(n.x, n.y, n.z),
+        crate::kernel::Vector3::new(o.x, o.y, o.z),
+    ))
+}
+
 /// Convert a solid to a sheet (SolidWorks / Inventor Convert to Sheet
 /// Metal): `face` is a point on the face that stays put, `bends` points on
 /// the sharp edges that become bends; a shelled body keeps its wall

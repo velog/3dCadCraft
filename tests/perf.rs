@@ -5,8 +5,20 @@
 //!
 //! The budgets are for the test profile (our crate at opt-level 1,
 //! dependencies at 3); release builds are faster.
+//!
+//! **Resource log** (owner, 2026-10-26): every case also records what its
+//! median run used and what the machine had — CPU time of this process (and
+//! so the cores it kept busy), peak and growth of its memory, the machine's
+//! CPU load over the run and how much of it came from other programs — in the
+//! table and in `target/perf-log/perf-<unix time>.jsonl` (first line: the
+//! machine: CPU, cores, RAM total / free, OS). A budget missed while other
+//! programs kept the machine busy says so (`docs/PERF.md`, "Resource log").
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 use cadcraft3d::kernel::{Point3, Real};
 use cadcraft3d::part::blend::{edge_ref, tangent_chain};
@@ -127,7 +139,129 @@ fn rib_part(network: bool) -> PartDocument {
     part
 }
 
-/// Median wall time (ms) of `runs` calls.
+/// What one run used and what the machine was doing meanwhile.
+#[derive(Clone, Copy, Debug, Default)]
+struct Usage {
+    /// CPU time of this process (all threads), ms.
+    cpu_ms: f64,
+    /// Highest resident memory of this process during the run, MB.
+    peak_mb: f64,
+    /// Resident memory when the run started, MB.
+    start_mb: f64,
+    /// The whole machine's CPU load over the run (all cores), %.
+    machine_pct: f64,
+    /// The part of it this process did not cause (other programs), %.
+    others_pct: f64,
+}
+
+/// The usage of the last median run (taken by [`Rows::push`]).
+static LAST: Mutex<Option<Usage>> = Mutex::new(None);
+
+fn mb(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
+}
+
+/// This process's CPU time (ms) and resident memory (bytes) now.
+fn own(sys: &mut System, pid: Pid) -> (f64, u64) {
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        false,
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
+    );
+    sys.process(pid)
+        .map_or((0.0, 0), |p| (p.accumulated_cpu_time() as f64, p.memory()))
+}
+
+/// Runs `f` once and measures it: wall time (ms) and [`Usage`]. Memory is
+/// sampled every 5 ms on a thread of its own (its peak), the machine's load
+/// is the average between the refreshes before and after the run.
+fn measured(f: &mut impl FnMut()) -> (f64, Usage) {
+    let Ok(pid) = sysinfo::get_current_pid() else {
+        let t0 = Instant::now();
+        f();
+        return (t0.elapsed().as_secs_f64() * 1000.0, Usage::default());
+    };
+    let mut sys = System::new();
+    sys.refresh_cpu_usage();
+    let (cpu0, mem0) = own(&mut sys, pid);
+    let stop = Arc::new(AtomicBool::new(false));
+    let peak = Arc::new(Mutex::new(mem0));
+    let sampler = {
+        let (stop, peak) = (stop.clone(), peak.clone());
+        std::thread::spawn(move || {
+            let mut s = System::new();
+            while !stop.load(Ordering::Relaxed) {
+                let (_, m) = own(&mut s, pid);
+                if let Ok(mut p) = peak.lock() {
+                    *p = (*p).max(m);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        })
+    };
+    let t0 = Instant::now();
+    f();
+    let wall = t0.elapsed().as_secs_f64() * 1000.0;
+    stop.store(true, Ordering::Relaxed);
+    let _ = sampler.join();
+    sys.refresh_cpu_usage();
+    let (cpu1, mem1) = own(&mut sys, pid);
+    let cores = sys.cpus().len().max(1) as f64;
+    let machine = f64::from(sys.global_cpu_usage());
+    let cpu_ms = (cpu1 - cpu0).max(0.0);
+    // This process's share of the machine over the run.
+    let mine = if wall > 0.0 {
+        100.0 * cpu_ms / (wall * cores)
+    } else {
+        0.0
+    };
+    let peak = peak.lock().map_or(mem1, |p| (*p).max(mem1));
+    (
+        wall,
+        Usage {
+            cpu_ms,
+            peak_mb: mb(peak),
+            start_mb: mb(mem0),
+            machine_pct: machine,
+            others_pct: (machine - mine).max(0.0),
+        },
+    )
+}
+
+/// The machine the budgets ran on (the log's first line).
+fn machine() -> String {
+    let mut sys = System::new();
+    sys.refresh_memory();
+    sys.refresh_cpu_all();
+    let brand = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().trim().to_owned())
+        .unwrap_or_default();
+    format!(
+        "{{\"machine\":{{\"cpu\":{:?},\"logical_cores\":{},\"physical_cores\":{},\"ram_total_mb\":{:.0},\"ram_free_mb\":{:.0},\"os\":{:?},\"arch\":{:?}}}}}",
+        brand,
+        sys.cpus().len(),
+        System::physical_core_count().unwrap_or(0),
+        mb(sys.total_memory()),
+        mb(sys.available_memory()),
+        System::long_os_version().unwrap_or_default(),
+        System::cpu_arch(),
+    )
+}
+
+/// The budget table: (case, budget ms, median ms, what the median run used).
+#[derive(Default)]
+struct Rows<'a>(Vec<(&'a str, f64, f64, Option<Usage>)>);
+
+impl<'a> Rows<'a> {
+    /// A case; its usage is the median run's (from [`median_ms`]).
+    fn push(&mut self, (case, budget, ms): (&'a str, f64, f64)) {
+        let usage = LAST.lock().ok().and_then(|mut u| u.take());
+        self.0.push((case, budget, ms, usage));
+    }
+}
+
 /// Budgets of the Face Draft Symmetric and Shell Rounded Corners cases (ms).
 const BUDGET_SYMMETRIC_DRAFT: f64 = 700.0;
 const BUDGET_ROUNDED_SHELL: f64 = 400.0;
@@ -137,16 +271,16 @@ const BUDGET_SPLIT: f64 = 500.0;
 /// angle) is ~0.8 s; classifying the parts by volume added 1.4 s (removed).
 const BUDGET_SPLIT_INCLINED: f64 = 1500.0;
 
+/// Median wall time (ms) of `runs` calls; the median run's [`Usage`] is
+/// kept for the table.
 fn median_ms(runs: usize, mut f: impl FnMut()) -> f64 {
-    let mut t: Vec<f64> = (0..runs)
-        .map(|_| {
-            let t0 = Instant::now();
-            f();
-            t0.elapsed().as_secs_f64() * 1000.0
-        })
-        .collect();
-    t.sort_by(f64::total_cmp);
-    t[t.len() / 2]
+    let mut t: Vec<(f64, Usage)> = (0..runs).map(|_| measured(&mut f)).collect();
+    t.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (ms, usage) = t[t.len() / 2];
+    if let Ok(mut last) = LAST.lock() {
+        *last = Some(usage);
+    }
+    ms
 }
 
 /// The fillet/chamfer acceptance part: box, 8 fillets r5, top-loop chamfer 2.
@@ -760,8 +894,8 @@ fn speed_budgets() {
     if std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some() {
         return;
     }
-    // (case, budget ms, median ms)
-    let mut rows: Vec<(&str, f64, f64)> = Vec::new();
+    // (case, budget ms, median ms, usage)
+    let mut rows = Rows::default();
 
     // Selection: filtering, resolving and ordering 10k candidates under the
     // cursor (Select Other over a dense faceted part) stays far below a frame.
@@ -2294,13 +2428,48 @@ fn speed_budgets() {
         ));
     }
 
-    println!("{:<62} {:>9} {:>9}", "case", "budget", "median");
+    let head = machine();
+    println!("{head}");
+    println!(
+        "{:<62} {:>9} {:>9} {:>9} {:>5} {:>8} {:>8} {:>7}",
+        "case", "budget", "median", "cpu", "cores", "peak MB", "machine", "others"
+    );
     let mut over = Vec::new();
-    for (case, budget, ms) in &rows {
+    let mut log = vec![head];
+    for (case, budget, ms, u) in &rows.0 {
         let flag = if ms > budget { "  OVER" } else { "" };
-        println!("{case:<62} {budget:>7.0} ms {ms:>7.1} ms{flag}");
+        let u = u.unwrap_or_default();
+        let cores = if *ms > 0.0 { u.cpu_ms / ms } else { 0.0 };
+        println!(
+            "{case:<62} {budget:>7.0} ms {ms:>7.1} ms {:>7.0} ms {cores:>5.1} {:>8.0} {:>7.0}% {:>6.0}%{flag}",
+            u.cpu_ms, u.peak_mb, u.machine_pct, u.others_pct
+        );
+        log.push(format!(
+            "{{\"case\":{case:?},\"budget_ms\":{budget},\"median_ms\":{ms:.3},\"cpu_ms\":{:.1},\"cores\":{cores:.2},\"peak_mb\":{:.1},\"start_mb\":{:.1},\"machine_pct\":{:.1},\"others_pct\":{:.1}}}",
+            u.cpu_ms, u.peak_mb, u.start_mb, u.machine_pct, u.others_pct
+        ));
         if ms > budget {
-            over.push(format!("{case}: {ms:.0} ms > {budget:.0} ms"));
+            // Other programs keeping the machine busy make a missed budget
+            // suspect: the message says so.
+            let busy = if u.others_pct > 25.0 {
+                format!(
+                    " (other programs used {:.0}% of the machine meanwhile)",
+                    u.others_pct
+                )
+            } else {
+                String::new()
+            };
+            over.push(format!("{case}: {ms:.0} ms > {budget:.0} ms{busy}"));
+        }
+    }
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/perf-log");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let file = dir.join(format!("perf-{stamp}.jsonl"));
+        if std::fs::write(&file, log.join("\n") + "\n").is_ok() {
+            println!("resource log: {}", file.display());
         }
     }
     assert!(over.is_empty(), "over budget:\n{}", over.join("\n"));

@@ -30,7 +30,7 @@ default = ["gui"]
 # egui UI + wgpu renderer. eframe re-exports its own wgpu (`eframe::wgpu`), so we
 # deliberately don't depend on `wgpu` directly: that guarantees a single wgpu
 # version in the dependency graph.
-gui = ["dep:eframe"]
+gui = ["dep:eframe", "dep:chrono"]
 
 [dependencies]
 # --- Math & kernel ---------------------------------------------------------
@@ -67,10 +67,14 @@ eframe = { version = "0.36", optional = true, default-features = false, features
     "x11",
     "accesskit",
 ] }
+# Local times in the file dialog (already in the tree through truck-stepio).
+chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 approx = "0.5"
 tempfile = "3"
+# Resource log of the speed tests (CPU time, memory, machine load): tests/perf.rs.
+sysinfo = { version = "0.35", default-features = false, features = ["system"] }
 
 [lints.rust]
 # Project policy: no unsafe code anywhere in this crate. Graphics FFI lives

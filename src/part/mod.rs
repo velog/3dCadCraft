@@ -1913,6 +1913,20 @@ impl PartDocument {
             (Feature::Loft(o), Feature::Loft(n)) => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
+            // Sheet metal: the same command (a Hem stays a Hem); the sketch
+            // of a Face may change (its profile is picked again).
+            (Feature::SheetFace(o), Feature::SheetFace(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::SheetFlange(o), Feature::SheetFlange(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::SheetConvert(o), Feature::SheetConvert(n)) => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
+            (Feature::SheetOp(o), Feature::SheetOp(n)) if o.kind_name() == n.kind_name() => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
             // Redefine of a work feature: any method of the same kind (a
             // plane stays a plane, so what refers to it still resolves).
             (Feature::Work(o), Feature::Work(n)) if o.def.prefix() == n.def.prefix() => {

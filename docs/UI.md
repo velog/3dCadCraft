@@ -96,7 +96,7 @@ By default they are **as in Inventor**. Today they are **hard-coded**; remapping
 | **F7** | Slice graphics (cuts the view through the sketch plane; in a sketch) | ✅ |
 | **F8 / F9** | show / hide all constraint glyphs | ✅ |
 | **F11** | Relax Mode (in a sketch) | ✅ |
-| **F11** | Full Screen (outside a sketch) | 🟡 |
+| **F11** | Full Screen (outside a sketch; kept for the next start) | 🟡 |
 | **Ctrl+0** | Clean Screen: only the view and Quick Access; a second press brings everything back | 🟡 |
 | **Esc** over a floating window | closes it (Parameters, Options, Physical Properties, Styles Editor, the browsers…), the command is not aborted | 🟡 |
 | **Home** | Zoom All | ⬜ |
@@ -228,6 +228,15 @@ Start/End/Start; |< < || > >|), closing puts everything back. The ViewCube and t
 assembly view too. 🟡 waiting for a visual check.
 
 ### Sheet metal (Sheet Metal tab, [spec/5.6-sheet-metal.md](spec/5.6-sheet-metal.md))
+
+Every sheet metal command opens a property panel like Inventor's (2026-10-26): the name (click to rename),
+**Input Geometry** selector rows (the active row takes the clicks in the view: hover lights green, chosen items
+blue; a single pick moves on; `x` clears a row), the command's sections, **OK / Apply / Cancel**. The result is
+shown see-through orange while values change (computed in the background). Arrows drag the Flange height and
+width offsets, the Hem length and the Contour Flange distance. Right-click: OK, Apply, Continue, Back, Flip,
+Cancel; Enter = Continue / OK, Esc = Cancel. Double-click a sheet metal feature in the browser to edit it in
+the same panel. **Corner Seam** (Modify): click an edge of a flange next to the corner, choose Symmetric Gap /
+Overlap / Reverse Overlap, gap, percent overlap.
 
 File → New… → **Sheet Metal**, or 3D Model › Convert › **Convert to Sheet Metal**. **Defaults**: thickness,
 K-factor, bend radius and reliefs (unticked values follow the thickness). **Face**: choose the sketch with the

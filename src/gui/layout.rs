@@ -78,7 +78,11 @@ pub struct UiSettings {
     pub windows: BTreeMap<String, WinRect>,
     /// Inner size of the main window when not maximized (points).
     pub main_size: Option<[f32; 2]>,
+    /// Outer top-left corner of the main window when not maximized (points).
+    pub main_pos: Option<[f32; 2]>,
     pub maximized: bool,
+    /// The main window was in Full Screen when the app closed.
+    pub full_screen: bool,
     /// Width of the label column of Properties (dragged at its border).
     pub props_label_width: Option<f32>,
 }
@@ -106,7 +110,9 @@ impl Default for UiSettings {
             status_height: None,
             windows: BTreeMap::new(),
             main_size: None,
+            main_pos: None,
             maximized: false,
+            full_screen: false,
             props_label_width: None,
         }
     }
@@ -177,12 +183,19 @@ impl UiSettings {
     }
 
     /// Reset UI Layout: everything back to the defaults except the main
-    /// window's own size.
+    /// window's own size, place and state.
     pub fn reset(&mut self) {
-        let (size, max) = (self.main_size, self.maximized);
+        let (size, pos, max, full) = (
+            self.main_size,
+            self.main_pos,
+            self.maximized,
+            self.full_screen,
+        );
         *self = Self::default();
         self.main_size = size;
+        self.main_pos = pos;
         self.maximized = max;
+        self.full_screen = full;
     }
 }
 
@@ -481,17 +494,39 @@ pub fn write_to(
     })
 }
 
-/// Size and maximized state for the main window at start-up.
-pub fn startup_window() -> ([f32; 2], bool) {
+/// How the main window opens: the state it had when the app closed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StartWindow {
+    pub size: [f32; 2],
+    /// `None`: where the system puts it.
+    pub pos: Option<[f32; 2]>,
+    pub maximized: bool,
+    /// Turned on by the app's first frame (`full_screen_cmd`), not the builder.
+    pub full_screen: bool,
+}
+
+/// The main window's state at start-up, from `settings.json`.
+pub fn startup_window() -> StartWindow {
     let l = super::files::settings_path()
         .map(|p| load_from(&p))
         .unwrap_or_default();
-    let s = l.ui.main_size.unwrap_or(MAIN_SIZE);
+    start_window(&l.ui)
+}
+
+fn start_window(ui: &UiSettings) -> StartWindow {
+    let s = ui.main_size.unwrap_or(MAIN_SIZE);
     let ok = |v: f32, lo: f32, hi: f32| if v.is_finite() { v.clamp(lo, hi) } else { lo };
-    (
-        [ok(s[0], 640.0, 7680.0), ok(s[1], 400.0, 4320.0)],
-        l.ui.maximized,
-    )
+    // Monitors left of / above the primary one have negative coordinates;
+    // anything beyond a few screens (a minimized window's -32000) is dropped.
+    let pos = ui
+        .main_pos
+        .filter(|p| p.iter().all(|v| v.is_finite() && v.abs() < 16_000.0));
+    StartWindow {
+        size: [ok(s[0], 640.0, 7680.0), ok(s[1], 400.0, 4320.0)],
+        pos,
+        maximized: ui.maximized,
+        full_screen: ui.full_screen,
+    }
 }
 
 /// `r` moved (and shrunk if needed) to lie inside `screen`.
@@ -653,6 +688,7 @@ impl LayoutUi {
     pub fn load(path: Option<PathBuf>) -> (Self, AppOptions) {
         let l = path.as_deref().map(load_from).unwrap_or_default();
         let me = Self {
+            full_screen: l.ui.full_screen,
             s: l.ui.clone(),
             damaged: l.damaged,
             warning: l.warning,
@@ -872,16 +908,34 @@ impl CadCraftApp {
         if let Some(w) = super::panels::dragged_label_width(ctx) {
             LayoutUi::note(&mut self.layout.s.props_label_width, w);
         }
-        let (inner, maxed, full) = ctx.input(|i| {
+        let (inner, outer, maxed, full, mini) = ctx.input(|i| {
             let v = i.viewport();
-            (v.inner_rect, v.maximized, v.fullscreen)
+            (
+                v.inner_rect,
+                v.outer_rect,
+                v.maximized,
+                v.fullscreen,
+                v.minimized,
+            )
         });
         if let Some(f) = full {
             self.layout.full_screen = f;
         }
-        if !self.layout.full_screen {
+        self.layout.s.full_screen = self.layout.full_screen;
+        if !self.layout.full_screen && mini != Some(true) {
             let maxed = maxed.unwrap_or(false);
             self.layout.s.maximized = maxed;
+            if let Some(r) = outer.filter(|_| !maxed) {
+                let pos = [r.min.x, r.min.y];
+                let moved = self
+                    .layout
+                    .s
+                    .main_pos
+                    .is_none_or(|p| (p[0] - pos[0]).abs() > 0.5 || (p[1] - pos[1]).abs() > 0.5);
+                if moved && pos.iter().all(|v| v.is_finite()) {
+                    self.layout.s.main_pos = Some(pos);
+                }
+            }
             if let Some(r) = inner.filter(|_| !maxed) {
                 let size = [r.width(), r.height()];
                 let changed =
@@ -1158,7 +1212,9 @@ mod tests {
             properties_width: Some(222.0),
             status_height: Some(40.0),
             main_size: Some([1200.0, 800.0]),
+            main_pos: Some([-1500.0, 40.0]),
             maximized: true,
+            full_screen: true,
             ..UiSettings::default()
         };
         ui.windows.insert(
@@ -1294,6 +1350,8 @@ mod tests {
         lay.s.ribbon_minimized = true;
         lay.s.properties_side = Side::Left;
         lay.s.main_size = Some([1000.0, 700.0]);
+        lay.s.main_pos = Some([50.0, 60.0]);
+        lay.s.full_screen = true;
         lay.s.windows.insert(
             "options".into(),
             WinRect {
@@ -1321,15 +1379,46 @@ mod tests {
         lay.reset();
         let expect = UiSettings {
             main_size: Some([1000.0, 700.0]),
+            main_pos: Some([50.0, 60.0]),
+            full_screen: true,
             ..UiSettings::default()
         };
-        assert_eq!(lay.s, expect, "Reset keeps only the main window size");
+        assert_eq!(
+            lay.s, expect,
+            "Reset keeps only the main window's own state"
+        );
         assert_ne!(
             lay.panel_id("model_browser"),
             id,
             "dragged sizes are forgotten"
         );
         assert_ne!(lay.window_id("options"), wid);
+    }
+
+    #[test]
+    fn main_window_opens_as_it_closed() {
+        let first = start_window(&UiSettings::default());
+        assert_eq!(first.size, MAIN_SIZE);
+        assert!(first.pos.is_none() && !first.maximized && !first.full_screen);
+        let d = tmp();
+        let p = d.path().join("settings.json");
+        let (ui, o) = custom();
+        assert!(write_to(&p, &ui, &o, false).is_ok());
+        let w = start_window(&load_from(&p).ui);
+        assert_eq!(w.size, [1200.0, 800.0]);
+        // A monitor left of the primary one has negative coordinates.
+        assert_eq!(w.pos, Some([-1500.0, 40.0]));
+        assert!(w.maximized && w.full_screen);
+        let (lay, _) = LayoutUi::load(Some(p));
+        assert!(lay.full_screen, "Full Screen comes back with the settings");
+        // A minimized window's place (-32000) or garbage is not restored.
+        for bad in [[-32000.0, -32000.0], [f32::NAN, 0.0]] {
+            let ui = UiSettings {
+                main_pos: Some(bad),
+                ..UiSettings::default()
+            };
+            assert!(start_window(&ui).pos.is_none());
+        }
     }
 
     #[test]

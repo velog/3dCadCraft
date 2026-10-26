@@ -968,3 +968,32 @@ fn corner_seam_types() {
     assert!(bad.is_err());
     assert_eq!(q.features.len(), n);
 }
+
+/// Edit Feature of every sheet metal feature type: the same kind replaces
+/// it in place (id and name kept); another kind is refused.
+#[test]
+fn sheet_features_can_be_edited() {
+    use cadcraft3d::part::Feature;
+    use cadcraft3d::part::sheet_metal::{SheetOp, SheetOpFeature};
+    let mut p = rect(100.0, 60.0);
+    flange(&mut p, &[Point3::new(50.0, 0.0, 2.0)], 20.0, |_| {});
+    let k = p
+        .features
+        .iter()
+        .position(|f| matches!(f, Feature::SheetFlange(_)))
+        .unwrap();
+    let Feature::SheetFlange(mut f) = p.features[k].clone() else {
+        panic!("not a flange");
+    };
+    let id = f.id.clone();
+    f.height = 30.0;
+    f.id.clear();
+    assert_eq!(p.replace_feature(k, Feature::SheetFlange(f)).unwrap(), id);
+    check(&p);
+    let (lo, hi) = bbox(&p);
+    assert!((hi.z - lo.z - 30.0).abs() < 0.5, "{lo} {hi}");
+    // A Hem cannot replace a Flange.
+    let body = p.sheet_models.keys().next().unwrap().clone();
+    let hem = Feature::SheetOp(SheetOpFeature::new(SheetOp::Unfold { body }));
+    assert!(p.replace_feature(k, hem).is_err());
+}

@@ -62,9 +62,63 @@ impl DialogPurpose {
         }
     }
 
+    /// The "Files of type" line.
+    fn type_text(self) -> String {
+        let kind = match self {
+            DialogPurpose::Open | DialogPurpose::SaveAs => "3DCadCraft project",
+            DialogPurpose::SaveFolder => return "3DCadCraft project folder".into(),
+            DialogPurpose::Export(ExportFormat::Stl) => "STL",
+            DialogPurpose::Export(ExportFormat::Step) => "STEP",
+            DialogPurpose::Export(ExportFormat::Glb) => "glTF binary",
+            DialogPurpose::Diagnostics => "Zip archive",
+            DialogPurpose::ExportParams
+            | DialogPurpose::ImportParams
+            | DialogPurpose::ExportBom => "CSV",
+            DialogPurpose::ExportDxf => "DXF",
+        };
+        let pats: Vec<String> = self.extensions().iter().map(|e| format!("*.{e}")).collect();
+        format!("{kind} ({})", pats.join(", "))
+    }
+
     fn saves(self) -> bool {
         !matches!(self, DialogPurpose::Open | DialogPurpose::ImportParams)
     }
+}
+
+/// A row of the file dialog's list.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Entry {
+    /// The name shown; in the Recent place the file's full path.
+    pub name: String,
+    pub is_dir: bool,
+    pub modified: Option<std::time::SystemTime>,
+    /// Files only.
+    pub size: Option<u64>,
+}
+
+/// The column the list is sorted by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SortBy {
+    Name,
+    Modified,
+    Size,
+}
+
+/// What the dialog shows: a place of the navigation pane, or a folder.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Location {
+    Recent,
+    /// The drive list (Windows "This PC").
+    Drives,
+    Dir(PathBuf),
+}
+
+/// A place of the navigation pane.
+#[derive(Clone, Debug)]
+pub(super) struct PlaceLink {
+    pub label: &'static str,
+    pub icon: super::icons::Icon,
+    pub to: Location,
 }
 
 /// The open file dialog.
@@ -77,14 +131,28 @@ pub(super) struct FileDialog {
     pub dir_text: String,
     /// The file name (Save / Export) or the picked file (Open).
     pub name: String,
-    /// The folder's entries: (name, is folder), folders first.
-    pub entries: Vec<(String, bool)>,
+    /// The folder's entries, folders first, in `sort` order.
+    pub entries: Vec<Entry>,
     /// A problem to show (missing folder, file exists…).
     pub note: Option<String>,
     /// The name was confirmed once over an existing file.
     pub replace_ok: bool,
     /// Give the name field the keyboard focus (once, on opening).
     pub focus: bool,
+    /// Places left with Back / Forward.
+    pub back: Vec<Location>,
+    pub forward: Vec<Location>,
+    pub sort: SortBy,
+    pub descending: bool,
+    /// The highlighted row (its name).
+    pub selected: Option<String>,
+    /// The Recent place is shown instead of a folder.
+    pub recent: bool,
+    pub places: Vec<PlaceLink>,
+    /// The list's scroll offset and visible height (last frame).
+    pub view: (f32, f32),
+    /// The last click / arrow key was in the list (Enter opens its folder).
+    pub list_active: bool,
 }
 
 impl FileDialog {
@@ -98,53 +166,208 @@ impl FileDialog {
             note: None,
             replace_ok: false,
             focus: true,
+            back: Vec::new(),
+            forward: Vec::new(),
+            sort: SortBy::Name,
+            descending: false,
+            selected: None,
+            recent: false,
+            places: places(""),
+            view: (0.0, 0.0),
+            list_active: false,
         };
         d.refresh();
         d
     }
 
-    /// The drive list is shown (Windows: Up from a drive's root).
-    pub(super) fn at_drives(&self) -> bool {
-        self.dir.as_os_str().is_empty()
+    /// Adds the current file's folder to the places.
+    pub(super) fn with_file(mut self, current: &str) -> Self {
+        self.places = places(current);
+        self
     }
 
-    /// Re-reads the folder.
+    /// The drive list is shown (Windows: Up from a drive's root).
+    pub(super) fn at_drives(&self) -> bool {
+        !self.recent && self.dir.as_os_str().is_empty()
+    }
+
+    pub(super) fn location(&self) -> Location {
+        if self.recent {
+            Location::Recent
+        } else if self.at_drives() {
+            Location::Drives
+        } else {
+            Location::Dir(self.dir.clone())
+        }
+    }
+
+    /// Re-reads the folder (or the recent files).
     pub(super) fn refresh(&mut self) {
         self.note = None;
-        if self.at_drives() {
+        if self.recent {
             self.dir_text.clear();
-            self.entries = drives().into_iter().map(|d| (d, true)).collect();
-            return;
-        }
-        self.dir_text = self.dir.display().to_string();
-        match list_dir(&self.dir, self.purpose.extensions()) {
-            Ok(v) => self.entries = v,
-            Err(e) => {
-                self.entries.clear();
-                self.note = Some(format!("Cannot read {}: {e}", self.dir.display()));
+            // Newest first: not sorted.
+            self.entries = recent_files().iter().map(|p| path_entry(p)).collect();
+        } else if self.at_drives() {
+            self.dir_text.clear();
+            self.entries = drives()
+                .into_iter()
+                .map(|d| Entry {
+                    name: d,
+                    is_dir: true,
+                    modified: None,
+                    size: None,
+                })
+                .collect();
+        } else {
+            self.dir_text = self.dir.display().to_string();
+            match list_entries(&self.dir, self.purpose.extensions()) {
+                Ok(v) => {
+                    self.entries = v;
+                    sort_entries(&mut self.entries, self.sort, self.descending);
+                }
+                Err(e) => {
+                    self.entries.clear();
+                    self.note = Some(format!("Cannot read {}: {e}", self.dir.display()));
+                }
             }
+        }
+        if let Some(s) = &self.selected
+            && !self.entries.iter().any(|e| &e.name == s)
+        {
+            self.selected = None;
+        }
+    }
+
+    /// Shows `to` without touching Back / Forward; false when it is no folder.
+    fn show(&mut self, to: Location) -> bool {
+        let dir = match to {
+            Location::Recent => {
+                self.recent = true;
+                self.selected = None;
+                self.refresh();
+                return true;
+            }
+            Location::Drives => PathBuf::new(),
+            Location::Dir(d) => drive_root(d),
+        };
+        if dir.is_dir() || (cfg!(windows) && dir.as_os_str().is_empty()) {
+            self.recent = false;
+            self.dir = dir;
+            self.selected = None;
+            self.refresh();
+            true
+        } else {
+            self.note = Some(format!("No folder {}", dir.display()));
+            false
+        }
+    }
+
+    /// Goes to `to`, remembering where it came from for Back.
+    pub(super) fn go_to(&mut self, to: Location) {
+        let from = self.location();
+        if self.show(to) && self.location() != from {
+            self.back.push(from);
+            self.forward.clear();
         }
     }
 
     fn go(&mut self, dir: PathBuf) {
-        let dir = drive_root(dir);
-        if dir.is_dir() || (cfg!(windows) && dir.as_os_str().is_empty()) {
-            self.dir = dir;
-            self.refresh();
-        } else {
-            self.note = Some(format!("No folder {}", dir.display()));
+        self.go_to(Location::Dir(dir));
+    }
+
+    pub(super) fn go_back(&mut self) {
+        let from = self.location();
+        if let Some(to) = self.back.pop()
+            && self.show(to)
+        {
+            self.forward.push(from);
         }
+    }
+
+    pub(super) fn go_forward(&mut self) {
+        let from = self.location();
+        if let Some(to) = self.forward.pop()
+            && self.show(to)
+        {
+            self.back.push(from);
+        }
+    }
+
+    fn can_go_up(&self) -> bool {
+        !self.recent && (self.dir.parent().is_some() || (cfg!(windows) && !self.at_drives()))
     }
 
     /// Up: the parent folder; from a drive's root, the drive list (Windows).
     fn up(&mut self) {
+        if self.recent {
+            return;
+        }
         match self.dir.parent() {
             Some(p) => {
                 let p = p.to_path_buf();
                 self.go(p);
             }
-            None if cfg!(windows) && !self.at_drives() => self.go(PathBuf::new()),
+            None if cfg!(windows) && !self.at_drives() => self.go_to(Location::Drives),
             None => {}
+        }
+    }
+
+    /// Enter / Open on `name`: a folder (name or path) is entered and
+    /// `None` returned; anything else is the file to use.
+    pub(super) fn activate(&mut self, name: &str) -> Option<String> {
+        let t = name.trim();
+        if !t.is_empty() && !self.recent {
+            let p = Path::new(t);
+            let p = drive_root(if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                self.dir.join(p)
+            });
+            // An unpacked project is a folder with a manifest: a file here.
+            if p.is_dir() && !p.join("manifest.json").is_file() {
+                self.go(p);
+                self.name.clear();
+                self.focus = true;
+                return None;
+            }
+        }
+        Some(t.to_owned())
+    }
+
+    /// Up / Down: the selection moves by `step` rows (a file also fills the name).
+    fn move_selection(&mut self, step: i32) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|s| self.entries.iter().position(|e| &e.name == s));
+        let last = self.entries.len() as i32 - 1;
+        let k = match at {
+            Some(k) => (k as i32 + step).clamp(0, last),
+            None if step < 0 => last,
+            None => 0,
+        } as usize;
+        let e = &self.entries[k];
+        self.selected = Some(e.name.clone());
+        if !e.is_dir {
+            self.name = e.name.clone();
+            self.replace_ok = false;
+        }
+    }
+
+    /// Sorts by `by`; the same column again reverses the order.
+    fn sort_by(&mut self, by: SortBy) {
+        if self.sort == by {
+            self.descending = !self.descending;
+        } else {
+            self.sort = by;
+            self.descending = false;
+        }
+        if !self.recent {
+            sort_entries(&mut self.entries, self.sort, self.descending);
         }
     }
 
@@ -157,6 +380,111 @@ impl FileDialog {
         }
         target_path(&self.dir, &self.name, self.purpose.extensions())
     }
+}
+
+/// The navigation pane: Recent, the current file's folder, Desktop,
+/// Documents, Downloads, Home and (Windows) This PC; missing folders are left out.
+fn places(current: &str) -> Vec<PlaceLink> {
+    use super::icons::Icon;
+    let home = home_dir();
+    let onedrive = cfg!(windows)
+        .then(|| std::env::var_os("OneDrive"))
+        .flatten()
+        .map(PathBuf::from);
+    let known = |sub: &str| {
+        home.iter()
+            .chain(onedrive.iter())
+            .map(|h| h.join(sub))
+            .find(|d| d.is_dir())
+    };
+    let mut v = vec![PlaceLink {
+        label: "Recent",
+        icon: Icon::Undo,
+        to: Location::Recent,
+    }];
+    if let Some(p) = Path::new(current.trim())
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty() && p.is_dir())
+    {
+        v.push(PlaceLink {
+            label: "Project Folder",
+            icon: Icon::Part,
+            to: Location::Dir(p.to_path_buf()),
+        });
+    }
+    for label in ["Desktop", "Documents", "Downloads"] {
+        if let Some(d) = known(label) {
+            v.push(PlaceLink {
+                label,
+                icon: Icon::Folder,
+                to: Location::Dir(d),
+            });
+        }
+    }
+    if let Some(h) = home.clone() {
+        v.push(PlaceLink {
+            label: "Home",
+            icon: Icon::Home,
+            to: Location::Dir(h),
+        });
+    }
+    if cfg!(windows) {
+        v.push(PlaceLink {
+            label: "This PC",
+            icon: Icon::Ortho,
+            to: Location::Drives,
+        });
+    }
+    v
+}
+
+/// A recent file as a row (name = its full path).
+fn path_entry(p: &Path) -> Entry {
+    let meta = std::fs::metadata(p).ok();
+    Entry {
+        name: p.display().to_string(),
+        is_dir: false,
+        modified: meta.as_ref().and_then(|m| m.modified().ok()),
+        size: meta.filter(std::fs::Metadata::is_file).map(|m| m.len()),
+    }
+}
+
+/// Folders above files; within them by `by` (then by name).
+pub(super) fn sort_entries(v: &mut [Entry], by: SortBy, descending: bool) {
+    v.sort_by_cached_key(|e| e.name.to_lowercase());
+    // Stable: equal keys keep the name order.
+    v.sort_by(|a, b| {
+        let o = match by {
+            SortBy::Name => std::cmp::Ordering::Equal,
+            SortBy::Modified => a.modified.cmp(&b.modified),
+            SortBy::Size => a.size.cmp(&b.size),
+        };
+        b.is_dir.cmp(&a.is_dir).then(o)
+    });
+    if descending {
+        let dirs = v.iter().take_while(|e| e.is_dir).count();
+        v[..dirs].reverse();
+        v[dirs..].reverse();
+    }
+}
+
+/// `12 KB`, `3.4 MB` (KB rounded up, as Explorer shows them).
+pub(super) fn size_text(n: u64) -> String {
+    const K: u64 = 1024;
+    if n < 1000 * K {
+        format!("{} KB", n.div_ceil(K))
+    } else if n < 1000 * K * K {
+        format!("{:.1} MB", n as f64 / (K * K) as f64)
+    } else {
+        format!("{:.1} GB", n as f64 / (K * K * K) as f64)
+    }
+}
+
+/// Local date and time, `2026-10-26 14:05`.
+fn date_text(t: std::time::SystemTime) -> String {
+    chrono::DateTime::<chrono::Local>::from(t)
+        .format("%Y-%m-%d %H:%M")
+        .to_string()
 }
 
 /// A bare drive (`C:`) means its root (`C:\`); `C:` alone is "the current
@@ -206,32 +534,53 @@ fn is_hidden(e: &std::fs::DirEntry, name: &str) -> bool {
 /// is for folders only, files are left out), sorted: folders first, by
 /// name, hidden entries skipped. An unreadable folder is an error.
 pub(super) fn list_dir(dir: &Path, exts: &[&str]) -> std::io::Result<Vec<(String, bool)>> {
+    Ok(list_entries(dir, exts)?
+        .into_iter()
+        .map(|e| (e.name, e.is_dir))
+        .collect())
+}
+
+/// [`list_dir`] with dates and sizes. Type and metadata come with the
+/// directory listing (no extra file-system call per entry on Windows);
+/// links are followed.
+pub(super) fn list_entries(dir: &Path, exts: &[&str]) -> std::io::Result<Vec<Entry>> {
     let rd = std::fs::read_dir(dir)?;
-    let mut v: Vec<(String, bool)> = rd
+    let mut v: Vec<Entry> = rd
         .filter_map(Result::ok)
         .filter_map(|e| {
             let name = e.file_name().to_str()?.to_owned();
             if is_hidden(&e, &name) {
                 return None;
             }
-            let path = e.path();
-            // A packed project is a file; an unpacked one a folder with a
-            // manifest: listed as a project too.
-            let is_dir = path.is_dir();
+            let meta = match e.file_type() {
+                Ok(t) if t.is_symlink() => std::fs::metadata(e.path()).ok(),
+                _ => e.metadata().ok(),
+            };
+            let is_dir = meta.as_ref().is_some_and(std::fs::Metadata::is_dir);
+            let modified = meta.as_ref().and_then(|m| m.modified().ok());
             let ext_ok = Path::new(&name)
                 .extension()
                 .and_then(|x| x.to_str())
                 .is_some_and(|x| exts.iter().any(|e| x.eq_ignore_ascii_case(e)));
-            if is_dir && !(ext_ok && path.join("manifest.json").is_file()) {
-                return Some((name, true));
+            // A packed project is a file; an unpacked one a folder with a
+            // manifest: listed as a project too.
+            if is_dir && !(ext_ok && e.path().join("manifest.json").is_file()) {
+                return Some(Entry {
+                    name,
+                    is_dir: true,
+                    modified,
+                    size: None,
+                });
             }
-            (ext_ok).then_some((name, false))
+            ext_ok.then(|| Entry {
+                name,
+                is_dir: false,
+                modified,
+                size: meta.filter(std::fs::Metadata::is_file).map(|m| m.len()),
+            })
         })
         .collect();
-    v.sort_by(|a, b| {
-        b.1.cmp(&a.1)
-            .then(a.0.to_lowercase().cmp(&b.0.to_lowercase()))
-    });
+    sort_entries(&mut v, SortBy::Name, false);
     Ok(v)
 }
 
@@ -430,7 +779,9 @@ impl CadCraftApp {
             DialogPurpose::ExportDxf => format!("{stem}-flat.dxf"),
             DialogPurpose::ImportParams => String::new(),
         };
-        self.file_dialog = Some(FileDialog::new(purpose, start_dir(&self.file_path), name));
+        self.file_dialog = Some(
+            FileDialog::new(purpose, start_dir(&self.file_path), name).with_file(&self.file_path),
+        );
     }
 
     /// New / Open open a tab of their own; Close / Close Tab ask to save
@@ -656,127 +1007,193 @@ impl CadCraftApp {
         let mut done: Option<PathBuf> = None;
         let mut cancel = false;
         let mut open = true;
+        let screen = ctx.content_rect();
+        let size = egui::vec2(780.0, 500.0).min(screen.size() * 0.9);
+        let wants_keys = ctx.egui_wants_keyboard_input();
         self.layout
             .place(
-                "file_dialog",
-                ctx.content_rect(),
+                "file_window",
+                screen,
                 true,
                 egui::Window::new(d.purpose.title())
                     .open(&mut open)
                     .collapsible(false)
                     .resizable(true)
-                    .default_size(egui::vec2(520.0, 420.0))
-                    .pivot(egui::Align2::CENTER_CENTER)
-                    .default_pos(ctx.content_rect().center()),
+                    .min_size(egui::vec2(480.0, 320.0))
+                    .default_size(size)
+                    // A centre pivot needs the size, which the first frame does not know.
+                    .pivot(egui::Align2::LEFT_TOP)
+                    .default_pos(screen.center() - size / 2.0),
             )
             .show(ctx, |ui| {
+                let mut chosen: Option<String> = None;
+                let mut enter: Option<String> = None;
+                let mut go_place: Option<Location> = None;
+                let mut path_enter = false;
+                let (step, k_enter, k_back, k_fwd, k_parent, k_esc) = ui.input(|i| {
+                    let alt = i.modifiers.alt;
+                    let step = if alt {
+                        0
+                    } else if i.key_pressed(egui::Key::ArrowDown) {
+                        1
+                    } else if i.key_pressed(egui::Key::ArrowUp) {
+                        -1
+                    } else {
+                        0
+                    };
+                    (
+                        step,
+                        i.key_pressed(egui::Key::Enter),
+                        alt && i.key_pressed(egui::Key::ArrowLeft),
+                        alt && i.key_pressed(egui::Key::ArrowRight),
+                        (alt && i.key_pressed(egui::Key::ArrowUp))
+                            || (!wants_keys && i.key_pressed(egui::Key::Backspace)),
+                        i.key_pressed(egui::Key::Escape),
+                    )
+                });
                 ui.horizontal(|ui| {
-                    let up = ui.add_enabled(
-                        d.dir.parent().is_some() || (cfg!(windows) && !d.at_drives()),
-                        egui::Button::new("Up"),
-                    );
-                    if up.on_hover_text("Parent folder").clicked() {
+                    let back = ui.add_enabled(!d.back.is_empty(), egui::Button::new("Back"));
+                    if back.on_hover_text("Back (Alt+Left)").clicked() || k_back {
+                        d.go_back();
+                    }
+                    let fwd = ui.add_enabled(!d.forward.is_empty(), egui::Button::new("Forward"));
+                    if fwd.on_hover_text("Forward (Alt+Right)").clicked() || k_fwd {
+                        d.go_forward();
+                    }
+                    let up = ui.add_enabled(d.can_go_up(), egui::Button::new("Up"));
+                    if up
+                        .on_hover_text("Parent folder (Alt+Up, Backspace)")
+                        .clicked()
+                        || k_parent
+                    {
                         d.up();
                     }
-                    if ui.button("Home").clicked()
-                        && let Some(h) = home_dir()
+                    if ui
+                        .button("Refresh")
+                        .on_hover_text("Read the folder again")
+                        .clicked()
                     {
-                        d.go(h);
+                        d.refresh();
                     }
+                    let hint = if d.recent {
+                        "Recent files"
+                    } else {
+                        "Drives - type a folder"
+                    };
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut d.dir_text)
-                            .hint_text("Drives - type a folder")
+                            .hint_text(hint)
                             .desired_width(f32::INFINITY),
                     );
                     if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        path_enter = true;
                         let p = PathBuf::from(d.dir_text.trim());
                         d.go(p);
                     }
                 });
                 ui.separator();
-                let mut enter: Option<String> = None;
-                let mut chosen: Option<String> = None;
-                egui::ScrollArea::vertical()
-                    .max_height(260.0)
-                    .auto_shrink([false, false])
+                let row_h = 22.0;
+                // File name, Files of type, the note and the buttons first, at the
+                // bottom: the list takes what is left (sizing it from an estimate
+                // made the window grow every frame).
+                egui::Panel::bottom(egui::Id::new("file_dialog_bottom"))
+                    .resizable(false)
+                    .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 6)))
                     .show(ui, |ui| {
-                        if d.entries.is_empty() {
-                            ui.weak("(no folders or matching files here)");
-                        }
-                        for (name, is_dir) in d.entries.clone() {
-                            let label = if d.at_drives() {
-                                format!("[ ] {name}\\")
-                            } else if is_dir {
-                                format!("[ ] {name}/")
-                            } else {
-                                name.clone()
-                            };
-                            let selected = !is_dir && d.name == name;
-                            let r = ui.selectable_label(selected, label);
-                            if is_dir {
-                                if r.clicked() {
-                                    enter = Some(name);
-                                }
-                            } else if r.double_clicked() {
-                                chosen = Some(name);
-                            } else if r.clicked() {
-                                d.name = name;
-                                d.replace_ok = false;
+                        let label_w = 90.0;
+                        let label = |ui: &mut egui::Ui, text: &str| {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(label_w, row_h),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| ui.label(text),
+                            );
+                        };
+                        ui.horizontal(|ui| {
+                            label(ui, "File name");
+                            let r = ui.add(
+                                egui::TextEdit::singleline(&mut d.name)
+                                    .desired_width(f32::INFINITY),
+                            );
+                            if std::mem::take(&mut d.focus) {
+                                r.request_focus();
                             }
+                            if r.changed() {
+                                d.replace_ok = false;
+                                d.list_active = false;
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            label(ui, "Files of type");
+                            ui.weak(d.purpose.type_text());
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.button("Cancel").clicked() {
+                                        cancel = true;
+                                    }
+                                    let ok = if d.purpose.saves() { "Save" } else { "Open" };
+                                    if ui.button(ok).clicked() {
+                                        chosen = d.activate(&d.name.clone());
+                                    }
+                                },
+                            );
+                        });
+                        if let Some(n) = &d.note {
+                            ui.colored_label(egui::Color32::from_rgb(220, 120, 40), n);
                         }
                     });
+                let list_h = ui.available_height().max(120.0);
+                ui.horizontal_top(|ui| {
+                    let w = 140.0;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(w, list_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_min_size(egui::vec2(w, list_h));
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let here = d.location();
+                            for pl in &d.places {
+                                let r =
+                                    icon_row(ui, w, row_h, Some(pl.icon), pl.label, here == pl.to);
+                                if r.clicked() {
+                                    go_place = Some(pl.to.clone());
+                                }
+                            }
+                        },
+                    );
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        let (e, c) = file_list(ui, &mut d, list_h, row_h, step);
+                        enter = e;
+                        chosen = chosen.take().or(c);
+                    });
+                });
+                if let Some(to) = go_place {
+                    d.go_to(to);
+                }
+                if k_esc {
+                    cancel = true;
+                }
+                if k_enter && !path_enter && chosen.is_none() && enter.is_none() {
+                    let dir = d
+                        .selected
+                        .as_ref()
+                        .filter(|_| d.list_active)
+                        .filter(|s| d.entries.iter().any(|e| &e.name == *s && e.is_dir))
+                        .cloned();
+                    match dir {
+                        Some(n) => enter = Some(n),
+                        None => chosen = d.activate(&d.name.clone()),
+                    }
+                }
                 if let Some(n) = enter {
                     let p = d.dir.join(n);
                     d.go(p);
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label(if d.purpose.saves() {
-                        "File name"
-                    } else {
-                        "File"
-                    });
-                    let r = ui
-                        .add(egui::TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY));
-                    if std::mem::take(&mut d.focus) {
-                        r.request_focus();
-                    }
-                    if r.changed() {
-                        d.replace_ok = false;
-                    }
-                    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        chosen = Some(d.name.clone());
-                    }
-                });
-                if let Some(n) = &d.note {
-                    ui.colored_label(egui::Color32::from_rgb(220, 120, 40), n);
-                }
-                ui.horizontal(|ui| {
-                    let ok = if d.purpose.saves() { "Save" } else { "Open" };
-                    if ui.button(ok).clicked() {
-                        chosen = Some(d.name.clone());
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                    let recent = recent_files();
-                    if d.purpose == DialogPurpose::Open && !recent.is_empty() {
-                        ui.menu_button("Recent", |ui| {
-                            for p in recent {
-                                if ui.button(p.display().to_string()).clicked() {
-                                    d.name = p.display().to_string();
-                                    chosen = Some(d.name.clone());
-                                    ui.close();
-                                }
-                            }
-                        });
-                    }
-                });
-                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    cancel = true;
+                    d.focus = true;
                 }
                 if let Some(n) = chosen {
                     d.name = n;
+                    d.focus = true;
                     match d.target() {
                         None if d.at_drives() && !d.name.trim().is_empty() => {
                             d.note = Some("Pick a drive or type a full path".into())
@@ -960,6 +1377,264 @@ impl CadCraftApp {
     }
 }
 
+/// A row of the places pane: icon and label, highlighted when `on`.
+fn icon_row(
+    ui: &mut egui::Ui,
+    w: f32,
+    h: f32,
+    icon: Option<super::icons::Icon>,
+    text: &str,
+    on: bool,
+) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::click());
+    let vis = ui.visuals();
+    let painter = ui.painter();
+    if on {
+        painter.rect_filled(rect, 2.0, vis.selection.bg_fill);
+    } else if r.hovered() {
+        painter.rect_filled(rect, 2.0, vis.widgets.hovered.weak_bg_fill);
+    }
+    if let Some(i) = icon {
+        let ir = egui::Rect::from_min_size(
+            rect.min + egui::vec2(4.0, (h - 16.0) / 2.0),
+            egui::vec2(16.0, 16.0),
+        );
+        super::icons::paint(painter, ir, i, &super::icons::Palette::ENABLED);
+    }
+    let color = if on {
+        vis.selection.stroke.color
+    } else {
+        vis.text_color()
+    };
+    painter.text(
+        egui::pos2(rect.min.x + 26.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::TextStyle::Body.resolve(ui.style()),
+        color,
+    );
+    r
+}
+
+/// The file dialog's list: a header that sorts, then only the visible rows.
+/// Returns (folder to enter, file chosen) from a double-click.
+fn file_list(
+    ui: &mut egui::Ui,
+    d: &mut FileDialog,
+    height: f32,
+    row_h: f32,
+    step: i32,
+) -> (Option<String>, Option<String>) {
+    use super::icons::{Icon, Palette};
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let w = ui.available_width();
+    let (date_w, size_w) = (130.0, 80.0);
+    let name_w = (w - date_w - size_w).max(120.0);
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let weak = ui.visuals().weak_text_color();
+    let text = ui.visuals().text_color();
+    // Header.
+    let (head, _) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::hover());
+    let mut x = head.min.x;
+    for (label, by, cw) in [
+        ("Name", SortBy::Name, name_w),
+        ("Date modified", SortBy::Modified, date_w),
+        ("Size", SortBy::Size, size_w),
+    ] {
+        let rect = egui::Rect::from_min_size(egui::pos2(x, head.min.y), egui::vec2(cw, row_h));
+        x += cw;
+        let r = ui.interact(
+            rect,
+            ui.id().with(("file_head", label)),
+            egui::Sense::click(),
+        );
+        let painter = ui.painter();
+        if r.hovered() && !d.recent {
+            painter.rect_filled(rect, 2.0, ui.visuals().widgets.hovered.weak_bg_fill);
+        }
+        let g = painter.text(
+            egui::pos2(rect.min.x + 6.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            font.clone(),
+            text,
+        );
+        if d.sort == by && !d.recent {
+            // A small triangle: up = ascending.
+            let c = egui::pos2(g.max.x + 8.0, rect.center().y);
+            let s = if d.descending { 3.0 } else { -3.0 };
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    egui::pos2(c.x - 4.0, c.y - s),
+                    egui::pos2(c.x + 4.0, c.y - s),
+                    egui::pos2(c.x, c.y + s),
+                ],
+                weak,
+                egui::Stroke::NONE,
+            ));
+        }
+        if r.clicked() {
+            d.sort_by(by);
+        }
+    }
+    ui.painter().hline(
+        head.x_range(),
+        head.max.y,
+        ui.visuals().widgets.noninteractive.bg_stroke,
+    );
+    let mut scroll_to = None;
+    if step != 0 {
+        d.move_selection(step);
+        d.list_active = true;
+        scroll_to = d
+            .selected
+            .as_ref()
+            .and_then(|s| d.entries.iter().position(|e| &e.name == s));
+    }
+    let view_h = (height - row_h - 1.0).max(row_h);
+    let mut area = egui::ScrollArea::vertical()
+        .id_salt("file_list")
+        .max_height(view_h)
+        .min_scrolled_height(view_h)
+        .auto_shrink([false, false]);
+    if let Some(k) = scroll_to {
+        let (off, view) = d.view;
+        let top = k as f32 * row_h;
+        if top < off {
+            area = area.vertical_scroll_offset(top);
+        } else if top + row_h > off + view {
+            area = area.vertical_scroll_offset(top + row_h - view);
+        }
+    }
+    if d.entries.is_empty() {
+        ui.add_space(6.0);
+        ui.weak(if d.recent {
+            "(no recent files)"
+        } else {
+            "(no folders or matching files here)"
+        });
+        return (None, None);
+    }
+    let (mut click, mut double) = (None, None);
+    let out = area.show_rows(ui, row_h, d.entries.len(), |ui, range| {
+        for k in range {
+            let e = &d.entries[k];
+            let (rect, r) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::click());
+            if r.double_clicked() {
+                double = Some(k);
+            } else if r.clicked() {
+                click = Some(k);
+            }
+            let vis = ui.visuals();
+            let painter = ui.painter();
+            let sel = d.selected.as_deref() == Some(e.name.as_str());
+            if sel {
+                painter.rect_filled(rect, 2.0, vis.selection.bg_fill);
+            } else if r.hovered() {
+                painter.rect_filled(rect, 2.0, vis.widgets.hovered.weak_bg_fill);
+            }
+            let project = Path::new(&e.name)
+                .extension()
+                .and_then(|x| x.to_str())
+                .is_some_and(|x| x.eq_ignore_ascii_case(FILE_EXTENSION));
+            let icon = if e.is_dir && !project {
+                Some(Icon::Folder)
+            } else if project {
+                Some(Icon::Part)
+            } else {
+                None
+            };
+            if let Some(i) = icon {
+                let ir = egui::Rect::from_min_size(
+                    rect.min + egui::vec2(4.0, (row_h - 16.0) / 2.0),
+                    egui::vec2(16.0, 16.0),
+                );
+                super::icons::paint(painter, ir, i, &Palette::ENABLED);
+            }
+            let (label, folder) = if d.recent {
+                let p = Path::new(&e.name);
+                (
+                    p.file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(&e.name)
+                        .to_owned(),
+                    p.parent().map(|f| f.display().to_string()),
+                )
+            } else if d.at_drives() {
+                (format!("{}\\", e.name), None)
+            } else {
+                (e.name.clone(), None)
+            };
+            let color = if sel {
+                vis.selection.stroke.color
+            } else {
+                text
+            };
+            let cy = rect.center().y;
+            let name_rect = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + 26.0, rect.min.y),
+                egui::pos2(rect.min.x + name_w - 6.0, rect.max.y),
+            );
+            let clip = painter.with_clip_rect(name_rect.intersect(painter.clip_rect()));
+            let g = clip.text(
+                egui::pos2(name_rect.min.x, cy),
+                egui::Align2::LEFT_CENTER,
+                label,
+                font.clone(),
+                color,
+            );
+            if let Some(f) = folder {
+                clip.text(
+                    egui::pos2(g.max.x + 10.0, cy),
+                    egui::Align2::LEFT_CENTER,
+                    f,
+                    font.clone(),
+                    weak,
+                );
+            }
+            if let Some(t) = e.modified {
+                painter.text(
+                    egui::pos2(rect.min.x + name_w + 6.0, cy),
+                    egui::Align2::LEFT_CENTER,
+                    date_text(t),
+                    font.clone(),
+                    weak,
+                );
+            }
+            if let Some(n) = e.size {
+                painter.text(
+                    egui::pos2(rect.max.x - 8.0, cy),
+                    egui::Align2::RIGHT_CENTER,
+                    size_text(n),
+                    font.clone(),
+                    weak,
+                );
+            }
+        }
+    });
+    d.view = (out.state.offset.y, out.inner_rect.height());
+    let (mut enter, mut chosen) = (None, None);
+    if let Some(k) = click {
+        let e = &d.entries[k];
+        d.selected = Some(e.name.clone());
+        d.list_active = true;
+        if !e.is_dir {
+            d.name = e.name.clone();
+            d.replace_ok = false;
+        }
+    }
+    if let Some(k) = double {
+        let e = d.entries[k].clone();
+        d.selected = Some(e.name.clone());
+        if e.is_dir {
+            enter = Some(e.name);
+        } else {
+            chosen = Some(e.name);
+        }
+    }
+    (enter, chosen)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1012,6 +1687,61 @@ mod tests {
     }
 
     #[test]
+    fn dialog_history_typed_folders_and_sorting() {
+        let root = std::env::temp_dir().join(format!("cadcraft_dialog_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub").join("deep")).unwrap();
+        std::fs::write(root.join("big.3dcadcraft"), vec![0u8; 5000]).unwrap();
+        std::fs::write(root.join("a.3dcadcraft"), b"x").unwrap();
+        let mut d = FileDialog::new(DialogPurpose::Open, root.clone(), String::new());
+        let names = |d: &FileDialog| d.entries.iter().map(|e| e.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&d), ["sub", "a.3dcadcraft", "big.3dcadcraft"]);
+        assert_eq!(d.entries[2].size, Some(5000));
+        assert!(d.entries[0].size.is_none() && d.entries[0].modified.is_some());
+        // Size, then reversed: folders stay on top.
+        d.sort_by(SortBy::Size);
+        d.sort_by(SortBy::Size);
+        assert_eq!(names(&d), ["sub", "big.3dcadcraft", "a.3dcadcraft"]);
+        // A typed folder path is entered, not opened; a file name is the file.
+        assert_eq!(d.activate("sub/deep"), None);
+        assert_eq!(d.dir, root.join("sub/deep"));
+        assert!(d.name.is_empty());
+        d.go_back();
+        assert_eq!(d.dir, root);
+        d.go_forward();
+        assert_eq!(d.dir, root.join("sub/deep"));
+        d.go_back();
+        assert_eq!(d.activate(" a "), Some("a".into()));
+        // Arrow keys walk the rows and fill the name with files.
+        d.sort_by(SortBy::Name);
+        d.move_selection(1);
+        d.move_selection(1);
+        assert_eq!(d.selected.as_deref(), Some("a.3dcadcraft"));
+        assert_eq!(d.name, "a.3dcadcraft");
+        d.move_selection(-5);
+        assert_eq!(d.selected.as_deref(), Some("sub"));
+        // Recent and back to the folder.
+        d.go_to(Location::Recent);
+        assert!(d.recent && !d.can_go_up());
+        d.go_back();
+        assert_eq!(d.location(), Location::Dir(root.clone()));
+        assert!(d.places.iter().any(|p| p.to == Location::Recent));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sizes_read_like_explorer() {
+        assert_eq!(size_text(0), "0 KB");
+        assert_eq!(size_text(1), "1 KB");
+        assert_eq!(size_text(15_000), "15 KB");
+        assert_eq!(size_text(3 * 1024 * 1024), "3.0 MB");
+        assert_eq!(
+            DialogPurpose::Export(ExportFormat::Step).type_text(),
+            "STEP (*.step, *.stp)"
+        );
+    }
+
+    #[test]
     fn unreadable_folder_is_an_error() {
         let missing = std::env::temp_dir().join("cadcraft_no_such_folder_x");
         assert!(list_dir(&missing, &["stl"]).is_err());
@@ -1040,7 +1770,7 @@ mod tests {
         );
         d.up();
         assert!(d.at_drives());
-        assert!(d.entries.iter().all(|(_, dir)| *dir));
+        assert!(d.entries.iter().all(|e| e.is_dir));
         assert_eq!(d.target(), None);
         d.name = format!("{sys}\\a\\x");
         assert_eq!(

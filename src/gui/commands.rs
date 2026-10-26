@@ -1287,8 +1287,9 @@ pub static COMMANDS: &[Command] = &[
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Closed sketch profiles cut through the sheet face they lie on (kept in the flat pattern); across bends: Unfold, Cut, Refold").spec("5.6-sheet-metal.md"),
     c("sm.corner_seam", "Corner Seam", "Ъглов шев", Icon::SheetMetal)
+        .run(Action::SmCornerSeam)
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
-        .tip("Close or open the corner between two flanges").todo("5.6"),
+        .tip("Close the corner between two flanges again: Symmetric Gap, Overlap or Reverse Overlap, gap, percent overlap").spec("5.6-sheet-metal.md"),
     c("sm.punch", "Punch Tool", "Щанца", Icon::SheetMetal)
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Louvres, lances, embosses from the punch library").todo("5.6"),

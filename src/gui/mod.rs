@@ -100,13 +100,17 @@ pub fn run(open: Option<std::path::PathBuf>) -> eframe::Result {
     if let Some(p) = &open {
         log::info!("open at start: {}", p.display());
     }
-    let (size, maximized) = layout::startup_window();
+    let start = layout::startup_window();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("3DCadCraft")
+        .with_inner_size(start.size)
+        .with_maximized(start.maximized);
+    if let Some(p) = start.pos {
+        viewport = viewport.with_position(p);
+    }
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
-        viewport: egui::ViewportBuilder::default()
-            .with_title("3DCadCraft")
-            .with_inner_size(size)
-            .with_maximized(maximized),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
@@ -941,6 +945,10 @@ impl CadCraftApp {
             full_screen_cmd: None,
         };
         let (lay, options) = layout::LayoutUi::load(files::settings_path());
+        // Full Screen comes back on the first frame: given to the window
+        // builder together with the remembered place, Windows kept the
+        // place and size and only dropped the frame.
+        app.full_screen_cmd = lay.full_screen.then_some(true);
         app.layout = lay;
         app.apply_options(options);
         // Ctrl+0 is Clean Screen (Inventor), not egui's zoom reset.
@@ -1449,11 +1457,7 @@ impl CadCraftApp {
             Feature::SheetFace(_)
             | Feature::SheetFlange(_)
             | Feature::SheetConvert(_)
-            | Feature::SheetOp(_) => {
-                self.file_status = Some(Ok(
-                    "Sheet metal: change the values in Properties (Sheet Metal Defaults for the thickness)".into(),
-                ));
-            }
+            | Feature::SheetOp(_) => self.sm_edit(k),
             Feature::Extrude(e) => {
                 let Some(sketch) = sketch_of(self, &e.sketch) else {
                     self.file_status =
@@ -3708,7 +3712,8 @@ impl CadCraftApp {
             | Action::SmCut
             | Action::SmUnfold
             | Action::SmRefold
-            | Action::SmExportFlat => self.sm_apply(action),
+            | Action::SmExportFlat
+            | Action::SmCornerSeam => self.sm_apply(action),
             Action::StartSketch => {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);
@@ -6259,8 +6264,6 @@ impl CadCraftApp {
                 Some(self.hole_preview())
             } else if self.thread_draft.is_some() {
                 Some(self.thread_preview())
-            } else if self.sm.draft.is_some() {
-                Some(self.sm_preview())
             } else {
                 None
             };
