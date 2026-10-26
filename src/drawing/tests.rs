@@ -653,7 +653,13 @@ fn pdf_of_a_sheet() {
             };
             super::pdf::Page {
                 size: d.sheets[i].dims(),
-                prims: super::render::sheet_list(&d, i, &|_| "TITLE".into(), &lines),
+                prims: super::render::sheet_list(
+                    &d,
+                    i,
+                    &|_| "TITLE".into(),
+                    &lines,
+                    &Default::default(),
+                ),
             }
         })
         .collect();
@@ -755,13 +761,19 @@ fn section_view_of_a_plate() {
     // The section line on the parent and the hatching are in the list.
     let ls = Arc::new(lines);
     let base_lines = Arc::new(lines_of(&part, ViewOrientation::Top));
-    let list = super::render::sheet_list(&d, 0, &|_| String::new(), &|id| {
-        Some(if id == s {
-            ls.clone()
-        } else {
-            base_lines.clone()
-        })
-    });
+    let list = super::render::sheet_list(
+        &d,
+        0,
+        &|_| String::new(),
+        &|id| {
+            Some(if id == s {
+                ls.clone()
+            } else {
+                base_lines.clone()
+            })
+        },
+        &Default::default(),
+    );
     assert!(
         list.iter()
             .any(|p| matches!(p, super::sheet::Prim::Center { .. })),
@@ -1022,15 +1034,13 @@ fn styles_drive_annotations() {
     assert_eq!(old.styles, DrawingStyles::default());
 }
 
-/// Our ISO and ANSI defaults are Inventor 2027's (values read from its
-/// templates through its API: `tests/data/inventor/styles_2027.json`,
-/// `tools/inventor/`).
+/// Our ISO and ANSI defaults keep the reference values of
+/// `tests/data/drawing_defaults.json`.
 #[test]
-fn defaults_match_inventor_2027() {
+fn iso_and_ansi_defaults() {
     use super::style::{DrawingStyles, LineType, TextOrientation};
     let text = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/data/inventor/styles_2027.json"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/drawing_defaults.json"),
     )
     .unwrap();
     let r: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -1130,4 +1140,130 @@ fn defaults_match_inventor_2027() {
         }),
         r["ISO"]["dimension"]["sample"].as_str().unwrap()
     );
+}
+
+/// An assembly view (a plate and three blocks): the parts list lists the
+/// BOM, a balloon on a block shows the block's item number, and renumbering
+/// the parts list by part number renumbers the balloon too.
+#[test]
+fn assembly_parts_list_and_balloons() {
+    use super::annot::{Placement, resolve_in};
+    use super::parts::{Balloon, PartsList, SortBy, Tables};
+    use crate::assembly::bom::{self, ComponentInfo};
+    use crate::document::AssemblyDocument;
+    use crate::kernel::Transform3;
+    let mut project = Project::new("Asm");
+    let plate = project.add_document(
+        "Plate",
+        DocumentData::Part(PartDocument::with_box("Box1", [80.0, 50.0, 12.0]).unwrap()),
+    );
+    let block = project.add_document(
+        "Block",
+        DocumentData::Part(PartDocument::with_box("Box1", [10.0, 10.0, 30.0]).unwrap()),
+    );
+    let mut asm = AssemblyDocument::default();
+    asm.place(DocRef::local(plate), "Plate", Transform3::identity(), true);
+    for k in 0..3 {
+        let t = Transform3::translation(10.0 + 25.0 * f64::from(k), 20.0, 12.0);
+        asm.place(DocRef::local(block), "Block", t, false);
+    }
+    let a = project.add_document("Assembly1", DocumentData::Assembly(asm.clone()));
+    let model_of = |id: DocumentId| match &project.document(id).unwrap().data {
+        DocumentData::Part(p) => Arc::new(part_model(p)),
+        _ => panic!("a part"),
+    };
+    let (mp, mb) = (model_of(plate), model_of(block));
+    let instances: Vec<hlr::Instance> = asm
+        .occurrences
+        .iter()
+        .map(|o| hlr::Instance {
+            id: o.id,
+            transform: o.transform,
+            model: if o.component.document == plate {
+                mp.clone()
+            } else {
+                mb.clone()
+            },
+        })
+        .collect();
+    let vm = hlr::assembly_model(&instances, hlr::Simplify::default());
+    let lines = view_lines(&vm, &ViewOrientation::Front.frame());
+    let mut d = DrawingDocument::default();
+    let v = d
+        .add_base_view(
+            DocRef::local(a),
+            ViewOrientation::Front,
+            [120.0, 180.0],
+            1.0,
+            ViewStyle::HiddenShown,
+        )
+        .unwrap();
+    let block_occ = asm.occurrences[1].id;
+    let edge = lines
+        .edges
+        .iter()
+        .filter_map(|e| e.name.clone())
+        .find(|n| hlr::occurrence_of(n) == Some(block_occ))
+        .expect("an edge of the first block");
+    d.add_annotation(AnnotationKind::PartsList(PartsList::new(v, [405.0, 287.0])));
+    let balloon = AnnotationKind::Balloon(Balloon {
+        view: v,
+        edge,
+        along: 0.5,
+        at: [-50.0, 40.0],
+        shape: Default::default(),
+        bom: Default::default(),
+        text: None,
+    });
+    d.add_annotation(balloon.clone());
+    let info = |r: DocRef| ComponentInfo {
+        file_name: project.document(r.document).unwrap().name.clone(),
+        ..Default::default()
+    };
+    let rows = |_: DocRef, k: super::parts::BomKind, merge: bool| {
+        Some(bom::rows(&asm, k.view(), merge, &info))
+    };
+    let texts = |prims: &[Prim]| -> Vec<String> {
+        prims
+            .iter()
+            .filter_map(|p| match p {
+                Prim::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let pl = Placement {
+        position: [120.0, 180.0],
+        scale: 1.0,
+        center: lines.center(),
+    };
+    let view = |id: u32| (id == v).then_some((pl, &lines));
+    let look = d.styles.look();
+    let tables = Tables::build(&d, 0, &rows);
+    let list = resolve_in(&d.sheets[0].annotations[0].kind, &view, &look, &tables).unwrap();
+    let t = texts(&list.prims);
+    assert!(
+        t.contains(&"Plate".to_owned()) && t.contains(&"Block".to_owned()),
+        "{t:?}"
+    );
+    assert!(t.contains(&"3".to_owned()), "three blocks: {t:?}");
+    let b = resolve_in(&balloon, &view, &look, &tables).unwrap();
+    assert_eq!(texts(&b.prims), ["2"]);
+    // Sorted by part number and renumbered: Block becomes item 1.
+    if let AnnotationKind::PartsList(p) = &mut d.sheets[0].annotations[0].kind {
+        p.sort = Some(SortBy {
+            column: "part_number".into(),
+            ascending: true,
+            renumber: true,
+        });
+    }
+    let tables = Tables::build(&d, 0, &rows);
+    let b = resolve_in(&balloon, &view, &look, &tables).unwrap();
+    assert_eq!(texts(&b.prims), ["1"]);
+    // A missing edge orphans the balloon.
+    let mut gone = balloon.clone();
+    if let AnnotationKind::Balloon(b) = &mut gone {
+        b.edge = "o99/none".into();
+    }
+    assert!(resolve_in(&gone, &view, &look, &tables).is_err());
 }

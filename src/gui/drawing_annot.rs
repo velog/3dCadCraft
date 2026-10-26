@@ -30,11 +30,11 @@ const CURVE_PX: f32 = 7.0;
 /// What a click on view geometry took.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct GeoPick {
-    view: u32,
-    edge: String,
+    pub(super) view: u32,
+    pub(super) edge: String,
     what: PickWhat,
     /// The picked point / the circle centre on the sheet (mm).
-    at: [f64; 2],
+    pub(super) at: [f64; 2],
 }
 
 impl GeoPick {
@@ -104,6 +104,23 @@ pub(super) struct ShownAnn {
     prims: Vec<Prim>,
     /// Where an orphaned annotation is marked.
     orphan: Option<[f64; 2]>,
+    /// A table takes clicks anywhere inside its outline.
+    area: Option<([f64; 2], [f64; 2])>,
+}
+
+/// The box around the lines of `prims`.
+fn lines_box(prims: &[Prim]) -> Option<([f64; 2], [f64; 2])> {
+    let mut lo = [f64::MAX; 2];
+    let mut hi = [f64::MIN; 2];
+    for p in prims {
+        if let Prim::Line { a, b, .. } = p {
+            for q in [a, b] {
+                lo = [lo[0].min(q[0]), lo[1].min(q[1])];
+                hi = [hi[0].max(q[0]), hi[1].max(q[1])];
+            }
+        }
+    }
+    (lo[0] <= hi[0]).then_some((lo, hi))
 }
 
 /// The views of this frame by id, for `annot::resolve`.
@@ -260,13 +277,17 @@ impl CadCraftApp {
         };
         let map = lookup(views);
         let view = |id: u32| map.get(&id).copied();
+        let tables = self.drw.tables.clone();
         sheet
             .annotations
             .iter()
             .map(
-                |a| match annot::resolve_with(&a.kind, &view, &self.drw.look) {
+                |a| match annot::resolve_in(&a.kind, &view, &self.drw.look, &tables) {
                     Ok(s) => ShownAnn {
                         id: a.id,
+                        area: matches!(a.kind, AnnotationKind::PartsList(_))
+                            .then(|| lines_box(&s.prims))
+                            .flatten(),
                         prims: s.prims,
                         orphan: None,
                     },
@@ -285,6 +306,7 @@ impl CadCraftApp {
                         };
                         ShownAnn {
                             id: a.id,
+                            area: None,
                             prims: Vec::new(),
                             orphan: match why {
                                 Orphan::NoView => None,
@@ -328,8 +350,12 @@ impl CadCraftApp {
         let tol = 5.0 / self.drw.cam.zoom;
         anns.iter()
             .filter_map(|a| {
+                let inside = a.area.is_some_and(|(lo, hi)| {
+                    q[0] >= lo[0] && q[0] <= hi[0] && q[1] >= lo[1] && q[1] <= hi[1]
+                });
                 let d = match a.orphan {
                     Some(o) => (o[0] - q[0]).hypot(o[1] - q[1]) - 9.0 / self.drw.cam.zoom,
+                    None if inside => 0.0,
                     None => prims_distance(&a.prims, q),
                 };
                 (d <= tol).then_some((a.id, d))
@@ -734,15 +760,25 @@ impl CadCraftApp {
         // What the next click does: take more geometry, or place.
         let wants_more = match (&draft.first, &draft.second) {
             (None, _) => true,
-            (Some(f), None) => matches!(f.what, PickWhat::Point(_)),
+            (Some(f), None) => matches!(f.what, PickWhat::Point(_) | PickWhat::Line),
             _ => false,
         };
         let candidate = under.filter(|g| {
             wants_more
                 && match &draft.first {
                     None => true,
-                    // The second item: a point of the same view.
-                    Some(f) => g.view == f.view && matches!(g.what, PickWhat::Point(_)) && *g != *f,
+                    // The second item: a point, or a line after a line, of
+                    // the same view (a line's own points are no second item).
+                    Some(f) => {
+                        g.view == f.view
+                            && match (&f.what, &g.what) {
+                                (PickWhat::Point(_), PickWhat::Point(_)) => *g != *f,
+                                (PickWhat::Line, PickWhat::Line | PickWhat::Point(_)) => {
+                                    g.edge != f.edge
+                                }
+                                _ => false,
+                            }
+                    }
                 }
         });
         if let Some(g) = &candidate {
@@ -848,6 +884,14 @@ impl CadCraftApp {
                                 text[0] += delta[0];
                                 text[1] += delta[1];
                             }
+                            AnnotationKind::PartsList(pl) => {
+                                pl.at[0] += delta[0];
+                                pl.at[1] += delta[1];
+                            }
+                            AnnotationKind::Balloon(b) => {
+                                b.at[0] += delta[0];
+                                b.at[1] += delta[1];
+                            }
                             _ => {}
                         }
                     }
@@ -888,6 +932,14 @@ impl CadCraftApp {
         let (at, text, height, leader) = match kind {
             Some(AnnotationKind::Text { at, text, height }) => (at, text, height, None),
             Some(AnnotationKind::LeaderText { tip, at, text }) => (at, text, 3.5, Some(tip)),
+            Some(AnnotationKind::PartsList(_)) => {
+                self.open_parts_list_editor(id);
+                return;
+            }
+            Some(AnnotationKind::Balloon(b)) => {
+                self.open_balloon_edit(id, &b);
+                return;
+            }
             Some(AnnotationKind::Dimension(_)) => {
                 // Edit Dimension: text, precision and tolerance (interface).
                 self.drw.planned = Some(super::drawing_planned::PlannedDialog::new(
@@ -1145,6 +1197,7 @@ impl CadCraftApp {
                         .unwrap_or_default()
                 },
                 &|id| lines.get(&id).cloned(),
+                &self.bom_tables(&doc, i),
             );
             pages.push(crate::drawing::pdf::Page {
                 size: sheet.dims(),
@@ -1233,7 +1286,43 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
             text,
             precision: 2,
         }),
-        (PickWhat::Line, _) => {
+        (PickWhat::Line, Some(s)) => {
+            // Line to line or line to point: the distance across the first
+            // line (horizontal for an upright line, vertical for a level
+            // one), else as the text's place says.
+            let l = v.lines.as_deref()?;
+            let e = l.edge(&f.edge)?;
+            let pl = Placement {
+                position: v.position,
+                scale: v.scale,
+                center: l.center(),
+            };
+            let (a, b) = (pl.to_sheet(e.a), pl.to_sheet(e.b));
+            let (dx, dy) = ((b[0] - a[0]).abs(), (b[1] - a[1]).abs());
+            let (role, q) = match s.what {
+                PickWhat::Point(r) => (r, s.at),
+                PickWhat::Line => {
+                    let e2 = l.edge(&s.edge)?;
+                    (PointRole::Start, pl.to_sheet(e2.a))
+                }
+                PickWhat::Circle(..) => return None,
+            };
+            let dim = if dx < 1e-6 * dy.max(1.0) {
+                DimKind::Horizontal
+            } else if dy < 1e-6 * dx.max(1.0) {
+                DimKind::Vertical
+            } else {
+                orient(a, q)
+            };
+            Some(Dimension {
+                dim,
+                a: pr(f, PointRole::Start),
+                b: Some(pr(s, role)),
+                text,
+                precision: 2,
+            })
+        }
+        (PickWhat::Line, None) => {
             let l = v.lines.as_deref()?;
             let e = l.edge(&f.edge)?;
             let pl = Placement {

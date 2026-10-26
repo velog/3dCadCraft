@@ -161,9 +161,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ]
     .iter()
     .find_map(|f| std::fs::read(f).ok());
-    let prims = cadcraft3d::drawing::render::sheet_list(&d, 0, &|_| "PLATE".into(), &|id| {
-        lines.get(&id).cloned()
-    });
+    let prims = cadcraft3d::drawing::render::sheet_list(
+        &d,
+        0,
+        &|_| "PLATE".into(),
+        &|id| lines.get(&id).cloned(),
+        &Default::default(),
+    );
     let pdf = cadcraft3d::drawing::pdf::write(
         &[cadcraft3d::drawing::pdf::Page {
             size: sheet.dims(),

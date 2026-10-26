@@ -1591,14 +1591,18 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["FCF"])
         .at(&[N_SYMBOLS])
         .tip("A GD&T feature control frame"),
-    dp("drw.parts_list", "Parts List", "Спецификация", Icon::PartsList, Dp::PartsList)
+    d("drw.parts_list", "Parts List", "Спецификация", Icon::PartsList)
+        .run(Action::Drawing(DrwCmd::PartsList))
+        .spec("4.4-parts-list.md")
         .alias(&["PL"])
         .at(&[N_TABLE])
-        .tip("A parts list from the BOM of a view's assembly"),
-    dp("drw.balloon", "Balloon", "Позиция", Icon::Balloon, Dp::Balloon)
+        .tip("A parts list from the BOM of a view's assembly: select the view, OK, then place the table"),
+    d("drw.balloon", "Balloon", "Позиция", Icon::Balloon)
+        .run(Action::Drawing(DrwCmd::Balloon))
+        .spec("4.4-parts-list.md")
         .alias(&["B"])
         .at(&[N_TABLE])
-        .tip("Item balloons with leaders"),
+        .tip("Item balloons: click a component's edge, then where the balloon goes"),
     dp("drw.hole_table", "Hole Table - View", "Таблица на отворите", Icon::PartsList, Dp::HoleTableView)
         .alias(&["HT"])
         .at(&[N_TABLE])
@@ -1711,10 +1715,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["ACL"])
         .at(&[N_SYMBOLS])
         .tip("Centre marks and lines on chosen feature types of the views"),
-    dp("drw.auto_balloon", "Auto Balloon", "Автоматични позиции", Icon::Balloon, Dp::AutoBalloon)
+    d("drw.auto_balloon", "Auto Balloon", "Автоматични позиции", Icon::Balloon)
+        .run(Action::Drawing(DrwCmd::AutoBalloon))
+        .spec("4.4-parts-list.md")
         .alias(&["AB"])
         .at(&[N_TABLE])
-        .tip("Balloons for every component of a view"),
+        .tip("Balloons for every component of a view at once, around it or in a row"),
     dp("drw.table", "Table", "Таблица", Icon::PartsList, Dp::GeneralTable)
         .alias(&["TB"])
         .at(&[N_TABLE])

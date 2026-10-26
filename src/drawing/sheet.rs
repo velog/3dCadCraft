@@ -248,8 +248,7 @@ impl TitleField {
     }
 }
 
-/// The frame's margin (Inventor 2027's ISO template: 10 mm on every side,
-/// 20 mm on A0 and A1; read through its API, see `tools/inventor/`).
+/// The frame's margin (ISO: 10 mm on every side, 20 mm on A0 and A1).
 pub fn margin(sheet: &Sheet) -> f64 {
     if matches!(sheet.size, SheetSize::A0 | SheetSize::A1) {
         20.0

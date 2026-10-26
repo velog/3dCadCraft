@@ -50,6 +50,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [0.15-context-menus-shortcuts.md](0.15-context-menus-shortcuts.md) | Right-click, keys, aliases, command search, command registry (G0) |
 | [0.11-presets.md](0.11-presets.md) | Presets: ready-made sets of settings in command panels (Last Used, No Preset, built-in) |
 | [4-drawings.md](4-drawings.md) | Drawings: sheets, views (HLR), annotations, tables, output — research document and stages D1–D6 |
+| [4.4-parts-list.md](4.4-parts-list.md) | Assembly views in drawings, Parts List (columns from any property, overrides by part number, sort / renumber, hidden and custom rows, wrapping), Balloon, Auto Balloon |
 | [4.6-drawing-styles.md](4.6-drawing-styles.md) | Drawing styles: the Style and Standard Editor of drawings (dimension, text, leader, centre mark, hatch, view annotation styles, layers, Object Defaults) |
 | [4.7-drawing-commands.md](4.7-drawing-commands.md) | The whole Inventor drawing command set (Place Views, Annotate, Manage): each command's dialog first, logic later (parts list / BOM source, balloons, dimension sets, tolerances, symbols, welding, hole tables, revisions, model reference) |
 | [6.1-frame-generator.md](6.1-frame-generator.md) | Frames (Frame Generator) — research document and stages F1–F4 |

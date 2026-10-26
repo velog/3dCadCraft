@@ -101,6 +101,20 @@ fn parts_of(project: &Project) -> Vec<(DocumentId, String)> {
     asm::placeable(project)
 }
 
+/// What a drawing's Base View can link from a file: its parts, then its
+/// assemblies.
+fn models_of(project: &Project) -> Vec<(DocumentId, String)> {
+    let mut v = asm::placeable(project);
+    v.extend(
+        project
+            .documents()
+            .iter()
+            .filter(|d| matches!(d.data, DocumentData::Assembly(_)))
+            .map(|d| (d.id, format!("{} (assembly)", d.name))),
+    );
+    v
+}
+
 /// The occurrence name of part `doc` of the file `path`: the file's name
 /// (its part's name too when the file holds several).
 fn base_name(path: &Path, parts: &[(DocumentId, String)], doc: DocumentId) -> String {
@@ -276,6 +290,7 @@ impl CadCraftApp {
     /// part.
     fn place_select(&mut self, path: PathBuf) {
         let loaded = self.part_file(&path);
+        let drawing = self.is_drawing();
         let Some(d) = self.asm.place.as_mut() else {
             return;
         };
@@ -283,7 +298,7 @@ impl CadCraftApp {
         d.preview = None;
         match loaded {
             Ok(p) => {
-                d.parts = parts_of(&p);
+                d.parts = if drawing { models_of(&p) } else { parts_of(&p) };
                 d.part = d.parts.first().map(|x| x.0);
                 d.error = d.parts.is_empty().then(|| "this file has no part".into());
             }
@@ -319,7 +334,13 @@ impl CadCraftApp {
     fn place_chosen(&mut self, path: PathBuf, doc: DocumentId) {
         let parts = self
             .part_file(&path)
-            .map(|p| parts_of(&p))
+            .map(|p| {
+                if self.is_drawing() {
+                    models_of(&p)
+                } else {
+                    parts_of(&p)
+                }
+            })
             .unwrap_or_default();
         let owner = PathBuf::from(self.file_path.trim());
         self.checkpoint("Place");

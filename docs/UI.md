@@ -301,7 +301,9 @@ Texture **ST**, Welding **WS**, Caterpillar **CAT**, End Fill **EF**, FCF **FCF*
 **CB**, Centered Pattern **CP**, Automated Centerlines **ACL**, Parts List **PL**, Balloon **B**, Auto Balloon
 **AB**, Table **TB**, Hole Tables **HT / HTS / HTF**, Revision Tag / Table / Cloud **RTG / RT / RC**, Edit
 Layers **EL**, Update All Sheets **UAS**, Replace Model Reference **RMR**, Define Border / Title Block / Symbol
-**DBR / DTB / DSS**. Double-click a dimension: Edit Dimension (Text, Precision and Tolerance, Inspection).
+**DBR / DTB / DSS**. Double-click a dimension: Edit Dimension (Text, Precision and Tolerance, Inspection). Parts List **PL** /
+Balloon **B** / Auto Balloon **AB** work (spec 4.4): double-click a parts list opens its editor (columns, cell
+overrides in colour, sort / renumber, hidden and custom rows), a balloon its shape / text; drag moves either.
 🟡 waiting for a visual check.
 
 ### Help, log and recovery

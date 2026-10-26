@@ -14,6 +14,7 @@
 
 pub mod annot;
 pub mod hlr;
+pub mod parts;
 pub mod pdf;
 pub mod render;
 pub mod sheet;

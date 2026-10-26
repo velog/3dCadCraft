@@ -201,5 +201,12 @@
     "features": 1,
     "sketches": 0,
     "exact": true
+  },
+  "r25/drawing_r25.3dcadcraft": {
+    "volume": 48000.000000000065,
+    "faces": 6,
+    "features": 1,
+    "sketches": 0,
+    "exact": true
   }
 }

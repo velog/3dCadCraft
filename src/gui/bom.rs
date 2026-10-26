@@ -46,7 +46,7 @@ const COLS: [&str; 8] = [
 
 impl CadCraftApp {
     /// What the BOM reads of a component.
-    fn bom_info(&self, r: DocRef) -> ComponentInfo {
+    pub(super) fn bom_info(&self, r: DocRef) -> ComponentInfo {
         let material = self.with_part(r, |p| p.material.clone()).flatten();
         let flat = self
             .with_part(r, |p| p.flat_extents().map(|x| (x.length, x.width, x.area)))

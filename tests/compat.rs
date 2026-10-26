@@ -1201,6 +1201,94 @@ fn drawing_r23_reads() {
     project.validate().unwrap();
 }
 
+/// Revision 25: an assembly of a plate and three blocks, its drawing with an
+/// assembly base view, a parts list (a sort, a cell override, a custom row)
+/// and a balloon.
+fn drawing_r25_project() -> Project {
+    use cadcraft3d::document::{AssemblyDocument, DocRef};
+    use cadcraft3d::drawing::parts::{Balloon, CustomRow, PartsList, SortBy};
+    use cadcraft3d::drawing::{AnnotationKind, DrawingDocument, ViewOrientation, ViewStyle};
+    use cadcraft3d::kernel::Transform3;
+    let mut project = Project::new("DrawingR25");
+    let plate = project.add_document(
+        "Plate",
+        DocumentData::Part(PartDocument::with_box("Box1", [80.0, 50.0, 12.0]).unwrap()),
+    );
+    let block = project.add_document(
+        "Block",
+        DocumentData::Part(PartDocument::with_box("Box1", [10.0, 10.0, 30.0]).unwrap()),
+    );
+    let mut asm = AssemblyDocument::default();
+    asm.place(DocRef::local(plate), "Plate", Transform3::identity(), true);
+    for k in 0..3 {
+        let t = Transform3::translation(10.0 + 25.0 * f64::from(k), 20.0, 12.0);
+        asm.place(DocRef::local(block), "Block", t, false);
+    }
+    let a = project.add_document("Assembly1", DocumentData::Assembly(asm));
+    let mut d = DrawingDocument::default();
+    let v = d
+        .add_base_view(
+            DocRef::local(a),
+            ViewOrientation::Front,
+            [120.0, 180.0],
+            1.0,
+            ViewStyle::HiddenShown,
+        )
+        .unwrap();
+    let mut pl = PartsList::new(v, [405.0, 287.0]);
+    pl.sort = Some(SortBy {
+        column: "part_number".into(),
+        ascending: true,
+        renumber: true,
+    });
+    pl.set_override("Plate", "description", Some("Base plate".into()));
+    pl.custom_rows.push(CustomRow {
+        cells: [("description".to_owned(), "Grease".to_owned())].into(),
+    });
+    d.add_annotation(AnnotationKind::PartsList(pl));
+    d.add_annotation(AnnotationKind::Balloon(Balloon {
+        view: v,
+        edge: "o2/Box1:E000-100".into(),
+        along: 0.5,
+        at: [-40.0, 40.0],
+        shape: Default::default(),
+        bom: Default::default(),
+        text: None,
+    }));
+    project.add_document("Drawing1", DocumentData::Drawing(d));
+    project
+}
+
+/// The revision 25 drawing reads back with its parts list and balloon.
+#[test]
+fn drawing_r25_reads() {
+    use cadcraft3d::drawing::AnnotationKind;
+    let f = root().join("r25/drawing_r25.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let anns = &d.sheets[0].annotations;
+    let Some(AnnotationKind::PartsList(pl)) = anns.first().map(|a| &a.kind) else {
+        panic!("a parts list first")
+    };
+    assert_eq!(pl.overrides.len(), 1);
+    assert_eq!(pl.custom_rows.len(), 1);
+    assert!(matches!(
+        anns.get(1).map(|a| &a.kind),
+        Some(AnnotationKind::Balloon(_))
+    ));
+    project.validate().unwrap();
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -1283,6 +1371,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             std::fs::write(&f, drawing_r23_bytes()).unwrap();
+        }
+        let f = root().join("r25/drawing_r25.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r25_project().save(&f).unwrap();
         }
         let f = root().join("r22/sheet_r22.3dcadcraft");
         if !f.exists() {

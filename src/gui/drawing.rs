@@ -55,6 +55,12 @@ pub enum DrwCmd {
     LeaderText,
     /// Annotate › Hole and Thread.
     HoleNote,
+    /// Annotate › Parts List.
+    PartsList,
+    /// Annotate › Balloon.
+    Balloon,
+    /// Annotate › Auto Balloon.
+    AutoBalloon,
     /// File › Export › PDF.
     ExportPdf,
     /// Annotate › Format › Edit Layers (the Style Editor on Layers).
@@ -128,6 +134,13 @@ pub(super) enum DrwTool {
     Detail(super::drawing_section::DetailDraft),
     /// Auxiliary View: an edge, then the place.
     Auxiliary(super::drawing_section::AuxDraft),
+    /// Parts List: the source view (dialog), then the place.
+    PartsList,
+    /// Balloon: a component's edge (view, edge, where along it), then the
+    /// balloon's place.
+    Balloon(Option<(u32, String, f64)>),
+    /// Auto Balloon: view and components (dialog).
+    AutoBalloon,
 }
 
 /// Tabs of the Drawing View dialog.
@@ -217,6 +230,10 @@ pub(super) struct DrwUi {
     pub styles_editor: Option<super::drawing_styles::StylesEditor>,
     /// The dialog of a command without logic yet.
     pub planned: Option<super::drawing_planned::PlannedDialog>,
+    /// Parts List, Balloon and Auto Balloon.
+    pub bom: super::drawing_bom::BomUi,
+    /// This frame's BOM tables of the active sheet.
+    pub tables: Arc<crate::drawing::parts::Tables>,
     /// This frame's annotation look (from the drawing's styles).
     pub look: crate::drawing::style::AnnotationLook,
     /// This frame's visible and hidden line weights (mm).
@@ -242,6 +259,7 @@ impl DrwUi {
         self.pdf_dialog = None;
         self.styles_editor = None;
         self.planned = None;
+        self.bom = Default::default();
         self.cam.fit = true;
         self.fitted = None;
     }
@@ -389,6 +407,9 @@ impl CadCraftApp {
             DrwCmd::Text => self.start_annotation(DrwTool::Text),
             DrwCmd::LeaderText => self.start_annotation(DrwTool::LeaderText(None)),
             DrwCmd::HoleNote => self.start_annotation(DrwTool::HoleNote(None)),
+            DrwCmd::PartsList => self.open_parts_list(),
+            DrwCmd::Balloon => self.open_balloon(),
+            DrwCmd::AutoBalloon => self.open_auto_balloon(),
             DrwCmd::ExportPdf => self.open_pdf_export(),
             DrwCmd::EditLayers => {
                 let first = self
@@ -422,7 +443,7 @@ impl CadCraftApp {
             .project
             .documents()
             .iter()
-            .filter(|d| d.data.kind() == DocumentKind::Part)
+            .filter(|d| matches!(d.data.kind(), DocumentKind::Part | DocumentKind::Assembly))
             .map(|d| (DocRef::local(d.id), d.name.clone()))
             .collect();
         if let Some(d) = self.drawing() {
@@ -563,6 +584,7 @@ impl CadCraftApp {
             self.drw.text_dialog = None;
             self.drw.pdf_dialog = None;
             self.drw.planned = None;
+            self.bom_cancel();
             true
         } else {
             false
@@ -577,12 +599,16 @@ impl CadCraftApp {
             || self.drw.text_dialog.is_some()
             || self.drw.pdf_dialog.is_some()
             || self.drw.planned.is_some()
+            || self.drw.bom.open()
     }
 
     /// Status-bar prompt.
     pub(super) fn drw_prompt(&self) -> String {
         if let Some(p) = &self.drw.planned {
             return p.prompt();
+        }
+        if let Some(p) = self.bom_prompt() {
+            return p;
         }
         match &self.drw.tool {
             Some(DrwTool::CenterMark) => "Center Mark: click circles or arcs (Esc ends)".into(),
@@ -599,6 +625,8 @@ impl CadCraftApp {
             Some(DrwTool::Section(d)) => d.prompt().into(),
             Some(DrwTool::Detail(d)) => d.prompt().into(),
             Some(DrwTool::Auxiliary(d)) => d.prompt().into(),
+            // Their prompts come from `bom_prompt` above.
+            Some(DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon) => String::new(),
             Some(DrwTool::Base) => {
                 "Base View: set the options, then click on the sheet to place the view".into()
             }
@@ -607,12 +635,12 @@ impl CadCraftApp {
                 "Projected View: click beside the view for an orthographic view, diagonally for an isometric one (Esc ends)".into()
             }
             None if self.drw.sel_ann.is_some() => {
-                "Drag a dimension or a note to move its text, Delete removes it, double-click edits a note".into()
+                "Drag a dimension, note, parts list or balloon to move it, Delete removes it, double-click edits it".into()
             }
             None if self.drw.sel.is_some() => {
                 "Drag the view to move it, double-click to edit it, Delete removes it".into()
             }
-            None => "Place Views > Base View (BV) places a view of a part".into(),
+            None => "Place Views > Base View (BV) places a view of a part or an assembly".into(),
         }
     }
 
@@ -629,7 +657,10 @@ impl CadCraftApp {
         frame: &ViewFrame,
         aligned: Option<hlr::Aligned>,
     ) -> Option<Arc<ViewLines>> {
-        let sig = self.with_part(model, |p| p.body_signature())?;
+        let sig = match self.assembly_signature(model) {
+            Some(s) => s,
+            None => self.with_part(model, |p| p.body_signature())?,
+        };
         let key = LinesKey {
             model,
             signature: hash_str(&sig),
@@ -642,9 +673,8 @@ impl CadCraftApp {
             return Some(l.clone());
         }
         let Some(ctx) = ctx else {
-            let lines = Arc::new(self.with_part(model, |p| {
-                hlr::view_lines_with(&hlr::part_model(p), frame, aligned.as_ref())
-            })?);
+            let job = self.model_job(model)?;
+            let lines = Arc::new(hlr::view_lines_with(&job.model(), frame, aligned.as_ref()));
             if let Ok(mut done) = self.drw.done.lock() {
                 done.insert(key, lines.clone());
             }
@@ -652,7 +682,7 @@ impl CadCraftApp {
             return Some(lines);
         };
         if self.drw.running.insert(key) {
-            let part = self.with_part(model, |p| p.clone())?;
+            let job = self.model_job(model)?;
             let done = self.drw.done.clone();
             let ctx = ctx.clone();
             let frame = *frame;
@@ -660,8 +690,7 @@ impl CadCraftApp {
                 .name("drawing-view".into())
                 .spawn(move || {
                     let t = std::time::Instant::now();
-                    let lines =
-                        hlr::view_lines_with(&hlr::part_model(&part), &frame, aligned.as_ref());
+                    let lines = hlr::view_lines_with(&job.model(), &frame, aligned.as_ref());
                     log::info!(
                         "drawing view: {} visible, {} hidden pieces, {} cut faces in {:.0} ms",
                         lines.visible.len(),
@@ -744,7 +773,7 @@ impl CadCraftApp {
     }
 
     /// Every view of the active sheet with its lines and sheet rectangle.
-    fn shown_views(&mut self, ctx: &egui::Context) -> Vec<ShownView> {
+    pub(super) fn shown_views(&mut self, ctx: &egui::Context) -> Vec<ShownView> {
         let Some(d) = self.drawing().cloned() else {
             return Vec::new();
         };
@@ -916,7 +945,10 @@ impl CadCraftApp {
             super::drawing_annot::paint_prims(&painter, &cam, rect, &extras, INK);
         }
 
-        // Annotations.
+        // Annotations (parts lists and balloons read this frame's BOM).
+        if let Some(d) = self.drawing().cloned() {
+            self.drw.tables = Arc::new(self.bom_tables(&d, d.active_sheet));
+        }
         let anns = self.shown_annotations(&views);
         self.paint_annotations(&painter, rect, &anns);
 
@@ -959,6 +991,9 @@ impl CadCraftApp {
             Some(DrwTool::Section(_) | DrwTool::Detail(_) | DrwTool::Auxiliary(_)) => {
                 self.child_view_tool(&ctx, &painter, rect, &response, &views)
             }
+            Some(DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon) => {
+                self.bom_tool(&painter, rect, &response, &views)
+            }
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
             None => {
@@ -983,8 +1018,14 @@ impl CadCraftApp {
                 Some(DrwTool::LeaderText(Some(_))) => {
                     self.drw.tool = Some(DrwTool::LeaderText(None));
                 }
-                Some(DrwTool::Base) => {}
-                _ => self.drw.tool = None,
+                Some(DrwTool::Balloon(Some(_))) => {
+                    self.drw.tool = Some(DrwTool::Balloon(None));
+                }
+                Some(DrwTool::Base | DrwTool::PartsList | DrwTool::AutoBalloon) => {}
+                _ => {
+                    self.drw.tool = None;
+                    self.bom_cancel();
+                }
             }
         }
         // Keys over the sheet.
@@ -1353,6 +1394,7 @@ impl CadCraftApp {
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);
         self.planned_window(ctx);
+        self.bom_windows(ctx);
     }
 
     /// The dialog of a command without logic yet.

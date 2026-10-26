@@ -93,9 +93,6 @@ pub enum Planned {
     CenteredPattern,
     AutoCenterlines,
     // Table
-    PartsList,
-    Balloon,
-    AutoBalloon,
     GeneralTable,
     HoleTableView,
     HoleTableSelection,
@@ -112,17 +109,6 @@ pub enum Planned {
 }
 
 // ---- shared pages ------------------------------------------------------------
-
-/// BOM view settings of Parts List, Balloon and Auto Balloon.
-const BOM_ROWS: &[Row] = &[
-    Head("BOM Settings and Properties"),
-    Combo("BOM View", &["Structured", "Parts Only"], 0),
-    Radio("Level", &["First Level", "All Levels"], 0),
-    Num("Minimum Digits", 1.0, ""),
-    Text("Delimiter", "."),
-    Radio("Numbering (Parts Only)", &["Numeric", "Alpha"], 0),
-    Radio("Case (Alpha)", &["Upper", "Lower"], 0),
-];
 
 const WRAP_ROWS: &[Row] = &[
     Head("Table Wrapping"),
@@ -225,7 +211,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 56] = [
+    pub const ALL: [Planned; 53] = [
         Self::Overlay,
         Self::DraftView,
         Self::Break,
@@ -267,9 +253,6 @@ impl Planned {
         Self::CenterlineBisector,
         Self::CenteredPattern,
         Self::AutoCenterlines,
-        Self::PartsList,
-        Self::Balloon,
-        Self::AutoBalloon,
         Self::GeneralTable,
         Self::HoleTableView,
         Self::HoleTableSelection,
@@ -328,9 +311,6 @@ impl Planned {
             Self::CenterlineBisector => "Centerline Bisector",
             Self::CenteredPattern => "Centered Pattern",
             Self::AutoCenterlines => "Automated Centerlines",
-            Self::PartsList => "Parts List",
-            Self::Balloon => "Balloon",
-            Self::AutoBalloon => "Auto Balloon",
             Self::GeneralTable => "Table",
             Self::HoleTableView => "Hole Table - View",
             Self::HoleTableSelection => "Hole Table - Selection",
@@ -968,101 +948,6 @@ impl Planned {
                     Num("Arc Angle Minimum", 0.0, "°"),
                 ],
             )],
-            Self::PartsList => &[
-                Page(
-                    "Source",
-                    &[
-                        Sel(
-                            "view",
-                            "Select View",
-                            "select a view: its model is the parts list's source",
-                        ),
-                        Combo("File", &["(the view's model)"], 0),
-                        Button("Browse..."),
-                        Combo("Model State", &["[Primary]"], 0),
-                        Check("Select Member (iAssembly)", false),
-                        Sel("place", "Placement", "click where the parts list goes"),
-                    ],
-                ),
-                Page("BOM Settings", BOM_ROWS),
-                Page("Table Wrapping", WRAP_ROWS),
-                Page(
-                    "Columns",
-                    &[
-                        Button("Column Chooser..."),
-                        Note(
-                            "Default columns: ITEM, QTY, PART NUMBER, DESCRIPTION (from iProperties)",
-                        ),
-                        Button("Sort..."),
-                        Button("Group Settings..."),
-                        Button("Filter Settings..."),
-                    ],
-                ),
-            ],
-            Self::Balloon => &[
-                Page(
-                    "Balloon",
-                    &[
-                        Sel(
-                            "component",
-                            "Component",
-                            "click a part's edge in a view (the leader start)",
-                        ),
-                        Sel(
-                            "place",
-                            "Placement",
-                            "click where the balloon goes (right-click: Continue)",
-                        ),
-                        Combo(
-                            "Shape",
-                            &[
-                                "Circular - 1 Entry",
-                                "Circular - 2 Entries",
-                                "Hexagon",
-                                "Linear",
-                                "Inspection",
-                            ],
-                            0,
-                        ),
-                        Check("Override Shape", false),
-                    ],
-                ),
-                Page("BOM Settings", BOM_ROWS),
-            ],
-            Self::AutoBalloon => &[
-                Page(
-                    "Selection",
-                    &[
-                        Sel(
-                            "view",
-                            "Select View Set",
-                            "select the view the balloons come from",
-                        ),
-                        Sel(
-                            "components",
-                            "Add or Remove Components",
-                            "select components (Shift removes)",
-                        ),
-                        Check("Ignore Multiple Instances", true),
-                    ],
-                ),
-                Page("BOM Settings", BOM_ROWS),
-                Page(
-                    "Placement",
-                    &[
-                        Radio("Placement", &["Around", "Horizontal", "Vertical"], 0),
-                        Num("Offset Spacing", 3.0, " mm"),
-                        Sel(
-                            "place",
-                            "Placement Line",
-                            "click where the balloons line up",
-                        ),
-                        Head("Style Overrides"),
-                        Check("Balloon Shape", false),
-                        Combo("Shape", &["Circular - 1 Entry"], 0),
-                    ],
-                ),
-            ],
             Self::GeneralTable => &[
                 Page(
                     "Source",
@@ -1255,11 +1140,6 @@ impl Planned {
             Self::AutoCenterlines => {
                 "Centre marks and lines on every chosen feature type of the views"
             }
-            Self::PartsList => {
-                "The parts list (BOM) of a view's model: source view or file, BOM view, levels, columns"
-            }
-            Self::Balloon => "Item balloons with leaders from the parts list's BOM",
-            Self::AutoBalloon => "Balloons for every component of a view at once",
             Self::GeneralTable => {
                 "A table of free cells, from a CSV / Excel file or an iPart's table"
             }

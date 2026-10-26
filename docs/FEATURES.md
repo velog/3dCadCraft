@@ -950,7 +950,12 @@ Center Mark, Centerline, Text; attached to edges by name, orphans marked. Waitin
 
 **How it works.** Each annotation is attached to geometry of a view (associatively). If the edge disappears, the annotation is marked as "orphaned" instead of silently disappearing.
 
-## 4.4 Tables — ⬜ · M
+## 4.4 Tables — 🟡 · M
+
+🟡 2026-10-26: assembly views; **Parts List** (BOM view, numbering, merge, wrapping, any iProperty as a
+column, cell overrides kept by part number, sort / renumber, hidden and custom rows) with **Balloon** and
+**Auto Balloon** reading item numbers through it. Waiting for a visual check. Hole, revision, general and bend
+tables to do. **Specification:** [spec/4.4-parts-list.md](spec/4.4-parts-list.md)
 
 - **Parts list** (from the BOM, 3.6), with **balloons** (item numbers);
 - **revision table**;

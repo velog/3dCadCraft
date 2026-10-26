@@ -10,3 +10,6 @@
 .DS_Store
 Thumbs.db
 .claude/worktrees/
+# Local, never committed: private working rules and tools
+/CLAUDE.local.md
+/local/

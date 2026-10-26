@@ -68,6 +68,9 @@ pub struct BomRow {
     pub occurrences: Vec<u32>,
     /// Custom iProperties by name (text).
     pub custom: BTreeMap<String, String>,
+    /// The component's standard iProperties by key (`iprops::STANDARD`),
+    /// for parts list columns.
+    pub props: BTreeMap<String, String>,
     /// A component of it was not found.
     pub missing: bool,
 }
@@ -137,6 +140,7 @@ pub fn rows(
                     ]
                 }))
                 .collect(),
+            props: ci.props.standard.clone(),
             missing: ci.missing,
         });
     }

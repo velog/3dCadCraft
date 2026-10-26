@@ -55,6 +55,7 @@ pub fn sheet_list(
     i: usize,
     title: &dyn Fn(TitleField) -> String,
     lines: &dyn Fn(u32) -> Option<Arc<ViewLines>>,
+    tables: &super::parts::Tables,
 ) -> Vec<Prim> {
     let mut out = sheet::format_prims(doc, i, title);
     let Some(sheet) = doc.sheets.get(i) else {
@@ -92,7 +93,7 @@ pub fn sheet_list(
     if st.layer(&st.defaults.dimension_layer).on {
         let look = st.look();
         for a in &sheet.annotations {
-            if let Ok(s) = annot::resolve_with(&a.kind, &view, &look) {
+            if let Ok(s) = annot::resolve_in(&a.kind, &view, &look, tables) {
                 out.extend(s.prims);
             }
         }

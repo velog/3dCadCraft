@@ -66,6 +66,10 @@ pub enum AnnotationKind {
         /// The text (lines split by `\n`).
         text: String,
     },
+    /// Parts list of a view's assembly (`parts`).
+    PartsList(super::parts::PartsList),
+    /// Item balloon on a component of an assembly view (`parts`).
+    Balloon(super::parts::Balloon),
     /// Text on the sheet.
     Text {
         /// Lower left of the first line (sheet mm).
@@ -191,14 +195,39 @@ pub fn resolve<'a>(
     resolve_with(a, view, &AnnotationLook::default())
 }
 
-/// [`resolve`] in the drawing's styles (`DrawingStyles::look`).
+/// [`resolve`] in the drawing's styles (`DrawingStyles::look`); parts
+/// lists and balloons need [`resolve_in`].
 pub fn resolve_with<'a>(
     a: &AnnotationKind,
     view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
     look: &AnnotationLook,
 ) -> Result<Shown, Orphan> {
+    resolve_in(a, view, look, &super::parts::Tables::default())
+}
+
+/// [`resolve_with`] with the sheet's BOM tables (parts lists, balloons).
+pub fn resolve_in<'a>(
+    a: &AnnotationKind,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+    look: &AnnotationLook,
+    tables: &super::parts::Tables,
+) -> Result<Shown, Orphan> {
     let st = Draw { look };
     match a {
+        AnnotationKind::PartsList(pl) => {
+            let t = tables.table_of(pl).ok_or(Orphan::NoView)?;
+            Ok(Shown {
+                prims: super::parts::table_prims(pl, &t, look),
+                value: None,
+            })
+        }
+        AnnotationKind::Balloon(b) => {
+            let (pl, lines) = view(b.view).ok_or(Orphan::NoView)?;
+            Ok(Shown {
+                prims: super::parts::resolve_balloon(b, pl, lines, tables, look)?,
+                value: None,
+            })
+        }
         AnnotationKind::Text { at, text, height } => {
             let spacing = look.leader_text.line_spacing;
             let prims = text
@@ -563,7 +592,7 @@ pub fn format_value(v: f64, precision: u8) -> String {
     }
 }
 
-fn line(a: [f64; 2], b: [f64; 2]) -> Prim {
+pub(super) fn line(a: [f64; 2], b: [f64; 2]) -> Prim {
     Prim::Line {
         a,
         b,
@@ -573,7 +602,7 @@ fn line(a: [f64; 2], b: [f64; 2]) -> Prim {
 
 /// A terminator at `tip` pointing along `dir` (unit): `size` long,
 /// `height` wide.
-fn terminator(
+pub(super) fn terminator(
     out: &mut Vec<Prim>,
     tip: [f64; 2],
     dir: [f64; 2],
@@ -621,15 +650,15 @@ pub fn text_width(t: &str, height: f64) -> f64 {
     t.chars().count() as f64 * height * 0.6
 }
 
-fn add(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+pub(super) fn add(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
     [a[0] + b[0], a[1] + b[1]]
 }
 
-fn sub(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+pub(super) fn sub(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
     [a[0] - b[0], a[1] - b[1]]
 }
 
-fn mul(a: [f64; 2], k: f64) -> [f64; 2] {
+pub(super) fn mul(a: [f64; 2], k: f64) -> [f64; 2] {
     [a[0] * k, a[1] * k]
 }
 
@@ -637,7 +666,7 @@ fn dot(a: [f64; 2], b: [f64; 2]) -> f64 {
     a[0] * b[0] + a[1] * b[1]
 }
 
-fn norm(a: [f64; 2]) -> f64 {
+pub(super) fn norm(a: [f64; 2]) -> f64 {
     a[0].hypot(a[1])
 }
 
@@ -650,6 +679,8 @@ impl Annotation {
             }
             AnnotationKind::Dimension(d) => Some(d.a.view),
             AnnotationKind::HoleNote { view, .. } => Some(*view),
+            AnnotationKind::PartsList(p) => Some(p.view),
+            AnnotationKind::Balloon(b) => Some(b.view),
             AnnotationKind::Text { .. } | AnnotationKind::LeaderText { .. } => None,
         }
     }
