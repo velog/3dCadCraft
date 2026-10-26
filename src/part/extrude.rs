@@ -305,7 +305,7 @@ impl ProfileRef {
 }
 
 /// Name of a sketch entity in topology names, e.g. `"3v1"`.
-pub(super) fn entity_key(e: EntityId) -> String {
+pub fn entity_key(e: EntityId) -> String {
     format!("{:?}", e.data())
 }
 

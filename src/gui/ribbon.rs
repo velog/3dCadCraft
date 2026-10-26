@@ -83,6 +83,20 @@ pub enum Action {
     SmFlange,
     /// Sheet Metal › Create Flat Pattern / Go to Folded Part.
     SmFlatPattern,
+    /// Sheet Metal › Hem.
+    SmHem,
+    /// Sheet Metal › Fold.
+    SmFold,
+    /// Sheet Metal › Contour Flange.
+    SmContour,
+    /// Sheet Metal › Cut.
+    SmCut,
+    /// Sheet Metal › Unfold.
+    SmUnfold,
+    /// Sheet Metal › Refold.
+    SmRefold,
+    /// Sheet Metal › Export Flat Pattern (DXF).
+    SmExportFlat,
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch

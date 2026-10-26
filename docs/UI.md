@@ -236,7 +236,11 @@ removes), Height, Angle, Bend Radius, Bend Position, Flip. **Width Extents** of 
 the flange's ends drag it narrower (it becomes Offset), the orange lines are the preview. **Convert to Sheet
 Metal** (Setup, or 3D Model › Convert) on a solid: click the base face (orange dot), then the edges that
 become bends (blue dots; again removes), OK. Defaults has the **Corner Relief Shape** (Round, Square, Tear,
-Trim to Bend). **Flat Pattern**: the view shows the part unfolded,
+Trim to Bend). **Hem**: click sheet edges, Length, Gap, Flip. **Fold**: choose the sketch and its line (on
+a face of the sheet), Angle, Bend Radius, Fold Location, Flip Side / Flip Direction. **Contour Flange**: a
+sketch with an open chain of lines, Distance (width), Flip. **Cut**: a sketch with closed profiles on a face of
+the sheet. **Unfold** / **Refold**: the whole sheet flat and back (a Cut between them crosses bends).
+**Export** (Flat Pattern panel): the flat pattern as DXF (layers OUTER, BEND_UP, BEND_DOWN). **Flat Pattern**: the view shows the part unfolded,
 Properties its extents and bends; again goes back. The other sheet metal commands are listed greyed.
 🟡 waiting for a visual check.
 

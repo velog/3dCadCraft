@@ -1446,7 +1446,10 @@ impl CadCraftApp {
         match f {
             // Sheet metal: the Face follows its sketch, the Flange is edited
             // in Properties (height, angle).
-            Feature::SheetFace(_) | Feature::SheetFlange(_) | Feature::SheetConvert(_) => {
+            Feature::SheetFace(_)
+            | Feature::SheetFlange(_)
+            | Feature::SheetConvert(_)
+            | Feature::SheetOp(_) => {
                 self.file_status = Some(Ok(
                     "Sheet metal: change the values in Properties (Sheet Metal Defaults for the thickness)".into(),
                 ));
@@ -3698,7 +3701,14 @@ impl CadCraftApp {
             | Action::SmDefaults
             | Action::SmFace
             | Action::SmFlange
-            | Action::SmFlatPattern => self.sm_apply(action),
+            | Action::SmFlatPattern
+            | Action::SmHem
+            | Action::SmFold
+            | Action::SmContour
+            | Action::SmCut
+            | Action::SmUnfold
+            | Action::SmRefold
+            | Action::SmExportFlat => self.sm_apply(action),
             Action::StartSketch => {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);

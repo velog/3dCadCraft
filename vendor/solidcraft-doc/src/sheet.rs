@@ -3039,6 +3039,46 @@ impl SheetBody {
     }
 
     /// The persistent name of the sheet edge nearest a world point.
+    /// Cut `regions` (in the world plane `plane`) through the sheet where they meet the material
+    /// of a panel parallel to `plane` and within one thickness of it (3DCadCraft addition: the
+    /// sheet metal Cut, kept in the flat pattern as a cut-out). Unfolded, the flat pattern is cut.
+    /// Returns how many cut-outs were added; an error when the regions meet no such material.
+    pub fn cut_through(&mut self, plane: &Plane, regions: &[Region2]) -> Result<usize> {
+        let mut work = FlatWork::new();
+        let n = plane.normal();
+        let candidates: Vec<(Option<usize>, Region2)> = if self.flat {
+            if self.frame.normal().cross(n).len() > 1e-6 {
+                Vec::new()
+            } else {
+                self.flat_regions()?.into_iter().map(|r| (None, r)).collect()
+            }
+        } else {
+            self.material_panels(Some(plane), &mut work)?
+        };
+        let mut added = 0;
+        for (pi, panel) in candidates {
+            let w = self.world(pi);
+            let lo = (apply_point(&w, Vec3::ZERO) - plane.origin).dot(n);
+            let hi = (apply_point(&w, Vec3::new(0.0, 0.0, self.t)) - plane.origin).dot(n);
+            let reach = self.t + 1e-6;
+            if lo.abs().min(hi.abs()) > reach && lo.signum() == hi.signum() {
+                continue;
+            }
+            for r in regions {
+                let flat = self.region_to_flat(pi, plane, r)?;
+                let met = material_boolean(std::slice::from_ref(&panel), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
+                if !met.is_empty() && !self.holes.contains(&flat) {
+                    self.holes.push(flat);
+                    added += 1;
+                }
+            }
+        }
+        if added == 0 {
+            return Err(DocError::Invalid("the cut meets no material of the sheet on its sketch's face".into()));
+        }
+        Ok(added)
+    }
+
     /// The ends (world) of the sheet edge nearest `pick`, in the order the flange offsets
     /// count them (3DCadCraft addition: drag handles at a flange's ends).
     pub fn edge_ends(&self, pick: Vec3) -> Option<(Vec3, Vec3, bool)> {

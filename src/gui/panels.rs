@@ -891,6 +891,7 @@ impl CadCraftApp {
                 Icon::SheetMetal,
                 format!("Sheet metal Face of {}", f.sketch),
             ),
+            Feature::SheetOp(f) => (Icon::SheetMetal, f.describe()),
             Feature::SheetConvert(f) => (
                 Icon::SheetMetal,
                 format!(
@@ -2326,6 +2327,7 @@ impl CadCraftApp {
                 | Feature::SheetFace(_)
                 | Feature::SheetFlange(_)
                 | Feature::SheetConvert(_)
+                | Feature::SheetOp(_)
                 | Feature::Combine(_)
                 | Feature::Split(_) => {}
             }
@@ -2409,6 +2411,24 @@ impl CadCraftApp {
                         }
                     }
                 });
+            }
+            Feature::SheetOp(ref o) => {
+                let fields = o.fields();
+                let title = o.describe();
+                psection(ui, &format!("sheetop_{k}"), "Sheet Metal", |ui| {
+                    for (field, _) in fields {
+                        let label = match field {
+                            "length" => "Length",
+                            "gap" => "Gap",
+                            "angle" => "Angle",
+                            "width" => "Width",
+                            other => other,
+                        };
+                        field_row(ui, &mut fx, label, &f, field);
+                        ui.end_row();
+                    }
+                });
+                ui.weak(title);
             }
             Feature::SheetConvert(ref c) => {
                 ui.label(format!(

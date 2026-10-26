@@ -192,6 +192,8 @@ pub enum Feature {
     SheetFlange(sheet_metal::SheetFlangeFeature),
     /// Convert to Sheet Metal of a solid (`sheet_metal.rs`).
     SheetConvert(sheet_metal::SheetConvertFeature),
+    /// Hem, Fold, Contour Flange, Unfold / Refold, Cut (`sheet_metal.rs`).
+    SheetOp(sheet_metal::SheetOpFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -298,6 +300,7 @@ enum BuildStep<'a> {
     SheetFace(&'a sheet_metal::SheetFaceFeature),
     SheetFlange(&'a sheet_metal::SheetFlangeFeature),
     SheetConvert(&'a sheet_metal::SheetConvertFeature),
+    SheetOp(&'a sheet_metal::SheetOpFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -322,6 +325,7 @@ impl<'a> BuildStep<'a> {
             Feature::SheetFace(f) => Self::SheetFace(f),
             Feature::SheetFlange(f) => Self::SheetFlange(f),
             Feature::SheetConvert(f) => Self::SheetConvert(f),
+            Feature::SheetOp(f) => Self::SheetOp(f),
         }
     }
 }
@@ -349,6 +353,7 @@ impl Feature {
             Feature::SheetFace(f) => &f.id,
             Feature::SheetFlange(f) => &f.id,
             Feature::SheetConvert(f) => &f.id,
+            Feature::SheetOp(f) => &f.id,
         }
     }
 
@@ -374,6 +379,7 @@ impl Feature {
             Feature::SheetFace(f) => &f.name,
             Feature::SheetFlange(f) => &f.name,
             Feature::SheetConvert(f) => &f.name,
+            Feature::SheetOp(f) => &f.name,
         }
     }
 
@@ -399,6 +405,7 @@ impl Feature {
             Feature::SheetFace(f) => &mut f.name,
             Feature::SheetFlange(f) => &mut f.name,
             Feature::SheetConvert(f) => &mut f.name,
+            Feature::SheetOp(f) => &mut f.name,
         };
         *n = name.to_owned();
     }
@@ -415,6 +422,7 @@ impl Feature {
             Feature::Rib(_) => false,
             Feature::SheetFace(_) => true,
             Feature::SheetFlange(_) | Feature::SheetConvert(_) => false,
+            Feature::SheetOp(f) => f.creates_body(),
             Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
@@ -445,6 +453,7 @@ impl Feature {
             Feature::Rib(r) => Some(&r.sketch),
             Feature::SheetFace(f) => Some(&f.sketch),
             Feature::SheetFlange(_) | Feature::SheetConvert(_) => None,
+            Feature::SheetOp(f) => f.sketch(),
         }
     }
 
@@ -1057,7 +1066,10 @@ impl PartDocument {
             // rebuilds them).
             if matches!(
                 f,
-                Feature::SheetFace(_) | Feature::SheetFlange(_) | Feature::SheetConvert(_)
+                Feature::SheetFace(_)
+                    | Feature::SheetFlange(_)
+                    | Feature::SheetConvert(_)
+                    | Feature::SheetOp(_)
             ) {
                 use std::hash::{Hash, Hasher};
                 let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1337,9 +1349,19 @@ impl PartDocument {
                         Err(e) => Err(e),
                     }
                 }
+                BuildStep::SheetOp(op) if use_exact => {
+                    match exact::sheet_op(op, &solids, &metal, &rule, &self.sketches) {
+                        Ok((next, body, state)) => {
+                            metal.insert(body, state);
+                            Ok(Some(next))
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
                 BuildStep::SheetFace(_)
                 | BuildStep::SheetFlange(_)
-                | BuildStep::SheetConvert(_) => Err(exact::Fail::User(
+                | BuildStep::SheetConvert(_)
+                | BuildStep::SheetOp(_) => Err(exact::Fail::User(
                     "sheet metal needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
                 BuildStep::Swept(_) => Err(exact::Fail::User(
@@ -1671,6 +1693,7 @@ impl PartDocument {
                 Feature::Coil(c) => (c.output == Output::Solid).then(|| c.id.clone()),
                 Feature::SheetFace(f) => Some(f.id.clone()),
                 Feature::SheetFlange(_) | Feature::SheetConvert(_) => None,
+                Feature::SheetOp(f) => f.creates_body().then(|| f.id.clone()),
                 Feature::Work(_)
                 | Feature::Blend(_)
                 | Feature::Shell(_)
@@ -2474,6 +2497,7 @@ fn pattern_sources<'t>(
             | Feature::SheetFace(_)
             | Feature::SheetFlange(_)
             | Feature::SheetConvert(_)
+            | Feature::SheetOp(_)
             | Feature::Pattern(_) => format!(
                 "{} cannot be patterned on its own (pattern the solid)",
                 f.name()

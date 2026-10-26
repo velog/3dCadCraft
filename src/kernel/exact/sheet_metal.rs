@@ -206,6 +206,221 @@ pub fn face(
     Ok((s, SheetModel(Arc::new(m))))
 }
 
+/// Tags the flanges added after `n0` `<tag>.<k>` (their edges and faces are
+/// named after it) and rebuilds the solid.
+fn finish(
+    mut next: sd::SheetBody,
+    n0: usize,
+    prefix: &str,
+    tag: &str,
+) -> Result<(ExactSolid, SheetModel), String> {
+    for (k, f) in next.flanges.iter_mut().enumerate().skip(n0) {
+        f.tag = format!("{tag}.{}", k - n0 + 1);
+    }
+    let s = named_solid(&next, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(next))))
+}
+
+fn guarded_sheet<T>(what: &str, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    crate::diagnostics::crash::guard(f)
+        .map_err(|_| format!("{what}: internal error in the sheet metal model"))?
+}
+
+/// Hem: a 180° bend folded back over the face at each edge (a point on it),
+/// `length` to its outer face, `gap` between the hem and the sheet.
+pub fn hem(
+    m: &SheetModel,
+    prefix: &str,
+    tag: &str,
+    edges: &[Point3],
+    length: Real,
+    gap: Real,
+    flip: bool,
+) -> Result<(ExactSolid, SheetModel), String> {
+    let mut next = (*m.0).clone();
+    if next.flat {
+        return Err("refold the sheet before adding hems".into());
+    }
+    let n0 = next.flanges.len();
+    guarded_sheet("Hem", || {
+        for e in edges {
+            next.add_hem(v3(e), length, gap, flip)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })?;
+    finish(next, n0, prefix, tag)
+}
+
+/// Where a fold's line lies in its bend zone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FoldLine {
+    /// The middle of the bend zone.
+    Centerline,
+    /// Its start (the fixed side).
+    Start,
+    /// Its end.
+    End,
+    /// Where the outer faces meet (the mould line).
+    Mould,
+}
+
+impl FoldLine {
+    fn key(self) -> &'static str {
+        match self {
+            FoldLine::Centerline => "centerline",
+            FoldLine::Start => "start",
+            FoldLine::End => "end",
+            FoldLine::Mould => "mould",
+        }
+    }
+}
+
+/// Fold: bends a panel along the line `a`–`b` on its face; `fixed` (a point
+/// of the side that stays) else the larger side. Returns notes too.
+#[allow(clippy::too_many_arguments)]
+pub fn fold(
+    m: &SheetModel,
+    prefix: &str,
+    tag: &str,
+    a: Point3,
+    b: Point3,
+    angle: Real,
+    radius: Real,
+    line: FoldLine,
+    flip: bool,
+    fixed: Option<Point3>,
+) -> Result<(ExactSolid, SheetModel, Vec<String>), String> {
+    let mut next = (*m.0).clone();
+    if next.flat {
+        return Err("refold the sheet before folding it".into());
+    }
+    let n0 = next.flanges.len();
+    let mut warning = None;
+    guarded_sheet("Fold", || {
+        next.add_fold(
+            v3(&a),
+            v3(&b),
+            angle,
+            radius,
+            line.key(),
+            flip,
+            fixed.as_ref().map(v3),
+            &mut warning,
+        )
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    })?;
+    let (s, model) = finish(next, n0, prefix, tag)?;
+    Ok((s, model, warning.into_iter().collect()))
+}
+
+/// Contour Flange: a new sheet from an open chain of lines `pts` in
+/// `plane` (the material on the right of travel, left when `flip`), `width`
+/// along the plane's normal; every corner becomes a bend of the rule.
+pub fn contour(
+    prefix: &str,
+    rv: &RuleValues,
+    plane: &Plane,
+    pts: &[[Real; 2]],
+    width: Real,
+    flip: bool,
+) -> Result<(ExactSolid, SheetModel), String> {
+    let pl = plane_of(plane)?;
+    let pts: Vec<_> = pts
+        .iter()
+        .map(|p| solidcraft_geom::Vec2::new(p[0], p[1]))
+        .collect();
+    let mut m = guarded_sheet("Contour Flange", || {
+        sd::contour_flange(prefix, "rule", &rule_of(rv), &pl, &pts, width, flip)
+            .map_err(|e| e.to_string())
+    })?;
+    for (k, f) in m.flanges.iter_mut().enumerate() {
+        f.tag = format!("{prefix}.{}", k + 1);
+    }
+    // The first segment is the base panel: its two long edges by name.
+    let n = m.base.outer.ccw().polyline(1e-3).len();
+    let outline = m.base.outer.ccw().polyline(1e-3);
+    m.base_curves = (0..n)
+        .filter_map(|k| {
+            let (a, b) = (*outline.get(k)?, *outline.get((k + 1) % n)?);
+            (a.dist(b) > 1e-9).then(|| (format!("E{}", k + 1), a, b))
+        })
+        .collect();
+    let s = named_solid(&m, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(m))))
+}
+
+/// Unfold (`flat`) or Refold the whole sheet: features after it work on
+/// the flat pattern until it is refolded.
+pub fn set_flat(
+    m: &SheetModel,
+    prefix: &str,
+    flat: bool,
+) -> Result<(ExactSolid, SheetModel), String> {
+    let mut next = (*m.0).clone();
+    if next.flat == flat {
+        return Err(if flat {
+            "the sheet is unfolded already".into()
+        } else {
+            "the sheet is not unfolded".into()
+        });
+    }
+    next.flat = flat;
+    let s = named_solid(&next, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(next))))
+}
+
+/// Whether the sheet is unfolded.
+pub fn is_flat(m: &SheetModel) -> bool {
+    m.0.flat
+}
+
+/// Cut: the profile's region through the sheet on the face its sketch lies
+/// on (kept in the flat pattern as a cut-out).
+pub fn cut(
+    m: &SheetModel,
+    prefix: &str,
+    plane: &Plane,
+    profiles: &[ExactProfile],
+) -> Result<(ExactSolid, SheetModel), String> {
+    let pl = plane_of(plane)?;
+    let regions: Vec<_> = profiles
+        .iter()
+        .map(|p| super::sweep::split_closed_arcs(p).region)
+        .collect();
+    let mut next = (*m.0).clone();
+    guarded_sheet("Cut", || {
+        next.cut_through(&pl, &regions)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })?;
+    let s = named_solid(&next, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(next))))
+}
+
+/// The flat pattern's material as closed loops (flat coordinates; outer
+/// loops counter-clockwise, cut-outs clockwise), for DXF.
+pub fn flat_loops(m: &SheetModel) -> Result<Vec<Vec<[Real; 2]>>, String> {
+    let regions = m.0.flat_regions().map_err(|e| e.to_string())?;
+    let tol = (m.0.t * 0.01).max(1e-3);
+    let mut out = Vec::new();
+    for r in regions {
+        out.push(
+            r.outer
+                .ccw()
+                .polyline(tol)
+                .iter()
+                .map(|p| [p.x, p.y])
+                .collect(),
+        );
+        for h in &r.holes {
+            out.push(h.polyline(tol).iter().map(|p| [p.x, p.y]).collect());
+        }
+    }
+    Ok(out)
+}
+
 /// The persistent name of the sheet edge nearest `at` (world).
 pub fn edge_name(m: &SheetModel, at: Point3) -> Option<String> {
     m.0.edge_name(v3(&at))

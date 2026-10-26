@@ -1259,14 +1259,17 @@ pub static COMMANDS: &[Command] = &[
         .tip("Show the part unfolded (its extents and bends in Properties); again: back to the folded part")
         .spec("5.6-sheet-metal.md"),
     c("sm.contour_flange", "Contour Flange", "Контурен фланец", Icon::SheetMetal)
+        .run(Action::SmContour)
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("A bent strip from an open sketch chain").todo("5.6"),
+        .tip("A new sheet from an open chain of sketch lines: every corner a bend of the rule").spec("5.6-sheet-metal.md"),
     c("sm.hem", "Hem", "Подгъв", Icon::SheetMetal)
+        .run(Action::SmHem)
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("Single, teardrop, rolled or double hem on an edge").todo("5.6"),
+        .tip("A single hem folded back on sheet edges: length and gap").spec("5.6-sheet-metal.md"),
     c("sm.fold", "Fold", "Сгъване", Icon::SheetMetal)
+        .run(Action::SmFold)
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("Fold a face along a sketch line").todo("5.6"),
+        .tip("Fold the sheet along a sketch line on one of its faces").spec("5.6-sheet-metal.md"),
     c("sm.bend", "Bend", "Огъвка", Icon::SheetMetal)
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("A bend joining two faces").todo("5.6"),
@@ -1280,8 +1283,9 @@ pub static COMMANDS: &[Command] = &[
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("Split a closed shape so it unfolds").todo("5.6"),
     c("sm.cut", "Cut", "Изрязване", Icon::SheetMetal)
+        .run(Action::SmCut)
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
-        .tip("A sketch cut through the sheet, also across bends").todo("5.6"),
+        .tip("Closed sketch profiles cut through the sheet face they lie on (kept in the flat pattern); across bends: Unfold, Cut, Refold").spec("5.6-sheet-metal.md"),
     c("sm.corner_seam", "Corner Seam", "Ъглов шев", Icon::SheetMetal)
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Close or open the corner between two flanges").todo("5.6"),
@@ -1289,15 +1293,18 @@ pub static COMMANDS: &[Command] = &[
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Louvres, lances, embosses from the punch library").todo("5.6"),
     c("sm.unfold", "Unfold", "Разгъване", Icon::SheetMetal)
+        .run(Action::SmUnfold)
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
-        .tip("Flatten chosen bends to add features in the flat").todo("5.6"),
+        .tip("Flatten the sheet (all its bends): later features (Cut) work on the flat pattern until Refold").spec("5.6-sheet-metal.md"),
     c("sm.refold", "Refold", "Обратно сгъване", Icon::SheetMetal)
+        .run(Action::SmRefold)
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
-        .tip("Fold the unfolded bends again").todo("5.6"),
+        .tip("Fold the unfolded sheet again, with what was cut while flat").spec("5.6-sheet-metal.md"),
     c("sm.export_flat", "Export Flat Pattern", "Експорт на развивката", Icon::SheetMetal)
         .short("Export")
+        .run(Action::SmExportFlat)
         .at(&[Place::Ribbon("Sheet Metal", "Flat Pattern")]).env(PART)
-        .tip("The flat pattern as DXF with layers (stage S3)").todo("5.6"),
+        .tip("The flat pattern as DXF: outline and cut-outs on OUTER, bend lines on BEND_UP / BEND_DOWN").spec("5.6-sheet-metal.md"),
     // ---- Assemble (docs/spec/3.1-assemblies.md) ---------------------------
     c("asm.place", "Place", "Поставяне на компонент", Icon::Place)
         .run(Action::AsmPlace)

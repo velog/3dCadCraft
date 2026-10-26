@@ -391,6 +391,235 @@ pub struct SheetConvertFeature {
     pub bends: Vec<super::blend::EdgeRef>,
 }
 
+/// Where a Fold's sketch line lies in the bend (Inventor's Fold Location).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FoldLocation {
+    /// The line is the bend's centre line.
+    #[default]
+    Centerline,
+    /// The line is where the bend starts (on the fixed side).
+    Start,
+    /// The line is where the bend ends.
+    End,
+    /// The line is the mould line (the outer faces' intersection).
+    Mould,
+}
+
+impl FoldLocation {
+    /// Every location, in menu order.
+    pub const ALL: [FoldLocation; 4] = [
+        FoldLocation::Centerline,
+        FoldLocation::Start,
+        FoldLocation::End,
+        FoldLocation::Mould,
+    ];
+
+    /// Label (panel).
+    pub fn label(self) -> &'static str {
+        match self {
+            FoldLocation::Centerline => "Centerline of Bend",
+            FoldLocation::Start => "Start of Bend",
+            FoldLocation::End => "End of Bend",
+            FoldLocation::Mould => "Mould Line",
+        }
+    }
+
+    pub(super) fn kernel(self) -> ksm::FoldLine {
+        match self {
+            FoldLocation::Centerline => ksm::FoldLine::Centerline,
+            FoldLocation::Start => ksm::FoldLine::Start,
+            FoldLocation::End => ksm::FoldLine::End,
+            FoldLocation::Mould => ksm::FoldLine::Mould,
+        }
+    }
+}
+
+/// The further sheet metal operations (stage S2), one feature type:
+/// Hem, Fold, Contour Flange, Unfold / Refold and Cut.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum SheetOp {
+    /// Hem: a 180° bend folded back at each edge.
+    Hem {
+        /// The sheet body.
+        body: String,
+        /// The edges.
+        edges: Vec<SheetEdge>,
+        /// Length to the hem's outer face (mm).
+        length: Real,
+        /// Gap between the hem and the sheet; `None`: half the thickness.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gap: Option<Real>,
+        /// Folded to the other face.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
+    },
+    /// Fold: bends the sheet along a sketch line on one of its faces.
+    Fold {
+        /// The sheet body.
+        body: String,
+        /// The sketch with the line.
+        sketch: String,
+        /// The line (sketch entity key).
+        line: String,
+        /// Bend angle (radians).
+        angle: Real,
+        /// Bend radius; `None`: the rule's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<Real>,
+        /// Where the line lies in the bend.
+        #[serde(default)]
+        location: FoldLocation,
+        /// The other way.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
+        /// The other side moves (by default the larger side stays).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip_side: bool,
+    },
+    /// Contour Flange: a new sheet from an open chain of sketch lines.
+    Contour {
+        /// The sketch.
+        sketch: String,
+        /// Width along the sketch normal (mm).
+        width: Real,
+        /// The material on the other side of the chain.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
+    },
+    /// Unfold: the whole sheet flat; features after it work on the flat pattern.
+    Unfold {
+        /// The sheet body.
+        body: String,
+    },
+    /// Refold: back to the folded sheet (with what was cut while flat).
+    Refold {
+        /// The sheet body.
+        body: String,
+    },
+    /// Cut: closed sketch profiles cut through the face their sketch lies on.
+    Cut {
+        /// The sketch.
+        sketch: String,
+        /// The profiles.
+        profiles: Vec<ProfileRef>,
+    },
+}
+
+/// A further sheet metal feature (`Hem1`, `Fold1`, `ContourFlange1`,
+/// `Unfold1`, `Refold1`, `Cut1`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SheetOpFeature {
+    /// Immutable id (faces and bends of the new panels are named after it).
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// What it does.
+    pub op: SheetOp,
+    /// Equations of the fields (`length`, `gap`, `angle`, `width`).
+    #[serde(
+        default,
+        skip_serializing_if = "super::params::FeatureParams::is_empty"
+    )]
+    pub params: super::params::FeatureParams,
+}
+
+impl SheetOpFeature {
+    /// A feature of this kind (its id is given by `add_sheet_op`).
+    pub fn new(op: SheetOp) -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            op,
+            params: Default::default(),
+        }
+    }
+
+    /// The command's name (the id's prefix).
+    pub fn kind_name(&self) -> &'static str {
+        match self.op {
+            SheetOp::Hem { .. } => "Hem",
+            SheetOp::Fold { .. } => "Fold",
+            SheetOp::Contour { .. } => "ContourFlange",
+            SheetOp::Unfold { .. } => "Unfold",
+            SheetOp::Refold { .. } => "Refold",
+            SheetOp::Cut { .. } => "Cut",
+        }
+    }
+
+    /// The sketch it uses.
+    pub fn sketch(&self) -> Option<&str> {
+        match &self.op {
+            SheetOp::Fold { sketch, .. }
+            | SheetOp::Contour { sketch, .. }
+            | SheetOp::Cut { sketch, .. } => Some(sketch),
+            _ => None,
+        }
+    }
+
+    /// The body it creates (Contour Flange).
+    pub fn creates_body(&self) -> bool {
+        matches!(self.op, SheetOp::Contour { .. })
+    }
+
+    /// Its numeric fields (parameters).
+    pub fn fields(&self) -> Vec<(&'static str, super::expr::Unit)> {
+        use super::expr::Unit;
+        match &self.op {
+            SheetOp::Hem { gap, .. } => {
+                let mut v = vec![("length", Unit::Mm)];
+                if gap.is_some() {
+                    v.push(("gap", Unit::Mm));
+                }
+                v
+            }
+            SheetOp::Fold { .. } => vec![("angle", Unit::Deg)],
+            SheetOp::Contour { .. } => vec![("width", Unit::Mm)],
+            _ => Vec::new(),
+        }
+    }
+
+    /// A field's value.
+    pub fn value(&self, field: &str) -> Option<Real> {
+        match (&self.op, field) {
+            (SheetOp::Hem { length, .. }, "length") => Some(*length),
+            (SheetOp::Hem { gap, .. }, "gap") => *gap,
+            (SheetOp::Fold { angle, .. }, "angle") => Some(*angle),
+            (SheetOp::Contour { width, .. }, "width") => Some(*width),
+            _ => None,
+        }
+    }
+
+    /// Sets a field.
+    pub fn set(&mut self, field: &str, v: Real) {
+        match (&mut self.op, field) {
+            (SheetOp::Hem { length, .. }, "length") => *length = v,
+            (SheetOp::Hem { gap, .. }, "gap") => *gap = Some(v),
+            (SheetOp::Fold { angle, .. }, "angle") => *angle = v,
+            (SheetOp::Contour { width, .. }, "width") => *width = v,
+            _ => {}
+        }
+    }
+
+    /// One line for the browser's hover / Properties.
+    pub fn describe(&self) -> String {
+        match &self.op {
+            SheetOp::Hem { edges, length, .. } => {
+                format!("Hem on {} edge(s), {length:.2} mm", edges.len())
+            }
+            SheetOp::Fold { angle, line, .. } => {
+                format!("Fold along {line}, {:.1}°", angle.to_degrees())
+            }
+            SheetOp::Contour { sketch, width, .. } => {
+                format!("Contour Flange of {sketch}, {width:.2} mm wide")
+            }
+            SheetOp::Unfold { body } => format!("Unfold {body}"),
+            SheetOp::Refold { body } => format!("Refold {body}"),
+            SheetOp::Cut { sketch, .. } => format!("Cut of {sketch} through the sheet"),
+        }
+    }
+}
+
 /// A sheet body's model with the face count the sheet steps left it with:
 /// a Hole or Cut on it later is not in the model yet (stage S2), so a
 /// further flange would drop it — that is refused.
@@ -413,6 +642,55 @@ pub struct FlatPattern {
     pub bends: Vec<ksm::BendLine>,
     /// The flat solid (for the view).
     pub solid: crate::kernel::exact::ExactSolid,
+}
+
+/// A minimal DXF (R12 entities: LINE, POLYLINE) of a flat pattern.
+fn dxf(loops: &[Vec<[Real; 2]>], bends: &[ksm::BendLine]) -> String {
+    use std::fmt::Write;
+    let mut s = String::new();
+    let mut put = |code: i32, v: &str| {
+        let _ = writeln!(s, "{code}\n{v}");
+    };
+    put(0, "SECTION");
+    put(2, "TABLES");
+    put(0, "TABLE");
+    put(2, "LAYER");
+    for (name, colour) in [("OUTER", "7"), ("BEND_UP", "3"), ("BEND_DOWN", "1")] {
+        put(0, "LAYER");
+        put(2, name);
+        put(70, "0");
+        put(62, colour);
+        put(6, "CONTINUOUS");
+    }
+    put(0, "ENDTAB");
+    put(0, "ENDSEC");
+    put(0, "SECTION");
+    put(2, "ENTITIES");
+    let num = |v: Real| format!("{v:.6}");
+    for lp in loops {
+        put(0, "POLYLINE");
+        put(8, "OUTER");
+        put(66, "1");
+        put(70, "1");
+        for p in lp {
+            put(0, "VERTEX");
+            put(8, "OUTER");
+            put(10, &num(p[0]));
+            put(20, &num(p[1]));
+        }
+        put(0, "SEQEND");
+    }
+    for b in bends {
+        put(0, "LINE");
+        put(8, if b.up { "BEND_UP" } else { "BEND_DOWN" });
+        put(10, &num(b.start[0]));
+        put(20, &num(b.start[1]));
+        put(11, &num(b.end[0]));
+        put(21, &num(b.end[1]));
+    }
+    put(0, "ENDSEC");
+    put(0, "EOF");
+    s
 }
 
 /// The rule of a part: its defaults, or Inventor's default rule.
@@ -473,6 +751,42 @@ impl super::PartDocument {
                 Err(e)
             }
         }
+    }
+
+    /// **Hem / Fold / Contour Flange / Unfold / Refold / Cut** (id
+    /// `<Kind><N>`). On failure nothing changes.
+    pub fn add_sheet_op(&mut self, mut def: SheetOpFeature) -> Result<String, super::PartError> {
+        if self.sheet_metal.is_none() {
+            self.make_sheet_metal(None);
+        }
+        let id = self.next_feature_id(def.kind_name());
+        (def.id, def.name) = (id.clone(), id.clone());
+        self.insert_feature_checked(super::Feature::SheetOp(def))?;
+        Ok(id)
+    }
+
+    /// The sheet body the edge or point `at` is on, if one.
+    pub fn sheet_body_at(&self, at: crate::kernel::Point3) -> Option<String> {
+        self.sheet_edge_at(at).map(|(b, _)| b)
+    }
+
+    /// Whether the sheet body `body` is unfolded now.
+    pub fn sheet_is_flat(&self, body: &str) -> bool {
+        self.sheet_models
+            .get(body)
+            .is_some_and(|st| ksm::is_flat(&st.model))
+    }
+
+    /// The flat pattern of `body` as DXF text (outline and cut-outs on layer
+    /// `OUTER`, bend lines on `BEND_UP` / `BEND_DOWN`).
+    pub fn flat_pattern_dxf(&self, body: &str) -> Result<String, String> {
+        let st = self
+            .sheet_models
+            .get(body)
+            .ok_or_else(|| format!("{body} is not a sheet metal body"))?;
+        let loops = ksm::flat_loops(&st.model)?;
+        let bends = ksm::bends(&st.model);
+        Ok(dxf(&loops, &bends))
     }
 
     /// **Flange** (id `Flange<N>`). On failure nothing changes.

@@ -13,8 +13,8 @@ use super::CadCraftApp;
 use super::valuefield::ExprValue;
 use crate::kernel::Point3;
 use crate::part::sheet_metal::{
-    CornerRelief, FlangePosition, FlangeWidth, SheetConvertFeature, SheetEdge, SheetFlangeFeature,
-    SheetMetalDefaults,
+    CornerRelief, FlangePosition, FlangeWidth, FoldLocation, SheetConvertFeature, SheetEdge,
+    SheetFlangeFeature, SheetMetalDefaults, SheetOp, SheetOpFeature,
 };
 
 /// An open sheet metal command.
@@ -26,6 +26,8 @@ pub(super) enum SmDraft {
     Flange { def: SheetFlangeFeature },
     /// Convert to Sheet Metal: the fixed face, then the bend edges.
     Convert { def: SheetConvertFeature },
+    /// Hem, Fold, Contour Flange or Cut.
+    Op { def: SheetOpFeature },
 }
 
 /// The environment's state.
@@ -38,6 +40,8 @@ pub(super) struct SheetUi {
     pub flat: bool,
     /// The sheet edge under the cursor (Flange): its polyline (screen).
     hover: Option<Vec<Pos2>>,
+    /// The flat pattern's DXF waiting for the Export dialog's path.
+    pub dxf: Option<String>,
 }
 
 impl CadCraftApp {
@@ -112,6 +116,111 @@ impl CadCraftApp {
                     def: SheetFlangeFeature::new("", Vec::new(), 20.0),
                 });
             }
+            Action::SmHem => {
+                if self.part().sheet_models.is_empty() {
+                    self.file_status = Some(Err("Hem: make a Face first".into()));
+                    return;
+                }
+                self.sm.flat = false;
+                self.sm.draft = Some(SmDraft::Op {
+                    def: SheetOpFeature::new(SheetOp::Hem {
+                        body: String::new(),
+                        edges: Vec::new(),
+                        length: crate::part::sheet_metal::rule_of(self.part()).thickness * 4.0,
+                        gap: None,
+                        flip: false,
+                    }),
+                });
+            }
+            Action::SmFold | Action::SmContour | Action::SmCut => {
+                let needs_sheet = !matches!(a, Action::SmContour);
+                if needs_sheet && self.part().sheet_models.is_empty() {
+                    self.file_status = Some(Err("Sheet metal: make a Face first".into()));
+                    return;
+                }
+                let sketch = self
+                    .sm_default_sketch_any()
+                    .map(|i| self.part().sketches[i].id.clone())
+                    .unwrap_or_default();
+                let op = match a {
+                    Action::SmFold => SheetOp::Fold {
+                        body: String::new(),
+                        sketch,
+                        line: String::new(),
+                        angle: std::f64::consts::FRAC_PI_2,
+                        radius: None,
+                        location: FoldLocation::Centerline,
+                        flip: false,
+                        flip_side: false,
+                    },
+                    Action::SmContour => SheetOp::Contour {
+                        sketch,
+                        width: 50.0,
+                        flip: false,
+                    },
+                    _ => SheetOp::Cut {
+                        sketch,
+                        profiles: Vec::new(),
+                    },
+                };
+                self.sm.flat = false;
+                self.sm.draft = Some(SmDraft::Op {
+                    def: SheetOpFeature::new(op),
+                });
+            }
+            Action::SmUnfold | Action::SmRefold => {
+                let unfold = matches!(a, Action::SmUnfold);
+                let what = if unfold { "Unfold" } else { "Refold" };
+                let mut names: Vec<String> = self.part().sheet_models.keys().cloned().collect();
+                names.sort();
+                let Some(body) = names
+                    .into_iter()
+                    .find(|b| self.part().sheet_is_flat(b) != unfold)
+                else {
+                    self.file_status = Some(Err(format!(
+                        "{what}: {}",
+                        if unfold {
+                            "there is no folded sheet"
+                        } else {
+                            "no sheet is unfolded"
+                        }
+                    )));
+                    return;
+                };
+                self.checkpoint(what);
+                let op = if unfold {
+                    SheetOp::Unfold { body }
+                } else {
+                    SheetOp::Refold { body }
+                };
+                match self.part_mut().add_sheet_op(SheetOpFeature::new(op)) {
+                    Ok(_) => {
+                        self.sm.flat = false;
+                        self.scene_dirty = true;
+                    }
+                    Err(e) => {
+                        self.history.cancel();
+                        self.file_status = Some(Err(format!("{what}: {e}")));
+                    }
+                }
+            }
+            Action::SmExportFlat => {
+                let mut names: Vec<String> = self.part().sheet_models.keys().cloned().collect();
+                names.sort();
+                let Some(body) = names.first() else {
+                    self.file_status = Some(Err(
+                        "Export Flat Pattern: there is no sheet yet (Face)".into(),
+                    ));
+                    return;
+                };
+                match self.part().flat_pattern_dxf(body) {
+                    Ok(text) => {
+                        self.sm.dxf = Some(text);
+                        self.open_dialog(super::files::DialogPurpose::ExportDxf);
+                    }
+                    Err(e) => self.file_status = Some(Err(format!("Export Flat Pattern: {e}"))),
+                }
+            }
             Action::SmFlatPattern => {
                 if self.part().sheet_models.is_empty() {
                     self.file_status =
@@ -132,6 +241,234 @@ impl CadCraftApp {
         (0..p.sketches.len()).rev().find(|&i| {
             p.consumers(&p.sketches[i].id).is_empty() && !p.sketches[i].sketch.regions().is_empty()
         })
+    }
+
+    /// The newest sketch no feature uses yet (any geometry).
+    fn sm_default_sketch_any(&self) -> Option<usize> {
+        let p = self.part();
+        (0..p.sketches.len())
+            .rev()
+            .find(|&i| p.consumers(&p.sketches[i].id).is_empty())
+            .or_else(|| p.sketches.len().checked_sub(1))
+    }
+
+    /// The sketch chooser of an Op panel.
+    fn sm_sketch_combo(&self, ui: &mut egui::Ui, salt: &str, sketch: &mut String) {
+        let p = self.part();
+        let shown = p
+            .sketches
+            .iter()
+            .find(|s| s.id == *sketch)
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| "(pick a sketch)".into());
+        egui::ComboBox::from_id_salt(salt)
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for s in &p.sketches {
+                    ui.selectable_value(sketch, s.id.clone(), &s.name);
+                }
+            });
+    }
+
+    /// The Op panel (Hem / Fold / Contour Flange / Cut).
+    fn sm_op_panel(&mut self, ui: &mut egui::Ui, def: &mut SheetOpFeature) {
+        let title = match def.op {
+            SheetOp::Hem { .. } => "Hem",
+            SheetOp::Fold { .. } => "Fold",
+            SheetOp::Contour { .. } => "Contour Flange",
+            SheetOp::Cut { .. } => "Cut",
+            SheetOp::Unfold { .. } => "Unfold",
+            SheetOp::Refold { .. } => "Refold",
+        };
+        self.panel_header(ui, super::icons::Icon::SheetMetal, title);
+        let rule = crate::part::sheet_metal::rule_of(self.part()).values();
+        let grid = |ui: &mut egui::Ui, id: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
+            egui::Grid::new(id)
+                .num_columns(2)
+                .min_col_width(super::panels::label_width(ui.ctx()))
+                .show(ui, |ui| add(ui));
+        };
+        match &mut def.op {
+            SheetOp::Hem {
+                edges,
+                length,
+                gap,
+                flip,
+                ..
+            } => {
+                ui.label(format!(
+                    "Edges: {} (click sheet edges; again removes one)",
+                    edges.len()
+                ));
+                if !edges.is_empty() && ui.small_button("Clear").clicked() {
+                    edges.clear();
+                }
+                grid(ui, "sm_hem", &mut |ui| {
+                    super::panels::plabel(ui, "Length");
+                    ui.add(ExprValue::new(length).suffix(" mm"));
+                    ui.end_row();
+                    super::panels::plabel(ui, "Gap");
+                    ui.horizontal(|ui| {
+                        let mut own = gap.is_some();
+                        if ui
+                            .checkbox(&mut own, "")
+                            .on_hover_text("Off: half the thickness")
+                            .changed()
+                        {
+                            *gap = own.then_some(rule.thickness * 0.5);
+                        }
+                        match gap.as_mut() {
+                            Some(g) => {
+                                ui.add(ExprValue::new(g).suffix(" mm"));
+                            }
+                            None => {
+                                ui.weak(format!(
+                                    "{:.3} mm (Thickness × 0.5)",
+                                    rule.thickness * 0.5
+                                ));
+                            }
+                        }
+                    });
+                    ui.end_row();
+                });
+                ui.checkbox(flip, "Flip (to the other face)");
+                ui.weak("Type: Single (Teardrop, Rolled and Double are planned)");
+            }
+            SheetOp::Fold {
+                body,
+                sketch,
+                line,
+                angle,
+                radius,
+                location,
+                flip,
+                flip_side,
+            } => {
+                ui.label("Bend Line: a sketch line on a face of the sheet");
+                self.sm_sketch_combo(ui, "sm_fold_sketch", sketch);
+                let p = self.part();
+                let lines: Vec<(String, crate::sketch::Point2, crate::sketch::Point2)> = p
+                    .sketches
+                    .iter()
+                    .find(|s| s.id == *sketch)
+                    .map(|ps| {
+                        ps.sketch
+                            .entities()
+                            .filter_map(|(id, e)| match e {
+                                crate::sketch::Entity::Line { start, end } => Some((
+                                    crate::part::extrude::entity_key(id),
+                                    ps.sketch.point(*start)?.position,
+                                    ps.sketch.point(*end)?.position,
+                                )),
+                                _ => None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !lines.iter().any(|l| l.0 == *line) {
+                    *line = lines.first().map(|l| l.0.clone()).unwrap_or_default();
+                }
+                egui::ComboBox::from_id_salt("sm_fold_line")
+                    .selected_text(if line.is_empty() {
+                        "(no line)".to_owned()
+                    } else {
+                        format!("Line {line}")
+                    })
+                    .show_ui(ui, |ui| {
+                        for (k, (key, a, b)) in lines.iter().enumerate() {
+                            let len = (b - a).norm();
+                            ui.selectable_value(
+                                line,
+                                key.clone(),
+                                format!("Line {} ({len:.1} mm)", k + 1),
+                            );
+                        }
+                    });
+                // The sheet the line lies on.
+                if let Some((_, a, b)) = lines.iter().find(|l| l.0 == *line)
+                    && let Some(ps) = p.sketches.iter().find(|s| s.id == *sketch)
+                {
+                    let m = ps
+                        .sketch
+                        .plane
+                        .point_at((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
+                    if let Some(found) = p.sheet_body_at(m) {
+                        *body = found;
+                    }
+                }
+                grid(ui, "sm_fold", &mut |ui| {
+                    super::panels::plabel(ui, "Angle");
+                    let mut deg = angle.to_degrees();
+                    ui.add(ExprValue::new(&mut deg).suffix("°").range(0.0..=180.0));
+                    *angle = deg.to_radians();
+                    ui.end_row();
+                    super::panels::plabel(ui, "Bend Radius");
+                    ui.horizontal(|ui| {
+                        let mut own = radius.is_some();
+                        if ui
+                            .checkbox(&mut own, "")
+                            .on_hover_text("Off: the rule's radius")
+                            .changed()
+                        {
+                            *radius = own.then_some(rule.bend_radius);
+                        }
+                        match radius.as_mut() {
+                            Some(r) => {
+                                ui.add(ExprValue::new(r).suffix(" mm"));
+                            }
+                            None => {
+                                ui.weak(format!("{:.3} mm (rule)", rule.bend_radius));
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    super::panels::plabel(ui, "Fold Location");
+                    egui::ComboBox::from_id_salt("sm_fold_loc")
+                        .selected_text(location.label())
+                        .show_ui(ui, |ui| {
+                            for l in FoldLocation::ALL {
+                                ui.selectable_value(location, l, l.label());
+                            }
+                        });
+                    ui.end_row();
+                });
+                ui.checkbox(flip_side, "Flip Side (the other side moves)");
+                ui.checkbox(flip, "Flip Direction");
+            }
+            SheetOp::Contour {
+                sketch,
+                width,
+                flip,
+            } => {
+                ui.label("Profile: an open chain of sketch lines (each corner becomes a bend)");
+                self.sm_sketch_combo(ui, "sm_contour_sketch", sketch);
+                grid(ui, "sm_contour", &mut |ui| {
+                    super::panels::plabel(ui, "Distance");
+                    ui.add(ExprValue::new(width).suffix(" mm"));
+                    ui.end_row();
+                });
+                ui.checkbox(flip, "Flip (material on the other side of the chain)");
+                let t = rule.thickness;
+                ui.weak(format!(
+                    "Thickness {t:.3} mm, bend radius {:.3} mm (Sheet Metal Defaults)",
+                    rule.bend_radius
+                ));
+            }
+            SheetOp::Cut { sketch, profiles } => {
+                ui.label("Profile: the closed profiles of a sketch on a face of the sheet");
+                self.sm_sketch_combo(ui, "sm_cut_sketch", sketch);
+                *profiles = self
+                    .part()
+                    .sketches
+                    .iter()
+                    .find(|s| s.id == *sketch)
+                    .map(|ps| crate::part::extrude::default_profiles(ps, &ps.sketch.regions()))
+                    .unwrap_or_default();
+                ui.label(format!("{} profile(s), through the sheet", profiles.len()));
+                ui.weak("Cut Across Bend: Unfold first, cut, then Refold");
+            }
+            SheetOp::Unfold { .. } | SheetOp::Refold { .. } => {}
+        }
     }
 
     /// The command's panel in Properties.
@@ -271,6 +608,7 @@ impl CadCraftApp {
                     }
                 }
             }
+            SmDraft::Op { def } => self.sm_op_panel(ui, def),
             SmDraft::Convert { def } => {
                 self.panel_header(ui, super::icons::Icon::SheetMetal, "Convert to Sheet Metal");
                 ui.label(format!("Solid: {}", def.body));
@@ -302,6 +640,7 @@ impl CadCraftApp {
                 SmDraft::Face { sketch, .. } => sketch.is_some(),
                 SmDraft::Flange { def } => !def.edges.is_empty(),
                 SmDraft::Convert { def } => !def.face.face.is_empty() && !def.bends.is_empty(),
+                SmDraft::Op { def } => op_ready(def),
             };
             let r = ui.add_enabled(ready, egui::Button::new("OK"));
             if r.clicked() || super::keys::panel_ok_key(ui, ready) {
@@ -323,10 +662,16 @@ impl CadCraftApp {
     }
 
     fn sm_commit(&mut self, d: SmDraft) {
-        self.checkpoint(match d {
+        self.checkpoint(match &d {
             SmDraft::Face { .. } => "Face",
             SmDraft::Flange { .. } => "Flange",
             SmDraft::Convert { .. } => "Convert to Sheet Metal",
+            SmDraft::Op { def } => match def.op {
+                SheetOp::Hem { .. } => "Hem",
+                SheetOp::Fold { .. } => "Fold",
+                SheetOp::Contour { .. } => "Contour Flange",
+                _ => "Cut",
+            },
         });
         let r = match d {
             SmDraft::Face {
@@ -344,6 +689,7 @@ impl CadCraftApp {
             SmDraft::Face { sketch: None, .. } => Ok(()),
             SmDraft::Flange { def } => self.part_mut().add_sheet_flange(def).map(|_| ()),
             SmDraft::Convert { def } => self.part_mut().add_sheet_convert(def).map(|_| ()),
+            SmDraft::Op { def } => self.part_mut().add_sheet_op(def).map(|_| ()),
         };
         match r {
             Ok(()) => {
@@ -370,7 +716,12 @@ impl CadCraftApp {
         if let Some(SmDraft::Convert { .. }) = &self.sm.draft {
             return self.sm_convert_view(painter, rect, pointer, clicked);
         }
-        if !matches!(self.sm.draft, Some(SmDraft::Flange { .. })) {
+        let picks_edges = matches!(self.sm.draft, Some(SmDraft::Flange { .. }))
+            || matches!(
+                &self.sm.draft,
+                Some(SmDraft::Op { def }) if matches!(def.op, SheetOp::Hem { .. })
+            );
+        if !picks_edges {
             return false;
         }
         self.sm.hover = None;
@@ -407,9 +758,17 @@ impl CadCraftApp {
                 Stroke::new(3.0, Color32::from_rgb(110, 220, 120)),
             ));
         }
-        if let Some(SmDraft::Flange { def }) = &self.sm.draft {
-            for e in &def.edges {
-                if let Some(s) = self.camera.project(&Point3::from(e.hint), rect) {
+        let picked: Vec<[f64; 3]> = match &self.sm.draft {
+            Some(SmDraft::Flange { def }) => def.edges.iter().map(|e| e.hint).collect(),
+            Some(SmDraft::Op { def }) => match &def.op {
+                SheetOp::Hem { edges, .. } => edges.iter().map(|e| e.hint).collect(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        {
+            for e in &picked {
+                if let Some(s) = self.camera.project(&Point3::from(*e), rect) {
                     painter.circle_filled(s, 5.0, Color32::from_rgb(80, 160, 255));
                 }
             }
@@ -588,6 +947,10 @@ impl CadCraftApp {
                 format!("sm|{def:?}"),
                 crate::part::Feature::SheetFlange(def.clone()),
             ),
+            Some(SmDraft::Op { def }) if op_ready(def) => (
+                format!("sm|{def:?}"),
+                crate::part::Feature::SheetOp(def.clone()),
+            ),
             Some(SmDraft::Convert { def })
                 if !def.face.face.is_empty() && !def.bends.is_empty() =>
             {
@@ -606,6 +969,7 @@ impl CadCraftApp {
             let built = match feature {
                 crate::part::Feature::SheetFlange(d) => trial.add_sheet_flange(d),
                 crate::part::Feature::SheetConvert(d) => trial.add_sheet_convert(d),
+                crate::part::Feature::SheetOp(d) => trial.add_sheet_op(d),
                 _ => return Err(String::new()),
             };
             built
@@ -619,24 +983,25 @@ impl CadCraftApp {
             self.file_status = Some(Err("Flange: that is not an edge of a sheet".into()));
             return;
         };
-        let Some(SmDraft::Flange { def }) = self.sm.draft.as_mut() else {
-            return;
+        let (sheet, edges) = match self.sm.draft.as_mut() {
+            Some(SmDraft::Flange { def }) => (&mut def.body, &mut def.edges),
+            Some(SmDraft::Op { def }) => match &mut def.op {
+                SheetOp::Hem { body, edges, .. } => (body, edges),
+                _ => return,
+            },
+            _ => return,
         };
-        if def.body.is_empty() {
-            def.body = body.clone();
-        } else if def.body != body {
-            self.file_status = Some(Err("Flange: the edges must be on one sheet".into()));
+        if sheet.is_empty() {
+            *sheet = body.clone();
+        } else if *sheet != body {
+            self.file_status = Some(Err("Sheet metal: the edges must be on one sheet".into()));
             return;
         }
-        match def
-            .edges
-            .iter()
-            .position(|e: &SheetEdge| e.name == edge.name)
-        {
+        match edges.iter().position(|e: &SheetEdge| e.name == edge.name) {
             Some(k) => {
-                def.edges.remove(k);
+                edges.remove(k);
             }
-            None => def.edges.push(edge),
+            None => edges.push(edge),
         }
     }
 
@@ -650,6 +1015,19 @@ impl CadCraftApp {
             SmDraft::Flange { .. } => {
                 "Flange: more edges, drag the end arrows for a narrower flange, then OK".into()
             }
+            SmDraft::Op { def } => match &def.op {
+                SheetOp::Hem { edges, .. } if edges.is_empty() => {
+                    "Hem: click the sheet edges to hem".into()
+                }
+                SheetOp::Hem { .. } => "Hem: more edges, or set the length and gap, then OK".into(),
+                SheetOp::Fold { .. } => {
+                    "Fold: choose the sketch and its line on a face of the sheet, then OK".into()
+                }
+                SheetOp::Contour { .. } => {
+                    "Contour Flange: choose the sketch with an open chain of lines, then OK".into()
+                }
+                _ => "Cut: choose the sketch with the closed profiles, then OK".into(),
+            },
             SmDraft::Convert { def } if def.face.face.is_empty() => {
                 "Convert to Sheet Metal: click the face that stays put (the base face)".into()
             }
@@ -796,5 +1174,18 @@ impl CadCraftApp {
                 ));
             }
         }
+    }
+}
+
+/// Whether an Op draft has its inputs.
+fn op_ready(def: &SheetOpFeature) -> bool {
+    match &def.op {
+        SheetOp::Hem { edges, .. } => !edges.is_empty(),
+        SheetOp::Fold {
+            body, sketch, line, ..
+        } => !body.is_empty() && !sketch.is_empty() && !line.is_empty(),
+        SheetOp::Contour { sketch, .. } => !sketch.is_empty(),
+        SheetOp::Cut { sketch, profiles } => !sketch.is_empty() && !profiles.is_empty(),
+        SheetOp::Unfold { .. } | SheetOp::Refold { .. } => true,
     }
 }

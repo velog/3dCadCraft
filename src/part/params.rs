@@ -293,6 +293,7 @@ fn feature_fields(f: &Feature) -> Vec<(&'static str, Unit)> {
         Feature::Rib(r) => r.fields(),
         Feature::SheetFlange(f) => f.fields(),
         Feature::SheetConvert(_) => Vec::new(),
+        Feature::SheetOp(f) => f.fields(),
         Feature::SheetFace(_) => Vec::new(),
         Feature::Thread(t) => t.fields(),
         Feature::Combine(_) | Feature::Split(_) => Vec::new(),
@@ -400,6 +401,7 @@ pub fn feature_value(f: &Feature, field: &str) -> Option<Real> {
         Feature::Rib(r) => r.value(field),
         Feature::SheetFlange(f) => f.value(field),
         Feature::SheetConvert(_) => None,
+        Feature::SheetOp(f) => f.value(field),
         Feature::SheetFace(_) => None,
         Feature::Thread(t) => t.value(field),
         Feature::Combine(_) | Feature::Split(_) => None,
@@ -520,6 +522,7 @@ fn set_feature_value(f: &mut Feature, field: &str, v: Real) {
         Feature::Rib(r) => r.set(field, v),
         Feature::SheetFlange(f) => f.set(field, v),
         Feature::SheetConvert(_) => {}
+        Feature::SheetOp(f) => f.set(field, v),
         Feature::SheetFace(_) => {}
         Feature::Thread(t) => t.set(field, v),
         Feature::Combine(_) | Feature::Split(_) => {}
@@ -574,6 +577,7 @@ fn feature_params_mut(f: &mut Feature) -> Option<&mut FeatureParams> {
         Feature::Rib(r) => Some(&mut r.params),
         Feature::SheetFlange(f) => Some(&mut f.params),
         Feature::SheetConvert(_) => None,
+        Feature::SheetOp(f) => Some(&mut f.params),
         Feature::SheetFace(_) => None,
         Feature::Thread(t) => Some(&mut t.params),
         Feature::Combine(_) | Feature::Split(_) => None,
@@ -597,6 +601,7 @@ fn feature_params(f: &Feature) -> Option<&FeatureParams> {
         Feature::Rib(r) => Some(&r.params),
         Feature::SheetFlange(f) => Some(&f.params),
         Feature::SheetConvert(_) => None,
+        Feature::SheetOp(f) => Some(&f.params),
         Feature::SheetFace(_) => None,
         Feature::Thread(t) => Some(&t.params),
         Feature::Combine(_) | Feature::Split(_) => None,

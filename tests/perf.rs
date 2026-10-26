@@ -1786,6 +1786,93 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Sheet metal S2 (docs/spec/5.6): a 200 x 120 Face, a Hem on its right
+    // edge, 20 round cut-outs (one Cut), a Fold along x = 140, Unfold,
+    // Refold and the flat pattern's DXF.
+    {
+        use cadcraft3d::part::sheet_metal::{FoldLocation, SheetOp, SheetOpFeature};
+        use cadcraft3d::part::{OriginPlane, ProfileRef};
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        base.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(200.0, 120.0))
+            .unwrap();
+        let r = base.sketches[i].sketch.regions();
+        base.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+            .unwrap();
+        let j = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        for k in 0..5 {
+            for l in 0..4 {
+                base.sketches[j]
+                    .sketch
+                    .add_circle(
+                        Point2::new(20.0 + 20.0 * k as f64, 20.0 + 25.0 * l as f64),
+                        4.0,
+                    )
+                    .unwrap();
+            }
+        }
+        let line = base.sketches[j]
+            .sketch
+            .add_line(Point2::new(140.0, -5.0), Point2::new(140.0, 125.0));
+        let regions = base.sketches[j].sketch.regions();
+        let holes: Vec<_> = regions
+            .iter()
+            .filter(|r| r.area() < 100.0)
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        assert_eq!(holes.len(), 20);
+        let sid = base.sketches[j].id.clone();
+        let (body, edge) = base.sheet_edge_at(Point3::new(200.0, 60.0, 2.0)).unwrap();
+        let ops = vec![
+            SheetOp::Hem {
+                body: body.clone(),
+                edges: vec![edge],
+                length: 8.0,
+                gap: None,
+                flip: false,
+            },
+            SheetOp::Cut {
+                sketch: sid.clone(),
+                profiles: holes,
+            },
+            SheetOp::Fold {
+                body: body.clone(),
+                sketch: sid,
+                line: cadcraft3d::part::extrude::entity_key(line),
+                angle: std::f64::consts::FRAC_PI_2,
+                radius: None,
+                location: FoldLocation::Centerline,
+                flip: false,
+                flip_side: false,
+            },
+            SheetOp::Unfold { body: body.clone() },
+            SheetOp::Refold { body: body.clone() },
+        ];
+        rows.push((
+            "sheet metal: Hem, Cut of 20 holes, Fold, Unfold, Refold + DXF",
+            1500.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                for op in ops.clone() {
+                    p.add_sheet_op(SheetOpFeature::new(op)).unwrap();
+                }
+                assert!(p.flat_pattern_dxf(&body).unwrap().contains("BEND"));
+            }),
+        ));
+    }
     // Bill of Materials (docs/spec/3.6): 2000 occurrences of 50 parts,
     // merged by part number, as the window computes them every frame.
     {

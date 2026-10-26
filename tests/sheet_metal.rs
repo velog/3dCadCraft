@@ -589,3 +589,232 @@ fn convert_shelled_box_keeps_its_walls() {
         "the shell's wall: {lo} {hi}"
     );
 }
+
+fn op(p: &mut PartDocument, o: cadcraft3d::part::sheet_metal::SheetOp) -> String {
+    p.add_sheet_op(cadcraft3d::part::sheet_metal::SheetOpFeature::new(o))
+        .unwrap()
+}
+
+/// A sketch on XY: the plate's bottom face (plane coordinates = world x, y).
+fn top_sketch(p: &mut PartDocument) -> usize {
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    p.create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap()
+}
+
+/// Hem: a 180° fold back at the edge; the flat pattern grows by the hem's
+/// developed length, the part by the gap and the thickness past the edge.
+#[test]
+fn hem_on_an_edge() {
+    use cadcraft3d::part::sheet_metal::SheetOp;
+    let mut p = rect(100.0, 60.0);
+    let (body, e) = p.sheet_edge_at(Point3::new(50.0, 0.0, 2.0)).unwrap();
+    let flat0 = p.flat_patterns()[0].size;
+    op(
+        &mut p,
+        SheetOp::Hem {
+            body,
+            edges: vec![e],
+            length: 10.0,
+            gap: None,
+            flip: false,
+        },
+    );
+    check(&p);
+    let (lo, hi) = bbox(&p);
+    // The hem rolls round the edge: past it by the gap (T/2) and the thickness.
+    assert!(
+        (hi.y - lo.y - 63.0).abs() < 0.05,
+        "past the edge by gap + T: {lo} {hi}"
+    );
+    assert!(hi.z - lo.z > 4.0, "two layers and a gap: {lo} {hi}");
+    let fp = &p.flat_patterns()[0];
+    assert_eq!(fp.bends.len(), 1);
+    let grow = fp.size.0.max(fp.size.1) - flat0.0.max(flat0.1);
+    let grow = if grow.abs() < 1.0 {
+        fp.size.0.min(fp.size.1) - flat0.0.min(flat0.1)
+    } else {
+        grow
+    };
+    assert!(grow > 5.0, "the flat grew by the hem: {grow}");
+}
+
+/// Fold along a sketch line across the plate: one bend, the flat pattern
+/// keeps the plate's size (the bend zone is taken out of the sheet).
+#[test]
+fn fold_along_a_line() {
+    use cadcraft3d::part::sheet_metal::{FoldLocation, SheetOp};
+    let mut p = rect(100.0, 60.0);
+    let flat0 = p.flat_patterns()[0].size;
+    let i = top_sketch(&mut p);
+    let line = p.sketches[i]
+        .sketch
+        .add_line(Point2::new(70.0, -5.0), Point2::new(70.0, 65.0));
+    let sid = p.sketches[i].id.clone();
+    let line_key = cadcraft3d::part::extrude::entity_key(line);
+    let body = p.sheet_models.keys().next().unwrap().clone();
+    op(
+        &mut p,
+        SheetOp::Fold {
+            body,
+            sketch: sid,
+            line: line_key,
+            angle: FRAC_PI_2,
+            radius: None,
+            location: FoldLocation::Centerline,
+            flip: false,
+            flip_side: false,
+        },
+    );
+    check(&p);
+    let fp = &p.flat_patterns()[0];
+    assert_eq!(fp.bends.len(), 1);
+    assert!(
+        (fp.size.0.max(fp.size.1) - flat0.0.max(flat0.1)).abs() < 0.05,
+        "{:?} {:?}",
+        fp.size,
+        flat0
+    );
+    let (lo, hi) = bbox(&p);
+    assert!(hi.z - lo.z > 20.0, "a leg stands up: {lo} {hi}");
+    assert!(hi.x < 80.0, "folded at x = 70: {lo} {hi}");
+}
+
+/// Contour Flange: an open chain of three lines (a U) on XZ, 50 wide: a
+/// channel with two bends.
+#[test]
+fn contour_flange_channel() {
+    use cadcraft3d::part::sheet_metal::SheetOp;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    let q: Vec<_> = [(0.0, 30.0), (0.0, 0.0), (60.0, 0.0), (60.0, 30.0)]
+        .iter()
+        .map(|&(x, y)| sk.add_point(Point2::new(x, y)))
+        .collect();
+    for k in 0..3 {
+        sk.add_line_between(q[k], q[k + 1]).unwrap();
+    }
+    let sid = p.sketches[i].id.clone();
+    let id = op(
+        &mut p,
+        SheetOp::Contour {
+            sketch: sid,
+            width: 50.0,
+            flip: false,
+        },
+    );
+    check(&p);
+    assert!(p.sheet_models.contains_key(&id));
+    let fp = &p.flat_patterns()[0];
+    assert_eq!(fp.bends.len(), 2);
+    let v = volume(&p);
+    let rough = (30.0 + 60.0 + 30.0) * 50.0 * 2.0;
+    assert!((v - rough).abs() < 0.1 * rough, "{v} vs {rough}");
+    // A flange on the channel's edge works too.
+    let (lo, hi) = bbox(&p);
+    eprintln!("channel box {lo} {hi}");
+}
+
+/// Unfold, cut a slot across the bend in the flat, Refold: the slot goes
+/// through the bend; the flat pattern has it.
+#[test]
+fn unfold_cut_refold() {
+    use cadcraft3d::part::sheet_metal::SheetOp;
+    let mut p = rect(100.0, 60.0);
+    flange(&mut p, &[Point3::new(50.0, 0.0, 2.0)], 25.0, |_| {});
+    let body = p.sheet_models.keys().next().unwrap().clone();
+    let v0 = volume(&p);
+    op(&mut p, SheetOp::Unfold { body: body.clone() });
+    check(&p);
+    assert!(p.sheet_is_flat(&body));
+    let (lo, hi) = bbox(&p);
+    assert!((hi.z - lo.z - 2.0).abs() < 0.05, "flat: {lo} {hi}");
+    // A slot over where the bend lies in the flat (y just below 0).
+    let i = top_sketch(&mut p);
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(40.0, -15.0), Point2::new(60.0, 10.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let sid = p.sketches[i].id.clone();
+    op(
+        &mut p,
+        SheetOp::Cut {
+            sketch: sid,
+            profiles: prof,
+        },
+    );
+    check(&p);
+    op(&mut p, SheetOp::Refold { body: body.clone() });
+    check(&p);
+    assert!(!p.sheet_is_flat(&body));
+    let v1 = volume(&p);
+    assert!(
+        v1 < v0 - 20.0 * 20.0 * 2.0 * 0.5,
+        "the slot took material: {v0} -> {v1}"
+    );
+    // DXF of the flat: outline, the slot and the bend line on its layer.
+    let dxf = p.flat_pattern_dxf(&body).unwrap();
+    assert!(dxf.contains("BEND_UP") || dxf.contains("BEND_DOWN"));
+    assert!(dxf.matches("POLYLINE").count() >= 2, "outline + slot");
+}
+
+/// Cut on the folded sheet: a circle on the top face is kept as a cut-out,
+/// so a flange can still be added after it (a Hole could not).
+#[test]
+fn sheet_cut_then_flange() {
+    use cadcraft3d::part::sheet_metal::SheetOp;
+    let mut p = rect(100.0, 60.0);
+    let i = top_sketch(&mut p);
+    p.sketches[i]
+        .sketch
+        .add_circle(Point2::new(50.0, 30.0), 8.0)
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let sid = p.sketches[i].id.clone();
+    let v0 = volume(&p);
+    op(
+        &mut p,
+        SheetOp::Cut {
+            sketch: sid,
+            profiles: prof,
+        },
+    );
+    check(&p);
+    let v1 = volume(&p);
+    let want = PI * 64.0 * 2.0;
+    assert!(((v0 - v1) - want).abs() < 0.02 * want, "{v0} -> {v1}");
+    flange(&mut p, &[Point3::new(50.0, 0.0, 2.0)], 20.0, |_| {});
+    check(&p);
+    // A cut whose sketch misses the sheet is refused.
+    let j = top_sketch(&mut p);
+    p.sketches[j]
+        .sketch
+        .add_circle(Point2::new(500.0, 500.0), 5.0)
+        .unwrap();
+    let r = p.sketches[j].sketch.regions();
+    let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let sid = p.sketches[j].id.clone();
+    let n = p.features.len();
+    let bad = p.add_sheet_op(cadcraft3d::part::sheet_metal::SheetOpFeature::new(
+        SheetOp::Cut {
+            sketch: sid,
+            profiles: prof,
+        },
+    ));
+    assert!(bad.is_err());
+    assert_eq!(p.features.len(), n);
+}

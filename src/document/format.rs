@@ -104,7 +104,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 20: Convert to Sheet Metal of a solid (`Feature::SheetConvert`), corner
 ///   relief shapes (`CornerRelief`), flange Width Extents (`FlangeWidth`)
 ///   (2026-10-25).
-pub const FORMAT_REVISION: u32 = 20;
+/// - 21: sheet metal Hem, Fold, Contour Flange, Unfold / Refold and Cut
+///   (`Feature::SheetOp`) (2026-10-26).
+pub const FORMAT_REVISION: u32 = 21;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

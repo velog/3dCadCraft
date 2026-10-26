@@ -3017,6 +3017,238 @@ pub(super) fn sheet_face(
 
 /// Sheet metal Flange: bends on the named edges of its sheet; the sheet's
 /// solid is rebuilt from its model.
+/// The sheet `body` and its state, refused when another feature changed
+/// it since the last sheet step (that change is not in the model).
+fn sheet_of<'a>(
+    body: &str,
+    solids: &[ExactSolid],
+    metal: &'a std::collections::HashMap<String, super::sheet_metal::SheetState>,
+) -> Result<(usize, &'a super::sheet_metal::SheetState), Fail> {
+    let k = solids
+        .iter()
+        .position(|s| s.name.as_deref() == Some(body))
+        .ok_or_else(|| User(format!("the sheet {body} no longer exists")))?;
+    let state = metal
+        .get(body)
+        .ok_or_else(|| User(format!("{body} is not a sheet metal body")))?;
+    if solids[k].face_names.len() != state.faces {
+        return Err(User(
+            "a feature after the sheet changed it (holes and cuts other than the sheet metal Cut are not in the sheet model yet): put this feature before them"
+                .into(),
+        ));
+    }
+    Ok((k, state))
+}
+
+/// The open chain of a sketch's own straight lines, in order (Contour Flange).
+fn open_chain(ps: &super::PartSketch) -> Result<Vec<[Real; 2]>, String> {
+    use crate::sketch::{Entity, Style};
+    let sk = &ps.sketch;
+    let mut segs: Vec<([Real; 2], [Real; 2])> = Vec::new();
+    for (id, e) in sk.entities() {
+        if sk.style(id) != Style::Normal || ps.is_reference(id) {
+            continue;
+        }
+        match e {
+            Entity::Line { start, end } => {
+                let (Some(a), Some(b)) = (sk.point(*start), sk.point(*end)) else {
+                    continue;
+                };
+                segs.push(([a.position.x, a.position.y], [b.position.x, b.position.y]));
+            }
+            _ => return Err("only lines: the bends are made at their corners".into()),
+        }
+    }
+    if segs.is_empty() {
+        return Err("the sketch has no lines".into());
+    }
+    let same = |p: [Real; 2], q: [Real; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-6;
+    let degree = |p: [Real; 2]| {
+        segs.iter()
+            .filter(|(a, b)| same(*a, p) || same(*b, p))
+            .count()
+    };
+    let start = segs
+        .iter()
+        .flat_map(|(a, b)| [*a, *b])
+        .find(|p| degree(*p) == 1)
+        .ok_or_else(|| "the lines must form an open chain".to_owned())?;
+    let mut pts = vec![start];
+    let mut used = vec![false; segs.len()];
+    let mut at = start;
+    while let Some(k) =
+        (0..segs.len()).find(|&k| !used[k] && (same(segs[k].0, at) || same(segs[k].1, at)))
+    {
+        used[k] = true;
+        at = if same(segs[k].0, at) {
+            segs[k].1
+        } else {
+            segs[k].0
+        };
+        pts.push(at);
+    }
+    if used.iter().any(|u| !u) {
+        return Err("the lines must form one open chain (no branches, no gaps)".into());
+    }
+    Ok(pts)
+}
+
+/// Hem, Fold, Contour Flange, Unfold / Refold, Cut. Returns the solids, the
+/// sheet body changed (or made) and its new state.
+pub(super) fn sheet_op(
+    op: &super::sheet_metal::SheetOpFeature,
+    solids: &[ExactSolid],
+    metal: &std::collections::HashMap<String, super::sheet_metal::SheetState>,
+    rule: &super::sheet_metal::SheetMetalDefaults,
+    sketches: &[super::PartSketch],
+) -> Result<(Vec<ExactSolid>, String, super::sheet_metal::SheetState), Fail> {
+    use super::sheet_metal::{SheetOp, SheetState};
+    use crate::kernel::exact::sheet_metal as ksm;
+    let sketch_of = |id: &str| {
+        sketches
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| User(format!("sketch {id} is missing")))
+    };
+    let replace = |k: usize, solid: ExactSolid, model: ksm::SheetModel, body: &str| {
+        let faces = solid.face_names.len();
+        let mut next = solids.to_vec();
+        next[k] = solid;
+        (next, body.to_owned(), SheetState { model, faces })
+    };
+    let rv = rule.values();
+    match &op.op {
+        SheetOp::Hem {
+            body,
+            edges,
+            length,
+            gap,
+            flip,
+        } => {
+            let (k, state) = sheet_of(body, solids, metal)?;
+            if edges.is_empty() {
+                return Err(User("select the edges".into()));
+            }
+            let mut pts = Vec::new();
+            for e in edges {
+                pts.push(
+                    ksm::edge_point(&state.model, &e.name, Point3::from(e.hint))
+                        .ok_or_else(|| User(format!("the edge {} no longer exists", e.name)))?,
+                );
+            }
+            let gap = gap.unwrap_or(rv.thickness * 0.5);
+            let (solid, model) =
+                ksm::hem(&state.model, body, &op.id, &pts, *length, gap, *flip).map_err(User)?;
+            Ok(replace(k, solid, model, body))
+        }
+        SheetOp::Fold {
+            body,
+            sketch,
+            line,
+            angle,
+            radius,
+            location,
+            flip,
+            flip_side,
+        } => {
+            let (k, state) = sheet_of(body, solids, metal)?;
+            let ps = sketch_of(sketch)?;
+            let sk = &ps.sketch;
+            let (a, b) = sk
+                .entities()
+                .find_map(|(id, e)| match e {
+                    crate::sketch::Entity::Line { start, end }
+                        if super::extrude::entity_key(id) == *line =>
+                    {
+                        Some((sk.point(*start)?.position, sk.point(*end)?.position))
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| User(format!("the fold line {line} is gone from {sketch}")))?;
+            let pl = &sk.plane;
+            let (wa, wb) = (pl.point_at(a.x, a.y), pl.point_at(b.x, b.y));
+            // The side that stays: left of the line, or right with Flip Side.
+            let d = (b - a).normalize();
+            let left = crate::sketch::Point2::new(-d.y, d.x);
+            let s = if *flip_side { -1.0 } else { 1.0 };
+            let mid = (a.coords + b.coords) * 0.5;
+            let off = (rv.thickness * 2.0).max(1.0) * s;
+            let fixed = pl.point_at(mid.x + left.x * off, mid.y + left.y * off);
+            let r = radius.unwrap_or(rv.bend_radius);
+            let (solid, model, notes) = ksm::fold(
+                &state.model,
+                body,
+                &op.id,
+                wa,
+                wb,
+                *angle,
+                r,
+                location.kernel(),
+                *flip,
+                Some(fixed),
+            )
+            .map_err(User)?;
+            for n in notes {
+                log::info!("{}: {n}", op.id);
+            }
+            Ok(replace(k, solid, model, body))
+        }
+        SheetOp::Contour {
+            sketch,
+            width,
+            flip,
+        } => {
+            rule.validate().map_err(User)?;
+            let ps = sketch_of(sketch)?;
+            let pts = open_chain(ps).map_err(User)?;
+            if !(width.is_finite() && *width > 0.0) {
+                return Err(User("the width must be positive".into()));
+            }
+            let (solid, model) =
+                ksm::contour(&op.id, &rv, &ps.sketch.plane, &pts, *width, *flip).map_err(User)?;
+            let faces = solid.face_names.len();
+            let mut next = solids.to_vec();
+            next.push(solid);
+            Ok((next, op.id.clone(), SheetState { model, faces }))
+        }
+        SheetOp::Unfold { body } | SheetOp::Refold { body } => {
+            let (k, state) = sheet_of(body, solids, metal)?;
+            let flat = matches!(op.op, SheetOp::Unfold { .. });
+            let (solid, model) = ksm::set_flat(&state.model, body, flat).map_err(User)?;
+            Ok(replace(k, solid, model, body))
+        }
+        SheetOp::Cut { sketch, profiles } => {
+            let ps = sketch_of(sketch)?;
+            let regions = ps.sketch.regions();
+            let mut profs = Vec::new();
+            for pr in profiles {
+                let region = pr
+                    .resolve(&regions)
+                    .ok_or_else(|| User("a profile no longer exists in the sketch".into()))?;
+                let (outer, holes) = kernel_profile(region);
+                profs.push(exact::profile(&outer, &holes).map_err(User)?);
+            }
+            if profs.is_empty() {
+                return Err(User("select the profiles".into()));
+            }
+            // The first sheet (by name) the profiles cut.
+            let mut names: Vec<&String> = metal.keys().collect();
+            names.sort();
+            let mut why = String::from("there is no sheet metal body");
+            for body in names {
+                let Ok((k, state)) = sheet_of(body, solids, metal) else {
+                    continue;
+                };
+                match ksm::cut(&state.model, body, &ps.sketch.plane, &profs) {
+                    Ok((solid, model)) => return Ok(replace(k, solid, model, body)),
+                    Err(e) => why = e,
+                }
+            }
+            Err(User(why))
+        }
+    }
+}
+
 /// Convert to Sheet Metal of the solid `sc.body`.
 pub(super) fn sheet_convert(
     sc: &super::sheet_metal::SheetConvertFeature,

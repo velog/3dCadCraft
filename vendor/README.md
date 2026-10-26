@@ -61,3 +61,4 @@ to `assets/` and their paths point there.
 |---|---|---|
 | `sheet.rs` `add_flanges_spans` | `add_flanges_each` with each flange held back from its edge's ends (the flange ends as where a cut-out ends the edge: the base keeps its edge beyond and gets the rule's bend relief) | Flange Width Extents (Edge / Width / Offset) |
 | `sheet.rs` `edge_ends` | the world ends of the sheet edge nearest a point | drag arrows at a flange's ends |
+| `sheet.rs` `cut_through` | regions of a world plane cut through the panels parallel to it (within one thickness), kept as flat cut-outs; unfolded, the flat pattern is cut | the sheet metal Cut (`SheetOp::Cut`) |

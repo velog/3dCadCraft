@@ -27,6 +27,8 @@ pub(super) enum DialogPurpose {
     ImportParams,
     /// Bill of Materials → Export (CSV).
     ExportBom,
+    /// Sheet Metal → Export Flat Pattern (DXF).
+    ExportDxf,
 }
 
 impl DialogPurpose {
@@ -40,6 +42,7 @@ impl DialogPurpose {
             DialogPurpose::ExportParams => "Export Parameters".into(),
             DialogPurpose::ImportParams => "Import Parameters".into(),
             DialogPurpose::ExportBom => "Export Bill of Materials".into(),
+            DialogPurpose::ExportDxf => "Export Flat Pattern".into(),
         }
     }
 
@@ -55,6 +58,7 @@ impl DialogPurpose {
             DialogPurpose::ExportParams
             | DialogPurpose::ImportParams
             | DialogPurpose::ExportBom => &["csv"],
+            DialogPurpose::ExportDxf => &["dxf"],
         }
     }
 
@@ -423,6 +427,7 @@ impl CadCraftApp {
             ),
             DialogPurpose::ExportParams => format!("{stem}-parameters.csv"),
             DialogPurpose::ExportBom => format!("{stem}-bom.csv"),
+            DialogPurpose::ExportDxf => format!("{stem}-flat.dxf"),
             DialogPurpose::ImportParams => String::new(),
         };
         self.file_dialog = Some(FileDialog::new(purpose, start_dir(&self.file_path), name));
@@ -821,6 +826,14 @@ impl CadCraftApp {
                 self.save_project(true);
             }
             DialogPurpose::Diagnostics => self.save_diagnostics(&path),
+            DialogPurpose::ExportDxf => {
+                let text = self.sm.dxf.take().unwrap_or_default();
+                self.file_status = Some(
+                    std::fs::write(&path, text)
+                        .map(|()| format!("Flat pattern exported to {}", path.display()))
+                        .map_err(|e| format!("Export Flat Pattern: {e}")),
+                );
+            }
             DialogPurpose::ExportBom => {
                 let text = self.bom_export.take().unwrap_or_default();
                 self.file_status = Some(

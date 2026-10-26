@@ -937,6 +937,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `add_flanges_spans`. A converted sheet (`Feature::SheetConvert`) has no sketch curves: `ksm::convert` names
   its base edges `E<k>` and tags its panels `<id>.<k>`, or `edge_name` returns nothing (no flange could be
   picked on it). `PartDocument::with_box(id, ..)` names the faces `<id>:Top` — use `"Box1"` in tests.
+  Hem / Fold / Contour Flange / Unfold / Refold / Cut are one feature type, `Feature::SheetOp` (`SheetOp` enum,
+  `kind` tag; regeneration in `part/exact.rs::sheet_op`) — a new sheet operation is a new `SheetOp` variant
+  (format revision), not a new `Feature` variant. SolidCraft's hem rolls *round* the edge (past it by
+  gap + T); a fold line through an existing bend is refused by the kernel.
 - **BOM** (`assembly::bom`, `gui/bom.rs`): computed every frame from the occurrences and each component's
   iProperties (`bom_info` through `with_part` / `part_file`); only `IProperties::bom_structure` and
   `Occurrence::bom` are stored.

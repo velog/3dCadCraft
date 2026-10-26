@@ -675,6 +675,7 @@ impl Feature {
             Feature::SheetFace(f) => &mut f.name,
             Feature::SheetFlange(f) => &mut f.name,
             Feature::SheetConvert(f) => &mut f.name,
+            Feature::SheetOp(f) => &mut f.name,
         }
     }
 }
