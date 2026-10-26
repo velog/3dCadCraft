@@ -29,7 +29,9 @@ pub(super) struct CmdSearch {
 impl CadCraftApp {
     /// The environment commands are searched in.
     fn search_env(&self) -> Env {
-        if self.is_assembly() {
+        if self.is_drawing() {
+            Env::Drawing
+        } else if self.is_assembly() {
             Env::Assembly
         } else if self.editing.is_some() {
             Env::Sketch

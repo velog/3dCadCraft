@@ -34,6 +34,7 @@ pub mod assembly;
 pub mod command;
 pub mod diagnostics;
 pub mod document;
+pub mod drawing;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod kernel;

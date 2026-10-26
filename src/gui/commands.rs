@@ -26,6 +26,7 @@ use std::sync::OnceLock;
 
 use super::camera::Projection;
 use super::demos::Demo;
+use super::drawing::DrwCmd;
 use super::icons::Icon;
 use super::layout::{Element, UiCmd, VisKind};
 use super::material::MatCmd;
@@ -47,11 +48,13 @@ pub enum Env {
     Sketch,
     /// An assembly is the active document.
     Assembly,
+    /// A drawing is the active document.
+    Drawing,
 }
 
 impl Env {
     /// Every environment (for tests and the keymap's filter).
-    pub const ALL: [Env; 3] = [Env::Part, Env::Sketch, Env::Assembly];
+    pub const ALL: [Env; 4] = [Env::Part, Env::Sketch, Env::Assembly, Env::Drawing];
 
     /// English name, as in messages ("not available in a sketch").
     pub fn label(self) -> &'static str {
@@ -59,6 +62,7 @@ impl Env {
             Env::Part => "a part",
             Env::Sketch => "a sketch",
             Env::Assembly => "an assembly",
+            Env::Drawing => "a drawing",
         }
     }
 }
@@ -76,6 +80,8 @@ impl Envs {
     pub const ANY: Envs = Envs(3);
     /// Only in an assembly.
     pub const ASSEMBLY: Envs = Envs(4);
+    /// Only in a drawing.
+    pub const DRAWING: Envs = Envs(8);
 
     /// Whether `e` is in the set.
     pub const fn has(self, e: Env) -> bool {
@@ -83,6 +89,7 @@ impl Envs {
             Env::Part => 1,
             Env::Sketch => 2,
             Env::Assembly => 4,
+            Env::Drawing => 8,
         };
         self.0 & bit != 0
     }
@@ -108,6 +115,8 @@ pub enum AppCmd {
     New,
     /// File → New Assembly: an assembly document in the open project.
     NewAssembly,
+    /// File → New Drawing: a drawing document in the open project.
+    NewDrawing,
     /// File → Open.
     Open,
     /// File → Save.
@@ -291,7 +300,7 @@ impl Command {
     /// exports do not (they export the part).
     pub fn valid_in(&self, env: Env) -> bool {
         self.envs.has(env)
-            || (env == Env::Assembly
+            || (matches!(env, Env::Assembly | Env::Drawing)
                 && (self.id.starts_with("view.")
                     || self.id.starts_with("help.")
                     || (self.id.starts_with("file.") && !self.id.starts_with("file.export"))
@@ -342,6 +351,15 @@ const A_COMPONENT: Place = Place::Ribbon("Assemble", "Component");
 const A_POSITION: Place = Place::Ribbon("Assemble", "Position");
 const A_RELATIONSHIPS: Place = Place::Ribbon("Assemble", "Relationships");
 const A_PATTERN: Place = Place::Ribbon("Assemble", "Pattern");
+const D_CREATE: Place = Place::Ribbon("Place Views", "Create");
+const D_MODIFY: Place = Place::Ribbon("Place Views", "Modify");
+const D_SKETCH: Place = Place::Ribbon("Place Views", "Sketch");
+const D_SHEETS: Place = Place::Ribbon("Place Views", "Sheets");
+const N_DIM: Place = Place::Ribbon("Annotate", "Dimension");
+const N_NOTES: Place = Place::Ribbon("Annotate", "Feature Notes");
+const N_TEXT: Place = Place::Ribbon("Annotate", "Text");
+const N_SYMBOLS: Place = Place::Ribbon("Annotate", "Symbols");
+const N_TABLE: Place = Place::Ribbon("Annotate", "Table");
 const V_NAV: Place = Place::Ribbon("View", "Navigate");
 const V_LOOK: Place = Place::Ribbon("View", "Appearance");
 const V_WIN: Place = Place::Ribbon("View", "Windows");
@@ -353,6 +371,15 @@ const KEY: Place = Place::Keyboard;
 const PART: Envs = Envs::PART;
 const ASSEMBLY: Envs = Envs::ASSEMBLY;
 const SKETCH: Envs = Envs::SKETCH;
+const DRAWING: Envs = Envs::DRAWING;
+
+/// A drawing command (`docs/spec/4-drawings.md`); planned ones add their
+/// FEATURES section with `.todo`.
+const fn d(id: &'static str, name: &'static str, bg: &'static str, icon: Icon) -> Command {
+    Command::new(id, name, bg, icon)
+        .env(DRAWING)
+        .spec("4-drawings.md")
+}
 
 const fn c(id: &'static str, name: &'static str, bg: &'static str, icon: Icon) -> Command {
     Command::new(id, name, bg, icon)
@@ -1388,7 +1415,169 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("The parts of the assembly with their quantities and iProperties: Model Data, Structured, Parts Only; Export to CSV")
         .spec("3.6-bom.md"),
+    // ---- Drawing: Place Views and Annotate --------------------------------
+    d("drw.base", "Base View", "Основен изглед", Icon::BaseView)
+        .run(Action::Drawing(DrwCmd::BaseView))
+        .alias(&["BV"])
+        .at(&[D_CREATE])
+        .tip("Place the first view of a part: choose the file, orientation, style and scale, then click on the sheet"),
+    d("drw.projected", "Projected View", "Проекционен изглед", Icon::ProjectedView)
+        .run(Action::Drawing(DrwCmd::ProjectedView))
+        .alias(&["PV"])
+        .at(&[D_CREATE])
+        .tip("Pick a parent view, then click beside it for orthographic views or diagonally for isometric ones"),
+    d("drw.auxiliary", "Auxiliary View", "Спомагателен изглед", Icon::AuxView)
+        .alias(&["AV"])
+        .at(&[D_CREATE])
+        .tip("A view square to an edge of a parent view")
+        .todo("4.2"),
+    d("drw.section", "Section View", "Разрез", Icon::SectionView)
+        .alias(&["SV"])
+        .at(&[D_CREATE])
+        .tip("Draw a section line over a parent view; the cut is hatched")
+        .todo("4.2"),
+    d("drw.detail", "Detail View", "Детайлен изглед", Icon::DetailView)
+        .alias(&["DV"])
+        .at(&[D_CREATE])
+        .tip("An enlarged circle or rectangle of a parent view")
+        .todo("4.2"),
+    d("drw.overlay", "Overlay View", "Изглед с наслагване", Icon::ProjectedView)
+        .alias(&["OV"])
+        .at(&[D_CREATE])
+        .tip("Positional representations of an assembly in phantom lines")
+        .todo("4.2"),
+    d("drw.draft_view", "Draft View", "Изглед-скица", Icon::DraftView)
+        .alias(&["DFV"])
+        .at(&[D_CREATE])
+        .tip("A view holding only a 2D sketch")
+        .todo("4.2"),
+    d("drw.break", "Break", "Прекъсване", Icon::BreakView)
+        .alias(&["BRK"])
+        .at(&[D_MODIFY])
+        .tip("Shorten a long part between two break lines")
+        .todo("4.2"),
+    d("drw.break_out", "Break Out", "Локален разрез", Icon::BreakOut)
+        .alias(&["BO"])
+        .at(&[D_MODIFY])
+        .tip("Cut away material inside a closed profile to a depth")
+        .todo("4.2"),
+    d("drw.slice", "Slice", "Сечение", Icon::SliceView)
+        .alias(&["SL"])
+        .at(&[D_MODIFY])
+        .tip("A zero-depth section along a sketch line")
+        .todo("4.2"),
+    d("drw.crop", "Crop", "Изрязване", Icon::CropView)
+        .alias(&["CR"])
+        .at(&[D_MODIFY])
+        .tip("Clip a view by a rectangle or a closed sketch")
+        .todo("4.2"),
+    d("drw.start_sketch", "Start Sketch", "Нова скица", Icon::StartSketch)
+        .alias(&["DS"])
+        .at(&[D_SKETCH])
+        .tip("A sketch on the sheet or on a view")
+        .todo("4.3"),
+    d("drw.new_sheet", "New Sheet", "Нов лист", Icon::NewSheet)
+        .run(Action::Drawing(DrwCmd::NewSheet))
+        .alias(&["NS"])
+        .at(&[D_SHEETS])
+        .tip("Add a sheet like the active one and make it active"),
+    d("drw.edit_sheet", "Edit Sheet", "Редакция на лист", Icon::Drawing)
+        .run(Action::Drawing(DrwCmd::EditSheet))
+        .alias(&["ES"])
+        .at(&[D_SHEETS])
+        .tip("Name, size, orientation, revision and exclusions of the active sheet"),
+    d("drw.dimension", "Dimension", "Размер", Icon::Dimension)
+        .alias(&["D"])
+        .at(&[N_DIM])
+        .tip("Linear, aligned, angular, radius and diameter dimensions on view geometry")
+        .todo("4.3"),
+    d("drw.baseline", "Baseline", "Размери от база", Icon::Dimension)
+        .alias(&["BD"])
+        .at(&[N_DIM])
+        .tip("Dimensions from one datum")
+        .todo("4.3"),
+    d("drw.ordinate", "Ordinate", "Ординатни размери", Icon::Dimension)
+        .alias(&["OD"])
+        .at(&[N_DIM])
+        .tip("Ordinate dimensions from an origin")
+        .todo("4.3"),
+    d("drw.chain", "Chain", "Верига от размери", Icon::Dimension)
+        .alias(&["CD"])
+        .at(&[N_DIM])
+        .tip("A chain of dimensions")
+        .todo("4.3"),
+    d("drw.retrieve", "Retrieve Model Annotations", "Извличане на размерите от модела", Icon::Dimension)
+        .short("Retrieve")
+        .alias(&["RMA"])
+        .at(&[N_DIM])
+        .tip("Bring the model's sketch and feature dimensions that lie in the view plane")
+        .todo("4.3"),
+    d("drw.hole_note", "Hole and Thread", "Бележка за отвор", Icon::HoleNote)
+        .alias(&["HN"])
+        .at(&[N_NOTES])
+        .tip("A note from a Hole or Thread feature (diameter, depth, thread)")
+        .todo("4.3"),
+    d("drw.text", "Text", "Текст", Icon::Text)
+        .alias(&["T"])
+        .at(&[N_TEXT])
+        .tip("Text with property fields")
+        .todo("4.3"),
+    d("drw.leader_text", "Leader Text", "Текст с водеща линия", Icon::Text)
+        .alias(&["LE"])
+        .at(&[N_TEXT])
+        .tip("Text with a leader to geometry")
+        .todo("4.3"),
+    d("drw.center_mark", "Center Mark", "Маркер на център", Icon::CenterMark)
+        .alias(&["CM"])
+        .at(&[N_SYMBOLS])
+        .tip("A centre mark on a circle or arc")
+        .todo("4.3"),
+    d("drw.centerline", "Centerline", "Осева линия", Icon::CenterlineMark)
+        .alias(&["CL"])
+        .at(&[N_SYMBOLS])
+        .tip("A centreline through centres or edges")
+        .todo("4.3"),
+    d("drw.surface", "Surface", "Грапавост", Icon::SurfaceSymbol)
+        .alias(&["ST"])
+        .at(&[N_SYMBOLS])
+        .tip("A surface texture symbol")
+        .todo("4.3"),
+    d("drw.datum", "Datum Identifier", "База", Icon::Datum)
+        .alias(&["DI"])
+        .at(&[N_SYMBOLS])
+        .tip("A datum identifier symbol")
+        .todo("4.3"),
+    d("drw.fcf", "Feature Control Frame", "Рамка на допуск", Icon::ControlFrame)
+        .alias(&["FCF"])
+        .at(&[N_SYMBOLS])
+        .tip("A GD&T feature control frame")
+        .todo("4.3"),
+    d("drw.parts_list", "Parts List", "Спецификация", Icon::PartsList)
+        .alias(&["PL"])
+        .at(&[N_TABLE])
+        .tip("A parts list from the BOM of a view's assembly")
+        .todo("4.4"),
+    d("drw.balloon", "Balloon", "Позиция", Icon::Balloon)
+        .alias(&["B"])
+        .at(&[N_TABLE])
+        .tip("Item balloons with leaders")
+        .todo("4.4"),
+    d("drw.hole_table", "Hole Table", "Таблица на отворите", Icon::PartsList)
+        .alias(&["HT"])
+        .at(&[N_TABLE])
+        .tip("Holes of a view with coordinates from a datum")
+        .todo("4.4"),
+    d("drw.revision_table", "Revision Table", "Таблица на ревизиите", Icon::PartsList)
+        .alias(&["RT"])
+        .at(&[N_TABLE])
+        .tip("Rows of revisions")
+        .todo("4.4"),
     // ---- File / Help -----------------------------------------------------
+    c("file.new_drawing", "New Drawing", "Нов чертеж", Icon::Drawing)
+        .run(Action::App(AppCmd::NewDrawing))
+        .at(&[FILE])
+        .tip("A new drawing in the open project; place views of its parts")
+        .spec("4-drawings.md"),
     c("file.new_assembly", "New Assembly", "Ново сглобяване", Icon::Assembly)
         .run(Action::App(AppCmd::NewAssembly))
         .at(&[FILE])

@@ -252,10 +252,14 @@ impl CadCraftApp {
     /// first: the link is a path relative to it).
     pub(super) fn open_place_dialog(&mut self) {
         if self.file_path.trim().is_empty() {
-            self.file_status = Some(Ok(
-                "Place: save the assembly first (part files are linked by a path relative to it)"
-                    .into(),
-            ));
+            let what = if self.is_drawing() {
+                "Base View: save the drawing first"
+            } else {
+                "Place: save the assembly first"
+            };
+            self.file_status = Some(Ok(format!(
+                "{what} (part files are linked by a path relative to it)"
+            )));
             self.after_save = Some(super::files::Pending::Place);
             self.open_dialog(super::files::DialogPurpose::SaveAs);
             return;
@@ -321,6 +325,15 @@ impl CadCraftApp {
         self.checkpoint("Place");
         let mut resolver = crate::document::Resolver::new();
         match resolver.link(&mut self.project, &owner, &path, doc) {
+            Ok(r) if self.is_drawing() => {
+                // Base View › Browse: the linked part is the view's file.
+                self.asm.place = None;
+                self.drw_linked(r);
+                self.file_status = Some(Ok(format!(
+                    "Base View: {} is linked; click on the sheet to place the view",
+                    path.display()
+                )));
+            }
             Ok(r) => {
                 self.asm.place = None;
                 self.asm.place_name = base_name(&path, &parts, doc);

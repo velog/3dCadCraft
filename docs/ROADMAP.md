@@ -251,7 +251,7 @@ Before each step: verify its rows against the Inventor 2027 help (spec §7).
 | Dragging within the freedom, interference check | 3.4, 3.5 |
 | BOM | 3.6 |
 | Component patterns | 3.7 |
-| Drawing: sheets, title block, ISO/ANSI; Base, Projected, Section, Detail views; HLR | 4.1, 4.2 |
+| Drawing: sheets, title block, ISO/ANSI; Base, Projected, Section, Detail views; HLR (🟡 D1 first part 2026-10-26: sheets, title block, Base / Projected views with HLR, the ribbon; next: PDF, exact curves, sections) | 4.1, 4.2 |
 | Dimensions, hole notes, centerlines, Parts List + balloons; export to PDF and DXF | 4.3–4.5 |
 | Patterns and mirror of features and bodies (🟡 done, waiting for a visual check — step 2.7) | 2.11, 2.12 |
 

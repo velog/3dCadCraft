@@ -57,6 +57,7 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `part::measure` | Measure (GUI-free): one item → length / radius / area / volume / position, two → minimum distance (closest pair with box pruning, adapted from SolidCraft `measure_sel.rs`), centre distance, angle; exact for lines, circles (pieces of one circle measured whole), planes, cylinders; window in `gui/measure.rs` | `Target`, `Item`, `Measurement` |
 | `part::export` | File → Export: binary STL, STEP (from `PartDocument::exact_bodies` via `kernel::exact::step_text`), GLB; `examples/export.rs` CLI | `ExportFormat`, `ExportMesh` |
 | `assembly` | assemblies, step A1 (`docs/spec/3.1-assemblies.md`), GUI-free: `AssemblyDocument` place / names `Part:k` / ids (never reused, `fix_ids` on load) / remove, `move_by`, `rotate_about`, `PickMesh` (a part's triangles, local) and `pick` (ray into each occurrence's frame), boxes; GUI `gui/assembly.rs` (`AsmUi`: selection, Place / Free Move / Free Rotate, browser tree, Properties, scene) | `Occurrence`, `PickMesh`, `Hit` |
+| `drawing` | drawings, GUI-free (`docs/spec/4-drawings.md`): `DrawingDocument` (standard, sheets, views; ids never reused), view frames and projection (first / third angle, `ViewFrame::projected`), placing / aligning / deleting views; `sheet.rs` sheet sizes, border and title block as `Prim`s (one list for screen and export); `hlr.rs` hidden line removal on the display mesh (edges + silhouettes, grid of front-facing triangles); GUI `gui/drawing.rs` (`DrwUi`: sheet view, Drawing View / Edit Sheet dialogs, browser, Properties) | `DrawingDocument`, `Sheet`, `DrawingView`, `ViewFrame`, `ViewLines` |
 | `document` | projects with many documents, `.3dcadcraft` ZIP/folder format, Link/Append/Pack | `Project`, `DocumentData`, `Resolver` |
 | `diagnostics` | session log (`log.rs`, own logger + ring buffer), action journal with JSON-delta part snapshots (`journal.rs`), `replay.rs` (journal → parts, first differing step), autosave + Restore decision (`recovery.rs`), panic hook / crash reports / emergency autosave (`crash.rs`), Save Diagnostics zip (`bundle.rs`); GUI hooks in `gui/diag.rs` | `Journal`, `Outcome`, `Step`, `Autosaver`, `Offer` |
 | `command` | Undo/Redo (snapshot history, coalesced gestures); selector flow of command dialogs (`flow.rs`: active selector, auto-advance, Continue/Back/Enter, accepted `PickKind`s, Face Draft/Shell selector lists — GUI-free); one selection model (`selection.rs`: categories, user `Filter`, Select `Priority`, `effective` = selector kinds ∩ filter, pick order, `box_takes`, Shift + right-click menu content); later the Command enum | `History<T>`, `Flow`, `Selector`, `Filter`, `Priority` |
@@ -999,6 +1000,15 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   returning the new faces' triangles + edges (`new_faces`), drawn see-through in `sm_view`. The command is
   `Cmd::Sheet` in `command_ui` (right-click menu, Enter, Esc, prompt). Corner Seam corners come from `base_pairs`
   (a corner relief moves the bends' ends off the corner, so `corners()` sees none).
+- **Drawings (D1)**: the active document can be a drawing (`is_drawing()`); `viewport` hands over to
+  `drawing_viewport` *before* any 3D work and `build_scene` returns nothing, Properties / browser / status
+  prompt go to `gui/drawing.rs`, `apply` refuses commands whose `valid_in(Env::Drawing)` is false (File /
+  View / Help / Undo / Options are shared, like in assemblies). A view's lines are never stored: they are
+  computed on a worker thread from a *copy* of the part and cached by `(DocRef, body signature, frame)`;
+  the frame draws "Computing view..." until then. A hidden piece lying on a visible line (tolerance
+  0.025 mm + size·1e-5: two features sample one circle differently) is not drawn — the front view of a box
+  showed every back edge dashed over the front ones. A first-angle and a third-angle top view are the same
+  picture; only the placement differs (`ViewFrame::projected`).
 - **BOM** (`assembly::bom`, `gui/bom.rs`): computed every frame from the occurrences and each component's
   iProperties (`bom_info` through `with_part` / `part_file`); only `IProperties::bom_structure` and
   `Occurrence::bom` are stored.

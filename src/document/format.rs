@@ -107,7 +107,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 21: sheet metal Hem, Fold, Contour Flange, Unfold / Refold and Cut
 ///   (`Feature::SheetOp`) (2026-10-26).
 /// - 22: Corner Seam (`SheetOp::CornerSeam`) (2026-10-26).
-pub const FORMAT_REVISION: u32 = 22;
+/// - 23: drawing documents (`DocumentData::Drawing`) (2026-10-26).
+pub const FORMAT_REVISION: u32 = 23;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
@@ -367,8 +368,10 @@ impl Project {
                 ));
             }
             // Occurrences of files before ids get theirs.
-            if let super::DocumentData::Assembly(a) = &mut doc.data {
-                a.fix_ids();
+            match &mut doc.data {
+                super::DocumentData::Assembly(a) => a.fix_ids(),
+                super::DocumentData::Drawing(d) => d.fix(),
+                super::DocumentData::Part(_) => {}
             }
             documents.push(doc);
         }

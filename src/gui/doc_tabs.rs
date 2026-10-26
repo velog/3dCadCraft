@@ -47,6 +47,7 @@ impl CadCraftApp {
         self.prev_sel.clear();
         self.select_other = None;
         self.mode = super::Mode::Normal;
+        self.drw.reset();
     }
 
     /// The active document taken out of the app's fields.

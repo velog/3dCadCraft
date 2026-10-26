@@ -9,8 +9,9 @@
 //! |-----------|--------------------------------------------|-------------------|
 //! | Part      | sketches + solid body (later: feature tree) | `.ipt`            |
 //! | Assembly  | placed occurrences of parts/sub-assemblies  | `.iam`            |
+//! | Drawing   | sheets with views of parts                  | `.idw` / `.dwg`   |
 //!
-//! (Drawings and presentations will become further document kinds.)
+//! (Presentations will become a further document kind.)
 //!
 //! Copying a `.3dcadcraft` file copies the whole design — nothing can go
 //! missing, unlike multi-file CAD datasets where an assembly silently loses
@@ -272,6 +273,8 @@ pub enum DocumentData {
     Part(PartDocument),
     /// An assembly.
     Assembly(AssemblyDocument),
+    /// A drawing: sheets with views of parts (`crate::drawing`).
+    Drawing(crate::drawing::DrawingDocument),
 }
 
 /// Kind of a document, for indexes and UI.
@@ -281,6 +284,8 @@ pub enum DocumentKind {
     Part,
     /// [`DocumentData::Assembly`].
     Assembly,
+    /// [`DocumentData::Drawing`].
+    Drawing,
 }
 
 impl DocumentData {
@@ -289,6 +294,7 @@ impl DocumentData {
         match self {
             DocumentData::Part(_) => DocumentKind::Part,
             DocumentData::Assembly(_) => DocumentKind::Assembly,
+            DocumentData::Drawing(_) => DocumentKind::Drawing,
         }
     }
 
@@ -297,15 +303,20 @@ impl DocumentData {
         match self {
             DocumentData::Part(_) => Vec::new(),
             DocumentData::Assembly(a) => a.occurrences.iter().map(|o| o.component).collect(),
+            DocumentData::Drawing(d) => d.references(),
         }
     }
 
     /// Rewrites every reference through `f`.
     pub(crate) fn remap_references(&mut self, mut f: impl FnMut(DocRef) -> DocRef) {
-        if let DocumentData::Assembly(a) = self {
-            for o in &mut a.occurrences {
-                o.component = f(o.component);
+        match self {
+            DocumentData::Assembly(a) => {
+                for o in &mut a.occurrences {
+                    o.component = f(o.component);
+                }
             }
+            DocumentData::Drawing(d) => d.remap_references(&mut f),
+            DocumentData::Part(_) => {}
         }
     }
 }

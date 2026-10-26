@@ -217,7 +217,10 @@ impl CadCraftApp {
         }
         self.selection = super::Selection::Body;
         self.editing = None;
-        self.tab = if self.is_assembly() {
+        self.drw.reset();
+        self.tab = if self.is_drawing() {
+            super::ribbon::Tab::PlaceViews
+        } else if self.is_assembly() {
             super::ribbon::Tab::Assemble
         } else {
             super::ribbon::Tab::Model

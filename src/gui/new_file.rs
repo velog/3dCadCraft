@@ -15,6 +15,7 @@ enum Kind {
     Part,
     Assembly,
     SheetMetal,
+    Drawing,
 }
 
 impl CadCraftApp {
@@ -71,7 +72,15 @@ impl CadCraftApp {
                     ) {
                         chosen = Some(Kind::SheetMetal);
                     }
-                    tile(ui, Icon::Drawing, "Drawing", "planned (4)", false);
+                    if tile(
+                        ui,
+                        Icon::Drawing,
+                        "Drawing",
+                        "views of the project's parts",
+                        true,
+                    ) {
+                        chosen = Some(Kind::Drawing);
+                    }
                 });
             });
         let now = ctx.input(|i| i.time);
@@ -91,6 +100,10 @@ impl CadCraftApp {
             Some(Kind::Assembly) => {
                 self.new_file = false;
                 self.new_assembly();
+            }
+            Some(Kind::Drawing) => {
+                self.new_file = false;
+                self.new_drawing();
             }
             None => {
                 if !open {

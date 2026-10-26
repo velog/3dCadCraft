@@ -73,6 +73,8 @@ pub enum Action {
     AsmJoint,
     /// Assemble › Bill of Materials.
     AsmBom,
+    /// Drawing commands (Place Views, Annotate).
+    Drawing(super::drawing::DrwCmd),
     /// 3D Model › Convert to Sheet Metal.
     SmConvert,
     /// Sheet Metal › Sheet Metal Defaults.
@@ -202,6 +204,8 @@ pub struct State {
     pub center_point: bool,
     /// The active document is an assembly.
     pub assembly: bool,
+    /// The active document is a drawing.
+    pub drawing: bool,
     /// The active part is a sheet metal part.
     pub sheet_metal: bool,
     /// The view shows the flat pattern.
@@ -213,6 +217,10 @@ pub struct State {
 /// Ribbon tabs of the part environment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
+    /// Drawing: base, projected and other views, sheets.
+    PlaceViews,
+    /// Drawing: dimensions, notes, symbols, tables.
+    Annotate,
     /// Assembly: place, position, relationships.
     Assemble,
     /// Sheet metal parts: Face, Flange, Flat Pattern.
@@ -232,7 +240,9 @@ pub enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 8] = [
+    const ALL: [Tab; 10] = [
+        Tab::PlaceViews,
+        Tab::Annotate,
         Tab::Assemble,
         Tab::SheetMetal,
         Tab::Model,
@@ -244,12 +254,15 @@ impl Tab {
     ];
 
     /// Whether the tab belongs to the environment (an assembly has no
-    /// 3D Model / Sketch tabs, a part no Assemble tab).
-    pub fn shown(self, assembly: bool, sheet_metal: bool) -> bool {
+    /// 3D Model / Sketch tabs, a part no Assemble tab, a drawing only its
+    /// own tabs and the shared Tools / Manage / View).
+    pub fn shown(self, assembly: bool, sheet_metal: bool, drawing: bool) -> bool {
         match self {
-            Tab::Assemble => assembly,
-            Tab::SheetMetal => sheet_metal && !assembly,
-            Tab::Model | Tab::Sketch => !assembly,
+            Tab::PlaceViews | Tab::Annotate => drawing,
+            Tab::Inspect if drawing => false,
+            Tab::Assemble => assembly && !drawing,
+            Tab::SheetMetal => sheet_metal && !assembly && !drawing,
+            Tab::Model | Tab::Sketch => !assembly && !drawing,
             _ => true,
         }
     }
@@ -261,6 +274,8 @@ impl Tab {
 
     fn label(self) -> &'static str {
         match self {
+            Tab::PlaceViews => "Place Views",
+            Tab::Annotate => "Annotate",
             Tab::Assemble => "Assemble",
             Tab::SheetMetal => "Sheet Metal",
             Tab::Model => "3D Model",
@@ -437,6 +452,67 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
         "sketch.show_constraints"
     };
     match tab {
+        Tab::PlaceViews => vec![
+            panel(
+                "Create",
+                vec![
+                    c("drw.base").large(),
+                    c("drw.projected").large(),
+                    c("drw.auxiliary"),
+                    c("drw.section"),
+                    c("drw.detail"),
+                    c("drw.overlay"),
+                    c("drw.draft_view"),
+                ],
+            ),
+            panel(
+                "Modify",
+                vec![
+                    c("drw.break"),
+                    c("drw.break_out"),
+                    c("drw.slice"),
+                    c("drw.crop"),
+                ],
+            ),
+            panel("Sketch", vec![c("drw.start_sketch").large()]),
+            panel(
+                "Sheets",
+                vec![c("drw.new_sheet").large(), c("drw.edit_sheet")],
+            ),
+        ],
+        Tab::Annotate => vec![
+            panel(
+                "Dimension",
+                vec![
+                    c("drw.dimension").large(),
+                    c("drw.baseline"),
+                    c("drw.ordinate"),
+                    c("drw.chain"),
+                    c("drw.retrieve"),
+                ],
+            ),
+            panel("Feature Notes", vec![c("drw.hole_note")]),
+            panel("Text", vec![c("drw.text").large(), c("drw.leader_text")]),
+            panel(
+                "Symbols",
+                vec![
+                    c("drw.center_mark"),
+                    c("drw.centerline"),
+                    c("drw.surface"),
+                    c("drw.datum"),
+                    c("drw.fcf"),
+                ],
+            ),
+            panel(
+                "Table",
+                vec![
+                    c("drw.parts_list").large(),
+                    c("drw.balloon"),
+                    c("drw.hole_table"),
+                    c("drw.revision_table"),
+                ],
+            ),
+        ],
         Tab::SheetMetal => vec![
             panel("Setup", vec![c("sm.defaults").large(), c("sm.convert")]),
             panel(
@@ -807,6 +883,7 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 project: false,
                 center_point: false,
                 assembly: false,
+                drawing: false,
                 asm_tool: None,
                 sheet_metal: true,
                 flat: false,
@@ -831,17 +908,21 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
     out
 }
 
-/// In an assembly, the part's commands of the shared tabs (Inspect,
-/// Tools…) are greyed with the reason.
+/// In an assembly or a drawing, the part's commands of the shared tabs
+/// (Inspect, Tools…) are greyed with the reason.
 fn for_env(mut panels: Vec<PanelDef>, st: &State) -> Vec<PanelDef> {
-    if !st.assembly {
+    let (env, why) = if st.drawing {
+        (commands::Env::Drawing, "Not available in a drawing")
+    } else if st.assembly {
+        (commands::Env::Assembly, "Not available in an assembly")
+    } else {
         return panels;
-    }
+    };
     for p in &mut panels {
         for cmd in &mut p.cmds {
-            let valid = commands::by_id(cmd.id).is_none_or(|c| c.valid_in(commands::Env::Assembly));
+            let valid = commands::by_id(cmd.id).is_none_or(|c| c.valid_in(env));
             if !valid && matches!(cmd.kind, Kind::Ready(..)) {
-                cmd.kind = Kind::Unavailable("Not available in an assembly");
+                cmd.kind = Kind::Unavailable(why);
             }
         }
     }
@@ -858,7 +939,7 @@ pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Op
     ui.horizontal(|ui| {
         for t in Tab::ALL
             .into_iter()
-            .filter(|t| t.shown(st.assembly, st.sheet_metal))
+            .filter(|t| t.shown(st.assembly, st.sheet_metal, st.drawing))
         {
             let was = *tab == t;
             let r = ui.selectable_value(tab, t, RichText::new(t.label()).strong());

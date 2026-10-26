@@ -187,15 +187,23 @@ impl CadCraftApp {
             ui.indent("docs", |ui| {
                 for (id, name, kind) in &docs {
                     if *id == self.part_id {
-                        if self.is_assembly() {
+                        if self.is_drawing() {
+                            self.drawing_tree(ui, name);
+                        } else if self.is_assembly() {
                             self.assembly_tree(ui, name);
                         } else {
                             self.part_tree(ui, name, &mut cmds);
                         }
                     } else {
                         ui.horizontal(|ui| {
-                            let assembly = *kind == crate::document::DocumentKind::Assembly;
-                            tree_icon(ui, if assembly { Icon::Assembly } else { Icon::Part });
+                            tree_icon(
+                                ui,
+                                match kind {
+                                    crate::document::DocumentKind::Assembly => Icon::Assembly,
+                                    crate::document::DocumentKind::Drawing => Icon::Drawing,
+                                    crate::document::DocumentKind::Part => Icon::Part,
+                                },
+                            );
                             let r = ui.selectable_label(
                                 self.selection == Selection::Document(*id),
                                 name.clone(),
@@ -1147,6 +1155,10 @@ impl CadCraftApp {
     pub(super) fn properties(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Properties").strong());
         ui.separator();
+        if self.is_drawing() {
+            self.drawing_properties(ui);
+            return;
+        }
         if self.is_assembly() {
             self.assembly_properties(ui);
             return;
@@ -1239,6 +1251,9 @@ impl CadCraftApp {
                         }
                         DocumentData::Assembly(a) => {
                             ui.label(format!("Assembly · {} occurrence(s)", a.occurrences.len()))
+                        }
+                        DocumentData::Drawing(dr) => {
+                            ui.label(format!("Drawing · {} sheet(s)", dr.sheets.len()))
                         }
                     };
                     ui.label(RichText::new("Editing more documents — planned").weak());
@@ -4644,6 +4659,11 @@ impl CadCraftApp {
                     match (self.mode, self.editing) {
                         (Mode::Normal, None) if self.sm.draft.is_some() => {
                             let prompt = self.sm_prompt().unwrap_or_default();
+                            let text = super::i18n::tr(&prompt);
+                            ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                        }
+                        _ if self.is_drawing() => {
+                            let prompt = self.drw_prompt();
                             let text = super::i18n::tr(&prompt);
                             ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                         }

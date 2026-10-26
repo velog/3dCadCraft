@@ -227,6 +227,7 @@ fn general_tab(
             ui.label(match kind {
                 crate::document::DocumentKind::Part => "Part",
                 crate::document::DocumentKind::Assembly => "Assembly",
+                crate::document::DocumentKind::Drawing => "Drawing",
             });
             ui.end_row();
             super::panels::plabel(ui, "Location");

@@ -253,6 +253,18 @@ the sheet. **Unfold** / **Refold**: the whole sheet flat and back (a Cut between
 Properties its extents and bends; again goes back. The other sheet metal commands are listed greyed.
 🟡 waiting for a visual check.
 
+### Drawings (Place Views / Annotate tabs, [spec/4-drawings.md](spec/4-drawings.md))
+
+**File → New… → Drawing** (or File → New Drawing) adds a drawing to the open project and opens it: an A3
+ISO sheet with a border and a title block. **BV** = Base View: the Drawing View dialog (Component, Model,
+Display Options, Recovery Options); choose the part (or **Browse...** to link a part file), the orientation,
+the style and the scale; the view follows the cursor and a click places it, then each click beside it places
+a projected view (**PV** later; diagonal = isometric); **Esc** or right-click ends. Drag a view to move it
+(projected views stay aligned), double-click to edit it, **Delete** removes it with the views projected from
+it. Middle button pans, the wheel zooms at the cursor, the sheet's right-click menu has **Zoom All**, Edit
+Sheet (**ES**), New Sheet (**NS**). The browser lists the sheets (click activates one) and the views under
+their parents. 🟡 waiting for a visual check.
+
 ### Help, log and recovery
 
 The **Help** menu (on the right in Quick Access): **Help** (F1), **Save Diagnostics…** (a zip for a problem report, through the program's file dialog), **Open Logs Folder** (`%APPDATA%\3dcadcraft\logs`). The program writes a log and an action journal for every session, autosaves into `%APPDATA%\3dcadcraft\recovery` (every 5 minutes and after OK, never over the user's file) and, on a crash, `crash-….txt`. If the previous session did not close cleanly, **Restore** appears at start-up: "Restore the autosaved version of …?" — **Restore** / **Open Original** / **Discard** 🟡 ([spec/0.14-diagnostics.md](spec/0.14-diagnostics.md)).

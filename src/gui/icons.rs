@@ -179,6 +179,26 @@ pub enum Icon {
     Folder,
     SheetMetal,
     Drawing,
+    // drawings
+    BaseView,
+    ProjectedView,
+    AuxView,
+    SectionView,
+    DetailView,
+    BreakView,
+    BreakOut,
+    SliceView,
+    CropView,
+    DraftView,
+    NewSheet,
+    CenterMark,
+    CenterlineMark,
+    Balloon,
+    PartsList,
+    HoleNote,
+    SurfaceSymbol,
+    Datum,
+    ControlFrame,
     Place,
     FreeMove,
     FreeRotate,
@@ -1077,6 +1097,129 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.rect(4.0, 4.0, 9.0, 9.0, acc);
             p.line(&[(10.0, 12.0), (13.0, 12.0)], ink);
             p.line(&[(4.0, 12.0), (8.0, 12.0)], hot);
+        }
+        BaseView => {
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            p.block([4.0, 7.0, 6.0, 4.5, 3.0], acc, soft);
+        }
+        ProjectedView => {
+            p.rect(1.5, 8.0, 7.5, 14.0, acc);
+            p.rect(9.0, 2.0, 15.0, 8.0, ink);
+            p.dashed((7.5, 8.0), (9.0, 8.0), hot);
+            p.dashed((4.5, 8.0), (4.5, 5.0), hot);
+            p.dashed((4.5, 5.0), (9.0, 5.0), hot);
+        }
+        AuxView => {
+            p.rect(1.5, 8.0, 7.5, 14.0, ink);
+            p.closed(&[(11.0, 1.5), (15.0, 5.5), (11.5, 9.0), (7.5, 5.0)], acc);
+            p.line(&[(7.5, 8.0), (9.5, 7.0)], hot);
+        }
+        SectionView => {
+            p.rect(2.5, 3.0, 13.5, 13.0, ink);
+            for k in 0..4 {
+                let x = 3.5 + k as f32 * 2.0;
+                p.line(&[(x, 12.5), (x + 3.0, 9.0)], tint(acc, 200));
+            }
+            p.line(&[(1.0, 8.0), (15.0, 8.0)], hot);
+            p.line(&[(1.0, 8.0), (1.0, 5.0)], hot);
+            p.line(&[(15.0, 8.0), (15.0, 5.0)], hot);
+        }
+        DetailView => {
+            p.circle(5.5, 5.5, 4.0, acc);
+            p.rect(9.0, 9.0, 15.0, 15.0, ink);
+            p.line(&[(8.3, 8.3), (9.0, 9.0)], hot);
+            p.disc(5.5, 5.5, 1.0, hot);
+        }
+        BreakView => {
+            p.rect(1.5, 5.0, 6.0, 11.0, ink);
+            p.rect(10.0, 5.0, 14.5, 11.0, ink);
+            p.line(&[(6.0, 4.0), (7.0, 6.5), (5.5, 9.5), (6.5, 12.0)], hot);
+            p.line(&[(10.0, 4.0), (11.0, 6.5), (9.5, 9.5), (10.5, 12.0)], hot);
+        }
+        BreakOut => {
+            p.rect(2.0, 2.0, 14.0, 14.0, ink);
+            p.closed(
+                &[
+                    (5.0, 6.0),
+                    (9.0, 4.5),
+                    (12.0, 7.0),
+                    (10.0, 11.5),
+                    (5.5, 10.5),
+                ],
+                hot,
+            );
+            p.disc(8.5, 8.0, 1.2, acc);
+        }
+        SliceView => {
+            p.rect(2.0, 3.0, 14.0, 13.0, ink);
+            p.line(&[(1.0, 14.5), (15.0, 1.5)], hot);
+        }
+        CropView => {
+            p.line(&[(4.0, 1.0), (4.0, 12.0), (15.0, 12.0)], ink);
+            p.line(&[(1.0, 4.0), (12.0, 4.0), (12.0, 15.0)], acc);
+        }
+        DraftView => {
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            p.line(&[(4.0, 11.0), (11.0, 5.0)], acc);
+            p.line(&[(11.0, 5.0), (12.5, 6.5)], hot);
+        }
+        NewSheet => {
+            p.closed(
+                &[
+                    (3.0, 1.5),
+                    (10.0, 1.5),
+                    (13.0, 4.5),
+                    (13.0, 14.5),
+                    (3.0, 14.5),
+                ],
+                ink,
+            );
+            p.line(&[(8.0, 6.0), (8.0, 12.0)], ok);
+            p.line(&[(5.0, 9.0), (11.0, 9.0)], ok);
+        }
+        CenterMark => {
+            p.circle(8.0, 8.0, 4.5, ink);
+            p.line(&[(1.0, 8.0), (15.0, 8.0)], acc);
+            p.line(&[(8.0, 1.0), (8.0, 15.0)], acc);
+        }
+        CenterlineMark => {
+            p.circle(4.0, 8.0, 2.5, ink);
+            p.circle(12.0, 8.0, 2.5, ink);
+            p.dashed((0.5, 8.0), (15.5, 8.0), acc);
+        }
+        Balloon => {
+            p.circle(10.0, 6.0, 4.5, acc);
+            p.text(10.0, 6.0, "1", 6.0, ink);
+            p.line(&[(6.8, 9.2), (2.0, 14.0)], ink);
+            p.disc(2.0, 14.0, 1.0, ink);
+        }
+        PartsList => {
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            for y in [5.5, 8.25, 11.0] {
+                p.line(&[(1.5, y), (14.5, y)], ink);
+            }
+            p.line(&[(5.0, 2.5), (5.0, 13.5)], acc);
+        }
+        HoleNote => {
+            p.circle(4.5, 11.0, 3.0, ink);
+            p.line(&[(6.5, 9.0), (10.0, 5.0), (15.0, 5.0)], acc);
+            p.text(12.0, 3.0, "Ø", 5.0, hot);
+        }
+        SurfaceSymbol => {
+            p.line(&[(1.5, 8.0), (4.5, 13.5), (11.0, 2.0), (15.0, 2.0)], acc);
+            p.line(&[(1.0, 14.5), (15.0, 14.5)], ink);
+        }
+        Datum => {
+            p.rect(4.5, 1.5, 11.5, 8.5, ink);
+            p.text(8.0, 5.0, "A", 6.0, acc);
+            p.line(&[(8.0, 8.5), (8.0, 11.5)], ink);
+            p.fill(&[(5.0, 15.0), (11.0, 15.0), (8.0, 11.5)], ink);
+        }
+        ControlFrame => {
+            p.rect(1.0, 4.5, 15.0, 11.5, ink);
+            p.line(&[(5.5, 4.5), (5.5, 11.5)], ink);
+            p.line(&[(11.0, 4.5), (11.0, 11.5)], ink);
+            p.circle(3.25, 8.0, 1.6, acc);
         }
         Folder => {
             p.fill(

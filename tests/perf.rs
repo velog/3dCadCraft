@@ -888,6 +888,9 @@ fn links_part(n: usize, sweep: bool) -> PartDocument {
     part
 }
 
+/// Hidden line removal of three views of a 100-hole plate (ms).
+const BUDGET_HLR: f64 = 400.0;
+
 #[test]
 fn speed_budgets() {
     // Shared CI runners have no stable timing (`CADCRAFT3D_NO_BUDGETS=1`).
@@ -2424,6 +2427,31 @@ fn speed_budgets() {
                 p.build_cache = Default::default();
                 p.regenerate().unwrap();
                 assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+            }),
+        ));
+    }
+
+    // Drawing views (spec 4 §6.1): hidden line removal of a plate with a
+    // 10 x 10 grid of holes, seen from the front, the top and isometric
+    // (meshes taken once, as the drawing's worker does per view).
+    {
+        use cadcraft3d::drawing::ViewOrientation;
+        use cadcraft3d::drawing::hlr::{part_meshes, view_lines};
+        let mut plate = box_with_circle([60.0, 60.0, 8.0], 3.0, 3.0, 2.0, true, 1.0);
+        plate.add_pattern(pattern_grid(10, 10, 6.0)).unwrap();
+        let meshes = part_meshes(&plate);
+        rows.push((
+            "drawing: HLR of a 100-hole plate, front + top + iso views",
+            BUDGET_HLR,
+            median_ms(3, || {
+                for o in [
+                    ViewOrientation::Front,
+                    ViewOrientation::Top,
+                    ViewOrientation::IsoTopRight,
+                ] {
+                    let l = view_lines(&meshes, &o.frame());
+                    assert!(!l.visible.is_empty());
+                }
             }),
         ));
     }

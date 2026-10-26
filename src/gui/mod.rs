@@ -41,6 +41,7 @@ mod demos;
 mod diag;
 mod doc_tabs;
 mod draft;
+mod drawing;
 mod drive;
 mod feature_cmd;
 mod files;
@@ -604,6 +605,8 @@ struct CadCraftApp {
     file_status: Option<Result<String, String>>,
     /// The assembly environment (`assembly.rs`).
     asm: assembly::AsmUi,
+    /// Drawing environment state (`drawing.rs`).
+    drw: drawing::DrwUi,
     /// Assembly constraints (`constrain.rs`).
     cons: constrain::ConstrainUi,
     /// Constraints keep the current distance (else 0); remembered.
@@ -859,6 +862,7 @@ impl CadCraftApp {
             window_title: String::new(),
             file_status: None,
             asm: Default::default(),
+            drw: Default::default(),
             cons: Default::default(),
             constrain_current_offset: false,
             iprops: None,
@@ -3530,6 +3534,10 @@ impl CadCraftApp {
     /// Fits the body and the visible sketches (an empty part shows the
     /// origin at a sensible scale).
     fn fit_view(&mut self) {
+        if self.is_drawing() {
+            self.drw.cam = Default::default();
+            return;
+        }
         if self.is_assembly() {
             match self.assembly_box() {
                 Some((lo, hi)) if nalgebra::distance(&lo, &hi) > 1.0 => self.camera.fit(lo, hi),
@@ -3656,6 +3664,14 @@ impl CadCraftApp {
     }
 
     fn apply(&mut self, action: Action) {
+        // In a drawing only its own and the application's commands run.
+        if self.is_drawing()
+            && let Some(c) = commands::by_action(action)
+            && !c.valid_in(commands::Env::Drawing)
+        {
+            self.file_status = Some(Err(format!("{}: not available in a drawing", c.name)));
+            return;
+        }
         // In an assembly only its own and the application's commands run.
         if self.is_assembly()
             && let Some(c) = commands::by_action(action)
@@ -3693,6 +3709,7 @@ impl CadCraftApp {
             _ => {}
         }
         match action {
+            Action::Drawing(c) => self.drw_apply(c),
             Action::AsmPlace
             | Action::AsmFreeMove
             | Action::AsmFreeRotate
@@ -3816,6 +3833,7 @@ impl CadCraftApp {
         match c {
             AppCmd::New => self.open_new_file(),
             AppCmd::NewAssembly => self.new_assembly(),
+            AppCmd::NewDrawing => self.new_drawing(),
             AppCmd::Open => self.request(files::Pending::Open, now),
             AppCmd::Save => self.save(),
             AppCmd::SaveAs => self.open_dialog(files::DialogPurpose::SaveAs),
@@ -4535,7 +4553,7 @@ impl CadCraftApp {
         if in_asm {
             self.assembly_keys(ctx, letter);
         }
-        let letter = letter && !in_asm;
+        let letter = letter && !in_asm && !self.is_drawing();
         if cmd && shift && pressed(Key::S) {
             self.open_dialog(files::DialogPurpose::SaveAs);
         } else if cmd && pressed(Key::S) {
@@ -4742,6 +4760,9 @@ impl CadCraftApp {
         g.add_line(&o, &Point3::new(0.0, 30.0, 0.0), [0.1, 0.7, 0.1]);
         g.add_line(&o, &Point3::new(0.0, 0.0, 30.0), [0.1, 0.2, 0.9]);
 
+        if self.is_drawing() {
+            return g;
+        }
         if self.is_assembly() {
             self.assembly_scene(&mut g);
             return g;
@@ -4870,6 +4891,11 @@ impl CadCraftApp {
     }
 
     fn viewport(&mut self, ui: &mut egui::Ui, frame: &eframe::Frame) {
+        // A drawing has its own 2D sheet view (`drawing.rs`).
+        if self.is_drawing() {
+            self.drawing_viewport(ui);
+            return;
+        }
         let (rect, mut response) =
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.viewport_rect = rect;
@@ -7156,6 +7182,7 @@ impl eframe::App for CadCraftApp {
         valuefield::draw_whip(&ctx);
         self.alias_window(&ctx);
         self.place_window(&ctx);
+        self.drawing_windows(&ctx);
         self.iprops_window(&ctx);
         self.new_file_window(&ctx);
         self.sm_defaults_window(&ctx);

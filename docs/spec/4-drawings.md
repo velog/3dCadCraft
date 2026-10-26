@@ -25,23 +25,23 @@ to, and an annotation whose edge is gone is marked (not deleted).
 
 | Option | Inventor behaviour | Restrictions | Our status |
 |---|---|---|---|
-| New Drawing | from a template (ISO / ANSI / DIN / JIS / GB / BSI); one sheet with a border and title block | | ⬜ |
-| Sheets | several per drawing; New Sheet, Edit Sheet (name, size A4–A0 / ANSI A–E / custom — Height / Width editable only for a custom size, orientation), Delete (several at once, a dialog lists them), Copy / Paste, Next / Previous Sheet in the canvas menu; Exclude from count / printing | | ⬜ |
+| New Drawing | from a template (ISO / ANSI / DIN / JIS / GB / BSI); one sheet with a border and title block | | 🟡 File → New → Drawing (and File → New Drawing) adds an ISO drawing (one A3 sheet, first angle) to the open project; template choice ANSI / DIN not in the UI yet; waiting for a visual check |
+| Sheets | several per drawing; New Sheet, Edit Sheet (name, size A4–A0 / ANSI A–E / custom — Height / Width editable only for a custom size, orientation), Delete (several at once, a dialog lists them), Copy / Paste, Next / Previous Sheet in the canvas menu; Exclude from count / printing | | 🟡 New Sheet (NS), Edit Sheet (ES: name, size incl. custom, orientation, revision, border / title block, exclude from count / printing), Delete Sheet, Activate (browser); Copy / Paste and Next / Previous Sheet ⬜; waiting for a visual check |
 | Sheet Formats | a saved sheet (size, border, title block, views with their settings) in Drawing Resources; Create Sheet Format from a sheet's menu (option *Fit views to sheet*); New Sheet from a format asks for a model for its views; a format is never edited in place — make a sheet from it, change it, save it under the same name | | ⬜ |
 | Drawing Resources | Sheet Formats (sheet + views ready to place), Borders, Title Blocks, Sketched Symbols — editable as sketches with property fields | | ⬜ |
-| Title block fields | text bound to iProperties of the drawing or the model of the first view (Part Number, Description, Designer, Date, Material, Mass, Scale, Sheet n of m); **prompted entries** asked when the block is placed, changed later in Edit Property Fields (only prompted values are editable there; iProperties through their own dialog); Reorder Prompted Entries in the definition | | ⬜ |
+| Title block fields | text bound to iProperties of the drawing or the model of the first view (Part Number, Description, Designer, Date, Material, Mass, Scale, Sheet n of m); **prompted entries** asked when the block is placed, changed later in Edit Property Fields (only prompted values are editable there; iProperties through their own dialog); Reorder Prompted Entries in the definition | | 🟡 a fixed ISO 7200-like block (title, part number, designed / checked by, date, material, scale, revision, sheet n / m) filled from the drawing's and the first view's model iProperties; prompted entries ⬜; waiting for a visual check |
 | Title block / border definition | drawn as a sketch (Manage › Define › Title Block), text with property fields, images; Save Title Block; Edit Definition from the sheet | | ⬜ |
-| Standards (Styles) | Standard — General: units, decimal marker, preset values (line weights, text heights, scales, hatch angles), characters excluded from automatic identifiers, Global Line Scale; View Preferences: view label per view type (prefix, text with scale / identifier fields, above / below, visible), default cut edges (Jagged / Smooth) for detail and section, thread edge display, **projection type** (first angle / third angle), Front View Plane (XY / YZ / XZ / From Model, new views only); Available Styles; Object Defaults (style + layer per object type: visible, hidden, tangent, centre, section, dimension…); **Material Hatch Pattern Defaults** (material → hatch pattern table, default pattern) | | ⬜ ISO first, then ANSI |
+| Standards (Styles) | Standard — General: units, decimal marker, preset values (line weights, text heights, scales, hatch angles), characters excluded from automatic identifiers, Global Line Scale; View Preferences: view label per view type (prefix, text with scale / identifier fields, above / below, visible), default cut edges (Jagged / Smooth) for detail and section, thread edge display, **projection type** (first angle / third angle), Front View Plane (XY / YZ / XZ / From Model, new views only); Available Styles; Object Defaults (style + layer per object type: visible, hidden, tangent, centre, section, dimension…); **Material Hatch Pattern Defaults** (material → hatch pattern table, default pattern) | | 🟡 the drawing stores its standard (ISO / ANSI / DIN) and projection type (ISO, DIN first angle; ANSI third); zones of the border follow it; the rest ⬜ |
 | Active standard / Update / Purge | Style and Standard Editor as for parts | | ⬜ |
 
 ### 3.2 Views (4.2)
 
 | View | Inventor behaviour | Restrictions | Our status |
 |---|---|---|---|
-| **Base View** | Drawing View dialog, Component tab: File (open models or browse), Representation (Model State; Design View + Associative; Camera View; Include 3D Annotations; Position View — assemblies), Style (Hidden lines displayed / removed / Shaded, *Style from Base*), Raster View, Scale (+ *Scale from Base*), label visibility and text, view identifier, Hide small parts (size threshold); orientation is chosen with the ViewCube in the preview; click to place; continue with projected views from the cursor | | ⬜ |
-| Base view options | Sheet Metal View: Folded Model / Flat Pattern (needs a flat pattern), Bend Extents, Punch Center; Model tab: reference data (hidden lines separately / with all bodies, style, margin), weldment state and welding symbols; Display Options (only the relevant ones shown): Standard Parts hidden lines (Never / Obey Browser) and Section (Never / Always / Obey Browser, default Obey Browser), Cut Inheritance, Thread Feature (off by default), Tangent Edges + Foreshortened, Interference Edges, Align to Base, Definition in Base View, Orientation from Base (on by default), Hatching, Center Justified / Fixed; Recovery Options: Include Surface Bodies, Include Mesh Bodies (both off), All Model Dimensions (planar to the view, not yet on the sheet, with tolerances), Use Work Features (as reference lines) | | ⬜ |
+| **Base View** | Drawing View dialog, Component tab: File (open models or browse), Representation (Model State; Design View + Associative; Camera View; Include 3D Annotations; Position View — assemblies), Style (Hidden lines displayed / removed / Shaded, *Style from Base*), Raster View, Scale (+ *Scale from Base*), label visibility and text, view identifier, Hide small parts (size threshold); orientation is chosen with the ViewCube in the preview; click to place; continue with projected views from the cursor | | 🟡 Drawing View dialog with all four tabs; File: the project's parts or Browse... (links a part file, the drawing saved first); standard orientations (Front … Iso Bottom Left) as a list instead of the ViewCube; Hidden Line / Hidden Line Removed (Shaded drawn as Hidden Line Removed for now); scale presets or any number, fitted to the sheet until set; identifier and label; the preview follows the cursor, a click places it and Projected View continues; Representation, Raster View, Hide small parts shown disabled; waiting for a visual check |
+| Base view options | Sheet Metal View: Folded Model / Flat Pattern (needs a flat pattern), Bend Extents, Punch Center; Model tab: reference data (hidden lines separately / with all bodies, style, margin), weldment state and welding symbols; Display Options (only the relevant ones shown): Standard Parts hidden lines (Never / Obey Browser) and Section (Never / Always / Obey Browser, default Obey Browser), Cut Inheritance, Thread Feature (off by default), Tangent Edges + Foreshortened, Interference Edges, Align to Base, Definition in Base View, Orientation from Base (on by default), Hatching, Center Justified / Fixed; Recovery Options: Include Surface Bodies, Include Mesh Bodies (both off), All Model Dimensions (planar to the view, not yet on the sheet, with tolerances), Use Work Features (as reference lines) | | 🟡 Align to Base works; the other options are in the dialog, disabled with their stage in the tooltip |
 | Raster View | pixel-based view computed fast; precise views are computed in the background and replace it; green frame in the view, marked browser icon; context menu converts raster ↔ precise; some commands unavailable; printing a raster view is not recommended | | ⬜ |
-| **Projected View** | orthographic (aligned to its parent by the projection type of the standard) and isometric views from any existing view; inherits the parent's scale and style unless *from Base* is cleared | | ⬜ |
+| **Projected View** | orthographic (aligned to its parent by the projection type of the standard) and isometric views from any existing view; inherits the parent's scale and style unless *from Base* is cleared | | 🟡 PV, or right after a base view: click beside the parent (orthographic, aligned, first / third angle from the standard) or diagonally (isometric); scale and style from the base unless cleared; Esc / right-click ends; waiting for a visual check |
 | **Section View** | a section line drawn over a parent (multi-segment); View identifier, Scale, Label, Style; **Depth**: Full or Distance; **Include Slice** / **Slice All Parts**; **Method**: Projected or Aligned (non-square segments); hatching by material; Half / Offset / Aligned sections from the line's shape | | ⬜ |
 | **Detail View** | dialog: identifier, scale, label, style (Show / Remove hidden lines / Shaded; default = the parent's), **Fence Shape** Circular / Rectangular (same in parent and detail), **Cutout Shape** Jagged (default) / Smooth; with Smooth: Display Full Detail Boundary, and with it Display Connection Line (vertices can be added / moved / deleted; gone when the view moves to another sheet); Attach Fence. Clicks: centre, outer boundary, place. The fence is *not* attached to the parent's geometry by default — Attach (menu) to a vertex keeps it there across model updates; Attach on empty space detaches | | ⬜ |
 | **Auxiliary View** | pick a parent, set scale / style / label, pick an edge or line of it; the view slides only square to or along that edge; for a line outside the geometry use a Section View | | ⬜ |
@@ -51,8 +51,8 @@ to, and an annotation whose edge is gone is marked (not deleted).
 | **Crop** | clips a view by a sketch / rectangle | | ⬜ |
 | **Overlay** | other positional representations drawn in phantom lines | ⛔ positional reps | ⬜ |
 | Draft view | a view with only a sketch | | ⬜ |
-| Move / align / rotate views; edit view; delete with dependents | | | ⬜ |
-| Associativity | the model changes → views recompute; Defer Update for large drawings | | ⬜ |
+| Move / align / rotate views; edit view; delete with dependents | | | 🟡 drag a view (aligned children follow, an aligned child slides on its axis), Edit View (double-click, browser, menu), Delete (with the views projected from it, one Undo step), position in Properties; rotate ⬜; waiting for a visual check |
+| Associativity | the model changes → views recompute; Defer Update for large drawings | | 🟡 a view's lines are cached by the model's body signature: a model change recomputes them (worker thread); linked part files are read again when their time changes; Defer Update ⬜ |
 
 ### 3.3 Annotations (4.3)
 
@@ -122,6 +122,25 @@ Nothing to adapt: SolidCraft has no drawings (only a DXF writer). Our plan:
    hatched by material (ISO 128 hatch patterns per material class), then the same HLR.
 5. **Speed**: views are computed on a worker thread (`preview_async`-like), cached by the model's
    signature; Raster View = the existing GPU renderer to an image.
+
+### 6.1a Implemented (D1, first part, 2026-10-26)
+
+- `src/drawing/mod.rs`: `DrawingDocument` (standard, sheets, active sheet, view ids never reused),
+  `Sheet`, `DrawingView` (`ViewKind::Base { model, orientation }` / `Projected { parent, dir }`),
+  `ViewFrame` (right, up, toward), `ViewOrientation`, `ProjectDir`, `Projection`, scales; placing, moving
+  (alignment), deleting with dependents, references for Pack / Link (`DocumentData::references`).
+- `src/drawing/sheet.rs`: sheet sizes, the border with zones and centring marks, the title block as
+  `Prim`s (lines and texts in sheet mm — the list the screen draws and PDF / DXF will write).
+- `src/drawing/hlr.rs`: option A2 on the display mesh: model edges + silhouettes of curved faces (mesh
+  edges between a front- and a back-facing triangle of one smooth surface), each cut into pieces of
+  1/600 of the model size and classified by its middle against the front-facing triangles binned in a
+  uniform grid on the view plane; pieces on a visible line are not drawn twice or hidden. Circles are still
+  polylines here (exact curves and edge names come with dimensions, D3).
+- GUI `src/gui/drawing.rs` (`DrwUi`): the sheet view (pan with the middle button, zoom at the cursor, Zoom
+  All), views drawn with ISO weights (visible 0.5, hidden 0.35 dashed), the Drawing View and Edit Sheet
+  dialogs, browser tree (Drawing Resources, sheets, views under their parents), Properties of a view or the
+  sheet. Ribbon tabs Place Views and Annotate list the whole Inventor command set; the planned ones are
+  greyed with their FEATURES section. Format revision 23 (`DocumentData::Drawing`).
 
 ### 6.2 Data model
 
