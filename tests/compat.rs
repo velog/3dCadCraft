@@ -1259,6 +1259,75 @@ fn drawing_r25_project() -> Project {
     project
 }
 
+/// Revision 26: the four-flange tray of revision 22, its drawing with an
+/// isometric folded view, a flat pattern view and a bend note on each bend.
+fn drawing_r26_project() -> Project {
+    use cadcraft3d::document::DocRef;
+    use cadcraft3d::drawing::hlr::flat_lines;
+    use cadcraft3d::drawing::{
+        AnnotationKind, DrawingDocument, SheetView, ViewOrientation, ViewStyle,
+    };
+    let mut project = Project::new("DrawingR26");
+    let part = sheet_r22();
+    let lines = flat_lines(&part, &ViewOrientation::Top.frame(), None).unwrap();
+    let id = project.add_document("Tray", DocumentData::Part(part));
+    let mut d = DrawingDocument::default();
+    d.add_base_view(
+        DocRef::local(id),
+        ViewOrientation::IsoTopRight,
+        [110.0, 190.0],
+        1.0,
+        ViewStyle::HiddenShown,
+    )
+    .unwrap();
+    let flat = d
+        .add_base_view(
+            DocRef::local(id),
+            ViewOrientation::Top,
+            [280.0, 160.0],
+            1.0,
+            ViewStyle::HiddenShown,
+        )
+        .unwrap();
+    d.sheets[0].views[1].sheet_metal = SheetView::Flat;
+    for b in &lines.bends {
+        d.add_annotation(AnnotationKind::BendNote {
+            view: flat,
+            bend: b.middle(),
+            offset: [0.0, 0.0],
+        });
+    }
+    project.add_document("Drawing1", DocumentData::Drawing(d));
+    project
+}
+
+/// The revision 26 drawing reads back with its flat pattern view and notes.
+#[test]
+fn drawing_r26_reads() {
+    use cadcraft3d::drawing::{AnnotationKind, SheetView};
+    let f = root().join("r26/drawing_r26.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    assert_eq!(d.sheets[0].views[1].sheet_metal, SheetView::Flat);
+    let notes = d.sheets[0]
+        .annotations
+        .iter()
+        .filter(|a| matches!(a.kind, AnnotationKind::BendNote { .. }))
+        .count();
+    assert_eq!(notes, 4);
+    project.validate().unwrap();
+}
+
 /// The revision 25 drawing reads back with its parts list and balloon.
 #[test]
 fn drawing_r25_reads() {
@@ -1376,6 +1445,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r25_project().save(&f).unwrap();
+        }
+        let f = root().join("r26/drawing_r26.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r26_project().save(&f).unwrap();
         }
         let f = root().join("r22/sheet_r22.3dcadcraft");
         if !f.exists() {

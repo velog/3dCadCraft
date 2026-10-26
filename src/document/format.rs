@@ -109,10 +109,13 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (`Feature::SheetOp`) (2026-10-26).
 /// - 22: Corner Seam (`SheetOp::CornerSeam`) (2026-10-26).
 /// - 23: drawing documents (`DocumentData::Drawing`) (2026-10-26).
-/// - 24: reserved for sheet metal Corner Round / Chamfer (`SheetOp`).
+/// - 24: not used (was reserved for sheet metal; see 26).
 /// - 25: parts lists and balloons in drawings (`AnnotationKind::PartsList`,
 ///   `AnnotationKind::Balloon`) (2026-10-26).
-pub const FORMAT_REVISION: u32 = 25;
+/// - 26: flat pattern views and bend notes (`DrawingView::sheet_metal`,
+///   `AnnotationKind::BendNote`) (2026-10-26). Revision 24 stays unused: the
+///   next new variant takes the next free number.
+pub const FORMAT_REVISION: u32 = 26;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

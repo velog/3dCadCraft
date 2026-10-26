@@ -72,7 +72,6 @@ pub enum Planned {
     // Feature Notes
     ChamferNote,
     PunchNote,
-    BendNote,
     // Symbols
     SketchedSymbols,
     SurfaceTexture,
@@ -211,7 +210,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 53] = [
+    pub const ALL: [Planned; 52] = [
         Self::Overlay,
         Self::DraftView,
         Self::Break,
@@ -234,7 +233,6 @@ impl Planned {
         Self::EditDimension,
         Self::ChamferNote,
         Self::PunchNote,
-        Self::BendNote,
         Self::SketchedSymbols,
         Self::SurfaceTexture,
         Self::Welding,
@@ -292,7 +290,6 @@ impl Planned {
             Self::EditDimension => "Edit Dimension",
             Self::ChamferNote => "Chamfer Note",
             Self::PunchNote => "Punch Notes",
-            Self::BendNote => "Bend Notes",
             Self::SketchedSymbols => "Symbols",
             Self::SurfaceTexture => "Surface Texture",
             Self::Welding => "Welding Symbol",
@@ -622,18 +619,6 @@ impl Planned {
                     ),
                     Sel("place", "Placement", "click where the note goes"),
                     Text("Note Format", "<PUNCH ID> <DIRECTION> <DEPTH>"),
-                ],
-            )],
-            Self::BendNote => &[Page(
-                "Bend Notes",
-                &[
-                    Sel(
-                        "bends",
-                        "Bend Centerlines",
-                        "select bend centre lines of a flat pattern view",
-                    ),
-                    Text("Note Format", "<DIRECTION> <BEND ANGLE> R<BEND RADIUS>"),
-                    Note("Each note sits on its bend line"),
                 ],
             )],
             Self::SketchedSymbols => &[Page(
@@ -1119,7 +1104,6 @@ impl Planned {
             }
             Self::ChamferNote => "A note with the chamfer's distances and angle",
             Self::PunchNote => "A note of a punch in a flat pattern view",
-            Self::BendNote => "Direction, angle and radius on a bend line of a flat pattern view",
             Self::SketchedSymbols => "Places a sketched symbol from Drawing Resources",
             Self::SurfaceTexture => "A surface texture (roughness) symbol, ISO 1302 / 21920",
             Self::Welding => "A welding symbol (ISO 2553): arrow and other side, flags, tail",

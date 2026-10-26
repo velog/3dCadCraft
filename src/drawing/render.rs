@@ -118,10 +118,31 @@ pub fn view_extras<'a>(
     let hatch_layer = st.layer(&st.defaults.hatch_layer);
     let center_w = st.layer(&st.defaults.section_layer).weight;
     let va = st.view_annotation(&st.defaults.view_annotation);
+    let (bend_c, bend_x) = st.bend_layers();
     for v in &sheet.views {
         let Some((pl, l)) = view(v.id) else {
             continue;
         };
+        // Flat patterns: bend centre lines and bend extents.
+        for b in &l.bends {
+            if bend_c.on {
+                out.push(Prim::Center {
+                    a: pl.to_sheet(b.centre[0]),
+                    b: pl.to_sheet(b.centre[1]),
+                    width: bend_c.weight,
+                    chain: bend_c.line_type != super::style::LineType::Continuous,
+                });
+            }
+            if bend_x.on {
+                for z in &b.zone {
+                    out.push(Prim::Path {
+                        pts: vec![pl.to_sheet(z[0]), pl.to_sheet(z[1])],
+                        width: bend_x.weight,
+                        dashed: bend_x.line_type == super::style::LineType::Dashed,
+                    });
+                }
+            }
+        }
         // Hatching of cut faces (the hatch style: angle, spacing, double).
         if v.display.hatching && hatch_layer.on {
             let loops: Vec<Vec<[f64; 2]>> = l

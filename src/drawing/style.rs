@@ -380,6 +380,10 @@ pub struct ObjectDefaults {
     pub hatch_layer: String,
     /// Layer of the border and title block.
     pub border_layer: String,
+    /// Layer of the bend centre lines of flat pattern views.
+    pub bend_center_layer: String,
+    /// Layer of the bend extents of flat pattern views.
+    pub bend_extent_layer: String,
 }
 
 impl Default for ObjectDefaults {
@@ -398,6 +402,8 @@ impl Default for ObjectDefaults {
             dimension_layer: "Dimension (ISO)".into(),
             hatch_layer: "Hatch (ISO)".into(),
             border_layer: "Border (ISO)".into(),
+            bend_center_layer: "Bend Centerline (ISO)".into(),
+            bend_extent_layer: "Bend Extent (ISO)".into(),
         }
     }
 }
@@ -497,6 +503,8 @@ impl DrawingStyles {
                 layer(&n("Section Line"), black, LineType::Chain, 0.7),
                 layer(&n("Border"), black, LineType::Continuous, 0.7),
                 layer(&n("Title"), black, LineType::Continuous, 0.5),
+                layer(&n("Bend Centerline"), black, LineType::Chain, 0.25),
+                layer(&n("Bend Extent"), black, LineType::Continuous, 0.5),
             ],
             dimension: vec![DimensionStyle {
                 name: n("Default"),
@@ -539,6 +547,8 @@ impl DrawingStyles {
                 dimension_layer: n("Dimension"),
                 hatch_layer: n("Hatch"),
                 border_layer: n("Border"),
+                bend_center_layer: n("Bend Centerline"),
+                bend_extent_layer: n("Bend Extent"),
             },
         };
         if kind == StandardKind::Ansi {
@@ -553,8 +563,31 @@ impl DrawingStyles {
             c.mark = 6.35;
             c.gap = 2.9972;
             c.overshoot = 3.175;
+            if let Some(l) = s
+                .layers
+                .iter_mut()
+                .find(|l| l.name == "Bend Centerline (ANSI)")
+            {
+                l.weight = 0.254;
+            }
         }
         s
+    }
+
+    /// The layers of bend centre lines and bend extents (chain 0.25 mm and
+    /// continuous 0.5 mm in drawings made before they existed).
+    pub fn bend_layers(&self) -> (LayerStyle, LayerStyle) {
+        let d = &self.defaults;
+        (
+            self.layer_or(
+                &d.bend_center_layer,
+                layer(&d.bend_center_layer, [0, 0, 0], LineType::Chain, 0.25),
+            ),
+            self.layer_or(
+                &d.bend_extent_layer,
+                layer(&d.bend_extent_layer, [0, 0, 0], LineType::Continuous, 0.5),
+            ),
+        )
     }
 
     /// The layer named `name`, else the first.
@@ -565,6 +598,16 @@ impl DrawingStyles {
             .or(self.layers.first())
             .cloned()
             .unwrap_or_else(|| layer(name, [0, 0, 0], LineType::Continuous, 0.25))
+    }
+
+    /// The layer named `name`, or `fallback` when the drawing has none of
+    /// that name (files from before the layer existed).
+    pub fn layer_or(&self, name: &str, fallback: LayerStyle) -> LayerStyle {
+        self.layers
+            .iter()
+            .find(|l| l.name == name)
+            .cloned()
+            .unwrap_or(fallback)
     }
 
     /// The dimension style named `name`, else the first.

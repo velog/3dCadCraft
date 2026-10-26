@@ -208,5 +208,12 @@
     "features": 1,
     "sketches": 0,
     "exact": true
+  },
+  "r26/drawing_r26.3dcadcraft": {
+    "volume": 31458.065903299444,
+    "faces": 54,
+    "features": 3,
+    "sketches": 1,
+    "exact": true
   }
 }

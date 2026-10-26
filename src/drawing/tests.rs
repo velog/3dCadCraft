@@ -1267,3 +1267,102 @@ fn assembly_parts_list_and_balloons() {
     }
     assert!(resolve_in(&gone, &view, &look, &tables).is_err());
 }
+
+/// A 100 × 60 × 2 sheet with a 25 mm flange.
+fn sheet_part() -> PartDocument {
+    use crate::part::SketchOptions;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 60.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let prof = vec![crate::part::ProfileRef::of(&r[0], r[0].interior_point())];
+    let face = p.add_sheet_face(i, prof, false).unwrap();
+    let (body, edge) = p
+        .sheet_edge_at(crate::kernel::Point3::new(50.0, 0.0, 2.0))
+        .unwrap();
+    assert_eq!(body, face);
+    let fl = crate::part::sheet_metal::SheetFlangeFeature::new(&body, vec![edge], 25.0);
+    p.add_sheet_flange(fl).unwrap();
+    p
+}
+
+/// A flat pattern view: the flat's outline seen on its top face, one bend
+/// with its centre line and extents across the flat, and its bend note in
+/// the dimension style (`UP 90,00° R2,00`).
+#[test]
+fn flat_pattern_view_and_bend_note() {
+    use super::annot::{Placement, bend_note_text, resolve};
+    let part = sheet_part();
+    let flats = part.flat_patterns();
+    let (a, b) = flats[0].size;
+    let lines = hlr::flat_lines(&part, &ViewOrientation::Top.frame(), None).expect("a flat");
+    let (w, h) = lines.size();
+    let (long, short) = (w.max(h), w.min(h));
+    close(long, a.max(b), 0.05, "flat length");
+    close(short, a.min(b), 0.05, "flat width");
+    assert_eq!(lines.bends.len(), 1);
+    let bend = &lines.bends[0];
+    let len = (bend.centre[1][0] - bend.centre[0][0]).hypot(bend.centre[1][1] - bend.centre[0][1]);
+    close(len, 100.0, 0.05, "bend line length");
+    close(bend.angle, 90.0, 1e-6, "bend angle");
+    // The zone is the bend allowance wide, around the centre line.
+    let z = &bend.zone;
+    let width = (z[0][0][0] - z[1][0][0]).hypot(z[0][0][1] - z[1][0][1]);
+    let ba = std::f64::consts::FRAC_PI_2 * (2.0 + 0.44 * 2.0);
+    close(width, ba, 0.01, "bend zone");
+    let st = super::style::DrawingStyles::default();
+    let text = bend_note_text(bend, &st.dimension[0]);
+    assert!(text.ends_with(" 90,00° R2,00"), "{text}");
+    assert!(text.starts_with("UP") || text.starts_with("DOWN"));
+    // The note annotation resolves on the bend, and is orphaned without it.
+    let pl = Placement {
+        position: [200.0, 150.0],
+        scale: 1.0,
+        center: lines.center(),
+    };
+    let view = |id: u32| (id == 1).then_some((pl, &lines));
+    let note = AnnotationKind::BendNote {
+        view: 1,
+        bend: bend.middle(),
+        offset: [0.0, 0.0],
+    };
+    let s = resolve(&note, &view).unwrap();
+    assert!(matches!(&s.prims[0], Prim::Text { text: t, .. } if *t == text));
+    let far = AnnotationKind::BendNote {
+        view: 1,
+        bend: [bend.middle()[0] + 500.0, 0.0],
+        offset: [0.0, 0.0],
+    };
+    assert!(resolve(&far, &view).is_err());
+    // The bend layers draw the lines: chain centre line, two extents.
+    let mut d = DrawingDocument::default();
+    let v = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [200.0, 150.0],
+            1.0,
+            ViewStyle::HiddenShown,
+        )
+        .unwrap();
+    d.sheets[0].views[0].sheet_metal = SheetView::Flat;
+    assert!(d.flat_of(&d.sheets[0], v));
+    let extras = super::render::view_extras(&d, 0, &|id| (id == v).then_some((pl, &lines)));
+    assert_eq!(
+        extras
+            .iter()
+            .filter(|p| matches!(p, Prim::Center { chain: true, .. }))
+            .count(),
+        1
+    );
+}

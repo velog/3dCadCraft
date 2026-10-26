@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::hlr::{ViewEdge, ViewLines};
+use super::hlr::{ViewBend, ViewEdge, ViewLines};
 use super::sheet::{Anchor, Prim, Weight};
 use super::style::{AnnotationLook, Terminator, TextOrientation};
 
@@ -65,6 +65,18 @@ pub enum AnnotationKind {
         at: [f64; 2],
         /// The text (lines split by `\n`).
         text: String,
+    },
+    /// Bend note on a bend of a flat pattern view: direction, angle and
+    /// radius, on the bend's centre line.
+    BendNote {
+        /// The view.
+        view: u32,
+        /// The bend's centre-line middle when the note was placed (view
+        /// plane): the note belongs to the nearest bend.
+        bend: [f64; 2],
+        /// The text's offset from its place on the line (sheet mm).
+        #[serde(default)]
+        offset: [f64; 2],
     },
     /// Parts list of a view's assembly (`parts`).
     PartsList(super::parts::PartsList),
@@ -214,6 +226,18 @@ pub fn resolve_in<'a>(
 ) -> Result<Shown, Orphan> {
     let st = Draw { look };
     match a {
+        AnnotationKind::BendNote {
+            view: v,
+            bend,
+            offset,
+        } => {
+            let (pl, lines) = view(*v).ok_or(Orphan::NoView)?;
+            let b = nearest_bend(lines, *bend).ok_or_else(|| Orphan::Missing("bend".into()))?;
+            Ok(Shown {
+                prims: st.bend_note(b, pl, *offset),
+                value: Some(b.angle),
+            })
+        }
         AnnotationKind::PartsList(pl) => {
             let t = tables.table_of(pl).ok_or(Orphan::NoView)?;
             Ok(Shown {
@@ -406,6 +430,36 @@ impl Draw<'_> {
             anchor: Anchor::Center,
             angle,
         }
+    }
+
+    /// A bend note: `UP 90,00° R2,00` (the dimension style's precision and
+    /// decimal marker) along the bend's centre line, above it, readable.
+    fn bend_note(&self, b: &ViewBend, pl: Placement, offset: [f64; 2]) -> Vec<Prim> {
+        let h = self.look.leader_text.height;
+        let (a, c) = (pl.to_sheet(b.centre[0]), pl.to_sheet(b.centre[1]));
+        let mut d = sub(c, a);
+        // Readable from the bottom or the right.
+        if d[0] < -1e-9 || (d[0].abs() <= 1e-9 && d[1] < 0.0) {
+            d = mul(d, -1.0);
+        }
+        let len = norm(d).max(1e-9);
+        let u = mul(d, 1.0 / len);
+        let n = [-u[1], u[0]];
+        let mid = mul(add(a, c), 0.5);
+        // Above the bend zone (its half width) by 1 mm.
+        let half = {
+            let z = &b.zone;
+            let (p, q) = (pl.to_sheet(z[0][0]), pl.to_sheet(z[1][0]));
+            norm(sub(p, q)) * 0.5
+        };
+        let at = add(add(mid, mul(n, half + 1.0)), offset);
+        vec![Prim::Text {
+            at,
+            height: h,
+            text: bend_note_text(b, &self.look.dim),
+            anchor: Anchor::Center,
+            angle: u[1].atan2(u[0]),
+        }]
     }
 
     /// A value as the dimension style writes it.
@@ -645,6 +699,43 @@ pub(super) fn terminator(
     }
 }
 
+/// The bend of `lines` whose centre-line middle is nearest `at`, within
+/// a tenth of the view's size (a bend that moved a little stays found).
+pub fn nearest_bend(lines: &ViewLines, at: [f64; 2]) -> Option<&ViewBend> {
+    let (w, h) = lines.size();
+    let tol = (w.max(h) * 0.1).max(1.0);
+    lines
+        .bends
+        .iter()
+        .map(|b| {
+            let m = b.middle();
+            ((m[0] - at[0]).hypot(m[1] - at[1]), b)
+        })
+        .filter(|(d, _)| *d <= tol)
+        .min_by(|x, y| x.0.total_cmp(&y.0))
+        .map(|(_, b)| b)
+}
+
+/// A bend note's text: direction, angle, radius (`DOWN 90,00° R2,00`).
+pub fn bend_note_text(b: &ViewBend, d: &super::style::DimensionStyle) -> String {
+    let num = |v: f64| {
+        let mut t = format!("{:.*}", usize::from(d.precision), v);
+        if !d.trailing_zeros && t.contains('.') {
+            t = t.trim_end_matches('0').trim_end_matches('.').to_string();
+        }
+        if d.decimal_comma {
+            t = t.replace('.', ",");
+        }
+        t
+    };
+    format!(
+        "{} {}° R{}",
+        if b.up { "UP" } else { "DOWN" },
+        num(b.angle),
+        num(b.radius)
+    )
+}
+
 /// Approximate width of a text line (mm): 0.6 × height per character.
 pub fn text_width(t: &str, height: f64) -> f64 {
     t.chars().count() as f64 * height * 0.6
@@ -679,6 +770,7 @@ impl Annotation {
             }
             AnnotationKind::Dimension(d) => Some(d.a.view),
             AnnotationKind::HoleNote { view, .. } => Some(*view),
+            AnnotationKind::BendNote { view, .. } => Some(*view),
             AnnotationKind::PartsList(p) => Some(p.view),
             AnnotationKind::Balloon(b) => Some(b.view),
             AnnotationKind::Text { .. } | AnnotationKind::LeaderText { .. } => None,

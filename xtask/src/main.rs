@@ -4,7 +4,7 @@
 //! - `quick` (a few minutes): format, assets, clippy, the unit tests except the
 //!   heavy ones (`heavy_unit_tests.txt`), the light integration tests, the GUI
 //!   unit tests;
-//! - `heavy`: the heavy unit tests, the medium integration tests, then the
+//! - `heavy`: the heavy unit tests, the timed unit tests (`TIMED_UNIT`) alone, the medium integration tests, then the
 //!   timed ones (`TIMED`: perf budgets, Boolean identities, oracle) one binary
 //!   at a time so their budgets do not share the machine;
 //! - `ci`: every check once: `quick` (and clippy without the GUI), `heavy`,
@@ -103,6 +103,11 @@ const MEDIUM: &[&str] = &[
 /// Integration tests with time budgets or long runs, each run alone (last).
 const TIMED: &[&str] = &["boolean_identity", "oracle", "perf_drawing", "perf"];
 
+/// Unit tests with a time budget: run alone after the others (sharing the
+/// machine with 36 parallel kernel tests, a 3 s test took 16 s).
+const TIMED_UNIT: &[&str] =
+    &["part::exact::hollow_box::picking_edges_one_by_one_is_exact_or_refused"];
+
 /// Unit tests that take 3 s or more under a full parallel run (measured
 /// 2026-10-26), one exact name per line.
 const HEAVY_UNIT: &str = include_str!("heavy_unit_tests.txt");
@@ -169,7 +174,10 @@ fn quick() -> bool {
 }
 
 fn heavy() -> bool {
-    let heavy = heavy_unit();
+    let heavy: Vec<&str> = heavy_unit()
+        .into_iter()
+        .filter(|t| !TIMED_UNIT.contains(t))
+        .collect();
     let mut unit = vec![
         "cargo",
         "test",
@@ -179,11 +187,28 @@ fn heavy() -> bool {
         "--exact",
     ];
     unit.extend(heavy.iter().copied());
+    let timed_unit = || {
+        TIMED_UNIT.iter().all(|t| {
+            run(
+                &[
+                    "cargo",
+                    "test",
+                    "--no-default-features",
+                    "--lib",
+                    "--",
+                    "--exact",
+                    t,
+                ],
+                &[],
+            )
+        })
+    };
     let mut medium = vec!["cargo", "test", "--no-default-features"];
     for t in MEDIUM {
         medium.extend(["--test", t]);
     }
     run(&unit, &[])
+        && timed_unit()
         && run(&medium, &[])
         && TIMED.iter().all(|t| {
             run(

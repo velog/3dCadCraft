@@ -26,9 +26,10 @@ use super::valuefield::ExprValue;
 use crate::assembly::bom::{self, BomRow, ComponentInfo};
 use crate::document::{AssemblyDocument, DocRef, DocumentData, Project};
 use crate::drawing::annot::{AnnotationKind, Placement};
+use crate::drawing::hlr::ViewLines;
 use crate::drawing::hlr::{self, ViewModel};
 use crate::drawing::parts::{self, Balloon, BalloonShape, BomKind, PartsList, Tables};
-use crate::drawing::{DrawingDocument, sheet as fmt};
+use crate::drawing::{DrawingDocument, ViewFrame, sheet as fmt};
 use crate::kernel::Transform3;
 use crate::part::PartDocument;
 
@@ -53,9 +54,24 @@ pub(super) struct ModelJob {
     parts: Vec<PartDocument>,
     occurrences: Vec<(u32, Transform3, usize)>,
     assembly: bool,
+    /// A part's flat pattern instead of the folded part.
+    flat: bool,
 }
 
 impl ModelJob {
+    /// The view's lines (on the worker): the model seen in `frame`; a flat
+    /// pattern in its own frame with its bends.
+    pub(super) fn lines(&self, frame: &ViewFrame, aligned: Option<&hlr::Aligned>) -> ViewLines {
+        if self.flat
+            && !self.assembly
+            && let Some(part) = self.parts.first()
+            && let Some(lines) = hlr::flat_lines(part, frame, aligned)
+        {
+            return lines;
+        }
+        hlr::view_lines_with(&self.model(), frame, aligned)
+    }
+
     /// The view model (on the worker).
     pub(super) fn model(&self) -> ViewModel {
         if !self.assembly {
@@ -266,13 +282,14 @@ impl CadCraftApp {
     }
 
     /// Copies of what a view of `model` is computed from.
-    pub(super) fn model_job(&self, model: DocRef) -> Option<ModelJob> {
+    pub(super) fn model_job(&self, model: DocRef, flat: bool) -> Option<ModelJob> {
         let Some((asm, src)) = self.drawing_assembly(model) else {
             let part = self.with_part(model, |p| p.clone())?;
             return Some(ModelJob {
                 parts: vec![part],
                 occurrences: Vec::new(),
                 assembly: false,
+                flat,
             });
         };
         let mut comps: Vec<DocRef> = Vec::new();
@@ -296,6 +313,7 @@ impl CadCraftApp {
             parts,
             occurrences,
             assembly: true,
+            flat: false,
         })
     }
 

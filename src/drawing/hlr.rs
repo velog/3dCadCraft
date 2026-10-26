@@ -40,6 +40,33 @@ pub struct ViewLines {
     pub min: [f64; 2],
     /// Upper right.
     pub max: [f64; 2],
+    /// Flat pattern views: the bends.
+    pub bends: Vec<ViewBend>,
+}
+
+/// A bend of a flat pattern view (view plane).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ViewBend {
+    /// Centre line ends.
+    pub centre: [[f64; 2]; 2],
+    /// The bend zone's two edges (Bend Extents).
+    pub zone: [[[f64; 2]; 2]; 2],
+    /// Bends up (towards the viewer of the flat's top face).
+    pub up: bool,
+    /// Angle (degrees).
+    pub angle: f64,
+    /// Inner radius (mm).
+    pub radius: f64,
+}
+
+impl ViewBend {
+    /// The centre line's middle.
+    pub fn middle(&self) -> [f64; 2] {
+        [
+            (self.centre[0][0] + self.centre[1][0]) * 0.5,
+            (self.centre[0][1] + self.centre[1][1]) * 0.5,
+        ]
+    }
 }
 
 impl ViewLines {
@@ -212,6 +239,87 @@ pub fn assembly_model(instances: &[Instance], simplify: Simplify) -> ViewModel {
         }
     }
     out
+}
+
+/// `m` moved by `t` (a flat pattern into its own frame).
+pub fn transformed(m: &ViewModel, t: &Transform3) -> ViewModel {
+    let moved = assembly_model(
+        &[Instance {
+            id: 0,
+            transform: *t,
+            model: std::sync::Arc::new(m.clone()),
+        }],
+        Simplify::default(),
+    );
+    ViewModel {
+        edges: moved
+            .edges
+            .into_iter()
+            .map(|mut e| {
+                e.name = e.name.map(|n| n.trim_start_matches("o0/").to_owned());
+                e
+            })
+            .collect(),
+        ..moved
+    }
+}
+
+/// The flat pattern of `part`'s first sheet body: its view model moved into
+/// the flat's own frame (top face towards +Z, flat x along +X), that move,
+/// and its bend lines (part coordinates).
+pub fn flat_model(
+    part: &PartDocument,
+) -> Option<(
+    ViewModel,
+    Transform3,
+    Vec<crate::part::sheet_metal::FlatBendLines>,
+)> {
+    use crate::kernel::exact::sheet_metal as ksm;
+    let f = part.flat_patterns().into_iter().next()?;
+    let st = part.sheet_models.get(&f.body)?;
+    let body = crate::kernel::exact::to_brep(std::slice::from_ref(&f.solid)).ok()?;
+    let flat_part = PartDocument {
+        body,
+        ..Default::default()
+    };
+    let o = ksm::flat_point(&st.model, [0.0, 0.0], 0.0);
+    let x = (ksm::flat_point(&st.model, [1.0, 0.0], 0.0) - o).normalize();
+    let n = (ksm::flat_point(&st.model, [0.0, 0.0], 1.0) - o).normalize();
+    let y = n.cross(&x);
+    let rot = nalgebra::Rotation3::from_basis_unchecked(&[x, y, n]);
+    let to_world = Transform3::from_parts(
+        nalgebra::Translation3::from(o.coords),
+        nalgebra::UnitQuaternion::from_rotation_matrix(&rot),
+    );
+    let to_flat = to_world.inverse();
+    let model = transformed(&part_model(&flat_part), &to_flat);
+    Some((model, to_flat, part.flat_bend_lines(&f.body)))
+}
+
+/// A flat pattern view's lines: the flat seen in `frame` with its bends
+/// (`None`: `part` has no flat pattern).
+pub fn flat_lines(
+    part: &PartDocument,
+    frame: &ViewFrame,
+    aligned: Option<&Aligned>,
+) -> Option<ViewLines> {
+    let (model, to_flat, bends) = flat_model(part)?;
+    let mut lines = view_lines_with(&model, frame, aligned);
+    let p = |q: &Point3| frame.project(&(to_flat * q));
+    lines.bends = bends
+        .iter()
+        .map(|b| ViewBend {
+            centre: [p(&b.centre[0]), p(&b.centre[1])],
+            zone: [
+                [p(&b.zone[0][0]), p(&b.zone[0][1])],
+                [p(&b.zone[1][0]), p(&b.zone[1][1])],
+            ],
+            up: b.bend.up,
+            angle: b.bend.angle_deg,
+            radius: b.bend.radius,
+        })
+        .collect();
+    Some(lines)
 }
 
 /// The note of the hole whose axis a circle (centre, normal) lies on.
@@ -983,6 +1091,15 @@ pub fn clip_circle(lines: &ViewLines, center: [f64; 2], radius: f64) -> ViewLine
         min: [center[0] - radius, center[1] - radius],
         max: [center[0] + radius, center[1] + radius],
         anchor: None,
+        bends: lines
+            .bends
+            .iter()
+            .filter(|b| {
+                let m = b.middle();
+                (m[0] - center[0]).hypot(m[1] - center[1]) <= radius
+            })
+            .cloned()
+            .collect(),
     }
 }
 

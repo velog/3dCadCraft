@@ -442,6 +442,8 @@ pub enum LinesJob {
         frame: ViewFrame,
         /// Alignment with the parent and the cut.
         aligned: Option<hlr::Aligned>,
+        /// The flat pattern instead of the folded part.
+        flat: bool,
     },
     /// The parent's lines inside a circle.
     Detail {
@@ -573,6 +575,28 @@ pub struct DrawingView {
     /// Recovery Options.
     #[serde(default)]
     pub recovery: RecoveryOptions,
+    /// Sheet Metal View of a sheet metal part (base views; the others
+    /// follow their base).
+    #[serde(default, skip_serializing_if = "SheetView::is_folded")]
+    pub sheet_metal: SheetView,
+}
+
+/// What a view of a sheet metal part shows (Drawing View › Sheet Metal
+/// View).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SheetView {
+    /// The folded model.
+    #[default]
+    Folded,
+    /// The flat pattern, in its own frame (top face towards +Z, flat x along
+    /// +X), with its bend lines.
+    Flat,
+}
+
+impl SheetView {
+    fn is_folded(&self) -> bool {
+        *self == SheetView::Folded
+    }
 }
 
 impl DrawingView {
@@ -739,6 +763,7 @@ impl DrawingDocument {
             raster: false,
             display: DisplayOptions::default(),
             recovery: RecoveryOptions::default(),
+            sheet_metal: SheetView::Folded,
         });
         Some(id)
     }
@@ -763,6 +788,7 @@ impl DrawingDocument {
             raster: p.raster,
             display: p.display,
             recovery: RecoveryOptions::default(),
+            sheet_metal: SheetView::Folded,
         };
         align(&mut v.position, p.position, dir);
         self.sheet_mut()?.views.push(v);
@@ -779,6 +805,21 @@ impl DrawingDocument {
             }
         }
         None
+    }
+
+    /// Whether view `id` shows a flat pattern (through its parents).
+    pub fn flat_of(&self, sheet: &Sheet, id: u32) -> bool {
+        let mut v = sheet.view(id);
+        for _ in 0..64 {
+            match v {
+                Some(x) if matches!(x.kind, ViewKind::Base { .. }) => {
+                    return x.sheet_metal == SheetView::Flat;
+                }
+                Some(x) => v = x.parent().and_then(|p| sheet.view(p)),
+                None => return false,
+            }
+        }
+        false
     }
 
     /// The frame of a view square to line `a`–`b` of a parent seen in `fp`,
@@ -818,6 +859,7 @@ impl DrawingDocument {
     pub fn lines_job(&self, sheet: &Sheet, id: u32) -> Option<LinesJob> {
         let v = sheet.view(id)?;
         let model = self.model_of(sheet, id)?;
+        let flat = self.flat_of(sheet, id);
         Some(match v.kind {
             ViewKind::Detail {
                 parent,
@@ -843,12 +885,14 @@ impl DrawingDocument {
                         line: [d[0] / len, d[1] / len],
                         cut,
                     }),
+                    flat,
                 }
             }
             _ => LinesJob::Model {
                 model,
                 frame: self.frame_of(sheet, id)?,
                 aligned: None,
+                flat,
             },
         })
     }
@@ -909,6 +953,7 @@ impl DrawingDocument {
             raster: p.raster,
             display: p.display,
             recovery: RecoveryOptions::default(),
+            sheet_metal: SheetView::Folded,
         };
         self.sheet_mut()?.views.push(v);
         // Positions are kept to 0.1 mm (readable in Properties).

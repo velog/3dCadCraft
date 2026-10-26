@@ -884,6 +884,10 @@ impl CadCraftApp {
                                 text[0] += delta[0];
                                 text[1] += delta[1];
                             }
+                            AnnotationKind::BendNote { offset, .. } => {
+                                offset[0] += delta[0];
+                                offset[1] += delta[1];
+                            }
                             AnnotationKind::PartsList(pl) => {
                                 pl.at[0] += delta[0];
                                 pl.at[1] += delta[1];

@@ -1651,10 +1651,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["PN"])
         .at(&[N_NOTES])
         .tip("Punch notes in a flat pattern view"),
-    dp("drw.bend_note", "Bend Notes", "Бележка за огъвка", Icon::HoleNote, Dp::BendNote)
+    d("drw.bend_note", "Bend Notes", "Бележка за огъвка", Icon::HoleNote)
+        .run(Action::Drawing(DrwCmd::BendNote))
+        .spec("4.8-sheet-metal-drawings.md")
         .alias(&["BN"])
         .at(&[N_NOTES])
-        .tip("Direction, angle and radius on the bend lines of a flat pattern view"),
+        .tip("Click the bend lines of a flat pattern view: direction, angle and radius on each"),
     dp("drw.symbols", "Symbols", "Символи", Icon::Datum, Dp::SketchedSymbols)
         .alias(&["SY"])
         .at(&[N_SYMBOLS])

@@ -55,6 +55,8 @@ pub enum DrwCmd {
     LeaderText,
     /// Annotate › Hole and Thread.
     HoleNote,
+    /// Annotate › Bend Notes.
+    BendNote,
     /// Annotate › Parts List.
     PartsList,
     /// Annotate › Balloon.
@@ -141,6 +143,8 @@ pub(super) enum DrwTool {
     Balloon(Option<(u32, String, f64)>),
     /// Auto Balloon: view and components (dialog).
     AutoBalloon,
+    /// Bend Notes: click bend lines of flat pattern views.
+    BendNote,
 }
 
 /// Tabs of the Drawing View dialog.
@@ -172,6 +176,8 @@ pub(super) struct ViewDialog {
     label_visible: bool,
     display: DisplayOptions,
     recovery: RecoveryOptions,
+    /// Sheet Metal View (sheet metal parts).
+    sheet_metal: drw::SheetView,
 }
 
 /// The Edit Sheet dialog.
@@ -198,6 +204,8 @@ struct LinesKey {
     frame: [i64; 6],
     /// Section / auxiliary alignment and cut (hash, 0 for plain views).
     aligned: u64,
+    /// The flat pattern.
+    flat: bool,
 }
 
 /// Drawing UI state of the app.
@@ -407,6 +415,7 @@ impl CadCraftApp {
             DrwCmd::Text => self.start_annotation(DrwTool::Text),
             DrwCmd::LeaderText => self.start_annotation(DrwTool::LeaderText(None)),
             DrwCmd::HoleNote => self.start_annotation(DrwTool::HoleNote(None)),
+            DrwCmd::BendNote => self.start_annotation(DrwTool::BendNote),
             DrwCmd::PartsList => self.open_parts_list(),
             DrwCmd::Balloon => self.open_balloon(),
             DrwCmd::AutoBalloon => self.open_auto_balloon(),
@@ -505,6 +514,7 @@ impl CadCraftApp {
             label_visible: true,
             display: DisplayOptions::default(),
             recovery: RecoveryOptions::default(),
+            sheet_metal: drw::SheetView::Folded,
         });
         self.drw.tool = Some(DrwTool::Base);
         if model.is_none() {
@@ -544,6 +554,7 @@ impl CadCraftApp {
             label_visible: v.label_visible,
             display: v.display,
             recovery: v.recovery,
+            sheet_metal: v.sheet_metal,
         });
         self.drw.tool = None;
     }
@@ -625,6 +636,9 @@ impl CadCraftApp {
             Some(DrwTool::Section(d)) => d.prompt().into(),
             Some(DrwTool::Detail(d)) => d.prompt().into(),
             Some(DrwTool::Auxiliary(d)) => d.prompt().into(),
+            Some(DrwTool::BendNote) => {
+                "Bend Notes: click bend lines of a flat pattern view (Esc ends)".into()
+            }
             // Their prompts come from `bom_prompt` above.
             Some(DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon) => String::new(),
             Some(DrwTool::Base) => {
@@ -656,6 +670,7 @@ impl CadCraftApp {
         model: DocRef,
         frame: &ViewFrame,
         aligned: Option<hlr::Aligned>,
+        flat: bool,
     ) -> Option<Arc<ViewLines>> {
         let sig = match self.assembly_signature(model) {
             Some(s) => s,
@@ -666,6 +681,7 @@ impl CadCraftApp {
             signature: hash_str(&sig),
             frame: quant(frame),
             aligned: aligned.map_or(0, |a| hash_str(&format!("{a:.6?}"))),
+            flat,
         };
         if let Ok(done) = self.drw.done.lock()
             && let Some(l) = done.get(&key)
@@ -673,7 +689,7 @@ impl CadCraftApp {
             return Some(l.clone());
         }
         let Some(ctx) = ctx else {
-            let job = self.model_job(model)?;
+            let job = self.model_job(model, flat)?;
             let lines = Arc::new(hlr::view_lines_with(&job.model(), frame, aligned.as_ref()));
             if let Ok(mut done) = self.drw.done.lock() {
                 done.insert(key, lines.clone());
@@ -682,7 +698,7 @@ impl CadCraftApp {
             return Some(lines);
         };
         if self.drw.running.insert(key) {
-            let job = self.model_job(model)?;
+            let job = self.model_job(model, flat)?;
             let done = self.drw.done.clone();
             let ctx = ctx.clone();
             let frame = *frame;
@@ -690,7 +706,7 @@ impl CadCraftApp {
                 .name("drawing-view".into())
                 .spawn(move || {
                     let t = std::time::Instant::now();
-                    let lines = hlr::view_lines_with(&job.model(), &frame, aligned.as_ref());
+                    let lines = job.lines(&frame, aligned.as_ref());
                     log::info!(
                         "drawing view: {} visible, {} hidden pieces, {} cut faces in {:.0} ms",
                         lines.visible.len(),
@@ -725,7 +741,8 @@ impl CadCraftApp {
                 model,
                 frame,
                 aligned,
-            } => self.view_lines(ctx, *model, frame, *aligned),
+                flat,
+            } => self.view_lines(ctx, *model, frame, *aligned, *flat),
             LinesJob::Detail {
                 parent,
                 center,
@@ -994,6 +1011,7 @@ impl CadCraftApp {
             Some(DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon) => {
                 self.bom_tool(&painter, rect, &response, &views)
             }
+            Some(DrwTool::BendNote) => self.bend_note_tool(&painter, rect, &response, &views),
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
             None => {
@@ -1139,7 +1157,8 @@ impl CadCraftApp {
             return;
         };
         let frame = dlg.orientation.frame();
-        let Some(lines) = self.view_lines(Some(ctx), model, &frame, None) else {
+        let flat = dlg.sheet_metal == drw::SheetView::Flat;
+        let Some(lines) = self.view_lines(Some(ctx), model, &frame, None, flat) else {
             return;
         };
         let mut scale = dlg.scale;
@@ -1179,6 +1198,7 @@ impl CadCraftApp {
                 v.label_visible = dlg.label_visible;
                 v.display = dlg.display;
                 v.recovery = dlg.recovery;
+                v.sheet_metal = dlg.sheet_metal;
             }
             Some(id)
         });
@@ -1223,12 +1243,13 @@ impl CadCraftApp {
             self.drw.tool = Some(DrwTool::Projected(None));
             return;
         };
-        let Some((frame, model, projection)) = self.drawing().and_then(|d| {
+        let Some((frame, model, projection, flat)) = self.drawing().and_then(|d| {
             let s = d.sheet()?;
             Some((
                 d.frame_of(s, parent)?,
                 d.model_of(s, parent)?,
                 d.standard.projection,
+                d.flat_of(s, parent),
             ))
         }) else {
             return;
@@ -1253,7 +1274,7 @@ impl CadCraftApp {
             [to(pv.position), to(pos)],
             Stroke::new(1.0, PREVIEW.gamma_multiply(0.6)),
         );
-        if let Some(lines) = self.view_lines(Some(ctx), model, &f, None) {
+        if let Some(lines) = self.view_lines(Some(ctx), model, &f, None, flat) {
             let v = ShownView {
                 id: 0,
                 lo: pos,
@@ -1425,6 +1446,14 @@ impl CadCraftApp {
             return;
         };
         let models = self.drawing_models();
+        // A sheet metal part offers the flat pattern.
+        let sheet = dlg
+            .model
+            .and_then(|m| self.with_part(m, |p| !p.sheet_models.is_empty()))
+            .unwrap_or(false);
+        if !sheet {
+            dlg.sheet_metal = drw::SheetView::Folded;
+        }
         let mut open = true;
         let mut ok = false;
         let mut cancel = false;
@@ -1454,7 +1483,7 @@ impl CadCraftApp {
                 });
                 ui.separator();
                 match dlg.tab {
-                    DlgTab::Component => component_tab(ui, &mut dlg, &models, &mut browse),
+                    DlgTab::Component => component_tab(ui, &mut dlg, &models, &mut browse, sheet),
                     DlgTab::Model => model_tab(ui),
                     DlgTab::Display => display_tab(ui, &mut dlg),
                     DlgTab::Recovery => recovery_tab(ui, &mut dlg),
@@ -1526,6 +1555,9 @@ impl CadCraftApp {
             v.label_visible = dlg.label_visible;
             v.display = dlg.display;
             v.recovery = dlg.recovery;
+            if !dlg.projected {
+                v.sheet_metal = dlg.sheet_metal;
+            }
         });
         self.drw.dialog = None;
     }
@@ -2056,6 +2088,7 @@ fn component_tab(
     d: &mut ViewDialog,
     models: &[(DocRef, String)],
     browse: &mut bool,
+    sheet: bool,
 ) {
     let why = "Planned (spec 4 §3.2)";
     ui.columns(2, |cols| {
@@ -2110,6 +2143,27 @@ fn component_tab(
         .on_disabled_hover_text("Model states and design views: planned (spec 4 §3.2)");
         planned_check(ui, "Camera View", why);
         planned_check(ui, "Include 3D Annotations", why);
+        ui.add_space(4.0);
+        ui.label(RichText::new("Sheet Metal View").strong());
+        ui.add_enabled_ui(sheet && !d.projected, |ui| {
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut d.sheet_metal, drw::SheetView::Folded, "Folded Model");
+                if ui
+                    .radio_value(&mut d.sheet_metal, drw::SheetView::Flat, "Flat Pattern")
+                    .clicked()
+                {
+                    // The flat seen on its top face.
+                    d.orientation = ViewOrientation::Top;
+                    d.auto_scale = d.edit.is_none();
+                }
+            });
+        })
+        .response
+        .on_disabled_hover_text(if d.projected {
+            "A projected view follows its base view"
+        } else {
+            "The model is not a sheet metal part"
+        });
         ui.add_space(4.0);
         ui.label(RichText::new("Orientation").strong());
         if d.projected {
