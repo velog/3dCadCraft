@@ -1043,7 +1043,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 - thickness;
 - bend radius;
 - **K-factor** (position of the neutral axis; it sets the developed length) or a bend table;
-- relief shape and size;
+- relief shape and size (2026-10-26: Round / Square 2-bend reliefs are flat cut-outs about the crossing of the bend centre lines, laser-ready);
 - corner gap.
 
 **Features:**

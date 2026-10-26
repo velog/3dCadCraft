@@ -468,6 +468,21 @@ fn corner_relief_shapes() {
         );
         check(&p);
         assert_eq!(p.flat_patterns()[0].bends.len(), 4, "{shape:?}");
+        // Trim to Bend is the square between the bend zones' lines by definition: the closed
+        // panels' ends stand a little past it. A square relief (8 across about the crossing of
+        // the centre lines, BA/2 = 2.262 out) meets each panel's closed end 2.324 short of its
+        // side: two jogs a corner, which are the relief's own shape.
+        match shape {
+            CornerRelief::Trim => {}
+            CornerRelief::Square => {
+                let steps = flat_steps(&p);
+                assert!(
+                    steps.len() == 8 && steps.iter().all(|s| (s.0 - 2.324).abs() < 1e-3),
+                    "{steps:?}"
+                );
+            }
+            _ => laser_ready(&p, &format!("{shape:?}")),
+        }
         vols.push((shape, volume(&p)));
     }
     eprintln!("{vols:?}");
@@ -1473,4 +1488,116 @@ fn rim_flanges_are_mitred_at_every_level() {
     // other return's depth at each end (a 45° picture-frame corner).
     let fp = &p.flat_patterns()[0];
     assert_eq!(fp.bends.len(), 16);
+    // Walls, lips and the 12 high flanges unfold without a step: each lip's and flange's bend
+    // runs to its parent's end, torn from there to where its panel starts, or its parent's end
+    // leans back to where the bend starts. The 45° flanges' bends end at their parents' ends,
+    // where their panels run on 1.17 to close the corner: those 8 jogs stay (a bend can't run
+    // on past its parent, and a torn end there would cross the mitre).
+    let steps = flat_steps(&p);
+    assert!(
+        steps.len() == 8 && steps.iter().all(|s| (s.0 - 1.171573).abs() < 1e-6),
+        "{steps:?}"
+    );
+}
+
+/// The flat pattern can go to a laser as it is (owner, 2026-10-26): its outline has no
+/// step — a jog shorter than 3·T that turns sharply (more than 30°) one way and then the other,
+/// as a bend stopping short of its parent's end or a panel running on past its bend left. A
+/// relief's slot turns the same way at both its corners and is no step.
+fn laser_ready(p: &PartDocument, what: &str) {
+    let steps = flat_steps(p);
+    assert!(
+        steps.is_empty(),
+        "{what}: steps (length, at) in the flat pattern: {steps:?}"
+    );
+}
+
+/// The jogs of [`laser_ready`] in the flat patterns' outlines: (length, where).
+fn flat_steps(p: &PartDocument) -> Vec<(Real, [Real; 2])> {
+    use cadcraft3d::kernel::exact::sheet_metal as ksm;
+    let mut out = Vec::new();
+    for st in p.sheet_models.values() {
+        let t = ksm::thickness(&st.model);
+        for lp in ksm::flat_loops(&st.model).unwrap() {
+            let mut pts: Vec<[Real; 2]> = Vec::new();
+            for q in lp {
+                if pts
+                    .last()
+                    .is_none_or(|l| (l[0] - q[0]).hypot(l[1] - q[1]) > 1e-9)
+                {
+                    pts.push(q);
+                }
+            }
+            let n = pts.len();
+            let dir = |i: usize| {
+                let (a, b) = (pts[i % n], pts[(i + 1) % n]);
+                let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                let l = dx.hypot(dy);
+                (dx / l, dy / l, l)
+            };
+            // The signed turn from one edge to the next.
+            let turn = |u: (Real, Real, Real), v: (Real, Real, Real)| {
+                (u.0 * v.1 - u.1 * v.0).atan2(u.0 * v.0 + u.1 * v.1)
+            };
+            let sharp = 30f64.to_radians();
+            for (i, &at) in pts.iter().enumerate() {
+                let (before, edge, after) = (dir(i + n - 1), dir(i), dir(i + 1));
+                let (t0, t1) = (turn(before, edge), turn(edge, after));
+                if edge.2 < 3.0 * t && t0.abs() > sharp && t1.abs() > sharp && t0 * t1 < 0.0 {
+                    out.push((edge.2, at));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A part of the owner's (`tests/data/sheet_box*.3dcadcraft`, 2026-10-26), regenerated.
+fn owners_box(name: &str) -> PartDocument {
+    use cadcraft3d::document::{DocumentData, Project};
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data")
+        .join(name);
+    let mut project = Project::load(&path).unwrap();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Part(_)))
+        .map(|d| d.id)
+        .unwrap();
+    let Some(DocumentData::Part(part)) = project.document_mut(id).map(|d| &mut d.data) else {
+        panic!("{name}: no part");
+    };
+    part.regenerate().unwrap();
+    part.clone()
+}
+
+/// The owner's boxes (walls, lips, a lip held back by Offset 1 / 1, a 45° rim; round corner
+/// reliefs): the base corners are relieved about the crossing of the walls' bend centre lines,
+/// every rim corner unfolds as one straight mitre (each lip's bend torn from its wall's end to
+/// where its panel starts, or its wall's end leaning back to where it starts), and the lip held
+/// back gets the rule's bend relief in the return it stands on. Healthy, and no step in the flat
+/// patterns but those reliefs and the 45° flanges' run-on.
+#[test]
+fn owners_boxes_unfold_laser_ready() {
+    for name in ["sheet_box1.3dcadcraft", "sheet_box2.3dcadcraft"] {
+        let p = owners_box(name);
+        check(&p);
+        assert_eq!(p.flat_patterns()[0].bends.len(), 16, "{name}");
+        let steps = flat_steps(&p);
+        if name.contains("box1") {
+            // The bend reliefs beside the four lips held back (Relief Depth T/2 = 1 mm), one at
+            // each of their ends, and nothing else.
+            assert!(
+                steps.len() == 8 && steps.iter().all(|s| (s.0 - 1.0).abs() < 1e-6),
+                "{name}: {steps:?}"
+            );
+        } else {
+            // As `rim_flanges_are_mitred_at_every_level`: only the 45° flanges' run-on.
+            assert!(
+                steps.len() == 8 && steps.iter().all(|s| (s.0 - 1.171573).abs() < 1e-6),
+                "{name}: {steps:?}"
+            );
+        }
+    }
 }

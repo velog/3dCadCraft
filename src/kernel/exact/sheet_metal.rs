@@ -440,6 +440,12 @@ pub struct FlangeCorners {
     pub size: Option<Real>,
     /// Gap between flanges at a corner (`None`: the rule's).
     pub gap: Option<Real>,
+    /// Round / Square reliefs at the base's vertex (old files) instead of
+    /// where the bends' centre lines cross.
+    pub at_vertex: bool,
+    /// Laser-ready corners: returns mitred through their bends, the bend
+    /// relief also on flanges standing on flanges.
+    pub laser_corners: bool,
     /// Corner overrides: (flange a, flange b, seam, gap, overlap ratio).
     pub seams: Vec<(usize, usize, Seam, Option<Real>, Real)>,
 }
@@ -640,6 +646,8 @@ pub fn flanges(
     }
     // The feature's own corner settings for its corners, the rule's after.
     let rule = (next.relief, next.relief_size, next.gap);
+    next.relief_at_vertex = corners.at_vertex;
+    next.laser_corners = corners.laser_corners;
     if let Some(s) = corners.shape {
         next.relief = shape_of(s);
     }
@@ -681,6 +689,8 @@ pub fn flanges(
         }
     }
     (next.relief, next.relief_size, next.gap) = rule;
+    next.relief_at_vertex = false;
+    next.laser_corners = true;
     let s = named_solid(&next, prefix, false)?;
     Ok((s, SheetModel(Arc::new(next)), notes))
 }

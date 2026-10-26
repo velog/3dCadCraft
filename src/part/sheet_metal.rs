@@ -56,6 +56,37 @@ pub enum CornerRelief {
     Trim,
 }
 
+/// Where a Round or Square corner relief is centred (Inventor's
+/// `CornerReliefPlacementEnum`): where the two bends' centre lines cross
+/// (its default; a cut-out through both bends, one clean outline in the
+/// flat pattern) or at the base's vertex the two bends share (the bends
+/// stop at the relief). Flanges saved before 2026-10-26 had the vertex.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReliefPlacement {
+    /// At the base's vertex (files made before the option).
+    #[default]
+    Vertex,
+    /// Where the bends' centre lines cross.
+    Intersection,
+}
+
+impl ReliefPlacement {
+    /// Both, in menu order.
+    pub const ALL: [ReliefPlacement; 2] = [ReliefPlacement::Intersection, ReliefPlacement::Vertex];
+
+    /// Label (Corner section).
+    pub fn label(self) -> &'static str {
+        match self {
+            ReliefPlacement::Intersection => "Bend Centerlines",
+            ReliefPlacement::Vertex => "Base Vertex",
+        }
+    }
+}
+
+fn is_vertex(p: &ReliefPlacement) -> bool {
+    *p == ReliefPlacement::Vertex
+}
+
 impl CornerRelief {
     /// Every shape, in menu order.
     pub const ALL: [CornerRelief; 4] = [
@@ -339,6 +370,16 @@ pub struct SheetFlangeFeature {
     /// Gap between its flanges at a corner (`None`: the rule's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corner_gap: Option<Real>,
+    /// Where its Round / Square corner reliefs are centred (new flanges:
+    /// where the bend centre lines cross; old files: the base vertex).
+    #[serde(default, skip_serializing_if = "is_vertex")]
+    pub relief_placement: ReliefPlacement,
+    /// Laser-ready corners (new flanges; files made before 2026-10-26 keep
+    /// SolidCraft's): flanges on flanges meeting at a corner are mitred
+    /// through their bends, and one narrower than the edge it stands on gets
+    /// the rule's bend relief there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub laser_corners: bool,
     /// Corner Overrides: single corners between two of its flanges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seams: Vec<CornerOverride>,
@@ -437,6 +478,8 @@ impl SheetFlangeFeature {
             corner_shape: None,
             corner_size: None,
             corner_gap: None,
+            relief_placement: ReliefPlacement::Intersection,
+            laser_corners: true,
             seams: Vec::new(),
             params: Default::default(),
         }

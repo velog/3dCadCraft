@@ -3379,6 +3379,8 @@ pub(super) fn sheet_flange(
             shape: fl.corner_shape.map(|c| c.kernel_pub()),
             size: fl.corner_size,
             gap: fl.corner_gap,
+            at_vertex: fl.relief_placement == super::sheet_metal::ReliefPlacement::Vertex,
+            laser_corners: fl.laser_corners,
             seams: fl
                 .seams
                 .iter()

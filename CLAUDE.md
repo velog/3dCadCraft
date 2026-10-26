@@ -1020,6 +1020,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   a closed corner stops a bend short of its parent's end, so walking existing levels uses `near_far_end`, not
   the exact `on_far_end`. The Flange / Hem hover offers only edges `ksm::can_flange` accepts (a 2D trial on a model
   copy, cached per edge in `SheetUi::free`).
+  Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
+  behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry
+  of old files without such a field). Corner reliefs (Round / Square) are cut-outs in `SheetBody::holes` about the crossing of the bends' centre
+  lines (bends and base stay whole; `corner_relief` / `reliefs_fit`, all of a feature's or none). A return's
+  bend is torn from its parent's end when `tapers_clear` (full half gap all round), else it stops square and
+  the parent's end leans back (`retract_far_end`). Flat-pattern outlines are checked for jogs by
+  `tests/sheet_metal.rs::flat_steps`; `cargo run --example flat_dxf -- file out_dir` dumps a project's flats.
 - **Aborts leave no crash report** (owner's Cut crash 2026-10-26: Windows `0xc0000409`, subcode 7 = `abort()`;
   a stack overflow aborts too). The desktop binary links a 64 MB main-thread stack (`build.rs`; Windows' default is
   1 MB and OK builds features on the main thread), and `diagnostics::activity` writes the last checkpoint /

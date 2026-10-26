@@ -25,8 +25,8 @@ use crate::command::flow::{Flow, PickKind, Selector};
 use crate::kernel::{Point3, Vector3};
 use crate::part::sheet_metal::{
     ContourDirection, CornerOverride, CornerRelief, CutExtent, FlangePosition, FlangeWidth,
-    FoldLocation, SeamType, SheetConvertFeature, SheetEdge, SheetFaceFeature, SheetFlangeFeature,
-    SheetMetalDefaults, SheetOp, SheetOpFeature, rule_of,
+    FoldLocation, ReliefPlacement, SeamType, SheetConvertFeature, SheetEdge, SheetFaceFeature,
+    SheetFlangeFeature, SheetMetalDefaults, SheetOp, SheetOpFeature, rule_of,
 };
 use crate::part::{Feature, PartDocument, PartError, ProfileRef};
 
@@ -997,6 +997,23 @@ impl CadCraftApp {
                             .response
                             .on_hover_text(
                                 "The relief cut where two of these bends meet at a corner",
+                            );
+                        ui.end_row();
+                        plabel(ui, "Placement");
+                        egui::ComboBox::from_id_salt("sm_relief_placement")
+                            .selected_text(f.relief_placement.label())
+                            .show_ui(ui, |ui| {
+                                for p in ReliefPlacement::ALL {
+                                    // The laser-ready corners come together: the relief through
+                                    // the bends and the bend relief on flanges standing on flanges.
+                                    if ui.selectable_value(&mut f.relief_placement, p, p.label()).changed() {
+                                        f.laser_corners = p == ReliefPlacement::Intersection;
+                                    }
+                                }
+                            })
+                            .response
+                            .on_hover_text(
+                                "Where a Round or Square relief is centred: where the two bends'                                  centre lines cross (cut through both bends) or at the base's vertex",
                             );
                         ui.end_row();
                         override_row(ui, "Relief Size", &mut f.corner_size, rule.corner_relief);
