@@ -126,6 +126,19 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     a parameter dropped on it by the pick whip, and a tolerance where the value is a dimension.
     Dynamic Input next to the cursor follows the same evaluation (`expr::eval` with the parameters).
     Panels live inside the Properties scroll area; viewport handles keep a fixed size on screen.
+14. **Every command has a keyboard shortcut** (owner's rule, 2026-10-26): each `COMMANDS` entry in
+    `gui/commands.rs` gets a `key` or at least one `.alias(..)` of 1–3 characters — Inventor's alias when
+    it has one (e.g. `E`, `RP`, `TH`), otherwise ours, built from the command name (`SMF` Sheet Metal
+    Flange, `BV` Base View). Aliases must not collide within one environment (the commands test checks
+    it); list them in `docs/UI.md`. On 2026-10-26, 92 implemented commands still had none (Coil, Rib,
+    Combine, Split, primitives, the sheet metal commands, view toggles…): give them aliases in one pass
+    when `gui/commands.rs` is free, then add a test that fails for an implemented command without one.
+15. **Interface first, then logic** (owner's rule, 2026-10-26): before a new feature's logic, build its
+    complete Inventor-like interface — ribbon button with icon and alias, the dialog / panel with
+    **every option of the spec** (tabs, selectors, fields, check boxes, defaults, presets row, tooltips,
+    status prompts, right-click menu), laid out as close to Inventor 2027 as we can. Options whose logic
+    is not there yet are shown but disabled, with the spec row in the tooltip (like rule 7 for the
+    ribbon). The owner checks the interface visually; only then the logic is implemented row by row.
 
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 
@@ -188,7 +201,7 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
 
 ## Feature workflow (mandatory, in this order)
 
-Every feature — new or a fix to an existing one — goes **spec → code → proof**.
+Every feature — new or a fix to an existing one — goes **spec → interface → logic → proof**.
 Never implement from memory of "how Inventor probably does it".
 
 ### 1. Specify: `docs/spec/<section>-<name>.md`
@@ -221,7 +234,15 @@ Never implement from memory of "how Inventor probably does it".
   missing), ⬜ to do, ⛔ blocked by another feature (say which). A new spec starts
   with everything ⬜.
 
-### 2. Implement against the spec
+### 2. Build the interface (rule 15)
+- The whole Inventor-like UI of the feature before its logic: command entry in `gui/commands.rs` with
+  an alias (rule 14) and icon, ribbon place, the dialog / panel with every spec option in Inventor's
+  order and grouping, selectors with their prompts, defaults, presets row, F1 mapping.
+- Options without logic yet are visible but disabled (tooltip: the spec row). Nothing may change the
+  model until the logic exists (rule 5).
+- Commit it, let the owner check it in the app, adjust, then go on.
+
+### 3. Implement the logic against the spec
 - Go through the spec table **row by row**. Each row you implement must match the
   described behaviour: click order, defaults, what gets constrained or named, errors.
   If you deviate on purpose, write the deviation into the row (🟡 + why).
@@ -241,7 +262,7 @@ Never implement from memory of "how Inventor probably does it".
   - errors as `<Command>: <reason>`;
   - F1 mapping in `CadCraftApp::open_help`.
 
-### 3. Prove
+### 4. Prove
 - `cargo fmt && cargo clippy --all-targets && cargo test`: zero warnings, all green.
 - **Speed:** every new feature adds a case with a budget to `tests/perf.rs`
   (`docs/PERF.md` has the targets and the log). Over budget → look for a faster way

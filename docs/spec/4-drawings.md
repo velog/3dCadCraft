@@ -206,6 +206,34 @@ Object Line Weights are display-list filters; shaded / raster views go in as ima
 - `rayon` (in the tree) per view and per edge batch, on a worker thread like `preview_async`; views cached
   by `(model signature, view definition)` as the regeneration cache does.
 
+#### g0. CADCraft: a Rust 2D CAD to adapt from (MIT OR Apache-2.0)
+
+[CADCraft](https://github.com/storytold/cadcraft) (ArtCraft team, v0.13.0, pre-alpha, AutoCAD-2027-like 2D
+drafting; read 2026-10-26) solved most of the 2D side with the stack proposed above: egui / eframe 0.37,
+a **display list** (`crates/render`: linetypes, hatches, text, dimensions, GD&T, paper sizes, pens) drawn
+by its own **wgpu** pipeline (`crates/ui-egui/src/gpu.rs`: one upload per document revision, hairlines as
+`LineList`, wide lines as instanced screen-space quads, f32 positions relative to a moving origin, CPU
+fallback with `tiny-skia`), **krilla** for PDF (`crates/io/src/pdf*`), an own DXF tag reader / writer
+(`crates/dxf`), `acadrust` (MPL-2.0) isolated in `crates/dwg`, an original single-stroke font "CADCraft
+Stroke" (CC0, `crates/fonts/src/stroke.rs`) plus TrueType through `skrifa` and shaping with `harfrust`.
+
+| What to adapt (with an `ATTRIBUTION.md` row) | Where in CADCraft | For stage |
+|---|---|---|
+| GPU canvas for big views (option B2) | `crates/ui-egui/src/gpu.rs` | D1 / when B1 is slow |
+| Linetypes (dash patterns along polylines, scale) | `crates/render/src/linetype.rs` | D1 |
+| Paper sizes, sheets, pens / plot styles | `crates/render/src/{paper,pen,plotstyle}.rs` | D1, D5 |
+| PDF export of a display list through krilla | `crates/io/src/pdf.rs`, `pdf/` | D1 |
+| Hatch patterns and region fill with islands | `crates/render/src/{hatch,fill}.rs` | D2 |
+| Dimension geometry (arrows, text placement), tolerances, GD&T frames | `crates/render/src/{dim,tolerance}.rs` | D3, D6 |
+| Text layout (TEXT / MTEXT, alignment, wrap), stroke font, font subsetting | `crates/fonts` | D1–D3 |
+| Tables | `crates/render/src/table.rs` | D4 |
+| DXF writer (layers, LTYPE, entities) | `crates/dxf`, `crates/io/src/dxf_write.rs` | D5 |
+| DWG through `acadrust` in a separate crate | `crates/dwg` | D5 (owner's decision) |
+
+Limits: it has **no 3D model** — hidden line removal, projections, sections and associativity to edges
+stay ours; its data model is AutoCAD's (entities, layers, ACI colours, handles), so we take functions,
+not modules; it is on egui 0.37 (we are on 0.36); the stroke font's Cyrillic coverage is not checked yet.
+
 #### g. Annotations reuse the sketch module
 
 Title blocks, borders, sketched symbols, Draft views, section / detail / break lines and view sketches are
