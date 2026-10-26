@@ -556,7 +556,7 @@ impl Planned {
                         Check("Enable Measured Value", false),
                         Combo(
                             "Symbol",
-                            &["Ø", "R", "□", "±", "°", "SØ", "SR", "⌴", "⌵", "↧"],
+                            &["", "Ø", "R", "□", "±", "°", "SØ", "SR", "⌴", "⌵", "↧"],
                             0,
                         ),
                         Combo("Text Style", &["Note Text (ISO)"], 0),
@@ -1330,6 +1330,11 @@ impl PlannedDialog {
                 Sel(k, label, prompt) if *k == key => Some((*label, *prompt)),
                 _ => None,
             })
+    }
+
+    /// The active selector takes whole views (not their geometry).
+    pub(super) fn wants_view(&self) -> bool {
+        matches!(self.active, Some("view" | "views" | "parent" | "base"))
     }
 
     /// Takes a pick for the active selector (described as text) and moves

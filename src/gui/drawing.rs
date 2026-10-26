@@ -930,7 +930,13 @@ impl CadCraftApp {
             && response.clicked()
             && let Some(p) = pointer
         {
-            let what = match self.geometry_under(&views, rect, p) {
+            let wants_view = self.drw.planned.as_ref().is_some_and(|d| d.wants_view());
+            let geo = if wants_view {
+                None
+            } else {
+                self.geometry_under(&views, rect, p)
+            };
+            let what = match geo {
                 Some(g) => g.describe(),
                 None => match self.drw.hover {
                     Some(id) => format!("View {id}"),

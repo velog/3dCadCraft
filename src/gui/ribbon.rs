@@ -572,9 +572,9 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             panel(
                 "Revision",
                 vec![
-                    c("drw.revision_tag"),
-                    c("drw.revision_table"),
-                    c("drw.revision_cloud"),
+                    c("drw.revision_tag").mini(),
+                    c("drw.revision_table").mini(),
+                    c("drw.revision_cloud").mini(),
                 ],
             ),
             panel("Format", vec![c("drw.edit_layers")]),
