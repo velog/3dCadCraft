@@ -1400,3 +1400,77 @@ fn flat_extents_and_bend_lines() {
         assert!(q.z > 1.99 && q.z < 2.1, "{q}");
     }
 }
+
+/// The owner's "Box 2" (2026-10-26): a 400 × 200 tray, walls 80 high, a lip 20
+/// in on every wall, a return 12 down on every lip, a 10 mm 45° flange on every
+/// return — each level one Flange on four edges. The returns used to meet
+/// unmitred at the corners (their inner bends ran into each other) and the 45°
+/// flanges failed ("the faces do not close"): corners were closed on the base
+/// and one level up only. Every level is mitred now, a gap apart.
+#[test]
+fn rim_flanges_are_mitred_at_every_level() {
+    let mut p = rect(400.0, 200.0);
+    let level = |p: &mut PartDocument, at: &[(Real, Real, Real)], h: Real, deg: Real| {
+        let pts: Vec<Point3> = at.iter().map(|&(x, y, z)| Point3::new(x, y, z)).collect();
+        flange(p, &pts, h, |d| d.angle = deg.to_radians());
+        check(p);
+    };
+    level(
+        &mut p,
+        &[
+            (400.0, 125.0, 2.0),
+            (358.0, 200.0, 2.0),
+            (0.0, 140.0, 2.0),
+            (96.0, 0.0, 2.0),
+        ],
+        80.0,
+        90.0,
+    );
+    // Only free edges take a flange (owner, 2026-10-26): the base edges have
+    // the walls' bends, a wall's top edge is free until the lip stands on it.
+    let body = p.sheet_models.keys().next().unwrap().clone();
+    assert!(!p.sheet_edge_can_flange(&body, Point3::new(96.0, 0.0, 2.0)));
+    assert!(p.sheet_edge_can_flange(&body, Point3::new(132.4, 2.0, 80.0)));
+    level(
+        &mut p,
+        &[
+            (2.0, 62.0, 80.0),
+            (66.7, 198.0, 80.0),
+            (132.4, 2.0, 80.0),
+            (398.0, 78.5, 80.0),
+        ],
+        20.0,
+        90.0,
+    );
+    assert!(!p.sheet_edge_can_flange(&body, Point3::new(132.4, 2.0, 80.0)));
+    let corners_before = p.sheet_corners().len();
+    level(
+        &mut p,
+        &[
+            (380.0, 129.5, 80.0),
+            (342.1, 180.0, 80.0),
+            (20.0, 115.5, 80.0),
+            (72.4, 20.0, 80.0),
+        ],
+        12.0,
+        90.0,
+    );
+    let v3 = volume(&p);
+    level(
+        &mut p,
+        &[
+            (382.0, 46.3, 90.0),
+            (366.3, 18.0, 90.0),
+            (40.1, 182.0, 90.0),
+            (18.0, 138.7, 90.0),
+        ],
+        10.0,
+        45.0,
+    );
+    assert!(volume(&p) > v3, "the 45° flanges add material");
+    assert_eq!(p.sheet_corners().len(), corners_before);
+    // Mitred: each return is shorter than its lip's inner edge by about the
+    // other return's depth at each end (a 45° picture-frame corner).
+    let fp = &p.flat_patterns()[0];
+    assert_eq!(fp.bends.len(), 16);
+}

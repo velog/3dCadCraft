@@ -2067,6 +2067,29 @@ impl SheetBody {
         })
     }
 
+    /// Like [`SheetBody::on_far_end`] for flanges already made: the flange of `among` on flange
+    /// `i`'s far edge whose bend ends nearest that edge's end, within its own reach of it (a
+    /// closed corner stops a bend short of its parent's end; 3DCadCraft).
+    fn near_far_end(&self, i: usize, at_end: bool, among: &[usize]) -> Option<(usize, Vec2)> {
+        let limit = std::f64::consts::PI - 1e-6;
+        let f = self.flanges.get(i).filter(|f| f.shape.is_none())?;
+        let (lo, hi) = self.far_edge(f);
+        let tip = self.allowance(f) + f.leg;
+        let end = if at_end { hi } else { lo };
+        among
+            .iter()
+            .filter_map(|&j| {
+                let g = self.flanges.get(j).filter(|g| g.parent == Some(i) && g.shape.is_none() && g.angle.abs() < limit && g.d.dot(f.d) > 1.0 - 1e-9)?;
+                let c = if at_end { g.p + g.d * g.len } else { g.p };
+                let (s, u) = ((c - f.p).dot(f.n), (c - f.p).dot(f.d));
+                let reach = self.allowance(g) + g.leg + 2.0 * self.t;
+                let off = (u - end).abs();
+                ((s - tip).abs() < 1e-6 && off <= reach).then_some((off, j, c))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, j, c)| (j, c))
+    }
+
     /// Finish the new flanges that stand on the far edges of flanges meeting at a convex corner of
     /// the base (returns on the walls of a tray), where their bends reach their parents' ends.
     /// Two of them meeting at a corner are closed toward each other ([`SheetBody::close_returns`]);
@@ -2086,7 +2109,7 @@ impl SheetBody {
             let w = apply_point(&s.world(Some(on)), v3(c));
             format!("({:.3}, {:.3}, {:.3})", w.x, w.y, w.z)
         };
-        for (a, a_end, b, b_end, c) in self.base_pairs(&parents) {
+        for (a, a_end, b, b_end, c_a, c_b) in self.corner_pairs(&parents, made) {
             let (x, y) = (self.on_far_end(a, a_end, made), self.on_far_end(b, b_end, made));
             if let (Some((x, ca)), Some((y, cb))) = (x, y) {
                 match self.close_returns(&ReturnCorner { a: x, a_end, b: y, b_end, ca, cb }) {
@@ -2098,7 +2121,8 @@ impl SheetBody {
                     }
                 }
             }
-            for (on, at_end, own, other) in [(x, a_end, a, b), (y, b_end, b, a)] {
+            // `other`'s bend end at the corner (at the base both bends end where they cross).
+            for (on, at_end, own, other, c) in [(x, a_end, a, b, c_b), (y, b_end, b, a, c_a)] {
                 let Some((i, ci)) = on else { continue };
                 if let Err(why) = self.clear_of_neighbour(i, at_end, ci, own, other, c) {
                     notes.push(format!("the flange at {} is not clear of the flange beside it: {why}", at(self, own, ci)));
@@ -2106,6 +2130,36 @@ impl SheetBody {
             }
         }
         notes
+    }
+
+    /// Flanges meeting at a corner at any depth, at least one of them a parent of `made`: the
+    /// pairs on the base ([`SheetBody::base_pairs`]), then the flanges of earlier features on
+    /// their far edges' ends that meet there too (returns on walls, flanges on those returns, …),
+    /// and so on (3DCadCraft: SolidCraft stopped at the first level, so a third flange around a
+    /// tray's rim met its neighbours unmitred). Each pair is (a, a_end, b, b_end, where a's bend
+    /// ends at the corner, where b's does), flat coordinates.
+    fn corner_pairs(&self, parents: &[usize], made: &[usize]) -> Vec<(usize, bool, usize, bool, Vec2, Vec2)> {
+        let before: Vec<usize> = (0..self.flanges.len()).filter(|i| !made.contains(i)).collect();
+        let mut level: Vec<(usize, bool, usize, bool, Vec2, Vec2)> =
+            self.base_pairs(&before).into_iter().map(|(a, ae, b, be, c)| (a, ae, b, be, c, c)).collect();
+        let mut out = Vec::new();
+        // A rim can't be deeper than its flanges; the bound only guards against a cycle.
+        for _ in 0..64 {
+            if level.is_empty() {
+                break;
+            }
+            let mut next = Vec::new();
+            for &(a, ae, b, be, ca, cb) in &level {
+                if parents.contains(&a) || parents.contains(&b) {
+                    out.push((a, ae, b, be, ca, cb));
+                }
+                if let (Some((x, cx)), Some((y, cy))) = (self.near_far_end(a, ae, &before), self.near_far_end(b, be, &before)) {
+                    next.push((x, ae, y, be, cx, cy));
+                }
+            }
+            level = next;
+        }
+        out
     }
 
     /// Close two flanges on flanges that meet at a corner (returns on two walls that meet): mitre

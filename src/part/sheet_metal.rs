@@ -1137,6 +1137,15 @@ impl super::PartDocument {
         ksm::edge_ends(&st.model, at).map(|(a, b, _)| (a, b))
     }
 
+    /// Whether a Flange (or Hem) can stand on sheet `body`'s edge nearest
+    /// `at` (part coordinates, mm): free of a bend, not taken by a cut-out,
+    /// room for a bend.
+    pub fn sheet_edge_can_flange(&self, body: &str, at: crate::kernel::Point3) -> bool {
+        self.sheet_models
+            .get(body)
+            .is_some_and(|st| ksm::can_flange(&st.model, at))
+    }
+
     /// A sheet edge's frame for the manipulators: (start, end, the normal of
     /// the face it was picked on, the direction out of its panel).
     pub fn sheet_edge_frame(

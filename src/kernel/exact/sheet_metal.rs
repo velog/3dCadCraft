@@ -711,6 +711,38 @@ pub fn bends(m: &SheetModel) -> Vec<BendLine> {
         .collect()
 }
 
+/// Whether a flange can stand on the sheet edge nearest `at` (world): a
+/// trial flange of the rule's radius, square, just past its bend, on a copy
+/// of the model (2D only, no solid). An edge that has a bend on it already,
+/// one a cut-out took, or one whose flange would not fit says no — the
+/// Flange command does not offer those (owner, 2026-10-26).
+pub fn can_flange(m: &SheetModel, at: Point3) -> bool {
+    let mut next = (*m.0).clone();
+    let (r, t) = (
+        next.flanges.first().map_or(t_radius(&next), |f| f.radius),
+        next.t,
+    );
+    let edge = sd::EdgeFlange {
+        pick: v3(&at),
+        height: r + t + t.max(0.1),
+        angle: std::f64::consts::FRAC_PI_2,
+    };
+    guarded_bool(|| {
+        next.add_flanges_spans(&[edge], &[], r, "inside", false)
+            .is_ok()
+    })
+}
+
+/// The bend radius to try with when the sheet has no bend yet: its thickness.
+fn t_radius(m: &sd::SheetBody) -> Real {
+    m.t
+}
+
+/// A predicate run under the panic guard (a panic is "no").
+fn guarded_bool(f: impl FnOnce() -> bool) -> bool {
+    crate::diagnostics::crash::guard(f).unwrap_or(false)
+}
+
 /// A point of the flat pattern (flat coordinates, `z` above its bottom
 /// face) in the part: the flat solid lies on the sheet's frame, its top face
 /// at `z = T`.

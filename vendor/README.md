@@ -59,6 +59,7 @@ to `assets/` and their paths point there.
 
 | File | Change | Effect |
 |---|---|---|
+| `sheet.rs` `corner_pairs`, `near_far_end` | flanges meeting at a corner at any depth: the base pairs, then the flanges on their far edges' ends, level by level (a closed corner stops a bend short of its parent's end: the nearest one within its reach); `close_return_corners` mitres every level (SolidCraft stopped at the first: a tray rim's third flange ran into its neighbours) | Flange auto-mitre of rims (owner's Box 1 / Box 2) |
 | `sheet.rs` `contour_flange_span`, `offset_chain` | a contour flange whose width spans `(from, to)` along the sketch normal and whose thickness can be centred on the chain (the chain offset by T/2, corners mitred) | Contour Flange Direction (Default / Flipped / Symmetric / Asymmetric) and Position Centered |
 | `sheet.rs` `add_flanges_spans` | `add_flanges_each` with each flange held back from its edge's ends (the flange ends as where a cut-out ends the edge: the base keeps its edge beyond and gets the rule's bend relief) | Flange Width Extents (Edge / Width / Offset) |
 | `sheet.rs` `edge_ends` | the world ends of the sheet edge nearest a point | drag arrows at a flange's ends |

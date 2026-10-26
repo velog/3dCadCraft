@@ -1016,6 +1016,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   Chamfer, Punch Tool) are `Action::SmPlanned(kind)`: `gui/sm_planned.rs` holds the panel state (`Planned`, not
   saved), carried in `SmDraft::planned` with a stand-in `feature`, so selector rows, picks (`Pick::Item`), Esc and
   prompts are shared; OK stays disabled. A selector row's label is its widget id — two rows must not share one.
+  Flange corners: `vendor` `corner_pairs` walks corner pairs level by level (base → returns → returns on returns);
+  a closed corner stops a bend short of its parent's end, so walking existing levels uses `near_far_end`, not
+  the exact `on_far_end`. The Flange / Hem hover offers only edges `ksm::can_flange` accepts (a 2D trial on a model
+  copy, cached per edge in `SheetUi::free`).
 - **Aborts leave no crash report** (owner's Cut crash 2026-10-26: Windows `0xc0000409`, subcode 7 = `abort()`;
   a stack overflow aborts too). The desktop binary links a 64 MB main-thread stack (`build.rs`; Windows' default is
   1 MB and OK builds features on the main thread), and `diagnostics::activity` writes the last checkpoint /

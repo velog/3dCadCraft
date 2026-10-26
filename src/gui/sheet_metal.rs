@@ -247,6 +247,8 @@ pub(super) struct SheetUi {
     ready: RefCell<Option<(String, SmResult)>>,
     /// The corners of the last good Flange preview (Corner Overrides).
     corners: RefCell<Vec<(usize, usize, Point3)>>,
+    /// Whether a flange can stand on an edge, by (model key, edge).
+    free: RefCell<std::collections::HashMap<(String, String), bool>>,
 }
 
 /// A pick in the graphics window.
@@ -1933,11 +1935,22 @@ impl CadCraftApp {
                     Some((Pick::Corner(c), vec![pts, line]))
                 }
                 _ => {
+                    // Only an edge a flange can stand on (owner, 2026-10-26): the model
+                    // edge under the cursor must run along a free sheet edge — not a
+                    // thickness edge or a bend's edge snapped to one nearby, nor an
+                    // edge with a bend on it already.
                     let (body, edge) = part.sheet_edge_at(at)?;
-                    let line = part
-                        .sheet_edge_ends(&body, &edge)
-                        .map_or(pts, |(a, b)| vec![a, b]);
-                    Some((Pick::SheetEdge(body, edge), vec![line]))
+                    let (a, b) = part.sheet_edge_ends(&body, &edge)?;
+                    let t = rule_of(part).values().thickness;
+                    let along = |q: &Point3| {
+                        let ab = b - a;
+                        let u = ((q - a).dot(&ab) / ab.norm_squared()).clamp(0.0, 1.0);
+                        (a + ab * u - q).norm() < 0.05 * t
+                    };
+                    if !(pts.iter().all(along) && self.sm_edge_free(&body, &edge, at)) {
+                        return None;
+                    }
+                    Some((Pick::SheetEdge(body, edge), vec![vec![a, b]]))
                 }
             };
         }
@@ -2046,6 +2059,22 @@ impl CadCraftApp {
             }
         }
         None
+    }
+
+    /// Whether a flange can stand on `edge` (cached per edge and model: the
+    /// trial runs once, not every frame).
+    fn sm_edge_free(&self, body: &str, edge: &SheetEdge, at: Point3) -> bool {
+        let key = (self.body_key(), format!("{body}/{}", edge.name));
+        if let Some(&ok) = self.sm.free.borrow().get(&key) {
+            return ok;
+        }
+        let ok = self.part().sheet_edge_can_flange(body, at);
+        let mut cache = self.sm.free.borrow_mut();
+        if cache.len() > 512 {
+            cache.clear();
+        }
+        cache.insert(key, ok);
+        ok
     }
 
     /// A corner edge of a sheet: straight, as long as the thickness, between
