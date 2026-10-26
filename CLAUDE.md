@@ -285,6 +285,22 @@ tools/gui_sim.py $WID key s move 705 385 click 705 385 shot /tmp/s1.png
 pkill -x 3dcadcraft                                      # NEVER `pkill -f` (kills your shell)
 ```
 
+**Windows** (`tools/gui_win.py`, WinAPI through ctypes, no packages; same commands plus `wheel`):
+
+```bash
+cargo build
+H=$(python tools/gui_win.py launch CADCRAFT3D_DEMO=slot)  # or: launch -- file.3dcadcraft
+python tools/gui_win.py $H shot target/s0.png             # HWND may be omitted with one window
+python tools/gui_win.py $H click 30 85 key Escape shot target/s1.png 0 0 300 140 3  # crop ×3
+python tools/gui_win.py kill                              # only the launched one
+```
+
+`launch` points `APPDATA` at a fresh `target/gui-profile` (default layout, no Restore offer — the
+owner's settings, presets, logs and autosaves stay untouched; `--profile user` for the real one), sizes
+the client area to 1400×900 and leaves the caller's job (the Bash tool closes its children). Input goes
+to the front window (the script brings it forward; the desktop must be unlocked); `shot` uses
+`PrintWindow`, so it also works while the window is covered. Coordinates are physical client pixels.
+
 Default window 1400×900: ribbon y≈60–90, browser x<250, properties x>1100,
 viewport ≈ (250..1100, 110..875). Coordinates shift with layout — always take a
 screenshot and measure first (crop + `-scale 300%` to locate small dots).
@@ -648,7 +664,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `USERPROFILE` (Git Bash sets `HOME=/c/Users/…`); `C:` alone is drive-relative
   (`gui::files::drive_root`); paths handed to other programs (Explorer) need native
   separators (`Path::join`, never `format!("{dir}/x")`); paths compared with text in docs
-  (`xtask assets`) are normalised to `/`. The X11 scripts in `tools/` do not run there.
+  (`xtask assets`) are normalised to `/`. The X11 scripts in `tools/` do not run there; use `tools/gui_win.py`.
 - **Presets** (`src/presets.rs`, `gui/presets.rs`, `docs/spec/0.11-presets.md`): a preset is the
   feature's JSON with only `PresetData::KEYS` kept (a key skipped by `skip_serializing_if` is
   stored as `null` = "default"), equations as `params: {field: expr}` without parameter names.
