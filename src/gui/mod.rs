@@ -54,6 +54,7 @@ mod files;
 mod hole;
 mod hole_dims;
 mod hole_panel;
+mod home;
 mod i18n;
 mod icons;
 mod iprops;
@@ -629,6 +630,8 @@ struct CadCraftApp {
     drive: Option<drive::DriveWin>,
     /// The Create New File window is open (`new_file.rs`).
     new_file: bool,
+    /// The Home page (`home.rs`).
+    home: home::HomeUi,
     /// The Sheet Metal environment (`sheet_metal.rs`).
     sm: sheet_metal::SheetUi,
     bom_export: Option<String>,
@@ -881,6 +884,7 @@ impl CadCraftApp {
             bom: None,
             drive: None,
             new_file: false,
+            home: home::HomeUi::default(),
             sm: Default::default(),
             bom_export: None,
             tab: Tab::Model,
@@ -977,6 +981,12 @@ impl CadCraftApp {
         {
             app.load_demo(demo);
             app.history.clear();
+        } else {
+            // Home first (a file given on the command line opens over it).
+            app.home.load();
+            if app.home.s.show_on_start {
+                app.show_home();
+            }
         }
         app.fit_view();
         app
@@ -7225,6 +7235,7 @@ impl eframe::App for CadCraftApp {
         // Expression fields everywhere evaluate against the part's parameters.
         valuefield::set_frame_table(&ctx, self.part().parameter_table());
         self.layout_begin(&ctx);
+        self.home_follow_documents();
         self.shortcuts(&ctx);
         self.files_ui(&ctx);
         self.confirm_delete_window(&ctx);

@@ -33,6 +33,8 @@
 //!
 //! See [`format`](mod@format) for the on-disk layout and [`library`] for link resolution.
 
+pub mod design_project;
+pub mod filetype;
 pub mod format;
 pub mod library;
 
@@ -46,6 +48,8 @@ use crate::kernel::Transform3;
 pub use crate::part::{PartDocument, PartSketch};
 
 pub mod iprops;
+pub use design_project::DesignProject;
+pub use filetype::FileType;
 pub use format::{FILE_EXTENSION, FORMAT_REVISION, FORMAT_VERSION, SaveOptions};
 pub use library::Resolver;
 

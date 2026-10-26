@@ -254,6 +254,7 @@ Before each step: verify its rows against the Inventor 2027 help (spec §7).
 | Drawing: sheets, title block, ISO/ANSI; Base, Projected, Section, Detail views; HLR (🟡 2026-10-26: sheets, title block, Base / Projected / Section / Detail / Auxiliary views with HLR, dimensions, centre marks, centrelines, hole notes, texts, PDF; 2026-10-26 later: assembly views, Parts List, Balloon, Auto Balloon (spec 4.4); next: Break / Break Out / Crop, angular dimensions, tangent-edge option, DXF) | 4.1, 4.2 |
 | Dimensions, hole notes, centerlines, Parts List + balloons; export to PDF and DXF | 4.3–4.5 |
 | Patterns and mirror of features and bodies (🟡 done, waiting for a visual check — step 2.7) | 2.11, 2.12 |
+| Home start page and one file per document (owner, 2026-10-26; specs [0.17](spec/0.17-home.md), [0.6a](spec/0.6a-file-types-projects.md)): H1 Home page + `FileType` / `DesignProject` (🟡 2026-10-26, waiting for the owner's check) → H2 Save As per kind (`.ccpart` / `.ccasm` / `.ccdrw`), Open filters, drawings / assemblies linking single files → H3 Projects editor, active project, per-project recent lists, workspace start folders → H4 Pack and Go to `.3dcadcraft`, `OldVersions`, Home commands with aliases, reduced ribbon on Home | 0.6, 0.17 |
 
 **Acceptance criteria:**
 - A vise of 6 parts and standard bolts from a linked library is assembled.

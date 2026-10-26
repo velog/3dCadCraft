@@ -1145,6 +1145,8 @@ impl CadCraftApp {
             let r = p.show(ui, |ui| self.status_bar(ui));
             LayoutUi::note(&mut self.layout.s.status_height, r.response.rect.height());
         }
+        // Home has no browser or Properties (spec 0.17 §3.1).
+        let (browser, props) = (browser && !self.home.shown, props && !self.home.shown);
         if browser {
             let w = self.layout.s.browser_width.unwrap_or(BROWSER_W);
             let p = match self.layout.s.browser_side {
@@ -1182,9 +1184,13 @@ impl CadCraftApp {
         }
         // Document tabs above the view (`doc_tabs`).
         egui::Panel::top(self.layout.panel_id("doc_tabs")).show(ui, |ui| self.tab_bar(ui));
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE)
-            .show(ui, |ui| self.viewport(ui, frame));
+        if self.home.shown {
+            egui::CentralPanel::default().show(ui, |ui| self.home_page(ui));
+        } else {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| self.viewport(ui, frame));
+        }
         self.shift_menu_ui(ui.ctx());
         if let Some(on) = self.full_screen_cmd.take() {
             ui.ctx()

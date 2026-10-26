@@ -11,7 +11,7 @@ use super::ribbon::{Size, icon_button};
 
 /// What the tiles make.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
+pub(super) enum Kind {
     Part,
     Assembly,
     SheetMetal,
@@ -85,31 +85,32 @@ impl CadCraftApp {
             });
         let now = ctx.input(|i| i.time);
         match chosen {
-            Some(Kind::Part) => {
+            Some(k) => {
                 self.new_file = false;
-                self.request(super::files::Pending::New, now);
-            }
-            Some(Kind::SheetMetal) => {
-                self.new_file = false;
-                self.add_blank_tab();
-                self.new_project();
-                self.part_mut().make_sheet_metal(None);
-                self.mark_saved();
-                self.tab = super::ribbon::Tab::SheetMetal;
-            }
-            Some(Kind::Assembly) => {
-                self.new_file = false;
-                self.new_assembly();
-            }
-            Some(Kind::Drawing) => {
-                self.new_file = false;
-                self.new_drawing();
+                self.new_file_of(k, now);
             }
             None => {
                 if !open {
                     self.new_file = false;
                 }
             }
+        }
+    }
+
+    /// A new document of kind `k` in a tab of its own (the chooser, Home's
+    /// New drop-down).
+    pub(super) fn new_file_of(&mut self, k: Kind, now: f64) {
+        match k {
+            Kind::Part => self.request(super::files::Pending::New, now),
+            Kind::SheetMetal => {
+                self.add_blank_tab();
+                self.new_project();
+                self.part_mut().make_sheet_metal(None);
+                self.mark_saved();
+                self.tab = super::ribbon::Tab::SheetMetal;
+            }
+            Kind::Assembly => self.new_assembly(),
+            Kind::Drawing => self.new_drawing(),
         }
     }
 }

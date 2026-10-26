@@ -136,6 +136,10 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
 **Specification:** [spec/0.6-files.md](spec/0.6-files.md) (the file dialog, recent files, Windows).
 
+**File types and design projects** — 🟡 (2026-10-26): one extension per document kind — `.ccpart`, `.ccasm`, `.ccdrw`, `.ccpres` — and design projects `.ccproj` (workspace, libraries, shortcuts, old versions; Inventor's `.ipj`); `FileType` and `DesignProject` exist with tests, Save As / Open filters / the Projects editor ⬜. **Specification:** [spec/0.6a-file-types-projects.md](spec/0.6a-file-types-projects.md)
+
+**Home** — 🟡 (2026-10-26): the start page as the first tab — project, New (with the kinds) / Open, recent documents as cards or a list with search, sort, filter, pins and Remove Unpinned, learning links; shown at start and after the last document closes. **Specification:** [spec/0.17-home.md](spec/0.17-home.md)
+
 **Inventor equivalent.** Project files (`.ipj`), Pack and Go, Vault (partly).
 
 ## 0.7 API for agents (JSON-RPC / MCP) — ⬜ · M

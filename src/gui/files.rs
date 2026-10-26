@@ -521,7 +521,7 @@ pub(super) fn size_text(n: u64) -> String {
 }
 
 /// Local date and time, `2026-10-26 14:05`.
-fn date_text(t: std::time::SystemTime) -> String {
+pub(super) fn date_text(t: std::time::SystemTime) -> String {
     chrono::DateTime::<chrono::Local>::from(t)
         .format("%Y-%m-%d %H:%M")
         .to_string()

@@ -142,6 +142,10 @@ impl CadCraftApp {
     pub(super) fn close_active_tab(&mut self) {
         if self.tabs.len() <= 1 {
             self.new_project();
+            // Inventor: Home comes back when the last document closes.
+            if self.home.s.show_on_start {
+                self.show_home();
+            }
             return;
         }
         self.leave_document();
@@ -182,12 +186,15 @@ impl CadCraftApp {
         let mut close_others = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            for k in 0..self.tabs.len() {
+            self.home_tab(ui);
+            // Home over an untouched Untitled: Home alone, as at Inventor's start.
+            let only_home = self.home.shown && self.tabs.len() == 1 && self.active_is_blank();
+            for k in 0..if only_home { 0 } else { self.tabs.len() } {
                 let (title, dirty) = match &self.tabs[k] {
                     Some(t) => (t.title.clone(), t.dirty),
                     None => (self.document_title(), active_dirty),
                 };
-                let active = k == self.active_tab;
+                let active = k == self.active_tab && !self.home.shown;
                 let text = format!("{title}{}", if dirty { " *" } else { "" });
                 let mut rt = RichText::new(text);
                 if active {
@@ -229,6 +236,7 @@ impl CadCraftApp {
             }
         });
         if let Some(k) = switch {
+            self.home.shown = false;
             self.switch_tab(k);
         }
         if close_others {
