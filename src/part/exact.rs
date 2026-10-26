@@ -3217,6 +3217,20 @@ pub(super) fn sheet_op(
             let (solid, model) = ksm::set_flat(&state.model, body, flat).map_err(User)?;
             Ok(replace(k, solid, model, body))
         }
+        SheetOp::CornerSeam {
+            body,
+            a,
+            b,
+            seam,
+            gap,
+            ratio,
+        } => {
+            let (k, state) = sheet_of(body, solids, metal)?;
+            let gap = gap.unwrap_or(rv.gap);
+            let (solid, model) =
+                ksm::seam(&state.model, body, a, b, seam.kernel(), gap, *ratio).map_err(User)?;
+            Ok(replace(k, solid, model, body))
+        }
         SheetOp::Cut { sketch, profiles } => {
             let ps = sketch_of(sketch)?;
             let regions = ps.sketch.regions();

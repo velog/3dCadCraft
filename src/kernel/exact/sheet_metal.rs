@@ -399,6 +399,71 @@ pub fn cut(
     Ok((s, SheetModel(Arc::new(next))))
 }
 
+/// How Corner Seam closes a corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seam {
+    /// Symmetric gap.
+    Gap,
+    /// The first flange over the second.
+    Overlap,
+    /// The second flange over the first.
+    ReverseOverlap,
+}
+
+/// A corner between two flanges: their tags, the corner point (world) and
+/// the direction the flanges rise.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlangeCorner {
+    /// One flange's tag.
+    pub a: String,
+    /// The other's.
+    pub b: String,
+    /// The corner on the base.
+    pub at: Point3,
+    /// The way the flanges rise from the base.
+    pub up: crate::kernel::Vector3,
+}
+
+/// The corners between flanges of the sheet.
+pub fn corners(m: &SheetModel) -> Vec<FlangeCorner> {
+    m.0.flange_corners()
+        .into_iter()
+        .map(|(a, b, at, up)| FlangeCorner {
+            a,
+            b,
+            at: p3(at),
+            up: crate::kernel::Vector3::new(up.x, up.y, up.z),
+        })
+        .collect()
+}
+
+/// Corner Seam: the corner between flanges `a` and `b` closed again.
+pub fn seam(
+    m: &SheetModel,
+    prefix: &str,
+    a: &str,
+    b: &str,
+    kind: Seam,
+    gap: Real,
+    ratio: Real,
+) -> Result<(ExactSolid, SheetModel), String> {
+    let mut next = (*m.0).clone();
+    if next.flat {
+        return Err("refold the sheet before changing its corners".into());
+    }
+    let kind = match kind {
+        Seam::Gap => sd::SeamKind::Gap,
+        Seam::Overlap => sd::SeamKind::Overlap,
+        Seam::ReverseOverlap => sd::SeamKind::ReverseOverlap,
+    };
+    guarded_sheet("Corner Seam", || {
+        next.seam_corner(a, b, kind, gap, ratio)
+            .map_err(|e| e.to_string())
+    })?;
+    let s = named_solid(&next, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(next))))
+}
+
 /// The flat pattern's material as closed loops (flat coordinates; outer
 /// loops counter-clockwise, cut-outs clockwise), for DXF.
 pub fn flat_loops(m: &SheetModel) -> Result<Vec<Vec<[Real; 2]>>, String> {

@@ -106,7 +106,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (2026-10-25).
 /// - 21: sheet metal Hem, Fold, Contour Flange, Unfold / Refold and Cut
 ///   (`Feature::SheetOp`) (2026-10-26).
-pub const FORMAT_REVISION: u32 = 21;
+/// - 22: Corner Seam (`SheetOp::CornerSeam`) (2026-10-26).
+pub const FORMAT_REVISION: u32 = 22;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

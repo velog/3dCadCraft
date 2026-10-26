@@ -657,6 +657,18 @@ struct Corner {
     c: Vec2,
 }
 
+/// How a corner between two flanges is closed (3DCadCraft addition: Corner Seam).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeamKind {
+    /// Both ends the gap apart, symmetric about the plane halving the flanges.
+    Gap,
+    /// The first flange runs on over the second one's edge (by the overlap ratio of the
+    /// thickness past its inner face); the second stops the gap short of the first.
+    Overlap,
+    /// The second flange over the first.
+    ReverseOverlap,
+}
+
 /// The corners of a straight-edged region (counter-clockwise).
 fn corners_of(r: &Region2) -> Vec<Vec2> {
     dedup(&r.outer.ccw().polyline(1e-3))
@@ -2395,6 +2407,13 @@ impl SheetBody {
     /// the edges nearest each other (on the inner faces) are `gap` apart along their length. Any
     /// angles, also unequal ones, at any convex corner of the base.
     fn close_corner(&mut self, k: &Corner) -> std::result::Result<(), String> {
+        self.close_corner_as(k, SeamKind::Gap, self.gap, 1.0)
+    }
+
+    /// [`Self::close_corner`] with a seam of `kind`, `gap` wide; `ratio` is how much of the
+    /// thickness an overlapping flange runs past the other's inner face (1 = flush with its
+    /// outer face).
+    fn close_corner_as(&mut self, k: &Corner, kind: SeamKind, gap: f64, ratio: f64) -> std::result::Result<(), String> {
         let (Some(fa), Some(fb)) = (self.flanges.get(k.a).cloned(), self.flanges.get(k.b).cloned()) else {
             return Err("a flange is missing".into());
         };
@@ -2411,20 +2430,46 @@ impl SheetBody {
         if (fa.angle >= 0.0) != (fb.angle >= 0.0) {
             return Err("the flanges bend opposite ways".into());
         }
-        let gap = self.gap;
         if !(gap >= MIN_CORNER_GAP) {
             return Err(format!("the flange gap {gap:.4} mm is below {MIN_CORNER_GAP} mm"));
+        }
+        if !(0.0..=1.0).contains(&ratio) {
+            return Err("the overlap ratio must be between 0 and 1".into());
         }
         let (wa, wb) = (self.fold(k.a), self.fold(k.b));
         // Signed distance from the plane bisecting the inner faces, positive on flange a's side.
         let Some(bisector) = self.halving_plane(k) else { return Err("the flanges are parallel".into()) };
+        // A flange's inner face as a plane: the signed distance of a point from it, positive
+        // toward the inside of the bend (away from the material).
+        let inner = |i: usize, w: &Mat| -> Option<(Vec3, Vec3)> {
+            let (z_in, sign) = if self.flanges.get(i)?.angle >= 0.0 { (self.t, 1.0) } else { (0.0, -1.0) };
+            Some((apply_point(w, v3(k.c) + Vec3::Z * z_in), apply_vector(w, Vec3::Z) * sign))
+        };
+        let (Some((pa, na)), Some((pb, nb))) = (inner(k.a, &wa), inner(k.b, &wb)) else {
+            return Err("a flange is missing".into());
+        };
+        let t = self.t;
+        // What each flange keeps: (signed distance of a point, positive on the kept side; the
+        // margin it must keep from 0).
+        type Keep<'a> = (Box<dyn Fn(Vec3) -> f64 + 'a>, f64);
+        let over = |p0: Vec3, n0: Vec3| -> Box<dyn Fn(Vec3) -> f64> { Box::new(move |p: Vec3| n0.dot(p - p0) + ratio * t) };
+        let short = |p0: Vec3, n0: Vec3| -> Box<dyn Fn(Vec3) -> f64> { Box::new(move |p: Vec3| n0.dot(p - p0)) };
+        let (keep_a, keep_b): (Keep, Keep) = match kind {
+            SeamKind::Gap => (
+                (Box::new(|p: Vec3| bisector(p)), gap / 2.0),
+                (Box::new(|p: Vec3| -bisector(p)), gap / 2.0),
+            ),
+            SeamKind::Overlap => ((over(pb, nb), 0.0), (short(pa, na), gap)),
+            SeamKind::ReverseOverlap => ((short(pb, nb), gap), (over(pa, na), 0.0)),
+        };
         // A flange's end: its panel keeps u ≥ u_end(s) (u from the corner along its bend, s from
         // the bend's start across it), so that every point of the end face is gap/2 or more from
         // the bisecting plane. The distance is affine in (u, s, z), so the end is a line in the
         // flat: returns u_end at the panel's bend edge and how much further the panel runs on per
         // unit of height.
-        let end = |f: &SheetFlange, w: &Mat, e: Vec2, sign: f64| -> std::result::Result<(f64, f64), String> {
-            let at = |u: f64, s: f64, z: f64| sign * bisector(apply_point(w, v3(k.c + e * u + f.n * s) + Vec3::Z * z));
+        let end = |f: &SheetFlange, w: &Mat, e: Vec2, keep: &Keep| -> std::result::Result<(f64, f64), String> {
+            let (dist, margin) = keep;
+            let at = |u: f64, s: f64, z: f64| dist(apply_point(w, v3(k.c + e * u + f.n * s) + Vec3::Z * z));
             let c0 = at(0.0, 0.0, 0.0);
             let (cu, cs, cz) = (at(1.0, 0.0, 0.0) - c0, at(0.0, 1.0, 0.0) - c0, at(0.0, 0.0, 1.0) - c0);
             if !(cu > 1e-6) || ![c0, cs, cz].iter().all(|x| x.is_finite()) {
@@ -2433,12 +2478,11 @@ impl SheetBody {
             let ba = self.allowance(f);
             // At 90° the end is square to the bend: keep the panel an exact rectangle.
             let slope = if (cs / cu).abs() < 1e-12 { 0.0 } else { cs / cu };
-            Ok(((gap / 2.0 - c0 - (cz * self.t).min(0.0) - cs * ba) / cu, slope))
+            Ok(((margin - c0 - (cz * self.t).min(0.0) - cs * ba) / cu, slope))
         };
         let mut new = [fa.clone(), fb.clone()];
-        for (f, (e, at_end, sign)) in new.iter_mut().zip([(ea, k.a_end, 1.0), (eb, k.b_end, -1.0)]) {
-            let w = if sign > 0.0 { &wa } else { &wb };
-            let (u_end, slope) = end(f, w, e, sign)?;
+        for (f, (e, at_end, w, keep)) in new.iter_mut().zip([(ea, k.a_end, &wa, &keep_a), (eb, k.b_end, &wb, &keep_b)]) {
+            let (u_end, slope) = end(f, w, e, keep)?;
             let tc = (k.c - f.p).dot(f.d);
             if at_end {
                 f.ext.1 = tc - u_end - f.len;
@@ -3039,6 +3083,46 @@ impl SheetBody {
     }
 
     /// The persistent name of the sheet edge nearest a world point.
+    /// The corners between two flanges on the base: (tag of one, tag of the other, the corner
+    /// in world coordinates, the base's normal) (3DCadCraft addition: Corner Seam picks).
+    pub fn flange_corners(&self) -> Vec<(String, String, Vec3, Vec3)> {
+        let all: Vec<usize> = (0..self.flanges.len()).collect();
+        // `base_pairs`, not `corners`: a corner relief moved the bends' ends off the corner.
+        self.base_pairs(&all)
+            .into_iter()
+            .map(|(a, a_end, b, b_end, c)| Corner { a, a_end, b, b_end, c })
+            .filter_map(|k| {
+                let (fa, fb) = (self.flanges.get(k.a)?, self.flanges.get(k.b)?);
+                let up = if fa.angle >= 0.0 { self.frame.normal() } else { self.frame.normal() * -1.0 };
+                (!fa.tag.is_empty() && !fb.tag.is_empty())
+                    .then(|| (fa.tag.clone(), fb.tag.clone(), apply_point(&self.frame_mat(), v3(k.c)), up))
+            })
+            .collect()
+    }
+
+    /// Close the corner between the flanges tagged `a` and `b` again with a seam of `kind`
+    /// (`Overlap`: `a` runs over `b`), `gap` wide, overlapping `ratio` of the thickness
+    /// (3DCadCraft addition: Corner Seam).
+    pub fn seam_corner(&mut self, a: &str, b: &str, kind: SeamKind, gap: f64, ratio: f64) -> Result<()> {
+        let find = |tag: &str| self.flanges.iter().position(|f| f.tag == tag);
+        let (Some(ia), Some(ib)) = (find(a), find(b)) else {
+            return Err(DocError::Invalid(format!("no flanges {a} and {b} on this sheet")));
+        };
+        let k = self
+            .base_pairs(&[ia, ib])
+            .into_iter()
+            .map(|(a, a_end, b, b_end, c)| Corner { a, a_end, b, b_end, c })
+            .find(|k| (k.a == ia && k.b == ib) || (k.a == ib && k.b == ia))
+            .ok_or_else(|| DocError::Invalid(format!("the flanges {a} and {b} do not meet at a corner")))?;
+        // The kinds are said from `a`'s side; the corner may list the flanges the other way.
+        let kind = match (kind, k.a == ia) {
+            (SeamKind::Overlap, false) => SeamKind::ReverseOverlap,
+            (SeamKind::ReverseOverlap, false) => SeamKind::Overlap,
+            (kind, _) => kind,
+        };
+        self.close_corner_as(&k, kind, gap, ratio).map_err(DocError::Invalid)
+    }
+
     /// Cut `regions` (in the world plane `plane`) through the sheet where they meet the material
     /// of a panel parallel to `plane` and within one thickness of it (3DCadCraft addition: the
     /// sheet metal Cut, kept in the flat pattern as a cut-out). Unfolded, the flat pattern is cut.

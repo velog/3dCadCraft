@@ -434,6 +434,67 @@ impl FoldLocation {
     }
 }
 
+/// How Corner Seam closes a corner (Inventor's Seam types).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SeamType {
+    /// Symmetric Gap: both flanges stop half the gap from the plane between them.
+    #[default]
+    SymmetricGap,
+    /// Overlap: the first flange runs over the second one's edge.
+    Overlap,
+    /// Reverse Overlap: the second flange over the first.
+    ReverseOverlap,
+}
+
+impl SeamType {
+    /// Every type, in menu order.
+    pub const ALL: [SeamType; 3] = [
+        SeamType::SymmetricGap,
+        SeamType::Overlap,
+        SeamType::ReverseOverlap,
+    ];
+
+    /// Label (panel).
+    pub fn label(self) -> &'static str {
+        match self {
+            SeamType::SymmetricGap => "Symmetric Gap",
+            SeamType::Overlap => "Overlap",
+            SeamType::ReverseOverlap => "Reverse Overlap",
+        }
+    }
+
+    pub(super) fn kernel(self) -> ksm::Seam {
+        match self {
+            SeamType::SymmetricGap => ksm::Seam::Gap,
+            SeamType::Overlap => ksm::Seam::Overlap,
+            SeamType::ReverseOverlap => ksm::Seam::ReverseOverlap,
+        }
+    }
+}
+
+fn ratio_default() -> Real {
+    1.0
+}
+
+fn is_one(v: &Real) -> bool {
+    *v == 1.0
+}
+
+/// A corner between two flanges of a sheet (Corner Seam picks).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SheetCorner {
+    /// The sheet body.
+    pub body: String,
+    /// The first flange's tag (`Flange1.2`).
+    pub a: String,
+    /// The second's.
+    pub b: String,
+    /// The corner on the base.
+    pub at: crate::kernel::Point3,
+    /// The way the flanges rise.
+    pub up: crate::kernel::Vector3,
+}
+
 /// The further sheet metal operations (stage S2), one feature type:
 /// Hem, Fold, Contour Flange, Unfold / Refold and Cut.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -497,6 +558,25 @@ pub enum SheetOp {
         /// The sheet body.
         body: String,
     },
+    /// Corner Seam: the corner between two flanges (by their tags) closed again.
+    CornerSeam {
+        /// The sheet body.
+        body: String,
+        /// The first flange (`Flange1.2`): the one that overlaps with Overlap.
+        a: String,
+        /// The second flange.
+        b: String,
+        /// The seam.
+        #[serde(default)]
+        seam: SeamType,
+        /// The gap; `None`: the rule's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gap: Option<Real>,
+        /// Overlap: how much of the thickness the flange runs past the other's
+        /// inner face (1 = flush with its outer face).
+        #[serde(default = "ratio_default", skip_serializing_if = "is_one")]
+        ratio: Real,
+    },
     /// Cut: closed sketch profiles cut through the face their sketch lies on.
     Cut {
         /// The sketch.
@@ -544,6 +624,7 @@ impl SheetOpFeature {
             SheetOp::Unfold { .. } => "Unfold",
             SheetOp::Refold { .. } => "Refold",
             SheetOp::Cut { .. } => "Cut",
+            SheetOp::CornerSeam { .. } => "CornerSeam",
         }
     }
 
@@ -575,6 +656,13 @@ impl SheetOpFeature {
             }
             SheetOp::Fold { .. } => vec![("angle", Unit::Deg)],
             SheetOp::Contour { .. } => vec![("width", Unit::Mm)],
+            SheetOp::CornerSeam { gap, .. } => {
+                if gap.is_some() {
+                    vec![("gap", Unit::Mm)]
+                } else {
+                    Vec::new()
+                }
+            }
             _ => Vec::new(),
         }
     }
@@ -586,6 +674,7 @@ impl SheetOpFeature {
             (SheetOp::Hem { gap, .. }, "gap") => *gap,
             (SheetOp::Fold { angle, .. }, "angle") => Some(*angle),
             (SheetOp::Contour { width, .. }, "width") => Some(*width),
+            (SheetOp::CornerSeam { gap, .. }, "gap") => *gap,
             _ => None,
         }
     }
@@ -597,6 +686,7 @@ impl SheetOpFeature {
             (SheetOp::Hem { gap, .. }, "gap") => *gap = Some(v),
             (SheetOp::Fold { angle, .. }, "angle") => *angle = v,
             (SheetOp::Contour { width, .. }, "width") => *width = v,
+            (SheetOp::CornerSeam { gap, .. }, "gap") => *gap = Some(v),
             _ => {}
         }
     }
@@ -616,6 +706,9 @@ impl SheetOpFeature {
             SheetOp::Unfold { body } => format!("Unfold {body}"),
             SheetOp::Refold { body } => format!("Refold {body}"),
             SheetOp::Cut { sketch, .. } => format!("Cut of {sketch} through the sheet"),
+            SheetOp::CornerSeam { a, b, seam, .. } => {
+                format!("Corner Seam {a} / {b}: {}", seam.label())
+            }
         }
     }
 }
@@ -768,6 +861,40 @@ impl super::PartDocument {
     /// The sheet body the edge or point `at` is on, if one.
     pub fn sheet_body_at(&self, at: crate::kernel::Point3) -> Option<String> {
         self.sheet_edge_at(at).map(|(b, _)| b)
+    }
+
+    /// The corners between flanges of every sheet (Corner Seam).
+    pub fn sheet_corners(&self) -> Vec<SheetCorner> {
+        let mut v: Vec<SheetCorner> = self
+            .sheet_models
+            .iter()
+            .flat_map(|(body, st)| {
+                ksm::corners(&st.model)
+                    .into_iter()
+                    .map(move |c| SheetCorner {
+                        body: body.clone(),
+                        a: c.a,
+                        b: c.b,
+                        at: c.at,
+                        up: c.up,
+                    })
+            })
+            .collect();
+        v.sort_by(|x, y| (&x.body, &x.a, &x.b).cmp(&(&y.body, &y.a, &y.b)));
+        v
+    }
+
+    /// The corner nearest `at` (part coordinates): distance to the corner's
+    /// edge, from the base up the flanges' height.
+    pub fn sheet_corner_near(&self, at: crate::kernel::Point3, reach: Real) -> Option<SheetCorner> {
+        self.sheet_corners()
+            .into_iter()
+            .map(|c| {
+                let h = (at - c.at).dot(&c.up).clamp(0.0, reach);
+                ((at - (c.at + c.up * h)).norm(), c)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, c)| c)
     }
 
     /// Whether the sheet body `body` is unfolded now.

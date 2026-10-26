@@ -187,5 +187,12 @@
     "features": 4,
     "sketches": 2,
     "exact": true
+  },
+  "r22/sheet_r22.3dcadcraft": {
+    "volume": 31207.960464304837,
+    "faces": 50,
+    "features": 3,
+    "sketches": 1,
+    "exact": true
   }
 }

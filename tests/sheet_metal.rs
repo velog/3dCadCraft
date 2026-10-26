@@ -818,3 +818,153 @@ fn sheet_cut_then_flange() {
     assert!(bad.is_err());
     assert_eq!(p.features.len(), n);
 }
+
+/// A 120 x 80 tray: four 20 mm flanges, corners closed with the rule's gap.
+fn tray() -> PartDocument {
+    let mut p = rect(120.0, 80.0);
+    flange(
+        &mut p,
+        &[
+            Point3::new(60.0, 0.0, 2.0),
+            Point3::new(120.0, 40.0, 2.0),
+            Point3::new(60.0, 80.0, 2.0),
+            Point3::new(0.0, 40.0, 2.0),
+        ],
+        20.0,
+        |_| {},
+    );
+    p
+}
+
+/// The points of the panel faces of flange `tag` (past its bend: not the
+/// rims at the bend's ends).
+fn flange_points(p: &PartDocument, tag: &str) -> Vec<Point3> {
+    let key = format!(":{tag}:");
+    p.body
+        .faces()
+        .filter(|(_, f)| {
+            f.name
+                .as_deref()
+                .is_some_and(|n| n.contains(&key) && !n.contains("rim.bend"))
+        })
+        .filter_map(|(_, f)| f.mesh.as_ref())
+        .flat_map(|m| m.positions.iter().copied())
+        .collect()
+}
+
+/// The flange of the tray that stands on its front edge (y = 0).
+fn front_tag(p: &PartDocument, c: &cadcraft3d::part::sheet_metal::SheetCorner) -> bool {
+    flange_points(p, &c.a).iter().all(|q| q.y < 2.0 + 1e-6)
+}
+
+/// Corner Seam: the front-right corner of a tray closed as Symmetric Gap
+/// (both 1 mm from the halving plane), Overlap (front runs flush over
+/// the right flange's edge, the right stops the gap short) and Reverse
+/// Overlap; a wider gap; every result a valid sheet with a flat pattern.
+#[test]
+fn corner_seam_types() {
+    use cadcraft3d::part::sheet_metal::{SeamType, SheetOp};
+    let p = tray();
+    let corners = p.sheet_corners();
+    assert_eq!(corners.len(), 4, "{corners:?}");
+    // The front-right corner, picked near its top.
+    let c = p
+        .sheet_corner_near(Point3::new(120.0, 0.0, 15.0), 100.0)
+        .unwrap();
+    // Where the bend lines cross: Inside of the base, set back (R + T)·tan 45° = 4.
+    assert!(
+        (c.at.x - 116.0).abs() < 1e-6 && (c.at.y - 4.0).abs() < 1e-6,
+        "{c:?}"
+    );
+    // Which of the two is the front flange (its bend runs along x).
+    let front_first = front_tag(&p, &c);
+    let (front, right) = if front_first {
+        (c.a.clone(), c.b.clone())
+    } else {
+        (c.b.clone(), c.a.clone())
+    };
+    let t = 2.0;
+    let front_reach = |q: &PartDocument, tag: &str| {
+        flange_points(q, tag)
+            .iter()
+            .map(|v| v.x)
+            .fold(Real::NEG_INFINITY, Real::max)
+    };
+    let right_reach = |q: &PartDocument, tag: &str| {
+        flange_points(q, tag)
+            .iter()
+            .map(|v| v.y)
+            .fold(Real::INFINITY, Real::min)
+    };
+    let base = front_reach(&p, &front);
+    // Symmetric Gap is measured square to the plane halving the corner (45°
+    // here): the inner faces' edges are g apart, so an end stops (g/2)·√2
+    // short of the other flange's inner face.
+    let sq2 = std::f64::consts::SQRT_2;
+    assert!(
+        (base - (120.0 - t - 1.0 * sq2)).abs() < 0.05,
+        "symmetric gap 2: {base}"
+    );
+    let mut reach = Vec::new();
+    for (seam, gap) in [
+        (SeamType::Overlap, None),
+        (SeamType::ReverseOverlap, None),
+        (SeamType::SymmetricGap, Some(4.0)),
+    ] {
+        let mut q = p.clone();
+        op(
+            &mut q,
+            SheetOp::CornerSeam {
+                body: c.body.clone(),
+                a: front.clone(),
+                b: right.clone(),
+                seam,
+                gap,
+                ratio: 1.0,
+            },
+        );
+        check(&q);
+        assert_eq!(q.flat_patterns()[0].bends.len(), 4);
+        reach.push((front_reach(&q, &front), right_reach(&q, &right)));
+    }
+    // Overlap: the front runs flush over the right's edge; the right stops
+    // the gap (2) short of the front's inner face (y = 2).
+    assert!((reach[0].0 - 120.0).abs() < 0.05, "{reach:?}");
+    assert!((reach[0].1 - (t + 2.0)).abs() < 0.05, "{reach:?}");
+    // Reverse: the right runs flush down to the front's outer face (y = 0).
+    assert!(reach[1].1.abs() < 0.05, "{reach:?}");
+    assert!(
+        (reach[2].0 - (120.0 - t - 2.0 * sq2)).abs() < 0.05,
+        "gap 4, {reach:?}"
+    );
+    // Half the thickness of overlap.
+    let mut q = p.clone();
+    op(
+        &mut q,
+        SheetOp::CornerSeam {
+            body: c.body.clone(),
+            a: front.clone(),
+            b: right.clone(),
+            seam: SeamType::Overlap,
+            gap: None,
+            ratio: 0.5,
+        },
+    );
+    check(&q);
+    assert!((front_reach(&q, &front) - 119.0).abs() < 0.05);
+    // Flanges that do not meet: refused, nothing changes.
+    let mut q = p.clone();
+    let n = q.features.len();
+    let bad = q.add_sheet_op(cadcraft3d::part::sheet_metal::SheetOpFeature::new(
+        SheetOp::CornerSeam {
+            body: c.body.clone(),
+            a: front,
+            b: "Flange9.9".into(),
+            seam: SeamType::Overlap,
+            gap: None,
+            ratio: 1.0,
+        },
+    ));
+    assert!(bad.is_err());
+    assert_eq!(q.features.len(), n);
+}

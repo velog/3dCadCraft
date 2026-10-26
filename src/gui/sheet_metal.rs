@@ -279,6 +279,7 @@ impl CadCraftApp {
             SheetOp::Cut { .. } => "Cut",
             SheetOp::Unfold { .. } => "Unfold",
             SheetOp::Refold { .. } => "Refold",
+            SheetOp::CornerSeam { .. } => "Corner Seam",
         };
         self.panel_header(ui, super::icons::Icon::SheetMetal, title);
         let rule = crate::part::sheet_metal::rule_of(self.part()).values();
@@ -467,7 +468,7 @@ impl CadCraftApp {
                 ui.label(format!("{} profile(s), through the sheet", profiles.len()));
                 ui.weak("Cut Across Bend: Unfold first, cut, then Refold");
             }
-            SheetOp::Unfold { .. } | SheetOp::Refold { .. } => {}
+            SheetOp::Unfold { .. } | SheetOp::Refold { .. } | SheetOp::CornerSeam { .. } => {}
         }
     }
 
@@ -1187,5 +1188,6 @@ fn op_ready(def: &SheetOpFeature) -> bool {
         SheetOp::Contour { sketch, .. } => !sketch.is_empty(),
         SheetOp::Cut { sketch, profiles } => !sketch.is_empty() && !profiles.is_empty(),
         SheetOp::Unfold { .. } | SheetOp::Refold { .. } => true,
+        SheetOp::CornerSeam { a, b, .. } => !a.is_empty() && !b.is_empty(),
     }
 }
