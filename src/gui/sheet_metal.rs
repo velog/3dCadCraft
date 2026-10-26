@@ -255,9 +255,10 @@ fn build(
     }
 }
 
-/// A face's shape signature: its triangle count and box (a changed face —
-/// a flange a Corner Seam ran on — has another).
-pub(super) type FaceSig = (usize, [i64; 6]);
+/// A face's shape signature: its area and box (a changed face — a flange a
+/// Corner Seam ran on, a wall a Cut went through — has another). Not the
+/// triangle count: a sheet rebuilt by a Cut meshes every face anew.
+pub(super) type FaceSig = (f64, [f64; 6]);
 
 fn face_sig(f: &crate::kernel::Face) -> Option<FaceSig> {
     let m = f.mesh.as_ref()?;
@@ -268,8 +269,37 @@ fn face_sig(f: &crate::kernel::Face) -> Option<FaceSig> {
             b[k + 3] = b[k + 3].max(p[k]);
         }
     }
-    // Micrometres: the same face rebuilt compares equal.
-    Some((m.triangles.len(), b.map(|v| (v * 1000.0).round() as i64)))
+    let at = |i: u32| {
+        m.positions
+            .get(i as usize)
+            .map(|p| Vector3::new(p[0], p[1], p[2]))
+    };
+    let area = m
+        .triangles
+        .iter()
+        .filter_map(|t| {
+            Some(
+                (at(t[1])? - at(t[0])?)
+                    .cross(&(at(t[2])? - at(t[0])?))
+                    .norm()
+                    / 2.0,
+            )
+        })
+        .sum();
+    Some((area, b))
+}
+
+/// The same face shape: box within 1 µm, area within 0.5 % (a curved face
+/// meshed again differs a little).
+fn same_sig(a: &Option<FaceSig>, b: &Option<FaceSig>) -> bool {
+    match (a, b) {
+        (Some((aa, ab)), Some((ba, bb))) => {
+            ab.iter().zip(bb).all(|(x, y)| (x - y).abs() < 1e-3)
+                && (aa - ba).abs() <= 1e-3 + 5e-3 * aa.abs().max(ba.abs())
+        }
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 /// The faces of a part by name with their shape (the preview's "before").
@@ -297,7 +327,7 @@ fn new_faces(
         let Some(n) = f.name.as_deref() else {
             continue;
         };
-        let same = before.get(n).is_some_and(|s| *s == face_sig(f));
+        let same = before.get(n).is_some_and(|s| same_sig(s, &face_sig(f)));
         if same && !n.contains(&key) && !n.contains(&key2) {
             continue;
         }
@@ -1067,25 +1097,36 @@ impl CadCraftApp {
                 }
                 SheetOp::Cut { extent, across, .. } => {
                     psection(ui, "sm_cut", "Behavior", |ui| {
-                        plabel(ui, "Cut Across Bend");
-                        ui.checkbox(across, "").on_hover_text(
+                        // The label column is narrow: the option's name
+                        // goes with its check box.
+                        plabel(ui, "Bends");
+                        ui.checkbox(across, "Cut Across Bend").on_hover_text(
                             "The profile wraps across the bends past the face it lies on (through the thickness)",
                         );
                         ui.end_row();
                         if !*across {
                             plabel(ui, "Extents");
-                            ui.horizontal(|ui| {
-                                for (x, tip) in [
-                                    (CutExtent::Thickness, "Through the face the sketch lies on"),
-                                    (CutExtent::Distance, "So deep into the material (a pocket)"),
-                                    (
-                                        CutExtent::ThroughAll,
-                                        "Through every wall along the sketch normal",
-                                    ),
-                                ] {
-                                    ui.selectable_value(extent, x, x.label()).on_hover_text(tip);
-                                }
-                            });
+                            egui::ComboBox::from_id_salt("sm_cut_extent")
+                                .selected_text(extent.label())
+                                .show_ui(ui, |ui| {
+                                    for (x, tip) in [
+                                        (
+                                            CutExtent::Thickness,
+                                            "Through the face the sketch lies on",
+                                        ),
+                                        (
+                                            CutExtent::Distance,
+                                            "So deep into the material (a pocket)",
+                                        ),
+                                        (
+                                            CutExtent::ThroughAll,
+                                            "Through every wall along the sketch normal",
+                                        ),
+                                    ] {
+                                        ui.selectable_value(extent, x, x.label())
+                                            .on_hover_text(tip);
+                                    }
+                                });
                             ui.end_row();
                             if *extent == CutExtent::Distance {
                                 field_row(ui, &mut fx, "Distance", &snapshot, "depth");
