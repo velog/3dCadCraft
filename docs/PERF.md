@@ -82,11 +82,26 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
 
 ## Log
 
+- 2026-10-26: **Drawing views of large assemblies** (`tests/perf_drawing.rs`, `examples/big_assembly.rs`). 5 000
+  components went from 15.7 s to 3.9 s, 20 000 from 114 s to 14.2 s, and the 2 500-hole plate from 3.1 s to 0.84 s
+  (front + iso, debug profile). The causes and fixes:
+  - The occlusion grid's cells came from the long side only. An assembly seen from the front had about 256 thin
+    cells of thousands of triangles each. Cells are now square at about two triangles each, sorted nearest first,
+    and a lookup stops at the first triangle behind the point.
+  - Silhouette candidates (smooth mesh edges) were welded for every view and every occurrence. They are now
+    computed once per component (`ViewModel::smooth`) and only transformed.
+  - Duplicate-line cells were 4 × the piece step. They are now about the 0.025 mm tolerance, and an isometric
+    crowd went from 8 s to 1 s.
+  - Pieces are classified on every core.
+
+  With *Hide small parts* below 30 mm (`Simplify::min_part`), 100 000 components take 2.6 s. Phase times are
+  printed with `CADCRAFT3D_HLR_TIMES=1`.
 - 2026-10-26 — **Open: two-mode timings.** *shell 1.5 of the rounded box* and *split solid by an open spline* run
   ~400 / ~300 ms in some `perf` runs and ~720 / ~620 ms in others (budgets 600 / 500), with the same code and a
   quiet machine (others < 5 % in the resource log: perf-1793010700 vs perf-1793019755). Alone in a scratch test
   they take 359 / 273 ms. Not yet explained (CPU power state? allocator state after earlier cases?) — to
   investigate before raising anything. New case: *flat extents + bend lines of the tray* 0.5 ms (budget 2).
+
 
 - 2026-10-26 — **Assembly update, 1000 stacked cubes: 190 → 41 ms** (perf table 91 ms with the sampler). Symmetry
   (`f9fdede`) made `Con::ends()` return a `Vec`, and `passes` scanned every constraint for every component: 1000 ×

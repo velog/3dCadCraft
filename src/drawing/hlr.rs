@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use super::ViewFrame;
-use crate::kernel::{Curve, EdgeId, Point3, SolidMesh, TessellationOptions, Vector3};
+use crate::kernel::{Curve, EdgeId, Point3, SolidMesh, TessellationOptions, Transform3, Vector3};
 use crate::part::PartDocument;
 
 /// The lines of one view, on the view plane (model mm, not scaled).
@@ -99,6 +99,9 @@ pub struct ViewModel {
     pub meshes: Vec<SolidMesh>,
     /// The edges drawn (no seams inside one smooth face).
     pub edges: Vec<ModelEdge>,
+    /// The meshes' smooth edges (silhouette candidates), computed once;
+    /// `None`: computed by each view.
+    pub smooth: Option<Vec<SmoothEdge>>,
 }
 
 /// One model edge.
@@ -114,6 +117,101 @@ pub struct ModelEdge {
     pub line: bool,
     /// The note of the hole whose axis this circle sits on.
     pub note: Option<String>,
+}
+
+/// One occurrence of a component in an assembly view: its id (edge names
+/// get the prefix `o<id>/`), placement and the component's model (shared
+/// by every occurrence of that component).
+#[derive(Clone, Debug)]
+pub struct Instance {
+    /// Occurrence id.
+    pub id: u32,
+    /// Placement in assembly coordinates.
+    pub transform: Transform3,
+    /// The component's view model (computed once per component).
+    pub model: std::sync::Arc<ViewModel>,
+}
+
+/// What a view leaves out to stay fast on large models (spec 4.7 §3.7;
+/// Inventor's *Hide small parts* of the Drawing View dialog).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Simplify {
+    /// Components whose bounding box diagonal is below this (model mm) are
+    /// not drawn; 0 keeps all.
+    pub min_part: f64,
+    /// Edges whose length is below this (model mm) are not drawn; 0 keeps
+    /// all.
+    pub min_edge: f64,
+    /// Hidden lines are not computed (Hidden Line Removed views).
+    pub no_hidden: bool,
+}
+
+/// The occurrence an assembly view's edge name belongs to (`o<id>/…`).
+pub fn occurrence_of(edge: &str) -> Option<u32> {
+    edge.strip_prefix('o')?.split_once('/')?.0.parse().ok()
+}
+
+/// The diagonal of a model's bounding box (mm).
+pub fn model_size(m: &ViewModel) -> f64 {
+    let (mut lo, mut hi) = (Vector3::repeat(f64::MAX), Vector3::repeat(f64::MIN));
+    for p in m.meshes.iter().flat_map(|m| &m.faces.positions) {
+        lo = lo.inf(&p.coords);
+        hi = hi.sup(&p.coords);
+    }
+    if lo.x > hi.x { 0.0 } else { (hi - lo).norm() }
+}
+
+/// An assembly's view model: every visible occurrence's component model
+/// moved into place, its edges named `o<occurrence id>/<edge name>`.
+/// Components smaller than `simplify.min_part` are left out.
+pub fn assembly_model(instances: &[Instance], simplify: Simplify) -> ViewModel {
+    let mut out = ViewModel::default();
+    let mut sizes: HashMap<*const ViewModel, f64> = HashMap::new();
+    for inst in instances {
+        let m = inst.model.as_ref();
+        if simplify.min_part > 0.0 {
+            let size = *sizes
+                .entry(m as *const ViewModel)
+                .or_insert_with(|| model_size(m));
+            if size < simplify.min_part {
+                continue;
+            }
+        }
+        let t = &inst.transform;
+        // Only what hidden line removal reads: positions and triangles
+        // (normals and edges stay with the component).
+        for mesh in &m.meshes {
+            let mut moved = SolidMesh::default();
+            moved.faces.positions = mesh.faces.positions.iter().map(|q| t * *q).collect();
+            moved.faces.triangles = mesh.faces.triangles.clone();
+            out.meshes.push(moved);
+        }
+        let smooth = out.smooth.get_or_insert_with(Vec::new);
+        let local;
+        let own = match &m.smooth {
+            Some(v) => v,
+            None => {
+                local = m.meshes.iter().flat_map(smooth_edges).collect::<Vec<_>>();
+                &local
+            }
+        };
+        smooth.extend(own.iter().map(|e| SmoothEdge {
+            a: t * e.a,
+            b: t * e.b,
+            n1: t * e.n1,
+            n2: t * e.n2,
+        }));
+        for e in &m.edges {
+            out.edges.push(ModelEdge {
+                name: e.name.as_ref().map(|n| format!("o{}/{n}", inst.id)),
+                pts: e.pts.iter().map(|q| t * *q).collect(),
+                circle: e.circle.map(|(c, n, r)| (t * c, t * n, r)),
+                line: e.line,
+                note: e.note.clone(),
+            });
+        }
+    }
+    out
 }
 
 /// The note of the hole whose axis a circle (centre, normal) lies on.
@@ -199,6 +297,7 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
             });
         }
     }
+    out.smooth = Some(out.meshes.iter().flat_map(smooth_edges).collect());
     out
 }
 
@@ -209,6 +308,11 @@ struct Tri {
 }
 
 impl Tri {
+    /// The nearest depth of its corners.
+    fn dmax(&self) -> f64 {
+        self.d[0].max(self.d[1]).max(self.d[2])
+    }
+
     /// Depth at `q` when `q` lies inside (edges included).
     fn depth_at(&self, q: [f64; 2]) -> Option<f64> {
         let [a, b, c] = self.p;
@@ -235,13 +339,23 @@ struct Grid {
 
 impl Grid {
     fn new(tris: Vec<Tri>, lo: [f64; 2], hi: [f64; 2]) -> Self {
-        let span = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(1e-6);
-        let per = ((tris.len() as f64).sqrt() * 1.5).clamp(8.0, 256.0);
-        let cell = span / per;
-        let n = [
-            (((hi[0] - lo[0]) / cell).ceil() as usize).clamp(1, 512),
-            (((hi[1] - lo[1]) / cell).ceil() as usize).clamp(1, 512),
-        ];
+        // Square cells about two triangles each over the area (an assembly
+        // seen from the front is long and flat: cells from the long side
+        // only held thousands of triangles each), at most 4 M cells.
+        let (w, h) = ((hi[0] - lo[0]).max(1e-6), (hi[1] - lo[1]).max(1e-6));
+        let target = (tris.len() as f64 * 0.5).clamp(64.0, 4.0e6);
+        let mut cell = (w * h / target).sqrt().max(w.max(h) * 1e-6);
+        let mut n;
+        loop {
+            n = [
+                ((w / cell).ceil() as usize).max(1),
+                ((h / cell).ceil() as usize).max(1),
+            ];
+            if n[0] * n[1] <= 4_000_000 && n[0] <= 16_384 && n[1] <= 16_384 {
+                break;
+            }
+            cell *= 1.5;
+        }
         let mut cells = vec![Vec::new(); n[0] * n[1]];
         for (k, t) in tris.iter().enumerate() {
             let (mut a, mut b) = ([f64::MAX; 2], [f64::MIN; 2]);
@@ -258,6 +372,13 @@ impl Grid {
                     cells[j * n[0] + i].push(k as u32);
                 }
             }
+        }
+        // Nearest first: a lookup stops at the first triangle that cannot
+        // be in front of the point.
+        for c in &mut cells {
+            c.sort_unstable_by(|&x, &y| {
+                tris[y as usize].dmax().total_cmp(&tris[x as usize].dmax())
+            });
         }
         Self {
             tris,
@@ -277,11 +398,16 @@ impl Grid {
     /// Whether a triangle nearer than `depth + eps` covers `q`.
     fn hidden(&self, q: [f64; 2], depth: f64, eps: f64) -> bool {
         let (i, j) = Self::index_of(self.lo, self.cell, self.n, q);
-        self.cells[j * self.n[0] + i].iter().any(|&k| {
-            self.tris[k as usize]
-                .depth_at(q)
-                .is_some_and(|d| d > depth + eps)
-        })
+        for &k in &self.cells[j * self.n[0] + i] {
+            let t = &self.tris[k as usize];
+            if t.dmax() <= depth + eps {
+                return false;
+            }
+            if t.depth_at(q).is_some_and(|d| d > depth + eps) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -310,7 +436,25 @@ pub fn view_lines_with(
     frame: &ViewFrame,
     aligned: Option<&Aligned>,
 ) -> ViewLines {
+    view_lines_simplified(model, frame, aligned, Simplify::default())
+}
+
+/// [`view_lines_with`] leaving out edges shorter than `simplify.min_edge`
+/// (components are left out before, in [`assembly_model`]).
+pub fn view_lines_simplified(
+    model: &ViewModel,
+    frame: &ViewFrame,
+    aligned: Option<&Aligned>,
+    simplify: Simplify,
+) -> ViewLines {
     let meshes = &model.meshes;
+    let clock = std::time::Instant::now();
+    let times = std::env::var_os("CADCRAFT3D_HLR_TIMES").is_some();
+    let lap = |what: &str| {
+        if times {
+            eprintln!("hlr {what}: {:.0} ms", clock.elapsed().as_secs_f64() * 1e3);
+        }
+    };
     let t = frame.toward;
     let p2 = |p: &Point3| frame.project(p);
     let dp = |p: &Point3| frame.depth(p);
@@ -379,7 +523,9 @@ pub fn view_lines_with(
             }
         }
     }
+    lap("tris");
     let grid = (!tris.is_empty()).then(|| Grid::new(tris, lo, hi));
+    lap("grid");
     // The cut faces: the crossings chained into loops.
     let section = chain_loops(&crossings, diag * 1e-7);
     let closed: Vec<&Vec<[f64; 2]>> = section
@@ -395,12 +541,20 @@ pub fn view_lines_with(
     // Model edges, silhouettes and the cut faces' outlines as 3D polylines,
     // each with its model edge.
     let mut curves: Vec<(Vec<Point3>, Option<u32>)> = Vec::new();
+    let short = |pts: &[Point3]| {
+        simplify.min_edge > 0.0
+            && pts.windows(2).map(|w| (w[1] - w[0]).norm()).sum::<f64>() < simplify.min_edge
+    };
     for (k, e) in model.edges.iter().enumerate() {
+        if short(&e.pts) {
+            continue;
+        }
         for part in clip_polyline(&e.pts, &side) {
             curves.push((part, Some(k as u32)));
         }
     }
-    for s in silhouettes(meshes, &t, diag) {
+    lap("edges");
+    for s in silhouettes(model, &t) {
         for part in clip_polyline(&s, &side) {
             curves.push((part, None));
         }
@@ -413,10 +567,11 @@ pub fn view_lines_with(
         }
     }
 
+    lap("silhouettes");
     let step = diag / 600.0;
-    // Every curve cut into short pieces, each classified by its middle.
-    let mut pieces: Vec<Vec<Piece>> = Vec::with_capacity(curves.len());
-    for (c, _) in &curves {
+    // Every curve cut into short pieces, each classified by its middle (on
+    // every core: the curves are independent).
+    let classify = |c: &Vec<Point3>| {
         let mut list = Vec::new();
         for w in c.windows(2) {
             let (a, b) = (w[0], w[1]);
@@ -433,6 +588,9 @@ pub fn view_lines_with(
                 let (m2, md) = (p2(&mid), dp(&mid));
                 let hidden =
                     grid.as_ref().is_some_and(|g| g.hidden(m2, md, eps)) || behind_cap(m2, md);
+                if hidden && simplify.no_hidden {
+                    continue;
+                }
                 list.push(Piece {
                     a: p2(&(a + (b - a) * s0)),
                     b: p2(&(a + (b - a) * s1)),
@@ -440,14 +598,18 @@ pub fn view_lines_with(
                 });
             }
         }
-        pieces.push(list);
-    }
+        list
+    };
+    let pieces: Vec<Vec<Piece>> = par_map(&curves, |(c, _)| classify(c));
+    lap("classify");
     // A piece lying on a visible one is not drawn again, and a hidden piece
     // on a visible one not at all (the visible line wins, as on paper).
     // Edges of one circle sampled by different features differ by the
     // display tolerance (0.01 mm).
     let tol = 0.025 + diag * 1e-5;
-    let cell = step.max(1e-6) * 4.0;
+    // Only pieces within `tol` of each other are compared: small cells keep
+    // a crowded view (an assembly seen isometric) from comparing thousands.
+    let cell = (step * 0.25).max(tol * 8.0).max(1e-6);
     let mut seen = SegGrid::new(cell);
     let mut drop = vec![Vec::new(); pieces.len()];
     for (k, list) in pieces.iter().enumerate() {
@@ -471,6 +633,7 @@ pub fn view_lines_with(
             }
         }
     }
+    lap("dedup");
     let mut out = ViewLines::default();
     let (mut olo, mut ohi) = ([f64::MAX; 2], [f64::MIN; 2]);
     for (k, (list, gone)) in pieces.iter().zip(&drop).enumerate() {
@@ -505,6 +668,7 @@ pub fn view_lines_with(
         out.min = olo;
         out.max = ohi;
     }
+    lap("runs");
     // The edges as the view sees them.
     let visible_edges: std::collections::HashSet<u32> =
         out.visible_src.iter().flatten().copied().collect();
@@ -935,8 +1099,56 @@ fn seg_dist(q: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
 
 /// Mesh edges between two smoothly joined triangles where one faces the
 /// viewer and the other does not: the outline of curved faces.
-fn silhouettes(meshes: &[SolidMesh], toward: &Vector3, diag: f64) -> Vec<Vec<Point3>> {
-    let q = diag * 1e-7;
+fn silhouettes(model: &ViewModel, toward: &Vector3) -> Vec<Vec<Point3>> {
+    let computed;
+    let smooth = match &model.smooth {
+        Some(v) => v,
+        None => {
+            computed = model
+                .meshes
+                .iter()
+                .flat_map(smooth_edges)
+                .collect::<Vec<_>>();
+            &computed
+        }
+    };
+    smooth
+        .iter()
+        .filter(|e| e.n1.dot(toward) * e.n2.dot(toward) < 0.0)
+        .map(|e| vec![e.a, e.b])
+        .collect()
+}
+
+/// An edge between two triangles of one curved face (they turn by less
+/// than ~45°): a silhouette where one faces the viewer and the other not.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SmoothEdge {
+    /// Start point.
+    pub a: Point3,
+    /// End point.
+    pub b: Point3,
+    /// The first triangle's unit normal.
+    pub n1: Vector3,
+    /// The second triangle's unit normal.
+    pub n2: Vector3,
+}
+
+/// The smooth edges of a mesh (welded across its faces: a cylinder comes in
+/// several faces), in a fixed order. Computed once per component.
+pub fn smooth_edges(m: &SolidMesh) -> Vec<SmoothEdge> {
+    // A mesh of planes only has none (its edges are model edges).
+    let n = &m.faces.normals;
+    if n.first()
+        .is_none_or(|first| n.iter().all(|v| v == first) || all_flat(m))
+    {
+        return Vec::new();
+    }
+    let (mut lo, mut hi) = (Vector3::repeat(f64::MAX), Vector3::repeat(f64::MIN));
+    for p in &m.faces.positions {
+        lo = lo.inf(&p.coords);
+        hi = hi.sup(&p.coords);
+    }
+    let q = ((hi - lo).norm() * 1e-7).max(1e-12);
     let key = |p: &Point3| {
         (
             (p.x / q).round() as i64,
@@ -944,48 +1156,90 @@ fn silhouettes(meshes: &[SolidMesh], toward: &Vector3, diag: f64) -> Vec<Vec<Poi
             (p.z / q).round() as i64,
         )
     };
-    // Welded vertex ids across faces (a cylinder comes in several faces).
     let mut ids: HashMap<(i64, i64, i64), u32> = HashMap::new();
     let mut pts: Vec<Point3> = Vec::new();
     let mut normals: Vec<Vector3> = Vec::new();
     let mut edges: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
-    for m in meshes {
-        let pos = &m.faces.positions;
-        for tri in &m.faces.triangles {
-            let p = tri.map(|i| pos[i as usize]);
-            let n = (p[1] - p[0]).cross(&(p[2] - p[0]));
-            if n.norm() < 1e-18 {
-                continue;
-            }
-            let t = normals.len() as u32;
-            normals.push(n.normalize());
-            let w = p.map(|x| {
-                let len = pts.len() as u32;
-                *ids.entry(key(&x)).or_insert_with(|| {
-                    pts.push(x);
-                    len
-                })
-            });
-            for (a, b) in [(w[0], w[1]), (w[1], w[2]), (w[2], w[0])] {
-                if a != b {
-                    edges.entry((a.min(b), a.max(b))).or_default().push(t);
-                }
+    let pos = &m.faces.positions;
+    for tri in &m.faces.triangles {
+        let p = tri.map(|i| pos[i as usize]);
+        let n = (p[1] - p[0]).cross(&(p[2] - p[0]));
+        if n.norm() < 1e-18 {
+            continue;
+        }
+        let t = normals.len() as u32;
+        normals.push(n.normalize());
+        let w = p.map(|x| {
+            let len = pts.len() as u32;
+            *ids.entry(key(&x)).or_insert_with(|| {
+                pts.push(x);
+                len
+            })
+        });
+        for (a, b) in [(w[0], w[1]), (w[1], w[2]), (w[2], w[0])] {
+            if a != b {
+                edges.entry((a.min(b), a.max(b))).or_default().push(t);
             }
         }
     }
-    let mut out = Vec::new();
-    for ((a, b), ts) in &edges {
-        if ts.len() != 2 {
-            continue;
+    let mut keys: Vec<(u32, u32)> = edges
+        .iter()
+        .filter(|(_, ts)| {
+            ts.len() == 2 && normals[ts[0] as usize].dot(&normals[ts[1] as usize]) >= 0.7
+        })
+        .map(|(k, _)| *k)
+        .collect();
+    keys.sort_unstable();
+    keys.into_iter()
+        .map(|(a, b)| {
+            let ts = &edges[&(a, b)];
+            SmoothEdge {
+                a: pts[a as usize],
+                b: pts[b as usize],
+                n1: normals[ts[0] as usize],
+                n2: normals[ts[1] as usize],
+            }
+        })
+        .collect()
+}
+
+/// Every triangle's vertex normals equal its face normal (no curved face):
+/// nothing can turn away from the viewer inside a face.
+fn all_flat(m: &SolidMesh) -> bool {
+    let (p, n) = (&m.faces.positions, &m.faces.normals);
+    m.faces.triangles.iter().all(|t| {
+        let [a, b, c] = t.map(|i| i as usize);
+        let f = (p[b] - p[a]).cross(&(p[c] - p[a]));
+        let len = f.norm();
+        len < 1e-18 || {
+            let f = f / len;
+            [a, b, c]
+                .iter()
+                .all(|&i| n.get(i).is_some_and(|v| v.dot(&f) > 0.9999))
         }
-        let (n1, n2) = (normals[ts[0] as usize], normals[ts[1] as usize]);
-        // Sharp edges are model edges already.
-        if n1.dot(&n2) < 0.7 {
-            continue;
-        }
-        if n1.dot(toward) * n2.dot(toward) < 0.0 {
-            out.push(vec![pts[*a as usize], pts[*b as usize]]);
-        }
+    })
+}
+
+/// `f` over `items` on every core, in order (small inputs on this thread).
+fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    if cores < 2 || items.len() < 2048 {
+        return items.iter().map(&f).collect();
     }
-    out
+    let chunk = items.len().div_ceil(cores);
+    let f = &f;
+    let done: Option<Vec<R>> = std::thread::scope(|sc| {
+        let jobs: Vec<_> = items
+            .chunks(chunk)
+            .map(|part| sc.spawn(move || part.iter().map(f).collect::<Vec<R>>()))
+            .collect();
+        let mut out = Vec::with_capacity(items.len());
+        for j in jobs {
+            out.extend(j.join().ok()?);
+        }
+        Some(out)
+    });
+    // A worker that failed: the whole job again on this thread (the result
+    // must keep one entry per item).
+    done.unwrap_or_else(|| items.iter().map(f).collect())
 }
