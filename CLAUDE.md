@@ -1026,8 +1026,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry
   of old files without such a field). Corner reliefs (Round / Square) are cut-outs in `SheetBody::holes` about the crossing of the bends' centre
   lines (bends and base stay whole; `corner_relief` / `reliefs_fit`, all of a feature's or none). A return's
-  bend is torn from its parent's end when `tapers_clear` (full half gap all round), else it stops square and
-  the parent's end leans back (`retract_far_end`). Flat-pattern outlines are checked for jogs by
+  bend end is mitred (`SheetFlange::mitre`: Hermite nodes (s, u, du/ds) of a curve in the flat, `mitre_end`;
+  every reader of a bend end goes through `end_offset` — `zone`, `bend_end`, `bends()`), the parent's end
+  leaning back when the bend must start in from it (`retract_far_end`). Flat-pattern outlines are checked for jogs by
   `tests/sheet_metal.rs::flat_steps`; `cargo run --example flat_dxf -- file out_dir` dumps a project's flats.
 - **Aborts leave no crash report** (owner's Cut crash 2026-10-26: Windows `0xc0000409`, subcode 7 = `abort()`;
   a stack overflow aborts too). The desktop binary links a 64 MB main-thread stack (`build.rs`; Windows' default is

@@ -440,6 +440,13 @@ pub struct SheetFlange {
     /// end starts.
     #[serde(default, skip_serializing_if = "is_false_pair")]
     pub tear: (bool, bool),
+    /// Mitred ends (3DCadCraft; a torn end that is not straight): where not empty, the bend's end
+    /// (the one at `p`, the other one) runs in the flat along cubic Hermite pieces through these
+    /// nodes — (s across the bend from its start line, u in from the bend's end along it,
+    /// du/ds) — from its start line to where the panel's end starts, so that folded it keeps the
+    /// gap from the mitre plane of its corner on both faces, as the panels do.
+    #[serde(default, skip_serializing_if = "is_no_mitre")]
+    pub mitre: (Vec<(f64, f64, f64)>, Vec<(f64, f64, f64)>),
     /// A fold's panel: the part of the sheet past the bend (flat coordinates, counter-clockwise)
     /// instead of a rectangle `leg` long.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -525,6 +532,25 @@ struct Cell {
 
 fn is_zero_pair(v: &(f64, f64)) -> bool {
     v.0 == 0.0 && v.1 == 0.0
+}
+
+#[allow(clippy::type_complexity)]
+fn is_no_mitre(v: &(Vec<(f64, f64, f64)>, Vec<(f64, f64, f64)>)) -> bool {
+    v.0.is_empty() && v.1.is_empty()
+}
+
+/// A mitred end's u at `s` (see [`SheetFlange::mitre`]): the Hermite piece holding `s`.
+fn mitre_u(nodes: &[(f64, f64, f64)], s: f64) -> Option<f64> {
+    let last = nodes.len().checked_sub(2)?;
+    let k = nodes.windows(2).position(|w| s <= w[1].0).unwrap_or(last);
+    let ((s0, u0, m0), (s1, u1, m1)) = (*nodes.get(k)?, *nodes.get(k + 1)?);
+    let h = s1 - s0;
+    if !(h > 0.0) {
+        return Some(u0);
+    }
+    let t = ((s - s0) / h).clamp(0.0, 1.0);
+    let (t2, t3) = (t * t, t * t * t);
+    Some((2.0 * t3 - 3.0 * t2 + 1.0) * u0 + (t3 - 2.0 * t2 + t) * h * m0 + (-2.0 * t3 + 3.0 * t2) * u1 + (t3 - t2) * h * m1)
 }
 
 fn is_false_pair(v: &(bool, bool)) -> bool {
@@ -836,6 +862,9 @@ impl SheetBody {
     /// Flat region of a flange's bend zone: square across the bend at both ends, but at a torn
     /// end its far edge ends where the panel's does.
     pub fn zone(&self, f: &SheetFlange) -> Region2 {
+        if !is_no_mitre(&f.mitre) {
+            return self.mitred_zone(f);
+        }
         let ba = self.allowance(f);
         let (u0, u1) = self.zone_span(f);
         let (a, b) = (f.p + f.d * u0, f.p + f.d * u1);
@@ -843,6 +872,55 @@ impl SheetBody {
         let far_a = if f.tear.0 { f.p + f.n * ba - f.d * f.ext.0 } else { a + f.n * ba };
         let far_b = if f.tear.1 { f.p + f.n * ba + f.d * (f.len + f.ext.1) } else { b + f.n * ba };
         rect(a, b, far_b, far_a)
+    }
+
+    /// [`SheetBody::zone`] with a mitred end or two: the start line, the end at `p + d·len` (along
+    /// its Hermite pieces, or as [`SheetBody::zone`] has it), the far edge, the end at `p` back.
+    fn mitred_zone(&self, f: &SheetFlange) -> Region2 {
+        let ba = self.allowance(f);
+        let (u0, u1) = self.zone_span(f);
+        let at = |at_end: bool, s: f64, u: f64| if at_end { f.p + f.d * (u1 - u) + f.n * s } else { f.p + f.d * (u0 + u) + f.n * s };
+        // An end from its start line to the far edge.
+        let end = |at_end: bool| -> Vec<Seg2> {
+            let nodes = if at_end { &f.mitre.1 } else { &f.mitre.0 };
+            if nodes.len() < 2 {
+                let (near, far) = (self.end_offset(f, at_end, 0.0), self.end_offset(f, at_end, ba));
+                return vec![Seg2::Line { a: at(at_end, 0.0, near), b: at(at_end, ba, far) }];
+            }
+            nodes
+                .windows(2)
+                .filter_map(|w| {
+                    let ((s0, v0, m0), (s1, v1, m1)) = (*w.first()?, *w.get(1)?);
+                    let h = s1 - s0;
+                    Some(Seg2::Cubic {
+                        p0: at(at_end, s0, v0),
+                        p1: at(at_end, s0 + h / 3.0, v0 + m0 * h / 3.0),
+                        p2: at(at_end, s1 - h / 3.0, v1 - m1 * h / 3.0),
+                        p3: at(at_end, s1, v1),
+                    })
+                })
+                .collect()
+        };
+        let (e0, e1) = (end(false), end(true));
+        let mut segs = vec![Seg2::Line { a: at(false, 0.0, self.end_offset(f, false, 0.0)), b: at(true, 0.0, self.end_offset(f, true, 0.0)) }];
+        segs.extend(e1);
+        segs.push(Seg2::Line { a: at(true, ba, self.end_offset(f, true, ba)), b: at(false, ba, self.end_offset(f, false, ba)) });
+        segs.extend(e0.iter().rev().map(Seg2::reversed));
+        Region2 { outer: Loop2 { segs }.ccw(), holes: Vec::new() }
+    }
+
+    /// How far in from the bend's end (the one at `p`, or the other one when `at_end`) its end
+    /// lies `s` across the bend from its start line: 0 at a square end, growing evenly to where
+    /// the panel's end starts at a torn one, along its Hermite pieces at a mitred one.
+    pub(crate) fn end_offset(&self, f: &SheetFlange, at_end: bool, s: f64) -> f64 {
+        let nodes = if at_end { &f.mitre.1 } else { &f.mitre.0 };
+        if let Some(u) = mitre_u(nodes, s) {
+            return u;
+        }
+        let ba = self.allowance(f).max(1e-12);
+        let ((u0, u1), (e0, e1)) = (self.zone_span(f), self.zone_ends(f));
+        let far = if at_end { u1 - e1 } else { e0 - u0 };
+        far * (s / ba).clamp(0.0, 1.0)
     }
 
     /// Where a bend zone's far edge (on its panel's side) starts and ends, along the bend from
@@ -857,9 +935,9 @@ impl SheetBody {
     /// torn end runs evenly along the bend while the bend turns, from its start line's end to
     /// where the panel's end starts.
     fn bend_end(&self, f: &SheetFlange, at_end: bool, phi: f64, z: f64) -> Vec3 {
-        let ((u0, u1), (e0, e1)) = (self.zone_span(f), self.zone_ends(f));
-        let (from, to) = if at_end { (u1, e1) } else { (u0, e0) };
-        let u = from + (to - from) * phi / f.angle.abs().max(1e-12);
+        let (u0, u1) = self.zone_span(f);
+        let off = self.end_offset(f, at_end, self.allowance(f) * phi / f.angle.abs().max(1e-12));
+        let u = if at_end { u1 - off } else { u0 + off };
         let parent = f.parent.map_or(IDENTITY, |i| self.fold(i));
         let (axis_o, k, turn) = self.bend_axis(f);
         apply_point(&mat_mul(&parent, &rot_about(axis_o, k, turn.signum() * phi)), v3(f.p + f.d * u) + Vec3::Z * z)
@@ -1542,9 +1620,10 @@ impl SheetBody {
         let mut out = Vec::new();
         for (i, f) in self.flanges.iter().enumerate() {
             let ba = self.allowance(f);
-            // The centre line runs between the middles of the bend's two ends (a torn end is askew).
-            let ((u0, u1), (e0, e1)) = (self.zone_span(f), self.zone_ends(f));
-            let (u0, u1) = ((u0 + e0) / 2.0, (u1 + e1) / 2.0);
+            // The centre line runs between the middles of the bend's two ends (a torn or mitred
+            // end is askew).
+            let (u0, u1) = self.zone_span(f);
+            let (u0, u1) = (u0 + self.end_offset(f, false, ba / 2.0), u1 - self.end_offset(f, true, ba / 2.0));
             let a = f.p + f.n * (ba / 2.0) + f.d * u0;
             for (s0, s1) in clear_of(a, f.d, u1 - u0, &cuts) {
                 out.push(BendInfo {
@@ -1947,6 +2026,7 @@ impl SheetBody {
                 ext: (0.0, 0.0),
                 slope: (0.0, 0.0),
                 tear: (false, false),
+            mitre: (Vec::new(), Vec::new()),
             });
             made.push(self.flanges.len() - 1);
         }
@@ -2024,8 +2104,9 @@ impl SheetBody {
         let mut notes = Vec::new();
         for (u, s) in [(0.0, -1.0), (f.len, 1.0)] {
             let at = |du: f64, dv: f64| f.p + f.d * (u + s * du) + f.n * dv;
-            // Only where the parent's panel runs on beside the bend's end.
-            if !panel.contains(at(1e-4, -1e-4)) {
+            // Only where the parent's panel runs on beside the bend's end (probed just inside its
+            // far edge: an end leaning at 45° would put a deeper probe on its boundary).
+            if !panel.contains(at(1e-4, -1e-7)) {
                 continue;
             }
             let relief = rect(at(0.0, -depth), at(width, -depth), at(width, reach), at(0.0, reach));
@@ -2290,25 +2371,29 @@ impl SheetBody {
             // Panel and bend ending together stay one straight edge.
             let u_panel = if (u_panel - u_bend).abs() < 1e-9 { u_bend } else { u_panel };
             let slope = if (cs / cu).abs() < 1e-12 { 0.0 } else { cs / cu };
-            // Best, the bend runs to its parent's end and its end is cut straight, in the flat,
-            // from there to where the panel's end starts (as a torn corner): the parent's end,
-            // the bend's and the panel's then follow one another without a step or a bare
-            // stretch of the parent's edge (3DCadCraft, for laser-cut flat patterns). Only where
-            // all of that end keeps the half gap from the plane; else the bend stops square as
-            // below.
+            // Best, as Inventor: the bend's end is mitred like the panels, keeping the half gap
+            // from the plane on both faces all the way round (a curve in the flat, from its
+            // parent's end to where the panel's end starts): one even gap through the bends and
+            // no step or bare stretch in the flat (3DCadCraft, owner 2026-10-26). A bend that
+            // would have to start in from its parent's end has the parent's end lean back to
+            // it. Only where no curve could be fitted, the bend stops square as below.
             if self.laser_corners && (u_bend > 1e-9 || u_panel.abs() > 1e-9) {
-                let mut g = f.clone();
-                if at_end {
-                    g.ext.1 = -u_panel;
-                    g.slope.1 = slope;
-                    g.tear.1 = true;
-                } else {
-                    g.ext.0 = -u_panel;
-                    g.slope.0 = slope;
-                    g.tear.0 = true;
-                }
-                if self.tapers_clear(&g, at_end, &dist, gap / 2.0) {
-                    *f = g;
+                if let Some(nodes) = self.mitre_end(f, c, &dist, gap / 2.0, cu) {
+                    let (start, far) = (nodes.first().map_or(0.0, |n| n.1), nodes.last().map_or(0.0, |n| n.1));
+                    if at_end {
+                        f.ext.1 = -far;
+                        f.slope.1 = slope;
+                        f.tear.1 = true;
+                        f.mitre.1 = nodes;
+                    } else {
+                        f.ext.0 = -far;
+                        f.slope.0 = slope;
+                        f.tear.0 = true;
+                        f.mitre.0 = nodes;
+                    }
+                    if start > 1e-9 {
+                        retract.push((f.parent, at_end, start));
+                    }
                     continue;
                 }
             }
@@ -2469,18 +2554,52 @@ impl SheetBody {
         Ok(())
     }
 
-    /// Whether flange `f`'s torn end (the one at `p`, or the other one when `at_end`) keeps
-    /// `half_gap` from a plane on both faces all the way round the bend: `dist` is the signed
-    /// distance from that plane. As in [`SheetBody::tear_corner`], the distance along a torn end
-    /// is a + b·φ + c·cos φ + d·sin φ in the turn φ, so its least is exact; it may fall short by a
-    /// thousandth of `half_gap` (0.5 µm of a 1 mm half gap halfway round a 45° return).
-    fn tapers_clear(&self, f: &SheetFlange, at_end: bool, dist: &dyn Fn(Vec3) -> f64, half_gap: f64) -> bool {
-        let th = f.angle.abs();
-        if !(th > 1e-9) {
-            return false;
+    /// The mitred end of flange `f`'s bend whose end on its start line is `c` (flat): Hermite
+    /// nodes (see [`SheetFlange::mitre`]) of the least u in from that end along the bend that
+    /// keeps `half_gap` from a plane on both faces, `dist` being the signed distance from it
+    /// (affine, `cu` per unit of u: a bend's points move along its axis with u). Where the bend
+    /// could start past its parent's end, it starts there and the extra tapers off across the
+    /// bend. The fit runs through the exact curve's ends and keeps within a thousandth of
+    /// `half_gap` of it between them (the faces' requirements meet in a kink, so up to 16
+    /// pieces); `None` if no fit does.
+    fn mitre_end(&self, f: &SheetFlange, c: Vec2, dist: &dyn Fn(Vec3) -> f64, half_gap: f64, cu: f64) -> Option<Vec<(f64, f64, f64)>> {
+        let (th, ba) = (f.angle.abs(), self.allowance(f));
+        if !(th > 1e-9 && ba > 1e-9 && cu > 1e-6) {
+            return None;
         }
-        let over = |z: f64| sinusoid_least(&|phi: f64| dist(self.bend_end(f, at_end, phi, z)) - half_gap, th);
-        over(0.0).min(over(self.t)) >= -(half_gap * 1e-3).max(1e-9)
+        let parent = f.parent.map_or(IDENTITY, |i| self.fold(i));
+        let (axis_o, k, turn) = self.bend_axis(f);
+        let at = |s: f64, z: f64| {
+            let phi = th * (s / ba).clamp(0.0, 1.0);
+            dist(apply_point(&mat_mul(&parent, &rot_about(axis_o, k, turn.signum() * phi)), v3(c) + Vec3::Z * z))
+        };
+        let req = |s: f64| ((half_gap - at(s, 0.0)) / cu).max((half_gap - at(s, self.t)) / cu);
+        let r0 = req(0.0);
+        let need = |s: f64| req(s) + if r0 < 0.0 { -r0 * (1.0 - s / ba) } else { 0.0 };
+        let tol = (half_gap * 1e-3).max(1e-6);
+        let slope_at = |s: f64| {
+            let h = ba * 1e-4;
+            let (a, b) = ((s - h).max(0.0), (s + h).min(ba));
+            (need(b) - need(a)) / (b - a)
+        };
+        for pieces in [1usize, 2, 4, 8, 16] {
+            let nodes: Vec<(f64, f64, f64)> = (0..=pieces)
+                .map(|j| {
+                    let s = ba * j as f64 / pieces as f64;
+                    (s, need(s), slope_at(s))
+                })
+                .collect();
+            // How far the fit strays from the exact curve.
+            let mut off = 0.0f64;
+            for i in 0..=pieces * 32 {
+                let s = ba * i as f64 / (pieces * 32) as f64;
+                off = off.max((need(s) - mitre_u(&nodes, s)?).abs());
+            }
+            if off <= tol {
+                return nodes.iter().all(|n| n.1.is_finite() && n.2.is_finite()).then_some(nodes);
+            }
+        }
+        None
     }
 
     /// The least of `g` (an affine function of a folded point) over the cross-section of flange
@@ -2979,6 +3098,7 @@ impl SheetBody {
             ext: (0.0, 0.0),
             slope: (0.0, 0.0),
             tear: (false, false),
+            mitre: (Vec::new(), Vec::new()),
             shape: None,
             tag: String::new(),
         });
@@ -3113,6 +3233,7 @@ impl SheetBody {
             ext: (0.0, 0.0),
             slope: (0.0, 0.0),
             tear: (false, false),
+            mitre: (Vec::new(), Vec::new()),
             shape: None,
             tag: String::new(),
         };
@@ -3193,6 +3314,7 @@ impl SheetBody {
             ext: (0.0, 0.0),
             slope: (0.0, 0.0),
             tear: (false, false),
+            mitre: (Vec::new(), Vec::new()),
             shape: Some(ccw(moving)),
             tag: String::new(),
         });
@@ -3336,6 +3458,7 @@ impl SheetBody {
                 ext: (0.0, 0.0),
                 slope: (0.0, 0.0),
                 tear: (false, false),
+            mitre: (Vec::new(), Vec::new()),
                 shape: Some(ccw(moving)),
                 tag: String::new(),
             });
@@ -4346,6 +4469,7 @@ pub fn contour_flange_span(body: &str, rule: &str, rv: &RuleValues, plane: &Plan
             ext: (0.0, 0.0),
             slope: (0.0, 0.0),
             tear: (false, false),
+            mitre: (Vec::new(), Vec::new()),
             shape: None,
             tag: String::new(),
         };
@@ -6342,12 +6466,14 @@ mod tests {
         }
         if bend {
             let ba = s.allowance(f);
-            let ((u0, u1), (e0, e1)) = (s.zone_span(f), s.zone_ends(f));
-            // A torn end runs straight from its start line's end to where the panel's end starts.
-            for (u, e) in [(u0, e0), (u1, e1)] {
+            let (u0, u1) = s.zone_span(f);
+            // A torn or mitred end runs in from its start line's end to where the panel's end starts.
+            for at_end in [false, true] {
                 for k in 0..=64 {
                     let x = k as f64 / 64.0;
-                    let q = f.p + f.d * (u + (e - u) * x) + f.n * (ba * x);
+                    let off = s.end_offset(f, at_end, ba * x);
+                    let u = if at_end { u1 - off } else { u0 + off };
+                    let q = f.p + f.d * u + f.n * (ba * x);
                     v.extend([0.0, s.t].map(|z| s.map3(Piece::Zone(i), q, z)));
                 }
             }
@@ -6440,8 +6566,8 @@ mod tests {
         // y = 12, and its neighbour on x = 0 likewise from x = 3. Their inner start lines y = 3
         // and x = 3 cross at (3, 3), so the mitre is the plane x = y and this return keeps
         // x − y ≥ e. Its panel ends on x = 3 + e + (y − 3), 1 mm in from the wall's end at its
-        // start; its bend runs on to the wall's end and is torn from there to where the panel
-        // starts (it keeps clear of the mitre all the way), so the flat pattern has no step there.
+        // start; its bend runs on to the wall's end and is mitred from there to where the panel
+        // starts (the gap e all the way round), so the flat pattern has no step there.
         let e = g / SQRT_2;
         let wall = &s.flanges[0];
         let (lo, hi) = s.far_edge(wall);
@@ -6472,11 +6598,15 @@ mod tests {
         let bb = kernel::measure(&s.solid().unwrap()).unwrap().bbox;
         assert!(bb.min.len() < 1e-6 && (bb.max - Vec3::new(120.0, 90.0, 20.0)).len() < 1e-6, "{bb:?}");
         // The flat pattern by hand: the base 114 x 84; the walls' bends π·(114 + 84)·2 and panels
-        // 14·((116 − 2e) + (86 − 2e))·2; the returns' torn bends, trapezoids from the walls' far
-        // edges to 1 in at each end, π·((115 − 2e) + (85 − 2e))·2, and their panels, 9 high and 9
-        // shorter at each end of the far edge, 9·((105 − 2e) + (75 − 2e))·2.
-        let want = 114.0 * 84.0 + 396.0 * PI + 28.0 * (202.0 - 4.0 * e) + 2.0 * PI * (200.0 - 4.0 * e) + 18.0 * (180.0 - 4.0 * e);
-        assert!((flat_area(&s) - want).abs() < 1e-6, "{} vs {want}", flat_area(&s));
+        // 14·((116 − 2e) + (86 − 2e))·2; the returns' mitred bends, π·((116 − 2e) + (86 − 2e))·2
+        // less their 8 mitred ends, and their panels, 9 high and 9 shorter at each end of the far
+        // edge, 9·((105 − 2e) + (75 − 2e))·2. A mitred end: at the turn φ the bend's inner face
+        // (radius 1 about y = 3) lies at y = 3 − cos φ and must keep x ≥ y + e, so the end runs
+        // u = 1 − cos φ in from the wall's end, s = 2φ across: it takes ∫ u ds = π − 2.
+        let want = 114.0 * 84.0 + 396.0 * PI + 28.0 * (202.0 - 4.0 * e) + 2.0 * PI * (202.0 - 4.0 * e) - 8.0 * (PI - 2.0)
+            + 18.0 * (180.0 - 4.0 * e);
+        // The ends are cubic fits, within g/2000 of the exact curve: 8 · π · 2.5e-4 at most.
+        assert!((flat_area(&s) - want).abs() < 2e-3, "{} vs {want}", flat_area(&s));
         // One piece in the flat and one valid shell folded, holding that area times the thickness.
         holds_the_flat_material(&s, "returns at 90°");
     }
@@ -6980,7 +7110,6 @@ mod tests {
 
     #[test]
     fn corner_reliefs_are_cut_between_flanges_of_unequal_angle_and_height() {
-        use std::f64::consts::FRAC_PI_2;
         // Flanges with their own angle and height: each relief is centred where its two bends'
         // centre lines cross, half the neighbour's BA = θ·(R + K·T) past each bend's end, so a
         // bend loses 4 − BA_neighbour/2 of its centre line at each end.

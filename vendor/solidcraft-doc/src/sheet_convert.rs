@@ -381,6 +381,7 @@ pub fn convert_body(mb: &ModelBody, rule: &str, rv: &RuleValues, face: Vec3, ben
                 shape: None,
                 tag: String::new(),
                 tear: (false, false),
+                mitre: (Vec::new(), Vec::new()),
             });
             queue.push((g, Some(sh.flanges.len() - 1)));
         }

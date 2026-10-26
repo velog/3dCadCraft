@@ -1488,16 +1488,10 @@ fn rim_flanges_are_mitred_at_every_level() {
     // other return's depth at each end (a 45° picture-frame corner).
     let fp = &p.flat_patterns()[0];
     assert_eq!(fp.bends.len(), 16);
-    // Walls, lips and the 12 high flanges unfold without a step: each lip's and flange's bend
-    // runs to its parent's end, torn from there to where its panel starts, or its parent's end
-    // leans back to where the bend starts. The 45° flanges' bends end at their parents' ends,
-    // where their panels run on 1.17 to close the corner: those 8 jogs stay (a bend can't run
-    // on past its parent, and a torn end there would cross the mitre).
-    let steps = flat_steps(&p);
-    assert!(
-        steps.len() == 8 && steps.iter().all(|s| (s.0 - 1.171573).abs() < 1e-6),
-        "{steps:?}"
-    );
+    // Every level unfolds without a step: each flange's bend on a flange is mitred like its
+    // panel (a curve in the flat from its parent's end to where its panel's end starts, the gap
+    // kept all round), as Inventor does.
+    laser_ready(&p, "rim");
 }
 
 /// The flat pattern can go to a laser as it is (owner, 2026-10-26): its outline has no
@@ -1574,10 +1568,10 @@ fn owners_box(name: &str) -> PartDocument {
 
 /// The owner's boxes (walls, lips, a lip held back by Offset 1 / 1, a 45° rim; round corner
 /// reliefs): the base corners are relieved about the crossing of the walls' bend centre lines,
-/// every rim corner unfolds as one straight mitre (each lip's bend torn from its wall's end to
-/// where its panel starts, or its wall's end leaning back to where it starts), and the lip held
+/// every rim corner is mitred through its bends (each flange's bend on a flange cut along the
+/// mitre from its parent's end to where its panel starts, as Inventor does), and the lip held
 /// back gets the rule's bend relief in the return it stands on. Healthy, and no step in the flat
-/// patterns but those reliefs and the 45° flanges' run-on.
+/// patterns but those reliefs.
 #[test]
 fn owners_boxes_unfold_laser_ready() {
     for name in ["sheet_box1.3dcadcraft", "sheet_box2.3dcadcraft"] {
@@ -1593,11 +1587,7 @@ fn owners_boxes_unfold_laser_ready() {
                 "{name}: {steps:?}"
             );
         } else {
-            // As `rim_flanges_are_mitred_at_every_level`: only the 45° flanges' run-on.
-            assert!(
-                steps.len() == 8 && steps.iter().all(|s| (s.0 - 1.171573).abs() < 1e-6),
-                "{name}: {steps:?}"
-            );
+            laser_ready(&p, name);
         }
     }
 }
