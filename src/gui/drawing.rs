@@ -160,24 +160,26 @@ enum DlgTab {
 #[derive(Clone, Debug)]
 pub(super) struct ViewDialog {
     /// `Some(id)`: Edit View of that view.
-    edit: Option<u32>,
+    pub(super) edit: Option<u32>,
     /// The view is a projected one (orientation from its parent).
-    projected: bool,
+    pub(super) projected: bool,
     tab: DlgTab,
-    model: Option<DocRef>,
-    orientation: ViewOrientation,
-    style: ViewStyle,
+    pub(super) model: Option<DocRef>,
+    pub(super) orientation: ViewOrientation,
+    pub(super) style: ViewStyle,
     style_from_base: bool,
-    scale: f64,
+    pub(super) scale: f64,
     scale_from_base: bool,
     /// The scale follows the model size until the user sets one.
-    auto_scale: bool,
+    pub(super) auto_scale: bool,
     identifier: String,
     label_visible: bool,
     display: DisplayOptions,
     recovery: RecoveryOptions,
     /// Sheet Metal View (sheet metal parts).
-    sheet_metal: drw::SheetView,
+    pub(super) sheet_metal: drw::SheetView,
+    /// The preview on the sheet: place, ViewCube, Custom View.
+    pub(super) orient: super::drawing_orient::OrientUi,
 }
 
 /// The Edit Sheet dialog.
@@ -515,6 +517,7 @@ impl CadCraftApp {
             display: DisplayOptions::default(),
             recovery: RecoveryOptions::default(),
             sheet_metal: drw::SheetView::Folded,
+            orient: Default::default(),
         });
         self.drw.tool = Some(DrwTool::Base);
         if model.is_none() {
@@ -555,6 +558,7 @@ impl CadCraftApp {
             display: v.display,
             recovery: v.recovery,
             sheet_metal: v.sheet_metal,
+            orient: Default::default(),
         });
         self.drw.tool = None;
     }
@@ -586,6 +590,13 @@ impl CadCraftApp {
             && *d != Default::default()
         {
             self.drw.tool = Some(DrwTool::Dimension(Default::default()));
+            return true;
+        }
+        // Esc in Custom View goes back to the orientation before it.
+        if let Some(dlg) = &mut self.drw.dialog
+            && let Some(cv) = dlg.orient.custom.take()
+        {
+            dlg.orientation = cv.before;
             return true;
         }
         if self.drw_open() {
@@ -642,11 +653,18 @@ impl CadCraftApp {
             // Their prompts come from `bom_prompt` above.
             Some(DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon) => String::new(),
             Some(DrwTool::Base) => {
-                "Base View: set the options, then click on the sheet to place the view".into()
+                if self.drw.dialog.as_ref().is_some_and(|d| d.orient.custom.is_some()) {
+                    "Custom View: drag on the sheet to orbit, Rotate at Angle turns by steps, Finish Custom View ends".into()
+                } else {
+                    "Base View: drag the preview to move it, the ViewCube turns it, a corner scales it, the triangles add projected views; OK places it".into()
+                }
             }
             Some(DrwTool::Projected(None)) => "Projected View: select the parent view".into(),
             Some(DrwTool::Projected(Some(_))) => {
                 "Projected View: click beside the view for an orthographic view, diagonally for an isometric one (Esc ends)".into()
+            }
+            None if self.orient_active() => {
+                "Edit View: the ViewCube turns the view, a corner scales it; OK applies".into()
             }
             None if self.drw.sel_ann.is_some() => {
                 "Drag a dimension, note, parts list or balloon to move it, Delete removes it, double-click edits it".into()
@@ -920,7 +938,10 @@ impl CadCraftApp {
             draw_view(&painter, &cam, rect, v, self.drw.weights);
             let frame_color = if self.drw.sel == Some(v.id) {
                 Some(SEL)
-            } else if self.drw.hover == Some(v.id) && self.drw.drag.is_none() {
+            } else if self.drw.hover == Some(v.id)
+                && self.drw.drag.is_none()
+                && !self.orient_active()
+            {
                 Some(HOVER)
             } else {
                 None
@@ -1001,7 +1022,7 @@ impl CadCraftApp {
         }
         // The running command.
         match self.drw.tool.clone() {
-            Some(DrwTool::Base) => self.base_view_place(&ctx, &painter, rect, &response, at_sheet),
+            Some(DrwTool::Base) => self.orient_tool(&ctx, &painter, rect, &response),
             Some(DrwTool::Projected(parent)) => {
                 self.projected_place(&ctx, &painter, rect, &response, at_sheet, parent, &views)
             }
@@ -1014,6 +1035,8 @@ impl CadCraftApp {
             Some(DrwTool::BendNote) => self.bend_note_tool(&painter, rect, &response, &views),
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
+            // Edit View of a base view: its preview and ViewCube.
+            None if self.orient_active() => self.orient_tool(&ctx, &painter, rect, &response),
             None => {
                 if !self.annotation_select(rect, &response, &anns, &views) {
                     self.sheet_select(rect, &response, at_sheet, &views);
@@ -1139,52 +1162,6 @@ impl CadCraftApp {
             .collect()
     }
 
-    /// Base View: the preview follows the pointer; a click places it and
-    /// Projected View continues from it.
-    fn base_view_place(
-        &mut self,
-        ctx: &egui::Context,
-        painter: &egui::Painter,
-        rect: Rect,
-        response: &egui::Response,
-        at: Option<[f64; 2]>,
-    ) {
-        let Some(dlg) = self.drw.dialog.clone() else {
-            self.drw.tool = None;
-            return;
-        };
-        let (Some(model), Some(at)) = (dlg.model, at) else {
-            return;
-        };
-        let frame = dlg.orientation.frame();
-        let flat = dlg.sheet_metal == drw::SheetView::Flat;
-        let Some(lines) = self.view_lines(Some(ctx), model, &frame, None, flat) else {
-            return;
-        };
-        let mut scale = dlg.scale;
-        if dlg.auto_scale
-            && let Some(dims) = self.drawing().and_then(|d| d.sheet().map(|s| s.dims()))
-        {
-            scale = drw::fit_scale(lines.size(), dims, 0.35);
-            if let Some(d) = self.drw.dialog.as_mut() {
-                d.scale = scale;
-            }
-        }
-        let v = ShownView {
-            id: 0,
-            lo: at,
-            hi: at,
-            lines: Some(lines),
-            position: at,
-            scale,
-            style: dlg.style,
-        };
-        draw_view_colored(painter, &self.drw.cam, rect, &v, PREVIEW, self.drw.weights);
-        if response.clicked() {
-            self.place_base_view(&dlg, at, scale);
-        }
-    }
-
     /// Places the dialog's base view at `at` and continues with Projected
     /// View from it.
     fn place_base_view(&mut self, dlg: &ViewDialog, at: [f64; 2], scale: f64) {
@@ -1199,6 +1176,12 @@ impl CadCraftApp {
                 v.display = dlg.display;
                 v.recovery = dlg.recovery;
                 v.sheet_metal = dlg.sheet_metal;
+            }
+            // Projected views added with the preview's triangles.
+            let base = d.sheet()?.view(id)?.position;
+            for t in &dlg.orient.targets {
+                let off = [t[0] - at[0], t[1] - at[1]];
+                d.add_projected_view(id, snap([base[0] + off[0], base[1] + off[1]]));
             }
             Some(id)
         });
@@ -1411,6 +1394,7 @@ impl CadCraftApp {
             return;
         }
         self.view_dialog_window(ctx);
+        self.custom_view_window(ctx);
         self.sheet_dialog_window(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);
@@ -1500,7 +1484,7 @@ impl CadCraftApp {
                         cancel = true;
                     }
                     if dlg.edit.is_none() {
-                        ui.weak("or click on the sheet to place it");
+                        ui.weak("drag the preview to move it");
                     }
                 });
             });
@@ -1520,11 +1504,13 @@ impl CadCraftApp {
             match dlg.edit {
                 Some(id) => self.apply_view_edit(id, &dlg),
                 None => {
-                    // OK without a click: the upper left third of the sheet.
-                    let at = self
-                        .drawing()
-                        .and_then(|d| d.sheet().map(|s| s.dims()))
-                        .map_or([100.0, 150.0], |(w, h)| [w * 0.3, h * 0.62]);
+                    // Where the preview is (the upper left of the sheet
+                    // until it is moved).
+                    let at = dlg.orient.at.unwrap_or_else(|| {
+                        self.drawing()
+                            .and_then(|d| d.sheet().map(|s| s.dims()))
+                            .map_or([100.0, 150.0], |(w, h)| [w * 0.3, h * 0.62])
+                    });
                     let scale = dlg.scale;
                     self.place_base_view(&dlg, at, scale);
                 }
@@ -2169,16 +2155,23 @@ fn component_tab(
         if d.projected {
             ui.weak("From the parent view");
         } else {
-            egui::Grid::new("drw_orient_grid")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    for (k, o) in ViewOrientation::ALL.into_iter().enumerate() {
-                        ui.radio_value(&mut d.orientation, o, o.label());
-                        if k % 2 == 1 {
-                            ui.end_row();
-                        }
-                    }
+            // Inventor sets it with the ViewCube beside the preview.
+            ui.label(d.orientation.label());
+            ui.weak("ViewCube at the preview's upper right corner");
+            if ui
+                .add_enabled(
+                    d.orient.custom.is_none(),
+                    egui::Button::new("Change View Orientation"),
+                )
+                .on_hover_text("Custom View: orbit freely, Rotate at Angle")
+                .clicked()
+            {
+                d.orient.custom = Some(super::drawing_orient::CustomView {
+                    before: d.orientation,
+                    axis: super::drawing_orient::Axis::Vertical,
+                    step: 15.0,
                 });
+            }
         }
         let ui = &mut cols[1];
         ui.label(RichText::new("Style").strong());

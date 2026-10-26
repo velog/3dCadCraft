@@ -44,6 +44,7 @@ mod draft;
 mod drawing;
 mod drawing_annot;
 mod drawing_bom;
+mod drawing_orient;
 mod drawing_planned;
 mod drawing_section;
 mod drawing_sheet;

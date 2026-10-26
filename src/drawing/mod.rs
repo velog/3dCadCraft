@@ -192,8 +192,9 @@ impl Sheet {
     }
 }
 
-/// Standard orientations of a base view (model Z up, front looks along +Y).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Orientations of a base view (model Z up, front looks along +Y): the
+/// standard ones and any other set with the ViewCube or Custom View.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ViewOrientation {
     /// From −Y.
     Front,
@@ -215,6 +216,14 @@ pub enum ViewOrientation {
     IsoBottomRight,
     /// Isometric from front, left, bottom.
     IsoBottomLeft,
+    /// Any other direction (format revision 27): towards the viewer and up
+    /// on the sheet, unit vectors in model coordinates.
+    Custom {
+        /// Towards the viewer.
+        toward: [f64; 3],
+        /// Up on the sheet.
+        up: [f64; 3],
+    },
 }
 
 impl ViewOrientation {
@@ -245,7 +254,24 @@ impl ViewOrientation {
             ViewOrientation::IsoTopLeft => "Iso Top Left",
             ViewOrientation::IsoBottomRight => "Iso Bottom Right",
             ViewOrientation::IsoBottomLeft => "Iso Bottom Left",
+            ViewOrientation::Custom { .. } => "Custom",
         }
+    }
+
+    /// The orientation showing `frame`: a standard one when it is that
+    /// (within 1e-6), else `Custom`.
+    pub fn from_frame(frame: &ViewFrame) -> Self {
+        let near = |a: Vector3, b: Vector3| (a - b).norm() < 1e-6;
+        Self::ALL
+            .into_iter()
+            .find(|o| {
+                let f = o.frame();
+                near(f.toward, frame.toward) && near(f.up, frame.up)
+            })
+            .unwrap_or(ViewOrientation::Custom {
+                toward: frame.toward.into(),
+                up: frame.up.into(),
+            })
     }
 
     /// The view's frame.
@@ -263,6 +289,7 @@ impl ViewOrientation {
             ViewOrientation::IsoTopLeft => (-x - y + z, z),
             ViewOrientation::IsoBottomRight => (x - y - z, -z),
             ViewOrientation::IsoBottomLeft => (-x - y - z, -z),
+            ViewOrientation::Custom { toward, up } => (toward.into(), up.into()),
         };
         ViewFrame::new(toward, up)
     }

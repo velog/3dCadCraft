@@ -1301,6 +1301,63 @@ fn drawing_r26_project() -> Project {
     project
 }
 
+/// Revision 27: a box with a base view in a custom orientation (turned with
+/// the ViewCube) and a projected view of it.
+fn drawing_r27_project() -> Project {
+    use cadcraft3d::document::DocRef;
+    use cadcraft3d::drawing::{DrawingDocument, ViewOrientation, ViewStyle};
+    let mut project = Project::new("DrawingR27");
+    let id = project.add_document(
+        "Block",
+        DocumentData::Part(PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap()),
+    );
+    let mut d = DrawingDocument::default();
+    let s = 0.5f64.sqrt();
+    let v = d
+        .add_base_view(
+            DocRef::local(id),
+            ViewOrientation::Custom {
+                toward: [s, -s, 0.0],
+                up: [0.0, 0.0, 1.0],
+            },
+            [120.0, 180.0],
+            1.0,
+            ViewStyle::HiddenShown,
+        )
+        .unwrap();
+    d.add_projected_view(v, [240.0, 180.0]).unwrap();
+    project.add_document("Drawing1", DocumentData::Drawing(d));
+    project
+}
+
+/// The revision 27 drawing reads back with its custom orientation.
+#[test]
+fn drawing_r27_reads() {
+    use cadcraft3d::drawing::{ViewKind, ViewOrientation};
+    let f = root().join("r27/drawing_r27.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let ViewKind::Base { orientation, .. } = &d.sheets[0].views[0].kind else {
+        panic!("a base view first")
+    };
+    let ViewOrientation::Custom { toward, .. } = orientation else {
+        panic!("a custom orientation")
+    };
+    assert!((toward[0] - 0.5f64.sqrt()).abs() < 1e-12);
+    assert_eq!(d.sheets[0].views.len(), 2);
+    project.validate().unwrap();
+}
+
 /// The revision 26 drawing reads back with its flat pattern view and notes.
 #[test]
 fn drawing_r26_reads() {
@@ -1450,6 +1507,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r26_project().save(&f).unwrap();
+        }
+        let f = root().join("r27/drawing_r27.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r27_project().save(&f).unwrap();
         }
         let f = root().join("r22/sheet_r22.3dcadcraft");
         if !f.exists() {

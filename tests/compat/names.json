@@ -683,5 +683,13 @@
     "Shell1:Inner[Box1:Left]",
     "Shell1:Inner[Box1:Right]",
     "Shell1:Inner[Box1:Right]"
+  ],
+  "r27/drawing_r27.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top"
   ]
 }

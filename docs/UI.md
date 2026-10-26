@@ -271,8 +271,12 @@ Round, SCH Corner Chamfer, SPT Punch Tool, SUF Unfold, SRF Refold, SFP Flat Patt
 
 **File → New… → Drawing** (or File → New Drawing) adds a drawing to the open project and opens it: an A3
 ISO sheet with a border and a title block. **BV** = Base View: the Drawing View dialog (Component, Model,
-Display Options, Recovery Options); choose the part (or **Browse...** to link a part file), the orientation,
-the style and the scale; the view follows the cursor and a click places it, then each click beside it places
+Display Options, Recovery Options); choose the part (or **Browse...** to link a part file), the style and the scale;
+the preview sits on the sheet: drag it (or click where it should go), turn it with the ViewCube at its upper
+right corner (faces, edges, corners, arrows, roll, drag to orbit; its arrow or a right-click opens the menu with
+**Custom View Orientation**: drag anywhere to orbit, Rotate at Angle, Finish Custom View), drag a corner to
+scale it (standard scales, **Ctrl** any), click the triangles on its border to add projected views (x removes);
+**OK** places it (Edit View has the same cube and corners), then each click beside it places
 a projected view (**PV** later; diagonal = isometric); **Esc** or right-click ends. Drag a view to move it
 (projected views stay aligned), double-click to edit it, **Delete** removes it with the views projected from
 it. Middle button pans, the wheel zooms at the cursor, the sheet's right-click menu has **Zoom All**, Edit

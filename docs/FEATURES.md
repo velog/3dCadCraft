@@ -912,7 +912,8 @@ visual check.
 
 🟡 2026-10-26: Base, Projected, Section (full, straight line, hatched), Detail (circular) and Auxiliary
 views with hidden line removal (display mesh, A2 of the spec), move / align / edit / delete; Break, Break
-Out, Slice, Crop, Overlay, Draft views are listed greyed.
+Out, Slice, Crop, Overlay, Draft views are listed greyed. The base view's preview has Inventor's ViewCube
+(any orientation, Custom View with free orbit and Rotate at Angle), corner scaling and projected-view triangles.
 
 | View | What it does |
 |---|---|
