@@ -29,6 +29,8 @@ DPI aware, so at 150 % scaling they are physical pixels, not egui points).
                            screenshot of the client area, optionally a crop scaled
                            SCALE times (nearest pixel) to locate small dots
   focus                    bring the window to the front
+  place X Y                move the window's outer top-left corner to screen X Y
+  info                     print the window's outer rectangle and state
 
 Input goes to the front window: commands other than `shot` bring it to the front, and
 the desktop must not be locked. `shot` uses PrintWindow, so a covered window still works.
@@ -368,7 +370,7 @@ def drive(h, args):
         send(mouse(b[1]))
         time.sleep(0.06)
 
-    if args and args[0] != 'shot':
+    if args and args[0] not in ('shot', 'info'):
         focus(h)
     while args:
         c = args.pop(0)
@@ -421,6 +423,18 @@ def drive(h, args):
             time.sleep(float(args.pop(0)))
         elif c == 'focus':
             focus(h)
+        elif c == 'place':
+            if user32.IsZoomed(h):
+                user32.ShowWindow(h, 9)
+            user32.SetWindowPos(h, None, int(args.pop(0)), int(args.pop(0)), 0, 0, 0x1 | 0x4)
+            time.sleep(0.3)
+        elif c == 'info':
+            wr = W.RECT()
+            user32.GetWindowRect(h, ctypes.byref(wr))
+            _, _, cw, ch = client_rect(h)
+            state = 'minimized' if user32.IsIconic(h) else 'maximized' if user32.IsZoomed(h) else 'normal'
+            print(f'outer {wr.left},{wr.top} {wr.right - wr.left}x{wr.bottom - wr.top} '
+                  f'client {cw}x{ch} {state} title={title(h)!r}')
         elif c == 'shot':
             path = args.pop(0)
             crop, scale = None, 1
