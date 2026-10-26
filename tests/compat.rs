@@ -1134,6 +1134,70 @@ fn extrude_options_r11() -> PartDocument {
     part
 }
 
+/// Revision 23: a project with a box part and a drawing of it (a base view and
+/// a projected view on an A3 sheet, a second A4 portrait sheet).
+fn drawing_r23_project() -> Project {
+    use cadcraft3d::document::DocRef;
+    use cadcraft3d::drawing::{
+        DrawingDocument, Orientation, SheetSize, ViewOrientation, ViewStyle,
+    };
+    let mut project = Project::new("DrawingR23");
+    let part = project.add_document(
+        "Part1",
+        DocumentData::Part(PartDocument::with_box("Box1", [40.0, 20.0, 10.0]).unwrap()),
+    );
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            DocRef::local(part),
+            ViewOrientation::Front,
+            [120.0, 180.0],
+            2.0,
+            ViewStyle::HiddenShown,
+        )
+        .unwrap();
+    d.add_projected_view(b, [120.0, 80.0]).unwrap();
+    d.new_sheet();
+    d.sheets[1].size = SheetSize::A4;
+    d.sheets[1].orientation = Orientation::Portrait;
+    d.active_sheet = 0;
+    project.add_document("Drawing1", DocumentData::Drawing(d));
+    project
+}
+
+fn drawing_r23_bytes() -> Vec<u8> {
+    let dir = std::env::temp_dir().join(format!("cadcraft-r23-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("drawing_r23.3dcadcraft");
+    drawing_r23_project().save(&f).unwrap();
+    let bytes = std::fs::read(&f).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    bytes
+}
+
+/// The revision 23 drawing reads back with its sheets and views.
+#[test]
+fn drawing_r23_reads() {
+    let f = root().join("r23/drawing_r23.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    assert_eq!(d.sheets.len(), 2);
+    assert_eq!(d.sheets[0].views.len(), 2);
+    assert_eq!(d.sheets[1].dims(), (210.0, 297.0));
+    assert_eq!(d.references().len(), 1);
+    project.validate().unwrap();
+}
+
 #[test]
 fn old_files_still_open() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -1211,6 +1275,11 @@ fn old_files_still_open() {
             let mut project = Project::new("WorkR8");
             project.add_document("Part1", DocumentData::Part(work_r8()));
             project.save(&f).unwrap();
+        }
+        let f = root().join("r23/drawing_r23.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(&f, drawing_r23_bytes()).unwrap();
         }
         let f = root().join("r22/sheet_r22.3dcadcraft");
         if !f.exists() {

@@ -451,6 +451,14 @@
     "Face1:base:bottom",
     "Face1:base:top"
   ],
+  "r23/drawing_r23.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top"
+  ],
   "r3/shell_r3.3dcadcraft": [
     "Box1:Back",
     "Box1:Bottom",

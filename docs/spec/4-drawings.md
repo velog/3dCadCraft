@@ -153,6 +153,22 @@ Nothing to adapt: SolidCraft has no drawings (only a DXF writer). Our plan:
 
 ### 6.3 Technology choices (Rust): options, pros and cons
 
+**Summary — what we use and for what** (status 2026-10-26):
+
+| Need | We use | Why | Status |
+|---|---|---|---|
+| Hidden lines of a view | our HLR on the kernel's display mesh (exact edges + silhouettes, visibility by rays into a grid of triangles) | fast, headless, keeps true curves; no GPL code to lean on | 🟡 first version (polyline edges) |
+| Drawing the sheet on screen | egui `Painter` from one display list in sheet mm | already used for all overlays, no new dependency | 🟡 |
+| Big views later | our own wgpu line pipeline (CADCraft's `gpu.rs` as the model) | only if a perf case needs it | ⬜ |
+| PDF | `krilla` (MIT / Apache, font subsetting, PDF/A) | Cyrillic title blocks need embedded fonts | ⬜ D1 next |
+| Text | one embedded TrueType font with Cyrillic (read by `skrifa`, already in the tree) | same widths on screen and paper | ⬜ font to choose |
+| DXF | our own writer (grown from the sheet metal one) | deterministic, no dependency | ⬜ D5 |
+| DWG | `acadrust` (MPL-2.0) in a separate module, only with the owner's yes | the only pure-Rust DWG writer; LibreDWG is GPL | ⬜ D5 |
+| SVG | written by us from the display list | also the snapshot format of our tests | ⬜ |
+| Hatching, ellipses | our own clipping; `kurbo` (in the tree) for Bézier conversion | small, exact | ⬜ D2 |
+| Parallel work | worker threads per view (done), `rayon` per edge batch later | the UI never waits | 🟡 |
+| Annotations, title blocks, symbols | our `Sketch` module on the sheet plane | the solver and tools exist | ⬜ D3 |
+
 What the tree already has (checked in `Cargo.lock`, 2026-10-26): `rayon` (through the kernel), `kurbo`,
 `skrifa`, `ttf-parser` and `vello_cpu` (through `epaint` 0.36, egui's font and shape rasteriser). The
 project is `MIT OR Apache-2.0`: every new dependency must be MIT / Apache / BSD / zlib (MPL-2.0 only
