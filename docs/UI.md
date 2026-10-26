@@ -106,6 +106,8 @@ By default they are **as in Inventor**. Today they are **hard-coded**; remapping
 | letters (S, E, R, H, L, C, D, X, O) | only alone or with Shift; with Ctrl or Alt they start nothing (Alt+S is the command search) | 🟡 |
 | **Ctrl+Tab / Ctrl+Shift+Tab** | next / previous document tab | 🟡 |
 | **Alt+S** | the "Search commands" field in the Quick Access (↑/↓/Tab, Enter starts, Esc clears / leaves) | 🟡 |
+| letters with *Show command alias input dialog* off (default) | multi-letter aliases gather in the status bar (`Command: SM_  (Flange)`); an alias no longer one starts with runs at once (`SMF`, `E`), one with longer ones after 0.6 s or Enter / Space (`S`); Backspace, Esc clears; red when nothing matches | 🟡 |
+| right-click a ribbon tab | **Show Tabs** (turn tabs on / off, Show All), **Minimize Ribbon** | 🟡 |
 | letters with *Show command alias input dialog* on | open the field next to the cursor; Enter / Space starts the highlighted command, Esc closes | 🟡 |
 | **S** (outside a sketch) | new 2D sketch (Start 2D Sketch) | ✅ |
 | **E** (everywhere; in a sketch it first leaves the sketch) | Extrude | ✅ |
@@ -134,6 +136,30 @@ By default they are **as in Inventor**. Today they are **hard-coded**; remapping
 | **Esc** | ends the current input (command, dialog, Select Other, Edit Feature); clears the selection (→ Previous Selection); in a sketch a second Esc returns to Select | ✅ |
 | **Ctrl** (held, while drawing) | no H/V/∥/⊥ inference, no tangent snap and no point alignment; snapping to points, midpoints and curves (and the constraints from it) **stays** | ✅ |
 | **Ctrl** (held, while dragging a manipulator) | finer step: 0.1 mm / 1° | ✅ |
+
+**Further aliases** (2026-10-26; type them over the view, the tooltips show them; the command search
+finds every command by its alias too):
+
+- 3D Model: CO Coil, RI Rib, CMB Combine, SPL Split, UCS UCS, BX Box, CY Cylinder, SPE Sphere, TOR Torus.
+- Sketch: TC Tangent Circle, AC Center Point Arc, RC / RCT Two / Three Point Center Rectangle, SL / SLO / SLC
+  Center to Center / Overall / Center Point Slot, SLA / SLR Three Point / Center Point Arc Slot, SPV Control
+  Vertex Spline, CHA Chamfer, CO Copy, RO Rotate, SPS Split, SC Scale, STR Stretch, PTH Pattern along Path,
+  PPT Pattern at Points, CN Coincident, CL Collinear, CC Concentric, GND Fix, PA Parallel, PE Perpendicular,
+  TA Tangent, SY Symmetric, ECS Edit Coordinate System, CT Construction, CE Centerline, NO Normal, CPT Center
+  Point, CSE Constraint Settings, ESK Finish Sketch, QDR / QDS / QDT / QDL / QDV the demos.
+- Inspect / Tools / Manage: PPR Physical Properties, IVS Validate Solid, AO Application Options, MAT Material,
+  APP Appearance, ADJ Adjust, APC Clear, PRM Parameters, RBA Rebuild All, STE Styles Editor, UST Update
+  Styles, PUR Purge Styles.
+- View: NFR / NTP / NRT Front / Top / Right, NOR / NPE / NPO Orthographic / Perspective / Perspective with
+  Ortho Faces, NVO / NVP / NVA / NVT / NVU visibility of origin planes / work planes / axes / points / UCS,
+  UIB / UIP / UIR / UIS / UIV / UIT Browser / Properties / Ribbon / Status Bar / ViewCube / Axis Triad,
+  UIL Reset UI Layout, UIM Minimize Ribbon.
+- Assembly: FIX Grounded, UPD Update, BOM Bill of Materials.
+- File / Help: NDW New Drawing, NAS New Assembly, SVF Save as Folder, STL / STP / SGL Export STL / STEP /
+  GLB, SDG Save Diagnostics, SLG Open Logs Folder.
+
+E and H (3D Model) and L, D, O, X (sketch) have no longer alias starting with them, so they start at
+once (a test keeps it so).
 
 > Inventor's letter shortcuts can differ by language and version. The table will be checked against a real installation.
 

@@ -170,12 +170,67 @@ pub enum Action {
 }
 
 /// Minimize ribbon state (Inventor: Minimize to Tabs).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Fold {
     /// Only the tab strip is shown.
     pub minimized: bool,
     /// Minimized, but the panels are shown until a command is picked.
     pub peek: bool,
+    /// Tabs the user turned off (labels; right-click a tab → Show Tabs).
+    pub hidden: Vec<String>,
+}
+
+impl Tab {
+    /// Shown in this environment and not turned off by the user.
+    pub fn visible(self, st: &State, hidden: &[String]) -> bool {
+        self.shown(st.assembly, st.sheet_metal, st.drawing)
+            && !hidden.iter().any(|h| h == self.label())
+    }
+
+    /// The first visible tab (the active one when the active tab is hidden).
+    pub fn first_visible(st: &State, hidden: &[String]) -> Option<Tab> {
+        Tab::ALL.into_iter().find(|t| t.visible(st, hidden))
+    }
+}
+
+/// The tab strip's right-click menu (Inventor: Show Tabs, Minimize).
+fn tabs_menu(ui: &mut egui::Ui, st: &State, fold: &mut Fold) {
+    ui.menu_button("Show Tabs", |ui| {
+        let tabs: Vec<Tab> = Tab::ALL
+            .into_iter()
+            .filter(|t| t.shown(st.assembly, st.sheet_metal, st.drawing))
+            .collect();
+        let on = tabs.iter().filter(|t| t.visible(st, &fold.hidden)).count();
+        for t in tabs {
+            let mut show = t.visible(st, &fold.hidden);
+            // The last visible tab stays.
+            let r = ui.add_enabled(!show || on > 1, egui::Checkbox::new(&mut show, t.label()));
+            if r.changed() {
+                fold.hidden.retain(|h| h != t.label());
+                if !show {
+                    fold.hidden.push(t.label().to_owned());
+                }
+            }
+        }
+        ui.separator();
+        if ui
+            .add_enabled(!fold.hidden.is_empty(), egui::Button::new("Show All"))
+            .clicked()
+        {
+            fold.hidden.clear();
+            ui.close();
+        }
+    });
+    let label = if fold.minimized {
+        "Show Full Ribbon"
+    } else {
+        "Minimize Ribbon"
+    };
+    if ui.button(label).clicked() {
+        fold.minimized = !fold.minimized;
+        fold.peek = false;
+        ui.close();
+    }
 }
 
 /// What the ribbon needs to know to enable commands.
@@ -1024,12 +1079,14 @@ const PANEL_H: f32 = ROW * 3.0 + 4.0;
 /// command, if any.
 pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Option<Action> {
     ui.horizontal(|ui| {
-        for t in Tab::ALL
+        let tabs: Vec<Tab> = Tab::ALL
             .into_iter()
-            .filter(|t| t.shown(st.assembly, st.sheet_metal, st.drawing))
-        {
+            .filter(|t| t.visible(st, &fold.hidden))
+            .collect();
+        for t in tabs {
             let was = *tab == t;
             let r = ui.selectable_value(tab, t, RichText::new(t.label()).strong());
+            r.context_menu(|ui| tabs_menu(ui, st, fold));
             if r.double_clicked() && was {
                 // Inventor: a double click on the active tab minimizes.
                 fold.minimized = !fold.minimized;

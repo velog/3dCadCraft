@@ -917,6 +917,66 @@ pub struct SheetState {
     pub model: ksm::SheetModel,
     /// Faces of the solid when the last sheet step made it.
     pub faces: usize,
+    /// The flat pattern, built on first use: the Flat Pattern view, its
+    /// Properties, the BOM and drawings ask for it every frame (unfolding
+    /// took 50–150 ms each time).
+    flat: std::sync::OnceLock<Option<FlatPattern>>,
+    /// The flat's extents, built on first use.
+    extents: std::sync::OnceLock<Option<FlatExtents>>,
+    /// The flat solid as our B-rep (the view's triangles), built on first use.
+    flat_brep: std::sync::OnceLock<Option<crate::kernel::BRep>>,
+}
+
+impl SheetState {
+    /// A sheet step's result (flat caches empty).
+    pub fn new(model: ksm::SheetModel, faces: usize) -> Self {
+        Self {
+            model,
+            faces,
+            flat: Default::default(),
+            extents: Default::default(),
+            flat_brep: Default::default(),
+        }
+    }
+
+    /// The flat solid of this sheet body (named `body`) as a B-rep, cached.
+    pub fn flat_brep(&self, body: &str) -> Option<&crate::kernel::BRep> {
+        self.flat_brep
+            .get_or_init(|| {
+                let f = self.flat(body)?;
+                crate::kernel::exact::to_brep(std::slice::from_ref(&f.solid)).ok()
+            })
+            .as_ref()
+    }
+
+    /// The flat pattern of this sheet body (named `body`), cached.
+    fn flat(&self, body: &str) -> Option<&FlatPattern> {
+        self.flat
+            .get_or_init(|| {
+                Some(FlatPattern {
+                    body: body.to_owned(),
+                    size: ksm::flat_size(&self.model).ok()?,
+                    bends: ksm::bends(&self.model),
+                    solid: ksm::flat_solid(&self.model, body).ok()?,
+                })
+            })
+            .as_ref()
+    }
+
+    /// The flat's extents, cached.
+    fn extents(&self) -> Option<FlatExtents> {
+        *self.extents.get_or_init(|| {
+            let (a, b) = match self.flat.get() {
+                Some(Some(f)) => f.size,
+                _ => ksm::flat_size(&self.model).ok()?,
+            };
+            Some(FlatExtents {
+                length: a.max(b),
+                width: a.min(b),
+                area: ksm::flat_area(&self.model).ok()?,
+            })
+        })
+    }
 }
 
 /// The flat pattern of a sheet body.
@@ -1040,7 +1100,10 @@ impl super::PartDocument {
             profiles,
             flip,
         };
-        self.insert_feature_checked(super::Feature::SheetFace(def))?;
+        // The sketch is consumed: hidden (Inventor), or shared when another
+        // feature used it already.
+        let used = [def.sketch.clone()];
+        self.add_consuming(super::Feature::SheetFace(def), &used)?;
         Ok(id)
     }
 
@@ -1073,7 +1136,9 @@ impl super::PartDocument {
         }
         let id = self.next_feature_id(def.kind_name());
         (def.id, def.name) = (id.clone(), id.clone());
-        self.insert_feature_checked(super::Feature::SheetOp(def))?;
+        // A Cut's / Contour Flange's / Fold's sketch is consumed like a Face's.
+        let used: Vec<String> = def.sketch().map(str::to_owned).into_iter().collect();
+        self.add_consuming(super::Feature::SheetOp(def), &used)?;
         Ok(id)
     }
 
@@ -1216,13 +1281,7 @@ impl super::PartDocument {
 
     /// The flat pattern's extents of sheet `body`.
     pub fn flat_extents_of(&self, body: &str) -> Option<FlatExtents> {
-        let st = self.sheet_models.get(body)?;
-        let (a, b) = ksm::flat_size(&st.model).ok()?;
-        Some(FlatExtents {
-            length: a.max(b),
-            width: a.min(b),
-            area: ksm::flat_area(&st.model).ok()?,
-        })
+        self.sheet_models.get(body)?.extents()
     }
 
     /// The bend lines of sheet `body`'s flat pattern, placed on the flat
@@ -1261,14 +1320,7 @@ impl super::PartDocument {
         let mut v: Vec<FlatPattern> = self
             .sheet_models
             .iter()
-            .filter_map(|(body, st)| {
-                Some(FlatPattern {
-                    body: body.clone(),
-                    size: ksm::flat_size(&st.model).ok()?,
-                    bends: ksm::bends(&st.model),
-                    solid: ksm::flat_solid(&st.model, body).ok()?,
-                })
-            })
+            .filter_map(|(body, st)| st.flat(body).cloned())
             .collect();
         v.sort_by(|a, b| a.body.cmp(&b.body));
         v
@@ -1311,6 +1363,8 @@ mod tests {
         let prof = vec![crate::part::ProfileRef::of(&r[0], r[0].interior_point())];
         let face = p.add_sheet_face(i, prof, false).unwrap();
         assert!(p.exact);
+        // The Face consumes its sketch: hidden, like an Extrude's.
+        assert!(!p.sketches[i].visible);
         assert!((volume(&p) - 12_000.0).abs() < 1.0, "{}", volume(&p));
         let (body, edge) = p
             .sheet_edge_at(Point3::new(50.0, 0.0, 2.0))
@@ -1326,6 +1380,13 @@ mod tests {
         let want = 60.0 - 4.0 + ba + (25.0 - 4.0);
         assert!((a.min(b) - want).abs() < 0.05, "{a} × {b}, want {want}");
         assert_eq!(flats[0].bends.len(), 1);
+        // Cached: asked again, the same flat (no second unfolding).
+        let st = &p.sheet_models[&body];
+        assert!(std::ptr::eq(
+            st.flat_brep(&body).unwrap(),
+            st.flat_brep(&body).unwrap()
+        ));
+        assert_eq!(p.flat_extents_of(&body), p.flat_extents_of(&body));
         // The sheet's faces are named.
         assert!(p.body.faces().all(|(_, f)| f.name.is_some()));
         // Round trip through JSON (the file's part document).

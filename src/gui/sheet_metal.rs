@@ -89,21 +89,12 @@ impl SmDraft {
         if let Some(p) = &self.planned {
             return p.kind.title();
         }
-        match &self.feature {
-            Feature::SheetFace(_) => "Face",
-            Feature::SheetFlange(_) => "Flange",
-            Feature::SheetConvert(_) => "Convert to Sheet Metal",
-            Feature::SheetOp(o) => match o.op {
-                SheetOp::Hem { .. } => "Hem",
-                SheetOp::Fold { .. } => "Fold",
-                SheetOp::Contour { .. } => "Contour Flange",
-                SheetOp::Cut { .. } => "Cut",
-                SheetOp::CornerSeam { .. } => "Corner Seam",
-                SheetOp::Unfold { .. } => "Unfold",
-                SheetOp::Refold { .. } => "Refold",
-            },
-            _ => "Sheet Metal",
-        }
+        feature_title(&self.feature)
+    }
+
+    /// The command's icon.
+    pub(super) fn icon(&self) -> super::icons::Icon {
+        command_icon(self.title())
     }
 
     /// The prefix of a new feature's id.
@@ -689,7 +680,7 @@ impl CadCraftApp {
         let Some(f) = self.part().features.get(k).cloned() else {
             return;
         };
-        self.panel_header(ui, super::icons::Icon::SheetMetal, f.name());
+        self.panel_header(ui, feature_icon(&f), f.name());
         let text = match &f {
             Feature::SheetFlange(fl) => format!(
                 "Flange on {} edge(s), {:.2} mm at {:.1}°",
@@ -865,7 +856,7 @@ impl CadCraftApp {
         let Some(mut d) = self.sm.draft.clone() else {
             return;
         };
-        self.panel_header(ui, super::icons::Icon::SheetMetal, d.title());
+        self.panel_header(ui, d.icon(), d.title());
         let shown = match d.edit {
             Some(k) => self
                 .part()
@@ -2669,12 +2660,20 @@ impl CadCraftApp {
         if !self.sm.flat || !self.is_sheet_metal() {
             return None;
         }
-        let flats = self.part().flat_patterns();
-        if flats.is_empty() {
-            return None;
-        }
-        let solids: Vec<_> = flats.into_iter().map(|f| f.solid).collect();
-        let body = crate::kernel::exact::to_brep(&solids).ok()?;
+        // One sheet body (the usual case): its cached B-rep; several are
+        // converted together.
+        let part = self.part();
+        let body = if part.sheet_models.len() == 1 {
+            let (name, st) = part.sheet_models.iter().next()?;
+            st.flat_brep(name)?.clone()
+        } else {
+            let flats = part.flat_patterns();
+            if flats.is_empty() {
+                return None;
+            }
+            let solids: Vec<_> = flats.into_iter().map(|f| f.solid).collect();
+            crate::kernel::exact::to_brep(&solids).ok()?
+        };
         Some(PartDocument {
             body,
             material: self.part().material.clone(),
@@ -2719,6 +2718,38 @@ impl CadCraftApp {
             }
         }
     }
+}
+
+/// The command name of sheet metal feature `f` (panel title).
+pub(super) fn feature_title(f: &Feature) -> &'static str {
+    match f {
+        Feature::SheetFace(_) => "Face",
+        Feature::SheetFlange(_) => "Flange",
+        Feature::SheetConvert(_) => "Convert to Sheet Metal",
+        Feature::SheetOp(o) => match o.op {
+            SheetOp::Hem { .. } => "Hem",
+            SheetOp::Fold { .. } => "Fold",
+            SheetOp::Contour { .. } => "Contour Flange",
+            SheetOp::Cut { .. } => "Cut",
+            SheetOp::CornerSeam { .. } => "Corner Seam",
+            SheetOp::Unfold { .. } => "Unfold",
+            SheetOp::Refold { .. } => "Refold",
+        },
+        _ => "Sheet Metal",
+    }
+}
+
+/// The icon of the sheet metal command named `title` (browser, panels).
+pub(super) fn command_icon(title: &str) -> super::icons::Icon {
+    super::commands::COMMANDS
+        .iter()
+        .find(|c| c.id.starts_with("sm.") && c.name == title)
+        .map_or(super::icons::Icon::SheetMetal, |c| c.icon)
+}
+
+/// The icon of sheet metal feature `f`.
+pub(super) fn feature_icon(f: &Feature) -> super::icons::Icon {
+    command_icon(feature_title(f))
 }
 
 /// Default / Flipped as two toggles (Inventor's direction buttons).

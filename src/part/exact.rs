@@ -3012,7 +3012,7 @@ pub(super) fn sheet_face(
     )
     .map_err(User)?;
     let faces = solid.face_names.len();
-    Ok((solid, super::sheet_metal::SheetState { model, faces }))
+    Ok((solid, super::sheet_metal::SheetState::new(model, faces)))
 }
 
 /// Sheet metal Flange: bends on the named edges of its sheet; the sheet's
@@ -3114,7 +3114,7 @@ pub(super) fn sheet_op(
         let faces = solid.face_names.len();
         let mut next = solids.to_vec();
         next[k] = solid;
-        (next, body.to_owned(), SheetState { model, faces })
+        (next, body.to_owned(), SheetState::new(model, faces))
     };
     let rv = rule.values();
     match &op.op {
@@ -3218,7 +3218,7 @@ pub(super) fn sheet_op(
             let faces = solid.face_names.len();
             let mut next = solids.to_vec();
             next.push(solid);
-            Ok((next, op.id.clone(), SheetState { model, faces }))
+            Ok((next, op.id.clone(), SheetState::new(model, faces)))
         }
         SheetOp::Unfold { body } | SheetOp::Refold { body } => {
             let (k, state) = sheet_of(body, solids, metal)?;
@@ -3323,7 +3323,7 @@ pub(super) fn sheet_convert(
     let faces = solid.face_names.len();
     let mut next = solids.to_vec();
     next[k] = solid;
-    Ok((next, super::sheet_metal::SheetState { model, faces }))
+    Ok((next, super::sheet_metal::SheetState::new(model, faces)))
 }
 
 pub(super) fn sheet_flange(
@@ -3395,5 +3395,5 @@ pub(super) fn sheet_flange(
     let faces = solid.face_names.len();
     let mut next = solids.to_vec();
     next[k] = solid;
-    Ok((next, super::sheet_metal::SheetState { model, faces }))
+    Ok((next, super::sheet_metal::SheetState::new(model, faces)))
 }

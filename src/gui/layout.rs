@@ -68,6 +68,8 @@ pub struct UiSettings {
     pub show_triad: bool,
     /// The ribbon shows its tabs only (Minimize to Tabs).
     pub ribbon_minimized: bool,
+    /// Ribbon tabs turned off (labels; right-click a tab → Show Tabs).
+    pub hidden_tabs: Vec<String>,
     pub browser_side: Side,
     pub properties_side: Side,
     /// Outer widths / height chosen by dragging (`None`: the default).
@@ -103,6 +105,7 @@ impl Default for UiSettings {
             show_view_cube: true,
             show_triad: true,
             ribbon_minimized: false,
+            hidden_tabs: Vec::new(),
             browser_side: Side::Left,
             properties_side: Side::Right,
             browser_width: None,
@@ -1106,9 +1109,17 @@ impl CadCraftApp {
                     super::ribbon::Tab::Model
                 };
             }
+            // A tab the user turned off gives way to the first one shown.
+            let hidden = std::mem::take(&mut self.layout.s.hidden_tabs);
+            if !self.tab.visible(&state, &hidden)
+                && let Some(t) = super::ribbon::Tab::first_visible(&state, &hidden)
+            {
+                self.tab = t;
+            }
             let mut fold = super::ribbon::Fold {
                 minimized: self.layout.s.ribbon_minimized,
                 peek: self.layout.ribbon_peek,
+                hidden,
             };
             let r = egui::Panel::top(self.layout.panel_id("ribbon")).show(ui, |ui| {
                 action = super::ribbon::show(ui, &mut self.tab, &state, &mut fold);
@@ -1133,6 +1144,7 @@ impl CadCraftApp {
             }
             self.layout.s.ribbon_minimized = fold.minimized;
             self.layout.ribbon_peek = fold.peek;
+            self.layout.s.hidden_tabs = fold.hidden;
             if let Some(a) = action {
                 self.apply(a);
             }

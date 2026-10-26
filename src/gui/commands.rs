@@ -275,9 +275,10 @@ impl Command {
     }
 
     /// The key shown in tooltips: the shortcut or first alias, if it works
-    /// today.
+    /// today — directly (`bound`) or typed into the alias field / command
+    /// search (every implemented command).
     pub fn shown_key(&self) -> Option<&'static str> {
-        if self.bound {
+        if self.bound || self.ready() {
             self.key.or(self.aliases.first().copied())
         } else {
             None
@@ -480,12 +481,14 @@ pub static COMMANDS: &[Command] = &[
         .tip("Loft: a body through sections in order (profiles, faces, a point)")
         .spec("5.2-loft.md"),
     c("part.coil", "Coil", "Спирала (пружина)", Icon::Coil)
+        .alias(&["CO"])
         .run(Action::Coil)
         .at(&[M_CREATE])
         .env(PART)
         .tip("Coil: screw closed profiles about an axis (springs, threads with Cut)")
         .spec("5.3-coil.md"),
     c("part.rib", "Rib", "Ребро", Icon::Rib)
+        .alias(&["RI"])
         .run(Action::Rib)
         .at(&[M_CREATE])
         .env(PART)
@@ -544,12 +547,14 @@ pub static COMMANDS: &[Command] = &[
         .env(PART)
         .todo("2.3"),
     c("part.combine", "Combine", "Комбиниране на тела", Icon::Combine)
+        .alias(&["CMB"])
         .run(Action::Combine)
         .at(&[M_MODIFY])
         .env(PART)
         .tip("Combine: join, cut or intersect a base body with toolbodies (multi-body parts)")
         .spec("2.13-combine-split.md"),
     c("part.split", "Split", "Разделяне на тяло", Icon::SplitBody)
+        .alias(&["SPL"])
         .run(Action::Split)
         .at(&[M_MODIFY])
         .env(PART)
@@ -589,6 +594,7 @@ pub static COMMANDS: &[Command] = &[
               sphere or torus (centre); or Grounded at X, Y, Z")
         .spec("2.10-work-features.md"),
     c("part.ucs", "UCS", "Потребителска координатна система", Icon::Ucs)
+        .alias(&["UCS"])
         .run(Action::Ucs)
         .at(&[M_WORK])
         .env(PART)
@@ -619,24 +625,28 @@ pub static COMMANDS: &[Command] = &[
         .tip("Mirror: copy features or solids mirrored across a plane")
         .spec("2.12-mirror.md"),
     c("part.box", "Box", "Паралелепипед (кутия)", Icon::Box)
+        .alias(&["BX"])
         .run(Action::Primitive(Prim::Box))
         .at(&[M_PRIM])
         .env(PART)
         .tip("Box: pick a plane, click the centre, then a corner (a sketch + Extrude)")
         .spec("2.1-extrude.md"),
     c("part.cylinder", "Cylinder", "Цилиндър", Icon::Cylinder)
+        .alias(&["CY"])
         .run(Action::Primitive(Prim::Cylinder))
         .at(&[M_PRIM])
         .env(PART)
         .tip("Cylinder: pick a plane, click the centre, then the diameter (a sketch + Extrude)")
         .spec("2.1-extrude.md"),
     c("part.sphere", "Sphere", "Сфера", Icon::Sphere)
+        .alias(&["SPE"])
         .run(Action::Primitive(Prim::Sphere))
         .at(&[M_PRIM])
         .env(PART)
         .tip("Sphere: pick a plane, click the centre, then the diameter (a sketch + full Revolve)")
         .spec("2.2-revolve.md"),
     c("part.torus", "Torus", "Тор", Icon::Torus)
+        .alias(&["TOR"])
         .run(Action::Primitive(Prim::Torus))
         .at(&[M_PRIM])
         .env(PART)
@@ -656,6 +666,7 @@ pub static COMMANDS: &[Command] = &[
         .tip("Circle: centre, then a point on it")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.circle_tangent", Tool::CircleTangent, "Tangent Circle", "Допирателна окръжност", Icon::CircleTangent)
+        .alias(&["TC"])
         .at(&[S_CREATE])
         .tip("Circle tangent to three lines")
         .spec("1.2-sketch-geometry.md"),
@@ -670,6 +681,7 @@ pub static COMMANDS: &[Command] = &[
         .tip("Arc tangent to a curve at its end")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.arc_center", Tool::ArcCenter, "Center Point Arc", "Дъга по център", Icon::ArcCenter)
+        .alias(&["AC"])
         .at(&[S_CREATE])
         .tip("Arc: centre, start, end")
         .spec("1.2-sketch-geometry.md"),
@@ -685,30 +697,37 @@ pub static COMMANDS: &[Command] = &[
         .tip("Rectangle by one side, then its width")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.rect_center", Tool::RectCenter, "Two Point Center Rectangle", "Правоъгълник от центъра", Icon::RectCenter)
+        .alias(&["RC"])
         .at(&[S_CREATE])
         .tip("Rectangle by its centre and a corner")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.rect_center3", Tool::RectCenterThreePoint, "Three Point Center Rectangle", "Правоъгълник от центъра по три точки", Icon::RectCenter3)
+        .alias(&["RCT"])
         .at(&[S_CREATE])
         .tip("Rectangle by its centre, a side midpoint and a corner")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.slot_cc", Tool::SlotCenterToCenter, "Center to Center Slot", "Прорез център до център", Icon::SlotCenter)
+        .alias(&["SL"])
         .at(&[S_CREATE])
         .tip("Slot by its two arc centres and the width")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.slot_overall", Tool::SlotOverall, "Overall Slot", "Прорез по обща дължина", Icon::SlotOverall)
+        .alias(&["SLO"])
         .at(&[S_CREATE])
         .tip("Slot by its overall length and the width")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.slot_center", Tool::SlotCenterPoint, "Center Point Slot", "Прорез от центъра", Icon::SlotPoint)
+        .alias(&["SLC"])
         .at(&[S_CREATE])
         .tip("Slot by its centre, an arc centre and the width")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.slot_arc3", Tool::SlotArcThreePoint, "Three Point Arc Slot", "Дъгов прорез през три точки", Icon::SlotArc)
+        .alias(&["SLA"])
         .at(&[S_CREATE])
         .tip("Curved slot along a three point arc")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.slot_arc_center", Tool::SlotArcCenter, "Center Point Arc Slot", "Дъгов прорез по център", Icon::SlotArc)
+        .alias(&["SLR"])
         .at(&[S_CREATE])
         .tip("Curved slot along a centre point arc")
         .spec("1.2-sketch-geometry.md"),
@@ -719,6 +738,7 @@ pub static COMMANDS: &[Command] = &[
         .tip("Spline through the clicked points")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.spline_cv", Tool::SplineCv, "Control Vertex Spline", "Сплайн по контролни върхове", Icon::Spline)
+        .alias(&["SPV"])
         .inv("Spline Control Vertex")
         .at(&[S_CREATE])
         .tip("Spline pulled by its control vertices")
@@ -750,6 +770,7 @@ pub static COMMANDS: &[Command] = &[
         .tip("Round the corner of two curves")
         .spec("1.2-sketch-geometry.md"),
     t("sketch.chamfer", Tool::Chamfer, "Chamfer", "Фаска (2D)", Icon::Chamfer2d)
+        .alias(&["CHA"])
         .at(&[S_CREATE])
         .tip("Bevel the corner of two lines")
         .spec("1.2-sketch-geometry.md"),
@@ -771,10 +792,12 @@ pub static COMMANDS: &[Command] = &[
         .tip("Selected geometry: base point, destination")
         .spec("1.6-modify.md"),
     t("sketch.copy", Tool::Copy, "Copy", "Копиране", Icon::Copy)
+        .alias(&["CO"])
         .at(&[S_MODIFY])
         .tip("Copy selected geometry (with its constraints)")
         .spec("1.6-modify.md"),
     t("sketch.rotate", Tool::Rotate, "Rotate", "Завъртане", Icon::Rotate)
+        .alias(&["RO"])
         .at(&[S_MODIFY])
         .tip("Selected geometry: centre, reference, angle")
         .spec("1.6-modify.md"),
@@ -790,6 +813,7 @@ pub static COMMANDS: &[Command] = &[
         .tip("Extend to the nearest curve (Shift = Trim)")
         .spec("1.6-modify.md"),
     t("sketch.split", Tool::Split, "Split", "Разцепване на крива", Icon::Split)
+        .alias(&["SPS"])
         .at(&[S_MODIFY])
         .tip("Split at the nearest intersection")
         .spec("1.6-modify.md"),
@@ -800,10 +824,12 @@ pub static COMMANDS: &[Command] = &[
         .tip("Offset a curve or loop")
         .spec("1.6-modify.md"),
     t("sketch.scale", Tool::Scale, "Scale", "Мащабиране", Icon::Scale)
+        .alias(&["SC"])
         .at(&[S_MODIFY])
         .tip("Selected geometry about a base point (factor in Properties)")
         .spec("1.6-modify.md"),
     t("sketch.stretch", Tool::Stretch, "Stretch", "Разтягане", Icon::Stretch)
+        .alias(&["STR"])
         .at(&[S_MODIFY])
         .tip("Move the selected geometry's points; dimensions update")
         .spec("1.6-modify.md"),
@@ -826,10 +852,12 @@ pub static COMMANDS: &[Command] = &[
         .tip("Mirror selected geometry about a line (Symmetric constraints)")
         .spec("1.7-patterns.md"),
     t("sketch.path_pattern", Tool::PatternPath, "Pattern along Path", "Масив по крива", Icon::PatternPath)
+        .alias(&["PTH"])
         .at(&[S_PATTERN])
         .tip("Copies of the selected geometry along a line, arc or spline (equal chords)")
         .spec("1.7-patterns.md"),
     t("sketch.point_pattern", Tool::PatternPoints, "Pattern at Points", "Масив по точки", Icon::PatternPoints)
+        .alias(&["PPT"])
         .inv("Sketch Driven Pattern")
         .at(&[S_PATTERN])
         .tip("Copies of the selected geometry at points; each copy follows its point (Inventor: Sketch Driven Pattern)")
@@ -842,18 +870,26 @@ pub static COMMANDS: &[Command] = &[
         .at(&[S_CONSTRAIN])
         .tip("General Dimension: kind follows the selection and placement")
         .spec("1.4-dimensions.md"),
-    con("sketch.coincident", Ct::Coincident, "Coincident", "Coincident Constraint", "Съвпадение", Icon::Coincident),
-    con("sketch.collinear", Ct::Collinear, "Collinear", "Collinear Constraint", "Колинеарност", Icon::Collinear),
-    con("sketch.concentric", Ct::Concentric, "Concentric", "Concentric Constraint", "Концентричност", Icon::Concentric),
-    con("sketch.fix", Ct::Fix, "Fix", "Fix Constraint", "Фиксиране", Icon::Fix),
-    con("sketch.parallel", Ct::Parallel, "Parallel", "Parallel Constraint", "Успоредност", Icon::Parallel),
-    con("sketch.perpendicular", Ct::Perpendicular, "Perpendicular", "Perpendicular Constraint", "Перпендикулярност", Icon::Perpendicular),
+    con("sketch.coincident", Ct::Coincident, "Coincident", "Coincident Constraint", "Съвпадение", Icon::Coincident)
+        .alias(&["CN"]),
+    con("sketch.collinear", Ct::Collinear, "Collinear", "Collinear Constraint", "Колинеарност", Icon::Collinear)
+        .alias(&["CL"]),
+    con("sketch.concentric", Ct::Concentric, "Concentric", "Concentric Constraint", "Концентричност", Icon::Concentric)
+        .alias(&["CC"]),
+    con("sketch.fix", Ct::Fix, "Fix", "Fix Constraint", "Фиксиране", Icon::Fix)
+        .alias(&["GND"]),
+    con("sketch.parallel", Ct::Parallel, "Parallel", "Parallel Constraint", "Успоредност", Icon::Parallel)
+        .alias(&["PA"]),
+    con("sketch.perpendicular", Ct::Perpendicular, "Perpendicular", "Perpendicular Constraint", "Перпендикулярност", Icon::Perpendicular)
+        .alias(&["PE"]),
     con("sketch.horizontal", Ct::Horizontal, "Horizontal", "Horizontal Constraint", "Хоризонталност", Icon::Horizontal)
         .alias(&["-"]),
     con("sketch.vertical", Ct::Vertical, "Vertical", "Vertical Constraint", "Вертикалност", Icon::Vertical)
         .alias(&["I"]),
-    con("sketch.tangent", Ct::Tangent, "Tangent", "Tangent Constraint", "Допирателност", Icon::Tangent),
-    con("sketch.symmetric", Ct::Symmetric, "Symmetric", "Symmetric Constraint", "Симетрия", Icon::Symmetric),
+    con("sketch.tangent", Ct::Tangent, "Tangent", "Tangent Constraint", "Допирателност", Icon::Tangent)
+        .alias(&["TA"]),
+    con("sketch.symmetric", Ct::Symmetric, "Symmetric", "Symmetric Constraint", "Симетрия", Icon::Symmetric)
+        .alias(&["SY"]),
     con("sketch.equal", Ct::Equal, "Equal", "Equal Constraint", "Равенство", Icon::Equal)
         .alias(&["="]),
     c("sketch.smooth", "Smooth (G2)", "Гладкост (G2)", Icon::Smooth)
@@ -893,6 +929,7 @@ pub static COMMANDS: &[Command] = &[
         .tip("Show or hide all constraint labels")
         .spec("1.3-constraints.md"),
     c("sketch.coordinate_system", "Edit Coordinate System", "Координатна система на скицата", Icon::CoordSystem)
+        .alias(&["ECS"])
         .run(Action::EditCoordinateSystem)
         .short("Coordinate System")
         .at(&[S_CONSTRAIN])
@@ -901,50 +938,60 @@ pub static COMMANDS: &[Command] = &[
         .spec("1.1-sketch.md"),
     // ---- Sketch: Format, Demo, Exit --------------------------------------
     c("sketch.construction", "Construction", "Конструктивна линия", Icon::Construction)
+        .alias(&["CT"])
         .run(Action::Format(Style::Construction))
         .at(&[S_FORMAT])
         .env(SKETCH)
         .tip("Selected geometry → construction; with nothing selected, toggles construction mode")
         .spec("1.2-sketch-geometry.md"),
     c("sketch.centerline", "Centerline", "Осева линия", Icon::Centerline)
+        .alias(&["CE"])
         .run(Action::Format(Style::Centerline))
         .at(&[S_FORMAT])
         .env(SKETCH)
         .tip("Selected geometry → centerline")
         .spec("1.2-sketch-geometry.md"),
     c("sketch.normal", "Normal", "Нормална линия", Icon::Normal)
+        .alias(&["NO"])
         .run(Action::Format(Style::Normal))
         .at(&[S_FORMAT])
         .env(SKETCH)
         .tip("Selected geometry → normal")
         .spec("1.2-sketch-geometry.md"),
     c("sketch.center_point", "Center Point", "Централна точка", Icon::Point)
+        .alias(&["CPT"])
         .run(Action::CenterPoint)
         .at(&[S_FORMAT])
         .env(SKETCH)
         .tip("New points are Center Points (a cross; Hole takes them as centres)")
         .spec("2.3-hole.md"),
     c("demo.rectangle", Demo::Rectangle.label(), "Пример: напълно определен правоъгълник", Icon::Demo)
+        .alias(&["QDR"])
         .run(Action::Demo(Demo::Rectangle))
         .at(&[S_DEMO])
         .tip("Demo sketch on the box's top face"),
     c("demo.slot", Demo::Slot.label(), "Пример: прорез", Icon::Demo)
+        .alias(&["QDS"])
         .run(Action::Demo(Demo::Slot))
         .at(&[S_DEMO])
         .tip("Demo sketch on the box's top face"),
     c("demo.tangents", Demo::Tangents.label(), "Пример: допирателни окръжности", Icon::Demo)
+        .alias(&["QDT"])
         .run(Action::Demo(Demo::Tangents))
         .at(&[S_DEMO])
         .tip("Demo sketch on the box's top face"),
     c("demo.lines", Demo::Lines.label(), "Пример: успоредни и перпендикулярни линии", Icon::Demo)
+        .alias(&["QDL"])
         .run(Action::Demo(Demo::Lines))
         .at(&[S_DEMO])
         .tip("Demo sketch on the box's top face"),
     c("demo.revolve", Demo::Revolve.label(), "Пример: половин сечение на вал", Icon::Demo)
+        .alias(&["QDV"])
         .run(Action::Demo(Demo::Revolve))
         .at(&[S_DEMO])
         .tip("Demo sketch on the box's top face"),
     c("sketch.finish", "Finish Sketch", "Край на скицата", Icon::Finish)
+        .alias(&["ESK"])
         .run(Action::FinishSketch)
         .inv("Finish 2D Sketch")
         .at(&[S_EXIT])
@@ -960,12 +1007,14 @@ pub static COMMANDS: &[Command] = &[
         .key("m")
         .bound(),
     c("inspect.physical", "Physical Properties", "Физични свойства (маса, център на тежестта)", Icon::Mass)
+        .alias(&["PPR"])
         .run(Action::Material(MatCmd::Physical))
         .inv("iProperties: Physical")
         .at(&[I_MEASURE])
         .tip("Mass, area, volume, centre of gravity and inertia (iProperties: Physical)")
         .spec("0.10-physical.md"),
     c("inspect.validate", "Validate Solid", "Проверка на тялото", Icon::Validate)
+        .alias(&["IVS"])
         .run(Action::SelectBody)
         .at(&[I_ANALYSIS])
         .tip("Euler–Poincaré and manifold check of the body")
@@ -981,11 +1030,13 @@ pub static COMMANDS: &[Command] = &[
         .todo("2.8"),
     // ---- Tools -----------------------------------------------------------
     c("tools.options", "Application Options", "Настройки на приложението", Icon::Options)
+        .alias(&["AO"])
         .run(Action::Options)
         .at(&[T_OPTIONS])
         .tip("Mouse profile, wheel direction, sketch options")
         .spec("0.13-ui-layout.md"),
     c("sketch.constraint_settings", "Constraint Settings", "Настройки на ограниченията", Icon::Settings)
+        .alias(&["CSE"])
         .run(Action::Options)
         .at(&[S_CONSTRAIN])
         .tip("Inference: which constraints are inferred and created while sketching")
@@ -994,34 +1045,40 @@ pub static COMMANDS: &[Command] = &[
         .at(&[T_OPTIONS])
         .todo("0.11"),
     c("tools.material", "Material", "Материал", Icon::Material)
+        .alias(&["MAT"])
         .run(Action::Material(MatCmd::MaterialBrowser))
         .inv("Material Browser")
         .at(&[T_LOOK])
         .tip("Material Browser: document and library materials")
         .spec("2.15-materials.md"),
     c("tools.appearance", "Appearance", "Външен вид", Icon::Appearance)
+        .alias(&["APP"])
         .run(Action::Material(MatCmd::AppearanceBrowser))
         .inv("Appearance Browser")
         .at(&[T_LOOK])
         .tip("Appearance Browser: document and library appearances")
         .spec("2.15-materials.md"),
     c("tools.adjust", "Adjust", "Промяна на вида (цвят)", Icon::AdjustLook)
+        .alias(&["ADJ"])
         .run(Action::Material(MatCmd::Adjust))
         .at(&[T_LOOK])
         .tip("Give the selected faces, features or bodies an appearance or a colour")
         .spec("2.15-materials.md"),
     c("tools.clear", "Clear", "Премахване на вида", Icon::ClearLook)
+        .alias(&["APC"])
         .run(Action::Material(MatCmd::Clear))
         .inv("Clear Appearance Overrides")
         .at(&[T_LOOK])
         .tip("Remove appearance overrides from faces, features, bodies")
         .spec("2.15-materials.md"),
     c("tools.parameters", "Parameters", "Параметри", Icon::Parameters)
+        .alias(&["PRM"])
         .run(Action::Parameters)
         .at(&[T_PARAMS])
         .tip("Parameters (fx): names, equations, tolerances, user parameters")
         .spec("0.5-parameters.md"),
     c("tools.rebuild_all", "Rebuild All", "Пълна регенерация", Icon::Rebuild)
+        .alias(&["RBA"])
         .run(Action::RebuildAll)
         .at(&[T_UPDATE])
         .tip("Recompute every feature of the part from scratch (also clears the build cache)")
@@ -1048,6 +1105,7 @@ pub static COMMANDS: &[Command] = &[
         .spec("0-ui.md"),
     // ---- Manage ----------------------------------------------------------
     c("manage.styles_editor", "Styles Editor", "Редактор на стилове", Icon::Styles)
+        .alias(&["STE"])
         .run(Action::Material(MatCmd::StylesEditor))
         .inv("Style and Standard Editor")
         .at(&[G_STYLES])
@@ -1055,6 +1113,7 @@ pub static COMMANDS: &[Command] = &[
         .tip("Style and Standard Editor: the document's materials and appearances (in a drawing: its dimension, text, leader, centre mark, hatch, view annotation styles, layers and Object Defaults)")
         .spec("2.15-materials.md"),
     c("manage.update_styles", "Update Styles", "Обновяване на стиловете", Icon::Rebuild)
+        .alias(&["UST"])
         .run(Action::Material(MatCmd::UpdateStyles))
         .short("Update")
         .inv("Update")
@@ -1062,6 +1121,7 @@ pub static COMMANDS: &[Command] = &[
         .tip("Update the document's styles from the library")
         .spec("2.15-materials.md"),
     c("manage.purge", "Purge Styles", "Изчистване на неизползвани стилове", Icon::Purge)
+        .alias(&["PUR"])
         .run(Action::Material(MatCmd::Purge))
         .short("Purge")
         .inv("Purge")
@@ -1089,18 +1149,21 @@ pub static COMMANDS: &[Command] = &[
         .tip("Look straight at the edited/selected sketch")
         .spec("0.3-view.md"),
     c("view.front", "Front View", "Изглед отпред", Icon::ViewFront)
+        .alias(&["NFR"])
         .run(Action::View(StandardView::Front))
         .short("Front")
         .at(&[V_NAV])
         .tip("Look from −Y")
         .spec("0.3-view.md"),
     c("view.top", "Top View", "Изглед отгоре", Icon::ViewTop)
+        .alias(&["NTP"])
         .run(Action::View(StandardView::Top))
         .short("Top")
         .at(&[V_NAV])
         .tip("Look from +Z")
         .spec("0.3-view.md"),
     c("view.right", "Right View", "Изглед отдясно", Icon::ViewRight)
+        .alias(&["NRT"])
         .run(Action::View(StandardView::Right))
         .short("Right")
         .at(&[V_NAV])
@@ -1114,71 +1177,85 @@ pub static COMMANDS: &[Command] = &[
         .at(&[V_LOOK])
         .todo("0.3"),
     c("view.orthographic", "Orthographic", "Ортогонална проекция", Icon::Ortho)
+        .alias(&["NOR"])
         .run(Action::Projection(Projection::Orthographic))
         .at(&[V_LOOK])
         .tip("Parallel projection")
         .spec("0.3-view.md"),
     c("view.perspective", "Perspective", "Перспектива", Icon::Ortho)
+        .alias(&["NPE"])
         .run(Action::Projection(Projection::Perspective))
         .at(&[V_LOOK])
         .tip("Perspective projection")
         .spec("0.3-view.md"),
     c("view.perspective_ortho", "Perspective with Ortho Faces", "Перспектива с ортогонални стени", Icon::Ortho)
+        .alias(&["NPO"])
         .run(Action::Projection(Projection::PerspectiveOrthoFaces))
         .at(&[V_LOOK])
         .tip("Perspective, but orthographic while looking straight at a ViewCube face")
         .spec("0.3-view.md"),
     c("view.vis_origin_planes", "Origin Planes", "Основни равнини (видимост)", Icon::WorkPlane)
+        .alias(&["NVO"])
         .run(Action::Ui(UiCmd::ObjVis(VisKind::OriginPlanes)))
         .at(&[V_VIS])
         .tip("Show or hide the origin planes XY, XZ, YZ (Object Visibility)")
         .spec("2.10-work-features.md"),
     c("view.vis_work_planes", "User Work Planes", "Работни равнини (видимост)", Icon::WorkPlane)
+        .alias(&["NVP"])
         .run(Action::Ui(UiCmd::ObjVis(VisKind::WorkPlanes)))
         .at(&[V_VIS])
         .tip("Show or hide every user work plane (a plane hidden on its own stays hidden)")
         .spec("2.10-work-features.md"),
     c("view.vis_work_axes", "User Work Axes", "Работни оси (видимост)", Icon::WorkAxis)
+        .alias(&["NVA"])
         .run(Action::Ui(UiCmd::ObjVis(VisKind::WorkAxes)))
         .at(&[V_VIS])
         .tip("Show or hide every user work axis")
         .spec("2.10-work-features.md"),
     c("view.vis_work_points", "User Work Points", "Работни точки (видимост)", Icon::WorkPoint)
+        .alias(&["NVT"])
         .run(Action::Ui(UiCmd::ObjVis(VisKind::WorkPoints)))
         .at(&[V_VIS])
         .tip("Show or hide every user work point")
         .spec("2.10-work-features.md"),
     c("view.vis_ucs", "UCS Triads", "UCS (видимост)", Icon::Ucs)
+        .alias(&["NVU"])
         .run(Action::Ui(UiCmd::ObjVis(VisKind::Ucs)))
         .at(&[V_VIS])
         .tip("Show or hide the UCS triads and their planes")
         .spec("2.10-work-features.md"),
     c("view.browser", "Browser", "Дърво на модела (показване)", Icon::UiPanels)
+        .alias(&["UIB"])
         .run(Action::Ui(UiCmd::Toggle(Element::Browser)))
         .at(&[V_WIN, VIEW])
         .tip("Show or hide the model browser")
         .spec("0.13-ui-layout.md"),
     c("view.properties", "Properties", "Панел Properties (показване)", Icon::UiPanels)
+        .alias(&["UIP"])
         .run(Action::Ui(UiCmd::Toggle(Element::Properties)))
         .at(&[V_WIN, VIEW])
         .tip("Show or hide the Properties panel")
         .spec("0.13-ui-layout.md"),
     c("view.ribbon", "Ribbon", "Лента с команди (показване)", Icon::UiPanels)
+        .alias(&["UIR"])
         .run(Action::Ui(UiCmd::Toggle(Element::Ribbon)))
         .at(&[V_WIN, VIEW])
         .tip("Show or hide the ribbon")
         .spec("0.13-ui-layout.md"),
     c("view.status_bar", "Status Bar", "Лента на състоянието (показване)", Icon::UiPanels)
+        .alias(&["UIS"])
         .run(Action::Ui(UiCmd::Toggle(Element::StatusBar)))
         .at(&[V_WIN, VIEW])
         .tip("Show or hide the status bar")
         .spec("0.13-ui-layout.md"),
     c("view.view_cube", "ViewCube", "Куб на изгледите (показване)", Icon::UiPanels)
+        .alias(&["UIV"])
         .run(Action::Ui(UiCmd::Toggle(Element::ViewCube)))
         .at(&[V_WIN, VIEW])
         .tip("Show or hide the ViewCube")
         .spec("0.13-ui-layout.md"),
     c("view.triad", "Axis Triad", "Триада на осите (показване)", Icon::UiPanels)
+        .alias(&["UIT"])
         .run(Action::Ui(UiCmd::Toggle(Element::Triad)))
         .at(&[V_WIN, VIEW])
         .tip("Show or hide the axis triad")
@@ -1199,12 +1276,14 @@ pub static COMMANDS: &[Command] = &[
         .tip("The application fills the screen (outside a sketch; there F11 is Relax Mode)")
         .spec("0.13-ui-layout.md"),
     c("view.reset_layout", "Reset UI Layout", "Начално разположение на панелите", Icon::ResetLayout)
+        .alias(&["UIL"])
         .run(Action::Ui(UiCmd::ResetLayout))
         .short("Reset")
         .at(&[V_WIN, VIEW])
         .tip("Reset UI Layout: panels, sizes and window positions back to the defaults")
         .spec("0.13-ui-layout.md"),
     c("view.minimize_ribbon", "Minimize Ribbon", "Свиване на лентата", Icon::UiPanels)
+        .alias(&["UIM"])
         .run(Action::Ui(UiCmd::MinimizeRibbon))
         .inv("Minimize to Tabs")
         .at(&[VIEW])
@@ -1289,98 +1368,98 @@ pub static COMMANDS: &[Command] = &[
         .env(PART)
         .tip("The sheet metal rule of the part: thickness, bend radius, K-factor, reliefs, gap")
         .spec("5.6-sheet-metal.md"),
-    c("sm.face", "Face", "Плоча", Icon::SheetMetal)
+    c("sm.face", "Face", "Плоча", Icon::SmFace)
         .run(Action::SmFace)
         .alias(&["SFA"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")])
         .env(PART)
         .tip("A sheet from a closed sketch profile, the rule's thickness")
         .spec("5.6-sheet-metal.md"),
-    c("sm.flange", "Flange", "Фланец", Icon::SheetMetal)
+    c("sm.flange", "Flange", "Фланец", Icon::SmFlange)
         .run(Action::SmFlange)
         .alias(&["SMF"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")])
         .env(PART)
         .tip("Bend flanges on sheet edges: height, angle, bend radius, Bend Position")
         .spec("5.6-sheet-metal.md"),
-    c("sm.flat_pattern", "Flat Pattern", "Развивка", Icon::SheetMetal)
+    c("sm.flat_pattern", "Flat Pattern", "Развивка", Icon::SmFlatPattern)
         .run(Action::SmFlatPattern)
         .alias(&["SFP"])
         .at(&[Place::Ribbon("Sheet Metal", "Flat Pattern")])
         .env(PART)
         .tip("Show the part unfolded (its extents and bends in Properties); again: back to the folded part")
         .spec("5.6-sheet-metal.md"),
-    c("sm.contour_flange", "Contour Flange", "Контурен фланец", Icon::SheetMetal)
+    c("sm.contour_flange", "Contour Flange", "Контурен фланец", Icon::SmContour)
         .run(Action::SmContour)
         .alias(&["SCF"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("A new sheet from an open chain of sketch lines: every corner a bend of the rule").spec("5.6-sheet-metal.md"),
-    c("sm.hem", "Hem", "Подгъв", Icon::SheetMetal)
+    c("sm.hem", "Hem", "Подгъв", Icon::SmHem)
         .run(Action::SmHem)
         .alias(&["SHM"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("A single hem folded back on sheet edges: length and gap").spec("5.6-sheet-metal.md"),
-    c("sm.fold", "Fold", "Сгъване", Icon::SheetMetal)
+    c("sm.fold", "Fold", "Сгъване", Icon::SmFold)
         .run(Action::SmFold)
         .alias(&["SFO"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("Fold the sheet along a sketch line on one of its faces").spec("5.6-sheet-metal.md"),
-    c("sm.bend", "Bend", "Огъвка", Icon::SheetMetal)
+    c("sm.bend", "Bend", "Огъвка", Icon::SmBend)
         .run(Action::SmPlanned(PlannedKind::Bend))
         .alias(&["SBD"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("A bend joining two faces by an edge of each; Double Bend for parallel faces (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
-    c("sm.contour_roll", "Contour Roll", "Валцоване", Icon::SheetMetal)
+    c("sm.contour_roll", "Contour Roll", "Валцоване", Icon::SmContourRoll)
         .run(Action::SmPlanned(PlannedKind::ContourRoll))
         .alias(&["SCR"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("A rolled sheet from an open profile turned about an axis (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
-    c("sm.lofted_flange", "Lofted Flange", "Преходен фланец", Icon::SheetMetal)
+    c("sm.lofted_flange", "Lofted Flange", "Преходен фланец", Icon::SmLoftedFlange)
         .run(Action::SmPlanned(PlannedKind::LoftedFlange))
         .alias(&["SLF"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("A transition between two profiles (square to round), die formed or press brake (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
-    c("sm.rip", "Rip", "Разрез", Icon::SheetMetal)
+    c("sm.rip", "Rip", "Разрез", Icon::SmRip)
         .run(Action::SmPlanned(PlannedKind::Rip))
         .alias(&["SRP"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
         .tip("Split a closed shape so it unfolds: at a point, between two points or a whole face (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
-    c("sm.cut", "Cut", "Изрязване", Icon::SheetMetal)
+    c("sm.cut", "Cut", "Изрязване", Icon::SmCut)
         .run(Action::SmCut)
         .alias(&["SCT"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Closed sketch profiles cut through the sheet face they lie on (kept in the flat pattern); across bends: Unfold, Cut, Refold").spec("5.6-sheet-metal.md"),
-    c("sm.corner_seam", "Corner Seam", "Ъглов шев", Icon::SheetMetal)
+    c("sm.corner_seam", "Corner Seam", "Ъглов шев", Icon::SmCornerSeam)
         .run(Action::SmCornerSeam)
         .alias(&["SCS"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Close the corner between two flanges again: Symmetric Gap, Overlap or Reverse Overlap, gap, percent overlap").spec("5.6-sheet-metal.md"),
-    c("sm.corner_round", "Corner Round", "Заобляне на ъгъл", Icon::SheetMetal)
+    c("sm.corner_round", "Corner Round", "Заобляне на ъгъл", Icon::SmCornerRound)
         .run(Action::SmPlanned(PlannedKind::CornerRound))
         .alias(&["SRD"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Round the sheet's corners through the thickness, sets of corners with their radii (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
-    c("sm.corner_chamfer", "Corner Chamfer", "Скосяване на ъгъл", Icon::SheetMetal)
+    c("sm.corner_chamfer", "Corner Chamfer", "Скосяване на ъгъл", Icon::SmCornerChamfer)
         .run(Action::SmPlanned(PlannedKind::CornerChamfer))
         .alias(&["SCH"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Chamfer the sheet's corners: one distance, distance and angle, or two distances (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
-    c("sm.punch", "Punch Tool", "Щанца", Icon::SheetMetal)
+    c("sm.punch", "Punch Tool", "Щанца", Icon::SmPunch)
         .run(Action::SmPlanned(PlannedKind::Punch))
         .alias(&["SPT"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Louvres, lances, embosses from the punch library at sketch points (panel only: needs the punch library, 6.3)").spec("5.6-sheet-metal.md"),
-    c("sm.unfold", "Unfold", "Разгъване", Icon::SheetMetal)
+    c("sm.unfold", "Unfold", "Разгъване", Icon::SmUnfold)
         .run(Action::SmUnfold)
         .alias(&["SUF"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Flatten the sheet (all its bends): later features (Cut) work on the flat pattern until Refold").spec("5.6-sheet-metal.md"),
-    c("sm.refold", "Refold", "Обратно сгъване", Icon::SheetMetal)
+    c("sm.refold", "Refold", "Обратно сгъване", Icon::SmRefold)
         .run(Action::SmRefold)
         .alias(&["SRF"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
         .tip("Fold the unfolded sheet again, with what was cut while flat").spec("5.6-sheet-metal.md"),
-    c("sm.export_flat", "Export Flat Pattern", "Експорт на развивката", Icon::SheetMetal)
+    c("sm.export_flat", "Export Flat Pattern", "Експорт на развивката", Icon::SmExportFlat)
         .short("Export")
         .run(Action::SmExportFlat)
         .alias(&["SFX"])
@@ -1418,6 +1497,7 @@ pub static COMMANDS: &[Command] = &[
         .tip("Click a component, then drag inside the circle to turn it freely or on its rim to turn it in the screen plane")
         .spec("3.1-assemblies.md"),
     c("asm.ground", "Grounded", "Фиксиран", Icon::Ground)
+        .alias(&["FIX"])
         .run(Action::AsmGround)
         .at(&[A_POSITION])
         .env(ASSEMBLY)
@@ -1456,12 +1536,14 @@ pub static COMMANDS: &[Command] = &[
         .tip("Copy components as new documents")
         .todo("3.8"),
     c("asm.update", "Update", "Обновяване", Icon::Rebuild)
+        .alias(&["UPD"])
         .run(Action::AsmUpdate)
         .at(&[Place::Ribbon("Assemble", "Manage")])
         .env(ASSEMBLY)
         .tip("Read the linked part files again (changes saved in them come in) and solve the constraints")
         .spec("3.1-assemblies.md"),
     c("asm.bom", "Bill of Materials", "Спецификация", Icon::Parameters)
+        .alias(&["BOM"])
         .short("BOM")
         .run(Action::AsmBom)
         .at(&[Place::Ribbon("Assemble", "Manage")])
@@ -1776,11 +1858,13 @@ pub static COMMANDS: &[Command] = &[
         .at(&[FILE])
         .tip("The drawing's sheets as a vector PDF (File › Export › PDF)"),
     c("file.new_drawing", "New Drawing", "Нов чертеж", Icon::Drawing)
+        .alias(&["NDW"])
         .run(Action::App(AppCmd::NewDrawing))
         .at(&[FILE])
         .tip("A new drawing in the open project; place views of its parts")
         .spec("4-drawings.md"),
     c("file.new_assembly", "New Assembly", "Ново сглобяване", Icon::Assembly)
+        .alias(&["NAS"])
         .run(Action::App(AppCmd::NewAssembly))
         .at(&[FILE])
         .tip("A new assembly in the open project; place the project's parts in it")
@@ -1814,21 +1898,25 @@ pub static COMMANDS: &[Command] = &[
         .tip("Save the project under another name")
         .spec("0.6-files.md"),
     c("file.save_folder", "Save as Folder", "Запис като папка", Icon::Part)
+        .alias(&["SVF"])
         .run(Action::App(AppCmd::SaveAsFolder))
         .at(&[FILE])
         .tip("Unpacked directory, git-friendly")
         .spec("0.6-files.md"),
     c("file.export_stl", "Export STL", "Износ в STL", Icon::Part)
+        .alias(&["STL"])
         .run(Action::App(AppCmd::Export(ExportFormat::Stl)))
         .at(&[FILE])
         .tip("Triangles in mm, for 3D printing")
         .spec("7.7-export.md"),
     c("file.export_step", "Export STEP", "Износ в STEP", Icon::Part)
+        .alias(&["STP"])
         .run(Action::App(AppCmd::Export(ExportFormat::Step)))
         .at(&[FILE])
         .tip("Exact B-rep for other CAD programs")
         .spec("7.7-export.md"),
     c("file.export_glb", "Export GLB", "Износ в GLB (glTF)", Icon::Part)
+        .alias(&["SGL"])
         .run(Action::App(AppCmd::Export(ExportFormat::Glb)))
         .at(&[FILE])
         .tip("Binary glTF for viewers and the web")
@@ -1845,11 +1933,13 @@ pub static COMMANDS: &[Command] = &[
         .tip("The specification of the current command")
         .spec("0-ui.md"),
     c("help.save_diagnostics", "Save Diagnostics", "Запис на диагностика", Icon::Options)
+        .alias(&["SDG"])
         .run(Action::App(AppCmd::SaveDiagnostics))
         .at(&[HELP])
         .tip("Zip the session log, the action journal, crash reports, the open project and settings.json (to send with a problem report)")
         .spec("0.14-diagnostics.md"),
     c("help.logs_folder", "Open Logs Folder", "Папка с дневниците", Icon::Options)
+        .alias(&["SLG"])
         .run(Action::App(AppCmd::OpenLogsFolder))
         .at(&[HELP])
         .tip("The folder with the session logs and crash reports")
@@ -1929,6 +2019,45 @@ fn fold_command(c: &Command) -> Folded {
 /// fuzzy) and score, then the ones of another environment, then the
 /// unimplemented ones (spec §5.1 rule 4, §5.3). An empty query lists the
 /// recent commands. `recent` holds ids, newest first.
+/// What a typed alias buffer matches in `env` (spec 0.15, alias input rule
+/// 2): the command whose alias it is exactly, and the runnable commands
+/// with a longer alias starting with it (first by registry order).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AliasMatch {
+    /// The command whose alias the buffer is.
+    pub exact: Option<&'static Command>,
+    /// How many runnable commands have a longer alias starting with it.
+    pub longer: usize,
+    /// The first of them.
+    pub first_longer: Option<&'static Command>,
+}
+
+/// Matches the alias buffer `buf` (case-insensitive) against the runnable
+/// commands of `env`.
+pub fn alias_match(buf: &str, env: Env) -> AliasMatch {
+    let b = buf.to_ascii_uppercase();
+    let mut m = AliasMatch::default();
+    for c in COMMANDS
+        .iter()
+        .filter(|c| c.ready() && !c.held && c.valid_in(env))
+    {
+        let mut longer = false;
+        for a in c.aliases {
+            let a = a.to_ascii_uppercase();
+            if a == b {
+                m.exact.get_or_insert(c);
+            } else if a.starts_with(&b) {
+                longer = true;
+            }
+        }
+        if longer {
+            m.longer += 1;
+            m.first_longer.get_or_insert(c);
+        }
+    }
+    m
+}
+
 pub fn search(query: &str, env: Env, recent: &[String]) -> Vec<Hit> {
     let q = Query::new(query);
     let mut hits: Vec<Hit> = COMMANDS
@@ -1983,6 +2112,54 @@ mod tests {
             );
             assert!(!c.places.is_empty(), "{} needs a place", c.id);
         }
+    }
+
+    #[test]
+    fn every_implemented_command_has_a_shortcut() {
+        // Owner's rule 14: a key or an alias for each runnable command.
+        let missing: Vec<&str> = COMMANDS
+            .iter()
+            .filter(|c| c.ready() && !c.held && c.aliases.is_empty() && c.key.is_none())
+            .map(|c| c.id)
+            .collect();
+        assert!(missing.is_empty(), "no key or alias: {missing:?}");
+    }
+
+    #[test]
+    fn the_most_used_letters_start_at_once() {
+        // No longer alias starts with them, so typing them waits for nothing.
+        for (letter, env) in [
+            ("E", Env::Part),
+            ("H", Env::Part),
+            ("L", Env::Sketch),
+            ("D", Env::Sketch),
+            ("O", Env::Sketch),
+            ("X", Env::Sketch),
+        ] {
+            let m = alias_match(letter, env);
+            assert!(m.exact.is_some(), "{letter} in {env:?}");
+            assert_eq!(
+                m.longer,
+                0,
+                "{letter} in {env:?}: {:?}",
+                m.first_longer.map(|c| c.id)
+            );
+        }
+    }
+
+    #[test]
+    fn typed_aliases_find_their_commands() {
+        // SMF is Flange in a part; S starts a sketch but waits for longer ones.
+        let m = alias_match("smf", Env::Part);
+        assert_eq!(m.exact.map(|c| c.id), Some("sm.flange"));
+        assert_eq!(m.longer, 0);
+        let m = alias_match("S", Env::Part);
+        assert!(m.exact.is_some());
+        assert!(m.longer > 0);
+        let m = alias_match("SM", Env::Part);
+        assert!(m.exact.is_none());
+        assert!(m.first_longer.is_some());
+        assert_eq!(alias_match("QQ", Env::Part).longer, 0);
     }
 
     #[test]

@@ -882,6 +882,7 @@ impl CadCraftApp {
         cmds: &mut Vec<BrowserCmd>,
     ) {
         let part = self.part();
+        let sm_icon = super::sheet_metal::feature_icon(f);
         let (icon, hover) = match f {
             Feature::Box(b) => (
                 Icon::Box,
@@ -895,11 +896,8 @@ impl CadCraftApp {
             Feature::Sweep(s) => (Icon::Sweep, format!("Sweep of {}", s.sketch)),
             Feature::Coil(c) => (Icon::Coil, format!("Coil of {}", c.sketch)),
             Feature::Rib(r) => (Icon::Rib, format!("Rib of {}", r.sketch)),
-            Feature::SheetFace(f) => (
-                Icon::SheetMetal,
-                format!("Sheet metal Face of {}", f.sketch),
-            ),
-            Feature::SheetOp(f) => (Icon::SheetMetal, f.describe()),
+            Feature::SheetFace(f) => (sm_icon, format!("Sheet metal Face of {}", f.sketch)),
+            Feature::SheetOp(f) => (sm_icon, f.describe()),
             Feature::SheetConvert(f) => (
                 Icon::SheetMetal,
                 format!(
@@ -909,7 +907,7 @@ impl CadCraftApp {
                 ),
             ),
             Feature::SheetFlange(f) => (
-                Icon::SheetMetal,
+                sm_icon,
                 format!(
                     "Flange on {} edge(s), {:.2} mm at {:.1}°",
                     f.edges.len(),
@@ -4663,6 +4661,7 @@ impl CadCraftApp {
                 ui.separator();
                 ui.label("mm");
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    self.alias_buffer_label(ui);
                     match (self.mode, self.editing) {
                         (Mode::Normal, None) if self.sm.draft.is_some() => {
                             let prompt = self.sm_prompt().unwrap_or_default();

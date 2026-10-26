@@ -30,7 +30,154 @@ pub(super) struct AliasInput {
     pub focus: bool,
 }
 
+/// The typed alias without the field (spec 0.15, alias input rule 2),
+/// shown in the status bar.
+#[derive(Default)]
+pub(super) struct AliasBuffer {
+    /// Letters typed (upper case).
+    pub text: String,
+    /// When the last letter came (egui time, s).
+    pub last: f64,
+}
+
+/// Wait for a further letter when the buffer is an alias and longer ones
+/// start with it (s).
+const ALIAS_WAIT: f64 = 0.6;
+/// The buffer is cleared after this long without a key (s).
+const ALIAS_CLEAR: f64 = 2.0;
+
 impl CadCraftApp {
+    /// The command environment for aliases.
+    fn alias_env(&self) -> commands::Env {
+        if self.is_drawing() {
+            commands::Env::Drawing
+        } else if self.is_assembly() {
+            commands::Env::Assembly
+        } else if self.editing.is_some() {
+            commands::Env::Sketch
+        } else {
+            commands::Env::Part
+        }
+    }
+
+    /// Multi-letter aliases with the field off (rule 2): letters gather in a
+    /// buffer shown in the status bar; a buffer that is an alias with no
+    /// longer one starts at once, one with longer ones after a short wait
+    /// (or Enter / Space). A single letter that no longer alias starts with
+    /// is left to the single-letter shortcuts. Returns whether it took this
+    /// frame's keys.
+    pub(super) fn alias_buffer_keys(&mut self, ctx: &egui::Context) -> bool {
+        if self.alias_input {
+            return false;
+        }
+        let env = self.alias_env();
+        let now = ctx.input(|i| i.time);
+        if !self.alias_buf.text.is_empty() {
+            let idle = now - self.alias_buf.last;
+            let m = commands::alias_match(&self.alias_buf.text, env);
+            if idle > ALIAS_WAIT
+                && let Some(c) = m.exact
+            {
+                self.alias_buf = AliasBuffer::default();
+                self.start_command(c);
+                return true;
+            }
+            if idle > ALIAS_CLEAR {
+                self.alias_buf = AliasBuffer::default();
+            }
+        }
+        let typed = super::keys::letter_alias(ctx.input(|i| i.modifiers))
+            .then(|| {
+                ctx.input(|i| {
+                    i.events.iter().find_map(|e| match e {
+                        egui::Event::Text(t)
+                            if !t.is_empty() && t.chars().all(|c| c.is_ascii_alphabetic()) =>
+                        {
+                            Some(t.to_ascii_uppercase())
+                        }
+                        _ => None,
+                    })
+                })
+            })
+            .flatten();
+        if let Some(t) = typed {
+            let cand = format!("{}{t}", self.alias_buf.text);
+            let m = commands::alias_match(&cand, env);
+            if self.alias_buf.text.is_empty() && m.longer == 0 {
+                return false; // a single-letter shortcut, as before
+            }
+            // The letters belong to the buffer, not to the single-letter keys.
+            ctx.input_mut(|i| {
+                i.events.retain(|e| {
+                    !matches!(e, egui::Event::Text(_))
+                        && !matches!(e, egui::Event::Key { key, pressed: true, .. }
+                            if key.name().len() == 1 && key.name().chars().all(|c| c.is_ascii_alphabetic()))
+                })
+            });
+            self.alias_buf.text = cand;
+            self.alias_buf.last = now;
+            if let Some(c) = m.exact
+                && m.longer == 0
+            {
+                self.alias_buf = AliasBuffer::default();
+                self.start_command(c);
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(ALIAS_WAIT + 0.05));
+            }
+            return true;
+        }
+        if self.alias_buf.text.is_empty() {
+            return false;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(0.2));
+        let (enter, esc, back) = ctx.input_mut(|i| {
+            let space = i.consume_key(egui::Modifiers::NONE, Key::Space);
+            (
+                i.consume_key(egui::Modifiers::NONE, Key::Enter) || space,
+                i.consume_key(egui::Modifiers::NONE, Key::Escape),
+                i.consume_key(egui::Modifiers::NONE, Key::Backspace),
+            )
+        });
+        if esc {
+            self.alias_buf = AliasBuffer::default();
+            return true;
+        }
+        if back {
+            self.alias_buf.text.pop();
+            self.alias_buf.last = now;
+            return true;
+        }
+        if enter {
+            let m = commands::alias_match(&self.alias_buf.text, env);
+            self.alias_buf = AliasBuffer::default();
+            if let Some(c) = m.exact.or(m.first_longer) {
+                self.start_command(c);
+            }
+            return true;
+        }
+        false
+    }
+
+    /// The buffer in the status bar: `Command: SM_  (Flange)`.
+    pub(super) fn alias_buffer_label(&self, ui: &mut egui::Ui) {
+        if self.alias_buf.text.is_empty() {
+            return;
+        }
+        let m = commands::alias_match(&self.alias_buf.text, self.alias_env());
+        let bg = super::i18n::bulgarian();
+        let name = |c: &Command| if bg { c.bg } else { c.name };
+        match m.exact.or(m.first_longer) {
+            Some(c) => ui.label(
+                RichText::new(format!("Command: {}_  ({})", self.alias_buf.text, name(c))).strong(),
+            ),
+            None => ui.colored_label(
+                Color32::from_rgb(220, 70, 60),
+                format!("{} — no such command here", self.alias_buf.text),
+            ),
+        };
+        ui.separator();
+    }
+
     /// Opens the field when a letter is typed (the option on, no text field
     /// focused — `shortcuts` checks that before). Returns whether it took
     /// the key.

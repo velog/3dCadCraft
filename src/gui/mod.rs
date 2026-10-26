@@ -531,6 +531,8 @@ struct CadCraftApp {
     alias_input: bool,
     /// The open alias field (`alias_input`).
     alias: alias_input::AliasInput,
+    /// Letters of a multi-letter alias typed with the field off.
+    alias_buf: alias_input::AliasBuffer,
     /// View → Object Visibility (persisted with the Application Options).
     obj_vis: layout::ObjectVisibility,
 
@@ -836,6 +838,7 @@ impl CadCraftApp {
             thread_texture: true,
             alias_input: false,
             alias: Default::default(),
+            alias_buf: Default::default(),
             obj_vis: Default::default(),
             camera: OrbitCamera::default(),
             renderer: cc.wgpu_render_state.as_ref().map(ViewportRenderer::new),
@@ -4557,6 +4560,10 @@ impl CadCraftApp {
         }
         // A letter with the alias field on opens it instead of starting.
         if keys::letter_alias(ctx.input(|i| i.modifiers)) && self.alias_start(ctx) {
+            return;
+        }
+        // With the field off, multi-letter aliases gather in the status bar.
+        if self.alias_buffer_keys(ctx) {
             return;
         }
         let pressed = |k: Key| ctx.input(|i| i.key_pressed(k));

@@ -134,9 +134,11 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     `gui/commands.rs` gets a `key` or at least one `.alias(..)` of 1–3 characters — Inventor's alias when
     it has one (e.g. `E`, `RP`, `TH`), otherwise ours, built from the command name (`SMF` Sheet Metal
     Flange, `BV` Base View). Aliases must not collide within one environment (the commands test checks
-    it); list them in `docs/UI.md`. On 2026-10-26, 92 implemented commands still had none (Coil, Rib,
-    Combine, Split, primitives, view toggles…; the sheet metal ones got theirs on 2026-10-26): give them aliases in one pass
-    when `gui/commands.rs` is free, then add a test that fails for an implemented command without one.
+    it); list them in `docs/UI.md`; each command also gets its **own icon** (no shared generic one —
+    the sheet metal commands all had one until 2026-10-26). `every_implemented_command_has_a_shortcut`
+    fails for a runnable command without one; `the_most_used_letters_start_at_once` keeps E, H (part) and
+    L, D, O, X (sketch) free of longer aliases. With the alias field off, multi-letter aliases gather in
+    the status bar (`alias_input.rs::alias_buffer_keys`, spec 0.15 rule 2).
 15. **Interface first, then logic** (owner's rule, 2026-10-26): before a new feature's logic, build its
     complete Inventor-like interface — ribbon button with icon and alias, the dialog / panel with
     **every option of the spec** (tabs, selectors, fields, check boxes, defaults, presets row, tooltips,
@@ -150,6 +152,11 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     mismatch (layout, wording, missing option, wrong result, error) is fixed and checked again until
     it matches; only then the work is reported done, with what was checked. The owner's own check
     comes after that, as the final validation.
+17. **Selected geometry offers its commands** (owner's rule, 2026-10-26): every command that can take
+    what is selected (a face, an edge, a sketch, a feature, a body, a work feature…) as an input is
+    listed in that selection's right-click menu, and starting it from there fills that input (like
+    Inventor's selection menus and mini-toolbar). A new command adds itself to the menus of the
+    selection kinds it accepts (`PickKind`s of its first selector).
 
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 
@@ -1030,6 +1037,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   every reader of a bend end goes through `end_offset` — `zone`, `bend_end`, `bends()`), the parent's end
   leaning back when the bend must start in from it (`retract_far_end`). Flat-pattern outlines are checked for jogs by
   `tests/sheet_metal.rs::flat_steps`; `cargo run --example flat_dxf -- file out_dir` dumps a project's flats.
+  The flat pattern is unfolded once per sheet step result: `SheetState` caches the flat, its extents and
+  its B-rep (`OnceLock`s, cleared by building a new state) — never unfold per frame (the Flat Pattern
+  view's Properties did, 50–150 ms a frame). Face / Cut / Contour Flange / Fold consume their sketch
+  (`add_consuming`: hidden, or shared).
 - **Aborts leave no crash report** (owner's Cut crash 2026-10-26: Windows `0xc0000409`, subcode 7 = `abort()`;
   a stack overflow aborts too). The desktop binary links a 64 MB main-thread stack (`build.rs`; Windows' default is
   1 MB and OK builds features on the main thread), and `diagnostics::activity` writes the last checkpoint /
