@@ -33,7 +33,9 @@ cargo test                                    # same + GUI-module tests
 cargo clippy --all-targets                    # must be warning-free
 cargo fmt                                     # rustfmt defaults (run before finishing)
 cargo doc --no-default-features               # must be warning-free
-cargo xtask ci                                # every check above, in order (run before finishing)
+cargo xtask quick                             # before a commit: fmt, clippy, all but the heavy tests (~40 s–3 min)
+cargo xtask heavy                             # heavy unit tests, medium and timed integration tests (idle machine)
+cargo xtask ci                                # every check once (quick + heavy + docs): before a push; docs/TESTING.md
 cargo xtask oracle                            # reference cases table (tests/oracle/)
 cargo run -- path/to/project.3dcadcraft       # open a project
 CADCRAFT3D_DEMO=slot cargo run                # start with a demo sketch (rectangle|slot|tangents|lines|revolve)
