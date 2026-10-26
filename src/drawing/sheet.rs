@@ -177,12 +177,16 @@ pub enum Prim {
         /// Hidden-line dashes.
         dashed: bool,
     },
-    /// A thin centre line (long dash, dot).
+    /// A centre line (long dash, dot).
     Center {
         /// Start (mm).
         a: [f64; 2],
         /// End (mm).
         b: [f64; 2],
+        /// Width on paper (mm).
+        width: f64,
+        /// Long dash, dot; else continuous (the layer's line type).
+        chain: bool,
     },
 }
 
@@ -206,11 +210,15 @@ pub enum TitleField {
     Company,
     /// Model: Revision Number (else the sheet's revision).
     Revision,
+    /// Drawing: Eng. Approved By.
+    ApprovedBy,
+    /// Drawing: Eng. Approved Date.
+    ApprovedDate,
 }
 
 impl TitleField {
     /// Every field, for the block and tests.
-    pub const ALL: [TitleField; 8] = [
+    pub const ALL: [TitleField; 10] = [
         TitleField::Title,
         TitleField::PartNumber,
         TitleField::Designer,
@@ -219,6 +227,8 @@ impl TitleField {
         TitleField::Material,
         TitleField::Company,
         TitleField::Revision,
+        TitleField::ApprovedBy,
+        TitleField::ApprovedDate,
     ];
 
     /// Caption above the value.
@@ -232,23 +242,34 @@ impl TitleField {
             TitleField::Material => "MATERIAL",
             TitleField::Company => "COMPANY",
             TitleField::Revision => "REV",
+            TitleField::ApprovedBy => "APPROVED BY",
+            TitleField::ApprovedDate => "DATE",
         }
     }
 }
 
-/// Margins of the frame (ISO 5457: 20 mm filing margin on the left).
-pub const MARGIN: f64 = 10.0;
-/// Left (filing) margin.
-pub const FILING_MARGIN: f64 = 20.0;
-/// Title block width (ISO 7200: 180 mm).
-pub const TITLE_W: f64 = 180.0;
+/// The frame's margin (Inventor 2027's ISO template: 10 mm on every side,
+/// 20 mm on A0 and A1; read through its API, see `tools/inventor/`).
+pub fn margin(sheet: &Sheet) -> f64 {
+    if matches!(sheet.size, SheetSize::A0 | SheetSize::A1) {
+        20.0
+    } else {
+        10.0
+    }
+}
+/// Title block width (Inventor's ISO title block: 170 × 30 mm).
+pub const TITLE_W: f64 = 170.0;
 /// Title block height.
-pub const TITLE_H: f64 = 36.0;
+pub const TITLE_H: f64 = 30.0;
+/// Zones of the default border (Inventor's ISO template: 6 × 4 on every
+/// size, labelled from the bottom right).
+pub const ZONES: (usize, usize) = (6, 4);
 
 /// The inner frame (lower left, upper right) of a sheet.
 pub fn frame(sheet: &Sheet) -> ([f64; 2], [f64; 2]) {
     let (w, h) = sheet.dims();
-    ([FILING_MARGIN, MARGIN], [w - MARGIN, h - MARGIN])
+    let m = margin(sheet);
+    ([m, m], [w - m, h - m])
 }
 
 /// The title block's rectangle (lower left, upper right), when shown.
@@ -296,32 +317,30 @@ pub fn format_prims(
     if sheet.border {
         let (lo, hi) = frame(sheet);
         rect(&mut out, lo, hi, Weight::Thick);
-        // Zones: numbers along the top and bottom, letters down the sides
-        // (ISO 5457: 1 at the left, A at the top; ANSI: from the lower right).
-        let ansi = doc.standard.kind == super::StandardKind::Ansi;
-        let nx = ((hi[0] - lo[0]) / 50.0).round().max(2.0) as usize;
-        let ny = ((hi[1] - lo[1]) / 50.0).round().max(2.0) as usize;
+        // Zones (Inventor's default border): numbers along the top and
+        // bottom counted from the right, letters up the sides from the bottom.
+        let m = margin(sheet);
+        let (nx, ny) = ZONES;
         let zx = (hi[0] - lo[0]) / nx as f64;
         let zy = (hi[1] - lo[1]) / ny as f64;
-        let tick = 5.0f64.min(MARGIN * 0.5);
         for k in 0..nx {
             let x = lo[0] + zx * k as f64;
             if k > 0 {
-                line(&mut out, [x, lo[1]], [x, lo[1] - tick], Weight::Thin);
-                line(&mut out, [x, hi[1]], [x, hi[1] + tick], Weight::Thin);
+                line(&mut out, [x, lo[1]], [x, lo[1] - m], Weight::Thin);
+                line(&mut out, [x, hi[1]], [x, hi[1] + m], Weight::Thin);
             }
             let mid = x + zx * 0.5;
-            let n = format!("{}", if ansi { nx - k } else { k + 1 });
+            let n = format!("{}", nx - k);
             text(
                 &mut out,
-                [mid, lo[1] - MARGIN * 0.75],
+                [mid, lo[1] - m * 0.5 - 1.75],
                 3.5,
                 &n,
                 Anchor::Center,
             );
             text(
                 &mut out,
-                [mid, hi[1] + MARGIN * 0.25],
+                [mid, hi[1] + m * 0.5 - 1.75],
                 3.5,
                 &n,
                 Anchor::Center,
@@ -330,54 +349,62 @@ pub fn format_prims(
         for k in 0..ny {
             let y = lo[1] + zy * k as f64;
             if k > 0 {
-                line(&mut out, [lo[0], y], [lo[0] - tick, y], Weight::Thin);
-                line(&mut out, [hi[0], y], [hi[0] + tick, y], Weight::Thin);
+                line(&mut out, [lo[0], y], [lo[0] - m, y], Weight::Thin);
+                line(&mut out, [hi[0], y], [hi[0] + m, y], Weight::Thin);
             }
-            let j = if ansi { k } else { ny - 1 - k };
-            let letter = (b'A' + (j as u8).min(25)) as char;
+            let letter = (b'A' + (k as u8).min(25)) as char;
             let s = letter.to_string();
             let mid = y + zy * 0.5 - 1.75;
-            text(
-                &mut out,
-                [lo[0] - MARGIN * 0.5, mid],
-                3.5,
-                &s,
-                Anchor::Center,
-            );
-            text(
-                &mut out,
-                [hi[0] + MARGIN * 0.5, mid],
-                3.5,
-                &s,
-                Anchor::Center,
-            );
+            text(&mut out, [lo[0] - m * 0.5, mid], 3.5, &s, Anchor::Center);
+            text(&mut out, [hi[0] + m * 0.5, mid], 3.5, &s, Anchor::Center);
         }
-        // Centring marks (ISO 5457).
-        for (a, b) in [
-            ([w * 0.5, 0.0], [w * 0.5, lo[1]]),
-            ([w * 0.5, h], [w * 0.5, hi[1]]),
-            ([0.0, h * 0.5], [lo[0], h * 0.5]),
-            ([w, h * 0.5], [hi[0], h * 0.5]),
+        // Centring marks: a line from the paper's edge to the frame and an
+        // open triangle pointing into the drawing area.
+        let t = (m * 0.5).min(5.0);
+        for (edge, apex, inward) in [
+            ([w * 0.5, 0.0], [w * 0.5, lo[1]], [0.0, 1.0]),
+            ([w * 0.5, h], [w * 0.5, hi[1]], [0.0, -1.0]),
+            ([0.0, h * 0.5], [lo[0], h * 0.5], [1.0, 0.0]),
+            ([w, h * 0.5], [hi[0], h * 0.5], [-1.0, 0.0]),
         ] {
-            line(&mut out, a, b, Weight::Thick);
+            line(&mut out, edge, apex, Weight::Thin);
+            let base = [apex[0] - inward[0] * t, apex[1] - inward[1] * t];
+            let side = [inward[1] * t * 0.6, -inward[0] * t * 0.6];
+            let (l, r) = (
+                [base[0] + side[0], base[1] + side[1]],
+                [base[0] - side[0], base[1] - side[1]],
+            );
+            line(&mut out, apex, l, Weight::Thin);
+            line(&mut out, l, r, Weight::Thin);
+            line(&mut out, r, apex, Weight::Thin);
         }
     }
     if let Some((lo, hi)) = title_rect(sheet) {
+        // Inventor's ISO title block (170 × 30 mm, three 10 mm rows): the
+        // first row holds who and when, the left of rows 2–3 the company, the
+        // last row the title, edition and sheet. The part number, scale and
+        // material sit in row 2, which Inventor leaves empty.
         rect(&mut out, lo, hi, Weight::Thick);
-        // Rows: (caption, value) cells; the bottom row is the title.
-        let (x0, x1, y0) = (lo[0], hi[0], lo[1]);
-        let row = TITLE_H / 4.0;
+        let (x0, y0) = (lo[0], lo[1]);
+        let k = (hi[0] - lo[0]) / TITLE_W;
+        let x = |mm: f64| x0 + mm * k;
+        let row = TITLE_H / 3.0;
+        let (y1, y2) = (y0 + row, y0 + 2.0 * row);
+        line(&mut out, [x0, y2], [hi[0], y2], Weight::Thin);
+        line(&mut out, [x(74.8), y1], [hi[0], y1], Weight::Thin);
+        line(&mut out, [x(74.8), y0], [x(74.8), y2], Weight::Thin);
+        let get = |f| value(f);
+        // A caption at the top left of a cell and its value under it.
         let cell = |out: &mut Vec<Prim>, a: f64, b: f64, y: f64, cap: &str, v: &str, big: bool| {
             line(out, [a, y], [a, y + row], Weight::Thin);
-            text(out, [a + 1.5, y + row - 3.2], 1.8, cap, Anchor::Left);
+            text(out, [a + 1.0, y + row - 2.6], 1.8, cap, Anchor::Left);
             let hgt: f64 = if big { 5.0 } else { 3.5 };
-            let at = [a + (b - a) * 0.5, y + 1.6];
-            text(out, at, hgt.min(row - 4.0), v, Anchor::Center);
+            if big {
+                text(out, [(a + b) * 0.5, y + 2.0], hgt, v, Anchor::Center);
+            } else {
+                text(out, [a + 1.0, y + 1.6], hgt, v, Anchor::Left);
+            }
         };
-        for k in 1..4 {
-            let y = y0 + row * k as f64;
-            line(&mut out, [x0, y], [x1, y], Weight::Thin);
-        }
         let (n, m) = doc.sheet_number(i);
         let scale = sheet
             .views
@@ -385,60 +412,6 @@ pub fn format_prims(
             .and_then(|v| doc.effective(sheet, v.id))
             .map(|(s, _)| scale_text(s))
             .unwrap_or_default();
-        let w3 = (x1 - x0) / 3.0;
-        let get = |f| value(f);
-        // Top row: company / designer / checked by.
-        let y = y0 + row * 3.0;
-        cell(
-            &mut out,
-            x0,
-            x0 + w3,
-            y,
-            "COMPANY",
-            &get(TitleField::Company),
-            false,
-        );
-        cell(
-            &mut out,
-            x0 + w3,
-            x0 + 2.0 * w3,
-            y,
-            "DESIGNED BY",
-            &get(TitleField::Designer),
-            false,
-        );
-        cell(
-            &mut out,
-            x0 + 2.0 * w3,
-            x1,
-            y,
-            "CHECKED BY",
-            &get(TitleField::CheckedBy),
-            false,
-        );
-        // Second row: material / date / scale.
-        let y = y0 + row * 2.0;
-        cell(
-            &mut out,
-            x0,
-            x0 + w3,
-            y,
-            "MATERIAL",
-            &get(TitleField::Material),
-            false,
-        );
-        cell(
-            &mut out,
-            x0 + w3,
-            x0 + 2.0 * w3,
-            y,
-            "DATE",
-            &get(TitleField::Date),
-            false,
-        );
-        cell(&mut out, x0 + 2.0 * w3, x1, y, "SCALE", &scale, false);
-        // Third row: part number / revision / sheet.
-        let y = y0 + row;
         let rev = {
             let r = get(TitleField::Revision);
             if r.is_empty() {
@@ -452,27 +425,103 @@ pub fn format_prims(
         } else {
             format!("{n} / {m}")
         };
+        // Row 1.
         cell(
             &mut out,
-            x0,
-            x0 + 2.0 * w3,
-            y,
-            "PART NUMBER",
+            x(0.0),
+            x(31.8),
+            y2,
+            "Designed by",
+            &get(TitleField::Designer),
+            false,
+        );
+        cell(
+            &mut out,
+            x(31.8),
+            x(56.5),
+            y2,
+            "Checked by",
+            &get(TitleField::CheckedBy),
+            false,
+        );
+        cell(
+            &mut out,
+            x(56.5),
+            x(97.3),
+            y2,
+            "Approved by",
+            &get(TitleField::ApprovedBy),
+            false,
+        );
+        cell(
+            &mut out,
+            x(97.3),
+            x(118.2),
+            y2,
+            "Date",
+            &get(TitleField::ApprovedDate),
+            false,
+        );
+        cell(
+            &mut out,
+            x(118.2),
+            x(149.4),
+            y2,
+            "Date",
+            &get(TitleField::Date),
+            false,
+        );
+        cell(&mut out, x(149.4), x(170.0), y2, "", "", false);
+        // Rows 2–3, left: the company.
+        line(&mut out, [x0, y0], [x0, y2], Weight::Thin);
+        text(&mut out, [x0 + 1.0, y2 - 2.6], 1.8, "Company", Anchor::Left);
+        text(
+            &mut out,
+            [x(37.4), y0 + 7.0],
+            5.0,
+            &get(TitleField::Company),
+            Anchor::Center,
+        );
+        // Row 2, right: part number, scale, material.
+        cell(
+            &mut out,
+            x(74.8),
+            x(118.2),
+            y1,
+            "Part number",
             &get(TitleField::PartNumber),
             false,
         );
+        cell(&mut out, x(118.2), x(134.5), y1, "Scale", &scale, false);
         cell(
             &mut out,
-            x0 + 2.0 * w3,
-            x0 + 2.5 * w3,
-            y,
-            "REV",
-            &rev,
+            x(134.5),
+            x(170.0),
+            y1,
+            "Material",
+            &get(TitleField::Material),
             false,
         );
-        cell(&mut out, x0 + 2.5 * w3, x1, y, "SHEET", &sheet_text, false);
-        // Bottom row: the title over the whole width.
-        cell(&mut out, x0, x1, y0, "TITLE", &get(TitleField::Title), true);
+        // Row 3, right: title, edition, sheet.
+        cell(
+            &mut out,
+            x(74.8),
+            x(134.5),
+            y0,
+            "",
+            &get(TitleField::Title),
+            true,
+        );
+        cell(&mut out, x(134.5), x(149.4), y0, "Edition", &rev, false);
+        cell(
+            &mut out,
+            x(149.4),
+            x(170.0),
+            y0,
+            "Sheet",
+            &sheet_text,
+            false,
+        );
     }
     out
 }

@@ -44,6 +44,7 @@ mod draft;
 mod drawing;
 mod drawing_annot;
 mod drawing_section;
+mod drawing_styles;
 mod drive;
 mod feature_cmd;
 mod files;

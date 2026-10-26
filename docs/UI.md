@@ -277,6 +277,9 @@ removes the selected one, double-click edits a note. A red **?** marks an annota
 parent, centre, size, place), **AV** = Auxiliary View (a straight edge, then the place); **HN** = Hole and
 Thread note (a hole's circle, then the place), **LE** = Leader Text (the arrow's tip, the text's place).
 **File › Export › PDF...** (or **PDF** in the command search): the PDF Drawing Options, then the file.
+**Manage › Styles Editor** in a drawing: the Style and Standard Editor of the drawing (left: Standard and the
+style types, bold = in use; right: the style's settings, dimension styles on Inventor's tabs); New / Rename /
+Delete at the top; every change redraws the sheet and is one Undo step.
 `cargo run --example drawing_demo -- plate.3dcadcraft` builds a plate with holes and its drawing (all view
 kinds and annotations) and writes `plate.pdf`.
 🟡 waiting for a visual check.

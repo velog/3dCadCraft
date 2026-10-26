@@ -82,6 +82,8 @@ impl Envs {
     pub const ASSEMBLY: Envs = Envs(4);
     /// Only in a drawing.
     pub const DRAWING: Envs = Envs(8);
+    /// The part, its sketches and drawings.
+    pub const PART_DRAWING: Envs = Envs(11);
 
     /// Whether `e` is in the set.
     pub const fn has(self, e: Env) -> bool {
@@ -1032,7 +1034,8 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::Material(MatCmd::StylesEditor))
         .inv("Style and Standard Editor")
         .at(&[G_STYLES])
-        .tip("Style and Standard Editor: the document's materials and appearances")
+        .env(Envs::PART_DRAWING)
+        .tip("Style and Standard Editor: the document's materials and appearances (in a drawing: its dimension, text, leader, centre mark, hatch, view annotation styles, layers and Object Defaults)")
         .spec("2.15-materials.md"),
     c("manage.update_styles", "Update Styles", "Обновяване на стиловете", Icon::Rebuild)
         .run(Action::Material(MatCmd::UpdateStyles))

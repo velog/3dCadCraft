@@ -141,17 +141,21 @@ pub(super) fn paint_prims(
                     p.add(Shape::line(pts, stroke));
                 }
             }
-            Prim::Center { a, b } => {
-                let long = ((12.0 * cam.zoom) as f32).clamp(6.0, 120.0);
-                let short = ((1.5 * cam.zoom) as f32).clamp(1.5, 15.0);
-                let stroke = Stroke::new(px(0.25), color);
-                p.extend(Shape::dashed_line_with_offset(
-                    &[to(*a), to(*b)],
-                    stroke,
-                    &[long, short],
-                    &[short, short],
-                    0.0,
-                ));
+            Prim::Center { a, b, width, chain } => {
+                let stroke = Stroke::new(px(*width), color);
+                if *chain {
+                    let long = ((12.0 * cam.zoom) as f32).clamp(6.0, 120.0);
+                    let short = ((1.5 * cam.zoom) as f32).clamp(1.5, 15.0);
+                    p.extend(Shape::dashed_line_with_offset(
+                        &[to(*a), to(*b)],
+                        stroke,
+                        &[long, short],
+                        &[short, short],
+                        0.0,
+                    ));
+                } else {
+                    p.line_segment([to(*a), to(*b)], stroke);
+                }
             }
             Prim::Fill { pts } => {
                 let mut pts: Vec<Pos2> = pts.iter().map(|q| to(*q)).collect();
@@ -214,7 +218,7 @@ fn prims_distance(prims: &[Prim], q: [f64; 2]) -> f64 {
     let mut best = f64::MAX;
     for p in prims {
         let d = match p {
-            Prim::Line { a, b, .. } | Prim::Center { a, b } => seg(*a, *b),
+            Prim::Line { a, b, .. } | Prim::Center { a, b, .. } => seg(*a, *b),
             Prim::Path { pts, .. } | Prim::Fill { pts } => pts
                 .windows(2)
                 .map(|w| seg(w[0], w[1]))
@@ -247,35 +251,37 @@ impl CadCraftApp {
         sheet
             .annotations
             .iter()
-            .map(|a| match annot::resolve(&a.kind, &view) {
-                Ok(s) => ShownAnn {
-                    id: a.id,
-                    prims: s.prims,
-                    orphan: None,
-                },
-                Err(why) => {
-                    // Mark it where it would be: the dimension's text, else
-                    // the view's middle.
-                    let at = match &a.kind {
-                        AnnotationKind::Dimension(d) => views
-                            .iter()
-                            .find(|v| v.id == d.a.view)
-                            .map(|v| [v.position[0] + d.text[0], v.position[1] + d.text[1]]),
-                        _ => a
-                            .view()
-                            .and_then(|id| views.iter().find(|v| v.id == id))
-                            .map(|v| v.position),
-                    };
-                    ShownAnn {
+            .map(
+                |a| match annot::resolve_with(&a.kind, &view, &self.drw.look) {
+                    Ok(s) => ShownAnn {
                         id: a.id,
-                        prims: Vec::new(),
-                        orphan: match why {
-                            Orphan::NoView => None,
-                            Orphan::Missing(_) => at,
-                        },
+                        prims: s.prims,
+                        orphan: None,
+                    },
+                    Err(why) => {
+                        // Mark it where it would be: the dimension's text, else
+                        // the view's middle.
+                        let at = match &a.kind {
+                            AnnotationKind::Dimension(d) => views
+                                .iter()
+                                .find(|v| v.id == d.a.view)
+                                .map(|v| [v.position[0] + d.text[0], v.position[1] + d.text[1]]),
+                            _ => a
+                                .view()
+                                .and_then(|id| views.iter().find(|v| v.id == id))
+                                .map(|v| v.position),
+                        };
+                        ShownAnn {
+                            id: a.id,
+                            prims: Vec::new(),
+                            orphan: match why {
+                                Orphan::NoView => None,
+                                Orphan::Missing(_) => at,
+                            },
+                        }
                     }
-                }
-            })
+                },
+            )
             .collect()
     }
 
@@ -680,7 +686,7 @@ impl CadCraftApp {
                     };
                     let map = lookup(views);
                     let look = |id: u32| map.get(&id).copied();
-                    if let Ok(s) = annot::resolve(&kind, &look) {
+                    if let Ok(s) = annot::resolve_with(&kind, &look, &self.drw.look) {
                         paint_prims(painter, &self.drw.cam, rect, &s.prims, PREVIEW);
                     }
                     if response.clicked() {
@@ -731,7 +737,9 @@ impl CadCraftApp {
         {
             let map = lookup(views);
             let view = |id: u32| map.get(&id).copied();
-            if let Ok(s) = annot::resolve(&AnnotationKind::Dimension(d.clone()), &view) {
+            if let Ok(s) =
+                annot::resolve_with(&AnnotationKind::Dimension(d.clone()), &view, &self.drw.look)
+            {
                 paint_prims(painter, &self.drw.cam, rect, &s.prims, PREVIEW);
             }
         }
@@ -752,7 +760,7 @@ impl CadCraftApp {
             let value = {
                 let map = lookup(views);
                 let view = |id: u32| map.get(&id).copied();
-                annot::resolve(&AnnotationKind::Dimension(d.clone()), &view)
+                annot::resolve_with(&AnnotationKind::Dimension(d.clone()), &view, &self.drw.look)
                     .ok()
                     .and_then(|s| s.value)
             };

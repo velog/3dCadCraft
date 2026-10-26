@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::hlr::{ViewEdge, ViewLines};
 use super::sheet::{Anchor, Prim, Weight};
+use super::style::{AnnotationLook, Terminator, TextOrientation};
 
 /// One annotation of a sheet.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -131,7 +132,8 @@ pub struct Dimension {
     /// Text position, relative to the view's position (sheet mm): the text
     /// moves with the view.
     pub text: [f64; 2],
-    /// Decimal places shown (trailing zeros dropped).
+    /// Decimal places when it was placed; the dimension style's precision
+    /// is drawn (a per-dimension override is to do).
     #[serde(default = "precision")]
     pub precision: u8,
 }
@@ -180,30 +182,30 @@ pub enum Orphan {
     Missing(String),
 }
 
-/// Extension line gap from the object (mm).
-const GAP: f64 = 1.0;
-/// Extension line overshoot past the dimension line (mm).
-const OVER: f64 = 2.0;
-/// Arrow length (mm).
-const ARROW: f64 = 3.0;
-/// Dimension text cap height (mm).
-const TEXT_H: f64 = 3.5;
-/// Centre lines pass a circle by (mm).
-const CENTER_OVER: f64 = 2.0;
-
-/// The geometry of annotation `a`; `view` gives a view's placement and
-/// lines.
+/// The geometry of annotation `a` in the default (ISO) styles; `view` gives
+/// a view's placement and lines.
 pub fn resolve<'a>(
     a: &AnnotationKind,
     view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
 ) -> Result<Shown, Orphan> {
+    resolve_with(a, view, &AnnotationLook::default())
+}
+
+/// [`resolve`] in the drawing's styles (`DrawingStyles::look`).
+pub fn resolve_with<'a>(
+    a: &AnnotationKind,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+    look: &AnnotationLook,
+) -> Result<Shown, Orphan> {
+    let st = Draw { look };
     match a {
         AnnotationKind::Text { at, text, height } => {
+            let spacing = look.leader_text.line_spacing;
             let prims = text
                 .lines()
                 .enumerate()
                 .map(|(k, line)| Prim::Text {
-                    at: [at[0], at[1] - k as f64 * height * 1.6],
+                    at: [at[0], at[1] - k as f64 * height * spacing],
                     height: *height,
                     text: line.to_string(),
                     anchor: Anchor::Left,
@@ -216,18 +218,8 @@ pub fn resolve<'a>(
             let (pl, lines) = view(*v).ok_or(Orphan::NoView)?;
             let (c, r) = circle(lines, edge)?;
             let (c, r) = (pl.to_sheet(c), r * pl.scale);
-            let e = r + CENTER_OVER;
             Ok(Shown {
-                prims: vec![
-                    Prim::Center {
-                        a: [c[0] - e, c[1]],
-                        b: [c[0] + e, c[1]],
-                    },
-                    Prim::Center {
-                        a: [c[0], c[1] - e],
-                        b: [c[0], c[1] + e],
-                    },
-                ],
+                prims: st.center_mark(c, r),
                 value: None,
             })
         }
@@ -243,15 +235,18 @@ pub fn resolve<'a>(
                 return Err(Orphan::Missing(b.clone()));
             }
             let u = [d[0] / len, d[1] / len];
+            let over = look.center.overshoot;
             Ok(Shown {
                 prims: vec![Prim::Center {
-                    a: add(c1, mul(u, -(r1 + CENTER_OVER))),
-                    b: add(c2, mul(u, r2 + CENTER_OVER)),
+                    a: add(c1, mul(u, -(r1 + over))),
+                    b: add(c2, mul(u, r2 + over)),
+                    width: look.center_weight,
+                    chain: look.center_chain,
                 }],
                 value: None,
             })
         }
-        AnnotationKind::Dimension(d) => dimension(d, view),
+        AnnotationKind::Dimension(d) => st.dimension(d, view),
         AnnotationKind::HoleNote {
             view: v,
             edge,
@@ -277,7 +272,7 @@ pub fn resolve<'a>(
             };
             let rim = add(cs, mul(dir, r * pl.scale));
             Ok(Shown {
-                prims: leader(rim, t, &note, dir[0] >= 0.0),
+                prims: st.leader(rim, t, &note, dir[0] >= 0.0),
                 value: None,
             })
         }
@@ -285,43 +280,249 @@ pub fn resolve<'a>(
             let d = sub(*tip, *at);
             let right = d[0] <= 0.0;
             Ok(Shown {
-                prims: leader(*tip, *at, text, right),
+                prims: st.leader(*tip, *at, text, right),
                 value: None,
             })
         }
     }
 }
 
-/// A leader from `tip` (arrow) to `at`, a shoulder under the text and the
-/// text's lines stacked above it (ISO 128-22 / ISO 3098 3.5 mm).
-fn leader(tip: [f64; 2], at: [f64; 2], text: &str, rightwards: bool) -> Vec<Prim> {
-    let mut prims = Vec::new();
-    let lines: Vec<&str> = text.lines().collect();
-    let w = lines
-        .iter()
-        .map(|l| text_width(l, TEXT_H))
-        .fold(0.0, f64::max)
-        .max(4.0);
-    let sign = if rightwards { 1.0 } else { -1.0 };
-    let end = [at[0] + sign * w, at[1]];
-    prims.push(line(tip, at));
-    prims.push(line(at, end));
-    let d = sub(tip, at);
-    let len = norm(d);
-    if len > 1e-9 {
-        arrow(&mut prims, tip, mul(d, 1.0 / len));
+/// Draws annotations in a look.
+struct Draw<'a> {
+    look: &'a AnnotationLook,
+}
+
+impl Draw<'_> {
+    /// A centre mark: the cross at the centre, a gap, then centre lines
+    /// passing the circle by the overshoot.
+    fn center_mark(&self, c: [f64; 2], r: f64) -> Vec<Prim> {
+        let s = &self.look.center;
+        let w = self.look.center_weight;
+        let half = s.mark * 0.5;
+        let mut out = Vec::new();
+        for dir in [[1.0, 0.0], [0.0, 1.0]] {
+            out.push(Prim::Line {
+                a: add(c, mul(dir, -half)),
+                b: add(c, mul(dir, half)),
+                weight: Weight::Thin,
+            });
+            let from = half + s.gap;
+            let to = r + s.overshoot;
+            if to > from + 1e-6 {
+                for sign in [1.0, -1.0] {
+                    out.push(Prim::Center {
+                        a: add(c, mul(dir, sign * from)),
+                        b: add(c, mul(dir, sign * to)),
+                        width: w,
+                        chain: self.look.center_chain,
+                    });
+                }
+            }
+        }
+        out
     }
-    let x0 = if rightwards { at[0] } else { end[0] };
-    for (k, l) in lines.iter().rev().enumerate() {
-        prims.push(Prim::Text {
-            at: [x0, at[1] + 0.8 + k as f64 * TEXT_H * 1.6],
-            height: TEXT_H,
-            text: (*l).to_string(),
-            anchor: Anchor::Left,
-            angle: 0.0,
-        });
+
+    /// A leader from `tip` (terminator) to `at`, a shoulder under the text
+    /// and the text's lines stacked above it.
+    fn leader(&self, tip: [f64; 2], at: [f64; 2], text: &str, rightwards: bool) -> Vec<Prim> {
+        let ts = &self.look.leader_text;
+        let h = ts.height;
+        let mut prims = Vec::new();
+        let lines: Vec<&str> = text.lines().collect();
+        let w = lines
+            .iter()
+            .map(|l| text_width(l, h) * ts.width_scale)
+            .fold(0.0, f64::max)
+            .max(4.0);
+        let sign = if rightwards { 1.0 } else { -1.0 };
+        let end = [at[0] + sign * w, at[1]];
+        prims.push(line(tip, at));
+        prims.push(line(at, end));
+        let d = sub(tip, at);
+        let len = norm(d);
+        if len > 1e-9 {
+            let l = &self.look.leader;
+            terminator(
+                &mut prims,
+                tip,
+                mul(d, 1.0 / len),
+                l.terminator,
+                l.arrow_size,
+                l.arrow_height,
+            );
+        }
+        let x0 = if rightwards { at[0] } else { end[0] };
+        for (k, l) in lines.iter().rev().enumerate() {
+            prims.push(Prim::Text {
+                at: [x0, at[1] + 0.8 + k as f64 * h * ts.line_spacing],
+                height: h,
+                text: (*l).to_string(),
+                anchor: Anchor::Left,
+                angle: 0.0,
+            });
+        }
+        prims
     }
-    prims
+
+    fn arrow(&self, out: &mut Vec<Prim>, tip: [f64; 2], dir: [f64; 2]) {
+        let d = &self.look.dim;
+        terminator(out, tip, dir, d.terminator, d.arrow_size, d.arrow_height);
+    }
+
+    fn text(&self, at: [f64; 2], t: &str, angle: f64) -> Prim {
+        Prim::Text {
+            at,
+            height: self.look.dim_text.height,
+            text: t.to_string(),
+            anchor: Anchor::Center,
+            angle,
+        }
+    }
+
+    /// A value as the dimension style writes it.
+    fn value(&self, v: f64, symbol: &str) -> String {
+        let d = &self.look.dim;
+        let mut t = format!("{:.*}", usize::from(d.precision), v);
+        if !d.trailing_zeros && t.contains('.') {
+            t = t.trim_end_matches('0').trim_end_matches('.').to_string();
+        }
+        if d.decimal_comma {
+            t = t.replace('.', ",");
+        }
+        format!("{}{symbol}{t}{}", d.prefix, d.suffix)
+    }
+
+    fn dimension<'a>(
+        &self,
+        d: &Dimension,
+        view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+    ) -> Result<Shown, Orphan> {
+        let ds = &self.look.dim;
+        let text_h = self.look.dim_text.height;
+        let mut prims = Vec::new();
+        match d.dim {
+            DimKind::Diameter | DimKind::Radius => {
+                let (pl, lines) = view(d.a.view).ok_or(Orphan::NoView)?;
+                let (c, r) = circle(lines, &d.a.edge)?;
+                let cs = pl.to_sheet(c);
+                let rs = r * pl.scale;
+                let t = add(pl.position, d.text);
+                let mut dir = sub(t, cs);
+                let len = norm(dir);
+                if len < 1e-9 {
+                    dir = [1.0, 0.0];
+                } else {
+                    dir = [dir[0] / len, dir[1] / len];
+                }
+                let diameter = d.dim == DimKind::Diameter;
+                let rim = add(cs, mul(dir, rs));
+                // The leader runs from the far rim (diameter) or the centre
+                // (radius) to the text, with a short shoulder under the text.
+                let from = if diameter { add(cs, mul(dir, -rs)) } else { cs };
+                let shoulder = if dir[0] >= 0.0 { 1.0 } else { -1.0 };
+                let symbol = match (diameter, ds.diameter_symbol) {
+                    (true, true) => "Ø",
+                    (true, false) => "",
+                    (false, _) => "R",
+                };
+                let value_text = self.value(if diameter { 2.0 * r } else { r }, symbol);
+                let w = text_width(&value_text, text_h) * self.look.dim_text.width_scale;
+                let end = [t[0] + shoulder * w, t[1]];
+                prims.push(line(from, t));
+                prims.push(line(t, end));
+                self.arrow(&mut prims, rim, dir);
+                if diameter {
+                    self.arrow(&mut prims, add(cs, mul(dir, -rs)), mul(dir, -1.0));
+                }
+                let text_at = [t[0] + shoulder * w * 0.5, t[1] + ds.gap.min(1.0)];
+                prims.push(self.text(text_at, &value_text, 0.0));
+                return Ok(Shown {
+                    prims,
+                    value: Some(if diameter { 2.0 * r } else { r }),
+                });
+            }
+            DimKind::Horizontal | DimKind::Vertical | DimKind::Aligned => {}
+        }
+        let b = d.b.as_ref().ok_or(Orphan::NoView)?;
+        let (qa, pa, pl) = point(&d.a, view)?;
+        let (qb, pb, _) = point(b, view)?;
+        let t = add(pl.position, d.text);
+        // Direction u along the dimension, n square to it towards the text.
+        let (u, value) = match d.dim {
+            DimKind::Horizontal => ([1.0, 0.0], (qb[0] - qa[0]).abs()),
+            DimKind::Vertical => ([0.0, 1.0], (qb[1] - qa[1]).abs()),
+            _ => {
+                let dd = sub(pb, pa);
+                let l = norm(dd);
+                if l < 1e-12 {
+                    ([1.0, 0.0], 0.0)
+                } else {
+                    ([dd[0] / l, dd[1] / l], norm(sub(qb, qa)))
+                }
+            }
+        };
+        let mut n = [-u[1], u[0]];
+        // The dimension line passes through the text point.
+        let off_a = dot(sub(t, pa), n);
+        if off_a < 0.0 {
+            n = mul(n, -1.0);
+        }
+        let la = add(pa, mul(n, dot(sub(t, pa), n)));
+        let lb = add(pb, mul(n, dot(sub(t, pb), n)));
+        // Extension lines (skipped when the point lies on the dimension line).
+        for (p, l) in [(pa, la), (pb, lb)] {
+            let len = norm(sub(l, p));
+            if len > ds.origin_offset + 1e-6 {
+                let dir = mul(sub(l, p), 1.0 / len);
+                prims.push(line(
+                    add(p, mul(dir, ds.origin_offset)),
+                    add(l, mul(dir, ds.extension)),
+                ));
+            }
+        }
+        prims.push(line(la, lb));
+        let along = sub(lb, la);
+        let span = norm(along);
+        if span > 1e-9 {
+            let v = mul(along, 1.0 / span);
+            self.arrow(&mut prims, la, mul(v, -1.0));
+            self.arrow(&mut prims, lb, v);
+        }
+        // Text above the line, readable from the bottom or the right (ISO),
+        // or always horizontal (ANSI).
+        let mid = mul(add(la, lb), 0.5);
+        let mut ang = u[1].atan2(u[0]);
+        if ang > std::f64::consts::FRAC_PI_2 + 1e-9 {
+            ang -= std::f64::consts::PI;
+        } else if ang <= -std::f64::consts::FRAC_PI_2 + 1e-9 {
+            ang += std::f64::consts::PI;
+        }
+        let text = self.value(value, "");
+        let (at, ang) = match ds.orientation {
+            TextOrientation::Aligned => {
+                let up = [-ang.sin(), ang.cos()];
+                (add(mid, mul(up, ds.gap)), ang)
+            }
+            TextOrientation::Horizontal => {
+                if u[0].abs() >= u[1].abs() {
+                    ([mid[0], mid[1] + ds.gap], 0.0)
+                } else {
+                    // Beside a vertical dimension line, on the text's side.
+                    let w = text_width(&text, text_h);
+                    let side = if t[0] >= mid[0] { 1.0 } else { -1.0 };
+                    (
+                        [mid[0] + side * (ds.gap + w * 0.5), mid[1] - text_h * 0.5],
+                        0.0,
+                    )
+                }
+            }
+        };
+        prims.push(self.text(at, &text, ang));
+        Ok(Shown {
+            prims,
+            value: Some(value),
+        })
+    }
 }
 
 fn circle(lines: &ViewLines, edge: &str) -> Result<([f64; 2], f64), Orphan> {
@@ -362,112 +563,6 @@ pub fn format_value(v: f64, precision: u8) -> String {
     }
 }
 
-fn dimension<'a>(
-    d: &Dimension,
-    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
-) -> Result<Shown, Orphan> {
-    let mut prims = Vec::new();
-    match d.dim {
-        DimKind::Diameter | DimKind::Radius => {
-            let (pl, lines) = view(d.a.view).ok_or(Orphan::NoView)?;
-            let (c, r) = circle(lines, &d.a.edge)?;
-            let cs = pl.to_sheet(c);
-            let rs = r * pl.scale;
-            let t = add(pl.position, d.text);
-            let mut dir = sub(t, cs);
-            let len = norm(dir);
-            if len < 1e-9 {
-                dir = [1.0, 0.0];
-            } else {
-                dir = [dir[0] / len, dir[1] / len];
-            }
-            let diameter = d.dim == DimKind::Diameter;
-            let rim = add(cs, mul(dir, rs));
-            // The leader runs from the far rim (diameter) or the centre
-            // (radius) to the text, with a short shoulder under the text.
-            let from = if diameter { add(cs, mul(dir, -rs)) } else { cs };
-            let shoulder = if dir[0] >= 0.0 { 1.0 } else { -1.0 };
-            let value_text = format!(
-                "{}{}",
-                if diameter { "Ø" } else { "R" },
-                format_value(if diameter { 2.0 * r } else { r }, d.precision)
-            );
-            let w = text_width(&value_text, TEXT_H);
-            let end = [t[0] + shoulder * w, t[1]];
-            prims.push(line(from, t));
-            prims.push(line(t, end));
-            arrow(&mut prims, rim, dir);
-            if diameter {
-                arrow(&mut prims, add(cs, mul(dir, -rs)), mul(dir, -1.0));
-            }
-            let text_at = [t[0] + shoulder * w * 0.5, t[1] + 0.8];
-            prims.push(text(text_at, &value_text, 0.0));
-            return Ok(Shown {
-                prims,
-                value: Some(if diameter { 2.0 * r } else { r }),
-            });
-        }
-        DimKind::Horizontal | DimKind::Vertical | DimKind::Aligned => {}
-    }
-    let b = d.b.as_ref().ok_or(Orphan::NoView)?;
-    let (qa, pa, pl) = point(&d.a, view)?;
-    let (qb, pb, _) = point(b, view)?;
-    let t = add(pl.position, d.text);
-    // Direction u along the dimension, n square to it towards the text.
-    let (u, value) = match d.dim {
-        DimKind::Horizontal => ([1.0, 0.0], (qb[0] - qa[0]).abs()),
-        DimKind::Vertical => ([0.0, 1.0], (qb[1] - qa[1]).abs()),
-        _ => {
-            let dd = sub(pb, pa);
-            let l = norm(dd);
-            if l < 1e-12 {
-                ([1.0, 0.0], 0.0)
-            } else {
-                ([dd[0] / l, dd[1] / l], norm(sub(qb, qa)))
-            }
-        }
-    };
-    let mut n = [-u[1], u[0]];
-    // The dimension line passes through the text point.
-    let off_a = dot(sub(t, pa), n);
-    if off_a < 0.0 {
-        n = mul(n, -1.0);
-    }
-    let la = add(pa, mul(n, dot(sub(t, pa), n)));
-    let lb = add(pb, mul(n, dot(sub(t, pb), n)));
-    // Extension lines (skipped when the point lies on the dimension line).
-    for (p, l) in [(pa, la), (pb, lb)] {
-        let len = norm(sub(l, p));
-        if len > GAP + 1e-6 {
-            let dir = mul(sub(l, p), 1.0 / len);
-            prims.push(line(add(p, mul(dir, GAP)), add(l, mul(dir, OVER))));
-        }
-    }
-    prims.push(line(la, lb));
-    let along = sub(lb, la);
-    let span = norm(along);
-    if span > 1e-9 {
-        let v = mul(along, 1.0 / span);
-        arrow(&mut prims, la, mul(v, -1.0));
-        arrow(&mut prims, lb, v);
-    }
-    // Text above the line, readable from the bottom or the right.
-    let mid = mul(add(la, lb), 0.5);
-    let mut ang = u[1].atan2(u[0]);
-    if ang > std::f64::consts::FRAC_PI_2 + 1e-9 {
-        ang -= std::f64::consts::PI;
-    } else if ang <= -std::f64::consts::FRAC_PI_2 + 1e-9 {
-        ang += std::f64::consts::PI;
-    }
-    let up = [-ang.sin(), ang.cos()];
-    let at = add(mid, mul(up, 1.0));
-    prims.push(text(at, &format_value(value, d.precision), ang));
-    Ok(Shown {
-        prims,
-        value: Some(value),
-    })
-}
-
 fn line(a: [f64; 2], b: [f64; 2]) -> Prim {
     Prim::Line {
         a,
@@ -476,23 +571,49 @@ fn line(a: [f64; 2], b: [f64; 2]) -> Prim {
     }
 }
 
-fn text(at: [f64; 2], t: &str, angle: f64) -> Prim {
-    Prim::Text {
-        at,
-        height: TEXT_H,
-        text: t.to_string(),
-        anchor: Anchor::Center,
-        angle,
+/// A terminator at `tip` pointing along `dir` (unit): `size` long,
+/// `height` wide.
+fn terminator(
+    out: &mut Vec<Prim>,
+    tip: [f64; 2],
+    dir: [f64; 2],
+    kind: Terminator,
+    size: f64,
+    height: f64,
+) {
+    let back = add(tip, mul(dir, -size));
+    let n = [-dir[1] * height * 0.5, dir[0] * height * 0.5];
+    match kind {
+        Terminator::Filled => out.push(Prim::Fill {
+            pts: vec![tip, add(back, n), sub(back, n)],
+        }),
+        Terminator::Open => {
+            out.push(line(tip, add(back, n)));
+            out.push(line(tip, sub(back, n)));
+        }
+        Terminator::Dot => {
+            let r = height * 0.5;
+            out.push(Prim::Fill {
+                pts: (0..12)
+                    .map(|k| {
+                        let a = std::f64::consts::TAU * k as f64 / 12.0;
+                        [tip[0] + r * a.cos(), tip[1] + r * a.sin()]
+                    })
+                    .collect(),
+            });
+        }
+        Terminator::Oblique => {
+            // A 45° stroke through the tip.
+            let k = std::f64::consts::FRAC_1_SQRT_2 * size * 0.5;
+            let s = [(dir[0] - dir[1]) * k, (dir[1] + dir[0]) * k];
+            out.push(Prim::Line {
+                a: sub(tip, s),
+                b: add(tip, s),
+                weight: Weight::Medium,
+            });
+        }
+        Terminator::None => {}
     }
-}
-
-/// A filled arrow with its tip at `tip`, pointing along `dir` (unit).
-fn arrow(out: &mut Vec<Prim>, tip: [f64; 2], dir: [f64; 2]) {
-    let back = add(tip, mul(dir, -ARROW));
-    let n = [-dir[1] * ARROW / 6.0, dir[0] * ARROW / 6.0];
-    out.push(Prim::Fill {
-        pts: vec![tip, add(back, n), sub(back, n)],
-    });
 }
 
 /// Approximate width of a text line (mm): 0.6 × height per character.

@@ -247,7 +247,17 @@ fn sheet_format() {
             _ => None,
         })
         .collect();
-    for want in ["BRACKET", "P-100", "TITLE", "SCALE", "1 / 1", "A", "1"] {
+    for want in [
+        "BRACKET",
+        "P-100",
+        "Designed by",
+        "Scale",
+        "Sheet",
+        "1 / 1",
+        "A",
+        "1",
+        "6",
+    ] {
         assert!(texts.contains(&want), "{want} in {texts:?}");
     }
     let (w, h) = d.sheets[0].dims();
@@ -452,7 +462,7 @@ fn annotations_resolve_by_edge_name() {
     assert!(
         h.prims
             .iter()
-            .any(|p| matches!(p, super::sheet::Prim::Text { text, .. } if text == "40")),
+            .any(|p| matches!(p, super::sheet::Prim::Text { text, .. } if text == "40,00")),
         "value text"
     );
     assert_eq!(
@@ -516,7 +526,7 @@ fn annotations_resolve_by_edge_name() {
     assert!(
         r.prims
             .iter()
-            .any(|p| matches!(p, super::sheet::Prim::Text { text, .. } if text == "Ø20"))
+            .any(|p| matches!(p, super::sheet::Prim::Text { text, .. } if text == "Ø20,00"))
     );
     let cm = resolve(
         &AnnotationKind::CenterMark {
@@ -526,14 +536,36 @@ fn annotations_resolve_by_edge_name() {
         &view,
     )
     .unwrap();
-    assert_eq!(cm.prims.len(), 2);
-    // Both centre lines pass through the centre (50, 50).
-    for p in &cm.prims {
-        let super::sheet::Prim::Center { a, b } = p else {
-            panic!("centre lines");
-        };
-        close((a[0] + b[0]) * 0.5, 50.0, 1e-6, "centre x");
-        close((a[1] + b[1]) * 0.5, 50.0, 1e-6, "centre y");
+    // The cross (2 lines through the centre) and 4 centre-line pieces past
+    // the circle by the overshoot (2.5 mm, Inventor's ISO).
+    let crosses: Vec<_> = cm
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            super::sheet::Prim::Line { a, b, .. } => Some((*a, *b)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(crosses.len(), 2);
+    for (a, b) in crosses {
+        close((a[0] + b[0]) * 0.5, 50.0, 1e-6, "cross x");
+        close((a[1] + b[1]) * 0.5, 50.0, 1e-6, "cross y");
+    }
+    let reach = cm
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            super::sheet::Prim::Center { a, b, .. } => Some(
+                (a[0] - 50.0)
+                    .hypot(a[1] - 50.0)
+                    .max((b[0] - 50.0).hypot(b[1] - 50.0)),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(reach.len(), 4);
+    for r in reach {
+        close(r, 10.0 + 2.5, 1e-6, "past the circle by the overshoot");
     }
     assert_eq!(super::annot::format_value(12.5, 2), "12.5");
     assert_eq!(super::annot::format_value(20.0, 2), "20");
@@ -884,5 +916,218 @@ fn hole_notes_and_leader_texts() {
         lt.prims
             .iter()
             .any(|p| matches!(p, Prim::Fill { pts } if pts[0] == [50.0, 50.0]))
+    );
+}
+
+/// Styles drive the drawing: a dimension style with a comma, three decimals
+/// kept, a prefix and open arrows changes the text and the arrows; new /
+/// rename / delete keep the references; styles in use cannot be deleted.
+#[test]
+fn styles_drive_annotations() {
+    use super::annot::{Placement, resolve_with};
+    use super::style::{DrawingStyles, StyleType, Terminator};
+    let boxed = primitive(
+        PrimitiveKind::Box,
+        Point2::new(0.0, 0.0),
+        Point2::new(20.0, 10.0),
+        10.0,
+    );
+    let front = lines_of(&boxed, ViewOrientation::Front);
+    let e = front
+        .edges
+        .iter()
+        .find(|e| e.straight && e.visible && ((e.b[0] - e.a[0]).abs() - 40.0).abs() < 1e-6)
+        .expect("a 40 mm edge");
+    let name = e.name.clone().unwrap_or_default();
+    let pl = Placement {
+        position: [100.0, 100.0],
+        scale: 1.0,
+        center: front.center(),
+    };
+    let view = |v: u32| (v == 1).then_some((pl, &front));
+    let dim = AnnotationKind::Dimension(Dimension {
+        dim: DimKind::Horizontal,
+        a: PointRef {
+            view: 1,
+            edge: name.clone(),
+            role: PointRole::Start,
+        },
+        b: Some(PointRef {
+            view: 1,
+            edge: name,
+            role: PointRole::End,
+        }),
+        text: [0.0, 20.0],
+        precision: 2,
+    });
+    let mut st = DrawingStyles::default();
+    let texts = |st: &DrawingStyles| -> Vec<String> {
+        resolve_with(&dim, &view, &st.look())
+            .unwrap()
+            .prims
+            .iter()
+            .filter_map(|p| match p {
+                Prim::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        texts(&st),
+        vec!["40,00".to_string()],
+        "Inventor's ISO: comma, 2 decimals"
+    );
+    let d = &mut st.dimension[0];
+    d.decimal_comma = true;
+    d.trailing_zeros = true;
+    d.precision = 3;
+    d.prefix = "(".into();
+    d.suffix = ")".into();
+    d.terminator = Terminator::Open;
+    assert_eq!(texts(&st), vec!["(40,000)".to_string()]);
+    let s = resolve_with(&dim, &view, &st.look()).unwrap();
+    assert!(
+        !s.prims.iter().any(|p| matches!(p, Prim::Fill { .. })),
+        "open arrows"
+    );
+    // New / rename / delete.
+    let name = st.dimension[0].name.clone();
+    let copy = st.duplicate(StyleType::Dimension, &name).unwrap();
+    assert_eq!(st.dimension.len(), 2);
+    assert!(
+        st.delete(StyleType::Dimension, &name).is_err(),
+        "in use by Object Defaults"
+    );
+    st.defaults.dimension = copy.clone();
+    st.rename(StyleType::Dimension, &copy, "Shop").unwrap();
+    assert_eq!(st.defaults.dimension, "Shop");
+    st.delete(StyleType::Dimension, &name).unwrap();
+    assert!(
+        st.delete(StyleType::Dimension, "Shop").is_err(),
+        "the last one stays"
+    );
+    // Renaming a text style follows into the dimension style that uses it.
+    let t = st.text[0].name.clone();
+    st.rename(StyleType::Text, &t, "Big").unwrap();
+    assert_eq!(st.dimension[0].text_style, "Big");
+    assert_eq!(st.look().dim_text.name, "Big");
+    // ANSI: horizontal text, a decimal point.
+    let ansi = DrawingStyles::of(StandardKind::Ansi);
+    assert!(!ansi.dimension[0].decimal_comma);
+    // Old drawings without styles read the ISO ones.
+    let old: DrawingDocument = serde_json::from_str(
+        r#"{"sheets":[{"name":"Sheet:1","size":"A3","orientation":"Landscape"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(old.styles, DrawingStyles::default());
+}
+
+/// Our ISO and ANSI defaults are Inventor 2027's (values read from its
+/// templates through its API: `tests/data/inventor/styles_2027.json`,
+/// `tools/inventor/`).
+#[test]
+fn defaults_match_inventor_2027() {
+    use super::style::{DrawingStyles, LineType, TextOrientation};
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data/inventor/styles_2027.json"),
+    )
+    .unwrap();
+    let r: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let f = |v: &serde_json::Value| v.as_f64().unwrap();
+    for (kind, key) in [(StandardKind::Iso, "ISO"), (StandardKind::Ansi, "ANSI")] {
+        let st = DrawingStyles::of(kind);
+        let x = &r[key];
+        let d = &st.dimension[0];
+        let rd = &x["dimension"];
+        assert_eq!(
+            d.decimal_comma,
+            rd["decimal_comma"].as_bool().unwrap(),
+            "{key} decimal"
+        );
+        assert_eq!(
+            f64::from(d.precision),
+            f(&rd["precision"]),
+            "{key} precision"
+        );
+        assert_eq!(d.trailing_zeros, rd["trailing_zeros"].as_bool().unwrap());
+        for (ours, name) in [
+            (d.arrow_size, "arrow_size"),
+            (d.arrow_height, "arrow_height"),
+            (d.extension, "extension"),
+            (d.origin_offset, "origin_offset"),
+            (d.gap, "gap"),
+        ] {
+            close(ours, f(&rd[name]), 1e-9, &format!("{key} dimension {name}"));
+        }
+        assert_eq!(
+            d.orientation == TextOrientation::Aligned,
+            rd["aligned_text"].as_bool().unwrap(),
+            "{key} text orientation"
+        );
+        close(
+            st.text[0].height,
+            f(&x["note_text"]["height"]),
+            1e-9,
+            "note text height",
+        );
+        let c = &st.center_mark[0];
+        let rc = &x["center_mark"];
+        close(c.mark, f(&rc["mark"]), 1e-9, "centre mark");
+        close(c.gap, f(&rc["gap"]), 1e-9, "centre gap");
+        close(c.overshoot, f(&rc["overshoot"]), 1e-9, "centre overshoot");
+        assert_eq!(
+            DrawingStandard::of(kind).projection == Projection::FirstAngle,
+            x["first_angle"].as_bool().unwrap()
+        );
+    }
+    let iso = DrawingStyles::of(StandardKind::Iso);
+    let l = &r["ISO"]["layers"];
+    for (name, key) in [
+        ("Visible (ISO)", "visible"),
+        ("Hidden (ISO)", "hidden"),
+        ("Center Mark (ISO)", "center_mark"),
+        ("Dimension (ISO)", "dimension"),
+        ("Hatch (ISO)", "hatch"),
+        ("Section Line (ISO)", "section_line"),
+        ("Border (ISO)", "border"),
+        ("Title (ISO)", "title"),
+    ] {
+        close(iso.layer(name).weight, f(&l[key]), 1e-9, name);
+    }
+    assert_eq!(
+        iso.layer("Center Mark (ISO)").line_type,
+        LineType::Continuous
+    );
+    // Border and title block.
+    let b = &r["ISO"]["border"];
+    let d = DrawingDocument::default();
+    let (lo, _) = super::sheet::frame(&d.sheets[0]);
+    close(lo[0], f(&b["margin"]), 1e-9, "A3 margin");
+    assert_eq!(super::sheet::ZONES.0 as f64, f(&b["zones"][0]));
+    assert_eq!(super::sheet::ZONES.1 as f64, f(&b["zones"][1]));
+    close(
+        super::sheet::TITLE_W,
+        f(&r["ISO"]["title_block"]["width"]),
+        1e-9,
+        "title block width",
+    );
+    close(
+        super::sheet::TITLE_H,
+        f(&r["ISO"]["title_block"]["height"]),
+        1e-9,
+        "title block height",
+    );
+    // The same diameter text as Inventor's (Ø11,00).
+    let look = iso.look();
+    assert_eq!(
+        format!("Ø{}", {
+            let mut t = format!("{:.*}", usize::from(look.dim.precision), 11.0);
+            if look.dim.decimal_comma {
+                t = t.replace('.', ",");
+            }
+            t
+        }),
+        r["ISO"]["dimension"]["sample"].as_str().unwrap()
     );
 }

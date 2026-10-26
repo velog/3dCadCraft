@@ -209,6 +209,12 @@ pub(super) struct DrwUi {
     pub text_dialog: Option<super::drawing_annot::TextDialog>,
     /// The PDF options window (kept until the file is written).
     pub pdf_dialog: Option<super::drawing_annot::PdfDialog>,
+    /// The Style and Standard Editor.
+    pub styles_editor: Option<super::drawing_styles::StylesEditor>,
+    /// This frame's annotation look (from the drawing's styles).
+    pub look: crate::drawing::style::AnnotationLook,
+    /// This frame's visible and hidden line weights (mm).
+    pub weights: [f64; 2],
     /// The sheet the camera was fitted to (index, size in µm): another
     /// sheet or a new size (Edit Sheet, Undo) fits again.
     fitted: Option<(usize, [i64; 2])>,
@@ -228,6 +234,7 @@ impl DrwUi {
         self.ann_drag = None;
         self.text_dialog = None;
         self.pdf_dialog = None;
+        self.styles_editor = None;
         self.cam.fit = true;
         self.fitted = None;
     }
@@ -768,6 +775,17 @@ impl CadCraftApp {
         else {
             return;
         };
+        // This frame's look and line weights from the drawing's styles.
+        if let Some(d) = self.drawing() {
+            let st = &d.styles;
+            let look = st.look();
+            let weights = [
+                st.layer(&st.defaults.visible_layer).weight,
+                st.layer(&st.defaults.hidden_layer).weight,
+            ];
+            self.drw.look = look;
+            self.drw.weights = weights;
+        }
         // Fit on request and when another sheet becomes active.
         let fit_key = (active, [(sheet_w * 1e3) as i64, (sheet_h * 1e3) as i64]);
         if self.drw.cam.fit || self.drw.fitted != Some(fit_key) {
@@ -826,7 +844,7 @@ impl CadCraftApp {
         };
         self.drw.hover = at_sheet.and_then(hit);
         for v in &views {
-            draw_view(&painter, &cam, rect, v);
+            draw_view(&painter, &cam, rect, v, self.drw.weights);
             let frame_color = if self.drw.sel == Some(v.id) {
                 Some(SEL)
             } else if self.drw.hover == Some(v.id) && self.drw.drag.is_none() {
@@ -996,6 +1014,8 @@ impl CadCraftApp {
                     TitleField::Material => material.clone().unwrap_or_default(),
                     TitleField::Company => dp("company"),
                     TitleField::Revision => mp("revision"),
+                    TitleField::ApprovedBy => dp("eng_approved_by"),
+                    TitleField::ApprovedDate => dp("eng_approved_date"),
                 };
                 (f, v)
             })
@@ -1041,7 +1061,7 @@ impl CadCraftApp {
             scale,
             style: dlg.style,
         };
-        draw_view_colored(painter, &self.drw.cam, rect, &v, PREVIEW);
+        draw_view_colored(painter, &self.drw.cam, rect, &v, PREVIEW, self.drw.weights);
         if response.clicked() {
             self.place_base_view(&dlg, at, scale);
         }
@@ -1144,7 +1164,7 @@ impl CadCraftApp {
                 scale: pv.scale,
                 style: pv.style,
             };
-            draw_view_colored(painter, &self.drw.cam, rect, &v, PREVIEW);
+            draw_view_colored(painter, &self.drw.cam, rect, &v, PREVIEW, self.drw.weights);
         }
         if response.clicked() {
             let placed =
@@ -1273,6 +1293,7 @@ impl CadCraftApp {
         self.view_dialog_window(ctx);
         self.sheet_dialog_window(ctx);
         self.annotation_windows(ctx);
+        self.drawing_styles_window(ctx);
     }
 
     fn view_dialog_window(&mut self, ctx: &egui::Context) {
@@ -2150,8 +2171,8 @@ fn dashed_rect(p: &egui::Painter, a: Pos2, b: Pos2, c: Color32) {
     p.extend(Shape::dashed_line(&pts, Stroke::new(1.2, c), 6.0, 4.0));
 }
 
-fn draw_view(p: &egui::Painter, cam: &SheetCam, rect: Rect, v: &ShownView) {
-    draw_view_colored(p, cam, rect, v, INK);
+fn draw_view(p: &egui::Painter, cam: &SheetCam, rect: Rect, v: &ShownView, weights: [f64; 2]) {
+    draw_view_colored(p, cam, rect, v, INK, weights);
 }
 
 /// A view's lines: visible solid (0.5 mm), hidden dashed (0.35 mm) when the
@@ -2162,6 +2183,7 @@ pub(super) fn draw_view_colored(
     rect: Rect,
     v: &ShownView,
     ink: Color32,
+    weights: [f64; 2],
 ) {
     let Some(lines) = &v.lines else {
         return;
@@ -2176,8 +2198,8 @@ pub(super) fn draw_view_colored(
             ],
         )
     };
-    let w = ((0.5 * cam.zoom) as f32).clamp(1.0, 4.0);
-    let hw = ((0.35 * cam.zoom) as f32).clamp(0.8, 3.0);
+    let w = ((weights[0] * cam.zoom) as f32).clamp(1.0, 4.0);
+    let hw = ((weights[1] * cam.zoom) as f32).clamp(0.8, 3.0);
     if v.style == ViewStyle::HiddenShown {
         let hidden = if ink == INK {
             HIDDEN_INK

@@ -211,10 +211,15 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 - sheet metal rules;
 - display precision.
 
-**Styles & Standards** (for drawings):
+**Styles & Standards** (for drawings, [spec/4.6-drawing-styles.md](spec/4.6-drawing-styles.md)):
 - ISO, ANSI, DIN, JIS, GB, BSI;
 - fonts, arrowheads, line weights;
 - dimension styles.
+
+🟡 2026-10-26: Manage › Styles Editor in a drawing: Standard (projection type, decimal marker, reset to
+ISO / ANSI / DIN), Dimension (Units, Display, Text, Options, Notes and Leaders tabs), Text, Leader, Center
+Mark, Hatch, View Annotation, Layers, Object Defaults; New / Rename / Delete; the sheet and the PDF follow at
+once. Tables' and symbols' style types are listed greyed.
 
 ---
 

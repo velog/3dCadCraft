@@ -17,6 +17,7 @@ pub mod hlr;
 pub mod pdf;
 pub mod render;
 pub mod sheet;
+pub mod style;
 
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +44,9 @@ pub struct DrawingDocument {
     /// The next annotation id (never reused).
     #[serde(default = "one")]
     pub next_annotation_id: u32,
+    /// The drawing's styles (Style and Standard Editor).
+    #[serde(default)]
+    pub styles: style::DrawingStyles,
 }
 
 fn one() -> u32 {
@@ -640,6 +644,7 @@ impl DrawingDocument {
             active_sheet: 0,
             next_view_id: 1,
             next_annotation_id: 1,
+            styles: style::DrawingStyles::of(standard.kind),
         }
     }
 

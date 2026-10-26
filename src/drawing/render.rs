@@ -61,40 +61,44 @@ pub fn sheet_list(
         return out;
     };
     let placed = placements(doc, i, lines);
+    let st = &doc.styles;
+    let visible = st.layer(&st.defaults.visible_layer);
+    let hidden = st.layer(&st.defaults.hidden_layer);
     for v in &sheet.views {
         let Some((pl, style, l)) = placed.get(&v.id) else {
             continue;
         };
-        if *style == ViewStyle::HiddenShown {
+        if *style == ViewStyle::HiddenShown && hidden.on {
             for h in &l.hidden {
                 out.push(Prim::Path {
                     pts: h.iter().map(|q| pl.to_sheet(*q)).collect(),
-                    width: HIDDEN_MM,
+                    width: hidden.weight,
                     dashed: true,
                 });
             }
         }
-        for p in &l.visible {
-            out.push(Prim::Path {
-                pts: p.iter().map(|q| pl.to_sheet(*q)).collect(),
-                width: VISIBLE_MM,
-                dashed: false,
-            });
+        if visible.on {
+            for p in &l.visible {
+                out.push(Prim::Path {
+                    pts: p.iter().map(|q| pl.to_sheet(*q)).collect(),
+                    width: visible.weight,
+                    dashed: false,
+                });
+            }
         }
     }
     let view = |id: u32| placed.get(&id).map(|(pl, _, l)| (*pl, l.as_ref()));
     out.extend(view_extras(doc, i, &view));
-    for a in &sheet.annotations {
-        if let Ok(s) = annot::resolve(&a.kind, &view) {
-            out.extend(s.prims);
+    if st.layer(&st.defaults.dimension_layer).on {
+        let look = st.look();
+        for a in &sheet.annotations {
+            if let Ok(s) = annot::resolve_with(&a.kind, &view, &look) {
+                out.extend(s.prims);
+            }
         }
     }
     out
 }
-
-/// Hatch spacing on paper (mm) and angle: ISO 128-50 general hatching.
-pub const HATCH_MM: f64 = 3.0;
-const HATCH_DEG: f64 = 45.0;
 
 /// What views add around their lines: section hatching, section lines and
 /// detail fences on the parents (Definition in Base View), detail
@@ -108,23 +112,35 @@ pub fn view_extras<'a>(
     let Some(sheet) = doc.sheets.get(i) else {
         return out;
     };
+    let st = &doc.styles;
+    let hs = st.hatch(&st.defaults.hatch);
+    let hatch_layer = st.layer(&st.defaults.hatch_layer);
+    let center_w = st.layer(&st.defaults.section_layer).weight;
+    let va = st.view_annotation(&st.defaults.view_annotation);
     for v in &sheet.views {
         let Some((pl, l)) = view(v.id) else {
             continue;
         };
-        // Hatching of cut faces.
-        if v.display.hatching {
+        // Hatching of cut faces (the hatch style: angle, spacing, double).
+        if v.display.hatching && hatch_layer.on {
             let loops: Vec<Vec<[f64; 2]>> = l
                 .section
                 .iter()
                 .map(|lp| lp.iter().map(|q| pl.to_sheet(*q)).collect())
                 .collect();
-            for (a, b) in hatch(&loops, HATCH_DEG.to_radians(), HATCH_MM) {
-                out.push(Prim::Line {
-                    a,
-                    b,
-                    weight: Weight::Thin,
-                });
+            let angles: &[f64] = if hs.double {
+                &[hs.angle, hs.angle + 90.0]
+            } else {
+                &[hs.angle]
+            };
+            for ang in angles {
+                for (a, b) in hatch(&loops, ang.to_radians(), hs.spacing) {
+                    out.push(Prim::Path {
+                        pts: vec![a, b],
+                        width: hatch_layer.weight,
+                        dashed: false,
+                    });
+                }
             }
         }
         // The detail view's boundary.
@@ -138,7 +154,15 @@ pub fn view_extras<'a>(
         {
             match v.kind {
                 ViewKind::Section { a, b, side, .. } => {
-                    section_line(&mut out, doc, &ppl, a, b, side, &v.identifier);
+                    section_line(
+                        &mut out,
+                        doc,
+                        &ppl,
+                        (a, b, side),
+                        &v.identifier,
+                        center_w,
+                        va.identifier_height,
+                    );
                 }
                 ViewKind::Detail { center, radius, .. } => {
                     let c = ppl.to_sheet(center);
@@ -147,7 +171,7 @@ pub fn view_extras<'a>(
                     let k = std::f64::consts::FRAC_1_SQRT_2;
                     out.push(Prim::Text {
                         at: [c[0] + (r + 2.0) * k, c[1] + (r + 2.0) * k],
-                        height: 5.0,
+                        height: va.identifier_height,
                         text: v.identifier.clone(),
                         anchor: Anchor::Left,
                         angle: 0.0,
@@ -167,10 +191,11 @@ pub fn view_extras<'a>(
                 }
             } - 3.0;
             let _ = h;
+            let h = va.label_height;
             for (k, t) in v.label_lines(pl.scale).into_iter().enumerate() {
                 out.push(Prim::Text {
-                    at: [v.position[0], below - 3.5 - k as f64 * 5.0],
-                    height: 3.5,
+                    at: [v.position[0], below - h - k as f64 * h * 1.45],
+                    height: h,
                     text: t,
                     anchor: Anchor::Center,
                     angle: 0.0,
@@ -202,10 +227,10 @@ fn section_line(
     out: &mut Vec<Prim>,
     doc: &DrawingDocument,
     pl: &Placement,
-    a: [f64; 2],
-    b: [f64; 2],
-    side: i8,
+    (a, b, side): ([f64; 2], [f64; 2], i8),
     letter: &str,
+    width: f64,
+    letter_height: f64,
 ) {
     let (pa, pb) = (pl.to_sheet(a), pl.to_sheet(b));
     let d = [pb[0] - pa[0], pb[1] - pa[1]];
@@ -222,7 +247,12 @@ fn section_line(
         Projection::ThirdAngle => [-s2[0], -s2[1]],
         Projection::FirstAngle => s2,
     };
-    out.push(Prim::Center { a: pa, b: pb });
+    out.push(Prim::Center {
+        a: pa,
+        b: pb,
+        width,
+        chain: true,
+    });
     let thick = 5.0f64.min(len * 0.25);
     for (end, inward) in [(pa, l), (pb, [-l[0], -l[1]])] {
         out.push(Prim::Line {
@@ -252,7 +282,7 @@ fn section_line(
                 end[0] + out_of_line[0] * 3.0 + look[0] * 3.0 - 1.5,
                 end[1] + out_of_line[1] * 3.0 + look[1] * 3.0 - 2.5,
             ],
-            height: 5.0,
+            height: letter_height,
             text: letter.to_string(),
             anchor: Anchor::Left,
             angle: 0.0,

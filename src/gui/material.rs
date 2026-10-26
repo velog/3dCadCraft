@@ -377,6 +377,11 @@ enum Do {
 impl CadCraftApp {
     /// A ribbon command.
     pub(super) fn material_cmd(&mut self, cmd: MatCmd) {
+        // In a drawing the editor shows the drawing's styles.
+        if matches!(cmd, MatCmd::StylesEditor) && self.is_drawing() {
+            self.open_drawing_styles();
+            return;
+        }
         let m = &mut self.mat;
         match cmd {
             MatCmd::MaterialBrowser => m.show_materials = true,

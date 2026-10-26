@@ -90,10 +90,11 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
                         s.draw_path(&pa);
                     }
                 }
-                Prim::Center { a, b } => {
+                Prim::Center { a, b, width, chain } => {
                     if let Some(pa) = path(&[*a, *b], false) {
                         s.set_fill(None);
-                        s.set_stroke(Some(stroke(0.25, Some(vec![12.0, 1.5, 1.5, 1.5]))));
+                        let dash = chain.then(|| vec![12.0, 1.5, 1.5, 1.5]);
+                        s.set_stroke(Some(stroke(*width, dash)));
                         s.draw_path(&pa);
                     }
                 }

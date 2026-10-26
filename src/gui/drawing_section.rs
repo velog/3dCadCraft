@@ -311,7 +311,14 @@ impl CadCraftApp {
                 scale,
                 style,
             };
-            super::drawing::draw_view_colored(painter, &self.drw.cam, rect, &shown, PREVIEW);
+            super::drawing::draw_view_colored(
+                painter,
+                &self.drw.cam,
+                rect,
+                &shown,
+                PREVIEW,
+                self.drw.weights,
+            );
             if let ViewKind::Detail { radius, .. } = v.kind {
                 painter.circle_stroke(
                     self.drw.cam.to_screen(rect, v.position),
