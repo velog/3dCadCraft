@@ -57,6 +57,10 @@ pub enum DrwCmd {
     HoleNote,
     /// File › Export › PDF.
     ExportPdf,
+    /// Annotate › Format › Edit Layers (the Style Editor on Layers).
+    EditLayers,
+    /// A command with its dialog and no logic yet (`drawing_planned`).
+    Planned(super::drawing_planned::Planned),
 }
 
 /// What the sheet view shows: the sheet point at the middle and the zoom.
@@ -211,6 +215,8 @@ pub(super) struct DrwUi {
     pub pdf_dialog: Option<super::drawing_annot::PdfDialog>,
     /// The Style and Standard Editor.
     pub styles_editor: Option<super::drawing_styles::StylesEditor>,
+    /// The dialog of a command without logic yet.
+    pub planned: Option<super::drawing_planned::PlannedDialog>,
     /// This frame's annotation look (from the drawing's styles).
     pub look: crate::drawing::style::AnnotationLook,
     /// This frame's visible and hidden line weights (mm).
@@ -235,6 +241,7 @@ impl DrwUi {
         self.text_dialog = None;
         self.pdf_dialog = None;
         self.styles_editor = None;
+        self.planned = None;
         self.cam.fit = true;
         self.fitted = None;
     }
@@ -383,6 +390,21 @@ impl CadCraftApp {
             DrwCmd::LeaderText => self.start_annotation(DrwTool::LeaderText(None)),
             DrwCmd::HoleNote => self.start_annotation(DrwTool::HoleNote(None)),
             DrwCmd::ExportPdf => self.open_pdf_export(),
+            DrwCmd::EditLayers => {
+                let first = self
+                    .drawing()
+                    .and_then(|d| d.styles.layers.first().map(|l| l.name.clone()))
+                    .unwrap_or_default();
+                let mut ed = super::drawing_styles::StylesEditor::new();
+                ed.kind = Some(crate::drawing::style::StyleType::Layers);
+                ed.name = first;
+                self.drw.styles_editor = Some(ed);
+            }
+            DrwCmd::Planned(p) => {
+                self.drw.tool = None;
+                self.drw.dialog = None;
+                self.drw.planned = Some(super::drawing_planned::PlannedDialog::new(p));
+            }
         }
     }
 
@@ -540,6 +562,7 @@ impl CadCraftApp {
             self.drw.sheet_dialog = None;
             self.drw.text_dialog = None;
             self.drw.pdf_dialog = None;
+            self.drw.planned = None;
             true
         } else {
             false
@@ -553,10 +576,14 @@ impl CadCraftApp {
             || self.drw.sheet_dialog.is_some()
             || self.drw.text_dialog.is_some()
             || self.drw.pdf_dialog.is_some()
+            || self.drw.planned.is_some()
     }
 
     /// Status-bar prompt.
     pub(super) fn drw_prompt(&self) -> String {
+        if let Some(p) = &self.drw.planned {
+            return p.prompt();
+        }
         match &self.drw.tool {
             Some(DrwTool::CenterMark) => "Center Mark: click circles or arcs (Esc ends)".into(),
             Some(DrwTool::Centerline(None)) => "Centerline: click the first circle".into(),
@@ -893,6 +920,30 @@ impl CadCraftApp {
         let anns = self.shown_annotations(&views);
         self.paint_annotations(&painter, rect, &anns);
 
+        // A planned command's selector takes the clicks.
+        let planned_sel = self
+            .drw
+            .planned
+            .as_ref()
+            .is_some_and(|d| d.active.is_some());
+        if planned_sel
+            && response.clicked()
+            && let Some(p) = pointer
+        {
+            let what = match self.geometry_under(&views, rect, p) {
+                Some(g) => g.describe(),
+                None => match self.drw.hover {
+                    Some(id) => format!("View {id}"),
+                    None => {
+                        let q = cam.to_sheet(rect, p);
+                        format!("Sheet ({:.1}, {:.1})", q[0], q[1])
+                    }
+                },
+            };
+            if let Some(dlg) = &mut self.drw.planned {
+                dlg.pick(what);
+            }
+        }
         // The running command.
         match self.drw.tool.clone() {
             Some(DrwTool::Base) => self.base_view_place(&ctx, &painter, rect, &response, at_sheet),
@@ -903,6 +954,7 @@ impl CadCraftApp {
                 self.child_view_tool(&ctx, &painter, rect, &response, &views)
             }
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
+            None if planned_sel => {}
             None => {
                 if !self.annotation_select(rect, &response, &anns, &views) {
                     self.sheet_select(rect, &response, at_sheet, &views);
@@ -1294,6 +1346,30 @@ impl CadCraftApp {
         self.sheet_dialog_window(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);
+        self.planned_window(ctx);
+    }
+
+    /// The dialog of a command without logic yet.
+    fn planned_window(&mut self, ctx: &egui::Context) {
+        let Some(mut dlg) = self.drw.planned.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut cancel = false;
+        let win = egui::Window::new(dlg.kind.title())
+            .id(egui::Id::new("drw_planned_window"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .default_width(440.0);
+        self.layout
+            .place("drawing_planned", ctx.content_rect(), false, win)
+            .show(ctx, |ui| {
+                cancel = dlg.ui(ui);
+            });
+        if open && !cancel {
+            self.drw.planned = Some(dlg);
+        }
     }
 
     fn view_dialog_window(&mut self, ctx: &egui::Context) {

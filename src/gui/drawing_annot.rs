@@ -37,6 +37,18 @@ pub(super) struct GeoPick {
     at: [f64; 2],
 }
 
+impl GeoPick {
+    /// The pick as text (a planned command's selector list).
+    pub(super) fn describe(&self) -> String {
+        let what = match self.what {
+            PickWhat::Point(_) => "point",
+            PickWhat::Line => "edge",
+            PickWhat::Circle(..) => "circle",
+        };
+        format!("View {}: {what} {}", self.view, self.edge)
+    }
+}
+
 /// Kind of geometry picked.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PickWhat {
@@ -328,7 +340,12 @@ impl CadCraftApp {
 
     /// The view geometry under the pointer: end points and centres first,
     /// then visible edges.
-    fn geometry_under(&self, views: &[ShownView], rect: Rect, pointer: Pos2) -> Option<GeoPick> {
+    pub(super) fn geometry_under(
+        &self,
+        views: &[ShownView],
+        rect: Rect,
+        pointer: Pos2,
+    ) -> Option<GeoPick> {
         let cam = self.drw.cam;
         let mut best: Option<(f32, GeoPick)> = None;
         let mut take = |d: f32, g: GeoPick| {
@@ -871,6 +888,13 @@ impl CadCraftApp {
         let (at, text, height, leader) = match kind {
             Some(AnnotationKind::Text { at, text, height }) => (at, text, height, None),
             Some(AnnotationKind::LeaderText { tip, at, text }) => (at, text, 3.5, Some(tip)),
+            Some(AnnotationKind::Dimension(_)) => {
+                // Edit Dimension: text, precision and tolerance (interface).
+                self.drw.planned = Some(super::drawing_planned::PlannedDialog::new(
+                    super::drawing_planned::Planned::EditDimension,
+                ));
+                return;
+            }
             _ => return,
         };
         self.drw.text_dialog = Some(TextDialog {

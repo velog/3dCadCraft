@@ -43,6 +43,7 @@ mod doc_tabs;
 mod draft;
 mod drawing;
 mod drawing_annot;
+mod drawing_planned;
 mod drawing_section;
 mod drawing_styles;
 mod drive;

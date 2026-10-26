@@ -221,6 +221,13 @@ ISO / ANSI / DIN), Dimension (Units, Display, Text, Options, Notes and Leaders t
 Mark, Hatch, View Annotation, Layers, Object Defaults; New / Rename / Delete; the sheet and the PDF follow at
 once. Tables' and symbols' style types are listed greyed.
 
+🟡 2026-10-26: every other command of Inventor's drawing ribbon has its dialog (interface first,
+[spec/4.7-drawing-commands.md](spec/4.7-drawing-commands.md)): Break, Break Out, Slice, Crop, Overlay, Draft View,
+align views, dimension sets, Arrange, Retrieve, Edit Dimension (tolerances and fits), chamfer / punch / bend notes,
+symbols, welding, caterpillar, end fill, FCF, datum identifiers and targets, centrelines, Parts List (source view /
+file, BOM view, levels), balloons, tables, hole tables, revisions, Replace Model Reference, Define templates; OK
+stays disabled until each command's logic exists.
+
 ---
 
 # Level 1 — Sketching

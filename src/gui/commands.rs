@@ -27,6 +27,7 @@ use std::sync::OnceLock;
 use super::camera::Projection;
 use super::demos::Demo;
 use super::drawing::DrwCmd;
+use super::drawing_planned::Planned as Dp;
 use super::icons::Icon;
 use super::layout::{Element, UiCmd, VisKind};
 use super::material::MatCmd;
@@ -363,6 +364,12 @@ const N_NOTES: Place = Place::Ribbon("Annotate", "Feature Notes");
 const N_TEXT: Place = Place::Ribbon("Annotate", "Text");
 const N_SYMBOLS: Place = Place::Ribbon("Annotate", "Symbols");
 const N_TABLE: Place = Place::Ribbon("Annotate", "Table");
+const N_RETRIEVE: Place = Place::Ribbon("Annotate", "Retrieve");
+const N_REVISION: Place = Place::Ribbon("Annotate", "Revision");
+const N_FORMAT: Place = Place::Ribbon("Annotate", "Format");
+const G_UPDATE: Place = Place::Ribbon("Manage", "Update");
+const G_MODIFY: Place = Place::Ribbon("Manage", "Modify");
+const G_DEFINE: Place = Place::Ribbon("Manage", "Define");
 const V_NAV: Place = Place::Ribbon("View", "Navigate");
 const V_LOOK: Place = Place::Ribbon("View", "Appearance");
 const V_WIN: Place = Place::Ribbon("View", "Windows");
@@ -382,6 +389,15 @@ const fn d(id: &'static str, name: &'static str, bg: &'static str, icon: Icon) -
     Command::new(id, name, bg, icon)
         .env(DRAWING)
         .spec("4-drawings.md")
+}
+
+/// A drawing command whose dialog exists and whose logic comes later
+/// (`gui/drawing_planned.rs`, `docs/spec/4.7-drawing-commands.md`).
+const fn dp(id: &'static str, name: &'static str, bg: &'static str, icon: Icon, p: Dp) -> Command {
+    Command::new(id, name, bg, icon)
+        .env(DRAWING)
+        .spec("4.7-drawing-commands.md")
+        .run(Action::Drawing(DrwCmd::Planned(p)))
 }
 
 const fn c(id: &'static str, name: &'static str, bg: &'static str, icon: Icon) -> Command {
@@ -1478,41 +1494,34 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["DV"])
         .at(&[D_CREATE])
         .tip("Click the parent view, the circle's centre and size, then place the enlarged view"),
-    d("drw.overlay", "Overlay View", "Изглед с наслагване", Icon::ProjectedView)
+    dp("drw.overlay", "Overlay View", "Изглед с наслагване", Icon::ProjectedView, Dp::Overlay)
         .alias(&["OV"])
         .at(&[D_CREATE])
-        .tip("Positional representations of an assembly in phantom lines")
-        .todo("4.2"),
-    d("drw.draft_view", "Draft View", "Изглед-скица", Icon::DraftView)
+        .tip("Positional representations of an assembly in phantom lines"),
+    dp("drw.draft_view", "Draft View", "Изглед-скица", Icon::DraftView, Dp::DraftView)
         .alias(&["DFV"])
         .at(&[D_CREATE])
-        .tip("A view holding only a 2D sketch")
-        .todo("4.2"),
-    d("drw.break", "Break", "Прекъсване", Icon::BreakView)
+        .tip("A view holding only a 2D sketch"),
+    dp("drw.break", "Break", "Прекъсване", Icon::BreakView, Dp::Break)
         .alias(&["BRK"])
         .at(&[D_MODIFY])
-        .tip("Shorten a long part between two break lines")
-        .todo("4.2"),
-    d("drw.break_out", "Break Out", "Локален разрез", Icon::BreakOut)
+        .tip("Shorten a long part between two break lines"),
+    dp("drw.break_out", "Break Out", "Локален разрез", Icon::BreakOut, Dp::BreakOut)
         .alias(&["BO"])
         .at(&[D_MODIFY])
-        .tip("Cut away material inside a closed profile to a depth")
-        .todo("4.2"),
-    d("drw.slice", "Slice", "Сечение", Icon::SliceView)
+        .tip("Cut away material inside a closed profile to a depth"),
+    dp("drw.slice", "Slice", "Сечение", Icon::SliceView, Dp::Slice)
         .alias(&["SL"])
         .at(&[D_MODIFY])
-        .tip("A zero-depth section along a sketch line")
-        .todo("4.2"),
-    d("drw.crop", "Crop", "Изрязване", Icon::CropView)
+        .tip("A zero-depth section along a sketch line"),
+    dp("drw.crop", "Crop", "Изрязване", Icon::CropView, Dp::Crop)
         .alias(&["CR"])
         .at(&[D_MODIFY])
-        .tip("Clip a view by a rectangle or a closed sketch")
-        .todo("4.2"),
-    d("drw.start_sketch", "Start Sketch", "Нова скица", Icon::StartSketch)
+        .tip("Clip a view by a rectangle or a closed sketch"),
+    dp("drw.start_sketch", "New Sketch", "Нова скица", Icon::StartSketch, Dp::StartSketch)
         .alias(&["DS"])
         .at(&[D_SKETCH])
-        .tip("A sketch on the sheet or on a view")
-        .todo("4.3"),
+        .tip("A sketch on the sheet or on a view"),
     d("drw.new_sheet", "New Sheet", "Нов лист", Icon::NewSheet)
         .run(Action::Drawing(DrwCmd::NewSheet))
         .alias(&["NS"])
@@ -1528,27 +1537,23 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["D"])
         .at(&[N_DIM])
         .tip("Click an edge (length), a circle (diameter / radius) or two points, then click where the dimension goes"),
-    d("drw.baseline", "Baseline", "Размери от база", Icon::Dimension)
+    dp("drw.baseline", "Baseline Dimension", "Размери от база", Icon::Dimension, Dp::Baseline)
         .alias(&["BD"])
         .at(&[N_DIM])
-        .tip("Dimensions from one datum")
-        .todo("4.3"),
-    d("drw.ordinate", "Ordinate", "Ординатни размери", Icon::Dimension)
+        .tip("Dimensions from one datum"),
+    dp("drw.ordinate", "Ordinate Dimension", "Ординатни размери", Icon::Dimension, Dp::Ordinate)
         .alias(&["OD"])
         .at(&[N_DIM])
-        .tip("Ordinate dimensions from an origin")
-        .todo("4.3"),
-    d("drw.chain", "Chain", "Верига от размери", Icon::Dimension)
+        .tip("Ordinate dimensions from an origin"),
+    dp("drw.chain", "Chain Dimension", "Верига от размери", Icon::Dimension, Dp::Chain)
         .alias(&["CD"])
         .at(&[N_DIM])
-        .tip("A chain of dimensions")
-        .todo("4.3"),
-    d("drw.retrieve", "Retrieve Model Annotations", "Извличане на размерите от модела", Icon::Dimension)
+        .tip("A chain of dimensions"),
+    dp("drw.retrieve", "Retrieve Model Annotations", "Извличане на размерите от модела", Icon::Dimension, Dp::Retrieve)
         .short("Retrieve")
         .alias(&["RMA"])
-        .at(&[N_DIM])
-        .tip("Bring the model's sketch and feature dimensions that lie in the view plane")
-        .todo("4.3"),
+        .at(&[N_RETRIEVE])
+        .tip("Bring the model's sketch and feature dimensions that lie in the view plane"),
     d("drw.hole_note", "Hole and Thread", "Бележка за отвор", Icon::HoleNote)
         .run(Action::Drawing(DrwCmd::HoleNote))
         .alias(&["HN"])
@@ -1574,41 +1579,188 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["CL"])
         .at(&[N_SYMBOLS])
         .tip("Click two circles of a view: a centreline through their centres"),
-    d("drw.surface", "Surface", "Грапавост", Icon::SurfaceSymbol)
+    dp("drw.surface", "Surface Texture Symbol", "Грапавост", Icon::SurfaceSymbol, Dp::SurfaceTexture)
         .alias(&["ST"])
         .at(&[N_SYMBOLS])
-        .tip("A surface texture symbol")
-        .todo("4.3"),
-    d("drw.datum", "Datum Identifier", "База", Icon::Datum)
+        .tip("A surface texture symbol"),
+    dp("drw.datum", "Datum Identifier Symbol", "База", Icon::Datum, Dp::DatumIdentifier)
         .alias(&["DI"])
         .at(&[N_SYMBOLS])
-        .tip("A datum identifier symbol")
-        .todo("4.3"),
-    d("drw.fcf", "Feature Control Frame", "Рамка на допуск", Icon::ControlFrame)
+        .tip("A datum identifier symbol"),
+    dp("drw.fcf", "Feature Control Frame", "Рамка на допуск", Icon::ControlFrame, Dp::ControlFrame)
         .alias(&["FCF"])
         .at(&[N_SYMBOLS])
-        .tip("A GD&T feature control frame")
-        .todo("4.3"),
-    d("drw.parts_list", "Parts List", "Спецификация", Icon::PartsList)
+        .tip("A GD&T feature control frame"),
+    dp("drw.parts_list", "Parts List", "Спецификация", Icon::PartsList, Dp::PartsList)
         .alias(&["PL"])
         .at(&[N_TABLE])
-        .tip("A parts list from the BOM of a view's assembly")
-        .todo("4.4"),
-    d("drw.balloon", "Balloon", "Позиция", Icon::Balloon)
+        .tip("A parts list from the BOM of a view's assembly"),
+    dp("drw.balloon", "Balloon", "Позиция", Icon::Balloon, Dp::Balloon)
         .alias(&["B"])
         .at(&[N_TABLE])
-        .tip("Item balloons with leaders")
-        .todo("4.4"),
-    d("drw.hole_table", "Hole Table", "Таблица на отворите", Icon::PartsList)
+        .tip("Item balloons with leaders"),
+    dp("drw.hole_table", "Hole Table - View", "Таблица на отворите", Icon::PartsList, Dp::HoleTableView)
         .alias(&["HT"])
         .at(&[N_TABLE])
-        .tip("Holes of a view with coordinates from a datum")
-        .todo("4.4"),
-    d("drw.revision_table", "Revision Table", "Таблица на ревизиите", Icon::PartsList)
+        .tip("Holes of a view with coordinates from a datum"),
+    dp("drw.revision_table", "Revision Table", "Таблица на ревизиите", Icon::PartsList, Dp::RevisionTable)
         .alias(&["RT"])
+        .at(&[N_REVISION])
+        .tip("Rows of revisions"),
+    dp("drw.align_h", "Horizontally Align View", "Хоризонтално подравняване", Icon::ProjectedView, Dp::AlignHorizontal)
+        .alias(&["ALH"])
+        .at(&[D_MODIFY])
+        .tip("Align a view horizontally to another one"),
+    dp("drw.align_v", "Vertically Align View", "Вертикално подравняване", Icon::ProjectedView, Dp::AlignVertical)
+        .alias(&["ALV"])
+        .at(&[D_MODIFY])
+        .tip("Align a view vertically to another one"),
+    dp("drw.align_pos", "Positionally Align View", "Подравняване по положение", Icon::ProjectedView, Dp::AlignInPosition)
+        .alias(&["ALP"])
+        .at(&[D_MODIFY])
+        .tip("Keep a view in place relative to another one"),
+    dp("drw.align_break", "Remove View Alignment", "Премахване на подравняването", Icon::ProjectedView, Dp::AlignBreak)
+        .alias(&["ALB"])
+        .at(&[D_MODIFY])
+        .tip("Free a view from its alignment"),
+    dp("drw.baseline_set", "Baseline Dimension Set", "Група размери от база", Icon::Dimension, Dp::BaselineSet)
+        .alias(&["BDS"])
+        .at(&[N_DIM])
+        .tip("Baseline dimensions kept as one set"),
+    dp("drw.ordinate_set", "Ordinate Dimension Set", "Група ординатни размери", Icon::Dimension, Dp::OrdinateSet)
+        .alias(&["ODS"])
+        .at(&[N_DIM])
+        .tip("Ordinate dimensions kept as one set"),
+    dp("drw.chain_set", "Chain Dimension Set", "Група верижни размери", Icon::Dimension, Dp::ChainSet)
+        .alias(&["CDS"])
+        .at(&[N_DIM])
+        .tip("Chain dimensions kept as one set"),
+    dp("drw.arrange", "Arrange Dimensions", "Подреждане на размерите", Icon::Dimension, Dp::Arrange)
+        .alias(&["AD"])
+        .at(&[N_DIM])
+        .tip("Space the selected dimensions evenly"),
+    dp("drw.chamfer_note", "Chamfer Note", "Бележка за фаска", Icon::HoleNote, Dp::ChamferNote)
+        .alias(&["CN"])
+        .at(&[N_NOTES])
+        .tip("A note with the chamfer distances and angle"),
+    dp("drw.punch_note", "Punch Notes", "Бележка за щанцоване", Icon::HoleNote, Dp::PunchNote)
+        .alias(&["PN"])
+        .at(&[N_NOTES])
+        .tip("Punch notes in a flat pattern view"),
+    dp("drw.bend_note", "Bend Notes", "Бележка за огъвка", Icon::HoleNote, Dp::BendNote)
+        .alias(&["BN"])
+        .at(&[N_NOTES])
+        .tip("Direction, angle and radius on the bend lines of a flat pattern view"),
+    dp("drw.symbols", "Symbols", "Символи", Icon::Datum, Dp::SketchedSymbols)
+        .alias(&["SY"])
+        .at(&[N_SYMBOLS])
+        .tip("Place a sketched symbol from Drawing Resources"),
+    dp("drw.welding", "Welding Symbol", "Символ за заварка", Icon::ControlFrame, Dp::Welding)
+        .alias(&["WS"])
+        .at(&[N_SYMBOLS])
+        .tip("A welding symbol: arrow and other side, flags, tail note"),
+    dp("drw.caterpillar", "Caterpillar", "Заваръчен шев (гъсеница)", Icon::CenterlineMark, Dp::Caterpillar)
+        .alias(&["CAT"])
+        .at(&[N_SYMBOLS])
+        .tip("Weld beads drawn along edges"),
+    dp("drw.end_fill", "End Fill", "Сечение на шев", Icon::SectionView, Dp::EndFill)
+        .alias(&["EF"])
+        .at(&[N_SYMBOLS])
+        .tip("The filled end section of a weld bead"),
+    dp("drw.feature_id", "Feature Identifier Symbol", "Идентификатор на елемент", Icon::Datum, Dp::FeatureIdentifier)
+        .alias(&["FI"])
+        .at(&[N_SYMBOLS])
+        .tip("A feature identifier symbol"),
+    dp("drw.dt_leader", "Datum Target - Leader", "Базова цел - водеща линия", Icon::Datum, Dp::DatumTargetLeader)
+        .alias(&["DTL"])
+        .at(&[N_SYMBOLS])
+        .tip("A datum target with a leader"),
+    dp("drw.dt_circle", "Datum Target - Circle", "Базова цел - кръг", Icon::Datum, Dp::DatumTargetCircle)
+        .alias(&["DTC"])
+        .at(&[N_SYMBOLS])
+        .tip("A circular datum target area"),
+    dp("drw.dt_line", "Datum Target - Line", "Базова цел - линия", Icon::Datum, Dp::DatumTargetLine)
+        .alias(&["DTN"])
+        .at(&[N_SYMBOLS])
+        .tip("A datum target line"),
+    dp("drw.dt_point", "Datum Target - Point", "Базова цел - точка", Icon::Datum, Dp::DatumTargetPoint)
+        .alias(&["DTP"])
+        .at(&[N_SYMBOLS])
+        .tip("A datum target point"),
+    dp("drw.dt_rect", "Datum Target - Rectangle", "Базова цел - правоъгълник", Icon::Datum, Dp::DatumTargetRectangle)
+        .alias(&["DTR"])
+        .at(&[N_SYMBOLS])
+        .tip("A rectangular datum target area"),
+    dp("drw.edge_symbol", "Edge Symbol", "Символ за ръб", Icon::SurfaceSymbol, Dp::EdgeSymbol)
+        .alias(&["EGS"])
+        .at(&[N_SYMBOLS])
+        .tip("An edge state symbol (ISO 13715)"),
+    dp("drw.transition", "Transition Symbol", "Символ за преход", Icon::SurfaceSymbol, Dp::TransitionSymbol)
+        .alias(&["TS"])
+        .at(&[N_SYMBOLS])
+        .tip("Mark a tangent transition edge"),
+    dp("drw.bisector", "Centerline Bisector", "Ъглополовяща ос", Icon::CenterlineMark, Dp::CenterlineBisector)
+        .alias(&["CB"])
+        .at(&[N_SYMBOLS])
+        .tip("A centre line half-way between two edges"),
+    dp("drw.centered_pattern", "Centered Pattern", "Оси на кръгов масив", Icon::CenterMark, Dp::CenteredPattern)
+        .alias(&["CP"])
+        .at(&[N_SYMBOLS])
+        .tip("Centre lines of a circular pattern of holes"),
+    dp("drw.auto_centerlines", "Automated Centerlines", "Автоматични оси", Icon::CenterMark, Dp::AutoCenterlines)
+        .alias(&["ACL"])
+        .at(&[N_SYMBOLS])
+        .tip("Centre marks and lines on chosen feature types of the views"),
+    dp("drw.auto_balloon", "Auto Balloon", "Автоматични позиции", Icon::Balloon, Dp::AutoBalloon)
+        .alias(&["AB"])
         .at(&[N_TABLE])
-        .tip("Rows of revisions")
-        .todo("4.4"),
+        .tip("Balloons for every component of a view"),
+    dp("drw.table", "Table", "Таблица", Icon::PartsList, Dp::GeneralTable)
+        .alias(&["TB"])
+        .at(&[N_TABLE])
+        .tip("A table of free cells, from a CSV / Excel file or an iPart table"),
+    dp("drw.hole_table_sel", "Hole Table - Selection", "Таблица на избрани отвори", Icon::PartsList, Dp::HoleTableSelection)
+        .alias(&["HTS"])
+        .at(&[N_TABLE])
+        .tip("A hole table of the selected holes"),
+    dp("drw.hole_table_feat", "Hole Table - Selected Feature", "Таблица на отворите на елемент", Icon::PartsList, Dp::HoleTableFeature)
+        .alias(&["HTF"])
+        .at(&[N_TABLE])
+        .tip("A hole table of the holes of one feature type"),
+    dp("drw.revision_tag", "Revision Tag", "Маркер на ревизия", Icon::Text, Dp::RevisionTag)
+        .alias(&["RTG"])
+        .at(&[N_REVISION])
+        .tip("A revision tag next to a change"),
+    dp("drw.revision_cloud", "Revision Cloud", "Облак на ревизия", Icon::Text, Dp::RevisionCloud)
+        .alias(&["RC"])
+        .at(&[N_REVISION])
+        .tip("A cloud round a change"),
+    dp("drw.update_all", "Update All Sheets", "Обновяване на всички листове", Icon::Rebuild, Dp::UpdateAllSheets)
+        .alias(&["UAS"])
+        .at(&[G_UPDATE])
+        .tip("Update the views of every sheet"),
+    dp("drw.replace_model", "Replace Model Reference", "Смяна на модела", Icon::Drawing, Dp::ReplaceModel)
+        .alias(&["RMR"])
+        .at(&[G_MODIFY])
+        .tip("Point the drawing views at another model file"),
+    dp("drw.define_border", "Define Border", "Дефиниране на рамка", Icon::Drawing, Dp::DefineBorder)
+        .alias(&["DBR"])
+        .at(&[G_DEFINE])
+        .tip("A new border template"),
+    dp("drw.define_title", "Define Title Block", "Дефиниране на основен надпис", Icon::Drawing, Dp::DefineTitleBlock)
+        .alias(&["DTB"])
+        .at(&[G_DEFINE])
+        .tip("A new title block template"),
+    dp("drw.define_symbol", "Define Sketched Symbol", "Дефиниране на символ", Icon::Drawing, Dp::DefineSymbol)
+        .alias(&["DSS"])
+        .at(&[G_DEFINE])
+        .tip("A new sketched symbol template"),
+    d("drw.edit_layers", "Edit Layers", "Редакция на слоевете", Icon::Settings)
+        .run(Action::Drawing(DrwCmd::EditLayers))
+        .alias(&["EL"])
+        .at(&[N_FORMAT])
+        .tip("The drawing's layers in the Style and Standard Editor: line type, weight, colour, on / off")
+        .spec("4.6-drawing-styles.md"),
     // ---- File / Help -----------------------------------------------------
     d("drw.export_pdf", "Export PDF", "Износ в PDF", Icon::Drawing)
         .run(Action::Drawing(DrwCmd::ExportPdf))

@@ -288,6 +288,17 @@ style types, bold = in use; right: the style's settings, dimension styles on Inv
 Delete at the top; every change redraws the sheet and is one Undo step.
 `cargo run --example drawing_demo -- plate.3dcadcraft` builds a plate with holes and its drawing (all view
 kinds and annotations) and writes `plate.pdf`.
+The other drawing commands open their Inventor dialog with OK disabled (interface first,
+[spec/4.7-drawing-commands.md](spec/4.7-drawing-commands.md)); a click on the sheet fills the active selector.
+Aliases: Overlay **OV**, Draft View **DFV**, Break **BRK**, Break Out **BO**, Slice **SL**, Crop **CR**, Align
+**ALH / ALV / ALP / ALB**, New Sketch **DS**, Baseline / Ordinate / Chain **BD / OD / CD** (sets **BDS / ODS /
+CDS**), Arrange **AD**, Retrieve **RMA**, Chamfer / Punch / Bend Note **CN / PN / BN**, Symbols **SY**, Surface
+Texture **ST**, Welding **WS**, Caterpillar **CAT**, End Fill **EF**, FCF **FCF**, Datum / Feature Identifier
+**DI / FI**, Datum Targets **DTL / DTC / DTN / DTP / DTR**, Edge Symbol **EGS**, Transition **TS**, Bisector
+**CB**, Centered Pattern **CP**, Automated Centerlines **ACL**, Parts List **PL**, Balloon **B**, Auto Balloon
+**AB**, Table **TB**, Hole Tables **HT / HTS / HTF**, Revision Tag / Table / Cloud **RTG / RT / RC**, Edit
+Layers **EL**, Update All Sheets **UAS**, Replace Model Reference **RMR**, Define Border / Title Block / Symbol
+**DBR / DTB / DSS**. Double-click a dimension: Edit Dimension (Text, Precision and Tolerance, Inspection).
 🟡 waiting for a visual check.
 
 ### Help, log and recovery

@@ -476,6 +476,15 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("drw.break_out"),
                     c("drw.slice"),
                     c("drw.crop"),
+                    split(
+                        "Align",
+                        items(&[
+                            "drw.align_h",
+                            "drw.align_v",
+                            "drw.align_pos",
+                            "drw.align_break",
+                        ]),
+                    ),
                 ],
             ),
             panel("Sketch", vec![c("drw.start_sketch").large()]),
@@ -489,33 +498,86 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 "Dimension",
                 vec![
                     c("drw.dimension").large(),
-                    c("drw.baseline"),
-                    c("drw.ordinate"),
-                    c("drw.chain"),
-                    c("drw.retrieve"),
+                    split(
+                        "Baseline",
+                        items(&[
+                            "drw.baseline",
+                            "drw.baseline_set",
+                            "drw.ordinate",
+                            "drw.ordinate_set",
+                            "drw.chain",
+                            "drw.chain_set",
+                        ]),
+                    ),
+                    c("drw.arrange"),
                 ],
             ),
-            panel("Feature Notes", vec![c("drw.hole_note")]),
+            panel(
+                "Feature Notes",
+                vec![
+                    c("drw.hole_note"),
+                    c("drw.chamfer_note"),
+                    c("drw.punch_note"),
+                    c("drw.bend_note"),
+                ],
+            ),
             panel("Text", vec![c("drw.text").large(), c("drw.leader_text")]),
             panel(
                 "Symbols",
                 vec![
-                    c("drw.center_mark"),
+                    split(
+                        "Symbols",
+                        items(&[
+                            "drw.symbols",
+                            "drw.surface",
+                            "drw.welding",
+                            "drw.caterpillar",
+                            "drw.end_fill",
+                            "drw.fcf",
+                            "drw.datum",
+                            "drw.feature_id",
+                            "drw.dt_leader",
+                            "drw.dt_circle",
+                            "drw.dt_line",
+                            "drw.dt_point",
+                            "drw.dt_rect",
+                            "drw.edge_symbol",
+                            "drw.transition",
+                        ]),
+                    ),
                     c("drw.centerline"),
-                    c("drw.surface"),
-                    c("drw.datum"),
-                    c("drw.fcf"),
+                    c("drw.center_mark"),
+                    c("drw.auto_centerlines"),
+                    c("drw.bisector"),
+                    c("drw.centered_pattern"),
                 ],
             ),
+            panel("Retrieve", vec![c("drw.retrieve").large()]),
             panel(
                 "Table",
                 vec![
                     c("drw.parts_list").large(),
-                    c("drw.balloon"),
-                    c("drw.hole_table"),
-                    c("drw.revision_table"),
+                    split(
+                        "Hole",
+                        items(&[
+                            "drw.hole_table",
+                            "drw.hole_table_sel",
+                            "drw.hole_table_feat",
+                        ]),
+                    ),
+                    c("drw.table"),
+                    split("Balloon", items(&["drw.balloon", "drw.auto_balloon"])),
                 ],
             ),
+            panel(
+                "Revision",
+                vec![
+                    c("drw.revision_tag"),
+                    c("drw.revision_table"),
+                    c("drw.revision_cloud"),
+                ],
+            ),
+            panel("Format", vec![c("drw.edit_layers")]),
         ],
         Tab::SheetMetal => vec![
             panel("Setup", vec![c("sm.defaults").large(), c("sm.convert")]),
@@ -792,15 +854,34 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             panel("Automation", vec![c("tools.rules"), c("tools.assistant")]),
             panel("History", vec![c("tools.undo"), c("tools.redo")]),
         ],
-        Tab::Manage => vec![panel(
-            "Styles and Standards",
-            vec![
-                c("manage.styles_editor").large(),
-                c("manage.update_styles"),
-                c("manage.purge"),
-                c("manage.save_styles"),
-            ],
-        )],
+        Tab::Manage => {
+            let styles = panel(
+                "Styles and Standards",
+                vec![
+                    c("manage.styles_editor").large(),
+                    c("manage.update_styles"),
+                    c("manage.purge"),
+                    c("manage.save_styles"),
+                ],
+            );
+            if st.drawing {
+                vec![
+                    panel("Update", vec![c("drw.update_all").large()]),
+                    styles,
+                    panel("Modify", vec![c("drw.replace_model").large()]),
+                    panel(
+                        "Define",
+                        vec![
+                            c("drw.define_border"),
+                            c("drw.define_title"),
+                            c("drw.define_symbol"),
+                        ],
+                    ),
+                ]
+            } else {
+                vec![styles]
+            }
+        }
         Tab::View => vec![
             panel(
                 "Visibility",
@@ -872,7 +953,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
 #[cfg(test)]
 pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
     let mut out = Vec::new();
-    for editing in [false, true] {
+    for (editing, drawing) in [(false, false), (true, false), (false, true)] {
         for labels_shown in [false, true] {
             let st = State {
                 labels_shown,
@@ -889,7 +970,7 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 project: false,
                 center_point: false,
                 assembly: false,
-                drawing: false,
+                drawing,
                 asm_tool: None,
                 sheet_metal: true,
                 flat: false,
