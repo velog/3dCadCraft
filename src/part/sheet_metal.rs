@@ -889,6 +889,30 @@ pub struct FlatPattern {
     pub solid: crate::kernel::exact::ExactSolid,
 }
 
+/// A flat pattern's extents (Inventor's FLAT PATTERN EXTENTS LENGTH /
+/// WIDTH / AREA): the material it needs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlatExtents {
+    /// Length (mm, the longer side of the box).
+    pub length: Real,
+    /// Width (mm).
+    pub width: Real,
+    /// Area of the flat (outlines minus cut-outs, mm²).
+    pub area: Real,
+}
+
+/// A bend of the flat pattern in the part's coordinates (on the flat's top
+/// face): its centre line and the two lines where the bend zone ends.
+#[derive(Clone, Debug)]
+pub struct FlatBendLines {
+    /// The bend (angle, radius, up / down, allowance).
+    pub bend: ksm::BendLine,
+    /// Centre line.
+    pub centre: [crate::kernel::Point3; 2],
+    /// The bend zone's two edges (allowance / 2 each side).
+    pub zone: [[crate::kernel::Point3; 2]; 2],
+}
+
 /// A minimal DXF (R12 entities: LINE, POLYLINE) of a flat pattern.
 fn dxf(loops: &[Vec<[Real; 2]>], bends: &[ksm::BendLine]) -> String {
     use std::fmt::Write;
@@ -1128,6 +1152,56 @@ impl super::PartDocument {
         let st = self.sheet_models.get(body)?;
         let at = ksm::edge_point(&st.model, &e.name, crate::kernel::Point3::from(e.hint))?;
         ksm::edge_frame(&st.model, at)
+    }
+
+    /// The flat pattern's extents of the first sheet body (cheap: no
+    /// solid is built, so a BOM can ask every frame).
+    pub fn flat_extents(&self) -> Option<FlatExtents> {
+        let mut bodies: Vec<&String> = self.sheet_models.keys().collect();
+        bodies.sort();
+        self.flat_extents_of(bodies.first()?)
+    }
+
+    /// The flat pattern's extents of sheet `body`.
+    pub fn flat_extents_of(&self, body: &str) -> Option<FlatExtents> {
+        let st = self.sheet_models.get(body)?;
+        let (a, b) = ksm::flat_size(&st.model).ok()?;
+        Some(FlatExtents {
+            length: a.max(b),
+            width: a.min(b),
+            area: ksm::flat_area(&st.model).ok()?,
+        })
+    }
+
+    /// The bend lines of sheet `body`'s flat pattern, placed on the flat
+    /// solid's top face (as the Flat Pattern view shows them).
+    pub fn flat_bend_lines(&self, body: &str) -> Vec<FlatBendLines> {
+        let Some(st) = self.sheet_models.get(body) else {
+            return Vec::new();
+        };
+        let z = ksm::thickness(&st.model) * 1.002;
+        ksm::bends(&st.model)
+            .into_iter()
+            .map(|b| {
+                let (s, e) = (b.start, b.end);
+                let (dx, dy) = (e[0] - s[0], e[1] - s[1]);
+                let l = (dx * dx + dy * dy).sqrt().max(1e-12);
+                let h = b.allowance / 2.0;
+                let (nx, ny) = (-dy / l * h, dx / l * h);
+                let at = |p: [Real; 2]| ksm::flat_point(&st.model, p, z);
+                let side = |k: Real| {
+                    [
+                        at([s[0] + nx * k, s[1] + ny * k]),
+                        at([e[0] + nx * k, e[1] + ny * k]),
+                    ]
+                };
+                FlatBendLines {
+                    centre: [at(s), at(e)],
+                    zone: [side(1.0), side(-1.0)],
+                    bend: b,
+                }
+            })
+            .collect()
     }
 
     /// The flat patterns of the sheet bodies (Create Flat Pattern).

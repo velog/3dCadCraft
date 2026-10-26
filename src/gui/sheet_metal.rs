@@ -2464,6 +2464,60 @@ impl CadCraftApp {
 
     // ---- Sheet Metal Defaults, Flat Pattern --------------------------------
 
+    /// The Flat Pattern view's bend lines: centre lines dashed, up in green
+    /// and down in red (as the DXF layers), the bend zones' edges thin grey,
+    /// and a note "UP 90° R2" at each centre line (Inventor: up = towards
+    /// the viewer of the flat's top face).
+    pub(super) fn sm_flat_lines(&self, painter: &egui::Painter, rect: Rect) {
+        if !self.sm.flat || !self.is_sheet_metal() {
+            return;
+        }
+        const UP: Color32 = Color32::from_rgb(30, 150, 60);
+        const DOWN: Color32 = Color32::from_rgb(200, 50, 40);
+        let zone = Stroke::new(1.0, Color32::from_gray(110));
+        let part = self.part();
+        for body in self.sm_sheets() {
+            for (k, l) in part.flat_bend_lines(&body).iter().enumerate() {
+                let colour = if l.bend.up { UP } else { DOWN };
+                for z in &l.zone {
+                    if let (Some(a), Some(b)) = (
+                        self.camera.project(&z[0], rect),
+                        self.camera.project(&z[1], rect),
+                    ) {
+                        painter.line_segment([a, b], zone);
+                    }
+                }
+                let (Some(a), Some(b)) = (
+                    self.camera.project(&l.centre[0], rect),
+                    self.camera.project(&l.centre[1], rect),
+                ) else {
+                    continue;
+                };
+                painter.extend(egui::Shape::dashed_line(
+                    &[a, b],
+                    Stroke::new(1.5, colour),
+                    8.0,
+                    4.0,
+                ));
+                let note = format!(
+                    "{} {} {:.0}° R{}",
+                    k + 1,
+                    if l.bend.up { "UP" } else { "DOWN" },
+                    l.bend.angle_deg,
+                    trim_number(l.bend.radius)
+                );
+                let mid = a + (b - a) * 0.5;
+                painter.text(
+                    mid + egui::vec2(4.0, -4.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    note,
+                    egui::FontId::proportional(11.0),
+                    colour,
+                );
+            }
+        }
+    }
+
     /// Sheet Metal Defaults window (Inventor's dialog: the rule's values).
     pub(super) fn sm_defaults_window(&mut self, ctx: &egui::Context) {
         let Some(mut r) = self.sm.defaults.clone() else {
@@ -2584,15 +2638,30 @@ impl CadCraftApp {
 
     /// Flat Pattern facts in Properties.
     pub(super) fn sm_flat_info(&self, ui: &mut egui::Ui) {
-        for f in self.part().flat_patterns() {
-            ui.label(RichText::new(format!("Flat Pattern of {}", f.body)).strong());
-            ui.label(format!(
-                "Extents {:.2} × {:.2} mm",
-                f.size.0.max(f.size.1),
-                f.size.0.min(f.size.1)
-            ));
-            ui.label(format!("{} bend(s)", f.bends.len()));
-            for (k, b) in f.bends.iter().enumerate() {
+        // Per frame: extents and bend lines only (the flat solids are built
+        // for the view once, not here).
+        let part = self.part();
+        for body in self.sm_sheets() {
+            let Some(x) = part.flat_extents_of(&body) else {
+                continue;
+            };
+            let bends: Vec<_> = part
+                .flat_bend_lines(&body)
+                .into_iter()
+                .map(|l| l.bend)
+                .collect();
+            ui.label(RichText::new(format!("Flat Pattern of {body}")).strong());
+            ui.label("Flat Pattern Extents").on_hover_text(
+                "Inventor's FLAT PATTERN EXTENTS LENGTH / WIDTH / AREA (also BOM columns)",
+            );
+            ui.label(format!("Length {:.2} mm", x.length));
+            ui.label(format!("Width {:.2} mm", x.width));
+            ui.label(format!("Area {:.2} mm²", x.area));
+            ui.label(format!("{} bend(s)", bends.len()));
+            ui.weak("Lines: up green, down red").on_hover_text(
+                "In the view: bend centre lines dashed (up green, down red), bend zones grey",
+            );
+            for (k, b) in bends.iter().enumerate() {
                 ui.weak(format!(
                     "Bend {}: {:.1}° {} R {:.2}, allowance {:.3} mm",
                     k + 1,
@@ -2777,6 +2846,12 @@ fn sm_clear_inputs(f: &mut Feature) {
         },
         _ => {}
     }
+}
+
+/// A length without trailing zeros (`2`, `2.5`, `0.75`).
+fn trim_number(v: f64) -> String {
+    let s = format!("{v:.3}");
+    s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
 #[cfg(test)]

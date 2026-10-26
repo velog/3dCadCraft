@@ -48,6 +48,9 @@ impl CadCraftApp {
     /// What the BOM reads of a component.
     fn bom_info(&self, r: DocRef) -> ComponentInfo {
         let material = self.with_part(r, |p| p.material.clone()).flatten();
+        let flat = self
+            .with_part(r, |p| p.flat_extents().map(|x| (x.length, x.width, x.area)))
+            .flatten();
         match r.library {
             None => match self.project.document(r.document) {
                 Some(d) => ComponentInfo {
@@ -55,6 +58,7 @@ impl CadCraftApp {
                     props: d.properties.clone(),
                     material,
                     missing: false,
+                    flat,
                 },
                 None => ComponentInfo {
                     file_name: "?".into(),
@@ -79,6 +83,7 @@ impl CadCraftApp {
                     missing: props.is_none(),
                     props: props.unwrap_or_default(),
                     material,
+                    flat,
                 }
             }
         }

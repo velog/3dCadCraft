@@ -1362,3 +1362,41 @@ fn contour_flange_direction_and_position() {
         );
     }
 }
+
+/// Flat pattern extents (Inventor's FLAT PATTERN EXTENTS LENGTH / WIDTH /
+/// AREA) and the bend lines the Flat Pattern view draws: a 100 × 60 plate
+/// with a 25 mm flange on its front edge flattens to 100 long, 60 + the
+/// flange's developed length wide; one bend line, its zone the allowance wide,
+/// on the flat's top face.
+#[test]
+fn flat_extents_and_bend_lines() {
+    let mut p = rect(100.0, 60.0);
+    let plain = p.flat_extents().unwrap();
+    assert!((plain.length - 100.0).abs() < 1e-6 && (plain.width - 60.0).abs() < 1e-6);
+    assert!((plain.area - 6000.0).abs() < 1e-3, "{}", plain.area);
+    flange(&mut p, &[Point3::new(50.0, 0.0, 2.0)], 25.0, |_| {});
+    let body = p.sheet_models.keys().next().unwrap().clone();
+    let x = p.flat_extents().unwrap();
+    let fp = &p.flat_patterns()[0];
+    // The flange adds to the 60 side (60 + developed length < 100): length
+    // stays the 100 edge, width is the developed side.
+    assert!((x.length - 100.0).abs() < 1e-6, "{}", x.length);
+    assert!((x.width - fp.size.0.min(fp.size.1)).abs() < 1e-9);
+    assert!(x.width > 60.0 + 20.0, "{}", x.width);
+    // No cut-outs: the area is the box's (within the outline's sampling).
+    assert!((x.area - x.length * x.width).abs() < 1e-3 * x.area, "{x:?}");
+    let lines = p.flat_bend_lines(&body);
+    assert_eq!(lines.len(), 1);
+    let l = &lines[0];
+    assert!(((l.centre[1] - l.centre[0]).norm() - 100.0).abs() < 1e-6);
+    let gap = (l.zone[1][0] - l.zone[0][0]).norm();
+    assert!(
+        (gap - l.bend.allowance).abs() < 1e-9,
+        "{gap} vs {}",
+        l.bend.allowance
+    );
+    // On the flat solid's top face (z = T).
+    for q in l.centre.iter().chain(l.zone.iter().flatten()) {
+        assert!(q.z > 1.99 && q.z < 2.1, "{q}");
+    }
+}

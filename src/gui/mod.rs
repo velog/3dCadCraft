@@ -6919,6 +6919,7 @@ impl CadCraftApp {
             }
             overlay::draw_snap(&painter, &self.camera, rect, &ps.sketch, &pick);
         }
+        self.sm_flat_lines(&painter, rect);
         // Sheet metal Flange: sheet edges under the cursor, clicks add them.
         let sm_click = response.clicked_by(PointerButton::Primary) && on_cube.is_none();
         self.sm_view(

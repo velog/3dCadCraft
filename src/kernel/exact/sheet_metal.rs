@@ -711,6 +711,38 @@ pub fn bends(m: &SheetModel) -> Vec<BendLine> {
         .collect()
 }
 
+/// A point of the flat pattern (flat coordinates, `z` above its bottom
+/// face) in the part: the flat solid lies on the sheet's frame, its top face
+/// at `z = T`.
+pub fn flat_point(m: &SheetModel, p: [Real; 2], z: Real) -> Point3 {
+    let f = &m.0.frame;
+    p3(f.to_world(solidcraft_geom::Vec2::new(p[0], p[1])) + f.normal() * z)
+}
+
+/// The flat pattern's area (outlines minus cut-outs), mm².
+pub fn flat_area(m: &SheetModel) -> Result<Real, String> {
+    let area = |l: &[solidcraft_geom::Vec2]| -> Real {
+        let n = l.len();
+        ((0..n)
+            .map(|i| {
+                let (a, b) = (l[i], l[(i + 1) % n]);
+                a.x * b.y - b.x * a.y
+            })
+            .sum::<Real>()
+            / 2.0)
+            .abs()
+    };
+    let regions = m.0.flat_regions().map_err(|e| e.to_string())?;
+    let tol = (m.0.t * 0.001).max(1e-4);
+    Ok(regions
+        .iter()
+        .map(|r| {
+            area(&r.outer.polyline(tol))
+                - r.holes.iter().map(|h| area(&h.polyline(tol))).sum::<Real>()
+        })
+        .sum())
+}
+
 /// The thickness of the sheet.
 pub fn thickness(m: &SheetModel) -> Real {
     m.0.t

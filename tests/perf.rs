@@ -1946,6 +1946,20 @@ fn speed_budgets() {
                 assert_eq!(p.flat_patterns()[0].bends.len(), 4);
             }),
         ));
+        // What the BOM and the Flat Pattern view ask every frame: the
+        // extents (no flat solid) and the bend lines.
+        let mut tray = base.clone();
+        tray.add_sheet_convert(def.clone()).unwrap();
+        let body = tray.sheet_models.keys().next().unwrap().clone();
+        rows.push((
+            "sheet metal: flat extents + bend lines of the tray (one frame)",
+            2.0,
+            median_ms(5, || {
+                let x = tray.flat_extents().unwrap();
+                assert!(x.area > 0.0);
+                assert_eq!(tray.flat_bend_lines(&body).len(), 4);
+            }),
+        ));
     }
     // Sheet metal S2 (docs/spec/5.6): a 200 x 120 Face, a Hem on its right
     // edge, 20 round cut-outs (one Cut), a Fold along x = 140, Unfold,
@@ -2060,6 +2074,7 @@ fn speed_budgets() {
                 props,
                 material: None,
                 missing: false,
+                flat: None,
             }
         };
         rows.push((

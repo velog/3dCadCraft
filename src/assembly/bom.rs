@@ -30,7 +30,18 @@ pub struct ComponentInfo {
     pub material: Option<String>,
     /// The part (file) could not be found.
     pub missing: bool,
+    /// A sheet metal part's flat pattern extents: length, width (mm) and
+    /// area (mm²) — the columns `Flat Pattern Length / Width / Area`.
+    pub flat: Option<(f64, f64, f64)>,
 }
+
+/// The BOM columns of a sheet metal part's flat pattern (Inventor's FLAT
+/// PATTERN EXTENTS LENGTH / WIDTH / AREA).
+pub const FLAT_COLUMNS: [&str; 3] = [
+    "Flat Pattern Length",
+    "Flat Pattern Width",
+    "Flat Pattern Area",
+];
 
 /// One row.
 #[derive(Clone, Debug, PartialEq)]
@@ -118,6 +129,13 @@ pub fn rows(
                 .custom
                 .iter()
                 .map(|c| (c.name.clone(), c.value.text()))
+                .chain(ci.flat.iter().flat_map(|&(l, w, a)| {
+                    [
+                        (FLAT_COLUMNS[0].to_owned(), format!("{l:.2} mm")),
+                        (FLAT_COLUMNS[1].to_owned(), format!("{w:.2} mm")),
+                        (FLAT_COLUMNS[2].to_owned(), format!("{a:.2} mm^2")),
+                    ]
+                }))
                 .collect(),
             missing: ci.missing,
         });
@@ -229,6 +247,7 @@ mod tests {
                 props,
                 material: Some("Steel".into()),
                 missing: false,
+                flat: None,
             }
         };
         let s = rows(&a, BomView::Structured, false, &info);
@@ -256,5 +275,24 @@ mod tests {
             "Item,Part Number,BOM Structure,Unit QTY,QTY,Stock Number,Description,Material,Grade"
         );
         assert_eq!(lines[2], "2,bolt,Normal,Each,3,,\"Hex bolt, M8\",Steel,8.8");
+    }
+
+    /// A sheet metal part's flat pattern extents are BOM columns.
+    #[test]
+    fn flat_pattern_columns() {
+        let plate = DocRef::local(DocumentId::new_random());
+        let mut a = AssemblyDocument::default();
+        a.place(plate, "plate", Transform3::identity(), true);
+        let info = |_| ComponentInfo {
+            file_name: "bracket".into(),
+            flat: Some((120.0, 80.0, 9600.0)),
+            ..Default::default()
+        };
+        let s = rows(&a, BomView::Structured, false, &info);
+        let cols = custom_columns(&s);
+        assert_eq!(cols.len(), 3);
+        assert!(FLAT_COLUMNS.iter().all(|c| cols.iter().any(|x| x == c)));
+        assert_eq!(s[0].custom[FLAT_COLUMNS[0]], "120.00 mm");
+        assert_eq!(s[0].custom[FLAT_COLUMNS[2]], "9600.00 mm^2");
     }
 }
