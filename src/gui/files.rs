@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 
 use super::CadCraftApp;
-use crate::document::{DocumentData, FILE_EXTENSION, Project};
+use crate::document::format::{FilePreview, read_preview};
+use crate::document::{DocumentData, DocumentKind, FILE_EXTENSION, Project};
 use crate::part::PartDocument;
 use crate::part::export::ExportFormat;
 
@@ -153,6 +154,27 @@ pub(super) struct FileDialog {
     pub view: (f32, f32),
     /// The last click / arrow key was in the list (Enter opens its folder).
     pub list_active: bool,
+    /// The preview pane of the selected file.
+    pub preview: PreviewSlot,
+}
+
+/// The preview pane's file, read on a worker thread.
+#[derive(Clone, Default)]
+pub(super) struct PreviewSlot {
+    /// The file shown and its time (a new time reads it again).
+    key: Option<(PathBuf, Option<std::time::SystemTime>)>,
+    /// Filled by the worker.
+    result: std::sync::Arc<std::sync::Mutex<Option<Result<FilePreview, String>>>>,
+    texture: Option<egui::TextureHandle>,
+}
+
+impl std::fmt::Debug for PreviewSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreviewSlot")
+            .field("key", &self.key)
+            .field("texture", &self.texture.is_some())
+            .finish()
+    }
 }
 
 impl FileDialog {
@@ -175,6 +197,7 @@ impl FileDialog {
             places: places(""),
             view: (0.0, 0.0),
             list_active: false,
+            preview: PreviewSlot::default(),
         };
         d.refresh();
         d
@@ -369,6 +392,18 @@ impl FileDialog {
         if !self.recent {
             sort_entries(&mut self.entries, self.sort, self.descending);
         }
+    }
+
+    /// The selected file (not a folder) and its time.
+    fn selected_file(&self) -> Option<(PathBuf, Option<std::time::SystemTime>)> {
+        let s = self.selected.as_ref()?;
+        let e = self.entries.iter().find(|e| &e.name == s && !e.is_dir)?;
+        let path = if self.recent {
+            PathBuf::from(&e.name)
+        } else {
+            self.dir.join(&e.name)
+        };
+        Some((path, e.modified))
     }
 
     /// The path the dialog would use for its name (extension added when
@@ -1008,7 +1043,7 @@ impl CadCraftApp {
         let mut cancel = false;
         let mut open = true;
         let screen = ctx.content_rect();
-        let size = egui::vec2(780.0, 500.0).min(screen.size() * 0.9);
+        let size = egui::vec2(980.0, 540.0).min(screen.size() * 0.9);
         let wants_keys = ctx.egui_wants_keyboard_input();
         self.layout
             .place(
@@ -1019,7 +1054,7 @@ impl CadCraftApp {
                     .open(&mut open)
                     .collapsible(false)
                     .resizable(true)
-                    .min_size(egui::vec2(480.0, 320.0))
+                    .min_size(egui::vec2(640.0, 360.0))
                     .default_size(size)
                     // A centre pivot needs the size, which the first frame does not know.
                     .pivot(egui::Align2::LEFT_TOP)
@@ -1162,11 +1197,23 @@ impl CadCraftApp {
                         },
                     );
                     ui.separator();
-                    ui.vertical(|ui| {
-                        let (e, c) = file_list(ui, &mut d, list_h, row_h, step);
-                        enter = e;
-                        chosen = chosen.take().or(c);
-                    });
+                    // The preview pane keeps its width; the list takes the rest.
+                    let pane_w = 240.0;
+                    let list_w =
+                        (ui.available_width() - pane_w - 3.0 * ui.spacing().item_spacing.x)
+                            .max(200.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(list_w, list_h),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            ui.set_width(list_w);
+                            let (e, c) = file_list(ui, &mut d, list_h, row_h, step);
+                            enter = e;
+                            chosen = chosen.take().or(c);
+                        },
+                    );
+                    ui.separator();
+                    preview_pane(ui, &mut d, pane_w, list_h);
                 });
                 if let Some(to) = go_place {
                     d.go_to(to);
@@ -1374,6 +1421,206 @@ impl CadCraftApp {
             "" => "Not saved yet".to_owned(),
             p => p.to_owned(),
         });
+    }
+}
+
+/// The preview pane: the selected file's preview picture and properties
+/// (`docs/spec/0.6-files.md` §3.0a), read on a worker thread once per file.
+fn preview_pane(ui: &mut egui::Ui, d: &mut FileDialog, w: f32, h: f32) {
+    let want = d.selected_file();
+    if want != d.preview.key {
+        d.preview = PreviewSlot {
+            key: want.clone(),
+            ..PreviewSlot::default()
+        };
+        if let Some((path, _)) = want {
+            let slot = d.preview.result.clone();
+            let ctx = ui.ctx().clone();
+            let spawned = std::thread::Builder::new()
+                .name("file-preview".into())
+                .spawn(move || {
+                    let r = read_preview(&path).map_err(|e| e.to_string());
+                    *crate::diagnostics::lock(&slot) = Some(r);
+                    ctx.request_repaint();
+                });
+            if let Err(e) = spawned {
+                *crate::diagnostics::lock(&d.preview.result) = Some(Err(e.to_string()));
+            }
+        }
+    }
+    let result = crate::diagnostics::lock(&d.preview.result).clone();
+    let entry = d
+        .selected
+        .as_ref()
+        .and_then(|s| d.entries.iter().find(|e| &e.name == s && !e.is_dir))
+        .cloned();
+    ui.allocate_ui_with_layout(
+        egui::vec2(w, h),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.set_min_size(egui::vec2(w, h));
+            ui.set_max_width(w);
+            let side = (w - 4.0).min(h * 0.6).max(64.0);
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
+            let note = |ui: &mut egui::Ui, text: &str| {
+                ui.put(
+                    rect.shrink(12.0),
+                    egui::Label::new(egui::RichText::new(text).weak()).wrap(),
+                );
+            };
+            match (&d.preview.key, &result) {
+                (None, _) => note(ui, "Select a file to see its preview"),
+                (Some(_), None) => note(ui, "Reading..."),
+                (Some(_), Some(Err(e))) => note(ui, e),
+                (Some((path, _)), Some(Ok(v))) => {
+                    if d.preview.texture.is_none()
+                        && let Some((iw, ih, rgba)) = v
+                            .thumbnail
+                            .as_deref()
+                            .and_then(crate::part::thumbnail::decode_png)
+                    {
+                        let img = egui::ColorImage::from_rgba_unmultiplied(
+                            [iw as usize, ih as usize],
+                            &rgba,
+                        );
+                        d.preview.texture = Some(ui.ctx().load_texture(
+                            format!("file-preview:{}", path.display()),
+                            img,
+                            egui::TextureOptions::LINEAR,
+                        ));
+                    }
+                    match &d.preview.texture {
+                        Some(t) => {
+                            ui.painter().image(
+                                t.id(),
+                                rect.shrink(4.0),
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                egui::Color32::WHITE,
+                            );
+                        }
+                        None => note(
+                            ui,
+                            "No preview picture: saved by an older version (save it again to add one)",
+                        ),
+                    }
+                }
+            }
+            ui.add_space(6.0);
+            let Some(Ok(v)) = &result else {
+                return;
+            };
+            if d.preview.key.is_none() {
+                return;
+            }
+            let kind = |k: DocumentKind| match k {
+                DocumentKind::Part => "Part",
+                DocumentKind::Assembly => "Assembly",
+                DocumentKind::Drawing => "Drawing",
+            };
+            let mut rows: Vec<(&str, String)> = Vec::new();
+            if let Some((name, k)) = &v.document {
+                rows.push(("Document", format!("{name} ({})", kind(*k))));
+            }
+            for (key, label) in [
+                ("part_number", "Part Number"),
+                ("description", "Description"),
+                ("title", "Title"),
+                ("author", "Author"),
+                ("revision", "Revision"),
+            ] {
+                let val = v.properties.get(key);
+                if !val.is_empty() {
+                    rows.push((label, val.to_owned()));
+                }
+            }
+            rows.push((
+                "Design State",
+                v.properties.design_state.label().to_owned(),
+            ));
+            let parts = v
+                .documents
+                .iter()
+                .filter(|d| d.1 == DocumentKind::Part)
+                .count();
+            let asms = v.documents.len() - parts;
+            rows.push((
+                "Documents",
+                match asms {
+                    0 => format!("{parts} part(s)"),
+                    _ => format!("{parts} part(s), {asms} assembly(ies)"),
+                },
+            ));
+            if let Some(e) = &entry {
+                if let Some(t) = e.modified {
+                    rows.push(("Modified", date_text(t)));
+                }
+                if let Some(n) = e.size {
+                    rows.push(("Size", size_text(n)));
+                }
+            }
+            rows.push(("Saved by", v.generator.clone()));
+            egui::Grid::new("file_preview_props")
+                .num_columns(2)
+                .spacing(egui::vec2(8.0, 2.0))
+                .show(ui, |ui| {
+                    let value_w = (w - 100.0).max(60.0);
+                    for (label, val) in rows {
+                        ui.weak(label);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(value_w, 16.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add(egui::Label::new(val.as_str()).truncate())
+                                    .on_hover_text(&val);
+                            },
+                        );
+                        ui.end_row();
+                    }
+                });
+        },
+    );
+}
+
+impl CadCraftApp {
+    /// The preview picture saved with the project (Application Options ›
+    /// Save): the active part, or every visible occurrence of the active
+    /// assembly.
+    pub(super) fn thumbnail_png(&self) -> Option<Vec<u8>> {
+        use super::layout::ThumbnailSource;
+        use crate::part::thumbnail;
+        let view = match self.thumbnail_source {
+            ThumbnailSource::Off => return None,
+            ThumbnailSource::Iso => thumbnail::iso_view(),
+            ThumbnailSource::ActiveView => self.camera.frame().0,
+        };
+        let started = std::time::Instant::now();
+        let mut scene = thumbnail::Scene::default();
+        if let Some(a) = self.assembly() {
+            for o in a.occurrences.iter().filter(|o| o.visible) {
+                self.with_part(o.component, |part| scene.add_part(part, Some(&o.transform)));
+            }
+        } else if let Some(d) = self.drawing() {
+            // A drawing shows the model of its first view (the sheet itself
+            // is not drawn yet).
+            let model = d
+                .sheets
+                .iter()
+                .find_map(|s| s.views.first().and_then(|v| d.model_of(s, v.id)));
+            if let Some(m) = model {
+                self.with_part(m, |part| scene.add_part(part, None));
+            }
+        } else {
+            scene.add_part(self.part(), None);
+        }
+        let png = thumbnail::png(&scene, view, thumbnail::SIZE);
+        log::info!(
+            "thumbnail: {} ms, {} bytes",
+            started.elapsed().as_millis(),
+            png.as_ref().map_or(0, Vec::len)
+        );
+        png
     }
 }
 

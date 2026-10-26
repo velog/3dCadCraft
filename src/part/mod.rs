@@ -54,6 +54,7 @@ pub mod shell;
 pub mod split;
 pub mod standards;
 pub mod sweep;
+pub mod thumbnail;
 pub mod units;
 pub mod work;
 

@@ -542,6 +542,7 @@ dependencies = [
  "eframe",
  "log",
  "nalgebra",
+ "png",
  "serde",
  "serde_json",
  "slotmap",

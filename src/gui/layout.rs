@@ -229,6 +229,21 @@ pub struct AppOptions {
     /// Assembly constraints take the distance (angle) the components have
     /// now; off: they snap together at 0.
     pub constrain_current_offset: bool,
+    /// Application Options › Save: the preview picture written on save.
+    pub thumbnail: ThumbnailSource,
+}
+
+/// Where the preview picture saved with a project comes from
+/// (`docs/spec/0.6-files.md` §3.0a).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThumbnailSource {
+    /// The active document from the front-right-top corner, fitted.
+    #[default]
+    Iso,
+    /// The view direction of the camera at save, fitted.
+    ActiveView,
+    /// No picture.
+    Off,
 }
 
 impl Default for AppOptions {
@@ -248,6 +263,7 @@ impl Default for AppOptions {
             object_visibility: ObjectVisibility::default(),
             recent_commands: Vec::new(),
             constrain_current_offset: false,
+            thumbnail: ThumbnailSource::Iso,
         }
     }
 }
@@ -845,6 +861,7 @@ impl CadCraftApp {
             object_visibility: self.obj_vis,
             recent_commands: self.recent_commands.clone(),
             constrain_current_offset: self.constrain_current_offset,
+            thumbnail: self.thumbnail_source,
         }
     }
 
@@ -867,6 +884,7 @@ impl CadCraftApp {
         self.obj_vis = o.object_visibility;
         self.recent_commands = o.recent_commands;
         self.constrain_current_offset = o.constrain_current_offset;
+        self.thumbnail_source = o.thumbnail;
     }
 
     /// Start of a frame: Ctrl+0, F11 (outside a sketch, where F11 is Relax

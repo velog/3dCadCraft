@@ -9,7 +9,8 @@
 //! name.3dcadcraft/           ← unpacked: a directory (git-friendly)
 //! ├── mimetype             "application/vnd.3dcadcraft.project+zip" (stored, first)
 //! ├── manifest.json        format version, project id/name, document index,
-//! │                        library links
+//! │                        library links, the document of the preview picture
+//! ├── thumbnail.png        preview picture (optional, `part::thumbnail`)
 //! └── documents/
 //!     ├── <uuid>.json      one file per document
 //!     └── …
@@ -114,6 +115,7 @@ const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
 const MIMETYPE_ENTRY: &str = "mimetype";
 const MANIFEST_ENTRY: &str = "manifest.json";
+const THUMBNAIL_ENTRY: &str = "thumbnail.png";
 
 /// Options for saving.
 #[derive(Clone, Debug)]
@@ -142,6 +144,10 @@ struct Manifest {
     project: ProjectHeader,
     documents: Vec<DocumentEntry>,
     libraries: Vec<LibraryLink>,
+    /// The document `thumbnail.png` shows (the active one at save). Older
+    /// builds ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preview: Option<DocumentId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -209,6 +215,9 @@ impl Project {
                 })
                 .collect(),
             libraries: self.libraries.clone(),
+            preview: self
+                .preview
+                .filter(|id| self.thumbnail.is_some() && self.document(*id).is_some()),
         };
         let mut entries = vec![
             (MIMETYPE_ENTRY.to_owned(), MIMETYPE.as_bytes().to_vec()),
@@ -216,6 +225,9 @@ impl Project {
         ];
         for d in &self.documents {
             entries.push((document_entry_name(d.id), to_json(path, d)?));
+        }
+        if let Some(png) = &self.thumbnail {
+            entries.push((THUMBNAIL_ENTRY.to_owned(), png.clone()));
         }
         Ok(entries)
     }
@@ -244,7 +256,8 @@ impl Project {
             for (name, bytes) in &entries {
                 // `mimetype` is stored uncompressed and first (as in ODF/EPUB) so
                 // file-type sniffers can identify the archive from its header.
-                let method = if name == MIMETYPE_ENTRY {
+                // A PNG is compressed already.
+                let method = if name == MIMETYPE_ENTRY || name == THUMBNAIL_ENTRY {
                     CompressionMethod::Stored
                 } else {
                     CompressionMethod::Deflated
@@ -381,6 +394,8 @@ impl Project {
             name: manifest.project.name,
             documents,
             libraries: manifest.libraries,
+            thumbnail: read(THUMBNAIL_ENTRY).ok(),
+            preview: manifest.preview,
             newer_file: (manifest.format_revision > FORMAT_REVISION).then(|| {
                 format!(
                     "made by a newer 3DCadCraft ({}, format revision {}; this build: {}): features added since may be missing or built differently, update the program",
@@ -391,6 +406,81 @@ impl Project {
         project.validate().map_err(|e| corrupt(path, e))?;
         Ok(project)
     }
+}
+
+/// What the Open dialog shows of a project without loading it: the preview
+/// picture, the previewed document's name, kind and iProperties, the
+/// documents and the build that wrote it.
+#[derive(Clone, Debug, Default)]
+pub struct FilePreview {
+    /// PNG bytes (`None` in files from older builds).
+    pub thumbnail: Option<Vec<u8>>,
+    /// The build that wrote the file.
+    pub generator: String,
+    /// Every document: (name, kind).
+    pub documents: Vec<(String, DocumentKind)>,
+    /// The previewed document (the active one at save, else the first).
+    pub document: Option<(String, DocumentKind)>,
+    /// Its iProperties.
+    pub properties: super::iprops::IProperties,
+}
+
+/// Reads [`FilePreview`] of a packed or unpacked project: the manifest, the
+/// picture and only the properties of one document.
+pub fn read_preview(path: &Path) -> ProjectResult<FilePreview> {
+    let meta = fs::metadata(path).map_err(io_err(path))?;
+    if meta.is_dir() {
+        preview_with(path, |name| fs::read(path.join(name)).ok())
+    } else {
+        let file = fs::File::open(path).map_err(io_err(path))?;
+        let mut zip = ZipArchive::new(BufReader::new(file))
+            .map_err(|e| corrupt(path, format!("not a 3DCadCraft archive ({e})")))?;
+        preview_with(path, |name| {
+            let mut entry = zip.by_name(name).ok()?;
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf).ok()?;
+            Some(buf)
+        })
+    }
+}
+
+fn preview_with(
+    path: &Path,
+    mut read: impl FnMut(&str) -> Option<Vec<u8>>,
+) -> ProjectResult<FilePreview> {
+    /// A document's name and properties; the model is skipped unparsed.
+    #[derive(Deserialize)]
+    struct Head {
+        #[serde(default)]
+        properties: super::iprops::IProperties,
+    }
+    let bytes = read(MANIFEST_ENTRY).ok_or_else(|| corrupt(path, "no manifest.json"))?;
+    let probe: VersionProbe = serde_json::from_slice(&bytes).map_err(|e| corrupt(path, e))?;
+    if probe.format != FORMAT_MAGIC {
+        return Err(corrupt(path, format!("unknown format '{}'", probe.format)));
+    }
+    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| corrupt(path, e))?;
+    let entry = manifest
+        .preview
+        .and_then(|id| manifest.documents.iter().find(|d| d.id == id))
+        .or_else(|| manifest.documents.first());
+    let properties = entry
+        // The canonical entry name, never a path from the file (as `load`).
+        .and_then(|e| read(&document_entry_name(e.id)))
+        .and_then(|b| serde_json::from_slice::<Head>(&b).ok())
+        .map(|h| h.properties)
+        .unwrap_or_default();
+    Ok(FilePreview {
+        thumbnail: read(THUMBNAIL_ENTRY),
+        generator: manifest.generator,
+        documents: manifest
+            .documents
+            .iter()
+            .map(|d| (d.name.clone(), d.kind))
+            .collect(),
+        document: entry.map(|e| (e.name.clone(), e.kind)),
+        properties,
+    })
 }
 
 /// Logs the result of a save or open (`what`) of `path`.
@@ -514,6 +604,44 @@ mod tests {
         p.save_folder(&folder, &SaveOptions::default()).unwrap();
         assert!(folder.join("manifest.json").is_file());
         assert_eq!(as_json(&Project::load(&folder).unwrap()), as_json(&p));
+    }
+
+    #[test]
+    fn preview_picture_and_properties_without_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut p = sample_project();
+        let bolt = p.documents()[1].id;
+        p.document_mut(bolt)
+            .unwrap()
+            .properties
+            .standard
+            .insert("part_number".into(), "B-008".into());
+        let png = vec![0x89, b'P', b'N', b'G', 1, 2, 3];
+        p.thumbnail = Some(png.clone());
+        p.preview = Some(bolt);
+        let file = dir.path().join("t.3dcadcraft");
+        let folder = dir.path().join("t-src.3dcadcraft");
+        p.save(&file).unwrap();
+        p.save_folder(&folder, &SaveOptions::default()).unwrap();
+        assert!(folder.join("thumbnail.png").is_file());
+        for path in [&file, &folder] {
+            let v = read_preview(path).unwrap();
+            assert_eq!(v.thumbnail.as_deref(), Some(png.as_slice()));
+            assert_eq!(v.document, Some(("Bolt M8".into(), DocumentKind::Part)));
+            assert_eq!(v.properties.get("part_number"), "B-008");
+            assert_eq!(v.documents.len(), 3);
+            // A load keeps the picture for the next save.
+            let back = Project::load(path).unwrap();
+            assert_eq!(back.thumbnail.as_deref(), Some(png.as_slice()));
+            assert_eq!(back.preview, Some(bolt));
+        }
+        // Without a picture: no entry, no preview field, the first document.
+        p.thumbnail = None;
+        p.save(&file).unwrap();
+        let v = read_preview(&file).unwrap();
+        assert!(v.thumbnail.is_none());
+        assert_eq!(v.document.map(|d| d.0), Some("Housing".into()));
+        assert!(read_preview(&dir.path().join("missing.3dcadcraft")).is_err());
     }
 
     #[test]

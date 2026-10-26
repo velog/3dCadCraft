@@ -366,6 +366,14 @@ pub struct Project {
     /// revision) and still opened: what may be built differently. Not saved.
     #[serde(skip)]
     pub newer_file: Option<String>,
+    /// The preview picture (`thumbnail.png`, PNG bytes) written with the
+    /// project, and the document it shows. Kept from the loaded file until
+    /// replaced (the GUI draws a new one on every save).
+    #[serde(skip)]
+    pub thumbnail: Option<Vec<u8>>,
+    /// The document the picture shows (the active one at save).
+    #[serde(skip)]
+    pub preview: Option<DocumentId>,
 }
 
 impl Project {
@@ -377,6 +385,8 @@ impl Project {
             documents: Vec::new(),
             libraries: Vec::new(),
             newer_file: None,
+            thumbnail: None,
+            preview: None,
         }
     }
 

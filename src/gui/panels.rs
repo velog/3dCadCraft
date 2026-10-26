@@ -4906,6 +4906,42 @@ impl CadCraftApp {
                 ui.checkbox(&mut o.show_axes, "Axes");
                 ui.checkbox(&mut o.show_triad, "Coordinate system indicator");
                 ui.separator();
+                ui.label(RichText::new("Save").strong());
+                let mut on = self.thumbnail_source != super::layout::ThumbnailSource::Off;
+                if ui
+                    .checkbox(&mut on, "Save preview picture")
+                    .on_hover_text(
+                        "A picture of the active document saved in the file, shown by the Open dialog",
+                    )
+                    .changed()
+                {
+                    self.thumbnail_source = if on {
+                        super::layout::ThumbnailSource::Iso
+                    } else {
+                        super::layout::ThumbnailSource::Off
+                    };
+                }
+                ui.add_enabled_ui(on, |ui| {
+                    ui.indent("thumbnail_source", |ui| {
+                        ui.radio_value(
+                            &mut self.thumbnail_source,
+                            super::layout::ThumbnailSource::Iso,
+                            "Isometric view on save",
+                        )
+                        .on_hover_text("From the front-right-top corner, zoomed to fit (the same model gives the same file)");
+                        ui.radio_value(
+                            &mut self.thumbnail_source,
+                            super::layout::ThumbnailSource::ActiveView,
+                            "Active view on save",
+                        )
+                        .on_hover_text("The view's direction at save, zoomed to fit");
+                        ui.add_enabled(false, egui::Button::new("Import from File..."))
+                            .on_disabled_hover_text(
+                                "Planned: a picture from a file (docs/spec/0.6-files.md §3.0a)",
+                            );
+                    });
+                });
+                ui.separator();
                 ui.label(RichText::new("Display").strong());
                 ui.checkbox(&mut self.show_labels, "Show constraint labels");
                 if ui

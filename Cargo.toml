@@ -52,6 +52,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 # Project container (.3dcadcraft = ZIP). Deflate only, backed by pure-Rust zlib-rs.
 zip = { version = "9", default-features = false, features = ["deflate"] }
+# Preview pictures (thumbnail.png) in project files.
+png = "0.18"
 # Globally unique, copy-safe identities for projects and documents.
 uuid = { version = "1", features = ["v4", "serde"] }
 

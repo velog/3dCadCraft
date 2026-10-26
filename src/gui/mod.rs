@@ -611,6 +611,8 @@ struct CadCraftApp {
     cons: constrain::ConstrainUi,
     /// Constraints keep the current distance (else 0); remembered.
     constrain_current_offset: bool,
+    /// Application Options › Save: the preview picture.
+    thumbnail_source: layout::ThumbnailSource,
     /// The iProperties window (`iprops.rs`).
     iprops: Option<iprops::IPropsWin>,
     /// The Bill of Materials window (`bom.rs`) and the CSV waiting for its
@@ -865,6 +867,7 @@ impl CadCraftApp {
             drw: Default::default(),
             cons: Default::default(),
             constrain_current_offset: false,
+            thumbnail_source: Default::default(),
             iprops: None,
             bom: None,
             drive: None,
@@ -3453,6 +3456,8 @@ impl CadCraftApp {
 
     fn save_project(&mut self, as_folder: bool) {
         let path = std::path::PathBuf::from(self.file_path.trim());
+        self.project.thumbnail = self.thumbnail_png();
+        self.project.preview = self.project.thumbnail.as_ref().map(|_| self.part_id);
         let result = if as_folder {
             self.project.save_folder(&path, &SaveOptions::default())
         } else {

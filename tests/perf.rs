@@ -1391,6 +1391,30 @@ fn speed_budgets() {
             p.add_pattern(pattern_grid(6, 6, 10.0)).unwrap();
         }),
     ));
+    // Preview picture written on every save (docs/spec/0.6-files.md §3.0a):
+    // tessellation + software render + PNG of a part with 36 holes.
+    let mut holes36 = holed.clone();
+    holes36.add_pattern(pattern_grid(6, 6, 10.0)).unwrap();
+    rows.push((
+        "preview picture of a plate with 36 holes (save thumbnail)",
+        150.0,
+        median_ms(3, || {
+            let png = cadcraft3d::part::thumbnail::part_png(
+                &holes36,
+                cadcraft3d::part::thumbnail::iso_view(),
+            );
+            assert!(png.is_some_and(|b| b.len() > 1000));
+        }),
+    ));
+    rows.push((
+        "preview picture of the rounded box (curved faces)",
+        100.0,
+        median_ms(3, || {
+            let png =
+                cadcraft3d::part::thumbnail::part_png(&rb, cadcraft3d::part::thumbnail::iso_view());
+            assert!(png.is_some());
+        }),
+    ));
     let bossed = box_with_circle([200.0, 200.0, 5.0], 10.0, 10.0, 1.5, false, 3.0);
     rows.push((
         "rectangular pattern 10×10 of a joined boss (SolidCraft #2076)",
