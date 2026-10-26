@@ -1427,20 +1427,20 @@ pub static COMMANDS: &[Command] = &[
         .at(&[D_CREATE])
         .tip("Pick a parent view, then click beside it for orthographic views or diagonally for isometric ones"),
     d("drw.auxiliary", "Auxiliary View", "Спомагателен изглед", Icon::AuxView)
+        .run(Action::Drawing(DrwCmd::Auxiliary))
         .alias(&["AV"])
         .at(&[D_CREATE])
-        .tip("A view square to an edge of a parent view")
-        .todo("4.2"),
+        .tip("Click a straight edge of a view, then place the view square to it"),
     d("drw.section", "Section View", "Разрез", Icon::SectionView)
+        .run(Action::Drawing(DrwCmd::Section))
         .alias(&["SV"])
         .at(&[D_CREATE])
-        .tip("Draw a section line over a parent view; the cut is hatched")
-        .todo("4.2"),
+        .tip("Click the parent view, two points of the section line, then place the hatched section"),
     d("drw.detail", "Detail View", "Детайлен изглед", Icon::DetailView)
+        .run(Action::Drawing(DrwCmd::Detail))
         .alias(&["DV"])
         .at(&[D_CREATE])
-        .tip("An enlarged circle or rectangle of a parent view")
-        .todo("4.2"),
+        .tip("Click the parent view, the circle's centre and size, then place the enlarged view"),
     d("drw.overlay", "Overlay View", "Изглед с наслагване", Icon::ProjectedView)
         .alias(&["OV"])
         .at(&[D_CREATE])
@@ -1487,10 +1487,10 @@ pub static COMMANDS: &[Command] = &[
         .at(&[D_SHEETS])
         .tip("Name, size, orientation, revision and exclusions of the active sheet"),
     d("drw.dimension", "Dimension", "Размер", Icon::Dimension)
+        .run(Action::Drawing(DrwCmd::Dimension))
         .alias(&["D"])
         .at(&[N_DIM])
-        .tip("Linear, aligned, angular, radius and diameter dimensions on view geometry")
-        .todo("4.3"),
+        .tip("Click an edge (length), a circle (diameter / radius) or two points, then click where the dimension goes"),
     d("drw.baseline", "Baseline", "Размери от база", Icon::Dimension)
         .alias(&["BD"])
         .at(&[N_DIM])
@@ -1513,30 +1513,30 @@ pub static COMMANDS: &[Command] = &[
         .tip("Bring the model's sketch and feature dimensions that lie in the view plane")
         .todo("4.3"),
     d("drw.hole_note", "Hole and Thread", "Бележка за отвор", Icon::HoleNote)
+        .run(Action::Drawing(DrwCmd::HoleNote))
         .alias(&["HN"])
         .at(&[N_NOTES])
-        .tip("A note from a Hole or Thread feature (diameter, depth, thread)")
-        .todo("4.3"),
+        .tip("Click a hole's circle, then place its note (diameter, depth, thread from the Hole feature)"),
     d("drw.text", "Text", "Текст", Icon::Text)
+        .run(Action::Drawing(DrwCmd::Text))
         .alias(&["T"])
         .at(&[N_TEXT])
-        .tip("Text with property fields")
-        .todo("4.3"),
+        .tip("Click where the note goes and type it"),
     d("drw.leader_text", "Leader Text", "Текст с водеща линия", Icon::Text)
+        .run(Action::Drawing(DrwCmd::LeaderText))
         .alias(&["LE"])
         .at(&[N_TEXT])
-        .tip("Text with a leader to geometry")
-        .todo("4.3"),
+        .tip("Click where the arrow points, then where the text goes, and type it"),
     d("drw.center_mark", "Center Mark", "Маркер на център", Icon::CenterMark)
+        .run(Action::Drawing(DrwCmd::CenterMark))
         .alias(&["CM"])
         .at(&[N_SYMBOLS])
-        .tip("A centre mark on a circle or arc")
-        .todo("4.3"),
+        .tip("Click circles or arcs of a view: a centre mark on each"),
     d("drw.centerline", "Centerline", "Осева линия", Icon::CenterlineMark)
+        .run(Action::Drawing(DrwCmd::Centerline))
         .alias(&["CL"])
         .at(&[N_SYMBOLS])
-        .tip("A centreline through centres or edges")
-        .todo("4.3"),
+        .tip("Click two circles of a view: a centreline through their centres"),
     d("drw.surface", "Surface", "Грапавост", Icon::SurfaceSymbol)
         .alias(&["ST"])
         .at(&[N_SYMBOLS])
@@ -1573,6 +1573,11 @@ pub static COMMANDS: &[Command] = &[
         .tip("Rows of revisions")
         .todo("4.4"),
     // ---- File / Help -----------------------------------------------------
+    d("drw.export_pdf", "Export PDF", "Износ в PDF", Icon::Drawing)
+        .run(Action::Drawing(DrwCmd::ExportPdf))
+        .alias(&["PDF"])
+        .at(&[FILE])
+        .tip("The drawing's sheets as a vector PDF (File › Export › PDF)"),
     c("file.new_drawing", "New Drawing", "Нов чертеж", Icon::Drawing)
         .run(Action::App(AppCmd::NewDrawing))
         .at(&[FILE])

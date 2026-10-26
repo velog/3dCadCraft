@@ -268,7 +268,18 @@ a projected view (**PV** later; diagonal = isometric); **Esc** or right-click en
 (projected views stay aligned), double-click to edit it, **Delete** removes it with the views projected from
 it. Middle button pans, the wheel zooms at the cursor, the sheet's right-click menu has **Zoom All**, Edit
 Sheet (**ES**), New Sheet (**NS**). The browser lists the sheets (click activates one) and the views under
-their parents. 🟡 waiting for a visual check.
+their parents. **Annotate**: **D** = Dimension (click an edge, a circle or two points, then where the
+dimension goes; above / below the points gives horizontal, beside vertical, a corner aligned), **CM** =
+Center Mark, **CL** = Centerline (two circles), **T** = Text (click, type, OK / Ctrl+Enter). Esc or right-click
+ends a tool (in a dimension it first drops the picks). Drag a dimension or a note to move its text, Delete
+removes the selected one, double-click edits a note. A red **?** marks an annotation whose edge is gone.
+**SV** = Section View (the parent, two points of the line, then the side), **DV** = Detail View (the
+parent, centre, size, place), **AV** = Auxiliary View (a straight edge, then the place); **HN** = Hole and
+Thread note (a hole's circle, then the place), **LE** = Leader Text (the arrow's tip, the text's place).
+**File › Export › PDF...** (or **PDF** in the command search): the PDF Drawing Options, then the file.
+`cargo run --example drawing_demo -- plate.3dcadcraft` builds a plate with holes and its drawing (all view
+kinds and annotations) and writes `plate.pdf`.
+🟡 waiting for a visual check.
 
 ### Help, log and recovery
 

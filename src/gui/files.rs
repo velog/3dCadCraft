@@ -30,6 +30,8 @@ pub(super) enum DialogPurpose {
     ExportBom,
     /// Sheet Metal → Export Flat Pattern (DXF).
     ExportDxf,
+    /// Drawing → File › Export › PDF.
+    ExportPdf,
 }
 
 impl DialogPurpose {
@@ -44,6 +46,7 @@ impl DialogPurpose {
             DialogPurpose::ImportParams => "Import Parameters".into(),
             DialogPurpose::ExportBom => "Export Bill of Materials".into(),
             DialogPurpose::ExportDxf => "Export Flat Pattern".into(),
+            DialogPurpose::ExportPdf => "Export PDF".into(),
         }
     }
 
@@ -60,6 +63,7 @@ impl DialogPurpose {
             | DialogPurpose::ImportParams
             | DialogPurpose::ExportBom => &["csv"],
             DialogPurpose::ExportDxf => &["dxf"],
+            DialogPurpose::ExportPdf => &["pdf"],
         }
     }
 
@@ -76,6 +80,7 @@ impl DialogPurpose {
             | DialogPurpose::ImportParams
             | DialogPurpose::ExportBom => "CSV",
             DialogPurpose::ExportDxf => "DXF",
+            DialogPurpose::ExportPdf => "PDF",
         };
         let pats: Vec<String> = self.extensions().iter().map(|e| format!("*.{e}")).collect();
         format!("{kind} ({})", pats.join(", "))
@@ -812,6 +817,7 @@ impl CadCraftApp {
             DialogPurpose::ExportParams => format!("{stem}-parameters.csv"),
             DialogPurpose::ExportBom => format!("{stem}-bom.csv"),
             DialogPurpose::ExportDxf => format!("{stem}-flat.dxf"),
+            DialogPurpose::ExportPdf => format!("{stem}.pdf"),
             DialogPurpose::ImportParams => String::new(),
         };
         self.file_dialog = Some(
@@ -1290,6 +1296,7 @@ impl CadCraftApp {
                 self.save_project(true);
             }
             DialogPurpose::Diagnostics => self.save_diagnostics(&path),
+            DialogPurpose::ExportPdf => self.write_drawing_pdf(&path),
             DialogPurpose::ExportDxf => {
                 let text = self.sm.dxf.take().unwrap_or_default();
                 self.file_status = Some(
@@ -1404,6 +1411,17 @@ impl CadCraftApp {
         }
         ui.separator();
         ui.menu_button("Export", |ui| {
+            if self.is_drawing() {
+                if ui
+                    .button("PDF...")
+                    .on_hover_text("The drawing's sheets as a vector PDF")
+                    .clicked()
+                {
+                    self.open_pdf_export();
+                    ui.close();
+                }
+                return;
+            }
             for (f, tip) in [
                 (ExportFormat::Stl, "Triangles in mm, for 3D printing"),
                 (ExportFormat::Step, "Exact B-rep for other CAD programs"),

@@ -12,7 +12,10 @@
 //! View results (curves) are never stored: they are recomputed from the
 //! model (spec §6.3 h).
 
+pub mod annot;
 pub mod hlr;
+pub mod pdf;
+pub mod render;
 pub mod sheet;
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::document::DocRef;
 use crate::kernel::Vector3;
 
+pub use annot::{Annotation, AnnotationKind, DimKind, Dimension, PointRef, PointRole};
 pub use sheet::{Orientation, SheetSize, TitleField};
 
 /// A drawing document.
@@ -36,6 +40,9 @@ pub struct DrawingDocument {
     /// The next view id (ids are never reused).
     #[serde(default = "one")]
     pub next_view_id: u32,
+    /// The next annotation id (never reused).
+    #[serde(default = "one")]
+    pub next_annotation_id: u32,
 }
 
 fn one() -> u32 {
@@ -138,6 +145,9 @@ pub struct Sheet {
     /// The views.
     #[serde(default)]
     pub views: Vec<DrawingView>,
+    /// Dimensions, centre marks, centrelines, texts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<Annotation>,
 }
 
 fn yes() -> bool {
@@ -157,6 +167,7 @@ impl Sheet {
             border: true,
             title_block: true,
             views: Vec::new(),
+            annotations: Vec::new(),
         }
     }
 
@@ -380,6 +391,62 @@ pub enum ViewKind {
         /// Where it lies from the parent.
         dir: ProjectDir,
     },
+    /// Section View: the parent cut along a line (full depth).
+    Section {
+        /// The parent view's id.
+        parent: u32,
+        /// The section line's ends in the parent's view plane (model mm,
+        /// unscaled, as `ViewFrame::project`).
+        a: [f64; 2],
+        /// Second end.
+        b: [f64; 2],
+        /// The side of the line the view lies on (+1: left of a → b).
+        side: i8,
+    },
+    /// Auxiliary View: square to a line (an edge) of the parent.
+    Auxiliary {
+        /// The parent view's id.
+        parent: u32,
+        /// The edge's ends in the parent's view plane.
+        a: [f64; 2],
+        /// Second end.
+        b: [f64; 2],
+        /// The side of the line the view lies on.
+        side: i8,
+    },
+    /// Detail View: an enlarged circle of the parent.
+    Detail {
+        /// The parent view's id.
+        parent: u32,
+        /// Fence centre in the parent's view plane.
+        center: [f64; 2],
+        /// Fence radius (model mm).
+        radius: f64,
+    },
+}
+
+/// What a view's lines are computed from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinesJob {
+    /// The model seen in a frame (aligned / cut for section and auxiliary
+    /// views).
+    Model {
+        /// The part.
+        model: DocRef,
+        /// The view's frame.
+        frame: ViewFrame,
+        /// Alignment with the parent and the cut.
+        aligned: Option<hlr::Aligned>,
+    },
+    /// The parent's lines inside a circle.
+    Detail {
+        /// The parent view.
+        parent: u32,
+        /// Fence centre (view plane).
+        center: [f64; 2],
+        /// Fence radius.
+        radius: f64,
+    },
 }
 
 /// Display style (Drawing View › Style).
@@ -504,11 +571,27 @@ pub struct DrawingView {
 }
 
 impl DrawingView {
-    /// The parent's id (projected views).
+    /// The parent's id (every view but a base view).
     pub fn parent(&self) -> Option<u32> {
         match self.kind {
-            ViewKind::Projected { parent, .. } => Some(parent),
+            ViewKind::Projected { parent, .. }
+            | ViewKind::Section { parent, .. }
+            | ViewKind::Auxiliary { parent, .. }
+            | ViewKind::Detail { parent, .. } => Some(parent),
             ViewKind::Base { .. } => None,
+        }
+    }
+
+    /// The label under the view (identifier and scale), when shown.
+    pub fn label_lines(&self, scale: f64) -> Vec<String> {
+        let scale = format!("SCALE {}", scale_text(scale).replace(' ', ""));
+        match self.kind {
+            ViewKind::Section { .. } => {
+                vec![format!("SECTION {0}-{0}", self.identifier), scale]
+            }
+            ViewKind::Detail { .. } => vec![format!("DETAIL {}", self.identifier), scale],
+            ViewKind::Auxiliary { .. } => vec![format!("VIEW {}", self.identifier), scale],
+            _ => vec![self.identifier.clone(), scale],
         }
     }
 }
@@ -556,6 +639,7 @@ impl DrawingDocument {
             sheets: vec![Sheet::new("Sheet:1", size, Orientation::Landscape)],
             active_sheet: 0,
             next_view_id: 1,
+            next_annotation_id: 1,
         }
     }
 
@@ -685,24 +769,270 @@ impl DrawingDocument {
         for _ in 0..64 {
             match &v.kind {
                 ViewKind::Base { model, .. } => return Some(*model),
-                ViewKind::Projected { parent, .. } => v = sheet.view(*parent)?,
+                _ => v = sheet.view(v.parent()?)?,
             }
         }
         None
     }
 
+    /// The frame of a view square to line `a`–`b` of a parent seen in `fp`,
+    /// lying on `side` of it: the line keeps its direction on the sheet (the
+    /// views stay aligned), the viewer stands on the view's side in third
+    /// angle and on the other side in first angle.
+    pub fn line_frame(
+        &self,
+        fp: &ViewFrame,
+        a: [f64; 2],
+        b: [f64; 2],
+        side: i8,
+    ) -> Option<(ViewFrame, [f64; 2])> {
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let len = d[0].hypot(d[1]);
+        if len < 1e-9 {
+            return None;
+        }
+        let l = [d[0] / len, d[1] / len];
+        let k = f64::from(side.signum());
+        let s2 = [-l[1] * k, l[0] * k];
+        let line3 = fp.right * l[0] + fp.up * l[1];
+        let side3 = fp.right * s2[0] + fp.up * s2[1];
+        let toward = match self.standard.projection {
+            Projection::ThirdAngle => side3,
+            Projection::FirstAngle => -side3,
+        };
+        let mut n = fp.toward;
+        if line3.cross(&n).dot(&toward) < 0.0 {
+            n = -n;
+        }
+        let up = line3 * l[1] + n * l[0];
+        Some((ViewFrame::new(toward, up), l))
+    }
+
+    /// What view `id`'s lines are computed from.
+    pub fn lines_job(&self, sheet: &Sheet, id: u32) -> Option<LinesJob> {
+        let v = sheet.view(id)?;
+        let model = self.model_of(sheet, id)?;
+        Some(match v.kind {
+            ViewKind::Detail {
+                parent,
+                center,
+                radius,
+            } => LinesJob::Detail {
+                parent,
+                center,
+                radius,
+            },
+            ViewKind::Section { parent, a, b, .. } | ViewKind::Auxiliary { parent, a, b, .. } => {
+                let fp = self.frame_of(sheet, parent)?;
+                let frame = self.frame_of(sheet, id)?;
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let len = d[0].hypot(d[1]).max(1e-12);
+                let cut = matches!(v.kind, ViewKind::Section { .. })
+                    .then(|| crate::kernel::Point3::from(fp.right * a[0] + fp.up * a[1]));
+                LinesJob::Model {
+                    model,
+                    frame,
+                    aligned: Some(hlr::Aligned {
+                        parent: fp,
+                        line: [d[0] / len, d[1] / len],
+                        cut,
+                    }),
+                }
+            }
+            _ => LinesJob::Model {
+                model,
+                frame: self.frame_of(sheet, id)?,
+                aligned: None,
+            },
+        })
+    }
+
+    /// The next free letter for a section / detail / auxiliary view
+    /// (I, O, Q, S, X, Z are skipped, as Inventor's standard does).
+    pub fn next_letter(&self) -> String {
+        let used: Vec<&str> = self
+            .sheets
+            .iter()
+            .flat_map(|s| &s.views)
+            .map(|v| v.identifier.as_str())
+            .collect();
+        let letters: Vec<String> = ('A'..='Z')
+            .filter(|c| !"IOQSXZ".contains(*c))
+            .map(String::from)
+            .collect();
+        for round in 0.. {
+            for l in &letters {
+                let name = if round == 0 {
+                    l.clone()
+                } else {
+                    format!("{l}{round}")
+                };
+                if !used.contains(&name.as_str()) {
+                    return name;
+                }
+            }
+        }
+        String::new()
+    }
+
+    /// A child view of `parent` (section, auxiliary, detail) at `at`.
+    fn add_child(
+        &mut self,
+        parent: u32,
+        kind: ViewKind,
+        at: [f64; 2],
+        scale: Option<f64>,
+    ) -> Option<u32> {
+        let p = self.sheet()?.view(parent)?.clone();
+        let (pscale, pstyle) = {
+            let s = self.sheet()?;
+            self.effective(s, parent)?
+        };
+        let identifier = self.next_letter();
+        let id = self.take_id();
+        let v = DrawingView {
+            id,
+            identifier,
+            kind,
+            position: at,
+            scale: scale.unwrap_or(pscale),
+            scale_from_base: scale.is_none(),
+            style: pstyle,
+            style_from_base: true,
+            label_visible: true,
+            raster: p.raster,
+            display: p.display,
+            recovery: RecoveryOptions::default(),
+        };
+        self.sheet_mut()?.views.push(v);
+        // Positions are kept to 0.1 mm (readable in Properties).
+        let at = self
+            .aligned_position(id, at)
+            .map(|c| (c * 10.0).round() / 10.0);
+        if let Some(v) = self.sheet_mut()?.view_mut(id) {
+            v.position = at;
+        }
+        Some(id)
+    }
+
+    /// Section View of `parent` along `a`–`b` (its view plane), placed at
+    /// `at` (sheet mm); the side follows `at`.
+    pub fn add_section_view(
+        &mut self,
+        parent: u32,
+        a: [f64; 2],
+        b: [f64; 2],
+        at: [f64; 2],
+    ) -> Option<u32> {
+        let side = self.side_of(parent, a, b, at)?;
+        self.add_child(parent, ViewKind::Section { parent, a, b, side }, at, None)
+    }
+
+    /// Auxiliary View of `parent` square to edge `a`–`b`, placed at `at`.
+    pub fn add_auxiliary_view(
+        &mut self,
+        parent: u32,
+        a: [f64; 2],
+        b: [f64; 2],
+        at: [f64; 2],
+    ) -> Option<u32> {
+        let side = self.side_of(parent, a, b, at)?;
+        self.add_child(parent, ViewKind::Auxiliary { parent, a, b, side }, at, None)
+    }
+
+    /// Detail View of `parent` inside the circle `center`, `radius` (view
+    /// plane), at `scale`, placed at `at`.
+    pub fn add_detail_view(
+        &mut self,
+        parent: u32,
+        center: [f64; 2],
+        radius: f64,
+        at: [f64; 2],
+        scale: f64,
+    ) -> Option<u32> {
+        if radius <= 1e-9 {
+            return None;
+        }
+        self.add_child(
+            parent,
+            ViewKind::Detail {
+                parent,
+                center,
+                radius,
+            },
+            at,
+            Some(scale),
+        )
+    }
+
+    /// Which side of line `a`–`b` (parent's view plane) the sheet point `at`
+    /// lies on, seen from the parent's position.
+    fn side_of(&self, parent: u32, a: [f64; 2], b: [f64; 2], at: [f64; 2]) -> Option<i8> {
+        let p = self.sheet()?.view(parent)?;
+        let d = [b[0] - a[0], b[1] - a[1]];
+        if d[0].hypot(d[1]) < 1e-9 {
+            return None;
+        }
+        let n = [-d[1], d[0]];
+        let off = [at[0] - p.position[0], at[1] - p.position[1]];
+        Some(if off[0] * n[0] + off[1] * n[1] >= 0.0 {
+            1
+        } else {
+            -1
+        })
+    }
+
+    /// Where view `id` may be when it wants `at`: aligned views slide on
+    /// their axis from the parent.
+    pub fn aligned_position(&self, id: u32, at: [f64; 2]) -> [f64; 2] {
+        let Some(sheet) = self.sheet() else {
+            return at;
+        };
+        let Some(v) = sheet.view(id) else {
+            return at;
+        };
+        if !v.display.align_to_base {
+            return at;
+        }
+        let Some(p) = v.parent().and_then(|pid| sheet.view(pid)) else {
+            return at;
+        };
+        let mut to = at;
+        match v.kind {
+            ViewKind::Projected { dir, .. } => align(&mut to, p.position, dir),
+            ViewKind::Section { a, b, .. } | ViewKind::Auxiliary { a, b, .. } => {
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let len = d[0].hypot(d[1]);
+                if len > 1e-9 {
+                    // Slide square to the line, from the parent's position.
+                    let n = [-d[1] / len, d[0] / len];
+                    let off = [at[0] - p.position[0], at[1] - p.position[1]];
+                    let t = off[0] * n[0] + off[1] * n[1];
+                    to = [p.position[0] + n[0] * t, p.position[1] + n[1] * t];
+                }
+            }
+            _ => {}
+        }
+        to
+    }
+
     /// The projection frame of view `id` (through its parents).
     pub fn frame_of(&self, sheet: &Sheet, id: u32) -> Option<ViewFrame> {
         let v = sheet.view(id)?;
+        if v.parent() == Some(id) {
+            return None;
+        }
         Some(match &v.kind {
             ViewKind::Base { orientation, .. } => orientation.frame(),
-            ViewKind::Projected { parent, dir } => {
-                if *parent == id {
-                    return None;
-                }
-                self.frame_of(sheet, *parent)?
-                    .projected(*dir, self.standard.projection)
+            ViewKind::Projected { parent, dir } => self
+                .frame_of(sheet, *parent)?
+                .projected(*dir, self.standard.projection),
+            ViewKind::Section { parent, a, b, side }
+            | ViewKind::Auxiliary { parent, a, b, side } => {
+                let fp = self.frame_of(sheet, *parent)?;
+                self.line_frame(&fp, *a, *b, *side)?.0
             }
+            ViewKind::Detail { parent, .. } => self.frame_of(sheet, *parent)?,
         })
     }
 
@@ -728,19 +1058,13 @@ impl DrawingDocument {
     /// view slides only along its parent's axis, and an aligned child
     /// follows its parent. Returns whether something moved.
     pub fn move_view(&mut self, id: u32, at: [f64; 2]) -> bool {
+        let to = self.aligned_position(id, at);
         let Some(sheet) = self.sheet_mut() else {
             return false;
         };
         let Some(v) = sheet.view(id).cloned() else {
             return false;
         };
-        let mut to = at;
-        if let ViewKind::Projected { parent, dir } = v.kind
-            && v.display.align_to_base
-            && let Some(p) = sheet.view(parent)
-        {
-            align(&mut to, p.position, dir);
-        }
         let delta = [to[0] - v.position[0], to[1] - v.position[1]];
         if delta[0].hypot(delta[1]) < 1e-9 {
             return false;
@@ -748,23 +1072,33 @@ impl DrawingDocument {
         if let Some(m) = sheet.view_mut(id) {
             m.position = to;
         }
-        // Aligned children keep their row / column.
-        let children: Vec<(u32, ProjectDir)> = sheet
+        // Aligned children keep their row / column (projected views) or
+        // follow along their line (section, auxiliary views).
+        let children: Vec<(u32, ViewKind)> = sheet
             .views
             .iter()
-            .filter_map(|c| match c.kind {
-                ViewKind::Projected { parent, dir } if parent == id && c.display.align_to_base => {
-                    Some((c.id, dir))
-                }
-                _ => None,
-            })
+            .filter(|c| c.parent() == Some(id) && c.display.align_to_base)
+            .map(|c| (c.id, c.kind.clone()))
             .collect();
-        for (cid, dir) in children {
+        for (cid, kind) in children {
             if let Some(c) = sheet.view_mut(cid) {
-                match dir {
-                    ProjectDir::Left | ProjectDir::Right => c.position[1] = to[1],
-                    ProjectDir::Up | ProjectDir::Down => c.position[0] = to[0],
-                    ProjectDir::Iso(..) => {}
+                match kind {
+                    ViewKind::Projected { dir, .. } => match dir {
+                        ProjectDir::Left | ProjectDir::Right => c.position[1] = to[1],
+                        ProjectDir::Up | ProjectDir::Down => c.position[0] = to[0],
+                        ProjectDir::Iso(..) => {}
+                    },
+                    ViewKind::Section { a, b, .. } | ViewKind::Auxiliary { a, b, .. } => {
+                        let d = [b[0] - a[0], b[1] - a[1]];
+                        let len = d[0].hypot(d[1]);
+                        if len > 1e-9 {
+                            let l = [d[0] / len, d[1] / len];
+                            let t = delta[0] * l[0] + delta[1] * l[1];
+                            c.position[0] += l[0] * t;
+                            c.position[1] += l[1] * t;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -789,6 +1123,10 @@ impl DrawingDocument {
             k += 1;
         }
         sheet.views.retain(|v| !gone.contains(&v.id));
+        // Their annotations go with them (as in Inventor).
+        sheet
+            .annotations
+            .retain(|a| a.view().is_none_or(|v| !gone.contains(&v)));
         gone
     }
 
@@ -833,6 +1171,33 @@ impl DrawingDocument {
             .max()
             .unwrap_or(0);
         self.next_view_id = self.next_view_id.max(max + 1);
+        let max = self
+            .sheets
+            .iter()
+            .flat_map(|s| &s.annotations)
+            .map(|a| a.id)
+            .max()
+            .unwrap_or(0);
+        self.next_annotation_id = self.next_annotation_id.max(max + 1);
+    }
+
+    /// Adds an annotation to the active sheet; returns its id.
+    pub fn add_annotation(&mut self, kind: AnnotationKind) -> Option<u32> {
+        let id = self.next_annotation_id.max(1);
+        let sheet = self.sheets.get_mut(self.active_sheet)?;
+        sheet.annotations.push(Annotation { id, kind });
+        self.next_annotation_id = id + 1;
+        Some(id)
+    }
+
+    /// Removes annotation `id` of the active sheet; returns whether it did.
+    pub fn delete_annotation(&mut self, id: u32) -> bool {
+        let Some(sheet) = self.sheet_mut() else {
+            return false;
+        };
+        let n = sheet.annotations.len();
+        sheet.annotations.retain(|a| a.id != id);
+        sheet.annotations.len() != n
     }
 }
 

@@ -2463,10 +2463,10 @@ fn speed_budgets() {
     // (meshes taken once, as the drawing's worker does per view).
     {
         use cadcraft3d::drawing::ViewOrientation;
-        use cadcraft3d::drawing::hlr::{part_meshes, view_lines};
+        use cadcraft3d::drawing::hlr::{part_model, view_lines};
         let mut plate = box_with_circle([60.0, 60.0, 8.0], 3.0, 3.0, 2.0, true, 1.0);
         plate.add_pattern(pattern_grid(10, 10, 6.0)).unwrap();
-        let meshes = part_meshes(&plate);
+        let meshes = part_model(&plate);
         rows.push((
             "drawing: HLR of a 100-hole plate, front + top + iso views",
             BUDGET_HLR,

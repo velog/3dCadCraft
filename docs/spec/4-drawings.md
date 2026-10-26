@@ -42,9 +42,9 @@ to, and an annotation whose edge is gone is marked (not deleted).
 | Base view options | Sheet Metal View: Folded Model / Flat Pattern (needs a flat pattern), Bend Extents, Punch Center; Model tab: reference data (hidden lines separately / with all bodies, style, margin), weldment state and welding symbols; Display Options (only the relevant ones shown): Standard Parts hidden lines (Never / Obey Browser) and Section (Never / Always / Obey Browser, default Obey Browser), Cut Inheritance, Thread Feature (off by default), Tangent Edges + Foreshortened, Interference Edges, Align to Base, Definition in Base View, Orientation from Base (on by default), Hatching, Center Justified / Fixed; Recovery Options: Include Surface Bodies, Include Mesh Bodies (both off), All Model Dimensions (planar to the view, not yet on the sheet, with tolerances), Use Work Features (as reference lines) | | 🟡 Align to Base works; the other options are in the dialog, disabled with their stage in the tooltip |
 | Raster View | pixel-based view computed fast; precise views are computed in the background and replace it; green frame in the view, marked browser icon; context menu converts raster ↔ precise; some commands unavailable; printing a raster view is not recommended | | ⬜ |
 | **Projected View** | orthographic (aligned to its parent by the projection type of the standard) and isometric views from any existing view; inherits the parent's scale and style unless *from Base* is cleared | | 🟡 PV, or right after a base view: click beside the parent (orthographic, aligned, first / third angle from the standard) or diagonally (isometric); scale and style from the base unless cleared; Esc / right-click ends; waiting for a visual check |
-| **Section View** | a section line drawn over a parent (multi-segment); View identifier, Scale, Label, Style; **Depth**: Full or Distance; **Include Slice** / **Slice All Parts**; **Method**: Projected or Aligned (non-square segments); hatching by material; Half / Offset / Aligned sections from the line's shape | | ⬜ |
-| **Detail View** | dialog: identifier, scale, label, style (Show / Remove hidden lines / Shaded; default = the parent's), **Fence Shape** Circular / Rectangular (same in parent and detail), **Cutout Shape** Jagged (default) / Smooth; with Smooth: Display Full Detail Boundary, and with it Display Connection Line (vertices can be added / moved / deleted; gone when the view moves to another sheet); Attach Fence. Clicks: centre, outer boundary, place. The fence is *not* attached to the parent's geometry by default — Attach (menu) to a vertex keeps it there across model updates; Attach on empty space detaches | | ⬜ |
-| **Auxiliary View** | pick a parent, set scale / style / label, pick an edge or line of it; the view slides only square to or along that edge; for a line outside the geometry use a Section View | | ⬜ |
+| **Section View** | a section line drawn over a parent (multi-segment); View identifier, Scale, Label, Style; **Depth**: Full or Distance; **Include Slice** / **Slice All Parts**; **Method**: Projected or Aligned (non-square segments); hatching by material; Half / Offset / Aligned sections from the line's shape | | 🟡 SV: click the parent, two points of the line (snaps to end points / centres, horizontal / vertical within 4°), then the side to look from; full depth, straight line only; the cut faces are found on the display mesh (crossings chained into loops), hatched 45° / 3 mm, the material on the viewer's side removed, hidden lines behind the cut face hidden; the view stays aligned square to the line; the section line on the parent: chain line, thick ends, arrows, letters; label SECTION A-A + scale; Depth Distance, Include Slice, Aligned method, half / offset sections, material hatch patterns ⬜; waiting for a visual check |
+| **Detail View** | dialog: identifier, scale, label, style (Show / Remove hidden lines / Shaded; default = the parent's), **Fence Shape** Circular / Rectangular (same in parent and detail), **Cutout Shape** Jagged (default) / Smooth; with Smooth: Display Full Detail Boundary, and with it Display Connection Line (vertices can be added / moved / deleted; gone when the view moves to another sheet); Attach Fence. Clicks: centre, outer boundary, place. The fence is *not* attached to the parent's geometry by default — Attach (menu) to a vertex keeps it there across model updates; Attach on empty space detaches | | 🟡 DV: click the parent (or start with it selected), the centre (snaps), the size, then the place; circular fence, smooth cutout with a full boundary, letter at the fence on the parent, scale = the preset ≥ 2 × the parent's, label DETAIL A + scale; rectangular fence, jagged cutout, connection line, Attach ⬜; waiting for a visual check |
+| **Auxiliary View** | pick a parent, set scale / style / label, pick an edge or line of it; the view slides only square to or along that edge; for a line outside the geometry use a Section View | | 🟡 AV: click a straight edge of a view, then place the view square to it (aligned; the line keeps its direction on the sheet); stored as the edge's ends at creation (does not follow a later change of that edge yet); waiting for a visual check |
 | **Break** | shortens a long part: Style Rectangular / Structural, Orientation horizontal / vertical / along picked geometry (fixed after creation), Display, Gap, Symbols (1–3, Structural), Propagate to parent view, slider for the count / amplitude of the break edge; dimensions across a break show the true length with a break symbol, dimensions ending in the removed part are hidden; Edit Break, drag the break lines | | ⬜ |
 | **Break Out** | a local cut inside a closed sketch profile to a depth | | ⬜ |
 | **Slice** | a zero-depth section by a sketch line | | ⬜ |
@@ -58,15 +58,15 @@ to, and an annotation whose edge is gone is marked (not deleted).
 
 | Option | Inventor behaviour | Restrictions | Our status |
 |---|---|---|---|
-| General Dimension | linear, aligned, angular, radius, diameter between view geometry; text overrides, tolerance, precision | | ⬜ |
+| General Dimension | linear, aligned, angular, radius, diameter between view geometry; text overrides, tolerance, precision | | 🟡 Dimension (D): an edge gives its length, a circle its diameter (an arc its radius), two points (end points, centres) their distance; horizontal / vertical / aligned follows where the text is put (above / beside / corner); ISO 129 layout (extension lines 1 mm off, 2 mm over, filled arrows, text above, readable from the bottom or the right), values in model mm with 2 decimals, zeros dropped; the text is dragged afterwards; angular, tolerances, text overrides ⬜; waiting for a visual check |
 | Baseline / Ordinate / Chain dimension sets | | | ⬜ |
 | Retrieve Model Annotations | brings in the model's sketch and feature dimensions that lie in the view plane | | ⬜ |
-| Hole and Thread Notes | from the Hole feature (`HoleSpec::note`) | | ⬜ (data exists, 2.3) |
-| Centre Mark, Centerline, Centerline Bisector, Centered Pattern; Automated Centerlines | | | ⬜ |
-| Text, Leader Text | text with iProperty / parameter fields | | ⬜ |
+| Hole and Thread Notes | from the Hole feature (`HoleSpec::note`) | | 🟡 HN: click a hole's circle (a circle on the axis of a Hole feature's hole), then place the note; the text comes from the hole (Ø, depth / THRU, counterbore / countersink, thread) at every redraw, symbols written as text (DEEP, CBORE, CSK) until the drawing font has them; waiting for a visual check |
+| Centre Mark, Centerline, Centerline Bisector, Centered Pattern; Automated Centerlines | | | 🟡 Center Mark (CM) on circles / arcs seen face-on, Centerline (CL) through two circle centres, both in centre-line style (long dash, dot) passing the circle by 2 mm; Bisector, Centered Pattern, automated centrelines ⬜; waiting for a visual check |
+| Text, Leader Text | text with iProperty / parameter fields | | 🟡 Text (T): a note with several lines and a height (Format Text window), double-click edits it, drag moves it; Leader Text (LE): the arrow's tip (snaps to end points / centres), then the text's place, same window; property fields and attaching the leader to geometry ⬜; waiting for a visual check |
 | Symbols | Surface Texture, Welding, Feature Control Frame (GD&T), Datum Identifier, Datum Target | | ⬜ |
 | Balloons / Auto Balloon | item balloons from a BOM view: Around / Horizontal / Vertical placement, offset, first instance only | ⛔ BOM (3.6, done first level) | ⬜ |
-| Orphaned annotations | an annotation whose geometry is gone is shown marked, never removed silently | | ⬜ |
+| Orphaned annotations | an annotation whose geometry is gone is shown marked, never removed silently | | 🟡 annotations reference (view, edge name); a missing edge leaves the annotation in the drawing, marked with a red "?" where it was; deleting a view deletes its annotations (as in Inventor); waiting for a visual check |
 
 ### 3.4 Tables (4.4)
 
@@ -83,7 +83,7 @@ to, and an annotation whose edge is gone is marked (not deleted).
 | Output | Inventor behaviour | Our status |
 |---|---|---|
 | Print | sheets to a printer, scale 1:1 or fit | ⬜ |
-| PDF | Current Sheet / All Sheets / Sheets in Range (From–To), Print Excluded Sheets, All Colors Black (images and shaded views stay coloured), Remove Object Line Weights, Vector Resolution (DPI of raster parts), Display Published File in Viewer | ⬜ |
+| PDF | Current Sheet / All Sheets / Sheets in Range (From–To), Print Excluded Sheets, All Colors Black (images and shaded views stay coloured), Remove Object Line Weights, Vector Resolution (DPI of raster parts), Display Published File in Viewer | 🟡 File › Export › PDF... (or PDF in the command search): PDF Drawing Options (Current Sheet / All Sheets / Sheets in Range, Print Excluded Sheets, Remove Object Line Weights, Display Published File; All Colors Black is always true until colours come; Vector Resolution matters with raster views only) then the file name; one page per sheet at paper size, ISO line weights, hidden lines dashed, centre lines dash-dot, texts in an embedded subset of the UI font (Ubuntu Light: Latin + Cyrillic; final font choice open); waiting for a visual check |
 | DXF / DWG | per sheet, layers per object type | ⬜ (SolidCraft's DXF writer, `crates/io/src/dxf.rs`) |
 | SVG | (ours) | ⬜ |
 
@@ -141,6 +141,17 @@ Nothing to adapt: SolidCraft has no drawings (only a DXF writer). Our plan:
   dialogs, browser tree (Drawing Resources, sheets, views under their parents), Properties of a view or the
   sheet. Ribbon tabs Place Views and Annotate list the whole Inventor command set; the planned ones are
   greyed with their FEATURES section. Format revision 23 (`DocumentData::Drawing`).
+
+### 6.1b Implemented (2026-10-26, second part)
+
+- HLR keeps each piece's model edge (`ViewLines::visible_src` / `hidden_src`, `ViewLines::edges`:
+  persistent name, projected end points, exact centre and radius of circles seen face-on), built from
+  the B-rep's edges (`hlr::part_model`) instead of the display mesh's anonymous polylines.
+- `drawing::annot`: `Annotation` (Center Mark, Centerline, Dimension, Text) on `Sheet::annotations`
+  (additive field), `resolve` → `Prim`s + value, or `Orphan`.
+- `drawing::render::sheet_list`: the whole sheet as one display list; `drawing::pdf::write` (krilla).
+- GUI `gui/drawing_annot.rs`: the tools, geometry picking (points 9 px, edges 7 px, as in sketches),
+  hover / selection / drag / Delete of annotations, the Text and PDF windows.
 
 ### 6.2 Data model
 

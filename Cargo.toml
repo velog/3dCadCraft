@@ -54,6 +54,8 @@ serde_json = { version = "1.0", features = ["float_roundtrip"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 # Preview pictures (thumbnail.png) in project files.
 png = "0.18"
+# Drawings: PDF export (vector, embedded subsetted fonts; MIT OR Apache-2.0).
+krilla = { version = "0.8.2", default-features = false, features = ["simple-text"] }
 # Globally unique, copy-safe identities for projects and documents.
 uuid = { version = "1", features = ["v4", "serde"] }
 

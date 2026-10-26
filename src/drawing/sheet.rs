@@ -160,6 +160,29 @@ pub enum Prim {
         text: String,
         /// Anchor.
         anchor: Anchor,
+        /// Rotation about `at` (radians, counter-clockwise).
+        angle: f64,
+    },
+    /// A filled polygon (arrowheads).
+    Fill {
+        /// Corners (mm).
+        pts: Vec<[f64; 2]>,
+    },
+    /// A polyline of a view (visible solid, hidden dashed).
+    Path {
+        /// Points (mm).
+        pts: Vec<[f64; 2]>,
+        /// Width on paper (mm).
+        width: f64,
+        /// Hidden-line dashes.
+        dashed: bool,
+    },
+    /// A thin centre line (long dash, dot).
+    Center {
+        /// Start (mm).
+        a: [f64; 2],
+        /// End (mm).
+        b: [f64; 2],
     },
 }
 
@@ -259,6 +282,7 @@ pub fn format_prims(
                 height,
                 text: t.to_string(),
                 anchor,
+                angle: 0.0,
             });
         }
     };

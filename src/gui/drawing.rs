@@ -20,10 +20,10 @@ use super::icons::Icon;
 use super::valuefield::ExprValue;
 use crate::document::{DocRef, DocumentData, DocumentKind};
 use crate::drawing::hlr::{self, ViewLines};
-use crate::drawing::sheet::{self as fmt, Anchor, Prim, TitleField};
+use crate::drawing::sheet::{self as fmt, Prim, TitleField};
 use crate::drawing::{
-    self as drw, DisplayOptions, DrawingDocument, Orientation, ProjectDir, RecoveryOptions,
-    SheetSize, ViewFrame, ViewKind, ViewOrientation, ViewStyle,
+    self as drw, DisplayOptions, DrawingDocument, LinesJob, Orientation, ProjectDir,
+    RecoveryOptions, SheetSize, ViewFrame, ViewKind, ViewOrientation, ViewStyle,
 };
 
 /// Drawing commands of the ribbon.
@@ -37,6 +37,26 @@ pub enum DrwCmd {
     NewSheet,
     /// Place Views › Edit Sheet.
     EditSheet,
+    /// Place Views › Section.
+    Section,
+    /// Place Views › Detail.
+    Detail,
+    /// Place Views › Auxiliary.
+    Auxiliary,
+    /// Annotate › Center Mark.
+    CenterMark,
+    /// Annotate › Centerline.
+    Centerline,
+    /// Annotate › Dimension.
+    Dimension,
+    /// Annotate › Text.
+    Text,
+    /// Annotate › Leader Text.
+    LeaderText,
+    /// Annotate › Hole and Thread.
+    HoleNote,
+    /// File › Export › PDF.
+    ExportPdf,
 }
 
 /// What the sheet view shows: the sheet point at the middle and the zoom.
@@ -45,7 +65,7 @@ pub(super) struct SheetCam {
     /// Sheet mm at the middle of the view.
     center: [f64; 2],
     /// Pixels per sheet mm.
-    zoom: f64,
+    pub(super) zoom: f64,
     /// Fit the sheet on the next frame (Zoom All, a new sheet).
     fit: bool,
 }
@@ -61,7 +81,7 @@ impl Default for SheetCam {
 }
 
 impl SheetCam {
-    fn to_screen(self, rect: Rect, p: [f64; 2]) -> Pos2 {
+    pub(super) fn to_screen(self, rect: Rect, p: [f64; 2]) -> Pos2 {
         let c = rect.center();
         Pos2::new(
             c.x + ((p[0] - self.center[0]) * self.zoom) as f32,
@@ -69,7 +89,7 @@ impl SheetCam {
         )
     }
 
-    fn to_sheet(self, rect: Rect, q: Pos2) -> [f64; 2] {
+    pub(super) fn to_sheet(self, rect: Rect, q: Pos2) -> [f64; 2] {
         let c = rect.center();
         [
             self.center[0] + f64::from(q.x - c.x) / self.zoom,
@@ -78,14 +98,32 @@ impl SheetCam {
     }
 }
 
-/// A running placement command.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A running placement or annotation command.
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum DrwTool {
     /// The Drawing View dialog is open for a new base view: a click on the
     /// sheet places it.
     Base,
     /// Projected View: the parent (picked, or the base just placed).
     Projected(Option<u32>),
+    /// Center Mark: click circles.
+    CenterMark,
+    /// Centerline: the first circle (view, edge), then the second.
+    Centerline(Option<(u32, String)>),
+    /// General Dimension.
+    Dimension(super::drawing_annot::DimDraft),
+    /// Text: click where it goes.
+    Text,
+    /// Leader Text: the arrow's tip, then the text's place.
+    LeaderText(Option<[f64; 2]>),
+    /// Hole and Thread note: the hole's circle (view, edge), then the place.
+    HoleNote(Option<(u32, String)>),
+    /// Section View: parent, then the line, then the place.
+    Section(super::drawing_section::SectionDraft),
+    /// Detail View: parent, centre, radius, place.
+    Detail(super::drawing_section::DetailDraft),
+    /// Auxiliary View: an edge, then the place.
+    Auxiliary(super::drawing_section::AuxDraft),
 }
 
 /// Tabs of the Drawing View dialog.
@@ -141,6 +179,8 @@ struct LinesKey {
     model: DocRef,
     signature: u64,
     frame: [i64; 6],
+    /// Section / auxiliary alignment and cut (hash, 0 for plain views).
+    aligned: u64,
 }
 
 /// Drawing UI state of the app.
@@ -149,7 +189,7 @@ pub(super) struct DrwUi {
     pub cam: SheetCam,
     /// Selected view.
     pub sel: Option<u32>,
-    hover: Option<u32>,
+    pub(super) hover: Option<u32>,
     /// Dragged view and the grab offset (view centre − pointer, sheet mm).
     drag: Option<(u32, [f64; 2])>,
     pub tool: Option<DrwTool>,
@@ -159,6 +199,16 @@ pub(super) struct DrwUi {
     done: Arc<Mutex<HashMap<LinesKey, Arc<ViewLines>>>>,
     /// Jobs started (finished ones stay until the cache is cleared).
     running: HashSet<LinesKey>,
+    /// Selected annotation.
+    pub sel_ann: Option<u32>,
+    /// Annotation under the pointer.
+    pub hover_ann: Option<u32>,
+    /// Dragged annotation and the last pointer point (sheet mm).
+    pub ann_drag: Option<(u32, [f64; 2])>,
+    /// The Text window.
+    pub text_dialog: Option<super::drawing_annot::TextDialog>,
+    /// The PDF options window (kept until the file is written).
+    pub pdf_dialog: Option<super::drawing_annot::PdfDialog>,
     /// The sheet the camera was fitted to (index, size in µm): another
     /// sheet or a new size (Edit Sheet, Undo) fits again.
     fitted: Option<(usize, [i64; 2])>,
@@ -173,6 +223,11 @@ impl DrwUi {
         self.tool = None;
         self.dialog = None;
         self.sheet_dialog = None;
+        self.sel_ann = None;
+        self.hover_ann = None;
+        self.ann_drag = None;
+        self.text_dialog = None;
+        self.pdf_dialog = None;
         self.cam.fit = true;
         self.fitted = None;
     }
@@ -208,17 +263,15 @@ fn hash_str(s: &str) -> u64 {
 type TreeView = (u32, String, Option<u32>, String);
 
 /// A view drawn this frame.
-struct ShownView {
-    id: u32,
-    identifier: String,
+pub(super) struct ShownView {
+    pub id: u32,
     /// Sheet rectangle (lower left, upper right).
-    lo: [f64; 2],
-    hi: [f64; 2],
-    lines: Option<Arc<ViewLines>>,
-    position: [f64; 2],
-    scale: f64,
-    style: ViewStyle,
-    label: bool,
+    pub lo: [f64; 2],
+    pub hi: [f64; 2],
+    pub lines: Option<Arc<ViewLines>>,
+    pub position: [f64; 2],
+    pub scale: f64,
+    pub style: ViewStyle,
 }
 
 impl CadCraftApp {
@@ -245,7 +298,7 @@ impl CadCraftApp {
     }
 
     /// Changes the active drawing after an Undo checkpoint `label`.
-    fn edit_drawing<R>(
+    pub(super) fn edit_drawing<R>(
         &mut self,
         label: &str,
         f: impl FnOnce(&mut DrawingDocument) -> R,
@@ -305,7 +358,32 @@ impl CadCraftApp {
                 let i = self.drawing().map_or(0, |d| d.active_sheet);
                 self.open_sheet_dialog(i);
             }
+            DrwCmd::Section => self.start_annotation(DrwTool::Section(Default::default())),
+            DrwCmd::Detail => {
+                let parent = self.drw.sel;
+                self.start_annotation(DrwTool::Detail(Default::default()));
+                if let Some(p) = parent {
+                    self.drw.tool = Some(DrwTool::Detail(
+                        super::drawing_section::DetailDraft::with_parent(p),
+                    ));
+                }
+            }
+            DrwCmd::Auxiliary => self.start_annotation(DrwTool::Auxiliary(Default::default())),
+            DrwCmd::CenterMark => self.start_annotation(DrwTool::CenterMark),
+            DrwCmd::Centerline => self.start_annotation(DrwTool::Centerline(None)),
+            DrwCmd::Dimension => self.start_annotation(DrwTool::Dimension(Default::default())),
+            DrwCmd::Text => self.start_annotation(DrwTool::Text),
+            DrwCmd::LeaderText => self.start_annotation(DrwTool::LeaderText(None)),
+            DrwCmd::HoleNote => self.start_annotation(DrwTool::HoleNote(None)),
+            DrwCmd::ExportPdf => self.open_pdf_export(),
         }
+    }
+
+    fn start_annotation(&mut self, tool: DrwTool) {
+        self.drw.dialog = None;
+        self.drw.sel = None;
+        self.drw.sel_ann = None;
+        self.drw.tool = Some(tool);
     }
 
     /// The parts a view can show: those of this project, then those of
@@ -399,11 +477,11 @@ impl CadCraftApp {
         };
         let (model, orientation) = match &v.kind {
             ViewKind::Base { model, orientation } => (Some(*model), *orientation),
-            ViewKind::Projected { .. } => (d.model_of(sheet, id), ViewOrientation::Front),
+            _ => (d.model_of(sheet, id), ViewOrientation::Front),
         };
         self.drw.dialog = Some(ViewDialog {
             edit: Some(id),
-            projected: matches!(v.kind, ViewKind::Projected { .. }),
+            projected: v.parent().is_some(),
             tab: DlgTab::Component,
             model,
             orientation,
@@ -442,10 +520,19 @@ impl CadCraftApp {
 
     /// Esc: closes the running drawing command.
     pub(super) fn drw_cancel(&mut self) -> bool {
-        if self.drw.tool.is_some() || self.drw.dialog.is_some() || self.drw.sheet_dialog.is_some() {
+        // Esc in a dimension with picks drops the picks first.
+        if let Some(DrwTool::Dimension(d)) = &self.drw.tool
+            && *d != Default::default()
+        {
+            self.drw.tool = Some(DrwTool::Dimension(Default::default()));
+            return true;
+        }
+        if self.drw_open() {
             self.drw.tool = None;
             self.drw.dialog = None;
             self.drw.sheet_dialog = None;
+            self.drw.text_dialog = None;
+            self.drw.pdf_dialog = None;
             true
         } else {
             false
@@ -454,18 +541,39 @@ impl CadCraftApp {
 
     /// A drawing command or dialog is open.
     pub(super) fn drw_open(&self) -> bool {
-        self.drw.tool.is_some() || self.drw.dialog.is_some() || self.drw.sheet_dialog.is_some()
+        self.drw.tool.is_some()
+            || self.drw.dialog.is_some()
+            || self.drw.sheet_dialog.is_some()
+            || self.drw.text_dialog.is_some()
+            || self.drw.pdf_dialog.is_some()
     }
 
     /// Status-bar prompt.
     pub(super) fn drw_prompt(&self) -> String {
-        match self.drw.tool {
+        match &self.drw.tool {
+            Some(DrwTool::CenterMark) => "Center Mark: click circles or arcs (Esc ends)".into(),
+            Some(DrwTool::Centerline(None)) => "Centerline: click the first circle".into(),
+            Some(DrwTool::Centerline(Some(_))) => {
+                "Centerline: click the second circle of the same view".into()
+            }
+            Some(DrwTool::Dimension(_)) => "Dimension: click an edge, a circle or two points, then click where the dimension goes (Esc ends)".into(),
+            Some(DrwTool::Text) => "Text: click where the text goes".into(),
+            Some(DrwTool::LeaderText(None)) => "Leader Text: click where the arrow points".into(),
+            Some(DrwTool::LeaderText(Some(_))) => "Leader Text: click where the text goes".into(),
+            Some(DrwTool::HoleNote(None)) => "Hole and Thread: click a hole's circle in a view".into(),
+            Some(DrwTool::HoleNote(Some(_))) => "Hole and Thread: click where the note goes (Esc ends)".into(),
+            Some(DrwTool::Section(d)) => d.prompt().into(),
+            Some(DrwTool::Detail(d)) => d.prompt().into(),
+            Some(DrwTool::Auxiliary(d)) => d.prompt().into(),
             Some(DrwTool::Base) => {
                 "Base View: set the options, then click on the sheet to place the view".into()
             }
             Some(DrwTool::Projected(None)) => "Projected View: select the parent view".into(),
             Some(DrwTool::Projected(Some(_))) => {
                 "Projected View: click beside the view for an orthographic view, diagonally for an isometric one (Esc ends)".into()
+            }
+            None if self.drw.sel_ann.is_some() => {
+                "Drag a dimension or a note to move its text, Delete removes it, double-click edits a note".into()
             }
             None if self.drw.sel.is_some() => {
                 "Drag the view to move it, double-click to edit it, Delete removes it".into()
@@ -476,25 +584,39 @@ impl CadCraftApp {
 
     // ---- view lines ------------------------------------------------------------
 
-    /// The lines of `model` seen in `frame`: from the cache, or `None` while
-    /// a worker computes them.
-    fn view_lines(
+    /// The lines of `model` seen in `frame` (aligned / cut for section and
+    /// auxiliary views): from the cache, else computed — on a worker when
+    /// `ctx` is given (`None` until it is done), here when it is `None`
+    /// (export).
+    pub(super) fn view_lines(
         &mut self,
-        ctx: &egui::Context,
+        ctx: Option<&egui::Context>,
         model: DocRef,
         frame: &ViewFrame,
+        aligned: Option<hlr::Aligned>,
     ) -> Option<Arc<ViewLines>> {
         let sig = self.with_part(model, |p| p.body_signature())?;
         let key = LinesKey {
             model,
             signature: hash_str(&sig),
             frame: quant(frame),
+            aligned: aligned.map_or(0, |a| hash_str(&format!("{a:.6?}"))),
         };
         if let Ok(done) = self.drw.done.lock()
             && let Some(l) = done.get(&key)
         {
             return Some(l.clone());
         }
+        let Some(ctx) = ctx else {
+            let lines = Arc::new(self.with_part(model, |p| {
+                hlr::view_lines_with(&hlr::part_model(p), frame, aligned.as_ref())
+            })?);
+            if let Ok(mut done) = self.drw.done.lock() {
+                done.insert(key, lines.clone());
+            }
+            self.drw.running.insert(key);
+            return Some(lines);
+        };
         if self.drw.running.insert(key) {
             let part = self.with_part(model, |p| p.clone())?;
             let done = self.drw.done.clone();
@@ -504,11 +626,13 @@ impl CadCraftApp {
                 .name("drawing-view".into())
                 .spawn(move || {
                     let t = std::time::Instant::now();
-                    let lines = hlr::view_lines(&hlr::part_meshes(&part), &frame);
+                    let lines =
+                        hlr::view_lines_with(&hlr::part_model(&part), &frame, aligned.as_ref());
                     log::info!(
-                        "drawing view: {} visible, {} hidden pieces in {:.0} ms",
+                        "drawing view: {} visible, {} hidden pieces, {} cut faces in {:.0} ms",
                         lines.visible.len(),
                         lines.hidden.len(),
+                        lines.section.len(),
                         t.elapsed().as_secs_f64() * 1e3
                     );
                     if let Ok(mut d) = done.lock() {
@@ -526,54 +650,103 @@ impl CadCraftApp {
         None
     }
 
+    /// The lines of a job (detail views from their parent's lines).
+    pub(super) fn job_lines(
+        &mut self,
+        ctx: Option<&egui::Context>,
+        job: &LinesJob,
+        done: &HashMap<u32, Arc<ViewLines>>,
+    ) -> Option<Arc<ViewLines>> {
+        match job {
+            LinesJob::Model {
+                model,
+                frame,
+                aligned,
+            } => self.view_lines(ctx, *model, frame, *aligned),
+            LinesJob::Detail {
+                parent,
+                center,
+                radius,
+            } => done
+                .get(parent)
+                .map(|l| Arc::new(hlr::clip_circle(l, *center, *radius))),
+        }
+    }
+
+    /// The lines of every view of sheet `i` that has them now (parents
+    /// before their detail views).
+    pub(super) fn sheet_lines(
+        &mut self,
+        ctx: Option<&egui::Context>,
+        doc: &DrawingDocument,
+        i: usize,
+    ) -> HashMap<u32, Arc<ViewLines>> {
+        let mut out = HashMap::new();
+        let Some(sheet) = doc.sheets.get(i) else {
+            return out;
+        };
+        let mut jobs: Vec<(u32, LinesJob)> = sheet
+            .views
+            .iter()
+            .filter_map(|v| Some((v.id, doc.lines_job(sheet, v.id)?)))
+            .collect();
+        // Detail views wait for their parent (a few rounds for chains).
+        for _ in 0..8 {
+            let mut left = Vec::new();
+            for (id, job) in jobs {
+                match self.job_lines(ctx, &job, &out) {
+                    Some(l) => {
+                        out.insert(id, l);
+                    }
+                    None => left.push((id, job)),
+                }
+            }
+            if left.is_empty() {
+                break;
+            }
+            jobs = left;
+        }
+        out
+    }
+
     /// Every view of the active sheet with its lines and sheet rectangle.
     fn shown_views(&mut self, ctx: &egui::Context) -> Vec<ShownView> {
-        let Some(d) = self.drawing() else {
+        let Some(d) = self.drawing().cloned() else {
             return Vec::new();
         };
+        let i = d.active_sheet;
+        let lines = self.sheet_lines(Some(ctx), &d, i);
         let Some(sheet) = d.sheet() else {
             return Vec::new();
         };
-        let jobs: Vec<_> = sheet
-            .views
-            .iter()
-            .map(|v| {
-                let model = d.model_of(sheet, v.id);
-                let frame = d.frame_of(sheet, v.id);
-                let (scale, style) = d.effective(sheet, v.id).unwrap_or((v.scale, v.style));
-                (
-                    v.id,
-                    v.identifier.clone(),
-                    v.position,
-                    v.label_visible,
-                    model,
-                    frame,
-                    scale,
-                    style,
-                )
-            })
-            .collect();
         let mut out = Vec::new();
-        for (id, identifier, position, label, model, frame, scale, style) in jobs {
-            let lines = match (model, frame) {
-                (Some(m), Some(f)) => self.view_lines(ctx, m, &f),
-                _ => None,
-            };
-            let (w, h) = lines.as_ref().map_or((40.0, 30.0), |l| {
-                let (w, h) = l.size();
-                (w * scale, h * scale)
-            });
+        for v in &sheet.views {
+            let (scale, style) = d.effective(sheet, v.id).unwrap_or((v.scale, v.style));
+            let l = lines.get(&v.id).cloned();
             let m = 3.0;
+            let (lo, hi) = match &l {
+                Some(l) => {
+                    let pl = crate::drawing::annot::Placement {
+                        position: v.position,
+                        scale,
+                        center: l.center(),
+                    };
+                    let (a, b) = (pl.to_sheet(l.min), pl.to_sheet(l.max));
+                    ([a[0] - m, a[1] - m], [b[0] + m, b[1] + m])
+                }
+                None => (
+                    [v.position[0] - 20.0, v.position[1] - 15.0],
+                    [v.position[0] + 20.0, v.position[1] + 15.0],
+                ),
+            };
             out.push(ShownView {
-                id,
-                identifier,
-                lo: [position[0] - w * 0.5 - m, position[1] - h * 0.5 - m],
-                hi: [position[0] + w * 0.5 + m, position[1] + h * 0.5 + m],
-                lines,
-                position,
+                id: v.id,
+                lo,
+                hi,
+                lines: l,
+                position: v.position,
                 scale,
                 style,
-                label,
             });
         }
         out
@@ -627,7 +800,6 @@ impl CadCraftApp {
         }
         let cam = self.drw.cam;
         let to = |p: [f64; 2]| cam.to_screen(rect, p);
-        let px = |mm: f64| ((mm * cam.zoom) as f32).clamp(1.0, 6.0);
 
         // Paper with a shadow.
         let paper = Rect::from_two_pos(to([0.0, 0.0]), to([sheet_w, sheet_h]));
@@ -640,28 +812,7 @@ impl CadCraftApp {
 
         // Border and title block.
         let prims = self.format_prims_active();
-        for p in &prims {
-            match p {
-                Prim::Line { a, b, weight } => {
-                    painter.line_segment([to(*a), to(*b)], Stroke::new(px(weight.mm()), INK));
-                }
-                Prim::Text {
-                    at,
-                    height,
-                    text,
-                    anchor,
-                } => {
-                    let size = (*height * cam.zoom * 1.35) as f32;
-                    if size >= 4.0 {
-                        let align = match anchor {
-                            Anchor::Left => Align2::LEFT_BOTTOM,
-                            Anchor::Center => Align2::CENTER_BOTTOM,
-                        };
-                        painter.text(to(*at), align, text, FontId::proportional(size), INK);
-                    }
-                }
-            }
-        }
+        super::drawing_annot::paint_prims(&painter, &cam, rect, &prims, INK);
 
         // Views.
         let views = self.shown_views(&ctx);
@@ -695,37 +846,69 @@ impl CadCraftApp {
                     HIDDEN_INK,
                 );
             }
-            if v.label {
-                let size = (3.5 * cam.zoom * 1.35) as f32;
-                if size >= 5.0 {
-                    let text = format!(
-                        "{}\nSCALE {}",
-                        v.identifier,
-                        drw::scale_text(v.scale).replace(' ', "")
-                    );
-                    painter.text(
-                        to([v.position[0], v.lo[1] - 1.5]),
-                        Align2::CENTER_TOP,
-                        text,
-                        FontId::proportional(size),
-                        INK,
-                    );
-                }
-            }
+        }
+        // Hatching, section lines, detail fences, labels (as on paper).
+        if let Some(d) = self.drawing() {
+            let map: HashMap<u32, (crate::drawing::annot::Placement, &ViewLines)> = views
+                .iter()
+                .filter_map(|v| {
+                    let l = v.lines.as_deref()?;
+                    Some((
+                        v.id,
+                        (
+                            crate::drawing::annot::Placement {
+                                position: v.position,
+                                scale: v.scale,
+                                center: l.center(),
+                            },
+                            l,
+                        ),
+                    ))
+                })
+                .collect();
+            let extras =
+                crate::drawing::render::view_extras(d, d.active_sheet, &|id| map.get(&id).copied());
+            super::drawing_annot::paint_prims(&painter, &cam, rect, &extras, INK);
         }
 
+        // Annotations.
+        let anns = self.shown_annotations(&views);
+        self.paint_annotations(&painter, rect, &anns);
+
         // The running command.
-        match self.drw.tool {
+        match self.drw.tool.clone() {
             Some(DrwTool::Base) => self.base_view_place(&ctx, &painter, rect, &response, at_sheet),
             Some(DrwTool::Projected(parent)) => {
                 self.projected_place(&ctx, &painter, rect, &response, at_sheet, parent, &views)
             }
-            None => self.sheet_select(rect, &response, at_sheet, &views),
+            Some(DrwTool::Section(_) | DrwTool::Detail(_) | DrwTool::Auxiliary(_)) => {
+                self.child_view_tool(&ctx, &painter, rect, &response, &views)
+            }
+            Some(_) => self.annotation_tool(&painter, rect, &response, &views),
+            None => {
+                if !self.annotation_select(rect, &response, &anns, &views) {
+                    self.sheet_select(rect, &response, at_sheet, &views);
+                }
+            }
         }
         if response.secondary_clicked() && self.drw.tool.is_some() {
-            // Right click ends Projected View (Inventor's Create).
-            if matches!(self.drw.tool, Some(DrwTool::Projected(_))) {
-                self.drw.tool = None;
+            // Right click ends the command (Inventor's Done / Create); a
+            // dimension or centerline with a first pick starts over.
+            match &self.drw.tool {
+                Some(DrwTool::Dimension(d)) if *d != Default::default() => {
+                    self.drw.tool = Some(DrwTool::Dimension(Default::default()));
+                }
+                Some(DrwTool::Centerline(Some(_))) => {
+                    self.drw.tool = Some(DrwTool::Centerline(None));
+                }
+                Some(DrwTool::HoleNote(Some(_))) => {
+                    self.drw.tool = Some(DrwTool::HoleNote(None));
+                }
+                Some(DrwTool::LeaderText(Some(_))) => {
+                    self.drw.tool = Some(DrwTool::LeaderText(None));
+                }
+                Some(DrwTool::Base) => {}
+                _ => self.drw.tool = None,
             }
         }
         // Keys over the sheet.
@@ -740,11 +923,12 @@ impl CadCraftApp {
                 if !self.drw_cancel() {
                     self.drw.sel = None;
                 }
-            } else if del
-                && self.drw.tool.is_none()
-                && let Some(id) = self.drw.sel
-            {
-                self.delete_drawing_view(id);
+            } else if del && self.drw.tool.is_none() {
+                if let Some(id) = self.drw.sel_ann {
+                    self.delete_annotation(id);
+                } else if let Some(id) = self.drw.sel {
+                    self.delete_drawing_view(id);
+                }
             }
         }
     }
@@ -754,9 +938,23 @@ impl CadCraftApp {
             return Vec::new();
         };
         let i = d.active_sheet;
-        // The model of the sheet's first view gives the model properties.
+        let values = self.title_values(d, i);
+        let get = |f: TitleField| {
+            values
+                .iter()
+                .find(|(k, _)| *k == f)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        };
+        fmt::format_prims(d, i, &get)
+    }
+
+    /// The title block's fields of sheet `i`: the drawing's iProperties and
+    /// those of the model of the sheet's first view.
+    pub(super) fn title_values(&self, d: &DrawingDocument, i: usize) -> Vec<(TitleField, String)> {
         let model = d
-            .sheet()
+            .sheets
+            .get(i)
             .and_then(|s| s.views.first().and_then(|v| d.model_of(s, v.id)));
         let drawing_props = self
             .project
@@ -772,40 +970,36 @@ impl CadCraftApp {
         let material = model
             .and_then(|m| self.with_part(m, |p| p.material.clone()))
             .flatten();
-        let get = |f: TitleField| -> String {
-            let dp = |k: &str| {
-                drawing_props
-                    .as_ref()
-                    .map_or(String::new(), |p| p.get(k).to_string())
-            };
-            let mp = |k: &str| {
-                model_props
-                    .as_ref()
-                    .map_or(String::new(), |(p, _)| p.get(k).to_string())
-            };
-            let first = |a: String, b: String| if a.is_empty() { b } else { a };
-            match f {
-                TitleField::Title => first(
-                    first(mp("title"), mp("description")),
-                    model_props
-                        .as_ref()
-                        .map_or(String::new(), |(_, n)| n.clone()),
-                ),
-                TitleField::PartNumber => first(
-                    mp("part_number"),
-                    model_props
-                        .as_ref()
-                        .map_or(String::new(), |(_, n)| n.clone()),
-                ),
-                TitleField::Designer => first(dp("designer"), dp("author")),
-                TitleField::CheckedBy => dp("checked_by"),
-                TitleField::Date => dp("creation_date"),
-                TitleField::Material => material.clone().unwrap_or_default(),
-                TitleField::Company => dp("company"),
-                TitleField::Revision => mp("revision"),
-            }
+        let dp = |k: &str| {
+            drawing_props
+                .as_ref()
+                .map_or(String::new(), |p| p.get(k).to_string())
         };
-        fmt::format_prims(d, i, &get)
+        let mp = |k: &str| {
+            model_props
+                .as_ref()
+                .map_or(String::new(), |(p, _)| p.get(k).to_string())
+        };
+        let name = model_props
+            .as_ref()
+            .map_or(String::new(), |(_, n)| n.clone());
+        let first = |a: String, b: String| if a.is_empty() { b } else { a };
+        TitleField::ALL
+            .into_iter()
+            .map(|f| {
+                let v = match f {
+                    TitleField::Title => first(first(mp("title"), mp("description")), name.clone()),
+                    TitleField::PartNumber => first(mp("part_number"), name.clone()),
+                    TitleField::Designer => first(dp("designer"), dp("author")),
+                    TitleField::CheckedBy => dp("checked_by"),
+                    TitleField::Date => dp("creation_date"),
+                    TitleField::Material => material.clone().unwrap_or_default(),
+                    TitleField::Company => dp("company"),
+                    TitleField::Revision => mp("revision"),
+                };
+                (f, v)
+            })
+            .collect()
     }
 
     /// Base View: the preview follows the pointer; a click places it and
@@ -826,7 +1020,7 @@ impl CadCraftApp {
             return;
         };
         let frame = dlg.orientation.frame();
-        let Some(lines) = self.view_lines(ctx, model, &frame) else {
+        let Some(lines) = self.view_lines(Some(ctx), model, &frame, None) else {
             return;
         };
         let mut scale = dlg.scale;
@@ -840,14 +1034,12 @@ impl CadCraftApp {
         }
         let v = ShownView {
             id: 0,
-            identifier: String::new(),
             lo: at,
             hi: at,
             lines: Some(lines),
             position: at,
             scale,
             style: dlg.style,
-            label: false,
         };
         draw_view_colored(painter, &self.drw.cam, rect, &v, PREVIEW);
         if response.clicked() {
@@ -942,17 +1134,15 @@ impl CadCraftApp {
             [to(pv.position), to(pos)],
             Stroke::new(1.0, PREVIEW.gamma_multiply(0.6)),
         );
-        if let Some(lines) = self.view_lines(ctx, model, &f) {
+        if let Some(lines) = self.view_lines(Some(ctx), model, &f, None) {
             let v = ShownView {
                 id: 0,
-                identifier: String::new(),
                 lo: pos,
                 hi: pos,
                 lines: Some(lines),
                 position: pos,
                 scale: pv.scale,
                 style: pv.style,
-                label: false,
             };
             draw_view_colored(painter, &self.drw.cam, rect, &v, PREVIEW);
         }
@@ -1082,6 +1272,7 @@ impl CadCraftApp {
         }
         self.view_dialog_window(ctx);
         self.sheet_dialog_window(ctx);
+        self.annotation_windows(ctx);
     }
 
     fn view_dialog_window(&mut self, ctx: &egui::Context) {
@@ -1563,6 +1754,9 @@ impl CadCraftApp {
                     ProjectDir::Iso(..) => "isometric",
                 }
             ),
+            ViewKind::Section { .. } => "Section View".to_string(),
+            ViewKind::Auxiliary { .. } => "Auxiliary View".to_string(),
+            ViewKind::Detail { .. } => "Detail View".to_string(),
         };
         let model = d
             .model_of(sheet, v.id)
@@ -1672,7 +1866,7 @@ impl CadCraftApp {
 }
 
 /// Sheet positions are kept to 0.1 mm (readable in Properties).
-fn snap(p: [f64; 2]) -> [f64; 2] {
+pub(super) fn snap(p: [f64; 2]) -> [f64; 2] {
     p.map(|v| (v * 10.0).round() / 10.0)
 }
 
@@ -1962,7 +2156,13 @@ fn draw_view(p: &egui::Painter, cam: &SheetCam, rect: Rect, v: &ShownView) {
 
 /// A view's lines: visible solid (0.5 mm), hidden dashed (0.35 mm) when the
 /// style shows them.
-fn draw_view_colored(p: &egui::Painter, cam: &SheetCam, rect: Rect, v: &ShownView, ink: Color32) {
+pub(super) fn draw_view_colored(
+    p: &egui::Painter,
+    cam: &SheetCam,
+    rect: Rect,
+    v: &ShownView,
+    ink: Color32,
+) {
     let Some(lines) = &v.lines else {
         return;
     };

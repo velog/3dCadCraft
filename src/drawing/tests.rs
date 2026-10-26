@@ -1,4 +1,6 @@
-use super::hlr::{part_meshes, view_lines};
+use std::sync::Arc;
+
+use super::hlr::{part_model, view_lines};
 use super::sheet::{Prim, format_prims};
 use super::*;
 use crate::document::{DocumentData, DocumentId, Project};
@@ -294,7 +296,7 @@ fn hlr_box() {
         Point2::new(20.0, 10.0),
         10.0,
     );
-    let meshes = part_meshes(&part);
+    let meshes = part_model(&part);
     let front = view_lines(&meshes, &ViewOrientation::Front.frame());
     let (w, h) = front.size();
     close(w, 40.0, 1e-6, "front width");
@@ -330,7 +332,7 @@ fn hlr_cylinder_silhouettes() {
         Point2::new(10.0, 0.0),
         30.0,
     );
-    let meshes = part_meshes(&part);
+    let meshes = part_model(&part);
     let front = view_lines(&meshes, &ViewOrientation::Front.frame());
     let (w, h) = front.size();
     close(w, 20.0, 0.05, "front width");
@@ -380,9 +382,507 @@ fn hlr_hidden_hole() {
         f,
     )
     .unwrap();
-    let front = view_lines(&part_meshes(&part), &ViewOrientation::Front.frame());
+    let front = view_lines(&part_model(&part), &ViewOrientation::Front.frame());
     let hidden = length(&front.hidden);
     assert!(hidden >= 2.0 * 10.0 - 0.2, "hole walls hidden: {hidden}");
     let (w, _) = front.size();
     close(w, 60.0, 1e-6, "plate width");
+}
+
+/// Lines of a part in a standard view, with the view's placement.
+fn lines_of(part: &PartDocument, o: ViewOrientation) -> super::hlr::ViewLines {
+    view_lines(&part_model(part), &o.frame())
+}
+
+/// Annotations attach to edges by name: a horizontal dimension over the
+/// box's 40 mm front edge, a diameter, a centre mark and a centreline on a
+/// cylinder seen from the top; a missing edge orphans, never panics.
+#[test]
+fn annotations_resolve_by_edge_name() {
+    use super::annot::{Placement, resolve};
+    let boxed = primitive(
+        PrimitiveKind::Box,
+        Point2::new(0.0, 0.0),
+        Point2::new(20.0, 10.0),
+        10.0,
+    );
+    let front = lines_of(&boxed, ViewOrientation::Front);
+    // A visible straight edge 40 long in x.
+    let e = front
+        .edges
+        .iter()
+        .find(|e| e.straight && e.visible && ((e.b[0] - e.a[0]).abs() - 40.0).abs() < 1e-6)
+        .expect("a 40 mm edge");
+    let name = e.name.clone().expect("named edge");
+    let pl = Placement {
+        position: [100.0, 100.0],
+        scale: 2.0,
+        center: front.center(),
+    };
+    let view = |v: u32| (v == 1).then_some((pl, &front));
+    let dim = |dim: DimKind, b: Option<PointRef>| {
+        AnnotationKind::Dimension(Dimension {
+            dim,
+            a: PointRef {
+                view: 1,
+                edge: name.clone(),
+                role: PointRole::Start,
+            },
+            b,
+            text: [0.0, 30.0],
+            precision: 2,
+        })
+    };
+    let end = Some(PointRef {
+        view: 1,
+        edge: name.clone(),
+        role: PointRole::End,
+    });
+    let h = resolve(&dim(DimKind::Horizontal, end.clone()), &view).unwrap();
+    close(h.value.unwrap(), 40.0, 1e-9, "horizontal value (model mm)");
+    let v = resolve(&dim(DimKind::Vertical, end.clone()), &view).unwrap();
+    close(
+        v.value.unwrap(),
+        0.0,
+        1e-9,
+        "vertical value of a horizontal edge",
+    );
+    let a = resolve(&dim(DimKind::Aligned, end), &view).unwrap();
+    close(a.value.unwrap(), 40.0, 1e-9, "aligned value");
+    assert!(
+        h.prims
+            .iter()
+            .any(|p| matches!(p, super::sheet::Prim::Text { text, .. } if text == "40")),
+        "value text"
+    );
+    assert_eq!(
+        h.prims
+            .iter()
+            .filter(|p| matches!(p, super::sheet::Prim::Fill { .. }))
+            .count(),
+        2,
+        "two arrows"
+    );
+    // Orphan: an edge that does not exist.
+    let orphan = AnnotationKind::CenterMark {
+        view: 1,
+        edge: "Nope:E1".into(),
+    };
+    assert!(matches!(
+        resolve(&orphan, &view),
+        Err(super::annot::Orphan::Missing(_))
+    ));
+    assert!(matches!(
+        resolve(&orphan, &|_| None),
+        Err(super::annot::Orphan::NoView)
+    ));
+
+    let cyl = primitive(
+        PrimitiveKind::Cylinder,
+        Point2::new(0.0, 0.0),
+        Point2::new(10.0, 0.0),
+        30.0,
+    );
+    let top = lines_of(&cyl, ViewOrientation::Top);
+    let circles: Vec<String> = top
+        .edges
+        .iter()
+        .filter(|e| e.circle.is_some())
+        .filter_map(|e| e.name.clone())
+        .collect();
+    assert!(
+        !circles.is_empty(),
+        "the cylinder's circles are seen face-on"
+    );
+    let pl = Placement {
+        position: [50.0, 50.0],
+        scale: 1.0,
+        center: top.center(),
+    };
+    let view = |v: u32| (v == 2).then_some((pl, &top));
+    let d = AnnotationKind::Dimension(Dimension {
+        dim: DimKind::Diameter,
+        a: PointRef {
+            view: 2,
+            edge: circles[0].clone(),
+            role: PointRole::Center,
+        },
+        b: None,
+        text: [20.0, 20.0],
+        precision: 2,
+    });
+    let r = resolve(&d, &view).unwrap();
+    close(r.value.unwrap(), 20.0, 1e-9, "diameter");
+    assert!(
+        r.prims
+            .iter()
+            .any(|p| matches!(p, super::sheet::Prim::Text { text, .. } if text == "Ø20"))
+    );
+    let cm = resolve(
+        &AnnotationKind::CenterMark {
+            view: 2,
+            edge: circles[0].clone(),
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(cm.prims.len(), 2);
+    // Both centre lines pass through the centre (50, 50).
+    for p in &cm.prims {
+        let super::sheet::Prim::Center { a, b } = p else {
+            panic!("centre lines");
+        };
+        close((a[0] + b[0]) * 0.5, 50.0, 1e-6, "centre x");
+        close((a[1] + b[1]) * 0.5, 50.0, 1e-6, "centre y");
+    }
+    assert_eq!(super::annot::format_value(12.5, 2), "12.5");
+    assert_eq!(super::annot::format_value(20.0, 2), "20");
+    assert_eq!(super::annot::format_value(1.005, 0), "1");
+}
+
+/// Annotations are stored, numbered, removed with their view and survive a
+/// save round trip.
+#[test]
+fn annotations_in_the_document() {
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [100.0, 100.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let cm = d
+        .add_annotation(AnnotationKind::CenterMark {
+            view: b,
+            edge: "Extrusion1:E1".into(),
+        })
+        .unwrap();
+    let t = d
+        .add_annotation(AnnotationKind::Text {
+            at: [20.0, 20.0],
+            text: "NOTE 1\nЗабележка".into(),
+            height: 3.5,
+        })
+        .unwrap();
+    assert!(t > cm);
+    let json = serde_json::to_string(&d).unwrap();
+    let back: DrawingDocument = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.sheets[0].annotations, d.sheets[0].annotations);
+    d.delete_view(b);
+    let left: Vec<u32> = d.sheets[0].annotations.iter().map(|a| a.id).collect();
+    assert_eq!(
+        left,
+        vec![t],
+        "the view's centre mark went with it, the text stays"
+    );
+    assert!(d.delete_annotation(t));
+    assert!(!d.delete_annotation(t));
+    let mut e = back;
+    e.next_annotation_id = 0;
+    e.fix();
+    assert!(e.next_annotation_id > t, "ids are never reused after load");
+}
+
+/// The sheet's display list goes to PDF: a valid document, one page per
+/// sheet.
+#[test]
+fn pdf_of_a_sheet() {
+    let part = primitive(
+        PrimitiveKind::Box,
+        Point2::new(0.0, 0.0),
+        Point2::new(20.0, 10.0),
+        10.0,
+    );
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [150.0, 180.0],
+            2.0,
+            ViewStyle::HiddenShown,
+        )
+        .unwrap();
+    d.add_projected_view(b, [150.0, 80.0]).unwrap();
+    d.new_sheet();
+    let lines_front = Arc::new(lines_of(&part, ViewOrientation::Front));
+    let lines_top = Arc::new(lines_of(&part, ViewOrientation::Bottom));
+    let pages: Vec<super::pdf::Page> = (0..d.sheets.len())
+        .map(|i| {
+            let lines = |v: u32| {
+                Some(if v == b {
+                    lines_front.clone()
+                } else {
+                    lines_top.clone()
+                })
+            };
+            super::pdf::Page {
+                size: d.sheets[i].dims(),
+                prims: super::render::sheet_list(&d, i, &|_| "TITLE".into(), &lines),
+            }
+        })
+        .collect();
+    assert!(
+        pages[0]
+            .prims
+            .iter()
+            .any(|p| matches!(p, super::sheet::Prim::Path { dashed: false, .. }))
+    );
+    let bytes = super::pdf::write(&pages, None, Default::default()).unwrap();
+    assert!(bytes.starts_with(b"%PDF-"));
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("/Count 2"), "two pages");
+}
+
+fn plate_with_hole() -> PartDocument {
+    // 60 × 40 × 10 centred on the origin, a Ø10 hole through the middle.
+    let mut part = primitive(
+        PrimitiveKind::Box,
+        Point2::new(0.0, 0.0),
+        Point2::new(30.0, 20.0),
+        10.0,
+    );
+    let mut e = crate::part::ExtrudeFeature::new(Vec::new(), 10.0);
+    e.operation = crate::part::Operation::Cut;
+    crate::part::primitive::add_primitive(
+        &mut part,
+        PrimitiveKind::Cylinder,
+        SketchPlacement::on_origin_plane(OriginPlane::XY),
+        &[Point2::new(0.0, 0.0), Point2::new(5.0, 0.0)],
+        crate::part::PrimitiveFeature::Extrude(e),
+    )
+    .unwrap();
+    part
+}
+
+fn area(lp: &[[f64; 2]]) -> f64 {
+    lp.windows(2)
+        .map(|w| w[0][0] * w[1][1] - w[1][0] * w[0][1])
+        .sum::<f64>()
+        .abs()
+        * 0.5
+}
+
+/// Section A-A through the hole of a plate seen from the top: two cut faces
+/// of 15 × 10 each, hatched; the view looks square to the line and stays
+/// aligned with the parent along it.
+#[test]
+fn section_view_of_a_plate() {
+    let part = plate_with_hole();
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    // A vertical line through the hole (top view plane = x, y).
+    let s = d
+        .add_section_view(b, [0.0, -25.0], [0.0, 25.0], [250.0, 160.0])
+        .unwrap();
+    let sheet = d.sheet().unwrap().clone();
+    let v = sheet.view(s).unwrap();
+    assert_eq!(v.identifier, "A");
+    assert_eq!(
+        v.position,
+        [250.0, 150.0],
+        "slides square to the line from the parent"
+    );
+    assert_eq!(v.label_lines(1.0)[0], "SECTION A-A");
+    let LinesJob::Model { frame, aligned, .. } = d.lines_job(&sheet, s).unwrap() else {
+        panic!("a model job");
+    };
+    // The line (y) stays up on the sheet; the view looks along ±x.
+    vclose(frame.up, Vector3::y(), "section up");
+    assert!(frame.toward.x.abs() > 1.0 - 1e-9);
+    let lines = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_ref());
+    assert_eq!(
+        lines.section.len(),
+        2,
+        "two cut faces beside the hole: {:?}",
+        lines.section.len()
+    );
+    let total: f64 = lines.section.iter().map(|l| area(l)).sum();
+    close(total, 2.0 * 15.0 * 10.0, 0.5, "cut area");
+    // Aligned: the parent's middle (y = 0) is the view's anchor along y.
+    close(lines.center()[1], 0.0, 1e-6, "aligned along the line");
+    let h = super::render::hatch(&lines.section, std::f64::consts::FRAC_PI_4, 3.0);
+    assert!(h.len() > 5, "hatched");
+    // The hole's walls are visible lines in the section (seen through the
+    // cut), not hidden.
+    assert!(lines.visible.len() > 4);
+    // Moving the parent moves the section along the line only.
+    d.move_view(b, [150.0, 170.0]);
+    assert_eq!(d.sheet().unwrap().view(s).unwrap().position, [250.0, 170.0]);
+    // The section line on the parent and the hatching are in the list.
+    let ls = Arc::new(lines);
+    let base_lines = Arc::new(lines_of(&part, ViewOrientation::Top));
+    let list = super::render::sheet_list(&d, 0, &|_| String::new(), &|id| {
+        Some(if id == s {
+            ls.clone()
+        } else {
+            base_lines.clone()
+        })
+    });
+    assert!(
+        list.iter()
+            .any(|p| matches!(p, super::sheet::Prim::Center { .. })),
+        "section line"
+    );
+    assert!(
+        list.iter()
+            .any(|p| matches!(p, super::sheet::Prim::Text { text, .. } if text == "SECTION A-A"))
+    );
+}
+
+/// Detail and auxiliary views: the detail clips its parent's lines to the
+/// fence and centres on it; an auxiliary view of a horizontal edge is the
+/// view from above (as a projected one).
+#[test]
+fn detail_and_auxiliary_views() {
+    let part = plate_with_hole();
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let det = d
+        .add_detail_view(b, [5.0, 0.0], 4.0, [300.0, 100.0], 4.0)
+        .unwrap();
+    let sheet = d.sheet().unwrap().clone();
+    assert_eq!(sheet.view(det).unwrap().identifier, "A");
+    assert_eq!(d.effective(&sheet, det).unwrap().0, 4.0, "own scale");
+    let top = lines_of(&part, ViewOrientation::Top);
+    let clipped = super::hlr::clip_circle(&top, [5.0, 0.0], 4.0);
+    assert_eq!(clipped.center(), [5.0, 0.0]);
+    assert!(!clipped.visible.is_empty(), "the hole's rim is inside");
+    // A line crossing the fence with both ends outside is cut, not lost.
+    let crossing = super::hlr::ViewLines {
+        visible: vec![vec![[-50.0, 0.0], [50.0, 0.0]]],
+        visible_src: vec![None],
+        ..Default::default()
+    };
+    let c = super::hlr::clip_circle(&crossing, [0.0, 0.0], 5.0);
+    assert_eq!(c.visible.len(), 1);
+    let l = &c.visible[0];
+    close(l[0][0], -5.0, 1e-6, "enters at the fence");
+    close(l[l.len() - 1][0], 5.0, 1e-6, "leaves at the fence");
+    for l in &clipped.visible {
+        for q in l {
+            assert!((q[0] - 5.0).hypot(q[1]) <= 4.0 + 1e-6);
+        }
+    }
+    // Auxiliary of the front view's top edge (horizontal) = the top view.
+    let mut d = DrawingDocument::default();
+    let f = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let aux = d
+        .add_auxiliary_view(f, [-30.0, 10.0], [30.0, 10.0], [150.0, 60.0])
+        .unwrap();
+    let p = d.add_projected_view(f, [150.0, 60.0]).unwrap();
+    let sheet = d.sheet().unwrap().clone();
+    let fa = d.frame_of(&sheet, aux).unwrap();
+    let fp = d.frame_of(&sheet, p).unwrap();
+    vclose(fa.toward, fp.toward, "aux = projected below");
+    vclose(fa.up, fp.up, "same up");
+    assert_eq!(
+        d.sheet().unwrap().view(aux).unwrap().position,
+        [150.0, 60.0]
+    );
+    // Deleting the parent takes the children and their annotations.
+    let gone = d.delete_view(f);
+    assert_eq!(gone.len(), 3);
+}
+
+/// Hole notes take their text from the edge's hole (so they follow the Hole
+/// feature); a circle without a hole orphans the note. Leader texts draw an
+/// arrow at their tip and stack their lines above the shoulder.
+#[test]
+fn hole_notes_and_leader_texts() {
+    use super::annot::{Placement, resolve};
+    use super::hlr::{ViewEdge, ViewLines};
+    let mut lines = ViewLines {
+        edges: vec![ViewEdge {
+            name: Some("Hole1:Bore:1".into()),
+            a: [5.0, 0.0],
+            b: [5.0, 0.0],
+            circle: Some(([0.0, 0.0], 5.0)),
+            straight: false,
+            visible: true,
+            note: Some("Ø10 THRU\nM12x1.75 - 6H".into()),
+            full_circle: true,
+        }],
+        min: [-30.0, -20.0],
+        max: [30.0, 20.0],
+        ..Default::default()
+    };
+    let pl = Placement {
+        position: [100.0, 100.0],
+        scale: 1.0,
+        center: [0.0, 0.0],
+    };
+    let note = AnnotationKind::HoleNote {
+        view: 1,
+        edge: "Hole1:Bore:1".into(),
+        text: [20.0, 15.0],
+    };
+    let s = {
+        let view = |v: u32| (v == 1).then_some((pl, &lines));
+        resolve(&note, &view).unwrap()
+    };
+    let texts: Vec<&str> = s
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            Prim::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        vec!["M12x1.75 - 6H", "Ø10 THRU"],
+        "bottom line first"
+    );
+    assert!(
+        s.prims.iter().any(|p| matches!(p, Prim::Fill { .. })),
+        "arrow at the rim"
+    );
+    lines.edges[0].note = None;
+    let view = |v: u32| (v == 1).then_some((pl, &lines));
+    assert!(matches!(
+        resolve(&note, &view),
+        Err(super::annot::Orphan::Missing(_))
+    ));
+    let lt = resolve(
+        &AnnotationKind::LeaderText {
+            tip: [50.0, 50.0],
+            at: [70.0, 60.0],
+            text: "WELD ALL ROUND".into(),
+        },
+        &view,
+    )
+    .unwrap();
+    assert!(
+        lt.prims
+            .iter()
+            .any(|p| matches!(p, Prim::Fill { pts } if pts[0] == [50.0, 50.0]))
+    );
 }

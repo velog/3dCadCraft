@@ -894,8 +894,9 @@ visual check.
 
 ## 4.2 Views — 🟡 · XL
 
-🟡 2026-10-26: Base and Projected views with hidden line removal (display mesh, A2 of the spec), move /
-align / edit / delete; the other views are listed greyed.
+🟡 2026-10-26: Base, Projected, Section (full, straight line, hatched), Detail (circular) and Auxiliary
+views with hidden line removal (display mesh, A2 of the spec), move / align / edit / delete; Break, Break
+Out, Slice, Crop, Overlay, Draft views are listed greyed.
 
 | View | What it does |
 |---|---|
@@ -919,7 +920,10 @@ A section is a Boolean intersection with a half-space (2.13) plus hatching by ma
 
 **Settings.** Scale, style (visible, hidden and tangent lines, shading), label, alignment between views.
 
-## 4.3 Annotations — ⬜ · L
+## 4.3 Annotations — 🟡 · L
+
+🟡 2026-10-26: Dimension (length, diameter / radius, point to point; horizontal / vertical / aligned),
+Center Mark, Centerline, Text; attached to edges by name, orphans marked. Waiting for a visual check.
 
 **Kinds.**
 - **Dimensions:** general, baseline (from one datum), ordinate, chain.
@@ -944,7 +948,9 @@ A section is a Boolean intersection with a half-space (2.13) plus hatching by ma
 
 The Inventor 2027 API adds replacing the BOM view while **keeping the placement of the annotations**. That is a good target for our behaviour too.
 
-## 4.5 Export — ⬜ · M
+## 4.5 Export — 🟡 · M
+
+🟡 2026-10-26: PDF (krilla, vector, all / current / range of sheets, embedded font). DXF / SVG / print ⬜.
 
 PDF (vector, multi-sheet), DXF (per sheet), SVG and printing.
 

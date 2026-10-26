@@ -42,6 +42,8 @@ mod diag;
 mod doc_tabs;
 mod draft;
 mod drawing;
+mod drawing_annot;
+mod drawing_section;
 mod drive;
 mod feature_cmd;
 mod files;
