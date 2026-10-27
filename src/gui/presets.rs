@@ -350,7 +350,7 @@ impl CadCraftApp {
                 });
                 let r = ui.add(egui::TextEdit::singleline(&mut edit.text).desired_width(120.0));
                 if !edit.focused {
-                    r.request_focus();
+                    super::valuefield::focus_all(ui.ctx(), &r, &edit.text);
                     edit.focused = true;
                 }
                 let (enter, esc) = ui.input_mut(|i| {

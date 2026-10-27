@@ -385,3 +385,16 @@ impl<T: ExprNumber> egui::Widget for ExprValue<'_, T> {
         inner.response
     }
 }
+
+/// Focuses text field `r` with its whole text selected, so typing replaces
+/// it (every value and name box opens this way; call it once, when the box
+/// opens — re-requesting focus every frame swallows Enter).
+pub(super) fn focus_all(ctx: &egui::Context, r: &egui::Response, text: &str) {
+    r.request_focus();
+    let mut st = egui::TextEdit::load_state(ctx, r.id).unwrap_or_default();
+    st.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+        egui::text::CCursor::new(0),
+        egui::text::CCursor::new(text.chars().count()),
+    )));
+    st.store(ctx, r.id);
+}

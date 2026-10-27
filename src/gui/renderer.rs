@@ -251,6 +251,15 @@ impl ViewportRenderer {
     /// Creates pipelines and buffers on egui's wgpu device.
     pub fn new(rs: &RenderState) -> Self {
         let device = &rs.device;
+        // GPU errors go into the session log with wgpu's own text: a
+        // surface "Validation" status followed by a crash inside egui-wgpu
+        // (owner's session 2026-10-27) left no cause behind.
+        device.on_uncaptured_error(std::sync::Arc::new(|e: wgpu::Error| {
+            log::error!("wgpu error: {e}");
+        }));
+        device.set_device_lost_callback(|reason, msg| {
+            log::error!("wgpu device lost ({reason:?}): {msg}");
+        });
 
         let msaa_ok = |f: wgpu::TextureFormat| {
             rs.adapter

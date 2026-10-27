@@ -2057,3 +2057,51 @@ fn project_flat_pattern_into_a_sketch() {
     assert!(p.project_flat_pattern(k, "Face1").is_err());
     assert_eq!(p.sketches[k].sketch.entities().count(), n);
 }
+
+#[test]
+fn a_cut_after_a_fillet_and_a_hole_cuts_the_solid() {
+    // The owner's Тест33 (2026-10-27): a Fillet and a Hole after the
+    // flange take the sheet out of the sheet model; a sheet metal Cut from
+    // a sketch on the flange was refused ("there is no sheet metal body").
+    // It cuts the solid through the thickness now.
+    let pr = cadcraft3d::document::Project::load(std::path::Path::new(
+        "tests/data/sheet_cut_after_fillet.3dcadcraft",
+    ))
+    .unwrap();
+    let mut p = pr
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            cadcraft3d::document::DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    p.regenerate().unwrap();
+    let v0 = volume(&p);
+    let j = p.sketches.len() - 1;
+    let ps = &p.sketches[j];
+    let regions = ps.own_regions();
+    assert_eq!(regions.len(), 1);
+    let area = regions[0].area();
+    let prof = vec![ProfileRef::of(&regions[0], regions[0].interior_point())];
+    let sid = ps.id.clone();
+    op(
+        &mut p,
+        cadcraft3d::part::sheet_metal::SheetOp::Cut {
+            extent: Default::default(),
+            depth: 0.0,
+            across: false,
+            sketch: sid,
+            profiles: prof,
+        },
+    );
+    check(&p);
+    let t = p.sheet_metal.as_ref().map_or(1.0, |r| r.thickness);
+    let v1 = volume(&p);
+    assert!(
+        ((v0 - v1) - area * t).abs() < 1e-3 * area * t,
+        "removed {} vs {}",
+        v0 - v1,
+        area * t
+    );
+}

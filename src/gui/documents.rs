@@ -739,7 +739,7 @@ impl CadCraftApp {
             .show(ctx, |ui| {
                 let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(240.0));
                 if !focused {
-                    r.request_focus();
+                    super::valuefield::focus_all(ui.ctx(), &r, &text);
                 }
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     commit = true;

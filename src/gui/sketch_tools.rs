@@ -651,12 +651,14 @@ impl SketchTools {
     }
 
     /// A drawing tool (picks positions, may snap and infer)?
-    /// Tools that take a line's midpoint as a point (Horizontal / Vertical
-    /// constraints, General Dimension).
+    /// Tools that take a line's midpoint as a point (Horizontal / Vertical /
+    /// Coincident constraints, General Dimension).
     pub fn takes_midpoints(&self) -> bool {
         matches!(
             self.tool,
-            Tool::Constrain(ConstraintTool::Horizontal | ConstraintTool::Vertical)
+            Tool::Constrain(
+                ConstraintTool::Horizontal | ConstraintTool::Vertical | ConstraintTool::Coincident
+            )
         )
     }
 
@@ -1865,7 +1867,8 @@ impl SketchTools {
                 Some(x) if x.is_circular() => 'c',
                 _ => 's',
             },
-            // Horizontal / Vertical take a line's midpoint (`takes_midpoints`).
+            // Horizontal / Vertical / Coincident take a line's midpoint
+            // (`takes_midpoints`).
             Snap::Midpoint(_) => 'm',
             Snap::None | Snap::Tangent(_) => '-',
         };
@@ -1901,7 +1904,17 @@ impl SketchTools {
                 .on_curve(pt(1), en(0))
                 .map(|c| Some(vec![c]))
                 .ok_or("The point defines that curve"),
-            (Coincident, "l" | "c" | "s") => Ok(None),
+            (Coincident, "l" | "c" | "s" | "m") => Ok(None),
+            // A point to a line's midpoint (Inventor's Coincident takes it).
+            (Coincident, "pm" | "mp") => {
+                let (p, m) = if ks == "pm" { (0, 1) } else { (1, 0) };
+                match self.picks[m].snap {
+                    Snap::Midpoint(line) => {
+                        Ok(Some(vec![Constraint::Midpoint { point: pt(p), line }]))
+                    }
+                    _ => Err("Select a point"),
+                }
+            }
             (Collinear | Parallel | Perpendicular, "l") => Ok(None),
             (Collinear, "ll") => Ok(Some(vec![Constraint::Collinear { a: en(0), b: en(1) }])),
             (Parallel, "ll") => Ok(Some(vec![Constraint::Parallel { a: en(0), b: en(1) }])),
@@ -3636,6 +3649,42 @@ mod tests {
         let q = ps.sketch.point(p).unwrap().position;
         assert_relative_eq!(q.x, (a.x + b.x) / 2.0, epsilon = 1e-6);
         assert_relative_eq!(q.y, (c.y + d.y) / 2.0, epsilon = 1e-6);
+    }
+
+    /// Coincident of a point with a line's midpoint, in either order
+    /// (owner, 2026-10-27: "Coincident does not take the midpoint").
+    #[test]
+    fn coincident_to_a_line_midpoint() {
+        for point_first in [true, false] {
+            let mut ps = sketch();
+            let mut t = SketchTools::default();
+            t.set_tool(Tool::Line);
+            t.click(&mut ps, pick(0.0, 0.0)).unwrap();
+            t.click(&mut ps, pick(20.0, 6.0)).unwrap();
+            t.escape();
+            let line = ps.sketch.entities().map(|(id, _)| id).next().unwrap();
+            let p = ps.sketch.add_point(Point2::new(3.0, 9.0));
+            let mid = Pick {
+                pos: Point2::new(10.0, 3.0),
+                snap: Snap::Midpoint(line),
+                infer: None,
+                align: Align::default(),
+            };
+            t.set_tool(Tool::Constrain(ConstraintTool::Coincident));
+            assert!(t.takes_midpoints());
+            let k = at_point(&ps, p);
+            if point_first {
+                t.click(&mut ps, k).unwrap();
+                t.click(&mut ps, mid).unwrap();
+            } else {
+                t.click(&mut ps, mid).unwrap();
+                t.click(&mut ps, k).unwrap();
+            }
+            let (a, b) = ps.sketch.line_geometry(line).unwrap();
+            let q = ps.sketch.point(p).unwrap().position;
+            assert_relative_eq!(q.x, (a.x + b.x) / 2.0, epsilon = 1e-6);
+            assert_relative_eq!(q.y, (a.y + b.y) / 2.0, epsilon = 1e-6);
+        }
     }
 
     /// A standalone point dimensioned to a line, to another point and to a

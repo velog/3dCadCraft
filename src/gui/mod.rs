@@ -7317,7 +7317,7 @@ impl CadCraftApp {
                                 .hint_text("value or equation"),
                         );
                         if !focused {
-                            r.request_focus();
+                            valuefield::focus_all(ui.ctx(), &r, &text);
                             focused = true;
                         }
                         ui.label(if angle { "deg" } else { "mm" });

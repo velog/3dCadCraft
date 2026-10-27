@@ -504,7 +504,7 @@ pub(super) fn name_crumb(ui: &mut egui::Ui, crumb: &mut NameCrumb, shown: &str) 
         if let Some(text) = crumb.editing.as_mut() {
             let r = ui.add(egui::TextEdit::singleline(text).desired_width(140.0));
             if !crumb.focused {
-                r.request_focus();
+                super::valuefield::focus_all(ui.ctx(), &r, text);
                 crumb.focused = true;
             }
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));

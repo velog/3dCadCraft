@@ -124,6 +124,136 @@ pub(super) fn extrude_from(
     Ok(Some(out))
 }
 
+/// A Join on a face whose profile's outer loop is the whole outline of the
+/// face (a lip round a rim, its outer wall flush with the body's walls): the
+/// kernel's Union of a tool that only touches the body along those walls
+/// found no result after a minute (owner's box, 2026-10-27), with or without
+/// the tool reaching into the body. Here the face itself is thickened into a
+/// slab (its walls are the body's own surfaces, so the Union is a gluing:
+/// 30 ms) and the profile's holes are cut back out of it. `Ok(None)`: not
+/// this case. Faces: the slab's moved face `<id>:End`, its walls (where they
+/// do not merge into the body's) `<id>:Wall:<k>`, the holes' walls
+/// `<id>:Side:<segment>`, their floors keep the face's name.
+pub(super) fn face_slab_join(
+    e: &ExtrudeFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    ps: &super::PartSketch,
+    cur: &[ExactSolid],
+    chosen: &[String],
+) -> Result<Option<Vec<ExactSolid>>, Fail> {
+    let super::PlaneRef::Face(face) = &ps.placement.plane else {
+        return Ok(None);
+    };
+    if e.operation != Operation::Join || e.output != Output::Solid || e.profiles.len() != 1 {
+        return Ok(None);
+    }
+    let regions = ps.sketch.regions();
+    let Some(region) = e.profiles[0].resolve(&regions) else {
+        return Ok(None);
+    };
+    if !region.outer.edges.iter().all(|x| ps.is_reference(x.source)) {
+        return Ok(None);
+    }
+    let Ok(pieces) = e.pieces(body, works, &ps.sketch) else {
+        return Ok(None);
+    };
+    let [piece] = pieces.as_slice() else {
+        return Ok(None);
+    };
+    let levels = &piece.span.levels;
+    let (Some(first), Some(last)) = (levels.first(), levels.last()) else {
+        return Ok(None);
+    };
+    if levels.len() != 2
+        || first.offset.abs() > 1e-12
+        || levels.iter().any(|l| l.inset.abs() > 1e-12)
+        || piece.span.clip.is_some()
+        || piece.bounds.is_some()
+    {
+        return Ok(None);
+    }
+    let depth = last.offset;
+    let plane = &ps.sketch.plane;
+    let inside = region.interior_point();
+    let at = plane.point_at(inside.x, inside.y);
+    // The solid holding the face there.
+    let Some((k, f)) = cur.iter().enumerate().find_map(|(k, s)| {
+        if s.is_open()
+            || !(chosen.is_empty() || s.name.as_ref().is_some_and(|n| chosen.contains(n)))
+        {
+            return None;
+        }
+        let f = *exact::faces_named(s, face, at).ok()?.first()?;
+        let d = *exact::face_distances(s, &[(f, at)]).ok()?.first()?;
+        (d <= 1e-6 * (1.0 + at.coords.norm())).then_some((k, f))
+    }) else {
+        return Ok(None);
+    };
+    let solid = &cur[k];
+    // Only out of the body (into the air).
+    let n = plane.normal.into_inner() * depth.signum();
+    if exact::contains(solid, at + n * (1e-3 * depth.abs()).max(1e-4)) {
+        return Ok(None);
+    }
+    let prefix = format!("{}:Lip", e.id);
+    let Ok(sheet) = exact::face_sheet(solid, &[f]) else {
+        return Ok(None);
+    };
+    let Ok(slab) = exact::thicken_sheet(&sheet, depth.abs(), false, None, &prefix) else {
+        return Ok(None);
+    };
+    // The slab is the face's whole outline: the profile's outer loop must be
+    // it (a slab of the wrong size would add material the user did not draw).
+    let want = region.outer.area().abs() * depth.abs();
+    match slab.volume_at(1e-4) {
+        Some(v) if (v - want).abs() <= 1e-5 * want => {}
+        _ => return Ok(None),
+    }
+    let Ok(Some(mut joined)) = exact::boolean(solid, &slab, ExactOp::Union) else {
+        return Ok(None);
+    };
+    // The holes, cut back out of the slab.
+    for (i, h) in piece.holes.iter().enumerate() {
+        let lp: Vec<crate::kernel::ProfileSegment> = h
+            .iter()
+            .rev()
+            .map(|s| crate::kernel::ProfileSegment {
+                geometry: super::extrude::reverse_segment(&s.geometry),
+                name: s.name.clone(),
+            })
+            .collect();
+        let prof = exact::profile(&lp, &[]).map_err(Kernel)?;
+        let tool = exact::extrude(plane, &prof, 0.0, depth, 0.0, &format!("{}#h{i}", e.id))
+            .map_err(Kernel)?;
+        joined = exact::boolean(&joined, &tool, ExactOp::Cut)
+            .map_err(Kernel)?
+            .ok_or_else(|| User("Join: nothing is left of the solid".into()))?;
+    }
+    // Names as a plain Join would give them: the moved face is the End, the
+    // pockets' walls are the profile's sides, their floors stay the face.
+    let p = &piece.prefix;
+    for n in joined.face_names.iter_mut().flatten() {
+        if n.starts_with(&format!("{prefix}:Offset:")) {
+            *n = format!("{p}:End");
+        } else if let Some(k) = n.strip_prefix(&format!("{prefix}:Wall:")) {
+            *n = format!("{p}:Wall:{k}");
+        } else if let Some((h, rest)) = n.split_once(':')
+            && h.starts_with(&format!("{}#h", e.id))
+        {
+            *n = if rest == "Start" {
+                face.clone()
+            } else {
+                format!("{p}:{rest}")
+            };
+        }
+    }
+    joined.name = solid.name.clone();
+    let mut out = cur.to_vec();
+    out[k] = joined;
+    Ok(Some(out))
+}
+
 /// Extrude with Output Surface: the walls of each profile (its loops) and
 /// of the open curves, as exact sheets (`exact::extrude_sheet`), one surface
 /// body per profile. `Ok(None)` for what sheets do not cover yet (a taper, a
@@ -3493,6 +3623,13 @@ fn open_chain(ps: &super::PartSketch) -> Result<Vec<[Real; 2]>, String> {
     Ok(pts)
 }
 
+/// A sheet operation's solids and, when the sheet model follows it, the
+/// sheet's new state (a Cut of a sheet no longer in the model has none).
+pub(super) type SheetStep = (
+    Vec<ExactSolid>,
+    Option<(String, super::sheet_metal::SheetState)>,
+);
+
 /// Hem, Fold, Contour Flange, Unfold / Refold, Cut. Returns the solids, the
 /// sheet body changed (or made) and its new state.
 pub(super) fn sheet_op(
@@ -3501,7 +3638,7 @@ pub(super) fn sheet_op(
     metal: &std::collections::HashMap<String, super::sheet_metal::SheetState>,
     rule: &super::sheet_metal::SheetMetalDefaults,
     sketches: &[super::PartSketch],
-) -> Result<(Vec<ExactSolid>, String, super::sheet_metal::SheetState), Fail> {
+) -> Result<SheetStep, Fail> {
     use super::sheet_metal::{ContourDirection, SheetOp, SheetState};
     use crate::kernel::exact::sheet_metal as ksm;
     let sketch_of = |id: &str| {
@@ -3514,7 +3651,7 @@ pub(super) fn sheet_op(
         let faces = solid.face_names.len();
         let mut next = solids.to_vec();
         next[k] = solid;
-        (next, body.to_owned(), SheetState::new(model, faces))
+        (next, Some((body.to_owned(), SheetState::new(model, faces))))
     };
     let rv = rule.values();
     match &op.op {
@@ -3618,7 +3755,7 @@ pub(super) fn sheet_op(
             let faces = solid.face_names.len();
             let mut next = solids.to_vec();
             next.push(solid);
-            Ok((next, op.id.clone(), SheetState::new(model, faces)))
+            Ok((next, Some((op.id.clone(), SheetState::new(model, faces)))))
         }
         SheetOp::Unfold { body } | SheetOp::Refold { body } => {
             let (k, state) = sheet_of(body, solids, metal)?;
@@ -3671,16 +3808,58 @@ pub(super) fn sheet_op(
             let mut names: Vec<&String> = metal.keys().collect();
             names.sort();
             let mut why = String::from("there is no sheet metal body");
+            let mut modelled = false;
             for body in names {
                 let Ok((k, state)) = sheet_of(body, solids, metal) else {
                     continue;
                 };
+                modelled = true;
                 match ksm::cut(&state.model, body, &ps.sketch.plane, &profs, mode) {
                     Ok((solid, model)) => return Ok(replace(k, solid, model, body)),
                     Err(e) => why = e,
                 }
             }
-            Err(User(why))
+            if modelled || *across {
+                return Err(User(why));
+            }
+            // A sheet another feature changed (a Fillet, a Hole) is no longer
+            // in the sheet model: cut it as a solid, square to the sketch, as
+            // deep as asked on both sides of the plane (the sketch lies on a
+            // face, so one side is air). The flat pattern does not see it.
+            let d = match mode {
+                ksm::CutMode::Depth(d) => d,
+                ksm::CutMode::ThroughAll => 1e4,
+                _ => rv.thickness,
+            };
+            let mut next = solids.to_vec();
+            let mut cut_any = false;
+            for (n, prof) in profs.iter().enumerate() {
+                let tool = exact::extrude(
+                    &ps.sketch.plane,
+                    prof,
+                    -d,
+                    d,
+                    0.0,
+                    &format!("{}#{n}", op.id),
+                )
+                .map_err(User)?;
+                for s in next.iter_mut() {
+                    if s.is_open() || !metal.contains_key(s.name.as_deref().unwrap_or("")) {
+                        continue;
+                    }
+                    if !exact::meets(s, &tool) {
+                        continue;
+                    }
+                    if let Some(r) = exact::boolean(s, &tool, exact::ExactOp::Cut).map_err(User)? {
+                        *s = r;
+                        cut_any = true;
+                    }
+                }
+            }
+            if !cut_any {
+                return Err(User(why));
+            }
+            Ok((next, None))
         }
         SheetOp::CornerRound { body, sets } => {
             let (k, state) = sheet_of(body, solids, metal)?;

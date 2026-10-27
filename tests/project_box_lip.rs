@@ -293,3 +293,82 @@ fn rounds_cut_by_a_split_project_as_arcs() {
     let got: Real = regions.iter().map(|r| r.area()).sum();
     assert!((got - want).abs() < 1e-5 * want, "area {got} vs {want}");
 }
+
+#[test]
+fn a_lip_flush_with_the_lids_outline_joins_exactly() {
+    // The owner's box: the lid's cut face outline projected (arcs at the
+    // rounded corners), offset 3 mm inwards and the ring extruded 3 mm out
+    // of the face, joined to the lid. The kernel's Union of that tool (its
+    // outer wall flush with the lid's walls) found no result after a minute
+    // and the whole part fell back to the faceted kernel (frames of 60-80
+    // ms after it). Now the face is thickened into a slab and the inside cut
+    // back out: exact, well under a second.
+    let pr = cadcraft3d::document::Project::load(std::path::Path::new(
+        "tests/data/kutia_lid_lip.3dcadcraft",
+    ))
+    .unwrap();
+    let mut p = pr
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            cadcraft3d::document::DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    p.regenerate().unwrap();
+    // Without the saved lip (its sketch had splines at the corners).
+    let k = p.features.len() - 1;
+    p.remove_feature(k).unwrap();
+    let j = p.sketches.iter().position(|s| s.id == "Sketch2").unwrap();
+    p.delete_sketch(j).unwrap();
+    p.regenerate().unwrap();
+    let lid_volume = |p: &PartDocument| {
+        p.exact_bodies
+            .0
+            .iter()
+            .find(|s| s.name.as_deref() == Some("Split1#2"))
+            .and_then(|s| s.volume_at(1e-4))
+            .unwrap()
+    };
+    let v0 = lid_volume(&p);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let j = p
+        .create_sketch(SketchPlacement::on_face("Split1#2:Cut"), &o)
+        .unwrap();
+    let line = p.sketches[j]
+        .sketch
+        .entities()
+        .find(|(_, e)| e.is_line())
+        .map(|(id, _)| id)
+        .unwrap();
+    let sk = &mut p.sketches[j].sketch;
+    // Inwards: towards the middle of the face (sketch y runs along −y).
+    let side = sk
+        .offset_side(line, cadcraft3d::sketch::Point2::new(W / 2.0, -D / 2.0))
+        .unwrap();
+    sk.offset(line, side.signum() * 3.0, true, true).unwrap();
+    sk.solve().unwrap();
+    let regions = p.sketches[j].sketch.regions();
+    let ring = regions.iter().find(|r| r.holes.len() == 1).unwrap();
+    let area = ring.area();
+    let mut f = ExtrudeFeature::new(vec![ProfileRef::of(ring, ring.interior_point())], 3.0);
+    f.operation = Operation::Join;
+    f.solids = vec!["Split1#2".into()];
+    let t = std::time::Instant::now();
+    let id = p.add_extrude(j, f).unwrap();
+    let took = t.elapsed();
+    assert!(p.exact, "exact kernel");
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    assert!(took.as_secs_f64() < 5.0, "{took:?}");
+    let added = lid_volume(&p) - v0;
+    assert!(
+        (added - 3.0 * area).abs() < 2e-4 * 3.0 * area,
+        "added {added} vs {}",
+        3.0 * area
+    );
+    let names: Vec<String> = p.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
+    assert!(names.contains(&format!("{id}:End")), "{names:?}");
+}

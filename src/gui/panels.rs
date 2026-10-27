@@ -105,7 +105,7 @@ fn rename_field(ui: &mut egui::Ui, target: RenameTarget, cmds: &mut Vec<BrowserC
     let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(150.0));
     if !focused {
         // Once only: re-requesting every frame swallows Enter.
-        r.request_focus();
+        super::valuefield::focus_all(ui.ctx(), &r, &text);
     }
     ui.data_mut(|d| d.insert_temp(id, (text.clone(), true)));
     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {

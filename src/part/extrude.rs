@@ -1250,7 +1250,7 @@ pub(crate) fn open_chain(
 }
 
 /// A segment run the other way.
-fn reverse_segment(s: &Segment2) -> Segment2 {
+pub(super) fn reverse_segment(s: &Segment2) -> Segment2 {
     match s {
         Segment2::Line { a, b } => Segment2::Line { a: *b, b: *a },
         Segment2::Arc { c, r, a0, sweep } => Segment2::Arc {

@@ -140,7 +140,7 @@ pub fn show(
             {
                 let r = ui.add(egui::TextEdit::singleline(text).desired_width(120.0));
                 if !state.focused {
-                    r.request_focus();
+                    super::valuefield::focus_all(ui.ctx(), &r, text);
                     state.focused = true;
                 }
                 if r.lost_focus() {

@@ -420,6 +420,32 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<
             return Ok(e.curve());
         }
     }
+    // A plane through a round (a fillet's or a cylinder's surface, square to
+    // the plane): the traced points lie on a circle, and a spline through
+    // them (2 % of the body apart) was 0.01 mm off it, so a sketch arc on the
+    // section no longer met the edge and Booleans with it failed. 3DCadCraft.
+    if let Field::Plane { .. } = g
+        && pts.len() >= 3
+        && let (Some(a), Some(b), Some(m)) = (pts.first(), pts.last(), pts.get(pts.len() / 2))
+        && a.distance(*b) > scale * 1e-9
+    {
+        let (ab, am) = (*b - *a, *m - *a);
+        let nrm = ab.cross(am);
+        let nn = nrm.magnitude2();
+        if nn > (scale * 1e-9).powi(4) {
+            let c = *a + (nrm.cross(ab) * am.magnitude2() + am.cross(nrm) * ab.magnitude2()) / (2.0 * nn);
+            let r = a.distance(c);
+            let tol = scale * 1e-7 + 1e-9;
+            // A straight section (nearly collinear points) is no round.
+            let len = ab.magnitude();
+            let straight = pts.iter().all(|p| (*p - *a).cross(ab).magnitude() / len <= scale * 1e-9);
+            if !straight && r <= 10.0 * scale && pts.iter().all(|p| (p.distance(c) - r).abs() <= tol) {
+                let (va, vb) = (mt::Vertex::new(*a), mt::Vertex::new(*b));
+                let e = guard("split arc", || Ok(mt::builder::circle_arc(&va, &vb, *m)))?;
+                return Ok(e.curve());
+            }
+        }
+    }
     fit(pts, scale)
 }
 

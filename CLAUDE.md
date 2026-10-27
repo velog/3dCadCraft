@@ -1150,6 +1150,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `exact::faces_in_solids` (nearest piece over every body), never "the first body that has the name" — Shell,
   Delete Face, Face Draft and Split Face of the second body worked on the first one's piece. `tests/multi_body.rs`
   covers a split plate worked body by body.
+- **A Join flush with a face's whole outline** (a lip round a box rim: the outline projected, offset inwards, the ring
+  extruded out of the face) is `exact::face_slab_join`: the face thickened into a slab (Union = gluing, 30 ms) and the
+  profile's holes cut back out. The plain tool's Union found no result after a minute and the part went faceted. A
+  plane's section of a round is an exact arc (`vendor` `splitface.rs::fit_on`); a spline section 0.01 mm off broke it.
+- **GPU errors are logged** (`ViewportRenderer::new`: `on_uncaptured_error`, `set_device_lost_callback`): a surface
+  "Validation" status then egui-wgpu's "Failed to create staging buffer" panic (owner's crash 2026-10-27, Extrude after
+  Project Cut Edges) left no cause in the log. Text boxes that open for typing use `valuefield::focus_all` (text selected).
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

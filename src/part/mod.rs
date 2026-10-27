@@ -1424,8 +1424,10 @@ impl PartDocument {
                 }
                 BuildStep::SheetOp(op) if use_exact => {
                     match exact::sheet_op(op, &solids, &metal, &rule, &self.sketches) {
-                        Ok((next, body, state)) => {
-                            metal.insert(body, state);
+                        Ok((next, state)) => {
+                            if let Some((body, state)) = state {
+                                metal.insert(body, state);
+                            }
                             Ok(Some(next))
                         }
                         Err(e) => Err(e),
@@ -1486,6 +1488,15 @@ impl PartDocument {
                     };
                     match self.sketches.iter().find(|s| s.id == sketch_id) {
                         None => Err(exact::Fail::User(format!("sketch {sketch_id} is missing"))),
+                        Some(ps)
+                            if use_exact
+                                && let Sweep::Extrude(e) = sweep
+                                && let Some(r) =
+                                    exact::face_slab_join(e, &body, &works, ps, &solids, chosen)
+                                        .transpose() =>
+                        {
+                            r.map(Some)
+                        }
                         Some(ps) if use_exact => {
                             let built = match sweep {
                                 // A Join of a profile bounded by projected edges
