@@ -873,13 +873,7 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
     }
     let mut target: Option<usize> = None;
     let mut open = Vec::new();
-    for r in &sh.remove {
-        let hint = Point3::from(r.hint);
-        let found = cur.iter().enumerate().find_map(|(i, s)| {
-            exact::faces_named(s, &r.face, hint)
-                .ok()
-                .and_then(|v| v.first().map(|&f| (i, f)))
-        });
+    for (r, found) in sh.remove.iter().zip(resolve_faces(cur, &sh.remove)) {
         let Some((i, f)) = found else {
             return Err(User(format!("the face {} no longer exists", r.face)));
         };
@@ -1022,30 +1016,15 @@ fn move_bodies(
     Ok(all)
 }
 
-/// Each face reference resolved in the first body (of `all`) that has it:
-/// `(body index, kernel face)`. Every body's mesh is made once for all the
-/// references ([`exact::faces_named_many`]).
+/// Each face reference resolved among the bodies of `all`: `(body index,
+/// kernel face)`, the piece nearest the hint when several bodies hold the
+/// name ([`exact::faces_in_solids`]).
 fn resolve_faces(all: &[ExactSolid], refs: &[super::FaceRef]) -> Vec<Option<(usize, usize)>> {
-    let mut out: Vec<Option<(usize, usize)>> = vec![None; refs.len()];
-    for (i, s) in all.iter().enumerate() {
-        let open: Vec<usize> = (0..refs.len()).filter(|&k| out[k].is_none()).collect();
-        if open.is_empty() {
-            break;
-        }
-        let asks: Vec<(&str, Point3)> = open
-            .iter()
-            .map(|&k| (refs[k].face.as_str(), Point3::from(refs[k].hint)))
-            .collect();
-        let Ok(found) = exact::faces_named_many(s, &asks) else {
-            continue;
-        };
-        for (k, v) in open.into_iter().zip(found) {
-            if let Some(&f) = v.first() {
-                out[k] = Some((i, f));
-            }
-        }
-    }
-    out
+    let asks: Vec<(&str, Point3)> = refs
+        .iter()
+        .map(|r| (r.face.as_str(), Point3::from(r.hint)))
+        .collect();
+    exact::faces_in_solids(all, &asks)
 }
 
 /// Delete Face: the picked faces of one body (solid or surface) deleted —
@@ -1334,13 +1313,11 @@ fn draft_targets(
 ) -> Result<(usize, Vec<usize>), Fail> {
     let mut target: Option<usize> = None;
     let mut faces = Vec::new();
-    for r in refs {
-        let hint = Point3::from(r.hint);
-        let found = out.iter().enumerate().find_map(|(i, s)| {
-            exact::faces_named(s, &r.face, hint)
-                .ok()
-                .and_then(|v| v.first().map(|&f| (i, f)))
-        });
+    let asks: Vec<(&str, Point3)> = refs
+        .iter()
+        .map(|r| (r.face.as_str(), Point3::from(r.hint)))
+        .collect();
+    for (r, found) in refs.iter().zip(exact::faces_in_solids(out, &asks)) {
         let Some((i, f)) = found else {
             return Err(User(format!("the face {} no longer exists", r.face)));
         };

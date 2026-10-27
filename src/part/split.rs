@@ -564,13 +564,12 @@ pub(super) fn build_exact(
             }
             // Faces by solid (each solid split once).
             let mut groups: Vec<(usize, Vec<(usize, String)>)> = Vec::new();
-            for r in &sp.faces {
-                let hint = Point3::from(r.hint);
-                let found = out.iter().enumerate().find_map(|(i, s)| {
-                    exact::faces_named(s, &r.face, hint)
-                        .ok()
-                        .and_then(|v| v.first().map(|&f| (i, f)))
-                });
+            let asks: Vec<(&str, Point3)> = sp
+                .faces
+                .iter()
+                .map(|r| (r.face.as_str(), Point3::from(r.hint)))
+                .collect();
+            for (r, found) in sp.faces.iter().zip(exact::faces_in_solids(&out, &asks)) {
                 let Some((i, f)) = found else {
                     return Err(Fail::User(format!("the face {} no longer exists", r.face)));
                 };

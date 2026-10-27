@@ -1142,6 +1142,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   A name decided by "is the sample within a tolerance of X" must not have a face straddle that window
   (a bend's cylinders were named after the rim they hang off on Windows only; CI red 10-25..10-27).
   `face_names_stay` diffs as multisets; check a new naming rule on both CI jobs.
+- **A face name can be on several bodies**: Split Solid leaves the names of the faces it cuts on both parts
+  (`Extrusion1:Top` is the top of A *and* of B). A feature resolving a `FaceRef` among bodies must use
+  `exact::faces_in_solids` (nearest piece over every body), never "the first body that has the name" — Shell,
+  Delete Face, Face Draft and Split Face of the second body worked on the first one's piece. `tests/multi_body.rs`
+  covers a split plate worked body by body.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

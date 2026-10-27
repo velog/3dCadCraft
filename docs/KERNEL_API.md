@@ -33,7 +33,7 @@ Apache-2.0), which SolidCraft itself is moving to. A new kernel is a new impleme
 |---|---|---|
 | Construction | `box_named`, `profile`, `extrude` (start / end offsets, taper), `revolve` (start, angle, full turn) | faces `Side:<segment>`, `Start`, `End`; a taper grows outward for a positive angle |
 | Booleans | `boolean` (`Join`, `Cut`, `Intersect`; `None` when nothing is left), `union_apart`, `join_apart`, `lumps` | the result keeps the first operand's body name; `union_apart` joins bodies apart without intersection work (patterns of thousands) |
-| Queries | `bounds`, `contains`, `meets`, `faces_named`, `face_point`, `face_corners` | `faces_named` gives the pieces of a split face nearest a hint first |
+| Queries | `bounds`, `contains`, `meets`, `faces_named`, `faces_in_solids`, `face_point`, `face_corners` | `faces_named` gives the pieces of a split face nearest a hint first; `faces_in_solids` picks the body too when a name is on several (after Split Solid) |
 | Blends | `fillet`, `fillet_each`, `fillet_variable`, `fillet_chord`, `chamfer` (`Same`, `Distance`, `Angle`) | edges by points nearest them; blend faces named after the replaced edge (`Round`, `Bevel`) |
 | Shell, draft | `shell`, `shell_with` (Inside / Outside / Both, Rounded Corners), `draft`, `draft_two_sided` | inner walls `Inner[<face>]`; drafted faces keep their names |
 | Split | `split_faces`, `split_faces_lenient`, `split_by_plane`, `split_by_sheet`, `sheet_nearest` | pieces `<face>~<split>.<k>`; parts behind / in front of the tool |

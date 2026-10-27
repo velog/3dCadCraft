@@ -1203,6 +1203,90 @@ pub fn faces_named_many(
     Ok(out)
 }
 
+/// The distance from each `(face, point)` to that face of `s` (its display
+/// triangles; one mesh for all of them).
+pub fn face_distances(s: &ExactSolid, asks: &[(usize, Point3)]) -> Result<Vec<Real>, String> {
+    let tol = (s.body.size() * 1e-4).max(1e-4);
+    let mesh = guarded("tessellate", || s.body.tessellate(tol))?;
+    let mut out = vec![Real::INFINITY; asks.len()];
+    for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+        let Some([a, b, c]) = mesh.tri(t) else {
+            continue;
+        };
+        for (d, (face, p)) in out.iter_mut().zip(asks) {
+            if *face == f as usize {
+                let q = sheet::closest_on_triangle(p, &p3(a), &p3(b), &p3(c));
+                *d = d.min((q - p).norm());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Face references `(name, hint)` resolved among several bodies:
+/// `(body index, kernel face)` of each. A name held by more than one body
+/// (a Split Solid leaves the names of the faces it cuts on both parts)
+/// means the piece nearest the hint over all of them, never the first
+/// body's.
+pub fn faces_in_solids(
+    solids: &[ExactSolid],
+    refs: &[(&str, Point3)],
+) -> Vec<Option<(usize, usize)>> {
+    // Every body's best piece of each reference.
+    let mut cands: Vec<Vec<(usize, usize)>> = vec![Vec::new(); refs.len()];
+    for (i, s) in solids.iter().enumerate() {
+        let asks: Vec<usize> = (0..refs.len())
+            .filter(|&k| s.face_names.iter().any(|n| n.as_deref() == Some(refs[k].0)))
+            .collect();
+        if asks.is_empty() {
+            continue;
+        }
+        let these: Vec<(&str, Point3)> = asks.iter().map(|&k| refs[k]).collect();
+        let Ok(found) = faces_named_many(s, &these) else {
+            continue;
+        };
+        for (k, v) in asks.into_iter().zip(found) {
+            if let Some(&f) = v.first() {
+                cands[k].push((i, f));
+            }
+        }
+    }
+    // A name on several bodies: the nearest piece (one mesh per body).
+    let mut dist: Vec<Vec<Real>> = cands.iter().map(|c| vec![0.0; c.len()]).collect();
+    for (i, s) in solids.iter().enumerate() {
+        let mut asks = Vec::new();
+        let mut at = Vec::new();
+        for (k, c) in cands.iter().enumerate() {
+            if c.len() < 2 {
+                continue;
+            }
+            for (j, &(b, f)) in c.iter().enumerate() {
+                if b == i {
+                    asks.push((f, refs[k].1));
+                    at.push((k, j));
+                }
+            }
+        }
+        if asks.is_empty() {
+            continue;
+        }
+        let d = face_distances(s, &asks).unwrap_or_else(|_| vec![Real::INFINITY; asks.len()]);
+        for ((k, j), d) in at.into_iter().zip(d) {
+            dist[k][j] = d;
+        }
+    }
+    cands
+        .into_iter()
+        .zip(dist)
+        .map(|(c, d)| {
+            c.into_iter()
+                .zip(d)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(x, _)| x)
+        })
+        .collect()
+}
+
 /// Which way a shell's walls grow from the faces (Inventor: Inside,
 /// Outside, Both).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
