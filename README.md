@@ -64,7 +64,7 @@ sheet metal cut across a bend (`tests/data/*_journal.jsonl`).
 | Area | State | Notes |
 |---|---|---|
 | Sketching | ✅ | all Inventor line / circle / arc / rectangle / slot / polygon / spline variants, ~20 constraint and dimension kinds, sparse solver with DOF analysis, Modify tools, patterns, projected geometry |
-| Part features | 🟡 | Extrude, Revolve, Hole, Thread, Fillet, Chamfer, Shell, Face Draft, Pattern, Mirror, Sweep, Loft, Coil, Rib, Combine, Split, work features, primitives — done; many waiting for their visual check |
+| Part features | 🟡 | Extrude, Revolve, Hole, Thread, Fillet, Chamfer, Shell, Face Draft, Pattern, Mirror, Sweep, Loft, Coil, Rib, Combine, Split, Thicken / Offset, work features, primitives — done; many waiting for their visual check |
 | History and parameters | ✅ | End of Part, reorder, suppress (also by condition), Edit Feature with live preview and drag handles, unit-aware expressions in every numeric field |
 | Sheet metal | 🟡 | Face, Flange, Contour Flange, Hem, Fold, Cut, Unfold / Refold, Corner Round / Chamfer, Convert, Flat Pattern, DXF; Bend, Rip, Corner Seam, Punch, Lofted Flange — interface only |
 | Assemblies | 🟡 | Place (also linked part files), Ground, Free Move / Rotate, Mate / Flush / Angle / Insert, joints with limits, BOM; patterns, interference, subassemblies — to do |
@@ -86,7 +86,7 @@ The full plan is in [docs/ROADMAP.md](docs/ROADMAP.md); the main open items:
    under load (ROADMAP "⚠ Critical fixes").
 2. **Visual check** of everything implemented but not yet confirmed in the
    running app (shell, draft, patterns, materials, assemblies, sheet metal…).
-3. **Part commands still without logic:** Thicken / Offset, Delete Face, Move
+3. **Part commands still without logic:** Delete Face, Move
    Bodies, Copy Object, Emboss, Sketch Driven Pattern, surfaces (Stitch, Sculpt,
    Patch, Trim, Extend), Derive, plastic part, freeform.
 4. **Assemblies:** Tangent / Symmetry, Drive and Animate, component patterns,
@@ -154,7 +154,7 @@ code, text, icons or file formats.
 
 **Докъде е (октомври 2026):** скицирането е завършено; повечето операции за детайли (Extrude, Revolve, Hole, Thread, Fillet, Chamfer, Shell, Draft, масиви, Sweep, Loft, Coil, Rib, Combine, Split) работят; ламарина с разгъвка и DXF; първи сглобки (връзки, шарнири, спецификация); чертежи с изгледи, разрези, детайли, коти, бележки за отвори, таблица на частите, балони и PDF. Много от тях чакат визуална проверка. Снимките по-горе са от реални модели, които всеки може да построи с `cargo run --example …` (вижте таблицата „Real cases“).
 
-**Какво остава:** спешните поправки за бързина (резба, зенкери), визуалната проверка, логиката на останалите команди за детайли (Thicken, Delete Face, повърхнини, Derive…), сглобки (масиви от компоненти, колизии, подсглобки), чертежи (Break/Crop, DXF), внос на STEP, API/MCP за AI агенти. Пълният план: [docs/ROADMAP.md](docs/ROADMAP.md).
+**Какво остава:** спешните поправки за бързина (резба, зенкери), визуалната проверка, логиката на останалите команди за детайли (Delete Face, повърхнини, Derive…), сглобки (масиви от компоненти, колизии, подсглобки), чертежи (Break/Crop, DXF), внос на STEP, API/MCP за AI агенти. Пълният план: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ```powershell
 git clone https://github.com/velog/3dCadCraft.git 3dCadCraft
