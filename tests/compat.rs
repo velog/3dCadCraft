@@ -2006,6 +2006,22 @@ fn face_names(path: &Path) -> Result<Vec<String>, String> {
 /// kernel that names faces differently breaks old files even with the same
 /// volume. Recorded in `tests/compat/names.json` (new fixtures with
 /// `CADCRAFT_WRITE_COMPAT=1`; never edit recorded entries).
+/// The names only `a` has and the names only `b` has, counting repeats.
+fn multiset_diff<'a>(a: &'a [String], b: &'a [String]) -> (Vec<&'a String>, Vec<&'a String>) {
+    let mut rest: Vec<&String> = b.iter().collect();
+    let mut only_a = Vec::new();
+    for n in a {
+        match rest.iter().position(|m| *m == n) {
+            Some(i) => {
+                rest.swap_remove(i);
+            }
+            None => only_a.push(n),
+        }
+    }
+    rest.sort();
+    (only_a, rest)
+}
+
 #[test]
 fn face_names_stay() {
     let write = std::env::var_os("CADCRAFT_WRITE_COMPAT").is_some();
@@ -2045,8 +2061,8 @@ fn face_names_stay() {
         match recorded.get(&key) {
             Some(want) if *want == got => {}
             Some(want) => {
-                let lost: Vec<&String> = want.iter().filter(|n| !got.contains(n)).collect();
-                let new: Vec<&String> = got.iter().filter(|n| !want.contains(n)).collect();
+                // As multisets: a name that lost one of its copies shows too.
+                let (lost, new) = multiset_diff(want, &got);
                 problems.push(format!("{key}: names changed; lost {lost:?}, new {new:?}"));
             }
             None if write => {

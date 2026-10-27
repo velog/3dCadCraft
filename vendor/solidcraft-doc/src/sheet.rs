@@ -3820,7 +3820,7 @@ impl SheetBody {
                 continue;
             }
             let off = ((a + d * along) - q2).len();
-            if off <= tol && best.as_ref().is_none_or(|(o, _)| off < *o) {
+            if off <= tol && best.as_ref().is_none_or(|(o, _)| off < *o) && !self.on_child_bend(pi, a, b, q2, tol) {
                 best = Some((off, name));
             }
         }
@@ -3830,6 +3830,19 @@ impl SheetBody {
         };
         let plane = self.panel_face(&name)?;
         Some((name, plane))
+    }
+
+    /// Whether a point by the rim `a`→`b` of panel `pi` lies where a flange's bend hangs off that
+    /// rim (3DCadCraft): there the sheet goes on round the bend, so a point of the bend's faces
+    /// near the panel is not on a rim face (its name depended on where the face's sample fell).
+    fn on_child_bend(&self, pi: Option<usize>, a: Vec2, b: Vec2, q: Vec2, tol: f64) -> bool {
+        let Some(d) = (b - a).normalized() else { return false };
+        self.flanges.iter().any(|f| {
+            f.parent == pi && d.cross(f.d).abs() < 1e-6 && (f.p - a).cross(d).abs() < 1e-6 && {
+                let u = (q - f.p).dot(f.d);
+                u > tol && u < f.len - tol
+            }
+        })
     }
 
     /// A flange's bend in its parent's flat coordinates: the parent's placement, the bend axis

@@ -1115,6 +1115,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   name — revolve sectors), ties broken by the sample point. Thickening every face of a closed solid is
   `exact::offset_solid` (a Boolean with its own shell finds nothing). Check volumes with Steiner's formula
   ((V_out + V_in)/2 = A·t + 4π/3·t³ for a closed convex surface, A·t for an open smooth one) and Pappus.
+- **Face names must not depend on the display mesh's last bits**: `exact::face_samples` takes the largest
+  triangle, and on a cylinder many are equal up to rounding, so the sample lands elsewhere on Linux.
+  A name decided by "is the sample within a tolerance of X" must not have a face straddle that window
+  (a bend's cylinders were named after the rim they hang off on Windows only; CI red 10-25..10-27).
+  `face_names_stay` diffs as multisets; check a new naming rule on both CI jobs.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.
