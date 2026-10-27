@@ -68,6 +68,9 @@ pub(super) struct DimView {
     pub ends: [Point3; 2],
     pub value: Real,
     pub expr: Option<String>,
+    /// A reference (driven) dimension of the sketch: shown in brackets,
+    /// not edited or dragged.
+    pub driven: bool,
 }
 
 /// The foot of the perpendicular from `p` on the line through `a`, `b`.
@@ -94,6 +97,7 @@ impl HoleDraft {
                 value: x.value,
                 // A link shows as the dimension it follows (`= #1`).
                 expr: x.link.map(|k| format!("= #{}", k + 1)).or(x.expr.clone()),
+                driven: false,
             });
         }
         let Some(c) = &self.sk else { return out };
@@ -114,14 +118,21 @@ impl HoleDraft {
             };
             let p = sk.to_world(&pt.position);
             let ends = [sk.to_world(&pa.position), sk.to_world(&pb.position)];
+            let driven = sk.is_driven(id);
             out.push(DimView {
                 r: DimRef::Sketch(id),
                 centre: CentreRef::Sketch(point),
                 p,
                 foot: foot(p, ends),
                 ends,
-                value,
+                // A reference dimension shows what the geometry measures.
+                value: if driven {
+                    sk.measure(id).unwrap_or(value)
+                } else {
+                    value
+                },
                 expr: sk.dim_param(id).expr.clone(),
+                driven,
             });
         }
         out
@@ -295,7 +306,7 @@ impl HoleDraft {
                 .fold(Real::INFINITY, Real::min);
             let len = size(p, n).min(0.45 * near).max(1e-3);
             let mut dirs: Vec<Vector3> = Vec::new();
-            for v in views.iter().filter(|v| v.centre == c) {
+            for v in views.iter().filter(|v| v.centre == c && !v.driven) {
                 let Some(dir) = (v.p - v.foot).try_normalize(1e-12) else {
                     continue;
                 };
@@ -463,6 +474,7 @@ impl CadCraftApp {
         let d = self.hole_draft.as_ref()?;
         d.dim_views()
             .into_iter()
+            .filter(|v| !v.driven)
             .filter_map(|v| {
                 let at = self.hole_dim_label(&v, rect)?;
                 let r = egui::Rect::from_center_size(at, egui::vec2(56.0, 18.0));
@@ -486,7 +498,13 @@ impl CadCraftApp {
         let blue = Color32::from_rgb(20, 90, 200);
         let hot = Color32::from_rgb(230, 120, 20);
         for v in d.dim_views() {
-            let col = if d.redefine == Some(v.r) { hot } else { blue };
+            let col = if d.redefine == Some(v.r) {
+                hot
+            } else if v.driven {
+                Color32::from_gray(120)
+            } else {
+                blue
+            };
             let (Some(a), Some(b)) = (
                 self.camera.project(&v.p, rect),
                 self.camera.project(&v.foot, rect),
@@ -513,6 +531,10 @@ impl CadCraftApp {
             // This command's dimensions are numbered as in the panel.
             if let DimRef::Draft(j) = v.r {
                 text = format!("#{}: {text}", j + 1);
+            }
+            // A reference dimension in brackets (Inventor).
+            if v.driven {
+                text = format!("({text})");
             }
             if let Some(at) = self.hole_dim_label(&v, rect) {
                 let g = painter.layout_no_wrap(text, egui::FontId::proportional(13.0), col);
@@ -805,6 +827,57 @@ mod tests {
             d.dims.push(x);
         }
         (part, d)
+    }
+
+    /// A reference (driven) dimension of the hole's sketch is shown with
+    /// what the geometry measures, flagged so it is drawn in brackets and
+    /// neither edited nor dragged.
+    #[test]
+    fn reference_dimensions_are_flagged() {
+        let (mut part, d) = holed();
+        let def = d.build(&mut part).unwrap();
+        part.add_hole(def).unwrap();
+        let k = part.last_inserted();
+        let Some(Feature::Hole(h)) = part.features.get(k).cloned() else {
+            panic!("no hole");
+        };
+        let mut e = HoleDraft::editing(h, k);
+        let index = part
+            .sketches
+            .iter()
+            .position(|s| s.id == e.def.sketch)
+            .unwrap();
+        let mut sketch = part.sketches[index].sketch.clone();
+        let id = e
+            .def
+            .centers
+            .iter()
+            .find_map(|c| match c {
+                HoleCenter::Point(p) => Some(*p),
+                _ => None,
+            })
+            .and_then(|p| {
+                sketch.constraints().find_map(|(id, c)| {
+                    matches!(c, Constraint::PointLineDistance { point, .. } if *point == p)
+                        .then_some(id)
+                })
+            })
+            .unwrap();
+        sketch.set_driven(id, true).unwrap();
+        e.sk = Some(SketchCopy {
+            index,
+            sketch,
+            rev: 0,
+        });
+        let views = e.dim_views();
+        let v = views.iter().find(|v| v.r == DimRef::Sketch(id)).unwrap();
+        assert!(v.driven);
+        assert!(
+            (v.value - 9.0).abs() < 1e-9 || (v.value - 12.0).abs() < 1e-9,
+            "{}",
+            v.value
+        );
+        assert_eq!(views.iter().filter(|v| !v.driven).count(), 1);
     }
 
     /// Edit Feature: the hole's two dimensions come back from its sketch,

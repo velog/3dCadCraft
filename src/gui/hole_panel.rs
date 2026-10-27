@@ -660,6 +660,13 @@ impl CadCraftApp {
                     ui.end_row();
                     continue;
                 }
+                // A reference (driven) dimension: shown, not edited.
+                if x.driven {
+                    ui.label(RichText::new(format!("({})", hole::num(x.value, 3))).weak())
+                        .on_hover_text("A reference dimension of the hole's sketch (driven)");
+                    ui.end_row();
+                    continue;
+                }
                 let mut v = x.value;
                 let mut eq = x.expr.clone();
                 super::valuefield::set_frame_table(ui.ctx(), table.clone());
