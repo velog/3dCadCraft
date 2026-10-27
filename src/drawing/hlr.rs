@@ -366,6 +366,12 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
     let body = &part.body;
     let mut out = ViewModel::default();
     let mut seen: std::collections::HashSet<EdgeId> = Default::default();
+    // How many identical holes share each hole's plane (the notes' "4x").
+    let counts: HashMap<String, usize> = part
+        .hole_groups()
+        .iter()
+        .flat_map(|g| g.keys.iter().map(move |k| (k.clone(), g.count())))
+        .collect();
     for (sid, solid) in body.solids() {
         if solid.open || solid.name.as_deref().is_some_and(|n| !part.body_visible(n)) {
             continue;
@@ -419,12 +425,20 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
                 circle,
                 line: matches!(curve, Some(Curve::Line(_))),
                 note: hole.map(|h| {
-                    h.spec
+                    let mut lines: Vec<String> = h
+                        .spec
                         .note_lines(2)
                         .iter()
                         .map(|l| crate::part::hole::ascii(l))
-                        .collect::<Vec<_>>()
-                        .join("\n")
+                        .collect();
+                    // Every identical hole on the plane, from any feature.
+                    let n = counts.get(&h.key()).copied().unwrap_or(1);
+                    if n > 1
+                        && let Some(first) = lines.first_mut()
+                    {
+                        *first = format!("{n}x {first}");
+                    }
+                    lines.join("\n")
                 }),
                 hole: hole.map(|h| h.key()),
             });

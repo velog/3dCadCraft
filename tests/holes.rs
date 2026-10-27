@@ -649,6 +649,18 @@ fn holes_group_across_features() {
     assert_eq!(g.len(), 2);
     assert_eq!(g[0].label(), "4x Ø6.6 THRU");
     assert_eq!(g[1].label(), "M8x1.25 - 6H ↧ 12\nØ6.75 ↧ 12");
+    assert_eq!(g[0].keys.len(), 4);
+    // A drawing's note counts every identical hole of the plane, from both
+    // Hole features (not only its own feature's holes).
+    let model = cadcraft3d::drawing::hlr::part_model(&part);
+    let notes: Vec<&str> = model
+        .edges
+        .iter()
+        .filter_map(|e| e.note.as_deref())
+        .collect();
+    assert!(notes.iter().any(|n| n.starts_with("4x ")), "{notes:?}");
+    assert!(notes.iter().any(|n| n.starts_with("M8x1.25")), "{notes:?}");
+    assert!(!notes.iter().any(|n| n.starts_with("2x ")), "{notes:?}");
 }
 
 #[test]

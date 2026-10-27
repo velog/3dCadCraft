@@ -1454,18 +1454,22 @@ impl HoleInstance {
 /// Identical holes on the same face (Hole Table rows, the `4x` of a note).
 #[derive(Clone, Debug, PartialEq)]
 pub struct HoleGroup {
-    /// The face they start on.
+    /// The face the first of them starts on.
     pub start_face: Option<String>,
     /// The note of each of them.
     pub note: String,
     /// The holes: (feature id, occurrence).
     pub members: Vec<(String, usize)>,
+    /// Their keys (`HoleInstance::key`; pattern copies count one each).
+    pub keys: Vec<String>,
+    /// Drilling direction (unit) and the start plane's offset along it.
+    plane: (Vector3, Real),
 }
 
 impl HoleGroup {
     /// How many holes.
     pub fn count(&self) -> usize {
-        self.members.len()
+        self.keys.len()
     }
 
     /// The note with the quantity: `4x Ø6.6 THRU` (no prefix for one hole).
@@ -1478,21 +1482,36 @@ impl HoleGroup {
     }
 }
 
-/// Groups identical holes (same note) on the same face, from any Hole
-/// feature, in order of first appearance.
+/// Groups identical holes (same note) that start on one plane and drill
+/// the same way, from any Hole feature, pattern or mirror copy, in order of
+/// first appearance: a drawing's note counts them all (`4x Ø6.6 THRU`),
+/// also across a face split in pieces or on a work plane.
 pub fn group_holes(holes: &[HoleInstance]) -> Vec<HoleGroup> {
     let mut out: Vec<HoleGroup> = Vec::new();
+    let size = holes
+        .iter()
+        .map(|h| h.origin.coords.norm())
+        .fold(1.0, Real::max);
     for h in holes {
         let note = h.spec.note();
-        match out
-            .iter_mut()
-            .find(|g| g.note == note && g.start_face == h.start_face)
-        {
-            Some(g) => g.members.push((h.feature.clone(), h.occurrence)),
+        let d = h.direction.normalize();
+        let off = h.origin.coords.dot(&d);
+        let same = |g: &HoleGroup| {
+            g.note == note
+                && g.plane.0.dot(&d) > 1.0 - 1e-9
+                && (g.plane.1 - off).abs() <= 1e-6 * size
+        };
+        match out.iter_mut().find(|g| same(g)) {
+            Some(g) => {
+                g.members.push((h.feature.clone(), h.occurrence));
+                g.keys.push(h.key());
+            }
             None => out.push(HoleGroup {
                 start_face: h.start_face.clone(),
                 note,
                 members: vec![(h.feature.clone(), h.occurrence)],
+                keys: vec![h.key()],
+                plane: (d, off),
             }),
         }
     }
@@ -1502,6 +1521,42 @@ pub fn group_holes(holes: &[HoleInstance]) -> Vec<HoleGroup> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(feature: &str, k: usize, o: [Real; 3], dir: [Real; 3], face: &str) -> HoleInstance {
+        HoleInstance {
+            feature: feature.into(),
+            occurrence: k,
+            spec: HoleSpec::simple(6.0, 10.0),
+            origin: Point3::new(o[0], o[1], o[2]),
+            direction: Vector3::new(dir[0], dir[1], dir[2]),
+            start_face: Some(face.into()),
+            copy: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn identical_holes_group_by_plane() {
+        let down = [0.0, 0.0, -1.0];
+        let holes = vec![
+            // One plane (z = 10) in two face pieces, two features.
+            at("Hole1", 1, [0.0, 0.0, 10.0], down, "Box1:Top~Split1.1"),
+            at("Hole2", 1, [30.0, 0.0, 10.0], down, "Box1:Top~Split1.2"),
+            // A pattern copy of Hole1's hole.
+            HoleInstance {
+                copy: vec![1],
+                ..at("Hole1", 1, [0.0, 20.0, 10.0], down, "Box1:Top~Split1.1")
+            },
+            // Another plane, and the same plane drilled the other way.
+            at("Hole3", 1, [0.0, 0.0, 5.0], down, "Step:Top"),
+            at("Hole4", 1, [0.0, 0.0, 10.0], [0.0, 0.0, 1.0], "Box1:Top"),
+        ];
+        let g = group_holes(&holes);
+        assert_eq!(g.len(), 3, "{g:?}");
+        assert_eq!(g[0].count(), 3);
+        assert_eq!(g[0].label(), "3x Ø6 ↧ 10");
+        assert_eq!(g[0].keys, ["Hole1:1", "Hole2:1", "Hole1:1#1"]);
+        assert_eq!((g[1].count(), g[2].count()), (1, 1));
+    }
 
     fn m8() -> ThreadSpec {
         ThreadSpec::from_table(&Standards::builtin(), standards::ISO_METRIC, "M8", true).unwrap()
@@ -1731,7 +1786,11 @@ mod tests {
             mk("Hole2", 1, &a, "Box1:Top"),
             mk("Hole2", 2, &a, "Box1:Top"),
             mk("Hole2", 3, &b, "Box1:Top"),
-            mk("Hole3", 1, &a, "Box1:Front"),
+            // The front face: another plane, drilled along Y.
+            HoleInstance {
+                direction: Vector3::y(),
+                ..mk("Hole3", 1, &a, "Box1:Front")
+            },
         ];
         let g = group_holes(&holes);
         assert_eq!(g.len(), 3);
