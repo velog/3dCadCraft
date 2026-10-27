@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 use crate::kernel::Real;
 
 /// Built-in files: (file name, contents).
-const BUILTIN: [(&str, &str); 5] = [
+const BUILTIN: [(&str, &str); 7] = [
     (
         THREADS_ISO,
         include_str!("../../data/standards/iso_metric_threads.csv"),
@@ -40,6 +40,14 @@ const BUILTIN: [(&str, &str); 5] = [
         COUNTERSINKS,
         include_str!("../../data/standards/countersinks.csv"),
     ),
+    (
+        THREADS_NPT,
+        include_str!("../../data/standards/npt_threads.csv"),
+    ),
+    (
+        THREADS_ISO_TAPER,
+        include_str!("../../data/standards/iso_taper_threads.csv"),
+    ),
 ];
 
 const THREADS_ISO: &str = "iso_metric_threads.csv";
@@ -47,11 +55,20 @@ const THREADS_UNIFIED: &str = "unified_threads.csv";
 const CLEARANCE: &str = "clearance_holes.csv";
 const COUNTERBORES: &str = "counterbores.csv";
 const COUNTERSINKS: &str = "countersinks.csv";
+const THREADS_NPT: &str = "npt_threads.csv";
+const THREADS_ISO_TAPER: &str = "iso_taper_threads.csv";
 
 /// Thread type names (Inventor's Thread Type list).
 pub const ISO_METRIC: &str = "ISO Metric profile";
 /// Unified inch threads (UNC / UNF).
 pub const ANSI_UNIFIED: &str = "ANSI Unified Screw Threads";
+/// NPT taper pipe threads (Taper Tapped holes).
+pub const NPT: &str = "NPT";
+/// ISO 7 internal taper pipe threads, Rc (Taper Tapped holes).
+pub const ISO_TAPER: &str = "ISO Taper Internal";
+
+/// Taper of a taper pipe thread: 1 in 16 on the diameter.
+pub const PIPE_TAPER: Real = 1.0 / 16.0;
 
 /// One thread size and pitch.
 #[derive(Clone, Debug, PartialEq)]
@@ -74,6 +91,9 @@ pub struct ThreadRow {
     pub classes_internal: Vec<String>,
     /// Tolerance classes of external threads.
     pub classes_external: Vec<String>,
+    /// Default thread length (taper pipe threads: the effective thread
+    /// length); 0 when the table has none.
+    pub length: Real,
 }
 
 /// A thread type: one table.
@@ -83,6 +103,9 @@ pub struct ThreadTable {
     pub name: String,
     /// Rows in file order.
     pub rows: Vec<ThreadRow>,
+    /// A taper pipe thread (1:16 on the diameter; Taper Tapped holes):
+    /// major and minor are the diameters at the hole's face.
+    pub taper: bool,
 }
 
 impl ThreadTable {
@@ -250,7 +273,13 @@ fn list(get: &dyn Fn(&str) -> Result<String, String>, name: &str) -> Vec<String>
         .unwrap_or_default()
 }
 
-fn threads(name: &str, file: &str, text: &str, warnings: &mut Vec<String>) -> ThreadTable {
+fn threads(
+    name: &str,
+    file: &str,
+    text: &str,
+    taper: bool,
+    warnings: &mut Vec<String>,
+) -> ThreadTable {
     let csv = parse_csv(text);
     let rows = csv.each(file, warnings, |get| {
         let row = ThreadRow {
@@ -263,6 +292,7 @@ fn threads(name: &str, file: &str, text: &str, warnings: &mut Vec<String>) -> Th
             minor: number(get, "minor")?,
             classes_internal: list(get, "classes_internal"),
             classes_external: list(get, "classes_external"),
+            length: number(get, "length").unwrap_or(0.0),
         };
         if !(row.minor < row.major && row.tap_drill < row.major && row.pitch < row.major) {
             return Err(format!(
@@ -275,6 +305,7 @@ fn threads(name: &str, file: &str, text: &str, warnings: &mut Vec<String>) -> Th
     ThreadTable {
         name: name.to_owned(),
         rows,
+        taper,
     }
 }
 
@@ -303,11 +334,20 @@ impl Standards {
     /// with a warning (`file:line: reason`).
     pub fn parse(text: &dyn Fn(&str) -> String) -> (Self, Vec<String>) {
         let mut w = Vec::new();
-        let threads_iso = threads(ISO_METRIC, THREADS_ISO, &text(THREADS_ISO), &mut w);
+        let threads_iso = threads(ISO_METRIC, THREADS_ISO, &text(THREADS_ISO), false, &mut w);
         let threads_un = threads(
             ANSI_UNIFIED,
             THREADS_UNIFIED,
             &text(THREADS_UNIFIED),
+            false,
+            &mut w,
+        );
+        let threads_npt = threads(NPT, THREADS_NPT, &text(THREADS_NPT), true, &mut w);
+        let threads_rc = threads(
+            ISO_TAPER,
+            THREADS_ISO_TAPER,
+            &text(THREADS_ISO_TAPER),
+            true,
             &mut w,
         );
         let clearance = parse_csv(&text(CLEARANCE)).each(CLEARANCE, &mut w, |get| {
@@ -323,7 +363,7 @@ impl Standards {
         let countersinks = seats(COUNTERSINKS, &text(COUNTERSINKS), "angle", &mut w);
         (
             Self {
-                threads: vec![threads_iso, threads_un],
+                threads: vec![threads_iso, threads_un, threads_npt, threads_rc],
                 clearance,
                 counterbores,
                 countersinks,

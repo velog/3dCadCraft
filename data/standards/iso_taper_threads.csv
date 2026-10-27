@@ -1,0 +1,17 @@
+# ISO 7-1 internal taper pipe threads (Rc), for Taper Tapped holes (mm).
+# Taper 1:16 on the diameter. major = major diameter at the gauge plane (the hole's face);
+#   minor = major - 2 x 0.640327 P (the Whitworth form's thread height); both shrink by depth / 16.
+# length = useful thread length for the basic gauge length (the default thread depth); tap_drill =
+#   the usual taper-pipe drill.
+# Edit freely, or copy this file to the user standards folder to override it.
+designation,series,size,major,pitch,tap_drill,minor,length,classes_internal
+Rc 1/16,Rc,1/16,7.723,0.9071,6.600,6.561,6.5,
+Rc 1/8,Rc,1/8,9.728,0.9071,8.400,8.566,6.5,
+Rc 1/4,Rc,1/4,13.157,1.3368,11.200,11.445,9.7,
+Rc 3/8,Rc,3/8,16.662,1.3368,14.750,14.950,10.1,
+Rc 1/2,Rc,1/2,20.955,1.8143,18.250,18.632,13.2,
+Rc 3/4,Rc,3/4,26.441,1.8143,23.750,24.118,14.5,
+Rc 1,Rc,1,33.249,2.3091,30.000,30.292,16.8,
+Rc 1 1/4,Rc,1 1/4,41.910,2.3091,38.500,38.953,19.1,
+Rc 1 1/2,Rc,1 1/2,47.803,2.3091,44.500,44.846,19.1,
+Rc 2,Rc,2,59.614,2.3091,56.000,56.657,23.4,

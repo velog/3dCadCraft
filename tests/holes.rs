@@ -1250,3 +1250,44 @@ fn far_side_countersink() {
         "a blind hole has no far side"
     );
 }
+
+// ------------------------------------------------------- taper tapped ---
+
+/// Taper Tapped (NPT 1/4, Rc 1/4): a bore narrowing 1:16 on the diameter
+/// from the thread's minor diameter at the face; the thread runs its
+/// effective length; no counterbore.
+#[test]
+fn taper_tapped_holes() {
+    let t = Standards::builtin();
+    let npt = ThreadSpec::from_table(&t, standards::NPT, "1/4-18 NPT", true).unwrap();
+    assert!(npt.taper && !npt.full_depth);
+    assert!((npt.depth - 10.206).abs() < 1e-3, "{}", npt.depth);
+    let mut part = block();
+    let mut s = HoleSpec::taper_tapped(npt.clone(), 15.0);
+    s.drill_point = DrillPoint::Flat;
+    holes_at(&mut part, s.clone(), &[(20.0, 15.0)]).unwrap();
+    // A frustum: r at the face = minor / 2, 15 mm deeper r − 15 / 32.
+    let (r0, r1) = (npt.minor / 2.0, npt.minor / 2.0 - 15.0 / 32.0);
+    let frustum = PI * 15.0 / 3.0 * (r0 * r0 + r0 * r1 + r1 * r1);
+    check(&part, 40.0 * 30.0 * 20.0 - frustum, 2e-4);
+    // Its faces: the bore wall is a cone, not a cylinder of either radius.
+    let note = s.note();
+    assert!(note.starts_with("1/4-18 NPT ↧ 10.21"), "{note}");
+    // ISO 7 Rc 1/4.
+    let rc = ThreadSpec::from_table(&t, standards::ISO_TAPER, "Rc 1/4", true).unwrap();
+    assert!((rc.pitch - 25.4 / 19.0).abs() < 1e-3);
+    assert!(HoleSpec::taper_tapped(rc, 12.0).validate().is_ok());
+    // A straight thread, a counterbore and a modeled thread are refused.
+    let mut bad = HoleSpec::taper_tapped(m8(), 12.0);
+    assert!(bad.validate().is_err());
+    bad = HoleSpec::taper_tapped(npt.clone(), 12.0);
+    bad.seat = SeatType::Counterbore;
+    bad.seat_diameter = 20.0;
+    bad.seat_depth = 2.0;
+    assert!(bad.validate().unwrap_err().contains("counterbore"));
+    bad = HoleSpec::taper_tapped(npt, 12.0);
+    if let Some(th) = bad.thread.as_mut() {
+        th.modeled = true;
+    }
+    assert!(bad.validate().is_err());
+}

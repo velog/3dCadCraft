@@ -1,0 +1,17 @@
+# NPT taper pipe threads, ASME B1.20.1, for Taper Tapped holes (diameters in mm, 1 in = 25.4 mm).
+# Taper 1:16 on the diameter. major / minor = the internal thread's diameters at the hole's face (the
+#   hand-tight plane: E1 = E0 + L1 / 16, major = E1 + 0.8 P, minor = E1 - 0.8 P, the 60 deg form's
+#   thread height being 0.8 P); they shrink by depth / 16 going in.
+# length = effective thread length L2 (the default thread depth); tap_drill = the usual taper-pipe drill.
+# Edit freely, or copy this file to the user standards folder to override it.
+designation,series,size,major,pitch,tap_drill,minor,length,classes_internal
+1/16-27 NPT,NPT,1/16,7.895,0.9407,6.147,6.389,6.632,
+1/8-27 NPT,NPT,1/8,10.242,0.9407,8.611,8.737,6.703,
+1/4-18 NPT,NPT,1/4,13.616,1.4111,11.112,11.358,10.206,
+3/8-18 NPT,NPT,3/8,17.055,1.4111,14.684,14.797,10.358,
+1/2-14 NPT,NPT,1/2,21.224,1.8143,18.258,18.321,13.556,
+3/4-14 NPT,NPT,3/4,26.569,1.8143,23.416,23.666,13.861,
+1-11.5 NPT,NPT,1,33.228,2.2087,29.370,29.694,17.343,
+1 1/4-11.5 NPT,NPT,1 1/4,41.985,2.2087,38.100,38.451,17.953,
+1 1/2-11.5 NPT,NPT,1 1/2,48.054,2.2087,44.054,44.520,18.377,
+2-11.5 NPT,NPT,2,60.092,2.2087,56.358,56.558,19.215,

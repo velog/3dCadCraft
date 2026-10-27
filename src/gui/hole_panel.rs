@@ -45,6 +45,7 @@ fn thread_choice(
     id: &str,
     t: &ThreadSpec,
     internal: bool,
+    taper: bool,
 ) -> Option<ThreadSpec> {
     let tables = Standards::global();
     let mut out: Option<ThreadSpec> = None;
@@ -57,9 +58,12 @@ fn thread_choice(
         n
     };
     plabel(ui, "Type");
+    // Taper Tapped holes take the taper pipe threads, the others the
+    // straight ones.
     let types: Vec<(String, String)> = tables
         .threads
         .iter()
+        .filter(|x| x.taper == taper)
         .map(|x| (x.name.clone(), x.name.clone()))
         .collect();
     if let Some(ty) = combo(
@@ -370,6 +374,12 @@ fn dimension_picture(ui: &mut egui::Ui, spec: &HoleSpec, fx: &mut Fields, f: &Fe
 
 /// Sets the hole type, filling the values from the tables (Clearance:
 /// ISO 273 M6 Normal; Tapped: M8).
+/// A Taper Tapped hole's depth for thread `t`: its thread length and a
+/// quarter more, to the next whole millimetre.
+fn taper_depth(t: &ThreadSpec) -> f64 {
+    (t.depth * 1.25).ceil()
+}
+
 fn set_type(spec: &mut HoleSpec, ty: HoleType) {
     let tables = Standards::global();
     spec.hole_type = ty;
@@ -386,13 +396,30 @@ fn set_type(spec: &mut HoleSpec, ty: HoleType) {
             }
             spec.clearance = Some(c);
         }
-        HoleType::Tapped | HoleType::TaperTapped => {
+        HoleType::Tapped => {
             let t = spec
                 .thread
                 .clone()
+                .filter(|t| !t.taper)
                 .unwrap_or_else(ThreadSpec::default_metric);
             spec.diameter = t.minor;
             spec.thread = Some(t);
+        }
+        HoleType::TaperTapped => {
+            if let Some(t) = spec
+                .thread
+                .clone()
+                .filter(|t| t.taper)
+                .or_else(ThreadSpec::default_taper)
+            {
+                spec.diameter = t.minor;
+                spec.depth = spec.depth.max(taper_depth(&t));
+                spec.thread = Some(t);
+            }
+            // No counterbore or spotface on a taper tapped hole (Inventor).
+            if matches!(spec.seat, SeatType::Counterbore | SeatType::Spotface) {
+                spec.seat = SeatType::None;
+            }
         }
         HoleType::Simple => {}
     }
@@ -697,7 +724,6 @@ impl CadCraftApp {
             plabel(ui, "Hole");
             let items: Vec<(String, HoleType)> = HoleType::ALL
                 .iter()
-                .filter(|t| **t != HoleType::TaperTapped)
                 .map(|t| (t.label().to_owned(), *t))
                 .collect();
             if let Some(t) = combo(
@@ -909,11 +935,15 @@ impl CadCraftApp {
         if let Some(t) = spec
             .thread
             .clone()
-            .filter(|_| spec.hole_type == HoleType::Tapped)
+            .filter(|_| matches!(spec.hole_type, HoleType::Tapped | HoleType::TaperTapped))
         {
             psection(ui, "hole_threads", "Threads", |ui| {
-                if let Some(n) = thread_choice(ui, "hole_thread", &t, true) {
+                let taper = spec.hole_type == HoleType::TaperTapped;
+                if let Some(n) = thread_choice(ui, "hole_thread", &t, true, taper) {
                     spec.diameter = n.minor;
+                    if taper {
+                        spec.depth = spec.depth.max(taper_depth(&n));
+                    }
                     spec.thread = Some(n);
                 }
                 let th = spec.thread.get_or_insert(t);
@@ -1019,7 +1049,7 @@ impl CadCraftApp {
             ui.end_row();
         });
         psection(ui, "thread_spec", "Specification", |ui| {
-            if let Some(n) = thread_choice(ui, "thread", &d.spec, internal) {
+            if let Some(n) = thread_choice(ui, "thread", &d.spec, internal, false) {
                 d.spec = n;
             }
         });

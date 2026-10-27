@@ -244,6 +244,10 @@ pub struct ThreadSpec {
     /// it, an external one shrinks; parameter `thread_clearance`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub clearance: Real,
+    /// A taper pipe thread (NPT, Rc): 1:16 on the diameter, `major` and
+    /// `minor` at the hole's face (Taper Tapped holes).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub taper: bool,
 }
 
 fn yes() -> bool {
@@ -279,11 +283,14 @@ impl ThreadSpec {
             pitch: r.pitch,
             minor: r.minor,
             tap_drill: r.tap_drill,
-            full_depth: true,
-            depth: 0.0,
+            // A taper pipe thread runs its effective length (Inventor
+            // computes the thread depth of a Taper Tapped hole).
+            full_depth: !t.taper,
+            depth: if t.taper { r.length } else { 0.0 },
             right_hand: true,
             modeled: false,
             clearance: 0.0,
+            taper: t.taper,
         })
     }
 
@@ -303,7 +310,13 @@ impl ThreadSpec {
             right_hand: true,
             modeled: false,
             clearance: 0.0,
+            taper: false,
         })
+    }
+
+    /// NPT 1/4 (the Taper Tapped hole's default).
+    pub fn default_taper() -> Option<Self> {
+        Self::from_table(Standards::global(), standards::NPT, "1/4-18 NPT", true)
     }
 
     /// The designation as a note writes it: ISO threads always with their
@@ -529,6 +542,27 @@ impl HoleSpec {
         }
     }
 
+    /// A Taper Tapped hole of taper pipe thread `thread`, `depth` deep: a
+    /// cone narrowing 1:16 from the thread's minor diameter at the face.
+    pub fn taper_tapped(thread: ThreadSpec, depth: Real) -> Self {
+        Self {
+            hole_type: HoleType::TaperTapped,
+            diameter: thread.minor,
+            thread: Some(thread),
+            ..Self::simple(6.0, depth)
+        }
+    }
+
+    /// The bore's taper on the radius per unit of depth (0: a straight bore).
+    pub fn bore_taper(&self) -> Real {
+        match self.tapped_thread() {
+            Some(t) if self.hole_type == HoleType::TaperTapped && t.taper => {
+                standards::PIPE_TAPER / 2.0
+            }
+            _ => 0.0,
+        }
+    }
+
     /// Fills the seat from the counterbore table (`fastener`, `size`):
     /// hole, counterbore diameter and depth. `false`: no such row.
     pub fn counterbore_from(&mut self, tables: &Standards, fastener: &str, size: &str) -> bool {
@@ -540,7 +574,7 @@ impl HoleSpec {
             return false;
         };
         self.seat = SeatType::Counterbore;
-        if self.hole_type != HoleType::Tapped {
+        if !matches!(self.hole_type, HoleType::Tapped | HoleType::TaperTapped) {
             self.diameter = r.hole;
         }
         self.seat_diameter = r.diameter;
@@ -558,7 +592,7 @@ impl HoleSpec {
             return false;
         };
         self.seat = SeatType::Countersink;
-        if self.hole_type != HoleType::Tapped {
+        if !matches!(self.hole_type, HoleType::Tapped | HoleType::TaperTapped) {
             self.diameter = r.hole;
         }
         self.csink_diameter = r.diameter;
@@ -587,7 +621,24 @@ impl HoleSpec {
     /// feature's health).
     pub fn validate(&self) -> Result<(), String> {
         if self.hole_type == HoleType::TaperTapped {
-            return Err("Taper Tapped holes are not supported yet".into());
+            match &self.thread {
+                Some(t) if t.taper => {
+                    if t.modeled {
+                        return Err("modeled taper pipe threads are not supported yet".into());
+                    }
+                }
+                _ => {
+                    return Err(
+                        "a Taper Tapped hole needs a taper pipe thread (NPT, ISO Taper)".into(),
+                    );
+                }
+            }
+            if matches!(self.seat, SeatType::Counterbore | SeatType::Spotface) {
+                return Err(format!(
+                    "a Taper Tapped hole cannot have a {}",
+                    self.seat.label().to_lowercase()
+                ));
+            }
         }
         let r = self.bore_radius();
         if !(r.is_finite() && r > 1e-6) {
@@ -657,7 +708,7 @@ impl HoleSpec {
             {
                 return Err("the thread is deeper than the hole".into());
             }
-        } else if matches!(self.hole_type, HoleType::Tapped) {
+        } else if matches!(self.hole_type, HoleType::Tapped | HoleType::TaperTapped) {
             return Err("select the thread".into());
         }
         if self.far_csink {
@@ -793,19 +844,22 @@ impl HoleSpec {
             }
         }
         let zb = -self.bore_bottom(depth);
-        let mut bore = vec![([0.0, top], "Top"), ([r, top], "Bore")];
+        // A Taper Tapped bore narrows going in (1:16 on the diameter).
+        let k = self.bore_taper();
+        let r_at = |z: Real| (r + z * k).max(r * 0.05);
+        let mut bore = vec![([0.0, top], "Top"), ([r_at(top), top], "Bore")];
         if point && self.drill_point.angled() {
-            let tip = r / (self.point_angle / 2.0).tan();
             // Angle Y: the point is part of the depth.
-            let zc = if self.drill_point == DrillPoint::AngleY {
-                zb + tip
-            } else {
-                zb
-            };
-            bore.push(([r, zc], "Tip"));
+            let mut zc = zb;
+            let mut tip = r_at(zc) / (self.point_angle / 2.0).tan();
+            if self.drill_point == DrillPoint::AngleY {
+                zc = zb + tip;
+                tip = r_at(zc) / (self.point_angle / 2.0).tan();
+            }
+            bore.push(([r_at(zc), zc], "Tip"));
             bore.push(([0.0, zc - tip], "Axis"));
         } else {
-            bore.push(([r, zb], "Bottom"));
+            bore.push(([r_at(zb), zb], "Bottom"));
             bore.push(([0.0, zb], "Axis"));
         }
         out.push(bore);
@@ -964,7 +1018,7 @@ impl HoleFeature {
     pub fn fields(&self) -> Vec<(&'static str, Unit)> {
         let s = &self.spec;
         let mut v = Vec::new();
-        if s.hole_type != HoleType::Tapped {
+        if !matches!(s.hole_type, HoleType::Tapped | HoleType::TaperTapped) {
             v.push(("diameter", Unit::Mm));
         }
         if s.termination == Termination::Distance {
