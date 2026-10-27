@@ -97,6 +97,12 @@ The full plan is in [docs/ROADMAP.md](docs/ROADMAP.md); the main open items:
    processing from the command line.
 8. Later: frame generator, standard components, weldments, FEA, rendering.
 
+## Download
+
+Ready-made builds for **Windows** (`.zip`) and **Linux** (`.tar.gz`, x86-64) are on the
+[Releases](https://github.com/velog/3dCadCraft/releases) page: unpack and run `3dcadcraft`
+(`3dcadcraft.exe`). They are pre-releases — keep copies of your projects.
+
 ## Build and run
 
 You need [Rust](https://rustup.rs) (stable). On Windows, also the Visual
@@ -155,6 +161,8 @@ code, text, icons or file formats.
 **Докъде е (октомври 2026):** скицирането е завършено; повечето операции за детайли (Extrude, Revolve, Hole, Thread, Fillet, Chamfer, Shell, Draft, масиви, Sweep, Loft, Coil, Rib, Combine, Split) работят; ламарина с разгъвка и DXF; първи сглобки (връзки, шарнири, спецификация); чертежи с изгледи, разрези, детайли, коти, бележки за отвори, таблица на частите, балони и PDF. Много от тях чакат визуална проверка. Снимките по-горе са от реални модели, които всеки може да построи с `cargo run --example …` (вижте таблицата „Real cases“).
 
 **Какво остава:** спешните поправки за бързина (резба, зенкери), визуалната проверка, логиката на останалите команди за детайли (Delete Face, повърхнини, Derive…), сглобки (масиви от компоненти, колизии, подсглобки), чертежи (Break/Crop, DXF), внос на STEP, API/MCP за AI агенти. Пълният план: [docs/ROADMAP.md](docs/ROADMAP.md).
+
+Готови версии за Windows и Linux: [Releases](https://github.com/velog/3dCadCraft/releases). Или от изходния код:
 
 ```powershell
 git clone https://github.com/velog/3dCadCraft.git 3dCadCraft

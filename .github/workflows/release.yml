@@ -1,0 +1,82 @@
+name: Release
+
+# A tag `v*` (e.g. `v0.1.0`) builds the desktop application for Windows and Linux and
+# publishes both archives as a pre-release on GitHub. Run by hand (Actions → Release →
+# Run workflow), it only builds and keeps the archives as workflow artifacts.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            exe: 3dcadcraft.exe
+            # Static C runtime: runs without the Visual C++ Redistributable.
+            rustflags: -C target-feature=+crt-static
+          - name: linux-x64
+            os: ubuntu-22.04 # older glibc, so the binary runs on more distributions
+            exe: 3dcadcraft
+            rustflags: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - name: System libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libvulkan-dev
+      - name: Build
+        run: cargo build --release --locked --bin 3dcadcraft
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+      - name: Package
+        shell: bash
+        run: |
+          name="3dcadcraft-${GITHUB_REF_NAME//\//-}-${{ matrix.name }}"
+          mkdir "$name"
+          cp "target/release/${{ matrix.exe }}" README.md LICENSE-MIT LICENSE-APACHE ATTRIBUTION.md "$name/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "$name.zip" "$name" > /dev/null
+            echo "ASSET=$name.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "$name.tar.gz" "$name"
+            echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ASSET }}
+
+  publish:
+    name: Publish the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            *.zip
+            *.tar.gz

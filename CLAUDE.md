@@ -37,6 +37,7 @@ cargo xtask quick                             # before a commit: fmt, clippy, al
 cargo xtask heavy                             # heavy unit tests, medium and timed integration tests (idle machine)
 cargo xtask ci                                # every check once (quick + heavy + docs): before a push; docs/TESTING.md
 cargo xtask oracle                            # reference cases table (tests/oracle/)
+git tag v0.1.0 && git push origin v0.1.0     # release: .github/workflows/release.yml builds Windows + Linux, publishes a pre-release
 cargo run -- path/to/project.3dcadcraft       # open a project
 CADCRAFT3D_DEMO=slot cargo run                # start with a demo sketch (rectangle|slot|tangents|lines|revolve)
 cargo run --example make_project -- /tmp/b.3dcadcraft   # build a project via the API
