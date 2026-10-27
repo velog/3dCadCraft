@@ -96,6 +96,42 @@ impl SeatType {
     }
 }
 
+/// Which diameter a tapped hole is cut at (Inventor's Document Settings ›
+/// Modeling › Tapped Hole Diameter; Minor by default, which drawings need
+/// for their thread display).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TapDiameter {
+    /// The thread's minor diameter.
+    #[default]
+    Minor,
+    /// Its major (nominal) diameter.
+    Major,
+    /// Its pitch diameter.
+    Pitch,
+    /// The tap drill.
+    TapDrill,
+}
+
+impl TapDiameter {
+    /// All, in the dialog's order.
+    pub const ALL: [TapDiameter; 4] = [
+        TapDiameter::Minor,
+        TapDiameter::Major,
+        TapDiameter::Pitch,
+        TapDiameter::TapDrill,
+    ];
+
+    /// The dialog's name.
+    pub fn label(self) -> &'static str {
+        match self {
+            TapDiameter::Minor => "Minor",
+            TapDiameter::Major => "Major",
+            TapDiameter::Pitch => "Pitch",
+            TapDiameter::TapDrill => "Tap Drill",
+        }
+    }
+}
+
 /// Where the hole ends.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Termination {
@@ -551,6 +587,25 @@ impl HoleSpec {
             thread: Some(thread),
             ..Self::simple(6.0, depth)
         }
+    }
+
+    /// The hole as a part with Tapped Hole Diameter `d` cuts it: a tapped
+    /// (or taper tapped) hole with a cosmetic thread takes that diameter
+    /// of its thread; every other hole stays as it is.
+    pub fn with_tap_diameter(&self, d: TapDiameter) -> HoleSpec {
+        let mut s = self.clone();
+        if let Some(t) = s.tapped_thread().filter(|t| !t.modeled) {
+            s.diameter = match d {
+                TapDiameter::Minor => t.minor,
+                TapDiameter::Major => t.major,
+                // 60° thread forms: d2 = d − 0.649519 P; a taper pipe
+                // thread's major and minor are both at the face.
+                TapDiameter::Pitch if t.taper => (t.major + t.minor) / 2.0,
+                TapDiameter::Pitch => t.major - 0.649_519 * t.pitch,
+                TapDiameter::TapDrill => t.tap_drill,
+            };
+        }
+        s
     }
 
     /// The bore's taper on the radius per unit of depth (0: a straight bore).

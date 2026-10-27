@@ -150,7 +150,7 @@ finds every command by its alias too):
   PPT Pattern at Points, CN Coincident, CL Collinear, CC Concentric, GND Fix, PA Parallel, PE Perpendicular,
   TA Tangent, SY Symmetric, ECS Edit Coordinate System, CT Construction, CE Centerline, NO Normal, CPT Center
   Point, CSE Constraint Settings, ESK Finish Sketch, QDR / QDS / QDT / QDL / QDV the demos.
-- Inspect / Tools / Manage: PPR Physical Properties, IVS Validate Solid, AO Application Options, MAT Material,
+- Inspect / Tools / Manage: PPR Physical Properties, IVS Validate Solid, AO Application Options, TDS Document Settings, MAT Material,
   APP Appearance, ADJ Adjust, APC Clear, PRM Parameters, RBA Rebuild All, STE Styles Editor, UST Update
   Styles, PUR Purge Styles.
 - Manage › Documents / Storage (spec 0.6b; part, assembly and drawing, not in a sketch): DM Documents,

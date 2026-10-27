@@ -1414,9 +1414,11 @@ pub(super) fn hole(
     body: &BRep,
     works: &super::placement::WorkGeom,
     cur: &[ExactSolid],
+    tap: super::hole::TapDiameter,
 ) -> Result<(Vec<ExactSolid>, HoleOutput, Vec<super::pattern::ToolSet>), Fail> {
     use super::hole::{CosmeticThread, HoleInstance, SeatType, Termination};
-    let spec = &h.spec;
+    // A tapped hole is cut at the document's Tapped Hole Diameter.
+    let spec = &h.spec.with_tap_diameter(tap);
     spec.validate().map_err(User)?;
     let places = hole_placements(h, ps, body, works).map_err(User)?;
     let size = body

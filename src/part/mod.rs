@@ -845,6 +845,10 @@ pub enum PartError {
     Feature(String),
 }
 
+fn is_default_tap(d: &hole::TapDiameter) -> bool {
+    *d == hole::TapDiameter::default()
+}
+
 /// A single part: features, the body they produce, and sketches.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PartDocument {
@@ -874,6 +878,10 @@ pub struct PartDocument {
     /// The part's material (`None`: Generic), see [`appearance`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
+    /// Document Settings › Modeling › Tapped Hole Diameter (Minor when not
+    /// set): change it through [`PartDocument::set_tapped_hole_diameter`].
+    #[serde(default, skip_serializing_if = "is_default_tap")]
+    pub tapped_hole_diameter: hole::TapDiameter,
     /// Sheet Metal Defaults: set for a sheet metal part (5.6).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sheet_metal: Option<sheet_metal::SheetMetalDefaults>,
@@ -1262,7 +1270,8 @@ impl PartDocument {
                 ))),
                 BuildStep::Hole(h) if use_exact => {
                     let ps = self.sketches.iter().find(|s| s.id == h.sketch);
-                    exact::hole(h, ps, &body, &works, &solids).map(|(next, out, sets)| {
+                    let tap = self.tapped_hole_diameter;
+                    exact::hole(h, ps, &body, &works, &solids, tap).map(|(next, out, sets)| {
                         extra = out;
                         made = sets;
                         Some(next)
@@ -2499,6 +2508,25 @@ impl PartDocument {
     /// place in the regeneration loop.
     pub fn holes(&self) -> &[HoleInstance] {
         &self.hole_instances
+    }
+
+    /// Document Settings › Tapped Hole Diameter: every tapped hole with a
+    /// cosmetic thread is cut again at that diameter of its thread (the
+    /// regeneration cache does not know the setting, so it starts over).
+    pub fn set_tapped_hole_diameter(&mut self, d: hole::TapDiameter) -> Result<(), PartError> {
+        if self.tapped_hole_diameter == d {
+            return Ok(());
+        }
+        let old = self.tapped_hole_diameter;
+        self.tapped_hole_diameter = d;
+        self.build_cache = Default::default();
+        if let Err(e) = self.regenerate() {
+            self.tapped_hole_diameter = old;
+            self.build_cache = Default::default();
+            let _ = self.regenerate();
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// The holes grouped as a drawing counts them: identical holes on the

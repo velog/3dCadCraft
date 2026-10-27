@@ -39,6 +39,7 @@ mod commands;
 mod constrain;
 mod demos;
 mod diag;
+mod doc_settings;
 mod doc_tabs;
 mod documents;
 mod draft;
@@ -3944,6 +3945,7 @@ impl CadCraftApp {
             AppCmd::New => self.open_new_file(),
             AppCmd::NewAssembly => self.file_new(documents::DocCmd::NewAssembly),
             AppCmd::NewDrawing => self.file_new(documents::DocCmd::NewDrawing),
+            AppCmd::DocumentSettings => doc_settings::open(),
             AppCmd::Open => self.request(files::Pending::Open, now),
             AppCmd::Save => self.save(),
             AppCmd::SaveAs => self.open_dialog(files::DialogPurpose::SaveAs),
@@ -7430,6 +7432,7 @@ impl eframe::App for CadCraftApp {
         self.alias_window(&ctx);
         self.place_window(&ctx);
         self.drawing_windows(&ctx);
+        self.doc_settings_window(&ctx);
         self.iprops_window(&ctx);
         self.new_file_window(&ctx);
         self.sm_defaults_window(&ctx);

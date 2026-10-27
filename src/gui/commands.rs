@@ -131,6 +131,8 @@ pub enum AppCmd {
     NewAssembly,
     /// File → New Drawing: a drawing document in the open project.
     NewDrawing,
+    /// Tools → Document Settings.
+    DocumentSettings,
     /// File → Open.
     Open,
     /// File → Save.
@@ -1253,8 +1255,11 @@ pub static COMMANDS: &[Command] = &[
         .tip("Inference: which constraints are inferred and created while sketching")
         .spec("1.5-inference.md"),
     c("tools.document_settings", "Document Settings", "Настройки на документа", Icon::Settings)
+        .alias(&["TDS"])
+        .run(Action::App(AppCmd::DocumentSettings))
         .at(&[T_OPTIONS])
-        .todo("0.11"),
+        .tip("Settings kept with the document: units, sketch, modeling (Tapped Hole Diameter), BOM, tolerances")
+        .spec("2.3-hole.md"),
     c("tools.material", "Material", "Материал", Icon::Material)
         .alias(&["MAT"])
         .run(Action::Material(MatCmd::MaterialBrowser))

@@ -1445,3 +1445,45 @@ fn hole_direction_from_a_plane() {
     assert!(g > half_disc * 15.0 * 0.99 && g < half_disc * 17.0, "{g}");
     assert!(groove.holes()[0].direction.z.abs() < 1e-9);
 }
+
+// ------------------------------------------------- tapped hole diameter ---
+
+/// Document Settings › Tapped Hole Diameter: an M8 tapped hole is cut at
+/// the thread's minor diameter by default and at the major one when the
+/// part says so; a plain hole does not change.
+#[test]
+fn tapped_hole_diameter_setting() {
+    use cadcraft3d::part::hole::TapDiameter;
+    let mut part = block();
+    let mut s = HoleSpec::tapped(m8(), 12.0);
+    s.termination = Termination::ThroughAll;
+    holes_at(&mut part, s, &[(20.0, 15.0)]).unwrap();
+    holes_at(
+        &mut part,
+        HoleSpec {
+            termination: Termination::ThroughAll,
+            ..HoleSpec::simple(4.0, 10.0)
+        },
+        &[(5.0, 5.0)],
+    )
+    .unwrap();
+    let whole = 40.0 * 30.0 * 20.0;
+    let plain = PI * 4.0 * 20.0;
+    let minor = m8().minor;
+    check(&part, whole - plain - PI * minor * minor / 4.0 * 20.0, 5e-4);
+    part.set_tapped_hole_diameter(TapDiameter::Major).unwrap();
+    check(&part, whole - plain - PI * 16.0 * 20.0, 5e-4);
+    part.set_tapped_hole_diameter(TapDiameter::TapDrill)
+        .unwrap();
+    let d = m8().tap_drill;
+    check(&part, whole - plain - PI * d * d / 4.0 * 20.0, 5e-4);
+    // Saved with the part; the default is not written.
+    let json = serde_json::to_string(&part).unwrap();
+    assert!(json.contains("\"tapped_hole_diameter\":\"TapDrill\""));
+    part.set_tapped_hole_diameter(TapDiameter::Minor).unwrap();
+    assert!(
+        !serde_json::to_string(&part)
+            .unwrap()
+            .contains("tapped_hole_diameter")
+    );
+}
