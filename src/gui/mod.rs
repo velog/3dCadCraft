@@ -62,6 +62,7 @@ mod hole_panel;
 mod home;
 mod i18n;
 mod icons;
+mod if_builder;
 mod iprops;
 mod keys;
 mod layout;
@@ -566,7 +567,7 @@ struct CadCraftApp {
     /// Multi-Value list being edited: user parameter index, text.
     param_values_edit: Option<(usize, String)>,
     /// The Suppress if window: feature index, condition text.
-    suppress_if_edit: Option<(usize, String)>,
+    suppress_if_edit: Option<(usize, if_builder::CondBuilder, Option<String>)>,
     /// The in-place dimension editor shows its tolerance part.
     dim_tol_open: bool,
     /// How dimension texts are shown (status bar: Value / Name / …).

@@ -395,7 +395,8 @@ impl CadCraftApp {
                 let text = id
                     .and_then(|id| self.part().suppress_if.get(&id).cloned())
                     .unwrap_or_default();
-                self.suppress_if_edit = Some((k, text));
+                self.suppress_if_edit =
+                    Some((k, super::if_builder::CondBuilder::from_text(&text), None));
             }
             BrowserCmd::MoveEop(at) => self.move_eop(at),
             BrowserCmd::DeleteBelowEop => self.delete_below_eop(),
@@ -725,7 +726,12 @@ impl CadCraftApp {
             tip.push_str("\nSuppressed (not built)");
         }
         if let Some(c) = part.suppress_if.get(id) {
-            tip.push_str(&format!("\nSuppress if: {c}"));
+            let now = match part.check_condition(c) {
+                Ok(true) => "true now: suppressed".to_owned(),
+                Ok(false) => "false now: built".to_owned(),
+                Err(e) => format!("cannot be evaluated: {e}"),
+            };
+            tip.push_str(&format!("\nSuppress if: {c} ({now})"));
         }
         if rolled {
             tip.push_str("\nBelow the End of Part (rolled back)");
@@ -5734,7 +5740,7 @@ impl CadCraftApp {
     /// The Suppress if window: a true / false equation for a feature (empty
     /// removes it).
     pub(super) fn suppress_if_window(&mut self, ctx: &egui::Context) {
-        let Some((k, mut text)) = self.suppress_if_edit.clone() else {
+        let Some((k, mut cond, mut error)) = self.suppress_if_edit.clone() else {
             return;
         };
         let name = self
@@ -5743,36 +5749,57 @@ impl CadCraftApp {
             .get(k)
             .map(|f| f.name().to_owned())
             .unwrap_or_default();
+        let table = self.part().parameter_table();
+        let names = super::if_builder::choices(&table, None);
         let mut apply = false;
         let mut close = false;
+        let mut clear = false;
         egui::Window::new(format!("Suppress if: {name}"))
+            .default_pos(ctx.content_rect().center() - egui::vec2(200.0, 120.0))
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label("Suppressed while this is true (empty: never):");
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut text)
-                        .desired_width(300.0)
-                        .hint_text("not Heavy    Width < 100 mm    Material == \"Al\""),
-                );
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    apply = true;
+                ui.label("The feature (and what depends on it) is suppressed while this holds:");
+                cond.ui(ui, &names, egui::Id::new(("suppress_if", k)));
+                let text = cond.text(&names);
+                if text.is_empty() {
+                    ui.label(
+                        RichText::new("No condition: the feature is never suppressed by it").weak(),
+                    );
+                } else if super::if_builder::unfinished(&cond) {
+                    ui.label(RichText::new("Choose a parameter, a comparison and a value").weak());
+                } else {
+                    ui.label(RichText::new(&text).monospace());
+                    let state = self.part().check_condition(&text);
+                    super::if_builder::state_label(
+                        ui,
+                        &state,
+                        "the feature is suppressed",
+                        "the feature is built",
+                    );
                 }
-                ui.label(
-                    RichText::new(
-                        "and, or, not, < > <= >= == !=, if(), true / false and text parameters",
-                    )
-                    .small()
-                    .weak(),
-                );
+                if let Some(e) = &error {
+                    ui.label(RichText::new(e).color(WARNING));
+                }
                 ui.horizontal(|ui| {
                     apply |= ui.button("OK").clicked();
                     close |= ui.button("Cancel").clicked();
+                    clear |= ui
+                        .button("Remove")
+                        .on_hover_text("No condition (the feature is built)")
+                        .clicked();
                 });
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    apply = true;
+                }
             });
+        if clear {
+            cond = super::if_builder::CondBuilder::from_text("");
+            apply = true;
+        }
         if apply {
             self.checkpoint("Suppress if");
-            let t = text.trim().to_owned();
+            let t = cond.text(&names);
             match self
                 .part_mut()
                 .set_suppress_if(k, (!t.is_empty()).then_some(t.as_str()))
@@ -5784,14 +5811,14 @@ impl CadCraftApp {
                 }
                 Err(e) => {
                     self.history.cancel();
-                    self.file_status = Some(Err(e.to_string()));
-                    self.suppress_if_edit = Some((k, text));
+                    error = Some(e.to_string());
+                    self.suppress_if_edit = Some((k, cond, error));
                 }
             }
         } else if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.suppress_if_edit = None;
         } else {
-            self.suppress_if_edit = Some((k, text));
+            self.suppress_if_edit = Some((k, cond, error));
         }
     }
 
@@ -5827,10 +5854,13 @@ impl CadCraftApp {
         }
         use super::valuefield::ParamDrag;
         let mut edits: Vec<Edit> = Vec::new();
+        // The row whose "if" button was pressed this frame.
+        let mut if_open: Option<String> = None;
         // Filter: names some equation uses (Used / Unused).
         let referenced: std::collections::HashSet<String> = rows
             .iter()
             .filter_map(|r| r.expr.as_deref())
+            .chain(self.part().suppress_if.values().map(String::as_str))
             .flat_map(crate::part::expr::names_in)
             .collect();
         let mut filter = self.param_filter;
@@ -5853,13 +5883,22 @@ impl CadCraftApp {
                 || r.equation().to_lowercase().contains(&search);
             kind && found
         };
-        // Used by: the parameters whose equations name a row.
+        // Used by: the parameters whose equations name a row, and the
+        // Suppress if conditions.
         let mut used_by: std::collections::HashMap<String, Vec<String>> = Default::default();
         for r in &rows {
             if let Some(e) = &r.expr {
                 for n in crate::part::expr::names_in(e) {
                     used_by.entry(n).or_default().push(r.name.clone());
                 }
+            }
+        }
+        for (id, c) in &self.part().suppress_if {
+            for n in crate::part::expr::names_in(c) {
+                used_by
+                    .entry(n)
+                    .or_default()
+                    .push(format!("Suppress if ({id})"));
             }
         }
         // Suggestions while typing an equation: parameters, functions.
@@ -5916,6 +5955,9 @@ impl CadCraftApp {
                     let r = ui.add(te);
                     if !r.has_focus() && !r.lost_focus() && *text != current {
                         *text = current.to_owned(); // changed elsewhere
+                    }
+                    if key.starts_with("e:") && r.has_focus() {
+                        super::if_builder::draw_hint(ui, r.rect.translate(egui::vec2(0.0, 2.0)), text, &rows);
                     }
                     // An equation cell: the names / functions that start with
                     // the word being typed (a click puts it in).
@@ -6166,7 +6208,20 @@ impl CadCraftApp {
                                                 .response;
                                             (None, resp)
                                         }
-                                        _ => cell(ui, format!("e:{}", r.name), &r.equation(), cols[1], err.is_some()),
+                                        _ => ui
+                                            .horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 2.0;
+                                                let c = cell(ui, format!("e:{}", r.name), &r.equation(), cols[1], err.is_some());
+                                                if ui
+                                                    .small_button("if")
+                                                    .on_hover_text("If...: this value depends on a condition (built from lists)")
+                                                    .clicked()
+                                                {
+                                                    if_open = Some(r.name.clone());
+                                                }
+                                                c
+                                            })
+                                            .inner,
                                     }
                                 };
                                 if let Some(src) = drop_on(ui, &eq_resp, &r.name) {
@@ -6311,6 +6366,44 @@ impl CadCraftApp {
         }
         self.show_params = open;
         self.param_filter = filter;
+        // The If window of a row (its "if" button).
+        let if_row = egui::Id::new("param_if_row");
+        if let Some(n) = &if_open
+            && let Some(r) = rows.iter().find(|r| &r.name == n)
+        {
+            super::if_builder::open(ctx, egui::Id::new(("param_if", n.as_str())), &r.equation());
+            ctx.data_mut(|d| d.insert_temp(if_row, n.clone()));
+        }
+        let open_row: Option<String> = ctx.data(|d| d.get_temp(if_row));
+        if let Some(n) = open_row {
+            let id = egui::Id::new(("param_if", n.as_str()));
+            match rows.iter().find(|r| r.name == n) {
+                Some(r) => {
+                    let def = r.def();
+                    let label = r.unit_label();
+                    let eval = |t: &str| {
+                        crate::part::expr::eval_value(t, def, &|x| {
+                            rows.iter().find(|q| q.name == x).map(|q| q.as_value())
+                        })
+                        .map(|(v, _)| match v {
+                            crate::part::expr::Value::Num(x, _) => {
+                                crate::part::params::format_in(x, def, &label)
+                            }
+                            crate::part::expr::Value::Bool(b) => b.to_string(),
+                            crate::part::expr::Value::Text(s) => format!("\"{s}\""),
+                        })
+                    };
+                    if let Some(t) = super::if_builder::window(ctx, id, &n, &rows, Some(&n), &eval)
+                    {
+                        edits.push(Edit::Expr(n.clone(), t));
+                    }
+                    if !super::if_builder::is_open(ctx, id) {
+                        ctx.data_mut(|d| d.remove::<String>(if_row));
+                    }
+                }
+                None => ctx.data_mut(|d| d.remove::<String>(if_row)),
+            }
+        }
         if edits.is_empty() {
             return;
         }

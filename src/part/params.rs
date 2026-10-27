@@ -950,11 +950,8 @@ impl PartDocument {
                 self.suppress_if.remove(&id);
             }
             Some(t) => {
-                let table = self.parameter_table();
-                expr::eval_value(t, Unit::Bool, &|n| {
-                    table.iter().find(|r| r.name == n).map(ParamRow::as_value)
-                })
-                .map_err(|e| PartError::Feature(format!("Suppress if: {e}")))?;
+                self.check_condition(t)
+                    .map_err(|e| PartError::Feature(format!("Suppress if: {e}")))?;
                 self.suppress_if.insert(id.clone(), t.to_owned());
             }
         }
@@ -968,6 +965,38 @@ impl PartDocument {
             return Err(PartError::Feature(format!("Suppress if: {e}")));
         }
         Ok(())
+    }
+
+    /// Evaluates a Suppress if condition with the current parameters:
+    /// whether it is true now, or why it is not a condition (not true /
+    /// false, an unknown name, a physical property).
+    pub fn check_condition(&self, text: &str) -> Result<bool, String> {
+        let table = self.parameter_table();
+        let list = self.equations(&table);
+        if let Some(p) = expr::names_in(text).iter().find_map(|n| {
+            if is_physical(n) {
+                Some(n.clone())
+            } else {
+                physical_dependency(n, &list)
+            }
+        }) {
+            return Err(format!(
+                "a condition cannot depend on {p} (it would change it)"
+            ));
+        }
+        match expr::eval_value(text, Unit::Bool, &|n| {
+            table.iter().find(|r| r.name == n).map(ParamRow::as_value)
+        })? {
+            (expr::Value::Bool(b), _) => Ok(b),
+            _ => Err("the condition must be true or false".into()),
+        }
+    }
+
+    /// Feature `k`'s Suppress if condition now: `None` without one, else
+    /// whether it is true, or its error.
+    pub fn suppress_if_state(&self, k: usize) -> Option<Result<bool, String>> {
+        let text = self.suppress_if.get(self.features.get(k)?.id())?;
+        Some(self.check_condition(text))
     }
 
     /// The equations of the table (physical properties are values, not
@@ -1316,6 +1345,14 @@ impl PartDocument {
         let old = p.def();
         let (name, expr, value) = (p.name.clone(), p.expr.clone(), p.value);
         let before = self.user_params[i].clone();
+        // Conditions that hold now must still be conditions afterwards.
+        let snapshot = self.clone();
+        let working: Vec<String> = self
+            .suppress_if
+            .iter()
+            .filter(|(_, c)| self.check_condition(c).is_ok())
+            .map(|(id, _)| id.clone())
+            .collect();
         // An old kind when the specification is one (files stay readable by
         // older builds), else the nearest old kind and the specification.
         {
@@ -1359,6 +1396,18 @@ impl PartDocument {
         };
         if r.is_err() {
             self.user_params[i] = before;
+            return r;
+        }
+        for id in working {
+            if let Some(Err(e)) = self
+                .feature_index(&id)
+                .and_then(|k| self.suppress_if_state(k))
+            {
+                *self = snapshot;
+                return Err(PartError::Feature(format!(
+                    "{name} is used by Suppress if ({id}): {e}"
+                )));
+            }
         }
         r
     }
@@ -2062,5 +2111,287 @@ mod pattern_params {
         part.set_parameter_expr(&w, "10 mm").unwrap();
         part.regenerate().unwrap();
         assert!((last_x(&part) - 40.0).abs() < 1e-6, "{}", last_x(&part));
+    }
+}
+
+/// Suppress if, end to end: conditions of every kind, dependents, renames,
+/// deletes, save / load, refusals that leave the part as it was.
+#[cfg(test)]
+mod suppress_if_tests {
+    use super::*;
+    use crate::part::history::DeleteOptions;
+    use crate::part::{ExtrudeFeature, Operation, ProfileRef, SketchOptions, SketchPlacement};
+
+    /// A 40 × 30 × 20 box, a boss (Extrusion1) on its top and a second boss
+    /// (Extrusion2) on the first one's end face, so Extrusion2 depends on
+    /// Extrusion1. Returns the part and both feature indices.
+    fn two_bosses() -> (PartDocument, usize, usize) {
+        let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let boss = |part: &mut PartDocument, face: &str, r: f64, z: f64| {
+            let j = part
+                .create_sketch(SketchPlacement::on_face(face), &o)
+                .unwrap();
+            let c = part.sketches[j]
+                .sketch
+                .plane
+                .project(&crate::kernel::Point3::new(20.0, 15.0, z));
+            part.sketches[j].sketch.add_circle(c, r).unwrap();
+            let rg = part.sketches[j].sketch.regions();
+            let mut ex =
+                ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 10.0);
+            ex.operation = Operation::Join;
+            part.add_extrude(j, ex).unwrap();
+            part.last_inserted()
+        };
+        let a = boss(&mut part, "Box1:Top", 8.0, 20.0);
+        let b = boss(&mut part, "Extrusion1:End", 4.0, 30.0);
+        (part, a, b)
+    }
+
+    fn faces(p: &PartDocument) -> usize {
+        p.body.faces().count()
+    }
+
+    fn user(part: &mut PartDocument, unit: Unit, expr: &str) -> String {
+        let n = part.add_user_parameter(unit);
+        part.set_parameter_expr(&n, expr).unwrap();
+        n
+    }
+
+    /// A condition on a length: compared in one unit (cm against mm).
+    #[test]
+    fn length_comparison_in_any_unit() {
+        let (mut part, a, _) = two_bosses();
+        let full = faces(&part);
+        let w = user(&mut part, Unit::Mm, "120 mm");
+        part.set_suppress_if(a, Some(&format!("{w} < 10 cm")))
+            .unwrap();
+        assert!(!part.is_suppressed(a));
+        part.set_parameter_expr(&w, "80 mm").unwrap();
+        part.regenerate().unwrap();
+        assert!(part.is_suppressed(a));
+        assert!(faces(&part) < full);
+        // Back again: the same part as before (faces, volume).
+        part.set_parameter_expr(&w, "120 mm").unwrap();
+        part.regenerate().unwrap();
+        assert!(!part.is_suppressed(a));
+        assert_eq!(faces(&part), full);
+    }
+
+    /// The dependents of a conditionally suppressed feature go with it, and
+    /// come back with it.
+    #[test]
+    fn dependents_follow() {
+        let (mut part, a, b) = two_bosses();
+        let on = user(&mut part, Unit::Bool, "true");
+        part.set_suppress_if(a, Some(&format!("not {on}"))).unwrap();
+        part.set_parameter_expr(&on, "false").unwrap();
+        part.regenerate().unwrap();
+        assert!(part.is_suppressed(a) && part.is_suppressed(b));
+        assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+        part.set_parameter_expr(&on, "true").unwrap();
+        part.regenerate().unwrap();
+        assert!(!part.is_suppressed(a) && !part.is_suppressed(b));
+    }
+
+    /// Text parameters, and / or, if() inside the condition.
+    #[test]
+    fn text_and_logic() {
+        let (mut part, a, b) = two_bosses();
+        let mat = user(&mut part, Unit::Text, "\"Steel\"");
+        let n = user(&mut part, Unit::Ul, "3");
+        part.set_suppress_if(a, Some(&format!("{mat} == \"Al\" and {n} > 2")))
+            .unwrap();
+        assert!(!part.is_suppressed(a));
+        part.set_parameter_expr(&mat, "\"Al\"").unwrap();
+        part.regenerate().unwrap();
+        assert!(part.is_suppressed(a));
+        part.set_suppress_if(b, Some(&format!("if({n} > 5, true, {mat} != \"Al\")")))
+            .unwrap();
+        // a is suppressed (b with it); the condition of b alone is false.
+        assert!(part.is_suppressed(b));
+        part.set_suppress_if(a, None).unwrap();
+        assert!(!part.is_suppressed(a) && !part.is_suppressed(b));
+        part.set_parameter_expr(&n, "6").unwrap();
+        part.regenerate().unwrap();
+        assert!(part.is_suppressed(b) && !part.is_suppressed(a));
+    }
+
+    /// A condition may use the model's own dimensions (d-names) and
+    /// user parameters with equations.
+    #[test]
+    fn model_parameters_and_equations() {
+        let (mut part, a, b) = two_bosses();
+        let d = part
+            .parameter_table()
+            .into_iter()
+            .find(|r| matches!(r.owner, ParamOwner::Feature { feature, .. } if feature == a))
+            .map(|r| r.name)
+            .unwrap();
+        let big = user(&mut part, Unit::Bool, &format!("{d} > 15 mm"));
+        part.set_suppress_if(b, Some(&big)).unwrap();
+        assert!(!part.is_suppressed(b));
+        part.set_parameter_expr(&d, "20 mm").unwrap();
+        part.regenerate().unwrap();
+        assert!(part.is_suppressed(b), "{big} is true now");
+        assert!(!part.is_suppressed(a));
+    }
+
+    /// Refusals leave everything as it was: not true / false, an unknown
+    /// name, a physical property, a feature that does not exist.
+    #[test]
+    fn refusals_change_nothing() {
+        let (mut part, a, _) = two_bosses();
+        let on = user(&mut part, Unit::Bool, "true");
+        part.set_suppress_if(a, Some(&format!("not {on}"))).unwrap();
+        let before = (
+            part.suppress_if.clone(),
+            part.cond_suppressed.clone(),
+            faces(&part),
+        );
+        for bad in ["12 mm", "Nope > 1", "Mass > 1 kg", "not (", "\"text\""] {
+            assert!(
+                part.set_suppress_if(a, Some(bad)).is_err(),
+                "{bad} accepted"
+            );
+            assert_eq!(
+                (
+                    part.suppress_if.clone(),
+                    part.cond_suppressed.clone(),
+                    faces(&part)
+                ),
+                before,
+                "{bad} changed the part"
+            );
+        }
+        assert!(part.set_suppress_if(99, Some("true")).is_err());
+        // Blank text removes it.
+        part.set_suppress_if(a, Some("   ")).unwrap();
+        assert!(part.suppress_if.is_empty());
+    }
+
+    /// Renaming a parameter rewrites the condition; a used parameter cannot
+    /// be deleted or purged.
+    #[test]
+    fn renames_and_deletes_of_parameters() {
+        let (mut part, a, _) = two_bosses();
+        let on = user(&mut part, Unit::Bool, "false");
+        part.set_suppress_if(a, Some(&format!("not {on}"))).unwrap();
+        assert!(part.is_suppressed(a));
+        part.rename_parameter(&on, "HasBoss").unwrap();
+        assert_eq!(
+            part.suppress_if.values().next().map(String::as_str),
+            Some("not HasBoss")
+        );
+        part.regenerate().unwrap();
+        assert!(part.is_suppressed(a), "still evaluated after the rename");
+        assert!(part.delete_user_parameter("HasBoss").is_err());
+        assert!(part.purge_unused_parameters().is_empty());
+        assert!(
+            part.parameter_users("HasBoss")
+                .iter()
+                .any(|u| u.starts_with("Suppress if"))
+        );
+    }
+
+    /// Deleting the feature drops its condition, also for the dependents
+    /// deleted with it.
+    #[test]
+    fn deleting_features_drops_their_conditions() {
+        let (mut part, a, b) = two_bosses();
+        part.set_suppress_if(b, Some("false")).unwrap();
+        part.set_suppress_if(a, Some("false")).unwrap();
+        part.delete_features(a, DeleteOptions::default()).unwrap();
+        assert!(part.suppress_if.is_empty(), "{:?}", part.suppress_if);
+        assert!(part.cond_suppressed.is_empty());
+    }
+
+    /// Save and load: the conditions are kept and evaluated again.
+    #[test]
+    fn save_and_load() {
+        let (mut part, a, b) = two_bosses();
+        let on = user(&mut part, Unit::Bool, "false");
+        part.set_suppress_if(a, Some(&format!("not {on}"))).unwrap();
+        let full_faces = faces(&part);
+        let json = serde_json::to_string(&part).unwrap();
+        let mut back: PartDocument = serde_json::from_str(&json).unwrap();
+        back.regenerate().unwrap();
+        assert_eq!(back.suppress_if, part.suppress_if);
+        assert!(back.is_suppressed(a) && back.is_suppressed(b));
+        assert_eq!(faces(&back), full_faces);
+    }
+
+    /// A manual suppression and a condition: either one suppresses.
+    #[test]
+    fn manual_and_conditional_suppression() {
+        let (mut part, a, _) = two_bosses();
+        part.set_suppress_if(a, Some("false")).unwrap();
+        assert!(!part.is_suppressed(a));
+        part.suppress_feature(a).unwrap();
+        assert!(part.is_suppressed(a));
+        part.unsuppress_feature(a).unwrap();
+        part.set_suppress_if(a, Some("true")).unwrap();
+        assert!(part.is_suppressed(a));
+    }
+
+    /// Changing the unit of a parameter a condition uses into one that
+    /// breaks the condition is refused, with nothing changed.
+    #[test]
+    fn unit_change_that_breaks_a_condition_is_refused() {
+        let (mut part, _, b) = two_bosses();
+        let on = user(&mut part, Unit::Bool, "true");
+        part.set_suppress_if(b, Some(&format!("not {on}"))).unwrap();
+        let i = part.user_params.iter().position(|u| u.name == on).unwrap();
+        let before = part.user_params[i].clone();
+        let r = part.set_user_unit(i, "mm");
+        assert!(r.is_err(), "accepted: {r:?}");
+        assert_eq!(part.user_params[i].unit, before.unit);
+        assert_eq!(part.suppress_if_state(b), Some(Ok(false)));
+        assert!(part.param_errors.is_empty(), "{:?}", part.param_errors);
+    }
+
+    /// A condition whose dimension went with a deleted feature is kept (the
+    /// user's text) and its feature shows why it is not evaluated.
+    #[test]
+    fn a_condition_that_lost_its_parameter_is_health() {
+        let (mut part, a, b) = two_bosses();
+        let d = part
+            .parameter_table()
+            .into_iter()
+            .find(|r| matches!(r.owner, ParamOwner::Feature { feature, .. } if feature == b))
+            .map(|r| r.name)
+            .unwrap();
+        part.set_suppress_if(a, Some(&format!("{d} > 50 mm")))
+            .unwrap();
+        part.delete_features(b, DeleteOptions::default()).unwrap();
+        let id = part.features[a].id().to_owned();
+        assert!(part.suppress_if.contains_key(&id), "the text stays");
+        assert!(matches!(part.suppress_if_state(a), Some(Err(_))));
+        let h = part.feature_health.get(&id).cloned().unwrap_or_default();
+        assert!(h.starts_with("Suppress if:") && h.contains(&d), "{h}");
+        assert!(
+            !part.is_suppressed(a),
+            "built while the condition cannot be read"
+        );
+        // Fixing the condition clears it.
+        part.set_suppress_if(a, Some("false")).unwrap();
+        assert!(!part.feature_health.contains_key(&id));
+    }
+
+    /// The condition's current state for the GUI: true, false or the error.
+    #[test]
+    fn condition_state() {
+        let (mut part, a, _) = two_bosses();
+        let n = user(&mut part, Unit::Ul, "1");
+        part.set_suppress_if(a, Some(&format!("{n} > 2"))).unwrap();
+        assert_eq!(part.suppress_if_state(a), Some(Ok(false)));
+        assert_eq!(part.check_condition(&format!("{n} < 2")), Ok(true));
+        assert!(part.check_condition("12 mm").is_err());
+        assert_eq!(part.suppress_if_state(99), None);
     }
 }

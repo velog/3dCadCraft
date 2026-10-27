@@ -126,6 +126,8 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
         if r.has_focus() {
             let t = ui.input(|i| i.time);
             ui.data_mut(|d| d.insert_temp(active_field_id(), (spec.id, t)));
+            // `if(` being typed: which argument, and the condition's state.
+            super::if_builder::draw_hint(ui, r.rect, &text, spec.table);
         }
         // Pick whip: a parameter dropped here becomes the field's value.
         if r.dnd_hover_payload::<ParamDrag>().is_some() {
@@ -208,6 +210,16 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
                 }
             });
             if ui
+                .button("If...")
+                .on_hover_text(
+                    "A value that depends on a condition: if(condition, value, other value), built from lists",
+                )
+                .clicked()
+            {
+                super::if_builder::open(ui.ctx(), spec.id, &shown);
+                ui.close();
+            }
+            if ui
                 .button("Measure")
                 .on_hover_text(
                     "Pick two points, a line, a circle, an edge or a face in the view and use the value",
@@ -230,6 +242,17 @@ pub fn value_field(ui: &mut egui::Ui, spec: &FieldSpec) -> Option<String> {
         .response
         .on_hover_text("Parameters, recent values");
     });
+    // The If window of this field (`>` → If...).
+    let title = spec.name.filter(|n| !n.is_empty()).unwrap_or("value");
+    let eval = |t: &str| {
+        eval_field_in(spec.table, t, spec.unit, spec.name)
+            .map(|(_, v, _)| format_value(v, spec.unit))
+    };
+    if let Some(t) =
+        super::if_builder::window(ui.ctx(), spec.id, title, spec.table, spec.name, &eval)
+    {
+        commit = Some(t);
+    }
     if let Some(t) = &commit {
         remember(ui.ctx(), t);
     }

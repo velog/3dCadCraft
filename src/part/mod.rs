@@ -1030,6 +1030,19 @@ impl PartDocument {
             self.update_physical();
             self.evaluate_parameters();
         }
+        // A Suppress if condition that cannot be evaluated any more (a
+        // parameter it reads was deleted, or changed kind): the feature is
+        // built and shows why (rule 5: never dropped silently).
+        for (label, e) in &self.param_errors {
+            if let Some(id) = label
+                .strip_prefix("Suppress if (")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                self.feature_health
+                    .entry(id.to_owned())
+                    .or_insert_with(|| format!("Suppress if: {e}"));
+            }
+        }
         Ok(())
     }
 

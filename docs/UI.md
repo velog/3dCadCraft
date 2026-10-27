@@ -301,6 +301,14 @@ SHM Hem, SFO Fold, SBD Bend, SCR Contour Roll, SLF Lofted Flange, SRP Rip, SCT C
 Round, SCH Corner Chamfer, SPT Punch Tool, SUF Unfold, SRF Refold, SFP Flat Pattern, SFX Export Flat Pattern.
 🟡 waiting for a visual check.
 
+### Decisions in fields and Suppress if ([spec/0.5-parameters.md](spec/0.5-parameters.md))
+
+`>` → **If...** in any value field, or the **if** button beside an equation in Parameters: build
+`if(condition, value, other)` from lists (parameter · comparison · value, `+ and` / `+ or`, *Type the condition*),
+see the result now, Insert. Typing `if(` in a field shows which argument you are in and whether the condition
+holds now. Browser → feature → **Suppress if...**: the same condition rows, *Now: true — the feature is
+suppressed*, OK / Cancel / Remove; the browser tooltip tells the state now. 🟡 waiting for the owner's check.
+
 ### Part commands with their panel only ([spec/2.0-part-commands.md](spec/2.0-part-commands.md))
 
 Every Inventor part command without logic yet opens its whole panel in Properties (tabs, selectors that take
