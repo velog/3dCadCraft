@@ -297,6 +297,10 @@ impl CadCraftApp {
                 super::combine_split::BodyPick::Surface(n)
                 | super::combine_split::BodyPick::Body(n),
             ) if self.thicken_draft.is_some() => self.thicken_pick_body(n),
+            BrowserCmd::CommandPick(
+                super::combine_split::BodyPick::Surface(n)
+                | super::combine_split::BodyPick::Body(n),
+            ) if self.move_draft.is_some() => self.move_bodies_pick_body(n),
             BrowserCmd::CommandPick(p) => {
                 self.body_cmd_browser_pick(p);
             }
@@ -912,6 +916,7 @@ impl CadCraftApp {
                 match f.op {
                     crate::part::BodyOp::Thicken(_) => Icon::Thicken,
                     crate::part::BodyOp::DeleteFace(_) => Icon::DeleteFace,
+                    crate::part::BodyOp::MoveBodies(_) => Icon::MoveBodies,
                 },
                 f.describe(),
             ),
@@ -1237,6 +1242,10 @@ impl CadCraftApp {
         }
         if self.delete_draft.is_some() {
             self.delete_face_panel(ui);
+            return;
+        }
+        if self.move_draft.is_some() {
+            self.move_bodies_panel(ui);
             return;
         }
         if self.section.as_ref().is_some_and(|s| s.editing) {
@@ -4877,6 +4886,10 @@ impl CadCraftApp {
                 }
                 (Mode::Normal, None) if self.delete_draft.is_some() => {
                     let text = self.delete_face_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.move_draft.is_some() => {
+                    let text = self.move_bodies_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.part_planned.is_some() => {

@@ -776,5 +776,19 @@
     "Box1:Front",
     "Box1:Left",
     "Box1:Right"
+  ],
+  "r35/move_bodies_r35.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top",
+    "Extrusion1:End",
+    "Extrusion1:Side:1v1:0",
+    "Extrusion1:Side:2v1:0",
+    "Extrusion1:Side:3v1:0",
+    "Extrusion1:Side:4v1:0",
+    "Extrusion1:Start"
   ]
 }

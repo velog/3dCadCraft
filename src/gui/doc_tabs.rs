@@ -43,6 +43,7 @@ impl CadCraftApp {
         self.part_planned = None;
         self.thicken_draft = None;
         self.delete_draft = None;
+        self.move_draft = None;
         self.section = None;
         // A sheet metal command points into this document's part.
         if self.sm.draft.take().is_some() {

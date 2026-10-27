@@ -626,7 +626,11 @@ pub static COMMANDS: &[Command] = &[
     pp("part.copy_object", "Copy Object", "Копиране на обект", Icon::CopyObject, Pp::CopyObject)
         .alias(&["CPO"])
         .at(&[M_MODIFY]),
-    pp("part.move_bodies", "Move Bodies", "Преместване на тела", Icon::MoveBodies, Pp::MoveBodies)
+    c("part.move_bodies", "Move Bodies", "Преместване на тела", Icon::MoveBodies)
+        .run(Action::MoveBodies)
+        .env(PART)
+        .spec("2.13-move-bodies.md")
+        .tip("Move or turn bodies of a multi-body part: Free Drag, Move Along Ray, Rotate About Line")
         .alias(&["MB"])
         .at(&[M_MODIFY]),
     pp("part.bend_part", "Bend Part", "Огъване на детайл", Icon::BendPart, Pp::BendPart)

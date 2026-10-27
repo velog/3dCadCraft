@@ -752,6 +752,11 @@ A mirror copy of features or of the whole body about a plane.
 
 Robustness in touching and nearly coincident cases is achieved with tolerances and a "fuzzy" mode. The details are in ROADMAP, kernel-level decisions.
 
+**Move Bodies** — 🟡 implemented 2026-10-27 (format revision 35, `BodyOp::MoveBodies`): solid or surface
+bodies moved by Free Drag (X, Y, Z), Move Along Ray (an edge or axis, Flip, Offset) and Rotate About Line
+(an edge or axis, Flip, Angle), several moves in one feature (*Click to add*); names stay, so later features
+follow; dragging the preview is still to do. **Specification:** [spec/2.13-move-bodies.md](spec/2.13-move-bodies.md)
+
 **Inventor equivalent.** Combine, Split, Move Bodies, Make Components.
 
 ## 2.14 Thicken / Offset, Delete Face, Replace Face — 🟡 (Thicken/Offset, Delete Face; waiting for a visual check) · L

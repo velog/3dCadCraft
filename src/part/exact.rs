@@ -926,6 +926,8 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
 /// the solids and the new surface bodies; kernel failures are health.
 pub(super) fn body_op(
     f: &super::BodyOpFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
     cur: &[ExactSolid],
     sheets: &[ExactSolid],
 ) -> Result<Vec<ExactSolid>, Fail> {
@@ -935,7 +937,70 @@ pub(super) fn body_op(
             out
         }),
         super::BodyOp::DeleteFace(d) => delete_face(d, cur, sheets),
+        super::BodyOp::MoveBodies(m) => move_bodies(m, body, works, cur, sheets),
     }
+}
+
+/// The rigid motion of Move Bodies' steps, in order (lines resolved on the
+/// body before the feature).
+pub(super) fn move_matrix(
+    m: &super::body_op::MoveBodiesOp,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+) -> Result<nalgebra::Matrix4<Real>, String> {
+    use super::body_op::MoveStep;
+    let mut total = nalgebra::Matrix4::<Real>::identity();
+    for s in &m.steps {
+        let step = match s {
+            MoveStep::FreeDrag { x, y, z } => {
+                nalgebra::Translation3::new(*x, *y, *z).to_homogeneous()
+            }
+            MoveStep::AlongRay {
+                direction,
+                flip,
+                offset,
+            } => {
+                let (_, d) = direction.resolve(body, works)?;
+                let d = if *flip { -d } else { d };
+                nalgebra::Translation3::from(d * *offset).to_homogeneous()
+            }
+            MoveStep::RotateAboutLine { axis, flip, angle } => {
+                let (p, d) = axis.resolve(body, works)?;
+                let d = if *flip { -d } else { d };
+                let axis = nalgebra::Unit::try_new(d, 1e-12)
+                    .ok_or_else(|| "the axis has no direction".to_owned())?;
+                let r = nalgebra::Rotation3::from_axis_angle(&axis, *angle).to_homogeneous();
+                nalgebra::Translation3::from(p.coords).to_homogeneous()
+                    * r
+                    * nalgebra::Translation3::from(-p.coords).to_homogeneous()
+            }
+        };
+        total = step * total;
+    }
+    Ok(total)
+}
+
+/// Move Bodies: each chosen body (solid or surface) moved by the steps;
+/// faces keep their names. Returns the solids and the surface bodies.
+fn move_bodies(
+    m: &super::body_op::MoveBodiesOp,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    cur: &[ExactSolid],
+    sheets: &[ExactSolid],
+) -> Result<Vec<ExactSolid>, Fail> {
+    m.validate().map_err(User)?;
+    let t = move_matrix(m, body, works).map_err(User)?;
+    let mut all: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
+    for name in &m.bodies {
+        let i = all
+            .iter()
+            .position(|s| s.name.as_deref() == Some(name.as_str()))
+            .ok_or_else(|| User(format!("the body {name} no longer exists")))?;
+        all[i] = exact::moved(&all[i], &t)
+            .map_err(|e| User(format!("the geometry kernel cannot move it ({e})")))?;
+    }
+    Ok(all)
 }
 
 /// Each face reference resolved in the first body (of `all`) that has it:

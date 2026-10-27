@@ -1202,7 +1202,9 @@ impl PartDocument {
                     "Split needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
                 BuildStep::Shell(sh) if use_exact => exact::shell(sh, &solids).map(Some),
-                BuildStep::BodyOp(op) if use_exact => exact::body_op(op, &solids, &sheets).map(Some),
+                BuildStep::BodyOp(op) if use_exact => {
+                    exact::body_op(op, &body, &works, &solids, &sheets).map(Some)
+                }
                 BuildStep::BodyOp(op) => Err(exact::Fail::User(format!(
                     "{} needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)",
                     op.kind_name()
@@ -2171,6 +2173,7 @@ impl PartDocument {
         match &def.op {
             BodyOp::Thicken(t) => t.validate().map_err(PartError::Feature)?,
             BodyOp::DeleteFace(d) => d.validate().map_err(PartError::Feature)?,
+            BodyOp::MoveBodies(m) => m.validate().map_err(PartError::Feature)?,
         }
         let id = self.next_feature_id(def.kind_name());
         (def.id, def.name) = (id.clone(), id.clone());

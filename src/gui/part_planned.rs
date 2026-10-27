@@ -101,7 +101,6 @@ pub enum PartPlanned {
     // 3D Model › Modify
     Direct,
     CopyObject,
-    MoveBodies,
     BendPart,
     // 3D Model › Pattern
     SketchDrivenPattern,
@@ -146,7 +145,7 @@ pub enum PartPlanned {
 impl PartPlanned {
     /// Every planned command, in ribbon order.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const ALL: [PartPlanned; 42] = [
+    pub const ALL: [PartPlanned; 41] = [
         PartPlanned::Emboss,
         PartPlanned::Decal,
         PartPlanned::Mark,
@@ -155,7 +154,6 @@ impl PartPlanned {
         PartPlanned::Unwrap,
         PartPlanned::Direct,
         PartPlanned::CopyObject,
-        PartPlanned::MoveBodies,
         PartPlanned::BendPart,
         PartPlanned::SketchDrivenPattern,
         PartPlanned::Stitch,
@@ -203,7 +201,6 @@ impl PartPlanned {
             Unwrap => "Unwrap",
             Direct => "Direct Edit",
             CopyObject => "Copy Object",
-            MoveBodies => "Move Bodies",
             BendPart => "Bend Part",
             SketchDrivenPattern => "Sketch Driven Pattern",
             Stitch => "Stitch",
@@ -252,7 +249,6 @@ impl PartPlanned {
             Unwrap => Icon::Unwrap,
             Direct => Icon::Direct,
             CopyObject => Icon::CopyObject,
-            MoveBodies => Icon::MoveBodies,
             BendPart => Icon::BendPart,
             SketchDrivenPattern => Icon::SketchPattern,
             Stitch => Icon::Stitch,
@@ -299,7 +295,7 @@ impl PartPlanned {
             Unwrap | Stitch | Sculpt | Patch | TrimSurface | ExtendSurface | RuledSurface => "5.4",
             ReplaceFace => "2.14",
             Direct => "5.5",
-            CopyObject | MoveBodies | BendPart => "2.13",
+            CopyObject | BendPart => "2.13",
             SketchDrivenPattern => "2.11",
             Grill | Boss | Rest | SnapFit | RuleFillet | Lip => "5.8",
             FreeformBox | FreeformPlane | FreeformCylinder | FreeformSphere | FreeformTorus
@@ -326,7 +322,6 @@ impl PartPlanned {
             Unwrap => "Flattens a group of faces into a flat surface.",
             Direct => "Moves, resizes, scales, rotates or deletes faces without history.",
             CopyObject => "Copies or moves faces or bodies into a surface, composite or solid.",
-            MoveBodies => "Moves or rotates solid bodies of a multi-body part.",
             BendPart => "Bends a part about a sketch line (not for sheet metal).",
             SketchDrivenPattern => "Copies features or bodies at the points of a sketch.",
             Stitch => "Joins surfaces into a quilt, or a solid when they close a volume.",
@@ -573,32 +568,6 @@ impl PartPlanned {
                     Check("Associative", true),
                     Check("Delete Original", false),
                     Note("Select Existing and Associative work when editing a part in an assembly"),
-                ],
-            )],
-            MoveBodies => &[Page(
-                "Move Bodies",
-                &[
-                    Sel("bodies", "Bodies", "Select the bodies to move", BODIES),
-                    Combo(
-                        "Move",
-                        &["Free Drag", "Move Along Ray", "Rotate About Line"],
-                        0,
-                    ),
-                    Head("Free Drag"),
-                    Num("X Offset", 0.0, " mm"),
-                    Num("Y Offset", 0.0, " mm"),
-                    Num("Z Offset", 0.0, " mm"),
-                    Head("Move Along Ray / Rotate About Line"),
-                    Sel(
-                        "ray",
-                        "Direction / Axis",
-                        "Select an edge or axis for the direction",
-                        AXIS,
-                    ),
-                    Check("Flip", false),
-                    Num("Offset", 0.0, " mm"),
-                    Num("Angle", 0.0, "°"),
-                    Button("Click to add"),
                 ],
             )],
             BendPart => &[Page(

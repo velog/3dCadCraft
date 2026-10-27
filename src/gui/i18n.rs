@@ -231,6 +231,18 @@ const TABLE: &[(&str, &str)] = &[
         "Изберете стените за изтриване",
     ),
     (
+        "Select the bodies to move",
+        "Изберете телата за преместване",
+    ),
+    (
+        "Select the edge or axis to move along (or X, Y, Z)",
+        "Изберете ръба или оста, по която да се премести (или X, Y, Z)",
+    ),
+    (
+        "Select the edge or axis to turn about (or X, Y, Z)",
+        "Изберете ръба или оста, около която да се завърти (или X, Y, Z)",
+    ),
+    (
         "Select a face of each lump or void to delete (Select Other reaches a void)",
         "Изберете стена на всяко парче или кухина за изтриване (кухината се достига със Select Other)",
     ),

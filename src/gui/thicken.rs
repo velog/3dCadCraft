@@ -582,6 +582,7 @@ impl CadCraftApp {
         let icon = match b.op {
             BodyOp::Thicken(_) => Icon::Thicken,
             BodyOp::DeleteFace(_) => Icon::DeleteFace,
+            BodyOp::MoveBodies(_) => Icon::MoveBodies,
         };
         self.panel_header(ui, icon, f.name());
         if let Some(h) = self.part().feature_health.get(f.id()) {
@@ -592,6 +593,7 @@ impl CadCraftApp {
             match b.op {
                 BodyOp::Thicken(_) => self.thicken_edit(k),
                 BodyOp::DeleteFace(_) => self.delete_face_edit(k),
+                BodyOp::MoveBodies(_) => self.move_bodies_edit(k),
             }
         }
     }

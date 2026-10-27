@@ -530,6 +530,51 @@ fn sheet_r22() -> PartDocument {
     p
 }
 
+/// Revision 35: a 40 × 30 × 20 box and a 10 mm block beside it (two
+/// bodies); Move Bodies turns the block 90° about Z, then moves it 5 up.
+fn move_bodies_r35() -> PartDocument {
+    use cadcraft3d::part::body_op::{MoveBodiesOp, MoveStep};
+    use cadcraft3d::part::{
+        BodyOp, BodyOpFeature, ExtrudeFeature, LineRef, OriginPlane, ProfileRef,
+    };
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(60.0, 0.0), Point2::new(70.0, 10.0))
+        .unwrap();
+    let profiles: Vec<ProfileRef> = sk
+        .regions()
+        .iter()
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
+    p.add_extrude(i, ExtrudeFeature::new(profiles, 10.0))
+        .unwrap();
+    let mut m = MoveBodiesOp::new();
+    m.bodies = vec!["Extrusion1".into()];
+    m.steps = vec![
+        MoveStep::RotateAboutLine {
+            axis: LineRef::Origin(2),
+            flip: false,
+            angle: std::f64::consts::FRAC_PI_2,
+        },
+        MoveStep::FreeDrag {
+            x: 0.0,
+            y: 0.0,
+            z: 5.0,
+        },
+    ];
+    p.add_body_op(BodyOpFeature::new(BodyOp::MoveBodies(m)))
+        .unwrap();
+    p
+}
+
 /// Revision 34: an 80 × 60 × 20 box with a fillet r 5 on the top front
 /// edge, then Delete Face of the round with Heal (the box comes back), then
 /// Delete Face of the top without Heal (the box opens into a surface).
@@ -1909,6 +1954,13 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r33_project().save(&f).unwrap();
+        }
+        let f = root().join("r35/move_bodies_r35.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("MoveBodiesR35");
+            project.add_document("Part1", DocumentData::Part(move_bodies_r35()));
+            project.save(&f).unwrap();
         }
         let f = root().join("r34/delete_face_r34.3dcadcraft");
         if !f.exists() {

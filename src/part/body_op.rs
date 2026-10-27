@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::boolean::Operation;
 use super::expr::Unit;
 use super::shell::FaceRef;
+use super::work::LineRef;
 use crate::kernel::Real;
 
 /// What Thicken/Offset takes (Inventor's Select: Face · Quilt).
@@ -172,6 +173,158 @@ pub enum BodyOp {
     Thicken(ThickenOp),
     /// Delete Face (format revision 34).
     DeleteFace(DeleteFaceOp),
+    /// Move Bodies (format revision 35).
+    MoveBodies(MoveBodiesOp),
+}
+
+/// One step of Move Bodies (Inventor's move types); the steps apply in
+/// order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum MoveStep {
+    /// Free Drag: offsets along the part's X, Y, Z (mm).
+    FreeDrag {
+        /// Along X (mm).
+        #[serde(default)]
+        x: Real,
+        /// Along Y (mm).
+        #[serde(default)]
+        y: Real,
+        /// Along Z (mm).
+        #[serde(default)]
+        z: Real,
+    },
+    /// Move Along Ray: `offset` along an edge or axis (`flip`: the other
+    /// way).
+    AlongRay {
+        /// The edge or axis giving the direction.
+        direction: LineRef,
+        /// The other way along it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
+        /// How far (mm).
+        offset: Real,
+    },
+    /// Rotate About Line: `angle` (radians, right-handed about the line's
+    /// direction; `flip`: the other way) about an edge or axis.
+    RotateAboutLine {
+        /// The edge or axis turned about.
+        axis: LineRef,
+        /// The other sense of rotation.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
+        /// The angle (radians).
+        angle: Real,
+    },
+}
+
+impl MoveStep {
+    /// The step's name in the panel's Move Type list.
+    pub fn label(&self) -> &'static str {
+        match self {
+            MoveStep::FreeDrag { .. } => "Free Drag",
+            MoveStep::AlongRay { .. } => "Move Along Ray",
+            MoveStep::RotateAboutLine { .. } => "Rotate About Line",
+        }
+    }
+}
+
+/// **Move Bodies** (`docs/spec/2.13-move-bodies.md`): solid or surface
+/// bodies of a multi-body part moved and turned by one or more steps.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MoveBodiesOp {
+    /// The bodies, by persistent name.
+    pub bodies: Vec<String>,
+    /// The steps, applied in order.
+    pub steps: Vec<MoveStep>,
+}
+
+impl MoveBodiesOp {
+    /// No bodies, one Free Drag step of zero (Inventor's start).
+    pub fn new() -> Self {
+        Self {
+            bodies: Vec::new(),
+            steps: vec![MoveStep::FreeDrag {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            }],
+        }
+    }
+
+    /// Refuses a definition that cannot be built (before any geometry).
+    pub fn validate(&self) -> Result<(), String> {
+        if self.bodies.is_empty() {
+            return Err("select the bodies to move".into());
+        }
+        if self.steps.is_empty() {
+            return Err("add a move".into());
+        }
+        if self.steps.len() > MAX_STEPS {
+            return Err(format!("at most {MAX_STEPS} moves in one feature"));
+        }
+        let finite = self.steps.iter().all(|s| match s {
+            MoveStep::FreeDrag { x, y, z } => x.is_finite() && y.is_finite() && z.is_finite(),
+            MoveStep::AlongRay { offset, .. } => offset.is_finite(),
+            MoveStep::RotateAboutLine { angle, .. } => angle.is_finite(),
+        });
+        if !finite {
+            return Err("a value is not a number".into());
+        }
+        Ok(())
+    }
+}
+
+impl Default for MoveBodiesOp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The most steps of one Move Bodies feature (each value gets a parameter
+/// name of its own).
+pub const MAX_STEPS: usize = 9;
+
+/// Field names of step k's values (`x1`, `offset2`, `angle3` …).
+const XS: [&str; MAX_STEPS] = ["x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9"];
+const YS: [&str; MAX_STEPS] = ["y1", "y2", "y3", "y4", "y5", "y6", "y7", "y8", "y9"];
+const ZS: [&str; MAX_STEPS] = ["z1", "z2", "z3", "z4", "z5", "z6", "z7", "z8", "z9"];
+const OFFSETS: [&str; MAX_STEPS] = [
+    "offset1", "offset2", "offset3", "offset4", "offset5", "offset6", "offset7", "offset8",
+    "offset9",
+];
+const ANGLES: [&str; MAX_STEPS] = [
+    "angle1", "angle2", "angle3", "angle4", "angle5", "angle6", "angle7", "angle8", "angle9",
+];
+
+/// Step k's fields and the value each one reaches.
+fn step_fields(k: usize, s: &MoveStep) -> Vec<(&'static str, Unit)> {
+    if k >= MAX_STEPS {
+        return Vec::new();
+    }
+    match s {
+        MoveStep::FreeDrag { .. } => vec![(XS[k], Unit::Mm), (YS[k], Unit::Mm), (ZS[k], Unit::Mm)],
+        MoveStep::AlongRay { .. } => vec![(OFFSETS[k], Unit::Mm)],
+        MoveStep::RotateAboutLine { .. } => vec![(ANGLES[k], Unit::Deg)],
+    }
+}
+
+/// The step index and the value a field name stands for.
+fn step_value<'a>(op: &'a mut MoveBodiesOp, field: &str) -> Option<&'a mut Real> {
+    let k = field
+        .trim_start_matches(|c: char| c.is_ascii_alphabetic())
+        .parse::<usize>()
+        .ok()?
+        .checked_sub(1)?;
+    let kind = field.trim_end_matches(|c: char| c.is_ascii_digit());
+    match (op.steps.get_mut(k)?, kind) {
+        (MoveStep::FreeDrag { x, .. }, "x") => Some(x),
+        (MoveStep::FreeDrag { y, .. }, "y") => Some(y),
+        (MoveStep::FreeDrag { z, .. }, "z") => Some(z),
+        (MoveStep::AlongRay { offset, .. }, "offset") => Some(offset),
+        (MoveStep::RotateAboutLine { angle, .. }, "angle") => Some(angle),
+        _ => None,
+    }
 }
 
 /// Delete Face's **Select**: single faces, or a whole lump or void.
@@ -258,6 +411,7 @@ impl BodyOpFeature {
         match self.op {
             BodyOp::Thicken(_) => "Thicken",
             BodyOp::DeleteFace(_) => "DeleteFace",
+            BodyOp::MoveBodies(_) => "MoveBodies",
         }
     }
 
@@ -267,15 +421,21 @@ impl BodyOpFeature {
             BodyOp::Thicken(t) => {
                 t.output == ThickenOutput::Surface || t.operation == Operation::NewSolid
             }
-            BodyOp::DeleteFace(_) => false,
+            BodyOp::DeleteFace(_) | BodyOp::MoveBodies(_) => false,
         }
     }
 
     /// The numeric fields (parameters `d<N>` of the feature).
     pub fn fields(&self) -> Vec<(&'static str, Unit)> {
-        match self.op {
+        match &self.op {
             BodyOp::Thicken(_) => vec![("distance", Unit::Mm)],
             BodyOp::DeleteFace(_) => Vec::new(),
+            BodyOp::MoveBodies(m) => m
+                .steps
+                .iter()
+                .enumerate()
+                .flat_map(|(k, s)| step_fields(k, s))
+                .collect(),
         }
     }
 
@@ -283,14 +443,21 @@ impl BodyOpFeature {
     pub fn value(&self, field: &str) -> Option<Real> {
         match (&self.op, field) {
             (BodyOp::Thicken(t), "distance") => Some(t.distance),
+            (BodyOp::MoveBodies(m), f) => step_value(&mut m.clone(), f).map(|v| *v),
             _ => None,
         }
     }
 
     /// Sets a field.
     pub fn set(&mut self, field: &str, v: Real) {
-        if let (BodyOp::Thicken(t), "distance") = (&mut self.op, field) {
-            t.distance = v;
+        match (&mut self.op, field) {
+            (BodyOp::Thicken(t), "distance") => t.distance = v,
+            (BodyOp::MoveBodies(m), f) => {
+                if let Some(x) = step_value(m, f) {
+                    *x = v;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -316,6 +483,10 @@ impl BodyOpFeature {
                 }
                 DeleteSelect::Faces => format!("Delete {} face(s) (the body opens)", d.faces.len()),
             },
+            BodyOp::MoveBodies(m) => {
+                let steps: Vec<&str> = m.steps.iter().map(MoveStep::label).collect();
+                format!("Move {} body(ies): {}", m.bodies.len(), steps.join(", "))
+            }
         }
     }
 }

@@ -2652,8 +2652,8 @@ fn threaded_piece(
     }))
 }
 
-/// `s` moved by the rigid motion `m` (a pattern copy of a tool); face names
-/// are kept.
+/// `s` moved by the rigid motion `m` (a pattern copy of a tool, Move
+/// Bodies); face names are kept, a surface body stays one.
 pub fn moved(s: &ExactSolid, m: &nalgebra::Matrix4<Real>) -> Result<ExactSolid, String> {
     // The kernel takes the matrix column by column.
     let mut a = [[0.0; 4]; 4];
@@ -2670,7 +2670,7 @@ pub fn moved(s: &ExactSolid, m: &nalgebra::Matrix4<Real>) -> Result<ExactSolid, 
         face_names
     };
     Ok(ExactSolid {
-        sheet: false,
+        sheet: s.sheet,
         name: s.name.clone(),
         body,
         face_names,

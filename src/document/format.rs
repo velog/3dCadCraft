@@ -127,7 +127,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 32: hole tables (`AnnotationKind::HoleTable`) (2026-10-27).
 /// - 33: chamfer notes (`AnnotationKind::ChamferNote`) (2026-10-27).
 /// - 34: Delete Face (`BodyOp::DeleteFace`) (2026-10-27).
-pub const FORMAT_REVISION: u32 = 34;
+/// - 35: Move Bodies (`BodyOp::MoveBodies`) (2026-10-27).
+pub const FORMAT_REVISION: u32 = 35;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

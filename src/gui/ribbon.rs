@@ -115,6 +115,8 @@ pub enum Action {
     Thicken,
     /// 3D Model › Modify › Delete Face.
     DeleteFace,
+    /// 3D Model › Modify › Move Bodies.
+    MoveBodies,
     /// View › Visual Style.
     VisualStyle(super::view_style::VisualStyle),
     /// View › Section View (Quarter / Half / Three Quarter / End).

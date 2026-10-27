@@ -77,6 +77,7 @@ mod manip;
 mod material;
 mod measure;
 mod measure_pick;
+mod move_bodies;
 mod nav;
 mod new_file;
 mod overlay;
@@ -783,6 +784,8 @@ struct CadCraftApp {
     thicken_draft: Option<thicken::ThickenDraft>,
     /// The open Delete Face command.
     delete_draft: Option<delete_face::DeleteDraft>,
+    /// The open Move Bodies command.
+    move_draft: Option<move_bodies::MoveDraft>,
     /// View › Visual Style.
     visual_style: view_style::VisualStyle,
     /// View › Section View: the view's cut (stays after its panel closes).
@@ -1000,6 +1003,7 @@ impl CadCraftApp {
             part_planned: None,
             thicken_draft: None,
             delete_draft: None,
+            move_draft: None,
             visual_style: Default::default(),
             section: None,
             combine_draft: None,
@@ -1563,6 +1567,7 @@ impl CadCraftApp {
             Feature::BodyOp(b) => match b.op {
                 crate::part::BodyOp::Thicken(_) => self.thicken_edit(k),
                 crate::part::BodyOp::DeleteFace(_) => self.delete_face_edit(k),
+                crate::part::BodyOp::MoveBodies(_) => self.move_bodies_edit(k),
             },
             Feature::Extrude(e) => {
                 let Some(sketch) = sketch_of(self, &e.sketch) else {
@@ -3847,6 +3852,7 @@ impl CadCraftApp {
             Action::AsmPlanned(k) => self.start_asm_planned(k),
             Action::Thicken => self.start_thicken(),
             Action::DeleteFace => self.start_delete_face(),
+            Action::MoveBodies => self.start_move_bodies(),
             Action::VisualStyle(v) => {
                 self.visual_style = v;
                 self.file_status = Some(Ok(format!("Visual Style: {}", v.label())));
@@ -4777,6 +4783,7 @@ impl CadCraftApp {
             self.part_planned = None;
             self.cancel_thicken();
             self.cancel_delete_face();
+            self.cancel_move_bodies();
             // Esc closes the Section View panel; an unfinished section goes.
             if let Some(s) = self.section.as_mut() {
                 s.editing = false;
@@ -5244,6 +5251,14 @@ impl CadCraftApp {
         {
             self.delete_face_click(p, rect);
         }
+        // Move Bodies: bodies, the line of a step (`gui/move_bodies.rs`).
+        if self.move_draft.is_some()
+            && on_cube.is_none()
+            && response.clicked_by(PointerButton::Primary)
+            && let Some(p) = pointer
+        {
+            self.move_bodies_click(p, rect);
+        }
         // Section View: its planes.
         if self.section.as_ref().is_some_and(|s| s.editing)
             && on_cube.is_none()
@@ -5340,6 +5355,7 @@ impl CadCraftApp {
             && self.part_planned.is_none()
             && self.thicken_draft.is_none()
             && self.delete_draft.is_none()
+            && self.move_draft.is_none()
             && !self.section.as_ref().is_some_and(|s| s.editing)
             && self.pattern_draft.is_none()
             && self.hole_draft.is_none()
@@ -6551,6 +6567,8 @@ impl CadCraftApp {
                 Some(self.thicken_preview())
             } else if self.delete_draft.is_some() {
                 Some(self.delete_face_preview())
+            } else if self.move_draft.is_some() {
+                Some(self.move_bodies_preview())
             } else if body_cmd {
                 Some(self.body_cmd_preview())
             } else if self.pattern_draft.is_some() {
