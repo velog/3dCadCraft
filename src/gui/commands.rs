@@ -335,6 +335,11 @@ const M_MODIFY: Place = Place::Ribbon("3D Model", "Modify");
 const M_WORK: Place = Place::Ribbon("3D Model", "Work Features");
 const M_PATTERN: Place = Place::Ribbon("3D Model", "Pattern");
 const M_PRIM: Place = Place::Ribbon("3D Model", "Primitives");
+// Model commands the Sheet Metal tab shows as well (Inventor 2027 has them there).
+const SM_SKETCH: Place = Place::Ribbon("Sheet Metal", "Sketch");
+const SM_MODIFY: Place = Place::Ribbon("Sheet Metal", "Modify");
+const SM_WORK: Place = Place::Ribbon("Sheet Metal", "Work Features");
+const SM_PATTERN: Place = Place::Ribbon("Sheet Metal", "Pattern");
 const S_CREATE: Place = Place::Ribbon("Sketch", "Create");
 const S_MODIFY: Place = Place::Ribbon("Sketch", "Modify");
 const S_PATTERN: Place = Place::Ribbon("Sketch", "Pattern");
@@ -442,7 +447,7 @@ pub static COMMANDS: &[Command] = &[
         .inv("Start 2D Sketch")
         .alias(&["S"])
         .bound()
-        .at(&[M_SKETCH])
+        .at(&[M_SKETCH, SM_SKETCH])
         .env(PART)
         .tip("Pick an origin plane or a planar face to sketch on")
         .spec("1.1-sketch.md"),
@@ -502,7 +507,7 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::Hole)
         .alias(&["H"])
         .bound()
-        .at(&[M_MODIFY])
+        .at(&[M_MODIFY, SM_MODIFY])
         .env(PART)
         .tip("Hole: click a face, sketch points or a circular edge for the centres (Simple, Clearance, Tapped; Counterbore, Spotface, Countersink)")
         .spec("2.3-hole.md"),
@@ -565,7 +570,7 @@ pub static COMMANDS: &[Command] = &[
         .short("Plane")
         .inv("Plane")
         .alias(&["]"])
-        .at(&[M_WORK])
+        .at(&[M_WORK, SM_WORK])
         .env(PART)
         .tip("Work Plane: pick a plane (offset), two planes (midplane), \
               a plane and an edge (angle), a plane and a point, three points, \
@@ -576,7 +581,7 @@ pub static COMMANDS: &[Command] = &[
         .short("Axis")
         .inv("Axis")
         .alias(&["/"])
-        .at(&[M_WORK])
+        .at(&[M_WORK, SM_WORK])
         .env(PART)
         .tip("Work Axis: an edge or sketch line, two points, two planes, a plane \
               and a point, a line and a point, a circular or elliptical edge, or a \
@@ -587,7 +592,7 @@ pub static COMMANDS: &[Command] = &[
         .short("Point")
         .inv("Point")
         .alias(&["."])
-        .at(&[M_WORK])
+        .at(&[M_WORK, SM_WORK])
         .env(PART)
         .tip("Work Point: a vertex, sketch point or midpoint, three planes, two \
               lines, a plane or curved face and a line, a circular edge (centre), a \
@@ -596,7 +601,7 @@ pub static COMMANDS: &[Command] = &[
     c("part.ucs", "UCS", "Потребителска координатна система", Icon::Ucs)
         .alias(&["UCS"])
         .run(Action::Ucs)
-        .at(&[M_WORK])
+        .at(&[M_WORK, SM_WORK])
         .env(PART)
         .tip("UCS: a coordinate system with its own planes, axes and centre; \
               set X, Y, Z and angles, or pick three points (centre, X, Y)")
@@ -605,7 +610,7 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::RectPattern)
         .short("Rectangular")
         .alias(&["RP"])
-        .at(&[M_PATTERN])
+        .at(&[M_PATTERN, SM_PATTERN])
         .env(PART)
         .tip("Rectangular Pattern: copy features or solids in rows along one or two directions")
         .spec("2.11-patterns.md"),
@@ -613,14 +618,14 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::CircPattern)
         .short("Circular")
         .alias(&["CP"])
-        .at(&[M_PATTERN])
+        .at(&[M_PATTERN, SM_PATTERN])
         .env(PART)
         .tip("Circular Pattern: copy features or solids at equal angles about an axis")
         .spec("2.11-patterns.md"),
     c("part.mirror", "Mirror", "Огледално копие", Icon::Mirror)
         .run(Action::MirrorFeature)
         .alias(&["MI"])
-        .at(&[M_PATTERN])
+        .at(&[M_PATTERN, SM_PATTERN])
         .env(PART)
         .tip("Mirror: copy features or solids mirrored across a plane")
         .spec("2.12-mirror.md"),

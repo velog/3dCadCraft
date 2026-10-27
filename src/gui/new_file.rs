@@ -1,6 +1,6 @@
 //! File → New (Inventor's Create New File): a window of document kinds as
-//! large icon tiles — Part, Assembly, and those still to come (Sheet Metal,
-//! Drawing) greyed with their section — so a new file is a choice, not a
+//! large icon tiles — Part, Assembly, Drawing (sheet metal is made in a
+//! Part: its tab is in every part, owner 2026-10-27) — so a new file is a choice, not a
 //! fixed part (the owner, 2026-10-24).
 
 use eframe::egui::{self, RichText};
@@ -14,7 +14,6 @@ use super::ribbon::{Size, icon_button};
 pub(super) enum Kind {
     Part,
     Assembly,
-    SheetMetal,
     Drawing,
 }
 
@@ -65,15 +64,6 @@ impl CadCraftApp {
                     }
                     if tile(
                         ui,
-                        Icon::SheetMetal,
-                        "Sheet Metal",
-                        "a part of sheet stock",
-                        true,
-                    ) {
-                        chosen = Some(Kind::SheetMetal);
-                    }
-                    if tile(
-                        ui,
                         Icon::Drawing,
                         "Drawing",
                         "views of the project's parts",
@@ -102,13 +92,6 @@ impl CadCraftApp {
     pub(super) fn new_file_of(&mut self, k: Kind, now: f64) {
         match k {
             Kind::Part => self.request(super::files::Pending::New, now),
-            Kind::SheetMetal => {
-                self.add_blank_tab();
-                self.new_project();
-                self.part_mut().make_sheet_metal(None);
-                self.mark_saved();
-                self.tab = super::ribbon::Tab::SheetMetal;
-            }
             Kind::Assembly => self.new_assembly(),
             Kind::Drawing => self.new_drawing(),
         }

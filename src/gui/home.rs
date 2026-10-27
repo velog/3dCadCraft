@@ -615,7 +615,6 @@ impl CadCraftApp {
                 use super::new_file::Kind;
                 for (k, label) in [
                     (Kind::Part, "Part"),
-                    (Kind::SheetMetal, "Sheet Metal"),
                     (Kind::Assembly, "Assembly"),
                     (Kind::Drawing, "Drawing"),
                 ] {

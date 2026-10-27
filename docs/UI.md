@@ -218,7 +218,7 @@ As in Inventor's panels ([spec/0-ui.md §4.1](spec/0-ui.md)):
 
 ### In an assembly (Assemble tab, [spec/3.1-assemblies.md](spec/3.1-assemblies.md))
 
-**File → New… (Ctrl+N)** opens Create New File: tiles Part, Assembly (Sheet Metal and Drawing greyed until they come); Assembly opens a new assembly file in a tab of its own (as Inventor's `.iam`). **P** = Place:
+**File → New… (Ctrl+N)** opens Create New File: tiles Part, Assembly, Drawing (sheet metal is made in a part); Assembly opens a new assembly file in a tab of its own (as Inventor's `.iam`). **P** = Place:
 the assembly is saved first if it is new, then a browser like Explorer lists folders and `.3dcadcraft` files
 with a shaded preview of the selected part (drag it to turn it); **Place** (or a double-click) *links* the part
 file — it stays its own file, saving it updates the assembly — and occurrences are named after the file
@@ -269,7 +269,7 @@ Symmetric Gap / Overlap / Reverse Overlap, gap, percent overlap. **Cut**: Extent
 / Through All, or Cut Across Bend. The ribbon stays on the tab you chose (Finish Sketch returns to the tab the
 sketch was opened from).
 
-File → New… → **Sheet Metal**, or 3D Model › Convert › **Convert to Sheet Metal**. **Defaults**: thickness,
+Every part has the Sheet Metal tab (after 3D Model; no separate sheet metal part type): **Face** or 3D Model › Convert › **Convert to Sheet Metal** starts one. The tab also has Start 2D Sketch, Hole, the patterns (Rectangular, Circular, Mirror) and the work features (Plane, Axis, Point, UCS). **Defaults**: thickness,
 K-factor, bend radius and reliefs (unticked values follow the thickness). **Face**: choose the sketch with the
 closed profile, Flip. **Flange**: click sheet edges (green under the cursor, blue dots when taken; again
 removes), Height, Angle, Bend Radius, Bend Position, Flip. **Width Extents** of a Flange: Edge, Width (centred or from an offset) or Offset; the orange arrows at

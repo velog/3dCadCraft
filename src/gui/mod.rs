@@ -1179,11 +1179,10 @@ impl CadCraftApp {
         // ribbon stays where the user put it (it jumped to 3D Model after
         // every sheet metal command, owner 2026-10-26).
         if self.tab == Tab::Sketch {
-            self.tab = if self.tab_before_sketch.shown(
-                self.is_assembly(),
-                self.is_sheet_metal(),
-                self.is_drawing(),
-            ) && self.tab_before_sketch != Tab::Sketch
+            self.tab = if self
+                .tab_before_sketch
+                .shown(self.is_assembly(), self.is_drawing())
+                && self.tab_before_sketch != Tab::Sketch
             {
                 self.tab_before_sketch
             } else {

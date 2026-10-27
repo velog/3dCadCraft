@@ -183,8 +183,7 @@ pub struct Fold {
 impl Tab {
     /// Shown in this environment and not turned off by the user.
     pub fn visible(self, st: &State, hidden: &[String]) -> bool {
-        self.shown(st.assembly, st.sheet_metal, st.drawing)
-            && !hidden.iter().any(|h| h == self.label())
+        self.shown(st.assembly, st.drawing) && !hidden.iter().any(|h| h == self.label())
     }
 
     /// The first visible tab (the active one when the active tab is hidden).
@@ -198,7 +197,7 @@ fn tabs_menu(ui: &mut egui::Ui, st: &State, fold: &mut Fold) {
     ui.menu_button("Show Tabs", |ui| {
         let tabs: Vec<Tab> = Tab::ALL
             .into_iter()
-            .filter(|t| t.shown(st.assembly, st.sheet_metal, st.drawing))
+            .filter(|t| t.shown(st.assembly, st.drawing))
             .collect();
         let on = tabs.iter().filter(|t| t.visible(st, &fold.hidden)).count();
         for t in tabs {
@@ -265,8 +264,6 @@ pub struct State {
     pub assembly: bool,
     /// The active document is a drawing.
     pub drawing: bool,
-    /// The active part is a sheet metal part.
-    pub sheet_metal: bool,
     /// The view shows the flat pattern.
     pub flat: bool,
     /// The assembly command that is open (shown pressed).
@@ -282,7 +279,8 @@ pub enum Tab {
     Annotate,
     /// Assembly: place, position, relationships.
     Assemble,
-    /// Sheet metal parts: Face, Flange, Flat Pattern.
+    /// Sheet metal in any part (one part type, owner 2026-10-27): Face,
+    /// Flange, Flat Pattern, and the model's holes, patterns, work features.
     SheetMetal,
     /// Features: create, modify, work features, patterns.
     Model,
@@ -303,8 +301,8 @@ impl Tab {
         Tab::PlaceViews,
         Tab::Annotate,
         Tab::Assemble,
-        Tab::SheetMetal,
         Tab::Model,
+        Tab::SheetMetal,
         Tab::Sketch,
         Tab::Inspect,
         Tab::Tools,
@@ -315,12 +313,12 @@ impl Tab {
     /// Whether the tab belongs to the environment (an assembly has no
     /// 3D Model / Sketch tabs, a part no Assemble tab, a drawing only its
     /// own tabs and the shared Tools / Manage / View).
-    pub fn shown(self, assembly: bool, sheet_metal: bool, drawing: bool) -> bool {
+    pub fn shown(self, assembly: bool, drawing: bool) -> bool {
         match self {
             Tab::PlaceViews | Tab::Annotate => drawing,
             Tab::Inspect if drawing => false,
             Tab::Assemble => assembly && !drawing,
-            Tab::SheetMetal => sheet_metal && !assembly && !drawing,
+            Tab::SheetMetal => !assembly && !drawing,
             Tab::Model | Tab::Sketch => !assembly && !drawing,
             _ => true,
         }
@@ -635,6 +633,17 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             panel("Format", vec![c("drw.edit_layers")]),
         ],
         Tab::SheetMetal => vec![
+            panel(
+                "Sketch",
+                vec![
+                    when(
+                        !st.picking,
+                        c("part.start_sketch"),
+                        "Select a plane or face in the graphics window (Esc cancels)",
+                    )
+                    .large(),
+                ],
+            ),
             panel("Setup", vec![c("sm.defaults").large(), c("sm.convert")]),
             panel(
                 "Create",
@@ -654,12 +663,30 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 "Modify",
                 vec![
                     c("sm.cut"),
+                    c("part.hole"),
                     c("sm.corner_seam"),
                     c("sm.corner_round"),
                     c("sm.corner_chamfer"),
                     c("sm.punch"),
                     c("sm.unfold"),
                     c("sm.refold"),
+                ],
+            ),
+            panel(
+                "Pattern",
+                vec![
+                    c("part.rect_pattern"),
+                    c("part.circ_pattern"),
+                    c("part.mirror"),
+                ],
+            ),
+            panel(
+                "Work Features",
+                vec![
+                    c("part.work_plane").large(),
+                    c("part.work_axis"),
+                    c("part.work_point"),
+                    c("part.ucs"),
                 ],
             ),
             panel(
@@ -1027,7 +1054,6 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 assembly: false,
                 drawing,
                 asm_tool: None,
-                sheet_metal: true,
                 flat: false,
             };
             for tab in Tab::ALL {
