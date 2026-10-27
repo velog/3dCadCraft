@@ -91,6 +91,8 @@ impl Envs {
     pub const DRAWING: Envs = Envs(8);
     /// The part, its sketches and drawings.
     pub const PART_DRAWING: Envs = Envs(11);
+    /// The part, its sketches and assemblies (the 3D documents).
+    pub const MODELS: Envs = Envs(7);
     /// Every document (part, assembly, drawing) outside a sketch: the
     /// commands on the design file's documents (spec 0.6b).
     pub const DOCUMENTS: Envs = Envs(13);
@@ -1197,6 +1199,7 @@ pub static COMMANDS: &[Command] = &[
     c("inspect.measure", "Measure", "Измерване", Icon::Measure)
         .run(Action::App(AppCmd::Measure))
         .at(&[I_MEASURE])
+        .env(Envs::MODELS)
         .tip("Length, area, volume, radius of the selection; distance and angle of two items")
         .spec("0.10-physical.md")
         .key("m")

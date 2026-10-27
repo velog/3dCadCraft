@@ -8,6 +8,9 @@ use eframe::egui::{self, Color32, RichText, Stroke};
 
 use super::CadCraftApp;
 use super::select::SelItem;
+use crate::assembly::relation::GeomRef;
+use crate::kernel::{BRep, EdgeId, Transform3};
+use crate::part::blend::EdgeRef;
 use crate::part::measure::{self, Measurement, Target};
 
 /// State of the Measure window.
@@ -21,6 +24,11 @@ pub(super) struct MeasureUi {
     pub loop_mode: bool,
     /// Accumulate: values added with "Add to Accumulate" (label, mm).
     pub acc: Vec<(String, f64)>,
+    /// In an assembly: the picked faces / edges of components (two at
+    /// most; a third click starts a new pair).
+    pub asm_picks: Vec<GeomRef>,
+    /// In an assembly: the face / edge under the cursor.
+    pub asm_hover: Option<GeomRef>,
 }
 
 /// The measurable targets of the selection (the last two), and whether
@@ -94,8 +102,11 @@ impl CadCraftApp {
     }
 
     /// The measurement of the current selection (cached per body and
-    /// selection).
+    /// selection); in an assembly, of the picked component faces / edges.
     fn measurement(&self) -> Option<Result<Measurement, String>> {
+        if self.is_assembly() {
+            return self.asm_measurement();
+        }
         let (t, _) = targets(&self.sel);
         if t.is_empty() {
             return None;
@@ -109,6 +120,93 @@ impl CadCraftApp {
         let r = measure::measure(&self.part().body, &t);
         *self.measure.cache.borrow_mut() = Some((key, r.clone()));
         Some(r)
+    }
+
+    /// The measurement of the faces / edges picked in an assembly, each in
+    /// its part and moved by its occurrence (cached by picks and places).
+    fn asm_measurement(&self) -> Option<Result<Measurement, String>> {
+        let a = self.assembly()?;
+        let picks = &self.measure.asm_picks;
+        if picks.is_empty() {
+            return None;
+        }
+        let mut key = format!("asm|{picks:?}");
+        for g in picks {
+            let Some(occ) = a.find(g.occurrence()) else {
+                return Some(Err("the component is gone".into()));
+            };
+            let sig = self.with_part(occ.component, |p| p.body_signature())?;
+            key.push_str(&format!("|{sig}|{:?}", occ.transform));
+        }
+        if let Some((k, r)) = &*self.measure.cache.borrow()
+            && *k == key
+        {
+            return Some(r.clone());
+        }
+        let mut placed: Vec<(BRep, Target, Transform3)> = Vec::new();
+        for g in picks {
+            let occ = a.find(g.occurrence())?;
+            let item = self.with_part(occ.component, |p| {
+                let t = match g {
+                    GeomRef::Face { name, .. } => Target::Face(name.clone()),
+                    GeomRef::Edge { edge, .. } => Target::Edge(edge_by_ref(&p.body, edge)?),
+                    _ => return None,
+                };
+                Some((p.body.clone(), t))
+            })?;
+            let Some((body, t)) = item else {
+                return Some(Err("this item can't be measured".into()));
+            };
+            placed.push((body, t, occ.transform));
+        }
+        let refs: Vec<measure::Placed> =
+            placed.iter().map(|(b, t, m)| (b, t.clone(), *m)).collect();
+        let r = measure::measure_placed(&refs);
+        *self.measure.cache.borrow_mut() = Some((key, r.clone()));
+        Some(r)
+    }
+
+    /// Measure in an assembly view (no command open): the face / edge
+    /// under the cursor is highlighted, a click picks it (a third click
+    /// starts a new pair, a click on nothing clears), the picks and the
+    /// distance are drawn.
+    pub(super) fn asm_measure_view(
+        &mut self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        pointer: Option<egui::Pos2>,
+        clicked: bool,
+    ) {
+        if !self.measure.open {
+            self.measure.asm_picks.clear();
+            self.measure.asm_hover = None;
+            return;
+        }
+        self.measure.asm_hover = pointer.and_then(|p| self.geom_under_pub(p, rect));
+        if clicked {
+            match self.measure.asm_hover.clone() {
+                Some(g) => {
+                    if self.measure.asm_picks.len() >= 2 {
+                        self.measure.asm_picks.clear();
+                    }
+                    self.measure.asm_picks.push(g);
+                }
+                None => self.measure.asm_picks.clear(),
+            }
+        }
+        let picks = self.measure.asm_picks.clone();
+        for (k, g) in picks.iter().enumerate() {
+            let col = if k == 0 {
+                Color32::from_rgb(80, 160, 255)
+            } else {
+                Color32::from_rgb(200, 110, 255)
+            };
+            self.draw_geom(painter, rect, g, col);
+        }
+        if let Some(g) = self.measure.asm_hover.clone() {
+            self.draw_geom(painter, rect, &g, Color32::from_rgb(110, 220, 120));
+        }
+        self.draw_measure(painter, rect);
     }
 
     /// While Measure is open a plain click adds the item (two at most:
@@ -141,14 +239,23 @@ impl CadCraftApp {
                     .resizable(true),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.measure.loop_mode, false, "Measure");
-                    ui.selectable_value(&mut self.measure.loop_mode, true, "Loop")
-                        .on_hover_text("Click an edge: the length of its closed loop");
-                });
+                let asm = self.is_assembly();
+                if asm {
+                    self.measure.loop_mode = false;
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.measure.loop_mode, false, "Measure");
+                        ui.selectable_value(&mut self.measure.loop_mode, true, "Loop")
+                            .on_hover_text("Click an edge: the length of its closed loop");
+                    });
+                }
                 ui.label(
                     RichText::new(if self.measure.loop_mode {
                         "Click an edge: the length of the loop it belongs to (with a face selected too: that face's loop)."
+                    } else if asm {
+                        "Click a face or an edge of a component; click a second one (on \
+                         the same or another component) for the distance and angle (a \
+                         third click starts again)."
                     } else {
                         "Click a face, edge, vertex or body; click a second one for the \
                          distance and angle (a third click starts again)."
@@ -273,6 +380,7 @@ impl CadCraftApp {
                 }
                 if ui.button("Clear Selection").clicked() {
                     self.sel.clear();
+                    self.measure.asm_picks.clear();
                 }
             });
         if !open {
@@ -307,6 +415,20 @@ impl CadCraftApp {
             col,
         );
     }
+}
+
+/// The edge of `body` an [`EdgeRef`] names: between its two faces, the
+/// piece nearest its hint.
+fn edge_by_ref(body: &BRep, r: &EdgeRef) -> Option<EdgeId> {
+    let hint = crate::kernel::Point3::from(r.hint);
+    body.edges()
+        .filter_map(|(e, _)| {
+            let x = crate::part::blend::edge_ref(body, e)?;
+            let same = x.faces == r.faces || (x.faces[0] == r.faces[1] && x.faces[1] == r.faces[0]);
+            same.then(|| (e, (crate::kernel::Point3::from(x.hint) - hint).norm()))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(e, _)| e)
 }
 
 #[cfg(test)]

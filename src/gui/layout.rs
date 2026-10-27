@@ -208,6 +208,14 @@ impl UiSettings {
 pub struct AppOptions {
     pub mouse: MousePreset,
     pub invert_wheel: bool,
+    /// Default Orbit Type (Free: relative to the screen).
+    pub orbit_type: super::camera::OrbitType,
+    /// Orbit about the model point under the cursor, when there is one.
+    pub orbit_at_cursor: bool,
+    /// The wheel zooms towards the cursor.
+    pub zoom_to_cursor: bool,
+    /// Zoom out by itself when new geometry leaves the view.
+    pub fit_new_geometry: bool,
     pub sketch: SketchOptions,
     pub inference: InferenceSettings,
     pub show_labels: bool,
@@ -257,6 +265,10 @@ impl Default for AppOptions {
         Self {
             mouse: MousePreset::Inventor,
             invert_wheel: false,
+            orbit_type: super::camera::OrbitType::Free,
+            orbit_at_cursor: true,
+            zoom_to_cursor: true,
+            fit_new_geometry: true,
             sketch: SketchOptions::default(),
             inference: InferenceSettings::default(),
             show_labels: true,
@@ -857,6 +869,10 @@ impl CadCraftApp {
         AppOptions {
             mouse: self.mouse,
             invert_wheel: self.invert_wheel,
+            orbit_type: self.orbit_type,
+            orbit_at_cursor: self.orbit_at_cursor,
+            zoom_to_cursor: self.zoom_to_cursor,
+            fit_new_geometry: self.fit_new_geometry,
             sketch: self.sketch_opts.clone(),
             inference: self.tools.inference,
             show_labels: self.show_labels,
@@ -878,6 +894,10 @@ impl CadCraftApp {
     pub(super) fn apply_options(&mut self, o: AppOptions) {
         self.mouse = o.mouse;
         self.invert_wheel = o.invert_wheel;
+        self.orbit_type = o.orbit_type;
+        self.orbit_at_cursor = o.orbit_at_cursor;
+        self.zoom_to_cursor = o.zoom_to_cursor;
+        self.fit_new_geometry = o.fit_new_geometry;
         self.sketch_opts = o.sketch;
         self.tools.inference = o.inference;
         self.show_labels = o.show_labels;
@@ -1278,6 +1298,8 @@ mod tests {
         let mut o = AppOptions {
             mouse: MousePreset::Classic,
             invert_wheel: true,
+            orbit_type: super::super::camera::OrbitType::Constrained,
+            zoom_to_cursor: false,
             show_labels: false,
             home_view: Some((30.0, -20.0)),
             ..AppOptions::default()

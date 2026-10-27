@@ -367,7 +367,7 @@ Collected from [REFERENCE.md](REFERENCE.md) (the reference written from the code
 | U11 | No Shift+right click for Select Other (it comes only after hovering still for ~0.7 s) | Shift+right click opens Select Other immediately | 0.9 | ⬜ |
 | U10 | Right click is an ordinary menu, not a marking menu; on a face/edge there is no Edit Feature (it is in the suggestion bar) | radial menu; context items for face/edge/body | 0.9 | 🟡 |
 | U11 | No Shift+right click for Select Other (it comes only after hovering still for ~0.7 s) | Shift+right click opens the Selection menu (Select Other, Loop, Tangencies, Invert, All, Previous, Clear, Window/Crossing, filters, priority) | 0.9 | 🟡 implemented ([0.9a](spec/0.9a-selection-filters.md)); Select Other inside a command ⬜; waiting for a visual check |
-| U12 | The wheel zooms about the orbit centre, not about the cursor | option *Zoom towards cursor* (the default in Inventor) | 0.3 | ⬜ |
+| U12 | The wheel zooms about the orbit centre, not about the cursor | option *Zoom towards cursor* (the default in Inventor) | 0.3 | ✅ 2026-10-27 *Zoom to cursor*, also Free / Constrained orbit, orbit about the point under the cursor, zoom out when a sketch / placed component leaves the view (`gui/nav.rs`) |
 | U13 | No Navigation Bar (Pan / Zoom / Orbit / Look At buttons) | a bar in the view; then a check box in View → User Interface | 0.3 | ⬜ |
 | U14 | SolidWorks and Fusion profiles | two more tables in `MousePreset` | 0.3 | ⬜ |
 | U15 | Greyed-out commands in the ribbon: Measure, Visual Style, Section View, Document Settings, Box, Project Geometry, Ellipse, Text, Smooth (G2) | per their sections | 0.10, 0.3, 0.11, 2.1, 1.8, 1.2, 1.3 | ⬜ |
@@ -381,7 +381,7 @@ Collected from [REFERENCE.md](REFERENCE.md) (the reference written from the code
 | U24 | No command registry (name, alias, key, icon, ribbon path, Bulgarian name in one place) | `gui/commands.rs` — group G0; base for G4–G7 | 0.4 | ⬜ |
 | U25 | No hint next to the cursor outside the commands with selectors; no alias field with autocomplete (Application Options → General → *Prompting interaction*) | group G6 | 0.11 | 🟡 |
 | U26 | No command search | a field in the Quick Access, **Alt+S** — group G7 | 0.4 | ⬜ |
-| U27 | No F5/Shift+F5, Home/End/PageUp, Zoom Window, Free/Constrained Orbit, Isolate, Object Visibility by type (Alt+], Ctrl+], Alt+V) | group G8 (takes over U3, U12) | 0.3 | ⬜ |
+| U27 | No F5/Shift+F5, Home/End/PageUp, Zoom Window, Isolate, Object Visibility by type (Alt+], Ctrl+], Alt+V) | group G8 (takes over U3, U12) | 0.3 | ⬜ |
 | U28 | Tooltips are short only; no Undo list; no Annotation scale; no Show Dimensions on a feature | groups G9, G10 | 0.4, 1.4 | ⬜ |
 | U20 | The comment in `src/gui/mod.rs` lists `CADCRAFT3D_DEMO=rectangle\|slot\|tangents\|lines` without `revolve` | a small fix in the code | — | ⬜ |
 

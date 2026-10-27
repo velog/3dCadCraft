@@ -373,6 +373,11 @@ impl CadCraftApp {
         Some(list)
     }
 
+    /// [`Self::geom_under`] for Measure.
+    pub(super) fn geom_under_pub(&self, pos: Pos2, rect: Rect) -> Option<GeomRef> {
+        self.geom_under(pos, rect)
+    }
+
     /// The face or edge of a component under the cursor (an edge within a
     /// few pixels wins over the face behind it).
     fn geom_under(&self, pos: Pos2, rect: Rect) -> Option<GeomRef> {

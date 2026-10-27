@@ -271,7 +271,7 @@ impl CadCraftApp {
     }
 
     /// The assembly's keys (Inventor's defaults): P Place, C Constrain,
-    /// V Free Move, G Free Rotate, Ctrl+C / Ctrl+V copy and paste
+    /// V Free Move, G Free Rotate, J Joint, M Measure, Ctrl+C / Ctrl+V copy and paste
     /// components.
     pub(super) fn assembly_keys(&mut self, ctx: &egui::Context, letter: bool) {
         let pressed = |k: egui::Key| ctx.input(|i| i.key_pressed(k));
@@ -283,6 +283,7 @@ impl CadCraftApp {
                 (egui::Key::V, Action::AsmFreeMove),
                 (egui::Key::G, Action::AsmFreeRotate),
                 (egui::Key::J, Action::AsmJoint),
+                (egui::Key::M, Action::App(super::commands::AppCmd::Measure)),
             ] {
                 if pressed(k) {
                     self.apply(a);
@@ -601,8 +602,15 @@ impl CadCraftApp {
         if self.asm.drag.is_none() {
             self.asm.hover = hit.map(|(h, _)| h.occurrence);
         }
-        let primary_click =
-            response.clicked_by(PointerButton::Primary) && !on_cube && !modal && !constraining;
+        // Measure (no command open) takes the clicks on faces and edges.
+        let measuring = self.measure.open && !constraining && self.asm.tool.is_none();
+        let primary_click = response.clicked_by(PointerButton::Primary)
+            && !on_cube
+            && !modal
+            && !constraining
+            && !measuring;
+        let measure_click =
+            response.clicked_by(PointerButton::Primary) && !on_cube && !modal && measuring;
         // Constrain takes the clicks (drawn and handled after the scene).
         let constrain_click =
             response.clicked_by(PointerButton::Primary) && !on_cube && !modal && constraining;
@@ -676,6 +684,7 @@ impl CadCraftApp {
 
         // --- navigation ---
         self.asm_navigate(ui, response, rect, cube_drag, busy);
+        self.draw_orbit_pivot(ui.ctx(), rect);
 
         // --- context menu (the ViewCube's own when it was clicked) ---
         let cube_menu = self.cube_context;
@@ -731,6 +740,9 @@ impl CadCraftApp {
         }
         let on_view = !on_cube && !modal;
         self.constrain_view(&painter, rect, pointer.filter(|_| on_view), constrain_click);
+        if measuring || !self.measure.open {
+            self.asm_measure_view(&painter, rect, pointer.filter(|_| on_view), measure_click);
+        }
         if let Some(g) = self.cons.browser_hover.clone() {
             self.draw_geom(&painter, rect, &g, Color32::from_rgb(110, 220, 120));
         }
@@ -912,16 +924,26 @@ impl CadCraftApp {
         let left = response.dragged_by(PointerButton::Primary);
         let middle = response.dragged_by(PointerButton::Middle);
         let right = response.dragged_by(PointerButton::Secondary);
+        let orbit = !cube_drag
+            && match self.mouse {
+                MousePreset::Inventor => (left && f4) || (middle && shift),
+                MousePreset::Classic => left && !busy,
+            };
+        if orbit {
+            let press = ui.input(|i| i.pointer.press_origin());
+            self.nav_orbit(delta, rect, press);
+        } else {
+            self.nav_orbit_end();
+        }
         if !cube_drag {
             match self.mouse {
-                MousePreset::Inventor if left && f4 => self.camera.orbit(delta.x, delta.y),
                 MousePreset::Inventor if left && f2 => {
                     self.camera.pan(delta.x, delta.y, rect.height())
                 }
                 MousePreset::Inventor if left && f3 => self.camera.zoom(-delta.y * 3.0),
-                MousePreset::Inventor if middle && shift => self.camera.orbit(delta.x, delta.y),
-                MousePreset::Inventor if middle => self.camera.pan(delta.x, delta.y, rect.height()),
-                MousePreset::Classic if left && !busy => self.camera.orbit(delta.x, delta.y),
+                MousePreset::Inventor if middle && !shift => {
+                    self.camera.pan(delta.x, delta.y, rect.height())
+                }
                 MousePreset::Classic if right || middle => {
                     self.camera.pan(delta.x, delta.y, rect.height())
                 }
@@ -931,8 +953,7 @@ impl CadCraftApp {
         if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
-                self.camera
-                    .zoom(if self.invert_wheel { -scroll } else { scroll });
+                self.nav_zoom(scroll, response.hover_pos(), rect);
             }
         }
         if response.double_clicked_by(PointerButton::Middle) {
@@ -941,6 +962,12 @@ impl CadCraftApp {
     }
 
     fn asm_cursor_hint(&self) -> Option<String> {
+        if self.asm.tool.is_none() && self.cons.draft.is_none() && self.measure.open {
+            return Some(match self.measure.asm_picks.len() {
+                1 => "Measure: click a second face or edge".into(),
+                _ => "Measure: click a face or an edge".into(),
+            });
+        }
         match self.asm.tool? {
             AsmTool::Place(_) => {
                 let next = self.assembly()?.next_name(&self.asm.place_name);

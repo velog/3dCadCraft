@@ -4926,6 +4926,37 @@ impl CadCraftApp {
                     ui.radio_value(&mut self.mouse, preset, preset.label());
                 }
                 ui.checkbox(&mut self.invert_wheel, "Reverse zoom direction");
+                ui.checkbox(&mut self.zoom_to_cursor, "Zoom to cursor")
+                    .on_hover_text("The wheel zooms towards the point under the cursor");
+                ui.horizontal(|ui| {
+                    ui.label("Default Orbit Type:");
+                    for t in [super::camera::OrbitType::Free, super::camera::OrbitType::Constrained] {
+                        ui.radio_value(&mut self.orbit_type, t, t.label()).on_hover_text(
+                            match t {
+                                super::camera::OrbitType::Free => {
+                                    "Relative to the screen: a top view tilts, it does not spin about Z"
+                                }
+                                super::camera::OrbitType::Constrained => {
+                                    "Relative to the model: a horizontal drag turns about the model's Z axis"
+                                }
+                            },
+                        );
+                    }
+                });
+                ui.checkbox(
+                    &mut self.orbit_at_cursor,
+                    "Orbit about the model point under the cursor",
+                )
+                .on_hover_text(
+                    "Orbit pivots on the face under the cursor; over empty space it turns about the centre of the screen",
+                );
+                ui.checkbox(
+                    &mut self.fit_new_geometry,
+                    "Zoom out when new geometry leaves the view",
+                )
+                .on_hover_text(
+                    "A sketch made larger (typed sizes, dimensions) or a placed component that no longer fits: the view zooms out to show everything",
+                );
                 ui.separator();
                 ui.label(RichText::new("Language").strong());
                 let mut bg = super::i18n::bulgarian();

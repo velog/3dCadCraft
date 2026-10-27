@@ -73,6 +73,7 @@ mod manip;
 mod material;
 mod measure;
 mod measure_pick;
+mod nav;
 mod new_file;
 mod overlay;
 mod panels;
@@ -657,6 +658,18 @@ struct CadCraftApp {
     tab_before_sketch: Tab,
     mouse: MousePreset,
     invert_wheel: bool,
+    /// Application Options › Display: Default Orbit Type.
+    orbit_type: camera::OrbitType,
+    /// Orbit about the model point under the cursor (when there is one).
+    orbit_at_cursor: bool,
+    /// The wheel zooms towards the cursor.
+    zoom_to_cursor: bool,
+    /// Zoom out by itself when new geometry leaves the view (`nav.rs`).
+    fit_new_geometry: bool,
+    /// The running orbit's pivot (`Some(None)`: about the screen centre).
+    nav_pivot: Option<Option<Point3>>,
+    /// Signature of the geometry `keep_in_view` watches.
+    fit_sig: Option<u64>,
     show_options: bool,
 
     /// Sketch tools of the sketch in edit mode.
@@ -918,6 +931,12 @@ impl CadCraftApp {
             tab_before_sketch: Tab::Model,
             mouse: MousePreset::Inventor,
             invert_wheel: false,
+            orbit_type: camera::OrbitType::Free,
+            orbit_at_cursor: true,
+            zoom_to_cursor: true,
+            fit_new_geometry: true,
+            nav_pivot: None,
+            fit_sig: None,
             show_options: false,
             tools: SketchTools::default(),
             arc_drag: None,
@@ -5032,6 +5051,8 @@ impl CadCraftApp {
         let (rect, mut response) =
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.viewport_rect = rect;
+        // New geometry out of the view (a sketch's sizes, a placement).
+        self.keep_in_view(ui.ctx(), rect);
         // What may be picked this frame: selector kinds ∩ user filter.
         self.update_pick_filter();
         let pointer = response.hover_pos();
@@ -6216,8 +6237,14 @@ impl CadCraftApp {
             MousePreset::Classic if (right && !self.shift_rmb) || middle => Nav::Pan,
             _ => Nav::None,
         };
+        if !matches!(nav, Nav::Orbit) {
+            self.nav_orbit_end();
+        }
         match nav {
-            Nav::Orbit => self.camera.orbit(delta.x, delta.y),
+            Nav::Orbit => {
+                let press = ui.input(|i| i.pointer.press_origin());
+                self.nav_orbit(delta, rect, press);
+            }
             Nav::Pan => self.camera.pan(delta.x, delta.y, rect.height()),
             Nav::Zoom => self.camera.zoom(-delta.y * 3.0),
             Nav::None if self.dragging_dim.is_some() && left => {
@@ -6264,11 +6291,11 @@ impl CadCraftApp {
                 }
             }
         }
+        self.draw_orbit_pivot(ui.ctx(), rect);
         if response.hovered() && !(self.select_other.is_some() && ui.input(|i| i.modifiers.shift)) {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
-                self.camera
-                    .zoom(if self.invert_wheel { -scroll } else { scroll });
+                self.nav_zoom(scroll, pointer, rect);
             }
         }
         if response.double_clicked_by(PointerButton::Middle)

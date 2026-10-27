@@ -71,7 +71,7 @@ Every feature is described with the same template:
 
 **Specification:** [spec/0.3-view.md](spec/0.3-view.md)
 
-**Controls (now):** the **Inventor** profile by default — Shift + middle button orbits, middle pans, the wheel zooms, F2/F3/F4 + left, double middle click = Fit, F6 = Home; the **Classic** profile — left orbits, right or middle pans (Tools → Application Options → Navigation). Orbit passes freely over the top and the bottom (🟡 waiting for a visual check). All keys and mouse actions: **[REFERENCE.md](REFERENCE.md)** (§1 mouse, §5 keys); the gaps — [ROADMAP.md](ROADMAP.md#interface-gaps-and-next-steps).
+**Controls (now):** the **Inventor** profile by default — Shift + middle button orbits, middle pans, the wheel zooms, F2/F3/F4 + left, double middle click = Fit, F6 = Home; the **Classic** profile — left orbits, right or middle pans (Tools → Application Options → Navigation). Orbit passes freely over the top and the bottom (🟡 waiting for a visual check). Since 2026-10-27: Default Orbit Type Free (relative to the screen) / Constrained, orbit about the model point under the cursor, zoom to the cursor, and the view zooms out by itself when the edited sketch or a placed component leaves it (spec 0.3 §3.1). All keys and mouse actions: **[REFERENCE.md](REFERENCE.md)** (§1 mouse, §5 keys); the gaps — [ROADMAP.md](ROADMAP.md#interface-gaps-and-next-steps).
 
 **ViewCube** (🟡 waiting for a visual check): 26 directions (faces, edges, corners) with highlight, arrows and 90° rotation when looking at a face, Home as a house icon, an N/E/S/W compass under the cube (drag = rotation about Z, click on a letter = view from that side), dragging the cube = Orbit, smooth transitions (~300 ms), semi-transparent when the mouse is far away, a context menu with the projections and Home.
 
@@ -81,7 +81,7 @@ Every feature is described with the same template:
 - **ViewCube:** settings (size, screen corner, Snap to closest view, Angle of North, Fit-to-View on click);
 - **visual styles:** shaded with edges, shaded only, wireframe, hidden lines;
 - orthographic and perspective projection: ✅ (Orthographic / Perspective / Perspective with Ortho Faces in the ViewCube menu, right click and View → Projection);
-- F5 (Previous View), the Home key (Zoom All), zoom to cursor, Navigation Bar;
+- F5 (Previous View), the Home key (Zoom All), Navigation Bar;
 - view section (section view);
 - background, lighting and materials (see 7.3).
 
@@ -180,7 +180,7 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
 **Specification:** [spec/0.10-physical.md](spec/0.10-physical.md)
 
-**State (2026-10-19):** Inspect → Physical Properties: mass per body and total (g / kg), volume, area, centre of gravity, inertia tensor about the centre of gravity, principal moments and axes, Requested Accuracy, Update, Include per body, Clipboard (`part::physical`). Measure 🟡 (Inspect → Measure, `M`: length, radius, area, volume, position of one item; minimum and centre distance and angle of two; spec §3.1). Waiting for a visual check.
+**State (2026-10-19):** Inspect → Physical Properties: mass per body and total (g / kg), volume, area, centre of gravity, inertia tensor about the centre of gravity, principal moments and axes, Requested Accuracy, Update, Include per body, Clipboard (`part::physical`). Measure 🟡 (Inspect → Measure, `M`: length, radius, area, volume, position of one item; minimum and centre distance and angle of two; spec §3.1; since 2026-10-27 also in assemblies, on the components' faces and edges). Waiting for a visual check.
 
 **What it does.**
 - **Measure:** distance, angle, radius, chain length, area.

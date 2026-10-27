@@ -29,6 +29,28 @@ impl Projection {
     }
 }
 
+/// Inventor's Application Options › Display › Default Orbit Type.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum OrbitType {
+    /// Relative to the screen (a trackball): a horizontal drag turns about
+    /// the screen's vertical axis, a vertical one about its horizontal axis,
+    /// whatever the view — a top view tilts instead of spinning about Z.
+    #[default]
+    Free,
+    /// Relative to the model: a horizontal drag turns about the model's Z.
+    Constrained,
+}
+
+impl OrbitType {
+    /// Inventor's name.
+    pub fn label(self) -> &'static str {
+        match self {
+            OrbitType::Free => "Free",
+            OrbitType::Constrained => "Constrained",
+        }
+    }
+}
+
 /// A camera orbiting a target point.
 #[derive(Clone, Debug)]
 pub struct OrbitCamera {
@@ -217,6 +239,39 @@ impl OrbitCamera {
         self.pitch = wrap_angle(self.pitch + dy * 0.008);
     }
 
+    /// Orbits by a mouse drag (in points) of the given type about `pivot`
+    /// (the model point under the cursor when the drag began; `None`: the
+    /// target, the centre of the screen). The camera turns rigidly about
+    /// the pivot, so the pivot stays where it is on screen.
+    pub fn orbit_about(&mut self, pivot: Option<Point3>, dx: f32, dy: f32, kind: OrbitType) {
+        let (b0, u0) = self.frame();
+        match kind {
+            OrbitType::Constrained => self.orbit(dx, dy),
+            OrbitType::Free => {
+                // The same speed as the constrained orbit: at a level view
+                // both give the same turn.
+                let r0 = u0.cross(&b0);
+                let turn = Rotation3::from_axis_angle(
+                    &nalgebra::Unit::new_normalize(r0),
+                    -(dy as Real) * 0.008,
+                ) * Rotation3::from_axis_angle(
+                    &nalgebra::Unit::new_normalize(u0),
+                    -(dx as Real) * 0.008,
+                );
+                self.set_frame(turn * b0, turn * u0);
+            }
+        }
+        let Some(pivot) = pivot else {
+            return;
+        };
+        // The turn the frame made, applied to the target about the pivot.
+        let (b1, u1) = self.frame();
+        let f0 = nalgebra::Matrix3::from_columns(&[u0.cross(&b0), u0, b0]);
+        let f1 = nalgebra::Matrix3::from_columns(&[u1.cross(&b1), u1, b1]);
+        let r = f1 * f0.transpose();
+        self.target = pivot + r * (self.target - pivot);
+    }
+
     /// Turns the view about world Z by `angle` (radians; positive moves
     /// the eye counter-clockwise seen from above). ViewCube compass ring.
     pub fn turn_about_z(&mut self, angle: Real) {
@@ -236,6 +291,34 @@ impl OrbitCamera {
     /// Zooms in (positive `scroll`) or out, exponentially.
     pub fn zoom(&mut self, scroll: f32) {
         self.distance = (self.distance * (-scroll as Real * 0.002).exp()).clamp(0.01, 1e6);
+    }
+
+    /// Zooms like [`Self::zoom`] but keeps the point under `pos` (screen,
+    /// in `rect`) where it is: Inventor's zoom to the cursor.
+    pub fn zoom_at(&mut self, scroll: f32, pos: Pos2, rect: Rect) {
+        let before = self.distance;
+        self.zoom(scroll);
+        let f = self.distance / before;
+        let (back, up) = self.frame();
+        let right = up.cross(&back);
+        let per_point = 2.0 * before * (self.fov_y / 2.0).tan() / rect.height().max(1.0) as Real;
+        let c = rect.center();
+        let offset = (right * (pos.x - c.x) as Real - up * (pos.y - c.y) as Real) * per_point;
+        self.target += offset * (1.0 - f);
+    }
+
+    /// Does the box `[min, max]` lie inside `rect` (shrunk by `margin`
+    /// points)? A corner behind the eye counts as outside.
+    pub fn box_in_view(&self, min: Point3, max: Point3, rect: Rect, margin: f32) -> bool {
+        let inner = rect.shrink(margin);
+        (0..8).all(|k| {
+            let p = Point3::new(
+                if k & 1 == 0 { min.x } else { max.x },
+                if k & 2 == 0 { min.y } else { max.y },
+                if k & 4 == 0 { min.z } else { max.z },
+            );
+            self.project(&p, rect).is_some_and(|s| inner.contains(s))
+        })
     }
 
     /// Frames the axis-aligned box `[min, max]`.
@@ -677,5 +760,102 @@ mod tests {
                 prev = f;
             }
         }
+    }
+
+    #[test]
+    fn free_orbit_matches_the_constrained_one_at_a_level_view() {
+        for (dx, dy) in [(40.0, 0.0), (-25.0, 0.0), (0.0, 30.0), (0.0, -50.0)] {
+            let mut a = OrbitCamera {
+                pitch: 0.0,
+                ..OrbitCamera::default()
+            };
+            let mut b = a.clone();
+            a.orbit_about(None, dx, dy, OrbitType::Free);
+            b.orbit_about(None, dx, dy, OrbitType::Constrained);
+            let (ea, eb) = (a.eye(), b.eye());
+            assert!((ea - eb).norm() < 1e-9, "{dx},{dy}: {ea} vs {eb}");
+            let ((_, ua), (_, ub)) = (a.frame(), b.frame());
+            assert!((ua - ub).norm() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn free_orbit_tilts_a_top_view_instead_of_spinning_it() {
+        let mut top = OrbitCamera::default();
+        top.look_from(Vector3::z());
+        let mut free = top.clone();
+        free.orbit_about(None, 60.0, 0.0, OrbitType::Free);
+        let (back, _) = free.frame();
+        // The eye left the Z axis (turned about the screen's vertical) ...
+        assert!(back.z < 0.95, "{back}");
+        // ... towards screen right, which stays the same.
+        let ((b0, u0), (_, u1)) = (top.frame(), free.frame());
+        assert!((u0 - u1).norm() < 1e-9);
+        assert!(back.dot(&u0.cross(&b0)) < 0.0, "model follows the mouse");
+        let mut constrained = top.clone();
+        constrained.orbit_about(None, 60.0, 0.0, OrbitType::Constrained);
+        assert!(constrained.frame().0.z > 1.0 - 1e-9, "spins about Z");
+    }
+
+    #[test]
+    fn orbit_about_a_pivot_keeps_it_on_screen() {
+        let r = rect();
+        for kind in [OrbitType::Free, OrbitType::Constrained] {
+            let mut cam = OrbitCamera::default();
+            let pivot = Point3::new(30.0, -10.0, 5.0);
+            let before = cam.project(&pivot, r).expect("in front");
+            for _ in 0..10 {
+                cam.orbit_about(Some(pivot), 13.0, -7.0, kind);
+            }
+            let after = cam.project(&pivot, r).expect("in front");
+            assert!(
+                (after - before).length() < 1e-3,
+                "{kind:?}: {before:?} {after:?}"
+            );
+            assert!(
+                ((cam.eye() - pivot).norm() - (OrbitCamera::default().eye() - pivot).norm()).abs()
+                    < 1e-6
+            );
+        }
+    }
+
+    #[test]
+    fn zoom_at_keeps_the_point_under_the_cursor() {
+        let r = rect();
+        let pos = Pos2::new(r.left() + 120.0, r.top() + 90.0);
+        for projection in [Projection::Perspective, Projection::Orthographic] {
+            let mut cam = OrbitCamera {
+                projection,
+                ..OrbitCamera::default()
+            };
+            // The point under the cursor in the plane through the target.
+            let (back, _) = cam.frame();
+            let (_, up) = cam.frame();
+            let plane = Plane::new(cam.target, back, up.cross(&back)).expect("plane");
+            let p = cam.ray_plane(pos, r, &plane).expect("hit");
+            cam.zoom_at(300.0, pos, r);
+            let s = cam.project(&p, r).expect("in front");
+            assert!(
+                (s - pos).length() < 1e-3,
+                "{projection:?}: {s:?} vs {pos:?}"
+            );
+            assert!(cam.distance < OrbitCamera::default().distance);
+        }
+    }
+
+    #[test]
+    fn box_in_view_sees_a_box_leaving_the_screen() {
+        let r = rect();
+        let mut cam = OrbitCamera::default();
+        cam.fit(
+            Point3::new(-10.0, -10.0, -10.0),
+            Point3::new(10.0, 10.0, 10.0),
+        );
+        let (lo, hi) = (
+            Point3::new(-10.0, -10.0, -10.0),
+            Point3::new(10.0, 10.0, 10.0),
+        );
+        assert!(cam.box_in_view(lo, hi, r, 4.0));
+        assert!(!cam.box_in_view(lo, Point3::new(1000.0, 10.0, 10.0), r, 4.0));
     }
 }

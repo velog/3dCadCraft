@@ -68,10 +68,13 @@ There are selectable **mouse profiles** (**Tools → Application Options → Nav
 | Fit (fits everything without changing the direction) | double click with the middle button | double click (any button) |
 | Home view + Fit | **F6** or the ViewCube's house | the same |
 
-- The wheel zooms about the centre of rotation, not about the cursor; the direction is reversed with *Reverse zoom direction* (also a setting in Inventor).
+- The wheel zooms **towards the cursor** (*Zoom to cursor*, on by default; off: about the centre of the view); the direction is reversed with *Reverse zoom direction* (also settings in Inventor).
+- **Orbit pivot:** an orbit that starts over a face turns about that point (a small centre mark shows it, the point stays under the cursor); over empty space it turns about the centre of the view (*Orbit about the model point under the cursor*).
+- **Default Orbit Type:** *Free* (default, Inventor's): relative to the screen — from a top view a horizontal drag tilts the model, it does not spin it about Z; *Constrained*: a horizontal drag turns about the model's Z.
+- **Zoom out to new geometry:** when the edited sketch grows out of the view (typed sizes, dimensions) or a placed component does not fit, the view zooms out to everything by itself (*Zoom out when new geometry leaves the view*).
 - F2/F3/F4 work only in the Inventor profile.
 - The **Home** key (Zoom All in Inventor) is not bound ⬜.
-- The profile and the wheel direction are **not remembered** between launches ⬜.
+- The profile, the wheel direction and the navigation options above are remembered in `settings.json`.
 
 **Orbit over the pole:** vertical dragging does not stop at the top/bottom — the model rolls over and the view stays upside down; horizontal dragging then reverses its direction to follow the mouse. A click on the ViewCube (or F6) brings back an upright view. A drag started on the ViewCube or the compass rotates the view and selects nothing in the model; a drag or the wheel stops the running smooth transition.
 

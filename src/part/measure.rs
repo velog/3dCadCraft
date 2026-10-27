@@ -15,7 +15,7 @@
 //! whole.
 
 use crate::kernel::{
-    BRep, Curve, EdgeId, FaceId, Point3, Real, Surface, TessellationOptions, Vector3,
+    BRep, Curve, EdgeId, FaceId, Point3, Real, Surface, TessellationOptions, Transform3, Vector3,
 };
 
 /// What can be measured, by the names the selection uses.
@@ -82,18 +82,36 @@ enum Geo {
 
 /// Measures one or two targets. A third is refused.
 pub fn measure(body: &BRep, targets: &[Target]) -> Result<Measurement, String> {
+    let placed: Vec<Placed> = targets
+        .iter()
+        .map(|t| (body, t.clone(), Transform3::identity()))
+        .collect();
+    measure_placed(&placed)
+}
+
+/// A target of a body moved by a rigid transform: an item of an assembly
+/// component (its part's body, the occurrence's placement).
+pub type Placed<'a> = (&'a BRep, Target, Transform3);
+
+/// Measures one or two targets, each in its own body and placement (an
+/// assembly's components): items are described in their body, then moved,
+/// so the values (lengths, radii, areas) stay exact and the positions,
+/// directions and the distance are in the common frame.
+pub fn measure_placed(targets: &[Placed]) -> Result<Measurement, String> {
     if targets.is_empty() || targets.len() > 2 {
         return Err("pick one or two items (faces, edges, vertices, bodies)".into());
     }
     let mut out = Measurement::default();
     let mut geos = Vec::new();
-    for t in targets {
-        let (item, geo) = describe(body, t).ok_or("this item can't be measured")?;
+    for (body, t, m) in targets {
+        let (mut item, geo) = describe(body, t).ok_or("this item can't be measured")?;
+        item.position = item.position.map(|p| m * p);
+        item.direction = item.direction.map(|d| m * d);
         out.items.push(item);
-        geos.push(geo);
+        geos.push(geo.moved(m));
     }
     if let ([ia, ib], [ga, gb]) = (out.items.as_slice(), geos.as_slice()) {
-        out.distance = exact_distance(ia, ib, targets, body)
+        out.distance = exact_distance(ia, ib, &targets[0], &targets[1])
             .or_else(|| closest(ga, gb).map(|(p, q)| ((q - p).norm(), p, q)));
         if let (Some(a), Some(b)) = (ia.position, ib.position) {
             out.center_distance = Some((b - a).norm());
@@ -105,6 +123,19 @@ pub fn measure(body: &BRep, targets: &[Target]) -> Result<Measurement, String> {
         }
     }
     Ok(out)
+}
+
+impl Geo {
+    /// The geometry moved by `m` (the identity is free).
+    fn moved(self, m: &Transform3) -> Geo {
+        if *m == Transform3::identity() {
+            return self;
+        }
+        match self {
+            Geo::Points(v) => Geo::Points(v.into_iter().map(|p| m * p).collect()),
+            Geo::Tris(v) => Geo::Tris(v.into_iter().map(|t| t.map(|p| m * p)).collect()),
+        }
+    }
 }
 
 /// Length of one kernel edge piece (a line, an arc, a sampled curve).
@@ -159,28 +190,24 @@ pub fn loop_length(body: &BRep, e: EdgeId, face: Option<&str>) -> Option<(Real, 
 }
 
 /// Two parallel planar faces: the plane-to-plane distance (exact).
-fn exact_distance(
-    a: &Item,
-    b: &Item,
-    targets: &[Target],
-    body: &BRep,
-) -> Option<(Real, Point3, Point3)> {
-    let (Target::Face(na), Target::Face(nb)) = (&targets[0], &targets[1]) else {
+fn exact_distance(a: &Item, b: &Item, ta: &Placed, tb: &Placed) -> Option<(Real, Point3, Point3)> {
+    let ((body_a, Target::Face(na), ma), (body_b, Target::Face(nb), mb)) = (ta, tb) else {
         return None;
     };
     let (da, db) = (a.direction?, b.direction?);
     if a.axis || b.axis || da.dot(&db).abs() < 1.0 - 1e-9 {
         return None;
     }
-    let pa = plane_of(body, na)?;
-    let pb = plane_of(body, nb)?;
-    let d = (pb.origin - pa.origin).dot(&da).abs();
+    let oa = ma * plane_of(body_a, na)?.origin;
+    let pb = plane_of(body_b, nb)?;
+    let d = (mb * pb.origin - oa).dot(&da).abs();
     // The closest points: the second face's origin projected onto the first.
-    let q = face_points(body, nb)
-        .into_iter()
-        .next()
-        .unwrap_or(pb.origin);
-    let p = q - da * (q - pa.origin).dot(&da);
+    let q = mb
+        * face_points(body_b, nb)
+            .into_iter()
+            .next()
+            .unwrap_or(pb.origin);
+    let p = q - da * (q - oa).dot(&da);
     Some((d, p, q))
 }
 
@@ -583,6 +610,48 @@ mod tests {
                 .length
                 .unwrap();
             assert!(close(len, l, 1e-9) || close(len, w, 1e-9));
+        }
+    }
+
+    /// Two components of an assembly: the same box placed twice, the second
+    /// moved up and turned. The values stay exact and the distance, the
+    /// angle and the positions are in the assembly's frame.
+    #[test]
+    fn items_of_two_placed_bodies() {
+        use nalgebra::{Translation3, UnitQuaternion};
+        for (l, w, h, gap) in [
+            (40.0, 30.0, 20.0, 15.0),
+            (10.0, 10.0, 10.0, 0.5),
+            (100.0, 5.0, 2.0, 70.0),
+        ] {
+            let p = PartDocument::with_box("Box1", [l, w, h]).unwrap();
+            let b = &p.body;
+            let lifted = Transform3::from_parts(
+                Translation3::new(0.0, 0.0, h + gap),
+                UnitQuaternion::from_axis_angle(&Vector3::z_axis(), 0.7),
+            );
+            let face = |n: &str| Target::Face(n.into());
+            let m = measure_placed(&[
+                (b, face("Box1:Top"), Transform3::identity()),
+                (b, face("Box1:Bottom"), lifted),
+            ])
+            .unwrap();
+            // Parallel planes: the exact gap, facing each other (180°).
+            assert!(close(m.distance.unwrap().0, gap, 1e-9), "{:?}", m.distance);
+            assert!(close(m.angle_deg.unwrap(), 180.0, 1e-6));
+            assert!(close(m.items[1].area.unwrap(), l * w, 1e-9 * l * w));
+            // A turned vertical edge keeps its length, its direction is Z.
+            let e = edge_between(b, "Box1:Front", "Box1:Right");
+            let m = measure_placed(&[(b, Target::Edge(e), lifted)]).unwrap();
+            assert!(close(m.items[0].length.unwrap(), h, 1e-9));
+            assert!(m.items[0].direction.unwrap().z.abs() > 1.0 - 1e-9);
+            // Bodies apart: the minimum distance is the gap.
+            let m = measure_placed(&[
+                (b, Target::Body("Box1".into()), Transform3::identity()),
+                (b, Target::Body("Box1".into()), lifted),
+            ])
+            .unwrap();
+            assert!(close(m.distance.unwrap().0, gap, 1e-6), "{:?}", m.distance);
         }
     }
 
