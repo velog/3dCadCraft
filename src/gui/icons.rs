@@ -242,6 +242,37 @@ pub enum Icon {
     FullScreen,
     /// Reset UI Layout (a frame with a turning arrow).
     ResetLayout,
+    // documents of a design file (spec 0.6b): a sheet with a sign
+    /// New Part in this file.
+    DocNewPart,
+    /// New Sheet Metal in this file.
+    DocNewSheetMetal,
+    /// New Assembly in this file.
+    DocNewAssembly,
+    /// New Drawing in this file.
+    DocNewDrawing,
+    /// New Presentation in this file.
+    DocNewPresentation,
+    /// Insert Document (a sheet coming in).
+    DocInsert,
+    /// Link File (a chain link).
+    DocLink,
+    /// Duplicate Document (two sheets).
+    DocDuplicate,
+    /// Rename Document (a text cursor).
+    DocRename,
+    /// Delete Document (a cross).
+    DocDelete,
+    /// The Documents window (a list of sheets).
+    Documents,
+    /// Save to Separate File (a sheet going out).
+    DocExtract,
+    /// Embed (a file into the sheet).
+    DocEmbed,
+    /// Embed All / Pack (sheets into a box).
+    DocPack,
+    /// Separate All / Unpack (sheets out of a box).
+    DocUnpack,
 }
 
 /// Pen on the 16 × 16 design grid mapped into a screen rect.
@@ -1522,5 +1553,123 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.arc(8.0, 9.0, 3.2, -60.0, 200.0, acc);
             p.head((5.0, 10.1), (0.34, 0.94), acc);
         }
+        DocNewPart | DocNewSheetMetal | DocNewAssembly | DocNewDrawing | DocNewPresentation => {
+            sheet(p, ink);
+            match icon {
+                DocNewPart => p.block([4.0, 8.0, 5.0, 3.5, 2.5], acc, soft),
+                DocNewSheetMetal => {
+                    p.line(&[(4.0, 6.0), (4.0, 12.0), (10.0, 12.0)], acc);
+                    p.arc(6.0, 10.0, 2.0, 90.0, 180.0, acc);
+                }
+                DocNewAssembly => {
+                    p.block([3.5, 9.5, 3.5, 3.0, 2.0], acc, soft);
+                    p.block([6.5, 6.5, 3.5, 3.0, 2.0], ink, tint(ink, 50));
+                }
+                DocNewDrawing => {
+                    p.rect(4.0, 6.0, 10.0, 12.0, acc);
+                    p.line(&[(7.0, 10.5), (10.0, 10.5)], ink);
+                }
+                _ => {
+                    p.block([4.0, 9.0, 3.5, 3.0, 2.0], acc, soft);
+                    p.dashed((8.5, 9.0), (11.0, 6.0), acc);
+                }
+            }
+            plus(p, hot);
+        }
+        DocInsert => {
+            sheet(p, ink);
+            p.line(&[(0.5, 9.0), (8.0, 9.0)], acc);
+            p.head((8.0, 9.0), (1.0, 0.0), acc);
+        }
+        DocLink => {
+            sheet(p, ink);
+            p.closed(&[(4.0, 7.0), (8.0, 7.0), (8.0, 10.0), (4.0, 10.0)], acc);
+            p.closed(&[(7.0, 9.0), (11.0, 9.0), (11.0, 12.0), (7.0, 12.0)], hot);
+        }
+        DocDuplicate => {
+            p.closed(
+                &[(1.5, 3.5), (7.0, 3.5), (9.5, 6.0), (9.5, 14.0), (1.5, 14.0)],
+                ink,
+            );
+            p.fill(
+                &[
+                    (6.0, 1.5),
+                    (11.5, 1.5),
+                    (14.5, 4.5),
+                    (14.5, 12.0),
+                    (6.0, 12.0),
+                ],
+                soft,
+            );
+            p.closed(
+                &[
+                    (6.0, 1.5),
+                    (11.5, 1.5),
+                    (14.5, 4.5),
+                    (14.5, 12.0),
+                    (6.0, 12.0),
+                ],
+                acc,
+            );
+        }
+        DocRename => {
+            sheet(p, ink);
+            p.line(&[(4.0, 9.0), (8.5, 9.0)], acc);
+            p.line(&[(10.0, 6.5), (10.0, 11.5)], hot);
+        }
+        DocDelete => {
+            sheet(p, ink);
+            p.line(&[(5.0, 7.0), (11.0, 13.0)], warn);
+            p.line(&[(11.0, 7.0), (5.0, 13.0)], warn);
+        }
+        Documents => {
+            for (k, c) in [(0.0, ink), (4.0, acc), (8.0, ink)] {
+                p.rect(1.5, 2.0 + k, 4.5, 4.5 + k, c);
+                p.line(&[(6.5, 3.2 + k), (14.5, 3.2 + k)], c);
+            }
+        }
+        DocExtract => {
+            sheet(p, ink);
+            p.line(&[(6.0, 9.0), (15.0, 9.0)], acc);
+            p.head((15.0, 9.0), (1.0, 0.0), acc);
+        }
+        DocEmbed => {
+            sheet(p, ink);
+            p.block([4.5, 8.5, 4.0, 3.0, 2.0], acc, soft);
+            p.line(&[(1.0, 4.0), (4.5, 7.0)], ok);
+            p.head((4.5, 7.0), (0.76, 0.65), ok);
+        }
+        DocPack | DocUnpack => {
+            p.fill(&[(2.0, 8.0), (14.0, 8.0), (14.0, 14.5), (2.0, 14.5)], soft);
+            p.rect(2.0, 8.0, 14.0, 14.5, ink);
+            if icon == DocPack {
+                p.line(&[(8.0, 1.0), (8.0, 7.0)], acc);
+                p.head((8.0, 7.0), (0.0, 1.0), acc);
+            } else {
+                p.line(&[(8.0, 7.0), (8.0, 1.0)], acc);
+                p.head((8.0, 1.0), (0.0, -1.0), acc);
+            }
+        }
     }
+}
+
+/// A sheet of paper with a folded corner (document icons).
+fn sheet(p: &Pen, c: Color32) {
+    p.closed(
+        &[
+            (3.0, 1.5),
+            (10.0, 1.5),
+            (13.0, 4.5),
+            (13.0, 14.5),
+            (3.0, 14.5),
+        ],
+        c,
+    );
+    p.line(&[(10.0, 1.5), (10.0, 4.5), (13.0, 4.5)], c);
+}
+
+/// The "new" sign in a document icon's corner.
+fn plus(p: &Pen, c: Color32) {
+    p.line(&[(12.5, 10.5), (12.5, 15.5)], c);
+    p.line(&[(10.0, 13.0), (15.0, 13.0)], c);
 }

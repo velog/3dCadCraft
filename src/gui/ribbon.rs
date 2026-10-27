@@ -159,6 +159,8 @@ pub enum Action {
     RebuildAll,
     /// View projection (Orthographic / Perspective / … with Ortho Faces).
     Projection(super::camera::Projection),
+    /// Manage › Documents: documents of the design file (spec 0.6b).
+    Docs(super::documents::DocCmd),
     /// Materials, appearances, styles, Physical Properties.
     Material(super::material::MatCmd),
     /// View → Windows: User Interface toggles, Clean Screen, Full Screen,
@@ -946,8 +948,36 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("manage.save_styles"),
                 ],
             );
+            // Documents of the design file (spec 0.6b), in every environment.
+            let docs = panel(
+                "Documents",
+                vec![
+                    c("doc.window").large(),
+                    c("doc.new_part"),
+                    c("doc.new_sheet_metal"),
+                    c("doc.new_assembly"),
+                    c("doc.new_drawing"),
+                    c("doc.new_presentation"),
+                    c("doc.insert"),
+                    c("doc.link"),
+                    c("doc.duplicate"),
+                    c("doc.rename"),
+                    c("doc.delete"),
+                ],
+            );
+            let storage = panel(
+                "Storage",
+                vec![
+                    c("doc.extract"),
+                    c("doc.embed"),
+                    c("doc.pack"),
+                    c("doc.unpack"),
+                ],
+            );
             if st.drawing {
                 vec![
+                    docs,
+                    storage,
                     panel("Update", vec![c("drw.update_all").large()]),
                     styles,
                     panel("Modify", vec![c("drw.replace_model").large()]),
@@ -961,7 +991,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     ),
                 ]
             } else {
-                vec![styles]
+                vec![docs, storage, styles]
             }
         }
         Tab::View => vec![

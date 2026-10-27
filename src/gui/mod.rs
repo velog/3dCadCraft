@@ -40,6 +40,7 @@ mod constrain;
 mod demos;
 mod diag;
 mod doc_tabs;
+mod documents;
 mod draft;
 mod drawing;
 mod drawing_annot;
@@ -636,6 +637,8 @@ struct CadCraftApp {
     new_file: bool,
     /// The Home page (`home.rs`).
     home: home::HomeUi,
+    /// Manage › Documents: the Documents window, Rename (spec 0.6b).
+    docs: documents::DocsUi,
     /// The Sheet Metal environment (`sheet_metal.rs`).
     sm: sheet_metal::SheetUi,
     bom_export: Option<String>,
@@ -890,6 +893,7 @@ impl CadCraftApp {
             drive: None,
             new_file: false,
             home: home::HomeUi::default(),
+            docs: documents::DocsUi::default(),
             sm: Default::default(),
             bom_export: None,
             tab: Tab::Model,
@@ -3823,6 +3827,7 @@ impl CadCraftApp {
             Action::SelectBody => self.selection = Selection::Body,
             Action::View(v) => self.set_view(v),
             Action::Options => self.show_options = true,
+            Action::Docs(c) => self.docs_apply(c),
             Action::Ui(c) => self.ui_command(c),
             Action::Tool(t) => {
                 if self.editing.is_some() {
@@ -7278,6 +7283,7 @@ impl eframe::App for CadCraftApp {
         self.docked_panels(ui, frame);
 
         self.options_window(&ctx);
+        self.documents_windows(&ctx);
         self.parameters_window(&ctx);
         self.suppress_if_window(&ctx);
         self.material_windows(&ctx);

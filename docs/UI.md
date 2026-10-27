@@ -47,7 +47,7 @@ What is copied is the **organisation and the workflow**, not the graphics: the i
 | Mini-toolbar | floating toolbar during a feature | **suggestion bar** next to a selected face/edge (New Sketch, Extrude/Press-Pull, Edit Feature, Edit Sketch, Look At; Fillet / Chamfer). Values in place in the view (e.g. the distance in Extrude) ⬜ — for now there are manipulators and fields in Properties | 🟡 |
 
 **The ribbon (the same for every document today):**
-- **3D Model, Inspect, Tools, Manage, View** and **Sketch**. Tools has a **Material and Appearance** panel (Material, Appearance, Adjust, Clear); Manage — **Styles and Standards** (Styles Editor, Update, Purge); Inspect → **Physical Properties**.
+- **3D Model, Inspect, Tools, Manage, View** and **Sketch**. Tools has a **Material and Appearance** panel (Material, Appearance, Adjust, Clear); Manage — **Documents** (the design file's documents: New Part / Sheet Metal / Assembly / Drawing in this file, Duplicate, Rename, Delete, the Documents window), **Storage** (separate files, embed, pack — planned) and **Styles and Standards** (Styles Editor, Update, Purge); Inspect → **Physical Properties**.
 - **Sketch tab:** panels Create (with **Project Geometry**: points and curves from earlier sketches, model edges; Shift = construction; Esc / right click → Done stops it), Modify, Pattern, Constrain, Format, Demo, Exit (there is no Insert panel; Image etc. ⬜).
 - ⬜ **Assembly:** Assemble, Design (calculators), Inspect, Tools, View.
 - ⬜ **Drawing:** Place Views, Annotate, Sketch, Tools, View.
@@ -150,6 +150,10 @@ finds every command by its alias too):
 - Inspect / Tools / Manage: PPR Physical Properties, IVS Validate Solid, AO Application Options, MAT Material,
   APP Appearance, ADJ Adjust, APC Clear, PRM Parameters, RBA Rebuild All, STE Styles Editor, UST Update
   Styles, PUR Purge Styles.
+- Manage › Documents / Storage (spec 0.6b; part, assembly and drawing, not in a sketch): DM Documents,
+  NP / NSM / NA / ND / NPN New Part / Sheet Metal / Assembly / Drawing / Presentation in This File,
+  IDF Insert Document, LF Link File, DUP Duplicate, RND Rename, DDC Delete Document, XF Save to Separate
+  File, MKI Embed, PK Embed All, UPK Separate All.
 - View: NFR / NTP / NRT Front / Top / Right, NOR / NPE / NPO Orthographic / Perspective / Perspective with
   Ortho Faces, NVO / NVP / NVA / NVT / NVU visibility of origin planes / work planes / axes / points / UCS,
   UIB / UIP / UIR / UIS / UIV / UIT Browser / Properties / Ribbon / Status Bar / ViewCube / Axis Triad,

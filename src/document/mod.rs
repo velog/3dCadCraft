@@ -34,6 +34,7 @@
 //! See [`format`](mod@format) for the on-disk layout and [`library`] for link resolution.
 
 pub mod design_project;
+pub mod documents;
 pub mod filetype;
 pub mod format;
 pub mod library;
@@ -136,6 +137,10 @@ pub enum ProjectError {
         /// The parse error.
         reason: String,
     },
+    /// A document operation the file's state does not allow (a taken
+    /// name, deleting the last document…); the text says why.
+    #[error("{0}")]
+    Refused(String),
     /// A [`DocumentId`] that is not in the project.
     #[error("document {0} not found")]
     UnknownDocument(DocumentId),

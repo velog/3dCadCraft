@@ -26,6 +26,7 @@ use std::sync::OnceLock;
 
 use super::camera::Projection;
 use super::demos::Demo;
+use super::documents::DocCmd;
 use super::drawing::DrwCmd;
 use super::drawing_planned::Planned as Dp;
 use super::icons::Icon;
@@ -86,6 +87,9 @@ impl Envs {
     pub const DRAWING: Envs = Envs(8);
     /// The part, its sketches and drawings.
     pub const PART_DRAWING: Envs = Envs(11);
+    /// Every document (part, assembly, drawing) outside a sketch: the
+    /// commands on the design file's documents (spec 0.6b).
+    pub const DOCUMENTS: Envs = Envs(13);
 
     /// Whether `e` is in the set.
     pub const fn has(self, e: Env) -> bool {
@@ -376,6 +380,8 @@ const N_FORMAT: Place = Place::Ribbon("Annotate", "Format");
 const G_UPDATE: Place = Place::Ribbon("Manage", "Update");
 const G_MODIFY: Place = Place::Ribbon("Manage", "Modify");
 const G_DEFINE: Place = Place::Ribbon("Manage", "Define");
+const G_DOCS: Place = Place::Ribbon("Manage", "Documents");
+const G_STORE: Place = Place::Ribbon("Manage", "Storage");
 const V_NAV: Place = Place::Ribbon("View", "Navigate");
 const V_LOOK: Place = Place::Ribbon("View", "Appearance");
 const V_WIN: Place = Place::Ribbon("View", "Windows");
@@ -408,6 +414,13 @@ const fn dp(id: &'static str, name: &'static str, bg: &'static str, icon: Icon, 
 
 const fn c(id: &'static str, name: &'static str, bg: &'static str, icon: Icon) -> Command {
     Command::new(id, name, bg, icon)
+}
+
+/// A command on the design file's documents (`docs/spec/0.6b-multi-document-files.md`).
+const fn doc(id: &'static str, name: &'static str, bg: &'static str, icon: Icon) -> Command {
+    Command::new(id, name, bg, icon)
+        .env(Envs::DOCUMENTS)
+        .spec("0.6b-multi-document-files.md")
 }
 
 /// A sketch tool: name = `Tool::label`, valid in a sketch.
@@ -1138,6 +1151,92 @@ pub static COMMANDS: &[Command] = &[
         .inv("Save")
         .at(&[G_STYLES])
         .todo("2.15"),
+    // ---- Manage › Documents (spec 0.6b) ---------------------------------------
+    doc("doc.window", "Documents", "Документи", Icon::Documents)
+        .run(Action::Docs(DocCmd::Window))
+        .alias(&["DM"])
+        .at(&[G_DOCS])
+        .tip("The documents of this design file and the files it links: open, rename, duplicate, delete"),
+    doc("doc.new_part", "New Part in This File", "Нова част във файла", Icon::DocNewPart)
+        .run(Action::Docs(DocCmd::NewPart))
+        .short("Part")
+        .alias(&["NP"])
+        .at(&[G_DOCS])
+        .tip("A new part stored inside this design file; it becomes the active document"),
+    doc("doc.new_sheet_metal", "New Sheet Metal in This File", "Нова листова част във файла", Icon::DocNewSheetMetal)
+        .run(Action::Docs(DocCmd::NewSheetMetal))
+        .short("Sheet Metal")
+        .alias(&["NSM"])
+        .at(&[G_DOCS])
+        .tip("A new sheet metal part stored inside this design file"),
+    doc("doc.new_assembly", "New Assembly in This File", "Нова сглобка във файла", Icon::DocNewAssembly)
+        .run(Action::Docs(DocCmd::NewAssembly))
+        .short("Assembly")
+        .alias(&["NA"])
+        .at(&[G_DOCS])
+        .tip("A new assembly stored inside this design file; Place offers the file's parts"),
+    doc("doc.new_drawing", "New Drawing in This File", "Нов чертеж във файла", Icon::DocNewDrawing)
+        .run(Action::Docs(DocCmd::NewDrawing))
+        .short("Drawing")
+        .alias(&["ND"])
+        .at(&[G_DOCS])
+        .tip("A new drawing stored inside this design file; Base View offers the file's models"),
+    doc("doc.new_presentation", "New Presentation in This File", "Нова презентация във файла", Icon::DocNewPresentation)
+        .short("Presentation")
+        .alias(&["NPN"])
+        .at(&[G_DOCS])
+        .tip("A new presentation inside this design file (presentations are still to come)")
+        .todo("0.6"),
+    doc("doc.insert", "Insert Document", "Вмъкване на документ", Icon::DocInsert)
+        .short("Insert")
+        .alias(&["IDF"])
+        .at(&[G_DOCS])
+        .tip("Copy documents of another file into this one, with what they reference")
+        .todo("0.6"),
+    doc("doc.link", "Link File", "Връзка към файл", Icon::DocLink)
+        .alias(&["LF"])
+        .at(&[G_DOCS])
+        .tip("Link another file: its documents can be placed and shown without copying them")
+        .todo("0.6"),
+    doc("doc.duplicate", "Duplicate Document", "Дублиране на документ", Icon::DocDuplicate)
+        .run(Action::Docs(DocCmd::Duplicate))
+        .short("Duplicate")
+        .alias(&["DUP"])
+        .at(&[G_DOCS])
+        .tip("A copy of the document in this file (named <name> Copy)"),
+    doc("doc.rename", "Rename Document", "Преименуване на документ", Icon::DocRename)
+        .run(Action::Docs(DocCmd::Rename))
+        .short("Rename")
+        .alias(&["RND"])
+        .at(&[G_DOCS])
+        .tip("Rename the document; names are unique inside a file"),
+    doc("doc.delete", "Delete Document", "Изтриване на документ", Icon::DocDelete)
+        .run(Action::Docs(DocCmd::Delete))
+        .short("Delete")
+        .alias(&["DDC"])
+        .at(&[G_DOCS])
+        .tip("Remove the document from this file (refused while another document uses it)"),
+    doc("doc.extract", "Save to Separate File", "Запис в отделен файл", Icon::DocExtract)
+        .short("Separate File")
+        .alias(&["XF"])
+        .at(&[G_STORE])
+        .tip("Move the document into its own .ccpart / .ccasm / .ccdrw file and link it back")
+        .todo("0.6"),
+    doc("doc.embed", "Embed", "Вграждане", Icon::DocEmbed)
+        .alias(&["MKI"])
+        .at(&[G_STORE])
+        .tip("Copy a linked document into this file; its references move to the copy")
+        .todo("0.6"),
+    doc("doc.pack", "Embed All", "Вграждане на всички", Icon::DocPack)
+        .alias(&["PK"])
+        .at(&[G_STORE])
+        .tip("Pack: every linked document into this file, so it stands alone")
+        .todo("0.6"),
+    doc("doc.unpack", "Separate All", "Разделяне на всички", Icon::DocUnpack)
+        .alias(&["UPK"])
+        .at(&[G_STORE])
+        .tip("Unpack: every document of this file into its own file, linked back")
+        .todo("0.6"),
     // ---- View ------------------------------------------------------------
     c("view.home", "Home View", "Начален изглед", Icon::Home)
         .run(Action::View(StandardView::Home))

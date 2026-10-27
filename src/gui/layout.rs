@@ -660,6 +660,7 @@ const ESCAPE_CLOSES: &[&str] = &[
     "physical",
     "measure",
     "offset",
+    "documents",
 ];
 
 /// The layout of this session: the persisted [`UiSettings`] plus what is
@@ -982,6 +983,7 @@ impl CadCraftApp {
             "parameters" => self.show_params = false,
             "offset" => self.offset_edit = None,
             "measure" => self.measure.open = false,
+            "documents" => self.docs.window = false,
             other => self.mat.close_window(other),
         }
     }

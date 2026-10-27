@@ -55,6 +55,14 @@ pub(super) struct PlaceDialog {
     preview: Option<Arc<PickMesh>>,
     /// The preview's turn (drag it).
     yaw: f32,
+    /// The parts stored in this design file (spec 0.6b §3.3 *In This
+    /// File*), listed above the file browser.
+    local: Vec<(DocumentId, String)>,
+    /// The part of this file picked in that list.
+    local_pick: Option<DocumentId>,
+    /// The assembly is saved, so other files can be linked (by a path
+    /// relative to it).
+    can_link: bool,
 }
 
 impl PlaceDialog {
@@ -68,13 +76,17 @@ impl PlaceDialog {
             part: None,
             preview: None,
             yaw: 0.6,
+            local: Vec::new(),
+            local_pick: None,
+            can_link: true,
         };
         d.refresh();
         d
     }
 
     fn refresh(&mut self) {
-        match super::files::list_dir(&self.dir, &[crate::document::FILE_EXTENSION]) {
+        let exts = [crate::document::FILE_EXTENSION, "ccpart", "ccasm"];
+        match super::files::list_dir(&self.dir, &exts) {
             Ok(v) => {
                 self.entries = v;
                 self.error = None;
@@ -265,7 +277,25 @@ impl CadCraftApp {
     /// Assemble › Place: the file browser (the assembly must be saved
     /// first: the link is a path relative to it).
     pub(super) fn open_place_dialog(&mut self) {
-        if self.file_path.trim().is_empty() {
+        // An assembly lists the parts of its own file first; they need no
+        // saved file (spec 0.6b §3.3).
+        let local = if self.is_drawing() {
+            Vec::new()
+        } else {
+            asm::placeable(&self.project)
+        };
+        let saved = !self.file_path.trim().is_empty();
+        if !saved && !local.is_empty() {
+            let dir = super::files::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let mut d = PlaceDialog::new(dir);
+            d.can_link = false;
+            d.local_pick = local.first().map(|x| x.0);
+            d.local = local;
+            self.asm.place = Some(d);
+            self.place_preview();
+            return;
+        }
+        if !saved {
             let what = if self.is_drawing() {
                 "Base View: save the drawing first"
             } else {
@@ -283,7 +313,26 @@ impl CadCraftApp {
             .map(Path::to_path_buf)
             .or_else(super::files::home_dir)
             .unwrap_or_else(|| PathBuf::from("."));
-        self.asm.place = Some(PlaceDialog::new(dir));
+        let mut d = PlaceDialog::new(dir);
+        d.local_pick = local.first().map(|x| x.0);
+        d.local = local;
+        self.asm.place = Some(d);
+        self.place_preview();
+    }
+
+    /// Starts placing part `doc` of this design file (no link).
+    fn place_local(&mut self, doc: DocumentId) {
+        let name = self
+            .project
+            .document(doc)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| "Part".into());
+        self.asm.place = None;
+        self.asm.place_name = name.clone();
+        self.asm.tool = Some(super::assembly::AsmTool::Place(DocRef::local(doc)));
+        self.file_status = Some(Ok(format!(
+            "Place: {name} (in this file); click in the view to place it"
+        )));
     }
 
     /// Selects file `path` in the dialog: loads it and previews its first
@@ -295,6 +344,7 @@ impl CadCraftApp {
             return;
         };
         d.selected = Some(path);
+        d.local_pick = None;
         d.preview = None;
         match loaded {
             Ok(p) => {
@@ -315,6 +365,20 @@ impl CadCraftApp {
         let Some(d) = self.asm.place.as_ref() else {
             return;
         };
+        if let Some(doc) = d.local_pick {
+            let mesh = match self.project.document(doc).map(|x| &x.data) {
+                Some(DocumentData::Part(part)) => {
+                    let mut part = part.clone();
+                    let _ = part.regenerate();
+                    Some(Arc::new(PickMesh::of(&part)))
+                }
+                _ => None,
+            };
+            if let Some(d) = self.asm.place.as_mut() {
+                d.preview = mesh;
+            }
+            return;
+        }
         let (Some(path), Some(doc)) = (d.selected.clone(), d.part) else {
             return;
         };
@@ -383,6 +447,8 @@ impl CadCraftApp {
         let mut select: Option<PathBuf> = None;
         let mut place: Option<(PathBuf, DocumentId)> = None;
         let mut new_part: Option<DocumentId> = None;
+        let mut local: Option<(DocumentId, bool)> = None;
+        let mut save_first = false;
         let mut cancel = false;
         let w = egui::Window::new("Place Component")
             .open(&mut open)
@@ -409,18 +475,77 @@ impl CadCraftApp {
                 });
                 ui.separator();
                 // The list and the preview share the window half and half,
-                // down to the buttons.
-                let list_h = (ui.available_height() - 70.0).max(220.0);
-                let half = (ui.available_width() - 16.0) / 2.0;
+                // down to the buttons, which are laid out first (an estimate
+                // of their height made the window grow every frame).
+                egui::Panel::bottom("place_buttons").show(ui, |ui| {
+                    if let Some(e) = &d.error {
+                        ui.colored_label(Color32::from_rgb(235, 80, 70), e);
+                    }
+                    ui.horizontal(|ui| {
+                        let ready =
+                            d.local_pick.is_some() || (d.selected.is_some() && d.part.is_some());
+                        if ui.add_enabled(ready, egui::Button::new("Place")).clicked() {
+                            if let Some(id) = d.local_pick {
+                                local = Some((id, true));
+                            } else if let (Some(p), Some(doc)) = (d.selected.clone(), d.part) {
+                                place = Some((p, doc));
+                            }
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+                let list_h = (ui.available_height() - 8.0).max(160.0);
+                let half = (ui.available_width() - 24.0) / 2.0;
                 ui.horizontal_top(|ui| {
                     // Folders and part files.
                     ui.vertical(|ui| {
                         ui.set_width(half);
+                        // The parts stored in this design file. What is drawn
+                        // above the file list is measured, never estimated
+                        // (an estimate made the window grow every frame).
+                        let top = ui.cursor().top();
+                        if !d.local.is_empty() {
+                            ui.label(RichText::new("In This File").strong());
+                            let h = (d.local.len() as f32 * 22.0).min(list_h * 0.4);
+                            egui::ScrollArea::vertical()
+                                .id_salt("place_local")
+                                .max_height(h)
+                                .show(ui, |ui| {
+                                    for (id, name) in &d.local {
+                                        ui.horizontal(|ui| {
+                                            super::panels::tree_icon(ui, Icon::Part);
+                                            let r = ui
+                                                .selectable_label(d.local_pick == Some(*id), name);
+                                            if r.double_clicked() {
+                                                local = Some((*id, true));
+                                            } else if r.clicked() {
+                                                local = Some((*id, false));
+                                            }
+                                        });
+                                    }
+                                });
+                            ui.separator();
+                            ui.label(RichText::new("Files").strong());
+                        }
+                        if !d.can_link {
+                            ui.weak(
+                                "Save the assembly to link part files: they are linked by a path relative to it.",
+                            );
+                            if ui.button("Save As...").clicked() {
+                                save_first = true;
+                            }
+                        }
+                        let used = ui.cursor().top() - top;
                         egui::ScrollArea::vertical()
                             .id_salt("place_files")
-                            .max_height(list_h)
+                            .max_height((list_h - used).max(80.0))
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
+                                if !d.can_link {
+                                    return;
+                                }
                                 for (name, is_dir) in &d.entries {
                                     let path = d.dir.join(name);
                                     ui.horizontal(|ui| {
@@ -450,9 +575,11 @@ impl CadCraftApp {
                     ui.separator();
                     // Preview of the selected part.
                     ui.vertical(|ui| {
-                        let side = half.min(list_h - 70.0).max(160.0);
+                        // Room for the three lines under it.
+                        let w = ui.available_width();
+                        let side = w.min(list_h - 70.0).max(120.0);
                         let (rect, resp) =
-                            ui.allocate_exact_size(egui::vec2(half, side), Sense::drag());
+                            ui.allocate_exact_size(egui::vec2(w, side), Sense::drag());
                         let painter = ui.painter_at(rect);
                         painter.rect_filled(rect, 4.0, Color32::from_rgb(38, 41, 46));
                         d.yaw += resp.drag_delta().x * 0.01;
@@ -468,7 +595,13 @@ impl CadCraftApp {
                                 );
                             }
                         }
-                        if let Some(path) = &d.selected {
+                        if let Some(id) = d.local_pick
+                            && let Some((_, name)) = d.local.iter().find(|x| x.0 == id)
+                        {
+                            ui.label(RichText::new(name).strong());
+                            ui.weak(format!("Occurrences are named {name}:1, {name}:2…"));
+                            ui.weak("Stored in this file: edits to it show in the assembly at once.");
+                        } else if let Some(path) = &d.selected {
                             let stem = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
                             ui.label(RichText::new(stem).strong());
                             if d.parts.len() > 1 {
@@ -484,26 +617,13 @@ impl CadCraftApp {
                                 ui.weak(format!("Occurrences are named {base}:1, {base}:2…"));
                             }
                         }
-                        ui.weak(
-                            "The part is linked: it stays its own file; save it and the \
-                             assembly shows the change.",
-                        );
+                        if d.local_pick.is_none() {
+                            ui.weak(
+                                "The part is linked: it stays its own file; save it and the \
+                                 assembly shows the change.",
+                            );
+                        }
                     });
-                });
-                if let Some(e) = &d.error {
-                    ui.colored_label(Color32::from_rgb(235, 80, 70), e);
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    let ready = d.selected.is_some() && d.part.is_some();
-                    if ui.add_enabled(ready, egui::Button::new("Place")).clicked()
-                        && let (Some(p), Some(doc)) = (d.selected.clone(), d.part)
-                    {
-                        place = Some((p, doc));
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
                 });
             });
         let _ = r;
@@ -514,6 +634,27 @@ impl CadCraftApp {
         }
         if let Some(p) = select {
             self.place_select(p);
+        }
+        if let Some((id, go)) = local {
+            if go {
+                self.place_local(id);
+                return;
+            }
+            if let Some(d) = self.asm.place.as_mut() {
+                d.local_pick = Some(id);
+                d.selected = None;
+            }
+            self.place_preview();
+        }
+        if save_first {
+            self.asm.place = None;
+            self.file_status = Some(Ok(
+                "Place: save the assembly first (part files are linked by a path relative to it)"
+                    .into(),
+            ));
+            self.after_save = Some(super::files::Pending::Place);
+            self.open_dialog(super::files::DialogPurpose::SaveAs);
+            return;
         }
         if let Some(doc) = new_part {
             if let Some(d) = self.asm.place.as_mut() {

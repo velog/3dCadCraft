@@ -15,6 +15,8 @@ enum BrowserCmd {
     Select(Selection),
     /// The iProperties window of a document.
     IProperties(crate::document::DocumentId),
+    /// A Manage › Documents command on a document (spec 0.6b).
+    Doc(super::documents::DocCmd, crate::document::DocumentId),
     NewSketchOn(PlaneRef),
     Edit(usize),
     Finish,
@@ -177,12 +179,18 @@ impl CadCraftApp {
             let project_label = RichText::new(self.project.name.clone()).strong();
             ui.horizontal(|ui| {
                 tree_icon(ui, Icon::Project);
-                if ui
-                    .selectable_label(self.selection == Selection::Project, project_label)
-                    .clicked()
-                {
+                let r = ui.selectable_label(self.selection == Selection::Project, project_label);
+                if r.clicked() {
                     cmds.push(BrowserCmd::Select(Selection::Project));
                 }
+                // New documents in this file (spec 0.6b §3.2).
+                r.context_menu(|ui| {
+                    let mut ask = None;
+                    super::documents::new_in_file_menu(ui, &mut ask);
+                    if let Some(c) = ask {
+                        cmds.push(BrowserCmd::Doc(c, self.part_id));
+                    }
+                });
             });
             ui.indent("docs", |ui| {
                 for (id, name, kind) in &docs {
@@ -217,6 +225,11 @@ impl CadCraftApp {
                                 cmds.push(BrowserCmd::Select(Selection::Document(*id)));
                             }
                             r.context_menu(|ui| {
+                                let mut ask = None;
+                                super::documents::doc_menu(ui, *id, &mut ask, &mut activate);
+                                if let Some((c, d)) = ask {
+                                    cmds.push(BrowserCmd::Doc(c, d));
+                                }
                                 if ui.button("iProperties...").clicked() {
                                     cmds.push(BrowserCmd::IProperties(*id));
                                     ui.close();
@@ -275,6 +288,7 @@ impl CadCraftApp {
     fn browser_cmd(&mut self, cmd: BrowserCmd) {
         match cmd {
             BrowserCmd::IProperties(d) => self.open_iproperties(d),
+            BrowserCmd::Doc(c, d) => self.docs_apply_to(c, d),
             // The pattern command's Features selector takes browser rows.
             BrowserCmd::Select(Selection::Feature(k))
                 if self.pattern_draft.is_some() && self.pattern_pick_browser(k) => {}
