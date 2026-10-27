@@ -2312,16 +2312,21 @@ impl CadCraftApp {
         Some(f)
     }
 
-    /// Handles of the interpolation splines of sketch `i`: the set ones,
-    /// and on a selected spline one per fit point (grey = free: dragging it
-    /// activates the handle).
+    /// Handles of the interpolation splines of sketch `i` (not projected
+    /// ones): the set ones, and on a selected spline one per fit point (grey
+    /// = free: dragging it activates the handle).
     fn spline_grips(&self, i: usize) -> Vec<SplineGrip> {
-        let sk = &self.part().sketches[i].sketch;
+        let ps = &self.part().sketches[i];
+        let sk = &ps.sketch;
         let mut out = Vec::new();
         for (e, ent) in sk.entities() {
             let crate::sketch::Entity::Spline { points } = ent else {
                 continue;
             };
+            // A projected spline follows its model edge: no handles.
+            if ps.is_reference(e) {
+                continue;
+            }
             let Some(fit) = sk.spline_fit(e) else {
                 continue;
             };
@@ -2840,8 +2845,24 @@ impl CadCraftApp {
             (Tool::RectTwoPoint | Tool::RectCenter, 1) => &["Width", "Height"],
             (Tool::Move | Tool::Copy, 1) => &["Delta X", "Delta Y"],
             (Tool::Rotate, 2) => &["Angle"],
+            (Tool::Offset, 1) => &["Distance"],
             _ => &[],
         }
+    }
+
+    /// The curve the Offset tool offsets (its first click).
+    fn offset_source(&self) -> Option<EntityId> {
+        match self.tools.first_snap() {
+            Some(Snap::OnEntity(e)) if self.tools.tool == Tool::Offset => Some(e),
+            _ => None,
+        }
+    }
+
+    /// The offset distance at `at` (signed, left of the curve positive).
+    fn offset_at(&self, at: Point2) -> Option<f64> {
+        let i = self.editing?;
+        let e = self.offset_source()?;
+        self.part().sketches[i].sketch.offset_side(e, at).ok()
     }
 
     /// The values the cursor gives now (mm; angles in degrees).
@@ -2860,6 +2881,7 @@ impl CadCraftApp {
             Tool::CircleCenter => [2.0 * d.norm(), 0.0],
             Tool::RectTwoPoint => [d.x.abs(), d.y.abs()],
             Tool::RectCenter => [2.0 * d.x.abs(), 2.0 * d.y.abs()],
+            Tool::Offset => [self.offset_at(pick.pos).map_or(0.0, f64::abs), 0.0],
             _ => [0.0, 0.0],
         }
     }
@@ -2911,6 +2933,32 @@ impl CadCraftApp {
                 let w = v[0].map_or(d.x, |w| w / 2.0 * sign(d.x));
                 let h = v[1].map_or(d.y, |h| h / 2.0 * sign(d.y));
                 a + crate::sketch::Vector2::new(w, h)
+            }
+            Tool::Offset => {
+                // On the cursor's side, at the typed distance: Newton steps
+                // along the distance's gradient (exact for lines and arcs).
+                let Some(want) = v[0] else { return pick };
+                let Some(d0) = self.offset_at(pick.pos) else {
+                    return pick;
+                };
+                let target = if d0 < 0.0 { -want } else { want };
+                let mut q = pick.pos;
+                for _ in 0..8 {
+                    let Some(d) = self.offset_at(q) else { break };
+                    let h = 1e-4 * (1.0 + want.abs());
+                    let (Some(dx), Some(dy)) = (
+                        self.offset_at(q + crate::sketch::Vector2::new(h, 0.0)),
+                        self.offset_at(q + crate::sketch::Vector2::new(0.0, h)),
+                    ) else {
+                        break;
+                    };
+                    let g = crate::sketch::Vector2::new(dx - d, dy - d) / h;
+                    if g.norm_squared() < 1e-12 || (d - target).abs() < 1e-10 {
+                        break;
+                    }
+                    q += g * ((target - d) / g.norm_squared());
+                }
+                q
             }
             _ => pick.pos,
         };
@@ -3044,6 +3092,8 @@ impl CadCraftApp {
                 .map(|(e, _)| e),
             _ => None,
         };
+        let offset_of = self.offset_source();
+        let offset_loop = self.tools.offset_loop;
         self.tool_op(|t, ps| t.click(ps, pick));
         if vals.iter().all(Option::is_none) {
             return;
@@ -3115,6 +3165,38 @@ impl CadCraftApp {
                         && let Ok((a, b)) = sk.line_points(l)
                     {
                         extra.push(C::Distance { a, b, value: val });
+                    }
+                }
+            }
+            // The typed offset: a distance from a straight source curve to
+            // its copy (the offset constraints carry it round the loop).
+            Tool::Offset => {
+                if let (Some(e), Some(val)) = (offset_of, vals[0]) {
+                    let sources: Vec<EntityId> = if offset_loop {
+                        sk.chain(e).0.into_iter().map(|(id, _)| id).collect()
+                    } else {
+                        vec![e]
+                    };
+                    let tol = 1e-6 * (1.0 + val.abs());
+                    let pair = new.iter().find_map(|&n| {
+                        let (p, _) = sk.line_points(n).ok()?;
+                        let at = sk.point(p)?.position;
+                        sources.iter().find_map(|&src| {
+                            let (a, b) = sk.line_geometry(src)?;
+                            let dir = (b - a).try_normalize(1e-12)?;
+                            let d = (dir.x * (at - a).y - dir.y * (at - a).x).abs();
+                            let (q0, q1) = sk.line_geometry(n)?;
+                            let par = (dir.x * (q1 - q0).y - dir.y * (q1 - q0).x).abs()
+                                <= 1e-9 * (q1 - q0).norm();
+                            ((d - val).abs() <= tol && par).then_some((p, src))
+                        })
+                    });
+                    if let Some((point, line)) = pair {
+                        extra.push(C::PointLineDistance {
+                            point,
+                            line,
+                            value: val,
+                        });
                     }
                 }
             }

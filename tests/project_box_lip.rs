@@ -237,3 +237,59 @@ fn the_owners_session_file_projects_its_corners() {
     assert_eq!(regions.len(), 1, "the outline is closed");
     assert!(regions[0].holes.is_empty());
 }
+
+#[test]
+fn rounds_cut_by_a_split_project_as_arcs() {
+    // The owner's box (2026-10-27): Variable fillet corners r 10, top and
+    // bottom edges rounded, split at z = 13, a lip on the lid. The kernel's
+    // round is a spline fitted to the cylinder, so the section edge on the
+    // lid's cut face was a spline 0.01 mm off the circle and projected as a
+    // spline (its handles could be dragged, its offset did not follow a
+    // dimension). It projects as an arc of the round's cylinder now.
+    let pr = cadcraft3d::document::Project::load(std::path::Path::new(
+        "tests/data/kutia_lid_lip.3dcadcraft",
+    ))
+    .unwrap();
+    let mut p = pr
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            cadcraft3d::document::DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    p.regenerate().unwrap();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let j = p
+        .create_sketch(SketchPlacement::on_face("Split1#2:Cut"), &o)
+        .unwrap();
+    let ps = &p.sketches[j];
+    assert!(ps.health.is_none(), "{:?}", ps.health);
+    assert_eq!(ps.links.len(), 4, "four rounded corners");
+    for l in &ps.links {
+        let c = l.curve.expect("a curve");
+        let Some(cadcraft3d::sketch::Entity::Arc { center, start, end }) = ps.sketch.entity(c)
+        else {
+            panic!("{:?} is not an arc", ps.sketch.entity(c));
+        };
+        let at = |q| ps.sketch.point(q).unwrap().position;
+        let (r0, r1) = (
+            (at(*start) - at(*center)).norm(),
+            (at(*end) - at(*center)).norm(),
+        );
+        assert!(
+            (r0 - R).abs() < 1e-2 && (r0 - r1).abs() < 1e-9,
+            "radius {r0} {r1}"
+        );
+    }
+    // The lip (Extrusion2) stands on the face: the outline and the lip's
+    // inner loop give the ring and its inside, together the whole face.
+    let regions = ps.sketch.regions();
+    assert_eq!(regions.len(), 2);
+    let want = W * D - (4.0 - std::f64::consts::PI) * R * R;
+    let got: Real = regions.iter().map(|r| r.area()).sum();
+    assert!((got - want).abs() < 1e-5 * want, "area {got} vs {want}");
+}

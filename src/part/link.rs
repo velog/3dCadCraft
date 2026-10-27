@@ -320,6 +320,9 @@ pub fn edge_shape(body: &BRep, edge: &EdgeRef) -> Result<Shape3, String> {
         if body.edge_direction(e).is_some() {
             return Err("the edge is straight now; project it again".into());
         }
+        if let Some(shape) = cylinder_section(body, e) {
+            return Ok(shape);
+        }
         return curve_shape(body, e, x.start == x.end);
     };
     let (a, b) = (
@@ -340,6 +343,80 @@ pub fn edge_shape(body: &BRep, edge: &EdgeRef) -> Result<Shape3, String> {
             radius: c.radius,
         }),
     }
+}
+
+/// A spline edge that is a section of a cylinder square to its axis (a
+/// round cut by a Split or a sketch plane: the kernel's fillet surface is
+/// a spline fitted to the cylinder, so their intersection comes back as a
+/// spline about 0.1 % off the circle) as the circle or arc it stands for.
+/// An arc keeps its end vertices (lines projected from the neighbouring
+/// edges share them): its centre is the point of their bisector nearest
+/// the axis.
+fn cylinder_section(body: &BRep, e: crate::kernel::EdgeId) -> Option<Shape3> {
+    let x = body.edge(e)?;
+    let pts = body
+        .sample_edge(e, &crate::kernel::TessellationOptions::default())
+        .ok()?;
+    if pts.len() < 3 {
+        return None;
+    }
+    body.edge_faces(e).into_iter().find_map(|f| {
+        let face = body.face(f)?;
+        let surface = face.facet_of.or(Some(face.surface))?;
+        let Some(crate::kernel::Surface::Cylinder(cy)) = body.surface(surface) else {
+            return None;
+        };
+        let (a, r) = (cy.axis.into_inner(), cy.radius);
+        let tol = 2e-3 * r;
+        let h = |p: &Point3| (p - cy.origin).dot(&a);
+        let h0 = h(&pts[0]);
+        let on = pts.iter().all(|p| {
+            let d = p - cy.origin;
+            (h(p) - h0).abs() <= tol && ((d - a * d.dot(&a)).norm() - r).abs() <= tol
+        });
+        if !on {
+            return None;
+        }
+        let axis_at = cy.origin + a * h0;
+        let normal = UnitVector3::new_normalize(a);
+        let (start, end) = (body.vertex(x.start)?.point, body.vertex(x.end)?.point);
+        if x.start == x.end || (start - end).norm() <= 1e-9 {
+            return Some(Shape3::Circle {
+                center: axis_at,
+                normal,
+                radius: r,
+            });
+        }
+        // The centre: on the bisector of the ends (in the section's plane),
+        // nearest the axis.
+        let mid = nalgebra::center(&start, &end);
+        let chord = end - start;
+        let bis = a.cross(&chord).try_normalize(1e-12)?;
+        let center = mid + bis * (axis_at - mid).dot(&bis);
+        // The arc runs counter-clockwise about its normal from start to end
+        // through the edge's middle sample.
+        let ang = |p: &Point3, n: &Vector3| {
+            let (u, v) = (start - center, p - center);
+            let t = u.cross(&v).dot(n).atan2(u.dot(&v));
+            if t < 0.0 {
+                t + std::f64::consts::TAU
+            } else {
+                t
+            }
+        };
+        let m = pts[pts.len() / 2];
+        let normal = if ang(&m, &a) < ang(&end, &a) {
+            normal
+        } else {
+            -normal
+        };
+        Some(Shape3::Arc {
+            center,
+            normal,
+            start,
+            end,
+        })
+    })
 }
 
 /// The source of `link` resolved for target sketch `i` of `sketches`.
