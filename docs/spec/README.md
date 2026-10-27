@@ -75,6 +75,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [1.8-project-geometry.md](1.8-project-geometry.md) | Project Geometry |
 | [1.9-profiles.md](1.9-profiles.md) | Profiles and regions |
 | [2.0-part-commands.md](2.0-part-commands.md) | The whole Inventor part command set (3D Model, Inspect, Tools, Manage, View, Environments) with every dialog, interface first; right-click menus by object kind (rule 17) |
+| [2.14-thicken-offset.md](2.14-thicken-offset.md) | Thicken/Offset: faces or quilts thickened (Join, Cut, Intersect, New Solid) or offset into a surface; `Feature::BodyOp` |
 | [2.1-extrude.md](2.1-extrude.md) | Extrude, including consumed and shared sketches |
 | [2.2-revolve.md](2.2-revolve.md) | Revolve, axis and centreline, diametric dimensions |
 | [2.3-hole.md](2.3-hole.md) | Hole: Simple / Clearance / Tapped, seats, terminations, standards in CSV, drawing note |

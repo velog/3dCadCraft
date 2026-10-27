@@ -582,7 +582,11 @@ pub static COMMANDS: &[Command] = &[
     pp("part.unwrap", "Unwrap", "Разгъване на лица", Icon::Unwrap, Pp::Unwrap)
         .alias(&["UNW"])
         .at(&[M_CREATE]),
-    pp("part.thicken", "Thicken/Offset", "Удебеляване / отместване", Icon::Thicken, Pp::ThickenOffset)
+    c("part.thicken", "Thicken/Offset", "Удебеляване / отместване", Icon::Thicken)
+        .run(Action::Thicken)
+        .env(PART)
+        .spec("2.14-thicken-offset.md")
+        .tip("Thicken faces (Join, Cut, Intersect, New Solid) or offset them into a surface")
         .alias(&["TO"])
         .at(&[M_MODIFY]),
     pp("part.delete_face", "Delete Face", "Изтриване на лице", Icon::DeleteFace, Pp::DeleteFace)

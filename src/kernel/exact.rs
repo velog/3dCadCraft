@@ -4395,6 +4395,8 @@ pub use sheet::{SheetSide, extrude_sheet, revolve_sheet, sheet_nearest, split_by
 pub mod sheet_metal;
 
 mod sweep;
+mod thicken;
 pub use sweep::{
     Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_to_point, path_points, sweep,
 };
+pub use thicken::{face_sheet, offset_sheet, thicken_faces, thicken_sheet};

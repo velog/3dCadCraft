@@ -24,6 +24,7 @@
 
 pub mod appearance;
 pub mod blend;
+pub mod body_op;
 pub mod boolean;
 pub mod coil;
 pub mod combine;
@@ -66,6 +67,9 @@ use thiserror::Error;
 pub use blend::{
     BlendFeature, BlendKind, ChamferMethod, EdgeRef, FilletSet, FilletType, PartialChamfer,
     VariableRadius,
+};
+pub use body_op::{
+    BodyOp, BodyOpFeature, ThickenDirection, ThickenOp, ThickenOutput, ThickenSelect,
 };
 pub use boolean::{Operation, Output};
 pub use coil::{CoilAxis, CoilEnd, CoilFeature, CoilMethod};
@@ -195,6 +199,8 @@ pub enum Feature {
     SheetConvert(sheet_metal::SheetConvertFeature),
     /// Hem, Fold, Contour Flange, Unfold / Refold, Cut (`sheet_metal.rs`).
     SheetOp(sheet_metal::SheetOpFeature),
+    /// Thicken/Offset and the other body operations (format revision 31).
+    BodyOp(body_op::BodyOpFeature),
 }
 
 /// A sketch-based solid feature (Extrude or Revolve), as regeneration
@@ -302,6 +308,7 @@ enum BuildStep<'a> {
     SheetFlange(&'a sheet_metal::SheetFlangeFeature),
     SheetConvert(&'a sheet_metal::SheetConvertFeature),
     SheetOp(&'a sheet_metal::SheetOpFeature),
+    BodyOp(&'a body_op::BodyOpFeature),
 }
 
 impl<'a> BuildStep<'a> {
@@ -327,6 +334,7 @@ impl<'a> BuildStep<'a> {
             Feature::SheetFlange(f) => Self::SheetFlange(f),
             Feature::SheetConvert(f) => Self::SheetConvert(f),
             Feature::SheetOp(f) => Self::SheetOp(f),
+            Feature::BodyOp(f) => Self::BodyOp(f),
         }
     }
 }
@@ -355,6 +363,7 @@ impl Feature {
             Feature::SheetFlange(f) => &f.id,
             Feature::SheetConvert(f) => &f.id,
             Feature::SheetOp(f) => &f.id,
+            Feature::BodyOp(f) => &f.id,
         }
     }
 
@@ -381,6 +390,7 @@ impl Feature {
             Feature::SheetFlange(f) => &f.name,
             Feature::SheetConvert(f) => &f.name,
             Feature::SheetOp(f) => &f.name,
+            Feature::BodyOp(f) => &f.name,
         }
     }
 
@@ -407,6 +417,7 @@ impl Feature {
             Feature::SheetFlange(f) => &mut f.name,
             Feature::SheetConvert(f) => &mut f.name,
             Feature::SheetOp(f) => &mut f.name,
+            Feature::BodyOp(f) => &mut f.name,
         };
         *n = name.to_owned();
     }
@@ -424,6 +435,7 @@ impl Feature {
             Feature::SheetFace(_) => true,
             Feature::SheetFlange(_) | Feature::SheetConvert(_) => false,
             Feature::SheetOp(f) => f.creates_body(),
+            Feature::BodyOp(f) => f.creates_body(),
             Feature::Work(_)
             | Feature::Blend(_)
             | Feature::Shell(_)
@@ -455,6 +467,7 @@ impl Feature {
             Feature::SheetFace(f) => Some(&f.sketch),
             Feature::SheetFlange(_) | Feature::SheetConvert(_) => None,
             Feature::SheetOp(f) => f.sketch(),
+            Feature::BodyOp(_) => None,
         }
     }
 
@@ -1181,6 +1194,11 @@ impl PartDocument {
                     "Split needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
                 BuildStep::Shell(sh) if use_exact => exact::shell(sh, &solids).map(Some),
+                BuildStep::BodyOp(op) if use_exact => exact::body_op(op, &solids, &sheets).map(Some),
+                BuildStep::BodyOp(op) => Err(exact::Fail::User(format!(
+                    "{} needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)",
+                    op.kind_name()
+                ))),
                 BuildStep::Draft(dr) if use_exact => {
                     let lines = dr
                         .parting_sketch()
@@ -1725,6 +1743,7 @@ impl PartDocument {
                 Feature::SheetFace(f) => Some(f.id.clone()),
                 Feature::SheetFlange(_) | Feature::SheetConvert(_) => None,
                 Feature::SheetOp(f) => f.creates_body().then(|| f.id.clone()),
+                Feature::BodyOp(f) => f.creates_body().then(|| f.id.clone()),
                 Feature::Work(_)
                 | Feature::Blend(_)
                 | Feature::Shell(_)
@@ -1958,6 +1977,9 @@ impl PartDocument {
             (Feature::SheetOp(o), Feature::SheetOp(n)) if o.kind_name() == n.kind_name() => {
                 (n.id, n.name) = (o.id.clone(), o.name.clone());
             }
+            (Feature::BodyOp(o), Feature::BodyOp(n)) if o.kind_name() == n.kind_name() => {
+                (n.id, n.name) = (o.id.clone(), o.name.clone());
+            }
             // Redefine of a work feature: any method of the same kind (a
             // plane stays a plane, so what refers to it still resolves).
             (Feature::Work(o), Feature::Work(n)) if o.def.prefix() == n.def.prefix() => {
@@ -2110,6 +2132,18 @@ impl PartDocument {
         let id = self.next_feature_id("Shell");
         (def.id, def.name) = (id.clone(), id.clone());
         self.insert_feature_checked(Feature::Shell(def))?;
+        Ok(id)
+    }
+
+    /// A body operation (**Thicken/Offset** …): the id is the command's name
+    /// and a number (`Thicken1`). On failure nothing changes.
+    pub fn add_body_op(&mut self, mut def: BodyOpFeature) -> Result<String, PartError> {
+        match &def.op {
+            BodyOp::Thicken(t) => t.validate().map_err(PartError::Feature)?,
+        }
+        let id = self.next_feature_id(def.kind_name());
+        (def.id, def.name) = (id.clone(), id.clone());
+        self.insert_feature_checked(Feature::BodyOp(def))?;
         Ok(id)
     }
 
@@ -2543,6 +2577,7 @@ fn pattern_sources<'t>(
             | Feature::SheetFlange(_)
             | Feature::SheetConvert(_)
             | Feature::SheetOp(_)
+            | Feature::BodyOp(_)
             | Feature::Pattern(_) => format!(
                 "{} cannot be patterned on its own (pattern the solid)",
                 f.name()

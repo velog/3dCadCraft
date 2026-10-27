@@ -123,7 +123,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (2026-10-27).
 /// - 30: sheet metal Corner Round and Corner Chamfer
 ///   (`SheetOp::CornerRound` / `CornerChamfer`) (2026-10-27).
-pub const FORMAT_REVISION: u32 = 30;
+/// - 31: body operations (`Feature::BodyOp`: Thicken/Offset) (2026-10-27).
+pub const FORMAT_REVISION: u32 = 31;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

@@ -903,6 +903,7 @@ impl CadCraftApp {
             Feature::Rib(r) => (Icon::Rib, format!("Rib of {}", r.sketch)),
             Feature::SheetFace(f) => (sm_icon, format!("Sheet metal Face of {}", f.sketch)),
             Feature::SheetOp(f) => (sm_icon, f.describe()),
+            Feature::BodyOp(f) => (Icon::Thicken, f.describe()),
             Feature::SheetConvert(f) => (
                 Icon::SheetMetal,
                 format!(
@@ -1217,6 +1218,10 @@ impl CadCraftApp {
         }
         if self.part_planned.is_some() {
             self.part_planned_panel(ui);
+            return;
+        }
+        if self.thicken_draft.is_some() {
+            self.thicken_panel(ui);
             return;
         }
         if self.section.as_ref().is_some_and(|s| s.editing) {
@@ -2304,6 +2309,10 @@ impl CadCraftApp {
             self.sm_feature_properties(ui, k);
             return;
         }
+        if matches!(f, Feature::BodyOp(_)) {
+            self.thicken_properties(ui, k);
+            return;
+        }
         let Some(sketch_id) = f.sketch().map(str::to_owned) else {
             return;
         };
@@ -2361,6 +2370,7 @@ impl CadCraftApp {
                 | Feature::SheetFlange(_)
                 | Feature::SheetConvert(_)
                 | Feature::SheetOp(_)
+                | Feature::BodyOp(_)
                 | Feature::Combine(_)
                 | Feature::Split(_) => {}
             }
@@ -2445,6 +2455,7 @@ impl CadCraftApp {
                     }
                 });
             }
+            Feature::BodyOp(_) => {}
             Feature::SheetOp(ref o) => {
                 let fields = o.fields();
                 let title = o.describe();
@@ -4818,6 +4829,10 @@ impl CadCraftApp {
                 }
                 (Mode::Normal, None) if self.section.as_ref().is_some_and(|s| s.editing) => {
                     let text = self.section_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.thicken_draft.is_some() => {
+                    let text = self.thicken_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.part_planned.is_some() => {

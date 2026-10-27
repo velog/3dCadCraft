@@ -40,6 +40,7 @@ pub(super) enum Entry {
     Shell,
     FaceDraft,
     Thread,
+    Thicken,
     Fillet,
     Chamfer,
     WorkPlane,
@@ -65,6 +66,7 @@ impl Entry {
             Entry::Shell => "Shell (remove these faces)",
             Entry::FaceDraft => "Face Draft",
             Entry::Thread => "Thread",
+            Entry::Thicken => "Thicken/Offset",
             Entry::Fillet => "Fillet",
             Entry::Chamfer => "Chamfer",
             Entry::WorkPlane => "Work Plane",
@@ -97,7 +99,7 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
             E::Separator,
             E::Shell,
             E::FaceDraft,
-            E::Planned(Pp::ThickenOffset),
+            E::Thicken,
             E::Planned(Pp::DeleteFace),
             E::Planned(Pp::Direct),
             E::Planned(Pp::CopyObject),
@@ -109,7 +111,7 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
             E::Separator,
             E::Shell,
             E::FaceDraft,
-            E::Planned(Pp::ThickenOffset),
+            E::Thicken,
             E::Planned(Pp::DeleteFace),
             E::Planned(Pp::Direct),
             E::Planned(Pp::CopyObject),
@@ -145,7 +147,7 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
         SelKind::SurfaceBody => vec![
             E::Planned(Pp::Stitch),
             E::Planned(Pp::Sculpt),
-            E::Planned(Pp::ThickenOffset),
+            E::Thicken,
             E::Planned(Pp::TrimSurface),
             E::Split,
         ],
@@ -358,6 +360,7 @@ impl CadCraftApp {
                     self.thread_pick(f, at);
                 }
             }
+            E::Thicken => self.apply(Action::Thicken),
             E::Fillet => self.apply(Action::Fillet),
             E::Chamfer => self.apply(Action::Chamfer),
             E::WorkPlane | E::WorkAxis | E::WorkPoint => {

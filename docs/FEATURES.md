@@ -748,9 +748,13 @@ Robustness in touching and nearly coincident cases is achieved with tolerances a
 
 **Inventor equivalent.** Combine, Split, Move Bodies, Make Components.
 
-## 2.14 Thicken / Offset, Delete Face, Replace Face — ⬜ · L
+## 2.14 Thicken / Offset, Delete Face, Replace Face — 🟡 (Thicken/Offset; waiting for a visual check) · L
 
 **Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
+
+**Thicken/Offset** — 🟡 implemented 2026-10-27 (format revision 31, `Feature::BodyOp`): faces or quilts,
+Join / Cut / Intersect / New Solid, Output Surface, Direction 1 / 2 / Symmetric, Automatic Face Chain,
+preview, Edit Feature. **Specification:** [spec/2.14-thicken-offset.md](spec/2.14-thicken-offset.md)
 
 - **Thicken/Offset:** turns a surface into a body with a thickness.
 - **Delete Face:** removes a face and closes the hole (healing imported models).

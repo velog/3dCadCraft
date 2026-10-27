@@ -921,6 +921,122 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
     Ok(out)
 }
 
+/// A body operation (`docs/spec/2.14-thicken-offset.md`). `cur`: the solids,
+/// `sheets`: the surface bodies (only these operations see them). Returns
+/// the solids and the new surface bodies; kernel failures are health.
+pub(super) fn body_op(
+    f: &super::BodyOpFeature,
+    cur: &[ExactSolid],
+    sheets: &[ExactSolid],
+) -> Result<Vec<ExactSolid>, Fail> {
+    match &f.op {
+        super::BodyOp::Thicken(t) => thicken(t, &f.id, cur, sheets),
+    }
+}
+
+/// Thicken/Offset: the picked faces (or quilts) as a slab joined to, cut
+/// from, intersected with a solid or a new solid; or offset into a surface.
+fn thicken(
+    t: &super::body_op::ThickenOp,
+    id: &str,
+    cur: &[ExactSolid],
+    sheets: &[ExactSolid],
+) -> Result<Vec<ExactSolid>, Fail> {
+    use super::body_op::{ThickenOutput, ThickenSelect};
+    t.validate().map_err(User)?;
+    let (d, symmetric) = t.signed();
+    let kernel = |e: String| User(format!("the geometry kernel cannot build it ({e})"));
+    // Every body that can hold a picked face: solids, then surface bodies.
+    let all: Vec<&ExactSolid> = cur.iter().chain(sheets).collect();
+    let mut source: Option<usize> = None;
+    let piece = match t.select {
+        ThickenSelect::Face => {
+            let mut faces = Vec::new();
+            for r in &t.faces {
+                let hint = Point3::from(r.hint);
+                let found = all.iter().enumerate().find_map(|(i, s)| {
+                    exact::faces_named(s, &r.face, hint)
+                        .ok()
+                        .and_then(|v| v.first().map(|&f| (i, f)))
+                });
+                let Some((i, f)) = found else {
+                    return Err(User(format!("the face {} no longer exists", r.face)));
+                };
+                match source {
+                    Some(s) if s != i => {
+                        return Err(User("the faces belong to different bodies".into()));
+                    }
+                    _ => source = Some(i),
+                }
+                if !faces.contains(&f) {
+                    faces.push(f);
+                }
+            }
+            let Some(i) = source else {
+                return Err(User("select the faces".into()));
+            };
+            match t.output {
+                ThickenOutput::Surface => {
+                    exact::offset_sheet(all[i], &faces, d, id).map_err(kernel)?
+                }
+                ThickenOutput::Solid => {
+                    exact::thicken_faces(all[i], &faces, d, symmetric, id).map_err(kernel)?
+                }
+            }
+        }
+        ThickenSelect::Quilt => {
+            let mut out: Option<ExactSolid> = None;
+            for q in &t.quilts {
+                let s = sheets
+                    .iter()
+                    .find(|s| s.name.as_deref() == Some(q.as_str()))
+                    .ok_or_else(|| User(format!("the surface body {q} no longer exists")))?;
+                let slab = exact::thicken_sheet(s, d, symmetric, id).map_err(kernel)?;
+                out = Some(match out {
+                    None => slab,
+                    Some(prev) => exact::boolean(&prev, &slab, ExactOp::Union)
+                        .map_err(kernel)?
+                        .ok_or_else(|| User("the thickened quilts leave nothing".into()))?,
+                });
+            }
+            out.ok_or_else(|| User("select the surface bodies (quilts)".into()))?
+        }
+    };
+    let mut out = cur.to_vec();
+    if t.output == ThickenOutput::Surface || t.operation == Operation::NewSolid {
+        out.push(piece);
+        return Ok(out);
+    }
+    // The solid it changes: the chosen one, else the solid of the faces, else
+    // the only one.
+    let target = if let Some(name) = t.solids.first() {
+        cur.iter()
+            .position(|s| s.name.as_deref() == Some(name.as_str()))
+            .ok_or_else(|| User(format!("the solid {name} no longer exists")))?
+    } else if let Some(i) = source.filter(|&i| i < cur.len()) {
+        i
+    } else if cur.len() == 1 {
+        0
+    } else if cur.is_empty() {
+        return Err(User("there is no solid to join to: use New Solid".into()));
+    } else {
+        return Err(User("select the solid".into()));
+    };
+    let name = cur[target].name.clone();
+    let op = match t.operation {
+        Operation::Join => ExactOp::Union,
+        Operation::Cut => ExactOp::Cut,
+        Operation::Intersect => ExactOp::Intersect,
+        Operation::NewSolid => ExactOp::Union,
+    };
+    let mut r = exact::boolean(&cur[target], &piece, op)
+        .map_err(kernel)?
+        .ok_or_else(|| User(format!("{:?}: nothing is left of the solid", t.operation)))?;
+    r.name = name;
+    out[target] = r;
+    Ok(out)
+}
+
 /// Face Draft (`docs/spec/2.8-draft.md`): the faces (with their rounds,
 /// Automatic Blending) are found by name on the solid holding them. One
 /// way: faces sharing a neutral plane are drafted in one kernel call,

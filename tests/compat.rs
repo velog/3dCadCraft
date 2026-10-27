@@ -530,6 +530,22 @@ fn sheet_r22() -> PartDocument {
     p
 }
 
+/// Revision 31: a 40 × 30 × 20 box whose top face is thickened by 5 mm
+/// (Thicken/Offset, `Feature::BodyOp`).
+fn thicken_r31() -> PartDocument {
+    use cadcraft3d::part::{BodyOp, BodyOpFeature, FaceRef, ThickenOp};
+    let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let mut t = ThickenOp::new();
+    t.faces = vec![FaceRef {
+        face: "Box1:Top".into(),
+        hint: [20.0, 15.0, 20.0],
+    }];
+    t.distance = 5.0;
+    p.add_body_op(BodyOpFeature::new(BodyOp::Thicken(t)))
+        .unwrap();
+    p
+}
+
 /// Revision 30: a 100 × 60 Face with a Corner Round (R10 at two corners)
 /// and a Corner Chamfer (Distance and Angle) at a third.
 fn sheet_r30() -> PartDocument {
@@ -1735,6 +1751,13 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r29_project().save(&f).unwrap();
+        }
+        let f = root().join("r31/thicken_r31.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ThickenR31");
+            project.add_document("Part1", DocumentData::Part(thicken_r31()));
+            project.save(&f).unwrap();
         }
         let f = root().join("r30/sheet_r30.3dcadcraft");
         if !f.exists() {

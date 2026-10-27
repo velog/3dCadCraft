@@ -200,6 +200,8 @@ enum Cmd {
     Sheet,
     /// A part command with its panel only (`gui/part_planned.rs`).
     Planned,
+    /// Thicken/Offset (`gui/thicken.rs`).
+    Thicken,
 }
 
 impl CadCraftApp {
@@ -218,6 +220,8 @@ impl CadCraftApp {
             Some(Cmd::Sheet)
         } else if self.part_planned.is_some() {
             Some(Cmd::Planned)
+        } else if self.thicken_draft.is_some() {
+            Some(Cmd::Thicken)
         } else {
             None
         }
@@ -237,6 +241,7 @@ impl CadCraftApp {
             Cmd::Loft => self.loft_draft.as_ref().map(|d| d.flow()),
             Cmd::Sheet => self.sm_flow(),
             Cmd::Planned => self.part_planned.as_ref().map(|d| d.flow()),
+            Cmd::Thicken => self.thicken_draft.as_ref().map(|d| d.flow()),
         }
     }
 
@@ -257,6 +262,7 @@ impl CadCraftApp {
             Cmd::Loft => "Loft",
             Cmd::Sheet => return self.sm_prompt(),
             Cmd::Planned => return self.part_planned.as_ref().map(|d| d.prompt()),
+            Cmd::Thicken => return self.thicken_prompt(),
         };
         let p = super::i18n::tr(flow.prompt());
         // A finished command also offers OK (Shell's input is optional).
@@ -288,6 +294,7 @@ impl CadCraftApp {
                     d.set_active(key);
                 }
             }
+            Some(Cmd::Thicken) => self.thicken_activate(key),
             Some(Cmd::Shell) | None => {}
         }
     }
@@ -300,6 +307,7 @@ impl CadCraftApp {
             Some(Cmd::Split) => self.commit_split(keep_open),
             Some(Cmd::Loft) => self.commit_loft(keep_open),
             Some(Cmd::Sheet) => self.sm_commit(keep_open),
+            Some(Cmd::Thicken) => self.commit_thicken(keep_open),
             Some(Cmd::Planned) => {
                 if let Some(d) = &self.part_planned {
                     self.file_status = Some(Err(format!(
@@ -317,6 +325,7 @@ impl CadCraftApp {
         self.shell_draft = None;
         self.loft_draft = None;
         self.part_planned = None;
+        self.cancel_thicken();
         if self.sm.draft.take().is_some() {
             self.end_feature_edit();
         }
@@ -366,6 +375,10 @@ impl CadCraftApp {
             Cmd::Loft => self.loft_draft.as_ref().is_some_and(|d| d.edit.is_some()),
             Cmd::Sheet => self.sm.draft.as_ref().is_some_and(|d| d.edit.is_some()),
             Cmd::Planned => false,
+            Cmd::Thicken => self
+                .thicken_draft
+                .as_ref()
+                .is_some_and(|d| d.edit.is_some()),
         };
         let repeat = self
             .repeatable()
@@ -388,7 +401,7 @@ impl CadCraftApp {
                 .map(|d| d.menu_options())
                 .unwrap_or_default(),
             Cmd::Sheet => self.sm_menu_options(),
-            Cmd::Planned => Vec::new(),
+            Cmd::Planned | Cmd::Thicken => Vec::new(),
         };
         let Some(choice) = command_menu(ui, &flow, !editing, repeat, &options) else {
             return true;
@@ -435,7 +448,7 @@ impl CadCraftApp {
                     }
                 }
                 Cmd::Sheet => self.sm_menu_option(k),
-                Cmd::Planned => {}
+                Cmd::Planned | Cmd::Thicken => {}
             },
         }
         true

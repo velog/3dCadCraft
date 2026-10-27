@@ -237,5 +237,12 @@
     "features": 3,
     "sketches": 1,
     "exact": true
+  },
+  "r31/thicken_r31.3dcadcraft": {
+    "volume": 30000.00000000003,
+    "faces": 6,
+    "features": 2,
+    "sketches": 0,
+    "exact": true
   }
 }

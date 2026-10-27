@@ -1146,6 +1146,41 @@ fn speed_budgets() {
         }),
     ));
 
+    // Thicken/Offset of the rounded box's top face (after the 8 fillets and
+    // the chamfer chain): a 3 mm slab joined; then the same face offset into
+    // a surface body.
+    for (case, surface) in [
+        (
+            "thicken 3 the rounded box's top face (Join, add_body_op)",
+            false,
+        ),
+        (
+            "offset the rounded box's top face into a surface (add_body_op)",
+            true,
+        ),
+    ] {
+        rows.push((
+            case,
+            400.0,
+            median_ms(3, || {
+                use cadcraft3d::part::{BodyOp, BodyOpFeature, ThickenOp, ThickenOutput};
+                let mut p = rb.clone();
+                p.build_cache = Default::default();
+                let top = p.body.find_face("Box1:Top").unwrap();
+                let mut t = ThickenOp::new();
+                t.faces
+                    .push(cadcraft3d::part::shell::face_ref(&p.body, top, None).unwrap());
+                t.distance = 3.0;
+                t.automatic_face_chain = false;
+                if surface {
+                    t.output = ThickenOutput::Surface;
+                }
+                p.add_body_op(BodyOpFeature::new(BodyOp::Thicken(t)))
+                    .unwrap();
+            }),
+        ));
+    }
+
     // Face Draft of a box's sides and vertical rounds (one tangent chain
     // from the front), fixed plane XY.
     let mut vertical_rounds = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();

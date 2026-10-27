@@ -91,6 +91,7 @@ mod show_dims;
 mod sketch_tools;
 mod sm_planned;
 mod sweep;
+mod thicken;
 mod valuefield;
 mod view_style;
 mod viewcube;
@@ -760,6 +761,8 @@ struct CadCraftApp {
     presets: presets::PresetUi,
     /// The open Face Draft command.
     draft_draft: Option<draft::DraftDraft>,
+    /// The open Thicken/Offset command.
+    thicken_draft: Option<thicken::ThickenDraft>,
     /// View › Visual Style.
     visual_style: view_style::VisualStyle,
     /// View › Section View: the view's cut (stays after its panel closes).
@@ -969,6 +972,7 @@ impl CadCraftApp {
             rib_draft: None,
             draft_draft: None,
             part_planned: None,
+            thicken_draft: None,
             visual_style: Default::default(),
             section: None,
             combine_draft: None,
@@ -1529,6 +1533,7 @@ impl CadCraftApp {
             | Feature::SheetFlange(_)
             | Feature::SheetConvert(_)
             | Feature::SheetOp(_) => self.sm_edit(k),
+            Feature::BodyOp(_) => self.thicken_edit(k),
             Feature::Extrude(e) => {
                 let Some(sketch) = sketch_of(self, &e.sketch) else {
                     self.file_status =
@@ -3809,6 +3814,7 @@ impl CadCraftApp {
             | Action::SmCornerSeam
             | Action::SmPlanned(_) => self.sm_apply(action),
             Action::PartPlanned(k) => self.start_part_planned(k),
+            Action::Thicken => self.start_thicken(),
             Action::VisualStyle(v) => {
                 self.visual_style = v;
                 self.file_status = Some(Ok(format!("Visual Style: {}", v.label())));
@@ -4736,6 +4742,7 @@ impl CadCraftApp {
             self.rib_draft = None;
             self.draft_draft = None;
             self.part_planned = None;
+            self.cancel_thicken();
             // Esc closes the Section View panel; an unfinished section goes.
             if let Some(s) = self.section.as_mut() {
                 s.editing = false;
@@ -5185,6 +5192,14 @@ impl CadCraftApp {
         {
             self.body_cmd_pick(h);
         }
+        // Thicken/Offset: faces, quilts, the solid (`gui/thicken.rs`).
+        if self.thicken_draft.is_some()
+            && on_cube.is_none()
+            && response.clicked_by(PointerButton::Primary)
+            && let Some(p) = pointer
+        {
+            self.thicken_click(p, rect);
+        }
         // Section View: its planes.
         if self.section.as_ref().is_some_and(|s| s.editing)
             && on_cube.is_none()
@@ -5279,6 +5294,7 @@ impl CadCraftApp {
             && self.draft_draft.is_none()
             && !body_cmd
             && self.part_planned.is_none()
+            && self.thicken_draft.is_none()
             && !self.section.as_ref().is_some_and(|s| s.editing)
             && self.pattern_draft.is_none()
             && self.hole_draft.is_none()
@@ -6460,6 +6476,8 @@ impl CadCraftApp {
                 Some(self.shell_preview())
             } else if self.draft_draft.is_some() {
                 Some(self.draft_preview())
+            } else if self.thicken_draft.is_some() {
+                Some(self.thicken_preview())
             } else if body_cmd {
                 Some(self.body_cmd_preview())
             } else if self.pattern_draft.is_some() {

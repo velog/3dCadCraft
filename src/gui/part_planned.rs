@@ -86,7 +86,6 @@ const TOOL: &[PickKind] = &[
     PickKind::SketchCurve,
 ];
 
-const OPERATION: &[&str] = &["Join", "Cut", "Intersect", "New Solid"];
 const DIRECTIONS: &[&str] = &["Direction 1", "Direction 2", "Symmetric"];
 
 /// A part command with an interface and no logic yet.
@@ -100,7 +99,6 @@ pub enum PartPlanned {
     Import,
     Unwrap,
     // 3D Model › Modify
-    ThickenOffset,
     DeleteFace,
     Direct,
     CopyObject,
@@ -149,14 +147,13 @@ pub enum PartPlanned {
 impl PartPlanned {
     /// Every planned command, in ribbon order.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const ALL: [PartPlanned; 44] = [
+    pub const ALL: [PartPlanned; 43] = [
         PartPlanned::Emboss,
         PartPlanned::Decal,
         PartPlanned::Mark,
         PartPlanned::Derive,
         PartPlanned::Import,
         PartPlanned::Unwrap,
-        PartPlanned::ThickenOffset,
         PartPlanned::DeleteFace,
         PartPlanned::Direct,
         PartPlanned::CopyObject,
@@ -206,7 +203,6 @@ impl PartPlanned {
             Derive => "Derive",
             Import => "Import",
             Unwrap => "Unwrap",
-            ThickenOffset => "Thicken/Offset",
             DeleteFace => "Delete Face",
             Direct => "Direct Edit",
             CopyObject => "Copy Object",
@@ -257,7 +253,6 @@ impl PartPlanned {
             Derive => Icon::Derive,
             Import => Icon::Import,
             Unwrap => Icon::Unwrap,
-            ThickenOffset => Icon::Thicken,
             DeleteFace => Icon::DeleteFace,
             Direct => Icon::Direct,
             CopyObject => Icon::CopyObject,
@@ -306,7 +301,7 @@ impl PartPlanned {
             Derive => "5.7",
             Import => "7.7",
             Unwrap | Stitch | Sculpt | Patch | TrimSurface | ExtendSurface | RuledSurface => "5.4",
-            ThickenOffset | DeleteFace | ReplaceFace => "2.14",
+            DeleteFace | ReplaceFace => "2.14",
             Direct => "5.5",
             CopyObject | MoveBodies | BendPart => "2.13",
             SketchDrivenPattern => "2.11",
@@ -333,7 +328,6 @@ impl PartPlanned {
             }
             Import => "Brings STEP, IGES, SAT, STL or OBJ data in as bodies.",
             Unwrap => "Flattens a group of faces into a flat surface.",
-            ThickenOffset => "Adds or removes thickness on faces, or offsets them into a surface.",
             DeleteFace => "Deletes faces; Heal closes the gap, otherwise the body opens.",
             Direct => "Moves, resizes, scales, rotates or deletes faces without history.",
             CopyObject => "Copies or moves faces or bodies into a surface, composite or solid.",
@@ -522,46 +516,6 @@ impl PartPlanned {
                     Num("Rotation", 0.0, "°"),
                 ],
             )],
-            ThickenOffset => &[
-                Page(
-                    "Thicken/Offset",
-                    &[
-                        Radio("Select", &["Face", "Quilt"], 0),
-                        Sel(
-                            "faces",
-                            "Faces",
-                            "Select the faces or quilts to thicken",
-                            FACES_SURFACES,
-                        ),
-                        Sel(
-                            "solids",
-                            "Solids",
-                            "Select the solid body (multi-body parts)",
-                            BODIES,
-                        ),
-                        Radio("Output", &["Solid", "Surface"], 0),
-                        Radio("Operation", OPERATION, 0),
-                        Num("Distance", 1.0, " mm"),
-                        Combo("Direction", DIRECTIONS, 0),
-                        Check("Automatic Face Chain", true),
-                        Check("Create Vertical Surfaces", false),
-                    ],
-                ),
-                Page(
-                    "More",
-                    &[
-                        Check("Automatic Blending", true),
-                        Check("Allow Approximation", true),
-                        Radio(
-                            "Approximation",
-                            &["Mean", "Never Too Thin", "Never Too Thick"],
-                            0,
-                        ),
-                        Radio("Tolerance", &["Optimized", "Specify Tolerance"], 0),
-                        Num("Specified Tolerance", 0.01, " mm"),
-                    ],
-                ),
-            ],
             DeleteFace => &[Page(
                 "Delete Face",
                 &[
@@ -1756,14 +1710,14 @@ mod tests {
     /// the same pick again removes it.
     #[test]
     fn selectors_advance() {
-        let mut d = PartDialog::new(PartPlanned::ThickenOffset);
-        assert_eq!(d.active, Some("faces"));
+        let mut d = PartDialog::new(PartPlanned::SketchDrivenPattern);
+        assert_eq!(d.active, Some("features"));
         d.pick("Face Box1:Top".into());
-        assert_eq!(d.active, Some("solids"));
+        assert_eq!(d.active, Some("sketch"));
         assert_eq!(d.flow().selectors[0].count, 1);
-        d.set_active("faces");
+        d.set_active("features");
         d.pick("Face Box1:Top".into());
-        assert!(d.picks.get("faces").is_none_or(Vec::is_empty));
+        assert!(d.picks.get("features").is_none_or(Vec::is_empty));
     }
 
     /// A feature row is not a face; a face is.

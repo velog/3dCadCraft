@@ -108,6 +108,8 @@ pub enum Action {
     /// A part command whose panel exists and whose logic comes later
     /// (`gui/part_planned.rs`, spec 2.0).
     PartPlanned(super::part_planned::PartPlanned),
+    /// 3D Model › Modify › Thicken/Offset.
+    Thicken,
     /// View › Visual Style.
     VisualStyle(super::view_style::VisualStyle),
     /// View › Section View (Quarter / Half / Three Quarter / End).

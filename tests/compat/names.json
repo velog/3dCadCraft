@@ -759,5 +759,13 @@
     "Face1:base:rim.3v1",
     "Face1:base:rim.4v1",
     "Face1:base:top"
+  ],
+  "r31/thicken_r31.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Thicken1:Offset:Box1:Top"
   ]
 }
