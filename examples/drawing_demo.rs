@@ -141,6 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }),
             text: [0.0, -50.0],
             precision: 2,
+            format: Default::default(),
         }));
     }
     d.add_annotation(AnnotationKind::Text {

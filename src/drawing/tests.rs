@@ -441,6 +441,7 @@ fn annotations_resolve_by_edge_name() {
             b,
             text: [0.0, 30.0],
             precision: 2,
+            format: Default::default(),
         })
     };
     let end = Some(PointRef {
@@ -520,6 +521,7 @@ fn annotations_resolve_by_edge_name() {
         b: None,
         text: [20.0, 20.0],
         precision: 2,
+        format: Default::default(),
     });
     let r = resolve(&d, &view).unwrap();
     close(r.value.unwrap(), 20.0, 1e-9, "diameter");
@@ -971,6 +973,7 @@ fn styles_drive_annotations() {
         }),
         text: [0.0, 20.0],
         precision: 2,
+        format: Default::default(),
     });
     let mut st = DrawingStyles::default();
     let texts = |st: &DrawingStyles| -> Vec<String> {

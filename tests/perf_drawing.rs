@@ -193,6 +193,33 @@ fn drawing_views_of_large_models() {
             over.push("complex part");
         }
     }
+    // A sheet full of toleranced dimensions: 2 000 labels with ISO fits
+    // (Edit Dimension), laid out and placed every frame.
+    {
+        use cadcraft3d::drawing::dimtext::{DimFormat, Label, TolMethod};
+        let look = cadcraft3d::drawing::style::AnnotationLook::default();
+        let f = DimFormat {
+            tol: TolMethod::FitsTolerances,
+            hole: "H7".into(),
+            ..Default::default()
+        };
+        let t = Instant::now();
+        let mut n = 0;
+        for k in 0..2000 {
+            let l = Label::build(1.0 + k as f64 * 0.2, "Ø", &f, &look.dim, 3.5, 1.0);
+            n += l.prims([100.0, 100.0], 0.3).len();
+        }
+        let total = ms(t);
+        let budget = 50.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms ({n} prims){flag}",
+            "dimension labels: 2 000 with H7 fits"
+        );
+        if total > budget {
+            over.push("dimension labels");
+        }
+    }
     if std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_none() {
         assert!(over.is_empty(), "over budget: {over:?}");
     }

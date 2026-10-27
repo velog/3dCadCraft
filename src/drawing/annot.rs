@@ -155,6 +155,9 @@ pub struct Dimension {
     /// is drawn (a per-dimension override is to do).
     #[serde(default = "precision")]
     pub precision: u8,
+    /// Edit Dimension: text, precision, tolerance, inspection (additive).
+    #[serde(default, skip_serializing_if = "super::dimtext::DimFormat::is_plain")]
+    pub format: super::dimtext::DimFormat,
 }
 
 fn precision() -> u8 {
@@ -432,16 +435,6 @@ impl Draw<'_> {
         terminator(out, tip, dir, d.terminator, d.arrow_size, d.arrow_height);
     }
 
-    fn text(&self, at: [f64; 2], t: &str, angle: f64) -> Prim {
-        Prim::Text {
-            at,
-            height: self.look.dim_text.height,
-            text: t.to_string(),
-            anchor: Anchor::Center,
-            angle,
-        }
-    }
-
     /// A bend note: `UP 90,00° R2,00` (the dimension style's precision and
     /// decimal marker) along the bend's centre line, above it, readable.
     fn bend_note(&self, b: &ViewBend, pl: Placement, offset: [f64; 2]) -> Vec<Prim> {
@@ -489,17 +482,16 @@ impl Draw<'_> {
         }]
     }
 
-    /// A value as the dimension style writes it.
-    fn value(&self, v: f64, symbol: &str) -> String {
-        let d = &self.look.dim;
-        let mut t = format!("{:.*}", usize::from(d.precision), v);
-        if !d.trailing_zeros && t.contains('.') {
-            t = t.trim_end_matches('0').trim_end_matches('.').to_string();
-        }
-        if d.decimal_comma {
-            t = t.replace('.', ",");
-        }
-        format!("{}{symbol}{t}{}", d.prefix, d.suffix)
+    /// The label of dimension `d` measuring `value`.
+    fn label(&self, d: &Dimension, value: f64, symbol: &str) -> super::dimtext::Label {
+        super::dimtext::Label::build(
+            value,
+            symbol,
+            &d.format,
+            &self.look.dim,
+            self.look.dim_text.height,
+            self.look.dim_text.width_scale,
+        )
     }
 
     fn dimension<'a>(
@@ -535,8 +527,8 @@ impl Draw<'_> {
                     (true, false) => "",
                     (false, _) => "R",
                 };
-                let value_text = self.value(if diameter { 2.0 * r } else { r }, symbol);
-                let w = text_width(&value_text, text_h) * self.look.dim_text.width_scale;
+                let label = self.label(d, if diameter { 2.0 * r } else { r }, symbol);
+                let w = label.width;
                 let end = [t[0] + shoulder * w, t[1]];
                 prims.push(line(from, t));
                 prims.push(line(t, end));
@@ -545,7 +537,7 @@ impl Draw<'_> {
                     self.arrow(&mut prims, add(cs, mul(dir, -rs)), mul(dir, -1.0));
                 }
                 let text_at = [t[0] + shoulder * w * 0.5, t[1] + ds.gap.min(1.0)];
-                prims.push(self.text(text_at, &value_text, 0.0));
+                prims.extend(label.prims(text_at, 0.0));
                 return Ok(Shown {
                     prims,
                     value: Some(if diameter { 2.0 * r } else { r }),
@@ -607,7 +599,7 @@ impl Draw<'_> {
         } else if ang <= -std::f64::consts::FRAC_PI_2 + 1e-9 {
             ang += std::f64::consts::PI;
         }
-        let text = self.value(value, "");
+        let label = self.label(d, value, "");
         let (at, ang) = match ds.orientation {
             TextOrientation::Aligned => {
                 let up = [-ang.sin(), ang.cos()];
@@ -618,7 +610,7 @@ impl Draw<'_> {
                     ([mid[0], mid[1] + ds.gap], 0.0)
                 } else {
                     // Beside a vertical dimension line, on the text's side.
-                    let w = text_width(&text, text_h);
+                    let w = label.width;
                     let side = if t[0] >= mid[0] { 1.0 } else { -1.0 };
                     (
                         [mid[0] + side * (ds.gap + w * 0.5), mid[1] - text_h * 0.5],
@@ -627,7 +619,7 @@ impl Draw<'_> {
                 }
             }
         };
-        prims.push(self.text(at, &text, ang));
+        prims.extend(label.prims(at, ang));
         Ok(Shown {
             prims,
             value: Some(value),

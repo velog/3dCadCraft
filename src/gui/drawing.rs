@@ -248,6 +248,10 @@ pub(super) struct DrwUi {
     pub bom: super::drawing_bom::BomUi,
     /// The Table dialog of a bend table.
     pub bend_table: Option<super::drawing_bend::BtDialog>,
+    /// Edit Dimension.
+    pub dim_edit: Option<super::drawing_dim::DimDialog>,
+    /// This frame's measured values of the dimensions (id, mm).
+    pub dim_values: Vec<(u32, f64)>,
     /// This frame's BOM tables of the active sheet.
     pub tables: Arc<crate::drawing::parts::Tables>,
     /// This frame's annotation look (from the drawing's styles).
@@ -277,6 +281,7 @@ impl DrwUi {
         self.planned = None;
         self.bom = Default::default();
         self.bend_table = None;
+        self.dim_edit = None;
         self.cam.fit = true;
         self.fitted = None;
     }
@@ -615,6 +620,7 @@ impl CadCraftApp {
             self.drw.pdf_dialog = None;
             self.drw.planned = None;
             self.drw.bend_table = None;
+            self.drw.dim_edit = None;
             self.bom_cancel();
             true
         } else {
@@ -632,6 +638,7 @@ impl CadCraftApp {
             || self.drw.planned.is_some()
             || self.drw.bom.open()
             || self.drw.bend_table.is_some()
+            || self.drw.dim_edit.is_some()
     }
 
     /// Status-bar prompt.
@@ -644,6 +651,10 @@ impl CadCraftApp {
         }
         if let Some(p) = self.bend_table_prompt() {
             return p;
+        }
+        if self.drw.dim_edit.is_some() {
+            return "Edit Dimension: the text, precision and tolerance of the dimension, then OK"
+                .into();
         }
         match &self.drw.tool {
             Some(DrwTool::CenterMark) => "Center Mark: click circles or arcs (Esc ends)".into(),
@@ -1004,6 +1015,10 @@ impl CadCraftApp {
         }
         let anns = self.shown_annotations(&views);
         self.bend_table_sync(&views);
+        self.drw.dim_values = anns
+            .iter()
+            .filter_map(|a| a.value.map(|v| (a.id(), v)))
+            .collect();
         self.paint_annotations(&painter, rect, &anns);
 
         // A planned command's selector takes the clicks.
@@ -1413,6 +1428,7 @@ impl CadCraftApp {
         self.view_dialog_window(ctx);
         self.custom_view_window(ctx);
         self.bend_table_window(ctx);
+        self.dim_edit_window(ctx);
         self.sheet_dialog_window(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);

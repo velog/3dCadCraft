@@ -68,7 +68,6 @@ pub enum Planned {
     ChainSet,
     Arrange,
     Retrieve,
-    EditDimension,
     // Feature Notes
     ChamferNote,
     PunchNote,
@@ -201,7 +200,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 51] = [
+    pub const ALL: [Planned; 50] = [
         Self::Overlay,
         Self::DraftView,
         Self::Break,
@@ -221,7 +220,6 @@ impl Planned {
         Self::ChainSet,
         Self::Arrange,
         Self::Retrieve,
-        Self::EditDimension,
         Self::ChamferNote,
         Self::PunchNote,
         Self::SketchedSymbols,
@@ -277,7 +275,6 @@ impl Planned {
             Self::ChainSet => "Chain Dimension Set",
             Self::Arrange => "Arrange Dimensions",
             Self::Retrieve => "Retrieve Model Annotations",
-            Self::EditDimension => "Edit Dimension",
             Self::ChamferNote => "Chamfer Note",
             Self::PunchNote => "Punch Notes",
             Self::SketchedSymbols => "Symbols",
@@ -510,75 +507,6 @@ impl Planned {
                     &[
                         Check("Include Tolerances", true),
                         Check("Include Notes", true),
-                    ],
-                ),
-            ],
-            Self::EditDimension => &[
-                Page(
-                    "Text",
-                    &[
-                        Text("Text", "<<>>"),
-                        Check("Hide Dimension Value", false),
-                        Check("Enable Measured Value", false),
-                        Combo(
-                            "Symbol",
-                            &["", "Ø", "R", "□", "±", "°", "SØ", "SR", "⌴", "⌵", "↧"],
-                            0,
-                        ),
-                        Combo("Text Style", &["Note Text (ISO)"], 0),
-                        Combo("Justification", &["Left", "Center", "Right"], 1),
-                    ],
-                ),
-                Page(
-                    "Precision and Tolerance",
-                    &[
-                        Combo(
-                            "Tolerance Method",
-                            &[
-                                "Default",
-                                "Basic",
-                                "Symmetric",
-                                "Deviation",
-                                "Limits - Stacked",
-                                "Limits - Linear",
-                                "Max",
-                                "Min",
-                                "Limits / Fits - Stacked",
-                                "Limits / Fits - Linear",
-                                "Limits / Fits - Show Size Limits",
-                                "Limits / Fits - Show Tolerances",
-                                "Reference",
-                            ],
-                            0,
-                        ),
-                        Num("Upper", 0.0, " mm"),
-                        Num("Lower", 0.0, " mm"),
-                        Combo("Hole", &["", "H7", "H8", "H9", "G7", "F7", "E9", "D10"], 0),
-                        Combo(
-                            "Shaft",
-                            &["", "h6", "h7", "g6", "f7", "e8", "k6", "m6", "n6", "p6"],
-                            0,
-                        ),
-                        Head("Precision"),
-                        Num("Primary Unit", 2.0, ""),
-                        Num("Primary Tolerance", 2.0, ""),
-                        Num("Alternate Unit", 2.0, ""),
-                        Num("Alternate Tolerance", 2.0, ""),
-                        Check("Model Value (override)", false),
-                        Combo(
-                            "Evaluated Size",
-                            &["Nominal", "Upper", "Median", "Lower"],
-                            0,
-                        ),
-                    ],
-                ),
-                Page(
-                    "Inspection Dimension",
-                    &[
-                        Check("Inspection Dimension", false),
-                        Radio("Shape", &["None", "Round ends", "Angled ends"], 1),
-                        Text("Label", ""),
-                        Text("Inspection Rate", "100%"),
                     ],
                 ),
             ],
@@ -1058,9 +986,6 @@ impl Planned {
             Self::Retrieve => {
                 "Brings the model's sketch / feature dimensions and 3D annotations into a view"
             }
-            Self::EditDimension => {
-                "Text, precision, tolerance (incl. fits) and inspection of a drawing dimension"
-            }
             Self::ChamferNote => "A note with the chamfer's distances and angle",
             Self::PunchNote => "A note of a punch in a flat pattern view",
             Self::SketchedSymbols => "Places a sketched symbol from Drawing Resources",
@@ -1366,9 +1291,6 @@ mod tests {
             assert!(!d.prompt().is_empty());
             if d.active.is_some() {
                 d.pick("View 1".into());
-            }
-            if p == Planned::EditDimension {
-                continue;
             }
             assert!(
                 COMMANDS

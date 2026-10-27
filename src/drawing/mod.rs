@@ -14,6 +14,8 @@
 
 pub mod annot;
 pub mod bend_table;
+pub mod dimtext;
+pub mod fits;
 pub mod hlr;
 pub mod parts;
 pub mod pdf;

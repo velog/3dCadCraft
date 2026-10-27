@@ -106,6 +106,15 @@ pub(super) struct ShownAnn {
     orphan: Option<[f64; 2]>,
     /// A table takes clicks anywhere inside its outline.
     area: Option<([f64; 2], [f64; 2])>,
+    /// The measured value (dimensions).
+    pub value: Option<f64>,
+}
+
+impl ShownAnn {
+    /// The annotation's id.
+    pub fn id(&self) -> u32 {
+        self.id
+    }
 }
 
 /// The box around the lines of `prims`.
@@ -291,6 +300,7 @@ impl CadCraftApp {
                         )
                         .then(|| lines_box(&s.prims))
                         .flatten(),
+                        value: s.value,
                         prims: s.prims,
                         orphan: None,
                     },
@@ -310,6 +320,7 @@ impl CadCraftApp {
                         ShownAnn {
                             id: a.id,
                             area: None,
+                            value: None,
                             prims: Vec::new(),
                             orphan: match why {
                                 Orphan::NoView => None,
@@ -956,10 +967,7 @@ impl CadCraftApp {
                 return;
             }
             Some(AnnotationKind::Dimension(_)) => {
-                // Edit Dimension: text, precision and tolerance (interface).
-                self.drw.planned = Some(super::drawing_planned::PlannedDialog::new(
-                    super::drawing_planned::Planned::EditDimension,
-                ));
+                self.open_dim_edit(id);
                 return;
             }
             _ => return,
@@ -1300,6 +1308,7 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
             b: None,
             text,
             precision: 2,
+            format: Default::default(),
         }),
         (PickWhat::Line, Some(s)) => {
             // Line to line or line to point: the distance across the first
@@ -1335,6 +1344,7 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                 b: Some(pr(s, role)),
                 text,
                 precision: 2,
+                format: Default::default(),
             })
         }
         (PickWhat::Line, None) => {
@@ -1351,6 +1361,7 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                 b: Some(pr(f, PointRole::End)),
                 text,
                 precision: 2,
+                format: Default::default(),
             })
         }
         (PickWhat::Point(r1), Some(s)) => {
@@ -1363,6 +1374,7 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                 b: Some(pr(s, r2)),
                 text,
                 precision: 2,
+                format: Default::default(),
             })
         }
         (PickWhat::Point(_), None) => None,

@@ -88,6 +88,9 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
   (the open two-mode item below), *36 countersunk holes* and *primitives* were over budget; none of them touches
   sheet metal code.
 
+- 2026-10-27: **Dimension labels** (`tests/perf_drawing.rs`): 2 000 dimensions with H7 fits shown as deviations
+  in brackets, laid out and placed, take 2.7 ms (budget 50 ms, debug profile).
+
 - 2026-10-26: **Drawing views of large assemblies** (`tests/perf_drawing.rs`, `examples/big_assembly.rs`). 5 000
   components went from 15.7 s to 3.9 s, 20 000 from 114 s to 14.2 s, and the 2 500-hole plate from 3.1 s to 0.84 s
   (front + iso, debug profile). The causes and fixes:
