@@ -1353,20 +1353,30 @@ impl CadCraftApp {
         ui.label(RichText::new("Validation").strong());
         // Validation walks the whole body: once per body, not every frame.
         let key = self.body_key();
+        // One row per body: a solid gets the closed-manifold check, a surface
+        // body (open on purpose) only its counts.
+        type Row = (String, bool, Result<crate::kernel::TopologyStats, String>);
         let cached = ui.ctx().memory(|m| {
             m.data
-                .get_temp::<(String, Option<Result<crate::kernel::TopologyStats, String>>)>(
-                    egui::Id::new("body_validation"),
-                )
+                .get_temp::<(String, Vec<Row>)>(egui::Id::new("body_validation"))
         });
-        let result = match cached {
+        let rows = match cached {
             Some((k, r)) if k == key => r,
             _ => {
                 let body = &self.part().body;
-                let r = body
+                let r: Vec<Row> = body
                     .solids()
-                    .next()
-                    .map(|(id, _)| body.validate_solid(id).map_err(|e| e.to_string()));
+                    .enumerate()
+                    .map(|(i, (id, s))| {
+                        let name = s.name.clone().unwrap_or_else(|| format!("Body {}", i + 1));
+                        let check = if s.open {
+                            body.stats(id).map_err(|e| e.to_string())
+                        } else {
+                            body.validate_solid(id).map_err(|e| e.to_string())
+                        };
+                        (name, s.open, check)
+                    })
+                    .collect();
                 ui.ctx().memory_mut(|m| {
                     m.data
                         .insert_temp(egui::Id::new("body_validation"), (key, r.clone()))
@@ -1374,27 +1384,40 @@ impl CadCraftApp {
                 r
             }
         };
-        match result {
-            Some(Ok(s)) => {
-                ui.label(format!(
-                    "V {}   E {}   F {}   shells {}",
-                    s.vertices, s.edges, s.faces, s.shells
-                ));
-                ui.label(format!(
-                    "Euler–Poincaré: V - E + F = {}, genus {}",
-                    s.euler_characteristic(),
-                    s.genus().map_or_else(|| "-".to_owned(), |g| g.to_string())
-                ));
-                ui.colored_label(
-                    Color32::from_rgb(20, 150, 50),
-                    "✔ valid closed manifold solid",
-                );
+        if rows.is_empty() {
+            ui.label("No solid");
+        }
+        let many = rows.len() > 1;
+        for (name, open, check) in rows {
+            if many {
+                ui.label(RichText::new(&name).weak());
             }
-            Some(Err(e)) => {
-                ui.colored_label(Color32::RED, format!("✘ {e}"));
-            }
-            None => {
-                ui.label("No solid");
+            match check {
+                Ok(s) if open => {
+                    ui.label(format!("V {}   E {}   F {}", s.vertices, s.edges, s.faces));
+                    ui.colored_label(
+                        Color32::from_rgb(20, 150, 50),
+                        "✔ surface body (open, not a solid)",
+                    );
+                }
+                Ok(s) => {
+                    ui.label(format!(
+                        "V {}   E {}   F {}   shells {}",
+                        s.vertices, s.edges, s.faces, s.shells
+                    ));
+                    ui.label(format!(
+                        "Euler–Poincaré: V - E + F = {}, genus {}",
+                        s.euler_characteristic(),
+                        s.genus().map_or_else(|| "-".to_owned(), |g| g.to_string())
+                    ));
+                    ui.colored_label(
+                        Color32::from_rgb(20, 150, 50),
+                        "✔ valid closed manifold solid",
+                    );
+                }
+                Err(e) => {
+                    ui.colored_label(Color32::RED, format!("✘ {e}"));
+                }
             }
         }
     }

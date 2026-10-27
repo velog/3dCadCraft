@@ -139,26 +139,8 @@ impl CadCraftApp {
         let body = &self.part().body;
         match (d.input, x) {
             ("faces", SelItem::Face(n)) => {
-                let Some(f) = body.find_face(n) else {
-                    return;
-                };
-                let Some(r) = crate::part::shell::face_ref(body, f, at) else {
-                    return;
-                };
-                if let Some(i) = d.def.faces.iter().position(|q| q.face == r.face) {
-                    d.def.faces.remove(i);
-                    return;
-                }
-                d.def.faces.push(r);
-                // Automatic Face Chain: the faces tangent to it come along.
-                if d.def.automatic_face_chain {
-                    for g in crate::part::select::tangent_faces(body, f) {
-                        if let Some(q) = crate::part::shell::face_ref(body, g, None)
-                            && !d.def.faces.iter().any(|x| x.face == q.face)
-                        {
-                            d.def.faces.push(q);
-                        }
-                    }
+                if let Some(f) = body.find_face(n) {
+                    take_face(body, &mut d.def, f, at);
                 }
             }
             ("quilts", SelItem::Body(n)) | ("quilts", SelItem::Face(n))
@@ -605,5 +587,109 @@ impl CadCraftApp {
         if ui.button("Edit Feature").clicked() {
             self.thicken_edit(k);
         }
+    }
+}
+
+/// Face `f` added to (or with a second pick removed from) the faces of
+/// `def`; Automatic Face Chain brings its tangent faces along.
+fn take_face(
+    body: &crate::kernel::BRep,
+    def: &mut ThickenOp,
+    f: crate::kernel::FaceId,
+    at: Option<Point3>,
+) {
+    let Some(r) = crate::part::shell::face_ref(body, f, at) else {
+        return;
+    };
+    // Pieces of one name (the sectors of a revolve) are told
+    // apart by the face each reference resolves to.
+    let resolves = |q: &crate::part::FaceRef| {
+        crate::part::shell::face_near(body, &q.face, Point3::from(q.hint))
+    };
+    if let Some(i) = def.faces.iter().position(|q| resolves(q) == Some(f)) {
+        def.faces.remove(i);
+        return;
+    }
+    def.faces.push(r);
+    // Automatic Face Chain: the faces tangent to it come along.
+    if def.automatic_face_chain {
+        let mut have: Vec<_> = def.faces.iter().filter_map(resolves).collect();
+        for g in crate::part::select::tangent_faces(body, f) {
+            if !have.contains(&g)
+                && let Some(q) = crate::part::shell::face_ref(body, g, None)
+            {
+                have.push(g);
+                def.faces.push(q);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::part::{
+        AxisRef, OriginPlane, Output, PartDocument, ProfileRef, RevolveExtent, RevolveFeature,
+        SketchOptions, SketchPlacement,
+    };
+    use crate::sketch::Point2;
+
+    /// A sphere surface (radius 20) revolved 270° about Z: its sectors share
+    /// face names.
+    fn sphere_surface() -> PartDocument {
+        let mut part = PartDocument::default();
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = part
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts)
+            .unwrap();
+        let sk = &mut part.sketches[i].sketch;
+        let c = sk.add_point(Point2::new(0.0, 0.0));
+        let s = sk.add_point(Point2::new(0.0, -20.0));
+        let e = sk.add_point(Point2::new(0.0, 20.0));
+        sk.add_arc(c, s, e).unwrap();
+        sk.add_line_between(e, s).unwrap();
+        let profiles = sk
+            .regions()
+            .iter()
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let mut rv = RevolveFeature::new(profiles, AxisRef::Origin(2));
+        rv.extent = RevolveExtent::Angle;
+        rv.angle = 270f64.to_radians();
+        rv.output = Output::Surface;
+        part.add_revolve(i, rv).unwrap();
+        part
+    }
+
+    #[test]
+    fn face_chain_takes_every_sector_of_a_surface() {
+        let part = sphere_surface();
+        let body = &part.body;
+        let n = body.faces().count();
+        assert!(n > 2, "{n} faces");
+        let (f, _) = body.faces().next().unwrap();
+        let mut def = ThickenOp::new();
+        take_face(body, &mut def, f, None);
+        // Faces of one name are all there, each resolving to its own piece.
+        assert_eq!(def.faces.len(), n);
+        let mut got: Vec<_> = def
+            .faces
+            .iter()
+            .filter_map(|q| crate::part::shell::face_near(body, &q.face, Point3::from(q.hint)))
+            .collect();
+        got.sort();
+        got.dedup();
+        assert_eq!(got.len(), n);
+        // A second pick of the same face removes it only.
+        take_face(body, &mut def, f, None);
+        assert_eq!(def.faces.len(), n - 1);
+        // Without the chain one pick is one face.
+        let mut one = ThickenOp::new();
+        one.automatic_face_chain = false;
+        take_face(body, &mut one, f, None);
+        assert_eq!(one.faces.len(), 1);
     }
 }
