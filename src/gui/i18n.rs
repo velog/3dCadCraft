@@ -125,6 +125,10 @@ const TABLE: &[(&str, &str)] = &[
         "Adjust: изберете стени, операции или тела (списъкът Select определя кои), изберете вид или цвят, после Apply",
     ),
     (
+        "Hole: click a planar face (its normal) or a straight edge for the direction",
+        "Hole: щракнете плоска стена (нормалата ѝ) или прав ръб за посоката",
+    ),
+    (
         "Hole: click the face where the hole ends (planar or curved)",
         "Hole: щракнете стената, в която свършва отворът (плоска или крива)",
     ),

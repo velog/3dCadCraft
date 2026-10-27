@@ -1262,7 +1262,7 @@ impl PartDocument {
                 ))),
                 BuildStep::Hole(h) if use_exact => {
                     let ps = self.sketches.iter().find(|s| s.id == h.sketch);
-                    exact::hole(h, ps, &body, &solids).map(|(next, out, sets)| {
+                    exact::hole(h, ps, &body, &works, &solids).map(|(next, out, sets)| {
                         extra = out;
                         made = sets;
                         Some(next)
@@ -2477,7 +2477,7 @@ impl PartDocument {
         def: &HoleFeature,
     ) -> Result<Vec<(Point3, crate::kernel::Vector3, Option<String>)>, String> {
         let ps = self.sketches.iter().find(|s| s.id == def.sketch);
-        exact::hole_placements(def, ps, &self.body)
+        exact::hole_placements(def, ps, &self.body, &self.work)
     }
 
     /// **Thread**: adds the feature (id `Thread<N>`). On failure nothing

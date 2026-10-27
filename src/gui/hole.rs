@@ -59,6 +59,8 @@ pub(super) enum HolePick {
     Edge(String, String, [Point3; 2]),
     /// A planar face (name) at a model point.
     Face(String, Point3),
+    /// The drilling direction (a planar face's normal, a straight edge).
+    Direction(crate::part::PullRef),
 }
 
 /// A linear dimension from a clicked centre to a model edge (Inventor:
@@ -109,6 +111,9 @@ pub(super) struct HoleDraft {
     pub edit: Option<usize>,
     /// The next face click sets the termination face (To).
     pub to_pick: bool,
+    /// The next click on a planar face or a straight edge sets the drilling
+    /// direction.
+    pub dir_pick: bool,
     /// A sketch shared for this hole by Keep sketch visible on (+): Cancel
     /// unshares it (sketch id).
     pub kept: Option<String>,
@@ -134,6 +139,7 @@ impl HoleDraft {
             dims: Vec::new(),
             edit: None,
             to_pick: false,
+            dir_pick: false,
             kept: None,
             remove: false,
             sk: None,
@@ -449,6 +455,24 @@ impl CadCraftApp {
         face: Option<(FaceId, Point3)>,
     ) -> Option<HolePick> {
         let part = self.part();
+        // The direction: a straight edge, else a planar face's normal.
+        if self.hole_draft.as_ref().is_some_and(|d| d.dir_pick) {
+            use crate::part::{LineRef, PlaneRef, PullRef};
+            let body = &part.body;
+            if let Some(e) = edge
+                && body.edge_direction(e).is_some()
+                && let Some(name) = body.edge(e).and_then(|x| x.name.clone())
+            {
+                return Some(HolePick::Direction(PullRef::Line(LineRef::Edge(name))));
+            }
+            let (f, _) = face?;
+            let planar = matches!(
+                body.face(f).and_then(|x| body.surface(x.surface)),
+                Some(crate::kernel::Surface::Plane(_))
+            );
+            let name = body.face(f).and_then(|x| x.name.clone())?;
+            return planar.then_some(HolePick::Direction(PullRef::Plane(PlaneRef::Face(name))));
+        }
         // Termination To: any face, planar or curved (a bore, a shaft).
         if self.hole_draft.as_ref().is_some_and(|d| d.to_pick) {
             let (f, at) = face?;
@@ -527,6 +551,13 @@ impl CadCraftApp {
         let Some(d) = self.hole_draft.as_mut() else {
             return;
         };
+        if d.dir_pick {
+            if let HolePick::Direction(p) = pick {
+                d.def.direction = Some(p);
+                d.dir_pick = false;
+            }
+            return;
+        }
         if d.to_pick {
             if let HolePick::Face(name, at) = pick {
                 d.def.spec.termination = crate::part::Termination::To(crate::part::FaceRef {
@@ -538,6 +569,8 @@ impl CadCraftApp {
             return;
         }
         match pick {
+            // Only while the direction is picked (handled above).
+            HolePick::Direction(_) => {}
             HolePick::SketchPoint(i, pid) => {
                 let Some(id) = ids.get(i) else { return };
                 if d.face.is_some() || (!d.def.sketch.is_empty() && d.def.sketch != *id) {

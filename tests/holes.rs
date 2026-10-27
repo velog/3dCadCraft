@@ -1384,3 +1384,64 @@ fn to_a_curved_face_breaks_through() {
     // Its note has no depth: the face ends it.
     assert_eq!(part.holes().last().unwrap().spec.note(), "Ø4");
 }
+
+// ------------------------------------------------------------- direction ---
+
+/// A picked direction: the XY plane's normal keeps the hole as it was (the
+/// sense follows the side it drilled to); the front face's normal turns it
+/// into a groove along Y from the centre on the top face.
+#[test]
+fn hole_direction_from_a_plane() {
+    use cadcraft3d::part::{PlaneRef, PullRef};
+    let mut plain = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let top = |part: &PartDocument| {
+        let mut hi = [f64::MIN; 3];
+        let mut lo = [f64::MAX; 3];
+        for (_, f) in part.body.faces() {
+            if let Some(m) = &f.mesh {
+                for q in &m.positions {
+                    for k in 0..3 {
+                        hi[k] = hi[k].max(q[k]);
+                        lo[k] = lo[k].min(q[k]);
+                    }
+                }
+            }
+        }
+        (lo, hi)
+    };
+    let (lo, hi) = top(&plain);
+    let c = Point3::new((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0, hi[2]);
+    let add = |part: &mut PartDocument, dir: Option<PullRef>| {
+        let (i, ids) = part.create_hole_sketch("Box1:Top", &[c]).unwrap();
+        let mut h = HoleFeature::new(HoleSpec {
+            termination: Termination::ThroughAll,
+            ..HoleSpec::simple(6.0, 10.0)
+        });
+        h.sketch = part.sketches[i].id.clone();
+        h.centers = ids.into_iter().map(HoleCenter::Point).collect();
+        h.direction = dir;
+        part.add_hole(h).unwrap();
+        assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+    };
+    let whole = volume(&plain);
+    let mut same = plain.clone();
+    add(&mut plain, None);
+    add(
+        &mut same,
+        Some(PullRef::Plane(PlaneRef::Origin(OriginPlane::XY))),
+    );
+    let (a, b) = (whole - volume(&plain), whole - volume(&same));
+    assert!((a - b).abs() < 1e-6 * whole, "{a} vs {b}");
+    assert!((a - PI * 9.0 * 20.0).abs() < 0.01 * a, "{a}");
+    // The front face's normal: a half-cylinder groove from the centre to
+    // one side (half the box's depth), a little more behind the centre.
+    let mut groove = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    add(
+        &mut groove,
+        Some(PullRef::Plane(PlaneRef::Face("Box1:Front".into()))),
+    );
+    let g = whole - volume(&groove);
+    let half_disc = PI * 9.0 / 2.0;
+    assert!(g > half_disc * 15.0 * 0.99 && g < half_disc * 17.0, "{g}");
+    assert!(groove.holes()[0].direction.z.abs() < 1e-9);
+}

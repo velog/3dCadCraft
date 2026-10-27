@@ -1162,11 +1162,28 @@ pub(super) fn hole_placements(
     h: &super::hole::HoleFeature,
     ps: Option<&super::PartSketch>,
     body: &BRep,
+    works: &super::placement::WorkGeom,
 ) -> Result<Vec<(Point3, crate::kernel::Vector3, Option<String>)>, String> {
+    use super::draft::PullRef;
     use super::hole::HoleCenter;
     if h.centers.is_empty() {
         return Err("select the hole centres".into());
     }
+    // A picked direction (face / plane normal, edge / axis).
+    let picked = match &h.direction {
+        None => None,
+        Some(PullRef::Plane(p)) => Some(
+            super::placement::plane_of(p, body, works)
+                .map_err(|e| format!("the direction: {e}"))?
+                .normal
+                .into_inner(),
+        ),
+        Some(PullRef::Line(l)) => Some(
+            l.resolve(body, works)
+                .map_err(|e| format!("the direction: {e}"))?
+                .1,
+        ),
+    };
     let mut out = Vec::new();
     for c in &h.centers {
         let (o, mut dir, face) = match c {
@@ -1192,6 +1209,13 @@ pub(super) fn hole_placements(
                 (cf.start, cf.axis, None)
             }
         };
+        if let Some(p) = picked {
+            let p = p
+                .try_normalize(1e-12)
+                .ok_or_else(|| "the direction has no length".to_owned())?;
+            // The picked line's sense on the side the hole drilled to.
+            dir = if p.dot(&dir) < 0.0 { -p } else { p };
+        }
         if h.spec.flip {
             dir = -dir;
         }
@@ -1388,12 +1412,13 @@ pub(super) fn hole(
     h: &super::hole::HoleFeature,
     ps: Option<&super::PartSketch>,
     body: &BRep,
+    works: &super::placement::WorkGeom,
     cur: &[ExactSolid],
 ) -> Result<(Vec<ExactSolid>, HoleOutput, Vec<super::pattern::ToolSet>), Fail> {
     use super::hole::{CosmeticThread, HoleInstance, SeatType, Termination};
     let spec = &h.spec;
     spec.validate().map_err(User)?;
-    let places = hole_placements(h, ps, body).map_err(User)?;
+    let places = hole_placements(h, ps, body, works).map_err(User)?;
     let size = body
         .bounding_box()
         .map_or(1.0, |(lo, hi)| (hi - lo).norm().max(1.0));

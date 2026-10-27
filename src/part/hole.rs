@@ -1017,6 +1017,12 @@ pub struct HoleFeature {
     /// Equations of its values.
     #[serde(default, skip_serializing_if = "FeatureParams::is_empty")]
     pub params: FeatureParams,
+    /// The drilling direction from a face / plane normal or a straight
+    /// edge / axis (Inventor: a point, then the direction); none: square to
+    /// the centre's sketch or face. It keeps the side the hole drills to
+    /// (Direction 1 / 2 flips it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<super::draft::PullRef>,
 }
 
 impl HoleFeature {
@@ -1115,6 +1121,7 @@ impl HoleFeature {
             spec,
             solids: Vec::new(),
             params: FeatureParams::default(),
+            direction: None,
         }
     }
 }

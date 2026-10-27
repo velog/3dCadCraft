@@ -4804,7 +4804,9 @@ impl CadCraftApp {
                 }
                 (Mode::Normal, None) if self.hole_draft.is_some() => {
                     let d = self.hole_draft.as_ref();
-                    let text = if d.is_some_and(|d| d.to_pick) {
+                    let text = if d.is_some_and(|d| d.dir_pick) {
+                        "Hole: click a planar face (its normal) or a straight edge for the direction"
+                    } else if d.is_some_and(|d| d.to_pick) {
                         "Hole: click the face where the hole ends (planar or curved)"
                     } else if d.is_some_and(|d| d.edit.is_some()) {
                         "Hole: change the options, then OK (the centres are edited in the hole's sketch)"

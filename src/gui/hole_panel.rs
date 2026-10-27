@@ -871,13 +871,13 @@ impl CadCraftApp {
                 ui.horizontal(|ui| {
                     let text = match &spec.termination {
                         Termination::To(f) => f.face.clone(),
-                        _ => "click a planar face".into(),
+                        _ => "click a face".into(),
                     };
                     ui.label(text);
                     if ui
                         .selectable_label(d.to_pick, "Pick")
                         .on_hover_text(
-                            "The next click on a face is where the hole ends (its plane)",
+                            "The next click on a face is where the hole ends (a planar face's plane, or a curved face)",
                         )
                         .clicked()
                     {
@@ -889,6 +889,37 @@ impl CadCraftApp {
                 });
                 ui.end_row();
             }
+            plabel(ui, "Along");
+            ui.horizontal(|ui| {
+                use crate::part::{LineRef, PlaneRef, PullRef};
+                let text = match &d.def.direction {
+                    None => "square to the face".to_owned(),
+                    Some(PullRef::Plane(PlaneRef::Face(n))) => format!("normal of {n}"),
+                    Some(PullRef::Plane(p)) => format!("normal of {p:?}"),
+                    Some(PullRef::Line(LineRef::Edge(n))) => format!("edge {n}"),
+                    Some(PullRef::Line(l)) => format!("{l:?}"),
+                };
+                ui.label(text);
+                if ui
+                    .selectable_label(d.dir_pick, "Pick")
+                    .on_hover_text(
+                        "The next click on a planar face (its normal) or a straight edge sets the drilling direction",
+                    )
+                    .clicked()
+                {
+                    d.dir_pick = !d.dir_pick;
+                    d.to_pick = false;
+                }
+                if d.def.direction.is_some()
+                    && ui
+                        .small_button("x")
+                        .on_hover_text("Square to the face again")
+                        .clicked()
+                {
+                    d.def.direction = None;
+                }
+            });
+            ui.end_row();
             plabel(ui, "Direction");
             let mut dir2 = spec.flip;
             ui.horizontal(|ui| {
