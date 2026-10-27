@@ -314,10 +314,10 @@ disabled) → logic, command by command** (rules 7, 14, 15, 17). The part comman
 
 | # | Defect | Where | Status |
 |---|---|---|---|
-| P0.1 | `plabel(ui, "")` takes its drag-handle id from the text: the 23 empty labels collide ("First / Second use of widget ID" in Extrude › Advanced Properties) | `gui/panels.rs` `plabel` | ⬜ |
-| P0.2 | "Suppress if..." is listed twice in a feature's browser menu (the block is repeated) | `gui/panels.rs` browser menu | ⬜ |
-| P0.3 | Validation prints `genus Some(11)` (Debug format) and χ shows as "x" | `gui/panels.rs` Validation | ⬜ |
-| P0.4 | Occurrence Properties: "Rotation Y −0 deg"; the label "Degrees of …" is cut off | `gui/assembly.rs` | ⬜ |
+| P0.1 | `plabel(ui, "")` takes its drag-handle id from the text: the 23 empty labels collide ("First / Second use of widget ID" in Extrude › Advanced Properties) | `gui/panels.rs` `plabel` | 🟡 2026-10-27 fixed (the cell's own id); visual check of Extrude ⬜ |
+| P0.2 | "Suppress if..." is listed twice in a feature's browser menu (the block is repeated) | `gui/panels.rs` browser menu | 🟡 2026-10-27 fixed; visual check ⬜ |
+| P0.3 | Validation prints `genus Some(11)` (Debug format) and χ shows as "x" | `gui/panels.rs` Validation | ✅ 2026-10-27 "V - E + F = -20, genus 11" |
+| P0.4 | Occurrence Properties: "Rotation Y −0 deg"; the label "Degrees of …" is cut off | `gui/assembly.rs` | 🟡 2026-10-27 fixed (round-off shows 0, label DOF); visual check ⬜ |
 | P0.5 | A selected component is not highlighted in the view (click in the view or in the browser); browser and Properties follow | `assembly_scene` (scene not rebuilt on a selection change?) | ⬜ to confirm |
 | P0.6 | Edit Feature (double-click) marks the document changed (`*`) before anything is changed | rollback | ⬜ |
 | P0.7 | The hover tooltip of a face covers the mini-toolbar | `gui/mod.rs` | ⬜ |
@@ -327,7 +327,7 @@ disabled) → logic, command by command** (rules 7, 14, 15, 17). The part comman
 | Step | Content | Spec | Status |
 |---|---|---|---|
 | P1 | Spec of the whole part command set with every dialog | [2.0](spec/2.0-part-commands.md) | 🟡 2026-10-27 written; rows *(to confirm)* checked against the help before their logic |
-| P2 | Interface of every missing command (rule 15): ribbon in Inventor's panels (Create: Emboss, Decal, Mark, Derive, Import, Unwrap, Shape Generator; Modify: Thicken/Offset, Delete Face, Direct, Copy Object, Move Bodies, Bend Part; Pattern: Sketch Driven; Surface: Stitch, Sculpt, Patch, Trim, Extend, Ruled Surface, Replace Face, Repair Bodies, Fit Mesh Face; Plastic Part; Freeform; Inspect › Analysis; Manage › Author / Insert / Layout; View › Appearance; Environments tab), each with alias, own icon, the dialog with selectors that pick, OK disabled — `gui/part_planned.rs` | 2.0 §3.1–3.8 | ⬜ |
+| P2 | 🟡 2026-10-27 done, waiting for the owner's check (44 panels in `gui/part_planned.rs`, 20 disabled ribbon entries, own icons, aliases; ribbon panels collapse like Inventor's when the window is narrow). Interface of every missing command (rule 15): ribbon in Inventor's panels (Create: Emboss, Decal, Mark, Derive, Import, Unwrap, Shape Generator; Modify: Thicken/Offset, Delete Face, Direct, Copy Object, Move Bodies, Bend Part; Pattern: Sketch Driven; Surface: Stitch, Sculpt, Patch, Trim, Extend, Ruled Surface, Replace Face, Repair Bodies, Fit Mesh Face; Plastic Part; Freeform; Inspect › Analysis; Manage › Author / Insert / Layout; View › Appearance; Environments tab), each with alias, own icon, the dialog with selectors that pick, OK disabled — `gui/part_planned.rs` | 2.0 §3.1–3.8 | ⬜ |
 | P3 | Right-click menus by object kind (face, cylinder, edge, vertex, body, surface body, sketch, work feature, feature, empty view), the command started with the selection as its first input (rule 17) | 2.0 §3.9, 0.15 G1 | ⬜ |
 | P4 | Visual Styles (Shaded, Shaded with Edges, Hidden Edges, Wireframe variants, Monochrome…) and Section View (Quarter / Half / Three Quarter / End) — the most used missing view commands | 0.3 | ⬜ |
 | P5 | Browser: search / filter, Show Dimensions, Find in Window, Properties, Copy; Properties restyle (labels look disabled) | 2.16 | ⬜ |

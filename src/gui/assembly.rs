@@ -1116,7 +1116,7 @@ impl CadCraftApp {
                     self.toggle_visible(&[o.id]);
                 }
                 ui.end_row();
-                super::panels::plabel(ui, "Degrees of freedom");
+                super::panels::plabel(ui, "DOF");
                 ui.label(if o.grounded {
                     "0 (grounded)".to_owned()
                 } else {
@@ -1130,13 +1130,15 @@ impl CadCraftApp {
         // Offsets and rotations about the assembly axes (X, then Y, then Z).
         let t = o.transform.translation.vector;
         let (rx, ry, rz) = o.transform.rotation.euler_angles();
+        // Round-off below a nanometre / nano-degree shows as 0 (not "-0").
+        let clean = |v: f64| if v.abs() < 1e-9 { 0.0 } else { v };
         let mut vals = [
-            t.x,
-            t.y,
-            t.z,
-            rx.to_degrees(),
-            ry.to_degrees(),
-            rz.to_degrees(),
+            clean(t.x),
+            clean(t.y),
+            clean(t.z),
+            clean(rx.to_degrees()),
+            clean(ry.to_degrees()),
+            clean(rz.to_degrees()),
         ];
         let before = vals;
         egui::Grid::new("occurrence_pos")

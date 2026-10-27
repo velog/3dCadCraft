@@ -32,6 +32,7 @@ use super::drawing_planned::Planned as Dp;
 use super::icons::Icon;
 use super::layout::{Element, UiCmd, VisKind};
 use super::material::MatCmd;
+use super::part_planned::PartPlanned as Pp;
 use super::ribbon::Action;
 use super::sketch_tools::{ConstraintTool as Ct, Tool};
 use super::sm_planned::PlannedKind;
@@ -344,6 +345,13 @@ const SM_SKETCH: Place = Place::Ribbon("Sheet Metal", "Sketch");
 const SM_MODIFY: Place = Place::Ribbon("Sheet Metal", "Modify");
 const SM_WORK: Place = Place::Ribbon("Sheet Metal", "Work Features");
 const SM_PATTERN: Place = Place::Ribbon("Sheet Metal", "Pattern");
+const M_SURFACE: Place = Place::Ribbon("3D Model", "Surface");
+const M_PLASTIC: Place = Place::Ribbon("3D Model", "Plastic Part");
+const M_FREEFORM: Place = Place::Ribbon("3D Model", "Freeform");
+const G_AUTHOR: Place = Place::Ribbon("Manage", "Author");
+const G_INSERT: Place = Place::Ribbon("Manage", "Insert");
+const G_LAYOUT: Place = Place::Ribbon("Manage", "Layout");
+const E_BEGIN: Place = Place::Ribbon("Environments", "Begin");
 const S_CREATE: Place = Place::Ribbon("Sketch", "Create");
 const S_MODIFY: Place = Place::Ribbon("Sketch", "Modify");
 const S_PATTERN: Place = Place::Ribbon("Sketch", "Pattern");
@@ -423,6 +431,16 @@ const fn doc(id: &'static str, name: &'static str, bg: &'static str, icon: Icon)
         .spec("0.6b-multi-document-files.md")
 }
 
+/// A part command whose panel exists and whose logic comes later
+/// (`gui/part_planned.rs`, `docs/spec/2.0-part-commands.md`).
+const fn pp(id: &'static str, name: &'static str, bg: &'static str, icon: Icon, k: Pp) -> Command {
+    Command::new(id, name, bg, icon)
+        .env(PART)
+        .spec("2.0-part-commands.md")
+        .tip("Opens the panel; the command's logic comes next (spec 2.0)")
+        .run(Action::PartPlanned(k))
+}
+
 /// A sketch tool: name = `Tool::label`, valid in a sketch.
 const fn t(
     id: &'static str,
@@ -464,9 +482,9 @@ pub static COMMANDS: &[Command] = &[
         .env(PART)
         .tip("Pick an origin plane or a planar face to sketch on")
         .spec("1.1-sketch.md"),
-    c("part.start_3d_sketch", "Start 3D Sketch", "Нова 3D скица", Icon::StartSketch)
+    c("part.start_3d_sketch", "Start 3D Sketch", "Нова 3D скица", Icon::Sketch3d)
         .alias(&["S3"])
-        .at(&[KEY])
+        .at(&[M_SKETCH])
         .env(PART)
         .todo("1.10"),
     c("part.extrude", "Extrude", "Изтегляне (екструдиране)", Icon::Extrude)
@@ -512,10 +530,130 @@ pub static COMMANDS: &[Command] = &[
         .env(PART)
         .tip("Rib: thin walls from open sketch curves out to the part (ribs and webs)")
         .spec("2.7-rib.md"),
-    c("part.emboss", "Emboss", "Релеф (Emboss)", Icon::Emboss)
-        .at(&[M_CREATE])
+    pp("part.emboss", "Emboss", "Релеф (Emboss)", Icon::Emboss, Pp::Emboss)
+        .alias(&["RLF"])
+        .at(&[M_CREATE]),
+    pp("part.derive", "Derive", "Производен детайл", Icon::Derive, Pp::Derive)
+        .alias(&["DER"])
+        .at(&[M_CREATE]),
+    pp("part.import", "Import", "Импорт на модел", Icon::Import, Pp::Import)
+        .alias(&["IMP"])
+        .at(&[M_CREATE]),
+    pp("part.decal", "Decal", "Стикер (Decal)", Icon::Decal, Pp::Decal)
+        .alias(&["DCL"])
+        .at(&[M_CREATE]),
+    pp("part.mark", "Mark", "Маркировка", Icon::Mark, Pp::Mark)
+        .alias(&["MK"])
+        .at(&[M_CREATE]),
+    pp("part.unwrap", "Unwrap", "Разгъване на лица", Icon::Unwrap, Pp::Unwrap)
+        .alias(&["UNW"])
+        .at(&[M_CREATE]),
+    pp("part.thicken", "Thicken/Offset", "Удебеляване / отместване", Icon::Thicken, Pp::ThickenOffset)
+        .alias(&["TO"])
+        .at(&[M_MODIFY]),
+    pp("part.delete_face", "Delete Face", "Изтриване на лице", Icon::DeleteFace, Pp::DeleteFace)
+        .alias(&["DF"])
+        .at(&[M_MODIFY]),
+    pp("part.direct", "Direct", "Директна редакция", Icon::Direct, Pp::Direct)
+        .alias(&["DE"])
+        .at(&[M_MODIFY]),
+    pp("part.copy_object", "Copy Object", "Копиране на обект", Icon::CopyObject, Pp::CopyObject)
+        .alias(&["CPO"])
+        .at(&[M_MODIFY]),
+    pp("part.move_bodies", "Move Bodies", "Преместване на тела", Icon::MoveBodies, Pp::MoveBodies)
+        .alias(&["MB"])
+        .at(&[M_MODIFY]),
+    pp("part.bend_part", "Bend Part", "Огъване на детайл", Icon::BendPart, Pp::BendPart)
+        .alias(&["BP"])
+        .at(&[M_MODIFY]),
+    pp("part.sketch_pattern", "Sketch Driven Pattern", "Масив по точки от скица", Icon::SketchPattern, Pp::SketchDrivenPattern)
+        .short("Sketch Driven")
+        .alias(&["SDP"])
+        .at(&[M_PATTERN]),
+    pp("part.stitch", "Stitch", "Зашиване на повърхнини", Icon::Stitch, Pp::Stitch)
+        .alias(&["STI"])
+        .at(&[M_SURFACE]),
+    pp("part.sculpt", "Sculpt", "Оформяне по повърхнини", Icon::Sculpt, Pp::Sculpt)
+        .alias(&["SCU"])
+        .at(&[M_SURFACE]),
+    pp("part.patch", "Patch", "Кръпка (Boundary Patch)", Icon::Patch, Pp::Patch)
+        .inv("Boundary Patch")
+        .alias(&["PAT"])
+        .at(&[M_SURFACE]),
+    pp("part.trim_surface", "Trim", "Подрязване на повърхнина", Icon::TrimSurface, Pp::TrimSurface)
+        .inv("Trim Surface")
+        .alias(&["TRS"])
+        .at(&[M_SURFACE]),
+    pp("part.extend_surface", "Extend", "Удължаване на повърхнина", Icon::ExtendSurface, Pp::ExtendSurface)
+        .inv("Extend Surface")
+        .alias(&["XS"])
+        .at(&[M_SURFACE]),
+    pp("part.ruled_surface", "Ruled Surface", "Линейчата повърхнина", Icon::RuledSurface, Pp::RuledSurface)
+        .alias(&["RUS"])
+        .at(&[M_SURFACE]),
+    pp("part.replace_face", "Replace Face", "Замяна на лице", Icon::ReplaceFace, Pp::ReplaceFace)
+        .alias(&["RF"])
+        .at(&[M_SURFACE]),
+    pp("part.grill", "Grill", "Вентилационна решетка", Icon::Grill, Pp::Grill)
+        .alias(&["GRL"])
+        .at(&[M_PLASTIC]),
+    pp("part.boss", "Boss", "Бобина за винт (Boss)", Icon::Boss, Pp::Boss)
+        .alias(&["BOS"])
+        .at(&[M_PLASTIC]),
+    pp("part.rest", "Rest", "Опора (Rest)", Icon::Rest, Pp::Rest)
+        .alias(&["RST"])
+        .at(&[M_PLASTIC]),
+    pp("part.snap_fit", "Snap Fit", "Щракаща връзка", Icon::SnapFit, Pp::SnapFit)
+        .alias(&["SNF"])
+        .at(&[M_PLASTIC]),
+    pp("part.rule_fillet", "Rule Fillet", "Закръгление по правило", Icon::RuleFillet, Pp::RuleFillet)
+        .alias(&["RUF"])
+        .at(&[M_PLASTIC]),
+    pp("part.lip", "Lip", "Зъб / канал (Lip)", Icon::Lip, Pp::Lip)
+        .alias(&["LIP"])
+        .at(&[M_PLASTIC]),
+    pp("part.ff_box", "Box", "Свободна форма: кутия", Icon::FfBox, Pp::FreeformBox)
+        .inv("Freeform Box")
+        .alias(&["FFB"])
+        .at(&[M_FREEFORM]),
+    pp("part.ff_plane", "Plane", "Свободна форма: равнина", Icon::FfPlane, Pp::FreeformPlane)
+        .inv("Freeform Plane")
+        .alias(&["FFP"])
+        .at(&[M_FREEFORM]),
+    pp("part.ff_cylinder", "Cylinder", "Свободна форма: цилиндър", Icon::FfCylinder, Pp::FreeformCylinder)
+        .inv("Freeform Cylinder")
+        .alias(&["FFY"])
+        .at(&[M_FREEFORM]),
+    pp("part.ff_sphere", "Sphere", "Свободна форма: сфера", Icon::FfSphere, Pp::FreeformSphere)
+        .inv("Freeform Sphere")
+        .alias(&["FFS"])
+        .at(&[M_FREEFORM]),
+    pp("part.ff_torus", "Torus", "Свободна форма: тор", Icon::FfTorus, Pp::FreeformTorus)
+        .inv("Freeform Torus")
+        .alias(&["FFT"])
+        .at(&[M_FREEFORM]),
+    pp("part.ff_quadball", "Quadball", "Свободна форма: квадсфера", Icon::FfQuadball, Pp::FreeformQuadball)
+        .inv("Freeform Quadball")
+        .alias(&["FFQ"])
+        .at(&[M_FREEFORM]),
+    pp("part.ff_face", "Face", "Свободна форма: лице", Icon::FfFace, Pp::FreeformFace)
+        .inv("Freeform Face")
+        .alias(&["FFF"])
+        .at(&[M_FREEFORM]),
+    pp("part.ff_convert", "Convert to Freeform", "Към свободна форма", Icon::FfConvert, Pp::FreeformConvert)
+        .short("Convert")
+        .alias(&["FFC"])
+        .at(&[M_FREEFORM]),
+    c("part.repair_bodies", "Repair Bodies", "Поправка на тела", Icon::RepairBodies)
+        .alias(&["RB"])
+        .at(&[M_SURFACE])
         .env(PART)
-        .todo("2.17"),
+        .todo("5.4"),
+    c("part.fit_mesh_face", "Fit Mesh Face", "Лице по мрежа", Icon::FitMeshFace)
+        .alias(&["FMF"])
+        .at(&[M_SURFACE])
+        .env(PART)
+        .todo("5.9"),
     c("part.hole", "Hole", "Отвор", Icon::Hole)
         .run(Action::Hole)
         .alias(&["H"])
@@ -1040,12 +1178,25 @@ pub static COMMANDS: &[Command] = &[
     c("inspect.interference", "Interference", "Застъпване", Icon::Interference)
         .at(&[I_ANALYSIS])
         .todo("3.5"),
-    c("inspect.curvature", "Curvature", "Кривина", Icon::Curvature)
-        .at(&[I_ANALYSIS])
-        .todo("5.4"),
-    c("inspect.draft_analysis", "Draft Analysis", "Анализ на наклона", Icon::Draft)
-        .at(&[I_ANALYSIS])
-        .todo("2.8"),
+    pp("inspect.zebra", "Zebra", "Анализ: зебра", Icon::Zebra, Pp::Zebra)
+        .inv("Zebra Analysis")
+        .alias(&["ZEB"])
+        .at(&[I_ANALYSIS]),
+    pp("inspect.draft_analysis", "Draft Analysis", "Анализ на наклона", Icon::DraftAnalysis, Pp::DraftAnalysis)
+        .short("Draft")
+        .alias(&["DFA"])
+        .at(&[I_ANALYSIS]),
+    pp("inspect.curvature", "Curvature", "Кривина", Icon::Curvature, Pp::Curvature)
+        .alias(&["CUR"])
+        .at(&[I_ANALYSIS]),
+    pp("inspect.surface_analysis", "Surface Analysis", "Анализ на повърхнината", Icon::SurfaceAnalysis, Pp::SurfaceAnalysis)
+        .short("Surface")
+        .alias(&["SAN"])
+        .at(&[I_ANALYSIS]),
+    pp("inspect.section_analysis", "Section Analysis", "Анализ в сечение", Icon::SectionAnalysis, Pp::SectionAnalysis)
+        .short("Section")
+        .alias(&["SEA"])
+        .at(&[I_ANALYSIS]),
     // ---- Tools -----------------------------------------------------------
     c("tools.options", "Application Options", "Настройки на приложението", Icon::Options)
         .alias(&["AO"])
@@ -1231,6 +1382,56 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["UPK"])
         .at(&[G_STORE])
         .tip("Unpack: every document of this file into its own file, linked back"),
+    pp("manage.extract_ifeature", "Extract iFeature", "Извличане на iFeature", Icon::ExtractIFeature, Pp::ExtractIFeature)
+        .alias(&["XIF"])
+        .at(&[G_AUTHOR]),
+    pp("manage.create_ipart", "Create iPart", "Фамилия детайли (iPart)", Icon::CreateIPart, Pp::CreateIPart)
+        .alias(&["CIP"])
+        .at(&[G_AUTHOR]),
+    pp("manage.insert_ifeature", "Insert iFeature", "Вмъкване на iFeature", Icon::InsertIFeature, Pp::InsertIFeature)
+        .alias(&["IIF"])
+        .at(&[G_INSERT]),
+    pp("manage.make_part", "Make Part", "Създаване на детайл от тела", Icon::MakePart, Pp::MakePart)
+        .alias(&["MKP"])
+        .at(&[G_LAYOUT]),
+    pp("manage.make_components", "Make Components", "Компоненти от тела", Icon::MakeComponents, Pp::MakeComponents)
+        .alias(&["MKC"])
+        .at(&[G_LAYOUT]),
+    c("manage.insert_object", "Insert Object", "Вмъкване на обект", Icon::InsertObject)
+        .alias(&["INO"])
+        .at(&[G_INSERT])
+        .env(PART)
+        .todo("0.6"),
+    c("tools.customize", "Customize", "Персонализиране", Icon::Customize)
+        .alias(&["CUS"])
+        .at(&[T_OPTIONS])
+        .todo("0.11"),
+    c("env.studio", "Inventor Studio", "Рендиране (Studio)", Icon::Studio)
+        .short("Studio")
+        .alias(&["STU"])
+        .at(&[E_BEGIN])
+        .env(PART)
+        .todo("7.3"),
+    c("env.stress", "Stress Analysis", "Якостен анализ", Icon::StressAnalysis)
+        .alias(&["STA"])
+        .at(&[E_BEGIN])
+        .env(PART)
+        .todo("7.1"),
+    c("env.shape_generator", "Shape Generator", "Генератор на форма", Icon::ShapeGenerator)
+        .alias(&["SHG"])
+        .at(&[E_BEGIN])
+        .env(PART)
+        .todo("7.1"),
+    c("env.print3d", "3D Print", "3D печат", Icon::Print3d)
+        .alias(&["3DP"])
+        .at(&[E_BEGIN])
+        .env(PART)
+        .todo("7.7"),
+    c("env.bim", "BIM Content", "BIM съдържание", Icon::BimContent)
+        .alias(&["BIM"])
+        .at(&[E_BEGIN])
+        .env(PART)
+        .todo("7.7"),
     // ---- View ------------------------------------------------------------
     c("view.home", "Home View", "Начален изглед", Icon::Home)
         .run(Action::View(StandardView::Home))
@@ -1322,6 +1523,33 @@ pub static COMMANDS: &[Command] = &[
         .at(&[V_VIS])
         .tip("Show or hide the UCS triads and their planes")
         .spec("2.10-work-features.md"),
+    c("view.cog", "Center of Gravity", "Център на тежестта", Icon::CenterOfGravity)
+        .alias(&["COG"])
+        .at(&[V_VIS])
+        .env(PART)
+        .todo("0.10"),
+    c("view.analysis_visibility", "Analysis Visibility", "Видимост на анализите", Icon::AnalysisVisibility)
+        .short("Analysis")
+        .alias(&["ANV"])
+        .at(&[V_VIS])
+        .env(PART)
+        .todo("0.10"),
+    c("view.shadows", "Shadows", "Сенки", Icon::Shadows)
+        .alias(&["SHD"])
+        .at(&[V_LOOK])
+        .todo("7.3"),
+    c("view.reflections", "Reflections", "Отражения", Icon::Reflections)
+        .alias(&["RFL"])
+        .at(&[V_LOOK])
+        .todo("7.3"),
+    c("view.ground_plane", "Ground Plane", "Равнина на земята", Icon::GroundPlane)
+        .alias(&["GRP"])
+        .at(&[V_LOOK])
+        .todo("7.3"),
+    c("view.ray_tracing", "Ray Tracing", "Трасиране на лъчи", Icon::RayTracing)
+        .alias(&["RTR"])
+        .at(&[V_LOOK])
+        .todo("7.3"),
     c("view.browser", "Browser", "Дърво на модела (показване)", Icon::UiPanels)
         .alias(&["UIB"])
         .run(Action::Ui(UiCmd::Toggle(Element::Browser)))

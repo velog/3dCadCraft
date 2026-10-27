@@ -853,21 +853,6 @@ impl CadCraftApp {
             cmds.push(BrowserCmd::SuppressIf(k));
             ui.close();
         }
-        let cond = part.suppress_if.contains_key(f.id());
-        if ui
-            .button(if cond {
-                "Suppress if... (set)"
-            } else {
-                "Suppress if..."
-            })
-            .on_hover_text(
-                "Suppress it while a true / false equation holds (not Heavy, Width < 100 mm)",
-            )
-            .clicked()
-        {
-            cmds.push(BrowserCmd::SuppressIf(k));
-            ui.close();
-        }
         if ui
             .add_enabled(
                 part.eop_index() != k + 1,
@@ -1224,6 +1209,10 @@ impl CadCraftApp {
             self.combine_dialog(ui);
             return;
         }
+        if self.part_planned.is_some() {
+            self.part_planned_panel(ui);
+            return;
+        }
         if self.split_draft.is_some() {
             self.split_dialog(ui);
             return;
@@ -1372,9 +1361,9 @@ impl CadCraftApp {
                     s.vertices, s.edges, s.faces, s.shells
                 ));
                 ui.label(format!(
-                    "Euler–Poincaré: χ = {}, genus {:?}",
+                    "Euler–Poincaré: V - E + F = {}, genus {}",
                     s.euler_characteristic(),
-                    s.genus()
+                    s.genus().map_or_else(|| "-".to_owned(), |g| g.to_string())
                 ));
                 ui.colored_label(
                     Color32::from_rgb(20, 150, 50),
@@ -4817,6 +4806,10 @@ impl CadCraftApp {
                     let text = self.command_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
+                (Mode::Normal, None) if self.part_planned.is_some() => {
+                    let text = self.command_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
                 (Mode::Normal, None) if self.draft_draft.is_some() => {
                     let text = self.command_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
@@ -5099,7 +5092,8 @@ pub(super) fn plabel(ui: &mut egui::Ui, text: &str) {
         egui::pos2(rect.right() + 1.0, rect.top()),
         egui::pos2(rect.right() + 7.0, rect.bottom()),
     );
-    let id = ui.id().with(("plabel_split", text));
+    // The cell's own (auto) id: many rows share a text, empty ones too.
+    let id = r.response.id.with("plabel_split");
     let h = ui.interact(handle, id, egui::Sense::drag());
     if h.hovered() || h.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);

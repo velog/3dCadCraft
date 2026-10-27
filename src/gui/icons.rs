@@ -271,6 +271,123 @@ pub enum Icon {
     DocPack,
     /// Separate All / Unpack (sheets out of a box).
     DocUnpack,
+    // part commands with an interface only (`gui/part_planned.rs`, spec 2.0)
+    /// Decal (a picture on a face).
+    Decal,
+    /// Mark (engraved text line).
+    Mark,
+    /// Derive (a part linked into this one).
+    Derive,
+    /// Import (a file arrow into a block).
+    Import,
+    /// Unwrap (a curved sheet flattened).
+    Unwrap,
+    /// Thicken/Offset (a face with an offset copy).
+    Thicken,
+    /// Delete Face (a block with a crossed face).
+    DeleteFace,
+    /// Direct Edit (a block with a move triad).
+    Direct,
+    /// Copy Object (a face and its copy).
+    CopyObject,
+    /// Move Bodies (a block with a move arrow).
+    MoveBodies,
+    /// Bend Part (a bent bar).
+    BendPart,
+    /// Sketch Driven Pattern (copies on sketch points).
+    SketchPattern,
+    /// Stitch (two surfaces sewn).
+    Stitch,
+    /// Sculpt (a surface cutting a block).
+    Sculpt,
+    /// Boundary Patch (a patch in a loop).
+    Patch,
+    /// Trim Surface (scissors on a surface).
+    TrimSurface,
+    /// Extend Surface (a surface with an arrow).
+    ExtendSurface,
+    /// Ruled Surface (a strip off an edge).
+    RuledSurface,
+    /// Replace Face (a new face over a block).
+    ReplaceFace,
+    /// Repair Bodies (a wrench on a block).
+    RepairBodies,
+    /// Fit Mesh Face (a plane fitted to a mesh).
+    FitMeshFace,
+    /// Grill (vent slots in a frame).
+    Grill,
+    /// Boss (a screw boss).
+    Boss,
+    /// Rest (a platform on a face).
+    Rest,
+    /// Snap Fit (a hook).
+    SnapFit,
+    /// Rule Fillet (a round with an R).
+    RuleFillet,
+    /// Lip (a stepped joint).
+    Lip,
+    /// Freeform Box.
+    FfBox,
+    /// Freeform Plane.
+    FfPlane,
+    /// Freeform Cylinder.
+    FfCylinder,
+    /// Freeform Sphere.
+    FfSphere,
+    /// Freeform Torus.
+    FfTorus,
+    /// Freeform Quadball.
+    FfQuadball,
+    /// Freeform Face.
+    FfFace,
+    /// Convert to Freeform.
+    FfConvert,
+    /// Zebra Analysis (stripes).
+    Zebra,
+    /// Draft Analysis (colour bands about a pull line).
+    DraftAnalysis,
+    /// Surface Analysis (a colour gradient on a face).
+    SurfaceAnalysis,
+    /// Section Analysis (a block cut by a plane).
+    SectionAnalysis,
+    /// Insert iFeature.
+    InsertIFeature,
+    /// Extract iFeature.
+    ExtractIFeature,
+    /// Create iPart (a table).
+    CreateIPart,
+    /// Make Part (a body pulled out to a part).
+    MakePart,
+    /// Make Components (bodies into an assembly).
+    MakeComponents,
+    /// Insert Object (a document).
+    InsertObject,
+    /// Customize (a ribbon with a pencil).
+    Customize,
+    /// Start 3D Sketch.
+    Sketch3d,
+    /// Shadows (a block and its shadow).
+    Shadows,
+    /// Reflections (a block mirrored below).
+    Reflections,
+    /// Ground Plane (a plane under a block).
+    GroundPlane,
+    /// Ray Tracing (rays from a light).
+    RayTracing,
+    /// Center of Gravity (the symbol).
+    CenterOfGravity,
+    /// Analysis Visibility (an eye).
+    AnalysisVisibility,
+    /// Inventor Studio (a camera).
+    Studio,
+    /// Stress Analysis (a beam with a load).
+    StressAnalysis,
+    /// Shape Generator (an optimised bracket).
+    ShapeGenerator,
+    /// 3D Print (a printer nozzle).
+    Print3d,
+    /// BIM Content (a building).
+    BimContent,
 }
 
 /// Pen on the 16 × 16 design grid mapped into a screen rect.
@@ -1544,6 +1661,371 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.line(&[(10.0, 2.0), (14.0, 2.0), (14.0, 6.0)], acc);
             p.line(&[(14.0, 10.0), (14.0, 14.0), (10.0, 14.0)], acc);
             p.line(&[(6.0, 14.0), (2.0, 14.0), (2.0, 10.0)], acc);
+        }
+        // ---- part commands with an interface only (spec 2.0) ----
+        Decal => {
+            p.rect(2.0, 3.0, 14.0, 13.0, ink);
+            p.fill(&[(4.0, 11.0), (7.0, 6.0), (10.0, 11.0)], soft);
+            p.closed(&[(4.0, 11.0), (7.0, 6.0), (10.0, 11.0)], acc);
+            p.circle(11.5, 6.0, 1.3, acc);
+        }
+        Mark => {
+            p.line(&[(1.5, 13.0), (14.5, 13.0)], ink);
+            p.text(8.0, 7.5, "MK", 7.0, acc);
+            p.line(&[(3.0, 11.0), (13.0, 11.0)], acc);
+        }
+        Derive => {
+            p.block([1.5, 8.0, 6.0, 5.0, 3.0], ink, tint(ink, 40));
+            p.block([8.5, 5.0, 5.0, 4.0, 2.5], acc, soft);
+            p.dashed((7.5, 10.0), (9.0, 8.0), acc);
+        }
+        Import => {
+            p.block([5.0, 8.0, 8.0, 5.5, 3.0], ink, tint(ink, 40));
+            p.line(&[(1.0, 3.0), (6.5, 8.0)], acc);
+            p.head((7.5, 9.0), (1.0, 1.0), acc);
+        }
+        Unwrap => {
+            p.arc(5.0, 9.0, 4.0, 90.0, 270.0, ink);
+            p.line(&[(5.0, 5.0), (15.0, 5.0), (15.0, 13.0), (5.0, 13.0)], acc);
+        }
+        Thicken => {
+            p.line(&[(2.0, 11.0), (8.0, 8.0), (14.0, 11.0)], ink);
+            p.line(&[(2.0, 7.0), (8.0, 4.0), (14.0, 7.0)], acc);
+            p.head((8.0, 3.0), (0.0, -1.0), acc);
+        }
+        DeleteFace => {
+            p.block([2.0, 6.0, 9.0, 7.0, 4.0], ink, tint(ink, 40));
+            p.line(&[(3.0, 7.0), (10.0, 12.0)], warn);
+            p.line(&[(10.0, 7.0), (3.0, 12.0)], warn);
+        }
+        Direct => {
+            p.block([1.5, 7.0, 8.0, 6.0, 3.0], ink, tint(ink, 40));
+            p.line(&[(10.0, 6.0), (14.0, 6.0)], acc);
+            p.head((15.0, 6.0), (1.0, 0.0), acc);
+            p.line(&[(10.0, 6.0), (10.0, 2.5)], hot);
+            p.head((10.0, 1.5), (0.0, -1.0), hot);
+        }
+        CopyObject => {
+            p.rect(1.5, 6.0, 8.0, 13.0, ink);
+            p.fill(&[(7.0, 2.0), (14.5, 2.0), (14.5, 9.0), (7.0, 9.0)], soft);
+            p.rect(7.0, 2.0, 14.5, 9.0, acc);
+        }
+        MoveBodies => {
+            p.block([1.5, 8.0, 6.0, 5.0, 3.0], ink, tint(ink, 40));
+            p.line(&[(8.5, 9.0), (13.5, 4.8)], acc);
+            p.head((14.5, 4.0), (1.0, -0.8), acc);
+        }
+        BendPart => {
+            p.line(&[(1.5, 13.0), (8.0, 13.0)], ink);
+            p.arc(8.0, 8.0, 5.0, -90.0, 0.0, ink);
+            p.line(&[(13.0, 8.0), (13.0, 2.0)], ink);
+            p.dashed((8.0, 14.5), (8.0, 1.5), acc);
+        }
+        SketchPattern => {
+            for (x, y) in [(3.5, 12.0), (8.0, 5.0), (12.5, 11.0)] {
+                p.disc(x, y, 1.0, hot);
+                p.circle(x, y, 2.3, acc);
+            }
+            p.dashed((3.5, 12.0), (8.0, 5.0), ink);
+            p.dashed((8.0, 5.0), (12.5, 11.0), ink);
+        }
+        Stitch => {
+            p.line(&[(1.5, 4.0), (8.0, 8.0), (1.5, 13.0)], ink);
+            p.line(&[(14.5, 4.0), (8.0, 8.0), (14.5, 13.0)], ink);
+            for y in [5.0, 8.0, 11.0] {
+                p.line(&[(6.0, y - 1.0), (10.0, y + 1.0)], acc);
+            }
+        }
+        Sculpt => {
+            p.block([2.0, 7.0, 10.0, 6.0, 3.5], ink, tint(ink, 40));
+            p.arc(8.0, 16.0, 9.0, 40.0, 140.0, acc);
+        }
+        Patch => {
+            p.closed(
+                &[
+                    (2.0, 9.0),
+                    (6.0, 3.0),
+                    (13.0, 4.0),
+                    (14.0, 11.0),
+                    (6.0, 13.5),
+                ],
+                ink,
+            );
+            p.fill(
+                &[
+                    (4.0, 9.0),
+                    (7.0, 5.0),
+                    (12.0, 6.0),
+                    (12.0, 10.0),
+                    (7.0, 12.0),
+                ],
+                soft,
+            );
+        }
+        TrimSurface => {
+            p.line(&[(1.5, 12.0), (9.0, 12.0), (14.5, 8.0)], ink);
+            p.circle(4.0, 5.0, 1.6, acc);
+            p.circle(4.0, 9.0, 1.6, acc);
+            p.line(&[(5.5, 5.5), (12.0, 9.0)], acc);
+            p.line(&[(5.5, 8.5), (12.0, 5.0)], acc);
+        }
+        ExtendSurface => {
+            p.fill(
+                &[(1.5, 5.0), (8.0, 5.0), (8.0, 12.0), (1.5, 12.0)],
+                tint(ink, 50),
+            );
+            p.rect(1.5, 5.0, 8.0, 12.0, ink);
+            p.dashed((8.0, 5.0), (13.0, 5.0), acc);
+            p.dashed((8.0, 12.0), (13.0, 12.0), acc);
+            p.line(&[(9.0, 8.5), (13.5, 8.5)], acc);
+            p.head((14.5, 8.5), (1.0, 0.0), acc);
+        }
+        RuledSurface => {
+            p.line(&[(1.5, 12.0), (14.5, 12.0)], ink);
+            p.fill(&[(3.0, 12.0), (13.0, 12.0), (13.0, 4.0), (3.0, 4.0)], soft);
+            for x in [4.5, 8.0, 11.5] {
+                p.line(&[(x, 12.0), (x, 4.0)], acc);
+            }
+        }
+        ReplaceFace => {
+            p.block([2.0, 7.0, 9.0, 6.5, 3.0], ink, tint(ink, 40));
+            p.line(&[(1.0, 4.0), (15.0, 1.5)], acc);
+            p.head((6.5, 6.0), (0.0, -1.0), acc);
+        }
+        RepairBodies => {
+            p.block([1.5, 8.0, 7.0, 5.5, 3.0], ink, tint(ink, 40));
+            p.line(&[(9.0, 13.0), (13.0, 6.0)], acc);
+            p.circle(13.8, 4.0, 1.8, acc);
+        }
+        FitMeshFace => {
+            p.line(&[(2.0, 12.0), (6.0, 6.0), (10.0, 11.0), (14.0, 5.0)], ink);
+            p.line(&[(2.0, 12.0), (10.0, 11.0)], ink);
+            p.line(&[(6.0, 6.0), (14.0, 5.0)], ink);
+            p.line(&[(1.0, 9.0), (15.0, 7.5)], acc);
+        }
+        Grill => {
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            for y in [5.0, 8.0, 11.0] {
+                p.line(&[(4.0, y), (12.0, y)], acc);
+            }
+        }
+        Boss => {
+            p.line(&[(1.0, 13.5), (15.0, 13.5)], ink);
+            p.rect(4.5, 4.0, 11.5, 13.5, ink);
+            p.rect(6.5, 4.0, 9.5, 13.5, acc);
+            p.line(&[(1.5, 13.5), (4.5, 8.0)], acc);
+            p.line(&[(14.5, 13.5), (11.5, 8.0)], acc);
+        }
+        Rest => {
+            p.line(&[(1.0, 12.0), (15.0, 12.0)], ink);
+            p.closed(&[(3.0, 12.0), (5.0, 7.0), (11.0, 7.0), (13.0, 12.0)], acc);
+        }
+        SnapFit => {
+            p.line(&[(3.0, 14.5), (3.0, 4.0)], ink);
+            p.line(&[(6.0, 14.5), (6.0, 6.0)], ink);
+            p.closed(&[(3.0, 4.0), (6.0, 6.0), (10.0, 5.0), (3.0, 1.5)], acc);
+        }
+        RuleFillet => {
+            p.line(&[(2.0, 14.0), (2.0, 8.0)], ink);
+            p.arc(8.0, 8.0, 6.0, 90.0, 180.0, acc);
+            p.line(&[(8.0, 2.0), (14.0, 2.0)], ink);
+            p.text(11.5, 10.5, "R", 7.0, acc);
+        }
+        Lip => {
+            p.line(
+                &[
+                    (1.5, 13.0),
+                    (7.0, 13.0),
+                    (7.0, 7.0),
+                    (10.0, 7.0),
+                    (10.0, 13.0),
+                    (14.5, 13.0),
+                ],
+                ink,
+            );
+            p.line(&[(1.5, 4.0), (6.0, 4.0), (6.0, 2.0)], acc);
+            p.line(&[(11.0, 2.0), (11.0, 4.0), (14.5, 4.0)], acc);
+        }
+        FfBox | FfPlane | FfCylinder | FfSphere | FfTorus | FfQuadball | FfFace | FfConvert => {
+            match icon {
+                FfBox => p.rect(3.0, 4.0, 13.0, 13.0, acc),
+                FfPlane => p.closed(&[(1.5, 11.0), (6.0, 6.0), (14.5, 6.0), (10.0, 11.0)], acc),
+                FfCylinder => {
+                    p.circle(8.0, 4.5, 5.0, acc);
+                    p.line(&[(3.0, 4.5), (3.0, 12.0)], acc);
+                    p.line(&[(13.0, 4.5), (13.0, 12.0)], acc);
+                }
+                FfSphere => p.circle(8.0, 8.0, 6.0, acc),
+                FfTorus => {
+                    p.circle(8.0, 8.0, 6.5, acc);
+                    p.circle(8.0, 8.0, 2.5, acc);
+                }
+                FfQuadball => {
+                    p.circle(8.0, 8.0, 6.0, acc);
+                    p.line(&[(2.0, 8.0), (14.0, 8.0)], acc);
+                    p.line(&[(8.0, 2.0), (8.0, 14.0)], acc);
+                }
+                FfFace => p.closed(&[(2.0, 12.0), (5.0, 3.0), (14.0, 5.0), (12.0, 13.0)], acc),
+                _ => {
+                    p.block([1.5, 8.0, 6.0, 5.0, 2.5], ink, tint(ink, 40));
+                    p.circle(12.0, 6.0, 3.0, acc);
+                }
+            }
+            p.disc(3.0, 13.5, 1.0, hot);
+            p.disc(13.0, 4.0, 1.0, hot);
+        }
+        Zebra => {
+            p.circle(8.0, 8.0, 6.5, ink);
+            for y in [4.0, 7.0, 10.0, 13.0] {
+                p.arc(8.0, y + 5.0, 6.0, 45.0, 135.0, acc);
+            }
+        }
+        DraftAnalysis => {
+            p.fill(
+                &[(2.0, 13.0), (5.0, 3.0), (8.0, 3.0), (6.0, 13.0)],
+                tint(ok, 160),
+            );
+            p.fill(
+                &[(6.0, 13.0), (8.0, 3.0), (11.0, 3.0), (10.0, 13.0)],
+                tint(warn, 160),
+            );
+            p.fill(
+                &[(10.0, 13.0), (11.0, 3.0), (14.0, 3.0), (14.0, 13.0)],
+                soft,
+            );
+            p.line(&[(8.0, 1.0), (8.0, 15.0)], ink);
+        }
+        SurfaceAnalysis => {
+            p.fill(&[(2.0, 12.0), (6.0, 4.0), (8.0, 12.0)], tint(warn, 160));
+            p.fill(&[(8.0, 12.0), (6.0, 4.0), (11.0, 4.0)], tint(ok, 160));
+            p.fill(&[(8.0, 12.0), (11.0, 4.0), (14.0, 12.0)], soft);
+            p.closed(&[(2.0, 12.0), (6.0, 4.0), (11.0, 4.0), (14.0, 12.0)], ink);
+        }
+        SectionAnalysis => {
+            p.block([2.0, 6.0, 9.0, 7.0, 3.5], ink, tint(ink, 40));
+            p.closed(&[(6.5, 3.5), (9.0, 1.5), (9.0, 11.5), (6.5, 13.5)], acc);
+        }
+        InsertIFeature | ExtractIFeature => {
+            p.block([5.0, 7.0, 8.0, 6.0, 3.0], ink, tint(ink, 40));
+            p.text(3.0, 4.5, "i", 8.0, acc);
+            if icon == InsertIFeature {
+                p.line(&[(9.0, 1.0), (9.0, 3.5)], acc);
+                p.head((9.0, 5.0), (0.0, 1.0), acc);
+            } else {
+                p.line(&[(9.0, 5.0), (12.5, 2.5)], acc);
+                p.head((13.5, 1.8), (1.0, -0.7), acc);
+            }
+        }
+        CreateIPart => {
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            p.line(&[(1.5, 6.0), (14.5, 6.0)], ink);
+            p.line(&[(6.0, 2.5), (6.0, 13.5)], ink);
+            p.line(&[(1.5, 9.5), (14.5, 9.5)], acc);
+            p.text(3.8, 4.2, "i", 5.0, acc);
+        }
+        MakePart => {
+            p.block([1.5, 8.0, 5.5, 5.0, 2.5], ink, tint(ink, 40));
+            p.block([9.5, 4.0, 5.0, 4.5, 2.5], acc, soft);
+            p.line(&[(7.5, 10.0), (10.0, 8.5)], acc);
+        }
+        MakeComponents => {
+            p.block([1.5, 9.0, 4.0, 4.0, 2.0], ink, tint(ink, 40));
+            p.block([6.5, 9.0, 4.0, 4.0, 2.0], ink, tint(ink, 40));
+            p.rect(1.0, 3.0, 15.0, 15.0, acc);
+            p.text(12.5, 6.0, "A", 6.0, acc);
+        }
+        InsertObject => {
+            p.rect(3.0, 1.5, 13.0, 14.5, ink);
+            for y in [5.0, 8.0, 11.0] {
+                p.line(&[(5.0, y), (11.0, y)], acc);
+            }
+        }
+        Customize => {
+            p.rect(1.5, 3.0, 14.5, 7.0, ink);
+            p.line(&[(6.0, 14.5), (13.0, 7.5)], acc);
+            p.line(&[(6.0, 14.5), (5.0, 15.0), (5.5, 13.5)], acc);
+        }
+        Sketch3d => {
+            p.line(&[(3.0, 12.0), (3.0, 3.0)], ink);
+            p.line(&[(3.0, 12.0), (13.0, 12.0)], ink);
+            p.line(&[(3.0, 12.0), (9.0, 8.0)], ink);
+            p.line(&[(5.0, 5.0), (10.0, 4.0), (13.0, 9.0)], acc);
+        }
+        Shadows => {
+            p.block([4.0, 4.0, 6.0, 5.0, 3.0], ink, tint(ink, 40));
+            p.fill(
+                &[(2.0, 13.0), (10.0, 13.0), (14.0, 11.0), (6.0, 11.0)],
+                tint(ink, 110),
+            );
+        }
+        Reflections => {
+            p.block([4.0, 2.0, 7.0, 5.0, 2.5], ink, tint(ink, 40));
+            p.line(&[(1.0, 9.0), (15.0, 9.0)], ink);
+            p.rect(4.0, 10.0, 11.0, 14.0, tint(acc, 120));
+        }
+        GroundPlane => {
+            p.block([5.0, 3.0, 6.0, 5.0, 2.5], ink, tint(ink, 40));
+            p.closed(&[(1.0, 14.0), (4.0, 10.0), (15.0, 10.0), (12.0, 14.0)], acc);
+            p.line(&[(6.0, 14.0), (9.0, 10.0)], acc);
+        }
+        RayTracing => {
+            p.circle(4.0, 4.0, 2.0, hot);
+            for (x, y) in [(13.0, 6.0), (12.0, 12.0), (6.0, 13.0)] {
+                p.line(&[(5.5, 5.5), (x, y)], acc);
+            }
+        }
+        CenterOfGravity => {
+            p.circle(8.0, 8.0, 5.5, ink);
+            p.fill(&[(8.0, 8.0), (8.0, 2.5), (13.5, 8.0)], ink);
+            p.fill(&[(8.0, 8.0), (8.0, 13.5), (2.5, 8.0)], ink);
+        }
+        AnalysisVisibility => {
+            p.arc(8.0, 12.0, 7.0, 30.0, 150.0, ink);
+            p.arc(8.0, 4.0, 7.0, 210.0, 330.0, ink);
+            p.circle(8.0, 8.0, 2.0, acc);
+        }
+        Studio => {
+            p.rect(1.5, 5.0, 11.0, 12.0, ink);
+            p.closed(&[(11.0, 7.0), (15.0, 5.0), (15.0, 12.0), (11.0, 10.0)], acc);
+            p.circle(6.0, 8.5, 2.0, acc);
+        }
+        StressAnalysis => {
+            p.rect(1.0, 9.0, 15.0, 12.0, ink);
+            p.line(&[(10.0, 2.0), (10.0, 7.0)], warn);
+            p.head((10.0, 8.5), (0.0, 1.0), warn);
+        }
+        ShapeGenerator => {
+            p.closed(
+                &[
+                    (1.5, 13.0),
+                    (14.5, 13.0),
+                    (14.5, 3.0),
+                    (11.0, 3.0),
+                    (11.0, 9.5),
+                    (5.0, 9.5),
+                ],
+                ink,
+            );
+            p.circle(8.0, 11.0, 1.2, acc);
+            p.circle(12.5, 6.5, 1.2, acc);
+        }
+        Print3d => {
+            p.line(&[(1.5, 14.0), (14.5, 14.0)], ink);
+            p.rect(4.0, 9.5, 12.0, 14.0, acc);
+            p.fill(&[(6.5, 2.0), (9.5, 2.0), (8.0, 6.5)], ink);
+        }
+        BimContent => {
+            p.closed(
+                &[
+                    (2.0, 14.0),
+                    (2.0, 6.0),
+                    (8.0, 2.0),
+                    (14.0, 6.0),
+                    (14.0, 14.0),
+                ],
+                ink,
+            );
+            p.rect(6.0, 9.0, 10.0, 14.0, acc);
         }
         ResetLayout => {
             p.rect(1.5, 2.5, 14.5, 13.5, ink);

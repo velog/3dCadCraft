@@ -298,6 +298,28 @@ SHM Hem, SFO Fold, SBD Bend, SCR Contour Roll, SLF Lofted Flange, SRP Rip, SCT C
 Round, SCH Corner Chamfer, SPT Punch Tool, SUF Unfold, SRF Refold, SFP Flat Pattern, SFX Export Flat Pattern.
 🟡 waiting for a visual check.
 
+### Part commands with their panel only ([spec/2.0-part-commands.md](spec/2.0-part-commands.md))
+
+Every Inventor part command without logic yet opens its whole panel in Properties (tabs, selectors that take
+picks in the view, every option with its default); OK and Apply stay disabled. Selectors, Enter, the right-click
+menu (Continue / Back / Cancel), the cursor hint and the status prompt work as in Face Draft or Combine. What is
+selected before and fits the first selector fills it (rule 17). When the window is too narrow, the rarely used
+ribbon panels (Surface, Plastic Part, Freeform, Primitives, Convert, Demo, Format…) collapse first into one
+button each that drops the panel down, then the others from the right (Inventor's behaviour).
+
+Aliases: Emboss **RLF**, Derive **DER**, Import **IMP**, Decal **DCL**, Mark **MK**, Unwrap **UNW**,
+Thicken/Offset **TO**, Delete Face **DF**, Direct **DE**, Copy Object **CPO**, Move Bodies **MB**, Bend Part **BP**,
+Sketch Driven Pattern **SDP**, Stitch **STI**, Sculpt **SCU**, Patch **PAT**, Trim **TRS**, Extend **XS**, Ruled
+Surface **RUS**, Replace Face **RF**, Repair Bodies **RB**, Fit Mesh Face **FMF**, Grill **GRL**, Boss **BOS**, Rest
+**RST**, Snap Fit **SNF**, Rule Fillet **RUF**, Lip **LIP**, Freeform Box / Plane / Cylinder / Sphere / Torus /
+Quadball / Face / Convert **FFB FFP FFY FFS FFT FFQ FFF FFC**, Zebra **ZEB**, Draft Analysis **DFA**, Curvature
+**CUR**, Surface Analysis **SAN**, Section Analysis **SEA**, Extract iFeature **XIF**, Create iPart **CIP**, Insert
+iFeature **IIF**, Insert Object **INO**, Make Part **MKP**, Make Components **MKC**, Customize **CUS**, Studio
+**STU**, Stress Analysis **STA**, Shape Generator **SHG**, 3D Print **3DP**, BIM Content **BIM**, Center of Gravity
+**COG**, Analysis Visibility **ANV**, Shadows **SHD**, Reflections **RFL**, Ground Plane **GRP**, Ray Tracing **RTR**.
+Emboss, Extend and Extract iFeature do not start with E (E must start Extrude at once).
+🟡 waiting for the owner's check.
+
 ### Drawings (Place Views / Annotate tabs, [spec/4-drawings.md](spec/4-drawings.md))
 
 **File → New… → Drawing** (or File → New Drawing) adds a drawing to the open project and opens it: an A3

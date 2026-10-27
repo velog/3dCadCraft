@@ -105,6 +105,9 @@ pub enum Action {
     /// (`gui/sm_planned.rs`): Bend, Contour Roll, Lofted Flange, Rip,
     /// Corner Round, Corner Chamfer, Punch Tool.
     SmPlanned(super::sm_planned::PlannedKind),
+    /// A part command whose panel exists and whose logic comes later
+    /// (`gui/part_planned.rs`, spec 2.0).
+    PartPlanned(super::part_planned::PartPlanned),
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch
@@ -296,10 +299,13 @@ pub enum Tab {
     Manage,
     /// Visibility and navigation.
     View,
+    /// Part: other environments (Studio, Stress Analysis, Shape Generator,
+    /// 3D Print, BIM Content).
+    Environments,
 }
 
 impl Tab {
-    const ALL: [Tab; 10] = [
+    const ALL: [Tab; 11] = [
         Tab::PlaceViews,
         Tab::Annotate,
         Tab::Assemble,
@@ -310,6 +316,7 @@ impl Tab {
         Tab::Tools,
         Tab::Manage,
         Tab::View,
+        Tab::Environments,
     ];
 
     /// Whether the tab belongs to the environment (an assembly has no
@@ -321,7 +328,7 @@ impl Tab {
             Tab::Inspect if drawing => false,
             Tab::Assemble => assembly && !drawing,
             Tab::SheetMetal => !assembly && !drawing,
-            Tab::Model | Tab::Sketch => !assembly && !drawing,
+            Tab::Model | Tab::Sketch | Tab::Environments => !assembly && !drawing,
             _ => true,
         }
     }
@@ -343,6 +350,7 @@ impl Tab {
             Tab::Tools => "Tools",
             Tab::Manage => "Manage",
             Tab::View => "View",
+            Tab::Environments => "Environments",
         }
     }
 }
@@ -725,6 +733,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         "Select a plane or face in the graphics window (Esc cancels)",
                     )
                     .large(),
+                    c("part.start_3d_sketch").mini(),
                 ],
             ),
             panel(
@@ -737,6 +746,9 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("part.coil"),
                     c("part.rib"),
                     c("part.emboss"),
+                    c("part.derive").mini(),
+                    c("part.import").mini(),
+                    split("Decal", items(&["part.decal", "part.mark", "part.unwrap"])).mini(),
                 ],
             ),
             panel(
@@ -748,9 +760,17 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("part.shell"),
                     c("part.draft"),
                     c("part.thread"),
-                    c("part.slot"),
                     c("part.combine"),
                     c("part.split"),
+                    c("part.thicken").mini(),
+                    c("part.delete_face").mini(),
+                    c("part.direct").mini(),
+                    c("part.slot").mini(),
+                    split(
+                        "Copy Object",
+                        items(&["part.copy_object", "part.move_bodies", "part.bend_part"]),
+                    )
+                    .mini(),
                 ],
             ),
             panel(
@@ -768,18 +788,63 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("part.rect_pattern"),
                     c("part.circ_pattern"),
                     c("part.mirror"),
+                    c("part.sketch_pattern").mini(),
+                ],
+            ),
+            panel(
+                "Surface",
+                vec![
+                    c("part.stitch").mini(),
+                    c("part.sculpt").mini(),
+                    c("part.patch").mini(),
+                    c("part.trim_surface").mini(),
+                    c("part.extend_surface").mini(),
+                    c("part.ruled_surface").mini(),
+                    c("part.replace_face").mini(),
+                    c("part.repair_bodies").mini(),
+                    c("part.fit_mesh_face").mini(),
+                ],
+            ),
+            panel(
+                "Plastic Part",
+                vec![
+                    c("part.grill").mini(),
+                    c("part.boss").mini(),
+                    c("part.rest").mini(),
+                    c("part.snap_fit").mini(),
+                    c("part.rule_fillet").mini(),
+                    c("part.lip").mini(),
+                ],
+            ),
+            panel(
+                "Freeform",
+                vec![
+                    split(
+                        "Freeform",
+                        items(&[
+                            "part.ff_box",
+                            "part.ff_plane",
+                            "part.ff_cylinder",
+                            "part.ff_sphere",
+                            "part.ff_torus",
+                            "part.ff_quadball",
+                            "part.ff_face",
+                            "part.ff_convert",
+                        ]),
+                    )
+                    .mini(),
                 ],
             ),
             panel(
                 "Primitives",
                 vec![
-                    c("part.box").large(),
-                    c("part.cylinder"),
-                    c("part.sphere"),
-                    c("part.torus"),
+                    c("part.box").mini(),
+                    c("part.cylinder").mini(),
+                    c("part.sphere").mini(),
+                    c("part.torus").mini(),
                 ],
             ),
-            panel("Convert", vec![c("sm.convert")]),
+            panel("Convert", vec![c("sm.convert").mini()]),
         ],
         Tab::Sketch => {
             let sk = |id: &'static str| when(st.editing, c(id), in_sketch);
@@ -914,15 +979,22 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 vec![
                     c("inspect.validate"),
                     c("inspect.interference"),
-                    c("inspect.curvature"),
+                    c("inspect.zebra"),
                     c("inspect.draft_analysis"),
+                    c("inspect.curvature"),
+                    c("inspect.surface_analysis"),
+                    c("inspect.section_analysis"),
                 ],
             ),
         ],
         Tab::Tools => vec![
             panel(
                 "Options",
-                vec![c("tools.options").large(), c("tools.document_settings")],
+                vec![
+                    c("tools.options").large(),
+                    c("tools.document_settings"),
+                    c("tools.customize"),
+                ],
             ),
             panel(
                 "Material and Appearance",
@@ -989,10 +1061,38 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         ],
                     ),
                 ]
+            } else if !st.assembly {
+                vec![
+                    docs,
+                    storage,
+                    styles,
+                    panel(
+                        "Author",
+                        vec![c("manage.extract_ifeature"), c("manage.create_ipart")],
+                    ),
+                    panel(
+                        "Insert",
+                        vec![c("manage.insert_ifeature"), c("manage.insert_object")],
+                    ),
+                    panel(
+                        "Layout",
+                        vec![c("manage.make_part"), c("manage.make_components")],
+                    ),
+                ]
             } else {
                 vec![docs, storage, styles]
             }
         }
+        Tab::Environments => vec![panel(
+            "Begin",
+            vec![
+                c("env.studio").large(),
+                c("env.stress").large(),
+                c("env.shape_generator").large(),
+                c("env.print3d").large(),
+                c("env.bim").large(),
+            ],
+        )],
         Tab::View => vec![
             panel(
                 "Visibility",
@@ -1009,6 +1109,8 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     ),
                     c(constraints).label("Constraints"),
                     c("sketch.dof").label("Degrees of Freedom"),
+                    c("view.cog"),
+                    c("view.analysis_visibility"),
                 ],
             ),
             panel(
@@ -1026,6 +1128,10 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 vec![
                     c("view.visual_style"),
                     c("view.section"),
+                    c("view.shadows").mini(),
+                    c("view.reflections").mini(),
+                    c("view.ground_plane").mini(),
+                    c("view.ray_tracing").mini(),
                     split(
                         "Projection",
                         items(&[
@@ -1171,44 +1277,153 @@ pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Op
     ui.separator();
 
     let mut clicked = None;
+    let panels = for_env(panels(*tab, st), st);
+    // Inventor collapses the rightmost panels into one button each when
+    // the window is too narrow (the panel's commands drop down from it).
+    // Widths are those measured when a panel was last drawn open.
+    let widths_id = egui::Id::new(("ribbon_panel_widths", tab.label()));
+    let mut widths: Vec<f32> = ui
+        .ctx()
+        .data(|d| d.get_temp::<Vec<f32>>(widths_id))
+        .unwrap_or_default();
+    widths.resize(panels.len(), 0.0);
+    let titles: Vec<&str> = panels.iter().map(|p| p.title).collect();
+    let collapsed = collapsed_panels(&widths, &titles, ui.available_width());
     egui::ScrollArea::horizontal().show(ui, |ui| {
         ui.horizontal_top(|ui| {
-            for p in for_env(panels(*tab, st), st) {
+            for (k, p) in panels.iter().enumerate() {
+                if collapsed[k] {
+                    if let Some(a) = collapsed_panel(ui, p, st) {
+                        clicked = Some(a);
+                    }
+                    ui.separator();
+                    continue;
+                }
+                let x0 = ui.cursor().min.x;
                 ui.vertical(|ui| {
                     ui.horizontal_top(|ui| {
                         ui.set_min_height(PANEL_H);
-                        // Large buttons stand alone; runs of small / mini
-                        // buttons fill columns of three.
-                        let mut i = 0;
-                        while i < p.cmds.len() {
-                            if p.cmds[i].size == Size::Large {
-                                if let Some(a) = command_button(ui, &p.cmds[i], st) {
-                                    clicked = Some(a);
-                                }
-                                i += 1;
-                                continue;
-                            }
-                            let size = p.cmds[i].size;
-                            let start = i;
-                            while i < p.cmds.len() && i - start < 3 && p.cmds[i].size == size {
-                                i += 1;
-                            }
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                for cmd in &p.cmds[start..i] {
-                                    if let Some(a) = command_button(ui, cmd, st) {
-                                        clicked = Some(a);
-                                    }
-                                }
-                            });
+                        if let Some(a) = panel_body(ui, p, st) {
+                            clicked = Some(a);
                         }
                     });
                     ui.label(RichText::new(p.title).small().weak());
                 });
                 ui.separator();
+                // The whole span: the panel, its separator and the spacing.
+                widths[k] = ui.cursor().min.x - x0;
             }
         });
     });
+    ui.ctx().data_mut(|d| d.insert_temp(widths_id, widths));
+    clicked
+}
+
+/// Width of a collapsed panel (its button, separator and spacing).
+const COLLAPSED_W: f32 = 76.0;
+
+/// Panels that collapse first (rarely used), and panels that collapse
+/// only when nothing else is left (the everyday ones).
+const COLLAPSE_FIRST: &[&str] = &[
+    "Demo",
+    "Primitives",
+    "Convert",
+    "Freeform",
+    "Plastic Part",
+    "Surface",
+    "Layout",
+    "Insert",
+    "Author",
+    "Format",
+];
+const COLLAPSE_LAST: &[&str] = &["Sketch", "Create", "Modify", "Constrain", "Exit"];
+
+/// Which panels are shown collapsed so that the row fits `avail`: the rarely
+/// used ones first, then the others from the right, the everyday ones last;
+/// never the first panel. `widths` are the spans of the open panels (with
+/// their separators); a panel not measured yet (0) counts as open.
+fn collapsed_panels(widths: &[f32], titles: &[&str], avail: f32) -> Vec<bool> {
+    let mut out = vec![false; widths.len()];
+    let mut total: f32 = widths.iter().sum();
+    let title = |k: usize| titles.get(k).copied().unwrap_or("");
+    let passes: [&dyn Fn(&str) -> bool; 3] = [
+        &|t| COLLAPSE_FIRST.contains(&t),
+        &|t| !COLLAPSE_LAST.contains(&t),
+        &|_| true,
+    ];
+    for pass in passes {
+        for k in (1..widths.len()).rev() {
+            if total <= avail {
+                return out;
+            }
+            if !out[k] && widths[k] > COLLAPSED_W && pass(title(k)) {
+                out[k] = true;
+                total -= widths[k] - COLLAPSED_W;
+            }
+        }
+    }
+    out
+}
+
+/// The commands of a panel: large buttons stand alone; runs of small /
+/// mini buttons fill columns of three.
+fn panel_body(ui: &mut egui::Ui, p: &PanelDef, st: &State) -> Option<Action> {
+    let mut clicked = None;
+    let mut i = 0;
+    while i < p.cmds.len() {
+        if p.cmds[i].size == Size::Large {
+            if let Some(a) = command_button(ui, &p.cmds[i], st) {
+                clicked = Some(a);
+            }
+            i += 1;
+            continue;
+        }
+        let size = p.cmds[i].size;
+        let start = i;
+        while i < p.cmds.len() && i - start < 3 && p.cmds[i].size == size {
+            i += 1;
+        }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            for cmd in &p.cmds[start..i] {
+                if let Some(a) = command_button(ui, cmd, st) {
+                    clicked = Some(a);
+                }
+            }
+        });
+    }
+    clicked
+}
+
+/// A collapsed panel: one button with the panel's first icon and its title;
+/// a click drops the whole panel down.
+fn collapsed_panel(ui: &mut egui::Ui, p: &PanelDef, st: &State) -> Option<Action> {
+    let mut clicked = None;
+    let icon = p.cmds.first().map_or(Icon::Settings, |c| c.icon);
+    // The same rows as an open panel: the button (icon and arrow, full
+    // height), then the title.
+    let r = ui.vertical(|ui| {
+        let b = ui
+            .horizontal_top(|ui| {
+                ui.set_min_height(PANEL_H);
+                icon_button(ui, icon, "", Size::Large, true, false, true)
+                    .on_hover_text(format!("{}: click for its commands", p.title))
+            })
+            .inner;
+        ui.label(RichText::new(p.title).small().weak());
+        b
+    });
+    egui::Popup::menu(&r.inner)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.horizontal_top(|ui| {
+                ui.set_min_height(PANEL_H);
+                clicked = panel_body(ui, p, st);
+            });
+            if clicked.is_some() {
+                ui.close();
+            }
+        });
     clicked
 }
 
@@ -1419,5 +1634,42 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
             );
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod collapse_tests {
+    /// Rarely used panels collapse first, then the others from the right,
+    /// until the row fits; narrow ones stay open; unmeasured ones count as
+    /// open.
+    #[test]
+    fn rightmost_panels_collapse_first() {
+        let w = [90.0, 350.0, 430.0, 250.0, 140.0, 140.0, 85.0, 60.0];
+        let t = [
+            "Sketch",
+            "Create",
+            "Modify",
+            "Work Features",
+            "Pattern",
+            "Surface",
+            "Primitives",
+            "Convert",
+        ];
+        // Surface and Primitives first, then Pattern and Work Features
+        // from the right.
+        let c = super::collapsed_panels(&w, &t, 1390.0);
+        assert_eq!(c, vec![false, false, false, true, true, true, true, false]);
+        let c = super::collapsed_panels(&w, &t, 1500.0);
+        assert_eq!(
+            c,
+            vec![false, false, false, false, false, true, true, false]
+        );
+        let c = super::collapsed_panels(&w, &t, 1700.0);
+        assert!(c.iter().all(|x| !x));
+        assert!(
+            super::collapsed_panels(&[0.0; 5], &t, 100.0)
+                .iter()
+                .all(|x| !x)
+        );
     }
 }

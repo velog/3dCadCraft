@@ -71,6 +71,7 @@ mod measure_pick;
 mod new_file;
 mod overlay;
 mod panels;
+mod part_planned;
 mod pattern_dialog;
 mod pattern_feature;
 mod place;
@@ -753,6 +754,9 @@ struct CadCraftApp {
     presets: presets::PresetUi,
     /// The open Face Draft command.
     draft_draft: Option<draft::DraftDraft>,
+    /// The open panel of a part command whose logic comes later
+    /// (`gui/part_planned.rs`, spec 2.0).
+    part_planned: Option<part_planned::PartDialog>,
     /// The open Combine command.
     combine_draft: Option<combine_split::CombineDraft>,
     /// The open Split command.
@@ -954,6 +958,7 @@ impl CadCraftApp {
             coil_draft: None,
             rib_draft: None,
             draft_draft: None,
+            part_planned: None,
             combine_draft: None,
             split_draft: None,
             pattern_draft: None,
@@ -3788,6 +3793,7 @@ impl CadCraftApp {
             | Action::SmExportFlat
             | Action::SmCornerSeam
             | Action::SmPlanned(_) => self.sm_apply(action),
+            Action::PartPlanned(k) => self.start_part_planned(k),
             Action::StartSketch => {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);
@@ -4709,6 +4715,7 @@ impl CadCraftApp {
             self.coil_draft = None;
             self.rib_draft = None;
             self.draft_draft = None;
+            self.part_planned = None;
             self.close_body_cmds();
             self.pattern_draft = None;
             self.cancel_hole();
@@ -5149,6 +5156,15 @@ impl CadCraftApp {
         {
             self.body_cmd_pick(h);
         }
+        // A planned part command: what its active selector takes
+        // (`gui/part_planned.rs`).
+        if self.part_planned.is_some()
+            && on_cube.is_none()
+            && response.clicked_by(PointerButton::Primary)
+            && let Some(p) = pointer
+        {
+            self.part_planned_click(p, rect);
+        }
         // Face Draft: what its active selector takes (`gui/draft.rs`).
         let draft_hover = match (self.draft_draft.is_some(), pointer, on_cube) {
             (true, Some(p), None) => self.draft_hover(p, rect, shell_hover),
@@ -5225,6 +5241,7 @@ impl CadCraftApp {
             && !self.coil_rib_open()
             && self.draft_draft.is_none()
             && !body_cmd
+            && self.part_planned.is_none()
             && self.pattern_draft.is_none()
             && self.hole_draft.is_none()
             && self.thread_draft.is_none()

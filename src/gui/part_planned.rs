@@ -1,0 +1,1777 @@
+//! The interface of the part commands whose logic comes later (rule 15,
+//! `docs/spec/2.0-part-commands.md`): each command opens its whole Inventor
+//! 2027 panel in Properties — tabs, selectors that take picks in the view
+//! (through the shared selector flow, so Enter, the right-click menu, the
+//! pick filter and the status prompt work as in the other commands), every
+//! option with its default. OK stays disabled: nothing changes the part
+//! (rule 5) until a command's logic is written against its spec rows.
+//!
+//! Dialogs are data ([`PartPlanned::pages`]): a page is a tab, a row one
+//! option. The state ([`PartDialog`]) is not saved; there is nothing to save
+//! yet.
+
+use std::collections::HashMap;
+
+use eframe::egui::{self, RichText};
+
+use super::CadCraftApp;
+use super::command_ui::{RowEvents, selector_row};
+use super::icons::Icon;
+use super::panels::plabel;
+use super::select::SelItem;
+use super::valuefield::ExprValue;
+use crate::command::flow::{Flow, PickKind, Selector, colors};
+
+/// One option of a panel.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Row {
+    /// A group title.
+    Head(&'static str),
+    /// A selector: key, label, status-bar prompt, the kinds it takes.
+    Sel(
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [PickKind],
+    ),
+    /// A check box and its default.
+    Check(&'static str, bool),
+    /// Radio buttons, default index.
+    Radio(&'static str, &'static [&'static str], usize),
+    /// A drop-down list, default index.
+    Combo(&'static str, &'static [&'static str], usize),
+    /// A number (expression field), default, unit suffix (`" mm"`, `"°"`,
+    /// `""`).
+    Num(&'static str, f64, &'static str),
+    /// A text box and its default.
+    Text(&'static str, &'static str),
+    /// A line of explanation.
+    Note(&'static str),
+    /// A button (shown, disabled until its logic exists).
+    Button(&'static str),
+}
+
+/// A tab of a panel: its name and rows.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Page(pub &'static str, pub &'static [Row]);
+
+use Row::{Button, Check, Combo, Head, Note, Num, Radio, Sel, Text};
+
+// ---- what the selectors take ------------------------------------------------
+
+const FACES: &[PickKind] = &[PickKind::Face, PickKind::PlanarFace];
+const EDGES: &[PickKind] = &[PickKind::Edge, PickKind::StraightEdge];
+const BODIES: &[PickKind] = &[PickKind::Body];
+const SURFACES: &[PickKind] = &[PickKind::Surface];
+const FACES_SURFACES: &[PickKind] = &[PickKind::Face, PickKind::PlanarFace, PickKind::Surface];
+const SKETCH: &[PickKind] = &[PickKind::Sketch];
+const PROFILE: &[PickKind] = &[PickKind::Region, PickKind::Sketch];
+const CURVES: &[PickKind] = &[PickKind::SketchCurve, PickKind::Edge];
+const LINE: &[PickKind] = &[PickKind::SketchCurve];
+const AXIS: &[PickKind] = &[PickKind::StraightEdge, PickKind::Axis];
+const PLANE: &[PickKind] = &[PickKind::PlanarFace, PickKind::Plane];
+const DIRECTION: &[PickKind] = &[
+    PickKind::StraightEdge,
+    PickKind::Axis,
+    PickKind::PlanarFace,
+    PickKind::Plane,
+];
+const POINTS: &[PickKind] = &[PickKind::Point, PickKind::SketchPoint];
+const FEATURES: &[PickKind] = &[PickKind::Face, PickKind::Body];
+const TOOL: &[PickKind] = &[
+    PickKind::Surface,
+    PickKind::Face,
+    PickKind::PlanarFace,
+    PickKind::Plane,
+    PickKind::SketchCurve,
+];
+
+const OPERATION: &[&str] = &["Join", "Cut", "Intersect", "New Solid"];
+const DIRECTIONS: &[&str] = &["Direction 1", "Direction 2", "Symmetric"];
+
+/// A part command with an interface and no logic yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PartPlanned {
+    // 3D Model › Create
+    Emboss,
+    Decal,
+    Mark,
+    Derive,
+    Import,
+    Unwrap,
+    // 3D Model › Modify
+    ThickenOffset,
+    DeleteFace,
+    Direct,
+    CopyObject,
+    MoveBodies,
+    BendPart,
+    // 3D Model › Pattern
+    SketchDrivenPattern,
+    // 3D Model › Surface
+    Stitch,
+    Sculpt,
+    Patch,
+    TrimSurface,
+    ExtendSurface,
+    RuledSurface,
+    ReplaceFace,
+    // 3D Model › Plastic Part
+    Grill,
+    Boss,
+    Rest,
+    SnapFit,
+    RuleFillet,
+    Lip,
+    // 3D Model › Freeform
+    FreeformBox,
+    FreeformPlane,
+    FreeformCylinder,
+    FreeformSphere,
+    FreeformTorus,
+    FreeformQuadball,
+    FreeformFace,
+    FreeformConvert,
+    // Inspect › Analysis
+    Zebra,
+    DraftAnalysis,
+    Curvature,
+    SurfaceAnalysis,
+    SectionAnalysis,
+    // Manage
+    InsertIFeature,
+    ExtractIFeature,
+    CreateIPart,
+    MakePart,
+    MakeComponents,
+}
+
+impl PartPlanned {
+    /// Every planned command, in ribbon order.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub const ALL: [PartPlanned; 44] = [
+        PartPlanned::Emboss,
+        PartPlanned::Decal,
+        PartPlanned::Mark,
+        PartPlanned::Derive,
+        PartPlanned::Import,
+        PartPlanned::Unwrap,
+        PartPlanned::ThickenOffset,
+        PartPlanned::DeleteFace,
+        PartPlanned::Direct,
+        PartPlanned::CopyObject,
+        PartPlanned::MoveBodies,
+        PartPlanned::BendPart,
+        PartPlanned::SketchDrivenPattern,
+        PartPlanned::Stitch,
+        PartPlanned::Sculpt,
+        PartPlanned::Patch,
+        PartPlanned::TrimSurface,
+        PartPlanned::ExtendSurface,
+        PartPlanned::RuledSurface,
+        PartPlanned::ReplaceFace,
+        PartPlanned::Grill,
+        PartPlanned::Boss,
+        PartPlanned::Rest,
+        PartPlanned::SnapFit,
+        PartPlanned::RuleFillet,
+        PartPlanned::Lip,
+        PartPlanned::FreeformBox,
+        PartPlanned::FreeformPlane,
+        PartPlanned::FreeformCylinder,
+        PartPlanned::FreeformSphere,
+        PartPlanned::FreeformTorus,
+        PartPlanned::FreeformQuadball,
+        PartPlanned::FreeformFace,
+        PartPlanned::FreeformConvert,
+        PartPlanned::Zebra,
+        PartPlanned::DraftAnalysis,
+        PartPlanned::Curvature,
+        PartPlanned::SurfaceAnalysis,
+        PartPlanned::SectionAnalysis,
+        PartPlanned::InsertIFeature,
+        PartPlanned::ExtractIFeature,
+        PartPlanned::CreateIPart,
+        PartPlanned::MakePart,
+        PartPlanned::MakeComponents,
+    ];
+
+    /// The panel's title (Inventor's command name).
+    pub fn title(self) -> &'static str {
+        use PartPlanned::*;
+        match self {
+            Emboss => "Emboss",
+            Decal => "Decal",
+            Mark => "Mark",
+            Derive => "Derive",
+            Import => "Import",
+            Unwrap => "Unwrap",
+            ThickenOffset => "Thicken/Offset",
+            DeleteFace => "Delete Face",
+            Direct => "Direct Edit",
+            CopyObject => "Copy Object",
+            MoveBodies => "Move Bodies",
+            BendPart => "Bend Part",
+            SketchDrivenPattern => "Sketch Driven Pattern",
+            Stitch => "Stitch",
+            Sculpt => "Sculpt",
+            Patch => "Boundary Patch",
+            TrimSurface => "Trim Surface",
+            ExtendSurface => "Extend Surface",
+            RuledSurface => "Ruled Surface",
+            ReplaceFace => "Replace Face",
+            Grill => "Grill",
+            Boss => "Boss",
+            Rest => "Rest",
+            SnapFit => "Snap Fit",
+            RuleFillet => "Rule Fillet",
+            Lip => "Lip",
+            FreeformBox => "Freeform Box",
+            FreeformPlane => "Freeform Plane",
+            FreeformCylinder => "Freeform Cylinder",
+            FreeformSphere => "Freeform Sphere",
+            FreeformTorus => "Freeform Torus",
+            FreeformQuadball => "Freeform Quadball",
+            FreeformFace => "Freeform Face",
+            FreeformConvert => "Convert to Freeform",
+            Zebra => "Zebra Analysis",
+            DraftAnalysis => "Draft Analysis",
+            Curvature => "Curvature Analysis",
+            SurfaceAnalysis => "Surface Analysis",
+            SectionAnalysis => "Section Analysis",
+            InsertIFeature => "Insert iFeature",
+            ExtractIFeature => "Extract iFeature",
+            CreateIPart => "Create iPart",
+            MakePart => "Make Part",
+            MakeComponents => "Make Components",
+        }
+    }
+
+    /// The panel's icon (the command's own, `gui/icons.rs`).
+    pub fn icon(self) -> Icon {
+        use PartPlanned::*;
+        match self {
+            Emboss => Icon::Emboss,
+            Decal => Icon::Decal,
+            Mark => Icon::Mark,
+            Derive => Icon::Derive,
+            Import => Icon::Import,
+            Unwrap => Icon::Unwrap,
+            ThickenOffset => Icon::Thicken,
+            DeleteFace => Icon::DeleteFace,
+            Direct => Icon::Direct,
+            CopyObject => Icon::CopyObject,
+            MoveBodies => Icon::MoveBodies,
+            BendPart => Icon::BendPart,
+            SketchDrivenPattern => Icon::SketchPattern,
+            Stitch => Icon::Stitch,
+            Sculpt => Icon::Sculpt,
+            Patch => Icon::Patch,
+            TrimSurface => Icon::TrimSurface,
+            ExtendSurface => Icon::ExtendSurface,
+            RuledSurface => Icon::RuledSurface,
+            ReplaceFace => Icon::ReplaceFace,
+            Grill => Icon::Grill,
+            Boss => Icon::Boss,
+            Rest => Icon::Rest,
+            SnapFit => Icon::SnapFit,
+            RuleFillet => Icon::RuleFillet,
+            Lip => Icon::Lip,
+            FreeformBox => Icon::FfBox,
+            FreeformPlane => Icon::FfPlane,
+            FreeformCylinder => Icon::FfCylinder,
+            FreeformSphere => Icon::FfSphere,
+            FreeformTorus => Icon::FfTorus,
+            FreeformQuadball => Icon::FfQuadball,
+            FreeformFace => Icon::FfFace,
+            FreeformConvert => Icon::FfConvert,
+            Zebra => Icon::Zebra,
+            DraftAnalysis => Icon::DraftAnalysis,
+            Curvature => Icon::Curvature,
+            SurfaceAnalysis => Icon::SurfaceAnalysis,
+            SectionAnalysis => Icon::SectionAnalysis,
+            InsertIFeature => Icon::InsertIFeature,
+            ExtractIFeature => Icon::ExtractIFeature,
+            CreateIPart => Icon::CreateIPart,
+            MakePart => Icon::MakePart,
+            MakeComponents => Icon::MakeComponents,
+        }
+    }
+
+    /// The `docs/FEATURES.md` section its logic belongs to.
+    pub fn section(self) -> &'static str {
+        use PartPlanned::*;
+        match self {
+            Emboss | Decal | Mark => "2.17",
+            Derive => "5.7",
+            Import => "7.7",
+            Unwrap | Stitch | Sculpt | Patch | TrimSurface | ExtendSurface | RuledSurface => "5.4",
+            ThickenOffset | DeleteFace | ReplaceFace => "2.14",
+            Direct => "5.5",
+            CopyObject | MoveBodies | BendPart => "2.13",
+            SketchDrivenPattern => "2.11",
+            Grill | Boss | Rest | SnapFit | RuleFillet | Lip => "5.8",
+            FreeformBox | FreeformPlane | FreeformCylinder | FreeformSphere | FreeformTorus
+            | FreeformQuadball | FreeformFace | FreeformConvert => "5.5",
+            Zebra | DraftAnalysis | Curvature | SurfaceAnalysis | SectionAnalysis => "0.10",
+            InsertIFeature | ExtractIFeature | CreateIPart => "5.7",
+            MakePart | MakeComponents => "3.10",
+        }
+    }
+
+    /// One line on what the command does (under the options).
+    pub fn about(self) -> &'static str {
+        use PartPlanned::*;
+        match self {
+            Emboss => {
+                "Raises or recesses a sketch profile or text on a face, or from the sketch plane."
+            }
+            Decal => "Puts a sketch image on faces as an appearance (projected or wrapped).",
+            Mark => "Marks text or sketch curves on faces for laser marking or etching.",
+            Derive => {
+                "Inserts another part or assembly as a linked base (bodies, sketches, parameters)."
+            }
+            Import => "Brings STEP, IGES, SAT, STL or OBJ data in as bodies.",
+            Unwrap => "Flattens a group of faces into a flat surface.",
+            ThickenOffset => "Adds or removes thickness on faces, or offsets them into a surface.",
+            DeleteFace => "Deletes faces; Heal closes the gap, otherwise the body opens.",
+            Direct => "Moves, resizes, scales, rotates or deletes faces without history.",
+            CopyObject => "Copies or moves faces or bodies into a surface, composite or solid.",
+            MoveBodies => "Moves or rotates solid bodies of a multi-body part.",
+            BendPart => "Bends a part about a sketch line (not for sheet metal).",
+            SketchDrivenPattern => "Copies features or bodies at the points of a sketch.",
+            Stitch => "Joins surfaces into a quilt, or a solid when they close a volume.",
+            Sculpt => "Adds or removes material bounded by surfaces.",
+            Patch => "A surface inside a closed loop of edges or sketch curves.",
+            TrimSurface => "Trims a surface by a cutting tool.",
+            ExtendSurface => "Lengthens surface edges by a distance or up to a face.",
+            RuledSurface => "A surface from edges: normal or tangent to a face, or along a vector.",
+            ReplaceFace => "Replaces faces by surfaces or planes: the body follows the new face.",
+            Grill => "Vent openings: boundary, islands, ribs and spars.",
+            Boss => "A screw boss (head or thread side) with stiffening ribs.",
+            Rest => "A raised or recessed platform on a face.",
+            SnapFit => "A cantilever snap-fit hook or loop.",
+            RuleFillet => {
+                "Fillets chosen by rules (edges of a feature, against a face, free edges)."
+            }
+            Lip => "A lip or groove along the joint of two housing halves.",
+            FreeformBox | FreeformPlane | FreeformCylinder | FreeformSphere | FreeformTorus
+            | FreeformQuadball => "A T-spline primitive shaped by dragging its control cage.",
+            FreeformFace => "A T-spline face from clicked vertices.",
+            FreeformConvert => "Converts a solid body into a freeform (T-spline) body.",
+            Zebra => "Stripe reflections on faces, to judge their continuity.",
+            DraftAnalysis => "Colours faces by their angle to a pull direction.",
+            Curvature => "Curvature combs on edges and faces.",
+            SurfaceAnalysis => "Colours faces by their curvature.",
+            SectionAnalysis => "A live section through the part with a wall-thickness check.",
+            InsertIFeature => "Inserts a saved iFeature: placement plane, sizes, position.",
+            ExtractIFeature => "Saves selected features as an iFeature with size parameters.",
+            CreateIPart => "A family table: parameters, properties and suppression per member.",
+            MakePart => "A new part derived from chosen bodies of this one.",
+            MakeComponents => "Each chosen body becomes a part in an assembly.",
+        }
+    }
+
+    /// The panel content: tabs and rows (spec 2.0 §3).
+    pub fn pages(self) -> &'static [Page] {
+        use PartPlanned::*;
+        match self {
+            Emboss => &[Page(
+                "Emboss",
+                &[
+                    Sel(
+                        "profile",
+                        "Profile",
+                        "Select the closed profiles or the sketch text",
+                        PROFILE,
+                    ),
+                    Radio(
+                        "Type",
+                        &[
+                            "Emboss from Face",
+                            "Engrave from Face",
+                            "Emboss/Engrave from Plane",
+                        ],
+                        0,
+                    ),
+                    Num("Depth", 1.0, " mm"),
+                    Combo("Direction", DIRECTIONS, 0),
+                    Num("Taper", 0.0, "°"),
+                    Button("Top Face Appearance..."),
+                    Check("Wrap to Face", false),
+                    Sel(
+                        "face",
+                        "Face",
+                        "Select the face to wrap the profile onto",
+                        FACES,
+                    ),
+                ],
+            )],
+            Decal => &[Page(
+                "Decal",
+                &[
+                    Sel(
+                        "image",
+                        "Image",
+                        "Select an image inserted into a sketch",
+                        SKETCH,
+                    ),
+                    Sel("face", "Face", "Select the faces for the decal", FACES),
+                    Check("Wrap to Face", false),
+                    Check("Chain Faces", false),
+                    Note("Images in sketches come with section 1.11"),
+                ],
+            )],
+            Mark => &[Page(
+                "Mark",
+                &[
+                    Sel(
+                        "profile",
+                        "Profile",
+                        "Select the text or sketch curves to mark",
+                        PROFILE,
+                    ),
+                    Sel("faces", "Faces", "Select the faces to mark", FACES),
+                    Radio("Mark Type", &["Mark Surface", "Mark Through"], 0),
+                    Check("Wrap to Face", false),
+                    Check("Flip Direction", false),
+                ],
+            )],
+            Derive => &[
+                Page(
+                    "Derive",
+                    &[
+                        Button("Browse..."),
+                        Text("Source", ""),
+                        Radio(
+                            "Derive Style",
+                            &[
+                                "Single solid body merging seams",
+                                "Single solid body keeping seams",
+                                "Keep each solid as a body",
+                                "Body as work surface",
+                            ],
+                            0,
+                        ),
+                        Head("Include"),
+                        Check("Solid Bodies", true),
+                        Check("Surface Bodies", false),
+                        Check("Sketches", false),
+                        Check("Work Geometry", false),
+                        Check("Parameters", false),
+                        Check("Show All Objects", false),
+                    ],
+                ),
+                Page(
+                    "Options",
+                    &[
+                        Num("Scale Factor", 1.0, ""),
+                        Check("Mirror Part", false),
+                        Combo("Mirror Plane", &["XY Plane", "XZ Plane", "YZ Plane"], 0),
+                    ],
+                ),
+            ],
+            Import => &[
+                Page(
+                    "Import",
+                    &[
+                        Button("Browse..."),
+                        Text("File", ""),
+                        Radio("Mode", &["Reference Model", "Convert Model"], 1),
+                        Combo("Units", &["From the file", "mm", "in"], 0),
+                        Radio("Placement", &["At the origin", "Pick a point"], 0),
+                    ],
+                ),
+                Page(
+                    "Objects",
+                    &[
+                        Check("Solids", true),
+                        Check("Surfaces", true),
+                        Check("Wires", false),
+                        Check("Work Planes", false),
+                        Check("Work Axes", false),
+                        Check("Work Points", false),
+                        Check("Points", false),
+                        Radio("Surfaces as", &["One composite", "Individual surfaces"], 0),
+                        Check("Check imported data", true),
+                    ],
+                ),
+            ],
+            Unwrap => &[Page(
+                "Unwrap",
+                &[
+                    Sel(
+                        "faces",
+                        "Faces",
+                        "Select the faces to unwrap (a tangent chain)",
+                        FACES,
+                    ),
+                    Sel(
+                        "edge",
+                        "Fixed Edge",
+                        "Select the edge that stays in place (optional)",
+                        EDGES,
+                    ),
+                    Sel(
+                        "point",
+                        "Fixed Point",
+                        "Select the point that stays in place (optional)",
+                        POINTS,
+                    ),
+                    Combo("Stiffness", &["Rigid", "Medium", "Plastic"], 0),
+                    Num("Rotation", 0.0, "°"),
+                ],
+            )],
+            ThickenOffset => &[
+                Page(
+                    "Thicken/Offset",
+                    &[
+                        Radio("Select", &["Face", "Quilt"], 0),
+                        Sel(
+                            "faces",
+                            "Faces",
+                            "Select the faces or quilts to thicken",
+                            FACES_SURFACES,
+                        ),
+                        Sel(
+                            "solids",
+                            "Solids",
+                            "Select the solid body (multi-body parts)",
+                            BODIES,
+                        ),
+                        Radio("Output", &["Solid", "Surface"], 0),
+                        Radio("Operation", OPERATION, 0),
+                        Num("Distance", 1.0, " mm"),
+                        Combo("Direction", DIRECTIONS, 0),
+                        Check("Automatic Face Chain", true),
+                        Check("Create Vertical Surfaces", false),
+                    ],
+                ),
+                Page(
+                    "More",
+                    &[
+                        Check("Automatic Blending", true),
+                        Check("Allow Approximation", true),
+                        Radio(
+                            "Approximation",
+                            &["Mean", "Never Too Thin", "Never Too Thick"],
+                            0,
+                        ),
+                        Radio("Tolerance", &["Optimized", "Specify Tolerance"], 0),
+                        Num("Specified Tolerance", 0.01, " mm"),
+                    ],
+                ),
+            ],
+            DeleteFace => &[Page(
+                "Delete Face",
+                &[
+                    Radio("Select", &["Individual Faces", "Lump or Void"], 0),
+                    Sel("faces", "Faces", "Select the faces to delete", FACES),
+                    Check("Heal", false),
+                    Note("Without Heal the solid becomes a surface body"),
+                ],
+            )],
+            Direct => &[
+                Page(
+                    "Direct Edit",
+                    &[
+                        Radio(
+                            "Operation",
+                            &["Move", "Size", "Scale", "Rotate", "Delete"],
+                            0,
+                        ),
+                        Radio("Select", &["Faces", "Solids"], 0),
+                        Sel(
+                            "objects",
+                            "Objects",
+                            "Select the faces or bodies to edit",
+                            FEATURES,
+                        ),
+                        Button("Locate"),
+                        Check("Snap to geometry", true),
+                        Check("Automatic Face Chain", true),
+                    ],
+                ),
+                Page(
+                    "Values",
+                    &[
+                        Head("Move"),
+                        Combo("Move along", &["Free Move", "X", "Y", "Z"], 0),
+                        Num("X", 0.0, " mm"),
+                        Num("Y", 0.0, " mm"),
+                        Num("Z", 0.0, " mm"),
+                        Head("Size"),
+                        Radio("Size", &["Offset", "Radius", "Diameter"], 0),
+                        Num("Value", 0.0, " mm"),
+                        Head("Scale"),
+                        Radio("Scale", &["Uniform", "Non-uniform"], 0),
+                        Num("Factor", 1.0, ""),
+                        Head("Rotate"),
+                        Sel("axis", "Axis", "Select the rotation axis", AXIS),
+                        Num("Angle", 0.0, "°"),
+                        Head("Delete"),
+                        Check("Heal", true),
+                    ],
+                ),
+            ],
+            CopyObject => &[Page(
+                "Copy Object",
+                &[
+                    Radio("Select", &["Face", "Body"], 0),
+                    Sel(
+                        "objects",
+                        "Objects",
+                        "Select the faces or bodies to copy",
+                        FEATURES,
+                    ),
+                    Radio(
+                        "Create New",
+                        &["Group", "Surface", "Composite", "Solid", "Multiple Solids"],
+                        1,
+                    ),
+                    Check("Select Existing", false),
+                    Check("Associative", true),
+                    Check("Delete Original", false),
+                    Note("Select Existing and Associative work when editing a part in an assembly"),
+                ],
+            )],
+            MoveBodies => &[Page(
+                "Move Bodies",
+                &[
+                    Sel("bodies", "Bodies", "Select the bodies to move", BODIES),
+                    Combo(
+                        "Move",
+                        &["Free Drag", "Move Along Ray", "Rotate About Line"],
+                        0,
+                    ),
+                    Head("Free Drag"),
+                    Num("X Offset", 0.0, " mm"),
+                    Num("Y Offset", 0.0, " mm"),
+                    Num("Z Offset", 0.0, " mm"),
+                    Head("Move Along Ray / Rotate About Line"),
+                    Sel(
+                        "ray",
+                        "Direction / Axis",
+                        "Select an edge or axis for the direction",
+                        AXIS,
+                    ),
+                    Check("Flip", false),
+                    Num("Offset", 0.0, " mm"),
+                    Num("Angle", 0.0, "°"),
+                    Button("Click to add"),
+                ],
+            )],
+            BendPart => &[Page(
+                "Bend Part",
+                &[
+                    Sel(
+                        "line",
+                        "Bend Line",
+                        "Select the sketch line to bend about",
+                        LINE,
+                    ),
+                    Sel(
+                        "bodies",
+                        "Bodies",
+                        "Select the bodies to bend (multi-body parts)",
+                        BODIES,
+                    ),
+                    Combo(
+                        "Bend",
+                        &[
+                            "Radius + Angle",
+                            "Radius + Arc Length",
+                            "Arc Length + Angle",
+                        ],
+                        0,
+                    ),
+                    Num("Radius", 10.0, " mm"),
+                    Num("Angle", 90.0, "°"),
+                    Num("Arc Length", 15.708, " mm"),
+                    Radio("Side", &["Left", "Right", "Both sides"], 0),
+                    Check("Flip Direction", false),
+                ],
+            )],
+            SketchDrivenPattern => &[Page(
+                "Sketch Driven Pattern",
+                &[
+                    Radio("Pattern", &["Features", "Solids"], 0),
+                    Sel(
+                        "features",
+                        "Features",
+                        "Select the features or bodies to copy",
+                        FEATURES,
+                    ),
+                    Sel(
+                        "sketch",
+                        "Sketch",
+                        "Select the sketch whose points place the copies",
+                        SKETCH,
+                    ),
+                    Sel(
+                        "base",
+                        "Base Point",
+                        "Select the base point (optional)",
+                        POINTS,
+                    ),
+                    Sel(
+                        "faces",
+                        "Faces",
+                        "Select a face for the copies' normal (optional)",
+                        FACES,
+                    ),
+                    Sel(
+                        "solid",
+                        "Solid",
+                        "Select the solid that takes the copies",
+                        BODIES,
+                    ),
+                    Radio("Output", &["Join", "New Solid"], 0),
+                    Radio("Creation Method", &["Identical", "Adjust"], 0),
+                ],
+            )],
+            Stitch => &[
+                Page(
+                    "Stitch",
+                    &[
+                        Sel(
+                            "surfaces",
+                            "Surfaces",
+                            "Select the surfaces to stitch",
+                            FACES_SURFACES,
+                        ),
+                        Num("Maximum Tolerance", 0.00025, " mm"),
+                        Button("Find Remaining Free Edges"),
+                        Check("Keep as Surface", false),
+                    ],
+                ),
+                Page(
+                    "Analysis",
+                    &[
+                        Check("Show Near-Tangent Edges", false),
+                        Note("Free edges and gaps are listed here after Find Remaining Free Edges"),
+                    ],
+                ),
+            ],
+            Sculpt => &[Page(
+                "Sculpt",
+                &[
+                    Sel(
+                        "surfaces",
+                        "Surfaces",
+                        "Select the surfaces and faces that bound the volume",
+                        TOOL,
+                    ),
+                    Sel(
+                        "solids",
+                        "Solids",
+                        "Select the solid body (multi-body parts)",
+                        BODIES,
+                    ),
+                    Radio("Operation", &["Add", "Remove", "New Solid"], 0),
+                    Combo("Side", &["One side", "Both sides"], 0),
+                    Check("Automatic Face Chain", true),
+                ],
+            )],
+            Patch => &[Page(
+                "Boundary Patch",
+                &[
+                    Sel(
+                        "boundary",
+                        "Boundary",
+                        "Select the closed loop of edges or sketch curves",
+                        CURVES,
+                    ),
+                    Combo(
+                        "Condition",
+                        &["Contact (G0)", "Tangent (G1)", "Smooth (G2)"],
+                        0,
+                    ),
+                    Check("Automatic Edge Chain", true),
+                    Sel(
+                        "rails",
+                        "Guide Rails",
+                        "Select guide curves (optional)",
+                        CURVES,
+                    ),
+                    Radio("Output", &["Surface", "Solid"], 0),
+                ],
+            )],
+            TrimSurface => &[Page(
+                "Trim Surface",
+                &[
+                    Sel(
+                        "tool",
+                        "Cutting Tool",
+                        "Select the surface, face, plane or curve that cuts",
+                        TOOL,
+                    ),
+                    Sel("remove", "Remove", "Select the pieces to remove", SURFACES),
+                    Check("Invert Selection", false),
+                ],
+            )],
+            ExtendSurface => &[Page(
+                "Extend Surface",
+                &[
+                    Sel(
+                        "edges",
+                        "Edges",
+                        "Select the surface edges to extend",
+                        EDGES,
+                    ),
+                    Check("Edge Chain", true),
+                    Radio("Extents", &["Distance", "To"], 0),
+                    Num("Distance", 5.0, " mm"),
+                    Sel("to", "To", "Select the face or plane to extend to", PLANE),
+                    Radio("Extend", &["Extend", "Stretch"], 0),
+                ],
+            )],
+            RuledSurface => &[Page(
+                "Ruled Surface",
+                &[
+                    Radio("Type", &["Normal", "Tangent", "Sweep"], 0),
+                    Sel("edges", "Edges", "Select the model edges", EDGES),
+                    Num("Distance", 5.0, " mm"),
+                    Num("Angle", 0.0, "°"),
+                    Sel(
+                        "vector",
+                        "Vector",
+                        "Select the sweep direction (Sweep type)",
+                        DIRECTION,
+                    ),
+                    Check("Automatic Edge Chain", true),
+                    Check("Flip", false),
+                    Button("Alternate All Faces"),
+                ],
+            )],
+            ReplaceFace => &[Page(
+                "Replace Face",
+                &[
+                    Sel(
+                        "existing",
+                        "Existing Faces",
+                        "Select the faces to replace",
+                        FACES,
+                    ),
+                    Sel(
+                        "new",
+                        "New Faces",
+                        "Select the surfaces or planes that replace them",
+                        TOOL,
+                    ),
+                    Check("Automatic Face Chain", true),
+                ],
+            )],
+            Grill => &[
+                Page(
+                    "Boundary",
+                    &[
+                        Sel(
+                            "boundary",
+                            "Profile",
+                            "Select the closed boundary profile",
+                            PROFILE,
+                        ),
+                        Num("Thickness", 1.0, " mm"),
+                        Num("Height", 1.0, " mm"),
+                        Num("Outside Height", 0.5, " mm"),
+                        Num("Outside Width", 1.0, " mm"),
+                        Num("Taper", 0.0, "°"),
+                    ],
+                ),
+                Page(
+                    "Island",
+                    &[
+                        Sel("island", "Profile", "Select the island profiles", PROFILE),
+                        Num("Thickness", 1.0, " mm"),
+                        Num("Top Offset", 0.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "Rib",
+                    &[
+                        Sel("ribs", "Profiles", "Select the rib curves", CURVES),
+                        Num("Thickness", 1.0, " mm"),
+                        Num("Height", 1.0, " mm"),
+                        Num("Top Offset", 0.0, " mm"),
+                        Num("Taper", 0.0, "°"),
+                    ],
+                ),
+                Page(
+                    "Spar",
+                    &[
+                        Sel("spars", "Profiles", "Select the spar curves", CURVES),
+                        Num("Thickness", 1.0, " mm"),
+                        Num("Height", 1.0, " mm"),
+                        Num("Bottom Offset", 0.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "Draft",
+                    &[
+                        Sel(
+                            "pull",
+                            "Pull Direction",
+                            "Select the pull direction",
+                            DIRECTION,
+                        ),
+                        Num("Draft Angle", 0.0, "°"),
+                        Note("Flow Area: computed with the logic"),
+                    ],
+                ),
+            ],
+            Boss => &[
+                Page(
+                    "Shape",
+                    &[
+                        Radio("Placement", &["From Sketch", "On Point"], 0),
+                        Sel("centers", "Centers", "Select the boss centres", POINTS),
+                        Radio("Type", &["Head", "Thread"], 0),
+                        Num("Outer Diameter", 8.0, " mm"),
+                        Num("Hole Diameter", 3.0, " mm"),
+                        Num("Offset", 1.0, " mm"),
+                        Num("Fillet", 0.5, " mm"),
+                        Num("Draft Angle", 0.0, "°"),
+                    ],
+                ),
+                Page(
+                    "Ribs",
+                    &[
+                        Check("Stiffening Ribs", false),
+                        Num("Count", 4.0, ""),
+                        Num("Start Angle", 0.0, "°"),
+                        Num("Thickness", 1.0, " mm"),
+                        Num("Height", 5.0, " mm"),
+                        Num("Chamfer", 0.0, " mm"),
+                        Num("Fillet", 0.0, " mm"),
+                    ],
+                ),
+            ],
+            Rest => &[
+                Page(
+                    "Shape",
+                    &[
+                        Sel("profile", "Profile", "Select the rest's profile", PROFILE),
+                        Sel("direction", "Direction", "Select the direction", DIRECTION),
+                        Num("Thickness", 1.0, " mm"),
+                        Radio("Extents", &["Distance", "To"], 0),
+                        Num("Height", 2.0, " mm"),
+                        Num("Clearance", 0.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "More",
+                    &[Num("Landing Taper", 0.0, "°"), Num("Draft Angle", 0.0, "°")],
+                ),
+            ],
+            SnapFit => &[
+                Page(
+                    "Shape",
+                    &[
+                        Radio(
+                            "Type",
+                            &["Cantilever Snap Fit Hook", "Cantilever Snap Fit Loop"],
+                            0,
+                        ),
+                        Radio("Placement", &["From Sketch", "On Point"], 0),
+                        Sel("centers", "Centers", "Select the snap fit points", POINTS),
+                        Sel(
+                            "direction",
+                            "Direction",
+                            "Select the hook direction",
+                            DIRECTION,
+                        ),
+                    ],
+                ),
+                Page(
+                    "Beam",
+                    &[
+                        Num("Length", 10.0, " mm"),
+                        Num("Thickness at root", 1.5, " mm"),
+                        Num("Thickness at tip", 1.0, " mm"),
+                        Num("Width", 4.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "Hook",
+                    &[
+                        Num("Hook Length", 2.0, " mm"),
+                        Num("Hook Height", 1.0, " mm"),
+                        Num("Insertion Angle", 30.0, "°"),
+                        Num("Retention Angle", 90.0, "°"),
+                    ],
+                ),
+            ],
+            RuleFillet => &[
+                Page(
+                    "Rule Fillet",
+                    &[
+                        Radio("Source", &["Feature", "Face"], 0),
+                        Sel("source", "Source", "Select the feature or face", FEATURES),
+                        Combo(
+                            "Rule",
+                            &[
+                                "All Edges",
+                                "Against Feature",
+                                "Free Edges",
+                                "Incident Edges",
+                            ],
+                            0,
+                        ),
+                        Num("Radius", 1.0, " mm"),
+                        Radio("Scope", &["Include", "Exclude"], 0),
+                        Sel(
+                            "scope",
+                            "Scope Faces",
+                            "Select the faces of the scope",
+                            FACES,
+                        ),
+                    ],
+                ),
+                Page(
+                    "Advanced",
+                    &[
+                        Check("All Rounds", false),
+                        Check("All Fillets", false),
+                        Check("Incident Edges", false),
+                    ],
+                ),
+            ],
+            Lip => &[
+                Page(
+                    "Shape",
+                    &[
+                        Radio("Type", &["Lip", "Groove"], 0),
+                        Sel(
+                            "path",
+                            "Path Edges",
+                            "Select the edges along the joint",
+                            EDGES,
+                        ),
+                        Sel("guide", "Guide Face", "Select the guide face", FACES),
+                        Sel(
+                            "pull",
+                            "Pull Direction",
+                            "Select the pull direction",
+                            DIRECTION,
+                        ),
+                        Radio("Path Extents", &["Full", "Between Points"], 0),
+                    ],
+                ),
+                Page(
+                    "Lip",
+                    &[
+                        Num("a (width)", 1.0, " mm"),
+                        Num("b (height)", 1.0, " mm"),
+                        Num("c (offset)", 0.0, " mm"),
+                        Num("Inner Draft", 0.0, "°"),
+                        Num("Outer Draft", 0.0, "°"),
+                    ],
+                ),
+            ],
+            FreeformBox => &[Page(
+                "Box",
+                &[
+                    Sel("plane", "Plane", "Select the base plane", PLANE),
+                    Sel("center", "Center", "Click the centre point", POINTS),
+                    Num("Length", 50.0, " mm"),
+                    Num("Width", 50.0, " mm"),
+                    Num("Height", 50.0, " mm"),
+                    Num("Length Faces", 4.0, ""),
+                    Num("Width Faces", 4.0, ""),
+                    Num("Height Faces", 4.0, ""),
+                    Check("Symmetry X", false),
+                    Check("Symmetry Y", false),
+                    Check("Symmetry Z", false),
+                    Combo("Direction", DIRECTIONS, 0),
+                ],
+            )],
+            FreeformPlane => &[Page(
+                "Plane",
+                &[
+                    Sel("plane", "Plane", "Select the base plane", PLANE),
+                    Sel("center", "Center", "Click the centre point", POINTS),
+                    Num("Length", 50.0, " mm"),
+                    Num("Width", 50.0, " mm"),
+                    Num("Length Faces", 4.0, ""),
+                    Num("Width Faces", 4.0, ""),
+                    Check("Symmetry X", false),
+                    Check("Symmetry Y", false),
+                ],
+            )],
+            FreeformCylinder => &[Page(
+                "Cylinder",
+                &[
+                    Sel("plane", "Plane", "Select the base plane", PLANE),
+                    Sel("center", "Center", "Click the centre point", POINTS),
+                    Num("Diameter", 50.0, " mm"),
+                    Num("Height", 50.0, " mm"),
+                    Num("Around Faces", 8.0, ""),
+                    Num("Height Faces", 4.0, ""),
+                    Check("Symmetry X", false),
+                    Check("Symmetry Y", false),
+                    Check("Symmetry Z", false),
+                    Combo("Direction", DIRECTIONS, 0),
+                ],
+            )],
+            FreeformSphere => &[Page(
+                "Sphere",
+                &[
+                    Sel("plane", "Plane", "Select the base plane", PLANE),
+                    Sel("center", "Center", "Click the centre point", POINTS),
+                    Num("Diameter", 50.0, " mm"),
+                    Num("Longitude Faces", 8.0, ""),
+                    Num("Latitude Faces", 4.0, ""),
+                    Check("Symmetry X", false),
+                    Check("Symmetry Y", false),
+                    Check("Symmetry Z", false),
+                ],
+            )],
+            FreeformTorus => &[Page(
+                "Torus",
+                &[
+                    Sel("plane", "Plane", "Select the base plane", PLANE),
+                    Sel("center", "Center", "Click the centre point", POINTS),
+                    Num("Diameter", 50.0, " mm"),
+                    Num("Ring Diameter", 10.0, " mm"),
+                    Num("Around Faces", 8.0, ""),
+                    Num("Ring Faces", 4.0, ""),
+                    Check("Symmetry X", false),
+                    Check("Symmetry Y", false),
+                    Check("Symmetry Z", false),
+                ],
+            )],
+            FreeformQuadball => &[Page(
+                "Quadball",
+                &[
+                    Sel("plane", "Plane", "Select the base plane", PLANE),
+                    Sel("center", "Center", "Click the centre point", POINTS),
+                    Num("Diameter", 50.0, " mm"),
+                    Num("Span Faces", 4.0, ""),
+                    Check("Symmetry X", false),
+                    Check("Symmetry Y", false),
+                    Check("Symmetry Z", false),
+                ],
+            )],
+            FreeformFace => &[Page(
+                "Face",
+                &[
+                    Radio("Type", &["Simple", "Edge", "Point by Point"], 0),
+                    Sel("points", "Vertices", "Click the face's vertices", POINTS),
+                    Num("Faces", 1.0, ""),
+                    Check("Symmetry", false),
+                ],
+            )],
+            FreeformConvert => &[Page(
+                "Convert",
+                &[
+                    Sel("body", "Body", "Select the solid body to convert", BODIES),
+                    Num("Faces", 8.0, ""),
+                    Check("Keep the original body", false),
+                ],
+            )],
+            Zebra => &[Page(
+                "Zebra",
+                &[
+                    Radio("Direction", &["Horizontal", "Vertical", "Radial"], 0),
+                    Num("Thickness", 5.0, ""),
+                    Num("Opacity", 50.0, " %"),
+                    Combo("Quality", &["Low", "Medium", "High"], 1),
+                    Radio("Faces", &["All", "Selected"], 0),
+                    Sel("faces", "Faces", "Select the faces to analyse", FACES),
+                ],
+            )],
+            DraftAnalysis => &[Page(
+                "Draft Analysis",
+                &[
+                    Sel(
+                        "pull",
+                        "Pull Direction",
+                        "Select the pull direction",
+                        DIRECTION,
+                    ),
+                    Num("Minimum Angle", -3.0, "°"),
+                    Num("Maximum Angle", 3.0, "°"),
+                    Radio("Display", &["Gradient", "Banded"], 0),
+                    Radio("Faces", &["All", "Selected"], 0),
+                    Sel("faces", "Faces", "Select the faces to analyse", FACES),
+                    Combo("Quality", &["Low", "Medium", "High"], 1),
+                ],
+            )],
+            Curvature => &[Page(
+                "Curvature",
+                &[
+                    Sel(
+                        "objects",
+                        "Faces / Curves",
+                        "Select the faces or edges",
+                        FACES_SURFACES,
+                    ),
+                    Num("Comb Density", 5.0, ""),
+                    Num("Comb Scale", 5.0, ""),
+                    Radio("Display", &["Edges", "Faces"], 0),
+                ],
+            )],
+            SurfaceAnalysis => &[Page(
+                "Surface Analysis",
+                &[
+                    Combo("Type", &["Gaussian", "Mean", "Maximum", "Minimum"], 0),
+                    Num("Range Minimum", -0.01, ""),
+                    Num("Range Maximum", 0.01, ""),
+                    Radio("Display", &["Gradient", "Banded"], 0),
+                    Radio("Faces", &["All", "Selected"], 0),
+                    Sel("faces", "Faces", "Select the faces to analyse", FACES),
+                ],
+            )],
+            SectionAnalysis => &[Page(
+                "Section Analysis",
+                &[
+                    Radio("Mode", &["Simple", "Advanced"], 0),
+                    Sel("plane", "Section Plane", "Select the section plane", PLANE),
+                    Num("Offset", 0.0, " mm"),
+                    Num("Minimum Wall Thickness", 1.0, " mm"),
+                    Num("Maximum Wall Thickness", 5.0, " mm"),
+                    Radio("Show", &["Inside", "Outside"], 0),
+                ],
+            )],
+            InsertIFeature => &[
+                Page("Select", &[Button("Browse..."), Text("iFeature", "")]),
+                Page(
+                    "Position",
+                    &[
+                        Sel(
+                            "plane",
+                            "Profile Plane",
+                            "Select the face or plane to place it on",
+                            PLANE,
+                        ),
+                        Num("Angle", 0.0, "°"),
+                        Check("Flip", false),
+                    ],
+                ),
+                Page(
+                    "Size",
+                    &[Note(
+                        "The iFeature's size parameters are listed here (name, value)",
+                    )],
+                ),
+                Page(
+                    "Precise Position",
+                    &[Check("Activate sketch edit immediately", false)],
+                ),
+            ],
+            ExtractIFeature => &[Page(
+                "Extract iFeature",
+                &[
+                    Radio(
+                        "Type",
+                        &["Standard iFeature", "Sheet Metal Punch iFeature"],
+                        0,
+                    ),
+                    Sel(
+                        "features",
+                        "Selected Features",
+                        "Select the features to extract",
+                        FACES,
+                    ),
+                    Note("Size Parameters: name, value, limit (None / Range / List), prompt"),
+                    Note("Position Geometry: the placement inputs and their prompts"),
+                    Button("Save..."),
+                ],
+            )],
+            CreateIPart => &[
+                Page(
+                    "Parameters",
+                    &[
+                        Note("Model and user parameters; >> adds a column to the table"),
+                        Button("Add Member"),
+                    ],
+                ),
+                Page(
+                    "Properties",
+                    &[Note(
+                        "iProperties as table columns (Part Number, Description…)",
+                    )],
+                ),
+                Page(
+                    "Suppression",
+                    &[Note("Features computed or suppressed per member")],
+                ),
+                Page("iMate", &[Note("iMates per member")]),
+                Page(
+                    "Work Features",
+                    &[Note("Work features included per member")],
+                ),
+                Page(
+                    "Threads",
+                    &[Note("Thread designation and class per member")],
+                ),
+                Page(
+                    "Other",
+                    &[
+                        Text("Member Name", "Member1"),
+                        Text("Part Number", ""),
+                        Check("Key column", false),
+                    ],
+                ),
+            ],
+            MakePart => &[Page(
+                "Make Part",
+                &[
+                    Sel(
+                        "bodies",
+                        "Bodies",
+                        "Select the bodies for the new part",
+                        BODIES,
+                    ),
+                    Text("New part name", "Part2"),
+                    Combo("Template", &["Standard (mm)", "Sheet Metal (mm)"], 0),
+                    Text("Location", ""),
+                    Check("Place part in target assembly", false),
+                ],
+            )],
+            MakeComponents => &[
+                Page(
+                    "Bodies",
+                    &[
+                        Sel(
+                            "bodies",
+                            "Bodies",
+                            "Select the bodies that become components",
+                            BODIES,
+                        ),
+                        Text("Target Assembly", "Assembly1"),
+                        Combo("Template", &["Standard (mm)"], 0),
+                        Text("Location", ""),
+                        Check("Insert components in target assembly", true),
+                    ],
+                ),
+                Page(
+                    "Components",
+                    &[
+                        Note("Per body: component name, template, file location, BOM structure"),
+                        Check("Include parameters", false),
+                    ],
+                ),
+            ],
+        }
+    }
+}
+
+/// The open panel of a planned command.
+#[derive(Clone, Debug)]
+pub(super) struct PartDialog {
+    pub kind: PartPlanned,
+    tab: usize,
+    /// Option values by (tab, row).
+    bools: HashMap<(usize, usize), bool>,
+    indices: HashMap<(usize, usize), usize>,
+    nums: HashMap<(usize, usize), f64>,
+    texts: HashMap<(usize, usize), String>,
+    /// The active selector's key.
+    pub active: Option<&'static str>,
+    /// Picks per selector key (descriptions).
+    pub picks: HashMap<&'static str, Vec<String>>,
+}
+
+/// The selector rows of `kind`, in order.
+fn selector_defs(
+    kind: PartPlanned,
+) -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [PickKind],
+)> {
+    kind.pages()
+        .iter()
+        .flat_map(|p| p.1)
+        .filter_map(|r| match *r {
+            Sel(k, l, p, a) => Some((k, l, p, a)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Selector colours by position (the dots of the rows).
+const COLORS: [[u8; 3]; 5] = [
+    colors::FACES,
+    colors::PLANE,
+    colors::DIRECTION,
+    colors::EDGES,
+    colors::POINTS,
+];
+
+impl PartDialog {
+    pub(super) fn new(kind: PartPlanned) -> Self {
+        Self {
+            kind,
+            tab: 0,
+            bools: HashMap::new(),
+            indices: HashMap::new(),
+            nums: HashMap::new(),
+            texts: HashMap::new(),
+            active: selector_defs(kind).first().map(|s| s.0),
+            picks: HashMap::new(),
+        }
+    }
+
+    /// The selectors as a flow (shared selector rows, Enter, the right-click
+    /// menu and the pick filter read it). None is required: OK stays off
+    /// anyway.
+    pub(super) fn flow(&self) -> Flow {
+        let sels = selector_defs(self.kind)
+            .into_iter()
+            .enumerate()
+            .map(|(i, (key, label, prompt, accepts))| Selector {
+                key,
+                label,
+                prompt,
+                accepts,
+                single: false,
+                required: false,
+                count: self.picks.get(key).map_or(0, Vec::len),
+                color: COLORS[i % COLORS.len()],
+            })
+            .collect();
+        Flow::new(sels, self.active)
+    }
+
+    /// The status-bar prompt: `<Command>: <prompt>`.
+    pub(super) fn prompt(&self) -> String {
+        let t = self.kind.title();
+        match self.flow().current() {
+            Some(s) => format!("{t}: {}", super::i18n::tr(s.prompt)),
+            None => format!("{t}: set the options (the command itself comes later)"),
+        }
+    }
+
+    /// Takes a pick for the active selector (described as text): the same
+    /// item again removes it; a new one moves on to the next empty
+    /// selector, as Inventor's selectors do.
+    pub(super) fn pick(&mut self, what: String) {
+        let Some(key) = self.active else {
+            return;
+        };
+        let list = self.picks.entry(key).or_default();
+        if let Some(i) = list.iter().position(|w| *w == what) {
+            list.remove(i);
+            return;
+        }
+        list.push(what);
+        let keys: Vec<&'static str> = selector_defs(self.kind).iter().map(|s| s.0).collect();
+        if let Some(i) = keys.iter().position(|k| *k == key)
+            && let Some(next) = keys.get(i + 1)
+            && self.picks.get(next).is_none_or(Vec::is_empty)
+        {
+            self.active = Some(next);
+        }
+    }
+
+    /// Makes the selector `key` active (and its tab the shown one).
+    pub(super) fn set_active(&mut self, key: &str) {
+        for (ti, p) in self.kind.pages().iter().enumerate() {
+            for r in p.1 {
+                if let Sel(k, ..) = *r
+                    && k == key
+                {
+                    self.active = Some(k);
+                    self.tab = ti;
+                }
+            }
+        }
+    }
+
+    /// Draws the panel body; returns true when Cancel was pressed.
+    fn ui(&mut self, ui: &mut egui::Ui) -> bool {
+        let pages = self.kind.pages();
+        if pages.len() > 1 {
+            ui.horizontal_wrapped(|ui| {
+                for (i, p) in pages.iter().enumerate() {
+                    ui.selectable_value(&mut self.tab, i, p.0);
+                }
+            });
+            ui.separator();
+        }
+        let ti = self.tab.min(pages.len().saturating_sub(1));
+        let Some(page) = pages.get(ti) else {
+            return false;
+        };
+        let flow = self.flow();
+        let mut ev = RowEvents::default();
+        egui::Grid::new(("part_planned", self.kind.title(), ti))
+            .num_columns(2)
+            .min_col_width(super::panels::label_width(ui.ctx()))
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                for (ri, row) in page.1.iter().enumerate() {
+                    self.row(ui, (ti, ri), row, &flow, &mut ev);
+                }
+            });
+        if let Some(k) = ev.activate {
+            self.active = Some(k);
+        }
+        if let Some(k) = ev.clear {
+            self.picks.remove(k);
+            self.active = Some(k);
+        }
+        ui.separator();
+        ui.label(RichText::new(self.kind.about()).weak());
+        let tip = format!(
+            "Interface only: the logic comes next (docs/spec/2.0-part-commands.md; FEATURES {})",
+            self.kind.section()
+        );
+        let mut cancel = false;
+        ui.horizontal(|ui| {
+            ui.add_enabled(false, egui::Button::new("OK"))
+                .on_disabled_hover_text(&tip);
+            if ui.button("Cancel").clicked() {
+                cancel = true;
+            }
+            ui.add_enabled(false, egui::Button::new("Apply"))
+                .on_disabled_hover_text(&tip);
+        });
+        cancel
+    }
+
+    fn row(
+        &mut self,
+        ui: &mut egui::Ui,
+        at: (usize, usize),
+        row: &Row,
+        flow: &Flow,
+        ev: &mut RowEvents,
+    ) {
+        match *row {
+            Head(t) => {
+                ui.label(RichText::new(t).strong());
+                ui.end_row();
+            }
+            Note(t) => {
+                plabel(ui, "");
+                ui.label(RichText::new(t).weak().italics());
+                ui.end_row();
+            }
+            Button(t) => {
+                plabel(ui, "");
+                ui.add_enabled(false, egui::Button::new(t))
+                    .on_disabled_hover_text("Comes with the command's logic");
+                ui.end_row();
+            }
+            Sel(key, ..) => {
+                let Some(i) = flow.selectors.iter().position(|s| s.key == key) else {
+                    return;
+                };
+                let s = &flow.selectors[i];
+                // One pick: its name (the description up to " · ").
+                let text = match self.picks.get(key).map(Vec::as_slice) {
+                    Some([one]) => one.split(" · ").next().unwrap_or(one).to_owned(),
+                    _ => String::new(),
+                };
+                selector_row(ui, s, flow.active == Some(i), &text, ev);
+                ui.end_row();
+            }
+            Check(label, on) => {
+                let v = self.bools.entry(at).or_insert(on);
+                plabel(ui, "");
+                ui.checkbox(v, label);
+                ui.end_row();
+            }
+            Radio(label, opts, def) => {
+                plabel(ui, label);
+                let v = self.indices.entry(at).or_insert(def);
+                // Two short choices side by side; more one under another, so
+                // the panel keeps its width.
+                let draw = |ui: &mut egui::Ui, v: &mut usize| {
+                    for (i, o) in opts.iter().enumerate() {
+                        ui.radio_value(v, i, *o);
+                    }
+                };
+                if opts.len() <= 2 && opts.iter().map(|o| o.len()).sum::<usize>() <= 24 {
+                    ui.horizontal(|ui| draw(ui, v));
+                } else {
+                    ui.vertical(|ui| draw(ui, v));
+                }
+                ui.end_row();
+            }
+            Combo(label, opts, def) => {
+                plabel(ui, label);
+                let v = self.indices.entry(at).or_insert(def);
+                egui::ComboBox::from_id_salt(("part_planned_combo", self.kind.title(), at))
+                    .selected_text(opts.get(*v).copied().unwrap_or(""))
+                    .show_ui(ui, |ui| {
+                        for (i, o) in opts.iter().enumerate() {
+                            ui.selectable_value(v, i, *o);
+                        }
+                    });
+                ui.end_row();
+            }
+            Num(label, def, unit) => {
+                plabel(ui, label);
+                let v = self.nums.entry(at).or_insert(def);
+                ui.add(ExprValue::new(v).suffix(unit));
+                ui.end_row();
+            }
+            Text(label, def) => {
+                plabel(ui, label);
+                let v = self.texts.entry(at).or_insert_with(|| def.to_string());
+                ui.add(egui::TextEdit::singleline(v).desired_width(180.0));
+                ui.end_row();
+            }
+        }
+    }
+}
+
+/// Whether `item` is something `kinds` takes (the pick filter already
+/// limits the categories; this keeps a feature row from filling a face
+/// selector).
+fn takes(kinds: &[PickKind], item: &SelItem) -> bool {
+    use PickKind as K;
+    let any = |ks: &[K]| ks.iter().any(|k| kinds.contains(k));
+    match item {
+        SelItem::Face(_) => any(&[K::Face, K::PlanarFace, K::Surface]),
+        SelItem::Edge(_) => any(&[K::Edge, K::StraightEdge]),
+        SelItem::Vertex(_) => any(&[K::Point]),
+        SelItem::Body(_) => any(&[K::Body, K::Surface]),
+        SelItem::Sketch(_) => any(&[K::Sketch, K::Region, K::SketchCurve, K::SketchPoint]),
+        SelItem::Feature(_) => any(&[K::Plane, K::Axis, K::Point, K::Face, K::Body]),
+    }
+}
+
+impl CadCraftApp {
+    /// Opens the panel of planned command `kind`. What is selected and
+    /// fits the first selector fills it (rule 17).
+    pub(super) fn start_part_planned(&mut self, kind: PartPlanned) {
+        let pre = self.sel.clone();
+        self.finish_sketch();
+        self.mode = super::Mode::Normal;
+        self.cancel_extrude();
+        self.work_draft = None;
+        self.blend_draft = None;
+        self.face_sel = None;
+        self.edge_sel = None;
+        let mut d = PartDialog::new(kind);
+        if let Some(first) = selector_defs(kind).first() {
+            for item in pre {
+                if takes(first.3, &item) {
+                    d.picks
+                        .entry(first.0)
+                        .or_default()
+                        .push(self.item_label(&item));
+                }
+            }
+            if d.picks.contains_key(first.0)
+                && let Some(next) = selector_defs(kind).get(1)
+            {
+                d.active = Some(next.0);
+            }
+        }
+        self.sel.clear();
+        self.part_planned = Some(d);
+    }
+
+    /// A click in the view while a planned panel is open: the item under
+    /// the cursor (through the pick filter of the active selector).
+    pub(super) fn part_planned_click(&mut self, p: egui::Pos2, rect: egui::Rect) {
+        let Some(d) = &self.part_planned else {
+            return;
+        };
+        let Some(kinds) = d.flow().current().map(|s| s.accepts) else {
+            return;
+        };
+        let edge = self.edge_under(p, rect);
+        let face = match (edge, self.plane_under(p, rect, false)) {
+            (None, Some(crate::part::PlaneRef::Face(n))) => Some(n),
+            _ => None,
+        };
+        let Some(item) = self.sel_item_at(p, rect, edge, face.as_deref()) else {
+            return;
+        };
+        if !takes(kinds, &item) {
+            return;
+        }
+        let what = self.item_label(&item);
+        if let Some(d) = self.part_planned.as_mut() {
+            d.pick(what);
+        }
+    }
+
+    /// The planned command's panel (Properties).
+    pub(super) fn part_planned_panel(&mut self, ui: &mut egui::Ui) {
+        let Some(mut d) = self.part_planned.clone() else {
+            return;
+        };
+        self.panel_header(ui, d.kind.icon(), d.kind.title());
+        let cancel = d.ui(ui);
+        self.part_planned = (!cancel).then_some(d);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::commands::COMMANDS;
+    use crate::gui::ribbon::Action;
+
+    /// Every planned command has a panel with options, a title, a
+    /// description, its own icon and a registry command; its FEATURES
+    /// section exists.
+    #[test]
+    fn every_planned_part_command_has_a_panel_and_a_command() {
+        let features = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/FEATURES.md"),
+        )
+        .unwrap_or_default();
+        let mut icons: Vec<Icon> = Vec::new();
+        for p in PartPlanned::ALL {
+            assert!(!p.title().is_empty() && !p.about().is_empty());
+            assert!(!icons.contains(&p.icon()), "{} shares an icon", p.title());
+            icons.push(p.icon());
+            assert!(
+                features.contains(&format!("## {} ", p.section())),
+                "{}: no FEATURES section {}",
+                p.title(),
+                p.section()
+            );
+            for pg in p.pages() {
+                assert!(!pg.1.is_empty(), "{} {}", p.title(), pg.0);
+            }
+            let mut d = PartDialog::new(p);
+            assert!(!d.prompt().is_empty());
+            if d.active.is_some() {
+                d.pick("Face Box1:Top".into());
+            }
+            let cmd = COMMANDS
+                .iter()
+                .find(|c| c.action == Some(Action::PartPlanned(p)));
+            let Some(cmd) = cmd else {
+                panic!("{} has no command", p.title());
+            };
+            assert!(!cmd.aliases.is_empty(), "{} has no alias", cmd.id);
+            assert_eq!(cmd.icon, p.icon(), "{}", cmd.id);
+        }
+    }
+
+    /// A pick fills the active selector and moves to the next empty one;
+    /// the same pick again removes it.
+    #[test]
+    fn selectors_advance() {
+        let mut d = PartDialog::new(PartPlanned::ThickenOffset);
+        assert_eq!(d.active, Some("faces"));
+        d.pick("Face Box1:Top".into());
+        assert_eq!(d.active, Some("solids"));
+        assert_eq!(d.flow().selectors[0].count, 1);
+        d.set_active("faces");
+        d.pick("Face Box1:Top".into());
+        assert!(d.picks.get("faces").is_none_or(Vec::is_empty));
+    }
+
+    /// A feature row is not a face; a face is.
+    #[test]
+    fn selectors_take_their_kinds() {
+        assert!(takes(FACES, &SelItem::Face("Box1:Top".into())));
+        assert!(!takes(BODIES, &SelItem::Face("Box1:Top".into())));
+        assert!(takes(SKETCH, &SelItem::Sketch(0)));
+        assert!(!takes(EDGES, &SelItem::Sketch(0)));
+    }
+}
