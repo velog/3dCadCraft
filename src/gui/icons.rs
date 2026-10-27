@@ -215,6 +215,7 @@ pub enum Icon {
     Balloon,
     PartsList,
     HoleNote,
+    ChamferNote,
     SurfaceSymbol,
     Datum,
     ControlFrame,
@@ -1620,6 +1621,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.circle(4.5, 11.0, 3.0, ink);
             p.line(&[(6.5, 9.0), (10.0, 5.0), (15.0, 5.0)], acc);
             p.text(12.0, 3.0, "Ø", 5.0, hot);
+        }
+        ChamferNote => {
+            // A block corner with its chamfer and the note's leader.
+            p.line(&[(1.5, 15.0), (1.5, 9.0), (5.5, 5.0), (11.5, 5.0)], ink);
+            p.line(&[(3.5, 7.0), (7.0, 3.0), (10.0, 1.5), (15.0, 1.5)], acc);
+            p.text(8.5, 11.0, "45°", 5.0, hot);
         }
         SurfaceSymbol => {
             p.line(&[(1.5, 8.0), (4.5, 13.5), (11.0, 2.0), (15.0, 2.0)], acc);

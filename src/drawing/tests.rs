@@ -1557,3 +1557,83 @@ fn arrange_puts_dimensions_in_rows() {
     let inside = dim([0.0, 0.0]);
     assert!(arrange(&[(3, &inside)], &view, 10.0, 6.0).is_empty());
 }
+
+/// Chamfer notes on a real part: a 40 × 30 × 20 block with an equal 2 mm
+/// chamfer and a 2 mm × 30° chamfer on two upright edges, seen from the top.
+/// The values follow the reference edge as in Inventor (`2,00 X 30,00°`
+/// along the face the distance was taken on, `1,15 X 60,00°` along the
+/// other), and the note is orphaned when the chamfer goes.
+#[test]
+fn chamfer_notes_measure_from_the_reference() {
+    use super::annot::{Placement, resolve};
+    use super::chamfer_note::ChamferNote;
+    use crate::part::blend::{BlendFeature, BlendKind, ChamferMethod, EdgeRef};
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    part.add_blend(BlendFeature::chamfer(
+        vec![EdgeRef {
+            faces: ["Box1:Left".into(), "Box1:Front".into()],
+            hint: [0.0, 0.0, 10.0],
+        }],
+        2.0,
+    ))
+    .unwrap();
+    let mut c = BlendFeature::chamfer(
+        vec![EdgeRef {
+            faces: ["Box1:Front".into(), "Box1:Right".into()],
+            hint: [40.0, 0.0, 10.0],
+        }],
+        2.0,
+    );
+    if let BlendKind::Chamfer { method, angle, .. } = &mut c.kind {
+        *method = ChamferMethod::DistanceAngle;
+        *angle = 30f64.to_radians();
+    }
+    part.add_blend(c).unwrap();
+    let lines = lines_of(&part, ViewOrientation::Top);
+    let named: Vec<&super::hlr::ViewEdge> = lines
+        .edges
+        .iter()
+        .filter(|e| e.visible && e.straight && e.circle.is_none() && e.name.is_some())
+        .collect();
+    let slanted =
+        |e: &super::hlr::ViewEdge| (e.b[0] - e.a[0]).abs() > 1e-6 && (e.b[1] - e.a[1]).abs() > 1e-6;
+    let pl = Placement {
+        position: [100.0, 100.0],
+        scale: 1.0,
+        center: lines.center(),
+    };
+    let mut texts = Vec::new();
+    for ch in named.iter().filter(|e| slanted(e)) {
+        for r in named.iter().filter(|e| !slanted(e)) {
+            let n = ChamferNote::new(
+                1,
+                ch.name.as_deref().unwrap(),
+                r.name.as_deref().unwrap(),
+                [20.0, 20.0],
+            );
+            let Ok((_, v)) = n.measure(&lines) else {
+                continue;
+            };
+            let s = resolve(&AnnotationKind::ChamferNote(n), &|id: u32| {
+                (id == 1).then_some((pl, &lines))
+            })
+            .unwrap();
+            let text = s.prims.iter().find_map(|p| match p {
+                Prim::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            });
+            assert!((s.value.unwrap() - v.distance1).abs() < 1e-9);
+            texts.push(text.unwrap());
+        }
+    }
+    texts.sort();
+    texts.dedup();
+    assert_eq!(texts, ["1,15 X 60,00°", "2,00 X 30,00°", "2,00 X 45,00°"]);
+    // A missing edge orphans the note.
+    let n = ChamferNote::new(1, "Nope:E1", "Box1:Top", [0.0, 0.0]);
+    assert!(matches!(
+        resolve(&AnnotationKind::ChamferNote(n), &|id: u32| (id == 1)
+            .then_some((pl, &lines))),
+        Err(super::annot::Orphan::Missing(_))
+    ));
+}

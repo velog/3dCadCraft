@@ -935,6 +935,10 @@ impl CadCraftApp {
                                 text[0] += delta[0];
                                 text[1] += delta[1];
                             }
+                            AnnotationKind::ChamferNote(n) => {
+                                n.text[0] += delta[0];
+                                n.text[1] += delta[1];
+                            }
                             AnnotationKind::BendNote { offset, .. } => {
                                 offset[0] += delta[0];
                                 offset[1] += delta[1];
@@ -1009,6 +1013,10 @@ impl CadCraftApp {
             }
             Some(AnnotationKind::HoleTable(_)) => {
                 self.open_hole_table_edit(id);
+                return;
+            }
+            Some(AnnotationKind::ChamferNote(_)) => {
+                self.open_chamfer_edit(id);
                 return;
             }
             Some(AnnotationKind::Balloon(b)) => {

@@ -49,6 +49,7 @@ mod drawing_annot;
 mod drawing_arrange;
 mod drawing_bend;
 mod drawing_bom;
+mod drawing_chamfer;
 mod drawing_dim;
 mod drawing_dimset;
 mod drawing_holetable;

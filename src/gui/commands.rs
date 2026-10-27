@@ -2302,10 +2302,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["AD"])
         .at(&[N_DIM])
         .tip("Space the selected dimensions evenly"),
-    dp("drw.chamfer_note", "Chamfer Note", "Бележка за фаска", Icon::HoleNote, Dp::ChamferNote)
+    d("drw.chamfer_note", "Chamfer Note", "Бележка за фаска", Icon::ChamferNote)
+        .run(Action::Drawing(DrwCmd::ChamferNote))
+        .spec("4.7-drawing-commands.md")
         .alias(&["CN"])
         .at(&[N_NOTES])
-        .tip("A note with the chamfer distances and angle"),
+        .tip("Click a chamfer's edge, a reference edge touching it, then place the note (distance X angle)"),
     dp("drw.punch_note", "Punch Notes", "Бележка за щанцоване", Icon::HoleNote, Dp::PunchNote)
         .alias(&["PN"])
         .at(&[N_NOTES])

@@ -1516,6 +1516,54 @@ fn drawing_r32_project() -> Project {
     project
 }
 
+fn drawing_r33_project() -> Project {
+    use cadcraft3d::drawing::AnnotationKind;
+    use cadcraft3d::drawing::chamfer_note::ChamferNote;
+    let mut project = drawing_r32_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let v = d.sheets[0].views[0].id;
+        let mut n = ChamferNote::new(v, "E1", "E2", [30.0, 20.0]);
+        n.format = Some("<DISTANCE1> X <DISTANCE2>".into());
+        d.add_annotation(AnnotationKind::ChamferNote(n));
+    }
+    project
+}
+
+/// The revision 33 drawing reads back with its chamfer note.
+#[test]
+fn drawing_r33_reads() {
+    use cadcraft3d::drawing::AnnotationKind;
+    let f = root().join("r33/drawing_r33.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let n = d.sheets[0]
+        .annotations
+        .iter()
+        .find_map(|a| match &a.kind {
+            AnnotationKind::ChamferNote(n) => Some(n.clone()),
+            _ => None,
+        })
+        .expect("a chamfer note");
+    assert_eq!((n.chamfer.as_str(), n.reference.as_str()), ("E1", "E2"));
+    assert_eq!(n.format(), "<DISTANCE1> X <DISTANCE2>");
+}
+
 /// The revision 32 drawing reads back with its hole table.
 #[test]
 fn drawing_r32_reads() {
@@ -1819,6 +1867,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r32_project().save(&f).unwrap();
+        }
+        let f = root().join("r33/drawing_r33.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r33_project().save(&f).unwrap();
         }
         let f = root().join("r30/sheet_r30.3dcadcraft");
         if !f.exists() {

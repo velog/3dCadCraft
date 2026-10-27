@@ -241,6 +241,9 @@ Part Offset outside the view, Spacing apart, shortest first, non-overlapping dim
 🟡 2026-10-27: **Hole Table** - View / Selection / Selected Feature (HT, HTS, HTF): origin indicator, tags A1 / A2 / B1 by
 kind and position, XDIM / YDIM / DESCRIPTION from the holes, Edit Hole Table (format revision 32).
 
+🟡 2026-10-27: **Chamfer Note** (CN): chamfer edge, reference edge, place; `2,00 X 30,00°` measured along the reference
+as in Inventor; Edit Chamfer Note with D1 / D2 / A1 tokens (format revision 33).
+
 🟡 2026-10-26: every other command of Inventor's drawing ribbon has its dialog (interface first,
 [spec/4.7-drawing-commands.md](spec/4.7-drawing-commands.md)): Break, Break Out, Slice, Crop, Overlay, Draft View,
 align views, Retrieve, chamfer / punch / bend notes,

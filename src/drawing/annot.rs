@@ -57,6 +57,9 @@ pub enum AnnotationKind {
         /// Text position, relative to the view's position (sheet mm).
         text: [f64; 2],
     },
+    /// Chamfer note on a chamfer's edge, measured from a reference edge
+    /// (`chamfer_note`, format revision 33).
+    ChamferNote(super::chamfer_note::ChamferNote),
     /// Text with a leader arrow.
     LeaderText {
         /// The arrow's tip (sheet mm).
@@ -354,6 +357,18 @@ pub fn resolve_in<'a>(
             Ok(Shown {
                 prims: st.leader(rim, t, &note, dir[0] >= 0.0),
                 value: None,
+            })
+        }
+        AnnotationKind::ChamferNote(n) => {
+            let (pl, lines) = view(n.view).ok_or(Orphan::NoView)?;
+            let (c, v) = n.measure(lines).map_err(Orphan::Missing)?;
+            let k = n.along.clamp(0.0, 1.0);
+            let tip = pl.to_sheet(add(c[0], mul(sub(c[1], c[0]), k)));
+            let t = add(pl.position, n.text);
+            let text = super::chamfer_note::text(n.format(), v, &look.dim);
+            Ok(Shown {
+                prims: st.leader(tip, t, &text, t[0] >= tip[0]),
+                value: Some(v.distance1),
             })
         }
         AnnotationKind::LeaderText { tip, at, text } => {
@@ -981,6 +996,7 @@ impl Annotation {
             }
             AnnotationKind::Dimension(d) => Some(d.a.view),
             AnnotationKind::HoleNote { view, .. } => Some(*view),
+            AnnotationKind::ChamferNote(n) => Some(n.view),
             AnnotationKind::BendNote { view, .. } => Some(*view),
             AnnotationKind::PartsList(p) => Some(p.view),
             AnnotationKind::BendTable(b) => Some(b.view),

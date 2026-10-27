@@ -57,6 +57,8 @@ pub enum DrwCmd {
     HoleNote,
     /// Annotate › Bend Notes.
     BendNote,
+    /// Annotate › Chamfer Note.
+    ChamferNote,
     /// Annotate › Parts List.
     PartsList,
     /// Annotate › Table (a bend table on a flat pattern view).
@@ -161,6 +163,8 @@ pub(super) enum DrwTool {
     Arrange(Vec<u32>),
     /// Hole Table: view, origin, holes, place.
     HoleTable(super::drawing_holetable::HtDraft),
+    /// Chamfer Note: chamfer edge, reference edge, place.
+    ChamferNote(super::drawing_chamfer::ChDraft),
 }
 
 /// Tabs of the Drawing View dialog.
@@ -264,6 +268,8 @@ pub(super) struct DrwUi {
     pub dim_edit: Option<super::drawing_dim::DimDialog>,
     /// Edit Hole Table.
     pub hole_table_edit: Option<super::drawing_holetable::HtEdit>,
+    /// Edit Chamfer Note.
+    pub chamfer_edit: Option<super::drawing_chamfer::ChEdit>,
     /// This frame's measured values of the dimensions (id, mm).
     pub dim_values: Vec<(u32, f64)>,
     /// This frame's BOM tables of the active sheet.
@@ -297,6 +303,7 @@ impl DrwUi {
         self.bend_table = None;
         self.dim_edit = None;
         self.hole_table_edit = None;
+        self.chamfer_edit = None;
         self.cam.fit = true;
         self.fitted = None;
     }
@@ -445,6 +452,7 @@ impl CadCraftApp {
             DrwCmd::LeaderText => self.start_annotation(DrwTool::LeaderText(None)),
             DrwCmd::HoleNote => self.start_annotation(DrwTool::HoleNote(None)),
             DrwCmd::BendNote => self.start_annotation(DrwTool::BendNote),
+            DrwCmd::ChamferNote => self.start_annotation(DrwTool::ChamferNote(Default::default())),
             DrwCmd::PartsList => self.open_parts_list(),
             DrwCmd::Table => self.open_bend_table(),
             DrwCmd::Arrange => self.start_arrange(),
@@ -642,6 +650,7 @@ impl CadCraftApp {
             self.drw.bend_table = None;
             self.drw.dim_edit = None;
             self.drw.hole_table_edit = None;
+            self.drw.chamfer_edit = None;
             self.bom_cancel();
             true
         } else {
@@ -661,6 +670,7 @@ impl CadCraftApp {
             || self.drw.bend_table.is_some()
             || self.drw.dim_edit.is_some()
             || self.drw.hole_table_edit.is_some()
+            || self.drw.chamfer_edit.is_some()
     }
 
     /// Status-bar prompt.
@@ -674,6 +684,9 @@ impl CadCraftApp {
         if let Some(p) = self.bend_table_prompt() {
             return p;
         }
+        if self.drw.chamfer_edit.is_some() {
+            return "Edit Chamfer Note: the note's text with its values, then OK".into();
+        }
         if self.drw.dim_edit.is_some() {
             return "Edit Dimension: the text, precision and tolerance of the dimension, then OK"
                 .into();
@@ -682,6 +695,7 @@ impl CadCraftApp {
             Some(DrwTool::DimSet(d)) => d.prompt(),
             Some(DrwTool::Arrange(p)) => Self::arrange_prompt(p),
             Some(DrwTool::HoleTable(d)) => d.prompt(),
+            Some(DrwTool::ChamferNote(d)) => d.prompt(),
             Some(DrwTool::CenterMark) => "Center Mark: click circles or arcs (Esc ends)".into(),
             Some(DrwTool::Centerline(None)) => "Centerline: click the first circle".into(),
             Some(DrwTool::Centerline(Some(_))) => {
@@ -1093,6 +1107,9 @@ impl CadCraftApp {
             Some(DrwTool::DimSet(_)) => self.dim_set_tool(&painter, rect, &response, &views),
             Some(DrwTool::Arrange(_)) => self.arrange_tool(&painter, rect, &response, &views),
             Some(DrwTool::HoleTable(_)) => self.hole_table_tool(&painter, rect, &response, &views),
+            Some(DrwTool::ChamferNote(_)) => {
+                self.chamfer_note_tool(&painter, rect, &response, &views)
+            }
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
             // Edit View of a base view: its preview and ViewCube.
@@ -1132,6 +1149,11 @@ impl CadCraftApp {
                 Some(DrwTool::DimSet(d)) if d.placing => {}
                 // The tool itself arranges on the right click.
                 Some(DrwTool::Arrange(_)) => {}
+                Some(DrwTool::ChamferNote(d)) if *d != Default::default() => {
+                    let mut d = d.clone();
+                    d.back();
+                    self.drw.tool = Some(DrwTool::ChamferNote(d));
+                }
                 Some(DrwTool::HoleTable(d)) => {
                     let mut d = d.clone();
                     d.cont();
@@ -1472,6 +1494,10 @@ impl CadCraftApp {
         self.bend_table_window(ctx);
         self.dim_edit_window(ctx);
         self.hole_table_window(ctx);
+        if self.drw.chamfer_edit.is_some() {
+            let views = self.shown_views(ctx);
+            self.chamfer_window(ctx, &views);
+        }
         self.sheet_dialog_window(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);

@@ -272,6 +272,84 @@ fn drawing_views_of_large_models() {
             over.push("hole table");
         }
     }
+    // 1 000 chamfer notes on a view of 1 000 chamfered corners (4 000
+    // straight edges): each note finds its two edges by name.
+    {
+        use cadcraft3d::drawing::AnnotationKind;
+        use cadcraft3d::drawing::annot::{Placement, resolve};
+        use cadcraft3d::drawing::chamfer_note::ChamferNote;
+        use cadcraft3d::drawing::hlr::{ViewEdge, ViewLines};
+        let line = |name: String, a: [f64; 2], b: [f64; 2]| ViewEdge {
+            name: Some(name),
+            a,
+            b,
+            circle: None,
+            full_circle: false,
+            straight: true,
+            visible: true,
+            note: None,
+            hole: None,
+        };
+        let mut edges = Vec::new();
+        for k in 0..1000 {
+            let o = [10.0 * (k % 40) as f64, 10.0 * (k / 40) as f64];
+            edges.push(line(
+                format!("C{k}"),
+                [o[0] + 2.0, o[1]],
+                [o[0], o[1] + 2.0],
+            ));
+            edges.push(line(
+                format!("R{k}"),
+                [o[0] + 2.0, o[1]],
+                [o[0] + 8.0, o[1]],
+            ));
+            edges.push(line(
+                format!("U{k}"),
+                [o[0], o[1] + 2.0],
+                [o[0], o[1] + 8.0],
+            ));
+            edges.push(line(
+                format!("X{k}"),
+                [o[0] + 9.0, o[1]],
+                [o[0] + 9.0, o[1] + 8.0],
+            ));
+        }
+        let lines = ViewLines {
+            edges,
+            min: [0.0, 0.0],
+            max: [400.0, 250.0],
+            ..Default::default()
+        };
+        let pl = Placement {
+            position: [200.0, 150.0],
+            scale: 0.5,
+            center: lines.center(),
+        };
+        let notes: Vec<AnnotationKind> = (0..1000)
+            .map(|k| {
+                AnnotationKind::ChamferNote(ChamferNote::new(
+                    1,
+                    &format!("C{k}"),
+                    &format!("R{k}"),
+                    [10.0, 10.0],
+                ))
+            })
+            .collect();
+        let view = |id: u32| (id == 1).then_some((pl, &lines));
+        let t = Instant::now();
+        let shown = notes.iter().filter(|n| resolve(n, &view).is_ok()).count();
+        let total = ms(t);
+        assert_eq!(shown, 1000);
+        let budget = 50.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms{flag}",
+            "chamfer notes: 1 000 on 4 000 edges"
+        );
+        if total > budget {
+            over.push("chamfer notes");
+        }
+    }
     // Arrange Dimensions over 1 000 horizontal dimensions above a view.
     {
         use cadcraft3d::drawing::annot::Placement;

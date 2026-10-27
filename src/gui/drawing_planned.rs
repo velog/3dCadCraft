@@ -62,7 +62,6 @@ pub enum Planned {
     // Annotate › Dimension
     Retrieve,
     // Feature Notes
-    ChamferNote,
     PunchNote,
     // Symbols
     SketchedSymbols,
@@ -111,7 +110,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 40] = [
+    pub const ALL: [Planned; 39] = [
         Self::Overlay,
         Self::DraftView,
         Self::Break,
@@ -124,7 +123,6 @@ impl Planned {
         Self::AlignBreak,
         Self::StartSketch,
         Self::Retrieve,
-        Self::ChamferNote,
         Self::PunchNote,
         Self::SketchedSymbols,
         Self::SurfaceTexture,
@@ -169,7 +167,6 @@ impl Planned {
             Self::AlignBreak => "Remove View Alignment",
             Self::StartSketch => "New Sketch",
             Self::Retrieve => "Retrieve Model Annotations",
-            Self::ChamferNote => "Chamfer Note",
             Self::PunchNote => "Punch Notes",
             Self::SketchedSymbols => "Symbols",
             Self::SurfaceTexture => "Surface Texture",
@@ -379,22 +376,6 @@ impl Planned {
                     ],
                 ),
             ],
-            Self::ChamferNote => &[Page(
-                "Chamfer Note",
-                &[
-                    Sel("chamfer", "Chamfer Edge", "select the chamfer's edge"),
-                    Sel(
-                        "reference",
-                        "Reference Edge",
-                        "select the edge the chamfer is measured from",
-                    ),
-                    Sel("place", "Placement", "click where the note goes"),
-                    Text("Note Format", "<DIST1> X <ANGLE>"),
-                    Note(
-                        "Edit Chamfer Note: Distance 1, Distance 2, Angle values with their precision and tolerance",
-                    ),
-                ],
-            )],
             Self::PunchNote => &[Page(
                 "Punch Notes",
                 &[
@@ -848,7 +829,6 @@ impl Planned {
             Self::Retrieve => {
                 "Brings the model's sketch / feature dimensions and 3D annotations into a view"
             }
-            Self::ChamferNote => "A note with the chamfer's distances and angle",
             Self::PunchNote => "A note of a punch in a flat pattern view",
             Self::SketchedSymbols => "Places a sketched symbol from Drawing Resources",
             Self::SurfaceTexture => "A surface texture (roughness) symbol, ISO 1302 / 21920",

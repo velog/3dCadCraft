@@ -15,6 +15,7 @@
 pub mod annot;
 pub mod arrange;
 pub mod bend_table;
+pub mod chamfer_note;
 pub mod dimset;
 pub mod dimtext;
 pub mod fits;
