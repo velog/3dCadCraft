@@ -118,8 +118,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 27: base views in any orientation (`ViewOrientation::Custom`: ViewCube,
 ///   Custom View) (2026-10-26).
 /// - 28: bend tables of flat pattern views (`AnnotationKind::BendTable`)
-/// - 29: baseline / chain / ordinate dimension sets (`AnnotationKind::DimSet`)
 ///   (2026-10-26).
+/// - 29: baseline / chain / ordinate dimension sets (`AnnotationKind::DimSet`)
+///   (2026-10-27).
 pub const FORMAT_REVISION: u32 = 29;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
