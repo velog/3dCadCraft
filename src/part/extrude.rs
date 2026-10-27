@@ -297,10 +297,22 @@ impl ProfileRef {
 
     /// Finds the referenced region among `regions`.
     pub fn resolve<'a>(&self, regions: &'a [Region]) -> Option<&'a Region> {
-        regions
+        let same: Vec<&Region> = regions
             .iter()
-            .find(|r| region_sources(r) == self.sources)
-            .or_else(|| regions.iter().find(|r| r.contains(self.seed)))
+            .filter(|r| region_sources(r) == self.sources)
+            .collect();
+        match same.as_slice() {
+            [one] => Some(*one),
+            // Several regions bounded by the same curves (the two crescents
+            // of two overlapping circles, one of them projected): the one
+            // holding the seed.
+            [first, ..] => same
+                .iter()
+                .find(|r| r.contains(self.seed))
+                .copied()
+                .or(Some(*first)),
+            [] => regions.iter().find(|r| r.contains(self.seed)),
+        }
     }
 }
 

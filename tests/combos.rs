@@ -87,12 +87,20 @@ fn cut_nearly_coaxial_with_a_hole() {
         sk.add_circle(at(20.1, 15.0, 10.0), 5.0).unwrap();
     });
     let r = p.sketches[j].sketch.regions();
-    // Curved face edges are not projected yet: the new disc is its own
-    // region; cutting it removes the crescent beside the hole.
-    let mut ex = ExtrudeFeature::new(
-        region_profiles(&r, |r| r.holes.is_empty() && r.area() < 100.0),
-        1.0,
-    );
+    // The hole's rim is projected with the face (as in Inventor): the new
+    // disc is split by it; the crescent beside the hole is the region inside
+    // the new circle and outside the old one.
+    let plane = p.sketches[j].sketch.plane.clone();
+    let crescent = |x: &cadcraft3d::sketch::Region| {
+        let ip = x.interior_point();
+        let q = plane.point_at(ip.x, ip.y);
+        let (d_old, d_new) = (
+            ((q.x - 20.0).powi(2) + (q.y - 15.0).powi(2)).sqrt(),
+            ((q.x - 20.1).powi(2) + (q.y - 15.0).powi(2)).sqrt(),
+        );
+        d_old > 5.0 && d_new < 5.0
+    };
+    let mut ex = ExtrudeFeature::new(region_profiles(&r, crescent), 1.0);
     ex.operation = Operation::Cut;
     ex.direction = ExtentDirection::Flipped;
     ex.extent = Extent::ThroughAll;

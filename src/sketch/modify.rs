@@ -195,6 +195,19 @@ pub(super) enum End {
     End,
 }
 
+/// Points an offset spline's copy goes through (both ends included).
+const SPLINE_OFFSET_POINTS: usize = 17;
+
+/// The unit tangent of `c` at `s` (central differences, one-sided at the
+/// ends).
+fn spline_tangent(c: &super::profile::ProfileCurve, s: Real) -> Vector2 {
+    let h = 1e-4;
+    let (a, b) = ((s - h).max(0.0), (s + h).min(1.0));
+    let d = c.point(b) - c.point(a);
+    let n = d.norm();
+    if n > 1e-15 { d / n } else { Vector2::x() }
+}
+
 impl Sketch {
     /// Intersections of `e`'s carrier with other curves (within *their*
     /// extent); `within_self` keeps only those inside `e`'s own extent.
@@ -471,8 +484,14 @@ impl Sketch {
     /// loop select), in traversal order, with `reversed` = traversed
     /// end → start. Also returns whether the chain is closed.
     pub fn chain(&self, e: EntityId) -> (Vec<(EntityId, bool)>, bool) {
-        let curve = |x: &Entity| x.is_line() || matches!(x, Entity::Arc { .. });
-        // Circles (no endpoints) and other curves form a chain of their own.
+        // Lines, arcs and open splines (a projected model edge that is no
+        // circle) chain; circles and closed splines form a chain of their
+        // own.
+        let curve = |x: &Entity| match x {
+            Entity::Line { .. } | Entity::Arc { .. } => true,
+            Entity::Spline { points } => points.first() != points.last(),
+            Entity::Circle { .. } => false,
+        };
         if !self.entity(e).is_some_and(curve) {
             return (vec![(e, false)], false);
         }
@@ -525,6 +544,20 @@ impl Sketch {
     /// Signed side of `at` relative to curve `e` in its own direction
     /// (positive = left), for choosing the offset direction.
     pub fn offset_side(&self, e: EntityId, at: Point2) -> Result<Real, SketchError> {
+        if let Some(Entity::Spline { .. }) = self.entity(e) {
+            // The nearest sample; left of the curve's direction is positive.
+            let c = self.curve_of(e).ok_or(SketchError::UnknownEntity)?;
+            let n = 200;
+            let (s, _) = (0..=n)
+                .map(|k| {
+                    let s = k as Real / n as Real;
+                    (s, (c.point(s) - at).norm())
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .ok_or(SketchError::UnknownEntity)?;
+            let (p, t) = (c.point(s), spline_tangent(&c, s));
+            return Ok(t.perp(&(at - p)));
+        }
         Ok(match Geom::of(self, e)? {
             Geom::Seg(a, b) => (b - a).normalize().perp(&(at - a)),
             // Left of a counter-clockwise arc is its inside.
@@ -563,13 +596,49 @@ impl Sketch {
         } else {
             (vec![(e, false)], false)
         };
+        // Splines (projected model edges that are no circles) are offset
+        // through points along their normals; their copies are free
+        // interpolation splines. Lines and arcs as below.
+        let splines: Vec<Option<super::profile::ProfileCurve>> = chain
+            .iter()
+            .map(|&(id, rev)| match self.entity(id) {
+                Some(Entity::Spline { .. }) => self
+                    .curve_of(id)
+                    .map(|c| if rev { c.reversed() } else { c }),
+                _ => None,
+            })
+            .collect();
         let geoms: Vec<Geom> = chain
             .iter()
-            .map(|&(id, _)| Geom::of(self, id))
+            .zip(&splines)
+            .map(|(&(id, _), sp)| match sp {
+                // A stand-in (never a line): corners next to a spline are
+                // the middle of the two offset ends.
+                Some(c) => Ok(Geom::Circle {
+                    c: c.start(),
+                    r: 1.0,
+                }),
+                None => Geom::of(self, id),
+            })
             .collect::<Result<_, _>>()?;
+        let offset_points = |c: &super::profile::ProfileCurve| -> Vec<Point2> {
+            let k = SPLINE_OFFSET_POINTS;
+            (0..k)
+                .map(|i| {
+                    let s = i as Real / (k - 1) as Real;
+                    let t = spline_tangent(c, s);
+                    c.point(s) + Vector2::new(-t.y, t.x) * distance
+                })
+                .collect()
+        };
         // In/out points of each piece in traversal order, offset to the left.
         let mut pieces: Vec<(Point2, Point2)> = Vec::new();
-        for (&(_, rev), g) in chain.iter().zip(&geoms) {
+        for ((&(_, rev), g), sp) in chain.iter().zip(&geoms).zip(&splines) {
+            if let Some(c) = sp {
+                let pts = offset_points(c);
+                pieces.push((pts[0], pts[pts.len() - 1]));
+                continue;
+            }
             let (p_in, p_out) = match *g {
                 Geom::Seg(a, b) => {
                     let (a, b) = if rev { (b, a) } else { (a, b) };
@@ -622,6 +691,18 @@ impl Sketch {
         sh.points.extend(&verts);
         for (i, &(base, rev)) in chain.iter().enumerate() {
             let (p_in, p_out) = (verts[i], verts[(i + 1) % verts.len()]);
+            if let Some(c) = &splines[i] {
+                let pts = offset_points(c);
+                let mut list = vec![p_in];
+                for p in &pts[1..pts.len() - 1] {
+                    let q = self.add_point(*p);
+                    sh.points.push(q);
+                    list.push(q);
+                }
+                list.push(p_out);
+                sh.entities.push(self.add_interp_spline(list)?);
+                continue;
+            }
             let copy = match self.entity(base).cloned() {
                 Some(Entity::Line { .. }) => self.add_line_between(p_in, p_out)?,
                 // Shared centre: concentric; CCW orientation preserved.
@@ -661,7 +742,7 @@ impl Sketch {
                 });
             }
         }
-        if constrain {
+        if constrain && splines.iter().all(Option::is_none) {
             for i in 1..n {
                 candidates.push(Constraint::EqualOffset {
                     base_a: chain[0].0,
@@ -680,6 +761,7 @@ impl Sketch {
     }
 
     /// Do two curves sharing an endpoint meet smoothly (same tangent)?
+    /// (A spline never counts: its copy is free.)
     fn tangent_join(&self, a: EntityId, b: EntityId) -> bool {
         let (Some(ea), Some(eb)) = (self.entity(a), self.entity(b)) else {
             return false;

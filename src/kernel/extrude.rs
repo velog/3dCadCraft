@@ -103,7 +103,7 @@ impl Segment2 {
         }
     }
 
-    fn end(&self) -> P2 {
+    pub(crate) fn end(&self) -> P2 {
         self.reversed().start()
     }
 

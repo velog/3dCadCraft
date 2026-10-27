@@ -276,9 +276,10 @@ pub fn profile(
     let mut starts = Vec::new();
     let mut conv = |lp: &[super::extrude::ProfileSegment]| -> Result<sg::Loop2, String> {
         let mut segs = Vec::new();
-        for s in lp {
-            starts.push((s.name.clone(), s.geometry.start()));
-            let pieces = seg2(&s.geometry)?;
+        let closed = closed_loop(lp.iter().map(|s| s.geometry.clone()).collect());
+        for (s, g) in lp.iter().zip(&closed) {
+            starts.push((s.name.clone(), g.start()));
+            let pieces = seg2(g)?;
             for _ in &pieces {
                 names.push(s.name.clone());
             }
@@ -293,6 +294,90 @@ pub fn profile(
         names,
         starts,
     })
+}
+
+/// The largest gap between neighbouring segments [`closed_loop`] closes:
+/// the sketch solver leaves its points up to ~1e-6 mm off (a projected arc's
+/// ends from the model, an offset loop after a solve), and the exact kernel
+/// refuses a loop whose ends miss by more than 1e-6 ("profile loop is not
+/// closed"). A bigger gap is a real one and stays.
+const LOOP_SNAP: Real = 1e-4;
+
+/// A closed loop with every joint made exact: neighbours meet at the middle
+/// of their two ends (when they are less than [`LOOP_SNAP`] apart); a line
+/// takes the joints as its ends, an arc keeps its sweep's sense and goes
+/// through both joints (its centre moved onto their bisector), a spline's
+/// end control points move to them.
+fn closed_loop(mut segs: Vec<super::extrude::Segment2>) -> Vec<super::extrude::Segment2> {
+    use super::extrude::Segment2 as S;
+    let n = segs.len();
+    if n < 2 {
+        return segs;
+    }
+    // Joint i: between segment i's end and segment i + 1's start.
+    let joints: Vec<Option<nalgebra::Point2<Real>>> = (0..n)
+        .map(|i| {
+            let (e, s) = (segs[i].end(), segs[(i + 1) % n].start());
+            ((e - s).norm() <= LOOP_SNAP).then(|| nalgebra::center(&e, &s))
+        })
+        .collect();
+    for i in 0..n {
+        let start = joints[(i + n - 1) % n];
+        let end = joints[i];
+        match &mut segs[i] {
+            S::Line { a, b } => {
+                if let Some(p) = start {
+                    *a = p;
+                }
+                if let Some(p) = end {
+                    *b = p;
+                }
+            }
+            S::Arc { c, r, a0, sweep } => {
+                let (Some(s), Some(e)) = (start, end) else {
+                    continue;
+                };
+                let chord = e - s;
+                if chord.norm() <= 1e-12 {
+                    continue;
+                }
+                let m = nalgebra::center(&s, &e);
+                let nrm = nalgebra::Vector2::new(-chord.y, chord.x).normalize();
+                let cc = m + nrm * (*c - m).dot(&nrm);
+                let ang = |p: nalgebra::Point2<Real>| (p.y - cc.y).atan2(p.x - cc.x);
+                let (b0, b1) = (ang(s), ang(e));
+                // The same sense and (nearly) the same turn as before.
+                let mut sw = b1 - b0;
+                let tau = std::f64::consts::TAU;
+                while sw - *sweep > std::f64::consts::PI {
+                    sw -= tau;
+                }
+                while *sweep - sw > std::f64::consts::PI {
+                    sw += tau;
+                }
+                *c = cc;
+                *r = (s - cc).norm();
+                *a0 = b0;
+                *sweep = sw;
+            }
+            S::Spline {
+                points, reversed, ..
+            } => {
+                let k = points.len();
+                if k < 2 {
+                    continue;
+                }
+                let (first, last) = if *reversed { (k - 1, 0) } else { (0, k - 1) };
+                if let Some(p) = start {
+                    points[first] = p;
+                }
+                if let Some(p) = end {
+                    points[last] = p;
+                }
+            }
+        }
+    }
+    segs
 }
 
 fn v2(p: &nalgebra::Point2<Real>) -> sg::Vec2 {
@@ -3199,7 +3284,18 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
                 .map_err(|e| e.to_string())?
             }
             _ => {
-                let range = curve_range(&curve, &pts)?;
+                // The range runs between the edge's *vertices*: an end shared
+                // with a neighbour that the kernel left up to its tolerance
+                // away (1.75e-6 mm at a lip's rounded corner on a downward
+                // face) was merged into one vertex, and the circle's angle
+                // must reach that vertex, not this edge's own last sample.
+                let mut ends = pts.clone();
+                let last = ends.len() - 1;
+                if let (Some(va), Some(vb)) = (out.vertex(a), out.vertex(b)) {
+                    ends[0] = va.point;
+                    ends[last] = vb.point;
+                }
+                let range = curve_range(&curve, &ends)?;
                 let cid = out.add_curve(curve);
                 match out.add_edge(cid, a, b, range) {
                     Ok(e) => e,
@@ -3430,7 +3526,14 @@ fn curve_range(c: &Curve, pts: &[Point3]) -> Result<super::Interval, String> {
                 let v = p - k.center;
                 v.dot(&k.y_axis()).atan2(v.dot(&k.x_axis))
             };
-            let a0 = ang(&pts[0]);
+            // The fitted circle's x axis runs through the first sample; the
+            // start is a vertex shared with a neighbour (a hair off it), so
+            // its angle can come out a hair below 0, outside the circle's
+            // domain [0, 2π].
+            let a0 = match ang(&pts[0]) {
+                a if a.abs() < 1e-9 => 0.0,
+                a => a,
+            };
             // Accumulate the turn along the polyline.
             let mut t = a0;
             for w in pts.windows(2) {

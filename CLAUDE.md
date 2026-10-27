@@ -1089,6 +1089,16 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Model edges have their own GPU buffer** (`SceneGeometry::add_edge_polyline`, used by
   `material::add_part_meshes*`): the visual style draws, hides or dashes them; grid, axes and overlays stay in
   the plain line buffer. New model-edge drawing must use `add_edge_polyline`, or styles will not affect it.
+- **Projected curves and closed profiles** (owner's box, `tests/project_box_lip.rs`): the face outline of a new
+  sketch projects curved edges as `LinkSource::Edge` links sharing the corner points (`add_curved_outline_edge`);
+  a curve that is no circle becomes an interpolation spline (`link::curve_shape`, fixed point count). Model
+  vertices sit up to ~2e-6 mm off their curves and the solver leaves ~1e-6: `exact::closed_loop` makes every
+  joint of a profile exact before the kernel (which refuses gaps > 1e-6, "profile loop is not closed"), a
+  projected arc's centre goes onto its chord's bisector, and `to_brep`'s circle ranges run between the
+  *merged* vertices (`curve_range` snaps a start a hair below 0). A Join whose profile is bounded by projected
+  face edges starts its tool a hair inside the body (`exact::extrude_from`; flush walls took the kernel 22 s
+  to fail); other joins keep their exact tools — old files' face names depend on it. Two regions bounded by
+  the same curves (crescents) are told apart by the profile's seed (`ProfileRef::resolve`).
 - **Body operations return the surface bodies themselves**: `build_features` puts the sheets back after every
   step *except* a `BodyOp` (Delete Face changes or makes one); a new `BodyOp` must append the untouched sheets
   (`thicken` does). Delete Face (`part/exact.rs::delete_face`, `kernel/exact/delete_face.rs`): Heal only over

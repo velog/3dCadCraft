@@ -49,6 +49,21 @@ pub(super) fn extrude(
     works: &super::placement::WorkGeom,
     sketch: &Sketch,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
+    extrude_from(e, body, works, sketch, 0.0)
+}
+
+/// [`extrude`] whose tools start `overlap` behind the start level (away
+/// from the extrusion): a Join whose tool only touches the body on a face
+/// (a lip on a rim, its wall flush with the body's wall) gives the kernel's
+/// Boolean nothing to intersect ("no result"); reaching a little into the
+/// body it does, and the result is the same solid.
+pub(super) fn extrude_from(
+    e: &ExtrudeFeature,
+    body: &BRep,
+    works: &super::placement::WorkGeom,
+    sketch: &Sketch,
+    overlap: Real,
+) -> Result<Option<Vec<ExactSolid>>, Fail> {
     if e.output == Output::Surface {
         return extrude_surface(e, body, works, sketch);
     }
@@ -70,10 +85,14 @@ pub(super) fn extrude(
             // A two-sided taper (kinked at the sketch plane): not yet.
             return Ok(None);
         };
+        if overlap != 0.0 && taper != 0.0 {
+            return Err(Kernel("no overlap for a tapered extrusion".into()));
+        }
+        let back = overlap * (last.offset - first.offset).signum();
         let mut tool = exact::extrude(
             plane,
             &prof,
-            first.offset,
+            first.offset - back,
             last.offset,
             taper,
             &piece.prefix,

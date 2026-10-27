@@ -3,8 +3,10 @@
 //!
 //! A [`GeometryLink`] ties geometry of one sketch (the *target*) to its
 //! source: a point, line, circle, arc or spline of another sketch of the
-//! same part (by sketch id + point/entity id, never by index), or a circular
-//! model edge (by [`EdgeRef`]: the names of its two faces and a hint). The
+//! same part (by sketch id + point/entity id, never by index), or a curved
+//! model edge (by [`EdgeRef`]: the names of its two faces and a hint; a
+//! circle or arc stays one, any other curve becomes an interpolation spline
+//! through [`CURVE_POINTS`] of its points). The
 //! target geometry is fixed (points fixed, circle radius held) and is moved
 //! to the orthogonal projection of the source onto the target plane at
 //! every regeneration ([`apply`]), so user geometry built on it follows.
@@ -24,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{EdgeRef, PartSketch};
 use crate::kernel::{BRep, Curve, Plane, Point3, Real, Tolerance, UnitVector3, Vector3};
-use crate::sketch::{Entity, EntityId, Point2, PointId, Sketch, SplineFit, Style};
+use crate::sketch::{Entity, EntityId, Point2, PointId, Sketch, SplineFit, Style, Vector2};
 
 /// What of a source sketch is projected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,7 +224,71 @@ pub fn sketch_shape(sketch: &Sketch, geo: SketchGeo) -> Result<Shape3, String> {
     }
 }
 
-/// A circular model edge in model coordinates.
+/// How many points an open curved edge that is no circle projects through
+/// (a closed one: twice as many). Fixed, so the target keeps its points
+/// when the edge changes shape.
+pub const CURVE_POINTS: usize = 9;
+
+/// A model edge that is neither straight nor circular, as an interpolation
+/// spline through points evenly spaced along it (natural ends).
+fn curve_shape(body: &BRep, e: crate::kernel::EdgeId, closed: bool) -> Result<Shape3, String> {
+    let pts = body
+        .sample_edge(e, &crate::kernel::TessellationOptions::default())
+        .map_err(|e| e.to_string())?;
+    if pts.len() < 2 {
+        return Err("the edge has no length".into());
+    }
+    // Arc length at each sample.
+    let mut at = vec![0.0];
+    for w in pts.windows(2) {
+        at.push(at[at.len() - 1] + (w[1] - w[0]).norm());
+    }
+    let total = at[at.len() - 1];
+    if total <= 1e-9 {
+        return Err("the edge has no length".into());
+    }
+    let k = if closed {
+        2 * CURVE_POINTS
+    } else {
+        CURVE_POINTS
+    };
+    // Distinct points: open curves include both ends; closed ones stop
+    // before the end (it is the start again).
+    let steps = if closed { k } else { k - 1 };
+    let mut out = Vec::with_capacity(k);
+    let mut j = 0;
+    for i in 0..k {
+        let s = total * i as Real / steps as Real;
+        while j + 1 < at.len() - 1 && at[j + 1] < s {
+            j += 1;
+        }
+        let span = (at[j + 1] - at[j]).max(1e-300);
+        let t = ((s - at[j]) / span).clamp(0.0, 1.0);
+        out.push(pts[j] + (pts[j + 1] - pts[j]) * t);
+    }
+    if !closed {
+        out[0] = pts[0];
+        out[k - 1] = pts[pts.len() - 1];
+    }
+    let mut order: Vec<usize> = (0..k).collect();
+    if closed {
+        order.push(0);
+    }
+    let fit = SplineFit {
+        start: None,
+        end: None,
+        inner: Vec::new(),
+        closed,
+    };
+    Ok(Shape3::Spline {
+        points: out,
+        order,
+        fit: Some((fit, Vector3::x(), Vector3::y())),
+    })
+}
+
+/// A curved model edge in model coordinates: a circle or arc, or any other
+/// curve as an interpolation spline ([`curve_shape`]).
 pub fn edge_shape(body: &BRep, edge: &EdgeRef) -> Result<Shape3, String> {
     let e = super::draft::edge_of(body, edge).ok_or_else(|| {
         format!(
@@ -232,7 +298,10 @@ pub fn edge_shape(body: &BRep, edge: &EdgeRef) -> Result<Shape3, String> {
     })?;
     let x = body.edge(e).ok_or("the edge no longer exists")?;
     let Some(Curve::Circle(c)) = body.curve(x.curve) else {
-        return Err("the edge is not circular any more".into());
+        if body.edge_direction(e).is_some() {
+            return Err("the edge is straight now; project it again".into());
+        }
+        return curve_shape(body, e, x.start == x.end);
     };
     let (a, b) = (
         body.vertex(x.start).map(|v| v.point),
@@ -382,6 +451,18 @@ pub fn project(shape: &Shape3, plane: &Plane) -> Result<Projected, String> {
                 );
             }
             out.flipped = normal.dot(&plane.normal) < 0.0;
+            // The centre moved onto the bisector of the two ends: a model
+            // edge's vertices sit up to the kernel's tolerance off its circle
+            // (1.75e-6 mm at a shelled lid's rounded corner), and an arc
+            // whose ends are not equally far from its centre leaves a gap
+            // the exact kernel refuses ("profile loop is not closed").
+            let (c, s, e) = (out.points[0], out.points[1], out.points[2]);
+            let chord = e - s;
+            if chord.norm() > tol.linear {
+                let m = nalgebra::center(&s, &e);
+                let n = Vector2::new(-chord.y, chord.x).normalize();
+                out.points[0] = m + n * (c - m).dot(&n);
+            }
         }
         Shape3::Spline { order, fit, .. } => {
             let y = plane.normal.cross(&plane.x_axis);
@@ -413,10 +494,34 @@ pub fn create(
     proj: &Projected,
     construction: bool,
 ) -> Result<(Vec<PointId>, Option<EntityId>), String> {
+    create_with(sketch, shape, proj, construction, &[])
+}
+
+/// [`create`], taking existing points for some of the link's points
+/// (`reuse`: index in link order → point): the face outline projected when
+/// a sketch is made shares its corners with the straight edges, so the
+/// loop is closed. Points made here are removed again on failure; reused
+/// ones are left alone.
+pub fn create_with(
+    sketch: &mut Sketch,
+    shape: &Shape3,
+    proj: &Projected,
+    construction: bool,
+    reuse: &[(usize, PointId)],
+) -> Result<(Vec<PointId>, Option<EntityId>), String> {
+    let mut made_here = Vec::new();
     let pts: Vec<PointId> = proj
         .points
         .iter()
-        .map(|&p| sketch.add_fixed_point(p))
+        .enumerate()
+        .map(|(i, &p)| match reuse.iter().find(|(k, _)| *k == i) {
+            Some(&(_, q)) => q,
+            None => {
+                let q = sketch.add_fixed_point(p);
+                made_here.push(q);
+                q
+            }
+        })
         .collect();
     let made = (|| -> Result<Option<EntityId>, crate::sketch::SketchError> {
         Ok(match shape {
@@ -459,7 +564,8 @@ pub fn create(
             Ok((pts, curve))
         }
         Err(e) => {
-            for p in pts {
+            let _ = pts;
+            for p in made_here {
                 let _ = sketch.remove_point(p);
             }
             Err(e.to_string())

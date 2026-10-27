@@ -1487,6 +1487,22 @@ impl PartDocument {
                         None => Err(exact::Fail::User(format!("sketch {sketch_id} is missing"))),
                         Some(ps) if use_exact => {
                             let built = match sweep {
+                                // A Join of a profile bounded by projected edges
+                                // of the sketch's face starts a hair inside the
+                                // body: its walls continue the body's (a lip on
+                                // a rim, flush with the inner wall), which sent
+                                // the kernel's Union down a 22 s path that
+                                // failed. Other joins keep their exact tools
+                                // (old files keep their face names).
+                                Sweep::Extrude(e)
+                                    if e.operation == Operation::Join
+                                        && matches!(ps.placement.plane, PlaneRef::Face(_))
+                                        && e.extent == extrude::Extent::Distance
+                                        && profile_on_references(e, ps) =>
+                                {
+                                    let overlap = (e.distance.abs() * 1e-3).clamp(1e-3, 0.05);
+                                    exact::extrude_from(e, &body, &works, &ps.sketch, overlap)
+                                }
                                 Sweep::Extrude(e) => exact::extrude(e, &body, &works, &ps.sketch),
                                 Sweep::Revolve(r) => exact::revolve(r, &body, &works, &ps.sketch),
                             };
@@ -1508,8 +1524,26 @@ impl PartDocument {
                                         op,
                                         solids: chosen.clone(),
                                     });
-                                    exact::combine(solids.clone(), added, op, chosen, false)
-                                        .map(Some)
+                                    match exact::combine(solids.clone(), added, op, chosen, false) {
+                                        // A Join that only touches the body:
+                                        // again with the tool reaching into it.
+                                        Err(exact::Fail::Kernel(msg))
+                                            if op == Operation::Join
+                                                && matches!(sweep, Sweep::Extrude(_)) =>
+                                        {
+                                            let Sweep::Extrude(e) = sweep else {
+                                                return Ok(false);
+                                            };
+                                            let overlap = (e.distance.abs() * 1e-3).clamp(1e-3, 0.05);
+                                            match exact::extrude_from(e, &body, &works, &ps.sketch, overlap) {
+                                                Ok(Some(again)) => exact::combine(solids.clone(), again, op, chosen, false)
+                                                    .map(Some)
+                                                    .map_err(|_| exact::Fail::Kernel(msg)),
+                                                _ => Err(exact::Fail::Kernel(msg)),
+                                            }
+                                        }
+                                        r => r.map(Some),
+                                    }
                                 }
                                 // An option the exact kernel lacks.
                                 Ok(None) => return Ok(false),
@@ -2819,13 +2853,13 @@ fn add_projections(body: &BRep, ps: &mut PartSketch, opts: &SketchOptions) {
             source: PointRef::PartOrigin,
         });
     }
-    let PlaneRef::Face(face_name) = &ps.placement.plane else {
+    let PlaneRef::Face(face_name) = ps.placement.plane.clone() else {
         return;
     };
     if !opts.auto_reference_edges {
         return;
     }
-    let Some(face) = body.find_face(face_name) else {
+    let Some(face) = body.find_face(&face_name) else {
         return;
     };
 
@@ -2848,7 +2882,11 @@ fn add_projections(body: &BRep, ps: &mut PartSketch, opts: &SketchOptions) {
     for e in body.face_edges(face) {
         let Some(edge) = body.edge(e) else { continue };
         if body.edge_direction(e).is_none() {
-            log::warn!("projection of curved edges is not implemented yet");
+            // A curved edge: an associative link (an arc, a circle or a
+            // spline) whose ends are the projected corners.
+            if let Err(msg) = add_curved_outline_edge(body, ps, e, &point_of) {
+                log::warn!("{face_name}: a curved edge is not projected: {msg}");
+            }
             continue;
         }
         if let (Some(&a), Some(&b)) = (point_of.get(&edge.start), point_of.get(&edge.end))
@@ -2859,9 +2897,81 @@ fn add_projections(body: &BRep, ps: &mut PartSketch, opts: &SketchOptions) {
     }
 }
 
+/// The curved edge `e` of the sketch's face as a [`GeometryLink`] that
+/// shares its end points with the projected corners (`point_of`).
+fn add_curved_outline_edge(
+    body: &BRep,
+    ps: &mut PartSketch,
+    e: crate::kernel::EdgeId,
+    point_of: &HashMap<crate::kernel::VertexId, crate::sketch::PointId>,
+) -> Result<(), String> {
+    let edge = body.edge(e).ok_or("no edge")?;
+    let r = blend::edge_ref(body, e).ok_or("its faces have no names")?;
+    let shape = link::edge_shape(body, &r)?;
+    let proj = link::project(&shape, &ps.sketch.plane)?;
+    let (a, b) = (point_of.get(&edge.start), point_of.get(&edge.end));
+    let n = proj.points.len();
+    // The link's points that are the edge's ends: an arc [centre, start,
+    // end], a spline its points from start to end; a circle has none.
+    let reuse: Vec<(usize, crate::sketch::PointId)> = match (&shape, a, b) {
+        (link::Shape3::Arc { .. }, Some(&a), Some(&b)) => vec![(1, a), (2, b)],
+        (link::Shape3::Spline { order, .. }, Some(&a), Some(&b))
+            if order.first() != order.last() =>
+        {
+            vec![(0, a), (n - 1, b)]
+        }
+        (link::Shape3::Spline { .. }, Some(&a), _) => vec![(0, a)],
+        _ => Vec::new(),
+    };
+    let (points, curve) = link::create_with(&mut ps.sketch, &shape, &proj, false, &reuse)?;
+    ps.links.push(GeometryLink {
+        source: LinkSource::Edge { edge: r },
+        points,
+        curve,
+        status: None,
+    });
+    Ok(())
+}
+
+/// Whether a profile of `e` is bounded (outside or in a hole) by projected
+/// geometry of sketch `ps` (its face's edges, linked model edges).
+fn profile_on_references(e: &ExtrudeFeature, ps: &PartSketch) -> bool {
+    let regions = ps.sketch.regions();
+    e.profiles.iter().any(|pr| {
+        regions.iter().any(|r| {
+            let mut outer: Vec<_> = r.outer.edges.iter().map(|x| x.source).collect();
+            outer.sort();
+            outer.dedup();
+            outer == pr.sources
+                && std::iter::once(&r.outer)
+                    .chain(&r.holes)
+                    .flat_map(|l| &l.edges)
+                    .any(|x| ps.is_reference(x.source))
+        })
+    })
+}
+
 /// Removes all projected points (and, by cascade, reference lines and
-/// constraints attached to them).
+/// constraints attached to them), and the links of the face's curved edges
+/// that share those points (their own points go too).
 fn clear_projections(ps: &mut PartSketch) {
+    let corners: Vec<crate::sketch::PointId> = ps.projections.iter().map(|p| p.point).collect();
+    let (outline, keep): (Vec<GeometryLink>, Vec<GeometryLink>) =
+        std::mem::take(&mut ps.links).into_iter().partition(|l| {
+            matches!(l.source, LinkSource::Edge { .. })
+                && l.points.iter().any(|p| corners.contains(p))
+        });
+    ps.links = keep;
+    for l in outline {
+        if let Some(c) = l.curve {
+            let _ = ps.sketch.remove_entity(c);
+        }
+        for p in l.points {
+            if !corners.contains(&p) {
+                let _ = ps.sketch.remove_point(p);
+            }
+        }
+    }
     for pr in std::mem::take(&mut ps.projections) {
         let _ = ps.sketch.remove_point(pr.point);
     }
