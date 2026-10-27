@@ -536,6 +536,10 @@ pub struct DisplayOptions {
     pub hatching: bool,
     /// The view stays centred on its geometry (else Fixed).
     pub center_justified: bool,
+    /// Flat pattern views: bend centre lines.
+    pub bend_centerlines: bool,
+    /// Flat pattern views: the lines where each bend starts and ends.
+    pub bend_extents: bool,
 }
 
 impl Default for DisplayOptions {
@@ -550,6 +554,8 @@ impl Default for DisplayOptions {
             orientation_from_base: true,
             hatching: true,
             center_justified: true,
+            bend_centerlines: true,
+            bend_extents: true,
         }
     }
 }

@@ -1943,6 +1943,7 @@ impl CadCraftApp {
             .model_of(sheet, v.id)
             .map_or_else(String::new, |m| self.model_name(m));
         let parent = v.parent();
+        let flat = d.flat_of(sheet, v.id);
         let mut nv = v.clone();
         egui::Grid::new("drw_view_props")
             .num_columns(2)
@@ -2011,6 +2012,14 @@ impl CadCraftApp {
                 super::panels::plabel(ui, "Label visible");
                 ui.checkbox(&mut nv.label_visible, "");
                 ui.end_row();
+                if flat {
+                    super::panels::plabel(ui, "Bend Centerlines");
+                    ui.checkbox(&mut nv.display.bend_centerlines, "");
+                    ui.end_row();
+                    super::panels::plabel(ui, "Bend Extents");
+                    ui.checkbox(&mut nv.display.bend_extents, "");
+                    ui.end_row();
+                }
                 super::panels::plabel(ui, "Position X");
                 ui.add(ExprValue::new(&mut nv.position[0]).suffix(" mm"));
                 ui.end_row();
@@ -2299,6 +2308,14 @@ fn display_tab(ui: &mut egui::Ui, d: &mut ViewDialog) {
             .on_disabled_hover_text("Tangent edges are always shown for now (stage D1 follow-up)");
         planned_check(ui, "Foreshortened", why);
         planned_check(ui, "Interference Edges", "Assemblies: planned (stage D4)");
+        let flat = d.sheet_metal == drw::SheetView::Flat;
+        for (on, text) in [
+            (&mut d.display.bend_centerlines, "Bend Centerlines"),
+            (&mut d.display.bend_extents, "Bend Extents"),
+        ] {
+            ui.add_enabled(flat, egui::Checkbox::new(on, text))
+                .on_disabled_hover_text("Flat pattern views only");
+        }
         let ui = &mut cols[1];
         ui.add_enabled(
             d.projected,

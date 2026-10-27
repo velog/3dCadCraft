@@ -125,7 +125,7 @@ pub fn view_extras<'a>(
         };
         // Flat patterns: bend centre lines and bend extents.
         for b in &l.bends {
-            if bend_c.on {
+            if bend_c.on && v.display.bend_centerlines {
                 out.push(Prim::Center {
                     a: pl.to_sheet(b.centre[0]),
                     b: pl.to_sheet(b.centre[1]),
@@ -133,7 +133,7 @@ pub fn view_extras<'a>(
                     chain: bend_c.line_type != super::style::LineType::Continuous,
                 });
             }
-            if bend_x.on {
+            if bend_x.on && v.display.bend_extents {
                 for z in &b.zone {
                     out.push(Prim::Path {
                         pts: vec![pl.to_sheet(z[0]), pl.to_sheet(z[1])],

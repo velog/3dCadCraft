@@ -463,10 +463,27 @@ impl Draw<'_> {
             norm(sub(p, q)) * 0.5
         };
         let at = add(add(mid, mul(n, half + 1.0)), offset);
+        let text = bend_note_text(b, &self.look.dim);
+        // Dragged off the bend (past the zone or the line's ends): a
+        // horizontal note with a leader to the nearest point of the line.
+        let rel = sub(at, mid);
+        let (s, t) = (dot(rel, u), dot(rel, n));
+        let off = t.abs() > half + 1.0 + 1.5 * h || s.abs() > len * 0.5 + h;
+        if off {
+            let tip = add(mid, mul(u, s.clamp(-len * 0.5, len * 0.5)));
+            let w = text_width(&text, h) * self.look.leader_text.width_scale;
+            let right = at[0] >= tip[0];
+            // The shoulder starts at the text's near end.
+            let start = [
+                at[0] - if right { w * 0.5 } else { -w * 0.5 },
+                at[1] - h * 0.5 - 0.8,
+            ];
+            return self.leader(tip, start, &text, right);
+        }
         vec![Prim::Text {
             at,
             height: h,
-            text: bend_note_text(b, &self.look.dim),
+            text,
             anchor: Anchor::Center,
             angle: u[1].atan2(u[0]),
         }]

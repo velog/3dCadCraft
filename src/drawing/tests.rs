@@ -1344,6 +1344,38 @@ fn flat_pattern_view_and_bend_note() {
         offset: [0.0, 0.0],
     };
     assert!(resolve(&far, &view).is_err());
+    // Dragged a little along the line it stays on the line; dragged off
+    // the bend it gets a leader whose tip lies on the centre line.
+    let along = AnnotationKind::BendNote {
+        view: 1,
+        bend: bend.middle(),
+        offset: [1.0, 1.0],
+    };
+    assert_eq!(resolve(&along, &view).unwrap().prims.len(), 1);
+    let dragged = AnnotationKind::BendNote {
+        view: 1,
+        bend: bend.middle(),
+        offset: [30.0, 40.0],
+    };
+    let s = resolve(&dragged, &view).unwrap();
+    assert!(s.prims.len() > 2, "{:?}", s.prims);
+    assert!(
+        s.prims
+            .iter()
+            .any(|p| matches!(p, Prim::Text { angle, .. } if angle.abs() < 1e-12))
+    );
+    let (a, c) = (pl.to_sheet(bend.centre[0]), pl.to_sheet(bend.centre[1]));
+    let on_line = |q: [f64; 2]| {
+        let (d, e) = ([c[0] - a[0], c[1] - a[1]], [q[0] - a[0], q[1] - a[1]]);
+        (d[0] * e[1] - d[1] * e[0]).abs() / d[0].hypot(d[1]) < 1e-6
+    };
+    assert!(
+        s.prims
+            .iter()
+            .any(|p| matches!(p, Prim::Line { a, .. } if on_line(*a))),
+        "{:?}",
+        s.prims
+    );
     // The bend layers draw the lines: chain centre line, two extents.
     let mut d = DrawingDocument::default();
     let v = d
@@ -1365,4 +1397,19 @@ fn flat_pattern_view_and_bend_note() {
             .count(),
         1
     );
+    // Each kind of bend line can be switched off per view.
+    let paths = |d: &DrawingDocument| {
+        super::render::view_extras(d, 0, &|id| (id == v).then_some((pl, &lines)))
+            .iter()
+            .fold((0, 0), |(c, p), x| match x {
+                Prim::Center { .. } => (c + 1, p),
+                Prim::Path { .. } => (c, p + 1),
+                _ => (c, p),
+            })
+    };
+    let (c0, p0) = paths(&d);
+    d.sheets[0].views[0].display.bend_extents = false;
+    assert_eq!(paths(&d), (c0, p0 - 2));
+    d.sheets[0].views[0].display.bend_centerlines = false;
+    assert_eq!(paths(&d), (c0 - 1, p0 - 2));
 }

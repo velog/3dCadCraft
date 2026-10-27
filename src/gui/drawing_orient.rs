@@ -339,8 +339,65 @@ impl CadCraftApp {
             frame_rect.left_bottom(),
             frame_rect.right_bottom(),
         ];
-        for c in corners {
-            painter.rect_filled(Rect::from_center_size(c, Vec2::splat(7.0)), 0.0, HANDLE);
+        let scaling = matches!(dlg.orient.drag, Some(Drag::Scale(..)));
+        let hot_corner = pointer.and_then(|p| corners.iter().position(|c| c.distance(p) < 8.0));
+        for (k, c) in corners.iter().enumerate() {
+            let big = hot_corner == Some(k) && dlg.orient.drag.is_none();
+            let side = if big { 11.0 } else { 7.0 };
+            painter.rect_filled(Rect::from_center_size(*c, Vec2::splat(side)), 0.0, HANDLE);
+        }
+        // Cursor: resize over a corner, move over the frame.
+        if let Some(k) = hot_corner.filter(|_| dlg.orient.drag.is_none()) {
+            ctx.set_cursor_icon(if k == 0 || k == 3 {
+                egui::CursorIcon::ResizeNwSe
+            } else {
+                egui::CursorIcon::ResizeNeSw
+            });
+        } else if scaling {
+            ctx.set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+        } else if dlg.orient.drag.is_none()
+            && dlg.edit.is_none()
+            && pointer.is_some_and(|p| frame_rect.contains(p))
+        {
+            ctx.set_cursor_icon(egui::CursorIcon::Move);
+        }
+        // While a corner is dragged: the frame follows the pointer and a
+        // label tells the scale a release gives (scales snap to the
+        // standard list, Ctrl drags freely).
+        if let (Some(Drag::Scale(s0, d0)), Some(p)) = (dlg.orient.drag, pointer) {
+            let q = cam.to_sheet(rect, p);
+            let raw = s0 * (q[0] - pos[0]).hypot(q[1] - pos[1]) / d0;
+            let k = raw / scale;
+            let lo = to([pos[0] - half[0] * k, pos[1] + half[1] * k]);
+            let hi = to([pos[0] + half[0] * k, pos[1] - half[1] * k]);
+            painter.rect_stroke(
+                Rect::from_two_pos(lo, hi).expand(6.0),
+                0.0,
+                Stroke::new(1.0, HANDLE),
+                egui::StrokeKind::Middle,
+            );
+            let free = ctx.input(|i| i.modifiers.ctrl);
+            let text = format!(
+                "Scale {}{}",
+                drw::scale_text(scale),
+                if free { "" } else { "   (Ctrl: free)" }
+            );
+            // Above the ViewCube and the previews.
+            let tip = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Tooltip,
+                egui::Id::new("drw_scale_tip"),
+            ));
+            let at = p + Vec2::new(16.0, 18.0);
+            let galley = tip.layout_no_wrap(text, FontId::proportional(13.0), Color32::BLACK);
+            let r = Rect::from_min_size(at, galley.size()).expand(4.0);
+            tip.rect_filled(r, 3.0, Color32::from_rgb(255, 250, 215));
+            tip.rect_stroke(
+                r,
+                3.0,
+                Stroke::new(1.0, Color32::GRAY),
+                egui::StrokeKind::Inside,
+            );
+            tip.galley(at, galley, Color32::BLACK);
         }
         // Projected views: previews and the border triangles (new views).
         let mut triangles = Vec::new();
