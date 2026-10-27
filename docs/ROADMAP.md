@@ -301,6 +301,53 @@ Before each step: verify its rows against the Inventor 2027 help (spec §7).
 
 ---
 
+## Part and assembly interface review (2026-10-27)
+
+The owner asked for a review of the part and assembly interface: what to improve and what is missing.
+It was checked in the running app (a 12-component assembly, a part with 111 faces) and in the code.
+Order agreed with the owner: **spec → interface (containers, buttons, dialogs with every option, OK
+disabled) → logic, command by command** (rules 7, 14, 15, 17). The part command set is specified in
+[spec/2.0-part-commands.md](spec/2.0-part-commands.md); the assembly command set gets its own spec
+(3.0) in step AU0.
+
+### P0 — defects found in the review
+
+| # | Defect | Where | Status |
+|---|---|---|---|
+| P0.1 | `plabel(ui, "")` takes its drag-handle id from the text: the 23 empty labels collide ("First / Second use of widget ID" in Extrude › Advanced Properties) | `gui/panels.rs` `plabel` | ⬜ |
+| P0.2 | "Suppress if..." is listed twice in a feature's browser menu (the block is repeated) | `gui/panels.rs` browser menu | ⬜ |
+| P0.3 | Validation prints `genus Some(11)` (Debug format) and χ shows as "x" | `gui/panels.rs` Validation | ⬜ |
+| P0.4 | Occurrence Properties: "Rotation Y −0 deg"; the label "Degrees of …" is cut off | `gui/assembly.rs` | ⬜ |
+| P0.5 | A selected component is not highlighted in the view (click in the view or in the browser); browser and Properties follow | `assembly_scene` (scene not rebuilt on a selection change?) | ⬜ to confirm |
+| P0.6 | Edit Feature (double-click) marks the document changed (`*`) before anything is changed | rollback | ⬜ |
+| P0.7 | The hover tooltip of a face covers the mini-toolbar | `gui/mod.rs` | ⬜ |
+
+### P — part environment
+
+| Step | Content | Spec | Status |
+|---|---|---|---|
+| P1 | Spec of the whole part command set with every dialog | [2.0](spec/2.0-part-commands.md) | 🟡 2026-10-27 written; rows *(to confirm)* checked against the help before their logic |
+| P2 | Interface of every missing command (rule 15): ribbon in Inventor's panels (Create: Emboss, Decal, Mark, Derive, Import, Unwrap, Shape Generator; Modify: Thicken/Offset, Delete Face, Direct, Copy Object, Move Bodies, Bend Part; Pattern: Sketch Driven; Surface: Stitch, Sculpt, Patch, Trim, Extend, Ruled Surface, Replace Face, Repair Bodies, Fit Mesh Face; Plastic Part; Freeform; Inspect › Analysis; Manage › Author / Insert / Layout; View › Appearance; Environments tab), each with alias, own icon, the dialog with selectors that pick, OK disabled — `gui/part_planned.rs` | 2.0 §3.1–3.8 | ⬜ |
+| P3 | Right-click menus by object kind (face, cylinder, edge, vertex, body, surface body, sketch, work feature, feature, empty view), the command started with the selection as its first input (rule 17) | 2.0 §3.9, 0.15 G1 | ⬜ |
+| P4 | Visual Styles (Shaded, Shaded with Edges, Hidden Edges, Wireframe variants, Monochrome…) and Section View (Quarter / Half / Three Quarter / End) — the most used missing view commands | 0.3 | ⬜ |
+| P5 | Browser: search / filter, Show Dimensions, Find in Window, Properties, Copy; Properties restyle (labels look disabled) | 2.16 | ⬜ |
+| P6 | Logic, in this order (each: spec rows → tests → visual check): Thicken/Offset → Delete Face → Move Bodies → Copy Object → Emboss / Mark → Sketch Driven Pattern → Replace Face → Stitch / Sculpt / Trim / Extend / Ruled Surface / Patch → Bend Part → Direct → Derive → Import (STEP) → analyses (Zebra, Draft, Curvature, Section) → Make Part / Make Components → iFeature / iPart → Plastic Part → Unwrap → Freeform / Shape Generator (blocked by their kernels) | 2.0 | ⬜ |
+
+### AU — assembly environment
+
+| Step | Content | Status |
+|---|---|---|
+| AU0 | Spec 3.0 of the whole assembly command set: Assemble (Component: Place, Place from Content Center, Place Imported CAD Files, Create, Replace, Pattern, Mirror, Copy, Shrinkwrap / Simplify; Position: Free Move, Free Rotate, Grounded; Relationships: Joint, Constrain, Show, Show Sick, Hide All; Work Features; Start 2D Sketch; Productivity: Make Layout; Manage: BOM, Parameters, Update), Design tab (Bolted Connection, Shaft, Spur Gear, Frame…), Environments tab (Tube & Pipe, Cable & Harness, Frame Generator, Dynamic Simulation, Stress Analysis, Presentation, Studio) | ⬜ |
+| AU1 | Interface of all of them (rule 15), plus the Constrain panel brought to the shared selector rows (dot / count / `x`), type icons, Motion / Transitional / Constraint Set tabs (disabled), presets row | ⬜ |
+| AU2 | Occurrence menu (rule 17): Constrain / Joint with the selection, Edit (in place), Replace, Pattern, Isolate / Undo Isolate, Transparent, Suppress, Enabled, Find in Browser, Measure, Hide Others / Show All | ⬜ |
+| AU3 | Quick Access in an assembly: selection priority Component / Part / Feature / Faces and Edges instead of "Faces and Edges"; no Material list (parts carry materials); Appearance per occurrence | ⬜ |
+| AU4 | Inspect in an assembly: Interference (3.5), Physical Properties of the assembly, Center of Gravity | ⬜ |
+| AU5 | Browser: the part's features under an occurrence, visibility toggle, filter, Assembly / Modeling view; components listed under the assembly only | ⬜ |
+| AU6 | View in an assembly: Visual Styles, Section View (P4 serves both), Representations (View, Positional, Model States — 3.9), DOF glyph | ⬜ |
+| AU7 | Logic in the A-plan order: A4 (Drive / Animate rest) → A5 (Pattern Component, Interference, subassemblies) → Replace (3.8) → Edit in place / adaptive (3.10) → Representations (3.9) → Contact Solver (3.4); Mate point–point (vertex picking), Angle Directed / Explicit, Lock Rotation, automatic joint type, Free Rotate handles | ⬜ |
+
+---
+
 ## Interface: gaps and next steps
 
 Collected from [REFERENCE.md](REFERENCE.md) (the reference written from the code on 2026-10-19), the sections "Differences from Inventor" and "Differences from docs/UI.md". The numbers point to [FEATURES.md](FEATURES.md).

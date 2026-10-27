@@ -739,6 +739,8 @@ Robustness in touching and nearly coincident cases is achieved with tolerances a
 
 ## 2.14 Thicken / Offset, Delete Face, Replace Face — ⬜ · L
 
+**Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
+
 - **Thicken/Offset:** turns a surface into a body with a thickness.
 - **Delete Face:** removes a face and closes the hole (healing imported models).
 - **Replace Face:** replaces a face with another surface.
@@ -770,6 +772,8 @@ Robustness in touching and nearly coincident cases is achieved with tolerances a
 **How it works.** A part is a list of features. Regeneration runs them in order, caches the results and on a change re-runs only the features from the changed one onwards. On an error (for example an edge that no longer exists) the feature is marked red and the rest continue where possible.
 
 ## 2.17 Emboss / Engrave, Decal — ⬜ · M
+
+**Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
 
 - **Emboss / Engrave:** raised or recessed text or outline on a face, including wrapped around a cylinder.
 - **Decal:** an image projected onto a face.
@@ -1025,6 +1029,8 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 
 ## 5.4 Surfaces — ⬜ · XL
 
+**Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
+
 **Tools.**
 - **Boundary Patch:** a surface inside a closed loop.
 - **Stitch:** stitching surfaces into a body.
@@ -1083,6 +1089,8 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 **3DCadCraft approach.** **Configurations** (see 3.9 Model States) and tables are one common mechanism. One document with a parameter table gives all variants, and a Link to "bolt, row M8×30" is an ordinary `DocRef` + a choice of configuration.
 
 ## 5.8 Plastic parts — ⬜ · L
+
+**Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
 
 - **Grill:** a ventilation grille;
 - **Boss:** a screw boss;
