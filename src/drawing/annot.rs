@@ -83,6 +83,9 @@ pub enum AnnotationKind {
     /// Bend table of a flat pattern view, with its bend tags (`bend_table`,
     /// format revision 28).
     BendTable(super::bend_table::BendTable),
+    /// Baseline / chain / ordinate dimension set (`dimset`, format
+    /// revision 29).
+    DimSet(super::dimset::DimSet),
     /// Item balloon on a component of an assembly view (`parts`).
     Balloon(super::parts::Balloon),
     /// Text on the sheet.
@@ -251,6 +254,7 @@ pub fn resolve_in<'a>(
                 value: None,
             })
         }
+        AnnotationKind::DimSet(s) => st.dim_set(s, view),
         AnnotationKind::BendTable(bt) => {
             let (pl, lines) = view(bt.view).ok_or(Orphan::NoView)?;
             Ok(Shown {
@@ -482,6 +486,55 @@ impl Draw<'_> {
         }]
     }
 
+    /// A baseline / chain / ordinate set: its dimensions drawn as single
+    /// ones (`set_members`); ordinates write each distance at the end of the
+    /// point's extension line.
+    fn dim_set<'a>(
+        &self,
+        s: &super::dimset::DimSet,
+        view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+    ) -> Result<Shown, Orphan> {
+        use super::dimset::SetKind;
+        let ds = &self.look.dim;
+        let mut prims = Vec::new();
+        if s.kind != SetKind::Ordinate {
+            for d in set_members(s, view, ds.spacing)? {
+                prims.extend(self.dimension(&d, view)?.prims);
+            }
+            return Ok(Shown { prims, value: None });
+        }
+        let g = SetGeom::of(s, view)?;
+        let (ax, nx) = (g.ax, 1 - g.ax);
+        let h = self.look.dim_text.height;
+        let c0 = g.c[s.origin].unwrap_or_default();
+        for &j in &g.order {
+            let p = g.sheet(j);
+            let mut from = p;
+            from[nx] += g.sign * ds.origin_offset;
+            let mut to = p;
+            to[nx] = g.at[nx];
+            if (to[nx] - p[nx]) * g.sign > ds.origin_offset {
+                prims.push(line(from, to));
+            }
+            let label = super::dimtext::Label::build(
+                (g.c[j].unwrap_or_default() - c0).abs(),
+                "",
+                &Default::default(),
+                ds,
+                h,
+                self.look.dim_text.width_scale,
+            );
+            let along = g.at[nx] + g.sign * (ds.gap + label.width * 0.5);
+            let (centre, angle) = if ax == 0 {
+                ([p[0] + h * 0.5, along], std::f64::consts::FRAC_PI_2)
+            } else {
+                ([along, p[1] - h * 0.5], 0.0)
+            };
+            prims.extend(label.prims(centre, angle));
+        }
+        Ok(Shown { prims, value: None })
+    }
+
     /// The label of dimension `d` measuring `value`.
     fn label(&self, d: &Dimension, value: f64, symbol: &str) -> super::dimtext::Label {
         super::dimtext::Label::build(
@@ -625,6 +678,122 @@ impl Draw<'_> {
             value: Some(value),
         })
     }
+}
+
+/// A point in its view's plane, on the sheet, and the view's placement.
+type ViewPoint = ([f64; 2], [f64; 2], Placement);
+
+/// A dimension set's points resolved: sheet points, coordinates along the
+/// direction, drawing order, placement and the side it lies on.
+struct SetGeom {
+    ax: usize,
+    pts: Vec<Option<[f64; 2]>>,
+    c: Vec<Option<f64>>,
+    order: Vec<usize>,
+    at: [f64; 2],
+    sign: f64,
+    pl: Placement,
+}
+
+impl SetGeom {
+    fn of<'a>(
+        s: &super::dimset::DimSet,
+        view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+    ) -> Result<SetGeom, Orphan> {
+        let ax = s.dir.axis();
+        let nx = 1 - ax;
+        let got: Vec<Option<ViewPoint>> = s.points.iter().map(|r| point(r, view).ok()).collect();
+        let origin = got.get(s.origin).and_then(|p| p.as_ref()).ok_or_else(|| {
+            Orphan::Missing(
+                s.points
+                    .get(s.origin)
+                    .map(|p| p.edge.clone())
+                    .unwrap_or_default(),
+            )
+        })?;
+        let pl = origin.2;
+        let at = add(pl.position, s.at);
+        let c: Vec<Option<f64>> = got.iter().map(|p| p.as_ref().map(|p| p.0[ax])).collect();
+        let pts: Vec<Option<[f64; 2]>> = got.iter().map(|p| p.as_ref().map(|p| p.1)).collect();
+        let mut order = s.order(&c);
+        // Of the points at one coordinate, the one nearest the placement
+        // carries the extension line (it never crosses the part).
+        for k in &mut order {
+            let ck = c[*k].unwrap_or_default();
+            let near = |j: usize| pts[j].map_or(f64::MAX, |p| (p[nx] - at[nx]).abs());
+            if let Some(best) = (0..c.len())
+                .filter(|&j| c[j].is_some_and(|cj| (cj - ck).abs() < 1e-6))
+                .min_by(|&a, &b| near(a).total_cmp(&near(b)))
+            {
+                *k = best;
+            }
+        }
+        let mid = order
+            .iter()
+            .map(|&k| pts[k].map_or(0.0, |p| p[nx]))
+            .sum::<f64>()
+            / order.len().max(1) as f64;
+        let sign = if at[nx] >= mid { 1.0 } else { -1.0 };
+        Ok(SetGeom {
+            ax,
+            pts,
+            c,
+            order,
+            at,
+            sign,
+            pl,
+        })
+    }
+
+    fn sheet(&self, k: usize) -> [f64; 2] {
+        self.pts.get(k).copied().flatten().unwrap_or([0.0; 2])
+    }
+}
+
+/// The single dimensions of a baseline or chain set: baseline from the
+/// origin to each point, the nearest first, `spacing` apart; chain between
+/// neighbours on one line. An ordinate set has none.
+pub fn set_members<'a>(
+    s: &super::dimset::DimSet,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+    spacing: f64,
+) -> Result<Vec<Dimension>, Orphan> {
+    use super::dimset::SetKind;
+    let g = SetGeom::of(s, view)?;
+    let (ax, nx) = (g.ax, 1 - g.ax);
+    let single = |a: usize, b: usize, line: f64| {
+        let (pa, pb) = (g.sheet(a), g.sheet(b));
+        let mut t = [0.0; 2];
+        t[ax] = (pa[ax] + pb[ax]) * 0.5;
+        t[nx] = line;
+        Dimension {
+            dim: if ax == 0 {
+                DimKind::Horizontal
+            } else {
+                DimKind::Vertical
+            },
+            a: s.points[a].clone(),
+            b: Some(s.points[b].clone()),
+            text: sub(t, g.pl.position),
+            precision: 2,
+            format: Default::default(),
+        }
+    };
+    Ok(match s.kind {
+        SetKind::Baseline => g
+            .order
+            .iter()
+            .skip(1)
+            .enumerate()
+            .map(|(k, &j)| single(g.order[0], j, g.at[nx] + g.sign * spacing * k as f64))
+            .collect(),
+        SetKind::Chain => g
+            .order
+            .windows(2)
+            .map(|w| single(w[0], w[1], g.at[nx]))
+            .collect(),
+        SetKind::Ordinate => Vec::new(),
+    })
 }
 
 fn circle(lines: &ViewLines, edge: &str) -> Result<([f64; 2], f64), Orphan> {
@@ -792,6 +961,7 @@ impl Annotation {
             AnnotationKind::BendNote { view, .. } => Some(*view),
             AnnotationKind::PartsList(p) => Some(p.view),
             AnnotationKind::BendTable(b) => Some(b.view),
+            AnnotationKind::DimSet(s) => s.view(),
             AnnotationKind::Balloon(b) => Some(b.view),
             AnnotationKind::Text { .. } | AnnotationKind::LeaderText { .. } => None,
         }

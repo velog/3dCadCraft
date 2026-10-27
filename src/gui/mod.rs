@@ -47,6 +47,7 @@ mod drawing_annot;
 mod drawing_bend;
 mod drawing_bom;
 mod drawing_dim;
+mod drawing_dimset;
 mod drawing_orient;
 mod drawing_planned;
 mod drawing_section;

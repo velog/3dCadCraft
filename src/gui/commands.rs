@@ -38,6 +38,7 @@ use super::sketch_tools::{ConstraintTool as Ct, Tool};
 use super::sm_planned::PlannedKind;
 use super::viewcube::StandardView;
 use crate::command::matcher::{self, Fields, Folded, Query, Tier};
+use crate::drawing::dimset::SetKind;
 use crate::part::PrimitiveKind as Prim;
 use crate::part::export::ExportFormat;
 use crate::sketch::Style;
@@ -1945,15 +1946,21 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["D"])
         .at(&[N_DIM])
         .tip("Click an edge (length), a circle (diameter / radius) or two points, then click where the dimension goes"),
-    dp("drw.baseline", "Baseline Dimension", "Размери от база", Icon::Dimension, Dp::Baseline)
+    d("drw.baseline", "Baseline Dimension", "Размери от база", Icon::Dimension)
+        .run(Action::Drawing(DrwCmd::DimSet(SetKind::Baseline, false)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["BD"])
         .at(&[N_DIM])
         .tip("Dimensions from one datum"),
-    dp("drw.ordinate", "Ordinate Dimension", "Ординатни размери", Icon::Dimension, Dp::Ordinate)
+    d("drw.ordinate", "Ordinate Dimension", "Ординатни размери", Icon::Dimension)
+        .run(Action::Drawing(DrwCmd::DimSet(SetKind::Ordinate, false)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["OD"])
         .at(&[N_DIM])
         .tip("Ordinate dimensions from an origin"),
-    dp("drw.chain", "Chain Dimension", "Верига от размери", Icon::Dimension, Dp::Chain)
+    d("drw.chain", "Chain Dimension", "Верига от размери", Icon::Dimension)
+        .run(Action::Drawing(DrwCmd::DimSet(SetKind::Chain, false)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["CD"])
         .at(&[N_DIM])
         .tip("A chain of dimensions"),
@@ -2035,15 +2042,21 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["ALB"])
         .at(&[D_MODIFY])
         .tip("Free a view from its alignment"),
-    dp("drw.baseline_set", "Baseline Dimension Set", "Група размери от база", Icon::Dimension, Dp::BaselineSet)
+    d("drw.baseline_set", "Baseline Dimension Set", "Група размери от база", Icon::Dimension)
+        .run(Action::Drawing(DrwCmd::DimSet(SetKind::Baseline, true)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["BDS"])
         .at(&[N_DIM])
         .tip("Baseline dimensions kept as one set"),
-    dp("drw.ordinate_set", "Ordinate Dimension Set", "Група ординатни размери", Icon::Dimension, Dp::OrdinateSet)
+    d("drw.ordinate_set", "Ordinate Dimension Set", "Група ординатни размери", Icon::Dimension)
+        .run(Action::Drawing(DrwCmd::DimSet(SetKind::Ordinate, true)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["ODS"])
         .at(&[N_DIM])
         .tip("Ordinate dimensions kept as one set"),
-    dp("drw.chain_set", "Chain Dimension Set", "Група верижни размери", Icon::Dimension, Dp::ChainSet)
+    d("drw.chain_set", "Chain Dimension Set", "Група верижни размери", Icon::Dimension)
+        .run(Action::Drawing(DrwCmd::DimSet(SetKind::Chain, true)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["CDS"])
         .at(&[N_DIM])
         .tip("Chain dimensions kept as one set"),

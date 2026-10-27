@@ -60,12 +60,6 @@ pub enum Planned {
     AlignBreak,
     StartSketch,
     // Annotate › Dimension
-    Baseline,
-    BaselineSet,
-    Ordinate,
-    OrdinateSet,
-    Chain,
-    ChainSet,
     Arrange,
     Retrieve,
     // Feature Notes
@@ -172,20 +166,6 @@ const HOLE_TABLE_PAGES: &[Page] = &[
     ),
 ];
 
-const DIM_SET_PAGES: &[Page] = &[Page(
-    "Placement",
-    &[
-        Sel(
-            "geometry",
-            "Geometry",
-            "select the edges and points to dimension (right-click: Continue)",
-        ),
-        Sel("place", "Placement", "click where the dimensions go"),
-        Combo("Style", &["Default (ISO)"], 0),
-        Note("A dimension set stays one object: members are added or removed from it later"),
-    ],
-)];
-
 const DATUM_TARGET_PAGES: &[Page] = &[Page(
     "Datum Target",
     &[
@@ -200,7 +180,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 50] = [
+    pub const ALL: [Planned; 44] = [
         Self::Overlay,
         Self::DraftView,
         Self::Break,
@@ -212,12 +192,6 @@ impl Planned {
         Self::AlignInPosition,
         Self::AlignBreak,
         Self::StartSketch,
-        Self::Baseline,
-        Self::BaselineSet,
-        Self::Ordinate,
-        Self::OrdinateSet,
-        Self::Chain,
-        Self::ChainSet,
         Self::Arrange,
         Self::Retrieve,
         Self::ChamferNote,
@@ -267,12 +241,6 @@ impl Planned {
             Self::AlignInPosition => "Positionally Align View",
             Self::AlignBreak => "Remove View Alignment",
             Self::StartSketch => "New Sketch",
-            Self::Baseline => "Baseline Dimension",
-            Self::BaselineSet => "Baseline Dimension Set",
-            Self::Ordinate => "Ordinate Dimension",
-            Self::OrdinateSet => "Ordinate Dimension Set",
-            Self::Chain => "Chain Dimension",
-            Self::ChainSet => "Chain Dimension Set",
             Self::Arrange => "Arrange Dimensions",
             Self::Retrieve => "Retrieve Model Annotations",
             Self::ChamferNote => "Chamfer Note",
@@ -460,21 +428,6 @@ impl Planned {
                     ),
                 ],
             )],
-            Self::Baseline | Self::Ordinate | Self::Chain => &[Page(
-                "Placement",
-                &[
-                    Sel(
-                        "geometry",
-                        "Geometry",
-                        "select edges and points (right-click: Continue)",
-                    ),
-                    Sel("origin", "Origin (Ordinate)", "click the origin point"),
-                    Sel("place", "Placement", "click where the dimensions go"),
-                    Combo("Style", &["Default (ISO)"], 0),
-                    Note("Separate dimensions, aligned and spaced by the style's Spacing (D)"),
-                ],
-            )],
-            Self::BaselineSet | Self::OrdinateSet | Self::ChainSet => DIM_SET_PAGES,
             Self::Arrange => &[Page(
                 "Arrange",
                 &[
@@ -979,9 +932,6 @@ impl Planned {
             }
             Self::AlignBreak => "Frees a view from its alignment",
             Self::StartSketch => "A sketch on the sheet or in a view",
-            Self::Baseline | Self::BaselineSet => "Dimensions from one datum edge",
-            Self::Ordinate | Self::OrdinateSet => "Ordinate dimensions from an origin indicator",
-            Self::Chain | Self::ChainSet => "A chain of dimensions end to end",
             Self::Arrange => "Spaces selected dimensions evenly",
             Self::Retrieve => {
                 "Brings the model's sketch / feature dimensions and 3D annotations into a view"

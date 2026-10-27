@@ -1416,3 +1416,75 @@ fn flat_pattern_view_and_bend_note() {
     d.sheets[0].views[0].display.bend_centerlines = false;
     assert_eq!(paths(&d), (c0 - 1, p0 - 2));
 }
+
+/// Baseline, chain and ordinate sets over the box's front view: points of
+/// its edges measured along x and y; repeated coordinates count once.
+#[test]
+fn dimension_sets_measure_from_the_origin() {
+    use super::annot::{Placement, resolve, set_members};
+    use super::dimset::{DimSet, SetDir, SetKind};
+    use super::sheet::Prim;
+    let boxed = primitive(
+        PrimitiveKind::Box,
+        Point2::new(0.0, 0.0),
+        Point2::new(20.0, 10.0),
+        10.0,
+    );
+    let front = lines_of(&boxed, ViewOrientation::Front);
+    let pl = Placement {
+        position: [100.0, 100.0],
+        scale: 1.0,
+        center: front.center(),
+    };
+    let view = |v: u32| (v == 1).then_some((pl, &front));
+    // Every end point of the visible straight edges.
+    let points: Vec<PointRef> = front
+        .edges
+        .iter()
+        .filter(|e| e.straight && e.visible && e.name.is_some())
+        .flat_map(|e| {
+            [PointRole::Start, PointRole::End].map(|role| PointRef {
+                view: 1,
+                edge: e.name.clone().unwrap_or_default(),
+                role,
+            })
+        })
+        .collect();
+    assert!(points.len() >= 4);
+    let set = |kind, dir, at| DimSet {
+        kind,
+        dir,
+        points: points.clone(),
+        origin: 0,
+        at,
+    };
+    let texts = |s: &DimSet| -> Vec<String> {
+        resolve(&AnnotationKind::DimSet(s.clone()), &view)
+            .unwrap()
+            .prims
+            .iter()
+            .filter_map(|p| match p {
+                Prim::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    // Two x coordinates (40 apart), two y coordinates (10 apart).
+    let b = set(SetKind::Baseline, SetDir::Horizontal, [0.0, 30.0]);
+    assert_eq!(set_members(&b, &view, 6.0).unwrap().len(), 1);
+    assert_eq!(texts(&b), ["40,00"]);
+    let c = set(SetKind::Chain, SetDir::Vertical, [40.0, 0.0]);
+    assert_eq!(texts(&c), ["10,00"]);
+    let mut o = set(SetKind::Ordinate, SetDir::Horizontal, [0.0, 30.0]);
+    let mut t = texts(&o);
+    t.sort();
+    assert_eq!(t, ["0,00", "40,00"]);
+    assert!(set_members(&o, &view, 6.0).unwrap().is_empty());
+    // A missing origin orphans the set.
+    o.points[0].edge = "gone".into();
+    assert!(resolve(&AnnotationKind::DimSet(o), &view).is_err());
+    // Save / load.
+    let a = AnnotationKind::DimSet(b);
+    let back: AnnotationKind = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+    assert_eq!(back, a);
+}

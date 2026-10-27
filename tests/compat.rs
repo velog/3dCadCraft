@@ -1353,6 +1353,88 @@ fn drawing_r28_project() -> Project {
     project
 }
 
+fn drawing_r29_project() -> Project {
+    use cadcraft3d::drawing::dimset::{DimSet, SetDir, SetKind};
+    use cadcraft3d::drawing::dimtext::{DimFormat, TolMethod};
+    use cadcraft3d::drawing::{AnnotationKind, DimKind, Dimension, PointRef, PointRole};
+    let mut project = drawing_r28_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let v = d.sheets[0].views[1].id;
+        let p = |edge: &str, role| PointRef {
+            view: v,
+            edge: edge.into(),
+            role,
+        };
+        d.add_annotation(AnnotationKind::DimSet(DimSet {
+            kind: SetKind::Ordinate,
+            dir: SetDir::Vertical,
+            points: vec![
+                p("E1", PointRole::Start),
+                p("E2", PointRole::End),
+                p("E3", PointRole::Center),
+            ],
+            origin: 1,
+            at: [60.0, 0.0],
+        }));
+        d.add_annotation(AnnotationKind::Dimension(Dimension {
+            dim: DimKind::Horizontal,
+            a: p("E1", PointRole::Start),
+            b: Some(p("E1", PointRole::End)),
+            text: [0.0, -40.0],
+            precision: 2,
+            format: DimFormat {
+                tol: TolMethod::FitsStacked,
+                hole: "H7".into(),
+                shaft: "g6".into(),
+                ..Default::default()
+            },
+        }));
+    }
+    project
+}
+
+/// The revision 29 drawing reads back with its ordinate set and the
+/// toleranced dimension.
+#[test]
+fn drawing_r29_reads() {
+    use cadcraft3d::drawing::AnnotationKind;
+    use cadcraft3d::drawing::dimset::SetKind;
+    let f = root().join("r29/drawing_r29.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let anns = &d.sheets[0].annotations;
+    let set = anns
+        .iter()
+        .find_map(|a| match &a.kind {
+            AnnotationKind::DimSet(s) => Some(s.clone()),
+            _ => None,
+        })
+        .expect("a dimension set");
+    assert_eq!(set.kind, SetKind::Ordinate);
+    assert_eq!((set.points.len(), set.origin), (3, 1));
+    assert!(anns.iter().any(|a| matches!(
+        &a.kind,
+        AnnotationKind::Dimension(x) if x.format.hole == "H7" && x.format.shaft == "g6"
+    )));
+    project.validate().unwrap();
+}
+
 /// The revision 28 drawing reads back with its bend table.
 #[test]
 fn drawing_r28_reads() {
@@ -1571,6 +1653,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r28_project().save(&f).unwrap();
+        }
+        let f = root().join("r29/drawing_r29.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r29_project().save(&f).unwrap();
         }
         let f = root().join("r22/sheet_r22.3dcadcraft");
         if !f.exists() {

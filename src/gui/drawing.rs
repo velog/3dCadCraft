@@ -61,6 +61,8 @@ pub enum DrwCmd {
     PartsList,
     /// Annotate › Table (a bend table on a flat pattern view).
     Table,
+    /// Baseline / Chain / Ordinate Dimension; `true`: kept as a set.
+    DimSet(crate::drawing::dimset::SetKind, bool),
     /// Annotate › Balloon.
     Balloon,
     /// Annotate › Auto Balloon.
@@ -149,6 +151,8 @@ pub(super) enum DrwTool {
     BendNote,
     /// Table: pick a flat pattern view, then place the bend table.
     BendTable,
+    /// Baseline / Chain / Ordinate Dimension (Set).
+    DimSet(super::drawing_dimset::DsDraft),
 }
 
 /// Tabs of the Drawing View dialog.
@@ -432,6 +436,9 @@ impl CadCraftApp {
             DrwCmd::BendNote => self.start_annotation(DrwTool::BendNote),
             DrwCmd::PartsList => self.open_parts_list(),
             DrwCmd::Table => self.open_bend_table(),
+            DrwCmd::DimSet(kind, set) => self.start_annotation(DrwTool::DimSet(
+                super::drawing_dimset::DsDraft::new(kind, set),
+            )),
             DrwCmd::Balloon => self.open_balloon(),
             DrwCmd::AutoBalloon => self.open_auto_balloon(),
             DrwCmd::ExportPdf => self.open_pdf_export(),
@@ -657,6 +664,7 @@ impl CadCraftApp {
                 .into();
         }
         match &self.drw.tool {
+            Some(DrwTool::DimSet(d)) => d.prompt(),
             Some(DrwTool::CenterMark) => "Center Mark: click circles or arcs (Esc ends)".into(),
             Some(DrwTool::Centerline(None)) => "Centerline: click the first circle".into(),
             Some(DrwTool::Centerline(Some(_))) => {
@@ -1065,6 +1073,7 @@ impl CadCraftApp {
             }
             Some(DrwTool::BendNote) => self.bend_note_tool(&painter, rect, &response, &views),
             Some(DrwTool::BendTable) => self.bend_table_tool(&painter, rect, &response, &views),
+            Some(DrwTool::DimSet(_)) => self.dim_set_tool(&painter, rect, &response, &views),
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
             // Edit View of a base view: its preview and ViewCube.
@@ -1095,6 +1104,13 @@ impl CadCraftApp {
                     self.drw.tool = Some(DrwTool::Balloon(None));
                 }
                 Some(DrwTool::Base | DrwTool::PartsList | DrwTool::AutoBalloon) => {}
+                // Continue: the dimensions follow the cursor.
+                Some(DrwTool::DimSet(d)) if !d.placing && d.ready() => {
+                    let mut d = d.clone();
+                    d.cont();
+                    self.drw.tool = Some(DrwTool::DimSet(d));
+                }
+                Some(DrwTool::DimSet(d)) if d.placing => {}
                 _ => {
                     self.drw.tool = None;
                     self.bom_cancel();

@@ -133,7 +133,7 @@ fn lines_box(prims: &[Prim]) -> Option<([f64; 2], [f64; 2])> {
 }
 
 /// The views of this frame by id, for `annot::resolve`.
-fn lookup(views: &[ShownView]) -> HashMap<u32, (Placement, &ViewLines)> {
+pub(super) fn lookup(views: &[ShownView]) -> HashMap<u32, (Placement, &ViewLines)> {
     views
         .iter()
         .filter_map(|v| {
@@ -476,6 +476,36 @@ impl CadCraftApp {
             }
         }
         best.map(|(_, g)| g)
+    }
+
+    /// The points a pick stands for (dimension sets): a point itself, a
+    /// straight edge's two ends, a circle's centre; with their sheet places.
+    pub(super) fn pick_points(
+        &self,
+        views: &[ShownView],
+        g: &GeoPick,
+    ) -> Vec<(annot::PointRef, [f64; 2])> {
+        let r = |role| annot::PointRef {
+            view: g.view,
+            edge: g.edge.clone(),
+            role,
+        };
+        match g.what {
+            PickWhat::Point(role) => vec![(r(role), g.at)],
+            PickWhat::Circle(..) => vec![(r(PointRole::Center), g.at)],
+            PickWhat::Line => {
+                let Some((pl, l)) = lookup(views).get(&g.view).copied() else {
+                    return Vec::new();
+                };
+                let Some(e) = l.edge(&g.edge) else {
+                    return Vec::new();
+                };
+                vec![
+                    (r(PointRole::Start), pl.to_sheet(e.a)),
+                    (r(PointRole::End), pl.to_sheet(e.b)),
+                ]
+            }
+        }
     }
 
     /// An end point or centre of view geometry under the pointer (sheet mm).
@@ -901,6 +931,10 @@ impl CadCraftApp {
                             AnnotationKind::BendNote { offset, .. } => {
                                 offset[0] += delta[0];
                                 offset[1] += delta[1];
+                            }
+                            AnnotationKind::DimSet(s) => {
+                                s.at[0] += delta[0];
+                                s.at[1] += delta[1];
                             }
                             AnnotationKind::PartsList(pl) => {
                                 pl.at[0] += delta[0];
