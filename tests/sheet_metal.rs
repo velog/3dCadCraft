@@ -789,7 +789,17 @@ fn unfold_cut_refold() {
     // DXF of the flat: outline, the slot and the bend line on its layer.
     let dxf = p.flat_pattern_dxf(&body).unwrap();
     assert!(dxf.contains("BEND_UP") || dxf.contains("BEND_DOWN"));
-    assert!(dxf.matches("POLYLINE").count() >= 2, "outline + slot");
+    // Outline and slot are straight: LINEs (4 + 4 at least, besides the bend).
+    assert!(
+        dxf.matches(
+            "
+LINE
+"
+        )
+        .count()
+            >= 9,
+        "outline + slot + bend"
+    );
 }
 
 /// Cut on the folded sheet: a circle on the top face is kept as a cut-out,
@@ -1863,4 +1873,117 @@ fn corner_round_refuses_an_inside_corner() {
         ))
         .expect_err("an inside corner");
     assert!(e.to_string().contains("inside corner"), "{e}");
+}
+
+/// The flat pattern's DXF keeps arcs and circles exact (owner, 2026-10-27:
+/// the arcs came out as runs of short lines): rounded corners are ARCs with
+/// their radii, a round cut-out is one CIRCLE, and every loop closes.
+#[test]
+fn flat_dxf_writes_arcs_and_circles() {
+    use cadcraft3d::part::sheet_metal::{CornerSet, SheetOp};
+    let t = SheetMetalDefaults::default().values().thickness;
+    let mut p = rect(100.0, 60.0);
+    let c00 = corner_at(&p, Point3::origin(), t);
+    let c11 = corner_at(&p, Point3::new(100.0, 60.0, 0.0), t);
+    op(
+        &mut p,
+        SheetOp::CornerRound {
+            body: "Face1".into(),
+            sets: vec![
+                CornerSet {
+                    corners: vec![c00],
+                    radius: 10.0,
+                },
+                CornerSet {
+                    corners: vec![c11],
+                    radius: 5.0,
+                },
+            ],
+        },
+    );
+    let i = top_sketch(&mut p);
+    p.sketches[i]
+        .sketch
+        .add_circle(Point2::new(50.0, 30.0), 8.0)
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let sid = p.sketches[i].id.clone();
+    op(
+        &mut p,
+        SheetOp::Cut {
+            extent: Default::default(),
+            depth: 0.0,
+            across: false,
+            sketch: sid,
+            profiles: prof,
+        },
+    );
+    check(&p);
+    let dxf = p.flat_pattern_dxf("Face1").unwrap();
+    // (code, value) pairs of the ENTITIES section.
+    let lines: Vec<&str> = dxf.lines().collect();
+    let pairs: Vec<(&str, &str)> = lines
+        .chunks(2)
+        .map(|c| (c[0].trim(), c[1].trim()))
+        .collect();
+    let mut ents: Vec<Vec<(&str, &str)>> = Vec::new();
+    let mut inside = false;
+    for &(c, v) in &pairs {
+        if c == "2" && v == "ENTITIES" {
+            inside = true;
+        } else if inside && c == "0" {
+            ents.push(vec![(c, v)]);
+        } else if inside && let Some(e) = ents.last_mut() {
+            e.push((c, v));
+        }
+    }
+    let val = |e: &[(&str, &str)], code: &str| -> Real {
+        e.iter()
+            .find(|(c, _)| *c == code)
+            .unwrap()
+            .1
+            .parse()
+            .unwrap()
+    };
+    let arcs: Vec<&Vec<(&str, &str)>> = ents.iter().filter(|e| e[0].1 == "ARC").collect();
+    let circles: Vec<&Vec<(&str, &str)>> = ents.iter().filter(|e| e[0].1 == "CIRCLE").collect();
+    assert_eq!(dxf.matches("POLYLINE").count(), 0, "no chords: {dxf}");
+    let mut radii: Vec<Real> = arcs.iter().map(|e| val(e, "40")).collect();
+    radii.sort_by(Real::total_cmp);
+    assert_eq!(radii.len(), 2, "two rounded corners: {radii:?}");
+    assert!((radii[0] - 5.0).abs() < 1e-6 && (radii[1] - 10.0).abs() < 1e-6);
+    for e in &arcs {
+        // A quarter turn each, counter-clockwise from 50 to 51.
+        let turn = (val(e, "51") - val(e, "50")).rem_euclid(360.0);
+        assert!((turn - 90.0).abs() < 1e-6, "arc turn {turn}");
+    }
+    assert_eq!(circles.len(), 1, "the round cut-out");
+    assert!((val(circles[0], "40") - 8.0).abs() < 1e-6);
+    assert!((val(circles[0], "10") - 50.0).abs() < 1e-6);
+    // Every line and arc end meets another end (closed loops).
+    let mut ends: Vec<[Real; 2]> = Vec::new();
+    for e in &ents {
+        match e[0].1 {
+            "LINE" if e[1].1 == "OUTER" => {
+                ends.push([val(e, "10"), val(e, "20")]);
+                ends.push([val(e, "11"), val(e, "21")]);
+            }
+            "ARC" => {
+                let (cx, cy, r) = (val(e, "10"), val(e, "20"), val(e, "40"));
+                for code in ["50", "51"] {
+                    let a = val(e, code).to_radians();
+                    ends.push([cx + r * a.cos(), cy + r * a.sin()]);
+                }
+            }
+            _ => {}
+        }
+    }
+    for (k, a) in ends.iter().enumerate() {
+        let met = ends
+            .iter()
+            .enumerate()
+            .any(|(j, b)| j != k && (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-5);
+        assert!(met, "open end at {a:?}");
+    }
 }

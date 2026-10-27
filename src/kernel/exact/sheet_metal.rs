@@ -552,6 +552,97 @@ pub fn flat_loops(m: &SheetModel) -> Result<Vec<Vec<[Real; 2]>>, String> {
     Ok(out)
 }
 
+/// One piece of a flat pattern's loop as the flat's geometry has it (flat
+/// coordinates), for DXF: lines, arcs and whole circles stay exact; other
+/// curves are polylines.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FlatSeg {
+    /// A straight piece.
+    Line([Real; 2], [Real; 2]),
+    /// An arc from angle `start` turning `sweep` (radians, positive =
+    /// counter-clockwise).
+    Arc {
+        /// Centre.
+        center: [Real; 2],
+        /// Radius.
+        radius: Real,
+        /// Start angle.
+        start: Real,
+        /// Turn.
+        sweep: Real,
+    },
+    /// A whole circle (a loop of arcs of one circle).
+    Circle {
+        /// Centre.
+        center: [Real; 2],
+        /// Radius.
+        radius: Real,
+    },
+    /// Any other curve, as points (both ends included).
+    Curve(Vec<[Real; 2]>),
+}
+
+/// The flat pattern's material as closed loops of [`FlatSeg`]s (outer loops
+/// counter-clockwise, cut-outs clockwise): what DXF writes.
+pub fn flat_profile(m: &SheetModel) -> Result<Vec<Vec<FlatSeg>>, String> {
+    use solidcraft_geom::Seg2;
+    let regions = m.0.flat_regions().map_err(|e| e.to_string())?;
+    let tol = (m.0.t * 0.01).max(1e-3);
+    let xy = |p: solidcraft_geom::Vec2| [p.x, p.y];
+    let conv = |lp: &solidcraft_geom::Loop2| -> Vec<FlatSeg> {
+        // A loop of arcs of one circle turning a whole turn is a circle.
+        let mut circle = None;
+        let mut turn = 0.0;
+        let whole = lp.segs.iter().all(|s| match *s {
+            Seg2::Arc {
+                center,
+                radius,
+                sweep,
+                ..
+            } => {
+                turn += sweep;
+                let (c0, r0) = *circle.get_or_insert((center, radius));
+                center.dist(c0) <= 1e-9 * (1.0 + r0) && (radius - r0).abs() <= 1e-9 * (1.0 + r0)
+            }
+            _ => false,
+        });
+        if let (true, Some((c, r))) = (whole, circle)
+            && (turn.abs() - std::f64::consts::TAU).abs() < 1e-6
+        {
+            return vec![FlatSeg::Circle {
+                center: xy(c),
+                radius: r,
+            }];
+        }
+        lp.segs
+            .iter()
+            .map(|s| match *s {
+                Seg2::Line { a, b } => FlatSeg::Line(xy(a), xy(b)),
+                Seg2::Arc {
+                    center,
+                    radius,
+                    start,
+                    sweep,
+                } => FlatSeg::Arc {
+                    center: xy(center),
+                    radius,
+                    start,
+                    sweep,
+                },
+                _ => FlatSeg::Curve(s.polyline(tol).into_iter().map(xy).collect()),
+            })
+            .collect()
+    };
+    let mut out = Vec::new();
+    for r in regions {
+        out.push(conv(&r.outer.ccw()));
+        for h in &r.holes {
+            out.push(conv(h));
+        }
+    }
+    Ok(out)
+}
+
 /// The persistent name of the sheet edge nearest `at` (world).
 pub fn edge_name(m: &SheetModel, at: Point3) -> Option<String> {
     m.0.edge_name(v3(&at))

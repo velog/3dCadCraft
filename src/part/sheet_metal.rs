@@ -1142,8 +1142,11 @@ pub struct FlatBendLines {
     pub zone: [[crate::kernel::Point3; 2]; 2],
 }
 
-/// A minimal DXF (R12 entities: LINE, POLYLINE) of a flat pattern.
-fn dxf(loops: &[Vec<[Real; 2]>], bends: &[ksm::BendLine]) -> String {
+/// A minimal DXF (R12 entities) of a flat pattern: the loops' lines, arcs
+/// and circles as LINE / ARC / CIRCLE (what a laser or CAM program expects;
+/// a polyline of short chords is not an arc to them), other curves as open
+/// POLYLINEs, bend lines as LINEs.
+fn dxf(loops: &[Vec<ksm::FlatSeg>], bends: &[ksm::BendLine]) -> String {
     use std::fmt::Write;
     let mut s = String::new();
     let mut put = |code: i32, v: &str| {
@@ -1165,26 +1168,79 @@ fn dxf(loops: &[Vec<[Real; 2]>], bends: &[ksm::BendLine]) -> String {
     put(0, "SECTION");
     put(2, "ENTITIES");
     let num = |v: Real| format!("{v:.6}");
-    for lp in loops {
-        put(0, "POLYLINE");
-        put(8, "OUTER");
-        put(66, "1");
-        put(70, "1");
-        for p in lp {
-            put(0, "VERTEX");
-            put(8, "OUTER");
-            put(10, &num(p[0]));
-            put(20, &num(p[1]));
+    // DXF angles are degrees in [0, 360), arcs always counter-clockwise.
+    let deg = |a: Real| {
+        let d = a.to_degrees().rem_euclid(360.0);
+        if d >= 360.0 - 1e-9 { 0.0 } else { d }
+    };
+    for seg in loops.iter().flatten() {
+        match seg {
+            ksm::FlatSeg::Line(a, b) => {
+                put(0, "LINE");
+                put(8, "OUTER");
+                put(10, &num(a[0]));
+                put(20, &num(a[1]));
+                put(30, "0.0");
+                put(11, &num(b[0]));
+                put(21, &num(b[1]));
+                put(31, "0.0");
+            }
+            ksm::FlatSeg::Arc {
+                center,
+                radius,
+                start,
+                sweep,
+            } => {
+                let (a0, a1) = if *sweep >= 0.0 {
+                    (*start, start + sweep)
+                } else {
+                    (start + sweep, *start)
+                };
+                put(0, "ARC");
+                put(8, "OUTER");
+                put(10, &num(center[0]));
+                put(20, &num(center[1]));
+                put(30, "0.0");
+                put(40, &num(*radius));
+                put(50, &num(deg(a0)));
+                put(51, &num(deg(a1)));
+            }
+            ksm::FlatSeg::Circle { center, radius } => {
+                put(0, "CIRCLE");
+                put(8, "OUTER");
+                put(10, &num(center[0]));
+                put(20, &num(center[1]));
+                put(30, "0.0");
+                put(40, &num(*radius));
+            }
+            ksm::FlatSeg::Curve(pts) => {
+                put(0, "POLYLINE");
+                put(8, "OUTER");
+                put(66, "1");
+                put(10, "0.0");
+                put(20, "0.0");
+                put(30, "0.0");
+                put(70, "0");
+                for p in pts {
+                    put(0, "VERTEX");
+                    put(8, "OUTER");
+                    put(10, &num(p[0]));
+                    put(20, &num(p[1]));
+                    put(30, "0.0");
+                }
+                put(0, "SEQEND");
+            }
         }
-        put(0, "SEQEND");
     }
     for b in bends {
         put(0, "LINE");
         put(8, if b.up { "BEND_UP" } else { "BEND_DOWN" });
         put(10, &num(b.start[0]));
         put(20, &num(b.start[1]));
+        put(30, "0.0");
         put(11, &num(b.end[0]));
         put(21, &num(b.end[1]));
+        put(31, "0.0");
     }
     put(0, "ENDSEC");
     put(0, "EOF");
@@ -1321,7 +1377,7 @@ impl super::PartDocument {
             .sheet_models
             .get(body)
             .ok_or_else(|| format!("{body} is not a sheet metal body"))?;
-        let loops = ksm::flat_loops(&st.model)?;
+        let loops = ksm::flat_profile(&st.model)?;
         let bends = ksm::bends(&st.model);
         Ok(dxf(&loops, &bends))
     }
