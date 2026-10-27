@@ -1252,6 +1252,7 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::Material(MatCmd::Physical))
         .inv("iProperties: Physical")
         .at(&[I_MEASURE])
+        .env(Envs::MODELS)
         .tip("Mass, area, volume, centre of gravity and inertia (iProperties: Physical)")
         .spec("0.10-physical.md"),
     c("inspect.validate", "Validate Solid", "Проверка на тялото", Icon::Validate)
@@ -1614,9 +1615,11 @@ pub static COMMANDS: &[Command] = &[
         .spec("2.10-work-features.md"),
     c("view.cog", "Center of Gravity", "Център на тежестта", Icon::CenterOfGravity)
         .alias(&["COG"])
+        .run(Action::Material(MatCmd::CenterOfGravity))
         .at(&[V_VIS])
-        .env(PART)
-        .todo("0.10"),
+        .env(Envs::MODELS)
+        .tip("Shows the centre of gravity of the part or assembly (a toggle)")
+        .spec("0.10-physical.md"),
     c("view.analysis_visibility", "Analysis Visibility", "Видимост на анализите", Icon::AnalysisVisibility)
         .short("Analysis")
         .alias(&["ANV"])

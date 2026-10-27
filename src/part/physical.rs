@@ -97,6 +97,18 @@ impl MassProps {
         (vals, axes)
     }
 
+    /// The same properties after the rigid motion `t` (an assembly
+    /// occurrence's placement): the centre moves, the tensor turns (R I Rᵀ).
+    pub fn moved(&self, t: &crate::kernel::Transform3) -> MassProps {
+        let r = t.rotation.to_rotation_matrix();
+        let r = r.matrix();
+        MassProps {
+            center: t * self.center,
+            inertia: r * self.inertia * r.transpose(),
+            ..self.clone()
+        }
+    }
+
     /// The bodies together (parallel-axis theorem for the inertia).
     pub fn combine<'a>(parts: impl IntoIterator<Item = &'a MassProps>) -> Option<MassProps> {
         let parts: Vec<&MassProps> = parts.into_iter().collect();

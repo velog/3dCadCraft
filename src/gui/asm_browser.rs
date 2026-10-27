@@ -36,7 +36,16 @@ impl CadCraftApp {
             .iter()
             .map(|o| (o.id, o.name.clone(), o.grounded, o.visible, o.component))
             .collect();
+        // Suppressed: struck through; Enabled off: italic (Inventor).
+        let looks: std::collections::HashMap<u32, (bool, bool)> = a
+            .occurrences
+            .iter()
+            .map(|o| (o.id, (o.suppressed, o.enabled)))
+            .collect();
+
         let all: Vec<u32> = a.constraints.iter().map(|c| c.id).collect();
+        // Find in Browser: open and show that row (once).
+        let find = self.asm.find_in_browser.take();
         let mut cmds = Vec::new();
         self.cons.browser_hover = None;
         let asm_doc = self.part_id;
@@ -67,16 +76,37 @@ impl CadCraftApp {
             }
             self.origin_folder(ui, ASSEMBLY, &mut cmds);
             for (id, label, grounded, visible, component) in occs {
+                let (suppressed, enabled) = looks.get(&id).copied().unwrap_or((false, true));
+                if find == Some(id) {
+                    let key = ui.make_persistent_id(("asm_occ", id));
+                    let mut st = egui::collapsing_header::CollapsingState::load_with_default_open(
+                        ui.ctx(),
+                        key,
+                        false,
+                    );
+                    st.set_open(true);
+                    st.store(ui.ctx());
+                    cmds.push(TreeCmd::Select(id, false));
+                }
                 let header = fold(ui, ("asm_occ", id), false, |ui| {
                     super::panels::tree_icon(ui, Icon::Part);
                     if grounded {
                         super::panels::tree_icon(ui, Icon::Ground);
                     }
                     let mut text = RichText::new(&label);
-                    if !visible {
+                    if !visible || suppressed {
                         text = text.weak();
                     }
+                    if suppressed {
+                        text = text.strikethrough();
+                    }
+                    if !enabled {
+                        text = text.italics();
+                    }
                     let r = ui.selectable_label(self.asm.sel.contains(&id), text);
+                    if find == Some(id) {
+                        r.scroll_to_me(Some(egui::Align::Center));
+                    }
                     let r = if grounded {
                         r.on_hover_text("Grounded")
                     } else {

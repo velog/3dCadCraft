@@ -1654,7 +1654,7 @@ impl CadCraftApp {
         let started = std::time::Instant::now();
         let mut scene = thumbnail::Scene::default();
         if let Some(a) = self.assembly() {
-            for o in a.occurrences.iter().filter(|o| o.visible) {
+            for o in a.occurrences.iter().filter(|o| o.shown()) {
                 self.with_part(o.component, |part| scene.add_part(part, Some(&o.transform)));
             }
         } else if let Some(d) = self.drawing() {

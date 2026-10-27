@@ -69,6 +69,7 @@ mod home;
 mod i18n;
 mod icons;
 mod if_builder;
+mod interference;
 mod iprops;
 mod keys;
 mod layout;
@@ -5122,6 +5123,7 @@ impl CadCraftApp {
                 cube_drag,
             );
             let painter = ui.painter_at(rect);
+            self.draw_cog(&painter, rect);
             if self.layout.visible(layout::Element::Triad) {
                 viewcube::draw_triad(&painter, &self.camera, rect);
             }
@@ -7158,6 +7160,7 @@ impl CadCraftApp {
             pointer.filter(|_| on_cube.is_none()),
             sm_click,
         );
+        self.draw_cog(&painter, rect);
         if self.layout.visible(layout::Element::Triad) {
             viewcube::draw_triad(&painter, &self.camera, rect);
         }
@@ -7482,6 +7485,8 @@ impl eframe::App for CadCraftApp {
         if self.is_assembly() {
             self.bom_window(&ctx);
             self.drive_window(&ctx);
+            self.interference_poll(&ctx);
+            self.interference_window(&ctx);
         }
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);

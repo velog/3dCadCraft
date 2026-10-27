@@ -84,7 +84,8 @@ pub fn rows(
     info: &dyn Fn(DocRef) -> ComponentInfo,
 ) -> Vec<BomRow> {
     let mut out: Vec<BomRow> = Vec::new();
-    for o in &asm.occurrences {
+    // Suppressed components are left out (Inventor).
+    for o in asm.occurrences.iter().filter(|o| !o.suppressed) {
         let ci = info(o.component);
         let structure = o.bom.unwrap_or(ci.props.bom_structure);
         // Reference and Phantom parts are not in a reportable BOM (no
@@ -279,6 +280,11 @@ mod tests {
             "Item,Part Number,BOM Structure,Unit QTY,QTY,Stock Number,Description,Material,Grade"
         );
         assert_eq!(lines[2], "2,bolt,Normal,Each,3,,\"Hex bolt, M8\",Steel,8.8");
+        // A suppressed bolt leaves the BOM (Model Data too).
+        a.occurrences[1].suppressed = true;
+        let s = rows(&a, BomView::Structured, false, &info);
+        assert_eq!(s[1].qty, 2);
+        assert_eq!(rows(&a, BomView::ModelData, true, &info).len(), 5);
     }
 
     /// A sheet metal part's flat pattern extents are BOM columns.

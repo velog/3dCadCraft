@@ -10,7 +10,9 @@
 use std::sync::Arc;
 
 pub mod bom;
+pub mod interference;
 pub mod joint;
+pub mod physical;
 pub mod relation;
 pub mod solve;
 
@@ -232,8 +234,19 @@ pub fn pick(
     dir: &Vector3,
     mesh: &dyn Fn(DocRef) -> Option<Arc<PickMesh>>,
 ) -> Option<Hit> {
+    pick_among(asm, origin, dir, mesh, &|_| true)
+}
+
+/// [`pick`] among the pickable occurrences that `keep` accepts (Isolate).
+pub fn pick_among(
+    asm: &AssemblyDocument,
+    origin: &Point3,
+    dir: &Vector3,
+    mesh: &dyn Fn(DocRef) -> Option<Arc<PickMesh>>,
+    keep: &dyn Fn(&Occurrence) -> bool,
+) -> Option<Hit> {
     let mut best: Option<Hit> = None;
-    for o in asm.occurrences.iter().filter(|o| o.visible) {
+    for o in asm.occurrences.iter().filter(|o| o.pickable() && keep(o)) {
         let Some(m) = mesh(o.component) else {
             continue;
         };
@@ -275,7 +288,7 @@ pub fn occurrence_box(o: &Occurrence, local: (Point3, Point3)) -> (Point3, Point
 pub fn bounding_box(project: &Project, asm: &AssemblyDocument) -> Option<(Point3, Point3)> {
     asm.occurrences
         .iter()
-        .filter(|o| o.visible)
+        .filter(|o| o.shown())
         .filter_map(|o| {
             let b = part_of(project, o.component)?.body.bounding_box()?;
             Some(occurrence_box(o, b))
@@ -359,6 +372,16 @@ mod tests {
         let h = pick(a, &Point3::new(95.0, 15.0, 10.0), &down, &f).unwrap();
         assert_eq!(h.occurrence, id2);
         assert!(pick(a, &Point3::new(50.0, 5.0, 10.0), &down, &f).is_none());
+        // Disabled ones are drawn but not picked; suppressed ones neither.
+        a.find_mut(id2).unwrap().enabled = false;
+        assert!(pick(a, &Point3::new(95.0, 15.0, 10.0), &down, &f).is_none());
+        a.find_mut(id2).unwrap().enabled = true;
+        a.find_mut(id1).unwrap().suppressed = true;
+        assert!(pick(a, &Point3::new(5.0, 5.0, 10.0), &down, &f).is_none());
+        let keep_first = |o: &Occurrence| o.id == id1;
+        a.find_mut(id1).unwrap().suppressed = false;
+        // Isolate: only the kept ones are picked.
+        assert!(pick_among(a, &Point3::new(95.0, 15.0, 10.0), &down, &f, &keep_first).is_none());
         // Hidden occurrences are not picked and leave the box.
         a.find_mut(id2).unwrap().visible = false;
         assert!(pick(a, &Point3::new(95.0, 15.0, 10.0), &down, &f).is_none());
@@ -377,7 +400,13 @@ mod tests {
             Transform3::new(Vector3::new(1.0, 2.0, 3.0), Vector3::new(0.1, 0.2, 0.3)),
             false,
         );
-        a.find_mut(id).unwrap().visible = false;
+        {
+            let o = a.find_mut(id).unwrap();
+            o.visible = false;
+            o.suppressed = true;
+            o.enabled = false;
+            o.transparent = true;
+        }
         let dir = std::env::temp_dir().join(format!("asm-rt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.3dcadcraft");
@@ -390,6 +419,7 @@ mod tests {
         let (o0, o1) = (&a0.occurrences[0], &a1.occurrences[0]);
         assert_eq!((o1.id, o1.visible, o1.grounded), (id, false, false));
         assert_eq!(o1.name, "Block:1");
+        assert!(o1.suppressed && !o1.enabled && o1.transparent);
         assert_eq!(o0.transform, o1.transform);
     }
 }

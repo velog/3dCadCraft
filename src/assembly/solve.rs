@@ -423,7 +423,10 @@ pub fn solve(
 ) -> Solved {
     let mut out = Solved::default();
     let mut cons: Vec<Con> = Vec::new();
-    for c in asm.constraints.iter().filter(|c| !c.suppressed) {
+    // A suppressed component's relationships rest (not sick).
+    let off =
+        |c: &relation::Constraint| asm.occurrences.iter().any(|o| o.suppressed && c.uses(o.id));
+    for c in asm.constraints.iter().filter(|c| !c.suppressed && !off(c)) {
         // Symmetry's plane.
         let plane = match &c.plane {
             Some(r) => match local(r) {
@@ -675,6 +678,26 @@ mod tests {
                 o.transform = *t;
             }
         }
+    }
+
+    /// A suppressed component's relationships rest: it is not moved and
+    /// they are not sick (Inventor).
+    #[test]
+    fn suppressed_components_rest() {
+        let mut a = two_cubes();
+        a.add_constraint(con(
+            ConstraintKind::Mate,
+            face(1, "Top"),
+            face(2, "Bottom"),
+            0.0,
+        ));
+        a.find_mut(2).unwrap().suppressed = true;
+        let s = solve(&a, &cube_geom, None);
+        assert!(s.converged && s.sick.is_empty());
+        assert!(!s.transforms.iter().any(|(i, _)| *i == 2));
+        a.find_mut(2).unwrap().suppressed = false;
+        let s = solve(&a, &cube_geom, None);
+        assert!(s.transforms.iter().any(|(i, _)| *i == 2));
     }
 
     #[test]

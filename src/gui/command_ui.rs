@@ -324,15 +324,7 @@ impl CadCraftApp {
             Some(Cmd::Thicken) => self.commit_thicken(keep_open),
             Some(Cmd::DeleteFace) => self.commit_delete_face(keep_open),
             Some(Cmd::MoveBodies) => self.commit_move_bodies(keep_open),
-            Some(Cmd::Planned) => {
-                if let Some(d) = &self.part_planned {
-                    self.file_status = Some(Err(format!(
-                        "{}: only the interface exists yet ({})",
-                        d.kind.title(),
-                        d.kind.spec()
-                    )));
-                }
-            }
+            Some(Cmd::Planned) => self.planned_ok(),
             None => {}
         }
     }

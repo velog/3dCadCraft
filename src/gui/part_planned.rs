@@ -1289,6 +1289,14 @@ impl From<super::asm_planned::AsmPlanned> for Planned {
 }
 
 impl Planned {
+    /// Whether OK runs something (the command's logic exists).
+    pub fn has_logic(self) -> bool {
+        matches!(
+            self,
+            Planned::Asm(super::asm_planned::AsmPlanned::Interference)
+        )
+    }
+
     pub fn title(self) -> &'static str {
         match self {
             Planned::Part(k) => k.title(),
@@ -1477,8 +1485,13 @@ impl PartDialog {
         }
     }
 
-    /// Draws the panel body; returns true when Cancel was pressed.
-    fn ui(&mut self, ui: &mut egui::Ui) -> bool {
+    /// The picks of selector `key` (their descriptions).
+    pub(super) fn picks_of(&self, key: &str) -> &[String] {
+        self.picks.get(key).map_or(&[], Vec::as_slice)
+    }
+
+    /// Draws the panel body: whether Cancel or OK was pressed.
+    fn ui(&mut self, ui: &mut egui::Ui) -> (bool, bool) {
         let pages = self.kind.pages();
         if pages.len() > 1 {
             ui.horizontal_wrapped(|ui| {
@@ -1499,7 +1512,7 @@ impl PartDialog {
         }
         let ti = self.tab.min(pages.len().saturating_sub(1));
         let Some(page) = pages.get(ti) else {
-            return false;
+            return (false, false);
         };
         let flow = self.flow();
         let mut ev = RowEvents::default();
@@ -1526,17 +1539,21 @@ impl PartDialog {
             self.kind.spec(),
             self.kind.section()
         );
-        let mut cancel = false;
+        let (mut cancel, mut ok) = (false, false);
+        let logic = self.kind.has_logic();
         ui.horizontal(|ui| {
-            ui.add_enabled(false, egui::Button::new("OK"))
-                .on_disabled_hover_text(&tip);
+            let b = ui.add_enabled(logic, egui::Button::new("OK"));
+            ok = b.clicked();
+            b.on_disabled_hover_text(&tip);
             if ui.button("Cancel").clicked() {
                 cancel = true;
             }
-            ui.add_enabled(false, egui::Button::new("Apply"))
-                .on_disabled_hover_text(&tip);
+            if !logic {
+                ui.add_enabled(false, egui::Button::new("Apply"))
+                    .on_disabled_hover_text(&tip);
+            }
         });
-        cancel
+        (cancel, ok)
     }
 
     fn row(
@@ -1708,8 +1725,32 @@ impl CadCraftApp {
             return;
         };
         self.panel_header(ui, d.kind.icon(), d.kind.title());
-        let cancel = d.ui(ui);
+        let (cancel, ok) = d.ui(ui);
         self.part_planned = (!cancel).then_some(d);
+        if ok {
+            self.planned_ok();
+        }
+    }
+
+    /// OK of a planned command that has its logic.
+    pub(super) fn planned_ok(&mut self) {
+        let Some(d) = self.part_planned.clone() else {
+            return;
+        };
+        match d.kind {
+            Planned::Asm(super::asm_planned::AsmPlanned::Interference) => {
+                if self.start_interference(&d) {
+                    self.part_planned = None;
+                }
+            }
+            k => {
+                self.file_status = Some(Err(format!(
+                    "{}: only the interface exists yet ({})",
+                    k.title(),
+                    k.spec()
+                )));
+            }
+        }
     }
 }
 

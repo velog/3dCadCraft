@@ -271,6 +271,10 @@ const BUDGET_PROJECT_FACE: f64 = 60.0;
 const BUDGET_ROUNDED_SHELL: f64 = 400.0;
 const BUDGET_COMBINE: f64 = 300.0;
 const BUDGET_SPLIT: f64 = 500.0;
+/// Analyze Interference of 20 overlapping 36-hole plates: 19 BSP
+/// intersections of 10k-triangle meshes on the cores (24 cores 0.29 s, one
+/// thread 2.4 s).
+const BUDGET_INTERFERENCE: f64 = 1000.0;
 /// One kernel call (`split_body`, the section through four rounds at an
 /// angle) is ~0.8 s; classifying the parts by volume added 1.4 s (removed).
 const BUDGET_SPLIT_INCLINED: f64 = 1500.0;
@@ -1805,6 +1809,59 @@ fn speed_budgets() {
                     &f,
                 );
                 assert!(h.is_some());
+            }),
+        ));
+    }
+    // Analyze Interference (docs/spec/3.0 §3.4, AU4): 20 occurrences of the
+    // 36-hole plate in a row, each 10 mm into the next — 190 pairs within
+    // one set, 19 overlaps cut by the BSP CSG on the display triangles.
+    {
+        use cadcraft3d::assembly::interference::{self as itf, Body};
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+        use cadcraft3d::kernel::Transform3;
+        use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, Termination};
+        let mut p = plate.clone();
+        let pts: Vec<Point3> = (0..36)
+            .map(|i| {
+                Point3::new(
+                    10.0 + 16.0 * (i % 6) as Real,
+                    10.0 + 16.0 * (i / 6) as Real,
+                    10.0,
+                )
+            })
+            .collect();
+        let (k, ids) = p.create_hole_sketch("Box1:Top", &pts).unwrap();
+        let mut s = HoleSpec::simple(5.5, 10.0);
+        s.termination = Termination::ThroughAll;
+        let mut def = HoleFeature::new(s);
+        def.sketch = p.sketches[k].id.clone();
+        def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+        p.add_hole(def).unwrap();
+        let local = itf::part_triangles(&p);
+        let (lo, hi) = p.body.bounding_box().unwrap();
+        let step = hi.x - lo.x - 10.0;
+        let mut asm = AssemblyDocument::default();
+        let r = DocRef::local(DocumentId::new_random());
+        for i in 0..20 {
+            asm.place(
+                r,
+                "Plate",
+                Transform3::translation(step * i as Real, 0.0, 0.0),
+                i == 0,
+            );
+        }
+        let ids: Vec<u32> = asm.occurrences.iter().map(|o| o.id).collect();
+        rows.push((
+            "assembly: Analyze Interference, 20 overlapping 36-hole plates (190 pairs)",
+            BUDGET_INTERFERENCE,
+            median_ms(3, || {
+                let bodies: Vec<Body> = asm
+                    .occurrences
+                    .iter()
+                    .filter_map(|o| Body::of(o, &local))
+                    .collect();
+                let found = itf::analyze(&bodies, &itf::pairs(&ids, &[]));
+                assert_eq!(found.len(), 19);
             }),
         ));
     }

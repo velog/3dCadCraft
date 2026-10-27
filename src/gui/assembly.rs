@@ -95,6 +95,14 @@ pub(super) struct AsmUi {
     pub came_from: Option<DocumentId>,
     /// Copied occurrences (Ctrl+C): component, placement, name.
     clipboard: Vec<(DocRef, Transform3, String)>,
+    /// Isolate: only these occurrences are drawn and picked until Undo
+    /// Isolate (a view state, not saved, as Inventor's temporary
+    /// representation).
+    pub isolated: Option<Vec<u32>>,
+    /// Find in Browser: the row to open and scroll to (taken by the tree).
+    pub find_in_browser: Option<u32>,
+    /// Analyze Interference: the running search and its result window.
+    pub interference: super::interference::InterferenceUi,
 }
 
 /// Selected occurrences: blue; under the cursor: green (as faces in a
@@ -158,8 +166,21 @@ impl CadCraftApp {
         let a = self.assembly()?;
         let (o, d) = self.camera.ray(pos, rect)?;
         let d = d.try_normalize(1e-12)?;
-        let h = asm::pick(a, &o, &d, &|r| self.asm_mesh(r))?;
+        let h = asm::pick_among(a, &o, &d, &|r| self.asm_mesh(r), &|o| {
+            self.asm_isolated(o.id)
+        })?;
         Some((h, o + d * h.t))
+    }
+
+    /// Whether Isolate leaves occurrence `id` in the view.
+    pub(super) fn asm_isolated(&self, id: u32) -> bool {
+        self.asm.isolated.as_ref().is_none_or(|v| v.contains(&id))
+    }
+
+    /// Whether occurrence `o` is drawn (visible, not suppressed, not
+    /// isolated away).
+    pub(super) fn asm_shown(&self, o: &crate::document::Occurrence) -> bool {
+        o.shown() && self.asm_isolated(o.id)
     }
 
     /// The box of occurrence `id` in assembly coordinates.
@@ -265,7 +286,7 @@ impl CadCraftApp {
         let a = self.assembly()?;
         a.occurrences
             .iter()
-            .filter(|o| o.visible)
+            .filter(|o| self.asm_shown(o))
             .filter_map(|o| self.asm_box(o.id))
             .reduce(|(a, b), (c, d)| (a.inf(&c), b.sup(&d)))
     }
@@ -458,14 +479,63 @@ impl CadCraftApp {
     }
 
     fn toggle_visible(&mut self, ids: &[u32]) {
-        let all = self
-            .assembly()
-            .is_some_and(|a| ids.iter().all(|&i| a.find(i).is_some_and(|o| o.visible)));
-        self.edit_assembly("Visibility", |a| {
+        self.toggle_flag(ids, "Visibility", |o| &mut o.visible);
+    }
+
+    /// Turns the flag `field` of the occurrences `ids` off when it is on
+    /// for all of them, else on for all (one Undo step `label`).
+    pub(super) fn toggle_flag(
+        &mut self,
+        ids: &[u32],
+        label: &str,
+        field: fn(&mut crate::document::Occurrence) -> &mut bool,
+    ) {
+        let all = self.assembly().is_some_and(|a| {
+            ids.iter()
+                .all(|&i| a.find(i).cloned().is_some_and(|mut o| *field(&mut o)))
+        });
+        self.edit_assembly(label, |a| {
             for &i in ids {
                 if let Some(o) = a.find_mut(i) {
-                    o.visible = !all;
+                    *field(o) = !all;
                 }
+            }
+        });
+        if label == "Suppress" {
+            // Suppressed components leave the selection; the others' places
+            // follow their relationships again.
+            self.asm.sel.retain(|i| !ids.contains(i));
+            self.asm_solve(None);
+        }
+    }
+
+    /// Isolate: only `ids` stay in the view (and are picked) until Undo
+    /// Isolate.
+    pub(super) fn isolate(&mut self, ids: Option<Vec<u32>>) {
+        self.asm.isolated = ids;
+        if let Some(keep) = &self.asm.isolated {
+            self.asm.sel.retain(|i| keep.contains(i));
+        }
+        self.asm.hover = None;
+        self.scene_dirty = true;
+        self.fit_view();
+    }
+
+    /// Hide Others: every occurrence but `ids` gets Visibility off.
+    fn hide_others(&mut self, ids: &[u32]) {
+        self.edit_assembly("Hide Others", |a| {
+            for o in &mut a.occurrences {
+                o.visible = ids.contains(&o.id);
+            }
+        });
+    }
+
+    /// Show All: Visibility on for every occurrence (Undo Isolate too).
+    fn show_all(&mut self) {
+        self.asm.isolated = None;
+        self.edit_assembly("Show All", |a| {
+            for o in &mut a.occurrences {
+                o.visible = true;
             }
         });
     }
@@ -526,7 +596,7 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return;
         };
-        for o in a.occurrences.iter().filter(|o| o.visible) {
+        for o in a.occurrences.iter().filter(|o| self.asm_shown(o)) {
             // The Constrain preview moves components before OK.
             let place = self
                 .cons
@@ -541,10 +611,26 @@ impl CadCraftApp {
             } else {
                 None
             };
+            // Disabled: faint; Transparent (or showing an interference):
+            // see-through.
+            let overlap = self
+                .asm
+                .interference
+                .report
+                .as_ref()
+                .is_some_and(|r| r.found.iter().any(|i| i.a == o.id || i.b == o.id));
+            let alpha = if !o.enabled {
+                Some(0.15)
+            } else if o.transparent || overlap {
+                Some(0.35)
+            } else {
+                None
+            };
             self.with_part(o.component, |part| {
-                super::material::add_part_meshes_at(g, part, Some(&place), tint)
+                super::material::add_part_meshes_seen(g, part, Some(&place), tint, alpha)
             });
         }
+        self.interference_scene(g);
     }
 
     /// Everything the view does while an assembly is active: picking,
@@ -1058,6 +1144,17 @@ impl CadCraftApp {
             }
             ui.separator();
         }
+        // With a selection, its menu above has them already.
+        if ids.is_empty() {
+            if self.asm.isolated.is_some() && ui.button("Undo Isolate").clicked() {
+                self.isolate(None);
+                ui.close();
+            }
+            if ui.button("Show All").clicked() {
+                self.show_all();
+                ui.close();
+            }
+        }
         if !self.asm.clipboard.is_empty() && ui.button("Paste       Ctrl+V").clicked() {
             self.paste_occurrences();
             ui.close();
@@ -1086,8 +1183,34 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return;
         };
-        let grounded = ids.iter().all(|&i| a.find(i).is_some_and(|o| o.grounded));
-        let visible = ids.iter().all(|&i| a.find(i).is_some_and(|o| o.visible));
+        let all = |f: fn(&crate::document::Occurrence) -> bool| {
+            ids.iter().all(|&i| a.find(i).is_some_and(f))
+        };
+        let grounded = all(|o| o.grounded);
+        let visible = all(|o| o.visible);
+        let transparent = all(|o| o.transparent);
+        let suppressed = all(|o| o.suppressed);
+        let enabled = all(|o| o.enabled);
+        let isolated = self.asm.isolated.is_some();
+        // Inventor's first group: relate the component to another one.
+        if ui.button("Constrain...").clicked() {
+            self.asm_apply(Action::AsmConstrain);
+            ui.close();
+        }
+        if ui.button("Joint...").clicked() {
+            self.asm_apply(Action::AsmJoint);
+            ui.close();
+        }
+        if ui.button("Measure").clicked() {
+            self.apply(Action::App(super::commands::AppCmd::Measure));
+            ui.close();
+        }
+        ui.separator();
+        if ids.len() == 1 && ui.button("Open").clicked() {
+            self.open_component(ids[0]);
+            ui.close();
+        }
+        ui.separator();
         let mut g = grounded;
         if ui.checkbox(&mut g, "Grounded").clicked() {
             self.toggle_ground(ids);
@@ -1098,8 +1221,40 @@ impl CadCraftApp {
             self.toggle_visible(ids);
             ui.close();
         }
-        if ids.len() == 1 && ui.button("Open").clicked() {
-            self.open_component(ids[0]);
+        if isolated {
+            if ui.button("Undo Isolate").clicked() {
+                self.isolate(None);
+                ui.close();
+            }
+        } else if ui.button("Isolate").clicked() {
+            self.isolate(Some(ids.to_vec()));
+            ui.close();
+        }
+        if ui.button("Hide Others").clicked() {
+            self.hide_others(ids);
+            ui.close();
+        }
+        if ui.button("Show All").clicked() {
+            self.show_all();
+            ui.close();
+        }
+        let mut t = transparent;
+        if ui.checkbox(&mut t, "Transparent").clicked() {
+            self.toggle_flag(ids, "Transparent", |o| &mut o.transparent);
+            ui.close();
+        }
+        let mut s = suppressed;
+        if ui.checkbox(&mut s, "Suppress").clicked() {
+            self.toggle_flag(ids, "Suppress", |o| &mut o.suppressed);
+            ui.close();
+        }
+        let mut e = enabled;
+        if ui.checkbox(&mut e, "Enabled").clicked() {
+            self.toggle_flag(ids, "Enabled", |o| &mut o.enabled);
+            ui.close();
+        }
+        if ids.len() == 1 && ui.button("Find in Browser").clicked() {
+            self.asm.find_in_browser = Some(ids[0]);
             ui.close();
         }
         if ids.len() == 1 && ui.button("iProperties...").clicked() {
@@ -1180,6 +1335,20 @@ impl CadCraftApp {
                     self.toggle_visible(&[o.id]);
                 }
                 ui.end_row();
+                type Flag = fn(&mut crate::document::Occurrence) -> &mut bool;
+                let flags: [(&str, bool, Flag); 3] = [
+                    ("Transparent", o.transparent, |o| &mut o.transparent),
+                    ("Enabled", o.enabled, |o| &mut o.enabled),
+                    ("Suppress", o.suppressed, |o| &mut o.suppressed),
+                ];
+                for (label, on, field) in flags {
+                    let mut b = on;
+                    super::panels::plabel(ui, label);
+                    if ui.checkbox(&mut b, "").changed() {
+                        self.toggle_flag(&[o.id], label, field);
+                    }
+                    ui.end_row();
+                }
                 super::panels::plabel(ui, "DOF");
                 ui.label(if o.grounded {
                     "0 (grounded)".to_owned()

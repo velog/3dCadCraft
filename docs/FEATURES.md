@@ -864,7 +864,9 @@ A more intuitive way: one operation sets both the *position* and the *motion*.
 - Dragging a component with the mouse within its freedom. It uses the same idea as dragging points in the sketch, which already works.
 - **Contact solver:** components cannot penetrate each other while dragging.
 
-## 3.5 Interference check — ⬜ · M
+## 3.5 Interference check — 🟡 (Analyze Interference: two sets, volumes and centroids, red display; waiting for a visual check by the owner) · M
+
+**Specification:** [spec/3.0-assembly-commands.md](spec/3.0-assembly-commands.md) §3.4
 
 Finds the overlapping volumes between components, shows them in red and gives their volume. Uses the Boolean intersection (2.13) with a fast pre-filter by bounding boxes (AABB/BVH).
 

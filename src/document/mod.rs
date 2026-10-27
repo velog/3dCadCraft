@@ -229,6 +229,17 @@ pub struct Occurrence {
     /// document's (`docs/spec/3.6-bom.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bom: Option<iprops::BomStructure>,
+    /// Suppress: left out of the view, picking, the solver (its
+    /// relationships rest) and the BOM, but kept with its relationships.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppressed: bool,
+    /// Enabled: off = drawn faint and see-through and never picked in the
+    /// view (Inventor's way of working past large components).
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub enabled: bool,
+    /// Transparent: drawn see-through (still picked).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub transparent: bool,
 }
 
 fn is_zero(v: &u32) -> bool {
@@ -255,7 +266,20 @@ impl Occurrence {
             grounded: false,
             visible: true,
             bom: None,
+            suppressed: false,
+            enabled: true,
+            transparent: false,
         }
+    }
+
+    /// Drawn in the view: visible and not suppressed.
+    pub fn shown(&self) -> bool {
+        self.visible && !self.suppressed
+    }
+
+    /// Picked in the view: shown and enabled.
+    pub fn pickable(&self) -> bool {
+        self.shown() && self.enabled
     }
 }
 

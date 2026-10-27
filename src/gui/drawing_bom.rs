@@ -268,7 +268,7 @@ impl CadCraftApp {
         let (asm, src) = self.drawing_assembly(model)?;
         let mut s = String::new();
         let mut seen: Vec<DocRef> = Vec::new();
-        for o in asm.occurrences.iter().filter(|o| o.visible) {
+        for o in asm.occurrences.iter().filter(|o| o.shown()) {
             if !seen.contains(&o.component) {
                 seen.push(o.component);
                 let sig = self
@@ -295,7 +295,7 @@ impl CadCraftApp {
         let mut comps: Vec<DocRef> = Vec::new();
         let mut parts = Vec::new();
         let mut occurrences = Vec::new();
-        for o in asm.occurrences.iter().filter(|o| o.visible) {
+        for o in asm.occurrences.iter().filter(|o| o.shown()) {
             let k = match comps.iter().position(|c| *c == o.component) {
                 Some(k) => k,
                 None => {

@@ -386,7 +386,7 @@ impl CadCraftApp {
         let (o, dir) = self.camera.ray(pos, rect)?;
         let dir = dir.try_normalize(1e-12)?;
         let mut best: Option<(f32, GeomRef)> = None;
-        for occ in a.occurrences.iter().filter(|o| o.visible) {
+        for occ in a.occurrences.iter().filter(|o| o.pickable()) {
             let Some(edges) = self.asm_edges(occ.component) else {
                 continue;
             };

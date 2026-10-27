@@ -36,6 +36,9 @@ pub enum MatCmd {
     Purge,
     /// Inspect → Physical Properties.
     Physical,
+    /// View → Center of Gravity (a toggle: the symbol at the centre of
+    /// gravity of the part or assembly).
+    CenterOfGravity,
 }
 
 /// Window state and the loaded libraries.
@@ -50,6 +53,8 @@ pub(super) struct MaterialUi {
     show_clear: bool,
     show_styles: bool,
     show_physical: bool,
+    /// View → Center of Gravity is on.
+    pub show_cog: bool,
     search: String,
     adjust_color: [u8; 3],
     adjust_opacity: f64,
@@ -92,6 +97,7 @@ impl MaterialUi {
             show_clear: false,
             show_styles: false,
             show_physical: false,
+            show_cog: false,
             search: String::new(),
             adjust_color: [200, 60, 60],
             adjust_opacity: 1.0,
@@ -176,6 +182,18 @@ pub(super) fn add_part_meshes_at(
     place: Option<&crate::kernel::Transform3>,
     tint: Option<[f32; 3]>,
 ) {
+    add_part_meshes_seen(g, part, place, tint, None);
+}
+
+/// [`add_part_meshes_at`] with every face at most `alpha` opaque (an
+/// assembly's Transparent / disabled components).
+pub(super) fn add_part_meshes_seen(
+    g: &mut SceneGeometry,
+    part: &PartDocument,
+    place: Option<&crate::kernel::Transform3>,
+    tint: Option<[f32; 3]>,
+    alpha: Option<f32>,
+) {
     let body = &part.body;
     let looks = Resolver::new(part).face_looks();
     let fallback = (Appearance::fallback(), LookSource::Material);
@@ -202,6 +220,9 @@ pub(super) fn add_part_meshes_at(
         for (fid, range) in &mesh.face_triangles {
             let (look, src) = looks.get(fid).unwrap_or(&fallback);
             let mut paint = face_paint(look, *src, solid.open);
+            if let Some(a) = alpha {
+                paint.alpha = paint.alpha.min(a);
+            }
             if let Some(c) = tint {
                 for (x, t) in paint.rgb.iter_mut().zip(c) {
                     *x = 0.5 * (*x + t);
@@ -398,6 +419,7 @@ impl CadCraftApp {
                 m.show_physical = true;
                 self.run(Do::ComputePhysical);
             }
+            MatCmd::CenterOfGravity => m.show_cog = !m.show_cog,
         }
         if let Some(p) = self.mat.problems.first().cloned() {
             self.file_status = Some(Err(p));
@@ -550,11 +572,67 @@ impl CadCraftApp {
             }
             Do::ComputePhysical => {
                 let key = self.physical_key();
-                let r = physical_properties(self.part(), self.mat.accuracy)
-                    .map_err(|e| format!("Physical Properties: {e}"));
+                let acc = self.mat.accuracy;
+                let r = if let Some(a) = self.assembly().cloned() {
+                    // An assembly: each part once, moved per occurrence.
+                    crate::assembly::physical::assembly_physical(&a, &mut |r| {
+                        self.with_part(r, |p| physical_properties(p, acc))
+                    })
+                } else {
+                    physical_properties(self.part(), acc)
+                }
+                .map_err(|e| format!("Physical Properties: {e}"));
                 self.mat.physical = Some((key, r));
             }
         }
+    }
+
+    /// View → Center of Gravity: the symbol at the centre of gravity of
+    /// the included bodies (components), recomputed when the model changed.
+    pub(super) fn draw_cog(&mut self, painter: &egui::Painter, rect: egui::Rect) {
+        if !self.mat.show_cog {
+            return;
+        }
+        let key = self.physical_key();
+        if self.mat.physical.as_ref().is_none_or(|(k, _)| *k != key) {
+            self.run(Do::ComputePhysical);
+        }
+        let Some((_, Ok(p))) = &self.mat.physical else {
+            return;
+        };
+        let chosen = p
+            .bodies
+            .iter()
+            .filter(|b| !self.mat.excluded.contains(&b.name))
+            .map(|b| &b.props);
+        let Some(t) = MassProps::combine(chosen) else {
+            return;
+        };
+        let Some(c) = self.camera.project(&t.center, rect) else {
+            return;
+        };
+        // The usual symbol: a circle with two opposite quarters filled.
+        let r = 9.0;
+        let ink = Color32::from_rgb(20, 20, 30);
+        let fill = |a0: f32| {
+            let mut pts = vec![c];
+            for k in 0..=12 {
+                let a = a0 + std::f32::consts::FRAC_PI_2 * k as f32 / 12.0;
+                pts.push(c + r * egui::vec2(a.cos(), -a.sin()));
+            }
+            egui::Shape::convex_polygon(pts, ink, egui::Stroke::NONE)
+        };
+        painter.circle_filled(c, r, Color32::WHITE);
+        painter.add(fill(0.0));
+        painter.add(fill(std::f32::consts::PI));
+        painter.circle_stroke(c, r, egui::Stroke::new(1.5, ink));
+        painter.text(
+            c + egui::vec2(r + 4.0, -r),
+            egui::Align2::LEFT_BOTTOM,
+            "COG",
+            egui::FontId::proportional(12.0),
+            ink,
+        );
     }
 
     /// What the physical properties depend on (stale when it changes).
@@ -562,6 +640,14 @@ impl CadCraftApp {
         use std::hash::{Hash, Hasher};
         let p = self.part();
         let mut h = std::collections::hash_map::DefaultHasher::new();
+        if let Some(a) = self.assembly() {
+            // Placements, suppression and every component's body.
+            serde_json::to_vec(a).unwrap_or_default().hash(&mut h);
+            for o in &a.occurrences {
+                self.with_part(o.component, |p| p.body_signature())
+                    .hash(&mut h);
+            }
+        }
         self.body_key().hash(&mut h);
         serde_json::to_vec(&p.features)
             .unwrap_or_default()
@@ -1199,9 +1285,14 @@ impl CadCraftApp {
                     ui.colored_label(Color32::from_rgb(230, 140, 0), format!("Warning: {w}"));
                 }
                 ui.separator();
+                let what = if self.is_assembly() {
+                    "Component"
+                } else {
+                    "Solid"
+                };
                 let excluded = &mut self.mat.excluded;
                 egui::Grid::new("phys_bodies").striped(true).show(ui, |ui| {
-                    for h in ["Include", "Solid", "Material", "Density", "Mass", "Volume"] {
+                    for h in ["Include", what, "Material", "Density", "Mass", "Volume"] {
                         ui.label(RichText::new(h).strong());
                     }
                     ui.end_row();
