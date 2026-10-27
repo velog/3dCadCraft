@@ -202,6 +202,8 @@ enum Cmd {
     Planned,
     /// Thicken/Offset (`gui/thicken.rs`).
     Thicken,
+    /// Delete Face (`gui/delete_face.rs`).
+    DeleteFace,
 }
 
 impl CadCraftApp {
@@ -222,6 +224,8 @@ impl CadCraftApp {
             Some(Cmd::Planned)
         } else if self.thicken_draft.is_some() {
             Some(Cmd::Thicken)
+        } else if self.delete_draft.is_some() {
+            Some(Cmd::DeleteFace)
         } else {
             None
         }
@@ -242,6 +246,7 @@ impl CadCraftApp {
             Cmd::Sheet => self.sm_flow(),
             Cmd::Planned => self.part_planned.as_ref().map(|d| d.flow()),
             Cmd::Thicken => self.thicken_draft.as_ref().map(|d| d.flow()),
+            Cmd::DeleteFace => self.delete_draft.as_ref().map(|d| d.flow()),
         }
     }
 
@@ -263,6 +268,7 @@ impl CadCraftApp {
             Cmd::Sheet => return self.sm_prompt(),
             Cmd::Planned => return self.part_planned.as_ref().map(|d| d.prompt()),
             Cmd::Thicken => return self.thicken_prompt(),
+            Cmd::DeleteFace => return self.delete_face_prompt(),
         };
         let p = super::i18n::tr(flow.prompt());
         // A finished command also offers OK (Shell's input is optional).
@@ -295,6 +301,7 @@ impl CadCraftApp {
                 }
             }
             Some(Cmd::Thicken) => self.thicken_activate(key),
+            Some(Cmd::DeleteFace) => {}
             Some(Cmd::Shell) | None => {}
         }
     }
@@ -308,6 +315,7 @@ impl CadCraftApp {
             Some(Cmd::Loft) => self.commit_loft(keep_open),
             Some(Cmd::Sheet) => self.sm_commit(keep_open),
             Some(Cmd::Thicken) => self.commit_thicken(keep_open),
+            Some(Cmd::DeleteFace) => self.commit_delete_face(keep_open),
             Some(Cmd::Planned) => {
                 if let Some(d) = &self.part_planned {
                     self.file_status = Some(Err(format!(
@@ -327,6 +335,7 @@ impl CadCraftApp {
         self.loft_draft = None;
         self.part_planned = None;
         self.cancel_thicken();
+        self.cancel_delete_face();
         if self.sm.draft.take().is_some() {
             self.end_feature_edit();
         }
@@ -380,6 +389,7 @@ impl CadCraftApp {
                 .thicken_draft
                 .as_ref()
                 .is_some_and(|d| d.edit.is_some()),
+            Cmd::DeleteFace => self.delete_draft.as_ref().is_some_and(|d| d.edit.is_some()),
         };
         let repeat = self
             .repeatable()
@@ -402,7 +412,7 @@ impl CadCraftApp {
                 .map(|d| d.menu_options())
                 .unwrap_or_default(),
             Cmd::Sheet => self.sm_menu_options(),
-            Cmd::Planned | Cmd::Thicken => Vec::new(),
+            Cmd::Planned | Cmd::Thicken | Cmd::DeleteFace => Vec::new(),
         };
         let Some(choice) = command_menu(ui, &flow, !editing, repeat, &options) else {
             return true;
@@ -449,7 +459,7 @@ impl CadCraftApp {
                     }
                 }
                 Cmd::Sheet => self.sm_menu_option(k),
-                Cmd::Planned | Cmd::Thicken => {}
+                Cmd::Planned | Cmd::Thicken | Cmd::DeleteFace => {}
             },
         }
         true

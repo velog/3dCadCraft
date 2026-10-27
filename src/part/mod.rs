@@ -1545,10 +1545,14 @@ impl PartDocument {
                     }
                 }
             };
-            // The surface bodies go back (after the solids).
+            // The surface bodies go back (after the solids); a body operation
+            // returns them itself (Delete Face may change one).
+            let returns_sheets = matches!(f, Feature::BodyOp(_));
             let step = step.map(|o| {
                 o.map(|mut next| {
-                    next.extend(sheets.iter().cloned());
+                    if !returns_sheets {
+                        next.extend(sheets.iter().cloned());
+                    }
                     next
                 })
             });
@@ -2166,6 +2170,7 @@ impl PartDocument {
     pub fn add_body_op(&mut self, mut def: BodyOpFeature) -> Result<String, PartError> {
         match &def.op {
             BodyOp::Thicken(t) => t.validate().map_err(PartError::Feature)?,
+            BodyOp::DeleteFace(d) => d.validate().map_err(PartError::Feature)?,
         }
         let id = self.next_feature_id(def.kind_name());
         (def.id, def.name) = (id.clone(), id.clone());

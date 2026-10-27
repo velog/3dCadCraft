@@ -23,6 +23,7 @@ Target times for interactive work:
 | chamfer 2 of the same edges (wedges) | 1200 ms | 371 ms |
 | Face Draft 3° of the sides and the vertical fillets of a box (`add_draft`) | 200 ms | 55 ms (2026-10-19) |
 | Thicken 3 mm of the rounded box's top face, Join (`add_body_op`) | 400 ms | 207 ms (2026-10-27, machine 49 % busy) |
+| Delete Face with Heal of the 36 hole walls of a plate (`add_body_op`, the step alone) | 300 ms | 39 ms (2026-10-27; 9 s before `faces_named_many` made the mesh once for all references) |
 | Offset of the same face into a surface (`add_body_op`) | 400 ms | 133 ms (2026-10-27) |
 | Face Draft 3° Symmetric about z = 10 (split, draft of both halves, merge) | 700 ms | 350 ms (2026-10-19, under load) |
 | Shell 2 Outside with Rounded Corners on a box without its top face | 400 ms | 190 ms (2026-10-19, under load) |

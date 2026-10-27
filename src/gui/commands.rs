@@ -613,7 +613,11 @@ pub static COMMANDS: &[Command] = &[
         .tip("Thicken faces (Join, Cut, Intersect, New Solid) or offset them into a surface")
         .alias(&["TO"])
         .at(&[M_MODIFY]),
-    pp("part.delete_face", "Delete Face", "Изтриване на лице", Icon::DeleteFace, Pp::DeleteFace)
+    c("part.delete_face", "Delete Face", "Изтриване на лице", Icon::DeleteFace)
+        .run(Action::DeleteFace)
+        .env(PART)
+        .spec("2.14-delete-face.md")
+        .tip("Delete faces: Heal closes the gap, otherwise the body opens into a surface; or a whole lump or void")
         .alias(&["DF"])
         .at(&[M_MODIFY]),
     pp("part.direct", "Direct", "Директна редакция", Icon::Direct, Pp::Direct)

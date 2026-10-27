@@ -1043,42 +1043,36 @@ fn face_samples(s: &ExactSolid) -> Result<Vec<Option<Point3>>, String> {
 /// face itself (its triangles); on a tie (the hint on the edge between two
 /// pieces) the piece whose sample point is nearer.
 pub fn faces_named(s: &ExactSolid, name: &str, hint: Point3) -> Result<Vec<usize>, String> {
-    let named: Vec<usize> = s
-        .face_names
+    Ok(faces_named_many(s, &[(name, hint)])?
+        .pop()
+        .unwrap_or_default())
+}
+
+/// [`faces_named`] for many references at once: the samples and the mesh
+/// are made once (only when a name is shared), not once per reference
+/// (Delete Face of 36 hole walls took 9 s).
+pub fn faces_named_many(
+    s: &ExactSolid,
+    refs: &[(&str, Point3)],
+) -> Result<Vec<Vec<usize>>, String> {
+    let named: Vec<Vec<usize>> = refs
         .iter()
-        .enumerate()
-        .filter(|(_, n)| n.as_deref() == Some(name))
-        .map(|(i, _)| i)
+        .map(|(name, _)| {
+            s.face_names
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.as_deref() == Some(*name))
+                .map(|(i, _)| i)
+                .collect()
+        })
         .collect();
-    if named.len() <= 1 {
+    if named.iter().all(|v| v.len() <= 1) {
         return Ok(named);
     }
     let samples = face_samples(s)?;
     let tol = (s.body.size() * 1e-4).max(1e-4);
     let mesh = guarded("tessellate", || s.body.tessellate(tol))?;
-    let mut near = vec![Real::INFINITY; s.face_names.len().max(s.body.face_count())];
-    for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        let Some([a, b, c]) = mesh.tri(t) else {
-            continue;
-        };
-        if let Some(d) = near.get_mut(f as usize) {
-            let q = sheet::closest_on_triangle(&hint, &p3(a), &p3(b), &p3(c));
-            *d = d.min((q - hint).norm());
-        }
-    }
     let tie = tol * 10.0;
-    let mut v: Vec<(Real, Real, usize)> = named
-        .into_iter()
-        .map(|i| {
-            let d = near.get(i).copied().unwrap_or(Real::INFINITY);
-            let sd = samples
-                .get(i)
-                .copied()
-                .flatten()
-                .map_or(Real::INFINITY, |p| (p - hint).norm());
-            (d, sd, i)
-        })
-        .collect();
     // Distances in steps of `tie` (a total order), then the sample's.
     let step = |d: Real| {
         if d.is_finite() {
@@ -1087,8 +1081,41 @@ pub fn faces_named(s: &ExactSolid, name: &str, hint: Point3) -> Result<Vec<usize
             Real::MAX
         }
     };
-    v.sort_by(|a, b| step(a.0).total_cmp(&step(b.0)).then(a.1.total_cmp(&b.1)));
-    Ok(v.into_iter().map(|(_, _, i)| i).collect())
+    let mut out = Vec::with_capacity(refs.len());
+    for (named, (_, hint)) in named.into_iter().zip(refs) {
+        if named.len() <= 1 {
+            out.push(named);
+            continue;
+        }
+        let mut near = vec![Real::INFINITY; s.face_names.len().max(s.body.face_count())];
+        for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+            if !named.contains(&(f as usize)) {
+                continue;
+            }
+            let Some([a, b, c]) = mesh.tri(t) else {
+                continue;
+            };
+            if let Some(d) = near.get_mut(f as usize) {
+                let q = sheet::closest_on_triangle(hint, &p3(a), &p3(b), &p3(c));
+                *d = d.min((q - hint).norm());
+            }
+        }
+        let mut v: Vec<(Real, Real, usize)> = named
+            .into_iter()
+            .map(|i| {
+                let d = near.get(i).copied().unwrap_or(Real::INFINITY);
+                let sd = samples
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map_or(Real::INFINITY, |p| (p - hint).norm());
+                (d, sd, i)
+            })
+            .collect();
+        v.sort_by(|a, b| step(a.0).total_cmp(&step(b.0)).then(a.1.total_cmp(&b.1)));
+        out.push(v.into_iter().map(|(_, _, i)| i).collect());
+    }
+    Ok(out)
 }
 
 /// Which way a shell's walls grow from the faces (Inventor: Inside,
@@ -4427,8 +4454,10 @@ pub use sheet::{SheetSide, extrude_sheet, revolve_sheet, sheet_nearest, split_by
 
 pub mod sheet_metal;
 
+mod delete_face;
 mod sweep;
 mod thicken;
+pub use delete_face::{delete_faces, delete_shell};
 pub use sweep::{
     Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_surface, loft_to_point,
     path_points, sweep, sweep_surface,

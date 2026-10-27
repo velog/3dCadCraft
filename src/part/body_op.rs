@@ -170,6 +170,59 @@ impl Default for ThickenOp {
 pub enum BodyOp {
     /// Thicken/Offset.
     Thicken(ThickenOp),
+    /// Delete Face (format revision 34).
+    DeleteFace(DeleteFaceOp),
+}
+
+/// Delete Face's **Select**: single faces, or a whole lump or void.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeleteSelect {
+    /// Individual Faces (Heal may close the gap).
+    #[default]
+    Faces,
+    /// Lump or Void: the shell of the picked face goes whole (a void fills
+    /// with material); Heal does not apply.
+    LumpOrVoid,
+}
+
+/// **Delete Face** (`docs/spec/2.14-delete-face.md`): faces of one body
+/// deleted; with Heal the planar neighbours extend over the gap, without it
+/// the body opens into a surface body.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeleteFaceOp {
+    /// Individual Faces or Lump or Void.
+    #[serde(default)]
+    pub select: DeleteSelect,
+    /// The faces (Lump or Void: a face of each shell to delete).
+    pub faces: Vec<FaceRef>,
+    /// Heal (off): close the gap by extending the neighbouring faces.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub heal: bool,
+}
+
+impl DeleteFaceOp {
+    /// No faces yet, Individual Faces, no Heal (Inventor's defaults).
+    pub fn new() -> Self {
+        Self {
+            select: DeleteSelect::Faces,
+            faces: Vec::new(),
+            heal: false,
+        }
+    }
+
+    /// Refuses a definition that cannot be built (before any geometry).
+    pub fn validate(&self) -> Result<(), String> {
+        if self.faces.is_empty() {
+            return Err("select the faces to delete".into());
+        }
+        Ok(())
+    }
+}
+
+impl Default for DeleteFaceOp {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// A body operation feature (`Thicken1`).
@@ -204,6 +257,7 @@ impl BodyOpFeature {
     pub fn kind_name(&self) -> &'static str {
         match self.op {
             BodyOp::Thicken(_) => "Thicken",
+            BodyOp::DeleteFace(_) => "DeleteFace",
         }
     }
 
@@ -213,6 +267,7 @@ impl BodyOpFeature {
             BodyOp::Thicken(t) => {
                 t.output == ThickenOutput::Surface || t.operation == Operation::NewSolid
             }
+            BodyOp::DeleteFace(_) => false,
         }
     }
 
@@ -220,6 +275,7 @@ impl BodyOpFeature {
     pub fn fields(&self) -> Vec<(&'static str, Unit)> {
         match self.op {
             BodyOp::Thicken(_) => vec![("distance", Unit::Mm)],
+            BodyOp::DeleteFace(_) => Vec::new(),
         }
     }
 
@@ -253,6 +309,13 @@ impl BodyOpFeature {
                     }
                 }
             }
+            BodyOp::DeleteFace(d) => match d.select {
+                DeleteSelect::LumpOrVoid => format!("Delete {} lump(s) or void(s)", d.faces.len()),
+                DeleteSelect::Faces if d.heal => {
+                    format!("Delete {} face(s), healed", d.faces.len())
+                }
+                DeleteSelect::Faces => format!("Delete {} face(s) (the body opens)", d.faces.len()),
+            },
         }
     }
 }

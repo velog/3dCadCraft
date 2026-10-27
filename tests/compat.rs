@@ -530,6 +530,43 @@ fn sheet_r22() -> PartDocument {
     p
 }
 
+/// Revision 34: an 80 × 60 × 20 box with a fillet r 5 on the top front
+/// edge, then Delete Face of the round with Heal (the box comes back), then
+/// Delete Face of the top without Heal (the box opens into a surface).
+fn delete_face_r34() -> PartDocument {
+    use cadcraft3d::part::body_op::{DeleteFaceOp, DeleteSelect};
+    use cadcraft3d::part::{BlendFeature, BodyOp, BodyOpFeature, EdgeRef, FaceRef};
+    let mut p = PartDocument::with_box("Box1", [80.0, 60.0, 20.0]).unwrap();
+    p.add_blend(BlendFeature::fillet(
+        vec![EdgeRef {
+            faces: ["Box1:Top".into(), "Box1:Front".into()],
+            hint: [40.0, 0.0, 20.0],
+        }],
+        5.0,
+    ))
+    .unwrap();
+    let round: Vec<FaceRef> = p
+        .body
+        .faces()
+        .filter(|(_, f)| f.name.as_deref().is_some_and(|n| n.starts_with("Fillet1")))
+        .filter_map(|(id, _)| cadcraft3d::part::shell::face_ref(&p.body, id, None))
+        .collect();
+    let mut d = DeleteFaceOp::new();
+    d.faces = round;
+    d.heal = true;
+    p.add_body_op(BodyOpFeature::new(BodyOp::DeleteFace(d)))
+        .unwrap();
+    let mut d = DeleteFaceOp::new();
+    d.select = DeleteSelect::Faces;
+    d.faces = vec![FaceRef {
+        face: "Box1:Top".into(),
+        hint: [40.0, 30.0, 20.0],
+    }];
+    p.add_body_op(BodyOpFeature::new(BodyOp::DeleteFace(d)))
+        .unwrap();
+    p
+}
+
 /// Revision 31: a 40 × 30 × 20 box whose top face is thickened by 5 mm
 /// (Thicken/Offset, `Feature::BodyOp`).
 fn thicken_r31() -> PartDocument {
@@ -1872,6 +1909,13 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r33_project().save(&f).unwrap();
+        }
+        let f = root().join("r34/delete_face_r34.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("DeleteFaceR34");
+            project.add_document("Part1", DocumentData::Part(delete_face_r34()));
+            project.save(&f).unwrap();
         }
         let f = root().join("r30/sheet_r30.3dcadcraft");
         if !f.exists() {

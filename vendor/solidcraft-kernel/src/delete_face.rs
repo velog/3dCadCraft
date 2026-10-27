@@ -366,3 +366,30 @@ mod tests {
         assert!(delete_faces(&plate, &top).is_err());
     }
 }
+
+/// Delete Face's Lump or Void (3DCadCraft addition): the shell holding face `face` (an index in
+/// the body's face order) taken out of the solid whole — a void (a cavity) fills with material,
+/// a lump (a separate piece of the same body) goes. A body of one shell is refused: nothing
+/// would be left. The history is over `[body]`: each face left is the body's.
+pub fn delete_shell(body: &Body, face: usize) -> Result<Body> {
+    body.require_brep("Delete Face")?;
+    let shells = body.solid.boundaries();
+    let mut start = 0;
+    let mut hit = None;
+    for (i, s) in shells.iter().enumerate() {
+        let n = s.len();
+        if face < start + n {
+            hit = Some(i);
+            break;
+        }
+        start += n;
+    }
+    let Some(i) = hit else {
+        return Err(fail(format!("there is no face {face}")));
+    };
+    if shells.len() < 2 {
+        return Err(fail("the body has one lump and no void: deleting it would leave nothing"));
+    }
+    let left: Vec<mt::Shell> = shells.iter().enumerate().filter(|(k, _)| *k != i).map(|(_, s)| s.clone()).collect();
+    crate::record::rebuilt(mt::Solid::new_unchecked(left), &[&body.solid], &crate::record::Rebuild::default())
+}

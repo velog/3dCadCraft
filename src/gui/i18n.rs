@@ -226,6 +226,22 @@ const TABLE: &[(&str, &str)] = &[
         "Изберете стените за махане (без стени: затворена кухина)",
     ),
     (", or OK (Enter)", " или OK (Enter)"),
+    (
+        "Select the faces to delete",
+        "Изберете стените за изтриване",
+    ),
+    (
+        "Select a face of each lump or void to delete (Select Other reaches a void)",
+        "Изберете стена на всяко парче или кухина за изтриване (кухината се достига със Select Other)",
+    ),
+    (
+        "Select the faces to thicken or offset",
+        "Изберете стените за удебеляване или отместване",
+    ),
+    (
+        "Select the surface bodies to thicken",
+        "Изберете повърхнинните тела за удебеляване",
+    ),
     ("Select the base body", "Изберете основното тяло"),
     (
         "Select the toolbodies (a second click drops one)",

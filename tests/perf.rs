@@ -1441,6 +1441,48 @@ fn speed_budgets() {
             assert!(png.is_some_and(|b| b.len() > 1000));
         }),
     ));
+    // Delete Face with Heal of every hole wall of the 36-hole plate: the
+    // plate comes back whole.
+    {
+        use cadcraft3d::part::body_op::DeleteFaceOp;
+        use cadcraft3d::part::{BodyOp, BodyOpFeature};
+        let plate_id = holes36.features[0].id().to_owned();
+        let walls: Vec<_> = holes36
+            .body
+            .faces()
+            .filter(|(_, f)| {
+                f.name
+                    .as_deref()
+                    .is_some_and(|n| !n.starts_with(&format!("{plate_id}:")))
+            })
+            .filter_map(|(id, _)| cadcraft3d::part::shell::face_ref(&holes36.body, id, None))
+            .collect();
+        assert!(walls.len() >= 36, "{} hole walls", walls.len());
+        // Only the Delete Face step is timed: each run gets its own cache,
+        // warmed with the plate and its holes first.
+        let mut times: Vec<f64> = (0..3)
+            .map(|_| {
+                let mut p = holes36.clone();
+                p.build_cache = Default::default();
+                p.regenerate().unwrap();
+                let mut d = DeleteFaceOp::new();
+                d.faces = walls.clone();
+                d.heal = true;
+                let t = std::time::Instant::now();
+                p.add_body_op(BodyOpFeature::new(BodyOp::DeleteFace(d)))
+                    .unwrap();
+                let ms = t.elapsed().as_secs_f64() * 1e3;
+                assert_eq!(p.body.faces().count(), 6);
+                ms
+            })
+            .collect();
+        times.sort_by(f64::total_cmp);
+        rows.push((
+            "delete face with heal of 36 hole walls (add_body_op)",
+            300.0,
+            times[1],
+        ));
+    }
     rows.push((
         "preview picture of the rounded box (curved faces)",
         100.0,

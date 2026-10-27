@@ -99,7 +99,6 @@ pub enum PartPlanned {
     Import,
     Unwrap,
     // 3D Model › Modify
-    DeleteFace,
     Direct,
     CopyObject,
     MoveBodies,
@@ -147,14 +146,13 @@ pub enum PartPlanned {
 impl PartPlanned {
     /// Every planned command, in ribbon order.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const ALL: [PartPlanned; 43] = [
+    pub const ALL: [PartPlanned; 42] = [
         PartPlanned::Emboss,
         PartPlanned::Decal,
         PartPlanned::Mark,
         PartPlanned::Derive,
         PartPlanned::Import,
         PartPlanned::Unwrap,
-        PartPlanned::DeleteFace,
         PartPlanned::Direct,
         PartPlanned::CopyObject,
         PartPlanned::MoveBodies,
@@ -203,7 +201,6 @@ impl PartPlanned {
             Derive => "Derive",
             Import => "Import",
             Unwrap => "Unwrap",
-            DeleteFace => "Delete Face",
             Direct => "Direct Edit",
             CopyObject => "Copy Object",
             MoveBodies => "Move Bodies",
@@ -253,7 +250,6 @@ impl PartPlanned {
             Derive => Icon::Derive,
             Import => Icon::Import,
             Unwrap => Icon::Unwrap,
-            DeleteFace => Icon::DeleteFace,
             Direct => Icon::Direct,
             CopyObject => Icon::CopyObject,
             MoveBodies => Icon::MoveBodies,
@@ -301,7 +297,7 @@ impl PartPlanned {
             Derive => "5.7",
             Import => "7.7",
             Unwrap | Stitch | Sculpt | Patch | TrimSurface | ExtendSurface | RuledSurface => "5.4",
-            DeleteFace | ReplaceFace => "2.14",
+            ReplaceFace => "2.14",
             Direct => "5.5",
             CopyObject | MoveBodies | BendPart => "2.13",
             SketchDrivenPattern => "2.11",
@@ -328,7 +324,6 @@ impl PartPlanned {
             }
             Import => "Brings STEP, IGES, SAT, STL or OBJ data in as bodies.",
             Unwrap => "Flattens a group of faces into a flat surface.",
-            DeleteFace => "Deletes faces; Heal closes the gap, otherwise the body opens.",
             Direct => "Moves, resizes, scales, rotates or deletes faces without history.",
             CopyObject => "Copies or moves faces or bodies into a surface, composite or solid.",
             MoveBodies => "Moves or rotates solid bodies of a multi-body part.",
@@ -514,15 +509,6 @@ impl PartPlanned {
                     ),
                     Combo("Stiffness", &["Rigid", "Medium", "Plastic"], 0),
                     Num("Rotation", 0.0, "°"),
-                ],
-            )],
-            DeleteFace => &[Page(
-                "Delete Face",
-                &[
-                    Radio("Select", &["Individual Faces", "Lump or Void"], 0),
-                    Sel("faces", "Faces", "Select the faces to delete", FACES),
-                    Check("Heal", false),
-                    Note("Without Heal the solid becomes a surface body"),
                 ],
             )],
             Direct => &[

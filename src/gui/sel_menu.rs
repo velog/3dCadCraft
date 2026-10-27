@@ -41,6 +41,7 @@ pub(super) enum Entry {
     FaceDraft,
     Thread,
     Thicken,
+    DeleteFace,
     Fillet,
     Chamfer,
     WorkPlane,
@@ -67,6 +68,7 @@ impl Entry {
             Entry::FaceDraft => "Face Draft",
             Entry::Thread => "Thread",
             Entry::Thicken => "Thicken/Offset",
+            Entry::DeleteFace => "Delete Face",
             Entry::Fillet => "Fillet",
             Entry::Chamfer => "Chamfer",
             Entry::WorkPlane => "Work Plane",
@@ -100,7 +102,7 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
             E::Shell,
             E::FaceDraft,
             E::Thicken,
-            E::Planned(Pp::DeleteFace),
+            E::DeleteFace,
             E::Planned(Pp::Direct),
             E::Planned(Pp::CopyObject),
             E::Separator,
@@ -112,7 +114,7 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
             E::Shell,
             E::FaceDraft,
             E::Thicken,
-            E::Planned(Pp::DeleteFace),
+            E::DeleteFace,
             E::Planned(Pp::Direct),
             E::Planned(Pp::CopyObject),
             E::Separator,
@@ -361,6 +363,7 @@ impl CadCraftApp {
                 }
             }
             E::Thicken => self.apply(Action::Thicken),
+            E::DeleteFace => self.apply(Action::DeleteFace),
             E::Fillet => self.apply(Action::Fillet),
             E::Chamfer => self.apply(Action::Chamfer),
             E::WorkPlane | E::WorkAxis | E::WorkPoint => {

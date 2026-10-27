@@ -242,7 +242,7 @@ Part Offset outside the view, Spacing apart, shortest first, non-overlapping dim
 kind and position, XDIM / YDIM / DESCRIPTION from the holes, Edit Hole Table (format revision 32).
 
 🟡 2026-10-27: **Chamfer Note** (CN): chamfer edge, reference edge, place; `2,00 X 30,00°` measured along the reference
-as in Inventor; Edit Chamfer Note with D1 / D2 / A1 tokens (format revision 33).
+as in Inventor; Edit Chamfer Note with D1 / D2 / A1 tokens (format revision 34).
 
 🟡 2026-10-26: every other command of Inventor's drawing ribbon has its dialog (interface first,
 [spec/4.7-drawing-commands.md](spec/4.7-drawing-commands.md)): Break, Break Out, Slice, Crop, Overlay, Draft View,
@@ -754,7 +754,7 @@ Robustness in touching and nearly coincident cases is achieved with tolerances a
 
 **Inventor equivalent.** Combine, Split, Move Bodies, Make Components.
 
-## 2.14 Thicken / Offset, Delete Face, Replace Face — 🟡 (Thicken/Offset; waiting for a visual check) · L
+## 2.14 Thicken / Offset, Delete Face, Replace Face — 🟡 (Thicken/Offset, Delete Face; waiting for a visual check) · L
 
 **Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
 
@@ -765,7 +765,11 @@ and opened spline eggs (Steiner's formula), revolved eggs of any angle, sphere s
 surface lofts, a tube swept along a spline (Pappus). **Specification:** [spec/2.14-thicken-offset.md](spec/2.14-thicken-offset.md)
 
 - **Thicken/Offset:** turns a surface into a body with a thickness.
-- **Delete Face:** removes a face and closes the hole (healing imported models).
+- **Delete Face:** removes a face and closes the hole (healing imported models). 🟡 implemented 2026-10-27
+  (format revision 34, `BodyOp::DeleteFace`): Individual Faces with Heal (planar neighbours extend: a fillet,
+  chamfer, hole, pocket or boss comes off) or without (the body opens into a surface body), Lump or Void (a
+  whole shell; a void fills with material); waiting for a visual check. **Specification:**
+  [spec/2.14-delete-face.md](spec/2.14-delete-face.md)
 - **Replace Face:** replaces a face with another surface.
 
 ## 2.15 Materials and appearance — 🟡 · M

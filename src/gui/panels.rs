@@ -908,7 +908,13 @@ impl CadCraftApp {
             Feature::Rib(r) => (Icon::Rib, format!("Rib of {}", r.sketch)),
             Feature::SheetFace(f) => (sm_icon, format!("Sheet metal Face of {}", f.sketch)),
             Feature::SheetOp(f) => (sm_icon, f.describe()),
-            Feature::BodyOp(f) => (Icon::Thicken, f.describe()),
+            Feature::BodyOp(f) => (
+                match f.op {
+                    crate::part::BodyOp::Thicken(_) => Icon::Thicken,
+                    crate::part::BodyOp::DeleteFace(_) => Icon::DeleteFace,
+                },
+                f.describe(),
+            ),
             Feature::SheetConvert(f) => (
                 Icon::SheetMetal,
                 format!(
@@ -1227,6 +1233,10 @@ impl CadCraftApp {
         }
         if self.thicken_draft.is_some() {
             self.thicken_panel(ui);
+            return;
+        }
+        if self.delete_draft.is_some() {
+            self.delete_face_panel(ui);
             return;
         }
         if self.section.as_ref().is_some_and(|s| s.editing) {
@@ -4863,6 +4873,10 @@ impl CadCraftApp {
                 }
                 (Mode::Normal, None) if self.thicken_draft.is_some() => {
                     let text = self.thicken_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.delete_draft.is_some() => {
+                    let text = self.delete_face_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.part_planned.is_some() => {

@@ -579,13 +579,20 @@ impl CadCraftApp {
         let Feature::BodyOp(b) = &f else {
             return;
         };
-        self.panel_header(ui, Icon::Thicken, f.name());
+        let icon = match b.op {
+            BodyOp::Thicken(_) => Icon::Thicken,
+            BodyOp::DeleteFace(_) => Icon::DeleteFace,
+        };
+        self.panel_header(ui, icon, f.name());
         if let Some(h) = self.part().feature_health.get(f.id()) {
             warning_box(ui, h);
         }
         ui.label(b.describe());
         if ui.button("Edit Feature").clicked() {
-            self.thicken_edit(k);
+            match b.op {
+                BodyOp::Thicken(_) => self.thicken_edit(k),
+                BodyOp::DeleteFace(_) => self.delete_face_edit(k),
+            }
         }
     }
 }

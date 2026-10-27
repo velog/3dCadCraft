@@ -113,6 +113,8 @@ pub enum Action {
     AsmPlanned(super::asm_planned::AsmPlanned),
     /// 3D Model › Modify › Thicken/Offset.
     Thicken,
+    /// 3D Model › Modify › Delete Face.
+    DeleteFace,
     /// View › Visual Style.
     VisualStyle(super::view_style::VisualStyle),
     /// View › Section View (Quarter / Half / Three Quarter / End).

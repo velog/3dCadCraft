@@ -34,6 +34,7 @@ An addition for Thicken/Offset's Allow Approximation (`docs/spec/2.14-thicken-of
 | File | Change | Effect |
 |---|---|---|
 | `surfaces.rs` `thicken_with_tolerance` (exported in `lib.rs`) | `thicken` with the free-form fitting tolerance as a parameter (was the constant 0.01 mm; `thicken` keeps it) | a revolved spline egg 40 mm tall thickens 1.5 mm (its offset is off by up to 0.12 mm at 0.01; fits at 0.3) |
+| `delete_face.rs` `delete_shell` (exported in `lib.rs`) | a new function: the shell holding a face taken out of the solid whole | Delete Face's Lump or Void: a closed shell's void fills with material, a lump of a body split in two goes |
 | `surface_offset.rs` `fit`: the face's (u, v) span | the boundary is walked in wire order, each search continuing from the last point's parameters (starting at a point that is no pole, the first one inside the surface's range); a hinted search that stalls short of its point falls back to one from nowhere; degenerate edges (poles) are skipped; at a pole the vanishing parameter keeps its last value; a bounded parameter is clamped to its range; a periodic angle takes the turn nearest the last point | thickened revolved egg pieces: 150° was 34 % too thick, 190° 6×, 120° / 180° could not be fitted — now each is its share of the whole egg |
 
 A fix (not about speed): a rolling-ball blend of a closed chain whose corners meet **curved**

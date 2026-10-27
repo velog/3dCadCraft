@@ -246,5 +246,6 @@
     "exact": true
   },
   "r32/drawing_r32.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
-  "r33/drawing_r33.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true}
+  "r33/drawing_r33.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r34/delete_face_r34.3dcadcraft": {"volume": 64000.0, "faces": 5, "features": 4, "sketches": 0, "exact": true}
 }

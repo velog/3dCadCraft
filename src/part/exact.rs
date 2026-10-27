@@ -930,8 +930,92 @@ pub(super) fn body_op(
     sheets: &[ExactSolid],
 ) -> Result<Vec<ExactSolid>, Fail> {
     match &f.op {
-        super::BodyOp::Thicken(t) => thicken(t, &f.id, cur, sheets),
+        super::BodyOp::Thicken(t) => thicken(t, &f.id, cur, sheets).map(|mut out| {
+            out.extend(sheets.iter().cloned());
+            out
+        }),
+        super::BodyOp::DeleteFace(d) => delete_face(d, cur, sheets),
     }
+}
+
+/// Each face reference resolved in the first body (of `all`) that has it:
+/// `(body index, kernel face)`. Every body's mesh is made once for all the
+/// references ([`exact::faces_named_many`]).
+fn resolve_faces(all: &[ExactSolid], refs: &[super::FaceRef]) -> Vec<Option<(usize, usize)>> {
+    let mut out: Vec<Option<(usize, usize)>> = vec![None; refs.len()];
+    for (i, s) in all.iter().enumerate() {
+        let open: Vec<usize> = (0..refs.len()).filter(|&k| out[k].is_none()).collect();
+        if open.is_empty() {
+            break;
+        }
+        let asks: Vec<(&str, Point3)> = open
+            .iter()
+            .map(|&k| (refs[k].face.as_str(), Point3::from(refs[k].hint)))
+            .collect();
+        let Ok(found) = exact::faces_named_many(s, &asks) else {
+            continue;
+        };
+        for (k, v) in open.into_iter().zip(found) {
+            if let Some(&f) = v.first() {
+                out[k] = Some((i, f));
+            }
+        }
+    }
+    out
+}
+
+/// Delete Face: the picked faces of one body (solid or surface) deleted —
+/// healed, opened into a surface body, or whole shells (Lump or Void).
+/// Returns the solids and the surface bodies.
+fn delete_face(
+    d: &super::body_op::DeleteFaceOp,
+    cur: &[ExactSolid],
+    sheets: &[ExactSolid],
+) -> Result<Vec<ExactSolid>, Fail> {
+    use super::body_op::DeleteSelect;
+    d.validate().map_err(User)?;
+    let mut all: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
+    let mut source: Option<usize> = None;
+    let mut faces: Vec<usize> = Vec::new();
+    let found_in = resolve_faces(&all, &d.faces);
+    for (r, found) in d.faces.iter().zip(found_in) {
+        let Some((i, f)) = found else {
+            return Err(User(format!("the face {} no longer exists", r.face)));
+        };
+        match source {
+            Some(s) if s != i => {
+                return Err(User("the faces belong to different bodies".into()));
+            }
+            _ => source = Some(i),
+        }
+        if !faces.contains(&f) {
+            faces.push(f);
+        }
+    }
+    let Some(i) = source else {
+        return Err(User("select the faces to delete".into()));
+    };
+    let kernel = |e: String| User(e.replace("Delete Face: ", ""));
+    let r = match d.select {
+        DeleteSelect::Faces => exact::delete_faces(&all[i], &faces, d.heal).map_err(kernel)?,
+        DeleteSelect::LumpOrVoid => {
+            // One shell at a time: indices change once a shell goes, so
+            // each later face is found again by its name (a face whose shell
+            // went with an earlier pick is skipped).
+            let mut s = all[i].clone();
+            for r in &d.faces {
+                let f = exact::faces_named(&s, &r.face, Point3::from(r.hint))
+                    .ok()
+                    .and_then(|v| v.first().copied());
+                if let Some(f) = f {
+                    s = exact::delete_shell(&s, f).map_err(kernel)?;
+                }
+            }
+            s
+        }
+    };
+    all[i] = r;
+    Ok(all)
 }
 
 /// Thicken/Offset: the picked faces (or quilts) as a slab joined to, cut
@@ -951,8 +1035,12 @@ fn thicken(
         // shrinks to nothing at its ends.
         if e.contains("Two same vertices") {
             User(
-                "an edge or a point of the faces is sharp in places and smooth in others (a cone                  tip, a loft through a corner): Thicken needs every edge smooth or sharp along                  its whole length"
-                    .into(),
+                concat!(
+                    "an edge or a point of the faces is sharp in places and smooth in others ",
+                    "(a cone tip, a loft through a corner): Thicken needs every edge smooth or ",
+                    "sharp along its whole length"
+                )
+                .into(),
             )
         } else {
             User(format!("the geometry kernel cannot build it ({e})"))
@@ -967,13 +1055,9 @@ fn thicken(
     let piece = match t.select {
         ThickenSelect::Face => {
             let mut faces = Vec::new();
-            for r in &t.faces {
-                let hint = Point3::from(r.hint);
-                let found = all.iter().enumerate().find_map(|(i, s)| {
-                    exact::faces_named(s, &r.face, hint)
-                        .ok()
-                        .and_then(|v| v.first().map(|&f| (i, f)))
-                });
+            let owned: Vec<ExactSolid> = all.iter().map(|s| (*s).clone()).collect();
+            let found_in = resolve_faces(&owned, &t.faces);
+            for (r, found) in t.faces.iter().zip(found_in) {
                 let Some((i, f)) = found else {
                     return Err(User(format!("the face {} no longer exists", r.face)));
                 };

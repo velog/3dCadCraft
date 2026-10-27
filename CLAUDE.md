@@ -1089,6 +1089,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Model edges have their own GPU buffer** (`SceneGeometry::add_edge_polyline`, used by
   `material::add_part_meshes*`): the visual style draws, hides or dashes them; grid, axes and overlays stay in
   the plain line buffer. New model-edge drawing must use `add_edge_polyline`, or styles will not affect it.
+- **Body operations return the surface bodies themselves**: `build_features` puts the sheets back after every
+  step *except* a `BodyOp` (Delete Face changes or makes one); a new `BodyOp` must append the untouched sheets
+  (`thicken` does). Delete Face (`part/exact.rs::delete_face`, `kernel/exact/delete_face.rs`): Heal only over
+  planar neighbours (kernel), Lump or Void through our `vendor` `delete_shell`.
+- **Compat expectations are appended by hand**: `CADCRAFT_WRITE_COMPAT=1` rewrites `expected.json` / `names.json`
+  in another order; keep the old text and add only the new entry (the r34 commit did).
 - **Body operations are one feature type** (`Feature::BodyOp`, like `SheetOp` for sheet metal): Delete Face, Move
   Bodies, Copy Object, Replace Face, Stitch, Trim… are new `BodyOp` variants (each a format revision), never new
   `Feature` variants. `build_features` passes them the surface bodies (`sheets`) as well; their kernel failures are
