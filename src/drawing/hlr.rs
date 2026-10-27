@@ -118,6 +118,8 @@ pub struct ViewEdge {
     /// A hole's note (Hole and Thread notes), when the edge is a hole's
     /// circle.
     pub note: Option<String>,
+    /// That hole (`HoleInstance::key`): every circle of one hole shares it.
+    pub hole: Option<String>,
 }
 
 /// What a view needs of a part: the display triangles and the model's
@@ -146,6 +148,8 @@ pub struct ModelEdge {
     pub line: bool,
     /// The note of the hole whose axis this circle sits on.
     pub note: Option<String>,
+    /// That hole's key (`HoleInstance::key`).
+    pub hole: Option<String>,
 }
 
 /// One occurrence of a component in an assembly view: its id (edge names
@@ -237,6 +241,7 @@ pub fn assembly_model(instances: &[Instance], simplify: Simplify) -> ViewModel {
                 circle: e.circle.map(|(c, n, r)| (t * c, t * n, r)),
                 line: e.line,
                 note: e.note.clone(),
+                hole: e.hole.as_ref().map(|h| format!("o{}/{h}", inst.id)),
             });
         }
     }
@@ -337,20 +342,16 @@ pub fn flat_lines(
     Some(lines)
 }
 
-/// The note of the hole whose axis a circle (centre, normal) lies on.
-fn hole_note(part: &PartDocument, (center, normal, _): (Point3, Vector3, f64)) -> Option<String> {
-    part.holes().iter().find_map(|h| {
+/// The hole whose axis a circle (centre, normal) lies on.
+fn hole_of(
+    part: &PartDocument,
+    (center, normal, _): (Point3, Vector3, f64),
+) -> Option<&crate::part::hole::HoleInstance> {
+    part.holes().iter().find(|h| {
         let d = h.direction.normalize();
         let off = center - h.origin;
         let across = (off - d * off.dot(&d)).norm();
-        (normal.dot(&d).abs() > 0.999 && across < 1e-4).then(|| {
-            h.spec
-                .note_lines(2)
-                .iter()
-                .map(|l| crate::part::hole::ascii(l))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
+        normal.dot(&d).abs() > 0.999 && across < 1e-4
     })
 }
 
@@ -411,12 +412,21 @@ pub fn part_model(part: &PartDocument) -> ViewModel {
                 Some(Curve::Circle(c)) => Some((c.center, c.normal.into_inner(), c.radius)),
                 _ => None,
             };
+            let hole = circle.and_then(|c| hole_of(part, c));
             out.edges.push(ModelEdge {
                 name: edge.name.clone(),
                 pts,
                 circle,
                 line: matches!(curve, Some(Curve::Line(_))),
-                note: circle.and_then(|c| hole_note(part, c)),
+                note: hole.map(|h| {
+                    h.spec
+                        .note_lines(2)
+                        .iter()
+                        .map(|l| crate::part::hole::ascii(l))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }),
+                hole: hole.map(|h| h.key()),
             });
         }
     }
@@ -812,6 +822,7 @@ pub fn view_lines_simplified(
                 straight: e.line || edge_on,
                 visible: visible_edges.contains(&(k as u32)),
                 note: e.note.clone(),
+                hole: e.hole.clone(),
                 full_circle: false,
             }
         })

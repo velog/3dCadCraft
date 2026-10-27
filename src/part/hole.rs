@@ -1426,6 +1426,16 @@ pub struct HoleInstance {
 }
 
 impl HoleInstance {
+    /// Identity of the hole in its part: feature, number and pattern copy
+    /// (`Hole1:2`, `Hole1:2#3`), stable while the feature keeps its holes.
+    pub fn key(&self) -> String {
+        let mut k = format!("{}:{}", self.feature, self.occurrence);
+        for c in &self.copy {
+            k.push_str(&format!("#{c}"));
+        }
+        k
+    }
+
     /// The hole moved by the rigid motion `m`: the hook for Pattern / Mirror
     /// (each copy of a Hole feature becomes `h.transformed(&m)` with its
     /// element index pushed onto `copy`). A mirror keeps the drilling

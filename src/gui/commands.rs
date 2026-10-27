@@ -28,6 +28,7 @@ use super::camera::Projection;
 use super::demos::Demo;
 use super::documents::DocCmd;
 use super::drawing::DrwCmd;
+use super::drawing_holetable::HtMode;
 use super::drawing_planned::Planned as Dp;
 use super::icons::Icon;
 use super::layout::{Element, UiCmd, VisKind};
@@ -2059,7 +2060,9 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["B"])
         .at(&[N_TABLE])
         .tip("Item balloons: click a component's edge, then where the balloon goes"),
-    dp("drw.hole_table", "Hole Table - View", "Таблица на отворите", Icon::PartsList, Dp::HoleTableView)
+    d("drw.hole_table", "Hole Table - View", "Таблица на отворите", Icon::PartsList)
+        .run(Action::Drawing(DrwCmd::HoleTable(HtMode::View)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["HT"])
         .at(&[N_TABLE])
         .tip("Holes of a view with coordinates from a datum"),
@@ -2193,11 +2196,15 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["TB"])
         .at(&[N_TABLE])
         .tip("A table from a view: on a flat pattern view, the bend table with tags (blank and CSV / Excel tables planned)"),
-    dp("drw.hole_table_sel", "Hole Table - Selection", "Таблица на избрани отвори", Icon::PartsList, Dp::HoleTableSelection)
+    d("drw.hole_table_sel", "Hole Table - Selection", "Таблица на избрани отвори", Icon::PartsList)
+        .run(Action::Drawing(DrwCmd::HoleTable(HtMode::Selection)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["HTS"])
         .at(&[N_TABLE])
         .tip("A hole table of the selected holes"),
-    dp("drw.hole_table_feat", "Hole Table - Selected Feature", "Таблица на отворите на елемент", Icon::PartsList, Dp::HoleTableFeature)
+    d("drw.hole_table_feat", "Hole Table - Selected Feature", "Таблица на отворите на елемент", Icon::PartsList)
+        .run(Action::Drawing(DrwCmd::HoleTable(HtMode::Feature)))
+        .spec("4.7-drawing-commands.md")
         .alias(&["HTF"])
         .at(&[N_TABLE])
         .tip("A hole table of the holes of one feature type"),

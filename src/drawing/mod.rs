@@ -19,6 +19,7 @@ pub mod dimset;
 pub mod dimtext;
 pub mod fits;
 pub mod hlr;
+pub mod hole_table;
 pub mod parts;
 pub mod pdf;
 pub mod render;

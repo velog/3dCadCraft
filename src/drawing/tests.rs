@@ -874,6 +874,7 @@ fn hole_notes_and_leader_texts() {
             straight: false,
             visible: true,
             note: Some("Ø10 THRU\nM12x1.75 - 6H".into()),
+            hole: Some("Hole1:1".into()),
             full_circle: true,
         }],
         min: [-30.0, -20.0],

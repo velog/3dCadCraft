@@ -86,6 +86,9 @@ pub enum AnnotationKind {
     /// Baseline / chain / ordinate dimension set (`dimset`, format
     /// revision 29).
     DimSet(super::dimset::DimSet),
+    /// Hole table of a view's holes, with its tags and origin indicator
+    /// (`hole_table`, format revision 31).
+    HoleTable(super::hole_table::HoleTable),
     /// Item balloon on a component of an assembly view (`parts`).
     Balloon(super::parts::Balloon),
     /// Text on the sheet.
@@ -255,6 +258,13 @@ pub fn resolve_in<'a>(
             })
         }
         AnnotationKind::DimSet(s) => st.dim_set(s, view),
+        AnnotationKind::HoleTable(ht) => {
+            let (pl, lines) = view(ht.view).ok_or(Orphan::NoView)?;
+            Ok(Shown {
+                prims: super::hole_table::prims(ht, lines, pl, look),
+                value: None,
+            })
+        }
         AnnotationKind::BendTable(bt) => {
             let (pl, lines) = view(bt.view).ok_or(Orphan::NoView)?;
             Ok(Shown {
@@ -975,6 +985,7 @@ impl Annotation {
             AnnotationKind::PartsList(p) => Some(p.view),
             AnnotationKind::BendTable(b) => Some(b.view),
             AnnotationKind::DimSet(s) => s.view(),
+            AnnotationKind::HoleTable(h) => Some(h.view),
             AnnotationKind::Balloon(b) => Some(b.view),
             AnnotationKind::Text { .. } | AnnotationKind::LeaderText { .. } => None,
         }

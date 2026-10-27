@@ -1492,6 +1492,62 @@ fn drawing_r29_project() -> Project {
     project
 }
 
+fn drawing_r32_project() -> Project {
+    use cadcraft3d::drawing::AnnotationKind;
+    use cadcraft3d::drawing::hole_table::{HoleScope, HoleTable};
+    let mut project = drawing_r29_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let v = d.sheets[0].views[0].id;
+        let mut ht = HoleTable::new(
+            v,
+            [-40.0, -25.0],
+            [250.0, 280.0],
+            HoleScope::Holes(vec!["Hole1:1".into(), "Hole1:2".into()]),
+        );
+        ht.tags = false;
+        d.add_annotation(AnnotationKind::HoleTable(ht));
+    }
+    project
+}
+
+/// The revision 32 drawing reads back with its hole table.
+#[test]
+fn drawing_r32_reads() {
+    use cadcraft3d::drawing::AnnotationKind;
+    use cadcraft3d::drawing::hole_table::HoleScope;
+    let f = root().join("r32/drawing_r32.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let ht = d.sheets[0]
+        .annotations
+        .iter()
+        .find_map(|a| match &a.kind {
+            AnnotationKind::HoleTable(h) => Some(h.clone()),
+            _ => None,
+        })
+        .expect("a hole table");
+    assert!(matches!(&ht.scope, HoleScope::Holes(k) if k.len() == 2));
+    assert!(!ht.tags);
+    assert_eq!(ht.columns.len(), 4);
+    project.validate().unwrap();
+}
+
 /// The revision 29 drawing reads back with its ordinate set and the
 /// toleranced dimension.
 #[test]
@@ -1758,6 +1814,11 @@ fn old_files_still_open() {
             let mut project = Project::new("ThickenR31");
             project.add_document("Part1", DocumentData::Part(thicken_r31()));
             project.save(&f).unwrap();
+        }
+        let f = root().join("r32/drawing_r32.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r32_project().save(&f).unwrap();
         }
         let f = root().join("r30/sheet_r30.3dcadcraft");
         if !f.exists() {

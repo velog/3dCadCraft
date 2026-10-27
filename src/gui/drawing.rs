@@ -63,6 +63,8 @@ pub enum DrwCmd {
     Table,
     /// Annotate › Arrange Dimensions.
     Arrange,
+    /// Annotate › Hole Table (View / Selection / Selected Feature).
+    HoleTable(super::drawing_holetable::HtMode),
     /// Baseline / Chain / Ordinate Dimension; `true`: kept as a set.
     DimSet(crate::drawing::dimset::SetKind, bool),
     /// Annotate › Balloon.
@@ -157,6 +159,8 @@ pub(super) enum DrwTool {
     DimSet(super::drawing_dimset::DsDraft),
     /// Arrange Dimensions: the picked dimensions.
     Arrange(Vec<u32>),
+    /// Hole Table: view, origin, holes, place.
+    HoleTable(super::drawing_holetable::HtDraft),
 }
 
 /// Tabs of the Drawing View dialog.
@@ -258,6 +262,8 @@ pub(super) struct DrwUi {
     pub bend_table: Option<super::drawing_bend::BtDialog>,
     /// Edit Dimension.
     pub dim_edit: Option<super::drawing_dim::DimDialog>,
+    /// Edit Hole Table.
+    pub hole_table_edit: Option<super::drawing_holetable::HtEdit>,
     /// This frame's measured values of the dimensions (id, mm).
     pub dim_values: Vec<(u32, f64)>,
     /// This frame's BOM tables of the active sheet.
@@ -290,6 +296,7 @@ impl DrwUi {
         self.bom = Default::default();
         self.bend_table = None;
         self.dim_edit = None;
+        self.hole_table_edit = None;
         self.cam.fit = true;
         self.fitted = None;
     }
@@ -441,6 +448,7 @@ impl CadCraftApp {
             DrwCmd::PartsList => self.open_parts_list(),
             DrwCmd::Table => self.open_bend_table(),
             DrwCmd::Arrange => self.start_arrange(),
+            DrwCmd::HoleTable(mode) => self.start_hole_table(mode),
             DrwCmd::DimSet(kind, set) => self.start_annotation(DrwTool::DimSet(
                 super::drawing_dimset::DsDraft::new(kind, set),
             )),
@@ -633,6 +641,7 @@ impl CadCraftApp {
             self.drw.planned = None;
             self.drw.bend_table = None;
             self.drw.dim_edit = None;
+            self.drw.hole_table_edit = None;
             self.bom_cancel();
             true
         } else {
@@ -651,6 +660,7 @@ impl CadCraftApp {
             || self.drw.bom.open()
             || self.drw.bend_table.is_some()
             || self.drw.dim_edit.is_some()
+            || self.drw.hole_table_edit.is_some()
     }
 
     /// Status-bar prompt.
@@ -671,6 +681,7 @@ impl CadCraftApp {
         match &self.drw.tool {
             Some(DrwTool::DimSet(d)) => d.prompt(),
             Some(DrwTool::Arrange(p)) => Self::arrange_prompt(p),
+            Some(DrwTool::HoleTable(d)) => d.prompt(),
             Some(DrwTool::CenterMark) => "Center Mark: click circles or arcs (Esc ends)".into(),
             Some(DrwTool::Centerline(None)) => "Centerline: click the first circle".into(),
             Some(DrwTool::Centerline(Some(_))) => {
@@ -1081,6 +1092,7 @@ impl CadCraftApp {
             Some(DrwTool::BendTable) => self.bend_table_tool(&painter, rect, &response, &views),
             Some(DrwTool::DimSet(_)) => self.dim_set_tool(&painter, rect, &response, &views),
             Some(DrwTool::Arrange(_)) => self.arrange_tool(&painter, rect, &response, &views),
+            Some(DrwTool::HoleTable(_)) => self.hole_table_tool(&painter, rect, &response, &views),
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
             // Edit View of a base view: its preview and ViewCube.
@@ -1120,6 +1132,11 @@ impl CadCraftApp {
                 Some(DrwTool::DimSet(d)) if d.placing => {}
                 // The tool itself arranges on the right click.
                 Some(DrwTool::Arrange(_)) => {}
+                Some(DrwTool::HoleTable(d)) => {
+                    let mut d = d.clone();
+                    d.cont();
+                    self.drw.tool = Some(DrwTool::HoleTable(d));
+                }
                 _ => {
                     self.drw.tool = None;
                     self.bom_cancel();
@@ -1454,6 +1471,7 @@ impl CadCraftApp {
         self.custom_view_window(ctx);
         self.bend_table_window(ctx);
         self.dim_edit_window(ctx);
+        self.hole_table_window(ctx);
         self.sheet_dialog_window(ctx);
         self.annotation_windows(ctx);
         self.drawing_styles_window(ctx);

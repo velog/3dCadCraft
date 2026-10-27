@@ -90,6 +90,9 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
   (the open two-mode item below), *36 countersunk holes* and *primitives* were over budget; none of them touches
   sheet metal code.
 
+- 2026-10-27: **Hole tables and Arrange** (`tests/perf_drawing.rs`): a table of 2 500 holes with its tags takes 4.3 ms
+  (budget 50 ms; 22 ms before the holes were indexed by key instead of searched), Arrange of 1 000 dimensions 0.4 ms.
+
 - 2026-10-27: **Dimension labels** (`tests/perf_drawing.rs`): 2 000 dimensions with H7 fits shown as deviations
   in brackets, laid out and placed, take 2.7 ms (budget 50 ms, debug profile).
 

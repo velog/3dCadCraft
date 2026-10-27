@@ -301,7 +301,9 @@ impl CadCraftApp {
                         id: a.id,
                         area: matches!(
                             a.kind,
-                            AnnotationKind::PartsList(_) | AnnotationKind::BendTable(_)
+                            AnnotationKind::PartsList(_)
+                                | AnnotationKind::BendTable(_)
+                                | AnnotationKind::HoleTable(_)
                         )
                         .then(|| lines_box(&s.prims))
                         .flatten(),
@@ -941,6 +943,10 @@ impl CadCraftApp {
                                 s.at[0] += delta[0];
                                 s.at[1] += delta[1];
                             }
+                            AnnotationKind::HoleTable(h) => {
+                                h.at[0] += delta[0];
+                                h.at[1] += delta[1];
+                            }
                             AnnotationKind::PartsList(pl) => {
                                 pl.at[0] += delta[0];
                                 pl.at[1] += delta[1];
@@ -999,6 +1005,10 @@ impl CadCraftApp {
             }
             Some(AnnotationKind::BendTable(_)) => {
                 self.open_bend_table_edit(id);
+                return;
+            }
+            Some(AnnotationKind::HoleTable(_)) => {
+                self.open_hole_table_edit(id);
                 return;
             }
             Some(AnnotationKind::Balloon(b)) => {

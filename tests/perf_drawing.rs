@@ -220,6 +220,58 @@ fn drawing_views_of_large_models() {
             over.push("dimension labels");
         }
     }
+    // A hole table of 2 500 holes in two kinds (a 50 × 50 grid of circles
+    // seen face-on), with its tags.
+    {
+        use cadcraft3d::drawing::annot::Placement;
+        use cadcraft3d::drawing::hlr::{ViewEdge, ViewLines};
+        use cadcraft3d::drawing::hole_table::{self, HoleScope, HoleTable};
+        let edges: Vec<ViewEdge> = (0..2500)
+            .map(|k| {
+                let c = [5.0 + 5.0 * (k % 50) as f64, 5.0 + 5.0 * (k / 50) as f64];
+                let r = if k % 3 == 0 { 1.5 } else { 1.0 };
+                ViewEdge {
+                    name: Some(format!("Hole{}:{}:Bore", k % 3, k)),
+                    a: [c[0] + r, c[1]],
+                    b: [c[0] + r, c[1]],
+                    circle: Some((c, r)),
+                    full_circle: true,
+                    straight: false,
+                    visible: true,
+                    note: Some(format!("Ø{} THRU", 2.0 * r)),
+                    hole: Some(format!("Hole{}:{}", k % 3, k)),
+                }
+            })
+            .collect();
+        let lines = ViewLines {
+            edges,
+            min: [0.0, 0.0],
+            max: [255.0, 255.0],
+            ..Default::default()
+        };
+        let pl = Placement {
+            position: [200.0, 150.0],
+            scale: 0.5,
+            center: lines.center(),
+        };
+        let ht = HoleTable::new(1, lines.min, [20.0, 280.0], HoleScope::View);
+        let look = cadcraft3d::drawing::style::AnnotationLook::default();
+        let t = Instant::now();
+        let prims = hole_table::prims(&ht, &lines, pl, &look);
+        let total = ms(t);
+        let n = ht.tagged(&lines).len();
+        assert_eq!(n, 2500);
+        let budget = 50.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms ({n} holes, {} prims){flag}",
+            "hole table: 2 500 holes of two kinds",
+            prims.len()
+        );
+        if total > budget {
+            over.push("hole table");
+        }
+    }
     // Arrange Dimensions over 1 000 horizontal dimensions above a view.
     {
         use cadcraft3d::drawing::annot::Placement;

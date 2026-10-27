@@ -238,11 +238,14 @@ view, Continue, placement above / beside decides x or y; baseline stacked by the
 ordinates at the ends of their extension lines; sets are one annotation (format revision 29). **Arrange Dimensions** (AD): rows
 Part Offset outside the view, Spacing apart, shortest first, non-overlapping dimensions on one row.
 
+🟡 2026-10-27: **Hole Table** - View / Selection / Selected Feature (HT, HTS, HTF): origin indicator, tags A1 / A2 / B1 by
+kind and position, XDIM / YDIM / DESCRIPTION from the holes, Edit Hole Table (format revision 32).
+
 🟡 2026-10-26: every other command of Inventor's drawing ribbon has its dialog (interface first,
 [spec/4.7-drawing-commands.md](spec/4.7-drawing-commands.md)): Break, Break Out, Slice, Crop, Overlay, Draft View,
 align views, Retrieve, chamfer / punch / bend notes,
 symbols, welding, caterpillar, end fill, FCF, datum identifiers and targets, centrelines, Parts List (source view /
-file, BOM view, levels), balloons, tables, hole tables, revisions, Replace Model Reference, Define templates; OK
+file, BOM view, levels), balloons, tables, revisions, Replace Model Reference, Define templates; OK
 stays disabled until each command's logic exists.
 
 ---

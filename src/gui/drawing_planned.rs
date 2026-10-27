@@ -84,9 +84,6 @@ pub enum Planned {
     CenteredPattern,
     AutoCenterlines,
     // Table
-    HoleTableView,
-    HoleTableSelection,
-    HoleTableFeature,
     RevisionTag,
     RevisionTable,
     RevisionCloud,
@@ -99,71 +96,6 @@ pub enum Planned {
 }
 
 // ---- shared pages ------------------------------------------------------------
-
-const HOLE_TABLE_PAGES: &[Page] = &[
-    Page(
-        "Placement",
-        &[
-            Sel("view", "View", "select the view whose holes are listed"),
-            Sel(
-                "origin",
-                "Origin",
-                "click a point of the view for the origin indicator",
-            ),
-            Sel("holes", "Holes", "select the holes or the hole feature"),
-            Sel("place", "Table Position", "click where the table goes"),
-        ],
-    ),
-    Page(
-        "Formatting",
-        &[
-            Check("Show Title", true),
-            Text("Title", "HOLE TABLE"),
-            Combo("Text Style", &["Note Text (ISO)"], 0),
-            Radio("Heading", &["Top", "Bottom", "No Heading"], 0),
-            Radio("Line Format", &["Outside Lines", "Inside Lines"], 0),
-            Button("Column Chooser..."),
-            Note("Columns: HOLE, XDIM, YDIM, DESCRIPTION (width and header per column)"),
-        ],
-    ),
-    Page(
-        "Options",
-        &[
-            Head("Row Merge Options"),
-            Radio(
-                "Merge",
-                &["None", "Numbering", "Rollup", "Combine Notes"],
-                0,
-            ),
-            Check("Reformat Table on Custom Hole Match", false),
-            Check("Delete Tags on Rollup", false),
-            Check("Secondary Tag Modifier on Rollup", false),
-            Head("Hole Tag Options"),
-            Check("Preserve Tagging", false),
-            Check("Use Leader", false),
-            Radio(
-                "Tag Order",
-                &["Arrange by Position", "Arrange by Size", "Group Hole Types"],
-                0,
-            ),
-            Head("View Filters: Included Features"),
-            Check("Hole features", true),
-            Check("Slot features", true),
-            Check("Circular cuts", true),
-            Check("Center marks", false),
-            Check("Recovered Punch Centers", false),
-            Head("Included Hole Types"),
-            Check("Drill Holes", true),
-            Check("Counterbore/Spotface Holes", true),
-            Check("Threaded Holes", true),
-            Check("Countersink Holes", true),
-            Head("Included Slot Types"),
-            Check("Simple Slots", true),
-            Check("Counterbore/Spotface Slots", true),
-            Check("Countersink Slots", true),
-        ],
-    ),
-];
 
 const DATUM_TARGET_PAGES: &[Page] = &[Page(
     "Datum Target",
@@ -179,7 +111,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 43] = [
+    pub const ALL: [Planned; 40] = [
         Self::Overlay,
         Self::DraftView,
         Self::Break,
@@ -212,9 +144,6 @@ impl Planned {
         Self::CenterlineBisector,
         Self::CenteredPattern,
         Self::AutoCenterlines,
-        Self::HoleTableView,
-        Self::HoleTableSelection,
-        Self::HoleTableFeature,
         Self::RevisionTag,
         Self::RevisionTable,
         Self::RevisionCloud,
@@ -260,9 +189,6 @@ impl Planned {
             Self::CenterlineBisector => "Centerline Bisector",
             Self::CenteredPattern => "Centered Pattern",
             Self::AutoCenterlines => "Automated Centerlines",
-            Self::HoleTableView => "Hole Table - View",
-            Self::HoleTableSelection => "Hole Table - Selection",
-            Self::HoleTableFeature => "Hole Table - Selected Feature",
             Self::RevisionTag => "Revision Tag",
             Self::RevisionTable => "Revision Table",
             Self::RevisionCloud => "Revision Cloud",
@@ -793,9 +719,6 @@ impl Planned {
                     Num("Arc Angle Minimum", 0.0, "°"),
                 ],
             )],
-            Self::HoleTableView | Self::HoleTableSelection | Self::HoleTableFeature => {
-                HOLE_TABLE_PAGES
-            }
             Self::RevisionTag => &[Page(
                 "Revision Tag",
                 &[
@@ -946,9 +869,6 @@ impl Planned {
             Self::CenteredPattern => "Centre lines of a circular pattern of holes",
             Self::AutoCenterlines => {
                 "Centre marks and lines on every chosen feature type of the views"
-            }
-            Self::HoleTableView | Self::HoleTableSelection | Self::HoleTableFeature => {
-                "Holes of a view with X / Y from an origin indicator and their descriptions"
             }
             Self::RevisionTag => "A revision tag next to a change",
             Self::RevisionTable => "Rows of revisions (Revision Number of the drawing)",
