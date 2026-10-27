@@ -2045,17 +2045,70 @@ fn project_flat_pattern_into_a_sketch() {
         "flat {} vs {want}",
         main.area()
     );
-    // A sketch square to the base panel is refused, unchanged.
+    // A sketch square to every panel is refused, unchanged.
     let o = SketchOptions {
         auto_project_origin: false,
         ..Default::default()
     };
     let k = p
-        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::YZ), &o)
         .unwrap();
     let n = p.sketches[k].sketch.entities().count();
     assert!(p.project_flat_pattern(k, "Face1").is_err());
     assert_eq!(p.sketches[k].sketch.entities().count(), n);
+    // On the flange's faces (owner, 2026-10-27: a double L's second side):
+    // the flat is laid where the flange is, the flange's face inside it.
+    let faces: Vec<String> = p
+        .body
+        .faces()
+        .filter_map(|(_, f)| f.name.clone())
+        .filter(|n| {
+            n.starts_with("Face1:Flange1.1:") && (n.ends_with(":top") || n.ends_with(":bottom"))
+        })
+        .collect();
+    assert_eq!(faces.len(), 2, "{faces:?}");
+    // Without the face's own edges, which would split the flat's region.
+    let bare = SketchOptions {
+        auto_reference_edges: false,
+        ..o.clone()
+    };
+    for face in faces {
+        let k = p
+            .create_sketch(SketchPlacement::on_face(&face), &bare)
+            .unwrap();
+        let before = p.sketches[k].sketch.entities().count();
+        p.project_flat_pattern(k, "Face1")
+            .unwrap_or_else(|e| panic!("{face}: {e}"));
+        let ps = &p.sketches[k];
+        assert!(ps.sketch.entities().count() > before);
+        let regions = ps.sketch.regions();
+        let main = regions
+            .iter()
+            .max_by(|a, b| a.area().total_cmp(&b.area()))
+            .unwrap();
+        assert!(
+            (main.area() - want).abs() < 1e-3 * want,
+            "{face}: flat {} vs {want}",
+            main.area()
+        );
+        // The flange face's middle lies on the flat, in the face's plane.
+        let (_, f) = p
+            .body
+            .faces()
+            .find(|(_, f)| f.name.as_deref() == Some(face.as_str()))
+            .unwrap();
+        let m = f.mesh.as_ref().unwrap();
+        let c = m
+            .positions
+            .iter()
+            .fold(nalgebra::Vector3::zeros(), |s, q| s + q.coords)
+            / m.positions.len() as Real;
+        let plane = &ps.sketch.plane;
+        let c = Point3::from(c);
+        assert!((c - plane.origin).dot(&plane.normal).abs() < 1e-6);
+        let q = plane.project(&c);
+        assert!(main.contains(q), "{face}: {q:?}");
+    }
 }
 
 #[test]

@@ -64,10 +64,11 @@ impl PartDocument {
 
     /// **Project Flat Pattern** of sheet `body` into sketch `index`: its
     /// outline and cut-outs (lines, arcs, circles; other curves as splines)
-    /// and its bend centre lines (construction), laid in the base panel's
-    /// plane on the top or bottom face, whichever the sketch is on (the
-    /// nearer one otherwise). The sketch must be parallel to the base
-    /// panel. Returns the new curves.
+    /// and its bend centre lines (construction), laid in the plane of the
+    /// panel the sketch is on (the base or a flange: on a flange's face the
+    /// flat lies where that panel is, the rest unfolded round it), on its top
+    /// or bottom face. A sketch on no face must be parallel to the base
+    /// (the nearer face then). Returns the new curves.
     pub fn project_flat_pattern(
         &mut self,
         index: usize,
@@ -86,26 +87,52 @@ impl PartDocument {
             .get(body)
             .ok_or_else(|| fail(format!("{body} is not a sheet metal body")))?;
         let t = ksm::thickness(&st.model);
-        // The flat's frame: origin, x and y as the sketch would see them.
-        let at = |p: [Real; 2], z: Real| ksm::flat_point(&st.model, p, z);
-        let (o, ex, ey) = (
-            at([0.0, 0.0], 0.0),
-            at([1.0, 0.0], 0.0),
-            at([0.0, 1.0], 0.0),
-        );
-        let n = (ex - o).cross(&(ey - o));
-        let n = n
-            .try_normalize(1e-12)
-            .ok_or_else(|| fail("the flat pattern has no plane".into()))?;
-        if n.cross(&plane.normal).norm() > 1e-6 {
-            return Err(fail(
-                "the sketch is not parallel to the sheet's base panel (sketch on its top or bottom face)"
-                    .into(),
-            ));
-        }
-        // The face of the sheet nearer the sketch plane.
-        let dist = |z: Real| (at([0.0, 0.0], z) - plane.origin).dot(&plane.normal).abs();
-        let z = if dist(t) < dist(0.0) { t } else { 0.0 };
+        // The panel the sketch lies on (the base first, then each flange's):
+        // parallel to it and on its top or bottom face. The flat is laid in
+        // that panel's place, as Inventor does on a flange's face.
+        let on_panel = |panel: Option<usize>| -> Option<Real> {
+            let at = |p: [Real; 2], z: Real| ksm::flat_point_on(&st.model, panel, p, z);
+            let (o, ex, ey) = (
+                at([0.0, 0.0], 0.0),
+                at([1.0, 0.0], 0.0),
+                at([0.0, 1.0], 0.0),
+            );
+            let n = (ex - o).cross(&(ey - o)).try_normalize(1e-12)?;
+            if n.cross(&plane.normal).norm() > 1e-6 {
+                return None;
+            }
+            let dist = |z: Real| (at([0.0, 0.0], z) - plane.origin).dot(&plane.normal).abs();
+            let z = if dist(t) < dist(0.0) { t } else { 0.0 };
+            Some((z, dist(z)))
+                .filter(|(_, d)| *d <= 1e-6 * (1.0 + t))
+                .map(|(z, _)| z)
+        };
+        let mut panels = std::iter::once(None).chain((0..ksm::panel_count(&st.model)).map(Some));
+        let (panel, z) = match panels.find_map(|k| on_panel(k).map(|z| (k, z))) {
+            Some(found) => found,
+            // Not on a face: parallel to the base, on the nearer side (as before).
+            None => {
+                let at = |p: [Real; 2], z: Real| ksm::flat_point(&st.model, p, z);
+                let (o, ex, ey) = (
+                    at([0.0, 0.0], 0.0),
+                    at([1.0, 0.0], 0.0),
+                    at([0.0, 1.0], 0.0),
+                );
+                let n = (ex - o)
+                    .cross(&(ey - o))
+                    .try_normalize(1e-12)
+                    .ok_or_else(|| fail("the flat pattern has no plane".into()))?;
+                if n.cross(&plane.normal).norm() > 1e-6 {
+                    return Err(fail(
+                        "the sketch is not parallel to a panel of the sheet (sketch on a panel's top or bottom face)"
+                            .into(),
+                    ));
+                }
+                let dist = |z: Real| (at([0.0, 0.0], z) - plane.origin).dot(&plane.normal).abs();
+                (None, if dist(t) < dist(0.0) { t } else { 0.0 })
+            }
+        };
+        let at = |p: [Real; 2], z: Real| ksm::flat_point_on(&st.model, panel, p, z);
         let loops = ksm::flat_profile(&st.model).map_err(fail)?;
         let p = |q: [Real; 2]| at(q, z);
         let mut pieces = Vec::new();

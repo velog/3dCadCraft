@@ -854,6 +854,23 @@ pub fn flat_point(m: &SheetModel, p: [Real; 2], z: Real) -> Point3 {
     p3(f.to_world(solidcraft_geom::Vec2::new(p[0], p[1])) + f.normal() * z)
 }
 
+/// [`flat_point`] with the flat pattern laid rigidly where flange `panel`'s
+/// panel is (its region of the flat on the folded panel; `None`: the base).
+pub fn flat_point_on(m: &SheetModel, panel: Option<usize>, p: [Real; 2], z: Real) -> Point3 {
+    let q = solidcraft_geom::Vec3::new(p[0], p[1], z);
+    let q = match panel {
+        Some(i) => solidcraft_doc::apply_point(&m.0.fold(i), q),
+        None => q,
+    };
+    let f = &m.0.frame;
+    p3(f.to_world(solidcraft_geom::Vec2::new(q.x, q.y)) + f.normal() * q.z)
+}
+
+/// How many flange panels the sheet has (indices for [`flat_point_on`]).
+pub fn panel_count(m: &SheetModel) -> usize {
+    m.0.flanges.len()
+}
+
 /// The flat pattern's area (outlines minus cut-outs), mm².
 pub fn flat_area(m: &SheetModel) -> Result<Real, String> {
     let area = |l: &[solidcraft_geom::Vec2]| -> Real {
