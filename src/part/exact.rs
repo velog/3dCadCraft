@@ -945,10 +945,25 @@ fn thicken(
     use super::body_op::{ThickenOutput, ThickenSelect};
     t.validate().map_err(User)?;
     let (d, symmetric) = t.signed();
-    let kernel = |e: String| User(format!("the geometry kernel cannot build it ({e})"));
+    let kernel = |e: String| {
+        // An edge sharp along part of its length only (a loft through a
+        // rectangle's corner between circles): the wall Thicken stands there
+        // shrinks to nothing at its ends.
+        if e.contains("Two same vertices") {
+            User(
+                "an edge or a point of the faces is sharp in places and smooth in others (a cone                  tip, a loft through a corner): Thicken needs every edge smooth or sharp along                  its whole length"
+                    .into(),
+            )
+        } else {
+            User(format!("the geometry kernel cannot build it ({e})"))
+        }
+    };
     // Every body that can hold a picked face: solids, then surface bodies.
     let all: Vec<&ExactSolid> = cur.iter().chain(sheets).collect();
     let mut source: Option<usize> = None;
+    // Face mode: the body index and its kernel faces (for the overlapped
+    // retry below).
+    let mut picked: Option<(usize, Vec<usize>)> = None;
     let piece = match t.select {
         ThickenSelect::Face => {
             let mut faces = Vec::new();
@@ -975,12 +990,14 @@ fn thicken(
             let Some(i) = source else {
                 return Err(User("select the faces".into()));
             };
+            picked = Some((i, faces.clone()));
             match t.output {
                 ThickenOutput::Surface => {
-                    exact::offset_sheet(all[i], &faces, d, id).map_err(kernel)?
+                    exact::offset_sheet(all[i], &faces, d, t.tolerance, id).map_err(kernel)?
                 }
                 ThickenOutput::Solid => {
-                    exact::thicken_faces(all[i], &faces, d, symmetric, id).map_err(kernel)?
+                    exact::thicken_faces(all[i], &faces, d, symmetric, t.tolerance, id)
+                        .map_err(kernel)?
                 }
             }
         }
@@ -991,7 +1008,8 @@ fn thicken(
                     .iter()
                     .find(|s| s.name.as_deref() == Some(q.as_str()))
                     .ok_or_else(|| User(format!("the surface body {q} no longer exists")))?;
-                let slab = exact::thicken_sheet(s, d, symmetric, id).map_err(kernel)?;
+                let slab =
+                    exact::thicken_sheet(s, d, symmetric, t.tolerance, id).map_err(kernel)?;
                 out = Some(match out {
                     None => slab,
                     Some(prev) => exact::boolean(&prev, &slab, ExactOp::Union)
@@ -1029,9 +1047,45 @@ fn thicken(
         Operation::Intersect => ExactOp::Intersect,
         Operation::NewSolid => ExactOp::Union,
     };
-    let mut r = exact::boolean(&cur[target], &piece, op)
-        .map_err(kernel)?
-        .ok_or_else(|| User(format!("{:?}: nothing is left of the solid", t.operation)))?;
+    // Every face of the solid, outward Join or inward Cut: the moved faces
+    // are the new solid.
+    let whole = picked.as_ref().is_some_and(|(i, faces)| {
+        *i == target && !symmetric && faces.len() == cur[target].face_names.len()
+    });
+    let grows =
+        (t.operation == Operation::Join && d > 0.0) || (t.operation == Operation::Cut && d < 0.0);
+    if whole && grows {
+        let mut r = exact::offset_solid(&cur[target], d, t.tolerance).map_err(kernel)?;
+        r.name = cur[target].name.clone();
+        out[target] = r;
+        return Ok(out);
+    }
+    let first = exact::boolean(&cur[target], &piece, op);
+    let first = match first {
+        Ok(Some(r)) => Ok(r),
+        Ok(None) => Err(format!("{:?}: nothing is left of the solid", t.operation)),
+        Err(e) => Err(e),
+    };
+    // A slab that only touches the solid along the picked faces (curved
+    // faces: the kernel's Boolean finds no result on coincident spheres or
+    // splines): built again reaching a little past the faces on the other
+    // side — into the material for a Join, out of it for a Cut — so the two
+    // overlap. The extra part lies inside (Join) or outside (Cut) the solid,
+    // so the result is the same.
+    let mut r = match (first, &picked) {
+        (Ok(r), _) => r,
+        (Err(e), Some((i, faces))) if !symmetric => {
+            let eps = (0.1 * d.abs()).clamp(0.02, 0.5) * -d.signum();
+            let sheet = exact::offset_sheet(all[*i], faces, eps, t.tolerance, id)
+                .map_err(|_| User(format!("the geometry kernel cannot build it ({e})")))?;
+            let slab = exact::thicken_sheet(&sheet, d - eps, false, t.tolerance, id)
+                .map_err(|_| User(format!("the geometry kernel cannot build it ({e})")))?;
+            exact::boolean(&cur[target], &slab, op)
+                .map_err(kernel)?
+                .ok_or_else(|| User(format!("{:?}: nothing is left of the solid", t.operation)))?
+        }
+        (Err(e), _) => return Err(kernel(e)),
+    };
     r.name = name;
     out[target] = r;
     Ok(out)

@@ -1105,6 +1105,16 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `section` / `about`, a `pp(..)` entry in `commands.rs` (alias, own icon) and a ribbon place; a selector's kinds
   decide what a view click (`part_planned_click` via `sel_item_at`) and the selection at start fill. Scripted key
   presses (`gui_win.py key g`) send no `Text` events, so multi-letter aliases need `type grl`.
+- **Thicken of free-form surfaces** (`kernel/exact/thicken.rs`, `tests/thicken_surfaces.rs`): the kernel
+  fits a spline face's offset as a B-spline within a tolerance — Optimized tries 0.01 … 1 mm (≤ 2 % of the
+  distance), only a "can't be fitted" error is retried. The fit's (u, v) span comes from a *continued*
+  closest-point walk round the boundary (`vendor` `surface_offset.rs::fit`): independent searches on a
+  revolved face jumped turns and poles (a 190° egg came out 6× too thick). A profile meeting the axis
+  with a free spline end is a cone tip — refused; give the spline end handles square to the axis.
+  `exact::faces_named` ranks by the distance from the hint to the face's *triangles* (several faces share a
+  name — revolve sectors), ties broken by the sample point. Thickening every face of a closed solid is
+  `exact::offset_solid` (a Boolean with its own shell finds nothing). Check volumes with Steiner's formula
+  ((V_out + V_in)/2 = A·t + 4π/3·t³ for a closed convex surface, A·t for an open smooth one) and Pappus.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

@@ -86,6 +86,11 @@ pub struct ThickenOp {
     /// More › Automatic Blending (kept; the kernel blends smooth faces).
     #[serde(default = "yes")]
     pub automatic_blending: bool,
+    /// More › Allow Approximation, Specify Tolerance (mm): how far a fitted
+    /// free-form face may stray from the true offset. `None`: Optimized (the
+    /// finest of 0.01 … 1 mm that fits, at most 2 % of the distance).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<Real>,
 }
 
 fn yes() -> bool {
@@ -107,6 +112,7 @@ impl ThickenOp {
             automatic_face_chain: true,
             vertical_surfaces: false,
             automatic_blending: true,
+            tolerance: None,
         }
     }
 
@@ -133,6 +139,12 @@ impl ThickenOp {
             _ => Ok(()),
         };
         picked?;
+        if self
+            .tolerance
+            .is_some_and(|t| !(t.is_finite() && (1e-6..=10.0).contains(&t)))
+        {
+            return Err("the tolerance must be 0.000001 … 10 mm".into());
+        }
         if self.vertical_surfaces {
             return Err("Create Vertical Surfaces is not supported yet".into());
         }

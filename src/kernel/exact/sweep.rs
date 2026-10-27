@@ -143,6 +143,113 @@ pub fn sweep(
     named(body, plane, &prof.names, prefix)
 }
 
+/// [`sweep`] with Output Surface: the profile's loops (outer and holes) swept
+/// into walls only, no caps — one surface body (a solid would close).
+/// Faces as for [`sweep`].
+pub fn sweep_surface(
+    plane: &Plane,
+    prof: &ExactProfile,
+    path: &[PathPiece],
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    let pl = plane_of(plane)?;
+    if path.is_empty() {
+        return Err("the path is empty".into());
+    }
+    let prof = split_closed_arcs(prof);
+    let chains: Vec<Vec<sg::Seg2>> = std::iter::once(&prof.region.outer)
+        .chain(prof.region.holes.iter())
+        .map(|l| l.segs.clone())
+        .collect();
+    let exact = path.iter().all(|p| !matches!(p, PathPiece::Points(_)));
+    let body = if exact {
+        let segs: Vec<sk::PathSeg> = path
+            .iter()
+            .filter_map(|p| match p {
+                PathPiece::Line { a, b } => Some(sk::PathSeg::Line { a: v3(a), b: v3(b) }),
+                PathPiece::Arc {
+                    a,
+                    center,
+                    axis,
+                    angle,
+                } => Some(sk::PathSeg::Arc {
+                    a: v3(a),
+                    center: v3(center),
+                    axis: d3(axis),
+                    angle: *angle,
+                }),
+                PathPiece::Points(_) => None,
+            })
+            .collect();
+        guarded("surface sweep", || sk::sweep_sheet(&pl, &chains, &segs))?
+    } else {
+        let pts = path_points(path);
+        guarded("surface sweep", || {
+            sk::sweep_sheet_points(&pl, &chains, &pts)
+        })?
+    };
+    let mut s = named(body, plane, &prof.names, prefix)?;
+    s.sheet = true;
+    Ok(s)
+}
+
+/// [`loft`] with Output Surface: the sections' outer loops lofted into walls
+/// only, no caps (holes are refused: a surface loft takes one loop per
+/// section). Faces as for [`loft`].
+pub fn loft_surface(
+    sections: &[(Plane, &ExactProfile)],
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    if sections.len() < 2 {
+        return Err("a loft needs two sections or more".into());
+    }
+    // A whole circle is one edge with a single vertex: the walls Thicken
+    // stands on such a free edge had two equal ends (kernel panic "Two same
+    // vertices cannot construct an edge"). Quarter arcs, as the solid loft.
+    let split: Vec<ExactProfile> = sections.iter().map(|(_, p)| split_closed_arcs(p)).collect();
+    let secs = sections
+        .iter()
+        .zip(&split)
+        .map(|((pl, _), prof)| {
+            let frame = Frame {
+                origin: pl.origin,
+                x: pl.x_axis.into_inner(),
+                y: pl.y_axis().into_inner(),
+            };
+            placed_section(prof, &frame, true)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if secs.iter().any(|s| !s.holes.is_empty()) {
+        return Err("a surface loft takes one loop per section (no holes)".into());
+    }
+    let numbered: Vec<String> = secs
+        .iter()
+        .enumerate()
+        .flat_map(|(k, s)| {
+            s.outer_names.iter().map(move |n| {
+                if k == 0 {
+                    n.clone()
+                } else {
+                    format!("s{k}.{n}")
+                }
+            })
+        })
+        .collect();
+    let input: Vec<(sg::Plane, Vec<sg::Seg2>)> = secs
+        .iter()
+        .map(|s| (s.plane, s.outer.segs.clone()))
+        .collect();
+    let body = guarded("surface loft", || sk::loft_sheet(&input))?;
+    let face_names = names_from(&body, &[], &side_names(&numbered, prefix));
+    Ok(ExactSolid {
+        sheet: true,
+        name: Some(prefix.to_owned()),
+        body,
+        face_names,
+        profiles: Vec::new(),
+    })
+}
+
 /// The profile with every arc cut into pieces of at most a quarter turn
 /// (names repeated per piece, as [`super::profile`] does for B-splines).
 pub(super) fn split_closed_arcs(prof: &ExactProfile) -> ExactProfile {

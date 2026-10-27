@@ -764,6 +764,16 @@ const THICKEN_TOLERANCE: f64 = 0.01;
 /// that would fold a face over is refused. Neighbouring faces must meet smoothly (their offsets
 /// agree).
 pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
+    thicken_with_tolerance(body, thickness, symmetric, THICKEN_TOLERANCE)
+}
+
+/// [`thicken`] with the fitting tolerance of free-form faces given (3DCadCraft: Inventor's
+/// Allow Approximation tolerance; a doubly curved spline face, such as a revolved egg, often
+/// needs more than 0.01 mm). Planes and circular cylinders still move exactly.
+pub fn thicken_with_tolerance(body: &Body, thickness: f64, symmetric: bool, tolerance: f64) -> Result<Body> {
+    if !(tolerance.is_finite() && (1e-6..=10.0).contains(&tolerance)) {
+        return Err(KernelError::Invalid("the thicken tolerance must be 0.000001…10 mm".into()));
+    }
     body.require_brep("thicken")?;
     if !(thickness.is_finite() && thickness.abs() > 1e-9) {
         return Err(KernelError::Invalid("thickness must be non-zero".into()));
@@ -780,7 +790,7 @@ pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
         // Planes and circular cylinders move exactly; other faces onto surfaces fitted within the
         // offset tolerance (Offset Surface's).
         let offs: Vec<crate::surface_offset::FaceMover> =
-            faces.iter().map(|f| crate::surface_offset::FaceMover::new(f, &[lo, hi], THICKEN_TOLERANCE)).collect::<Result<_>>()?;
+            faces.iter().map(|f| crate::surface_offset::FaceMover::new(f, &[lo, hi], tolerance)).collect::<Result<_>>()?;
         let near = |a: Vec3, b: Vec3| a.dist(b) <= tol * 1e3;
         // Each side's copies of every vertex and edge. Faces that move one to the same place share
         // the copy (they meet smoothly there); across a sharp edge each face has its own.

@@ -292,6 +292,11 @@ impl CadCraftApp {
             // The pattern command's Features selector takes browser rows.
             BrowserCmd::Select(Selection::Feature(k))
                 if self.pattern_draft.is_some() && self.pattern_pick_browser(k) => {}
+            // Thicken's Quilts / Solids selectors take body rows too.
+            BrowserCmd::CommandPick(
+                super::combine_split::BodyPick::Surface(n)
+                | super::combine_split::BodyPick::Body(n),
+            ) if self.thicken_draft.is_some() => self.thicken_pick_body(n),
             BrowserCmd::CommandPick(p) => {
                 self.body_cmd_browser_pick(p);
             }

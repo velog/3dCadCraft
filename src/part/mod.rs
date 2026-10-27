@@ -1297,6 +1297,12 @@ impl PartDocument {
                     "a modeled thread needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)".into(),
                 )),
                 BuildStep::Swept(sw) if use_exact => match sw.build(&self.sketches, &body) {
+                    // Output Surface: new surface bodies, no operation.
+                    Ok(added) if sw.output == Output::Surface => {
+                        let mut next = solids.clone();
+                        next.extend(added);
+                        Ok(Some(next))
+                    }
                     Ok(added) => {
                         made.push(pattern::ToolSet {
                             tools: added.clone(),
@@ -1310,6 +1316,12 @@ impl PartDocument {
                     Err(e) => Err(e),
                 },
                 BuildStep::Loft(lo) if use_exact => match lo.build(&self.sketches, &body) {
+                    // Output Surface: new surface bodies, no operation.
+                    Ok(added) if lo.output == Output::Surface => {
+                        let mut next = solids.clone();
+                        next.extend(added);
+                        Ok(Some(next))
+                    }
                     Ok(added) => {
                         made.push(pattern::ToolSet {
                             tools: added.clone(),
@@ -1562,7 +1574,11 @@ impl PartDocument {
                     &next,
                     matches!(
                         f,
-                        Feature::Sweep(_) | Feature::Loft(_) | Feature::Coil(_) | Feature::Rib(_)
+                        Feature::Sweep(_)
+                            | Feature::Loft(_)
+                            | Feature::Coil(_)
+                            | Feature::Rib(_)
+                            | Feature::BodyOp(_)
                     ),
                 ) {
                     // A result the kernel made but that is not a valid solid
@@ -1598,6 +1614,7 @@ impl PartDocument {
                                 | Feature::Loft(_)
                                 | Feature::Coil(_)
                                 | Feature::Rib(_)
+                                | Feature::BodyOp(_)
                         ) =>
                     {
                         let msg =

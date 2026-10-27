@@ -757,7 +757,9 @@ Robustness in touching and nearly coincident cases is achieved with tolerances a
 
 **Thicken/Offset** — 🟡 implemented 2026-10-27 (format revision 31, `Feature::BodyOp`): faces or quilts,
 Join / Cut / Intersect / New Solid, Output Surface, Direction 1 / 2 / Symmetric, Automatic Face Chain,
-preview, Edit Feature. **Specification:** [spec/2.14-thicken-offset.md](spec/2.14-thicken-offset.md)
+preview, Edit Feature, Optimized / Specify Tolerance for free-form faces. Tested on hard surfaces: whole
+and opened spline eggs (Steiner's formula), revolved eggs of any angle, sphere shells, smooth and creased
+surface lofts, a tube swept along a spline (Pappus). **Specification:** [spec/2.14-thicken-offset.md](spec/2.14-thicken-offset.md)
 
 - **Thicken/Offset:** turns a surface into a body with a thickness.
 - **Delete Face:** removes a face and closes the hole (healing imported models).
@@ -1019,7 +1021,8 @@ A profile moved along a trajectory (path).
 - **Solid Sweep** (a body along the path). ⬜ (clear refusal)
 
 **Settings.** Twist 🟡, taper (scale about the path) 🟡, Join / Cut /
-Intersect / New Solid 🟡, Surface ⬜. Waiting for a visual check.
+Intersect / New Solid 🟡, Surface 🟡 (a plain Path sweep of open or closed profiles: walls only, a new surface
+body; with taper, twist, a rail or Parallel a clear refusal). Waiting for a visual check.
 
 ## 5.2 Loft (transition between sections) — 🟡 · XL
 
@@ -1030,7 +1033,8 @@ A smooth surface or body through several sections. It can be controlled by **rai
 **End conditions:** free, tangent, smooth (G2), direction. Used for transition ducts, housings and blades.
 
 **Ours:** sections from sketches (also with holes — a hollow body), face loops, a point at the end
-(pyramid); 2 sections ruled, ≥ 3 smooth; Join / Cut / Intersect / New Solid 🟡.
+(pyramid); 2 sections ruled, ≥ 3 smooth; Join / Cut / Intersect / New Solid 🟡; Output Surface 🟡 (sections
+without holes, no rails / centre line / conditions / point / Closed Loop yet: a clear refusal).
 **Rails** 🟡 (1, 2, 3 and more rails that touch every section; stations fitted to the
 rails), **Center Line** 🟡 (sections perpendicular to the curve, frames without twist),
 **Area Loft** 🟡 (placed sections with an area or a scale, Proportional / Absolute, Driving /

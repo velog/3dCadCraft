@@ -217,9 +217,22 @@ impl CadCraftApp {
             let (_, t) = self.picker().pick(&o, &dir)?;
             Some(o + dir * t)
         });
-        let item = self
-            .sel_item_at(p, rect, edge, face.as_deref())
-            .or_else(|| face.clone().map(SelItem::Face));
+        // Quilts: the surface body whose face is under the cursor (the
+        // shared pickers resolve a face to a solid body only).
+        let quilt = (d.input == "quilts")
+            .then(|| {
+                let (o, dir) = self.camera.ray(p, rect)?;
+                let (f, _) = self.picker().pick(&o, &dir.try_normalize(1e-12)?)?;
+                let body = &self.part().body;
+                crate::part::select::body_of_face(body, f)
+                    .filter(|n| crate::part::select::body_is_surface(body, n))
+            })
+            .flatten()
+            .map(SelItem::Body);
+        let item = quilt.or_else(|| {
+            self.sel_item_at(p, rect, edge, face.as_deref())
+                .or_else(|| face.clone().map(SelItem::Face))
+        });
         if let Some(x) = item {
             self.thicken_take(&mut d, &x, at);
             // The first selector done: on to the solid of a multi-body part.
@@ -233,6 +246,14 @@ impl CadCraftApp {
             }
         }
         self.thicken_draft = Some(d);
+    }
+
+    /// A body row picked in the browser (Quilts or Solids selector).
+    pub(super) fn thicken_pick_body(&mut self, name: String) {
+        if let Some(mut d) = self.thicken_draft.clone() {
+            self.thicken_take(&mut d, &SelItem::Body(name), None);
+            self.thicken_draft = Some(d);
+        }
     }
 
     /// Makes selector `key` active.
@@ -463,7 +484,7 @@ impl CadCraftApp {
                     egui::Checkbox::new(&mut approx, "Allow Approximation"),
                 )
                 .on_disabled_hover_text(
-                    "Free-form faces are fitted within 0.01 mm (fixed for now; spec 2.14)",
+                    "Free-form faces are always fitted within the tolerance below (spec 2.14)",
                 );
                 ui.end_row();
                 plabel(ui, "Approximation");
@@ -482,12 +503,26 @@ impl CadCraftApp {
                 .on_disabled_hover_text("Spec 2.14: the kernel fits the mean offset");
                 ui.end_row();
                 plabel(ui, "Tolerance");
-                ui.add_enabled_ui(false, |ui| {
-                    let mut a = 0usize;
-                    ui.radio_value(&mut a, 0, "Optimized");
-                    ui.radio_value(&mut a, 1, "Specify Tolerance");
+                ui.vertical(|ui| {
+                    let mut specify = d.def.tolerance.is_some();
+                    ui.radio_value(&mut specify, false, "Optimized")
+                        .on_hover_text(
+                            "The finest of 0.01 … 1 mm that fits, at most 2 % of the distance",
+                        );
+                    ui.radio_value(&mut specify, true, "Specify Tolerance")
+                        .on_hover_text("How far a fitted free-form face may stray (mm)");
+                    match (specify, d.def.tolerance) {
+                        (false, Some(_)) => d.def.tolerance = None,
+                        (true, None) => d.def.tolerance = Some(0.1),
+                        _ => {}
+                    }
                 });
                 ui.end_row();
+                if let Some(tol) = d.def.tolerance.as_mut() {
+                    plabel(ui, "");
+                    ui.add(ExprValue::new(tol).suffix(" mm"));
+                    ui.end_row();
+                }
             });
         }
         if let Some(k) = ev.activate {

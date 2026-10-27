@@ -1038,24 +1038,57 @@ fn face_samples(s: &ExactSolid) -> Result<Vec<Option<Point3>>, String> {
 }
 
 /// The faces of `s` named `name`, nearest to `hint` first (a face a later
-/// Boolean split in pieces keeps its name on each piece).
+/// Boolean split in pieces keeps its name on each piece; the sectors of a
+/// full revolve share one name). Nearest = the distance from `hint` to the
+/// face itself (its triangles); on a tie (the hint on the edge between two
+/// pieces) the piece whose sample point is nearer.
 pub fn faces_named(s: &ExactSolid, name: &str, hint: Point3) -> Result<Vec<usize>, String> {
-    let samples = face_samples(s)?;
-    let mut v: Vec<(Real, usize)> = s
+    let named: Vec<usize> = s
         .face_names
         .iter()
         .enumerate()
         .filter(|(_, n)| n.as_deref() == Some(name))
-        .filter_map(|(i, _)| {
-            samples
+        .map(|(i, _)| i)
+        .collect();
+    if named.len() <= 1 {
+        return Ok(named);
+    }
+    let samples = face_samples(s)?;
+    let tol = (s.body.size() * 1e-4).max(1e-4);
+    let mesh = guarded("tessellate", || s.body.tessellate(tol))?;
+    let mut near = vec![Real::INFINITY; s.face_names.len().max(s.body.face_count())];
+    for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+        let Some([a, b, c]) = mesh.tri(t) else {
+            continue;
+        };
+        if let Some(d) = near.get_mut(f as usize) {
+            let q = sheet::closest_on_triangle(&hint, &p3(a), &p3(b), &p3(c));
+            *d = d.min((q - hint).norm());
+        }
+    }
+    let tie = tol * 10.0;
+    let mut v: Vec<(Real, Real, usize)> = named
+        .into_iter()
+        .map(|i| {
+            let d = near.get(i).copied().unwrap_or(Real::INFINITY);
+            let sd = samples
                 .get(i)
                 .copied()
                 .flatten()
-                .map(|p| ((p - hint).norm(), i))
+                .map_or(Real::INFINITY, |p| (p - hint).norm());
+            (d, sd, i)
         })
         .collect();
-    v.sort_by(|a, b| a.0.total_cmp(&b.0));
-    Ok(v.into_iter().map(|(_, i)| i).collect())
+    // Distances in steps of `tie` (a total order), then the sample's.
+    let step = |d: Real| {
+        if d.is_finite() {
+            (d / tie).round()
+        } else {
+            Real::MAX
+        }
+    };
+    v.sort_by(|a, b| step(a.0).total_cmp(&step(b.0)).then(a.1.total_cmp(&b.1)));
+    Ok(v.into_iter().map(|(_, _, i)| i).collect())
 }
 
 /// Which way a shell's walls grow from the faces (Inventor: Inside,
@@ -4397,6 +4430,7 @@ pub mod sheet_metal;
 mod sweep;
 mod thicken;
 pub use sweep::{
-    Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_to_point, path_points, sweep,
+    Frame, PathPiece, check_bend, frame_point, loft, loft_frames, loft_surface, loft_to_point,
+    path_points, sweep, sweep_surface,
 };
-pub use thicken::{face_sheet, offset_sheet, thicken_faces, thicken_sheet};
+pub use thicken::{face_sheet, offset_sheet, offset_solid, thicken_faces, thicken_sheet};

@@ -612,9 +612,7 @@ impl SweepFeature {
                 "Solid Sweep (a toolbody along a path) is not supported yet".into(),
             ));
         }
-        if self.output == Output::Surface {
-            return Err(User("Surface output is not supported yet".into()));
-        }
+        let surface = self.output == Output::Surface;
         if self.sweep_type == SweepType::PathAndGuideSurface {
             return Err(User("Path & Guide Surface is not supported yet".into()));
         }
@@ -678,7 +676,15 @@ impl SweepFeature {
                 kx::check_bend(plane, &prof, &path.pieces).map_err(User)?;
             }
             let prefix = super::exact::prefix(&self.id, k);
-            let solid = if plain {
+            let solid = if plain && surface {
+                kx::sweep_surface(plane, &prof, &path.pieces, &prefix)
+                    .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?
+            } else if surface {
+                return Err(User(
+                    "Surface output with taper, twist, a guide rail or Parallel orientation is not supported yet"
+                        .into(),
+                ));
+            } else if plain {
                 kx::sweep(plane, &prof, &path.pieces, &prefix)
                     .map_err(|e| User(format!("the geometry kernel cannot build it ({e})")))?
             } else {

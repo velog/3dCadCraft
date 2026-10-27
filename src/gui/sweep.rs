@@ -1006,20 +1006,23 @@ pub(super) fn output_rows(ui: &mut egui::Ui, output: &mut Output, op: &mut Opera
     plabel(ui, "Output");
     ui.horizontal(|ui| {
         ui.selectable_value(output, Output::Solid, "Solid");
-        ui.add_enabled(false, egui::Button::new("Surface"))
-            .on_disabled_hover_text("Surface output is not supported yet");
+        ui.selectable_value(output, Output::Surface, "Surface")
+            .on_hover_text("Walls only, a new surface body (no operation)");
     });
     ui.end_row();
     plabel(ui, "Operation");
-    ui.vertical(|ui| {
-        for o in [
-            Operation::Join,
-            Operation::Cut,
-            Operation::Intersect,
-            Operation::NewSolid,
-        ] {
-            ui.radio_value(op, o, o.label());
-        }
+    // A surface is a body of its own: no operation (Inventor greys them).
+    ui.add_enabled_ui(*output == Output::Solid, |ui| {
+        ui.vertical(|ui| {
+            for o in [
+                Operation::Join,
+                Operation::Cut,
+                Operation::Intersect,
+                Operation::NewSolid,
+            ] {
+                ui.radio_value(op, o, o.label());
+            }
+        });
     });
     ui.end_row();
 }

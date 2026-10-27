@@ -146,6 +146,18 @@ of both operands and `sew_touching_with_sources` (1024 bosses: 9.8 s, from 39 s)
 - Triangulation OPEN: #1666 (STL of a loft), #2356, #818 (a blind cut splits all vertical edges; we see the same after Shell).
 - Speed OPEN: #1219 (a fillet of a hole untouched by the cut makes it 350× slower), #742, #1093, #1856.
 
+## Thicken / offset of free-form faces (our patch, to propose)
+
+- `thicken` fits free-form offsets within a fixed 0.01 mm: a spline egg 40 mm tall needs about 0.3 mm
+  to thicken by 1.5 mm. Proposal: a tolerance parameter (`thicken_with_tolerance` in our `vendor/`).
+- `surface_offset::fit` took a face's (u, v) span from independent closest-point searches of boundary
+  samples. On a surface of revolution the angle is periodic and any angle reaches a pole, so the span
+  overran or missed the face: a 150° revolved egg thickened 34 % too thick, a 190° one six times, 120°
+  and 180° could not be fitted. Proposal: the continued search in our `vendor/` (see its README row).
+- A loft from a circle through a rectangle to a circle has seams that are sharp at the rectangle's
+  corners and smooth elsewhere; `thicken` panics there ("Two same vertices cannot construct an edge").
+  Expected: an error, or a wall that tapers out.
+
 ## Tests we should add on our side
 1. A cut ending exactly in the plane of a face or along a fillet's tangent edge: face count, no zero-thickness faces (#2963, #2591).
 2. Through All from a sketch in the plane of a face: nothing behind the plane changes (#423).

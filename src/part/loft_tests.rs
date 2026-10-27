@@ -352,9 +352,11 @@ fn refusals_and_edits() {
     let b = at_height(&mut p, 20.0, |s| square(s, 10.0));
     for (f, text) in [
         (
-            Box::new(|d: &mut LoftFeature| d.output = Output::Surface)
-                as Box<dyn Fn(&mut LoftFeature)>,
-            "Surface",
+            Box::new(|d: &mut LoftFeature| {
+                d.output = Output::Surface;
+                d.closed_loop = true;
+            }) as Box<dyn Fn(&mut LoftFeature)>,
+            "Surface output",
         ),
         (
             Box::new(|d: &mut LoftFeature| {

@@ -271,8 +271,12 @@ impl LoftFeature {
     ) -> Result<Vec<ExactSolid>, Fail> {
         use Fail::User;
         let kernel = |e: String| User(format!("the geometry kernel cannot build it ({e})"));
-        if self.output == Output::Surface {
-            return Err(User("Surface output is not supported yet".into()));
+        let surface = self.output == Output::Surface;
+        if surface && (self.guided() || self.closed_loop) {
+            return Err(User(
+                "Surface output with rails, a centre line, conditions, point mapping or Closed Loop is not supported yet"
+                    .into(),
+            ));
         }
         let n = self.sections.len();
         if n < 2 {
@@ -285,6 +289,11 @@ impl LoftFeature {
         if points.iter().any(|&k| k != 0 && k + 1 != n) {
             return Err(User(
                 "a point can only be the first or the last section".into(),
+            ));
+        }
+        if !points.is_empty() && surface {
+            return Err(User(
+                "a surface loft to a point is not supported yet".into(),
             ));
         }
         if !points.is_empty() {
@@ -335,7 +344,11 @@ impl LoftFeature {
             let g = self.guided_input(sketches, body, refs).map_err(User)?;
             return kx::loft_guided(&g, &self.id).map(|s| vec![s]).map_err(User);
         }
-        let s = kx::loft(&refs, &self.id).map_err(kernel)?;
+        let s = if surface {
+            kx::loft_surface(&refs, &self.id).map_err(kernel)?
+        } else {
+            kx::loft(&refs, &self.id).map_err(kernel)?
+        };
         Ok(vec![s])
     }
 

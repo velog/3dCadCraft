@@ -353,8 +353,11 @@ fn refusals_leave_the_part_unchanged() {
             "Solid Sweep",
         ),
         (
-            Box::new(|d: &mut SweepFeature| d.output = Output::Surface),
-            "Surface",
+            Box::new(|d: &mut SweepFeature| {
+                d.output = Output::Surface;
+                d.taper = 0.05;
+            }),
+            "Surface output",
         ),
         (
             Box::new(|d: &mut SweepFeature| d.sweep_type = SweepType::PathAndGuideSurface),

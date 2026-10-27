@@ -225,15 +225,83 @@ fn fit(f: &mt::Face, distance: f64, tolerance: f64) -> Result<mt::BSplineSurface
     let d = sign * distance;
     // The face's span in its surface's parameters: its boundary, found on the surface.
     let (mut u0, mut u1, mut v0, mut v1) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+    // Each search starts from the last point's parameters (3DCadCraft): on a periodic surface
+    // (a revolution) a search from nowhere may land on another turn of the angle for a point
+    // of the same boundary, and the span then covered more than the face — the fitted offset
+    // was trimmed wrongly (a 150° revolved egg thickened 34 % too thick, 190° 6×).
+    // The boundary's sample points in wire order; a degenerate edge (a pole: a revolved
+    // profile's end on the axis) is one point and is left out.
+    let mut pts: Vec<mt::Point3> = Vec::new();
     for e in f.absolute_boundaries().iter().flat_map(|w| w.edge_iter()) {
-        let c = e.curve();
+        let c = e.oriented_curve();
         let (t0, t1) = c.range_tuple();
-        for k in 0..=16 {
-            let q = c.subs(t0 + (t1 - t0) * k as f64 / 16.0);
-            if let Some((u, v)) = s.search_nearest_parameter(q, None, 100) {
-                (u0, u1, v0, v1) = (u0.min(u), u1.max(u), v0.min(v), v1.max(v));
-            }
+        let samples: Vec<mt::Point3> = (0..=16).map(|k| c.subs(t0 + (t1 - t0) * k as f64 / 16.0)).collect();
+        let extent = samples.iter().map(|p| from_p3(*p).dist(from_p3(samples[0]))).fold(0.0f64, f64::max);
+        if extent > 1e-9 * (1.0 + from_p3(samples[0]).dist(Vec3::new(0.0, 0.0, 0.0))) {
+            pts.extend(samples);
         }
+    }
+    // Where one derivative vanishes (a pole) every value of that parameter is the same point.
+    let pole = |u: f64, v: f64| -> (bool, bool) {
+        let (a, b) = (s.uder(u, v).magnitude(), s.vder(u, v).magnitude());
+        let m = a.max(b);
+        (m == 0.0 || a < 1e-7 * m, m == 0.0 || b < 1e-7 * m)
+    };
+    // Each search continues from the last point's parameters, starting at a point that is no
+    // pole (3DCadCraft: on a periodic surface — a revolution — a search from nowhere may land
+    // on another turn of the angle, and a pole gives any angle; the span then missed or
+    // overran the face and the fitted offset was trimmed wrongly: a 150° revolved egg came out
+    // 34 % too thick, a 190° one 6×, a 120° one could not be fitted).
+    // The first search stays in the surface's own parameter range (a search from nowhere also
+    // returned points of the extrapolated curve beyond its end).
+    let (ur, vr) = s.try_range_tuple();
+    let inside = |(u, v): (f64, f64)| {
+        ur.is_none_or(|(a, b)| u >= a - 1e-9 && u <= b + 1e-9) && vr.is_none_or(|(a, b)| v >= a - 1e-9 && v <= b + 1e-9)
+    };
+    let ranged = |q: mt::Point3| -> Option<(f64, f64)> {
+        let r = match (ur, vr) {
+            (Some(a), Some(b)) => s.search_nearest_parameter(q, mt::SPHint2D::Range(a, b), 100),
+            _ => s.search_nearest_parameter(q, None, 100),
+        };
+        r.filter(|p| inside(*p))
+    };
+    let start = pts.iter().position(|q| ranged(*q).is_some_and(|(u, v)| pole(u, v) == (false, false))).unwrap_or(0);
+    let mut hint: Option<(f64, f64)> = None;
+    for k in 0..pts.len() {
+        let q = pts[(start + k) % pts.len()];
+        let found = match hint {
+            // Continuing from the last point may leave the range (a periodic angle). Next to a
+            // pole that search stalls short of the point: then the search from nowhere is taken.
+            Some(h) => {
+                let miss = |p: (f64, f64)| from_p3(s.subs(p.0, p.1)).dist(from_p3(q));
+                let near = 1e-7 * (1.0 + from_p3(q).dist(Vec3::new(0.0, 0.0, 0.0)));
+                match s.search_nearest_parameter(q, Some(h), 100) {
+                    Some(p) if miss(p) <= near => Some(p),
+                    other => match ranged(q) {
+                        Some(r) if other.is_none_or(|p| miss(r) < miss(p)) => Some(r),
+                        _ => other,
+                    },
+                }
+            }
+            None => ranged(q),
+        };
+        let Some((u, v)) = found else { continue };
+        // A parameter with a bounded, non-periodic range (a revolved profile's) is held in it:
+        // at a pole a search also lands on the profile curve extrapolated past the axis. An
+        // angle (a range of exactly one turn) may go round.
+        let clamp = |x: f64, r: Option<(f64, f64)>| match r {
+            Some((a, b)) if ((b - a) - std::f64::consts::TAU).abs() > 1e-9 => x.clamp(a, b),
+            _ => x,
+        };
+        let (u, v) = (clamp(u, ur), clamp(v, vr));
+        let (pu, pv) = pole(u, v);
+        // At a pole only the parameter that still moves the point counts.
+        let (u, v) = match hint {
+            Some((hu, hv)) => (if pu { hu } else { u }, if pv { hv } else { v }),
+            None => (u, v),
+        };
+        hint = Some((u, v));
+        (u0, u1, v0, v1) = (u0.min(u), u1.max(u), v0.min(v), v1.max(v));
     }
     if !(u0.is_finite() && u1 > u0 && v0.is_finite() && v1 > v0) {
         return Err(KernelError::Failed("offset: the face's span on its surface".into()));

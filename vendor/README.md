@@ -29,6 +29,13 @@ copy when the pin moves to a commit that has them.
 | `surface_kind.rs` `face_surfaces` | every face's surface in one walk (in parallel) | `face_surface(i)` walked to face i each time |
 | `polybool.rs` `Sources::edge` | an edge between two faces that share several edges (a circle split into arcs), whose chord test finds none or several, gets no origin (`Some(vec![])`) instead of `None` | one such edge dropped the whole result's history: a modeled thread cut in slabs lost every face name (not a speed change) |
 
+An addition for Thicken/Offset's Allow Approximation (`docs/spec/2.14-thicken-offset.md`):
+
+| File | Change | Effect |
+|---|---|---|
+| `surfaces.rs` `thicken_with_tolerance` (exported in `lib.rs`) | `thicken` with the free-form fitting tolerance as a parameter (was the constant 0.01 mm; `thicken` keeps it) | a revolved spline egg 40 mm tall thickens 1.5 mm (its offset is off by up to 0.12 mm at 0.01; fits at 0.3) |
+| `surface_offset.rs` `fit`: the face's (u, v) span | the boundary is walked in wire order, each search continuing from the last point's parameters (starting at a point that is no pole, the first one inside the surface's range); a hinted search that stalls short of its point falls back to one from nowhere; degenerate edges (poles) are skipped; at a pole the vanishing parameter keeps its last value; a bounded parameter is clamped to its range; a periodic angle takes the turn nearest the last point | thickened revolved egg pieces: 150° was 34 % too thick, 190° 6×, 120° / 180° could not be fitted — now each is its share of the whole egg |
+
 A fix (not about speed): a rolling-ball blend of a closed chain whose corners meet **curved**
 seams. Proposed upstream in `docs/SOLIDCRAFT_ISSUES.md` (Sweep).
 
