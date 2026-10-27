@@ -71,13 +71,16 @@ fn link_to(
 /// every reference in `project` follows. The document's own references to
 /// documents still inside `project` become links to `owner_path`.
 ///
-/// Refused for the file's last document, an unsaved `project` and an
-/// existing `target`. Returns the new link.
+/// Refused for the file's last document and an unsaved `project`. An
+/// existing `target` is replaced only with `replace` (the user confirmed),
+/// when it is a file of the document's kind that `project` does not link.
+/// Returns the new link.
 pub fn extract(
     project: &mut Project,
     owner_path: &Path,
     id: DocumentId,
     target: &Path,
+    replace: bool,
 ) -> ProjectResult<LibraryId> {
     if project.documents.len() <= 1 {
         return Err(ProjectError::Refused(
@@ -86,17 +89,36 @@ pub fn extract(
     }
     let owner_dir = folder_of(owner_path)?;
     let owner_abs = owner_dir.join(owner_path.file_name().unwrap_or_default());
-    if target.exists() {
-        return Err(ProjectError::Refused(format!(
-            "{} already exists",
-            target.display()
-        )));
-    }
-    let target_dir = folder_of(target)?;
     let doc = project
         .document(id)
         .cloned()
         .ok_or(ProjectError::UnknownDocument(id))?;
+    if target.exists() {
+        if !replace {
+            return Err(ProjectError::Refused(format!(
+                "{} already exists",
+                target.display()
+            )));
+        }
+        if FileType::from_path(target) != Some(FileType::for_kind(doc.data.kind())) {
+            return Err(ProjectError::Refused(format!(
+                "{} is another kind of file",
+                target.display()
+            )));
+        }
+        let t = canonical(target)?;
+        let linked = project
+            .libraries
+            .iter()
+            .any(|l| canonical(&owner_dir.join(&l.path)).is_ok_and(|p| p == t));
+        if linked {
+            return Err(ProjectError::Refused(format!(
+                "{} is linked by this file",
+                target.display()
+            )));
+        }
+    }
+    let target_dir = folder_of(target)?;
 
     // The new file: the document with its references made links.
     let stem = target
@@ -229,8 +251,113 @@ pub fn embed(
             .remap_references(|r| if r == from { DocRef::local(new_id) } else { r });
     }
     project.documents.push(copy);
-    project.prune_libraries();
+    // Only this link goes, and only when nothing uses it any more: a file
+    // linked by Link File stays linked without users.
+    let used = project
+        .documents
+        .iter()
+        .flat_map(|d| d.data.references())
+        .any(|r| r.library == Some(lib));
+    if !used {
+        project.libraries.retain(|l| l.id != lib);
+    }
     Ok(new_id)
+}
+
+/// **Link File**: links the file at `path` from `project` (saved at
+/// `owner_path`) without placing anything; its documents can then be
+/// placed and shown (spec 0.6b §3.2). Refuses the file itself.
+pub fn link_file(
+    project: &mut Project,
+    owner_path: &Path,
+    resolver: &mut Resolver,
+    path: &Path,
+) -> ProjectResult<LibraryId> {
+    let owner_dir = folder_of(owner_path)?;
+    let other = resolver.load(path)?;
+    if other.id == project.id {
+        return Err(ProjectError::Refused("a file cannot link itself".into()));
+    }
+    let abs = canonical(path)?;
+    Ok(link_to(project, &owner_dir, &abs, other.id, &other.name))
+}
+
+/// **Insert Document**: copies every document of the file at `path` into
+/// `project` (saved at `owner_path`, or not saved yet). References between
+/// them follow the copies; their links to other files are rewritten for
+/// this file (a link back to `project` becomes local). Ids are kept when
+/// free; a taken name gets ` (2)`, ` (3)`…. Returns the new documents.
+pub fn insert_file(
+    project: &mut Project,
+    owner_path: Option<&Path>,
+    resolver: &mut Resolver,
+    path: &Path,
+) -> ProjectResult<Vec<DocumentId>> {
+    let source = resolver.load(path)?;
+    if source.id == project.id {
+        return Err(ProjectError::Refused("a file cannot insert itself".into()));
+    }
+    let source_dir = canonical(path)?
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let owner_dir = match owner_path {
+        Some(p) => Some(folder_of(p)?),
+        None => None,
+    };
+    // New ids first, so references between the copies can follow them.
+    let ids: HashMap<DocumentId, DocumentId> = source
+        .documents
+        .iter()
+        .map(|d| {
+            let new = if project.document(d.id).is_some() {
+                DocumentId::new_random()
+            } else {
+                d.id
+            };
+            (d.id, new)
+        })
+        .collect();
+    let mut libs: HashMap<LibraryId, Option<LibraryId>> = HashMap::new();
+    for l in &source.libraries {
+        let to = if l.project == project.id {
+            None
+        } else {
+            let abs = source_dir.join(&l.path);
+            let path = match &owner_dir {
+                Some(dir) => relative_path(dir, &abs),
+                None => abs.to_string_lossy().replace('\\', "/"),
+            };
+            Some(project.add_library(path, l.project, l.name.clone()))
+        };
+        libs.insert(l.id, to);
+    }
+    let mut added = Vec::new();
+    for d in &source.documents {
+        let mut copy = d.clone();
+        copy.id = ids.get(&d.id).copied().unwrap_or(d.id);
+        if project.name_taken(&copy.name, None) {
+            let base = copy.name.clone();
+            copy.name = (2..)
+                .map(|k| format!("{base} ({k})"))
+                .find(|n| !project.name_taken(n, None))
+                .unwrap_or(base);
+        }
+        copy.data.remap_references(|r| match r.library {
+            None => DocRef::local(ids.get(&r.document).copied().unwrap_or(r.document)),
+            Some(l) => match libs.get(&l) {
+                Some(Some(to)) => DocRef {
+                    library: Some(*to),
+                    document: r.document,
+                },
+                Some(None) => DocRef::local(r.document),
+                None => r,
+            },
+        });
+        added.push(copy.id);
+        project.documents.push(copy);
+    }
+    Ok(added)
 }
 
 /// **Embed All** (Pack): embeds every linked document, then what those
@@ -298,7 +425,7 @@ pub fn separate_all(
             .cloned()
             .ok_or(ProjectError::UnknownDocument(id))?;
         let target = free_path(&separate_file_name(&folder, &doc));
-        extract(project, owner_path, id, &target)?;
+        extract(project, owner_path, id, &target, false)?;
         written.push(target);
     }
 }
@@ -368,7 +495,7 @@ mod tests {
         let (mut p, path, part, a) = design(&d);
         let target = separate_file_name(&d, p.document(part).unwrap());
         assert_eq!(target.file_name().unwrap(), "Part1.ccpart");
-        let lib = extract(&mut p, &path, part, &target).unwrap();
+        let lib = extract(&mut p, &path, part, &target, false).unwrap();
         assert!(p.document(part).is_none());
         assert!(
             refs(&p, a)
@@ -387,7 +514,31 @@ mod tests {
         let doc = res.resolve(&path, &back, refs(&back, a)[0]).unwrap();
         assert_eq!(doc.id, part);
         // The last document stays; an existing file is not overwritten.
-        assert!(extract(&mut p, &path, a, &target).is_err());
+        assert!(extract(&mut p, &path, a, &target, true).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn replace_takes_an_unlinked_file_of_the_same_kind_only() {
+        let d = tmp("replace");
+        let (mut p, path, part, a) = design(&d);
+        let old = d.join("Old.ccpart");
+        std::fs::write(&old, b"x").unwrap();
+        let asm_file = d.join("Old.ccasm");
+        std::fs::write(&asm_file, b"x").unwrap();
+        // Another kind is refused even when confirmed.
+        assert!(extract(&mut p, &path, part, &asm_file, true).is_err());
+        let lib = extract(&mut p, &path, part, &old, true).unwrap();
+        assert_eq!(Project::load(&old).unwrap().documents()[0].id, part);
+        p.save(&path).unwrap();
+        // Now linked: replacing it with the assembly's copy is refused.
+        let mut res = Resolver::new();
+        embed(&mut p, &path, &mut res, lib, part).unwrap();
+        let mut top = p.clone();
+        let lib2 = link_file(&mut top, &path, &mut res, &old).unwrap();
+        assert!(top.library(lib2).is_some());
+        assert!(extract(&mut top, &path, part, &old, true).is_err());
+        assert!(p.document(a).is_some());
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -396,7 +547,7 @@ mod tests {
         let d = tmp("roundtrip");
         let (mut p, path, part, a) = design(&d);
         let target = d.join("Assembly1.ccasm");
-        let lib = extract(&mut p, &path, a, &target).unwrap();
+        let lib = extract(&mut p, &path, a, &target, false).unwrap();
         p.save(&path).unwrap();
         // The assembly file links the part in the design file.
         let f = Project::load(&target).unwrap();
@@ -423,6 +574,33 @@ mod tests {
         assert_eq!(refs(&p, t), vec![DocRef::local(a)]);
         assert!(p.libraries().is_empty());
         p.validate().unwrap();
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn link_file_keeps_a_link_and_insert_copies_every_document() {
+        let d = tmp("link");
+        let (src, src_path, part, a) = design(&d);
+        let mut p = Project::new("Other");
+        p.add_new_document("Part", DocumentData::Part(PartDocument::default()));
+        let path = d.join("Other.3dcadcraft");
+        p.save(&path).unwrap();
+        let mut res = Resolver::new();
+        let lib = link_file(&mut p, &path, &mut res, &src_path).unwrap();
+        assert_eq!(p.libraries().len(), 1);
+        assert_eq!(p.libraries()[0].id, lib);
+        assert!(link_file(&mut p, &path, &mut res, &path).is_err());
+        // Insert copies both documents; Part1 is taken here: "Part1 (2)".
+        let added = insert_file(&mut p, Some(&path), &mut res, &src_path).unwrap();
+        assert_eq!(added, vec![part, a], "ids kept when free");
+        assert_eq!(p.document(part).unwrap().name, "Part1 (2)");
+        assert_eq!(refs(&p, a), vec![DocRef::local(part); 2]);
+        p.validate().unwrap();
+        // Again: fresh ids, the assembly follows its own copy.
+        let again = insert_file(&mut p, Some(&path), &mut res, &src_path).unwrap();
+        assert!(again.iter().all(|id| *id != part && *id != a));
+        assert_eq!(refs(&p, again[1]), vec![DocRef::local(again[0]); 2]);
+        assert_eq!(src.documents().len(), 2);
         let _ = std::fs::remove_dir_all(&d);
     }
 

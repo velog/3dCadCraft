@@ -57,9 +57,9 @@ pub(super) struct PlaceDialog {
     yaw: f32,
     /// The parts stored in this design file (spec 0.6b §3.3 *In This
     /// File*), listed above the file browser.
-    local: Vec<(DocumentId, String)>,
+    local: Vec<(DocRef, String)>,
     /// The part of this file picked in that list.
-    local_pick: Option<DocumentId>,
+    local_pick: Option<DocRef>,
     /// The assembly is saved, so other files can be linked (by a path
     /// relative to it).
     can_link: bool,
@@ -282,7 +282,7 @@ impl CadCraftApp {
         let local = if self.is_drawing() {
             Vec::new()
         } else {
-            asm::placeable(&self.project)
+            self.placeable_here()
         };
         let saved = !self.file_path.trim().is_empty();
         if !saved && !local.is_empty() {
@@ -320,6 +320,35 @@ impl CadCraftApp {
         self.place_preview();
     }
 
+    /// What Place offers above the file browser: the parts of this file,
+    /// then the parts of the files it links (Link File, earlier places).
+    fn placeable_here(&self) -> Vec<(DocRef, String)> {
+        let mut v: Vec<(DocRef, String)> = asm::placeable(&self.project)
+            .into_iter()
+            .map(|(id, name)| (DocRef::local(id), name))
+            .collect();
+        for l in self.project.libraries() {
+            let Some(path) = self.library_path(l.id) else {
+                continue;
+            };
+            let Ok(file) = self.part_file(&path) else {
+                continue;
+            };
+            let f = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            for (id, name) in parts_of(&file) {
+                let r = DocRef {
+                    library: Some(l.id),
+                    document: id,
+                };
+                v.push((r, format!("{name} ({f})")));
+            }
+        }
+        v
+    }
+
     /// The name of a referenced document: of this file, or of a linked file
     /// (`<name> (<file>)`); `(missing)` when it cannot be found.
     pub(super) fn ref_name(&self, r: DocRef) -> String {
@@ -335,18 +364,26 @@ impl CadCraftApp {
         .unwrap_or_else(|| "(missing)".to_owned())
     }
 
-    /// Starts placing part `doc` of this design file (no link).
-    fn place_local(&mut self, doc: DocumentId) {
-        let name = self
-            .project
-            .document(doc)
-            .map(|d| d.name.clone())
-            .unwrap_or_else(|| "Part".into());
+    /// Starts placing part `r` of this design file or of a file it links.
+    fn place_local(&mut self, r: DocRef) {
+        let name = match r.library {
+            None => self.project.document(r.document).map(|d| d.name.clone()),
+            Some(lib) => self.library_path(lib).and_then(|path| {
+                let file = self.part_file(&path).ok()?;
+                file.document(r.document).map(|d| d.name.clone())
+            }),
+        }
+        .unwrap_or_else(|| "Part".into());
+        let where_ = if r.library.is_some() {
+            "linked"
+        } else {
+            "in this file"
+        };
         self.asm.place = None;
         self.asm.place_name = name.clone();
-        self.asm.tool = Some(super::assembly::AsmTool::Place(DocRef::local(doc)));
+        self.asm.tool = Some(super::assembly::AsmTool::Place(r));
         self.file_status = Some(Ok(format!(
-            "Place: {name} (in this file); click in the view to place it"
+            "Place: {name} ({where_}); click in the view to place it"
         )));
     }
 
@@ -380,14 +417,17 @@ impl CadCraftApp {
         let Some(d) = self.asm.place.as_ref() else {
             return;
         };
-        if let Some(doc) = d.local_pick {
-            let mesh = match self.project.document(doc).map(|x| &x.data) {
-                Some(DocumentData::Part(part)) => {
-                    let mut part = part.clone();
-                    let _ = part.regenerate();
-                    Some(Arc::new(PickMesh::of(&part)))
-                }
-                _ => None,
+        if let Some(r) = d.local_pick {
+            let mesh = match r.library {
+                None => match self.project.document(r.document).map(|x| &x.data) {
+                    Some(DocumentData::Part(part)) => {
+                        let mut part = part.clone();
+                        let _ = part.regenerate();
+                        Some(Arc::new(PickMesh::of(&part)))
+                    }
+                    _ => None,
+                },
+                Some(_) => self.with_part(r, |p| Arc::new(PickMesh::of(p))),
             };
             if let Some(d) = self.asm.place.as_mut() {
                 d.preview = mesh;
@@ -462,7 +502,7 @@ impl CadCraftApp {
         let mut select: Option<PathBuf> = None;
         let mut place: Option<(PathBuf, DocumentId)> = None;
         let mut new_part: Option<DocumentId> = None;
-        let mut local: Option<(DocumentId, bool)> = None;
+        let mut local: Option<(DocRef, bool)> = None;
         let mut save_first = false;
         let mut cancel = false;
         let w = egui::Window::new("Place Component")
@@ -522,7 +562,15 @@ impl CadCraftApp {
                         // (an estimate made the window grow every frame).
                         let top = ui.cursor().top();
                         if !d.local.is_empty() {
-                            ui.label(RichText::new("In This File").strong());
+                            let linked = d.local.iter().any(|x| x.0.library.is_some());
+                            ui.label(
+                                RichText::new(if linked {
+                                    "In This File and Linked Files"
+                                } else {
+                                    "In This File"
+                                })
+                                .strong(),
+                            );
                             let h = (d.local.len() as f32 * 22.0).min(list_h * 0.4);
                             egui::ScrollArea::vertical()
                                 .id_salt("place_local")
@@ -614,8 +662,17 @@ impl CadCraftApp {
                             && let Some((_, name)) = d.local.iter().find(|x| x.0 == id)
                         {
                             ui.label(RichText::new(name).strong());
-                            ui.weak(format!("Occurrences are named {name}:1, {name}:2…"));
-                            ui.weak("Stored in this file: edits to it show in the assembly at once.");
+                            // A linked part's list name carries its file: "Plate (Plate.ccpart)".
+                            let base = match id.library {
+                                Some(_) => name.rsplit_once(" (").map_or(name.as_str(), |x| x.0),
+                                None => name.as_str(),
+                            };
+                            ui.weak(format!("Occurrences are named {base}:1, {base}:2…"));
+                            ui.weak(if id.library.is_some() {
+                                "In a linked file: save that file and the assembly shows the change."
+                            } else {
+                                "Stored in this file: edits to it show in the assembly at once."
+                            });
                         } else if let Some(path) = &d.selected {
                             let stem = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
                             ui.label(RichText::new(stem).strong());

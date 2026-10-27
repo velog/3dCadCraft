@@ -32,7 +32,16 @@ pub(super) enum DialogPurpose {
     ExportDxf,
     /// Drawing → File › Export › PDF.
     ExportPdf,
+    /// Manage › Link File: a file to link (spec 0.6b).
+    LinkFile,
+    /// Manage › Insert Document: a file whose documents are copied in.
+    InsertDocument,
+    /// Save to Separate File: where document `.0` (of kind `.1`) goes.
+    Extract(crate::document::DocumentId, crate::document::DocumentKind),
 }
+
+/// The files that hold documents (Open, Link File, Insert Document).
+const MODEL_EXTS: &[&str] = &[FILE_EXTENSION, "ccpart", "ccasm", "ccdrw"];
 
 impl DialogPurpose {
     fn title(self) -> String {
@@ -47,13 +56,22 @@ impl DialogPurpose {
             DialogPurpose::ExportBom => "Export Bill of Materials".into(),
             DialogPurpose::ExportDxf => "Export Flat Pattern".into(),
             DialogPurpose::ExportPdf => "Export PDF".into(),
+            DialogPurpose::LinkFile => "Link File".into(),
+            DialogPurpose::InsertDocument => "Insert Document".into(),
+            DialogPurpose::Extract(..) => "Save to Separate File".into(),
         }
     }
 
     /// Extensions listed and given to a typed name.
     fn extensions(self) -> &'static [&'static str] {
         match self {
-            DialogPurpose::Open | DialogPurpose::SaveAs => &[FILE_EXTENSION],
+            DialogPurpose::Open | DialogPurpose::LinkFile | DialogPurpose::InsertDocument => {
+                MODEL_EXTS
+            }
+            DialogPurpose::SaveAs => &[FILE_EXTENSION],
+            DialogPurpose::Extract(_, crate::document::DocumentKind::Part) => &["ccpart"],
+            DialogPurpose::Extract(_, crate::document::DocumentKind::Assembly) => &["ccasm"],
+            DialogPurpose::Extract(_, crate::document::DocumentKind::Drawing) => &["ccdrw"],
             DialogPurpose::SaveFolder => &[],
             DialogPurpose::Export(ExportFormat::Stl) => &["stl"],
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
@@ -70,7 +88,11 @@ impl DialogPurpose {
     /// The "Files of type" line.
     fn type_text(self) -> String {
         let kind = match self {
-            DialogPurpose::Open | DialogPurpose::SaveAs => "3DCadCraft project",
+            DialogPurpose::Open | DialogPurpose::LinkFile | DialogPurpose::InsertDocument => {
+                "3DCadCraft files"
+            }
+            DialogPurpose::SaveAs => "3DCadCraft project",
+            DialogPurpose::Extract(_, k) => crate::document::FileType::for_kind(k).name(),
             DialogPurpose::SaveFolder => return "3DCadCraft project folder".into(),
             DialogPurpose::Export(ExportFormat::Stl) => "STL",
             DialogPurpose::Export(ExportFormat::Step) => "STEP",
@@ -87,7 +109,13 @@ impl DialogPurpose {
     }
 
     fn saves(self) -> bool {
-        !matches!(self, DialogPurpose::Open | DialogPurpose::ImportParams)
+        !matches!(
+            self,
+            DialogPurpose::Open
+                | DialogPurpose::ImportParams
+                | DialogPurpose::LinkFile
+                | DialogPurpose::InsertDocument
+        )
     }
 }
 
@@ -818,7 +846,18 @@ impl CadCraftApp {
             DialogPurpose::ExportBom => format!("{stem}-bom.csv"),
             DialogPurpose::ExportDxf => format!("{stem}-flat.dxf"),
             DialogPurpose::ExportPdf => format!("{stem}.pdf"),
-            DialogPurpose::ImportParams => String::new(),
+            DialogPurpose::ImportParams
+            | DialogPurpose::LinkFile
+            | DialogPurpose::InsertDocument => String::new(),
+            DialogPurpose::Extract(id, _) => self
+                .project
+                .document(id)
+                .map(|d| {
+                    crate::document::storage::separate_file_name(Path::new(""), d)
+                        .display()
+                        .to_string()
+                })
+                .unwrap_or_default(),
         };
         self.file_dialog = Some(
             FileDialog::new(purpose, start_dir(&self.file_path), name).with_file(&self.file_path),
@@ -962,11 +1001,7 @@ impl CadCraftApp {
                 .dropped_files
                 .iter()
                 .map(|f| f.path().to_path_buf())
-                .find(|p| {
-                    p.extension()
-                        .and_then(|x| x.to_str())
-                        .is_some_and(|x| x.eq_ignore_ascii_case(FILE_EXTENSION))
-                })
+                .find(|p| crate::document::FileType::from_path(p).is_some_and(|t| t.is_model()))
         });
         if let Some(p) = dropped {
             // A tab of its own: nothing to save first.
@@ -1297,6 +1332,9 @@ impl CadCraftApp {
             }
             DialogPurpose::Diagnostics => self.save_diagnostics(&path),
             DialogPurpose::ExportPdf => self.write_drawing_pdf(&path),
+            DialogPurpose::LinkFile => self.docs_link_file(&path),
+            DialogPurpose::InsertDocument => self.docs_insert_file(&path),
+            DialogPurpose::Extract(id, _) => self.docs_extract_to(id, &path),
             DialogPurpose::ExportDxf => {
                 let text = self.sm.dxf.take().unwrap_or_default();
                 self.file_status = Some(
@@ -1798,16 +1836,17 @@ fn file_list(
             } else if r.hovered() {
                 painter.rect_filled(rect, 2.0, vis.widgets.hovered.weak_bg_fill);
             }
-            let project = Path::new(&e.name)
-                .extension()
-                .and_then(|x| x.to_str())
-                .is_some_and(|x| x.eq_ignore_ascii_case(FILE_EXTENSION));
-            let icon = if e.is_dir && !project {
-                Some(Icon::Folder)
-            } else if project {
-                Some(Icon::Part)
-            } else {
-                None
+            // The kind's icon by extension (spec 0.6a); a `.3dcadcraft`
+            // folder (Save as Folder) is a design, not a plain folder.
+            use crate::document::FileType;
+            let ty = FileType::from_path(Path::new(&e.name));
+            let icon = match ty {
+                Some(FileType::Assembly) => Some(Icon::Assembly),
+                Some(FileType::Drawing) => Some(Icon::Drawing),
+                Some(FileType::Project) => Some(Icon::Project),
+                Some(_) => Some(Icon::Part),
+                None if e.is_dir => Some(Icon::Folder),
+                None => None,
             };
             if let Some(i) = icon {
                 let ir = egui::Rect::from_min_size(

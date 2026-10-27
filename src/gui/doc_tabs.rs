@@ -207,6 +207,10 @@ impl CadCraftApp {
                 if r.clicked() {
                     switch = Some(k);
                 }
+                // The active file's documents (spec 0.6b §3.3).
+                if active {
+                    self.document_chips(ui);
+                }
                 r.context_menu(|ui| {
                     if ui.button("Close").clicked() {
                         close = Some(k);

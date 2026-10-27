@@ -1334,16 +1334,16 @@ pub static COMMANDS: &[Command] = &[
         .tip("A new presentation inside this design file (presentations are still to come)")
         .todo("0.6"),
     doc("doc.insert", "Insert Document", "Вмъкване на документ", Icon::DocInsert)
+        .run(Action::Docs(DocCmd::Insert))
         .short("Insert")
         .alias(&["IDF"])
         .at(&[G_DOCS])
-        .tip("Copy documents of another file into this one, with what they reference")
-        .todo("0.6"),
+        .tip("Copy documents of another file into this one, with what they reference"),
     doc("doc.link", "Link File", "Връзка към файл", Icon::DocLink)
+        .run(Action::Docs(DocCmd::Link))
         .alias(&["LF"])
         .at(&[G_DOCS])
-        .tip("Link another file: its documents can be placed and shown without copying them")
-        .todo("0.6"),
+        .tip("Link another file: its documents can be placed and shown without copying them"),
     doc("doc.duplicate", "Duplicate Document", "Дублиране на документ", Icon::DocDuplicate)
         .run(Action::Docs(DocCmd::Duplicate))
         .short("Duplicate")

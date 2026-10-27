@@ -29,6 +29,10 @@ pub enum DocCmd {
     NewDrawing,
     /// New Presentation in this file (presentations are still to come).
     NewPresentation,
+    /// Copy every document of another file into this one.
+    Insert,
+    /// Link another file (Place and Base View offer its documents).
+    Link,
     /// A copy of the document in this file.
     Duplicate,
     /// Rename the document.
@@ -55,6 +59,8 @@ impl DocCmd {
             DocCmd::NewAssembly => "New Assembly",
             DocCmd::NewDrawing => "New Drawing",
             DocCmd::NewPresentation => "New Presentation",
+            DocCmd::Insert => "Insert Document",
+            DocCmd::Link => "Link File",
             DocCmd::Duplicate => "Duplicate Document",
             DocCmd::Rename => "Rename Document",
             DocCmd::Delete => "Delete Document",
@@ -151,6 +157,12 @@ impl CadCraftApp {
             DocCmd::Delete => self.docs_delete(id),
             DocCmd::Window => self.docs.window = !self.docs.window,
             DocCmd::Extract => self.docs_extract(id),
+            DocCmd::Insert => self.open_dialog(super::files::DialogPurpose::InsertDocument),
+            DocCmd::Link => {
+                if self.saved_path(c).is_some() {
+                    self.open_dialog(super::files::DialogPurpose::LinkFile);
+                }
+            }
             DocCmd::Embed => self.docs_embed(),
             DocCmd::Pack => self.docs_pack(),
             DocCmd::Unpack => self.docs_unpack(),
@@ -226,14 +238,14 @@ impl CadCraftApp {
         Some(PathBuf::from(p))
     }
 
-    /// Save to Separate File: `<folder>/<name>.<kind ext>` next to the design
-    /// file, linked back (spec 0.6b §3.5).
+    /// Save to Separate File: the Save dialog (in the design file's folder,
+    /// `<name>.<kind ext>` proposed), then `docs_extract_to` (spec 0.6b §3.5).
     fn docs_extract(&mut self, id: DocumentId) {
         let c = DocCmd::Extract;
-        let Some(owner) = self.saved_path(c) else {
+        if self.saved_path(c).is_none() {
             return;
-        };
-        let Some(doc) = self.project.document(id).cloned() else {
+        }
+        let Some(kind) = self.project.document(id).map(|d| d.data.kind()) else {
             return;
         };
         if self.project.documents().len() <= 1 {
@@ -243,11 +255,22 @@ impl CadCraftApp {
             )));
             return;
         }
-        let folder = owner
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let target = storage::separate_file_name(&folder, &doc);
+        self.open_dialog(super::files::DialogPurpose::Extract(id, kind));
+    }
+
+    /// Writes document `id` to `target` and links it back.
+    pub(super) fn docs_extract_to(&mut self, id: DocumentId, target: &Path) {
+        let c = DocCmd::Extract;
+        let Some(owner) = self.saved_path(c) else {
+            return;
+        };
+        let Some(doc) = self.project.document(id).cloned() else {
+            return;
+        };
+        let target = target.to_path_buf();
+        // The dialog asked before an existing file got here: replace it
+        // (storage refuses another kind and a file this one links).
+        let replace = target.exists();
         // The active document gives way first: it leaves this file.
         let back = self.part_id;
         if id == self.part_id
@@ -262,7 +285,7 @@ impl CadCraftApp {
         }
         let t = target.clone();
         if self
-            .docs_edit(c, |p| storage::extract(p, &owner, id, &t))
+            .docs_edit(c, |p| storage::extract(p, &owner, id, &t, replace))
             .is_some()
         {
             self.after_restore();
@@ -274,6 +297,45 @@ impl CadCraftApp {
             )));
         } else if self.project.document(back).is_some() && back != self.part_id {
             self.activate_document(back);
+        }
+    }
+
+    /// Link File: `path` is linked; Place and Base View offer its documents.
+    pub(super) fn docs_link_file(&mut self, path: &Path) {
+        let c = DocCmd::Link;
+        let Some(owner) = self.saved_path(c) else {
+            return;
+        };
+        let p = path.to_path_buf();
+        if self
+            .docs_edit(c, |pr| {
+                storage::link_file(pr, &owner, &mut Resolver::new(), &p)
+            })
+            .is_some()
+        {
+            self.docs.window = true;
+            self.file_status = Some(Ok(format!(
+                "{}: {} is linked (Place offers its parts; Embed copies them in)",
+                c.name(),
+                path.display()
+            )));
+        }
+    }
+
+    /// Insert Document: every document of `path` is copied into this file.
+    pub(super) fn docs_insert_file(&mut self, path: &Path) {
+        let c = DocCmd::Insert;
+        let owner = {
+            let p = self.file_path.trim();
+            (!p.is_empty()).then(|| PathBuf::from(p))
+        };
+        let p = path.to_path_buf();
+        if let Some(added) = self.docs_edit(c, |pr| {
+            storage::insert_file(pr, owner.as_deref(), &mut Resolver::new(), &p)
+        }) {
+            let names: Vec<String> = added.iter().map(|&d| self.doc_name(d)).collect();
+            self.docs.window = true;
+            self.file_status = Some(Ok(format!("{}: {}", c.name(), names.join(", "))));
         }
     }
 
@@ -309,6 +371,13 @@ impl CadCraftApp {
             .into_iter()
             .collect();
         let n = docs.len();
+        if n == 0 {
+            self.file_status = Some(Ok(format!(
+                "{}: nothing is used from that file yet (Place a part of it first)",
+                c.name()
+            )));
+            return;
+        }
         let done = self.docs_edit(c, |p| {
             let mut res = Resolver::new();
             for d in docs {
@@ -707,6 +776,48 @@ impl CadCraftApp {
         }
         if keep {
             self.docs.rename = Some((id, text, true));
+        }
+    }
+}
+
+impl CadCraftApp {
+    /// Document chips after the active file's tab: one per document of the
+    /// file when it holds several (spec 0.6b §3.3); a click makes that
+    /// document the active one, sharing the file's Undo and Save.
+    pub(super) fn document_chips(&mut self, ui: &mut egui::Ui) {
+        if self.project.documents().len() < 2 {
+            return;
+        }
+        let docs: Vec<(DocumentId, String, DocumentKind)> = self
+            .project
+            .documents()
+            .iter()
+            .map(|d| (d.id, d.name.clone(), d.data.kind()))
+            .collect();
+        let mut open = None;
+        let mut ask = None;
+        for (id, name, kind) in docs {
+            super::panels::tree_icon(ui, kind_icon(kind));
+            let on = id == self.part_id;
+            let text = if on {
+                RichText::new(&name).strong()
+            } else {
+                RichText::new(&name)
+            };
+            let r = ui
+                .selectable_label(on, text)
+                .on_hover_text("A document of this file: click to work on it");
+            if r.clicked() && !on {
+                open = Some(id);
+            }
+            r.context_menu(|ui| doc_menu(ui, id, &mut ask, &mut open));
+        }
+        if let Some(id) = open {
+            self.asm.came_from = None;
+            self.activate_document(id);
+        }
+        if let Some((c, id)) = ask {
+            self.docs_apply_to(c, id);
         }
     }
 }
