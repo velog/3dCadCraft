@@ -407,6 +407,95 @@ pub enum Icon {
     Print3d,
     /// BIM Content (a building).
     BimContent,
+    // assembly commands with an interface only (`gui/asm_planned.rs`, spec 3.0)
+    /// Place from Content Center (a bolt from a library shelf).
+    PlaceContent,
+    /// Place Imported CAD Files (a file arrow onto a component).
+    PlaceImported,
+    /// Create In-Place Component (a new block with a plus).
+    AsmCreate,
+    /// Pattern Component (a row of components).
+    AsmPattern,
+    /// Mirror Components (two blocks about a dashed plane).
+    AsmMirror,
+    /// Copy Components (a block and its copy, plus sign).
+    AsmCopy,
+    /// Replace Component (two blocks swapped by arrows).
+    AsmReplace,
+    /// Make Layout (a sketch sheet with blocks).
+    MakeLayout,
+    /// Simplify (an assembly into one box).
+    Simplify,
+    /// Create Derived Substitutes (an assembly to one part).
+    Substitutes,
+    /// Assemble (a face moving onto another).
+    AsmAssemble,
+    /// Create iAssembly (a table of assemblies).
+    CreateIAssembly,
+    /// Bolted Connection (a bolt through two plates).
+    Bolt,
+    /// Clevis Pin (a pin with a head and a hole).
+    ClevisPin,
+    /// Secure Pin (a split pin).
+    SecurePin,
+    /// Radial Pin (a pin through a shaft).
+    RadialPin,
+    /// Insert Frame (an L profile along a line).
+    InsertFrame,
+    /// Shaft (stepped sections).
+    Shaft,
+    /// Spur Gears (two meshing gears).
+    SpurGear,
+    /// Worm Gear (a worm under a wheel).
+    WormGear,
+    /// Bevel Gears (two cones).
+    BevelGear,
+    /// Bearing (two rings and balls).
+    Bearing,
+    /// Parallel Key (a key in a shaft groove).
+    KeyJoint,
+    /// V-Belts (a belt over two pulleys).
+    VBelt,
+    /// Synchronous Belts (a toothed belt).
+    SyncBelt,
+    /// Roller Chains (chain links).
+    Chain,
+    /// Disc Cam (a disc with a follower).
+    DiscCam,
+    /// Linear Cam (a wavy track).
+    LinearCam,
+    /// Cylindrical Cam (a groove round a cylinder).
+    CylCam,
+    /// Involute Splines (a toothed shaft end).
+    InvSpline,
+    /// Parallel Splines (a shaft with square teeth).
+    ParSpline,
+    /// O-Ring (a ring in a groove).
+    ORing,
+    /// Compression Spring (a coil between plates).
+    CompSpring,
+    /// Extension Spring (a coil with hooks).
+    ExtSpring,
+    /// Torsion Spring (a coil with legs).
+    TorsionSpring,
+    /// Belleville Spring (stacked dished washers).
+    Belleville,
+    /// Show relationships (glyphs on components).
+    ShowRelations,
+    /// Show Sick relationships (a red glyph).
+    ShowSick,
+    /// Hide All relationships (a crossed glyph).
+    HideRelations,
+    /// Degrees of Freedom (arrows round a block).
+    DofGlyph,
+    /// Tube & Pipe (a bent pipe).
+    TubePipe,
+    /// Cable & Harness (wires to a plug).
+    CableHarness,
+    /// Dynamic Simulation (a pendulum).
+    DynamicSim,
+    /// Presentation (an exploded block).
+    Presentation,
 }
 
 /// Pen on the 16 × 16 design grid mapped into a screen rect.
@@ -2181,6 +2270,315 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
                 p.line(&[(8.0, 7.0), (8.0, 1.0)], acc);
                 p.head((8.0, 1.0), (0.0, -1.0), acc);
             }
+        }
+        // ---- assembly commands with an interface only (spec 3.0) ----
+        PlaceContent => {
+            p.line(&[(1.5, 14.0), (14.5, 14.0)], ink);
+            p.rect(3.0, 2.0, 7.0, 5.0, acc);
+            p.line(&[(5.0, 5.0), (5.0, 12.5)], acc);
+            p.rect(10.0, 6.0, 14.0, 12.0, ink);
+            p.head((9.0, 9.0), (-1.0, 0.0), hot);
+        }
+        PlaceImported => {
+            p.block([6.0, 8.5, 7.0, 5.0, 2.5], ink, soft);
+            p.text(4.5, 4.0, "STP", 5.0, acc);
+            p.head((7.5, 8.0), (0.7, 1.0), hot);
+        }
+        AsmCreate => {
+            p.block([1.5, 9.0, 6.0, 5.0, 2.5], ink, tint(ink, 40));
+            p.block([8.0, 6.0, 5.0, 4.0, 2.0], acc, soft);
+            p.line(&[(12.0, 1.0), (12.0, 5.0)], hot);
+            p.line(&[(10.0, 3.0), (14.0, 3.0)], hot);
+        }
+        AsmPattern => {
+            for x in [1.0, 6.0, 11.0] {
+                p.block([x, 9.0, 3.5, 3.5, 1.5], acc, soft);
+            }
+            p.dashed((1.0, 4.0), (15.0, 4.0), ink);
+        }
+        AsmMirror => {
+            p.dashed((8.0, 1.0), (8.0, 15.0), ink);
+            p.block([1.0, 7.0, 4.5, 5.0, 2.0], acc, soft);
+            p.block([10.0, 7.0, 4.5, 5.0, 2.0], ink, tint(ink, 40));
+        }
+        AsmCopy => {
+            p.block([1.0, 8.0, 5.0, 5.0, 2.0], ink, tint(ink, 40));
+            p.block([7.5, 8.0, 5.0, 5.0, 2.0], acc, soft);
+            p.line(&[(12.5, 1.0), (12.5, 5.0)], hot);
+            p.line(&[(10.5, 3.0), (14.5, 3.0)], hot);
+        }
+        AsmReplace => {
+            p.block([1.0, 9.0, 4.5, 4.5, 2.0], ink, tint(ink, 40));
+            p.block([10.0, 4.0, 4.5, 4.5, 2.0], acc, soft);
+            p.arc(8.0, 8.0, 5.0, 200.0, 290.0, hot);
+            p.head((9.5, 3.2), (1.0, 0.2), hot);
+            p.arc(8.0, 8.0, 5.0, 20.0, 110.0, hot);
+            p.head((6.5, 12.8), (-1.0, -0.2), hot);
+        }
+        MakeLayout => {
+            p.rect(1.5, 2.0, 14.5, 14.0, ink);
+            p.rect(3.5, 4.0, 7.5, 8.0, acc);
+            p.rect(9.0, 7.0, 13.0, 12.0, acc);
+            p.dashed((7.5, 6.0), (9.0, 9.0), ink);
+        }
+        Simplify => {
+            for (x, y) in [(2.0, 3.0), (6.0, 2.0), (3.0, 7.0)] {
+                p.rect(x, y, x + 3.0, y + 3.0, ink);
+            }
+            p.head((10.0, 8.0), (1.0, 0.0), hot);
+            p.block([9.5, 9.0, 5.0, 4.5, 1.5], acc, soft);
+        }
+        Substitutes => {
+            p.rect(1.5, 2.0, 5.0, 5.5, ink);
+            p.rect(2.5, 8.0, 6.0, 11.5, ink);
+            p.line(&[(7.0, 7.0), (9.5, 7.0)], hot);
+            p.head((10.5, 7.0), (1.0, 0.0), hot);
+            p.block([10.0, 9.0, 4.5, 4.0, 1.5], acc, soft);
+        }
+        AsmAssemble => {
+            p.block([1.0, 10.0, 7.0, 4.0, 2.0], ink, tint(ink, 40));
+            p.block([8.0, 3.0, 5.0, 3.0, 2.0], acc, soft);
+            p.line(&[(10.5, 7.0), (10.5, 9.5)], hot);
+            p.head((10.5, 10.5), (0.0, 1.0), hot);
+        }
+        CreateIAssembly => {
+            p.rect(1.5, 2.0, 14.5, 14.0, ink);
+            p.line(&[(1.5, 6.0), (14.5, 6.0)], ink);
+            p.line(&[(6.0, 2.0), (6.0, 14.0)], ink);
+            p.block([7.5, 8.5, 3.0, 3.0, 1.5], acc, soft);
+            p.text(3.8, 4.0, "i", 6.0, acc);
+        }
+        Bolt => {
+            p.rect(1.0, 6.0, 15.0, 8.5, ink);
+            p.rect(1.0, 9.0, 15.0, 11.5, ink);
+            p.fill(&[(5.0, 2.0), (11.0, 2.0), (11.0, 4.5), (5.0, 4.5)], acc);
+            p.line(&[(8.0, 4.5), (8.0, 15.0)], acc);
+            p.rect(5.5, 12.0, 10.5, 14.0, hot);
+        }
+        ClevisPin => {
+            p.fill(&[(2.0, 4.0), (5.0, 4.0), (5.0, 12.0), (2.0, 12.0)], acc);
+            p.rect(5.0, 6.5, 14.5, 9.5, acc);
+            p.circle(12.5, 8.0, 0.8, hot);
+        }
+        SecurePin => {
+            p.arc(4.0, 8.0, 2.5, 90.0, 270.0, acc);
+            p.line(&[(4.0, 5.5), (14.5, 5.5)], acc);
+            p.line(&[(4.0, 10.5), (12.0, 10.5)], acc);
+            p.line(&[(4.0, 8.0), (13.0, 8.0)], ink);
+        }
+        RadialPin => {
+            p.rect(1.5, 5.0, 14.5, 11.0, ink);
+            p.rect(6.5, 1.5, 9.5, 14.5, acc);
+        }
+        InsertFrame => {
+            let l = [
+                (3.0, 3.0),
+                (5.0, 3.0),
+                (5.0, 9.0),
+                (11.0, 9.0),
+                (11.0, 11.0),
+                (3.0, 11.0),
+            ];
+            p.dashed((1.0, 14.0), (15.0, 2.0), ink);
+            p.fill(&l, soft);
+            p.closed(&l, acc);
+        }
+        Shaft => {
+            p.rect(1.0, 6.0, 5.0, 10.0, acc);
+            p.rect(5.0, 4.0, 10.0, 12.0, acc);
+            p.rect(10.0, 6.5, 15.0, 9.5, acc);
+            p.dashed((0.5, 8.0), (15.5, 8.0), ink);
+        }
+        SpurGear | WormGear | BevelGear => {
+            let teeth = |cx: f32, cy: f32, r: f32, n: usize, c: Color32| {
+                p.circle(cx, cy, r, c);
+                for i in 0..n {
+                    let a = i as f32 / n as f32 * std::f32::consts::TAU;
+                    let (ca, sa) = (a.cos(), a.sin());
+                    p.line(
+                        &[
+                            (cx + r * ca, cy + r * sa),
+                            (cx + (r + 1.6) * ca, cy + (r + 1.6) * sa),
+                        ],
+                        c,
+                    );
+                }
+            };
+            match icon {
+                SpurGear => {
+                    teeth(5.5, 6.0, 3.5, 8, acc);
+                    teeth(11.5, 11.0, 2.3, 6, ink);
+                }
+                WormGear => {
+                    teeth(8.0, 5.5, 3.5, 8, acc);
+                    p.rect(2.0, 11.0, 14.0, 14.5, ink);
+                    for x in [4.0, 7.0, 10.0, 13.0] {
+                        p.line(&[(x - 1.0, 11.0), (x + 1.0, 14.5)], ink);
+                    }
+                }
+                _ => {
+                    p.closed(&[(2.0, 3.0), (8.0, 6.0), (8.0, 10.0), (2.0, 13.0)], acc);
+                    p.closed(&[(9.0, 9.0), (14.5, 9.0), (12.5, 14.5), (11.0, 14.5)], ink);
+                }
+            }
+        }
+        Bearing => {
+            p.circle(8.0, 8.0, 6.5, ink);
+            p.circle(8.0, 8.0, 2.5, ink);
+            for i in 0..6 {
+                let a = i as f32 / 6.0 * std::f32::consts::TAU;
+                p.disc(8.0 + 4.5 * a.cos(), 8.0 + 4.5 * a.sin(), 1.1, acc);
+            }
+        }
+        KeyJoint => {
+            p.circle(8.0, 9.0, 5.5, ink);
+            p.fill(&[(6.0, 2.5), (10.0, 2.5), (10.0, 5.5), (6.0, 5.5)], acc);
+            p.rect(6.0, 2.5, 10.0, 5.5, hot);
+        }
+        VBelt | SyncBelt => {
+            p.circle(4.0, 10.0, 3.0, ink);
+            p.circle(12.0, 6.0, 2.0, ink);
+            p.line(&[(3.0, 7.1), (11.5, 4.0)], acc);
+            p.line(&[(5.0, 12.9), (12.6, 7.9)], acc);
+            if icon == SyncBelt {
+                for (x, y) in [(5.0, 6.4), (7.5, 5.5), (10.0, 4.6)] {
+                    p.line(&[(x, y), (x + 0.3, y + 1.0)], hot);
+                }
+            }
+        }
+        Chain => {
+            for x in [1.5, 6.0, 10.5] {
+                p.closed(
+                    &[
+                        (x, 6.0),
+                        (x + 4.0, 6.0),
+                        (x + 5.0, 8.0),
+                        (x + 4.0, 10.0),
+                        (x, 10.0),
+                        (x - 1.0, 8.0),
+                    ],
+                    acc,
+                );
+                p.disc(x + 0.5, 8.0, 0.8, ink);
+            }
+        }
+        DiscCam => {
+            p.circle(7.0, 10.0, 4.0, acc);
+            p.arc(7.0, 7.0, 3.0, 180.0, 360.0, acc);
+            p.disc(7.0, 10.0, 0.9, ink);
+            p.line(&[(7.0, 4.0), (7.0, 1.0)], ink);
+            p.circle(7.0, 3.0, 1.0, hot);
+        }
+        LinearCam => {
+            let pts: Vec<(f32, f32)> = (0..=20)
+                .map(|i| {
+                    let t = i as f32 / 20.0;
+                    (
+                        1.0 + 14.0 * t,
+                        10.0 - 2.5 * (t * std::f32::consts::TAU).sin(),
+                    )
+                })
+                .collect();
+            p.line(&pts, acc);
+            p.line(&[(1.0, 14.0), (15.0, 14.0)], ink);
+            p.circle(8.0, 6.0, 1.3, hot);
+        }
+        CylCam => {
+            p.rect(3.0, 2.0, 13.0, 14.0, ink);
+            p.line(&[(3.0, 10.0), (8.0, 5.0), (13.0, 9.0)], acc);
+            p.line(&[(3.0, 12.0), (8.0, 7.0), (13.0, 11.0)], acc);
+        }
+        InvSpline | ParSpline => {
+            p.circle(8.0, 8.0, 3.5, ink);
+            for i in 0..8 {
+                let a = i as f32 / 8.0 * std::f32::consts::TAU;
+                let (c, s) = (a.cos(), a.sin());
+                if icon == InvSpline {
+                    p.line(
+                        &[
+                            (8.0 + 3.5 * c, 8.0 + 3.5 * s),
+                            (8.0 + 6.0 * c, 8.0 + 6.0 * s),
+                        ],
+                        acc,
+                    );
+                } else {
+                    p.disc(8.0 + 5.0 * c, 8.0 + 5.0 * s, 1.2, acc);
+                }
+            }
+        }
+        ORing => {
+            p.rect(1.0, 4.0, 15.0, 12.0, ink);
+            p.circle(8.0, 8.0, 3.0, acc);
+            p.circle(8.0, 8.0, 1.5, acc);
+        }
+        CompSpring | ExtSpring | TorsionSpring => {
+            let pts: Vec<(f32, f32)> = (0..=6)
+                .map(|i| (if i % 2 == 0 { 4.0 } else { 12.0 }, 3.0 + i as f32 * 1.7))
+                .collect();
+            p.line(&pts, acc);
+            match icon {
+                CompSpring => {
+                    p.line(&[(2.0, 2.0), (14.0, 2.0)], ink);
+                    p.line(&[(2.0, 14.5), (14.0, 14.5)], ink);
+                }
+                ExtSpring => {
+                    p.arc(8.0, 2.0, 1.5, 180.0, 360.0, ink);
+                    p.arc(8.0, 14.5, 1.5, 0.0, 180.0, ink);
+                }
+                _ => {
+                    p.line(&[(4.0, 3.0), (1.0, 1.0)], ink);
+                    p.line(&[(4.0, 13.2), (15.0, 15.0)], ink);
+                }
+            }
+        }
+        Belleville => {
+            for y in [4.0, 8.0, 12.0] {
+                p.line(&[(2.0, y + 1.5), (8.0, y - 1.0), (14.0, y + 1.5)], acc);
+            }
+            p.dashed((8.0, 1.0), (8.0, 15.0), ink);
+        }
+        ShowRelations | ShowSick | HideRelations => {
+            p.block([1.0, 9.0, 5.0, 4.5, 2.0], ink, tint(ink, 40));
+            p.block([9.5, 9.0, 5.0, 4.5, 2.0], ink, tint(ink, 40));
+            let c = if icon == ShowSick { warn } else { acc };
+            p.rect(5.5, 2.0, 10.5, 6.5, c);
+            p.line(&[(6.5, 5.0), (9.5, 5.0)], c);
+            if icon == HideRelations {
+                p.line(&[(4.5, 1.0), (11.5, 7.5)], warn);
+            }
+        }
+        DofGlyph => {
+            p.block([5.0, 8.0, 5.0, 4.0, 2.0], ink, tint(ink, 40));
+            p.line(&[(1.0, 10.0), (4.0, 10.0)], acc);
+            p.head((1.0, 10.0), (-1.0, 0.0), acc);
+            p.line(&[(8.0, 5.0), (8.0, 1.5)], acc);
+            p.head((8.0, 1.0), (0.0, -1.0), acc);
+            p.arc(13.0, 10.0, 2.0, 270.0, 450.0, hot);
+        }
+        TubePipe => {
+            p.line(&[(1.0, 4.0), (8.0, 4.0)], acc);
+            p.arc(8.0, 9.0, 5.0, 270.0, 360.0, acc);
+            p.line(&[(13.0, 9.0), (13.0, 15.0)], acc);
+            p.line(&[(1.0, 7.0), (8.0, 7.0)], ink);
+            p.arc(8.0, 9.0, 2.0, 270.0, 360.0, ink);
+            p.line(&[(10.0, 9.0), (10.0, 15.0)], ink);
+        }
+        CableHarness => {
+            p.rect(10.0, 5.0, 15.0, 11.0, ink);
+            for y in [6.5, 8.0, 9.5] {
+                p.line(&[(1.0, y + 3.0 * (y - 8.0)), (6.0, y), (10.0, y)], acc);
+            }
+        }
+        DynamicSim => {
+            p.line(&[(3.0, 2.0), (13.0, 2.0)], ink);
+            p.line(&[(8.0, 2.0), (12.0, 11.0)], acc);
+            p.disc(12.5, 12.0, 2.0, acc);
+            p.arc(8.0, 2.0, 10.0, 75.0, 105.0, hot);
+        }
+        Presentation => {
+            p.block([1.0, 10.0, 5.0, 4.0, 2.0], ink, tint(ink, 40));
+            p.block([9.0, 3.0, 5.0, 4.0, 2.0], acc, soft);
+            p.dashed((5.0, 9.0), (9.5, 6.0), hot);
         }
     }
 }

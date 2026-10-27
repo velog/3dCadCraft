@@ -311,8 +311,9 @@ impl CadCraftApp {
             Some(Cmd::Planned) => {
                 if let Some(d) = &self.part_planned {
                     self.file_status = Some(Err(format!(
-                        "{}: only the interface exists yet (docs/spec/2.0-part-commands.md)",
-                        d.kind.title()
+                        "{}: only the interface exists yet ({})",
+                        d.kind.title(),
+                        d.kind.spec()
                     )));
                 }
             }

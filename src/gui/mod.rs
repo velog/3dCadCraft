@@ -25,6 +25,7 @@
 
 mod alias_input;
 mod asm_browser;
+mod asm_planned;
 mod assembly;
 mod blend;
 mod bom;
@@ -3835,6 +3836,7 @@ impl CadCraftApp {
             | Action::SmCornerSeam
             | Action::SmPlanned(_) => self.sm_apply(action),
             Action::PartPlanned(k) => self.start_part_planned(k),
+            Action::AsmPlanned(k) => self.start_asm_planned(k),
             Action::Thicken => self.start_thicken(),
             Action::VisualStyle(v) => {
                 self.visual_style = v;

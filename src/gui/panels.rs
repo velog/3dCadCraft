@@ -4732,7 +4732,7 @@ impl CadCraftApp {
                             ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                         }
                         _ if self.is_assembly() => {
-                            let prompt = self.constrain_prompt().unwrap_or_else(|| self.asm_prompt());
+                            let prompt = self.command_prompt().or_else(|| self.constrain_prompt()).unwrap_or_else(|| self.asm_prompt());
                             let text = super::i18n::tr(&prompt);
                             ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                         }

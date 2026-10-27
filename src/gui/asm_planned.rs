@@ -1,0 +1,1294 @@
+//! The interface of the assembly commands whose logic comes later (rule 15,
+//! `docs/spec/3.0-assembly-commands.md`): each command opens its whole
+//! Inventor 2027 panel in Properties, with selectors that take components,
+//! faces and edges in the view. The panel, the selector flow, Enter, Esc,
+//! the right-click menu and the prompts are the part's planned commands'
+//! (`gui/part_planned.rs`, `Planned::Asm`). OK stays disabled: nothing
+//! changes the assembly (rule 5).
+//!
+//! In an assembly a selector's `PickKind::Body` stands for a **component**
+//! (an occurrence); `Face` / `PlanarFace` and `Edge` / `StraightEdge` take a
+//! component's faces and edges; `Plane`, `Axis` and `Point` take origin and
+//! work geometry (from the browser, later).
+
+use eframe::egui;
+
+use super::CadCraftApp;
+use super::icons::Icon;
+use super::part_planned::{Page, PartDialog, Planned, Row, selector_defs};
+use crate::command::flow::PickKind;
+
+use Row::{Button, Check, Combo, Head, Note, Num, Radio, Sel, Text};
+
+// ---- what the selectors take ------------------------------------------------
+
+const COMPONENTS: &[PickKind] = &[PickKind::Body];
+const PLANE: &[PickKind] = &[PickKind::PlanarFace, PickKind::Plane];
+const EDGE: &[PickKind] = &[PickKind::Edge, PickKind::StraightEdge];
+const CIRCLE: &[PickKind] = &[PickKind::Edge];
+const LINE: &[PickKind] = &[PickKind::StraightEdge, PickKind::Axis];
+const CYLINDER: &[PickKind] = &[PickKind::Face];
+const POINT: &[PickKind] = &[PickKind::Point];
+const GEOMETRY: &[PickKind] = &[
+    PickKind::Face,
+    PickKind::PlanarFace,
+    PickKind::Edge,
+    PickKind::StraightEdge,
+];
+
+const BOM: &[&str] = &["Normal", "Phantom", "Reference", "Purchased", "Inseparable"];
+const PLACEMENT: &[&str] = &["Linear", "Concentric", "On Point", "By Hole"];
+const MODEL: &[&str] = &["Component", "Feature", "No Model"];
+const STATUS: &[&str] = &["Mirror", "Reuse", "Exclude"];
+const DEST: &[&str] = &["Insert in Assembly", "Open in New Window"];
+const REMOVE: &[&str] = &["None", "All", "Range", "Preserve"];
+
+/// An assembly command with an interface and no logic yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AsmPlanned {
+    // Assemble › Component
+    PlaceContentCenter,
+    PlaceImported,
+    Create,
+    Pattern,
+    Mirror,
+    Copy,
+    Replace,
+    MakeLayout,
+    Simplify,
+    DerivedSubstitutes,
+    // Assemble › Relationships
+    Assemble,
+    // Inspect › Interference
+    Interference,
+    // Manage › Author
+    CreateIAssembly,
+    // Design › Fasten
+    BoltedConnection,
+    ClevisPin,
+    SecurePin,
+    RadialPin,
+    // Design › Frame
+    InsertFrame,
+    // Design › Power Transmission
+    Shaft,
+    SpurGear,
+    WormGear,
+    BevelGear,
+    Bearing,
+    Key,
+    VBelts,
+    SyncBelts,
+    RollerChains,
+    DiscCam,
+    LinearCam,
+    CylindricalCam,
+    InvoluteSplines,
+    ParallelSplines,
+    ORing,
+    // Design › Spring
+    CompressionSpring,
+    ExtensionSpring,
+    TorsionSpring,
+    BellevilleSpring,
+}
+
+impl AsmPlanned {
+    #[cfg(test)]
+    pub const ALL: [AsmPlanned; 37] = {
+        use AsmPlanned::*;
+        [
+            PlaceContentCenter,
+            PlaceImported,
+            Create,
+            Pattern,
+            Mirror,
+            Copy,
+            Replace,
+            MakeLayout,
+            Simplify,
+            DerivedSubstitutes,
+            Assemble,
+            Interference,
+            CreateIAssembly,
+            BoltedConnection,
+            ClevisPin,
+            SecurePin,
+            RadialPin,
+            InsertFrame,
+            Shaft,
+            SpurGear,
+            WormGear,
+            BevelGear,
+            Bearing,
+            Key,
+            VBelts,
+            SyncBelts,
+            RollerChains,
+            DiscCam,
+            LinearCam,
+            CylindricalCam,
+            InvoluteSplines,
+            ParallelSplines,
+            ORing,
+            CompressionSpring,
+            ExtensionSpring,
+            TorsionSpring,
+            BellevilleSpring,
+        ]
+    };
+
+    /// The panel's title (Inventor's command name).
+    pub fn title(self) -> &'static str {
+        use AsmPlanned::*;
+        match self {
+            PlaceContentCenter => "Place from Content Center",
+            PlaceImported => "Place Imported CAD Files",
+            Create => "Create In-Place Component",
+            Pattern => "Pattern Component",
+            Mirror => "Mirror Components",
+            Copy => "Copy Components",
+            Replace => "Replace Component",
+            MakeLayout => "Make Layout",
+            Simplify => "Simplify",
+            DerivedSubstitutes => "Create Derived Substitutes",
+            Assemble => "Assemble",
+            Interference => "Analyze Interference",
+            CreateIAssembly => "Create iAssembly",
+            BoltedConnection => "Bolted Connection",
+            ClevisPin => "Clevis Pin",
+            SecurePin => "Secure Pin",
+            RadialPin => "Radial Pin",
+            InsertFrame => "Insert Frame",
+            Shaft => "Shaft",
+            SpurGear => "Spur Gears",
+            WormGear => "Worm Gear",
+            BevelGear => "Bevel Gears",
+            Bearing => "Bearing",
+            Key => "Parallel Key",
+            VBelts => "V-Belts",
+            SyncBelts => "Synchronous Belts",
+            RollerChains => "Roller Chains",
+            DiscCam => "Disc Cam",
+            LinearCam => "Linear Cam",
+            CylindricalCam => "Cylindrical Cam",
+            InvoluteSplines => "Involute Splines",
+            ParallelSplines => "Parallel Splines",
+            ORing => "O-Ring",
+            CompressionSpring => "Compression Spring",
+            ExtensionSpring => "Extension Spring",
+            TorsionSpring => "Torsion Spring",
+            BellevilleSpring => "Belleville Spring",
+        }
+    }
+
+    /// The panel's icon (the command's own, `gui/icons.rs`).
+    pub fn icon(self) -> Icon {
+        use AsmPlanned::*;
+        match self {
+            PlaceContentCenter => Icon::PlaceContent,
+            PlaceImported => Icon::PlaceImported,
+            Create => Icon::AsmCreate,
+            Pattern => Icon::AsmPattern,
+            Mirror => Icon::AsmMirror,
+            Copy => Icon::AsmCopy,
+            Replace => Icon::AsmReplace,
+            MakeLayout => Icon::MakeLayout,
+            Simplify => Icon::Simplify,
+            DerivedSubstitutes => Icon::Substitutes,
+            Assemble => Icon::AsmAssemble,
+            Interference => Icon::Interference,
+            CreateIAssembly => Icon::CreateIAssembly,
+            BoltedConnection => Icon::Bolt,
+            ClevisPin => Icon::ClevisPin,
+            SecurePin => Icon::SecurePin,
+            RadialPin => Icon::RadialPin,
+            InsertFrame => Icon::InsertFrame,
+            Shaft => Icon::Shaft,
+            SpurGear => Icon::SpurGear,
+            WormGear => Icon::WormGear,
+            BevelGear => Icon::BevelGear,
+            Bearing => Icon::Bearing,
+            Key => Icon::KeyJoint,
+            VBelts => Icon::VBelt,
+            SyncBelts => Icon::SyncBelt,
+            RollerChains => Icon::Chain,
+            DiscCam => Icon::DiscCam,
+            LinearCam => Icon::LinearCam,
+            CylindricalCam => Icon::CylCam,
+            InvoluteSplines => Icon::InvSpline,
+            ParallelSplines => Icon::ParSpline,
+            ORing => Icon::ORing,
+            CompressionSpring => Icon::CompSpring,
+            ExtensionSpring => Icon::ExtSpring,
+            TorsionSpring => Icon::TorsionSpring,
+            BellevilleSpring => Icon::Belleville,
+        }
+    }
+
+    /// The `docs/FEATURES.md` section its logic belongs to.
+    pub fn section(self) -> &'static str {
+        use AsmPlanned::*;
+        match self {
+            PlaceContentCenter | BoltedConnection | ClevisPin | SecurePin | RadialPin => "6.3",
+            PlaceImported => "7.7",
+            Create | MakeLayout => "3.10",
+            Pattern | Mirror => "3.7",
+            Copy | Replace => "3.8",
+            Simplify | DerivedSubstitutes => "3.11",
+            Assemble => "3.2",
+            Interference => "3.5",
+            CreateIAssembly => "5.7",
+            InsertFrame => "6.1",
+            _ => "6.2",
+        }
+    }
+
+    /// One line on what the command does (under the options).
+    pub fn about(self) -> &'static str {
+        use AsmPlanned::*;
+        match self {
+            PlaceContentCenter => {
+                "Places a standard part (bolt, nut, washer, profile) from the library."
+            }
+            PlaceImported => "Places a STEP, IGES, SAT or Parasolid file as a component.",
+            Create => {
+                "A new part or subassembly made in place, its first sketch on a face or plane."
+            }
+            Pattern => {
+                "Repeats components after a feature pattern, in rows and columns, or about an axis."
+            }
+            Mirror => "Mirrors components about a plane: new mirrored files or reused instances.",
+            Copy => "Copies components as new independent files or reused instances.",
+            Replace => {
+                "Swaps components for another file; relationships are kept where the geometry still exists."
+            }
+            MakeLayout => "A layout part with sketches for top-down design.",
+            Simplify => {
+                "A simplified part from the assembly: envelopes, fewer components and features."
+            }
+            DerivedSubstitutes => "A derived substitute part for each first-level subassembly.",
+            Assemble => {
+                "Pick a face or edge of the moving component, then one of the target: the relationship is inferred."
+            }
+            Interference => "Finds the volumes where components overlap.",
+            CreateIAssembly => "A family table of the assembly: members, components, parameters.",
+            BoltedConnection => "A bolt, washers and a nut through holes drilled in the plates.",
+            ClevisPin | SecurePin | RadialPin => "A pin from the library with its hole.",
+            InsertFrame => "Frame members along sketch lines or edges of a skeleton.",
+            Shaft => "A shaft from sections with chamfers, fillets, grooves, keyways and threads.",
+            SpurGear | WormGear | BevelGear => {
+                "A gear pair from module, number of teeth and pressure angle."
+            }
+            Bearing => "A rolling bearing from the library sized to a shaft.",
+            Key => "A parallel key with its grooves in the shaft and the hub.",
+            VBelts | SyncBelts | RollerChains => {
+                "A belt or chain over pulleys or sprockets in one plane."
+            }
+            DiscCam | LinearCam | CylindricalCam => "A cam from a motion diagram and its follower.",
+            InvoluteSplines | ParallelSplines => "A splined shaft and hub from the standard.",
+            ORing => "An O-ring and its groove.",
+            CompressionSpring | ExtensionSpring | TorsionSpring | BellevilleSpring => {
+                "A spring between two planes along an axis."
+            }
+        }
+    }
+
+    /// The panel content: tabs and rows (spec 3.0 §3).
+    pub fn pages(self) -> &'static [Page] {
+        use AsmPlanned::*;
+        match self {
+            PlaceContentCenter => &[Page(
+                "Place from Content Center",
+                &[
+                    Combo(
+                        "Category View",
+                        &[
+                            "Fasteners",
+                            "Shaft Parts",
+                            "Structural Shapes",
+                            "Other Parts",
+                        ],
+                        0,
+                    ),
+                    Combo(
+                        "Family",
+                        &[
+                            "Hex Head Bolt",
+                            "Socket Head Cap Screw",
+                            "Hex Nut",
+                            "Plain Washer",
+                        ],
+                        0,
+                    ),
+                    Combo("Standard", &["ISO", "DIN", "ANSI"], 0),
+                    Head("Size"),
+                    Combo("Thread Description", &["M6", "M8", "M10", "M12"], 1),
+                    Num("Nominal Length", 30.0, " mm"),
+                    Radio("Insert", &["As Standard", "As Custom"], 0),
+                    Note("Needs the standard parts library (FEATURES 6.3)"),
+                ],
+            )],
+            PlaceImported => &[Page(
+                "Import",
+                &[
+                    Text("File", ""),
+                    Button("Browse..."),
+                    Radio("Import Type", &["Reference Model", "Convert Model"], 1),
+                    Head("Object Filters"),
+                    Check("Solids", true),
+                    Check("Surfaces", true),
+                    Check("Wires", true),
+                    Check("Work Planes", true),
+                    Check("Work Axes", true),
+                    Check("Work Points", true),
+                    Check("Points", true),
+                    Combo("Units", &["From source", "mm", "in"], 0),
+                    Combo(
+                        "Structure",
+                        &["Assembly", "Multi-body part", "Composite"],
+                        0,
+                    ),
+                    Check("Check imported data", true),
+                ],
+            )],
+            Create => &[Page(
+                "Create In-Place Component",
+                &[
+                    Text("New Component Name", "Part1"),
+                    Combo(
+                        "Template",
+                        &[
+                            "Standard (mm).ccpart",
+                            "Sheet Metal (mm).ccpart",
+                            "Standard (mm).ccasm",
+                        ],
+                        0,
+                    ),
+                    Button("Browse Templates..."),
+                    Text("New File Location", "(the assembly's folder)"),
+                    Combo("Default BOM Structure", BOM, 0),
+                    Check("Virtual Component", false),
+                    Check("Constrain sketch plane to selected face or plane", true),
+                    Sel(
+                        "plane",
+                        "Sketch Plane",
+                        "select a face or plane for the new component's first sketch",
+                        PLANE,
+                    ),
+                ],
+            )],
+            Pattern => &[
+                Page(
+                    "Associative",
+                    &[
+                        Sel(
+                            "components",
+                            "Components",
+                            "select the components to pattern",
+                            COMPONENTS,
+                        ),
+                        Sel(
+                            "feature",
+                            "Feature Pattern",
+                            "select a feature pattern of a part",
+                            CYLINDER,
+                        ),
+                        Note("Count and spacing follow the feature pattern"),
+                    ],
+                ),
+                Page(
+                    "Rectangular",
+                    &[
+                        Sel(
+                            "components",
+                            "Components",
+                            "select the components to pattern",
+                            COMPONENTS,
+                        ),
+                        Head("Column"),
+                        Sel(
+                            "column",
+                            "Column Direction",
+                            "select an edge or axis for the columns",
+                            LINE,
+                        ),
+                        Check("Flip column", false),
+                        Num("Column Count", 2.0, ""),
+                        Num("Column Spacing", 2.0, " mm"),
+                        Head("Row"),
+                        Sel(
+                            "row",
+                            "Row Direction",
+                            "select an edge or axis for the rows",
+                            LINE,
+                        ),
+                        Check("Flip row", false),
+                        Num("Row Count", 2.0, ""),
+                        Num("Row Spacing", 2.0, " mm"),
+                    ],
+                ),
+                Page(
+                    "Circular",
+                    &[
+                        Sel(
+                            "components",
+                            "Components",
+                            "select the components to pattern",
+                            COMPONENTS,
+                        ),
+                        Sel(
+                            "axis",
+                            "Rotation Axis",
+                            "select an edge or axis to turn about",
+                            LINE,
+                        ),
+                        Check("Flip", false),
+                        Num("Count", 4.0, ""),
+                        Num("Angle", 90.0, "°"),
+                    ],
+                ),
+            ],
+            Mirror => &[
+                Page(
+                    "Status",
+                    &[
+                        Radio(
+                            "Operation",
+                            &["Create mirror pattern", "Create flat structure"],
+                            0,
+                        ),
+                        Sel(
+                            "components",
+                            "Components",
+                            "select the components to mirror",
+                            COMPONENTS,
+                        ),
+                        Sel(
+                            "plane",
+                            "Mirror Plane",
+                            "select a work plane, a planar face or an origin plane",
+                            PLANE,
+                        ),
+                        Radio("Status of all", STATUS, 0),
+                        Button("Copy List of Unsuitable Components"),
+                        Check("Mirror Relationships", false),
+                        Check("Ground New Components", false),
+                        Check("Link Sheet Metal Styles", false),
+                        Head("More"),
+                        Check("Reuse Standard Content and Factory Parts", true),
+                        Check("Preview Components", true),
+                    ],
+                ),
+                Page(
+                    "File Names",
+                    &[
+                        Note("New Name / File Location / status per component (after Next)"),
+                        Check("Prefix", false),
+                        Text("Prefix text", ""),
+                        Check("Suffix", true),
+                        Text("Suffix text", "_MIR"),
+                        Check("Increment", false),
+                        Combo(
+                            "File Location",
+                            &["Source Path", "Workspace", "User Path"],
+                            0,
+                        ),
+                        Radio("Component Destination", DEST, 0),
+                    ],
+                ),
+            ],
+            Copy => &[
+                Page(
+                    "Status",
+                    &[
+                        Sel(
+                            "components",
+                            "Components",
+                            "select the components to copy",
+                            COMPONENTS,
+                        ),
+                        Radio("Status of all", &["Copy", "Reuse", "Exclude"], 0),
+                        Check("Reuse Standard Content and Factory Parts", true),
+                    ],
+                ),
+                Page(
+                    "File Names",
+                    &[
+                        Note("New Name / File Location / status per component (after Next)"),
+                        Check("Prefix", false),
+                        Text("Prefix text", ""),
+                        Check("Suffix", true),
+                        Text("Suffix text", "_CPY"),
+                        Check("Increment", false),
+                        Combo(
+                            "File Location",
+                            &["Source Path", "Workspace", "User Path"],
+                            0,
+                        ),
+                        Radio("Component Destination", DEST, 0),
+                    ],
+                ),
+            ],
+            Replace => &[Page(
+                "Replace",
+                &[
+                    Sel(
+                        "components",
+                        "Components",
+                        "select the components to replace",
+                        COMPONENTS,
+                    ),
+                    Check("Replace All occurrences", false),
+                    Text("New Component", ""),
+                    Button("Browse..."),
+                    Note(
+                        "Relationships are found again by their face names; missing ones become sick",
+                    ),
+                ],
+            )],
+            MakeLayout => &[Page(
+                "Make Layout",
+                &[
+                    Text("Layout Name", "Layout1"),
+                    Combo("Template", &["Standard (mm).ccpart"], 0),
+                    Text("Location", "(the assembly's folder)"),
+                ],
+            )],
+            Simplify => &[
+                Page(
+                    "Input",
+                    &[
+                        Combo(
+                            "Preset",
+                            &[
+                                "No Simplification",
+                                "Remove the least detail",
+                                "Remove moderate detail",
+                                "Remove the most detail",
+                            ],
+                            0,
+                        ),
+                        Combo("Model State", &["Primary"], 0),
+                        Combo("View", &["Default"], 0),
+                        Check("Associative", false),
+                        Combo("Position", &["Primary"], 0),
+                    ],
+                ),
+                Page(
+                    "Envelopes",
+                    &[
+                        Radio(
+                            "Replace with Envelopes",
+                            &[
+                                "None",
+                                "All in One Envelope",
+                                "Each Top Level Component",
+                                "Each Part",
+                            ],
+                            0,
+                        ),
+                        Combo(
+                            "Type",
+                            &[
+                                "Orthogonal Bounding Box",
+                                "Oriented Minimum Bounding Box",
+                                "Oriented Minimum Bounding Cylinder",
+                            ],
+                            0,
+                        ),
+                    ],
+                ),
+                Page(
+                    "Components",
+                    &[
+                        Radio("Exclude parts", &["by selection", "by size"], 0),
+                        Radio("Priority", &["Part Priority", "Component Priority"], 0),
+                        Check("All Occurrences", false),
+                        Sel(
+                            "excluded",
+                            "Components",
+                            "select the components to leave out",
+                            COMPONENTS,
+                        ),
+                        Num("Max. Diagonal", 10.0, " mm"),
+                        Check("Auto-detect", false),
+                        Button("View Included"),
+                        Button("View Excluded"),
+                    ],
+                ),
+                Page(
+                    "Features",
+                    &[
+                        Combo("Holes", REMOVE, 0),
+                        Combo("Fillets", REMOVE, 0),
+                        Combo("Chamfers", REMOVE, 0),
+                        Combo("Pockets", REMOVE, 0),
+                        Combo("Embosses", REMOVE, 0),
+                        Combo("Tunnels", REMOVE, 0),
+                        Check("Highlight", false),
+                    ],
+                ),
+                Page(
+                    "Output",
+                    &[
+                        Radio("Type", &["New Part File", "Substitute"], 0),
+                        Combo(
+                            "Template",
+                            &["Standard (mm).ccpart", "Sheet Metal (mm).ccpart"],
+                            0,
+                        ),
+                        Text("Name", "Assembly1_Simplified"),
+                        Text("Location", "(the assembly's folder)"),
+                        Combo("BOM Structure", &["Normal", "Reference"], 0),
+                        Combo(
+                            "Style",
+                            &[
+                                "Single solid without seams",
+                                "Single solid with seams",
+                                "Maintain each solid",
+                                "Single composite",
+                            ],
+                            0,
+                        ),
+                    ],
+                ),
+                Page(
+                    "Advanced",
+                    &[
+                        Check("Break link", false),
+                        Check("Suppress link", false),
+                        Check("Rename", false),
+                        Check("Fill internal voids", false),
+                        Check("Remove internal parts", true),
+                        Check("Link face color from source component", true),
+                        Check("Make independent bodies on failed Boolean", false),
+                    ],
+                ),
+            ],
+            DerivedSubstitutes => &[Page(
+                "Create Derived Substitutes",
+                &[
+                    Note("Each first-level subassembly with its proposed file name and location"),
+                    Radio("Naming", &["Suffix", "Prefix"], 0),
+                    Text("Text", "_SUB"),
+                    Combo("Template", &["Standard (mm).ccpart"], 0),
+                ],
+            )],
+            Assemble => &[Page(
+                "Assemble",
+                &[
+                    Sel(
+                        "moving",
+                        "Component",
+                        "select a face or edge of the component to move",
+                        GEOMETRY,
+                    ),
+                    Sel(
+                        "target",
+                        "Target",
+                        "select a face or edge of the target",
+                        GEOMETRY,
+                    ),
+                    Combo("Type", &["Inferred", "Mate", "Flush", "Insert", "Angle"], 0),
+                    Num("Offset", 0.0, " mm"),
+                    Check("Flip", false),
+                ],
+            )],
+            Interference => &[Page(
+                "Interference Analysis",
+                &[
+                    Sel(
+                        "set1",
+                        "Define Set #1",
+                        "select the components of the first set",
+                        COMPONENTS,
+                    ),
+                    Sel(
+                        "set2",
+                        "Define Set #2",
+                        "select the components of the second set (empty: within set #1)",
+                        COMPONENTS,
+                    ),
+                    Check("Treat subassemblies as components", false),
+                    Check("Use precise thread analysis", true),
+                    Note(
+                        "OK lists the overlaps: components, volume, centroid; filters, Ignore, Copy to Clipboard",
+                    ),
+                ],
+            )],
+            CreateIAssembly => &[
+                Page(
+                    "Components",
+                    &[
+                        Note("Include / exclude components per member"),
+                        Button("Add Member"),
+                    ],
+                ),
+                Page(
+                    "Parameters",
+                    &[Note(
+                        "Parameters of the assembly and its components as columns",
+                    )],
+                ),
+                Page(
+                    "Properties",
+                    &[Note("iProperties as columns (Part Number, Description…)")],
+                ),
+                Page(
+                    "Work Features",
+                    &[Note("Include / exclude work features per member")],
+                ),
+                Page(
+                    "Other",
+                    &[
+                        Text("Member Name", "Assembly1-01"),
+                        Text("Part Number", "Assembly1-01"),
+                    ],
+                ),
+            ],
+            BoltedConnection => &[
+                Page(
+                    "Design",
+                    &[
+                        Radio("Type", &["Through All", "Blind"], 0),
+                        Combo("Placement", PLACEMENT, 0),
+                        Sel(
+                            "start",
+                            "Start Plane",
+                            "select the start plane (the bolt goes in from it)",
+                            PLANE,
+                        ),
+                        Sel(
+                            "edge1",
+                            "Linear Edge 1",
+                            "select the first edge to dimension the hole from",
+                            EDGE,
+                        ),
+                        Sel(
+                            "edge2",
+                            "Linear Edge 2",
+                            "select the second edge to dimension the hole from",
+                            EDGE,
+                        ),
+                        Sel(
+                            "circle",
+                            "Circular Reference",
+                            "select a circular edge for the centre",
+                            CIRCLE,
+                        ),
+                        Sel("point", "Point", "select a work point", POINT),
+                        Sel("hole", "Existing Hole", "select an existing hole", CYLINDER),
+                        Sel("end", "Termination", "select the end face", PLANE),
+                        Check("Follow Pattern", false),
+                        Head("Thread"),
+                        Combo(
+                            "Thread",
+                            &["ISO Metric profile", "ANSI Unified Screw Threads"],
+                            0,
+                        ),
+                        Combo("Diameter", &["M6", "M8", "M10", "M12", "M16"], 1),
+                        Head("Fasteners"),
+                        Button("Click to add a fastener"),
+                        Combo("Standard", &["ISO", "DIN", "ANSI"], 0),
+                        Combo(
+                            "Category",
+                            &[
+                                "Bolts",
+                                "Hex Head Bolts",
+                                "Socket Head Bolts",
+                                "Washers",
+                                "Nuts",
+                            ],
+                            0,
+                        ),
+                    ],
+                ),
+                Page(
+                    "Calculation",
+                    &[Note(
+                        "Strength check of the joint (comes after the geometry)",
+                    )],
+                ),
+                Page(
+                    "Fatigue Calculation",
+                    &[Note(
+                        "Fatigue check of the joint (comes after the geometry)",
+                    )],
+                ),
+            ],
+            ClevisPin | SecurePin | RadialPin => &[Page(
+                "Design",
+                &[
+                    Combo("Placement", PLACEMENT, 0),
+                    Sel("start", "Start Plane", "select the start plane", PLANE),
+                    Sel(
+                        "ref",
+                        "Reference",
+                        "select an edge, circle or point for the position",
+                        GEOMETRY,
+                    ),
+                    Sel("end", "Termination", "select the end face", PLANE),
+                    Num("Pin Diameter", 8.0, " mm"),
+                    Button("Click to add a pin"),
+                ],
+            )],
+            InsertFrame => &[Page(
+                "Insert",
+                &[
+                    Head("Frame Member Selection"),
+                    Combo("Standard", &["ISO", "DIN", "ANSI"], 0),
+                    Combo(
+                        "Family",
+                        &[
+                            "ISO 657/1 Angle",
+                            "ISO 4019 Square tube",
+                            "DIN 1026 U-profile",
+                        ],
+                        0,
+                    ),
+                    Combo("Size", &["20x20x3", "30x30x3", "40x40x4"], 0),
+                    Combo("Material", &["Steel", "Aluminium 6061"], 0),
+                    Combo("Appearance", &["As Material"], 0),
+                    Head("Orientation"),
+                    Num("Horizontal Offset", 0.0, " mm"),
+                    Num("Vertical Offset", 0.0, " mm"),
+                    Num("Rotation", 0.0, "°"),
+                    Combo(
+                        "Anchor",
+                        &[
+                            "Centre",
+                            "Top Left",
+                            "Top",
+                            "Top Right",
+                            "Left",
+                            "Right",
+                            "Bottom Left",
+                            "Bottom",
+                            "Bottom Right",
+                        ],
+                        0,
+                    ),
+                    Head("Placement"),
+                    Radio("Method", &["Map Geometry", "Two Points"], 0),
+                    Sel(
+                        "edges",
+                        "Edges / Lines",
+                        "select skeleton edges or sketch lines",
+                        EDGE,
+                    ),
+                    Check("Merge", false),
+                ],
+            )],
+            Shaft => &[
+                Page(
+                    "Design",
+                    &[
+                        Sel(
+                            "axis",
+                            "Axis",
+                            "select an axis or cylindrical face for the shaft",
+                            LINE,
+                        ),
+                        Sel(
+                            "start",
+                            "Start Plane",
+                            "select the start plane (optional)",
+                            PLANE,
+                        ),
+                        Head("Sections"),
+                        Note("Cylinder 100 × 50 mm"),
+                        Button("Insert Cylinder"),
+                        Button("Insert Cone"),
+                        Button("Insert Polygon"),
+                        Button("Bore at the left"),
+                        Button("Bore at the right"),
+                    ],
+                ),
+                Page(
+                    "Calculation",
+                    &[Note("Loads, supports, material (comes after the geometry)")],
+                ),
+                Page("Graphs", &[Note("Shear force, bending moment, deflection")]),
+            ],
+            SpurGear | WormGear | BevelGear => &[
+                Page(
+                    "Design",
+                    &[
+                        Head("Common"),
+                        Combo(
+                            "Design Guide",
+                            &[
+                                "Module",
+                                "Number of Teeth",
+                                "Center Distance",
+                                "Total Unit Correction",
+                            ],
+                            0,
+                        ),
+                        Num("Pressure Angle", 20.0, "°"),
+                        Num("Module", 2.0, " mm"),
+                        Num("Desired Gear Ratio", 2.0, ""),
+                        Num("Center Distance", 60.0, " mm"),
+                        Head("Gear 1"),
+                        Combo("Gear 1", MODEL, 0),
+                        Num("Number of Teeth 1", 20.0, ""),
+                        Num("Facewidth 1", 20.0, " mm"),
+                        Sel(
+                            "cyl1",
+                            "Cylindrical Face 1",
+                            "select the first gear's cylindrical face or axis",
+                            CYLINDER,
+                        ),
+                        Sel(
+                            "start1",
+                            "Start Plane 1",
+                            "select the first gear's start plane",
+                            PLANE,
+                        ),
+                        Head("Gear 2"),
+                        Combo("Gear 2", MODEL, 0),
+                        Num("Number of Teeth 2", 40.0, ""),
+                        Num("Facewidth 2", 20.0, " mm"),
+                        Sel(
+                            "cyl2",
+                            "Cylindrical Face 2",
+                            "select the second gear's cylindrical face or axis",
+                            CYLINDER,
+                        ),
+                        Sel(
+                            "start2",
+                            "Start Plane 2",
+                            "select the second gear's start plane",
+                            PLANE,
+                        ),
+                    ],
+                ),
+                Page(
+                    "Calculation",
+                    &[Note(
+                        "Strength of the teeth and life (comes after the geometry)",
+                    )],
+                ),
+            ],
+            Bearing => &[
+                Page(
+                    "Design",
+                    &[
+                        Sel(
+                            "cyl",
+                            "Cylindrical Face",
+                            "select the shaft's cylindrical face",
+                            CYLINDER,
+                        ),
+                        Sel("start", "Start Plane", "select the start plane", PLANE),
+                        Num("Diameter", 20.0, " mm"),
+                        Num("Outside Diameter", 47.0, " mm"),
+                        Num("Width", 14.0, " mm"),
+                        Combo(
+                            "Category",
+                            &["Ball Bearings", "Roller Bearings", "Thrust Bearings"],
+                            0,
+                        ),
+                        Note("The fitting bearings from the library are listed here"),
+                    ],
+                ),
+                Page(
+                    "Calculation",
+                    &[Note("Loads and life (comes after the geometry)")],
+                ),
+            ],
+            Key => &[Page(
+                "Design",
+                &[
+                    Combo("Key", &["ISO 2491 A", "DIN 6885 A"], 0),
+                    Head("Shaft Groove"),
+                    Sel(
+                        "shaft",
+                        "Cylindrical Face",
+                        "select the shaft's cylindrical face",
+                        CYLINDER,
+                    ),
+                    Sel(
+                        "start",
+                        "Start Plane",
+                        "select the start plane of the groove",
+                        PLANE,
+                    ),
+                    Combo("Groove", &["Rounded ends", "Square ends"], 0),
+                    Head("Hub Groove"),
+                    Sel(
+                        "hub",
+                        "Hub Face",
+                        "select the hub's cylindrical face",
+                        CYLINDER,
+                    ),
+                    Num("Number of Keys", 1.0, ""),
+                ],
+            )],
+            VBelts | SyncBelts | RollerChains => &[Page(
+                "Design",
+                &[
+                    Sel(
+                        "plane",
+                        "Mid-plane",
+                        "select the plane the belt runs in",
+                        PLANE,
+                    ),
+                    Combo(
+                        "Belt",
+                        &[
+                            "ISO 4184 Classical",
+                            "ISO 5296 Synchronous",
+                            "ISO 606 Roller chain",
+                        ],
+                        0,
+                    ),
+                    Head("Pulleys"),
+                    Sel(
+                        "pulleys",
+                        "Pulleys",
+                        "select the cylindrical faces or axes of the pulleys",
+                        CYLINDER,
+                    ),
+                    Combo("Pulley placement", &["Fixed", "Free", "Tensioner"], 0),
+                    Button("Click to add a pulley"),
+                ],
+            )],
+            DiscCam | LinearCam | CylindricalCam => &[Page(
+                "Design",
+                &[
+                    Sel(
+                        "cyl",
+                        "Cylindrical Face",
+                        "select the cam's cylindrical face or axis",
+                        CYLINDER,
+                    ),
+                    Sel("start", "Start Plane", "select the start plane", PLANE),
+                    Num("Base Radius", 30.0, " mm"),
+                    Num("Cam Width", 10.0, " mm"),
+                    Head("Follower"),
+                    Combo("Follower Type", &["Roller", "Sliding", "Flat"], 0),
+                    Num("Roller Radius", 8.0, " mm"),
+                    Head("Motion"),
+                    Note("Segments: start angle, end angle, lift, motion type"),
+                    Button("Add Segment"),
+                ],
+            )],
+            InvoluteSplines | ParallelSplines => &[Page(
+                "Design",
+                &[
+                    Combo("Spline", &["ISO 4156", "DIN 5480", "ISO 14 (parallel)"], 0),
+                    Sel(
+                        "shaft",
+                        "Shaft Groove",
+                        "select the shaft's cylindrical face",
+                        CYLINDER,
+                    ),
+                    Sel("start", "Start Plane", "select the start plane", PLANE),
+                    Sel(
+                        "hub",
+                        "Hub Groove",
+                        "select the hub's cylindrical face",
+                        CYLINDER,
+                    ),
+                    Num("Spline Length", 30.0, " mm"),
+                ],
+            )],
+            ORing => &[Page(
+                "Design",
+                &[
+                    Sel(
+                        "cyl",
+                        "Cylindrical Face",
+                        "select the cylindrical face of the seal",
+                        CYLINDER,
+                    ),
+                    Sel("start", "Start Plane", "select the start plane", PLANE),
+                    Radio("Groove", &["Radial outer", "Radial inner", "Axial"], 0),
+                    Combo("O-Ring", &["ISO 3601-1"], 0),
+                    Num("Offset", 5.0, " mm"),
+                ],
+            )],
+            CompressionSpring | ExtensionSpring | TorsionSpring | BellevilleSpring => &[
+                Page(
+                    "Design",
+                    &[
+                        Sel(
+                            "axis",
+                            "Axis",
+                            "select the spring's axis or cylindrical face",
+                            LINE,
+                        ),
+                        Sel("start", "Start Plane", "select the start plane", PLANE),
+                        Sel("end", "End Plane", "select the end plane", PLANE),
+                        Num("Wire Diameter", 2.0, " mm"),
+                        Num("Outer Diameter", 20.0, " mm"),
+                        Num("Free Length", 50.0, " mm"),
+                        Num("Active Coils", 6.0, ""),
+                        Combo("Ends", &["Closed and ground", "Closed", "Open"], 0),
+                    ],
+                ),
+                Page(
+                    "Calculation",
+                    &[Note(
+                        "Forces, stresses and lengths (comes after the geometry)",
+                    )],
+                ),
+            ],
+        }
+    }
+}
+
+impl CadCraftApp {
+    /// Opens the panel of planned assembly command `kind`; the selected
+    /// components fill its first selector when it takes components (rule 17).
+    pub(super) fn start_asm_planned(&mut self, kind: AsmPlanned) {
+        self.asm.tool = None;
+        let mut d = PartDialog::new(kind);
+        let defs = selector_defs(Planned::Asm(kind));
+        if let Some(first) = defs.first()
+            && first.3.contains(&PickKind::Body)
+            && !self.asm.sel.is_empty()
+        {
+            let names: Vec<String> = self
+                .asm
+                .sel
+                .iter()
+                .filter_map(|&id| self.occurrence_label(id))
+                .collect();
+            d.picks.entry(first.0).or_default().extend(names);
+            if let Some(next) = defs.get(1) {
+                d.active = Some(next.0);
+            }
+        }
+        self.part_planned = Some(d);
+    }
+
+    fn occurrence_label(&self, id: u32) -> Option<String> {
+        self.assembly()?
+            .find(id)
+            .map(|o| format!("{} · component", o.name))
+    }
+
+    /// A click in the assembly view while a planned panel is open: a
+    /// component, or a face / edge of one, as the active selector takes.
+    pub(super) fn asm_planned_click(&mut self, p: egui::Pos2, rect: egui::Rect) {
+        let Some(kinds) = self
+            .part_planned
+            .as_ref()
+            .and_then(|d| d.flow().current().map(|s| s.accepts))
+        else {
+            return;
+        };
+        let what = if kinds.contains(&PickKind::Body) {
+            self.asm_pick_pub(p, rect)
+                .and_then(|(h, _)| self.occurrence_label(h.occurrence))
+        } else {
+            use crate::assembly::relation::GeomRef;
+            let face = kinds
+                .iter()
+                .any(|k| matches!(k, PickKind::Face | PickKind::PlanarFace));
+            let edge = kinds
+                .iter()
+                .any(|k| matches!(k, PickKind::Edge | PickKind::StraightEdge));
+            match self.geom_under_pub(p, rect) {
+                Some(g @ GeomRef::Face { .. }) if face => Some(self.geom_label(&g)),
+                Some(g @ GeomRef::Edge { .. }) if edge => Some(self.geom_label(&g)),
+                _ => None,
+            }
+        };
+        if let (Some(w), Some(d)) = (what, self.part_planned.as_mut()) {
+            d.pick(w);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::commands::COMMANDS;
+    use crate::gui::ribbon::Action;
+
+    /// Every planned assembly command has a panel, its own icon (not shared
+    /// with the part's planned commands either), a registry command with an
+    /// alias, and its FEATURES section exists.
+    #[test]
+    fn every_planned_assembly_command_has_a_panel_and_a_command() {
+        let features = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/FEATURES.md"),
+        )
+        .unwrap_or_default();
+        let mut icons: Vec<Icon> = super::super::part_planned::PartPlanned::ALL
+            .iter()
+            .map(|p| p.icon())
+            .collect();
+        for k in AsmPlanned::ALL {
+            assert!(!k.title().is_empty() && !k.about().is_empty());
+            assert!(!icons.contains(&k.icon()), "{} shares an icon", k.title());
+            icons.push(k.icon());
+            assert!(
+                features.contains(&format!("## {} ", k.section())),
+                "{}: no FEATURES section {}",
+                k.title(),
+                k.section()
+            );
+            for pg in k.pages() {
+                assert!(!pg.1.is_empty(), "{} {}", k.title(), pg.0);
+            }
+            let d = PartDialog::new(k);
+            assert!(d.prompt().starts_with(k.title()));
+            let Some(cmd) = COMMANDS
+                .iter()
+                .find(|c| c.action == Some(Action::AsmPlanned(k)))
+            else {
+                panic!("{} has no command", k.title());
+            };
+            assert!(!cmd.aliases.is_empty(), "{} has no alias", cmd.id);
+            assert_eq!(cmd.icon, k.icon(), "{}", cmd.id);
+        }
+    }
+
+    /// Selector keys are unique within a panel, labels within a tab (a
+    /// selector row's label is its widget id).
+    #[test]
+    fn selector_keys_are_unique() {
+        for k in AsmPlanned::ALL {
+            let defs = selector_defs(Planned::Asm(k));
+            for (i, a) in defs.iter().enumerate() {
+                assert!(
+                    defs[i + 1..].iter().all(|b| b.0 != a.0),
+                    "{}: key {}",
+                    k.title(),
+                    a.0
+                );
+            }
+            for pg in k.pages() {
+                let labels: Vec<&str> =
+                    pg.1.iter()
+                        .filter_map(|r| match *r {
+                            Sel(_, l, ..) => Some(l),
+                            _ => None,
+                        })
+                        .collect();
+                for (i, l) in labels.iter().enumerate() {
+                    assert!(
+                        !labels[i + 1..].contains(l),
+                        "{} {}: {l} twice",
+                        k.title(),
+                        pg.0
+                    );
+                }
+            }
+        }
+    }
+
+    /// Pattern: the components, then the feature pattern.
+    #[test]
+    fn pattern_advances_from_components() {
+        let mut d = PartDialog::new(AsmPlanned::Pattern);
+        assert_eq!(d.active, Some("components"));
+        d.pick("bracket:1 · component".into());
+        assert_eq!(d.active, Some("feature"));
+    }
+}

@@ -578,7 +578,9 @@ impl CadCraftApp {
         // deletes the selected components.
         if response.hovered() || self.asm.tool.is_some() {
             if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                if self.asm.tool.is_some() {
+                if self.part_planned.is_some() {
+                    self.part_planned = None;
+                } else if self.asm.tool.is_some() {
                     self.asm.tool = None;
                     self.asm.place_turn = None;
                 } else {
@@ -604,11 +606,22 @@ impl CadCraftApp {
         }
         // Measure (no command open) takes the clicks on faces and edges.
         let measuring = self.measure.open && !constraining && self.asm.tool.is_none();
+        // A planned command's panel takes the clicks (`gui/asm_planned.rs`).
+        let planned = self.part_planned.is_some();
+        if planned
+            && response.clicked_by(PointerButton::Primary)
+            && !on_cube
+            && !modal
+            && let Some(p) = pointer
+        {
+            self.asm_planned_click(p, rect);
+        }
         let primary_click = response.clicked_by(PointerButton::Primary)
             && !on_cube
             && !modal
             && !constraining
-            && !measuring;
+            && !measuring
+            && !planned;
         let measure_click =
             response.clicked_by(PointerButton::Primary) && !on_cube && !modal && measuring;
         // Constrain takes the clicks (drawn and handled after the scene).
@@ -690,6 +703,9 @@ impl CadCraftApp {
         let cube_menu = self.cube_context;
         response.context_menu(|ui| {
             if cube_menu {
+                return;
+            }
+            if self.part_planned.is_some() && self.command_context_menu(ui) {
                 return;
             }
             if self.cons.draft.is_some() {
@@ -1090,6 +1106,23 @@ impl CadCraftApp {
             self.open_component_iproperties(ids[0]);
             ui.close();
         }
+        ui.separator();
+        use super::asm_planned::AsmPlanned as Ap;
+        let one = [
+            Ap::Replace,
+            Ap::Pattern,
+            Ap::Mirror,
+            Ap::Copy,
+            Ap::Interference,
+        ];
+        for k in one {
+            if ui.button(format!("{}...", k.title())).clicked() {
+                self.asm.sel = ids.to_vec();
+                self.start_asm_planned(k);
+                ui.close();
+            }
+        }
+        ui.separator();
         if ui.button("Delete").clicked() {
             self.delete_occurrences(ids);
             ui.close();
@@ -1100,6 +1133,10 @@ impl CadCraftApp {
 
     /// Properties of the selected occurrence (or of the assembly).
     pub(super) fn assembly_properties(&mut self, ui: &mut egui::Ui) {
+        if self.part_planned.is_some() {
+            self.part_planned_panel(ui);
+            return;
+        }
         if self.cons.draft.is_some() {
             self.constrain_panel(ui);
             return;

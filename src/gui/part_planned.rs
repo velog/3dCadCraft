@@ -1312,10 +1312,76 @@ impl PartPlanned {
     }
 }
 
+/// A command with its panel only: a part command (spec 2.0) or an
+/// assembly command (`gui/asm_planned.rs`, spec 3.0). Both share the panel,
+/// the selector flow and the prompts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Planned {
+    Part(PartPlanned),
+    Asm(super::asm_planned::AsmPlanned),
+}
+
+impl From<PartPlanned> for Planned {
+    fn from(k: PartPlanned) -> Self {
+        Planned::Part(k)
+    }
+}
+
+impl From<super::asm_planned::AsmPlanned> for Planned {
+    fn from(k: super::asm_planned::AsmPlanned) -> Self {
+        Planned::Asm(k)
+    }
+}
+
+impl Planned {
+    pub fn title(self) -> &'static str {
+        match self {
+            Planned::Part(k) => k.title(),
+            Planned::Asm(k) => k.title(),
+        }
+    }
+
+    pub fn icon(self) -> Icon {
+        match self {
+            Planned::Part(k) => k.icon(),
+            Planned::Asm(k) => k.icon(),
+        }
+    }
+
+    pub fn section(self) -> &'static str {
+        match self {
+            Planned::Part(k) => k.section(),
+            Planned::Asm(k) => k.section(),
+        }
+    }
+
+    pub fn about(self) -> &'static str {
+        match self {
+            Planned::Part(k) => k.about(),
+            Planned::Asm(k) => k.about(),
+        }
+    }
+
+    pub fn pages(self) -> &'static [Page] {
+        match self {
+            Planned::Part(k) => k.pages(),
+            Planned::Asm(k) => k.pages(),
+        }
+    }
+
+    /// The spec that lists the command.
+    pub fn spec(self) -> &'static str {
+        match self {
+            Planned::Part(_) => "docs/spec/2.0-part-commands.md",
+            Planned::Asm(_) => "docs/spec/3.0-assembly-commands.md",
+        }
+    }
+}
+
 /// The open panel of a planned command.
 #[derive(Clone, Debug)]
 pub(super) struct PartDialog {
-    pub kind: PartPlanned,
+    pub kind: Planned,
     tab: usize,
     /// Option values by (tab, row).
     bools: HashMap<(usize, usize), bool>,
@@ -1328,9 +1394,10 @@ pub(super) struct PartDialog {
     pub picks: HashMap<&'static str, Vec<String>>,
 }
 
-/// The selector rows of `kind`, in order.
-fn selector_defs(
-    kind: PartPlanned,
+/// The selector rows of `kind`, in order; a key on several tabs (Pattern
+/// Component's Components) is one selector.
+pub(super) fn selector_defs(
+    kind: Planned,
 ) -> Vec<(
     &'static str,
     &'static str,
@@ -1344,7 +1411,24 @@ fn selector_defs(
             Sel(k, l, p, a) => Some((k, l, p, a)),
             _ => None,
         })
-        .collect()
+        .fold(Vec::new(), |mut v, s| {
+            if !v.iter().any(|t: &(&str, _, _, _)| t.0 == s.0) {
+                v.push(s);
+            }
+            v
+        })
+}
+
+/// The selector keys shown on tab `ti` of `kind`.
+fn tab_keys(kind: Planned, ti: usize) -> Vec<&'static str> {
+    kind.pages().get(ti).map_or_else(Vec::new, |p| {
+        p.1.iter()
+            .filter_map(|r| match *r {
+                Sel(k, ..) => Some(k),
+                _ => None,
+            })
+            .collect()
+    })
 }
 
 /// Selector colours by position (the dots of the rows).
@@ -1357,7 +1441,8 @@ const COLORS: [[u8; 3]; 5] = [
 ];
 
 impl PartDialog {
-    pub(super) fn new(kind: PartPlanned) -> Self {
+    pub(super) fn new(kind: impl Into<Planned>) -> Self {
+        let kind = kind.into();
         Self {
             kind,
             tab: 0,
@@ -1413,7 +1498,8 @@ impl PartDialog {
             return;
         }
         list.push(what);
-        let keys: Vec<&'static str> = selector_defs(self.kind).iter().map(|s| s.0).collect();
+        // The next selector of the tab on show (another tab's is not seen).
+        let keys = tab_keys(self.kind, self.tab);
         if let Some(i) = keys.iter().position(|k| *k == key)
             && let Some(next) = keys.get(i + 1)
             && self.picks.get(next).is_none_or(Vec::is_empty)
@@ -1445,6 +1531,15 @@ impl PartDialog {
                     ui.selectable_value(&mut self.tab, i, p.0);
                 }
             });
+            // A tab's selectors only take picks while it is shown.
+            let keys = tab_keys(self.kind, self.tab);
+            if self.active.is_none_or(|a| !keys.contains(&a)) {
+                self.active = keys
+                    .iter()
+                    .find(|k| self.picks.get(*k).is_none_or(Vec::is_empty))
+                    .or(keys.first())
+                    .copied();
+            }
             ui.separator();
         }
         let ti = self.tab.min(pages.len().saturating_sub(1));
@@ -1472,7 +1567,8 @@ impl PartDialog {
         ui.separator();
         ui.label(RichText::new(self.kind.about()).weak());
         let tip = format!(
-            "Interface only: the logic comes next (docs/spec/2.0-part-commands.md; FEATURES {})",
+            "Interface only: the logic comes next ({}; FEATURES {})",
+            self.kind.spec(),
             self.kind.section()
         );
         let mut cancel = false;
@@ -1579,7 +1675,7 @@ impl PartDialog {
 /// Whether `item` is something `kinds` takes (the pick filter already
 /// limits the categories; this keeps a feature row from filling a face
 /// selector).
-fn takes(kinds: &[PickKind], item: &SelItem) -> bool {
+pub(super) fn takes(kinds: &[PickKind], item: &SelItem) -> bool {
     use PickKind as K;
     let any = |ks: &[K]| ks.iter().any(|k| kinds.contains(k));
     match item {
@@ -1596,6 +1692,7 @@ impl CadCraftApp {
     /// Opens the panel of planned command `kind`. What is selected and
     /// fits the first selector fills it (rule 17).
     pub(super) fn start_part_planned(&mut self, kind: PartPlanned) {
+        let kind = Planned::Part(kind);
         let pre = self.sel.clone();
         self.finish_sketch();
         self.mode = super::Mode::Normal;

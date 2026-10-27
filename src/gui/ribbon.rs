@@ -108,6 +108,9 @@ pub enum Action {
     /// A part command whose panel exists and whose logic comes later
     /// (`gui/part_planned.rs`, spec 2.0).
     PartPlanned(super::part_planned::PartPlanned),
+    /// An assembly command whose panel exists and whose logic comes later
+    /// (`gui/asm_planned.rs`, spec 3.0).
+    AsmPlanned(super::asm_planned::AsmPlanned),
     /// 3D Model › Modify › Thicken/Offset.
     Thicken,
     /// View › Visual Style.
@@ -290,6 +293,9 @@ pub enum Tab {
     Annotate,
     /// Assembly: place, position, relationships.
     Assemble,
+    /// Assembly: Design Accelerator (fasteners, frames, power
+    /// transmission, springs).
+    Design,
     /// Sheet metal in any part (one part type, owner 2026-10-27): Face,
     /// Flange, Flat Pattern, and the model's holes, patterns, work features.
     SheetMetal,
@@ -311,10 +317,11 @@ pub enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 11] = [
+    const ALL: [Tab; 12] = [
         Tab::PlaceViews,
         Tab::Annotate,
         Tab::Assemble,
+        Tab::Design,
         Tab::Model,
         Tab::SheetMetal,
         Tab::Sketch,
@@ -332,9 +339,10 @@ impl Tab {
         match self {
             Tab::PlaceViews | Tab::Annotate => drawing,
             Tab::Inspect if drawing => false,
-            Tab::Assemble => assembly && !drawing,
+            Tab::Assemble | Tab::Design => assembly && !drawing,
             Tab::SheetMetal => !assembly && !drawing,
-            Tab::Model | Tab::Sketch | Tab::Environments => !assembly && !drawing,
+            Tab::Model | Tab::Sketch => !assembly && !drawing,
+            Tab::Environments => !drawing,
             _ => true,
         }
     }
@@ -349,6 +357,7 @@ impl Tab {
             Tab::PlaceViews => "Place Views",
             Tab::Annotate => "Annotate",
             Tab::Assemble => "Assemble",
+            Tab::Design => "Design",
             Tab::SheetMetal => "Sheet Metal",
             Tab::Model => "3D Model",
             Tab::Sketch => "Sketch",
@@ -711,22 +720,90 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             ),
         ],
         Tab::Assemble => vec![
-            panel("Component", vec![c("asm.place").large(), c("asm.create")]),
+            panel(
+                "Component",
+                vec![
+                    c("asm.place").large(),
+                    c("asm.place_cc"),
+                    c("asm.place_imported"),
+                    c("asm.create").large(),
+                    c("asm.replace"),
+                ],
+            ),
             panel(
                 "Position",
                 vec![c("asm.free_move"), c("asm.free_rotate"), c("asm.ground")],
             ),
             panel(
                 "Relationships",
-                vec![c("asm.constrain").large(), c("asm.joint").large()],
+                vec![
+                    c("asm.joint").large(),
+                    c("asm.constrain").large(),
+                    c("asm.assemble"),
+                    c("asm.show_rel"),
+                    c("asm.show_sick"),
+                    c("asm.hide_rel"),
+                ],
             ),
             panel(
                 "Pattern",
                 vec![c("asm.pattern"), c("asm.mirror"), c("asm.copy")],
             ),
             panel(
+                "Productivity",
+                vec![c("asm.make_layout"), c("asm.substitutes")],
+            ),
+            panel("Simplification", vec![c("asm.simplify").large()]),
+            panel(
                 "Manage",
                 vec![c("asm.update").large(), c("asm.bom").large()],
+            ),
+        ],
+        Tab::Design => vec![
+            panel(
+                "Fasten",
+                vec![
+                    c("design.bolted").large(),
+                    c("design.clevis_pin"),
+                    c("design.secure_pin"),
+                    c("design.radial_pin"),
+                ],
+            ),
+            panel("Frame", vec![c("design.insert_frame").large()]),
+            panel(
+                "Power Transmission",
+                vec![
+                    c("design.shaft").large(),
+                    c("design.spur_gear").large(),
+                    split("Gears", items(&["design.worm_gear", "design.bevel_gear"])),
+                    c("design.bearing"),
+                    c("design.key"),
+                    split(
+                        "Belts and Chains",
+                        items(&["design.v_belts", "design.sync_belts", "design.chains"]),
+                    ),
+                    split(
+                        "Cams",
+                        items(&["design.disc_cam", "design.linear_cam", "design.cyl_cam"]),
+                    ),
+                    split(
+                        "Splines",
+                        items(&[
+                            "design.involute_splines",
+                            "design.parallel_splines",
+                            "design.o_ring",
+                        ]),
+                    ),
+                ],
+            ),
+            panel(
+                "Spring",
+                vec![
+                    c("design.compression_spring"),
+                    c("design.extension_spring"),
+                    c("design.torsion_spring"),
+                    c("design.belleville_spring"),
+                ],
             ),
         ],
         Tab::Model => vec![
@@ -975,6 +1052,23 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 panel("Exit", vec![sk("sketch.finish").large()]),
             ]
         }
+        Tab::Inspect if st.assembly => vec![
+            panel(
+                "Measure",
+                vec![c("inspect.measure").large(), c("inspect.physical")],
+            ),
+            panel("Interference", vec![c("inspect.interference").large()]),
+            panel(
+                "Analysis",
+                vec![
+                    c("inspect.zebra"),
+                    c("inspect.draft_analysis"),
+                    c("inspect.curvature"),
+                    c("inspect.surface_analysis"),
+                    c("inspect.section_analysis"),
+                ],
+            ),
+        ],
         Tab::Inspect => vec![
             panel(
                 "Measure",
@@ -984,7 +1078,6 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 "Analysis",
                 vec![
                     c("inspect.validate"),
-                    c("inspect.interference"),
                     c("inspect.zebra"),
                     c("inspect.draft_analysis"),
                     c("inspect.curvature"),
@@ -1086,9 +1179,25 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     ),
                 ]
             } else {
-                vec![docs, storage, styles]
+                vec![
+                    docs,
+                    storage,
+                    styles,
+                    panel("Author", vec![c("manage.create_iassembly").large()]),
+                ]
             }
         }
+        Tab::Environments if st.assembly => vec![panel(
+            "Assembly",
+            vec![
+                c("env.tube_pipe").large(),
+                c("env.cable_harness").large(),
+                c("env.dynamic_sim").large(),
+                c("env.asm_stress").large(),
+                c("env.asm_studio").large(),
+                c("env.presentation").large(),
+            ],
+        )],
         Tab::Environments => vec![panel(
             "Begin",
             vec![
@@ -1114,7 +1223,11 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         ]),
                     ),
                     c(constraints).label("Constraints"),
-                    c("sketch.dof").label("Degrees of Freedom"),
+                    if st.assembly {
+                        c("view.dof")
+                    } else {
+                        c("sketch.dof").label("Degrees of Freedom")
+                    },
                     c("view.cog"),
                     c("view.analysis_visibility"),
                 ],
@@ -1195,7 +1308,12 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
 #[cfg(test)]
 pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
     let mut out = Vec::new();
-    for (editing, drawing) in [(false, false), (true, false), (false, true)] {
+    for (editing, drawing, assembly) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (false, false, true),
+    ] {
         for labels_shown in [false, true] {
             let st = State {
                 labels_shown,
@@ -1211,7 +1329,7 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 full_screen: false,
                 project: false,
                 center_point: false,
-                assembly: false,
+                assembly,
                 drawing,
                 asm_tool: None,
                 flat: false,

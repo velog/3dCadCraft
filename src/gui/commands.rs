@@ -24,6 +24,7 @@
 
 use std::sync::OnceLock;
 
+use super::asm_planned::AsmPlanned as Ap;
 use super::camera::Projection;
 use super::demos::Demo;
 use super::documents::DocCmd;
@@ -380,6 +381,14 @@ const A_COMPONENT: Place = Place::Ribbon("Assemble", "Component");
 const A_POSITION: Place = Place::Ribbon("Assemble", "Position");
 const A_RELATIONSHIPS: Place = Place::Ribbon("Assemble", "Relationships");
 const A_PATTERN: Place = Place::Ribbon("Assemble", "Pattern");
+const A_PRODUCTIVITY: Place = Place::Ribbon("Assemble", "Productivity");
+const A_SIMPLIFY: Place = Place::Ribbon("Assemble", "Simplification");
+const I_INTERFERENCE: Place = Place::Ribbon("Inspect", "Interference");
+const X_FASTEN: Place = Place::Ribbon("Design", "Fasten");
+const X_FRAME: Place = Place::Ribbon("Design", "Frame");
+const X_POWER: Place = Place::Ribbon("Design", "Power Transmission");
+const X_SPRING: Place = Place::Ribbon("Design", "Spring");
+const A_ENV: Place = Place::Ribbon("Environments", "Assembly");
 const D_CREATE: Place = Place::Ribbon("Place Views", "Create");
 const D_MODIFY: Place = Place::Ribbon("Place Views", "Modify");
 const D_SKETCH: Place = Place::Ribbon("Place Views", "Sketch");
@@ -478,6 +487,16 @@ const fn pp(id: &'static str, name: &'static str, bg: &'static str, icon: Icon, 
         .spec("2.0-part-commands.md")
         .tip("Opens the panel; the command's logic comes next (spec 2.0)")
         .run(Action::PartPlanned(k))
+}
+
+/// An assembly command with its panel only, logic later
+/// (`gui/asm_planned.rs`, `docs/spec/3.0-assembly-commands.md`).
+const fn ap(id: &'static str, name: &'static str, bg: &'static str, icon: Icon, k: Ap) -> Command {
+    Command::new(id, name, bg, icon)
+        .env(ASSEMBLY)
+        .spec("3.0-assembly-commands.md")
+        .tip("Opens the panel; the command's logic comes next (spec 3.0)")
+        .run(Action::AsmPlanned(k))
 }
 
 /// A sketch tool: name = `Tool::label`, valid in a sketch.
@@ -1219,9 +1238,6 @@ pub static COMMANDS: &[Command] = &[
         .at(&[I_ANALYSIS])
         .tip("Euler–Poincaré and manifold check of the body")
         .spec("2.16-browser.md"),
-    c("inspect.interference", "Interference", "Застъпване", Icon::Interference)
-        .at(&[I_ANALYSIS])
-        .todo("3.5"),
     pp("inspect.zebra", "Zebra", "Анализ: зебра", Icon::Zebra, Pp::Zebra)
         .inv("Zebra Analysis")
         .alias(&["ZEB"])
@@ -1852,11 +1868,6 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("Place a part as a new occurrence: click in the view for each one, right-click for OK, Place Grounded at Origin or a 90° turn")
         .spec("3.1-assemblies.md"),
-    c("asm.create", "Create", "Създаване на компонент", Icon::Part)
-        .at(&[A_COMPONENT])
-        .env(ASSEMBLY)
-        .tip("Create a new part inside the assembly")
-        .todo("3.10"),
     c("asm.free_move", "Free Move", "Свободно преместване", Icon::FreeMove)
         .run(Action::AsmFreeMove)
         .alias(&["V"])
@@ -1897,21 +1908,6 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("Rigid, Rotational, Slider, Cylindrical, Planar or Ball joint between origins of two components (face or circle centres, axes, points)")
         .spec("3.1-assemblies.md"),
-    c("asm.pattern", "Pattern", "Масив от компоненти", Icon::PatternRect)
-        .at(&[A_PATTERN])
-        .env(ASSEMBLY)
-        .tip("Pattern components")
-        .todo("3.7"),
-    c("asm.mirror", "Mirror", "Огледало на компоненти", Icon::Mirror)
-        .at(&[A_PATTERN])
-        .env(ASSEMBLY)
-        .tip("Mirror components about a plane")
-        .todo("3.7"),
-    c("asm.copy", "Copy", "Копиране на компоненти", Icon::Copy)
-        .at(&[A_PATTERN])
-        .env(ASSEMBLY)
-        .tip("Copy components as new documents")
-        .todo("3.8"),
     c("asm.update", "Update", "Обновяване", Icon::Rebuild)
         .alias(&["UPD"])
         .run(Action::AsmUpdate)
@@ -1927,6 +1923,194 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("The parts of the assembly with their quantities and iProperties: Model Data, Structured, Parts Only; Export to CSV")
         .spec("3.6-bom.md"),
+    // ---- Assembly commands with their panel only (spec 3.0) ---------------
+    ap("asm.place_cc", "Place from Content Center", "Поставяне от библиотеката", Icon::PlaceContent, Ap::PlaceContentCenter)
+        .short("Content Center")
+        .alias(&["PCC"])
+        .at(&[A_COMPONENT]),
+    ap("asm.place_imported", "Place Imported CAD Files", "Поставяне на чужд CAD файл", Icon::PlaceImported, Ap::PlaceImported)
+        .short("Imported CAD")
+        .alias(&["PIF"])
+        .at(&[A_COMPONENT]),
+    ap("asm.create", "Create", "Създаване на компонент", Icon::AsmCreate, Ap::Create)
+        .inv("Create In-Place Component")
+        .alias(&["CRC"])
+        .at(&[A_COMPONENT]),
+    ap("asm.replace", "Replace", "Замяна на компонент", Icon::AsmReplace, Ap::Replace)
+        .inv("Replace Component")
+        .alias(&["RC", "RA"])
+        .at(&[A_COMPONENT]),
+    ap("asm.pattern", "Pattern", "Масив от компоненти", Icon::AsmPattern, Ap::Pattern)
+        .inv("Pattern Component")
+        .alias(&["PCO"])
+        .at(&[A_PATTERN]),
+    ap("asm.mirror", "Mirror", "Огледало на компоненти", Icon::AsmMirror, Ap::Mirror)
+        .inv("Mirror Components")
+        .alias(&["MIC"])
+        .at(&[A_PATTERN]),
+    ap("asm.copy", "Copy", "Копиране на компоненти", Icon::AsmCopy, Ap::Copy)
+        .inv("Copy Components")
+        .alias(&["CPC"])
+        .at(&[A_PATTERN]),
+    ap("asm.assemble", "Assemble", "Сглобяване", Icon::AsmAssemble, Ap::Assemble)
+        .alias(&["ASM"])
+        .at(&[A_RELATIONSHIPS]),
+    c("asm.show_rel", "Show", "Показване на връзките", Icon::ShowRelations)
+        .inv("Show Relationships")
+        .alias(&["SHR"])
+        .at(&[A_RELATIONSHIPS])
+        .env(ASSEMBLY)
+        .tip("Shows the relationship glyphs of the chosen components")
+        .todo("3.2"),
+    c("asm.show_sick", "Show Sick", "Показване на болните връзки", Icon::ShowSick)
+        .alias(&["SSR"])
+        .at(&[A_RELATIONSHIPS])
+        .env(ASSEMBLY)
+        .tip("Shows the glyphs of the sick relationships")
+        .todo("3.2"),
+    c("asm.hide_rel", "Hide All", "Скриване на връзките", Icon::HideRelations)
+        .inv("Hide All Relationships")
+        .alias(&["HAR"])
+        .at(&[A_RELATIONSHIPS])
+        .env(ASSEMBLY)
+        .tip("Hides every relationship glyph")
+        .todo("3.2"),
+    ap("asm.make_layout", "Make Layout", "Създаване на оформление", Icon::MakeLayout, Ap::MakeLayout)
+        .alias(&["MKL"])
+        .at(&[A_PRODUCTIVITY]),
+    ap("asm.substitutes", "Create Derived Substitutes", "Производни заместители", Icon::Substitutes, Ap::DerivedSubstitutes)
+        .short("Substitutes")
+        .alias(&["CDS"])
+        .at(&[A_PRODUCTIVITY]),
+    ap("asm.simplify", "Simplify", "Опростяване", Icon::Simplify, Ap::Simplify)
+        .alias(&["SIM"])
+        .at(&[A_SIMPLIFY]),
+    ap("inspect.interference", "Analyze Interference", "Анализ на застъпване", Icon::Interference, Ap::Interference)
+        .short("Interference")
+        .alias(&["INT"])
+        .at(&[I_INTERFERENCE]),
+    ap("manage.create_iassembly", "Create iAssembly", "Създаване на iAssembly", Icon::CreateIAssembly, Ap::CreateIAssembly)
+        .alias(&["CIA"])
+        .at(&[G_AUTHOR]),
+    c("view.dof", "Degrees of Freedom", "Степени на свобода", Icon::DofGlyph)
+        .short("DOF")
+        .alias(&["DOF"])
+        .at(&[V_VIS])
+        .env(ASSEMBLY)
+        .tip("Shows each free component's degrees of freedom as a glyph")
+        .todo("3.2"),
+    // Design tab (Design Accelerator)
+    ap("design.bolted", "Bolted Connection", "Болтово съединение", Icon::Bolt, Ap::BoltedConnection)
+        .short("Bolted")
+        .alias(&["BC"])
+        .at(&[X_FASTEN]),
+    ap("design.clevis_pin", "Clevis Pin", "Щифт с глава", Icon::ClevisPin, Ap::ClevisPin)
+        .alias(&["CVP"])
+        .at(&[X_FASTEN]),
+    ap("design.secure_pin", "Secure Pin", "Шплинт", Icon::SecurePin, Ap::SecurePin)
+        .alias(&["SCP"])
+        .at(&[X_FASTEN]),
+    ap("design.radial_pin", "Radial Pin", "Радиален щифт", Icon::RadialPin, Ap::RadialPin)
+        .alias(&["RDP"])
+        .at(&[X_FASTEN]),
+    ap("design.insert_frame", "Insert Frame", "Вмъкване на рамка", Icon::InsertFrame, Ap::InsertFrame)
+        .alias(&["IFR"])
+        .at(&[X_FRAME]),
+    ap("design.shaft", "Shaft", "Вал", Icon::Shaft, Ap::Shaft)
+        .alias(&["SHF"])
+        .at(&[X_POWER]),
+    ap("design.spur_gear", "Spur Gear", "Цилиндрично зъбно колело", Icon::SpurGear, Ap::SpurGear)
+        .alias(&["SPG"])
+        .at(&[X_POWER]),
+    ap("design.worm_gear", "Worm Gear", "Червячна предавка", Icon::WormGear, Ap::WormGear)
+        .alias(&["WGR"])
+        .at(&[X_POWER]),
+    ap("design.bevel_gear", "Bevel Gear", "Конично зъбно колело", Icon::BevelGear, Ap::BevelGear)
+        .alias(&["BVG"])
+        .at(&[X_POWER]),
+    ap("design.bearing", "Bearing", "Лагер", Icon::Bearing, Ap::Bearing)
+        .alias(&["BRG"])
+        .at(&[X_POWER]),
+    ap("design.key", "Key", "Призматична шпонка", Icon::KeyJoint, Ap::Key)
+        .inv("Parallel Key")
+        .alias(&["KEY"])
+        .at(&[X_POWER]),
+    ap("design.v_belts", "V-Belts", "Клиновидни ремъци", Icon::VBelt, Ap::VBelts)
+        .alias(&["VBT"])
+        .at(&[X_POWER]),
+    ap("design.sync_belts", "Synchronous Belts", "Зъбни ремъци", Icon::SyncBelt, Ap::SyncBelts)
+        .short("Sync Belts")
+        .alias(&["SBT"])
+        .at(&[X_POWER]),
+    ap("design.chains", "Roller Chains", "Ролкови вериги", Icon::Chain, Ap::RollerChains)
+        .alias(&["RCH"])
+        .at(&[X_POWER]),
+    ap("design.disc_cam", "Disc Cam", "Дискова гърбица", Icon::DiscCam, Ap::DiscCam)
+        .alias(&["DCM"])
+        .at(&[X_POWER]),
+    ap("design.linear_cam", "Linear Cam", "Линейна гърбица", Icon::LinearCam, Ap::LinearCam)
+        .alias(&["LCM"])
+        .at(&[X_POWER]),
+    ap("design.cyl_cam", "Cylindrical Cam", "Цилиндрична гърбица", Icon::CylCam, Ap::CylindricalCam)
+        .alias(&["CCM"])
+        .at(&[X_POWER]),
+    ap("design.involute_splines", "Involute Splines", "Еволвентни шлицове", Icon::InvSpline, Ap::InvoluteSplines)
+        .alias(&["ISP"])
+        .at(&[X_POWER]),
+    ap("design.parallel_splines", "Parallel Splines", "Правостенни шлицове", Icon::ParSpline, Ap::ParallelSplines)
+        .alias(&["PSP"])
+        .at(&[X_POWER]),
+    ap("design.o_ring", "O-Ring", "О-пръстен", Icon::ORing, Ap::ORing)
+        .alias(&["ORG"])
+        .at(&[X_POWER]),
+    ap("design.compression_spring", "Compression Spring", "Натискова пружина", Icon::CompSpring, Ap::CompressionSpring)
+        .short("Compression")
+        .alias(&["CSP"])
+        .at(&[X_SPRING]),
+    ap("design.extension_spring", "Extension Spring", "Опънна пружина", Icon::ExtSpring, Ap::ExtensionSpring)
+        .short("Extension")
+        .alias(&["ESP"])
+        .at(&[X_SPRING]),
+    ap("design.torsion_spring", "Torsion Spring", "Усукваща пружина", Icon::TorsionSpring, Ap::TorsionSpring)
+        .short("Torsion")
+        .alias(&["TSP"])
+        .at(&[X_SPRING]),
+    ap("design.belleville_spring", "Belleville Spring", "Тарелкова пружина", Icon::Belleville, Ap::BellevilleSpring)
+        .short("Belleville")
+        .alias(&["BSP"])
+        .at(&[X_SPRING]),
+    // Environments of an assembly
+    c("env.tube_pipe", "Tube & Pipe", "Тръбопроводи", Icon::TubePipe)
+        .alias(&["TAP"])
+        .at(&[A_ENV])
+        .env(ASSEMBLY)
+        .todo("6.5"),
+    c("env.cable_harness", "Cable & Harness", "Кабели и снопове", Icon::CableHarness)
+        .alias(&["CAH"])
+        .at(&[A_ENV])
+        .env(ASSEMBLY)
+        .todo("6.6"),
+    c("env.dynamic_sim", "Dynamic Simulation", "Динамична симулация", Icon::DynamicSim)
+        .alias(&["DSI"])
+        .at(&[A_ENV])
+        .env(ASSEMBLY)
+        .todo("7.2"),
+    c("env.asm_stress", "Stress Analysis", "Якостен анализ", Icon::StressAnalysis)
+        .alias(&["STA"])
+        .at(&[A_ENV])
+        .env(ASSEMBLY)
+        .todo("7.1"),
+    c("env.asm_studio", "Inventor Studio", "Рендиране (Studio)", Icon::Studio)
+        .short("Studio")
+        .alias(&["STU"])
+        .at(&[A_ENV])
+        .env(ASSEMBLY)
+        .todo("7.3"),
+    c("env.presentation", "Presentation", "Презентация", Icon::Presentation)
+        .alias(&["PRS"])
+        .at(&[A_ENV])
+        .env(ASSEMBLY)
+        .todo("7.4"),
     // ---- Drawing: Place Views and Annotate --------------------------------
     d("drw.base", "Base View", "Основен изглед", Icon::BaseView)
         .run(Action::Drawing(DrwCmd::BaseView))

@@ -49,7 +49,7 @@ What is copied is the **organisation and the workflow**, not the graphics: the i
 **The ribbon (the same for every document today):**
 - **3D Model, Inspect, Tools, Manage, View** and **Sketch**. Tools has a **Material and Appearance** panel (Material, Appearance, Adjust, Clear); Manage — **Documents** (the design file's documents: New Part / Assembly / Drawing in this file, Duplicate, Rename, Delete, the Documents window), **Storage** (Save to Separate File, Embed, Embed All, Separate All) and **Styles and Standards** (Styles Editor, Update, Purge); Inspect → **Physical Properties**.
 - **Sketch tab:** panels Create (with **Project Geometry**: points and curves from earlier sketches, model edges; Shift = construction; Esc / right click → Done stops it), Modify, Pattern, Constrain, Format, Demo, Exit (there is no Insert panel; Image etc. ⬜).
-- ⬜ **Assembly:** Assemble, Design (calculators), Inspect, Tools, View.
+- 🟡 **Assembly:** Assemble, Design (calculators), Inspect, Tools, Manage, View, Environments (2026-10-27: every command on the ribbon, spec 3.0).
 - ⬜ **Drawing:** Place Views, Annotate, Sketch, Tools, View.
 
 As in Inventor, entering a sketch opens the Sketch tab, and "Finish Sketch" returns to 3D Model and updates the model (the features that use the sketch follow it; while the sketch is open, the body stays the old one).
@@ -246,6 +246,20 @@ folds open and shut: *Relationships*, the assembly's *Origin*, and each componen
 axes, centre point), its part's work features and its constraints; with Constrain open a click on such a
 row is a selection (it lights up in the view under the cursor). **Use the current distance** (Constrain
 panel, remembered): on, the offset is the distance the components have now; off, they snap together at 0.
+**The whole assembly command set** ([spec/3.0](spec/3.0-assembly-commands.md), interface only — OK disabled): tabs
+Assemble (Component: Place from Content Center **PCC**, Place Imported CAD Files **PIF**, Create **CRC**, Replace
+**RC** / **RA**; Relationships: Assemble **ASM**, Show **SHR**, Show Sick **SSR**, Hide All **HAR**; Pattern **PCO**,
+Mirror **MIC**, Copy **CPC**; Productivity: Make Layout **MKL**, Create Derived Substitutes **CDS**; Simplify
+**SIM**), **Design** (Bolted Connection **BC**, Clevis / Secure / Radial Pin **CVP SCP RDP**, Insert Frame **IFR**,
+Shaft **SHF**, Spur / Worm / Bevel Gear **SPG WGR BVG**, Bearing **BRG**, Key **KEY**, V-Belts **VBT**, Synchronous
+Belts **SBT**, Roller Chains **RCH**, Disc / Linear / Cylindrical Cam **DCM LCM CCM**, Involute / Parallel Splines
+**ISP PSP**, O-Ring **ORG**, Compression / Extension / Torsion / Belleville Spring **CSP ESP TSP BSP**), Inspect ›
+Analyze Interference **INT**, Manage › Create iAssembly **CIA**, View › Degrees of Freedom **DOF**, Environments
+(Tube & Pipe **TAP**, Cable & Harness **CAH**, Dynamic Simulation **DSI**, Stress Analysis **STA**, Studio **STU**,
+Presentation **PRS**). Each opens its panel in Properties: selectors take a component (click it) or a face / edge of
+one; the selected components fill the first selector; Enter / right-click Continue / Esc as in the other
+commands. A component's right-click menu offers Replace, Pattern, Mirror, Copy and Analyze Interference with it.
+
 The label column of Properties is wider or narrower by dragging its border. **Assemble › BOM**: the Bill of
 Materials (tabs Model Data / Structured / Parts Only, Part Number Row Merge, click a header to sort, Columns for
 custom iProperties, edit Part Number / Stock Number / Description / BOM Structure of the file's own components,

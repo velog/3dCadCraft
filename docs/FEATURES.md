@@ -878,6 +878,8 @@ Finds the overlapping volumes between components, shows them in red and gives th
 
 ## 3.7 Component patterns and mirror — ⬜ · M
 
+**Specification of the whole command set:** [spec/3.0-assembly-commands.md](spec/3.0-assembly-commands.md) (interface done 2026-10-27, logic ⬜)
+
 **Kinds.**
 - **Patterns:** rectangular, circular, following a feature pattern in a part (bolts in the holes of a flange).
 - **Sketch-driven patterns** (new in 2027).
@@ -887,6 +889,8 @@ Finds the overlapping volumes between components, shows them in red and gives th
 - *mirrored new part*: a left/right version.
 
 ## 3.8 Replace, copy, make independent — ⬜ · S
+
+**Specification of the whole command set:** [spec/3.0-assembly-commands.md](spec/3.0-assembly-commands.md) (interface done 2026-10-27, logic ⬜)
 
 - **Replace:** one component with another, trying to keep the constraints.
 - **Copy Components.**
