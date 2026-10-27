@@ -683,6 +683,19 @@ impl Draw<'_> {
 /// A point in its view's plane, on the sheet, and the view's placement.
 type ViewPoint = ([f64; 2], [f64; 2], Placement);
 
+/// A linear dimension's two points on the sheet, its view's placement and
+/// lines (`None`: a diameter / radius or a missing point).
+pub fn dim_points<'a>(
+    d: &Dimension,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+) -> Option<([f64; 2], [f64; 2], Placement, &'a ViewLines)> {
+    let b = d.b.as_ref()?;
+    let (_, pa, pl) = point(&d.a, view).ok()?;
+    let (_, pb, _) = point(b, view).ok()?;
+    let (_, lines) = view(d.a.view)?;
+    Some((pa, pb, pl, lines))
+}
+
 /// A dimension set's points resolved: sheet points, coordinates along the
 /// direction, drawing order, placement and the side it lies on.
 struct SetGeom {

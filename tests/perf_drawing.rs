@@ -220,6 +220,71 @@ fn drawing_views_of_large_models() {
             over.push("dimension labels");
         }
     }
+    // Arrange Dimensions over 1 000 horizontal dimensions above a view.
+    {
+        use cadcraft3d::drawing::annot::Placement;
+        use cadcraft3d::drawing::{DimKind, Dimension, PointRef, PointRole};
+        let model = part_model(&box_with_circle(
+            [80.0, 50.0, 10.0],
+            20.0,
+            10.0,
+            5.0,
+            true,
+            10.0,
+        ));
+        let lines = view_lines_simplified(&model, &front, None, Simplify::default());
+        let edges: Vec<String> = lines
+            .edges
+            .iter()
+            .filter(|e| e.straight && e.visible)
+            .filter_map(|e| e.name.clone())
+            .collect();
+        let pl = Placement {
+            position: [200.0, 150.0],
+            scale: 1.0,
+            center: lines.center(),
+        };
+        let view = |v: u32| (v == 1).then_some((pl, &lines));
+        let dims: Vec<Dimension> = (0..1000)
+            .map(|k| {
+                let e = edges[k % edges.len()].clone();
+                Dimension {
+                    dim: DimKind::Horizontal,
+                    a: PointRef {
+                        view: 1,
+                        edge: e.clone(),
+                        role: PointRole::Start,
+                    },
+                    b: Some(PointRef {
+                        view: 1,
+                        edge: e,
+                        role: PointRole::End,
+                    }),
+                    text: [0.0, 40.0 + (k % 37) as f64],
+                    precision: 2,
+                    format: Default::default(),
+                }
+            })
+            .collect();
+        let refs: Vec<(u32, &Dimension)> = dims
+            .iter()
+            .enumerate()
+            .map(|(k, d)| (k as u32, d))
+            .collect();
+        let t = Instant::now();
+        let moved = cadcraft3d::drawing::arrange::arrange(&refs, &view, 10.0, 6.0);
+        let total = ms(t);
+        let budget = 100.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms ({} moved){flag}",
+            "arrange dimensions: 1 000 above one view",
+            moved.len()
+        );
+        if total > budget {
+            over.push("arrange dimensions");
+        }
+    }
     if std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_none() {
         assert!(over.is_empty(), "over budget: {over:?}");
     }

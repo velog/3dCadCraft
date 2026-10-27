@@ -115,6 +115,11 @@ impl ShownAnn {
     pub fn id(&self) -> u32 {
         self.id
     }
+
+    /// What it draws.
+    pub fn prims(&self) -> &[Prim] {
+        &self.prims
+    }
 }
 
 /// The box around the lines of `prims`.

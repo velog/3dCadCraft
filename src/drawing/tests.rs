@@ -1488,3 +1488,71 @@ fn dimension_sets_measure_from_the_origin() {
     let back: AnnotationKind = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
     assert_eq!(back, a);
 }
+
+/// Arrange Dimensions over the box's front view: horizontal dimensions above
+/// it go into rows Part Offset outside the view, Spacing apart, shortest
+/// first, non-overlapping ones sharing a row; the text keeps its place
+/// along the line.
+#[test]
+fn arrange_puts_dimensions_in_rows() {
+    use super::annot::{Placement, dim_points};
+    use super::arrange::arrange;
+    let boxed = primitive(
+        PrimitiveKind::Box,
+        Point2::new(0.0, 0.0),
+        Point2::new(20.0, 10.0),
+        10.0,
+    );
+    let front = lines_of(&boxed, ViewOrientation::Front);
+    let pl = Placement {
+        position: [100.0, 100.0],
+        scale: 1.0,
+        center: front.center(),
+    };
+    let view = |v: u32| (v == 1).then_some((pl, &front));
+    let e = front
+        .edges
+        .iter()
+        .find(|e| e.straight && e.visible && ((e.b[0] - e.a[0]).abs() - 40.0).abs() < 1e-6)
+        .expect("a 40 mm edge");
+    let name = e.name.clone().unwrap_or_default();
+    let p = |role| PointRef {
+        view: 1,
+        edge: name.clone(),
+        role,
+    };
+    let dim = |text: [f64; 2]| Dimension {
+        dim: DimKind::Horizontal,
+        a: p(PointRole::Start),
+        b: Some(p(PointRole::End)),
+        text,
+        precision: 2,
+        format: Default::default(),
+    };
+    // Two overlapping 40 mm dimensions placed untidily above the view.
+    let (d1, d2) = (dim([3.0, 40.0]), dim([-2.0, 13.0]));
+    assert!(dim_points(&d1, &view).is_some());
+    let top = pl.to_sheet(front.max)[1].max(pl.to_sheet(front.min)[1]);
+    let r = arrange(&[(1, &d1), (2, &d2)], &view, 10.0, 6.0);
+    assert_eq!(r.len(), 2);
+    let y = |id: u32| {
+        r.iter()
+            .find(|x| x.0 == id)
+            .map(|x| 100.0 + x.1[1])
+            .unwrap()
+    };
+    let mut ys = [y(1), y(2)];
+    ys.sort_by(f64::total_cmp);
+    close(ys[0], top + 10.0, 1e-9, "first row at the part offset");
+    close(ys[1], top + 16.0, 1e-9, "second row one spacing further");
+    // The text keeps its place along the line.
+    close(
+        r.iter().find(|x| x.0 == 1).unwrap().1[0],
+        3.0,
+        1e-12,
+        "text x",
+    );
+    // A dimension inside the view's box is left alone.
+    let inside = dim([0.0, 0.0]);
+    assert!(arrange(&[(3, &inside)], &view, 10.0, 6.0).is_empty());
+}

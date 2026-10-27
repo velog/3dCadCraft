@@ -60,7 +60,6 @@ pub enum Planned {
     AlignBreak,
     StartSketch,
     // Annotate › Dimension
-    Arrange,
     Retrieve,
     // Feature Notes
     ChamferNote,
@@ -180,7 +179,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 44] = [
+    pub const ALL: [Planned; 43] = [
         Self::Overlay,
         Self::DraftView,
         Self::Break,
@@ -192,7 +191,6 @@ impl Planned {
         Self::AlignInPosition,
         Self::AlignBreak,
         Self::StartSketch,
-        Self::Arrange,
         Self::Retrieve,
         Self::ChamferNote,
         Self::PunchNote,
@@ -241,7 +239,6 @@ impl Planned {
             Self::AlignInPosition => "Positionally Align View",
             Self::AlignBreak => "Remove View Alignment",
             Self::StartSketch => "New Sketch",
-            Self::Arrange => "Arrange Dimensions",
             Self::Retrieve => "Retrieve Model Annotations",
             Self::ChamferNote => "Chamfer Note",
             Self::PunchNote => "Punch Notes",
@@ -426,13 +423,6 @@ impl Planned {
                     Note(
                         "Sketch tools of the drawing: lines, arcs, text, Fill/Hatch Sketch Region, Project Geometry",
                     ),
-                ],
-            )],
-            Self::Arrange => &[Page(
-                "Arrange",
-                &[
-                    Sel("dims", "Dimensions", "select the dimensions to arrange"),
-                    Note("Spaces them by the style's Spacing (D) and Part Offset (E)"),
                 ],
             )],
             Self::Retrieve => &[
@@ -932,7 +922,6 @@ impl Planned {
             }
             Self::AlignBreak => "Frees a view from its alignment",
             Self::StartSketch => "A sketch on the sheet or in a view",
-            Self::Arrange => "Spaces selected dimensions evenly",
             Self::Retrieve => {
                 "Brings the model's sketch / feature dimensions and 3D annotations into a view"
             }

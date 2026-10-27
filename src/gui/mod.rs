@@ -44,6 +44,7 @@ mod documents;
 mod draft;
 mod drawing;
 mod drawing_annot;
+mod drawing_arrange;
 mod drawing_bend;
 mod drawing_bom;
 mod drawing_dim;

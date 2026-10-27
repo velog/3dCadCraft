@@ -13,6 +13,7 @@
 //! model (spec §6.3 h).
 
 pub mod annot;
+pub mod arrange;
 pub mod bend_table;
 pub mod dimset;
 pub mod dimtext;

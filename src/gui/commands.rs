@@ -2060,7 +2060,9 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["CDS"])
         .at(&[N_DIM])
         .tip("Chain dimensions kept as one set"),
-    dp("drw.arrange", "Arrange Dimensions", "Подреждане на размерите", Icon::Dimension, Dp::Arrange)
+    d("drw.arrange", "Arrange Dimensions", "Подреждане на размерите", Icon::Dimension)
+        .run(Action::Drawing(DrwCmd::Arrange))
+        .spec("4.7-drawing-commands.md")
         .alias(&["AD"])
         .at(&[N_DIM])
         .tip("Space the selected dimensions evenly"),
