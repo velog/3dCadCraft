@@ -6036,6 +6036,26 @@ impl CadCraftApp {
             let (add, toggle) = ui.input(|k| (k.modifiers.shift, k.modifiers.command));
             self.extrude_box_pick(rect, a, b, add, toggle);
         }
+        // Hole: a box from empty space takes the sketch points in it as
+        // centres (Ctrl takes them out).
+        if response.drag_started_by(PointerButton::Primary)
+            && self.manip_drag.is_none()
+            && self.hole_draft.is_some()
+            && self.hole_drag.is_none()
+            && on_cube.is_none()
+            && self.mouse == MousePreset::Inventor
+            && !ui.input(|i| i.key_down(Key::F2) || i.key_down(Key::F3) || i.key_down(Key::F4))
+        {
+            self.box_select = ui.input(|i| i.pointer.press_origin());
+        }
+        if response.drag_stopped()
+            && self.hole_draft.is_some()
+            && let (Some(a), Some(b)) = (self.box_select.take(), pointer)
+            && a.distance(b) > 3.0
+        {
+            let remove = ui.input(|k| k.modifiers.command);
+            self.hole_box_pick(rect, a, b, remove);
+        }
         // Corner Round / Corner Chamfer: a box from empty space takes every
         // corner edge in it (window / crossing; Ctrl takes them out).
         if response.drag_started_by(PointerButton::Primary)

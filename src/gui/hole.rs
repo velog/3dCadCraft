@@ -539,6 +539,65 @@ impl CadCraftApp {
         }
     }
 
+    /// A window from `a` to `b` (screen) while Hole is open: the points of
+    /// one visible sketch inside it become centres (with Window select
+    /// center points only, its Center Points alone); `remove` (Ctrl) takes
+    /// them out instead. Points of another sketch than the hole's are left.
+    pub(super) fn hole_box_pick(&mut self, rect: Rect, a: egui::Pos2, b: egui::Pos2, remove: bool) {
+        let window = Rect::from_two_pos(a, b);
+        let centres_only = option(&WINDOW_CENTERS);
+        let mut found: Vec<(usize, PointId)> = Vec::new();
+        for (i, ps) in self.part().sketches.iter().enumerate() {
+            if !ps.visible {
+                continue;
+            }
+            for (pid, p) in ps.sketch.points() {
+                if ps.is_projected(pid)
+                    || (centres_only && p.style != crate::sketch::PointStyle::Center)
+                {
+                    continue;
+                }
+                let w = ps.sketch.to_world(&p.position);
+                if self
+                    .camera
+                    .project(&w, rect)
+                    .is_some_and(|s| window.contains(s))
+                {
+                    found.push((i, pid));
+                }
+            }
+        }
+        let ids: Vec<String> = self.part().sketches.iter().map(|s| s.id.clone()).collect();
+        let Some(d) = self.hole_draft.as_mut() else {
+            return;
+        };
+        if d.face.is_some() {
+            return;
+        }
+        for (i, pid) in found {
+            let Some(id) = ids.get(i) else { continue };
+            if !d.def.sketch.is_empty() && d.def.sketch != *id {
+                continue;
+            }
+            let c = HoleCenter::Point(pid);
+            let has = d.def.centers.contains(&c);
+            if remove && has {
+                d.def.centers.retain(|x| *x != c);
+            } else if !remove && !has {
+                d.def.sketch = id.clone();
+                d.def.centers.push(c);
+            }
+        }
+        if !d
+            .def
+            .centers
+            .iter()
+            .any(|c| matches!(c, HoleCenter::Point(_)))
+        {
+            d.def.sketch.clear();
+        }
+    }
+
     /// A click while Hole is open.
     pub(super) fn hole_pick(&mut self, pick: HolePick) {
         let ids: Vec<String> = self.part().sketches.iter().map(|s| s.id.clone()).collect();
