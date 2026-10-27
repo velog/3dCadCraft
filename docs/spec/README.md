@@ -43,6 +43,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [0.5-parameters.md](0.5-parameters.md) | Parameters, expressions, link to dimensions and tolerances |
 | [0.6-files.md](0.6-files.md) | New, Open, Save, Save As, Export, recent files, the file dialog (also on Windows) |
 | [0.6a-file-types-projects.md](0.6a-file-types-projects.md) | One extension per document kind (`.ccpart`, `.ccasm`, `.ccdrw`, `.ccpres`), design projects (`.ccproj`) |
+| [0.6b-multi-document-files.md](0.6b-multi-document-files.md) | Many documents in one design file (New Part / Assembly / Drawing in this file, Documents panel) and separate files (extract, embed, pack, unpack) |
 | [0.17-home.md](0.17-home.md) | Home: the start page — active project, New / Open, recent documents, learning links |
 | [0.10-physical.md](0.10-physical.md) | Physical Properties: mass, volume, area, centre of gravity, inertia |
 | [0.9-selection.md](0.9-selection.md) | Selection, filters, prehighlight, Select Other, context suggestions |

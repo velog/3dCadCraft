@@ -238,6 +238,10 @@ const TABLE: &[(&str, &str)] = &[
         "Готово — Start 2D Sketch (S), или десен клик върху стена: New Sketch",
     ),
     (
+        "Home: New or Open a file, or double-click a recent one",
+        "Home: New или Open на файл, или двоен клик върху скорошен",
+    ),
+    (
         "Select a planar face or an origin plane to sketch on (Esc cancels)",
         "Изберете плоска стена или равнина на Origin за скицата (Esc отказва)",
     ),

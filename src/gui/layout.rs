@@ -1075,7 +1075,10 @@ impl CadCraftApp {
             lay.visible(Element::Browser),
             lay.visible(Element::Properties),
         );
-        if ribbon {
+        // Home replaces the ribbon by its own Get Started tab (spec 0.17 §3.1).
+        if ribbon && self.home.shown {
+            egui::Panel::top(self.layout.panel_id("ribbon")).show(ui, |ui| self.home_ribbon(ui));
+        } else if ribbon {
             let mut action = None;
             let state = super::ribbon::State {
                 labels_shown: self.show_labels,

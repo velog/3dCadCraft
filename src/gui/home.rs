@@ -186,7 +186,7 @@ pub(super) struct HomeUi {
     /// Home is the visible tab.
     pub shown: bool,
     /// The open documents when Home came forward (a change hides it).
-    docs_sig: Option<(usize, usize, String)>,
+    docs_sig: Option<DocsSig>,
     pub s: HomeSettings,
     loaded: bool,
     search: String,
@@ -355,6 +355,15 @@ impl HomeUi {
     }
 }
 
+/// Tab count, active tab, file, project and document (see `docs_sig`).
+type DocsSig = (
+    usize,
+    usize,
+    String,
+    crate::document::ProjectId,
+    crate::document::DocumentId,
+);
+
 /// What a click on Home asks the app to do (applied after drawing).
 enum Ask {
     Open(PathBuf),
@@ -366,6 +375,7 @@ enum Ask {
     Explore(PathBuf),
     Folder(PathBuf),
     Help,
+    Options,
 }
 
 /// A disabled control's tooltip: the spec row it waits for.
@@ -384,8 +394,17 @@ impl CadCraftApp {
     }
 
     /// The open documents, to notice New / Open done elsewhere.
-    fn docs_sig(&self) -> (usize, usize, String) {
-        (self.tabs.len(), self.active_tab, self.file_path.clone())
+    /// What changes when a document is opened or made: New replaces an
+    /// untouched Untitled tab in place, so the tab count alone missed it
+    /// (New from Home left Home on top of the new part).
+    fn docs_sig(&self) -> DocsSig {
+        (
+            self.tabs.len(),
+            self.active_tab,
+            self.file_path.clone(),
+            self.project.id,
+            self.part_id,
+        )
     }
 
     /// Hides Home when a document was opened or made meanwhile.
@@ -484,6 +503,69 @@ impl CadCraftApp {
                 self.home.shown = false;
                 self.open_help();
             }
+            Ask::Options => self.show_options = true,
+        }
+    }
+
+    /// The ribbon while Home is shown: only the Get Started tab with the
+    /// commands that need no document (spec 0.17 §3.1, Inventor's Get
+    /// Started tab on Home).
+    pub(super) fn home_ribbon(&mut self, ui: &mut egui::Ui) {
+        use super::ribbon::{Size, icon_button};
+        let mut ask = None;
+        ui.horizontal(|ui| {
+            let _ = ui.selectable_label(true, RichText::new("Get Started").strong());
+        });
+        ui.separator();
+        let big = |ui: &mut egui::Ui, icon, text: &str, on: bool| {
+            icon_button(ui, icon, text, Size::Large, on, false, false)
+        };
+        let group = |ui: &mut egui::Ui, title: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
+            ui.vertical(|ui| {
+                ui.horizontal_top(|ui| add(ui));
+                ui.label(RichText::new(title).small().weak());
+            });
+            ui.separator();
+        };
+        ui.horizontal_top(|ui| {
+            group(ui, "Launch", &mut |ui| {
+                if big(ui, Icon::Part, "New", true)
+                    .on_hover_text("Create New File (Ctrl+N)")
+                    .clicked()
+                {
+                    ask = Some(Ask::NewDialog);
+                }
+                if big(ui, Icon::Folder, "Open", true)
+                    .on_hover_text("Open a file (Ctrl+O)")
+                    .clicked()
+                {
+                    ask = Some(Ask::OpenDialog);
+                }
+                planned(
+                    big(ui, Icon::Project, "Projects", false),
+                    "Projects editor (spec 0.6a §3.2)",
+                );
+            });
+            group(ui, "Options", &mut |ui| {
+                if big(ui, Icon::Options, "Application Options", true)
+                    .on_hover_text("Application Options")
+                    .clicked()
+                {
+                    ask = Some(Ask::Options);
+                }
+            });
+            group(ui, "Help", &mut |ui| {
+                if big(ui, Icon::Assistant, "Help", true)
+                    .on_hover_text("Help (F1)")
+                    .clicked()
+                {
+                    ask = Some(Ask::Help);
+                }
+            });
+        });
+        if let Some(a) = ask {
+            let ctx = ui.ctx().clone();
+            self.home_apply(a, &ctx);
         }
     }
 

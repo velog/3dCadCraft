@@ -4663,6 +4663,12 @@ impl CadCraftApp {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     self.alias_buffer_label(ui);
                     match (self.mode, self.editing) {
+                        _ if self.home.shown => {
+                            let text = super::i18n::tr(
+                                "Home: New or Open a file, or double-click a recent one",
+                            );
+                            ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                        }
                         (Mode::Normal, None) if self.sm.draft.is_some() => {
                             let prompt = self.sm_prompt().unwrap_or_default();
                             let text = super::i18n::tr(&prompt);

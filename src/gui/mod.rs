@@ -4556,6 +4556,19 @@ impl CadCraftApp {
         if ctx.egui_wants_keyboard_input() || self.file_window_open() {
             return; // typing into a text field
         }
+        // Home has no document: only New, Open and Help (spec 0.17 §3.1).
+        if self.home.shown {
+            let (cmd, f1) = ctx.input(|i| (i.modifiers.command, i.key_pressed(Key::F1)));
+            if f1 {
+                self.open_help();
+            } else if cmd && ctx.input(|i| i.key_pressed(Key::O)) {
+                let now = ctx.input(|i| i.time);
+                self.request(files::Pending::Open, now);
+            } else if cmd && ctx.input(|i| i.key_pressed(Key::N)) {
+                self.open_new_file();
+            }
+            return;
+        }
         if self.hud_keys(ctx) {
             return;
         }
@@ -4735,6 +4748,19 @@ impl CadCraftApp {
             let now = ui.input(|i| i.time);
             if ui.button("Open").on_hover_text("Ctrl+O").clicked() {
                 self.request(files::Pending::Open, now);
+            }
+            // Home has no document: no Save, Undo, selection or material.
+            if self.home.shown {
+                ui.separator();
+                ui.label(RichText::new("Home").strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.menu_button("Help", |ui| {
+                        ui.set_min_width(200.0);
+                        self.help_menu(ui);
+                    });
+                    ui.label(RichText::new("3DCadCraft").weak());
+                });
+                return;
             }
             if ui.button("Save").on_hover_text("Ctrl+S").clicked() {
                 self.save();

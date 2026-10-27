@@ -138,6 +138,8 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
 **File types and design projects** — 🟡 (2026-10-26): one extension per document kind — `.ccpart`, `.ccasm`, `.ccdrw`, `.ccpres` — and design projects `.ccproj` (workspace, libraries, shortcuts, old versions; Inventor's `.ipj`); `FileType` and `DesignProject` exist with tests, Save As / Open filters / the Projects editor ⬜. **Specification:** [spec/0.6a-file-types-projects.md](spec/0.6a-file-types-projects.md)
 
+**Many documents in one file** — ⬜ (2026-10-27): the design is kept in one `.3dcadcraft` file; Manage › Documents creates parts, sheet metal parts, assemblies and drawings inside it, and any document can be saved to its own file and linked back, or embedded again (extract / embed / pack / unpack). **Specification:** [spec/0.6b-multi-document-files.md](spec/0.6b-multi-document-files.md)
+
 **Home** — 🟡 (2026-10-26): the start page as the first tab — project, New (with the kinds) / Open, recent documents as cards or a list with search, sort, filter, pins and Remove Unpinned, learning links; shown at start and after the last document closes. **Specification:** [spec/0.17-home.md](spec/0.17-home.md)
 
 **Inventor equivalent.** Project files (`.ipj`), Pack and Go, Vault (partly).
