@@ -287,10 +287,13 @@ sketch with an open chain of lines, Distance (width), Flip. **Cut**: a sketch wi
 the sheet. **Unfold** / **Refold**: the whole sheet flat and back (a Cut between them crosses bends).
 **Export** (Flat Pattern panel): the flat pattern as DXF (layers OUTER, BEND_UP, BEND_DOWN). **Flat Pattern**: the view shows the part unfolded with its bend lines (dashed centre lines: up green, down red, each with a note `k UP 90° R2`; bend zones grey) and Flat Pattern Extents Length / Width / Area in Properties (also BOM columns),
 Properties its extents and bends; again goes back. **Bend**, **Contour Roll**, **Lofted Flange**, **Rip**,
-**Corner Round**, **Corner Chamfer** and **Punch Tool** open their whole panel (selectors take picks, every
+and **Punch Tool** open their whole panel (selectors take picks, every
 option works in the panel) with OK disabled: the interface comes first, the geometry after the owner's check.
-Corner Round / Corner Chamfer take only the sheet's corner edges (through the thickness): click them, or drag a
-box from empty space (left to right: window, right to left: crossing; Ctrl+box takes them out). **Contour
+**Corner Round** and **Corner Chamfer** (Modify) round or cut the sheet's outside corners through the thickness, in
+the folded part and the flat pattern: click corner edges, or drag a box from empty space (left to right: window,
+right to left: crossing; Ctrl+box takes them out); Corner Round's *Feature* takes every corner of the clicked
+face's feature; sets of corners with their own radius (Add Corner Edge Set); Corner Chamfer: One Distance,
+Distance and Angle (click the edge the angle is measured from), Two Distances (one corner, Flip). **Contour
 Flange**: Direction Default / Flip / Sym / Asym (Distance 2), Position Default / Flipped / Center.
 
 Aliases (type in the view, no command open): SCV Convert, SMD Defaults, SFA Face, SCF Contour Flange, SMF Flange,

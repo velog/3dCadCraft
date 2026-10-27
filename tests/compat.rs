@@ -530,6 +530,83 @@ fn sheet_r22() -> PartDocument {
     p
 }
 
+/// Revision 30: a 100 × 60 Face with a Corner Round (R10 at two corners)
+/// and a Corner Chamfer (Distance and Angle) at a third.
+fn sheet_r30() -> PartDocument {
+    use cadcraft3d::part::sheet_metal::{
+        ChamferMethod, CornerEdge, CornerSet, SheetOp, SheetOpFeature,
+    };
+    use cadcraft3d::part::{OriginPlane, ProfileRef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 60.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    p.add_sheet_face(i, prof, false).unwrap();
+    // The corner edge from (x, y, 0) up through the sheet.
+    let corner = |p: &PartDocument, x: f64, y: f64| -> CornerEdge {
+        let at = Point3::new(x, y, 0.0);
+        for (e, ed) in p.body.edges() {
+            let a = p.body.vertex(ed.start).unwrap().point;
+            let b = p.body.vertex(ed.end).unwrap().point;
+            let (lo, hi) = if a.z < b.z { (a, b) } else { (b, a) };
+            if (lo - at).norm() > 1e-6 || (hi.x - x).abs() > 1e-6 || (hi.y - y).abs() > 1e-6 {
+                continue;
+            }
+            let mut f: Vec<String> = p
+                .body
+                .edge_faces(e)
+                .into_iter()
+                .filter_map(|f| p.body.face(f)?.name.clone())
+                .collect();
+            f.sort();
+            let m = lo + (hi - lo) * 0.5;
+            return CornerEdge {
+                faces: [f[0].clone(), f[1].clone()],
+                hint: [m.x, m.y, m.z],
+            };
+        }
+        panic!("no corner at ({x}, {y})");
+    };
+    let (c00, c10, c11) = (
+        corner(&p, 0.0, 0.0),
+        corner(&p, 100.0, 0.0),
+        corner(&p, 100.0, 60.0),
+    );
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::CornerRound {
+        body: "Face1".into(),
+        sets: vec![CornerSet {
+            corners: vec![c00, c10],
+            radius: 10.0,
+        }],
+    }))
+    .unwrap();
+    let edge = Some(c11.faces[0].clone());
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::CornerChamfer {
+        body: "Face1".into(),
+        corners: vec![c11],
+        method: ChamferMethod::DistanceAngle,
+        distance: 8.0,
+        angle: 40f64.to_radians(),
+        distance2: 0.0,
+        flip: false,
+        edge,
+    }))
+    .unwrap();
+    p
+}
+
 /// Revision 21: a 100 × 60 Face with a Hem on its right edge, a Cut (a
 /// circle) and a Fold along x = 70.
 fn sheet_r21() -> PartDocument {
@@ -1658,6 +1735,13 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r29_project().save(&f).unwrap();
+        }
+        let f = root().join("r30/sheet_r30.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("SheetR30");
+            project.add_document("Part1", DocumentData::Part(sheet_r30()));
+            project.save(&f).unwrap();
         }
         let f = root().join("r22/sheet_r22.3dcadcraft");
         if !f.exists() {

@@ -4,7 +4,8 @@
 //! 2027 property panel — selectors that take picks in the view, every option
 //! with its default — so the panel can be checked before the geometry exists.
 //! OK and Apply stay disabled: nothing changes the model (rule 5) until each
-//! command's logic is written against its spec rows.
+//! command's logic is written against its spec rows. Corner Round and Corner
+//! Chamfer have theirs: [`Planned::op`] is the feature OK builds.
 //!
 //! The panel state lives in [`Planned`] (not saved; there is no feature
 //! yet); `SmDraft::planned` carries it, so the command shares the sheet metal
@@ -17,6 +18,7 @@ use super::valuefield::ExprValue;
 use crate::command::flow::{PickKind, Selector};
 use crate::kernel::Point3;
 use crate::kernel::exact::sheet_metal::RuleValues as SheetRuleValues;
+use crate::part::sheet_metal::{ChamferMethod, CornerEdge, CornerSet, SheetOp};
 
 /// Selector dot colours (as the other sheet metal commands).
 const C_INPUT: [u8; 3] = [40, 120, 230];
@@ -89,6 +91,19 @@ const SET_LABELS: [&str; 9] = [
 
 /// One picked item: its id (to toggle) and its highlight lines.
 pub(super) type Item = (String, Vec<Vec<Point3>>);
+
+/// A corner item (`<face a>|<face b>`, the edge's line) as the feature
+/// stores it: the faces and the edge's middle.
+fn corner_of(item: &Item) -> Option<CornerEdge> {
+    let (a, b) = item.0.split_once('|')?;
+    let line = item.1.first()?;
+    let (p, q) = (line.first()?, line.last()?);
+    let m = p + (q - p) * 0.5;
+    Some(CornerEdge {
+        faces: [a.to_owned(), b.to_owned()],
+        hint: [m.x, m.y, m.z],
+    })
+}
 
 /// The panel state of a planned command.
 #[derive(Clone, Debug)]
@@ -415,6 +430,144 @@ impl Planned {
                 false,
                 false,
             )],
+        }
+    }
+
+    /// Its logic is there: OK builds [`Planned::op`] (Corner Round and
+    /// Corner Chamfer, 2026-10-27).
+    pub(super) fn has_logic(&self) -> bool {
+        matches!(
+            self.kind,
+            PlannedKind::CornerRound | PlannedKind::CornerChamfer
+        )
+    }
+
+    /// The operation the panel defines (`None` for the commands without
+    /// logic). Corner items are `<face a>|<face b>` with the edge's line.
+    pub(super) fn op(&self) -> Option<SheetOp> {
+        let corners = |key: &str| -> Vec<CornerEdge> {
+            self.items(key).iter().filter_map(corner_of).collect()
+        };
+        let body_of = |c: &[CornerEdge]| {
+            c.first()
+                .and_then(|c| c.faces[0].split(':').next())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        match self.kind {
+            PlannedKind::CornerRound => {
+                let sets: Vec<CornerSet> = if self.feature_priority {
+                    vec![CornerSet {
+                        corners: corners("feature"),
+                        radius: self.radii.first().copied().unwrap_or(1.0),
+                    }]
+                } else {
+                    self.radii
+                        .iter()
+                        .zip(SET_KEYS)
+                        .map(|(r, key)| CornerSet {
+                            corners: corners(key),
+                            radius: *r,
+                        })
+                        .collect()
+                };
+                let all: Vec<CornerEdge> = sets
+                    .iter()
+                    .flat_map(|s| s.corners.iter().cloned())
+                    .collect();
+                Some(SheetOp::CornerRound {
+                    body: body_of(&all),
+                    sets,
+                })
+            }
+            PlannedKind::CornerChamfer => {
+                let corners = corners("corners");
+                let method = match self.chamfer {
+                    0 => ChamferMethod::Distance,
+                    1 => ChamferMethod::DistanceAngle,
+                    _ => ChamferMethod::TwoDistances,
+                };
+                Some(SheetOp::CornerChamfer {
+                    body: body_of(&corners),
+                    corners,
+                    method,
+                    distance: self.distance,
+                    angle: if method == ChamferMethod::DistanceAngle {
+                        self.angle.to_radians()
+                    } else {
+                        0.0
+                    },
+                    distance2: if method == ChamferMethod::TwoDistances {
+                        self.distance2
+                    } else {
+                        0.0
+                    },
+                    flip: self.chamfer_flip && method == ChamferMethod::TwoDistances,
+                    edge: (method == ChamferMethod::DistanceAngle)
+                        .then(|| self.items("edge").first().map(|i| i.0.clone()))
+                        .flatten(),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// The panel of an existing Corner Round / Corner Chamfer (Edit Feature);
+    /// `line` gives each corner's highlight.
+    pub(super) fn from_op(
+        op: &SheetOp,
+        rule: &SheetRuleValues,
+        line: &dyn Fn(&CornerEdge) -> Vec<Point3>,
+    ) -> Option<Self> {
+        let item =
+            |c: &CornerEdge| -> Item { (format!("{}|{}", c.faces[0], c.faces[1]), vec![line(c)]) };
+        match op {
+            SheetOp::CornerRound { sets, .. } => {
+                let mut p = Self::new(PlannedKind::CornerRound, rule);
+                p.radii = sets.iter().map(|s| s.radius).take(SET_KEYS.len()).collect();
+                if p.radii.is_empty() {
+                    p.radii.push(rule.thickness * 2.0);
+                }
+                for (s, key) in sets.iter().zip(SET_KEYS) {
+                    for c in &s.corners {
+                        p.add(key, item(c));
+                    }
+                }
+                Some(p)
+            }
+            SheetOp::CornerChamfer {
+                corners,
+                method,
+                distance,
+                angle,
+                distance2,
+                flip,
+                edge,
+                ..
+            } => {
+                let mut p = Self::new(PlannedKind::CornerChamfer, rule);
+                p.chamfer = match method {
+                    ChamferMethod::Distance => 0,
+                    ChamferMethod::DistanceAngle => 1,
+                    ChamferMethod::TwoDistances => 2,
+                };
+                p.distance = *distance;
+                if *method == ChamferMethod::DistanceAngle {
+                    p.angle = angle.to_degrees();
+                }
+                if *method == ChamferMethod::TwoDistances {
+                    p.distance2 = *distance2;
+                }
+                p.chamfer_flip = *flip;
+                for c in corners {
+                    p.add("corners", item(c));
+                }
+                if let Some(e) = edge {
+                    p.add("edge", (e.clone(), Vec::new()));
+                }
+                Some(p)
+            }
+            _ => None,
         }
     }
 

@@ -3282,6 +3282,82 @@ pub(super) fn sheet_op(
             }
             Err(User(why))
         }
+        SheetOp::CornerRound { body, sets } => {
+            let (k, state) = sheet_of(body, solids, metal)?;
+            let mut cuts = Vec::new();
+            for s in sets {
+                for c in &s.corners {
+                    cuts.push((corner_at(body, c), ksm::CornerSize::Round(s.radius)));
+                }
+            }
+            if cuts.is_empty() {
+                return Err(User("select the corner edges".into()));
+            }
+            let (solid, model) =
+                ksm::corner_cuts(&state.model, body, &op.id, &cuts).map_err(User)?;
+            Ok(replace(k, solid, model, body))
+        }
+        SheetOp::CornerChamfer {
+            body,
+            corners,
+            method,
+            distance,
+            angle,
+            distance2,
+            flip,
+            edge,
+        } => {
+            use super::sheet_metal::ChamferMethod;
+            let (k, state) = sheet_of(body, solids, metal)?;
+            if corners.is_empty() {
+                return Err(User("select the corner edges".into()));
+            }
+            let cuts: Vec<_> = corners
+                .iter()
+                .map(|c| {
+                    let size = match method {
+                        ChamferMethod::Distance => ksm::CornerSize::Chamfer(*distance, *distance),
+                        ChamferMethod::TwoDistances if *flip => {
+                            ksm::CornerSize::Chamfer(*distance2, *distance)
+                        }
+                        ChamferMethod::TwoDistances => {
+                            ksm::CornerSize::Chamfer(*distance, *distance2)
+                        }
+                        ChamferMethod::DistanceAngle => {
+                            // From the given face, else the first (the second with Flip).
+                            let on_b = match edge {
+                                Some(e) => *e == c.faces[1],
+                                None => *flip,
+                            };
+                            ksm::CornerSize::DistanceAngle(*distance, *angle, on_b)
+                        }
+                    };
+                    (corner_at(body, c), size)
+                })
+                .collect();
+            let (solid, model) =
+                ksm::corner_cuts(&state.model, body, &op.id, &cuts).map_err(User)?;
+            Ok(replace(k, solid, model, body))
+        }
+    }
+}
+
+/// A Corner Round / Corner Chamfer corner for the sheet model: its rim faces
+/// without the body's prefix.
+fn corner_at(
+    body: &str,
+    c: &super::sheet_metal::CornerEdge,
+) -> crate::kernel::exact::sheet_metal::CornerAt {
+    let local = |n: &str| {
+        n.strip_prefix(body)
+            .and_then(|r| r.strip_prefix(':'))
+            .unwrap_or(n)
+            .to_owned()
+    };
+    crate::kernel::exact::sheet_metal::CornerAt {
+        a: local(&c.faces[0]),
+        b: local(&c.faces[1]),
+        near: Point3::from(c.hint),
     }
 }
 

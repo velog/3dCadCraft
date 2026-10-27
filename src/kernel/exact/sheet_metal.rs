@@ -148,9 +148,11 @@ fn named_solid(m: &sd::SheetBody, prefix: &str, flat: bool) -> Result<ExactSolid
     s.face_names = samples
         .iter()
         .map(|p| {
-            let named = p
-                .and_then(|p| m.panel_face_at(v3(&p), m.t * 0.2))
-                .map(|(n, _)| n);
+            // A Corner Round / Chamfer face first: its sample lies by a rim too.
+            let named = p.and_then(|p| {
+                m.corner_face_at(v3(&p), m.t * 0.05)
+                    .or_else(|| m.panel_face_at(v3(&p), m.t * 0.2).map(|(n, _)| n))
+            });
             Some(match named {
                 Some(n) => format!("{prefix}:{n}"),
                 None => {
@@ -888,4 +890,75 @@ mod tests {
         assert!((hi.z - lo.z - 2.0).abs() < 1.0);
         let _ = Vector3::z();
     }
+}
+
+/// A corner edge of the sheet (Corner Round / Corner Chamfer): the rim faces
+/// meeting there, as the solid names them without the body prefix
+/// (`base:rim.L1`, `Flange1.0:rim.far`), and a point on it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CornerAt {
+    /// Rim face a.
+    pub a: String,
+    /// Rim face b.
+    pub b: String,
+    /// A point of the edge (world).
+    pub near: Point3,
+}
+
+/// How a corner is cut.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CornerSize {
+    /// Round of this radius.
+    Round(Real),
+    /// Chamfer: so far along rim a and rim b.
+    Chamfer(Real, Real),
+    /// Chamfer so far along rim a (b with `true`) and at this angle to it.
+    DistanceAngle(Real, Real, bool),
+}
+
+/// Corner Round / Corner Chamfer `tag`: each corner cut as given (the
+/// folded solid and the flat pattern both lose the corner's material); the
+/// k-th corner's face is `<prefix>:<tag>.<k>:round` (or `:chamfer`).
+pub fn corner_cuts(
+    m: &SheetModel,
+    prefix: &str,
+    tag: &str,
+    corners: &[(CornerAt, CornerSize)],
+) -> Result<(ExactSolid, SheetModel), String> {
+    let mut next = (*m.0).clone();
+    for (k, (c, size)) in corners.iter().enumerate() {
+        let role = match size {
+            CornerSize::Round(_) => "round",
+            _ => "chamfer",
+        };
+        let name = format!("{tag}.{}:{role}", k + 1);
+        let rc = next
+            .rim_corner(&c.a, &c.b, v3(&c.near))
+            .ok_or_else(|| format!("the corner between {} and {} no longer exists", c.a, c.b))?;
+        let cut = match *size {
+            CornerSize::Round(r) => sd::CornerCut::Round(r),
+            CornerSize::Chamfer(a, b) => sd::CornerCut::Chamfer(a, b),
+            CornerSize::DistanceAngle(d, angle, on_b) => {
+                let theta = rc.angle();
+                let rest = std::f64::consts::PI - theta - angle;
+                if !(angle > 0.0 && rest > 1e-6) {
+                    return Err(format!(
+                        "the angle must be between 0° and {:.1}° at this corner",
+                        (std::f64::consts::PI - theta).to_degrees()
+                    ));
+                }
+                let other = d * angle.sin() / rest.sin();
+                if on_b {
+                    sd::CornerCut::Chamfer(other, d)
+                } else {
+                    sd::CornerCut::Chamfer(d, other)
+                }
+            }
+        };
+        guarded_sheet("Corner", || {
+            next.cut_corner(&rc, cut, &name).map_err(|e| e.to_string())
+        })?;
+    }
+    let s = named_solid(&next, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(next))))
 }

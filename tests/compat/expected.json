@@ -230,5 +230,12 @@
     "sketches": 1,
     "exact": true
   },
-  "r29/drawing_r29.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true}
+  "r29/drawing_r29.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r30/sheet_r30.3dcadcraft": {
+    "volume": 11860.329912369796,
+    "faces": 9,
+    "features": 3,
+    "sketches": 1,
+    "exact": true
+  }
 }

@@ -1910,6 +1910,69 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Corner Round (docs/spec/5.6 §3.2): the four corners of a 200 × 120
+    // Face rounded R10 in one feature, then the flat pattern.
+    {
+        use cadcraft3d::part::sheet_metal::{CornerEdge, CornerSet, SheetOp, SheetOpFeature};
+        use cadcraft3d::part::{OriginPlane, ProfileRef};
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        base.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(200.0, 120.0))
+            .unwrap();
+        let r = base.sketches[i].sketch.regions();
+        let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+        base.add_sheet_face(i, prof, false).unwrap();
+        // The four edges through the thickness (vertical, 2 mm).
+        let mut corners = Vec::new();
+        for (e, x) in base.body.edges() {
+            let a = base.body.vertex(x.start).unwrap().point;
+            let b = base.body.vertex(x.end).unwrap().point;
+            if (a.x - b.x).abs() > 1e-9 || (a.y - b.y).abs() > 1e-9 {
+                continue;
+            }
+            let mut f: Vec<String> = base
+                .body
+                .edge_faces(e)
+                .into_iter()
+                .filter_map(|f| base.body.face(f)?.name.clone())
+                .collect();
+            f.sort();
+            let m = a + (b - a) * 0.5;
+            corners.push(CornerEdge {
+                faces: [f[0].clone(), f[1].clone()],
+                hint: [m.x, m.y, m.z],
+            });
+        }
+        assert_eq!(corners.len(), 4);
+        let op = SheetOpFeature::new(SheetOp::CornerRound {
+            body: "Face1".into(),
+            sets: vec![CornerSet {
+                corners,
+                radius: 10.0,
+            }],
+        });
+        rows.push((
+            "sheet metal: Corner Round of 4 corners of a 200 x 120 Face + flat pattern",
+            50.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_op(op.clone()).unwrap();
+                assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+                assert!(p.flat_extents_of("Face1").is_some());
+            }),
+        ));
+    }
     // Convert to Sheet Metal (docs/spec/5.6): a 200 x 120 x 60 box, Top
     // fixed, its four top edges bent into a tray.
     {

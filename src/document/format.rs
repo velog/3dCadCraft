@@ -121,7 +121,9 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (2026-10-26).
 /// - 29: baseline / chain / ordinate dimension sets (`AnnotationKind::DimSet`)
 ///   (2026-10-27).
-pub const FORMAT_REVISION: u32 = 29;
+/// - 30: sheet metal Corner Round and Corner Chamfer
+///   (`SheetOp::CornerRound` / `CornerChamfer`) (2026-10-27).
+pub const FORMAT_REVISION: u32 = 30;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

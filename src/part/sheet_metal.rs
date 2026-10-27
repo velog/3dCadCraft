@@ -644,6 +644,50 @@ fn is_one(v: &Real) -> bool {
     *v == 1.0
 }
 
+/// A corner edge of a sheet (Corner Round / Corner Chamfer): the two rim
+/// faces meeting there, by persistent name (`Face1:base:rim.L1`,
+/// `Face1:Flange2.0:rim.far`), and a point on it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CornerEdge {
+    /// The rim faces (Two Distances' Distance 1 runs along the first).
+    pub faces: [String; 2],
+    /// A point of the edge (the corner where the names find several).
+    pub hint: [Real; 3],
+}
+
+/// One Corner Edge Set of a Corner Round: corners with one radius.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CornerSet {
+    /// The corners.
+    pub corners: Vec<CornerEdge>,
+    /// The radius (mm).
+    pub radius: Real,
+}
+
+/// Corner Chamfer's method.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChamferMethod {
+    /// The same distance along both edges.
+    #[default]
+    Distance,
+    /// A distance along an edge and the angle to it.
+    DistanceAngle,
+    /// Distance 1 along the first face, Distance 2 along the second.
+    TwoDistances,
+}
+
+impl ChamferMethod {
+    fn is_default(&self) -> bool {
+        *self == Self::Distance
+    }
+}
+
+/// The field of each Corner Edge Set's radius (set 1 is `radius`).
+pub const ROUND_FIELDS: [&str; 9] = [
+    "radius", "radius2", "radius3", "radius4", "radius5", "radius6", "radius7", "radius8",
+    "radius9",
+];
+
 /// A corner between two flanges of a sheet (Corner Seam picks).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SheetCorner {
@@ -766,6 +810,38 @@ pub enum SheetOp {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         across: bool,
     },
+    /// Corner Round: corners through the thickness rounded, set by set.
+    CornerRound {
+        /// The sheet body.
+        body: String,
+        /// The Corner Edge Sets.
+        sets: Vec<CornerSet>,
+    },
+    /// Corner Chamfer: corners through the thickness cut straight.
+    CornerChamfer {
+        /// The sheet body.
+        body: String,
+        /// The corners.
+        corners: Vec<CornerEdge>,
+        /// How the cut is given.
+        #[serde(default, skip_serializing_if = "ChamferMethod::is_default")]
+        method: ChamferMethod,
+        /// Distance (mm); Two Distances: Distance 1.
+        distance: Real,
+        /// Distance and Angle: the angle (radians).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        angle: Real,
+        /// Two Distances: Distance 2 (mm).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        distance2: Real,
+        /// Two Distances: the distances swapped; Distance and Angle without
+        /// an edge: measured from the second face.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
+        /// Distance and Angle: the rim face the angle is measured from.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        edge: Option<String>,
+    },
 }
 
 /// A further sheet metal feature (`Hem1`, `Fold1`, `ContourFlange1`,
@@ -807,6 +883,8 @@ impl SheetOpFeature {
             SheetOp::Refold { .. } => "Refold",
             SheetOp::Cut { .. } => "Cut",
             SheetOp::CornerSeam { .. } => "CornerSeam",
+            SheetOp::CornerRound { .. } => "CornerRound",
+            SheetOp::CornerChamfer { .. } => "CornerChamfer",
         }
     }
 
@@ -854,6 +932,20 @@ impl SheetOpFeature {
                     Vec::new()
                 }
             }
+            SheetOp::CornerRound { sets, .. } => ROUND_FIELDS
+                .iter()
+                .take(sets.len())
+                .map(|f| (*f, Unit::Mm))
+                .collect(),
+            SheetOp::CornerChamfer { method, .. } => match method {
+                ChamferMethod::Distance => vec![("distance", Unit::Mm)],
+                ChamferMethod::DistanceAngle => {
+                    vec![("distance", Unit::Mm), ("angle", Unit::Deg)]
+                }
+                ChamferMethod::TwoDistances => {
+                    vec![("distance", Unit::Mm), ("distance2", Unit::Mm)]
+                }
+            },
             _ => Vec::new(),
         }
     }
@@ -868,6 +960,13 @@ impl SheetOpFeature {
             (SheetOp::Contour { width2, .. }, "width2") => Some(*width2),
             (SheetOp::Cut { depth, .. }, "depth") => Some(*depth),
             (SheetOp::CornerSeam { gap, .. }, "gap") => *gap,
+            (SheetOp::CornerRound { sets, .. }, f) => {
+                let k = ROUND_FIELDS.iter().position(|x| *x == f)?;
+                sets.get(k).map(|s| s.radius)
+            }
+            (SheetOp::CornerChamfer { distance, .. }, "distance") => Some(*distance),
+            (SheetOp::CornerChamfer { angle, .. }, "angle") => Some(*angle),
+            (SheetOp::CornerChamfer { distance2, .. }, "distance2") => Some(*distance2),
             _ => None,
         }
     }
@@ -882,6 +981,18 @@ impl SheetOpFeature {
             (SheetOp::Contour { width2, .. }, "width2") => *width2 = v,
             (SheetOp::Cut { depth, .. }, "depth") => *depth = v,
             (SheetOp::CornerSeam { gap, .. }, "gap") => *gap = Some(v),
+            (SheetOp::CornerRound { sets, .. }, f) => {
+                if let Some(s) = ROUND_FIELDS
+                    .iter()
+                    .position(|x| *x == f)
+                    .and_then(|k| sets.get_mut(k))
+                {
+                    s.radius = v;
+                }
+            }
+            (SheetOp::CornerChamfer { distance, .. }, "distance") => *distance = v,
+            (SheetOp::CornerChamfer { angle, .. }, "angle") => *angle = v,
+            (SheetOp::CornerChamfer { distance2, .. }, "distance2") => *distance2 = v,
             _ => {}
         }
     }
@@ -904,6 +1015,21 @@ impl SheetOpFeature {
             SheetOp::CornerSeam { a, b, seam, .. } => {
                 format!("Corner Seam {a} / {b}: {}", seam.label())
             }
+            SheetOp::CornerRound { sets, .. } => {
+                let n: usize = sets.iter().map(|s| s.corners.len()).sum();
+                match sets.first() {
+                    Some(s) if sets.len() == 1 => {
+                        format!("Corner Round of {n} corner(s), R{:.2} mm", s.radius)
+                    }
+                    _ => format!("Corner Round of {n} corner(s) in {} sets", sets.len()),
+                }
+            }
+            SheetOp::CornerChamfer {
+                corners, distance, ..
+            } => format!(
+                "Corner Chamfer of {} corner(s), {distance:.2} mm",
+                corners.len()
+            ),
         }
     }
 }

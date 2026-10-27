@@ -506,6 +506,10 @@ pub struct SheetBody {
     /// The base sketch's lines (id, ends in flat coordinates), naming the base panel's edges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub base_curves: Vec<(String, Vec2, Vec2)>,
+    /// 3DCadCraft: the round or straight cut of each Corner Round / Corner Chamfer corner (flat
+    /// coordinates) with the name of the face it leaves (`CornerRound1.1:round`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub corner_faces: Vec<(String, Seg2)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -4329,6 +4333,7 @@ pub fn base_flange(body: &str, rule: &str, rv: &RuleValues, plane: Plane, region
         laser_corners: true,
         bend_relief: (rv.relief_width, rv.relief_depth),
         base_curves: Vec::new(),
+        corner_faces: Vec::new(),
     }
 }
 
@@ -4437,6 +4442,7 @@ pub fn contour_flange_span(body: &str, rule: &str, rv: &RuleValues, plane: &Plan
         laser_corners: true,
         bend_relief: (rv.relief_width, rv.relief_depth),
         base_curves: Vec::new(),
+        corner_faces: Vec::new(),
     };
     let (y0, y1) = if ysign > 0.0 { (span.0, span.1) } else { (-span.1, -span.0) };
     // First segment: the base panel.
@@ -7524,5 +7530,195 @@ mod tests {
             assert_eq!((&s.base, &s.flanges), (&notch.base, &notch.flanges), "{what}");
             holds_the_flat_material(&s, &what);
         }
+    }
+}
+
+/// 3DCadCraft: a sharp corner of the sheet's outline (Corner Round / Corner Chamfer), flat
+/// coordinates: the corner, the unit directions along its two rims away from it and how long
+/// each rim is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RimCorner {
+    pub at: Vec2,
+    pub da: Vec2,
+    pub db: Vec2,
+    pub la: f64,
+    pub lb: f64,
+}
+
+/// 3DCadCraft: what Corner Round / Corner Chamfer leave of a corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CornerCut {
+    /// A round of this radius, tangent to both rims.
+    Round(f64),
+    /// A straight cut from this far along rim a to this far along rim b.
+    Chamfer(f64, f64),
+}
+
+impl RimCorner {
+    /// The angle between the rims (radians, below π for the convex corners this cuts).
+    pub fn angle(&self) -> f64 {
+        self.da.dot(self.db).clamp(-1.0, 1.0).acos()
+    }
+}
+
+impl SheetBody {
+    /// 3DCadCraft: the corner where the rims `<panel>:rim.<a>` and `<panel>:rim.<b>` of one panel
+    /// meet (`a`, `b` as the folded solid's face names give them, without the body prefix), nearest
+    /// `near` (world) of several. A flat sheet, or rims without such names (a base drawn by the
+    /// feature itself), fall back to the outline corner of the material nearest `near`.
+    pub fn rim_corner(&self, a: &str, b: &str, near: Vec3) -> Option<RimCorner> {
+        let flat_of = |pi: Option<usize>| -> Option<Vec2> {
+            let q = apply_point(&mat_inverse(&self.world(pi))?, near);
+            Some(Vec2::new(q.x, q.y))
+        };
+        let rims = self.rims();
+        let mut best: Option<(f64, RimCorner)> = None;
+        for (pa, a0, a1, _) in rims.iter().filter(|r| r.3 == a) {
+            for (_, b0, b1, _) in rims.iter().filter(|r| r.3 == b && r.0 == *pa) {
+                // The end the two rims share.
+                let shared = [(*a0, *a1), (*a1, *a0)].into_iter().find_map(|(va, oa)| {
+                    [(*b0, *b1), (*b1, *b0)].into_iter().find(|(vb, _)| va.dist(*vb) < 1e-6).map(|(_, ob)| (va, oa, ob))
+                });
+                let Some((at, oa, ob)) = shared else { continue };
+                let (Some(da), Some(db)) = ((oa - at).normalized(), (ob - at).normalized()) else { continue };
+                let c = RimCorner { at, da, db, la: at.dist(oa), lb: at.dist(ob) };
+                let d = flat_of(*pa).map_or(f64::MAX, |q| q.dist(at));
+                if best.as_ref().is_none_or(|x| d < x.0) {
+                    best = Some((d, c));
+                }
+            }
+        }
+        if let Some((_, c)) = best {
+            return Some(c);
+        }
+        // By geometry: the corners of the material's outline (straight on both sides) near where
+        // `near` lies in the flat, through every panel it may lie on.
+        let qs: Vec<Vec2> = if self.flat {
+            flat_of(None).into_iter().collect()
+        } else {
+            self.panels()
+                .into_iter()
+                .filter_map(|(pi, _)| {
+                    let p = apply_point(&mat_inverse(&self.world(pi))?, near);
+                    (p.z > -self.t && p.z < 2.0 * self.t).then(|| Vec2::new(p.x, p.y))
+                })
+                .collect()
+        };
+        let regions = self.flat_material().ok()?;
+        for r in &regions {
+            for lp in std::iter::once(&r.outer).chain(&r.holes) {
+                let n = lp.segs.len();
+                for i in 0..n {
+                    let (Some(Seg2::Line { a: p0, b: v }), Some(Seg2::Line { a: _, b: p1 })) = (lp.segs.get(i), lp.segs.get((i + 1) % n)) else {
+                        continue;
+                    };
+                    let d = qs.iter().map(|q| v.dist(*q)).fold(f64::MAX, f64::min);
+                    if d > self.t.max(0.5) {
+                        continue;
+                    }
+                    let (Some(da), Some(db)) = ((*p0 - *v).normalized(), (*p1 - *v).normalized()) else { continue };
+                    let c = RimCorner { at: *v, da, db, la: v.dist(*p0), lb: v.dist(*p1) };
+                    if best.as_ref().is_none_or(|x| d < x.0) {
+                        best = Some((d, c));
+                    }
+                }
+            }
+        }
+        best.map(|(_, c)| c)
+    }
+
+    /// 3DCadCraft: Corner Round / Corner Chamfer of a convex corner: the material beyond the round
+    /// or the straight cut becomes a cut-out (`holes`), so the folded solid and the flat pattern
+    /// both have it. Refuses a corner that is not convex, a size past the rims, and a cut that
+    /// would take more than the corner.
+    pub fn cut_corner(&mut self, c: &RimCorner, cut: CornerCut, name: &str) -> Result<()> {
+        let bad = |s: &str| Err(DocError::Invalid(s.into()));
+        let theta = c.angle();
+        let Some(bis) = (c.da + c.db).normalized() else { return bad("the corner's edges are in one line") };
+        if !(theta > 1e-3 && theta < std::f64::consts::PI - 1e-3) {
+            return bad("the corner's edges are in one line");
+        }
+        let before = self.flat_material()?;
+        let probe = c.at + bis * (1e-4 * self.t.max(1.0));
+        if !before.iter().any(|r| r.contains(probe)) {
+            return bad("not supported yet: rounding or chamfering an inside corner");
+        }
+        let (ta, tb, area) = match cut {
+            CornerCut::Round(r) => {
+                if !(r > 0.0 && r.is_finite()) {
+                    return bad("the radius must be positive");
+                }
+                let l = r / (theta / 2.0).tan();
+                (l, l, l * r - r * r * (std::f64::consts::PI - theta) / 2.0)
+            }
+            CornerCut::Chamfer(a, b) => {
+                if !(a > 0.0 && b > 0.0 && a.is_finite() && b.is_finite()) {
+                    return bad("the distances must be positive");
+                }
+                (a, b, 0.5 * a * b * theta.sin())
+            }
+        };
+        if ta > c.la + 1e-9 || tb > c.lb + 1e-9 {
+            return bad("the size is larger than the corner's edges");
+        }
+        let (p1, p2) = (c.at + c.da * ta, c.at + c.db * tb);
+        // Outside the corner, so the cut-out meets the outline only where the round or the cut
+        // starts and ends.
+        let out = c.at - bis * ta.max(tb).max(self.t);
+        let first = match cut {
+            CornerCut::Round(r) => {
+                let centre = c.at + bis * (r / (theta / 2.0).sin());
+                let s = (p1 - centre).angle();
+                let mut sweep = (p2 - centre).angle() - s;
+                while sweep > std::f64::consts::PI {
+                    sweep -= 2.0 * std::f64::consts::PI;
+                }
+                while sweep < -std::f64::consts::PI {
+                    sweep += 2.0 * std::f64::consts::PI;
+                }
+                Seg2::Arc { center: centre, radius: r, start: s, sweep }
+            }
+            CornerCut::Chamfer(..) => Seg2::Line { a: p1, b: p2 },
+        };
+        let lp = Loop2 { segs: vec![first.clone(), Seg2::Line { a: p2, b: out }, Seg2::Line { a: out, b: p1 }] };
+        let region = Region2 { outer: lp.ccw(), holes: Vec::new() };
+        let mut trial = self.clone();
+        trial.holes.push(region);
+        let after = trial.flat_material()?;
+        if after.len() != before.len() {
+            return bad("it would cut the flat pattern apart");
+        }
+        let taken = before.iter().map(Region2::area).sum::<f64>() - after.iter().map(Region2::area).sum::<f64>();
+        if (taken - area).abs() > 1e-6 * self.t.max(1.0).powi(2) + 1e-4 * area {
+            return bad("the corner is too near other material or a cut-out");
+        }
+        trial.corner_faces.push((name.to_string(), first));
+        *self = trial;
+        Ok(())
+    }
+
+    /// 3DCadCraft: the name of the Corner Round / Corner Chamfer face through world point `p`
+    /// (within `tol`), folded or flat.
+    pub fn corner_face_at(&self, p: Vec3, tol: f64) -> Option<String> {
+        if self.corner_faces.is_empty() {
+            return None;
+        }
+        let panels: Vec<Option<usize>> =
+            if self.flat { vec![None] } else { self.panels().into_iter().map(|(pi, _)| pi).collect() };
+        for pi in panels {
+            let Some(inv) = mat_inverse(&self.world(pi)) else { continue };
+            let q = apply_point(&inv, p);
+            if q.z < -tol || q.z > self.t + tol {
+                continue;
+            }
+            let q2 = Vec2::new(q.x, q.y);
+            for (name, seg) in &self.corner_faces {
+                let at = seg.point_at(seg.closest_param(q2));
+                if at.dist(q2) < tol {
+                    return Some(name.clone());
+                }
+            }
+        }
+        None
     }
 }

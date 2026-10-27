@@ -1042,6 +1042,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   its B-rep (`OnceLock`s, cleared by building a new state) — never unfold per frame (the Flat Pattern
   view's Properties did, 50–150 ms a frame). Face / Cut / Contour Flange / Fold consume their sketch
   (`add_consuming`: hidden, or shared).
+  Corner Round / Corner Chamfer (`SheetOp::CornerRound` / `CornerChamfer`) are cut-outs of the flat (vendor
+  `rim_corner` finds the corner by its rim faces `<panel>:rim.<edge>`, `cut_corner` adds the region); their
+  faces are named through `SheetBody::corner_faces` *before* `panel_face_at` (a round took a rim's name or
+  `Bend:k`). Their GUI is the planned panel with logic (`Planned::has_logic` / `op` / `from_op`;
+  `SmDraft::sync` keeps `feature` in step, `stub()` = no logic yet). Their preview shows only their own faces
+  (every touched rim changes; drawing the whole sheet made frames take 0.9 s).
 - **Aborts leave no crash report** (owner's Cut crash 2026-10-26: Windows `0xc0000409`, subcode 7 = `abort()`;
   a stack overflow aborts too). The desktop binary links a 64 MB main-thread stack (`build.rs`; Windows' default is
   1 MB and OK builds features on the main thread), and `diagnostics::activity` writes the last checkpoint /

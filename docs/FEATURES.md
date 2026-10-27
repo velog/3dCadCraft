@@ -1056,7 +1056,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 - **Direct edit:** moving, rotating and scaling faces without history. Useful for imported STEP models.
 - **Freeform (T-spline/SubD):** organic shapes by dragging a control cage. A long-term goal.
 
-## 5.6 Sheet Metal — 🟡 (Defaults, Face, Flange, Convert, Hem, Fold, Contour Flange, Cut, Unfold / Refold, Flat Pattern, DXF; waiting for a visual check) · XL
+## 5.6 Sheet Metal — 🟡 (Defaults, Face, Flange, Convert, Hem, Fold, Contour Flange, Cut, Corner Seam, Corner Round, Corner Chamfer, Unfold / Refold, Flat Pattern, DXF; waiting for a visual check) · XL
 
 **Specification (research first):** [spec/5.6-sheet-metal.md](spec/5.6-sheet-metal.md) — Inventor's rules, features and flat pattern option by option, what SolidCraft's sheet module already does, stages S1–S5.
 

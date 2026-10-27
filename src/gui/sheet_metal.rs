@@ -84,6 +84,22 @@ impl SmDraft {
         d
     }
 
+    /// A planned command whose logic is not there yet (OK disabled).
+    pub(super) fn stub(&self) -> bool {
+        self.planned.as_ref().is_some_and(|p| !p.has_logic())
+    }
+
+    /// A planned command with logic: `feature` follows its panel.
+    fn sync(&mut self) {
+        if let Some(op) = self.planned.as_ref().and_then(Planned::op) {
+            let mut f = SheetOpFeature::new(op);
+            if let Feature::SheetOp(old) = &self.feature {
+                f.params = old.params.clone();
+            }
+            self.feature = Feature::SheetOp(f);
+        }
+    }
+
     /// The command's name.
     pub(super) fn title(&self) -> &'static str {
         if let Some(p) = &self.planned {
@@ -202,7 +218,11 @@ impl SmDraft {
                     true,
                     usize::from(!a.is_empty()),
                 )],
-                SheetOp::Unfold { .. } | SheetOp::Refold { .. } => Vec::new(),
+                // Their selectors are the planned panel's (`flow` returns early).
+                SheetOp::Unfold { .. }
+                | SheetOp::Refold { .. }
+                | SheetOp::CornerRound { .. }
+                | SheetOp::CornerChamfer { .. } => Vec::new(),
             },
             _ => Vec::new(),
         };
@@ -253,6 +273,8 @@ enum Pick {
     Bend(crate::part::EdgeRef),
     /// A planned command's pick: its name and highlight.
     Item(String, Vec<Vec<Point3>>),
+    /// Several at once (Corner Round by Feature: the feature's corners).
+    Items(Vec<(String, Vec<Vec<Point3>>)>),
 }
 
 /// Builds the draft's feature into `part` (a new one, or Edit Feature).
@@ -345,11 +367,14 @@ fn new_faces(
     let key2 = format!(":{id}");
     let mut out = SmPreview::default();
     let mut seen = HashSet::new();
+    // Corner Round / Chamfer shorten every rim they touch: only their own
+    // faces are shown (a tray's 16 corners lit the whole sheet).
+    let own_only = id.starts_with("CornerRound") || id.starts_with("CornerChamfer");
     for (fid, f) in body.faces() {
         let Some(n) = f.name.as_deref() else {
             continue;
         };
-        let same = before.get(n).is_some_and(|s| same_sig(s, &face_sig(f)));
+        let same = own_only || before.get(n).is_some_and(|s| same_sig(s, &face_sig(f)));
         if same && !n.contains(&key) && !n.contains(&key2) {
             continue;
         }
@@ -666,7 +691,17 @@ impl CadCraftApp {
         let sketch_id = f.sketch().map(str::to_owned);
         self.roll_back_to(k);
         let sketch = sketch_id.and_then(|id| self.part().sketches.iter().position(|s| s.id == id));
+        let rule = rule_of(self.part()).values();
+        let planned = match &f {
+            Feature::SheetOp(o) => {
+                Planned::from_op(&o.op, &rule, &|c: &crate::part::sheet_metal::CornerEdge| {
+                    self.sm_corner_line(c)
+                })
+            }
+            _ => None,
+        };
         let mut d = SmDraft::new(f, "");
+        d.planned = planned;
         d.edit = Some(k);
         d.sketch = sketch;
         d.active = d.flow().selectors.first().map(|s| s.key).unwrap_or("");
@@ -778,7 +813,7 @@ impl CadCraftApp {
         let Some(d) = self.sm.draft.clone() else {
             return;
         };
-        if d.planned.is_some() {
+        if d.stub() {
             self.file_status = Some(Err(format!("{}: {}", d.title(), Planned::NOT_YET)));
             return;
         }
@@ -813,6 +848,9 @@ impl CadCraftApp {
                     let mut next = d.clone();
                     next.crumb = Default::default();
                     sm_clear_inputs(&mut next.feature);
+                    if let Some(p) = next.planned.as_mut() {
+                        p.picks.clear();
+                    }
                     next.active = next.flow().selectors.first().map(|s| s.key).unwrap_or("");
                     self.sm.draft = Some(next);
                 } else {
@@ -835,7 +873,7 @@ impl CadCraftApp {
         if flow.selectors.is_empty() {
             return Some(format!("{}: OK (Enter)", d.title()));
         }
-        let ok = if d.planned.is_some() {
+        let ok = if d.stub() {
             "".into()
         } else if flow.ready() {
             super::i18n::tr(super::command_ui::OR_OK)
@@ -1296,6 +1334,8 @@ impl CadCraftApp {
                             }
                         });
                     }
+                    // Their sections are the planned panel's.
+                    SheetOp::CornerRound { .. } | SheetOp::CornerChamfer { .. } => {}
                     SheetOp::CornerSeam {
                         body,
                         a,
@@ -1405,8 +1445,9 @@ impl CadCraftApp {
                 d.active = k;
             }
         }
+        d.sync();
         self.sm.draft = Some(d.clone());
-        if d.planned.is_some() {
+        if d.stub() {
             ui.add_space(4.0);
             ui.add(egui::Label::new(RichText::new(Planned::NOT_YET).weak()).wrap());
         }
@@ -1423,7 +1464,7 @@ impl CadCraftApp {
             Some(Err(e)) if !e.is_empty() => warning_box(ui, e),
             _ => {}
         }
-        let ready = d.flow().ready() && !failed && d.planned.is_none();
+        let ready = d.flow().ready() && !failed && !d.stub();
         ui.horizontal(|ui| {
             let size = egui::vec2(60.0, 22.0);
             if ui
@@ -1525,7 +1566,7 @@ impl CadCraftApp {
     /// `None` while inputs are missing.
     fn sm_preview(&self) -> Option<SmResult> {
         let d = self.sm.draft.as_ref()?;
-        if !d.flow().ready() || d.planned.is_some() {
+        if !d.flow().ready() || d.stub() {
             return None;
         }
         let key = format!("{:?}|{:?}|{:?}", d.edit, d.sketch, d.feature);
@@ -1995,22 +2036,48 @@ impl CadCraftApp {
                         .as_ref()
                         .and_then(|d| d.planned.as_ref())
                         .is_some_and(|pl| pl.corners_only(sel.key));
+                    let rim = self.sm.draft.as_ref().is_some_and(|d| {
+                        d.planned
+                            .as_ref()
+                            .is_some_and(|pl| pl.kind == PlannedKind::CornerChamfer)
+                            && sel.key == "edge"
+                    });
                     if let Some(e) = self.edge_under(p, rect)
                         && (!corners || self.sm_corner_edge(e))
                         && let Ok(pts) = part.body.sample_edge(e, &opts)
                     {
-                        let name = part
-                            .body
-                            .edge(e)
-                            .and_then(|x| x.name.clone())
-                            .unwrap_or_else(|| "edge".into());
-                        return Some((Pick::Item(name, vec![pts.clone()]), vec![pts]));
+                        let name = if corners {
+                            self.sm_corner_id(e)
+                        } else if rim {
+                            // The angle is measured from the rim face along the edge.
+                            self.sm_edge_faces(e)
+                                .into_iter()
+                                .find(|n| n.contains(":rim."))
+                        } else {
+                            Some(
+                                part.body
+                                    .edge(e)
+                                    .and_then(|x| x.name.clone())
+                                    .unwrap_or_else(|| "edge".into()),
+                            )
+                        };
+                        if let Some(name) = name {
+                            return Some((Pick::Item(name, vec![pts.clone()]), vec![pts]));
+                        }
                     }
                 }
                 PickKind::Face | PickKind::PlanarFace => {
                     if let Some((f, _)) = self.face_hit(&o, &dir)
                         && let Some(name) = part.body.face(f).and_then(|x| x.name.clone())
                     {
+                        if sel.key == "feature" {
+                            // Corner Round by Feature: every corner of the feature
+                            // the face belongs to.
+                            let items = self.sm_feature_corners(&name);
+                            let lines: Vec<Vec<Point3>> =
+                                items.iter().flat_map(|i| i.1.iter().cloned()).collect();
+                            return Some((Pick::Items(items), lines));
+                        }
                         let lines: Vec<Vec<Point3>> =
                             crate::part::select::edges_of_face(&part.body, f)
                                 .into_iter()
@@ -2110,7 +2177,84 @@ impl CadCraftApp {
                 _ => None,
             })
             .collect();
+        // Outside corners only: an inside one cannot be rounded or chamfered
+        // yet (spec 5.6 §3.2).
         matches!(normals.as_slice(), [n1, n2] if n1.dot(n2).abs() < 0.999)
+            && crate::part::select::edge_convex(body, e) != Some(false)
+    }
+
+    /// The names of the faces along edge `e`.
+    fn sm_edge_faces(&self, e: crate::kernel::EdgeId) -> Vec<String> {
+        let body = &self.part().body;
+        let mut v: Vec<String> = self
+            .picker()
+            .faces_of(e)
+            .into_iter()
+            .filter_map(|f| body.face(f)?.name.clone())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// A corner edge as Corner Round / Corner Chamfer store it: its two rim
+    /// faces, `<face a>|<face b>`.
+    fn sm_corner_id(&self, e: crate::kernel::EdgeId) -> Option<String> {
+        match self.sm_edge_faces(e).as_slice() {
+            [a, b] => Some(format!("{a}|{b}")),
+            _ => None,
+        }
+    }
+
+    /// Every corner edge of the sheet metal feature that made face `face`
+    /// (its panel `<body>:<feature>.<k>:…`, or the base `<body>:base:…`).
+    fn sm_feature_corners(&self, face: &str) -> Vec<(String, Vec<Vec<Point3>>)> {
+        let owner = |n: &str| -> Option<String> {
+            let mut it = n.split(':');
+            let body = it.next()?;
+            let panel = it.next()?;
+            Some(match panel.split_once('.') {
+                Some((feature, _)) => format!("{body}:{feature}"),
+                None => format!("{body}:{panel}"),
+            })
+        };
+        let Some(want) = owner(face) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (e, pts) in self.edge_polylines().iter() {
+            if !self.sm_corner_edge(*e) {
+                continue;
+            }
+            let faces = self.sm_edge_faces(*e);
+            if faces.len() == 2
+                && faces
+                    .iter()
+                    .all(|f| owner(f).as_deref() == Some(want.as_str()))
+            {
+                out.push((format!("{}|{}", faces[0], faces[1]), vec![pts.clone()]));
+            }
+        }
+        out
+    }
+
+    /// The highlight of a stored corner: the corner edge with its faces
+    /// nearest its point (else the point).
+    fn sm_corner_line(&self, c: &crate::part::sheet_metal::CornerEdge) -> Vec<Point3> {
+        let hint = Point3::from(c.hint);
+        let mut best: Option<(f64, Vec<Point3>)> = None;
+        for (e, pts) in self.edge_polylines().iter() {
+            if self.sm_edge_faces(*e).as_slice() != [c.faces[0].clone(), c.faces[1].clone()] {
+                continue;
+            }
+            let d = pts
+                .iter()
+                .map(|p| (p - hint).norm())
+                .fold(f64::MAX, f64::min);
+            if best.as_ref().is_none_or(|b| d < b.0) {
+                best = Some((d, pts.clone()));
+            }
+        }
+        best.map_or_else(|| vec![hint, hint], |b| b.1)
     }
 
     /// The open command takes a box of edges: its active selector takes
@@ -2148,14 +2292,11 @@ impl CadCraftApp {
                 } else {
                     s.iter().any(|p| r.contains(*p))
                 };
-            if inside && self.sm_corner_edge(*e) {
-                let name = self
-                    .part()
-                    .body
-                    .edge(*e)
-                    .and_then(|x| x.name.clone())
-                    .unwrap_or_else(|| format!("{e:?}"));
-                taken.push((name, vec![pts.clone()]));
+            if inside
+                && self.sm_corner_edge(*e)
+                && let Some(id) = self.sm_corner_id(*e)
+            {
+                taken.push((id, vec![pts.clone()]));
             }
         }
         let Some(d) = self.sm.draft.as_mut() else {
@@ -2171,11 +2312,27 @@ impl CadCraftApp {
                 }
             }
         }
+        d.sync();
     }
 
     /// Applies a pick to the active selector (`remove`: Ctrl+click takes
     /// an edge out).
     fn sm_pick(&mut self, pick: Pick, remove: bool) {
+        if let (Some(d), Pick::Items(items)) = (self.sm.draft.as_mut(), &pick)
+            && let Some(p) = d.planned.as_mut()
+        {
+            if let Some(s) = Flow::new(p.selectors(), Some(d.active)).current() {
+                for item in items {
+                    if remove {
+                        p.remove(s.key, &item.0);
+                    } else {
+                        p.add(s.key, item.clone());
+                    }
+                }
+            }
+            d.sync();
+            return;
+        }
         if let (Some(d), Pick::Item(id, lines)) = (self.sm.draft.as_mut(), &pick)
             && let Some(p) = d.planned.as_mut()
         {
@@ -2189,6 +2346,7 @@ impl CadCraftApp {
             {
                 d.active = k;
             }
+            d.sync();
             return;
         }
         // The same edge on the sheet's other face (a second click switches
@@ -2732,6 +2890,8 @@ pub(super) fn feature_title(f: &Feature) -> &'static str {
             SheetOp::Contour { .. } => "Contour Flange",
             SheetOp::Cut { .. } => "Cut",
             SheetOp::CornerSeam { .. } => "Corner Seam",
+            SheetOp::CornerRound { .. } => "Corner Round",
+            SheetOp::CornerChamfer { .. } => "Corner Chamfer",
             SheetOp::Unfold { .. } => "Unfold",
             SheetOp::Refold { .. } => "Refold",
         },

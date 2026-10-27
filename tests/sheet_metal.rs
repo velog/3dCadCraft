@@ -1591,3 +1591,276 @@ fn owners_boxes_unfold_laser_ready() {
         }
     }
 }
+
+/// The corner edge through the thickness from `at` up by `up` along Z: its
+/// two faces (sorted) and its middle.
+fn corner_at(p: &PartDocument, at: Point3, up: Real) -> cadcraft3d::part::sheet_metal::CornerEdge {
+    let top = at + cadcraft3d::kernel::Vector3::z() * up;
+    corner_where(
+        p,
+        |a, b| {
+            ((a - at).norm() < 1e-6 && (b - top).norm() < 1e-6)
+                || ((b - at).norm() < 1e-6 && (a - top).norm() < 1e-6)
+        },
+        |_| true,
+    )
+    .unwrap_or_else(|| panic!("no corner edge at {at}"))
+}
+
+/// The first edge whose ends pass `ends` and faces pass `faces`, as a corner.
+fn corner_where(
+    p: &PartDocument,
+    ends: impl Fn(Point3, Point3) -> bool,
+    faces: impl Fn(&[String]) -> bool,
+) -> Option<cadcraft3d::part::sheet_metal::CornerEdge> {
+    for (e, x) in p.body.edges() {
+        let (Some(a), Some(b)) = (p.body.vertex(x.start), p.body.vertex(x.end)) else {
+            continue;
+        };
+        let (a, b) = (a.point, b.point);
+        if !ends(a, b) {
+            continue;
+        }
+        let mut names: Vec<String> = p
+            .body
+            .edge_faces(e)
+            .into_iter()
+            .filter_map(|f| p.body.face(f)?.name.clone())
+            .collect();
+        names.sort();
+        if names.len() != 2 || !faces(&names) {
+            continue;
+        }
+        let m = a + (b - a) * 0.5;
+        return Some(cadcraft3d::part::sheet_metal::CornerEdge {
+            faces: [names[0].clone(), names[1].clone()],
+            hint: [m.x, m.y, m.z],
+        });
+    }
+    None
+}
+
+fn flat_area(p: &PartDocument, body: &str) -> Real {
+    p.flat_extents_of(body).unwrap().area
+}
+
+fn chamfer(
+    corners: Vec<cadcraft3d::part::sheet_metal::CornerEdge>,
+    method: cadcraft3d::part::sheet_metal::ChamferMethod,
+    distance: Real,
+    angle: Real,
+    distance2: Real,
+    flip: bool,
+    edge: Option<String>,
+) -> cadcraft3d::part::sheet_metal::SheetOp {
+    cadcraft3d::part::sheet_metal::SheetOp::CornerChamfer {
+        body: "Face1".into(),
+        corners,
+        method,
+        distance,
+        angle,
+        distance2,
+        flip,
+        edge,
+    }
+}
+
+/// Corner Round / Corner Chamfer (spec 5.6 §3.2): a round of r at a square
+/// corner takes r²(1 − π/4) of the flat and t times that of the volume, an
+/// equal chamfer d²/2; sets with their own radius; Distance and Angle; Two
+/// Distances (Flip); a flange's far corner; a size past the edges is refused
+/// and leaves the part as it was.
+#[test]
+fn corner_round_and_chamfer() {
+    use cadcraft3d::part::sheet_metal::{ChamferMethod, CornerSet, SheetOp};
+    let t = SheetMetalDefaults::default().values().thickness;
+    let base = rect(100.0, 60.0);
+    check(&base);
+    let (v0, a0) = (volume(&base), flat_area(&base, "Face1"));
+    let c00 = corner_at(&base, Point3::origin(), t);
+    let c10 = corner_at(&base, Point3::new(100.0, 0.0, 0.0), t);
+    let c11 = corner_at(&base, Point3::new(100.0, 60.0, 0.0), t);
+    assert!(
+        c00.faces.iter().all(|f| f.contains(":rim.")),
+        "rim faces: {:?}",
+        c00.faces
+    );
+    let round = |r: Real| r * r * (1.0 - PI / 4.0);
+
+    // Two sets: R10 at two corners, R5 at the third.
+    let mut p = base.clone();
+    op(
+        &mut p,
+        SheetOp::CornerRound {
+            body: "Face1".into(),
+            sets: vec![
+                CornerSet {
+                    corners: vec![c00.clone(), c10.clone()],
+                    radius: 10.0,
+                },
+                CornerSet {
+                    corners: vec![c11.clone()],
+                    radius: 5.0,
+                },
+            ],
+        },
+    );
+    check(&p);
+    // The rounds are named after the feature and the corner.
+    let names: Vec<String> = p.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
+    for k in 1..=3 {
+        let want = format!("Face1:CornerRound1.{k}:round");
+        assert!(names.contains(&want), "{want} in {names:?}");
+    }
+    assert!(!names.iter().any(|n| n.contains("Bend")), "{names:?}");
+    let taken = 2.0 * round(10.0) + round(5.0);
+    let v1 = volume(&p);
+    assert!(
+        (v0 - v1 - t * taken).abs() < 0.02 * t * taken,
+        "volume {v0} -> {v1}, expected -{}",
+        t * taken
+    );
+    let a1 = flat_area(&p, "Face1");
+    // The flat's area follows the arcs by chords (0.1 % here).
+    assert!((a0 - a1 - taken).abs() < 5e-3 * taken, "flat {a0} -> {a1}");
+    p.regenerate().unwrap();
+    assert!((volume(&p) - v1).abs() < 1e-6 * v1, "regenerates the same");
+    let json = serde_json::to_string(&p.features).unwrap();
+    assert!(json.contains("CornerRound"), "{json}");
+
+    // One Distance: d²/2 at a square corner.
+    let mut q = base.clone();
+    op(
+        &mut q,
+        chamfer(
+            vec![c00.clone()],
+            ChamferMethod::Distance,
+            8.0,
+            0.0,
+            0.0,
+            false,
+            None,
+        ),
+    );
+    check(&q);
+    let got = a0 - flat_area(&q, "Face1");
+    assert!((got - 32.0).abs() < 1e-3, "{got}");
+
+    // Two Distances 10 × 4, either way round: 20 mm² each.
+    for flip in [false, true] {
+        let mut q = base.clone();
+        op(
+            &mut q,
+            chamfer(
+                vec![c00.clone()],
+                ChamferMethod::TwoDistances,
+                10.0,
+                0.0,
+                4.0,
+                flip,
+                None,
+            ),
+        );
+        check(&q);
+        let got = a0 - flat_area(&q, "Face1");
+        assert!((got - 20.0).abs() < 1e-3, "{got}");
+    }
+
+    // Distance and Angle: 10 along the given face at 30° → 10·tan 30° on the other.
+    let mut q = base.clone();
+    op(
+        &mut q,
+        chamfer(
+            vec![c00.clone()],
+            ChamferMethod::DistanceAngle,
+            10.0,
+            30f64.to_radians(),
+            0.0,
+            false,
+            Some(c00.faces[1].clone()),
+        ),
+    );
+    check(&q);
+    let want = 0.5 * 10.0 * 10.0 * 30f64.to_radians().tan();
+    let got = a0 - flat_area(&q, "Face1");
+    assert!((got - want).abs() < 1e-3, "{got} vs {want}");
+
+    // Too large: refused, the part as it was.
+    let mut q = base.clone();
+    let n = q.features.len();
+    let r = q.add_sheet_op(cadcraft3d::part::sheet_metal::SheetOpFeature::new(
+        SheetOp::CornerRound {
+            body: "Face1".into(),
+            sets: vec![CornerSet {
+                corners: vec![c00.clone()],
+                radius: 80.0,
+            }],
+        },
+    ));
+    assert!(r.is_err());
+    assert_eq!(q.features.len(), n);
+
+    // A flange's far corner, rounded in the flange's plane.
+    let mut f = base.clone();
+    flange(&mut f, &[Point3::new(50.0, 0.0, t)], 20.0, |_| {});
+    check(&f);
+    let (vf, af) = (volume(&f), flat_area(&f, "Face1"));
+    let corner = corner_where(
+        &f,
+        |_, _| true,
+        |n| n.iter().any(|x| x.contains(":rim.far")) && n.iter().any(|x| x.contains(":rim.side")),
+    )
+    .expect("a corner of the flange's far end");
+    op(
+        &mut f,
+        SheetOp::CornerRound {
+            body: "Face1".into(),
+            sets: vec![CornerSet {
+                corners: vec![corner],
+                radius: 5.0,
+            }],
+        },
+    );
+    check(&f);
+    let got = af - flat_area(&f, "Face1");
+    assert!((got - round(5.0)).abs() < 5e-3 * round(5.0), "{got}");
+    let got = vf - volume(&f);
+    assert!(
+        (got - t * round(5.0)).abs() < 0.02 * t * round(5.0),
+        "{got}"
+    );
+}
+
+/// An inside corner (the notch of an L-shaped plate) is refused.
+#[test]
+fn corner_round_refuses_an_inside_corner() {
+    use cadcraft3d::part::sheet_metal::{CornerSet, SheetOp};
+    let t = SheetMetalDefaults::default().values().thickness;
+    let p = plate(
+        &[
+            (0.0, 0.0),
+            (80.0, 0.0),
+            (80.0, 30.0),
+            (40.0, 30.0),
+            (40.0, 60.0),
+            (0.0, 60.0),
+        ],
+        &[],
+        SheetMetalDefaults::default(),
+    );
+    check(&p);
+    let c = corner_at(&p, Point3::new(40.0, 30.0, 0.0), t);
+    let mut q = p.clone();
+    let e = q
+        .add_sheet_op(cadcraft3d::part::sheet_metal::SheetOpFeature::new(
+            SheetOp::CornerRound {
+                body: "Face1".into(),
+                sets: vec![CornerSet {
+                    corners: vec![c],
+                    radius: 5.0,
+                }],
+            },
+        ))
+        .expect_err("an inside corner");
+    assert!(e.to_string().contains("inside corner"), "{e}");
+}
