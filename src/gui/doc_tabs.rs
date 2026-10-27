@@ -106,7 +106,7 @@ impl CadCraftApp {
 
     /// The active document is an untouched empty "Untitled": New / Open
     /// replace it instead of adding a tab.
-    fn active_is_blank(&mut self) -> bool {
+    pub(super) fn active_is_blank(&mut self) -> bool {
         self.file_path.trim().is_empty()
             && !self.is_dirty(f64::INFINITY, true)
             && self.part().features.is_empty()

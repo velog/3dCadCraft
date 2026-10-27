@@ -3890,8 +3890,8 @@ impl CadCraftApp {
         let now = self.dirty_cache.0;
         match c {
             AppCmd::New => self.open_new_file(),
-            AppCmd::NewAssembly => self.new_assembly(),
-            AppCmd::NewDrawing => self.new_drawing(),
+            AppCmd::NewAssembly => self.file_new(documents::DocCmd::NewAssembly),
+            AppCmd::NewDrawing => self.file_new(documents::DocCmd::NewDrawing),
             AppCmd::Open => self.request(files::Pending::Open, now),
             AppCmd::Save => self.save(),
             AppCmd::SaveAs => self.open_dialog(files::DialogPurpose::SaveAs),

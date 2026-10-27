@@ -245,8 +245,6 @@ pub enum Icon {
     // documents of a design file (spec 0.6b): a sheet with a sign
     /// New Part in this file.
     DocNewPart,
-    /// New Sheet Metal in this file.
-    DocNewSheetMetal,
     /// New Assembly in this file.
     DocNewAssembly,
     /// New Drawing in this file.
@@ -1553,14 +1551,10 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.arc(8.0, 9.0, 3.2, -60.0, 200.0, acc);
             p.head((5.0, 10.1), (0.34, 0.94), acc);
         }
-        DocNewPart | DocNewSheetMetal | DocNewAssembly | DocNewDrawing | DocNewPresentation => {
+        DocNewPart | DocNewAssembly | DocNewDrawing | DocNewPresentation => {
             sheet(p, ink);
             match icon {
                 DocNewPart => p.block([4.0, 8.0, 5.0, 3.5, 2.5], acc, soft),
-                DocNewSheetMetal => {
-                    p.line(&[(4.0, 6.0), (4.0, 12.0), (10.0, 12.0)], acc);
-                    p.arc(6.0, 10.0, 2.0, 90.0, 180.0, acc);
-                }
                 DocNewAssembly => {
                     p.block([3.5, 9.5, 3.5, 3.0, 2.0], acc, soft);
                     p.block([6.5, 6.5, 3.5, 3.0, 2.0], ink, tint(ink, 50));

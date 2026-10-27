@@ -1095,10 +1095,7 @@ impl CadCraftApp {
             }
             return;
         };
-        let component = self
-            .project
-            .document(o.component.document)
-            .map_or_else(|| "(missing)".to_owned(), |d| d.name.clone());
+        let component = self.ref_name(o.component);
         ui.label(RichText::new(&o.name).strong());
         egui::Grid::new("occurrence_props")
             .min_col_width(super::panels::label_width(ui.ctx()))

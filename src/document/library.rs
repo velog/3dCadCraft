@@ -242,7 +242,7 @@ impl Resolver {
     }
 }
 
-fn canonical(path: &Path) -> ProjectResult<PathBuf> {
+pub(super) fn canonical(path: &Path) -> ProjectResult<PathBuf> {
     path.canonicalize()
         .map(without_verbatim)
         .map_err(|source| match source.kind() {
@@ -276,7 +276,7 @@ pub(crate) fn without_verbatim(path: PathBuf) -> PathBuf {
 /// Relative path from directory `from` to file `to` (both canonical), with
 /// `/` separators. Falls back to the absolute path when no relative path
 /// exists (different drives on Windows).
-fn relative_path(from: &Path, to: &Path) -> String {
+pub(super) fn relative_path(from: &Path, to: &Path) -> String {
     let (f, t): (Vec<Component>, Vec<Component>) =
         (from.components().collect(), to.components().collect());
     if f.first() != t.first() {

@@ -1,15 +1,20 @@
 //! Manage › Documents (`docs/spec/0.6b-multi-document-files.md`): the
-//! documents of the open design file — New Part / Sheet Metal / Assembly /
-//! Drawing *in this file*, Duplicate, Rename, Delete, the Documents window
-//! and the storage commands (Save to Separate File, Embed, Pack, Unpack;
-//! shown disabled until D3). Every change is one Undo step of the file.
+//! documents of the open design file — New Part / Assembly / Drawing *in
+//! this file*, Duplicate, Rename, Delete, the Documents window
+//! and the storage commands (Save to Separate File, Embed, Embed All,
+//! Separate All; `document::storage`). Every change is one Undo step of
+//! the file; files written on disk stay.
 
 use eframe::egui::{self, Color32, RichText};
 
 use super::CadCraftApp;
+use std::path::{Path, PathBuf};
+
 use crate::document::documents::base_name;
+use crate::document::storage;
 use crate::document::{
-    AssemblyDocument, DocumentData, DocumentId, DocumentKind, Project, ProjectResult,
+    AssemblyDocument, DocumentData, DocumentId, DocumentKind, LibraryId, Project, ProjectResult,
+    Resolver,
 };
 use crate::part::PartDocument;
 
@@ -18,8 +23,6 @@ use crate::part::PartDocument;
 pub enum DocCmd {
     /// New Part in this file.
     NewPart,
-    /// New Sheet Metal part in this file.
-    NewSheetMetal,
     /// New Assembly in this file.
     NewAssembly,
     /// New Drawing in this file.
@@ -49,7 +52,6 @@ impl DocCmd {
     fn name(self) -> &'static str {
         match self {
             DocCmd::NewPart => "New Part",
-            DocCmd::NewSheetMetal => "New Sheet Metal",
             DocCmd::NewAssembly => "New Assembly",
             DocCmd::NewDrawing => "New Drawing",
             DocCmd::NewPresentation => "New Presentation",
@@ -64,16 +66,9 @@ impl DocCmd {
         }
     }
 
-    /// Waits for a later step (spec 0.6b §6: D2–D3, presentations).
+    /// Waits for a later step (presentations are still to come).
     pub(super) fn planned(self) -> bool {
-        matches!(
-            self,
-            DocCmd::NewPresentation
-                | DocCmd::Extract
-                | DocCmd::Embed
-                | DocCmd::Pack
-                | DocCmd::Unpack
-        )
+        matches!(self, DocCmd::NewPresentation)
     }
 }
 
@@ -86,6 +81,11 @@ pub struct DocsUi {
     selected: Option<DocumentId>,
     /// Rename Document: the document, the typed name, focus requested.
     rename: Option<(DocumentId, String, bool)>,
+    /// The linked file picked in the Documents window (Embed).
+    selected_link: Option<LibraryId>,
+    /// Application Options › Save › New documents: each new document in a
+    /// file of its own instead of the open design file (spec 0.6b §3.6).
+    pub separate: bool,
 }
 
 /// The kind's icon in lists.
@@ -127,14 +127,11 @@ impl CadCraftApp {
             )));
             return;
         }
+        if self.docs.separate && self.docs_new_file(c) {
+            return;
+        }
         match c {
             DocCmd::NewPart => self.docs_new(c, DocumentData::Part(PartDocument::default())),
-            DocCmd::NewSheetMetal => {
-                let mut part = PartDocument::default();
-                part.make_sheet_metal(None);
-                self.docs_new(c, DocumentData::Part(part));
-                self.tab = super::ribbon::Tab::SheetMetal;
-            }
             DocCmd::NewAssembly => {
                 self.docs_new(c, DocumentData::Assembly(AssemblyDocument::default()));
             }
@@ -153,7 +150,215 @@ impl CadCraftApp {
             }
             DocCmd::Delete => self.docs_delete(id),
             DocCmd::Window => self.docs.window = !self.docs.window,
-            _ => {}
+            DocCmd::Extract => self.docs_extract(id),
+            DocCmd::Embed => self.docs_embed(),
+            DocCmd::Pack => self.docs_pack(),
+            DocCmd::Unpack => self.docs_unpack(),
+            DocCmd::NewPresentation => {}
+        }
+    }
+
+    /// File → New Assembly / New Drawing: into the open design file, unless
+    /// New documents is *As separate files* or the open file is an
+    /// untouched blank one (then a new file, as before).
+    pub(super) fn file_new(&mut self, c: DocCmd) {
+        if self.docs.separate || self.active_is_blank() {
+            self.docs_new_file(c);
+        } else {
+            self.docs_apply_to(c, self.part_id);
+        }
+    }
+
+    /// A new document of `c`'s kind in a new file (tab); false when `c`
+    /// is not a New command.
+    fn docs_new_file(&mut self, c: DocCmd) -> bool {
+        use super::new_file::Kind;
+        let kind = match c {
+            DocCmd::NewPart => Kind::Part,
+            DocCmd::NewAssembly => Kind::Assembly,
+            DocCmd::NewDrawing => {
+                self.new_drawing_file();
+                return true;
+            }
+            _ => return false,
+        };
+        self.new_file_of(kind, 0.0);
+        true
+    }
+
+    /// A new file (tab) holding one empty drawing.
+    fn new_drawing_file(&mut self) {
+        self.add_blank_tab();
+        let mut project = Project::new("Drawing1");
+        let id = project.add_new_document(
+            "Drawing",
+            DocumentData::Drawing(crate::drawing::DrawingDocument::default()),
+        );
+        self.project = project;
+        self.part_id = id;
+        self.asm = Default::default();
+        self.cons = Default::default();
+        self.file_path.clear();
+        self.history.clear();
+        self.editing = None;
+        self.selection = super::Selection::Body;
+        self.drw.reset();
+        self.tab = super::ribbon::Tab::PlaceViews;
+        self.after_restore();
+        self.fit_view();
+        self.mark_saved();
+        self.file_status = Some(Ok(
+            "New drawing: Place Views > Base View (BV) picks a model file".into(),
+        ));
+    }
+
+    /// The saved design file, or a message that it must be saved first
+    /// (links are paths relative to it).
+    fn saved_path(&mut self, c: DocCmd) -> Option<PathBuf> {
+        let p = self.file_path.trim();
+        if p.is_empty() {
+            self.file_status = Some(Err(format!(
+                "{}: save this file first (separate files are linked by a path relative to it)",
+                c.name()
+            )));
+            return None;
+        }
+        Some(PathBuf::from(p))
+    }
+
+    /// Save to Separate File: `<folder>/<name>.<kind ext>` next to the design
+    /// file, linked back (spec 0.6b §3.5).
+    fn docs_extract(&mut self, id: DocumentId) {
+        let c = DocCmd::Extract;
+        let Some(owner) = self.saved_path(c) else {
+            return;
+        };
+        let Some(doc) = self.project.document(id).cloned() else {
+            return;
+        };
+        if self.project.documents().len() <= 1 {
+            self.file_status = Some(Err(format!(
+                "{}: a file keeps at least one document",
+                c.name()
+            )));
+            return;
+        }
+        let folder = owner
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let target = storage::separate_file_name(&folder, &doc);
+        // The active document gives way first: it leaves this file.
+        let back = self.part_id;
+        if id == self.part_id
+            && let Some(o) = self
+                .project
+                .documents()
+                .iter()
+                .map(|d| d.id)
+                .find(|&d| d != id)
+        {
+            self.activate_document(o);
+        }
+        let t = target.clone();
+        if self
+            .docs_edit(c, |p| storage::extract(p, &owner, id, &t))
+            .is_some()
+        {
+            self.after_restore();
+            self.file_status = Some(Ok(format!(
+                "{}: {} is now {} (linked; save this file to keep the link)",
+                c.name(),
+                doc.name,
+                target.display()
+            )));
+        } else if self.project.document(back).is_some() && back != self.part_id {
+            self.activate_document(back);
+        }
+    }
+
+    /// Embed: the documents used from the linked file picked in the
+    /// Documents window (or the only linked file) come into this file.
+    fn docs_embed(&mut self) {
+        let c = DocCmd::Embed;
+        let links: Vec<LibraryId> = self.project.libraries().iter().map(|l| l.id).collect();
+        let lib = self
+            .docs
+            .selected_link
+            .filter(|l| links.contains(l))
+            .or_else(|| (links.len() == 1).then(|| links[0]));
+        let Some(lib) = lib else {
+            self.docs.window = true;
+            self.file_status = Some(Err(format!(
+                "{}: pick a linked file in the Documents window",
+                c.name()
+            )));
+            return;
+        };
+        let Some(owner) = self.saved_path(c) else {
+            return;
+        };
+        let docs: Vec<DocumentId> = self
+            .project
+            .documents()
+            .iter()
+            .flat_map(|d| d.data.references())
+            .filter(|r| r.library == Some(lib))
+            .map(|r| r.document)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let n = docs.len();
+        let done = self.docs_edit(c, |p| {
+            let mut res = Resolver::new();
+            for d in docs {
+                storage::embed(p, &owner, &mut res, lib, d)?;
+            }
+            Ok(())
+        });
+        if done.is_some() {
+            self.docs.selected_link = None;
+            self.file_status = Some(Ok(format!(
+                "{}: {n} document(s) copied into this file",
+                c.name()
+            )));
+        }
+    }
+
+    /// Embed All (Pack): every linked document comes into this file.
+    fn docs_pack(&mut self) {
+        let c = DocCmd::Pack;
+        if self.project.libraries().is_empty() {
+            self.file_status = Some(Ok(format!("{}: this file links no other file", c.name())));
+            return;
+        }
+        let Some(owner) = self.saved_path(c) else {
+            return;
+        };
+        if let Some(n) = self.docs_edit(c, |p| storage::embed_all(p, &owner, &mut Resolver::new()))
+        {
+            self.file_status = Some(Ok(format!(
+                "{}: {n} document(s) copied in; this file stands alone",
+                c.name()
+            )));
+        }
+    }
+
+    /// Separate All (Unpack): every document but the active one to its own
+    /// file next to this one.
+    fn docs_unpack(&mut self) {
+        let c = DocCmd::Unpack;
+        let Some(owner) = self.saved_path(c) else {
+            return;
+        };
+        let keep = self.part_id;
+        if let Some(files) = self.docs_edit(c, |p| storage::separate_all(p, &owner, keep)) {
+            self.after_restore();
+            self.file_status = Some(Ok(format!(
+                "{}: {} file(s) written next to this one and linked; save this file to keep the links",
+                c.name(),
+                files.len()
+            )));
         }
     }
 
@@ -187,7 +392,7 @@ impl CadCraftApp {
         }
     }
 
-    /// New Part / Sheet Metal / Assembly in this file: added with the next
+    /// New Part / Assembly in this file: added with the next
     /// free name of its kind and made the active document.
     fn docs_new(&mut self, c: DocCmd, data: DocumentData) {
         let base = base_name(data.kind());
@@ -271,11 +476,22 @@ impl CadCraftApp {
                 (d.id, d.name.clone(), d.data.kind(), users)
             })
             .collect();
-        let links: Vec<(String, String)> = self
+        let links: Vec<(LibraryId, String, String, usize)> = self
             .project
             .libraries()
             .iter()
-            .map(|l| (l.name.clone(), l.path.clone()))
+            .map(|l| {
+                let used = self
+                    .project
+                    .documents()
+                    .iter()
+                    .flat_map(|d| d.data.references())
+                    .filter(|r| r.library == Some(l.id))
+                    .map(|r| r.document)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len();
+                (l.id, l.name.clone(), l.path.clone(), used)
+            })
             .collect();
         let active = self.part_id;
         let file = if self.file_path.trim().is_empty() {
@@ -323,6 +539,7 @@ impl CadCraftApp {
                                     activate = Some(*id);
                                 } else if r.clicked() {
                                     self.docs.selected = Some(*id);
+                                    self.docs.selected_link = None;
                                 }
                                 r.context_menu(|ui| {
                                     doc_menu(ui, *id, &mut ask, &mut activate);
@@ -337,14 +554,28 @@ impl CadCraftApp {
                             });
                             ui.end_row();
                         }
-                        for (name, path) in &links {
+                        for (lib, name, path, used) in &links {
                             ui.horizontal(|ui| {
                                 super::panels::tree_icon(ui, super::icons::Icon::DocLink);
-                                ui.label(name);
+                                let on = self.docs.selected_link == Some(*lib);
+                                let r = ui
+                                    .selectable_label(on, name)
+                                    .on_hover_text("A linked file: Embed copies what is used from it into this file");
+                                if r.clicked() {
+                                    self.docs.selected_link = Some(*lib);
+                                    self.docs.selected = None;
+                                }
+                                r.context_menu(|ui| {
+                                    if ui.button(DocCmd::Embed.name()).clicked() {
+                                        self.docs.selected_link = Some(*lib);
+                                        ask = Some((DocCmd::Embed, active));
+                                        ui.close();
+                                    }
+                                });
                             });
                             ui.label("Linked file");
                             ui.label(path);
-                            ui.label("");
+                            ui.label(format!("{used} document(s) used here"));
                             ui.end_row();
                         }
                     });
@@ -380,8 +611,34 @@ impl CadCraftApp {
                         }
                     }
                     ui.separator();
-                    for c in [DocCmd::Extract, DocCmd::Embed, DocCmd::Pack, DocCmd::Unpack] {
-                        planned(ui.add_enabled(false, egui::Button::new(c.name())), c);
+                    if ui
+                        .add_enabled(sel.is_some(), egui::Button::new(DocCmd::Extract.name()))
+                        .on_hover_text("Move the picked document into its own file next to this one, linked back")
+                        .clicked()
+                        && let Some(s) = sel
+                    {
+                        ask = Some((DocCmd::Extract, s));
+                    }
+                    if ui
+                        .add_enabled(self.docs.selected_link.is_some(), egui::Button::new(DocCmd::Embed.name()))
+                        .on_hover_text("Copy what is used from the picked linked file into this file")
+                        .clicked()
+                    {
+                        ask = Some((DocCmd::Embed, active));
+                    }
+                    if ui
+                        .add_enabled(!links.is_empty(), egui::Button::new(DocCmd::Pack.name()))
+                        .on_hover_text("Every linked document into this file, so it stands alone")
+                        .clicked()
+                    {
+                        ask = Some((DocCmd::Pack, active));
+                    }
+                    if ui
+                        .add_enabled(rows.len() > 1, egui::Button::new(DocCmd::Unpack.name()))
+                        .on_hover_text("Every document but the active one into its own file, linked back")
+                        .clicked()
+                    {
+                        ask = Some((DocCmd::Unpack, active));
                     }
                 });
             });
@@ -472,17 +729,20 @@ pub(super) fn doc_menu(
         }
     }
     ui.separator();
-    planned(
-        ui.add_enabled(false, egui::Button::new(DocCmd::Extract.name())),
-        DocCmd::Extract,
-    );
+    if ui
+        .button(DocCmd::Extract.name())
+        .on_hover_text("Move it into its own file next to this one, linked back")
+        .clicked()
+    {
+        *ask = Some((DocCmd::Extract, id));
+        ui.close();
+    }
 }
 
 /// The menu of the file's top node: new documents in this file.
 pub(super) fn new_in_file_menu(ui: &mut egui::Ui, ask: &mut Option<DocCmd>) {
     for (c, label) in [
         (DocCmd::NewPart, "New Part in This File"),
-        (DocCmd::NewSheetMetal, "New Sheet Metal in This File"),
         (DocCmd::NewAssembly, "New Assembly in This File"),
         (DocCmd::NewDrawing, "New Drawing in This File"),
     ] {

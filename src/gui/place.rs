@@ -320,6 +320,21 @@ impl CadCraftApp {
         self.place_preview();
     }
 
+    /// The name of a referenced document: of this file, or of a linked file
+    /// (`<name> (<file>)`); `(missing)` when it cannot be found.
+    pub(super) fn ref_name(&self, r: DocRef) -> String {
+        match r.library {
+            None => self.project.document(r.document).map(|d| d.name.clone()),
+            Some(lib) => self.library_path(lib).and_then(|path| {
+                let file = self.part_file(&path).ok()?;
+                let name = file.document(r.document)?.name.clone();
+                let f = path.file_name()?.to_string_lossy().into_owned();
+                Some(format!("{name} ({f})"))
+            }),
+        }
+        .unwrap_or_else(|| "(missing)".to_owned())
+    }
+
     /// Starts placing part `doc` of this design file (no link).
     fn place_local(&mut self, doc: DocumentId) {
         let name = self

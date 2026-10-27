@@ -4967,6 +4967,13 @@ impl CadCraftApp {
                             );
                     });
                 });
+                ui.label("New documents");
+                ui.indent("new_documents", |ui| {
+                    ui.radio_value(&mut self.docs.separate, false, "In one file")
+                        .on_hover_text("New Part / Assembly / Drawing go into the open design file (Manage › Documents lists them)");
+                    ui.radio_value(&mut self.docs.separate, true, "As separate files")
+                        .on_hover_text("Each new document is a new file in a tab of its own");
+                });
                 ui.separator();
                 ui.label(RichText::new("Display").strong());
                 ui.checkbox(&mut self.show_labels, "Show constraint labels");

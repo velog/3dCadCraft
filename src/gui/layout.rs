@@ -234,6 +234,9 @@ pub struct AppOptions {
     pub constrain_current_offset: bool,
     /// Application Options › Save: the preview picture written on save.
     pub thumbnail: ThumbnailSource,
+    /// Application Options › Save › New documents: false = in the open
+    /// design file (the default, spec 0.6b §3.6), true = each in a new file.
+    pub new_documents_separate: bool,
 }
 
 /// Where the preview picture saved with a project comes from
@@ -267,6 +270,7 @@ impl Default for AppOptions {
             recent_commands: Vec::new(),
             constrain_current_offset: false,
             thumbnail: ThumbnailSource::Iso,
+            new_documents_separate: false,
         }
     }
 }
@@ -866,6 +870,7 @@ impl CadCraftApp {
             recent_commands: self.recent_commands.clone(),
             constrain_current_offset: self.constrain_current_offset,
             thumbnail: self.thumbnail_source,
+            new_documents_separate: self.docs.separate,
         }
     }
 
@@ -889,6 +894,7 @@ impl CadCraftApp {
         self.recent_commands = o.recent_commands;
         self.constrain_current_offset = o.constrain_current_offset;
         self.thumbnail_source = o.thumbnail;
+        self.docs.separate = o.new_documents_separate;
     }
 
     /// Start of a frame: Ctrl+0, F11 (outside a sketch, where F11 is Relax

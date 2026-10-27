@@ -954,7 +954,6 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 vec![
                     c("doc.window").large(),
                     c("doc.new_part"),
-                    c("doc.new_sheet_metal"),
                     c("doc.new_assembly"),
                     c("doc.new_drawing"),
                     c("doc.new_presentation"),

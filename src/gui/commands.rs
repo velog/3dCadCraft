@@ -1163,12 +1163,6 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["NP"])
         .at(&[G_DOCS])
         .tip("A new part stored inside this design file; it becomes the active document"),
-    doc("doc.new_sheet_metal", "New Sheet Metal in This File", "Нова листова част във файла", Icon::DocNewSheetMetal)
-        .run(Action::Docs(DocCmd::NewSheetMetal))
-        .short("Sheet Metal")
-        .alias(&["NSM"])
-        .at(&[G_DOCS])
-        .tip("A new sheet metal part stored inside this design file"),
     doc("doc.new_assembly", "New Assembly in This File", "Нова сглобка във файла", Icon::DocNewAssembly)
         .run(Action::Docs(DocCmd::NewAssembly))
         .short("Assembly")
@@ -1217,26 +1211,26 @@ pub static COMMANDS: &[Command] = &[
         .at(&[G_DOCS])
         .tip("Remove the document from this file (refused while another document uses it)"),
     doc("doc.extract", "Save to Separate File", "Запис в отделен файл", Icon::DocExtract)
+        .run(Action::Docs(DocCmd::Extract))
         .short("Separate File")
         .alias(&["XF"])
         .at(&[G_STORE])
-        .tip("Move the document into its own .ccpart / .ccasm / .ccdrw file and link it back")
-        .todo("0.6"),
+        .tip("Move the document into its own .ccpart / .ccasm / .ccdrw file and link it back"),
     doc("doc.embed", "Embed", "Вграждане", Icon::DocEmbed)
+        .run(Action::Docs(DocCmd::Embed))
         .alias(&["MKI"])
         .at(&[G_STORE])
-        .tip("Copy a linked document into this file; its references move to the copy")
-        .todo("0.6"),
+        .tip("Copy a linked document into this file; its references move to the copy"),
     doc("doc.pack", "Embed All", "Вграждане на всички", Icon::DocPack)
+        .run(Action::Docs(DocCmd::Pack))
         .alias(&["PK"])
         .at(&[G_STORE])
-        .tip("Pack: every linked document into this file, so it stands alone")
-        .todo("0.6"),
+        .tip("Pack: every linked document into this file, so it stands alone"),
     doc("doc.unpack", "Separate All", "Разделяне на всички", Icon::DocUnpack)
+        .run(Action::Docs(DocCmd::Unpack))
         .alias(&["UPK"])
         .at(&[G_STORE])
-        .tip("Unpack: every document of this file into its own file, linked back")
-        .todo("0.6"),
+        .tip("Unpack: every document of this file into its own file, linked back"),
     // ---- View ------------------------------------------------------------
     c("view.home", "Home View", "Начален изглед", Icon::Home)
         .run(Action::View(StandardView::Home))
