@@ -288,7 +288,7 @@ fn curve_shape(body: &BRep, e: crate::kernel::EdgeId, closed: bool) -> Result<Sh
 }
 
 /// A curved model edge in model coordinates: a circle or arc, or any other
-/// curve as an interpolation spline ([`curve_shape`]). With a target
+/// curve as an interpolation spline (`curve_shape`). With a target
 /// `plane`, a circle or arc not parallel to it (an ellipse there) is a
 /// spline too.
 pub fn edge_shape_on(body: &BRep, edge: &EdgeRef, plane: Option<&Plane>) -> Result<Shape3, String> {
@@ -307,7 +307,7 @@ pub fn edge_shape_on(body: &BRep, edge: &EdgeRef, plane: Option<&Plane>) -> Resu
 }
 
 /// A curved model edge in model coordinates: a circle or arc, or any other
-/// curve as an interpolation spline ([`curve_shape`]).
+/// curve as an interpolation spline (`curve_shape`).
 pub fn edge_shape(body: &BRep, edge: &EdgeRef) -> Result<Shape3, String> {
     let e = super::draft::edge_of(body, edge).ok_or_else(|| {
         format!(

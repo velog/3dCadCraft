@@ -417,7 +417,10 @@ fn r44_four_tapped_holes_then_a_boss() {
     let j = sketch_on(&mut p, &t2, |sk, at| {
         sk.add_circle(at(0.0, 0.0, 8.0), 4.0).unwrap();
     });
-    boss(&mut p, j, 5.0, |r| r.holes.is_empty() && r.area() < 60.0);
+    // The circle only: the hole mouths on the face are projected too.
+    boss(&mut p, j, 5.0, |r| {
+        r.holes.is_empty() && r.area() > 40.0 && r.area() < 60.0
+    });
     check(&p, v + PI * 16.0 * 5.0, 1e-4);
 }
 

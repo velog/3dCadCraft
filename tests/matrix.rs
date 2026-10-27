@@ -1651,7 +1651,8 @@ fn boss_at(
     let regions = part.sketches[j].sketch.regions();
     let profiles: Vec<ProfileRef> = regions
         .iter()
-        .filter(|rg| rg.holes.is_empty() && rg.area() < PI * r * r * 1.01)
+        // The circle only: the face's hole mouths are projected too.
+        .filter(|rg| rg.holes.is_empty() && (rg.area() - PI * r * r).abs() < PI * r * r * 0.01)
         .map(|rg| ProfileRef::of(rg, rg.interior_point()))
         .collect();
     let mut ex = ExtrudeFeature::new(profiles, h);
