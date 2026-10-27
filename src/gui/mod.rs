@@ -83,6 +83,7 @@ mod presets;
 mod project;
 mod renderer;
 mod ribbon;
+mod sel_menu;
 mod select;
 mod sheet_metal;
 mod shell;
@@ -2741,27 +2742,30 @@ impl CadCraftApp {
                     self.edit_sketch(i);
                 }
             }
-            Some(3) => {
-                let placement = crate::part::SketchPlacement {
-                    plane: PlaneRef::Face(name),
-                    ..Default::default()
-                };
-                let body = &self.part().body;
-                if let Ok(plane) = placement.resolve(body, &crate::kernel::Plane::xy()) {
-                    let (center, radius) = match body.bounding_box() {
-                        Some((lo, hi)) => {
-                            let uv = plane.project(&nalgebra::center(&lo, &hi));
-                            (
-                                plane.point_at(uv.x, uv.y),
-                                nalgebra::distance(&lo, &hi) / 2.0,
-                            )
-                        }
-                        None => (plane.origin, 50.0),
-                    };
-                    self.camera.look_at(&plane, center, radius);
-                }
-            }
+            Some(3) => self.look_at_face(name),
             _ => {}
+        }
+    }
+
+    /// Look At face `name`: the view square to it, the body fitted.
+    pub(super) fn look_at_face(&mut self, name: String) {
+        let placement = crate::part::SketchPlacement {
+            plane: PlaneRef::Face(name),
+            ..Default::default()
+        };
+        let body = &self.part().body;
+        if let Ok(plane) = placement.resolve(body, &crate::kernel::Plane::xy()) {
+            let (center, radius) = match body.bounding_box() {
+                Some((lo, hi)) => {
+                    let uv = plane.project(&nalgebra::center(&lo, &hi));
+                    (
+                        plane.point_at(uv.x, uv.y),
+                        nalgebra::distance(&lo, &hi) / 2.0,
+                    )
+                }
+                None => (plane.origin, 50.0),
+            };
+            self.camera.look_at(&plane, center, radius);
         }
     }
 
@@ -5497,6 +5501,16 @@ impl CadCraftApp {
             self.sel_menu = Some((p, rect, menu));
             self.sel_menu_fresh = true;
         }
+        // A right click on an item that is not selected selects it, so the
+        // menu offers its commands (rule 17, `gui/sel_menu.rs`).
+        if response.secondary_clicked()
+            && idle
+            && !self.shift_rmb
+            && let Some(p) = pointer
+        {
+            let item = self.sel_item_at(p, rect, edge_hover, face_hover.as_deref());
+            self.select_for_menu(item);
+        }
         if response.secondary_clicked()
             && let Some(p) = pointer
         {
@@ -5605,6 +5619,7 @@ impl CadCraftApp {
                     ui.separator();
                 }
                 if self.editing.is_none() && !self.sel.is_empty() {
+                    self.selection_menu(ui);
                     self.appearance_context_menu(ui);
                     self.measure_context(ui);
                 }
@@ -5621,6 +5636,8 @@ impl CadCraftApp {
                     }
                 });
                 match &context_target {
+                    // A selection lists New Sketch itself.
+                    Some(_) if self.editing.is_none() && !self.sel.is_empty() => {}
                     Some(plane) => {
                         if ui.button("New Sketch").clicked() {
                             self.mode = Mode::PickPlane(PickPurpose::NewSketch);
