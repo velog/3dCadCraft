@@ -7,13 +7,18 @@
 //!    points), within [`overlay::POINT_SNAP_PX`];
 //! 2. a curve of an earlier sketch (line, circle, arc, spline), within
 //!    [`overlay::CURVE_SNAP_PX`];
-//! 3. a model edge: straight edges by their vertices
-//!    (`PartDocument::project_edge`), circular ones as linked circles/arcs
-//!    (`PartDocument::project_curved_edge`).
+//! 3. work points and axes;
+//! 4. a model vertex (a fixed point, `PartDocument::project_point`);
+//! 5. a model edge (`PartDocument::project_model_edge`): straight edges by
+//!    their vertices, circles / arcs as linked circles / arcs, other curves
+//!    (and circles in a tilted plane) as linked splines, ends shared with
+//!    the projected vertices so a chain of edges closes;
+//! 6. a face: all its loops (`PartDocument::project_face`);
+//! 7. a work plane (its line across the sketch).
 //!
 //! Earlier sketches are drawn while the command runs, also hidden (consumed)
-//! ones, so their geometry can be picked. Shift+click projects a sketch curve
-//! as construction geometry (as construction-off, with Construction on).
+//! ones, so their geometry can be picked. Shift+click projects as
+//! construction geometry (as construction-off, with Construction on).
 //! **Replace Reference** (References row or the context menu) arms
 //! [`CadCraftApp::relink`]: the next pick replaces that link's source.
 
@@ -33,8 +38,12 @@ pub(super) enum ProjPick {
         /// The point or curve.
         geo: SketchGeo,
     },
+    /// A model vertex (by name).
+    Vertex(crate::part::PointRef),
     /// A model edge.
     Edge(EdgeId),
+    /// A model face (by name): all its loops.
+    Face(String),
     /// A work point / axis / plane (by id).
     Work(String),
 }
@@ -95,9 +104,22 @@ impl CadCraftApp {
         {
             return Some(ProjPick::Work(id));
         }
-        self.edge_under(p, rect)
-            .map(ProjPick::Edge)
-            .or_else(|| self.work_feature_under(p, rect).map(ProjPick::Work))
+        if let Some(v @ crate::part::PointRef::Vertex(_)) = self.vertex_under(p, rect) {
+            return Some(ProjPick::Vertex(v));
+        }
+        if let Some(e) = self.edge_under(p, rect) {
+            return Some(ProjPick::Edge(e));
+        }
+        if let Some((o, d)) = self.camera.ray(p, rect)
+            && let Some(d) = d.try_normalize(1e-12)
+            && let Some((f, _)) = self.face_hit(&o, &d)
+            && let Some(name) = self.part().body.face(f).and_then(|x| x.name.clone())
+            // The sketch's own face: its edges are projected already.
+            && self.part().sketches[i].placement.plane != crate::part::PlaneRef::Face(name.clone())
+        {
+            return Some(ProjPick::Face(name));
+        }
+        self.work_feature_under(p, rect).map(ProjPick::Work)
     }
 
     /// Project Geometry: a click at `p` projects what is under it into
@@ -117,10 +139,11 @@ impl CadCraftApp {
                     ProjPick::Edge(e) => crate::part::blend::edge_ref(&self.part().body, e)
                         .map(|edge| LinkSource::Edge { edge }),
                     ProjPick::Work(id) => Some(LinkSource::Work { id }),
+                    ProjPick::Vertex(_) | ProjPick::Face(_) => None,
                 };
                 let Some(source) = source else {
                     self.file_status = Some(Err(
-                        "Replace Reference: that edge has no persistent name".into(),
+                        "Replace Reference: pick a sketch point or curve, a named edge or a work feature".into(),
                     ));
                     return true;
                 };
@@ -153,10 +176,15 @@ impl CadCraftApp {
                     .project_sketch_geometry(i, &id, geo, construction)
                     .map(|_| ())
             }
-            ProjPick::Edge(e) if self.part().body.edge_direction(e).is_some() => {
-                self.part_mut().project_edge(i, e).map(|_| ())
-            }
-            ProjPick::Edge(e) => self.part_mut().project_curved_edge(i, e).map(|_| ()),
+            ProjPick::Vertex(v) => self.part_mut().project_point(i, v).map(|_| ()),
+            ProjPick::Edge(e) => self
+                .part_mut()
+                .project_model_edge(i, e, construction)
+                .map(|_| ()),
+            ProjPick::Face(f) => self
+                .part_mut()
+                .project_face(i, &f, construction)
+                .map(|_| ()),
             ProjPick::Work(id) => self.part_mut().project_work(i, &id).map(|_| ()),
         };
         match r {
@@ -172,6 +200,62 @@ impl CadCraftApp {
             }
         }
         true
+    }
+
+    /// **Project Cut Edges** into the edited sketch (one Undo step).
+    pub(super) fn project_cut_edges(&mut self) {
+        let Some(i) = self.editing else {
+            self.file_status = Some(Err("Project Cut Edges: edit a sketch first".into()));
+            return;
+        };
+        self.checkpoint("Project Cut Edges");
+        let r = self.part_mut().project_cut_edges(i).map(|_| ());
+        self.projected(r);
+    }
+
+    /// **Project Flat Pattern** into the edited sketch (one Undo step): the
+    /// first sheet body whose base panel is parallel to the sketch.
+    pub(super) fn project_flat_pattern(&mut self) {
+        let Some(i) = self.editing else {
+            self.file_status = Some(Err("Project Flat Pattern: edit a sketch first".into()));
+            return;
+        };
+        let mut bodies: Vec<String> = self.part().sheet_models.keys().cloned().collect();
+        bodies.sort();
+        if bodies.is_empty() {
+            self.file_status = Some(Err(
+                "Project Flat Pattern: the part has no sheet metal body".into(),
+            ));
+            return;
+        }
+        self.checkpoint("Project Flat Pattern");
+        let mut r = Err(crate::part::PartError::Feature(String::new()));
+        for b in &bodies {
+            r = self.part_mut().project_flat_pattern(i, b).map(|_| ());
+            if r.is_ok() {
+                break;
+            }
+        }
+        self.projected(r);
+    }
+
+    /// After a projection command: solve and redraw, or undo the checkpoint
+    /// and show the error.
+    fn projected(&mut self, r: Result<(), crate::part::PartError>) {
+        match r {
+            Ok(()) => {
+                if let Some(i) = self.editing {
+                    let _ = self.part_mut().sketches[i].sketch.solve();
+                }
+                self.file_status = None;
+                self.solve();
+                self.scene_dirty = true;
+            }
+            Err(err) => {
+                self.history.cancel();
+                self.file_status = Some(Err(err.to_string()));
+            }
+        }
     }
 
     /// Lights up what a Project Geometry click at `pointer` would take.
@@ -212,6 +296,29 @@ impl CadCraftApp {
                         .filter_map(|q| self.camera.project(q, rect))
                         .collect();
                     painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
+                }
+            }
+            Some(ProjPick::Vertex(v)) => {
+                let part = self.part();
+                if let Ok(q) = crate::part::placement::point_of(&v, &part.body, &part.work)
+                    && let Some(s) = self.camera.project(&q, rect)
+                {
+                    painter.circle_stroke(s, 7.0, Stroke::new(2.5, col));
+                }
+            }
+            Some(ProjPick::Face(name)) => {
+                let body = &self.part().body;
+                let opts = crate::kernel::TessellationOptions::default();
+                if let Some(f) = body.find_face(&name) {
+                    for e in body.face_edges(f) {
+                        if let Ok(pts) = body.sample_edge(e, &opts) {
+                            let pts: Vec<Pos2> = pts
+                                .iter()
+                                .filter_map(|q| self.camera.project(q, rect))
+                                .collect();
+                            painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
+                        }
+                    }
                 }
             }
             Some(ProjPick::Work(id)) => {

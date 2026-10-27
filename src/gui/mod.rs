@@ -3871,6 +3871,8 @@ impl CadCraftApp {
                 self.project_geometry = !self.project_geometry;
                 self.relink = None;
             }
+            Action::ProjectCutEdges => self.project_cut_edges(),
+            Action::ProjectFlatPattern => self.project_flat_pattern(),
             Action::CenterPoint => {
                 self.tools.center_point = !self.tools.center_point;
                 if self.tools.center_point {

@@ -1229,11 +1229,35 @@ pub fn edge_ref(body: &BRep, e: EdgeId) -> Option<EdgeRef> {
     }
     let x = body.edge(e)?;
     let (a, b) = (body.vertex(x.start)?.point, body.vertex(x.end)?.point);
-    let m = nalgebra::center(&a, &b);
+    // A straight edge: its middle. A curved one: the point half way along
+    // the curve (the chord's middle of a half circle is its centre — both
+    // halves of a hole's rim had the same hint and resolved to one).
+    let m = match body.edge_direction(e) {
+        Some(_) => nalgebra::center(&a, &b),
+        None => body
+            .sample_edge(e, &crate::kernel::TessellationOptions::default())
+            .ok()
+            .and_then(|pts| curve_middle(&pts))
+            .unwrap_or_else(|| nalgebra::center(&a, &b)),
+    };
     Some(EdgeRef {
         faces: [names[0].clone(), names[1].clone()],
         hint: [m.x, m.y, m.z],
     })
+}
+
+/// The point half way along a polyline (by length).
+fn curve_middle(pts: &[Point3]) -> Option<Point3> {
+    let total: Real = pts.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+    let mut left = total / 2.0;
+    for w in pts.windows(2) {
+        let l = (w[1] - w[0]).norm();
+        if l >= left && l > 0.0 {
+            return Some(w[0] + (w[1] - w[0]) * (left / l));
+        }
+        left -= l;
+    }
+    pts.last().copied()
 }
 
 #[cfg(test)]

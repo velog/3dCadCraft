@@ -1987,3 +1987,73 @@ fn flat_dxf_writes_arcs_and_circles() {
         assert!(met, "open end at {a:?}");
     }
 }
+
+/// Project Flat Pattern (Sketch › Project Geometry ▾): the unfolded outline
+/// and cut-outs into a sketch on the base panel, lines / arcs / circles, the
+/// bend centre lines as construction; its region is the flat's area.
+#[test]
+fn project_flat_pattern_into_a_sketch() {
+    use cadcraft3d::part::sheet_metal::SheetOp;
+    let mut p = rect(100.0, 60.0);
+    flange(&mut p, &[Point3::new(50.0, 0.0, 2.0)], 25.0, |_| {});
+    let i = top_sketch(&mut p);
+    p.sketches[i]
+        .sketch
+        .add_circle(Point2::new(50.0, 30.0), 8.0)
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    let sid = p.sketches[i].id.clone();
+    op(
+        &mut p,
+        SheetOp::Cut {
+            extent: Default::default(),
+            depth: 0.0,
+            across: false,
+            sketch: sid,
+            profiles: prof,
+        },
+    );
+    check(&p);
+    let want = flat_area(&p, "Face1");
+    let j = top_sketch(&mut p);
+    let curves = p.project_flat_pattern(j, "Face1").unwrap();
+    let sk = &p.sketches[j].sketch;
+    let circles = curves
+        .iter()
+        .filter(|&&c| {
+            matches!(
+                sk.entity(c),
+                Some(cadcraft3d::sketch::Entity::Circle { .. })
+            )
+        })
+        .count();
+    assert_eq!(circles, 1, "the round cut-out");
+    let bends = curves
+        .iter()
+        .filter(|&&c| sk.style(c) == cadcraft3d::sketch::Style::Construction)
+        .count();
+    assert_eq!(bends, 1, "one bend centre line");
+    let regions = sk.regions();
+    let main = regions
+        .iter()
+        .max_by(|a, b| a.area().total_cmp(&b.area()))
+        .unwrap();
+    assert_eq!(main.holes.len(), 1);
+    assert!(
+        (main.area() - want).abs() < 1e-3 * want,
+        "flat {} vs {want}",
+        main.area()
+    );
+    // A sketch square to the base panel is refused, unchanged.
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let k = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .unwrap();
+    let n = p.sketches[k].sketch.entities().count();
+    assert!(p.project_flat_pattern(k, "Face1").is_err());
+    assert_eq!(p.sketches[k].sketch.entities().count(), n);
+}

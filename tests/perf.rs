@@ -264,6 +264,10 @@ impl<'a> Rows<'a> {
 
 /// Budgets of the Face Draft Symmetric and Shell Rounded Corners cases (ms).
 const BUDGET_SYMMETRIC_DRAFT: f64 = 700.0;
+/// Project Cut Edges of a 60 × 60 plate with 36 holes (docs/PERF.md).
+const BUDGET_CUT_EDGES: f64 = 60.0;
+/// Project Geometry of that plate's top face, every loop.
+const BUDGET_PROJECT_FACE: f64 = 60.0;
 const BUDGET_ROUNDED_SHELL: f64 = 400.0;
 const BUDGET_COMBINE: f64 = 300.0;
 const BUDGET_SPLIT: f64 = 500.0;
@@ -1481,6 +1485,60 @@ fn speed_budgets() {
             "delete face with heal of 36 hole walls (add_body_op)",
             300.0,
             times[1],
+        ));
+    }
+    // Project Cut Edges through the 36-hole plate (a sketch at half its
+    // thickness: the outline and 36 circles) and Project Geometry of its
+    // whole top face (the same loops, linked).
+    {
+        use cadcraft3d::part::{
+            OriginPlane, PlaneRef, SketchOptions, SketchPlacement, WorkDef, WorkFeature,
+            WorkPlaneDef,
+        };
+        let mut p = holes36.clone();
+        let wp = p
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: 3.0,
+            })))
+            .unwrap();
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let pl = SketchPlacement {
+            plane: PlaneRef::Work(wp),
+            ..SketchPlacement::on_origin_plane(OriginPlane::XY)
+        };
+        let j = p.create_sketch(pl, &o).unwrap();
+        rows.push((
+            "project cut edges of a plate with 36 holes",
+            BUDGET_CUT_EDGES,
+            median_ms(3, || {
+                let mut q = p.clone();
+                let c = q.project_cut_edges(j).unwrap();
+                assert!(c.len() >= 40, "{} curves", c.len());
+            }),
+        ));
+        let top = p
+            .body
+            .faces()
+            .find(|(_, f)| {
+                f.mesh
+                    .as_ref()
+                    .is_some_and(|m| m.positions.iter().all(|q| (q.z - 6.0).abs() < 1e-6))
+            })
+            .and_then(|(_, f)| f.name.clone())
+            .unwrap();
+        rows.push((
+            "project geometry of a face with 36 holes (all its loops)",
+            BUDGET_PROJECT_FACE,
+            median_ms(3, || {
+                let mut q = p.clone();
+                let c = q.project_face(j, &top, false).unwrap();
+                assert!(c.len() >= 40, "{} curves", c.len());
+            }),
         ));
     }
     rows.push((

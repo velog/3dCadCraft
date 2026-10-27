@@ -48,7 +48,7 @@ What is copied is the **organisation and the workflow**, not the graphics: the i
 
 **The ribbon (the same for every document today):**
 - **3D Model, Inspect, Tools, Manage, View** and **Sketch**. Tools has a **Material and Appearance** panel (Material, Appearance, Adjust, Clear); Manage — **Documents** (the design file's documents: New Part / Assembly / Drawing in this file, Duplicate, Rename, Delete, the Documents window), **Storage** (Save to Separate File, Embed, Embed All, Separate All) and **Styles and Standards** (Styles Editor, Update, Purge); Inspect → **Physical Properties**.
-- **Sketch tab:** panels Create (with **Project Geometry**: points and curves from earlier sketches, model edges; Shift = construction; Esc / right click → Done stops it), Modify, Pattern, Constrain, Format, Demo, Exit (there is no Insert panel; Image etc. ⬜).
+- **Sketch tab:** panels Create (with the **Project Geometry** split button: Project Geometry — points and curves from earlier sketches, model vertices, edges and faces, work features; Shift = construction; Esc / right click → Done stops it —, **Project Cut Edges** (PCE) and **Project Flat Pattern** (PFP)), Modify, Pattern, Constrain, Format, Demo, Exit (there is no Insert panel; Image etc. ⬜).
 - 🟡 **Assembly:** Assemble, Design (calculators), Inspect, Tools, Manage, View, Environments (2026-10-27: every command on the ribbon, spec 3.0).
 - ⬜ **Drawing:** Place Views, Annotate, Sketch, Tools, View.
 

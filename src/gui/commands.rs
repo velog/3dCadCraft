@@ -978,12 +978,26 @@ pub static COMMANDS: &[Command] = &[
         .at(&[S_CREATE])
         .tip("Sketch point")
         .spec("1.2-sketch-geometry.md"),
-    c("sketch.project", "Project Geometry", "Проектиране на геометрия", Icon::Project)
+    c("sketch.project", "Project Geometry", "Проектиране на геометрия", Icon::ProjectGeometry)
         .run(Action::ProjectGeometry)
         .alias(&["P"])
         .at(&[S_CREATE])
         .env(SKETCH)
-        .tip("Project points and curves of earlier sketches, or model edges, into this sketch (associative; Shift: construction; Esc ends)")
+        .tip("Project points and curves of earlier sketches, model vertices, edges and faces, work features into this sketch (associative; Shift: construction; Esc ends)")
+        .spec("1.8-project-geometry.md"),
+    c("sketch.project_cut", "Project Cut Edges", "Проектиране на сечение", Icon::ProjectCutEdges)
+        .run(Action::ProjectCutEdges)
+        .alias(&["PCE"])
+        .at(&[S_CREATE])
+        .env(SKETCH)
+        .tip("The section of the part by the sketch plane, as fixed geometry (not associative: project again after a change)")
+        .spec("1.8-project-geometry.md"),
+    c("sketch.project_flat", "Project Flat Pattern", "Проектиране на развивка", Icon::ProjectFlatPattern)
+        .run(Action::ProjectFlatPattern)
+        .alias(&["PFP"])
+        .at(&[S_CREATE])
+        .env(SKETCH)
+        .tip("The sheet metal flat pattern (outline, cut-outs, bend lines as construction) into a sketch on the base panel")
         .spec("1.8-project-geometry.md"),
     t("sketch.polygon", Tool::Polygon, "Polygon", "Многоъгълник", Icon::Polygon)
         .alias(&["POL"])

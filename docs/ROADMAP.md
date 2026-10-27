@@ -160,7 +160,9 @@ Compared with Inventor's help (Line, Circle, Arc, Rectangle, Slot, Polygon, Spli
 
 **Project Geometry (1.8), 2026-10-20 (waiting for a visual check):** projection of points and curves from earlier sketches (also on another plane) and of circular model edges, associative (`part::link`), References with Break Link / Delete / Replace / Select, context menu. Along the way: Sweep of a circle along a spline (the path is made of points) failed in the kernel — the circle is now split into quarters.
 
-**To do in Level 1:** Project Geometry — ellipses, faces, work features, Project Cut Edges; Ellipse, Text.
+**Project Geometry, 2026-10-27:** vertices, faces (all loops), chains of edges that close, Shift construction for model edges, circles in tilted sketches as splines, Project Cut Edges, Project Flat Pattern (waiting for a visual check).
+
+**To do in Level 1:** Project Geometry — true ellipses, References node in the browser; Ellipse, Text.
 
 ### Step 2.5 — Extrude (New Solid) ✅
 

@@ -288,6 +288,25 @@ fn curve_shape(body: &BRep, e: crate::kernel::EdgeId, closed: bool) -> Result<Sh
 }
 
 /// A curved model edge in model coordinates: a circle or arc, or any other
+/// curve as an interpolation spline ([`curve_shape`]). With a target
+/// `plane`, a circle or arc not parallel to it (an ellipse there) is a
+/// spline too.
+pub fn edge_shape_on(body: &BRep, edge: &EdgeRef, plane: Option<&Plane>) -> Result<Shape3, String> {
+    let shape = edge_shape(body, edge)?;
+    let tilted =
+        |n: &UnitVector3| plane.is_some_and(|pl| !Tolerance::default().are_parallel(n, &pl.normal));
+    match &shape {
+        Shape3::Circle { normal, .. } | Shape3::Arc { normal, .. } if tilted(normal) => {
+            let e = super::draft::edge_of(body, edge).ok_or("the edge no longer exists")?;
+            let x = body.edge(e).ok_or("the edge no longer exists")?;
+            let closed = matches!(shape, Shape3::Circle { .. }) || x.start == x.end;
+            curve_shape(body, e, closed)
+        }
+        _ => Ok(shape),
+    }
+}
+
+/// A curved model edge in model coordinates: a circle or arc, or any other
 /// curve as an interpolation spline ([`curve_shape`]).
 pub fn edge_shape(body: &BRep, edge: &EdgeRef) -> Result<Shape3, String> {
     let e = super::draft::edge_of(body, edge).ok_or_else(|| {
@@ -352,7 +371,10 @@ pub fn resolve(
             }
             sketch_shape(&sketches[k].sketch, *geo)
         }
-        LinkSource::Edge { edge } => edge_shape(body, edge),
+        LinkSource::Edge { edge } => {
+            let plane = sketches.get(i).map(|s| &s.sketch.plane);
+            edge_shape_on(body, edge, plane)
+        }
     }
 }
 

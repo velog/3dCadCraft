@@ -28,6 +28,7 @@ pub mod body_op;
 pub mod boolean;
 pub mod coil;
 pub mod combine;
+mod cut_edges;
 pub mod draft;
 mod exact;
 pub mod export;
@@ -2447,6 +2448,151 @@ impl PartDocument {
         self.add_link(index, LinkSource::Work { id: id.to_owned() }, false)
     }
 
+    /// **Project Geometry** of a model point (a vertex, a straight edge's
+    /// midpoint, the part origin...) into sketch `index`: a fixed point that
+    /// follows it. A point already projected is returned as it is.
+    pub fn project_point(&mut self, index: usize, source: PointRef) -> Result<PointId, PartError> {
+        let w = placement::point_of(&source, &self.body, &self.work)?;
+        let ps = self
+            .sketches
+            .get_mut(index)
+            .ok_or(PartError::NoSketch(index))?;
+        if let Some(p) = ps.projections.iter().find(|p| p.source == source) {
+            return Ok(p.point);
+        }
+        let point = ps.sketch.add_fixed_point(ps.sketch.plane.project(&w));
+        ps.projections.push(Projection { point, source });
+        Ok(point)
+    }
+
+    /// **Project Geometry** of any model edge into sketch `index`, as
+    /// Inventor does it: a straight edge is a reference line between its
+    /// projected vertices, a circle / arc a linked circle / arc (in a plane
+    /// not parallel to the sketch: a spline), any other curve a linked
+    /// spline. The ends are the projected vertices, so edges projected one
+    /// after another (or a whole face) make closed loops. `construction`:
+    /// the curve is construction geometry (Shift+click).
+    pub fn project_model_edge(
+        &mut self,
+        index: usize,
+        edge: crate::kernel::EdgeId,
+        construction: bool,
+    ) -> Result<EntityId, PartError> {
+        let fail = |m: String| PartError::Feature(format!("Project Geometry: {m}"));
+        if index >= self.sketches.len() {
+            return Err(PartError::NoSketch(index));
+        }
+        let body = self.body.clone();
+        let e = body
+            .edge(edge)
+            .ok_or_else(|| fail("the edge no longer exists".into()))?
+            .clone();
+        let curve = if body.edge_direction(edge).is_some() {
+            self.project_edge(index, edge)?
+        } else {
+            let r = blend::edge_ref(&body, edge)
+                .ok_or_else(|| fail("the edge's faces have no names".into()))?;
+            let source = LinkSource::Edge { edge: r.clone() };
+            if let Some(l) = self.sketches[index]
+                .links
+                .iter()
+                .find(|l| l.source == source)
+                && let Some(c) = l.curve
+            {
+                return Ok(c);
+            }
+            let plane = self.sketches[index].sketch.plane.clone();
+            let shape = link::edge_shape_on(&body, &r, Some(&plane)).map_err(fail)?;
+            let proj = link::project(&shape, &plane).map_err(fail)?;
+            // The ends as projected vertices (shared with neighbours).
+            let named = |v| body.vertex(v).and_then(|x| x.name.clone());
+            let ends = match (e.start != e.end, named(e.start), named(e.end)) {
+                (true, Some(a), Some(b)) => Some((a, b)),
+                _ => None,
+            };
+            let n = proj.points.len();
+            let slots = match &shape {
+                link::Shape3::Arc { .. } => Some((1, 2)),
+                link::Shape3::Spline { order, .. } if order.first() != order.last() => {
+                    Some((0, n - 1))
+                }
+                _ => None,
+            };
+            let mut made = Vec::new();
+            let mut reuse = Vec::new();
+            if let (Some((a, b)), Some((ia, ib))) = (ends, slots) {
+                for (name, k) in [(a, ia), (b, ib)] {
+                    let src = PointRef::Vertex(name);
+                    let had = self.sketches[index]
+                        .projections
+                        .iter()
+                        .any(|p| p.source == src);
+                    let p = self.project_point(index, src)?;
+                    if !had {
+                        made.push(p);
+                    }
+                    reuse.push((k, p));
+                }
+            }
+            let ps = &mut self.sketches[index];
+            match link::create_with(&mut ps.sketch, &shape, &proj, construction, &reuse) {
+                Ok((points, curve)) => {
+                    ps.links.push(GeometryLink {
+                        source,
+                        points,
+                        curve,
+                        status: None,
+                    });
+                    return curve.ok_or_else(|| fail("the edge made no curve".into()));
+                }
+                Err(m) => {
+                    for p in made {
+                        ps.projections.retain(|x| x.point != p);
+                        let _ = ps.sketch.remove_point(p);
+                    }
+                    return Err(fail(m));
+                }
+            }
+        };
+        if construction {
+            let _ = self.sketches[index]
+                .sketch
+                .set_style(curve, crate::sketch::Style::Construction);
+        }
+        Ok(curve)
+    }
+
+    /// **Project Geometry** of a face: every edge of all its loops
+    /// ([`Self::project_model_edge`]; Inventor projects a picked face's
+    /// loops). Returns the curves; on failure nothing changes.
+    pub fn project_face(
+        &mut self,
+        index: usize,
+        face: &str,
+        construction: bool,
+    ) -> Result<Vec<EntityId>, PartError> {
+        let f = self.body.find_face(face).ok_or_else(|| {
+            PartError::Feature(format!("Project Geometry: face {face} no longer exists"))
+        })?;
+        let edges = self.body.face_edges(f);
+        let before = self
+            .sketches
+            .get(index)
+            .cloned()
+            .ok_or(PartError::NoSketch(index))?;
+        let mut out = Vec::new();
+        for e in edges {
+            match self.project_model_edge(index, e, construction) {
+                Ok(c) => out.push(c),
+                Err(err) => {
+                    self.sketches[index] = before;
+                    return Err(err);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     fn add_link(
         &mut self,
         index: usize,
@@ -2907,7 +3053,7 @@ fn add_curved_outline_edge(
 ) -> Result<(), String> {
     let edge = body.edge(e).ok_or("no edge")?;
     let r = blend::edge_ref(body, e).ok_or("its faces have no names")?;
-    let shape = link::edge_shape(body, &r)?;
+    let shape = link::edge_shape_on(body, &r, Some(&ps.sketch.plane))?;
     let proj = link::project(&shape, &ps.sketch.plane)?;
     let (a, b) = (point_of.get(&edge.start), point_of.get(&edge.end));
     let n = proj.points.len();

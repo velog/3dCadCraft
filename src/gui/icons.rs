@@ -174,6 +174,12 @@ pub enum Icon {
     Origin,
     Sketch,
     Project,
+    /// Sketch › Project Geometry.
+    ProjectGeometry,
+    /// Sketch › Project Cut Edges.
+    ProjectCutEdges,
+    /// Sketch › Project Flat Pattern.
+    ProjectFlatPattern,
     // assembly
     Assembly,
     Folder,
@@ -1360,6 +1366,37 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
         Project => {
             p.rect(2.0, 3.0, 14.0, 13.0, ink);
             p.block([4.0, 8.0, 5.0, 3.5, 3.0], acc, soft);
+        }
+        ProjectGeometry => {
+            // A block above the sketch plane, its outline dropped onto it.
+            let plane = [(0.8, 14.8), (4.6, 10.6), (15.2, 10.6), (11.4, 14.8)];
+            p.fill(&plane, soft);
+            p.closed(&plane, acc);
+            p.block([4.6, 3.6, 5.4, 3.2, 3.0], ink, tint(ink, 40));
+            for (a, b) in [((4.6, 6.8), (4.6, 12.6)), ((10.0, 6.8), (10.0, 12.6))] {
+                p.dashed(a, b, ink);
+            }
+            p.closed(&[(3.6, 13.3), (5.8, 11.6), (11.2, 11.6), (9.0, 13.3)], hot);
+        }
+        ProjectCutEdges => {
+            // A block cut by the sketch plane: the section in colour.
+            p.block([2.5, 5.5, 8.0, 8.5, 5.0], ink, tint(ink, 40));
+            let cut = [(2.5, 9.8), (10.5, 9.8), (14.5, 7.3), (6.5, 7.3)];
+            p.fill(&cut, tint(hot, 110));
+            p.closed(&cut, hot);
+            p.line(&[(0.6, 11.0), (2.5, 9.8)], acc);
+            p.line(&[(14.5, 7.3), (15.6, 6.6)], acc);
+        }
+        ProjectFlatPattern => {
+            // A folded sheet above, its flat pattern below.
+            p.line(&[(3.0, 1.2), (3.0, 4.6), (13.0, 4.6)], ink);
+            p.arc(4.4, 3.2, 1.4, 180.0, 270.0, ink);
+            p.line(&[(8.0, 5.6), (8.0, 7.6)], acc);
+            p.head((8.0, 9.0), (0.0, 1.0), acc);
+            let flat = [(1.2, 9.6), (14.8, 9.6), (14.8, 14.8), (1.2, 14.8)];
+            p.fill(&flat, tint(hot, 60));
+            p.closed(&flat, hot);
+            p.dashed((1.2, 11.8), (14.8, 11.8), acc);
         }
         SheetMetal => {
             p.line(&[(2.0, 4.0), (2.0, 13.0), (12.0, 13.0)], ink);

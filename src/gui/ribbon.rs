@@ -158,6 +158,10 @@ pub enum Action {
     Hole,
     /// Project Geometry: a click on a model edge projects it into the sketch.
     ProjectGeometry,
+    /// Project Cut Edges: the section of the part by the sketch plane.
+    ProjectCutEdges,
+    /// Project Flat Pattern: a sheet's unfolded outline into the sketch.
+    ProjectFlatPattern,
     /// Format → Center Point: new points are Center Points.
     CenterPoint,
     /// Thread: a cosmetic or modeled thread on a cylindrical face.
@@ -999,7 +1003,15 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         menu("Spline", &["sketch.spline_interp", "sketch.spline_cv"]),
                         c("sketch.ellipse"),
                         sk("sketch.point"),
-                        sk("sketch.project").mini(),
+                        menu(
+                            "Project Geometry",
+                            &[
+                                "sketch.project",
+                                "sketch.project_cut",
+                                "sketch.project_flat",
+                            ],
+                        )
+                        .large(),
                         sk("sketch.polygon"),
                         menu("Fillet", &["sketch.fillet", "sketch.chamfer"]),
                         c("sketch.text"),
