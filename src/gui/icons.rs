@@ -271,6 +271,25 @@ pub enum Icon {
     DocPack,
     /// Separate All / Unpack (sheets out of a box).
     DocUnpack,
+    // visual styles and section views (`gui/view_style.rs`)
+    /// Shaded (a shaded block, no edges).
+    VsShaded,
+    /// Shaded with Hidden Edges.
+    VsHidden,
+    /// Wireframe.
+    VsWire,
+    /// Wireframe with Hidden Edges.
+    VsWireHidden,
+    /// Wireframe with Visible Edges Only.
+    VsWireVisible,
+    /// Monochrome.
+    VsMono,
+    /// Quarter Section View.
+    SectionQuarter,
+    /// Three Quarter Section View.
+    SectionThreeQuarter,
+    /// End Section View.
+    SectionEnd,
     // part commands with an interface only (`gui/part_planned.rs`, spec 2.0)
     /// Decal (a picture on a face).
     Decal,
@@ -1661,6 +1680,43 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.line(&[(10.0, 2.0), (14.0, 2.0), (14.0, 6.0)], acc);
             p.line(&[(14.0, 10.0), (14.0, 14.0), (10.0, 14.0)], acc);
             p.line(&[(6.0, 14.0), (2.0, 14.0), (2.0, 10.0)], acc);
+        }
+        // ---- visual styles and section views ----
+        VsShaded => p.block([2.0, 6.0, 9.0, 8.0, 5.0], tint(acc, 200), soft),
+        VsHidden => {
+            p.block([2.0, 6.0, 9.0, 8.0, 5.0], ink, soft);
+            p.dashed((2.0, 14.0), (6.0, 11.5), ink);
+            p.dashed((6.0, 11.5), (15.0, 11.5), ink);
+        }
+        VsWire => {
+            p.block([2.0, 6.0, 9.0, 8.0, 5.0], acc, Color32::TRANSPARENT);
+            p.line(&[(2.0, 14.0), (6.0, 11.5), (15.0, 11.5)], acc);
+            p.line(&[(6.0, 11.5), (6.0, 3.5)], acc);
+        }
+        VsWireHidden => {
+            p.block([2.0, 6.0, 9.0, 8.0, 5.0], acc, Color32::TRANSPARENT);
+            p.dashed((2.0, 14.0), (6.0, 11.5), ink);
+            p.dashed((6.0, 11.5), (15.0, 11.5), ink);
+            p.dashed((6.0, 11.5), (6.0, 3.5), ink);
+        }
+        VsWireVisible => p.block([2.0, 6.0, 9.0, 8.0, 5.0], acc, Color32::TRANSPARENT),
+        VsMono => p.block([2.0, 6.0, 9.0, 8.0, 5.0], ink, tint(ink, 110)),
+        SectionQuarter | SectionThreeQuarter | SectionEnd => {
+            p.block([2.0, 6.0, 9.0, 8.0, 5.0], ink, Color32::TRANSPARENT);
+            match icon {
+                SectionQuarter => p.fill(
+                    &[(6.5, 6.0), (10.5, 3.5), (10.5, 7.5), (6.5, 10.0)],
+                    tint(warn, 140),
+                ),
+                SectionThreeQuarter => p.fill(
+                    &[(2.0, 6.0), (6.5, 6.0), (6.5, 14.0), (2.0, 14.0)],
+                    tint(warn, 140),
+                ),
+                _ => {
+                    p.line(&[(9.0, 9.0), (15.0, 15.0)], warn);
+                    p.line(&[(15.0, 9.0), (9.0, 15.0)], warn);
+                }
+            }
         }
         // ---- part commands with an interface only (spec 2.0) ----
         Decal => {

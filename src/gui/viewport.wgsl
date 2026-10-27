@@ -9,10 +9,27 @@ struct Uniforms {
     // Slice Graphics: fragments with dot(clip.xyz, p) > clip.w are cut away;
     // clip.xyz = 0 disables it.
     clip: vec4<f32>,
+    // Section View's second plane (Quarter / Three Quarter); 0 = none.
+    clip2: vec4<f32>,
+    // x: monochrome faces, y: the two planes cut where either does
+    // (Three Quarter) instead of where both do (Quarter).
+    style: vec4<f32>,
 };
 
+fn cut_by(c: vec4<f32>, p: vec3<f32>) -> bool {
+    return dot(c.xyz, c.xyz) > 0.0 && dot(c.xyz, p) > c.w;
+}
+
 fn sliced(p: vec3<f32>) -> bool {
-    return dot(u.clip.xyz, u.clip.xyz) > 0.0 && dot(u.clip.xyz, p) > u.clip.w;
+    let a = cut_by(u.clip, p);
+    if (dot(u.clip2.xyz, u.clip2.xyz) == 0.0) {
+        return a;
+    }
+    let b = cut_by(u.clip2, p);
+    if (u.style.y > 0.5) {
+        return a || b;
+    }
+    return a && b;
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -55,7 +72,12 @@ fn fs_shaded(i: VsOut) -> @location(0) vec4<f32> {
     let ndv = abs(dot(n, v));
     let diffuse = 0.25 + 0.75 * ndv;
     let spec = 0.15 * pow(ndv, 48.0);
-    return vec4<f32>(to_gamma(i.color * diffuse + vec3<f32>(spec)), 1.0);
+    var col = i.color;
+    if (u.style.x > 0.5) {
+        // Monochrome: one light grey, the shading stays.
+        col = vec3<f32>(0.62);
+    }
+    return vec4<f32>(to_gamma(col * diffuse + vec3<f32>(spec)), 1.0);
 }
 
 // Back faces. In a valid closed solid they are always hidden behind front
@@ -80,6 +102,18 @@ fn fs_backface(i: VsOut) -> @location(0) vec4<f32> {
         return vec4<f32>(to_gamma(c), 1.0);
     }
     return vec4<f32>(to_gamma(vec3<f32>(0.75, 0.05, 0.05) * (0.3 + 0.7 * ndv)), 1.0);
+}
+
+// Hidden edges (behind faces): dashed in screen space, faded towards the
+// background.
+@fragment
+fn fs_hidden(i: VsOut) -> @location(0) vec4<f32> {
+    let k = (i.clip.x + i.clip.y) / 8.0;
+    let dash = abs(k - round(k)) * 8.0 < 2.5;
+    if (sliced(i.world) || dash) {
+        discard;
+    }
+    return vec4<f32>(to_gamma(mix(i.color, vec3<f32>(0.62, 0.64, 0.68), 0.6)), 1.0);
 }
 
 // Unlit: edges, axes, grid.

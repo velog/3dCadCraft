@@ -301,6 +301,14 @@ SHM Hem, SFO Fold, SBD Bend, SCR Contour Roll, SLF Lofted Flange, SRP Rip, SCT C
 Round, SCH Corner Chamfer, SPT Punch Tool, SUF Unfold, SRF Refold, SFP Flat Pattern, SFX Export Flat Pattern.
 🟡 waiting for a visual check.
 
+### Visual Style and Section View ([spec/0.3-view.md](spec/0.3-view.md) §3.4–3.5)
+
+View › Appearance › **Visual Style**: Shaded (VSS), Shaded with Edges (VSE), Shaded with Hidden Edges (VSH),
+Wireframe (VSW), Wireframe with Hidden Edges (VWH), Wireframe with Visible Edges Only (VWV), Monochrome (VSM).
+**Section View**: Quarter (QSV), Half (SVH), Three Quarter (TQS), End (NSV) — click a planar face, a work plane or
+an origin plane (a face selected before is taken), Offset, Flip Section, OK; the section stays until End Section
+View. 🟡 waiting for the owner's check.
+
 ### Decisions in fields and Suppress if ([spec/0.5-parameters.md](spec/0.5-parameters.md))
 
 `>` → **If...** in any value field, or the **if** button beside an equation in Parameters: build

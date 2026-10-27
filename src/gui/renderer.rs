@@ -37,6 +37,9 @@ pub struct SceneGeometry {
     tri_indices: Vec<u32>,
     line_vertices: Vec<u8>,
     line_vertex_count: u32,
+    /// Model edges (the visual style decides how they are drawn).
+    edge_vertices: Vec<u8>,
+    edge_vertex_count: u32,
     alpha_vertices: Vec<u8>,
     alpha_count: u32,
     alpha_indices: Vec<u32>,
@@ -142,12 +145,54 @@ impl SceneGeometry {
         self.line_vertex_count += 2;
     }
 
-    /// Adds a polyline as consecutive segments.
-    pub fn add_polyline(&mut self, pts: &[Point3], color: [f32; 3]) {
+    /// Adds a model edge (drawn, hidden or dashed by the visual style).
+    pub fn add_edge_polyline(&mut self, pts: &[Point3], color: [f32; 3]) {
         for w in pts.windows(2) {
-            self.add_line(&w[0], &w[1], color);
+            for p in [&w[0], &w[1]] {
+                push_vertex(&mut self.edge_vertices, p, &Vector3::zeros(), color);
+            }
+            self.edge_vertex_count += 2;
         }
     }
+}
+
+/// How the view draws the model (View › Visual Style).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewStyle {
+    /// Shaded faces.
+    pub faces: bool,
+    /// Faces only hide what is behind them (wireframe with hidden or
+    /// visible edges).
+    pub depth_only: bool,
+    /// Visible model edges.
+    pub edges: bool,
+    /// Hidden model edges, dashed and faint.
+    pub hidden_edges: bool,
+    /// One grey for every face.
+    pub monochrome: bool,
+}
+
+impl Default for ViewStyle {
+    /// Shaded with Edges.
+    fn default() -> Self {
+        Self {
+            faces: true,
+            depth_only: false,
+            edges: true,
+            hidden_edges: false,
+            monochrome: false,
+        }
+    }
+}
+
+/// A cut of the view by up to two planes (View › Section View): fragments
+/// with `n · p > w` are cut away; with two planes, where both cut
+/// (Quarter) or where either does (`union`: Three Quarter).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Cut {
+    pub a: Option<(Vector3, Real)>,
+    pub b: Option<(Vector3, Real)>,
+    pub union: bool,
 }
 
 fn push_vertex(buf: &mut Vec<u8>, p: &Point3, n: &Vector3, c: [f32; 3]) {
@@ -165,6 +210,8 @@ struct GpuGeometry {
     tri_index_count: u32,
     line_vbuf: Option<wgpu::Buffer>,
     line_vertex_count: u32,
+    edge_vbuf: Option<wgpu::Buffer>,
+    edge_vertex_count: u32,
     alpha_vbuf: Option<wgpu::Buffer>,
     alpha_ibuf: Option<wgpu::Buffer>,
     alpha_index_count: u32,
@@ -186,6 +233,10 @@ pub struct ViewportRenderer {
     shaded: wgpu::RenderPipeline,
     backfaces: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
+    /// Front faces into the depth buffer only (wireframe styles).
+    depth_faces: wgpu::RenderPipeline,
+    /// Edges behind faces, dashed (hidden-edge styles).
+    hidden_lines: wgpu::RenderPipeline,
     transparent: wgpu::RenderPipeline,
     threads: wgpu::RenderPipeline,
     uniform_buf: wgpu::Buffer,
@@ -220,7 +271,7 @@ impl ViewportRenderer {
 
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport uniforms"),
-            size: 96, // mat4x4<f32> + 2 × vec4<f32>
+            size: 128, // mat4x4<f32> + 4 × vec4<f32>
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -252,7 +303,14 @@ impl ViewportRenderer {
         });
 
         let attributes = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
-        let pipeline = |label, topology, cull_mode, fs: &str, bias: wgpu::DepthBiasState| {
+        let pipeline_ex = |label,
+                           topology,
+                           cull_mode,
+                           fs: &str,
+                           bias: wgpu::DepthBiasState,
+                           depth_write: bool,
+                           compare: wgpu::CompareFunction,
+                           write_mask: wgpu::ColorWrites| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),
@@ -274,8 +332,8 @@ impl ViewportRenderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    depth_write_enabled: Some(depth_write),
+                    depth_compare: Some(compare),
                     stencil: Default::default(),
                     bias,
                 }),
@@ -290,12 +348,24 @@ impl ViewportRenderer {
                     targets: &[Some(wgpu::ColorTargetState {
                         format: COLOR_FORMAT,
                         blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
+                        write_mask,
                     })],
                 }),
                 multiview_mask: None,
                 cache: None,
             })
+        };
+        let pipeline = |label, topology, cull_mode, fs: &str, bias: wgpu::DepthBiasState| {
+            pipeline_ex(
+                label,
+                topology,
+                cull_mode,
+                fs,
+                bias,
+                true,
+                wgpu::CompareFunction::LessEqual,
+                wgpu::ColorWrites::ALL,
+            )
         };
         // Push faces slightly back so edges drawn on them win the depth test,
         // and back faces much further back so that, where they meet front
@@ -321,6 +391,26 @@ impl ViewportRenderer {
             bias(16),
         );
         let lines = pipeline("lines", Topo::LineList, None, "fs_flat", Default::default());
+        let depth_faces = pipeline_ex(
+            "depth faces",
+            Topo::TriangleList,
+            Some(Face::Back),
+            "fs_shaded",
+            bias(2),
+            true,
+            wgpu::CompareFunction::LessEqual,
+            wgpu::ColorWrites::empty(),
+        );
+        let hidden_lines = pipeline_ex(
+            "hidden lines",
+            Topo::LineList,
+            None,
+            "fs_hidden",
+            Default::default(),
+            false,
+            wgpu::CompareFunction::Greater,
+            wgpu::ColorWrites::ALL,
+        );
         // See-through faces: blended over the opaque scene, depth-tested
         // but not written (faces behind stay visible), both sides.
         let alpha_attributes =
@@ -432,6 +522,8 @@ impl ViewportRenderer {
             shaded,
             backfaces,
             lines,
+            depth_faces,
+            hidden_lines,
             transparent,
             threads,
             uniform_buf,
@@ -476,6 +568,12 @@ impl ViewportRenderer {
                 wgpu::BufferUsages::VERTEX,
             ),
             line_vertex_count: g.line_vertex_count,
+            edge_vbuf: buffer(
+                "edge vertices",
+                &g.edge_vertices,
+                wgpu::BufferUsages::VERTEX,
+            ),
+            edge_vertex_count: g.edge_vertex_count,
             alpha_vbuf: buffer(
                 "alpha vertices",
                 &g.alpha_vertices,
@@ -509,7 +607,8 @@ impl ViewportRenderer {
         size: [u32; 2],
         view_proj: &Matrix4<Real>,
         eye: &Point3,
-        clip: Option<(Vector3, Real)>,
+        cut: Cut,
+        style: ViewStyle,
     ) -> egui::TextureId {
         let size = [size[0].max(1), size[1].max(1)];
         self.ensure_target(rs, size);
@@ -517,13 +616,17 @@ impl ViewportRenderer {
             return egui::TextureId::default();
         };
 
-        let mut uniforms = Vec::with_capacity(96);
-        let (cn, cw) = clip.unwrap_or((Vector3::zeros(), 0.0));
+        let mut uniforms = Vec::with_capacity(128);
+        let (cn, cw) = cut.a.unwrap_or((Vector3::zeros(), 0.0));
+        let (dn, dw) = cut.b.unwrap_or((Vector3::zeros(), 0.0));
+        let flag = |b: bool| if b { 1.0 } else { 0.0 };
         for v in view_proj
             .iter()
             .copied()
             .chain([eye.x, eye.y, eye.z, 1.0])
             .chain([cn.x, cn.y, cn.z, cw])
+            .chain([dn.x, dn.y, dn.z, dw])
+            .chain([flag(style.monochrome), flag(cut.union), 0.0, 0.0])
         {
             uniforms.extend_from_slice(&(v as f32).to_le_bytes()); // column-major, as WGSL expects
         }
@@ -568,17 +671,38 @@ impl ViewportRenderer {
                 if let (Some(vb), Some(ib)) = (&g.tri_vbuf, &g.tri_ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    for pipeline in [&self.shaded, &self.backfaces] {
+                    let faces: &[&wgpu::RenderPipeline] = if style.faces {
+                        &[&self.shaded, &self.backfaces]
+                    } else if style.depth_only {
+                        &[&self.depth_faces]
+                    } else {
+                        &[]
+                    };
+                    for pipeline in faces {
                         pass.set_pipeline(pipeline);
                         pass.draw_indexed(0..g.tri_index_count, 0, 0..1);
                     }
                 }
                 // Thread texture over the opaque faces, under the edges.
-                if let (Some(vb), Some(ib)) = (&g.thread_vbuf, &g.thread_ibuf) {
+                if let (Some(vb), Some(ib)) = (&g.thread_vbuf, &g.thread_ibuf)
+                    && style.faces
+                {
                     pass.set_pipeline(&self.threads);
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..g.thread_index_count, 0, 0..1);
+                }
+                // Model edges: the hidden ones (behind faces) first, dashed.
+                if let Some(vb) = &g.edge_vbuf {
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    if style.hidden_edges && (style.faces || style.depth_only) {
+                        pass.set_pipeline(&self.hidden_lines);
+                        pass.draw(0..g.edge_vertex_count, 0..1);
+                    }
+                    if style.edges {
+                        pass.set_pipeline(&self.lines);
+                        pass.draw(0..g.edge_vertex_count, 0..1);
+                    }
                 }
                 if let Some(vb) = &g.line_vbuf {
                     pass.set_pipeline(&self.lines);
@@ -586,7 +710,9 @@ impl ViewportRenderer {
                     pass.draw(0..g.line_vertex_count, 0..1);
                 }
                 // Transparent faces last, over everything opaque.
-                if let (Some(vb), Some(ib)) = (&g.alpha_vbuf, &g.alpha_ibuf) {
+                if let (Some(vb), Some(ib)) = (&g.alpha_vbuf, &g.alpha_ibuf)
+                    && style.faces
+                {
                     pass.set_pipeline(&self.transparent);
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);

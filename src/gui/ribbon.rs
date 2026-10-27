@@ -108,6 +108,10 @@ pub enum Action {
     /// A part command whose panel exists and whose logic comes later
     /// (`gui/part_planned.rs`, spec 2.0).
     PartPlanned(super::part_planned::PartPlanned),
+    /// View › Visual Style.
+    VisualStyle(super::view_style::VisualStyle),
+    /// View › Section View (Quarter / Half / Three Quarter / End).
+    SectionView(super::view_style::SectionKind),
     /// Revolve sketch regions around an axis.
     Revolve,
     /// Primitives: Box, Cylinder (sketch + Extrude), Sphere, Torus (sketch
@@ -1126,8 +1130,27 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             panel(
                 "Appearance",
                 vec![
-                    c("view.visual_style"),
-                    c("view.section"),
+                    split(
+                        "Visual Style",
+                        items(&[
+                            "view.vs_shaded",
+                            "view.visual_style",
+                            "view.vs_hidden_edges",
+                            "view.vs_wireframe",
+                            "view.vs_wire_hidden",
+                            "view.vs_wire_visible",
+                            "view.vs_monochrome",
+                        ]),
+                    ),
+                    split(
+                        "Section View",
+                        items(&[
+                            "view.section_quarter",
+                            "view.section",
+                            "view.section_three_quarter",
+                            "view.section_end",
+                        ]),
+                    ),
                     c("view.shadows").mini(),
                     c("view.reflections").mini(),
                     c("view.ground_plane").mini(),

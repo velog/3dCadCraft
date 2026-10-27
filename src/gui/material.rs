@@ -237,7 +237,7 @@ pub(super) fn add_part_meshes_at(
             g.add_mesh_transparent(&f.positions, &f.normals, tris, *c);
         }
         for edge in &mesh.edges {
-            g.add_polyline(edge, [0.02, 0.02, 0.04]);
+            g.add_edge_polyline(edge, [0.02, 0.02, 0.04]);
         }
     }
 }

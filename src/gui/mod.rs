@@ -92,6 +92,7 @@ mod sketch_tools;
 mod sm_planned;
 mod sweep;
 mod valuefield;
+mod view_style;
 mod viewcube;
 mod work;
 mod work_panel;
@@ -759,6 +760,10 @@ struct CadCraftApp {
     presets: presets::PresetUi,
     /// The open Face Draft command.
     draft_draft: Option<draft::DraftDraft>,
+    /// View › Visual Style.
+    visual_style: view_style::VisualStyle,
+    /// View › Section View: the view's cut (stays after its panel closes).
+    section: Option<view_style::Section>,
     /// The open panel of a part command whose logic comes later
     /// (`gui/part_planned.rs`, spec 2.0).
     part_planned: Option<part_planned::PartDialog>,
@@ -964,6 +969,8 @@ impl CadCraftApp {
             rib_draft: None,
             draft_draft: None,
             part_planned: None,
+            visual_style: Default::default(),
+            section: None,
             combine_draft: None,
             split_draft: None,
             pattern_draft: None,
@@ -3802,6 +3809,11 @@ impl CadCraftApp {
             | Action::SmCornerSeam
             | Action::SmPlanned(_) => self.sm_apply(action),
             Action::PartPlanned(k) => self.start_part_planned(k),
+            Action::VisualStyle(v) => {
+                self.visual_style = v;
+                self.file_status = Some(Ok(format!("Visual Style: {}", v.label())));
+            }
+            Action::SectionView(k) => self.section_command(k),
             Action::StartSketch => {
                 self.finish_sketch();
                 self.mode = Mode::PickPlane(PickPurpose::NewSketch);
@@ -4724,6 +4736,13 @@ impl CadCraftApp {
             self.rib_draft = None;
             self.draft_draft = None;
             self.part_planned = None;
+            // Esc closes the Section View panel; an unfinished section goes.
+            if let Some(s) = self.section.as_mut() {
+                s.editing = false;
+                if s.planes.len() < s.kind.planes() {
+                    self.section = None;
+                }
+            }
             self.close_body_cmds();
             self.pattern_draft = None;
             self.cancel_hole();
@@ -4960,7 +4979,8 @@ impl CadCraftApp {
         painter: &egui::Painter,
     ) {
         let scene = std::mem::take(&mut self.scene_dirty).then(|| self.build_scene());
-        let slice = self.slice_plane();
+        let cut = self.view_cut();
+        let style = self.visual_style.style();
         match (frame.wgpu_render_state(), self.renderer.as_mut()) {
             (Some(rs), Some(renderer)) => {
                 if let Some(scene) = scene {
@@ -4977,7 +4997,8 @@ impl CadCraftApp {
                     size,
                     &self.camera.view_projection(aspect),
                     &self.camera.eye(),
-                    slice,
+                    cut,
+                    style,
                 );
                 let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                 painter.image(tex, rect, uv, Color32::WHITE);
@@ -5164,6 +5185,14 @@ impl CadCraftApp {
         {
             self.body_cmd_pick(h);
         }
+        // Section View: its planes.
+        if self.section.as_ref().is_some_and(|s| s.editing)
+            && on_cube.is_none()
+            && response.clicked_by(PointerButton::Primary)
+            && let Some(p) = pointer
+        {
+            self.section_click(p, rect);
+        }
         // A planned part command: what its active selector takes
         // (`gui/part_planned.rs`).
         if self.part_planned.is_some()
@@ -5250,6 +5279,7 @@ impl CadCraftApp {
             && self.draft_draft.is_none()
             && !body_cmd
             && self.part_planned.is_none()
+            && !self.section.as_ref().is_some_and(|s| s.editing)
             && self.pattern_draft.is_none()
             && self.hole_draft.is_none()
             && self.thread_draft.is_none()

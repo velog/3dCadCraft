@@ -36,6 +36,7 @@ use super::part_planned::PartPlanned as Pp;
 use super::ribbon::Action;
 use super::sketch_tools::{ConstraintTool as Ct, Tool};
 use super::sm_planned::PlannedKind;
+use super::view_style::{SectionKind, VisualStyle};
 use super::viewcube::StandardView;
 use crate::command::matcher::{self, Fields, Folded, Query, Tier};
 use crate::drawing::dimset::SetKind;
@@ -430,6 +431,38 @@ const fn doc(id: &'static str, name: &'static str, bg: &'static str, icon: Icon)
     Command::new(id, name, bg, icon)
         .env(Envs::DOCUMENTS)
         .spec("0.6b-multi-document-files.md")
+}
+
+/// View › Visual Style `v`.
+const fn vs(
+    id: &'static str,
+    v: VisualStyle,
+    bg: &'static str,
+    icon: Icon,
+    alias: &'static [&'static str],
+) -> Command {
+    Command::new(id, v.label_const(), bg, icon)
+        .run(Action::VisualStyle(v))
+        .alias(alias)
+        .at(&[V_LOOK])
+        .tip("How the view draws faces and edges")
+        .spec("0.3-view.md")
+}
+
+/// View › Section View `k`.
+const fn sv(
+    id: &'static str,
+    k: SectionKind,
+    bg: &'static str,
+    icon: Icon,
+    alias: &'static [&'static str],
+) -> Command {
+    Command::new(id, k.label_const(), bg, icon)
+        .run(Action::SectionView(k))
+        .alias(alias)
+        .at(&[V_LOOK])
+        .tip("A live cut of the view by planes (faces, work or origin planes); it stays until End Section View")
+        .spec("0.3-view.md")
 }
 
 /// A part command whose panel exists and whose logic comes later
@@ -1469,13 +1502,17 @@ pub static COMMANDS: &[Command] = &[
         .at(&[V_NAV])
         .tip("Look from +X")
         .spec("0.3-view.md"),
-    c("view.visual_style", "Visual Style", "Визуален стил", Icon::VisualStyle)
-        .at(&[V_LOOK])
-        .todo("0.3"),
-    c("view.section", "Section View", "Изглед в разрез", Icon::Section)
-        .inv("Half Section View")
-        .at(&[V_LOOK])
-        .todo("0.3"),
+    vs("view.vs_shaded", VisualStyle::Shaded, "Засенчено", Icon::VsShaded, &["VSS"]),
+    vs("view.visual_style", VisualStyle::ShadedWithEdges, "Засенчено с ръбове", Icon::VisualStyle, &["VSE"]),
+    vs("view.vs_hidden_edges", VisualStyle::ShadedWithHiddenEdges, "Засенчено със скрити ръбове", Icon::VsHidden, &["VSH"]),
+    vs("view.vs_wireframe", VisualStyle::Wireframe, "Телен модел", Icon::VsWire, &["VSW"]),
+    vs("view.vs_wire_hidden", VisualStyle::WireframeWithHiddenEdges, "Телен модел със скрити ръбове", Icon::VsWireHidden, &["VWH"]),
+    vs("view.vs_wire_visible", VisualStyle::WireframeWithVisibleEdgesOnly, "Телен модел само с видими ръбове", Icon::VsWireVisible, &["VWV"]),
+    vs("view.vs_monochrome", VisualStyle::Monochrome, "Монохромно", Icon::VsMono, &["VSM"]),
+    sv("view.section_quarter", SectionKind::Quarter, "Разрез на четвърт", Icon::SectionQuarter, &["QSV"]),
+    sv("view.section", SectionKind::Half, "Разрез наполовина", Icon::Section, &["SVH"]),
+    sv("view.section_three_quarter", SectionKind::ThreeQuarter, "Разрез на три четвърти", Icon::SectionThreeQuarter, &["TQS"]),
+    sv("view.section_end", SectionKind::End, "Край на разреза", Icon::SectionEnd, &["NSV"]),
     c("view.orthographic", "Orthographic", "Ортогонална проекция", Icon::Ortho)
         .alias(&["NOR"])
         .run(Action::Projection(Projection::Orthographic))

@@ -1219,6 +1219,10 @@ impl CadCraftApp {
             self.part_planned_panel(ui);
             return;
         }
+        if self.section.as_ref().is_some_and(|s| s.editing) {
+            self.section_panel(ui);
+            return;
+        }
         if self.split_draft.is_some() {
             self.split_dialog(ui);
             return;
@@ -4810,6 +4814,10 @@ impl CadCraftApp {
                 }
                 (Mode::Normal, None) if self.combine_draft.is_some() || self.split_draft.is_some() => {
                     let text = self.command_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
+                (Mode::Normal, None) if self.section.as_ref().is_some_and(|s| s.editing) => {
+                    let text = self.section_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
                 (Mode::Normal, None) if self.part_planned.is_some() => {
