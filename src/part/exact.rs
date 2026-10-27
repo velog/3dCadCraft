@@ -1273,6 +1273,54 @@ fn face_contains(body: &BRep, f: crate::kernel::FaceId, q: Point3) -> bool {
     })
 }
 
+/// How far along `dir` from `o` a hole of radius `r` must go until its
+/// axis and its rim (16 points) have all met face `f` (its display
+/// triangles); `None` when none of them meets it ahead.
+fn curved_reach(
+    body: &BRep,
+    f: crate::kernel::FaceId,
+    o: Point3,
+    dir: crate::kernel::Vector3,
+    r: Real,
+) -> Option<Real> {
+    let m = body.face(f).and_then(|x| x.mesh.clone())?;
+    let d = dir.normalize();
+    let side = perpendicular(d);
+    let other = d.cross(&side);
+    let hit = |p: Point3| -> Option<Real> {
+        m.triangles
+            .iter()
+            .filter_map(|t| {
+                let [a, b, c] = t.map(|i| m.positions[i as usize]);
+                // Möller–Trumbore.
+                let (e1, e2) = (b - a, c - a);
+                let h = d.cross(&e2);
+                let det = e1.dot(&h);
+                if det.abs() < 1e-14 {
+                    return None;
+                }
+                let s = p - a;
+                let u = s.dot(&h) / det;
+                let q = s.cross(&e1);
+                let v = d.dot(&q) / det;
+                let t = e2.dot(&q) / det;
+                (u >= -1e-9 && v >= -1e-9 && u + v <= 1.0 + 1e-9 && t > 1e-9).then_some(t)
+            })
+            .fold(None, |acc: Option<Real>, t| {
+                Some(acc.map_or(t, |a| a.min(t)))
+            })
+    };
+    let mut far: Option<Real> = hit(o);
+    for k in 0..16 {
+        let a = std::f64::consts::TAU * k as Real / 16.0;
+        let p = o + (side * a.cos() + other * a.sin()) * r;
+        if let Some(t) = hit(p) {
+            far = Some(far.map_or(t, |x: Real| x.max(t)));
+        }
+    }
+    far
+}
+
 /// Whether the ring of radius `rad` about `c` (square to `dir`) lies on one
 /// planar face of `body` square to `dir` — where a 90° countersink can be the
 /// kernel's chamfer of the bore's rim.
@@ -1389,29 +1437,39 @@ pub(super) fn hole(
             Termination::To(fr) => {
                 let fid = super::shell::face_near(body, &fr.face, Point3::from(fr.hint))
                     .ok_or_else(|| User(format!("the face {} no longer exists", fr.face)))?;
-                let pl = match body.face(fid).and_then(|f| body.surface(f.surface)) {
-                    Some(crate::kernel::Surface::Plane(pl)) => pl.clone(),
-                    _ => {
-                        return Err(User(
-                            "a termination face that is not planar is not supported yet".into(),
-                        ));
+                match body.face(fid).and_then(|f| body.surface(f.surface)) {
+                    Some(crate::kernel::Surface::Plane(pl)) => {
+                        let nrm = pl.normal.into_inner();
+                        let den = dir.dot(&nrm);
+                        if den.abs() < 1e-9 {
+                            return Err(User(
+                                "the termination face is parallel to the hole".into(),
+                            ));
+                        }
+                        let d = (pl.origin - o).dot(&nrm) / den;
+                        if !(d.is_finite() && d > 1e-6) {
+                            return Err(User(
+                                "the termination face is not ahead of the hole".into(),
+                            ));
+                        }
+                        if !spec.extend_to && !face_contains(body, fid, *o + *dir * d) {
+                            return Err(User(
+                                "the hole does not reach the termination face (turn Extend To on)"
+                                    .into(),
+                            ));
+                        }
+                        (d, false)
                     }
-                };
-                let nrm = pl.normal.into_inner();
-                let den = dir.dot(&nrm);
-                if den.abs() < 1e-9 {
-                    return Err(User("the termination face is parallel to the hole".into()));
+                    _ => {
+                        // A curved face (a bore, a shaft): the hole goes on
+                        // until its whole section has met the face, so it
+                        // breaks fully through into the space beyond it.
+                        let d = curved_reach(body, fid, *o, *dir, r_bore).ok_or_else(|| {
+                            User("the hole does not reach the termination face".into())
+                        })?;
+                        (d + (0.02 * r_bore).max(1e-4 * size), false)
+                    }
                 }
-                let d = (pl.origin - o).dot(&nrm) / den;
-                if !(d.is_finite() && d > 1e-6) {
-                    return Err(User("the termination face is not ahead of the hole".into()));
-                }
-                if !spec.extend_to && !face_contains(body, fid, *o + *dir * d) {
-                    return Err(User(
-                        "the hole does not reach the termination face (turn Extend To on)".into(),
-                    ));
-                }
-                (d, false)
             }
         };
         // A bore whose wall reaches the far side of the body (a blind depth

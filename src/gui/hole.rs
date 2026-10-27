@@ -449,6 +449,12 @@ impl CadCraftApp {
         face: Option<(FaceId, Point3)>,
     ) -> Option<HolePick> {
         let part = self.part();
+        // Termination To: any face, planar or curved (a bore, a shaft).
+        if self.hole_draft.as_ref().is_some_and(|d| d.to_pick) {
+            let (f, at) = face?;
+            let name = part.body.face(f).and_then(|x| x.name.clone())?;
+            return Some(HolePick::Face(name, at));
+        }
         // Points of visible sketches (not their projected references).
         let mut best: Option<(f32, HolePick)> = None;
         let sketch_on = self.cat_on(crate::command::selection::Category::SketchEntity);

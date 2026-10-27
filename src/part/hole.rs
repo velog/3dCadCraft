@@ -897,9 +897,13 @@ impl HoleSpec {
     pub fn note_lines(&self, digits: usize) -> Vec<String> {
         let n = |x: Real| num(x, digits);
         let through = self.termination == Termination::ThroughAll;
+        // A hole To a face has no depth of its own to write.
+        let to_face = matches!(self.termination, Termination::To(_));
         let depth_text = |d: Real| {
             if through {
                 " THRU".to_owned()
+            } else if to_face {
+                String::new()
             } else {
                 format!(" ↧ {}", n(d))
             }
@@ -919,6 +923,8 @@ impl HoleSpec {
                     t.note(),
                     if thread_through {
                         " THRU".to_owned()
+                    } else if to_face && t.full_depth {
+                        String::new()
                     } else {
                         format!(" ↧ {}", n(len))
                     }

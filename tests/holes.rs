@@ -1291,3 +1291,96 @@ fn taper_tapped_holes() {
     }
     assert!(bad.validate().is_err());
 }
+
+// ------------------------------------------------------ to a curved face ---
+
+/// To a cylindrical face: a Ø4 hole from the top of a box down to the wall
+/// of a Ø10 bore running across it goes on until its whole section has met
+/// the bore (it breaks fully through, no ridge left); the volume lies
+/// between the two depths of the meeting.
+#[test]
+fn to_a_curved_face_breaks_through() {
+    use cadcraft3d::part::FaceRef;
+    let mut part = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let face_z = |part: &PartDocument, name: &str| {
+        part.body
+            .faces()
+            .find(|(_, f)| f.name.as_deref() == Some(name))
+            .and_then(|(_, f)| f.mesh.as_ref().map(|m| m.positions[0]))
+            .unwrap()
+    };
+    let y0 = face_z(&part, "Box1:Front").y;
+    // The bore: Ø10 through, along the box's depth, 8 mm above its bottom.
+    let mut lo = [f64::MAX; 3];
+    let mut hi = [f64::MIN; 3];
+    for (_, f) in part.body.faces() {
+        if let Some(m) = &f.mesh {
+            for q in &m.positions {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(q[k]);
+                    hi[k] = hi[k].max(q[k]);
+                }
+            }
+        }
+    }
+    let cx = (lo[0] + hi[0]) / 2.0;
+    let zc = lo[2] + 8.0;
+    let (i, ids) = part
+        .create_hole_sketch("Box1:Front", &[Point3::new(cx, y0, zc)])
+        .unwrap();
+    let mut bore = HoleFeature::new(HoleSpec {
+        termination: Termination::ThroughAll,
+        ..HoleSpec::simple(10.0, 10.0)
+    });
+    bore.sketch = part.sketches[i].id.clone();
+    bore.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(bore).unwrap();
+    let wall = part
+        .body
+        .faces()
+        .find(|(_, f)| {
+            f.name
+                .as_deref()
+                .is_some_and(|n| n.starts_with("Hole1:Bore"))
+                && f.mesh
+                    .as_ref()
+                    .is_some_and(|m| m.positions.iter().any(|q| q.z > zc + 4.9))
+        })
+        .map(|(_, f)| f.name.clone().unwrap_or_default())
+        .expect("the bore's wall");
+    let before = volume(&part);
+    // The Ø4 hole from the top to the bore's wall.
+    let yc = (lo[1] + hi[1]) / 2.0;
+    let (i, ids) = part
+        .create_hole_sketch("Box1:Top", &[Point3::new(cx, yc, hi[2])])
+        .unwrap();
+    let mut h = HoleFeature::new(HoleSpec {
+        termination: Termination::To(FaceRef {
+            face: wall,
+            hint: [cx, yc, zc + 5.0],
+        }),
+        ..HoleSpec::simple(4.0, 10.0)
+    });
+    h.sketch = part.sketches[i].id.clone();
+    h.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(h).unwrap();
+    assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+    let removed = before - volume(&part);
+    // From the top (z = hi) to the bore's top (zc + 5) on the axis, and to
+    // where the rim meets it (zc + sqrt(25 − 4)) at the most.
+    let d_axis = hi[2] - (zc + 5.0);
+    let d_rim = hi[2] - (zc + (25.0f64 - 4.0).sqrt());
+    let area = PI * 4.0;
+    assert!(
+        removed > area * d_axis * 0.999,
+        "{removed} vs {}",
+        area * d_axis
+    );
+    assert!(
+        removed < area * d_rim * 1.001,
+        "{removed} vs {}",
+        area * d_rim
+    );
+    // Its note has no depth: the face ends it.
+    assert_eq!(part.holes().last().unwrap().spec.note(), "Ø4");
+}

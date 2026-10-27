@@ -125,8 +125,8 @@ const TABLE: &[(&str, &str)] = &[
         "Adjust: изберете стени, операции или тела (списъкът Select определя кои), изберете вид или цвят, после Apply",
     ),
     (
-        "Hole: click the planar face where the hole ends",
-        "Hole: щракнете плоската стена, в която свършва отворът",
+        "Hole: click the face where the hole ends (planar or curved)",
+        "Hole: щракнете стената, в която свършва отворът (плоска или крива)",
     ),
     (
         "Hole: change the options, then OK (the centres are edited in the hole's sketch)",
