@@ -432,6 +432,9 @@ pub struct SketchTools {
     pub selected: Vec<EntityId>,
     /// Selected constraints (glyphs or dimensions picked in the window).
     pub selected_constraints: Vec<crate::sketch::ConstraintId>,
+    /// Selected points that no curve uses (Center Points of holes, sketch
+    /// points): Delete removes them.
+    pub selected_points: Vec<crate::sketch::PointId>,
     pub dim_edit: Option<DimEdit>,
     pub over_prompt: Option<OverPrompt>,
     /// Offset options (Inventor: right-click → Loop Select / Constrain Offset).
@@ -507,6 +510,7 @@ impl Default for SketchTools {
             center_point: false,
             selected: Vec::new(),
             selected_constraints: Vec::new(),
+            selected_points: Vec::new(),
             dim_edit: None,
             over_prompt: None,
             offset_loop: true,
@@ -2954,6 +2958,13 @@ pub fn format_value(v: Real, is_angle: bool) -> String {
 fn dimension_from(sk: &Sketch, picks: &[Pick], place: Point2) -> Result<Constraint, String> {
     let is = |s: Snap, f: fn(&Entity) -> bool| matches!(s, Snap::OnEntity(e) if sk.entity(e).is_some_and(f));
     let centerline = |s: Snap| matches!(s, Snap::OnEntity(e) if sk.entity(e).is_some_and(Entity::is_line) && sk.style(e) == Style::Centerline);
+    let center_of = |s: Snap| match s {
+        Snap::OnEntity(e) => match sk.entity(e) {
+            Some(Entity::Circle { center, .. } | Entity::Arc { center, .. }) => Some(*center),
+            _ => None,
+        },
+        _ => None,
+    };
     // To a centerline, placed on its far side: a diametric dimension (the
     // diameter a revolve gives), else a radial one.
     let to_axis = |p: PointId, axis: EntityId| -> Option<Constraint> {
@@ -3052,6 +3063,29 @@ fn dimension_from(sk: &Sketch, picks: &[Pick], place: Point2) -> Result<Constrai
                         value,
                         supplement,
                     }
+                }
+            }
+            // A circle or arc with a point, a line or another circle:
+            // measured to its centre (Inventor's default).
+            (sa, sb) if center_of(sa).is_some() || center_of(sb).is_some() => {
+                let as_point = |s: Snap| match s {
+                    Snap::Point(p) => Some(p),
+                    _ => center_of(s),
+                };
+                let line = |s: Snap| match s {
+                    Snap::OnEntity(l) if sk.entity(l).is_some_and(Entity::is_line) => Some(l),
+                    _ => None,
+                };
+                match (as_point(sa), as_point(sb), line(sa), line(sb)) {
+                    (Some(p), _, _, Some(l)) | (_, Some(p), Some(l), _) => {
+                        Constraint::PointLineDistance {
+                            point: p,
+                            line: l,
+                            value: 1.0,
+                        }
+                    }
+                    (Some(p), Some(q), _, _) if p != q => distance_by_placement(sk, p, q, place),
+                    _ => return Err("This selection cannot be dimensioned".into()),
                 }
             }
             _ => return Err("This selection cannot be dimensioned".into()),
@@ -3711,6 +3745,43 @@ mod tests {
             );
             assert_eq!(ps.sketch.constraints().count(), 1);
         }
+    }
+
+    #[test]
+    fn dimension_to_a_circle_measures_to_its_centre() {
+        // A hole's centre to a projected round edge (owner's sheet metal
+        // hole sketch): it was "This selection cannot be dimensioned".
+        let mut ps = sketch();
+        let c = ps.sketch.add_circle(Point2::new(0.0, 0.0), 3.0).unwrap();
+        let d = ps.sketch.add_circle(Point2::new(20.0, 0.0), 2.0).unwrap();
+        let l = ps
+            .sketch
+            .add_line(Point2::new(-10.0, 15.0), Point2::new(30.0, 15.0));
+        let p = ps.sketch.add_point(Point2::new(5.0, 10.0));
+        let pick = |snap| Pick {
+            pos: Point2::origin(),
+            snap,
+            infer: None,
+            align: Align::default(),
+        };
+        let measure = |picks: [Pick; 2]| {
+            let mut sk = ps.sketch.clone();
+            let c = dimension_from(&sk, &picks, Point2::new(40.0, 40.0)).unwrap();
+            let id = sk.add_constraint(c).unwrap();
+            sk.measure(id).unwrap()
+        };
+        let p_c = measure([pick(Snap::Point(p)), pick(Snap::OnEntity(c))]);
+        assert!(p_c > 0.0 && p_c <= 125.0_f64.sqrt() + 1e-9, "{p_c}");
+        assert_relative_eq!(
+            measure([pick(Snap::OnEntity(c)), pick(Snap::OnEntity(l))]),
+            15.0
+        );
+        assert_relative_eq!(
+            measure([pick(Snap::OnEntity(l)), pick(Snap::OnEntity(d))]),
+            15.0
+        );
+        let c_d = measure([pick(Snap::OnEntity(c)), pick(Snap::OnEntity(d))]);
+        assert!(c_d > 0.0 && c_d <= 20.0 + 1e-9, "{c_d}");
     }
 
     #[test]

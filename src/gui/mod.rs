@@ -1196,6 +1196,11 @@ impl CadCraftApp {
         }
         self.tab = Tab::Sketch;
         self.tools.set_tool(Tool::Select);
+        // A hole's sketch: new points are Center Points (the hole takes
+        // them at Finish Sketch, `hole_takes_new_centers`).
+        if self.hole_of_sketch(i).is_some() {
+            self.tools.center_point = true;
+        }
         self.part_mut().sketches[i].visible = true;
         if self.sketch_opts.look_at_on_create {
             self.look_at_sketch(i);
@@ -1221,7 +1226,8 @@ impl CadCraftApp {
         // model on Finish Sketch). Without this the body stayed as it was
         // until Rebuild All, and the session journal recorded that stale
         // body after every edit in the sketch (the replay then "differed").
-        if self.editing.take().is_some() {
+        if let Some(i) = self.editing.take() {
+            self.hole_takes_new_centers(i);
             if let Err(e) = self.part_mut().regenerate() {
                 self.file_status = Some(Err(e.to_string()));
             }
@@ -4563,7 +4569,8 @@ impl CadCraftApp {
         let Some(i) = self.editing else { return };
         let selected = std::mem::take(&mut self.tools.selected);
         let constraints = std::mem::take(&mut self.tools.selected_constraints);
-        if selected.is_empty() && constraints.is_empty() {
+        let points = std::mem::take(&mut self.tools.selected_points);
+        if selected.is_empty() && constraints.is_empty() && points.is_empty() {
             return;
         }
         // Inventor: copies of a pattern are not deleted one by one.
@@ -4591,6 +4598,15 @@ impl CadCraftApp {
         }
         for c in constraints {
             let _ = ps.sketch.remove_constraint(c);
+        }
+        // Lone points (with their constraints); a projected one is a
+        // reference and goes with its link.
+        for p in points {
+            if ps.is_projected(p) {
+                let _ = ps.delete_reference(crate::part::RefTarget::Point(p));
+            } else {
+                let _ = ps.sketch.remove_point(p);
+            }
         }
         for e in selected {
             if ps.link_of(crate::part::RefTarget::Curve(e)).is_some() {
@@ -4892,6 +4908,7 @@ impl CadCraftApp {
                 self.tools.escape();
             } else {
                 self.tools.selected.clear();
+                self.tools.selected_points.clear();
             }
             self.mode = Mode::Normal;
             self.cancel_extrude();
@@ -5980,7 +5997,29 @@ impl CadCraftApp {
                 if !shift_held {
                     self.tools.selected_constraints.clear();
                 }
+                // A point no curve uses (a hole's Center Point) is selected
+                // on its own; Delete removes it (and its hole).
+                let lone = hovered.filter(|&p| {
+                    in_sketch.is_some_and(|i| {
+                        let sk = &self.part().sketches[i].sketch;
+                        !sk.entities().any(|(_, x)| x.points().contains(&p))
+                    })
+                });
+                if !shift_held {
+                    self.tools.selected_points.clear();
+                }
                 match hovered_entity {
+                    _ if let Some(p) = lone => {
+                        if !shift_held {
+                            self.tools.selected.clear();
+                        }
+                        let sel = &mut self.tools.selected_points;
+                        if let Some(k) = sel.iter().position(|&x| x == p) {
+                            sel.remove(k);
+                        } else {
+                            sel.push(p);
+                        }
+                    }
                     Some(e) => {
                         if !shift_held {
                             self.tools.selected.clear();
@@ -6796,6 +6835,11 @@ impl CadCraftApp {
                 },
                 show_labels: (active || (profile_sketch && self.editing.is_none()))
                     && self.show_labels,
+                selected_points: if active {
+                    self.tools.selected_points.clone()
+                } else {
+                    Vec::new()
+                },
                 highlighted: if active {
                     self.dragging.or(hovered)
                 } else {

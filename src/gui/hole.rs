@@ -1010,6 +1010,41 @@ impl CadCraftApp {
         }
     }
 
+    /// The one Hole feature placed by points of sketch `i`.
+    pub(super) fn hole_of_sketch(&self, i: usize) -> Option<usize> {
+        let id = &self.part().sketches.get(i)?.id;
+        let mut holes = self.part().features.iter().enumerate().filter(|(_, f)| {
+            matches!(f, Feature::Hole(h) if &h.sketch == id
+                && h.centers.iter().any(|c| matches!(c, HoleCenter::Point(_))))
+        });
+        let (k, _) = holes.next()?;
+        holes.next().is_none().then_some(k)
+    }
+
+    /// Finish Sketch of a hole's sketch opened on its own (browser, Edit
+    /// Sketch): Center Points added there become centres of that hole, as
+    /// the panel does when it comes back (`resume_hole`). Deleted centre
+    /// points remove their holes by themselves.
+    pub(super) fn hole_takes_new_centers(&mut self, i: usize) {
+        if self.hole_return.is_some() {
+            return; // the panel opens again and takes them
+        }
+        let Some(k) = self.hole_of_sketch(i) else {
+            return;
+        };
+        let Some(Feature::Hole(h)) = self.part().features.get(k) else {
+            return;
+        };
+        let new = new_center_points(self.part(), h);
+        if new.is_empty() {
+            return;
+        }
+        self.checkpoint("Hole");
+        if let Some(Feature::Hole(h)) = self.part_mut().features.get_mut(k) {
+            h.centers.extend(new.into_iter().map(HoleCenter::Point));
+        }
+    }
+
     /// **Edit Sketch** of Hole feature `k` (browser menu, breadcrumb).
     pub(super) fn edit_hole_sketch(&mut self, k: usize) {
         let Some(id) = self

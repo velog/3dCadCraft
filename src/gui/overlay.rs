@@ -43,6 +43,8 @@ pub struct SketchStyle {
     pub highlighted: Option<PointId>,
     /// Entities to highlight (selected or hovered).
     pub selected: Vec<EntityId>,
+    /// Selected points (a Center Point on its own).
+    pub selected_points: Vec<PointId>,
 }
 
 /// Projects a sketch-plane point to the screen.
@@ -207,7 +209,10 @@ pub fn draw_sketch(
         let Some(s) = to_screen(p.position) else {
             continue;
         };
-        if Some(id) == style.highlighted || hot_points.contains(&id) {
+        if Some(id) == style.highlighted
+            || hot_points.contains(&id)
+            || style.selected_points.contains(&id)
+        {
             painter.circle_filled(s, 6.0, HIGHLIGHT);
         } else if ps.is_projected(id) {
             painter.rect_filled(

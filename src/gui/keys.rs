@@ -176,7 +176,8 @@ impl CadCraftApp {
             flow: self.flow_command_open(),
             sketch_tool: self.editing.is_some()
                 && self.tools.tool != super::sketch_tools::Tool::Select,
-            sketch_selection: self.editing.is_some() && !self.tools.selected.is_empty(),
+            sketch_selection: self.editing.is_some()
+                && !(self.tools.selected.is_empty() && self.tools.selected_points.is_empty()),
         }
     }
 }

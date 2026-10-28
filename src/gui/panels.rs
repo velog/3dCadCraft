@@ -4533,11 +4533,18 @@ impl CadCraftApp {
             ));
             ui.toggle_value(&mut self.show_dof, "Show All Degrees of Freedom");
         }
-        if !self.tools.selected.is_empty() || !self.tools.selected_constraints.is_empty() {
+        if !self.tools.selected.is_empty()
+            || !self.tools.selected_constraints.is_empty()
+            || !self.tools.selected_points.is_empty()
+        {
             ui.separator();
             ui.horizontal(|ui| {
+                let points = match self.tools.selected_points.len() {
+                    0 => String::new(),
+                    n => format!("{n} point(s), "),
+                };
                 ui.label(format!(
-                    "{} curve(s), {} constraint(s) selected",
+                    "{points}{} curve(s), {} constraint(s) selected",
                     self.tools.selected.len(),
                     self.tools.selected_constraints.len()
                 ));
