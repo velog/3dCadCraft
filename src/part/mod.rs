@@ -1513,7 +1513,7 @@ impl PartDocument {
                                         && profile_on_references(e, ps) =>
                                 {
                                     let overlap = (e.distance.abs() * 1e-3).clamp(1e-3, 0.05);
-                                    exact::extrude_from(e, &body, &works, &ps.sketch, overlap)
+                                    exact::extrude_from(e, &body, &works, &ps.sketch, overlap, 0.0)
                                 }
                                 Sweep::Extrude(e) => exact::extrude(e, &body, &works, &ps.sketch),
                                 Sweep::Revolve(r) => exact::revolve(r, &body, &works, &ps.sketch),
@@ -1547,7 +1547,30 @@ impl PartDocument {
                                                 return Ok(false);
                                             };
                                             let overlap = (e.distance.abs() * 1e-3).clamp(1e-3, 0.05);
-                                            match exact::extrude_from(e, &body, &works, &ps.sketch, overlap) {
+                                            match exact::extrude_from(e, &body, &works, &ps.sketch, overlap, 0.0) {
+                                                Ok(Some(again)) => exact::combine(solids.clone(), again, op, chosen, false)
+                                                    .map(Some)
+                                                    .map_err(|_| exact::Fail::Kernel(msg)),
+                                                _ => Err(exact::Fail::Kernel(msg)),
+                                            }
+                                        }
+                                        // A Cut whose walls are the body's own
+                                        // walls (every curve of the profile
+                                        // projected or fixed: Project Cut
+                                        // Edges of a section, holes and all)
+                                        // found no result: again with the
+                                        // profile grown past those walls into
+                                        // the air, by more than the kernel's
+                                        // tolerance (0.01 mm on a 100 mm plate
+                                        // still failed; owner's Test2, 10-27).
+                                        Err(exact::Fail::Kernel(msg))
+                                            if op == Operation::Cut
+                                                && let Sweep::Extrude(e) = sweep
+                                                && profile_all_projected(e, ps) =>
+                                        {
+                                            let size = body.bounding_box().map_or(100.0, |(lo, hi)| (hi - lo).amax());
+                                            let grow = (size * 5e-4).clamp(0.01, 0.1);
+                                            match exact::extrude_from(e, &body, &works, &ps.sketch, 0.0, grow) {
                                                 Ok(Some(again)) => exact::combine(solids.clone(), again, op, chosen, false)
                                                     .map(Some)
                                                     .map_err(|_| exact::Fail::Kernel(msg)),
@@ -3106,6 +3129,35 @@ fn profile_on_references(e: &ExtrudeFeature, ps: &PartSketch) -> bool {
                     .any(|x| ps.is_reference(x.source))
         })
     })
+}
+
+/// Whether every curve of every loop of the feature's profiles is projected
+/// or fixed (a region of Project Cut Edges or of a face's outline).
+fn profile_all_projected(e: &ExtrudeFeature, ps: &PartSketch) -> bool {
+    let sk = &ps.sketch;
+    let fixed = |c: crate::sketch::EntityId| {
+        ps.is_reference(c)
+            || sk.entity(c).is_some_and(|x| {
+                x.points()
+                    .iter()
+                    .all(|&p| sk.point(p).is_some_and(|q| q.fixed))
+                    && (!matches!(x, crate::sketch::Entity::Circle { .. }) || sk.is_radius_fixed(c))
+            })
+    };
+    let regions = sk.regions();
+    !e.profiles.is_empty()
+        && e.profiles.iter().all(|pr| {
+            regions.iter().any(|r| {
+                let mut outer: Vec<_> = r.outer.edges.iter().map(|x| x.source).collect();
+                outer.sort();
+                outer.dedup();
+                outer == pr.sources
+                    && std::iter::once(&r.outer)
+                        .chain(&r.holes)
+                        .flat_map(|l| &l.edges)
+                        .all(|x| fixed(x.source))
+            })
+        })
 }
 
 /// Removes all projected points (and, by cascade, reference lines and

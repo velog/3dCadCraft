@@ -1115,6 +1115,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   face edges starts its tool a hair inside the body (`exact::extrude_from`; flush walls took the kernel 22 s
   to fail); other joins keep their exact tools — old files' face names depend on it. Two regions bounded by
   the same curves (crescents) are told apart by the profile's seed (`ProfileRef::resolve`).
+  A Cut whose every curve is projected or fixed (a section from Project Cut Edges, holes included) has the
+  body's own walls as its walls: when the kernel finds no result it is retried with the profile grown by
+  size·5e-4 into the air (`extrude_from`'s `grow`; 0.01 mm on a 100 mm plate still failed — owner's Test2).
 - **Body operations return the surface bodies themselves**: `build_features` puts the sheets back after every
   step *except* a `BodyOp` (Delete Face changes or makes one); a new `BodyOp` must append the untouched sheets
   (`thicken` does). Delete Face (`part/exact.rs::delete_face`, `kernel/exact/delete_face.rs`): Heal only over

@@ -51,7 +51,8 @@ import time
 import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXE = os.path.join(ROOT, 'target', 'debug', '3dcadcraft.exe')
+# CARGO_TARGET_DIR: a worktree building into its own target directory.
+EXE = os.path.join(os.environ.get('CARGO_TARGET_DIR') or os.path.join(ROOT, 'target'), 'debug', '3dcadcraft.exe')
 LOG = os.path.join(ROOT, 'target', 'gui-test.log')
 PID = os.path.join(ROOT, 'target', 'gui-test.pid')
 PROFILE = os.path.join(ROOT, 'target', 'gui-profile')
@@ -282,7 +283,7 @@ def write_png(path, w, hgt, bgra, crop=None, scale=1):
 
 
 def launch(args):
-    size, envs, rest, profile = (1400, 900), {}, [], PROFILE
+    size, envs, rest, profile, beside = (1400, 900), {}, [], PROFILE, False
     while args:
         a = args.pop(0)
         if a == '--':
@@ -293,12 +294,16 @@ def launch(args):
             size = None if s == 'none' else tuple(int(v) for v in s.lower().split('x'))
         elif a == '--profile':
             profile = args.pop(0)
+        elif a == '--beside':
+            # Another 3DCadCraft window (the user's) may stay open: input is sent only while
+            # the launched window is in front (`drive` checks before every step).
+            beside = True
         else:
             k, _, v = a.partition('=')
             envs[k] = v
     if not os.path.exists(EXE):
         raise SystemExit(f'{EXE} not found: run `cargo build` first')
-    if windows():
+    if windows() and not beside:
         raise SystemExit('a 3DCadCraft window is already open: close it or `gui_win.py kill`')
     env = dict(os.environ, RUST_LOG='warn')
     if profile == PROFILE:
@@ -374,6 +379,10 @@ def drive(h, args):
         focus(h)
     while args:
         c = args.pop(0)
+        if c not in ('shot', 'info', 'sleep') and user32.GetForegroundWindow() != h:
+            focus(h)
+            if user32.GetForegroundWindow() != h:
+                raise SystemExit(f'window {h} is not in front: input stopped before `{c}`')
         if c == 'move':
             move(args.pop(0), args.pop(0))
         elif c == 'click':

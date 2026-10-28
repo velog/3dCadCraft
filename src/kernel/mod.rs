@@ -43,7 +43,7 @@ mod query;
 mod revolve;
 pub mod smooth;
 
-pub use extrude::{ExtrudeLevel, ProfileSegment, Segment2};
+pub use extrude::{ExtrudeLevel, ProfileSegment, Segment2, offset_loop};
 pub use facet::{BoolOp, FaceTag};
 pub use mesh::{SolidMesh, TessellationOptions, TriangleMesh, triangulate_with_holes};
 pub use revolve::RevolveAxis;

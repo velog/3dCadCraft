@@ -372,3 +372,54 @@ fn a_lip_flush_with_the_lids_outline_joins_exactly() {
     let names: Vec<String> = p.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
     assert!(names.contains(&format!("{id}:End")), "{names:?}");
 }
+
+#[test]
+fn a_cut_of_a_whole_section_from_projected_cut_edges_stays_exact() {
+    // The owner's plate with holes (session 2026-10-27, Test2): a work plane
+    // through its middle, a sketch on it with Project Cut Edges (the section
+    // outline and the holes' circles) and that region cut 10 mm. The tool's
+    // walls are the plate's own walls and the holes' walls: the kernel's Cut
+    // found no result and the whole part went faceted (and not watertight).
+    let pr = cadcraft3d::document::Project::load(std::path::Path::new(
+        "tests/data/cut_edges_section_cut.3dcadcraft",
+    ))
+    .unwrap();
+    let mut p = pr
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            cadcraft3d::document::DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    p.regenerate().unwrap();
+    assert!(p.exact);
+    let v0 = p.exact_bodies.0[0].volume_at(1e-4).unwrap();
+    let j = p.sketches.iter().position(|s| s.id == "Sketch6").unwrap();
+    let regions = p.sketches[j].sketch.regions();
+    let profiles = cadcraft3d::part::extrude::default_profiles(&p.sketches[j], &regions);
+    assert_eq!(profiles.len(), 1);
+    let area: Real = regions.iter().map(|r| r.area()).fold(0.0, Real::max);
+    let mut f = ExtrudeFeature::new(profiles, 10.0);
+    f.operation = Operation::Cut;
+    let t = std::time::Instant::now();
+    p.add_extrude(j, f).unwrap();
+    let took = t.elapsed();
+    assert!(p.exact, "exact kernel");
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    assert!(took.as_secs_f64() < 10.0, "{took:?}");
+    let v1 = p
+        .exact_bodies
+        .0
+        .iter()
+        .filter_map(|s| s.volume_at(1e-4))
+        .sum::<Real>();
+    // The section is the same from z = 11 down to 1 but where blind holes
+    // end inside it (the columns under the holes stay, as in the profile).
+    let removed = v0 - v1;
+    eprintln!("removed {removed} vs {} ({took:?})", 10.0 * area);
+    assert!(
+        (removed - 10.0 * area).abs() < 1e-3 * 10.0 * area,
+        "removed {removed}"
+    );
+}

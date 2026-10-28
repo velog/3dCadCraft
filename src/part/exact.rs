@@ -49,20 +49,24 @@ pub(super) fn extrude(
     works: &super::placement::WorkGeom,
     sketch: &Sketch,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
-    extrude_from(e, body, works, sketch, 0.0)
+    extrude_from(e, body, works, sketch, 0.0, 0.0)
 }
 
 /// [`extrude`] whose tools start `overlap` behind the start level (away
 /// from the extrusion): a Join whose tool only touches the body on a face
 /// (a lip on a rim, its wall flush with the body's wall) gives the kernel's
 /// Boolean nothing to intersect ("no result"); reaching a little into the
-/// body it does, and the result is the same solid.
+/// body it does, and the result is the same solid. `grow` offsets every
+/// loop of the profile outward (holes shrink): a Cut whose walls are the
+/// body's own walls (a section from Project Cut Edges) reaches a little into
+/// the air beyond them.
 pub(super) fn extrude_from(
     e: &ExtrudeFeature,
     body: &BRep,
     works: &super::placement::WorkGeom,
     sketch: &Sketch,
     overlap: Real,
+    grow: Real,
 ) -> Result<Option<Vec<ExactSolid>>, Fail> {
     if e.output == Output::Surface {
         return extrude_surface(e, body, works, sketch);
@@ -71,7 +75,21 @@ pub(super) fn extrude_from(
     let mut out = Vec::new();
     for piece in e.pieces(body, works, sketch).map_err(User)? {
         let levels = &piece.span.levels;
-        let prof = exact::profile(&piece.outer, &piece.holes).map_err(Kernel)?;
+        let prof = if grow != 0.0 {
+            let grown = |l: &[crate::kernel::ProfileSegment]| {
+                crate::kernel::offset_loop(l, grow).map_err(|x| Kernel(x.to_string()))
+            };
+            let outer = grown(&piece.outer)?;
+            let holes = piece
+                .holes
+                .iter()
+                .map(|h| grown(h))
+                .collect::<Result<Vec<_>, _>>()?;
+            exact::profile(&outer, &holes)
+        } else {
+            exact::profile(&piece.outer, &piece.holes)
+        }
+        .map_err(Kernel)?;
         let (first, last) = match (levels.first(), levels.last()) {
             (Some(a), Some(b)) => (a, b),
             _ => return Err(User("the extrusion has no depth".into())),

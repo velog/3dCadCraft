@@ -232,7 +232,7 @@ fn carrier_hits(a: &Segment2, b: &Segment2) -> Vec<P2> {
 /// Offsets a closed loop to the right of its direction by `delta` (outward
 /// for counter-clockwise outer loops, into the hole for clockwise holes).
 /// Corners are re-intersected; smooth joins stay smooth.
-fn offset_loop(lp: &[ProfileSegment], delta: Real) -> KernelResult<Vec<ProfileSegment>> {
+pub fn offset_loop(lp: &[ProfileSegment], delta: Real) -> KernelResult<Vec<ProfileSegment>> {
     if delta == 0.0 {
         return Ok(lp.to_vec());
     }
