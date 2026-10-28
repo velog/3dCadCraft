@@ -959,8 +959,6 @@ fn area(lp: &[[f64; 2]]) -> f64 {
         * 0.5
 }
 
-/// Section A-A through the hole of a plate seen from the top: two cut faces
-/// of 15 × 10 each, hatched; the view looks square to the line and stays
 /// An offset section: a line of three segments (x = -20 below the hole,
 /// a jog, x = 0 through the hole's upper half) cuts each part along its
 /// own plane; the projected cut faces add up (200 + 150 mm²), unlike the
@@ -1009,6 +1007,57 @@ fn offset_section_cuts_each_segment_on_its_own_plane() {
     assert_eq!(cells.len(), 5);
 }
 
+/// An aligned section: x = 0 up to the hole's centre, then 45° out to the
+/// corner. Aligned turns the inclined segment into the first one's plane,
+/// so its cut face keeps its true length (from the hole's rim, r = 5, to the
+/// plate's edge, r = 20·√2); Projected foreshortens it.
+#[test]
+fn aligned_section_turns_inclined_segments_into_the_view() {
+    let part = plate_with_hole();
+    let area_of = |aligned_method: bool| {
+        let mut d = DrawingDocument::default();
+        let b = d
+            .add_base_view(
+                model(),
+                ViewOrientation::Top,
+                [150.0, 150.0],
+                1.0,
+                ViewStyle::HiddenRemoved,
+            )
+            .unwrap();
+        let s = d
+            .add_section_view_line(b, &[[0.0, -25.0], [0.0, 0.0], [25.0, 25.0]], [250.0, 160.0])
+            .unwrap();
+        if let Some(v) = d.sheet_mut().and_then(|sh| sh.view_mut(s))
+            && let ViewKind::Section { aligned, .. } = &mut v.kind
+        {
+            *aligned = aligned_method;
+        }
+        let sheet = d.sheet().unwrap().clone();
+        let LinesJob::Model { frame, aligned, .. } = d.lines_job(&sheet, s).unwrap() else {
+            panic!("a model job");
+        };
+        assert_eq!(aligned.as_ref().map(|a| a.unfold), Some(aligned_method));
+        let lines = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_deref());
+        lines.section.iter().map(|l| area(l)).sum::<f64>()
+    };
+    let true_len = 20.0 * 2f64.sqrt() - 5.0;
+    close(
+        area_of(true),
+        150.0 + true_len * 10.0,
+        2.0,
+        "aligned cut area",
+    );
+    close(
+        area_of(false),
+        150.0 + (20.0 - 5.0 / 2f64.sqrt()) * 10.0,
+        2.0,
+        "projected cut area",
+    );
+}
+
+/// Section A-A through the hole of a plate seen from the top: two cut faces
+/// of 15 × 10 each, hatched; the view looks square to the line and stays
 /// aligned with the parent along it.
 #[test]
 fn section_view_of_a_plate() {

@@ -2133,6 +2133,24 @@ impl CadCraftApp {
                 super::panels::plabel(ui, "Model");
                 ui.label(model);
                 ui.end_row();
+                if let ViewKind::Section { mid, aligned, .. } = &mut nv.kind {
+                    // Aligned needs a line of several segments.
+                    let bent = !mid.is_empty();
+                    super::panels::plabel(ui, "Method");
+                    ui.add_enabled_ui(bent, |ui| {
+                        egui::ComboBox::from_id_salt("drw_section_method")
+                            .selected_text(if *aligned { "Aligned" } else { "Projected" })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(aligned, false, "Projected");
+                                ui.selectable_value(aligned, true, "Aligned");
+                            })
+                    })
+                    .response
+                    .on_disabled_hover_text(
+                        "Aligned turns inclined segments into the view: draw a line of several segments",
+                    );
+                    ui.end_row();
+                }
                 if let ViewKind::Base { orientation, .. } = &mut nv.kind {
                     super::panels::plabel(ui, "Orientation");
                     egui::ComboBox::from_id_salt("drw_orient")

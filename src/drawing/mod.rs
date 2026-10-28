@@ -449,6 +449,12 @@ pub enum ViewKind {
         /// the first segment.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         mid: Vec<[f64; 2]>,
+        /// Method Aligned (a line of several segments): the material behind
+        /// the later segments is turned about the bends into the first
+        /// segment's plane; false: Projected. Old builds read it as
+        /// Projected.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        aligned: bool,
     },
     /// Auxiliary View: square to a line (an edge) of the parent.
     Auxiliary {
@@ -943,6 +949,7 @@ impl DrawingDocument {
                 radius,
             },
             ViewKind::Section { parent, a, b, .. } | ViewKind::Auxiliary { parent, a, b, .. } => {
+                let unfold = matches!(v.kind, ViewKind::Section { aligned: true, .. });
                 let fp = self.frame_of(sheet, parent)?;
                 let frame = self.frame_of(sheet, id)?;
                 let poly = v.kind.section_line().unwrap_or_else(|| vec![a, b]);
@@ -959,6 +966,7 @@ impl DrawingDocument {
                         line: [d[0] / len, d[1] / len],
                         cut,
                         poly: if poly.len() > 2 { poly } else { Vec::new() },
+                        unfold,
                     })),
                     flat,
                 }
@@ -1059,6 +1067,7 @@ impl DrawingDocument {
                 b,
                 side,
                 mid: Vec::new(),
+                aligned: false,
             },
             at,
             None,
@@ -1125,6 +1134,7 @@ impl DrawingDocument {
                 b: last,
                 side,
                 mid: pts[1..pts.len() - 1].to_vec(),
+                aligned: false,
             },
             at,
             None,
@@ -1198,6 +1208,7 @@ impl DrawingDocument {
                 b,
                 side,
                 mid,
+                ..
             } => {
                 let fp = self.frame_of(sheet, *parent)?;
                 self.line_frame(&fp, *a, mid.first().copied().unwrap_or(*b), *side)?

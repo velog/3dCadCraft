@@ -574,6 +574,10 @@ pub struct Aligned {
     /// (offset section, projected): each segment cuts along its own plane,
     /// square to the parent's plane; empty: the one plane through `cut`.
     pub poly: Vec<[f64; 2]>,
+    /// Aligned method: the material behind each later segment is turned
+    /// about its bends into the first segment's plane (true lengths of
+    /// inclined segments) instead of being projected.
+    pub unfold: bool,
 }
 
 /// The visible and hidden lines of `model` seen in `frame`.
@@ -598,6 +602,19 @@ pub fn view_lines_simplified(
     aligned: Option<&Aligned>,
     simplify: Simplify,
 ) -> ViewLines {
+    if let Some(a) = aligned.filter(|a| a.unfold && a.cut.is_some() && a.poly.len() >= 3) {
+        // Aligned: turn the model straight, then one plane through the
+        // first segment.
+        let (unfolded, start) = unfold_model(model, &a.parent, &a.poly);
+        let straight = Aligned {
+            parent: a.parent,
+            line: a.line,
+            cut: Some(start),
+            poly: Vec::new(),
+            unfold: false,
+        };
+        return view_lines_simplified(&unfolded, frame, Some(&straight), simplify);
+    }
     let meshes = &model.meshes;
     let clock = std::time::Instant::now();
     let times = std::env::var_os("CADCRAFT3D_HLR_TIMES").is_some();
@@ -1245,6 +1262,277 @@ pub fn section_cells(
         cells.push(Cell { edges });
     }
     cells
+}
+
+/// A rigid motion of the parent's view plane (depth kept): `x ↦ m·x + t`.
+#[derive(Clone, Copy, Debug)]
+struct Turn {
+    m: [[f64; 2]; 2],
+    t: [f64; 2],
+}
+
+impl Turn {
+    const ID: Turn = Turn {
+        m: [[1.0, 0.0], [0.0, 1.0]],
+        t: [0.0, 0.0],
+    };
+
+    /// A rotation by `a` about `c`.
+    fn about(c: [f64; 2], a: f64) -> Turn {
+        let (s, k) = a.sin_cos();
+        let m = [[k, -s], [s, k]];
+        Turn {
+            m,
+            t: [
+                c[0] - m[0][0] * c[0] - m[0][1] * c[1],
+                c[1] - m[1][0] * c[0] - m[1][1] * c[1],
+            ],
+        }
+    }
+
+    fn vec(&self, v: [f64; 2]) -> [f64; 2] {
+        [
+            self.m[0][0] * v[0] + self.m[0][1] * v[1],
+            self.m[1][0] * v[0] + self.m[1][1] * v[1],
+        ]
+    }
+
+    fn pt(&self, v: [f64; 2]) -> [f64; 2] {
+        let w = self.vec(v);
+        [w[0] + self.t[0], w[1] + self.t[1]]
+    }
+
+    /// `self` after `o`.
+    fn then_from(&self, o: &Turn) -> Turn {
+        let c = |i: usize, j: usize| self.m[i][0] * o.m[0][j] + self.m[i][1] * o.m[1][j];
+        Turn {
+            m: [[c(0, 0), c(0, 1)], [c(1, 0), c(1, 1)]],
+            t: self.pt(o.t),
+        }
+    }
+
+    fn point3(&self, f: &ViewFrame, p: &Point3) -> Point3 {
+        let q = f.project(p);
+        let w = self.pt(q);
+        let rest = p.coords - f.right * q[0] - f.up * q[1];
+        Point3::from(rest + f.right * w[0] + f.up * w[1])
+    }
+
+    fn vector3(&self, f: &ViewFrame, v: &Vector3) -> Vector3 {
+        let q = [v.dot(&f.right), v.dot(&f.up)];
+        let w = self.vec(q);
+        v - f.right * q[0] - f.up * q[1] + f.right * w[0] + f.up * w[1]
+    }
+}
+
+/// The pieces of an Aligned section line: the boundaries between the
+/// segments (a point and the side the later segment lies on) and the motion
+/// of each segment's material into the first segment's line.
+struct Unfold {
+    bounds: Vec<([f64; 2], [f64; 2])>,
+    turns: Vec<Turn>,
+}
+
+impl Unfold {
+    fn new(poly: &[[f64; 2]]) -> Unfold {
+        let unit = |a: [f64; 2], b: [f64; 2]| {
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let l = d[0].hypot(d[1]).max(1e-12);
+            [d[0] / l, d[1] / l]
+        };
+        let mut p: Vec<[f64; 2]> = Vec::new();
+        for q in poly {
+            if p.last()
+                .is_none_or(|l: &[f64; 2]| (l[0] - q[0]).hypot(l[1] - q[1]) > 1e-9)
+            {
+                p.push(*q);
+            }
+        }
+        let dirs: Vec<[f64; 2]> = p.windows(2).map(|w| unit(w[0], w[1])).collect();
+        let (mut bounds, mut turns) = (Vec::new(), vec![Turn::ID]);
+        for i in 1..dirs.len() {
+            let (d0, d1) = (dirs[i - 1], dirs[i]);
+            // Square to the bisector of the two directions: the boundary is
+            // the bisector of the corner.
+            let s = [d0[0] + d1[0], d0[1] + d1[1]];
+            bounds.push((p[i], if s[0].hypot(s[1]) < 1e-9 { d1 } else { s }));
+            let a = d0[1].atan2(d0[0]) - d1[1].atan2(d1[0]);
+            let prev = turns[i - 1];
+            turns.push(prev.then_from(&Turn::about(p[i], a)));
+        }
+        Unfold { bounds, turns }
+    }
+
+    fn side(&self, i: usize, v: [f64; 2]) -> f64 {
+        let (c, s) = self.bounds[i];
+        (v[0] - c[0]) * s[0] + (v[1] - c[1]) * s[1]
+    }
+
+    /// The segment whose material holds `v`.
+    fn sector(&self, v: [f64; 2]) -> usize {
+        let mut k = 0;
+        for i in 0..self.bounds.len() {
+            if self.side(i, v) > 0.0 {
+                k = i + 1;
+            } else {
+                break;
+            }
+        }
+        k
+    }
+
+    /// `pts` cut at the boundaries, each part with its sector.
+    fn split_curve(&self, f: &ViewFrame, pts: &[Point3]) -> Vec<(usize, Vec<Point3>)> {
+        let mut out: Vec<(usize, Vec<Point3>)> = Vec::new();
+        for w in pts.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let (va, vb) = (f.project(&a), f.project(&b));
+            let mut ts = vec![0.0, 1.0];
+            for i in 0..self.bounds.len() {
+                let (fa, fb) = (self.side(i, va), self.side(i, vb));
+                if (fa > 0.0) != (fb > 0.0) {
+                    ts.push(fa / (fa - fb));
+                }
+            }
+            ts.sort_by(f64::total_cmp);
+            ts.dedup_by(|x, y| (*x - *y).abs() < 1e-12);
+            for t in ts.windows(2) {
+                let mid = a + (b - a) * ((t[0] + t[1]) * 0.5);
+                let k = self.sector(f.project(&mid));
+                let (p0, p1) = (a + (b - a) * t[0], a + (b - a) * t[1]);
+                match out.last_mut() {
+                    Some((s, cur))
+                        if *s == k && cur.last().is_some_and(|l| (*l - p0).norm() < 1e-12) =>
+                    {
+                        cur.push(p1)
+                    }
+                    _ => out.push((k, vec![p0, p1])),
+                }
+            }
+        }
+        out
+    }
+}
+
+/// An Aligned section's model turned straight: everything behind a later
+/// segment of `poly` (the parent's view plane, split at the bisectors of
+/// its bends) turned about the bends into the first segment's line. Returns
+/// the model and a point of the first segment (the one cutting plane).
+fn unfold_model(model: &ViewModel, parent: &ViewFrame, poly: &[[f64; 2]]) -> (ViewModel, Point3) {
+    let u = Unfold::new(poly);
+    let f = parent;
+    let smooth: Vec<SmoothEdge> = match &model.smooth {
+        Some(v) => v.clone(),
+        None => model.meshes.iter().flat_map(smooth_edges).collect(),
+    };
+    let mut meshes = Vec::with_capacity(model.meshes.len());
+    for m in &model.meshes {
+        let (pos, nrm) = (&m.faces.positions, &m.faces.normals);
+        let mut out = TriangleMeshOut::default();
+        for tri in &m.faces.triangles {
+            let ids = tri.map(|i| i as usize);
+            let mut pieces = vec![ids.map(|i| pos[i]).to_vec()];
+            for i in 0..u.bounds.len() {
+                let g = |q: &Point3| -u.side(i, f.project(q));
+                let h = |q: &Point3| u.side(i, f.project(q));
+                let mut next = Vec::new();
+                for p in pieces {
+                    for half in [clip_polygon(&p, &h).0, clip_polygon(&p, &g).0] {
+                        if half.len() >= 3 {
+                            next.push(half);
+                        }
+                    }
+                }
+                pieces = next;
+            }
+            // One normal per triangle (the pieces of a split one share it).
+            let n = ids
+                .iter()
+                .map(|i| nrm.get(*i).copied().unwrap_or_default())
+                .fold(Vector3::zeros(), |s, v| s + v);
+            let n = if n.norm() > 1e-12 { n.normalize() } else { n };
+            for p in pieces {
+                let c = p.iter().fold(Vector3::zeros(), |s, q| s + q.coords) / p.len() as f64;
+                let turn = u.turns[u.sector(f.project(&Point3::from(c)))];
+                out.push(
+                    &p.iter().map(|q| turn.point3(f, q)).collect::<Vec<_>>(),
+                    turn.vector3(f, &n),
+                );
+            }
+        }
+        meshes.push(SolidMesh {
+            faces: out.into_mesh(),
+            edges: Vec::new(),
+            face_triangles: Vec::new(),
+        });
+    }
+    let mut edges = Vec::with_capacity(model.edges.len());
+    for e in &model.edges {
+        let parts = u.split_curve(f, &e.pts);
+        let whole = parts.len() == 1;
+        for (k, pts) in parts {
+            let turn = u.turns[k];
+            let mut ne = e.clone();
+            ne.pts = pts.iter().map(|q| turn.point3(f, q)).collect();
+            ne.circle = if whole {
+                e.circle
+                    .map(|(c, n, r)| (turn.point3(f, &c), turn.vector3(f, &n), r))
+            } else {
+                None
+            };
+            edges.push(ne);
+        }
+    }
+    let mut sm = Vec::with_capacity(smooth.len());
+    for s in &smooth {
+        for (k, pts) in u.split_curve(f, &[s.a, s.b]) {
+            let turn = u.turns[k];
+            if let (Some(a), Some(b)) = (pts.first(), pts.last()) {
+                sm.push(SmoothEdge {
+                    a: turn.point3(f, a),
+                    b: turn.point3(f, b),
+                    n1: turn.vector3(f, &s.n1),
+                    n2: turn.vector3(f, &s.n2),
+                });
+            }
+        }
+    }
+    let start = poly.first().copied().unwrap_or_default();
+    (
+        ViewModel {
+            meshes,
+            edges,
+            smooth: Some(sm),
+        },
+        Point3::from(f.right * start[0] + f.up * start[1]),
+    )
+}
+
+/// Triangles collected from convex polygons (a fan each).
+#[derive(Default)]
+struct TriangleMeshOut {
+    positions: Vec<Point3>,
+    normals: Vec<Vector3>,
+    triangles: Vec<[u32; 3]>,
+}
+
+impl TriangleMeshOut {
+    fn push(&mut self, poly: &[Point3], n: Vector3) {
+        let base = self.positions.len() as u32;
+        self.positions.extend_from_slice(poly);
+        self.normals.extend(std::iter::repeat_n(n, poly.len()));
+        for k in 1..poly.len() as u32 - 1 {
+            self.triangles.push([base, base + k, base + k + 1]);
+        }
+    }
+
+    fn into_mesh(self) -> crate::kernel::TriangleMesh {
+        crate::kernel::TriangleMesh {
+            positions: self.positions,
+            normals: self.normals,
+            triangles: self.triangles,
+        }
+    }
 }
 
 /// The parts of a convex polygon outside `cell`; the chords where it meets
