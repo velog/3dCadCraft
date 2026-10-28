@@ -1301,6 +1301,9 @@ impl Planned {
             Planned::Asm(
                 super::asm_planned::AsmPlanned::Interference
                     | super::asm_planned::AsmPlanned::Pattern
+                    | super::asm_planned::AsmPlanned::Replace
+                    | super::asm_planned::AsmPlanned::Copy
+                    | super::asm_planned::AsmPlanned::Mirror
             ) | Planned::Part(
                 PartPlanned::Stitch
                     | PartPlanned::Patch
@@ -1389,7 +1392,7 @@ pub(super) struct PartDialog {
 }
 
 /// Buttons that run something (the rest stay disabled).
-const LIVE_BUTTONS: &[&str] = &["Find Remaining Free Edges"];
+const LIVE_BUTTONS: &[&str] = &["Find Remaining Free Edges", "Browse..."];
 
 /// The selector rows of `kind`, in order; a key on several tabs (Pattern
 /// Component's Components) is one selector.
@@ -1637,9 +1640,28 @@ impl PartDialog {
             .iter()
             .enumerate()
             .find(|(_, r)| match **r {
-                Num(l, ..) | Check(l, _) => l == label,
+                Num(l, ..) | Check(l, _) | Text(l, _) => l == label,
                 _ => false,
             })
+    }
+
+    /// The text in row `label` of tab `ti` (its default until changed).
+    pub(super) fn text(&self, ti: usize, label: &str) -> String {
+        match self.find_row(ti, label) {
+            Some((ri, Text(_, def))) => self
+                .texts
+                .get(&(ti, ri))
+                .cloned()
+                .unwrap_or_else(|| def.to_string()),
+            _ => String::new(),
+        }
+    }
+
+    /// Sets the text in row `label` of tab `ti`.
+    pub(super) fn set_text(&mut self, ti: usize, label: &str, v: &str) {
+        if let Some((ri, _)) = self.find_row(ti, label) {
+            self.texts.insert((ti, ri), v.to_owned());
+        }
     }
 
     /// The number in row `label` of tab `ti` (its default until changed).
@@ -1938,7 +1960,11 @@ impl CadCraftApp {
         self.panel_header(ui, d.kind.icon(), d.kind.title());
         let (cancel, ok) = d.ui(ui);
         if let Some(b) = d.pressed.take() {
-            d.note = self.surface_button(&d, b);
+            if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::Replace) {
+                self.replace_browse();
+            } else {
+                d.note = self.surface_button(&d, b);
+            }
         }
         self.part_planned = (!cancel).then_some(d);
         if ok {
@@ -1959,6 +1985,21 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::Pattern) => {
                 if self.pattern_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Replace) => {
+                if self.replace_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Copy) => {
+                if self.copy_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Mirror) => {
+                if self.mirror_ok(&d) {
                     self.part_planned = None;
                 }
             }

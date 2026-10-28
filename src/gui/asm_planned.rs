@@ -511,6 +511,8 @@ impl AsmPlanned {
                             COMPONENTS,
                         ),
                         Radio("Status of all", &["Copy", "Reuse", "Exclude"], 0),
+                        Check("Copy Relationships", true),
+                        Check("Ground New Components", false),
                         Check("Reuse Standard Content and Factory Parts", true),
                     ],
                 ),

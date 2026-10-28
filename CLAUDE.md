@@ -1096,6 +1096,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (`resolve_with` passes empty tables: parts lists / balloons come out as `NoView`). An assembly view's model
   is `ModelJob` (copies of the components for the worker); its cache key is `assembly_signature`. A linked
   assembly's own links are relative to *its* file (`AsmSrc::File`), not to the drawing.
+- **`AsmUi` is reset on every file open / tab switch** (`self.asm = Default::default()` in five places): an
+  application setting kept there is lost and the next settings save writes the default back (the browser's
+  Assembly / Modeling View did). Settings live on `CadCraftApp` (`asm_browser`, `select`). Replace / Copy /
+  Mirror (`assembly::replace`, `assembly::copy`, GUI `gui/asm_replace.rs`): a mirrored part is a copy with a
+  solid Mirror (Remove Original) about its YZ plane, placed by M · T · D (rigid); Replace's Browse reuses the
+  Place window (`AsmUi::place_for_replace`).
 - **Component patterns** (`assembly::pattern`, GUI `gui/asm_pattern.rs`): the copies are ordinary occurrences listed in
   `ComponentPattern::elements`; `pattern::place` moves them from their sources at the end of every `asm_solve` /
   `asm_try` (also with no constraints), and `solve` never frees an element (`is_element`). `AssemblyDocument::remove`

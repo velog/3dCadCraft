@@ -1963,6 +1963,7 @@ pub static COMMANDS: &[Command] = &[
         .at(&[A_COMPONENT]),
     ap("asm.replace", "Replace", "Замяна на компонент", Icon::AsmReplace, Ap::Replace)
         .inv("Replace Component")
+        .tip("Swaps the selected components for another part (Replace All occurrences: every occurrence of it); relationships are found again by face names")
         .alias(&["RC", "RA"])
         .at(&[A_COMPONENT]),
     ap("asm.pattern", "Pattern", "Масив от компоненти", Icon::AsmPattern, Ap::Pattern)

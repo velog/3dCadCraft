@@ -27,6 +27,7 @@ mod alias_input;
 mod asm_browser;
 mod asm_pattern;
 mod asm_planned;
+mod asm_replace;
 mod asm_select;
 mod assembly;
 mod blend;
@@ -644,6 +645,9 @@ struct CadCraftApp {
     cons: constrain::ConstrainUi,
     /// Constraints keep the current distance (else 0); remembered.
     constrain_current_offset: bool,
+    /// The assembly browser's view and filters (an application setting:
+    /// kept outside `AsmUi`, which opening a file resets).
+    asm_browser: asm_browser::AsmBrowserOpts,
     /// Application Options › Save: the preview picture.
     thumbnail_source: layout::ThumbnailSource,
     /// The iProperties window (`iprops.rs`).
@@ -932,6 +936,7 @@ impl CadCraftApp {
             drw: Default::default(),
             cons: Default::default(),
             constrain_current_offset: false,
+            asm_browser: Default::default(),
             thumbnail_source: Default::default(),
             iprops: None,
             bom: None,

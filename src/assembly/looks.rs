@@ -86,7 +86,7 @@ impl AssemblyDocument {
             AsmLookTarget::Face { name, .. } => set_entry(&mut looks.faces, name, own),
         }
         let changed = *looks != before;
-        self.purge_appearances();
+        self.purge_unused_appearances();
         Ok(changed)
     }
 
@@ -101,12 +101,12 @@ impl AssemblyDocument {
             n += o.looks.names().count();
             o.looks = Default::default();
         }
-        self.purge_appearances();
+        self.purge_unused_appearances();
         n
     }
 
     /// Drops the document copies no override uses.
-    fn purge_appearances(&mut self) {
+    pub(crate) fn purge_unused_appearances(&mut self) {
         let used: std::collections::BTreeSet<String> = self
             .occurrences
             .iter()

@@ -82,6 +82,11 @@ pub(super) struct AsmUi {
     place_turn: Option<Transform3>,
     /// The Place Component window, while it is open.
     pub place: Option<super::place::PlaceDialog>,
+    /// The Place window was opened by Replace's Browse: the chosen part
+    /// becomes Replace's new component instead of being placed.
+    pub place_for_replace: bool,
+    /// Replace's new component and the name its occurrences get.
+    pub replace_with: Option<(DocRef, String)>,
     /// The name the placed occurrences get (`bracket` → `bracket:1`).
     pub place_name: String,
     /// The part files the assembly links (loaded once, reloaded when the
@@ -93,6 +98,10 @@ pub(super) struct AsmUi {
     /// Faces and Edges (`gui/asm_select.rs`), and the one under the cursor.
     pub sub: Vec<super::asm_select::AsmSub>,
     pub sub_hover: Option<super::asm_select::AsmSub>,
+    /// The feature row under the cursor in the browser (prehighlighted).
+    pub tree_hover: Option<super::asm_select::AsmSub>,
+    /// The browser's search text.
+    pub search: String,
     /// The (selection, hover) the scene was last built with.
     scene_state: (Vec<u32>, Option<u32>),
     scene_sub: (
@@ -282,6 +291,63 @@ impl CadCraftApp {
         }
         self.asm.came_from = Some(self.part_id);
         self.activate_document(r.document);
+    }
+
+    /// Opens the part of occurrence `id` with its feature `k` selected
+    /// (browser, Modeling View).
+    pub(super) fn open_component_feature(&mut self, id: u32, k: usize) {
+        let local = self
+            .assembly()
+            .and_then(|a| a.find(id))
+            .is_some_and(|o| o.component.library.is_none());
+        self.open_component(id);
+        if local && k < self.part().features.len() {
+            self.selection = super::Selection::Feature(k);
+        }
+    }
+
+    /// Zooms to the faces feature `fid` made on occurrence `id`.
+    pub(super) fn find_feature_in_window(&mut self, id: u32, fid: &str) {
+        let Some(o) = self.assembly().and_then(|a| a.find(id)).cloned() else {
+            return;
+        };
+        let Some(mesh) = self.asm_mesh(o.component) else {
+            return;
+        };
+        let faces: Vec<crate::kernel::FaceId> = self
+            .with_part(o.component, |p| {
+                p.body
+                    .faces()
+                    .filter(|(_, f)| {
+                        f.name
+                            .as_deref()
+                            .is_some_and(|n| crate::document::feature_of_face(n) == fid)
+                    })
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut bb: Option<(Point3, Point3)> = None;
+        for (f, tri) in mesh.triangles() {
+            if !faces.contains(f) {
+                continue;
+            }
+            for p in tri {
+                let w = o.transform * p;
+                bb = Some(match bb {
+                    Some((lo, hi)) => (lo.inf(&w), hi.sup(&w)),
+                    None => (w, w),
+                });
+            }
+        }
+        match bb {
+            Some((lo, hi)) => self.camera.fit(lo, hi),
+            None => {
+                self.file_status = Some(Err(
+                    "Find in Window: the feature has no faces on this component".into(),
+                ))
+            }
+        }
     }
 
     /// Back to the assembly a component was opened from.
@@ -488,7 +554,7 @@ impl CadCraftApp {
         });
     }
 
-    fn toggle_visible(&mut self, ids: &[u32]) {
+    pub(super) fn toggle_visible(&mut self, ids: &[u32]) {
         self.toggle_flag(ids, "Visibility", |o| &mut o.visible);
     }
 
@@ -841,7 +907,10 @@ impl CadCraftApp {
             self.asm.scene_state = state;
             self.scene_dirty = true;
         }
-        let sub = (self.asm.sub.clone(), self.asm.sub_hover.clone());
+        let sub = (
+            self.asm.sub.clone(),
+            self.asm.sub_hover.clone().or(self.asm.tree_hover.clone()),
+        );
         if sub != self.asm.scene_sub {
             self.asm.scene_sub = sub;
             self.scene_dirty = true;

@@ -245,6 +245,8 @@ pub struct AppOptions {
     /// Application Options › Save › New documents: false = in the open
     /// design file (the default, spec 0.6b §3.6), true = each in a new file.
     pub new_documents_separate: bool,
+    /// The assembly browser's view and filters (spec 3.0 §3.9).
+    pub asm_browser: super::asm_browser::AsmBrowserOpts,
 }
 
 /// Where the preview picture saved with a project comes from
@@ -283,6 +285,7 @@ impl Default for AppOptions {
             constrain_current_offset: false,
             thumbnail: ThumbnailSource::Iso,
             new_documents_separate: false,
+            asm_browser: Default::default(),
         }
     }
 }
@@ -887,6 +890,7 @@ impl CadCraftApp {
             constrain_current_offset: self.constrain_current_offset,
             thumbnail: self.thumbnail_source,
             new_documents_separate: self.docs.separate,
+            asm_browser: self.asm_browser,
         }
     }
 
@@ -915,6 +919,7 @@ impl CadCraftApp {
         self.constrain_current_offset = o.constrain_current_offset;
         self.thumbnail_source = o.thumbnail;
         self.docs.separate = o.new_documents_separate;
+        self.asm_browser = o.asm_browser;
     }
 
     /// Start of a frame: Ctrl+0, F11 (outside a sketch, where F11 is Relax

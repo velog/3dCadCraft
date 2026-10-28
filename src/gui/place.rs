@@ -380,6 +380,10 @@ impl CadCraftApp {
             "in this file"
         };
         self.asm.place = None;
+        if self.asm.place_for_replace {
+            self.replace_chosen(r, name);
+            return;
+        }
         self.asm.place_name = name.clone();
         self.asm.tool = Some(super::assembly::AsmTool::Place(r));
         self.file_status = Some(Ok(format!(
@@ -462,7 +466,11 @@ impl CadCraftApp {
             })
             .unwrap_or_default();
         let owner = PathBuf::from(self.file_path.trim());
-        self.checkpoint("Place");
+        self.checkpoint(if self.asm.place_for_replace {
+            "Replace"
+        } else {
+            "Place"
+        });
         let mut resolver = crate::document::Resolver::new();
         match resolver.link(&mut self.project, &owner, &path, doc) {
             Ok(r) if self.is_drawing() => {
@@ -473,6 +481,10 @@ impl CadCraftApp {
                     "Base View: {} is linked; click on the sheet to place the view",
                     path.display()
                 )));
+            }
+            Ok(r) if self.asm.place_for_replace => {
+                self.asm.place = None;
+                self.replace_chosen(r, base_name(&path, &parts, doc));
             }
             Ok(r) => {
                 self.asm.place = None;
@@ -505,7 +517,12 @@ impl CadCraftApp {
         let mut local: Option<(DocRef, bool)> = None;
         let mut save_first = false;
         let mut cancel = false;
-        let w = egui::Window::new("Place Component")
+        let title = if self.asm.place_for_replace {
+            "Replace Component: New Component"
+        } else {
+            "Place Component"
+        };
+        let w = egui::Window::new(title)
             .open(&mut open)
             .resizable(true)
             .collapsible(false)
@@ -743,6 +760,7 @@ impl CadCraftApp {
         }
         if cancel || !open {
             self.asm.place = None;
+            self.asm.place_for_replace = false;
         }
     }
 }

@@ -170,6 +170,7 @@ impl CadCraftApp {
             .asm
             .sub_hover
             .as_ref()
+            .or(self.asm.tree_hover.as_ref())
             .filter(|s| s.occurrence() == o.id);
         let over = |name: Option<&str>| FaceOver {
             look: o.looks.face_look(name).and_then(|n| looks.get(n).cloned()),

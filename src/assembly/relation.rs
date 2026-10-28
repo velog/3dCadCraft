@@ -191,6 +191,18 @@ impl GeomRef {
         }
     }
 
+    /// The occurrence it lies on, to change (Copy / Mirror remap their
+    /// relationships to the new components).
+    pub fn occurrence_mut(&mut self) -> &mut u32 {
+        match self {
+            GeomRef::Face { occurrence, .. }
+            | GeomRef::Edge { occurrence, .. }
+            | GeomRef::Origin { occurrence, .. }
+            | GeomRef::Work { occurrence, .. }
+            | GeomRef::FacePoint { occurrence, .. } => occurrence,
+        }
+    }
+
     /// Short text for the browser and the panel (`Box1:Top`, `Box1:Top|Box1:Front`).
     pub fn label(&self) -> String {
         match self {
@@ -311,6 +323,27 @@ impl Constraint {
 }
 
 impl Constraint {
+    /// A relationship of `kind` between `a` and `b` at value 0 (no limits,
+    /// not suppressed; the assembly gives it its id and name).
+    pub fn new(kind: ConstraintKind, a: GeomRef, b: GeomRef) -> Self {
+        Self {
+            id: 0,
+            name: String::new(),
+            kind,
+            a,
+            b,
+            value: 0.0,
+            expr: None,
+            aligned: false,
+            suppressed: false,
+            locked: false,
+            min: None,
+            max: None,
+            resting: false,
+            plane: None,
+        }
+    }
+
     /// Whether it uses occurrence `id`.
     pub fn uses(&self, id: u32) -> bool {
         self.a.occurrence() == id

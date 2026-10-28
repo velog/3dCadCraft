@@ -192,8 +192,14 @@ impl CadCraftApp {
                     }
                 });
             });
+            let only_active = self.is_assembly();
             ui.indent("docs", |ui| {
                 for (id, name, kind) in &docs {
+                    // An assembly's browser shows its own tree only; the
+                    // other documents are in Manage > Documents and the tabs.
+                    if only_active && *id != self.part_id {
+                        continue;
+                    }
                     if *id == self.part_id {
                         if self.is_drawing() {
                             self.drawing_tree(ui, name);
@@ -896,123 +902,7 @@ impl CadCraftApp {
         cmds: &mut Vec<BrowserCmd>,
     ) {
         let part = self.part();
-        let sm_icon = super::sheet_metal::feature_icon(f);
-        let (icon, hover) = match f {
-            Feature::Box(b) => (
-                Icon::Box,
-                format!(
-                    "Box {:.2} x {:.2} x {:.2} mm",
-                    b.size[0], b.size[1], b.size[2]
-                ),
-            ),
-            Feature::Extrude(e) => (Icon::Extrude, format!("Extrude of {}", e.sketch)),
-            Feature::Revolve(r) => (Icon::Revolve, format!("Revolve of {}", r.sketch)),
-            Feature::Sweep(s) => (Icon::Sweep, format!("Sweep of {}", s.sketch)),
-            Feature::Coil(c) => (Icon::Coil, format!("Coil of {}", c.sketch)),
-            Feature::Rib(r) => (Icon::Rib, format!("Rib of {}", r.sketch)),
-            Feature::SheetFace(f) => (sm_icon, format!("Sheet metal Face of {}", f.sketch)),
-            Feature::SheetOp(f) => (sm_icon, f.describe()),
-            Feature::BodyOp(f) => (
-                match f.op {
-                    crate::part::BodyOp::Thicken(_) => Icon::Thicken,
-                    crate::part::BodyOp::DeleteFace(_) => Icon::DeleteFace,
-                    crate::part::BodyOp::MoveBodies(_) => Icon::MoveBodies,
-                    crate::part::BodyOp::Stitch(_) => Icon::Stitch,
-                    crate::part::BodyOp::Patch(_) => Icon::Patch,
-                    crate::part::BodyOp::Trim(_) => Icon::TrimSurface,
-                    crate::part::BodyOp::Extend(_) => Icon::ExtendSurface,
-                    crate::part::BodyOp::Ruled(_) => Icon::RuledSurface,
-                    crate::part::BodyOp::ReplaceFace(_) => Icon::ReplaceFace,
-                    crate::part::BodyOp::Sculpt(_) => Icon::Sculpt,
-                },
-                f.describe(),
-            ),
-            Feature::SheetConvert(f) => (
-                Icon::SheetMetal,
-                format!(
-                    "Convert {} to sheet metal ({} bends)",
-                    f.body,
-                    f.bends.len()
-                ),
-            ),
-            Feature::SheetFlange(f) => (
-                sm_icon,
-                format!(
-                    "Flange on {} edge(s), {:.2} mm at {:.1}°",
-                    f.edges.len(),
-                    f.height,
-                    f.angle.to_degrees()
-                ),
-            ),
-            Feature::Loft(l) => (
-                Icon::Loft,
-                format!("Loft through {} sections", l.sections.len()),
-            ),
-            Feature::Hole(h) => (
-                Icon::Hole,
-                format!("{} centre(s): {}", h.centers.len(), h.spec.note_ascii()),
-            ),
-            Feature::Thread(t) => (
-                Icon::Thread,
-                format!(
-                    "{} ({})",
-                    t.spec.note(),
-                    if t.spec.modeled {
-                        "modeled"
-                    } else {
-                        "cosmetic"
-                    }
-                ),
-            ),
-            Feature::Blend(bl) => (
-                match bl.kind {
-                    crate::part::BlendKind::Fillet { .. } => Icon::FilletEdge,
-                    crate::part::BlendKind::Chamfer { .. } => Icon::ChamferEdge,
-                },
-                format!("{} of {} edge(s)", bl.command(), bl.edges.len()),
-            ),
-            Feature::Draft(dr) => (
-                Icon::Draft,
-                format!(
-                    "{}, {} face(s), {:.2}°",
-                    dr.draft_type.label(),
-                    dr.faces.len(),
-                    dr.angle.to_degrees()
-                ),
-            ),
-            Feature::Pattern(p) => (
-                super::pattern_feature::icon_of(p),
-                super::pattern_feature::summary(p),
-            ),
-            Feature::Shell(sh) => (
-                Icon::Shell,
-                format!(
-                    "Shell {}, {} face(s) removed",
-                    sh.direction.label(),
-                    sh.remove.len()
-                ),
-            ),
-            Feature::Work(w) => (
-                match &w.def {
-                    crate::part::WorkDef::Plane(_) => Icon::WorkPlane,
-                    crate::part::WorkDef::Axis(_) => Icon::WorkAxis,
-                    crate::part::WorkDef::Point(_) => Icon::WorkPoint,
-                    crate::part::WorkDef::Ucs(_) => Icon::Ucs,
-                },
-                w.def.method().to_owned(),
-            ),
-            Feature::Combine(c) => (
-                Icon::Combine,
-                format!(
-                    "{} of {} with {} toolbody(ies){}",
-                    c.operation.label(),
-                    c.base,
-                    c.tools.len(),
-                    if c.keep_tools { ", kept" } else { "" }
-                ),
-            ),
-            Feature::Split(sp) => (Icon::SplitBody, sp.method.label().to_owned()),
-        };
+        let (icon, hover) = feature_look(f);
         // The box is the body (its size is in the body's properties).
         let (selected, select) = match f {
             Feature::Box(_) => (
@@ -6632,5 +6522,127 @@ impl CadCraftApp {
         }
         self.scene_dirty = true;
         self.solve();
+    }
+}
+
+/// A feature's browser icon and its one-line description (hover text;
+/// Show Extended Names in an assembly).
+pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
+    let sm_icon = super::sheet_metal::feature_icon(f);
+    match f {
+        Feature::Box(b) => (
+            Icon::Box,
+            format!(
+                "Box {:.2} x {:.2} x {:.2} mm",
+                b.size[0], b.size[1], b.size[2]
+            ),
+        ),
+        Feature::Extrude(e) => (Icon::Extrude, format!("Extrude of {}", e.sketch)),
+        Feature::Revolve(r) => (Icon::Revolve, format!("Revolve of {}", r.sketch)),
+        Feature::Sweep(s) => (Icon::Sweep, format!("Sweep of {}", s.sketch)),
+        Feature::Coil(c) => (Icon::Coil, format!("Coil of {}", c.sketch)),
+        Feature::Rib(r) => (Icon::Rib, format!("Rib of {}", r.sketch)),
+        Feature::SheetFace(f) => (sm_icon, format!("Sheet metal Face of {}", f.sketch)),
+        Feature::SheetOp(f) => (sm_icon, f.describe()),
+        Feature::BodyOp(f) => (
+            match f.op {
+                crate::part::BodyOp::Thicken(_) => Icon::Thicken,
+                crate::part::BodyOp::DeleteFace(_) => Icon::DeleteFace,
+                crate::part::BodyOp::MoveBodies(_) => Icon::MoveBodies,
+                crate::part::BodyOp::Stitch(_) => Icon::Stitch,
+                crate::part::BodyOp::Patch(_) => Icon::Patch,
+                crate::part::BodyOp::Trim(_) => Icon::TrimSurface,
+                crate::part::BodyOp::Extend(_) => Icon::ExtendSurface,
+                crate::part::BodyOp::Ruled(_) => Icon::RuledSurface,
+                crate::part::BodyOp::ReplaceFace(_) => Icon::ReplaceFace,
+                crate::part::BodyOp::Sculpt(_) => Icon::Sculpt,
+            },
+            f.describe(),
+        ),
+        Feature::SheetConvert(f) => (
+            Icon::SheetMetal,
+            format!(
+                "Convert {} to sheet metal ({} bends)",
+                f.body,
+                f.bends.len()
+            ),
+        ),
+        Feature::SheetFlange(f) => (
+            sm_icon,
+            format!(
+                "Flange on {} edge(s), {:.2} mm at {:.1}°",
+                f.edges.len(),
+                f.height,
+                f.angle.to_degrees()
+            ),
+        ),
+        Feature::Loft(l) => (
+            Icon::Loft,
+            format!("Loft through {} sections", l.sections.len()),
+        ),
+        Feature::Hole(h) => (
+            Icon::Hole,
+            format!("{} centre(s): {}", h.centers.len(), h.spec.note_ascii()),
+        ),
+        Feature::Thread(t) => (
+            Icon::Thread,
+            format!(
+                "{} ({})",
+                t.spec.note(),
+                if t.spec.modeled {
+                    "modeled"
+                } else {
+                    "cosmetic"
+                }
+            ),
+        ),
+        Feature::Blend(bl) => (
+            match bl.kind {
+                crate::part::BlendKind::Fillet { .. } => Icon::FilletEdge,
+                crate::part::BlendKind::Chamfer { .. } => Icon::ChamferEdge,
+            },
+            format!("{} of {} edge(s)", bl.command(), bl.edges.len()),
+        ),
+        Feature::Draft(dr) => (
+            Icon::Draft,
+            format!(
+                "{}, {} face(s), {:.2}°",
+                dr.draft_type.label(),
+                dr.faces.len(),
+                dr.angle.to_degrees()
+            ),
+        ),
+        Feature::Pattern(p) => (
+            super::pattern_feature::icon_of(p),
+            super::pattern_feature::summary(p),
+        ),
+        Feature::Shell(sh) => (
+            Icon::Shell,
+            format!(
+                "Shell {}, {} face(s) removed",
+                sh.direction.label(),
+                sh.remove.len()
+            ),
+        ),
+        Feature::Work(w) => (
+            match &w.def {
+                crate::part::WorkDef::Plane(_) => Icon::WorkPlane,
+                crate::part::WorkDef::Axis(_) => Icon::WorkAxis,
+                crate::part::WorkDef::Point(_) => Icon::WorkPoint,
+                crate::part::WorkDef::Ucs(_) => Icon::Ucs,
+            },
+            w.def.method().to_owned(),
+        ),
+        Feature::Combine(c) => (
+            Icon::Combine,
+            format!(
+                "{} of {} with {} toolbody(ies){}",
+                c.operation.label(),
+                c.base,
+                c.tools.len(),
+                if c.keep_tools { ", kept" } else { "" }
+            ),
+        ),
+        Feature::Split(sp) => (Icon::SplitBody, sp.method.label().to_owned()),
     }
 }

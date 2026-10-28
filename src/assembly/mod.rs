@@ -10,12 +10,14 @@
 use std::sync::Arc;
 
 pub mod bom;
+pub mod copy;
 pub mod interference;
 pub mod joint;
 pub mod looks;
 pub mod pattern;
 pub mod physical;
 pub mod relation;
+pub mod replace;
 pub mod solve;
 
 pub use relation::{Constraint, ConstraintKind, Geom, GeomRef};
