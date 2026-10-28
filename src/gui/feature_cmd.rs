@@ -206,14 +206,14 @@ impl CadCraftApp {
         self.start_feature(revolve);
     }
 
-    /// Extrude: a click on an open curve of the profile sketch (one that
-    /// bounds no region) adds it to the open profile, or removes it again.
-    /// Returns whether it was such a click.
+    /// Extrude, or Revolve with Output Surface: a click on an open curve of
+    /// the profile sketch (one that bounds no region) adds it to the open
+    /// profile, or removes it again. Returns whether it was such a click.
     pub(super) fn open_curve_pick(&mut self, pos: egui::Pos2, rect: egui::Rect) -> bool {
         let Some(d) = self.extrude.as_ref() else {
             return false;
         };
-        if !matches!(d.def, DraftDef::Extrude(_)) {
+        if matches!(&d.def, DraftDef::Revolve(r) if r.output != crate::part::Output::Surface) {
             return false;
         }
         let Some(ps) = self.part().sketches.get(d.sketch) else {
@@ -225,10 +225,14 @@ impl CadCraftApp {
         else {
             return false;
         };
-        if !matches!(
-            sk.entity(e),
-            Some(crate::sketch::Entity::Line { .. } | crate::sketch::Entity::Arc { .. })
-        ) || ps.is_reference(e)
+        let open_spline = matches!(sk.entity(e), Some(crate::sketch::Entity::Spline { points })
+            if points.len() >= 2 && points.first() != points.last());
+        if !(open_spline
+            || matches!(
+                sk.entity(e),
+                Some(crate::sketch::Entity::Line { .. } | crate::sketch::Entity::Arc { .. })
+            ))
+            || ps.is_reference(e)
         {
             return false;
         }
@@ -243,8 +247,17 @@ impl CadCraftApp {
         let Some(d) = self.extrude.as_mut() else {
             return false;
         };
-        let DraftDef::Extrude(x) = &mut d.def else {
-            return false;
+        let x = match &mut d.def {
+            DraftDef::Extrude(x) => x,
+            DraftDef::Revolve(r) => {
+                match r.open.iter().position(|&c| c == e) {
+                    Some(k) => {
+                        r.open.remove(k);
+                    }
+                    None => r.open.push(e),
+                }
+                return true;
+            }
         };
         let open = x.open.get_or_insert_with(|| crate::part::OpenProfile {
             curves: Vec::new(),
@@ -463,9 +476,17 @@ impl CadCraftApp {
                 "{cmd}: click a line of the sketch (or an origin axis in the panel) for the axis"
             ),
             _ if d.def.profiles().is_empty()
-                && !matches!(&d.def, DraftDef::Extrude(e) if e.open.is_some()) =>
+                && !matches!(&d.def, DraftDef::Extrude(e) if e.open.is_some())
+                && !matches!(&d.def, DraftDef::Revolve(r) if !r.open.is_empty()) =>
             {
-                format!("{cmd}: click the profiles (regions) to use; open curves: Match Shape")
+                match &d.def {
+                    DraftDef::Revolve(r) if r.output == crate::part::Output::Surface => {
+                        format!("{cmd}: click the profiles (regions) or open curves to revolve")
+                    }
+                    _ => format!(
+                        "{cmd}: click the profiles (regions) to use; open curves: Match Shape"
+                    ),
+                }
             }
             DraftDef::Revolve(_) => format!(
                 "{cmd}: set the options, then OK (Ctrl+Enter); right-click: Continue to the axis"

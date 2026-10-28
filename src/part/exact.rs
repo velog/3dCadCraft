@@ -527,7 +527,75 @@ pub(super) fn revolve(
             .map_err(Kernel)?,
         );
     }
+    // Open curves (Output Surface): one chain, without its lines on the axis.
+    if !r.open.is_empty() {
+        if r.output != Output::Surface {
+            return Err(User(
+                "open curves give a surface: choose Output Surface".into(),
+            ));
+        }
+        let op = super::OpenProfile {
+            curves: r.open.clone(),
+            flip: false,
+            match_shape: false,
+        };
+        let (chain, ..) = super::extrude::open_chain(&op, sketch)
+            .map_err(|e| User(e.replace("Match Shape: ", "")))?;
+        let chains = open_off_axis(chain, axis.origin, axis.dir);
+        if chains.is_empty() {
+            return Err(User("the open curves lie on the axis".into()));
+        }
+        out.push(
+            exact::revolve_sheet(
+                &sketch.plane,
+                &chains,
+                axis.origin,
+                axis.dir,
+                start,
+                sweep,
+                REVOLVE_SHEET_SENSE,
+                &prefix(&r.id, r.profiles.len()),
+            )
+            .map_err(Kernel)?,
+        );
+    }
     Ok(Some(out))
+}
+
+/// An open chain without its lines on the revolve axis: the runs between
+/// them (each sweeps a surface; a line on the axis sweeps nothing).
+fn open_off_axis(
+    chain: Vec<crate::kernel::ProfileSegment>,
+    origin: nalgebra::Point2<Real>,
+    dir: nalgebra::Vector2<Real>,
+) -> Vec<Vec<crate::kernel::ProfileSegment>> {
+    use crate::kernel::Segment2;
+    let Some(d) = dir.try_normalize(1e-15) else {
+        return vec![chain];
+    };
+    let size = chain
+        .iter()
+        .map(|s| s.geometry.point(0.0).coords.norm())
+        .fold(1.0, Real::max);
+    let on = |p: nalgebra::Point2<Real>| {
+        let v = p - origin;
+        (v.x * d.y - v.y * d.x).abs() < 1e-9 * size
+    };
+    let mut out = Vec::new();
+    let mut cur = Vec::new();
+    for s in chain {
+        if matches!(&s.geometry, Segment2::Line { a, b } if on(*a) && on(*b)) {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+        } else {
+            cur.push(s);
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 /// Applies a feature's operation: `added` (its solids) against the bodies

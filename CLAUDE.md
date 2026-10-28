@@ -1172,6 +1172,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **GPU errors are logged** (`ViewportRenderer::new`: `on_uncaptured_error`, `set_device_lost_callback`): a surface
   "Validation" status then egui-wgpu's "Failed to create staging buffer" panic (owner's crash 2026-10-27, Extrude after
   Project Cut Edges) left no cause in the log. Text boxes that open for typing use `valuefield::focus_all` (text selected).
+- **Free-form faces in sectors** (a revolved or swept spline): the exact kernel's B-spline faces carry a
+  placeholder plane; `kernel::smooth::same_free_form` treats pieces with the same name whose mesh leaves that
+  plane as one face (no seam drawn, one pick). Revolve open curves: `RevolveFeature::open` (surface only).
+- **The status bar's "ms" is the CPU work of a frame** (measured in `App::ui`); `unstable_dt` (time between
+  frames) grew while the mouse stood still and looked like a slow view.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

@@ -1438,10 +1438,30 @@ impl CadCraftApp {
             (ps.visible || part.consumers(&ps.id).is_empty())
                 && !app.sketch_regions(&ps.sketch).is_empty()
         };
-        let Some(sketch) = preferred
-            .filter(|&i| i < n && usable(self, i))
-            .or_else(|| (0..n).rev().find(|&i| usable(self, i)))
-        else {
+        // The chosen sketch with open curves only: a surface of them
+        // (Inventor switches to Output Surface for an open profile).
+        let open_only = preferred.filter(|&i| {
+            i < n && !usable(self, i) && {
+                let ps = &self.part().sketches[i];
+                ps.sketch.entities().any(|(e, x)| {
+                    !ps.is_reference(e)
+                        && ps.sketch.style(e) == crate::sketch::Style::Normal
+                        && match x {
+                            crate::sketch::Entity::Line { .. }
+                            | crate::sketch::Entity::Arc { .. } => true,
+                            crate::sketch::Entity::Spline { points } => {
+                                points.first() != points.last()
+                            }
+                            _ => false,
+                        }
+                })
+            }
+        });
+        let Some(sketch) = open_only.or_else(|| {
+            preferred
+                .filter(|&i| i < n && usable(self, i))
+                .or_else(|| (0..n).rev().find(|&i| usable(self, i)))
+        }) else {
             self.file_status = Some(Err(format!(
                 "{cmd}: no free or visible sketch has a closed profile"
             )));
@@ -1459,6 +1479,9 @@ impl CadCraftApp {
                 auto.unwrap_or(crate::part::AxisRef::Origin(0)),
             );
             def.operation = operation;
+            if open_only.is_some() {
+                def.output = crate::part::Output::Surface;
+            }
             let mut d = ExtrudeDraft::new(sketch, DraftDef::Revolve(def));
             d.axis_pick = !axis_set;
             d.axis_set = axis_set;
@@ -1467,6 +1490,9 @@ impl CadCraftApp {
             let mut def = crate::part::ExtrudeFeature::new(profiles, 10.0);
             def.extend_face = false; // Inventor: off, on by itself when needed
             def.operation = operation;
+            if open_only.is_some() {
+                def.output = crate::part::Output::Surface;
+            }
             ExtrudeDraft::new(sketch, DraftDef::Extrude(def))
         };
         self.draft_preset_start(&mut draft.def);
@@ -2117,7 +2143,10 @@ impl CadCraftApp {
         let Some(d) = &self.extrude else {
             return Ok(Vec::new());
         };
-        let open = matches!(&d.def, DraftDef::Extrude(e) if e.open.is_some());
+        let open = match &d.def {
+            DraftDef::Extrude(e) => e.open.is_some(),
+            DraftDef::Revolve(r) => !r.open.is_empty(),
+        };
         if d.def.profiles().is_empty() && !open {
             return Err("Select a profile".to_owned());
         }
@@ -7581,6 +7610,7 @@ impl eframe::App for CadCraftApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let frame_start = std::time::Instant::now();
         self.body_key_frame.replace((true, None));
         // Expression fields everywhere evaluate against the part's parameters.
         valuefield::set_frame_table(&ctx, self.part().parameter_table());
@@ -7622,6 +7652,13 @@ impl eframe::App for CadCraftApp {
         self.dimension_windows(&ctx);
         self.layout_end(&ctx);
         self.diag_frame(&ctx);
+        // The work of this frame (the status bar shows it next frame; the
+        // time between frames grows while nothing happens).
+        let work = frame_start.elapsed().as_secs_f32() * 1000.0;
+        ctx.memory_mut(|m| {
+            let v: &mut f32 = m.data.get_temp_mut_or(egui::Id::new("frame_ms"), work);
+            *v = *v * 0.8 + work * 0.2;
+        });
     }
 
     fn on_exit(&mut self) {

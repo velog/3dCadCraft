@@ -117,9 +117,40 @@ impl BRep {
     /// visible face (both on the same curved surface).
     pub(crate) fn is_smooth_seam(&self, a: FaceId, b: FaceId) -> bool {
         match (self.face_surface_of(a), self.face_surface_of(b)) {
-            (Some(x), Some(y)) => a != b && same_curved(x, y),
+            (Some(x), Some(y)) => a != b && (same_curved(x, y) || self.same_free_form(a, b)),
             _ => false,
         }
+    }
+
+    /// Two pieces of one free-form face: the same persistent name (a
+    /// revolved or swept spline comes in sectors, each named after the
+    /// curve that made it) and no analytic surface (the exact kernel's
+    /// B-spline faces carry a placeholder plane their mesh is not on).
+    fn same_free_form(&self, a: FaceId, b: FaceId) -> bool {
+        let (Some(fa), Some(fb)) = (self.face(a), self.face(b)) else {
+            return false;
+        };
+        fa.name.is_some() && fa.name == fb.name && self.free_form(a) && self.free_form(b)
+    }
+
+    /// A face whose display mesh leaves its (plane) surface: free-form.
+    fn free_form(&self, f: FaceId) -> bool {
+        let Some(face) = self.face(f) else {
+            return false;
+        };
+        let (Some(Surface::Plane(pl)), Some(mesh)) = (self.face_surface_of(f), face.mesh.as_ref())
+        else {
+            return false;
+        };
+        let n = pl.normal.into_inner();
+        let size = mesh
+            .positions
+            .iter()
+            .map(|p| (p - pl.origin).norm())
+            .fold(1.0, Real::max);
+        mesh.positions
+            .iter()
+            .any(|p| (p - pl.origin).dot(&n).abs() > 1e-6 * size)
     }
 
     /// The pieces of the visible face that face `f` belongs to: `f` and
@@ -128,7 +159,7 @@ impl BRep {
         let Some(own) = self.face_surface_of(f) else {
             return vec![f];
         };
-        if matches!(own, Surface::Plane(_) | Surface::Extrusion(_)) {
+        if matches!(own, Surface::Plane(_) | Surface::Extrusion(_)) && !self.free_form(f) {
             return vec![f];
         }
         let map = self.edge_face_map();

@@ -93,6 +93,11 @@ pub struct RevolveFeature {
     /// the farther one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub minimum: bool,
+    /// Open curves of the sketch revolved as a surface (Output Surface
+    /// only): lines, arcs and splines joined end to end, one chain; lines
+    /// lying on the axis sweep nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open: Vec<EntityId>,
 }
 
 fn quarter() -> Real {
@@ -120,6 +125,7 @@ impl RevolveFeature {
             preset: None,
             to: None,
             minimum: false,
+            open: Vec::new(),
         }
     }
 
@@ -305,6 +311,9 @@ impl RevolveFeature {
         works: &WorkGeom,
         sketch: &Sketch,
     ) -> Result<(), String> {
+        if !self.open.is_empty() {
+            return Err("open curves are revolved by the exact kernel only".into());
+        }
         let axis = resolve_axis_in(&self.axis, sketch, works)?;
         let (start, sweep) = self.sweep_in(body, works, sketch)?;
         let regions = sketch.regions();

@@ -1189,8 +1189,33 @@ pub(crate) fn open_chain(
                     b,
                 });
             }
+            Some(Entity::Spline { points }) if points.len() >= 2 => {
+                let (Some(a), Some(b)) = (
+                    points.first().and_then(|&p| pos(p)),
+                    points.last().and_then(|&p| pos(p)),
+                ) else {
+                    return Err("Match Shape: a curve of the open profile is gone".into());
+                };
+                if (a - b).norm() < 1e-9 {
+                    return Err(
+                        "Match Shape: a closed spline is a profile, not an open curve".into(),
+                    );
+                }
+                let (cv, knots) =
+                    sketch.spline_def(e, &|p| pos(p).map_or(Vector2::zeros(), |q| q.coords));
+                pieces.push(Piece2 {
+                    seg: Segment2::Spline {
+                        points: cv.into_iter().map(Point2::from).collect(),
+                        reversed: false,
+                        knots,
+                    },
+                    name,
+                    a,
+                    b,
+                });
+            }
             Some(_) => {
-                return Err("Match Shape: open profiles of lines and arcs only (yet)".into());
+                return Err("Match Shape: open profiles of lines, arcs and splines only".into());
             }
             None => return Err("Match Shape: a curve of the open profile is gone".into()),
         }

@@ -4725,15 +4725,14 @@ impl CadCraftApp {
                         );
                 }
                 ui.separator();
-                // Frame time (CPU), smoothed: shows when the view gets slow.
-                let dt = ui.input(|i| i.unstable_dt) * 1000.0;
-                let ms = ui.ctx().memory_mut(|m| {
-                    let v: &mut f32 = m.data.get_temp_mut_or(egui::Id::new("frame_ms"), dt);
-                    *v = *v * 0.9 + dt * 0.1;
-                    *v
-                });
+                // The CPU work of a frame, smoothed (measured in `ui`): shows
+                // when the view gets slow. Idle time between frames is not in it.
+                let ms = ui
+                    .ctx()
+                    .memory(|m| m.data.get_temp::<f32>(egui::Id::new("frame_ms")))
+                    .unwrap_or(0.0);
                 ui.label(RichText::new(format!("{ms:.0} ms")).weak())
-                    .on_hover_text("Time per frame");
+                    .on_hover_text("Time the program spends on a frame (without the GPU and the wait for input)");
                 ui.separator();
                 ui.label("ISO");
                 ui.separator();
@@ -5656,6 +5655,23 @@ fn revolve_options(
         &fx.bodies,
         ctx,
     );
+    // Open curves: only a surface takes them (Inventor).
+    if def.output == crate::part::Output::Surface {
+        egui::Grid::new("revolve_open").num_columns(2).show(ui, |ui| {
+            plabel(ui, "Open curves");
+            ui.horizontal(|ui| {
+                ui.label(format!("{}", def.open.len())).on_hover_text(
+                    "Click curves of the sketch that close no area to revolve them as a surface (a second click removes one)",
+                );
+                if !def.open.is_empty() && ui.small_button("x").on_hover_text("Clear").clicked() {
+                    def.open.clear();
+                }
+            });
+            ui.end_row();
+        });
+    } else if !def.open.is_empty() {
+        def.open.clear();
+    }
     *def != before
 }
 
@@ -5822,8 +5838,13 @@ fn extrude_options(
             ui.end_row();
         }
         let n_open = def.open.as_ref().map_or(0, |o| o.curves.len());
+        let surface = def.output == crate::part::Output::Surface;
         plabel(ui, "");
         match def.open.as_mut() {
+            // A surface of open curves: no side to keep, no Match Shape.
+            Some(_) if surface => {
+                ui.label(RichText::new(format!("Open curves: {n_open}")).small());
+            }
             Some(op) => {
                 ui.vertical(|ui| {
                     ui.checkbox(&mut op.match_shape, "Match Shape")

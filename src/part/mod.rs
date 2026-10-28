@@ -1924,8 +1924,15 @@ impl PartDocument {
             .ok_or(PartError::NoSketch(index))?
             .id
             .clone();
-        if def.profiles.is_empty() {
-            return Err(PartError::Feature("select at least one profile".into()));
+        if def.profiles.is_empty() && (def.open.is_empty() || def.output != Output::Surface) {
+            return Err(PartError::Feature(
+                if def.open.is_empty() {
+                    "select at least one profile"
+                } else {
+                    "open curves give a surface: choose Output Surface"
+                }
+                .into(),
+            ));
         }
         let id = self.next_feature_id("Revolution");
         let name = if def.name.is_empty() {
