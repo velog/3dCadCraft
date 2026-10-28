@@ -61,8 +61,15 @@ pub enum DrwCmd {
     ChamferNote,
     /// Annotate › Parts List.
     PartsList,
-    /// Annotate › Table (a bend table on a flat pattern view).
+    /// Annotate › Table (a bend table on a flat pattern view, an empty
+    /// table or one from a CSV file).
     Table,
+    /// Annotate › Revision Table.
+    RevisionTable,
+    /// Annotate › Revision Tag.
+    RevisionTag,
+    /// Annotate › Revision Cloud.
+    RevisionCloud,
     /// Annotate › Arrange Dimensions.
     Arrange,
     /// Annotate › Hole Table (View / Selection / Selected Feature).
@@ -165,6 +172,15 @@ pub(super) enum DrwTool {
     HoleTable(super::drawing_holetable::HtDraft),
     /// Chamfer Note: chamfer edge, reference edge, place.
     ChamferNote(super::drawing_chamfer::ChDraft),
+    /// Table: the general table follows the cursor.
+    GeneralTable(crate::drawing::table::GeneralTable),
+    /// Revision Table: the table follows the cursor; `true`: Revision Tag
+    /// continues after it.
+    RevisionTable(crate::drawing::revision::RevisionTable, bool),
+    /// Revision Tag: the leader's arrow (view, sheet point) once picked.
+    RevisionTag(Option<(u32, [f64; 2])>),
+    /// Revision Cloud: the corners so far (sheet mm).
+    RevisionCloud(Vec<[f64; 2]>),
 }
 
 /// Tabs of the Drawing View dialog.
@@ -270,6 +286,8 @@ pub(super) struct DrwUi {
     pub hole_table_edit: Option<super::drawing_holetable::HtEdit>,
     /// Edit Chamfer Note.
     pub chamfer_edit: Option<super::drawing_chamfer::ChEdit>,
+    /// General tables and revisions.
+    pub rev: super::drawing_revision::RevUi,
     /// This frame's measured values of the dimensions (id, mm).
     pub dim_values: Vec<(u32, f64)>,
     /// This frame's BOM tables of the active sheet.
@@ -304,6 +322,7 @@ impl DrwUi {
         self.dim_edit = None;
         self.hole_table_edit = None;
         self.chamfer_edit = None;
+        self.rev = Default::default();
         self.cam.fit = true;
         self.fitted = None;
     }
@@ -454,7 +473,10 @@ impl CadCraftApp {
             DrwCmd::BendNote => self.start_annotation(DrwTool::BendNote),
             DrwCmd::ChamferNote => self.start_annotation(DrwTool::ChamferNote(Default::default())),
             DrwCmd::PartsList => self.open_parts_list(),
-            DrwCmd::Table => self.open_bend_table(),
+            DrwCmd::Table => self.open_table(),
+            DrwCmd::RevisionTable => self.open_revision_table(false),
+            DrwCmd::RevisionTag => self.start_revision_tag(),
+            DrwCmd::RevisionCloud => self.start_revision_cloud(),
             DrwCmd::Arrange => self.start_arrange(),
             DrwCmd::HoleTable(mode) => self.start_hole_table(mode),
             DrwCmd::DimSet(kind, set) => self.start_annotation(DrwTool::DimSet(
@@ -651,6 +673,7 @@ impl CadCraftApp {
             self.drw.dim_edit = None;
             self.drw.hole_table_edit = None;
             self.drw.chamfer_edit = None;
+            self.drw.rev.close();
             self.bom_cancel();
             true
         } else {
@@ -671,6 +694,7 @@ impl CadCraftApp {
             || self.drw.dim_edit.is_some()
             || self.drw.hole_table_edit.is_some()
             || self.drw.chamfer_edit.is_some()
+            || self.drw.rev.open()
     }
 
     /// Status-bar prompt.
@@ -682,6 +706,9 @@ impl CadCraftApp {
             return p;
         }
         if let Some(p) = self.bend_table_prompt() {
+            return p;
+        }
+        if let Some(p) = self.rev_prompt() {
             return p;
         }
         if self.drw.chamfer_edit.is_some() {
@@ -716,6 +743,13 @@ impl CadCraftApp {
             // Their prompts come from `bom_prompt` above.
             Some(
                 DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon | DrwTool::BendTable,
+            ) => String::new(),
+            // Their prompts come from `rev_prompt` above.
+            Some(
+                DrwTool::GeneralTable(_)
+                | DrwTool::RevisionTable(..)
+                | DrwTool::RevisionTag(_)
+                | DrwTool::RevisionCloud(_),
             ) => String::new(),
             Some(DrwTool::Base) => {
                 if self.drw.dialog.as_ref().is_some_and(|d| d.orient.custom.is_some()) {
@@ -1110,6 +1144,15 @@ impl CadCraftApp {
             Some(DrwTool::ChamferNote(_)) => {
                 self.chamfer_note_tool(&painter, rect, &response, &views)
             }
+            Some(DrwTool::GeneralTable(_) | DrwTool::RevisionTable(..)) => {
+                self.rev_table_tool(&painter, rect, &response)
+            }
+            Some(DrwTool::RevisionTag(_)) => {
+                self.revision_tag_tool(&painter, rect, &response, &views)
+            }
+            Some(DrwTool::RevisionCloud(_)) => {
+                self.revision_cloud_tool(&painter, rect, &response, &views)
+            }
             Some(_) => self.annotation_tool(&painter, rect, &response, &views),
             None if planned_sel => {}
             // Edit View of a base view: its preview and ViewCube.
@@ -1158,6 +1201,13 @@ impl CadCraftApp {
                     let mut d = d.clone();
                     d.cont();
                     self.drw.tool = Some(DrwTool::HoleTable(d));
+                }
+                Some(DrwTool::RevisionTag(Some(_))) => {
+                    self.drw.tool = Some(DrwTool::RevisionTag(None));
+                }
+                // Closes the cloud; with no corners the command ends.
+                Some(DrwTool::RevisionCloud(p)) if !p.is_empty() => {
+                    self.finish_revision_cloud(&views);
                 }
                 _ => {
                     self.drw.tool = None;
@@ -1494,6 +1544,7 @@ impl CadCraftApp {
         self.bend_table_window(ctx);
         self.dim_edit_window(ctx);
         self.hole_table_window(ctx);
+        self.rev_windows(ctx);
         if self.drw.chamfer_edit.is_some() {
             let views = self.shown_views(ctx);
             self.chamfer_window(ctx, &views);

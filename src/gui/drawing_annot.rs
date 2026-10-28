@@ -304,6 +304,8 @@ impl CadCraftApp {
                             AnnotationKind::PartsList(_)
                                 | AnnotationKind::BendTable(_)
                                 | AnnotationKind::HoleTable(_)
+                                | AnnotationKind::Table(_)
+                                | AnnotationKind::RevisionTable(_)
                         )
                         .then(|| lines_box(&s.prims))
                         .flatten(),
@@ -963,6 +965,24 @@ impl CadCraftApp {
                                 b.at[0] += delta[0];
                                 b.at[1] += delta[1];
                             }
+                            AnnotationKind::Table(t) => {
+                                t.at[0] += delta[0];
+                                t.at[1] += delta[1];
+                            }
+                            AnnotationKind::RevisionTable(t) => {
+                                t.at[0] += delta[0];
+                                t.at[1] += delta[1];
+                            }
+                            AnnotationKind::RevisionTag(t) => {
+                                t.at[0] += delta[0];
+                                t.at[1] += delta[1];
+                            }
+                            AnnotationKind::RevisionCloud(c) => {
+                                for p in &mut c.pts {
+                                    p[0] += delta[0];
+                                    p[1] += delta[1];
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -1027,7 +1047,10 @@ impl CadCraftApp {
                 self.open_dim_edit(id);
                 return;
             }
-            _ => return,
+            _ => {
+                self.open_rev_edit(id);
+                return;
+            }
         };
         self.drw.text_dialog = Some(TextDialog {
             at,

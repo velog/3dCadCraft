@@ -220,6 +220,47 @@ fn drawing_views_of_large_models() {
             over.push("dimension labels");
         }
     }
+    // A general table of 1 000 rows × 8 columns read from CSV text, and a
+    // revision table of 500 revisions with 100 clouds, drawn every frame.
+    {
+        use cadcraft3d::drawing::revision::{self, RevisionCloud, RevisionTable};
+        use cadcraft3d::drawing::table::{self, GeneralTable};
+        let look = cadcraft3d::drawing::style::AnnotationLook::default();
+        let csv: String = (0..=1000)
+            .map(|r| {
+                (0..8)
+                    .map(|c| format!("R{r}C{c}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    + "\n"
+            })
+            .collect();
+        let t = Instant::now();
+        let gt = GeneralTable::from_csv([20.0, 280.0], &csv, true).unwrap();
+        let mut rt = RevisionTable::default().place([250.0, 280.0], "2026-10-28");
+        for _ in 0..499 {
+            rt.add_revision("2026-10-28");
+        }
+        let cloud = RevisionCloud {
+            view: None,
+            pts: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+            arc: 8.0,
+        };
+        let mut n = table::prims(&gt, &look).len() + revision::prims(&rt, &look).len();
+        for _ in 0..100 {
+            n += revision::cloud_prims(&cloud, [10.0, 10.0], 0.35).len();
+        }
+        let total = ms(t);
+        let budget = 50.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms ({n} prims){flag}",
+            "general table 1 000 × 8, revisions 500, clouds 100"
+        );
+        if total > budget {
+            over.push("general / revision tables");
+        }
+    }
     // A hole table of 2 500 holes in two kinds (a 50 × 50 grid of circles
     // seen face-on), with its tags.
     {

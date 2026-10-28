@@ -547,9 +547,12 @@ pub fn table_prims_gap(pl: &PartsList, t: &Table, look: &AnnotationLook, gap: f6
             y -= rh;
             let mut x = left;
             for (c, s) in pl.columns.iter().zip(&r.cells) {
-                // Bend tables centre every value (Inventor's Table style).
-                let center =
-                    matches!(c.key.as_str(), "item" | "qty" | "unit") || c.key.starts_with("bend_");
+                // Bend, general and revision tables centre every value
+                // (Inventor's Table styles).
+                let center = matches!(c.key.as_str(), "item" | "qty" | "unit")
+                    || ["bend_", "table:", "rev:"]
+                        .iter()
+                        .any(|p| c.key.starts_with(p));
                 text(&mut out, x, c.width, y, s, center);
                 x += c.width;
             }

@@ -94,6 +94,15 @@ pub enum AnnotationKind {
     HoleTable(super::hole_table::HoleTable),
     /// Item balloon on a component of an assembly view (`parts`).
     Balloon(super::parts::Balloon),
+    /// General table: empty or read from a CSV file (`table`, format
+    /// revision 36).
+    Table(super::table::GeneralTable),
+    /// Revision table (`revision`, format revision 36).
+    RevisionTable(super::revision::RevisionTable),
+    /// Revision tag (`revision`, format revision 36).
+    RevisionTag(super::revision::RevisionTag),
+    /// Revision cloud (`revision`, format revision 36).
+    RevisionCloud(super::revision::RevisionCloud),
     /// Text on the sheet.
     Text {
         /// Lower left of the first line (sheet mm).
@@ -272,6 +281,34 @@ pub fn resolve_in<'a>(
             let (pl, lines) = view(bt.view).ok_or(Orphan::NoView)?;
             Ok(Shown {
                 prims: super::bend_table::prims(bt, lines, pl, look),
+                value: None,
+            })
+        }
+        AnnotationKind::Table(t) => Ok(Shown {
+            prims: super::table::prims(t, look),
+            value: None,
+        }),
+        AnnotationKind::RevisionTable(t) => Ok(Shown {
+            prims: super::revision::prims(t, look),
+            value: None,
+        }),
+        AnnotationKind::RevisionTag(t) => {
+            let origin = match t.view {
+                Some(v) => view(v).ok_or(Orphan::NoView)?.0.position,
+                None => [0.0, 0.0],
+            };
+            Ok(Shown {
+                prims: super::revision::tag_prims(t, origin, look),
+                value: None,
+            })
+        }
+        AnnotationKind::RevisionCloud(c) => {
+            let origin = match c.view {
+                Some(v) => view(v).ok_or(Orphan::NoView)?.0.position,
+                None => [0.0, 0.0],
+            };
+            Ok(Shown {
+                prims: super::revision::cloud_prims(c, origin, look.dim_weight),
                 value: None,
             })
         }
@@ -1003,7 +1040,12 @@ impl Annotation {
             AnnotationKind::DimSet(s) => s.view(),
             AnnotationKind::HoleTable(h) => Some(h.view),
             AnnotationKind::Balloon(b) => Some(b.view),
-            AnnotationKind::Text { .. } | AnnotationKind::LeaderText { .. } => None,
+            AnnotationKind::RevisionTag(t) => t.view,
+            AnnotationKind::RevisionCloud(c) => c.view,
+            AnnotationKind::Text { .. }
+            | AnnotationKind::LeaderText { .. }
+            | AnnotationKind::Table(_)
+            | AnnotationKind::RevisionTable(_) => None,
         }
     }
 }

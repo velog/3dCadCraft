@@ -166,6 +166,7 @@ impl CadCraftApp {
         let mut ok = false;
         let mut cancel = false;
         let mut open = true;
+        let mut general = None;
         let title = if dlg.edit.is_some() {
             "Edit Table"
         } else {
@@ -183,9 +184,18 @@ impl CadCraftApp {
                 ui.horizontal(|ui| {
                     let mut src = 0;
                     ui.radio_value(&mut src, 0, "Select View");
-                    for other in ["Empty", "File (CSV / Excel)"] {
-                        ui.add_enabled(false, egui::RadioButton::new(false, other))
-                            .on_disabled_hover_text("Tables of other sources: planned (spec 4.7)");
+                    // A new table may switch to the general table's sources.
+                    let new = dlg.edit.is_none();
+                    for (other, src) in [
+                        ("Empty", super::drawing_revision::TableSource::Empty),
+                        ("File (CSV)", super::drawing_revision::TableSource::File),
+                    ] {
+                        if ui
+                            .add_enabled(new, egui::RadioButton::new(false, other))
+                            .clicked()
+                        {
+                            general = Some(src);
+                        }
                     }
                 });
                 ui.horizontal(|ui| {
@@ -288,6 +298,10 @@ impl CadCraftApp {
             if self.drw.tool == Some(DrwTool::BendTable) {
                 self.drw.tool = None;
             }
+            return;
+        }
+        if let Some(src) = general {
+            self.open_general_table(src);
             return;
         }
         if ok {

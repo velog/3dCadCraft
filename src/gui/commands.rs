@@ -2283,10 +2283,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["HT"])
         .at(&[N_TABLE])
         .tip("Holes of a view with coordinates from a datum"),
-    dp("drw.revision_table", "Revision Table", "Таблица на ревизиите", Icon::PartsList, Dp::RevisionTable)
+    d("drw.revision_table", "Revision Table", "Таблица на ревизиите", Icon::RevisionTable)
+        .run(Action::Drawing(DrwCmd::RevisionTable))
+        .spec("4.7-drawing-commands.md")
         .alias(&["RT"])
         .at(&[N_REVISION])
-        .tip("Rows of revisions"),
+        .tip("Rows of revisions: scope, alpha or numeric index, delete rule; Add Revision Row in its editor"),
     dp("drw.align_h", "Horizontally Align View", "Хоризонтално подравняване", Icon::ProjectedView, Dp::AlignHorizontal)
         .alias(&["ALH"])
         .at(&[D_MODIFY])
@@ -2409,12 +2411,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["AB"])
         .at(&[N_TABLE])
         .tip("Balloons for every component of a view at once, around it or in a row"),
-    d("drw.table", "Table", "Таблица", Icon::PartsList)
+    d("drw.table", "Table", "Таблица", Icon::GeneralTable)
         .run(Action::Drawing(DrwCmd::Table))
-        .spec("4.8-sheet-metal-drawings.md")
+        .spec("4.7-drawing-commands.md")
         .alias(&["TB"])
         .at(&[N_TABLE])
-        .tip("A table from a view: on a flat pattern view, the bend table with tags (blank and CSV / Excel tables planned)"),
+        .tip("A general table: empty, from a CSV file, or the bend table of a flat pattern view"),
     d("drw.hole_table_sel", "Hole Table - Selection", "Таблица на избрани отвори", Icon::PartsList)
         .run(Action::Drawing(DrwCmd::HoleTable(HtMode::Selection)))
         .spec("4.7-drawing-commands.md")
@@ -2427,14 +2429,18 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["HTF"])
         .at(&[N_TABLE])
         .tip("A hole table of the holes of one feature type"),
-    dp("drw.revision_tag", "Revision Tag", "Маркер на ревизия", Icon::Text, Dp::RevisionTag)
+    d("drw.revision_tag", "Revision Tag", "Маркер на ревизия", Icon::RevisionTag)
+        .run(Action::Drawing(DrwCmd::RevisionTag))
+        .spec("4.7-drawing-commands.md")
         .alias(&["RTG"])
         .at(&[N_REVISION])
-        .tip("A revision tag next to a change"),
-    dp("drw.revision_cloud", "Revision Cloud", "Облак на ревизия", Icon::Text, Dp::RevisionCloud)
+        .tip("The active revision in a tag next to a change, with a leader from an edge"),
+    d("drw.revision_cloud", "Revision Cloud", "Облак на ревизия", Icon::RevisionCloud)
+        .run(Action::Drawing(DrwCmd::RevisionCloud))
+        .spec("4.7-drawing-commands.md")
         .alias(&["RC"])
         .at(&[N_REVISION])
-        .tip("A cloud round a change"),
+        .tip("A cloud round a change: click its corners, double-click closes it"),
     dp("drw.update_all", "Update All Sheets", "Обновяване на всички листове", Icon::Rebuild, Dp::UpdateAllSheets)
         .alias(&["UAS"])
         .at(&[G_UPDATE])

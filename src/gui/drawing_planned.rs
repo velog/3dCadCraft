@@ -82,10 +82,6 @@ pub enum Planned {
     CenterlineBisector,
     CenteredPattern,
     AutoCenterlines,
-    // Table
-    RevisionTag,
-    RevisionTable,
-    RevisionCloud,
     // Manage
     UpdateAllSheets,
     ReplaceModel,
@@ -110,7 +106,7 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 39] = [
+    pub const ALL: [Planned; 36] = [
         Self::Overlay,
         Self::DraftView,
         Self::Break,
@@ -142,9 +138,6 @@ impl Planned {
         Self::CenterlineBisector,
         Self::CenteredPattern,
         Self::AutoCenterlines,
-        Self::RevisionTag,
-        Self::RevisionTable,
-        Self::RevisionCloud,
         Self::UpdateAllSheets,
         Self::ReplaceModel,
         Self::DefineBorder,
@@ -186,9 +179,6 @@ impl Planned {
             Self::CenterlineBisector => "Centerline Bisector",
             Self::CenteredPattern => "Centered Pattern",
             Self::AutoCenterlines => "Automated Centerlines",
-            Self::RevisionTag => "Revision Tag",
-            Self::RevisionTable => "Revision Table",
-            Self::RevisionCloud => "Revision Cloud",
             Self::UpdateAllSheets => "Update All Sheets",
             Self::ReplaceModel => "Replace Model Reference",
             Self::DefineBorder => "Define Border",
@@ -700,56 +690,6 @@ impl Planned {
                     Num("Arc Angle Minimum", 0.0, "°"),
                 ],
             )],
-            Self::RevisionTag => &[Page(
-                "Revision Tag",
-                &[
-                    Sel(
-                        "place",
-                        "Placement",
-                        "click the place of the tag (an edge gives a leader)",
-                    ),
-                    Text("Revision", "A"),
-                    Combo("Style", &["Revision Tag (ISO)"], 0),
-                ],
-            )],
-            Self::RevisionTable => &[
-                Page(
-                    "Table Scope",
-                    &[
-                        Radio("Scope", &["Entire Drawing", "Active Sheet"], 0),
-                        Head("Revision Index"),
-                        Radio("Index", &["Alpha", "Numeric"], 0),
-                        Text("Start Value", "A"),
-                        Check("Auto-Index", true),
-                        Check("Update property on revision number edit", true),
-                        Head("Delete Rule"),
-                        Radio("Delete", &["Manual", "Auto (keep the last rows)"], 0),
-                        Num("Rows to Keep", 5.0, ""),
-                        Sel("place", "Placement", "click where the table goes"),
-                    ],
-                ),
-                Page(
-                    "Columns",
-                    &[
-                        Button("Column Chooser..."),
-                        Note(
-                            "REV, DESCRIPTION, DATE, APPROVED (rows from Revision Number and the dates)",
-                        ),
-                    ],
-                ),
-            ],
-            Self::RevisionCloud => &[Page(
-                "Revision Cloud",
-                &[
-                    Sel(
-                        "points",
-                        "Outline",
-                        "click the cloud's corners (double-click closes)",
-                    ),
-                    Num("Arc Length", 8.0, " mm"),
-                    Check("Associate to View", true),
-                ],
-            )],
             Self::UpdateAllSheets => &[Page(
                 "Update All Sheets",
                 &[
@@ -850,9 +790,6 @@ impl Planned {
             Self::AutoCenterlines => {
                 "Centre marks and lines on every chosen feature type of the views"
             }
-            Self::RevisionTag => "A revision tag next to a change",
-            Self::RevisionTable => "Rows of revisions (Revision Number of the drawing)",
-            Self::RevisionCloud => "A cloud round a change",
             Self::UpdateAllSheets => "Updates the views of every sheet",
             Self::ReplaceModel => "Points the drawing's views at another model file",
             Self::DefineBorder => "A new border template in Drawing Resources",

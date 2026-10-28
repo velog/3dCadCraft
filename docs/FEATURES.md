@@ -1006,7 +1006,8 @@ Center Mark, Centerline, Text; attached to edges by name, orphans marked. Waitin
 🟡 2026-10-26: assembly views; **Parts List** (BOM view, numbering, merge, wrapping, any iProperty as a
 column, cell overrides kept by part number, sort / renumber, hidden and custom rows) with **Balloon** and
 **Auto Balloon** reading item numbers through it. Waiting for a visual check. Bend tables of flat pattern views with bend tags (Table on a flat view, spec
-4.8); hole, revision and general tables to do. **Specification:** [spec/4.4-parts-list.md](spec/4.4-parts-list.md)
+4.8); hole tables (2026-10-27); 🟡 2026-10-28: general tables (Empty, CSV file) and revision tables with
+revision tags and clouds (spec 4.7 §3.5, format revision 36). **Specification:** [spec/4.4-parts-list.md](spec/4.4-parts-list.md)
 
 - **Parts list** (from the BOM, 3.6), with **balloons** (item numbers);
 - **revision table**;

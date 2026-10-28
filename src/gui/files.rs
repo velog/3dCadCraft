@@ -32,6 +32,8 @@ pub(super) enum DialogPurpose {
     ExportDxf,
     /// Drawing → File › Export › PDF.
     ExportPdf,
+    /// Drawing → Annotate › Table: the CSV file of a general table.
+    TableSource,
     /// Manage › Link File: a file to link (spec 0.6b).
     LinkFile,
     /// Manage › Insert Document: a file whose documents are copied in.
@@ -56,6 +58,7 @@ impl DialogPurpose {
             DialogPurpose::ExportBom => "Export Bill of Materials".into(),
             DialogPurpose::ExportDxf => "Export Flat Pattern".into(),
             DialogPurpose::ExportPdf => "Export PDF".into(),
+            DialogPurpose::TableSource => "Table Source".into(),
             DialogPurpose::LinkFile => "Link File".into(),
             DialogPurpose::InsertDocument => "Insert Document".into(),
             DialogPurpose::Extract(..) => "Save to Separate File".into(),
@@ -79,7 +82,8 @@ impl DialogPurpose {
             DialogPurpose::Diagnostics => &["zip"],
             DialogPurpose::ExportParams
             | DialogPurpose::ImportParams
-            | DialogPurpose::ExportBom => &["csv"],
+            | DialogPurpose::ExportBom
+            | DialogPurpose::TableSource => &["csv"],
             DialogPurpose::ExportDxf => &["dxf"],
             DialogPurpose::ExportPdf => &["pdf"],
         }
@@ -100,7 +104,8 @@ impl DialogPurpose {
             DialogPurpose::Diagnostics => "Zip archive",
             DialogPurpose::ExportParams
             | DialogPurpose::ImportParams
-            | DialogPurpose::ExportBom => "CSV",
+            | DialogPurpose::ExportBom
+            | DialogPurpose::TableSource => "CSV",
             DialogPurpose::ExportDxf => "DXF",
             DialogPurpose::ExportPdf => "PDF",
         };
@@ -113,6 +118,7 @@ impl DialogPurpose {
             self,
             DialogPurpose::Open
                 | DialogPurpose::ImportParams
+                | DialogPurpose::TableSource
                 | DialogPurpose::LinkFile
                 | DialogPurpose::InsertDocument
         )
@@ -847,6 +853,7 @@ impl CadCraftApp {
             DialogPurpose::ExportDxf => format!("{stem}-flat.dxf"),
             DialogPurpose::ExportPdf => format!("{stem}.pdf"),
             DialogPurpose::ImportParams
+            | DialogPurpose::TableSource
             | DialogPurpose::LinkFile
             | DialogPurpose::InsertDocument => String::new(),
             DialogPurpose::Extract(id, _) => self
@@ -1332,6 +1339,7 @@ impl CadCraftApp {
             }
             DialogPurpose::Diagnostics => self.save_diagnostics(&path),
             DialogPurpose::ExportPdf => self.write_drawing_pdf(&path),
+            DialogPurpose::TableSource => self.table_source_picked(&path),
             DialogPurpose::LinkFile => self.docs_link_file(&path),
             DialogPurpose::InsertDocument => self.docs_insert_file(&path),
             DialogPurpose::Extract(id, _) => self.docs_extract_to(id, &path),

@@ -57,6 +57,7 @@ mod drawing_dimset;
 mod drawing_holetable;
 mod drawing_orient;
 mod drawing_planned;
+mod drawing_revision;
 mod drawing_section;
 mod drawing_sheet;
 mod drawing_styles;

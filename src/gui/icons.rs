@@ -222,6 +222,10 @@ pub enum Icon {
     PartsList,
     HoleNote,
     ChamferNote,
+    GeneralTable,
+    RevisionTable,
+    RevisionTag,
+    RevisionCloud,
     SurfaceSymbol,
     Datum,
     ControlFrame,
@@ -1664,6 +1668,41 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.line(&[(1.5, 15.0), (1.5, 9.0), (5.5, 5.0), (11.5, 5.0)], ink);
             p.line(&[(3.5, 7.0), (7.0, 3.0), (10.0, 1.5), (15.0, 1.5)], acc);
             p.text(8.5, 11.0, "45°", 5.0, hot);
+        }
+        GeneralTable => {
+            // A grid of equal cells.
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            p.line(&[(1.5, 6.0), (14.5, 6.0)], acc);
+            p.line(&[(1.5, 9.75), (14.5, 9.75)], ink);
+            for x in [5.8, 10.2] {
+                p.line(&[(x, 2.5), (x, 13.5)], ink);
+            }
+        }
+        RevisionTable => {
+            p.rect(1.5, 6.5, 14.5, 14.5, ink);
+            p.line(&[(1.5, 10.5), (14.5, 10.5)], ink);
+            p.line(&[(5.0, 6.5), (5.0, 14.5)], ink);
+            p.closed(&[(8.0, 0.8), (12.0, 5.6), (4.0, 5.6)], acc);
+        }
+        RevisionTag => {
+            p.closed(&[(8.0, 1.0), (15.0, 13.0), (1.0, 13.0)], acc);
+            p.text(8.0, 9.5, "A", 6.0, ink);
+        }
+        RevisionCloud => {
+            // Scallops round a rectangle.
+            for (x, y) in [
+                (3.5, 4.0),
+                (8.0, 3.0),
+                (12.5, 4.0),
+                (13.5, 8.0),
+                (12.5, 12.0),
+                (8.0, 13.0),
+                (3.5, 12.0),
+                (2.5, 8.0),
+            ] {
+                p.circle(x, y, 2.2, acc);
+            }
+            p.text(8.0, 8.0, "1", 5.0, ink);
         }
         SurfaceSymbol => {
             p.line(&[(1.5, 8.0), (4.5, 13.5), (11.0, 2.0), (15.0, 2.0)], acc);

@@ -1617,6 +1617,98 @@ fn drawing_r33_project() -> Project {
     project
 }
 
+fn drawing_r36_project() -> Project {
+    use cadcraft3d::drawing::AnnotationKind;
+    use cadcraft3d::drawing::revision::{RevisionCloud, RevisionTable, RevisionTag, TagShape};
+    use cadcraft3d::drawing::table::GeneralTable;
+    let mut project = drawing_r33_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let v = d.sheets[0].views[0].id;
+        let t = GeneralTable::from_csv(
+            [20.0, 150.0],
+            "NAME,QTY
+Bolt,4
+Nut,4
+",
+            true,
+        )
+        .unwrap();
+        d.add_annotation(AnnotationKind::Table(t));
+        let mut rt = RevisionTable {
+            numeric: false,
+            start: "A".into(),
+            keep: Some(3),
+            ..Default::default()
+        }
+        .place([250.0, 200.0], "2026-10-28");
+        rt.add_revision("2026-10-29");
+        rt.rows[1].description = "Hole moved".into();
+        d.add_annotation(AnnotationKind::RevisionTable(rt));
+        d.add_annotation(AnnotationKind::RevisionTag(RevisionTag {
+            view: Some(v),
+            at: [30.0, 20.0],
+            tip: Some([10.0, 5.0]),
+            rev: "B".into(),
+            shape: TagShape::Hexagon,
+        }));
+        d.add_annotation(AnnotationKind::RevisionCloud(RevisionCloud {
+            view: Some(v),
+            pts: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0]],
+            arc: 6.0,
+        }));
+    }
+    project
+}
+
+/// The revision 36 drawing reads back with its general table and revisions.
+#[test]
+fn drawing_r36_reads() {
+    use cadcraft3d::drawing::AnnotationKind;
+    use cadcraft3d::drawing::revision::TagShape;
+    let f = root().join("r36/drawing_r36.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let anns = &d.sheets[0].annotations;
+    let table = anns
+        .iter()
+        .find_map(|a| match &a.kind {
+            AnnotationKind::Table(t) => Some(t.clone()),
+            _ => None,
+        })
+        .expect("a general table");
+    assert_eq!(table.rows, [["Bolt", "4"], ["Nut", "4"]]);
+    let rt = anns
+        .iter()
+        .find_map(|a| match &a.kind {
+            AnnotationKind::RevisionTable(t) => Some(t.clone()),
+            _ => None,
+        })
+        .expect("a revision table");
+    assert_eq!(rt.active_rev(), "B");
+    assert_eq!((rt.numeric, rt.keep), (false, Some(3)));
+    assert_eq!(rt.rows[1].description, "Hole moved");
+    assert!(anns.iter().any(|a| matches!(&a.kind,
+        AnnotationKind::RevisionTag(t) if t.shape == TagShape::Hexagon && t.rev == "B")));
+    assert!(anns.iter().any(|a| matches!(&a.kind,
+        AnnotationKind::RevisionCloud(c) if c.pts.len() == 3 && c.arc == 6.0)));
+}
+
 /// The revision 33 drawing reads back with its chamfer note.
 #[test]
 fn drawing_r33_reads() {
@@ -1954,6 +2046,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r33_project().save(&f).unwrap();
+        }
+        let f = root().join("r36/drawing_r36.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r36_project().save(&f).unwrap();
         }
         let f = root().join("r35/move_bodies_r35.3dcadcraft");
         if !f.exists() {
