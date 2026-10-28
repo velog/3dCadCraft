@@ -83,10 +83,10 @@ forever), **crash**, **order** (the result depends on selection or face order).
 
 | Source | Case | Symptom | Our test idea |
 |---|---|---|---|
-| Inventor help (Stitch: Maximum Tolerance, Find Remaining Free Edges) | Stitch bridges gaps up to the tolerance and lists the free edges left with their gaps | — | ✅ ours ignores the tolerance (`stitch_leaves_gaps_over_the_tolerance`, ignored); add the free-edge list when it is fixed |
+| Inventor help (Stitch: Maximum Tolerance, Find Remaining Free Edges) | Stitch bridges gaps up to the tolerance and lists the free edges left with their gaps | — | ✅ ours ignored the tolerance; fixed 2026-10-28 (`stitch_leaves_gaps_over_the_tolerance` passes; Stitch lists free edges) |
 | FreeCAD #17735 | Fill Boundary Curves: "curves are disjoint" for curves that meet | fail | Boundary Patch of 4 edges whose ends meet within 1e-6 (not exactly) |
 | FreeCAD #29872 | surface tools ignore the placement of the bodies they use | silent | Patch / Trim of a moved body (Move Bodies first) |
-| OCCT #1534, #1543 (seams), ours | tools crossing a periodic face at its seam | fail, silent | ✅ ours: Trim of a tube along its seam plane (`trim_a_curved_wall_along_its_seams`, ignored); add the same for Split and Cut |
+| OCCT #1534, #1543 (seams), ours | tools crossing a periodic face at its seam | fail, silent | ✅ ours: Trim of a tube along its seam plane failed; fixed 2026-10-28 (`trim_a_curved_wall_along_its_seams` passes); add the same for Split and Cut |
 
 ## 7. Loft and sweep
 

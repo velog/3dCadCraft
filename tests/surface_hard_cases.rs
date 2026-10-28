@@ -154,10 +154,10 @@ fn stitch_joins_gaps_within_the_tolerance() {
 }
 
 /// Edges further apart than the tolerance are not stitched (Inventor
-/// leaves them, listing the free edges): ours makes one "surface" of two
-/// walls even 5 mm apart.
+/// leaves them, listing the free edges): refused as feature health, the
+/// part unchanged (until 2026-10-28 two walls even 5 mm apart became one
+/// "surface").
 #[test]
-#[ignore = "known: Stitch groups surfaces whatever the gap; the tolerance is not checked (reported to the surfaces session)"]
 fn stitch_leaves_gaps_over_the_tolerance() {
     for gap in [0.05, 0.5, 5.0] {
         let (p, ok) = walls_stitched(gap);
@@ -230,10 +230,10 @@ fn trim_a_curved_wall_by_a_plane_through_its_axis() {
 }
 
 /// The same with XZ, the plane the cylinder's two kernel faces meet on
-/// (their seams lie in it): refused as "the tool does not cross the
-/// selected faces" — the part is left unchanged, but Inventor trims it.
+/// (their seams lie in it): the tool only runs along the seams, so the
+/// whole pieces on the removed side go (refused as "no crossing" until
+/// 2026-10-28).
 #[test]
-#[ignore = "known: Trim by a plane through a cylinder's seams finds no crossing (reported to the surfaces session)"]
 fn trim_a_curved_wall_along_its_seams() {
     trim_tube(OriginPlane::XZ, [0.0, 8.0, 7.5]);
     trim_tube(OriginPlane::XZ, [0.0, -8.0, 7.5]);
