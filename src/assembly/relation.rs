@@ -785,7 +785,17 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
         }
         (Angle, x, y) => {
             if hold {
-                out.push(x.direction().dot(&y.direction()) - d.cos());
+                let (ua, ub) = (x.direction(), y.direction());
+                if d.sin().abs() < 1e-12 {
+                    // 0 or 180 degrees: the directions equal / opposed, in
+                    // first-order form (`cos θ − cos d` has a double root
+                    // there and the solver stalled ~1e-4 rad short).
+                    vec3(out, ua - ub * d.cos().signum());
+                } else {
+                    // The angle itself: its slope stays 1 near the ends,
+                    // where the cosine's flattens.
+                    out.push(ua.cross(&ub).norm().atan2(ua.dot(&ub)) - d);
+                }
             }
         }
         (Insert, Geom::Circle { c: ca, n: na, .. }, Geom::Circle { c: cb, n: nb, .. }) => {

@@ -1008,7 +1008,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (face sense); a circular edge's normal is the outward normal of its planar face (a hole rim points out
   of the hole), which Insert's Opposed / Aligned rely on. `GeomRef::Origin { occurrence: ASSEMBLY (0) }`
   is the assembly's own origin (identity, never solved); `Work { id }` reads `PartDocument::work`, so
-  resolve through `relation::resolve_in(part, r)`, not `resolve_local(body, r)`.
+  resolve through `relation::resolve_in(part, r)`, not `resolve_local(body, r)`. An Angle's residual is the angle itself (`atan2(|ua×ub|, ua·ub) − d`), and at exactly 0 / 180° the vector `ua ∓ ub`: `cos θ − cos d` is a double root at the ends (the solver stopped ~1e-4 rad short, DOF left open).
 - **Joints (A3)** are `ConstraintKind` variants (Rigid … Ball, `is_joint()`) with `locked` / `min` / `max`
   on `Constraint`, so the browser, Suppress / Delete and `asm_try` serve them unchanged. The solver turns
   their geometry into frames (`Geom::as_frame`, `assembly::joint::frame_of`) *in part coordinates* before

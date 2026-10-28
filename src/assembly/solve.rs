@@ -804,6 +804,41 @@ mod tests {
         assert!((cos - 30f64.to_radians().cos()).abs() < 1e-6);
     }
 
+    /// Angles at the ends of their range (0, 180 degrees and close to
+    /// them): `cos θ − cos d` has a double root there, so the solver
+    /// stalled 7.5e-5 rad short and the DOF stayed open.
+    #[test]
+    fn angles_at_the_ends_of_their_range() {
+        for deg in [0.0, 180.0, 1e-4, 179.99, 0.01, 90.0] {
+            let d: Real = deg;
+            let mut a = two_cubes();
+            a.add_constraint(con(
+                ConstraintKind::Mate,
+                face(1, "Top"),
+                face(2, "Bottom"),
+                0.0,
+            ));
+            a.add_constraint(con(
+                ConstraintKind::Angle,
+                face(1, "Right"),
+                face(2, "Right"),
+                d.to_radians(),
+            ));
+            let s = solve(&a, &cube_geom, None);
+            assert!(s.converged, "{deg}: {}", s.residual);
+            assert_eq!(s.dof[&2], 2, "{deg}");
+            applied(&mut a, &s);
+            let t = a.find(2).unwrap().transform;
+            let u = t * Vector3::x();
+            let got = u.cross(&Vector3::x()).norm().atan2(u.dot(&Vector3::x()));
+            assert!(
+                (got - d.to_radians()).abs() < 1e-9,
+                "{deg}: {} deg",
+                got.to_degrees()
+            );
+        }
+    }
+
     /// The origin planes of a component flush with the assembly's own
     /// (occurrence `ASSEMBLY`): it lands on the origin, square to it.
     #[test]
