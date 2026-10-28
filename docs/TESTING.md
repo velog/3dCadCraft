@@ -48,3 +48,11 @@ SolidCraft 0.24 over MCP"). A geometry test should therefore check numbers, not 
     value grows again (same volume, moved centre of mass), or the next change fails as a conflict;
   - a **fractional count** (a pattern's 6.5) rounds while the positions use the exact value, so a centred
     row shifts.
+
+## Preventive cases that fail today
+
+`tests/*_hard_cases.rs` hold harder geometry per module (drawings, assembly solver, interference,
+surfaces), each compared with what Inventor / SolidWorks do. A case that cannot pass yet is marked
+`#[ignore = "known: <why>"]` — it documents the gap and is run with
+`cargo test --no-default-features --test <file> -- --ignored`; when it starts passing, drop the
+`ignore`.
