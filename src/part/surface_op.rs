@@ -400,6 +400,37 @@ pub(super) fn stitch(
         .map(|n| sheet_named(sheets, n))
         .collect::<Result<_, _>>()?;
     let parts: Vec<&ExactSolid> = idx.iter().map(|&i| &sheets[i]).collect();
+    // The kernel puts surfaces that meet nowhere into one body too (side by side); Inventor
+    // stitches only what meets within the tolerance.
+    let edges: Vec<Vec<[Point3; 2]>> = parts.iter().map(|s| edge_segments(s)).collect();
+    for (k, mine) in edges.iter().enumerate() {
+        let meets = edges.iter().enumerate().any(|(j, other)| {
+            j != k
+                && mine.iter().any(|a| {
+                    other.iter().any(|b| {
+                        let d = |q: &Point3, s: &[Point3; 2]| {
+                            let ab = s[1] - s[0];
+                            let t = ((q - s[0]).dot(&ab) / ab.norm_squared().max(1e-24))
+                                .clamp(0.0, 1.0);
+                            (s[0] + ab * t - q).norm()
+                        };
+                        // Overlapping edges: an end or the middle of one lies on the other.
+                        let m = nalgebra::center(&a[0], &a[1]);
+                        [a[0], a[1], m]
+                            .iter()
+                            .filter(|q| d(q, b) <= op.tolerance)
+                            .count()
+                            >= 2
+                    })
+                })
+        });
+        if !meets {
+            return Err(User(format!(
+                "{} does not meet the other surfaces within the tolerance ({} mm)",
+                op.surfaces[k], op.tolerance
+            )));
+        }
+    }
     let sewn = surface_ops::stitch(&parts, op.tolerance, op.keep_surface, id).map_err(|e| {
         User(format!(
             "the surfaces do not meet within the tolerance ({e})"
@@ -415,6 +446,18 @@ pub(super) fn stitch(
     );
     out.push(sewn);
     Ok(out)
+}
+
+/// The edges of a body as straight pieces (the display samples of each edge).
+fn edge_segments(s: &ExactSolid) -> Vec<[Point3; 2]> {
+    let Ok(b) = exact::to_brep(std::slice::from_ref(s)) else {
+        return Vec::new();
+    };
+    let opts = crate::kernel::TessellationOptions::default();
+    b.edges()
+        .filter_map(|(e, _)| b.sample_edge(e, &opts).ok())
+        .flat_map(|pts| pts.windows(2).map(|w| [w[0], w[1]]).collect::<Vec<_>>())
+        .collect()
 }
 
 /// Boundary Patch: a new surface body.
@@ -580,8 +623,47 @@ pub(super) fn trim(
             )
         }
     };
-    let _ = kept;
-    let trimmed = trimmed.map_err(|e| User(format!("the tool does not cut the surface ({e})")))?;
+    // A tool that runs exactly along the seams of the surface's pieces (a plane through a
+    // cylinder's axis, where the kernel's two halves meet) cuts no face: the pieces on the
+    // other side go whole.
+    let trimmed = match trimmed {
+        Ok(t) => t,
+        Err(e) => {
+            let side = |q: &Point3| -> Option<Real> {
+                match &op.tool {
+                    TrimTool::Plane(r) => {
+                        let pl = super::placement::plane_of(r, body, works).ok()?;
+                        Some((q - pl.origin).dot(&pl.normal.into_inner()))
+                    }
+                    TrimTool::Surface(name) => {
+                        let t = sheet_named(sheets, name).ok()?;
+                        let side = exact::SheetSide::new(sheets[t].triangles().ok()?);
+                        Some(side.signed(q))
+                    }
+                    TrimTool::Sketch(_) => None,
+                }
+            };
+            let fail = || User(format!("the tool does not cut the surface ({e})"));
+            let keep_side = side(&kept).ok_or_else(fail)?;
+            let s = &sheets[i];
+            let size = s.size().max(1.0);
+            let mut gone = Vec::new();
+            for f in 0..surface_ops::face_count(s) {
+                let q = exact::face_point(s, f).ok_or_else(fail)?;
+                let x = side(&q).ok_or_else(fail)?;
+                if x.abs() < 1e-6 * size {
+                    return Err(fail()); // a face on the tool: really not cut
+                }
+                if (x > 0.0) != (keep_side > 0.0) {
+                    gone.push(f);
+                }
+            }
+            if gone.is_empty() || gone.len() == surface_ops::face_count(s) {
+                return Err(fail());
+            }
+            exact::delete_faces(s, &gone, false).map_err(|_| fail())?
+        }
+    };
     let mut out: Vec<ExactSolid> = cur.to_vec();
     for (k, s) in sheets.iter().enumerate() {
         out.push(if k == i { trimmed.clone() } else { s.clone() });

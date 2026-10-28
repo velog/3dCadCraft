@@ -912,3 +912,55 @@ fn boundary_patch_output_solid_closes_an_open_box() {
     assert_eq!(surfaces(&p), 0);
     close(solid_volume(&p), 1000.0, 1e-6);
 }
+
+#[test]
+fn stitch_refuses_surfaces_apart_more_than_the_tolerance() {
+    // Two walls 0.05 mm apart, tolerance 0.001: Inventor leaves them apart.
+    let mut p = PartDocument::default();
+    let a = wall(&mut p, &[(0.0, 0.0), (10.0, 0.0)], 10.0);
+    let b = wall(&mut p, &[(10.05, 0.0), (10.05, 10.0)], 10.0);
+    let e = p
+        .add_body_op(BodyOpFeature::new(BodyOp::Stitch(StitchOp {
+            surfaces: vec![a, b],
+            tolerance: 0.001,
+            keep_surface: false,
+        })))
+        .unwrap_err();
+    assert!(e.to_string().contains("tolerance"), "{e}");
+    assert_eq!(surfaces(&p), 2);
+}
+
+#[test]
+fn trim_a_cylinder_wall_along_its_seams() {
+    // A circle r 10 extruded 10 as a surface: the kernel makes two half
+    // walls meeting where XZ cuts them. XZ trims away the half at y > 0.
+    let mut p = PartDocument::default();
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 10.0)
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let mut f = ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 10.0);
+    f.output = Output::Surface;
+    let s = p.add_extrude(i, f).unwrap();
+    let full = sheet_area(&p);
+    for (plane, at) in [
+        (OriginPlane::XZ, [0.0, 10.0, 5.0]),
+        (OriginPlane::YZ, [10.0, 0.0, 5.0]),
+    ] {
+        let mut q = p.clone();
+        op(
+            &mut q,
+            BodyOp::Trim(TrimOp {
+                surface: s.clone(),
+                tool: TrimTool::Plane(PlaneRef::Origin(plane)),
+                remove: at,
+                invert: false,
+            }),
+        );
+        close(sheet_area(&q), full / 2.0, 1e-3);
+    }
+}
