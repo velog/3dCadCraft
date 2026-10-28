@@ -599,8 +599,9 @@ impl CadCraftApp {
                 let acc = self.mat.accuracy;
                 let r = if let Some(a) = self.assembly().cloned() {
                     // An assembly: each part once, moved per occurrence.
+                    let mut stack = vec![self.part_id];
                     crate::assembly::physical::assembly_physical(&a, &mut |r| {
-                        self.with_part(r, |p| physical_properties(p, acc))
+                        self.component_physical(r, acc, &mut stack)
                     })
                 } else {
                     physical_properties(self.part(), acc)
@@ -660,6 +661,30 @@ impl CadCraftApp {
     }
 
     /// What the physical properties depend on (stale when it changes).
+    /// A component's Physical Properties in its own coordinates: a part's,
+    /// or a subassembly's summed over its components (spec 3.1a). `stack`
+    /// holds the assemblies being summed (a loop is an error, not a hang).
+    fn component_physical(
+        &self,
+        r: crate::document::DocRef,
+        acc: Accuracy,
+        stack: &mut Vec<crate::document::DocumentId>,
+    ) -> Option<Result<Physical, String>> {
+        let Some(sub) = crate::assembly::tree::assembly_of(&self.project, r) else {
+            return self.with_part(r, |p| physical_properties(p, acc));
+        };
+        if stack.contains(&r.document) || stack.len() > crate::assembly::tree::MAX_DEPTH {
+            return Some(Err("the assembly contains itself".into()));
+        }
+        let sub = sub.clone();
+        stack.push(r.document);
+        let p = crate::assembly::physical::assembly_physical(&sub, &mut |c| {
+            self.component_physical(c, acc, stack)
+        });
+        stack.pop();
+        Some(p)
+    }
+
     fn physical_key(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let p = self.part();
@@ -670,6 +695,15 @@ impl CadCraftApp {
             for o in &a.occurrences {
                 self.with_part(o.component, |p| p.body_signature())
                     .hash(&mut h);
+                // A subassembly: its content and its parts' bodies.
+                if let Some(sub) = crate::assembly::tree::assembly_of(&self.project, o.component) {
+                    serde_json::to_vec(sub).unwrap_or_default().hash(&mut h);
+                    for l in crate::assembly::tree::leaves(&self.project, o.component.document, sub)
+                    {
+                        self.with_part(l.occurrence.component, |p| p.body_signature())
+                            .hash(&mut h);
+                    }
+                }
             }
         }
         self.body_key().hash(&mut h);

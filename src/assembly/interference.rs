@@ -9,6 +9,8 @@
 //! interference. Volumes and centroids come from the triangles: exact for
 //! planar parts, an inscribed approximation on curved faces (as the display).
 
+use std::collections::HashMap;
+
 use crate::document::Occurrence;
 use crate::kernel::csg::{self, CsgPolygon};
 use crate::kernel::{Point3, Real, TessellationOptions};
@@ -108,6 +110,38 @@ pub fn pairs(set1: &[u32], set2: &[u32]) -> Vec<(u32, u32)> {
             for &b in set2 {
                 add(a, b);
             }
+        }
+    }
+    out
+}
+
+/// The overlaps of parts summed per pair of the components they belong to
+/// (`owner`: part item → component; a part not listed is its own): a
+/// subassembly treated as one component (spec 3.1a). Volumes add up, the
+/// centroid is volume-weighted, the ids become the components'.
+pub fn merge_by(found: Vec<Interference>, owner: &HashMap<u32, u32>) -> Vec<Interference> {
+    let top = |x: u32| owner.get(&x).copied().unwrap_or(x);
+    let mut out: Vec<Interference> = Vec::new();
+    for i in found {
+        let (a, b) = (top(i.a), top(i.b));
+        if a == b {
+            continue;
+        }
+        match out
+            .iter_mut()
+            .find(|o| (o.a, o.b) == (a, b) || (o.a, o.b) == (b, a))
+        {
+            Some(o) => {
+                let v = o.volume + i.volume;
+                if v > 0.0 {
+                    o.centroid = Point3::from(
+                        (o.centroid.coords * o.volume + i.centroid.coords * i.volume) / v,
+                    );
+                }
+                o.volume = v;
+                o.tris.extend(i.tris);
+            }
+            None => out.push(Interference { a, b, ..i }),
         }
     }
     out
@@ -331,5 +365,33 @@ mod tests {
         let b1 = Body::of(&occ(1, Transform3::identity()), &block).unwrap();
         let found = analyze(&[b1, b2], &[(1, 2)]);
         assert_eq!(found.len(), 1);
+    }
+
+    /// Parts 11, 12 of component 1 and 21 of component 2: the two overlaps
+    /// become one, volume summed, centroid weighted; one inside a
+    /// component is dropped.
+    #[test]
+    fn overlaps_summed_per_component() {
+        let one = |a, b, v, x| Interference {
+            a,
+            b,
+            volume: v,
+            centroid: Point3::new(x, 0.0, 0.0),
+            tris: vec![[Point3::origin(); 3]],
+        };
+        let owner = HashMap::from([(11, 1), (12, 1), (21, 2)]);
+        let m = merge_by(
+            vec![
+                one(11, 21, 2000.0, 0.0),
+                one(21, 12, 500.0, 10.0),
+                one(11, 12, 7.0, 0.0),
+            ],
+            &owner,
+        );
+        assert_eq!(m.len(), 1);
+        assert_eq!((m[0].a, m[0].b), (1, 2));
+        assert!((m[0].volume - 2500.0).abs() < 1e-9);
+        assert!((m[0].centroid.x - 2.0).abs() < 1e-12);
+        assert_eq!(m[0].tris.len(), 2);
     }
 }

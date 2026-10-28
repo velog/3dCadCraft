@@ -16,6 +16,8 @@ use crate::document::{DocRef, DocumentData};
 pub(super) struct BomWin {
     view: BomView,
     merge: bool,
+    /// Structured: the rows inside subassemblies too (All Levels).
+    all_levels: bool,
     /// Sort by column (index) and direction.
     sort: Option<(usize, bool)>,
     /// Custom iProperty columns shown.
@@ -27,6 +29,7 @@ impl Default for BomWin {
         Self {
             view: BomView::Structured,
             merge: true,
+            all_levels: false,
             sort: None,
             extra: Vec::new(),
         }
@@ -59,6 +62,7 @@ impl CadCraftApp {
                     material,
                     missing: false,
                     flat,
+                    assembly: crate::assembly::tree::assembly_of(&self.project, r).cloned(),
                 },
                 None => ComponentInfo {
                     file_name: "?".into(),
@@ -84,6 +88,7 @@ impl CadCraftApp {
                     props: props.unwrap_or_default(),
                     material,
                     flat,
+                    assembly: None,
                 }
             }
         }
@@ -104,7 +109,7 @@ impl CadCraftApp {
         let Some(asm) = self.assembly().cloned() else {
             return;
         };
-        let mut rows = bom::rows(&asm, w.view, w.merge, &|r| self.bom_info(r));
+        let mut rows = bom::rows_in(&asm, w.view, w.merge, w.all_levels, &|r| self.bom_info(r));
         let customs = bom::custom_columns(&rows);
         w.extra.retain(|c| customs.contains(c));
         if let Some((col, asc)) = w.sort {
@@ -120,10 +125,20 @@ impl CadCraftApp {
                     _ => String::new(),
                 }
             };
-            rows.sort_by(|a, b| {
-                let o = key(a).to_lowercase().cmp(&key(b).to_lowercase());
+            // Rows inside a subassembly stay below it: whole blocks are
+            // sorted by their first-level row.
+            let mut blocks: Vec<Vec<BomRow>> = Vec::new();
+            for r in rows.drain(..) {
+                match blocks.last_mut() {
+                    Some(b) if r.level > 0 => b.push(r),
+                    _ => blocks.push(vec![r]),
+                }
+            }
+            blocks.sort_by(|a, b| {
+                let o = key(&a[0]).to_lowercase().cmp(&key(&b[0]).to_lowercase());
                 if asc { o } else { o.reverse() }
             });
+            rows = blocks.into_iter().flatten().collect();
         }
         let mut open = true;
         let mut export = false;
@@ -169,7 +184,14 @@ impl CadCraftApp {
                 }
             });
             if w.view == BomView::Structured {
-                ui.weak("First level (sub-assemblies come later). Reference and Phantom components are not listed.");
+                ui.horizontal(|ui| {
+                    ui.label("Level");
+                    ui.selectable_value(&mut w.all_levels, false, "First Level")
+                        .on_hover_text("Subassemblies as one row each");
+                    ui.selectable_value(&mut w.all_levels, true, "All Levels")
+                        .on_hover_text("The rows inside each subassembly below it (1.1, 1.2...)");
+                    ui.weak("Reference components are not listed; a Phantom subassembly's components move up a level.");
+                });
             }
             ui.separator();
             let model = w.view == BomView::ModelData;
@@ -199,7 +221,7 @@ impl CadCraftApp {
                         ui.label(RichText::new(c).strong());
                     }
                     ui.end_row();
-                    for r in &rows {
+                    for (ri, r) in rows.iter().enumerate() {
                         let doc = r.components.first().copied();
                         // Components of this file can be edited here.
                         let local = r.components.iter().all(|c| c.library.is_none()) && !r.missing;
@@ -215,7 +237,7 @@ impl CadCraftApp {
                                 }
                             });
                         } else {
-                            ui.label(&r.item);
+                            ui.label(format!("{}{}", "    ".repeat(r.level), r.item));
                         }
                         let mut cell = |ui: &mut egui::Ui, key: &'static str, value: &str| {
                             let mut v = value.to_owned();
@@ -242,7 +264,7 @@ impl CadCraftApp {
                         }
                         let mut s = r.structure;
                         ui.add_enabled_ui(local, |ui| {
-                            egui::ComboBox::from_id_salt(("bom_s", r.occurrences[0]))
+                            egui::ComboBox::from_id_salt(("bom_s", ri))
                                 .selected_text(s.label())
                                 .show_ui(ui, |ui| {
                                     for x in BomStructure::ALL {

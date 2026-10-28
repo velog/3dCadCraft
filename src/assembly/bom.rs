@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::assembly::tree;
 use crate::document::iprops::{BomStructure, IProperties};
 use crate::document::{AssemblyDocument, DocRef};
 
@@ -33,6 +34,9 @@ pub struct ComponentInfo {
     /// A sheet metal part's flat pattern extents: length, width (mm) and
     /// area (mm²) — the columns `Flat Pattern Length / Width / Area`.
     pub flat: Option<(f64, f64, f64)>,
+    /// The component's own occurrences when it is an assembly (a
+    /// subassembly).
+    pub assembly: Option<AssemblyDocument>,
 }
 
 /// The BOM columns of a sheet metal part's flat pattern (Inventor's FLAT
@@ -46,8 +50,12 @@ pub const FLAT_COLUMNS: [&str; 3] = [
 /// One row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BomRow {
-    /// Item number (empty in Model Data).
+    /// Item number (empty in Model Data; `1.2` for the second row inside
+    /// item 1).
     pub item: String,
+    /// Nesting level in the Structured view (0 = the assembly's own).
+    pub level: usize,
+
     /// Part Number (the file name when not set).
     pub part_number: String,
     /// BOM Structure (the occurrence's override first).
@@ -75,25 +83,139 @@ pub struct BomRow {
     pub missing: bool,
 }
 
-/// The rows of `asm` in `view`. `merge` puts components of one part number
-/// in one row (Part Number Row Merge); `info` describes a component.
+/// The rows of `asm` in `view`, the Structured view at its first level.
+/// `merge` puts components of one part number in one row (Part Number Row
+/// Merge); `info` describes a component.
 pub fn rows(
     asm: &AssemblyDocument,
     view: BomView,
     merge: bool,
     info: &dyn Fn(DocRef) -> ComponentInfo,
 ) -> Vec<BomRow> {
-    let mut out: Vec<BomRow> = Vec::new();
+    rows_in(asm, view, merge, false, info)
+}
+
+/// The rows of `asm` in `view` (`docs/spec/3.1a-subassemblies.md`): Model
+/// Data lists the first level; Structured lists each level's components
+/// (`all_levels`: a Normal subassembly's rows follow it, numbered `1.1`,
+/// quantities per subassembly); Parts Only lists the parts of every level
+/// with their total quantities. A Phantom subassembly is not listed and
+/// its components move up a level; a Purchased or Inseparable one is one
+/// item; Reference components are left out.
+pub fn rows_in(
+    asm: &AssemblyDocument,
+    view: BomView,
+    merge: bool,
+    all_levels: bool,
+    info: &dyn Fn(DocRef) -> ComponentInfo,
+) -> Vec<BomRow> {
+    let mut out = Vec::new();
+    let mut stack = Vec::new();
+    match view {
+        BomView::ModelData => gather(asm, view, merge, info, None, &mut stack, &mut out),
+        BomView::Structured => {
+            structured(asm, merge, all_levels, info, "", 0, &mut stack, &mut out);
+        }
+        BomView::PartsOnly => {
+            gather(asm, view, merge, info, None, &mut stack, &mut out);
+            for (k, r) in out.iter_mut().enumerate() {
+                r.item = (k + 1).to_string();
+            }
+        }
+    }
+    out
+}
+
+/// One level of the Structured view, numbered after `prefix`, each Normal
+/// subassembly followed by its own rows when `all`.
+#[allow(clippy::too_many_arguments)]
+fn structured(
+    asm: &AssemblyDocument,
+    merge: bool,
+    all: bool,
+    info: &dyn Fn(DocRef) -> ComponentInfo,
+    prefix: &str,
+    level: usize,
+    stack: &mut Vec<DocRef>,
+    out: &mut Vec<BomRow>,
+) {
+    let mut rows = Vec::new();
+    gather(
+        asm,
+        BomView::Structured,
+        merge,
+        info,
+        None,
+        stack,
+        &mut rows,
+    );
+    for (k, mut r) in rows.into_iter().enumerate() {
+        r.item = format!("{prefix}{}", k + 1);
+        r.level = level;
+        let sub = match (all, r.structure, r.components.first()) {
+            (true, BomStructure::Normal, Some(&c)) if !stack.contains(&c) => {
+                info(c).assembly.map(|a| (c, a))
+            }
+            _ => None,
+        };
+        let (item, top) = (format!("{}.", r.item), r.occurrences.clone());
+        out.push(r);
+        if let Some((c, a)) = sub {
+            let from = out.len();
+            stack.push(c);
+            structured(&a, merge, all, info, &item, level + 1, stack, out);
+            stack.pop();
+            // Balloons and parts lists find nested rows by the top-level
+            // occurrence they lie in.
+            for r in &mut out[from..] {
+                r.occurrences = top.clone();
+            }
+        }
+    }
+}
+
+/// The rows of one level into `out`: a Phantom subassembly's components
+/// (and in Parts Only a Normal one's) join this level; `top` is the
+/// top-level occurrence the level lies in (`None`: this is the top).
+fn gather(
+    asm: &AssemblyDocument,
+    view: BomView,
+    merge: bool,
+    info: &dyn Fn(DocRef) -> ComponentInfo,
+    top: Option<u32>,
+    stack: &mut Vec<DocRef>,
+    out: &mut Vec<BomRow>,
+) {
+    if stack.len() > tree::MAX_DEPTH {
+        return;
+    }
     // Suppressed components are left out (Inventor).
     for o in asm.occurrences.iter().filter(|o| !o.suppressed) {
-        let ci = info(o.component);
+        let mut ci = info(o.component);
         let structure = o.bom.unwrap_or(ci.props.bom_structure);
-        // Reference and Phantom parts are not in a reportable BOM (no
-        // sub-assemblies yet, so a phantom has no children to promote).
-        if view != BomView::ModelData
-            && matches!(structure, BomStructure::Reference | BomStructure::Phantom)
-        {
-            continue;
+        let owner = top.unwrap_or(o.id);
+        if view != BomView::ModelData {
+            if structure == BomStructure::Reference {
+                continue;
+            }
+            let walk = match structure {
+                BomStructure::Phantom => true,
+                BomStructure::Normal => view == BomView::PartsOnly,
+                _ => false,
+            };
+            match ci.assembly.take() {
+                Some(sub) if walk => {
+                    if !stack.contains(&o.component) {
+                        stack.push(o.component);
+                        gather(&sub, view, merge, info, Some(owner), stack, out);
+                        stack.pop();
+                    }
+                    continue;
+                }
+                // A phantom part is not listed.
+                None if structure == BomStructure::Phantom => continue,
+                _ => {}
+            }
         }
         let part_number = if ci.missing {
             format!("(missing) {}", ci.file_name)
@@ -111,7 +233,9 @@ pub fn rows(
         };
         if let Some(r) = out.iter_mut().find(|r| same(r)) {
             r.qty += 1;
-            r.occurrences.push(o.id);
+            if !r.occurrences.contains(&owner) {
+                r.occurrences.push(owner);
+            }
             if !r.components.contains(&o.component) {
                 r.components.push(o.component);
             }
@@ -119,6 +243,7 @@ pub fn rows(
         }
         out.push(BomRow {
             item: String::new(),
+            level: 0,
             part_number,
             structure,
             qty: 1,
@@ -127,7 +252,7 @@ pub fn rows(
             description: ci.props.get("description").to_owned(),
             material: ci.material.clone().unwrap_or_default(),
             components: vec![o.component],
-            occurrences: vec![o.id],
+            occurrences: vec![owner],
             custom: ci
                 .props
                 .custom
@@ -145,12 +270,6 @@ pub fn rows(
             missing: ci.missing,
         });
     }
-    if view != BomView::ModelData {
-        for (k, r) in out.iter_mut().enumerate() {
-            r.item = (k + 1).to_string();
-        }
-    }
-    out
 }
 
 /// The custom iProperty names used by `rows` (optional columns).
@@ -253,6 +372,7 @@ mod tests {
                 material: Some("Steel".into()),
                 missing: false,
                 flat: None,
+                assembly: None,
             }
         };
         let s = rows(&a, BomView::Structured, false, &info);
@@ -304,5 +424,101 @@ mod tests {
         assert!(FLAT_COLUMNS.iter().all(|c| cols.iter().any(|x| x == c)));
         assert_eq!(s[0].custom[FLAT_COLUMNS[0]], "120.00 mm");
         assert_eq!(s[0].custom[FLAT_COLUMNS[2]], "9600.00 mm^2");
+    }
+
+    /// A subassembly "Bracket" (a plate and two posts) placed twice next to
+    /// a base: Structured First / All Levels, Parts Only totals, and the
+    /// Phantom / Purchased structures of the subassembly.
+    #[test]
+    fn subassembly_levels() {
+        let (base, plate, post, sub) = (
+            DocRef::local(DocumentId::new_random()),
+            DocRef::local(DocumentId::new_random()),
+            DocRef::local(DocumentId::new_random()),
+            DocRef::local(DocumentId::new_random()),
+        );
+        let mut bracket = AssemblyDocument::default();
+        bracket.place(plate, "plate", Transform3::identity(), true);
+        bracket.place(post, "post", Transform3::identity(), false);
+        bracket.place(post, "post", Transform3::identity(), false);
+        let mut top = AssemblyDocument::default();
+        top.place(base, "base", Transform3::identity(), true);
+        top.place(sub, "bracket", Transform3::identity(), false);
+        top.place(sub, "bracket", Transform3::identity(), false);
+        let with = |structure: BomStructure| {
+            let bracket = bracket.clone();
+            move |r: DocRef| {
+                let mut props = IProperties::default();
+                let name = if r == base {
+                    "base"
+                } else if r == plate {
+                    "plate"
+                } else if r == post {
+                    "post"
+                } else {
+                    props.bom_structure = structure;
+                    "bracket"
+                };
+                ComponentInfo {
+                    file_name: name.into(),
+                    props,
+                    assembly: (r == sub).then(|| bracket.clone()),
+                    ..Default::default()
+                }
+            }
+        };
+        let info = with(BomStructure::Normal);
+        let list = |rows: Vec<BomRow>| -> Vec<(String, String, u32)> {
+            rows.into_iter()
+                .map(|r| (r.item, r.part_number, r.qty))
+                .collect()
+        };
+        let row = |i: &str, p: &str, q: u32| (i.to_owned(), p.to_owned(), q);
+        let first = rows(&top, BomView::Structured, false, &info);
+        assert_eq!(list(first), [row("1", "base", 1), row("2", "bracket", 2)]);
+        let all = rows_in(&top, BomView::Structured, false, true, &info);
+        assert_eq!(all[2].level, 1);
+        // Nested rows point at the subassembly's occurrences (balloons).
+        assert_eq!(all[2].occurrences, [2, 3]);
+        assert_eq!(
+            list(all),
+            [
+                row("1", "base", 1),
+                row("2", "bracket", 2),
+                row("2.1", "plate", 1),
+                row("2.2", "post", 2),
+            ]
+        );
+        // Parts Only: every level, quantities multiplied.
+        assert_eq!(
+            list(rows(&top, BomView::PartsOnly, false, &info)),
+            [
+                row("1", "base", 1),
+                row("2", "plate", 2),
+                row("3", "post", 4)
+            ]
+        );
+        // Model Data: the first level as modelled.
+        assert_eq!(rows(&top, BomView::ModelData, false, &info).len(), 3);
+        // Phantom: not listed, its parts move up a level.
+        let info = with(BomStructure::Phantom);
+        assert_eq!(
+            list(rows_in(&top, BomView::Structured, false, true, &info)),
+            [
+                row("1", "base", 1),
+                row("2", "plate", 2),
+                row("3", "post", 4)
+            ]
+        );
+        // Purchased: one item, its parts listed nowhere.
+        let info = with(BomStructure::Purchased);
+        assert_eq!(
+            list(rows_in(&top, BomView::Structured, false, true, &info)),
+            [row("1", "base", 1), row("2", "bracket", 2)]
+        );
+        assert_eq!(
+            list(rows(&top, BomView::PartsOnly, false, &info)),
+            [row("1", "base", 1), row("2", "bracket", 2)]
+        );
     }
 }

@@ -2410,6 +2410,7 @@ fn speed_budgets() {
                 material: None,
                 missing: false,
                 flat: None,
+                assembly: None,
             }
         };
         rows.push((

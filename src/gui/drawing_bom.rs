@@ -259,6 +259,7 @@ impl CadCraftApp {
             props: props.unwrap_or_default(),
             material,
             flat,
+            assembly: crate::assembly::tree::assembly_of(project, r).cloned(),
         }
     }
 

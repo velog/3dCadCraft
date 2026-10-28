@@ -3,7 +3,9 @@
 //! "Top" assembly with a 120 × 80 × 6 base plate and the Bracket placed
 //! twice, the second one turned 90°.
 //!
-//! `cargo run --example subassembly_demo -- out.3dcadcraft`
+//! `cargo run --example subassembly_demo -- out.3dcadcraft [overlap]`
+//! (`overlap`: the second Bracket stands in the first one, for Analyze
+//! Interference).
 
 use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentData, Project};
 use cadcraft3d::kernel::{Transform3, Vector3};
@@ -13,6 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "subassembly_demo.3dcadcraft".into());
+    let overlap = std::env::args().nth(2).as_deref() == Some("overlap");
     let mut project = Project::new("SubassemblyDemo");
     let base = project.add_document(
         "Base",
@@ -50,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         DocRef::local(bracket),
         "Bracket",
         Transform3::new(
-            Vector3::new(100.0, 20.0, 6.0),
+            Vector3::new(if overlap { 30.0 } else { 100.0 }, 20.0, 6.0),
             Vector3::z() * std::f64::consts::FRAC_PI_2,
         ),
         false,

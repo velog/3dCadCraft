@@ -1098,7 +1098,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   assembly's own links are relative to *its* file (`AsmSrc::File`), not to the drawing.
 - **`AsmUi` is reset on every file open / tab switch** (`self.asm = Default::default()` in five places): an
   application setting kept there is lost and the next settings save writes the default back (the browser's
-  Assembly / Modeling View did). Settings live on `CadCraftApp` (`asm_browser`, `select`). Replace / Copy /
+  Assembly / Modeling View did). Settings live on `CadCraftApp` (`asm_browser`, `select`). Subassemblies
+  (`assembly::tree`, spec 3.1a): BOM levels come from `ComponentInfo::assembly` (`bom::rows_in`), Interference
+  checks the parts inside one by one even with *Treat subassemblies as components* (then `interference::merge_by`
+  sums them: one mesh of touching parts is no closed solid), Physical Properties recurse in `component_physical`.
+  Replace / Copy /
   Mirror (`assembly::replace`, `assembly::copy`, GUI `gui/asm_replace.rs`): a mirrored part is a copy with a
   solid Mirror (Remove Original) about its YZ plane, placed by M · T · D (rigid); Replace's Browse reuses the
   Place window (`AsmUi::place_for_replace`).

@@ -418,7 +418,10 @@ pub fn table(pl: &PartsList, rows: &[BomRow]) -> Table {
             });
         }
         for o in &r.occurrences {
-            out.items.insert(*o, (row_item.clone(), qty.clone()));
+            // A subassembly's own row comes before the rows inside it.
+            out.items
+                .entry(*o)
+                .or_insert_with(|| (row_item.clone(), qty.clone()));
         }
         out.rows.push(TableRow {
             key: r.part_number.clone(),
@@ -902,6 +905,7 @@ mod tests {
     fn row(item: &str, pn: &str, qty: u32, occ: &[u32]) -> BomRow {
         BomRow {
             item: item.into(),
+            level: 0,
             part_number: pn.into(),
             structure: BomStructure::Normal,
             qty,
