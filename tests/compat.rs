@@ -1798,6 +1798,64 @@ fn drawing_r38_project() -> Project {
     project
 }
 
+fn drawing_r39_project() -> Project {
+    use cadcraft3d::drawing::ViewKind;
+    let mut project = drawing_r38_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let b = d.sheets[0].views[0].id;
+        d.add_section_view_line(
+            b,
+            &[[-20.0, -25.0], [-20.0, 0.0], [0.0, 0.0], [0.0, 25.0]],
+            [250.0, 160.0],
+        )
+        .unwrap();
+        assert!(
+            d.sheets[0]
+                .views
+                .iter()
+                .any(|v| matches!(&v.kind, ViewKind::Section { mid, .. } if mid.len() == 2))
+        );
+    }
+    project
+}
+
+/// The revision 39 drawing reads back with its offset section's line.
+#[test]
+fn drawing_r39_reads() {
+    use cadcraft3d::drawing::ViewKind;
+    let f = root().join("r39/drawing_r39.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let line = d.sheets[0]
+        .views
+        .iter()
+        .find_map(|v| match &v.kind {
+            ViewKind::Section { .. } => v.kind.section_line(),
+            _ => None,
+        })
+        .expect("a section view");
+    assert_eq!(
+        line,
+        [[-20.0, -25.0], [-20.0, 0.0], [0.0, 0.0], [0.0, 25.0]]
+    );
+}
+
 /// The revision 38 drawing reads back with its angular dimension and a
 /// slid text with an outside arrowhead.
 #[test]
@@ -2212,6 +2270,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r33_project().save(&f).unwrap();
+        }
+        let f = root().join("r39/drawing_r39.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r39_project().save(&f).unwrap();
         }
         let f = root().join("r38/drawing_r38.3dcadcraft");
         if !f.exists() {

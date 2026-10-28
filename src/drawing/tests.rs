@@ -961,6 +961,54 @@ fn area(lp: &[[f64; 2]]) -> f64 {
 
 /// Section A-A through the hole of a plate seen from the top: two cut faces
 /// of 15 × 10 each, hatched; the view looks square to the line and stays
+/// An offset section: a line of three segments (x = -20 below the hole,
+/// a jog, x = 0 through the hole's upper half) cuts each part along its
+/// own plane; the projected cut faces add up (200 + 150 mm²), unlike the
+/// straight line through the hole (300 mm²).
+#[test]
+fn offset_section_cuts_each_segment_on_its_own_plane() {
+    let part = plate_with_hole();
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let s = d
+        .add_section_view(b, [-20.0, -25.0], [0.0, 25.0], [250.0, 160.0])
+        .unwrap();
+    if let Some(v) = d.sheet_mut().and_then(|sh| sh.view_mut(s))
+        && let ViewKind::Section { a, b, mid, .. } = &mut v.kind
+    {
+        *a = [-20.0, -25.0];
+        *b = [0.0, 25.0];
+        *mid = vec![[-20.0, 0.0], [0.0, 0.0]];
+    }
+    let sheet = d.sheet().unwrap().clone();
+    let LinesJob::Model { frame, aligned, .. } = d.lines_job(&sheet, s).unwrap() else {
+        panic!("a model job");
+    };
+    // Square to the first segment (along y): the view looks along ±x.
+    assert!(frame.toward.x.abs() > 1.0 - 1e-9);
+    assert_eq!(aligned.as_ref().map(|a| a.poly.len()), Some(4));
+    let lines = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_deref());
+    let total: f64 = lines.section.iter().map(|l| area(l)).sum();
+    close(total, 200.0 + 150.0, 1.0, "offset cut area");
+    // The removed region is the viewer's side of the whole line: one convex
+    // cell per segment of the extended line.
+    let cells = super::hlr::section_cells(
+        &[[-20.0, -25.0], [-20.0, 0.0], [0.0, 0.0], [0.0, 25.0]],
+        &ViewOrientation::Top.frame(),
+        &frame,
+        1000.0,
+    );
+    assert_eq!(cells.len(), 5);
+}
+
 /// aligned with the parent along it.
 #[test]
 fn section_view_of_a_plate() {
@@ -994,7 +1042,7 @@ fn section_view_of_a_plate() {
     // The line (y) stays up on the sheet; the view looks along ±x.
     vclose(frame.up, Vector3::y(), "section up");
     assert!(frame.toward.x.abs() > 1.0 - 1e-9);
-    let lines = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_ref());
+    let lines = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_deref());
     assert_eq!(
         lines.section.len(),
         2,

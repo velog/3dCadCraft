@@ -206,13 +206,13 @@ pub fn view_extras<'a>(
             && let Some((ppl, _)) = view(pid)
         {
             match v.kind {
-                ViewKind::Section { a, b, side, .. } if section_pen.is_some() => {
+                ViewKind::Section { side, .. } if section_pen.is_some() => {
                     out.extend(section_pen.clone());
                     section_line(
                         &mut out,
                         doc,
                         &ppl,
-                        (a, b, side),
+                        (&v.kind.section_line().unwrap_or_default(), side),
                         &v.identifier,
                         center_w,
                         va.identifier_height,
@@ -285,18 +285,26 @@ fn section_line(
     out: &mut Vec<Prim>,
     doc: &DrawingDocument,
     pl: &Placement,
-    (a, b, side): ([f64; 2], [f64; 2], i8),
+    (line, side): (&[[f64; 2]], i8),
     letter: &str,
     width: f64,
     letter_height: f64,
 ) {
-    let (pa, pb) = (pl.to_sheet(a), pl.to_sheet(b));
-    let d = [pb[0] - pa[0], pb[1] - pa[1]];
-    let len = d[0].hypot(d[1]);
-    if len < 1e-9 {
+    let pts: Vec<[f64; 2]> = line.iter().map(|q| pl.to_sheet(*q)).collect();
+    if pts.len() < 2 {
         return;
     }
-    let l = [d[0] / len, d[1] / len];
+    let unit = |a: [f64; 2], b: [f64; 2]| {
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let len = d[0].hypot(d[1]);
+        (len > 1e-9).then(|| ([d[0] / len, d[1] / len], len))
+    };
+    let n = pts.len();
+    let Some((l, len)) = unit(pts[0], pts[1]) else {
+        return;
+    };
+    let (pa, pb) = (pts[0], pts[n - 1]);
+    let (lb, len_b) = unit(pts[n - 2], pts[n - 1]).unwrap_or((l, len));
     let k = f64::from(side.signum());
     let s2 = [-l[1] * k, l[0] * k];
     // The viewer looks along −toward: third angle towards the far side of
@@ -305,14 +313,34 @@ fn section_line(
         Projection::ThirdAngle => [-s2[0], -s2[1]],
         Projection::FirstAngle => s2,
     };
-    out.push(Prim::Center {
-        a: pa,
-        b: pb,
-        width,
-        chain: true,
-    });
-    let thick = 5.0f64.min(len * 0.25);
-    for (end, inward) in [(pa, l), (pb, [-l[0], -l[1]])] {
+    for w in pts.windows(2) {
+        out.push(Prim::Center {
+            a: w[0],
+            b: w[1],
+            width,
+            chain: true,
+        });
+    }
+    // Thick at the ends and at each change of direction (ISO 128-44).
+    for i in 1..n - 1 {
+        let (Some((u0, l0)), Some((u1, l1))) = (unit(pts[i - 1], pts[i]), unit(pts[i], pts[i + 1]))
+        else {
+            continue;
+        };
+        let (t0, t1) = (2.5f64.min(l0 * 0.25), 2.5f64.min(l1 * 0.25));
+        out.push(Prim::Line {
+            a: [pts[i][0] - u0[0] * t0, pts[i][1] - u0[1] * t0],
+            b: pts[i],
+            weight: Weight::Thick,
+        });
+        out.push(Prim::Line {
+            a: pts[i],
+            b: [pts[i][0] + u1[0] * t1, pts[i][1] + u1[1] * t1],
+            weight: Weight::Thick,
+        });
+    }
+    let thick = 5.0f64.min(len * 0.25).min(len_b * 0.25);
+    for (end, inward) in [(pa, l), (pb, [-lb[0], -lb[1]])] {
         out.push(Prim::Line {
             a: end,
             b: [end[0] + inward[0] * thick, end[1] + inward[1] * thick],

@@ -790,7 +790,7 @@ impl CadCraftApp {
         ctx: Option<&egui::Context>,
         model: DocRef,
         frame: &ViewFrame,
-        aligned: Option<hlr::Aligned>,
+        aligned: Option<Box<hlr::Aligned>>,
         flat: bool,
     ) -> Option<Arc<ViewLines>> {
         let sig = match self.assembly_signature(model) {
@@ -801,7 +801,9 @@ impl CadCraftApp {
             model,
             signature: hash_str(&sig),
             frame: quant(frame),
-            aligned: aligned.map_or(0, |a| hash_str(&format!("{a:.6?}"))),
+            aligned: aligned
+                .as_ref()
+                .map_or(0, |a| hash_str(&format!("{a:.6?}"))),
             flat,
         };
         if let Ok(done) = self.drw.done.lock()
@@ -811,7 +813,11 @@ impl CadCraftApp {
         }
         let Some(ctx) = ctx else {
             let job = self.model_job(model, flat)?;
-            let lines = Arc::new(hlr::view_lines_with(&job.model(), frame, aligned.as_ref()));
+            let lines = Arc::new(hlr::view_lines_with(
+                &job.model(),
+                frame,
+                aligned.as_deref(),
+            ));
             if let Ok(mut done) = self.drw.done.lock() {
                 done.insert(key, lines.clone());
             }
@@ -827,7 +833,7 @@ impl CadCraftApp {
                 .name("drawing-view".into())
                 .spawn(move || {
                     let t = std::time::Instant::now();
-                    let lines = job.lines(&frame, aligned.as_ref());
+                    let lines = job.lines(&frame, aligned.as_deref());
                     log::info!(
                         "drawing view: {} visible, {} hidden pieces, {} cut faces in {:.0} ms",
                         lines.visible.len(),
@@ -863,7 +869,7 @@ impl CadCraftApp {
                 frame,
                 aligned,
                 flat,
-            } => self.view_lines(ctx, *model, frame, *aligned, *flat),
+            } => self.view_lines(ctx, *model, frame, aligned.clone(), *flat),
             LinesJob::Detail {
                 parent,
                 center,
@@ -1218,6 +1224,13 @@ impl CadCraftApp {
                     let mut d = d.clone();
                     d.cont();
                     self.drw.tool = Some(DrwTool::HoleTable(d));
+                }
+                // Ends the section line (Inventor's Continue); a line not
+                // started yet ends the command.
+                Some(DrwTool::Section(d)) if d.clone().finish() => {
+                    let mut d = d.clone();
+                    d.finish();
+                    self.drw.tool = Some(DrwTool::Section(d));
                 }
                 Some(DrwTool::RevisionTag(Some(_))) => {
                     self.drw.tool = Some(DrwTool::RevisionTag(None));

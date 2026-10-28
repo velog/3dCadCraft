@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(LinesJob::Model { frame, aligned, .. }) = d.lines_job(&sheet, v.id) {
             lines.insert(
                 v.id,
-                Arc::new(hlr::view_lines_with(&pm, &frame, aligned.as_ref())),
+                Arc::new(hlr::view_lines_with(&pm, &frame, aligned.as_deref())),
             );
         }
     }

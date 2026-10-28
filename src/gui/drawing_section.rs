@@ -14,12 +14,13 @@ use crate::drawing::{SCALES, ViewKind};
 const PREVIEW: Color32 = Color32::from_rgb(60, 140, 90);
 const PICKED: Color32 = Color32::from_rgb(40, 120, 230);
 
-/// Section View in progress (sheet mm).
+/// Section View in progress: the line's points so far (sheet mm) and
+/// whether the line is finished.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct SectionDraft {
     parent: Option<u32>,
-    a: Option<[f64; 2]>,
-    b: Option<[f64; 2]>,
+    pts: Vec<[f64; 2]>,
+    done: bool,
 }
 
 /// Detail View in progress (sheet mm).
@@ -40,12 +41,26 @@ pub(super) struct AuxDraft {
 impl SectionDraft {
     /// Status-bar prompt.
     pub(super) fn prompt(&self) -> &'static str {
-        match (self.parent, self.a, self.b) {
-            (None, _, _) => "Section View: click the parent view",
-            (_, None, _) => "Section View: click the first point of the section line",
-            (_, _, None) => "Section View: click the second point (horizontal / vertical snap)",
+        match (self.parent, self.pts.len(), self.done) {
+            (None, ..) => "Section View: click the parent view",
+            (_, 0, _) => "Section View: click the first point of the section line",
+            (_, 1, _) => {
+                "Section View: click the next point (end points, centres, middles, horizontal / vertical snap)"
+            }
+            (_, _, false) => {
+                "Section View: click more points for an offset section; right-click, Enter or double-click ends the line"
+            }
             _ => "Section View: move to the side to look from and click to place the view",
         }
+    }
+
+    /// Ends the line (two points or more): the view is placed next.
+    pub(super) fn finish(&mut self) -> bool {
+        if self.parent.is_some() && self.pts.len() >= 2 && !self.done {
+            self.done = true;
+            return true;
+        }
+        false
     }
 }
 
@@ -133,37 +148,45 @@ impl CadCraftApp {
                 let Some(pv) = views.iter().find(|v| v.id == parent) else {
                     return;
                 };
-                match (d.a, d.b) {
-                    (None, _) => {
-                        if let Some(q) = snapped {
-                            painter.circle_filled(to(q), 4.0, PREVIEW);
-                            if response.clicked() {
-                                d.a = Some(q);
-                                self.drw.tool = Some(DrwTool::Section(d));
+                if !d.done {
+                    for w in d.pts.windows(2) {
+                        painter.line_segment([to(w[0]), to(w[1])], Stroke::new(2.0, PICKED));
+                    }
+                    if let Some(mut q) = snapped {
+                        match d.pts.last().copied() {
+                            None => {
+                                painter.circle_filled(to(q), 4.0, PREVIEW);
+                            }
+                            Some(last) => {
+                                hv(&mut q, last);
+                                painter.line_segment([to(last), to(q)], Stroke::new(2.0, PREVIEW));
                             }
                         }
-                    }
-                    (Some(a), None) => {
-                        if let Some(mut q) = snapped {
-                            hv(&mut q, a);
-                            painter.line_segment([to(a), to(q)], Stroke::new(2.0, PREVIEW));
-                            if response.clicked() && (q[0] - a[0]).hypot(q[1] - a[1]) > 1.0 {
-                                d.b = Some(q);
-                                self.drw.tool = Some(DrwTool::Section(d));
-                            }
+                        let enter = response.hovered()
+                            && painter.ctx().input(|i| i.key_pressed(egui::Key::Enter));
+                        if response.double_clicked() || enter {
+                            d.finish();
+                        } else if response.clicked()
+                            && d.pts
+                                .last()
+                                .is_none_or(|l| (q[0] - l[0]).hypot(q[1] - l[1]) > 1.0)
+                        {
+                            d.pts.push(q);
                         }
+                        self.drw.tool = Some(DrwTool::Section(d));
                     }
-                    (Some(a), Some(b)) => {
-                        painter.line_segment([to(a), to(b)], Stroke::new(2.0, PICKED));
-                        let (Some(ra), Some(rb), Some(q)) = (to_view(pv, a), to_view(pv, b), at)
-                        else {
-                            return;
-                        };
-                        self.child_preview(ctx, painter, rect, response, "Section View", |doc| {
-                            doc.add_section_view(parent, ra, rb, q)
-                        });
-                    }
+                    return;
                 }
+                for w in d.pts.windows(2) {
+                    painter.line_segment([to(w[0]), to(w[1])], Stroke::new(2.0, PICKED));
+                }
+                let line: Option<Vec<[f64; 2]>> = d.pts.iter().map(|p| to_view(pv, *p)).collect();
+                let (Some(line), Some(q)) = (line, at) else {
+                    return;
+                };
+                self.child_preview(ctx, painter, rect, response, "Section View", |doc| {
+                    doc.add_section_view_line(parent, &line, q)
+                });
             }
             DrwTool::Detail(mut d) => {
                 let Some(parent) = d.parent else {
@@ -343,13 +366,13 @@ fn from_view(v: &ShownView, q: [f64; 2]) -> Option<[f64; 2]> {
 }
 
 /// The grip of a section line being dragged: its section view, which grip
-/// (0: first end, 1: second end, 2: the whole line), the line's ends when
+/// (a point index, or `points + k` for segment k), the line's points when
 /// the drag began and where the pointer pressed (sheet mm).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct SectionGrip {
     view: u32,
-    which: u8,
-    ends: [[f64; 2]; 2],
+    which: usize,
+    pts: Vec<[f64; 2]>,
     from: [f64; 2],
 }
 
@@ -379,10 +402,11 @@ impl CadCraftApp {
     }
 
     /// Section lines on their parents: hovering a line shows its grips (its
-    /// ends and its middle); dragging an end moves it with the sketch snaps
-    /// (and horizontal / vertical to the other end), dragging the line moves
-    /// it whole; the section is computed again when the drag ends (one Undo
-    /// step). Returns whether it took the pointer.
+    /// points and the middles of its segments); dragging a point moves it
+    /// with the sketch snaps (and horizontal / vertical to its neighbour),
+    /// dragging a segment moves that segment; the section is computed again
+    /// when the drag ends (one Undo step). Returns whether it took the
+    /// pointer.
     pub(super) fn section_line_grips(
         &mut self,
         painter: &egui::Painter,
@@ -395,15 +419,21 @@ impl CadCraftApp {
             return false;
         };
         // Every section line on the sheet (sheet mm).
-        let lines: Vec<(u32, [f64; 2], [f64; 2])> = sheet
+        let lines: Vec<(u32, Vec<[f64; 2]>)> = sheet
             .views
             .iter()
-            .filter_map(|v| match v.kind {
-                ViewKind::Section { parent, a, b, .. } => {
-                    let pv = views.iter().find(|x| x.id == parent)?;
-                    Some((v.id, from_view(pv, a)?, from_view(pv, b)?))
-                }
-                _ => None,
+            .filter_map(|v| {
+                let ViewKind::Section { parent, .. } = v.kind else {
+                    return None;
+                };
+                let pv = views.iter().find(|x| x.id == parent)?;
+                let pts: Option<Vec<[f64; 2]>> = v
+                    .kind
+                    .section_line()?
+                    .iter()
+                    .map(|q| from_view(pv, *q))
+                    .collect();
+                Some((v.id, pts?))
             })
             .collect();
         let to = |q: [f64; 2]| cam.to_screen(rect, q);
@@ -419,79 +449,89 @@ impl CadCraftApp {
         let near = 7.0 / cam.zoom;
         let hit = press.or(at).and_then(|q| {
             let d = |p: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]);
-            lines.iter().find_map(|&(id, a, b)| {
-                if d(a) < near {
-                    Some((id, 0u8, a, b))
-                } else if d(b) < near {
-                    Some((id, 1, a, b))
-                } else {
+            lines.iter().find_map(|(id, pts)| {
+                if let Some(k) = pts.iter().position(|p| d(*p) < near) {
+                    return Some((*id, k, pts.clone()));
+                }
+                pts.windows(2).enumerate().find_map(|(k, w)| {
+                    let (a, b) = (w[0], w[1]);
                     let v = [b[0] - a[0], b[1] - a[1]];
                     let l2 = v[0] * v[0] + v[1] * v[1];
                     let t = (((q[0] - a[0]) * v[0] + (q[1] - a[1]) * v[1]) / l2.max(1e-12))
                         .clamp(0.0, 1.0);
                     let p = [a[0] + v[0] * t, a[1] + v[1] * t];
-                    (d(p) < near * 0.7).then_some((id, 2, a, b))
-                }
+                    (d(p) < near * 0.7).then(|| (*id, pts.len() + k, pts.clone()))
+                })
             })
         });
-        if let Some(g) = self.drw.section_drag {
+        if let Some(g) = self.drw.section_drag.clone() {
             // Dragging: the line as it will be.
-            let (mut a, mut b) = (g.ends[0], g.ends[1]);
+            let mut pts = g.pts.clone();
+            let n = pts.len();
             if let (Some(p), Some(q)) = (pointer, at) {
-                match g.which {
-                    0 | 1 => {
-                        let mut s = self.section_snap(views, rect, p);
-                        let other = if g.which == 0 { b } else { a };
-                        hv(&mut s, other);
-                        if g.which == 0 {
-                            a = s;
-                        } else {
-                            b = s;
-                        }
-                    }
-                    _ => {
-                        let d = [q[0] - g.from[0], q[1] - g.from[1]];
-                        a = [a[0] + d[0], a[1] + d[1]];
-                        b = [b[0] + d[0], b[1] + d[1]];
+                if g.which < n {
+                    let mut s = self.section_snap(views, rect, p);
+                    let other = if g.which > 0 {
+                        pts[g.which - 1]
+                    } else {
+                        pts[1]
+                    };
+                    hv(&mut s, other);
+                    pts[g.which] = s;
+                } else {
+                    let k = g.which - n;
+                    let d = [q[0] - g.from[0], q[1] - g.from[1]];
+                    for i in [k, k + 1] {
+                        pts[i] = [pts[i][0] + d[0], pts[i][1] + d[1]];
                     }
                 }
             }
-            painter.line_segment([to(a), to(b)], Stroke::new(2.0, PREVIEW));
-            for p in [a, b] {
+            for w in pts.windows(2) {
+                painter.line_segment([to(w[0]), to(w[1])], Stroke::new(2.0, PREVIEW));
+            }
+            for p in &pts {
                 painter.rect_filled(
-                    Rect::from_center_size(to(p), egui::vec2(7.0, 7.0)),
+                    Rect::from_center_size(to(*p), egui::vec2(7.0, 7.0)),
                     0.0,
                     PREVIEW,
                 );
             }
             if response.drag_stopped() {
                 self.drw.section_drag = None;
-                if (a[0] - b[0]).hypot(a[1] - b[1]) > 1.0 {
-                    self.set_section_line(g.view, a, b, views);
+                let ok = pts
+                    .windows(2)
+                    .all(|w| (w[0][0] - w[1][0]).hypot(w[0][1] - w[1][1]) > 1.0);
+                if ok {
+                    self.set_section_line(g.view, &pts, views);
                 }
             }
             return true;
         }
-        let Some((id, which, a, b)) = hit else {
+        let Some((id, which, pts)) = hit else {
             return false;
         };
-        // Grips of the hovered line.
-        let m = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
-        for (k, p) in [a, b, m].into_iter().enumerate() {
-            let on = k as u8 == which;
+        // Grips of the hovered line: its points and its segments' middles.
+        let n = pts.len();
+        let mids: Vec<[f64; 2]> = pts
+            .windows(2)
+            .map(|w| [(w[0][0] + w[1][0]) * 0.5, (w[0][1] + w[1][1]) * 0.5])
+            .collect();
+        for (k, p) in pts.iter().chain(&mids).enumerate() {
+            let on = k == which;
             let r = if on { 9.0 } else { 7.0 };
             painter.rect_stroke(
-                Rect::from_center_size(to(p), egui::vec2(r, r)),
+                Rect::from_center_size(to(*p), egui::vec2(r, r)),
                 0.0,
                 Stroke::new(1.5, if on { PICKED } else { PREVIEW }),
                 egui::StrokeKind::Middle,
             );
         }
+        let _ = n;
         if let Some(q) = press {
             self.drw.section_drag = Some(SectionGrip {
                 view: id,
                 which,
-                ends: [a, b],
+                pts,
                 from: q,
             });
             return true;
@@ -504,9 +544,9 @@ impl CadCraftApp {
         false
     }
 
-    /// Moves section view `id`'s line to sheet points `a`, `b` (on its
+    /// Moves section view `id`'s line to the sheet points `pts` (on its
     /// parent): one Undo step; the section is computed again.
-    fn set_section_line(&mut self, id: u32, a: [f64; 2], b: [f64; 2], views: &[ShownView]) {
+    fn set_section_line(&mut self, id: u32, pts: &[[f64; 2]], views: &[ShownView]) {
         let Some(parent) = self
             .drawing()
             .and_then(|d| d.sheet()?.view(id))
@@ -517,15 +557,23 @@ impl CadCraftApp {
         let Some(pv) = views.iter().find(|v| v.id == parent) else {
             return;
         };
-        let (Some(ra), Some(rb)) = (to_view(pv, a), to_view(pv, b)) else {
+        let Some(line) = pts
+            .iter()
+            .map(|p| to_view(pv, *p))
+            .collect::<Option<Vec<_>>>()
+        else {
             return;
         };
+        if line.len() < 2 {
+            return;
+        }
         self.edit_drawing("Edit Section Line", move |d| {
             if let Some(v) = d.sheet_mut().and_then(|s| s.view_mut(id))
-                && let ViewKind::Section { a, b, .. } = &mut v.kind
+                && let ViewKind::Section { a, b, mid, .. } = &mut v.kind
             {
-                *a = ra;
-                *b = rb;
+                *a = line[0];
+                *b = line[line.len() - 1];
+                *mid = line[1..line.len() - 1].to_vec();
             }
         });
         self.history.break_coalescing();

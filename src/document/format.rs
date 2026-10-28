@@ -134,7 +134,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 37: the surface commands (`BodyOp::Stitch`, `Patch`, `Trim`, `Extend`,
 ///   `Ruled`, `ReplaceFace`, `Sculpt`) (2026-10-28).
 /// - 38: angular dimensions in drawings (`DimKind::Angle`) (2026-10-28).
-pub const FORMAT_REVISION: u32 = 38;
+/// - 39: section lines of several segments (`ViewKind::Section::mid`,
+///   offset sections) (2026-10-28).
+pub const FORMAT_REVISION: u32 = 39;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

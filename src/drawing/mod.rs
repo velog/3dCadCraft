@@ -444,6 +444,11 @@ pub enum ViewKind {
         b: [f64; 2],
         /// The side of the line the view lies on (+1: left of a → b).
         side: i8,
+        /// Points between `a` and `b` of a line of several segments (an
+        /// offset section; format revision 39); the view looks square to
+        /// the first segment.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        mid: Vec<[f64; 2]>,
     },
     /// Auxiliary View: square to a line (an edge) of the parent.
     Auxiliary {
@@ -478,7 +483,7 @@ pub enum LinesJob {
         /// The view's frame.
         frame: ViewFrame,
         /// Alignment with the parent and the cut.
-        aligned: Option<hlr::Aligned>,
+        aligned: Option<Box<hlr::Aligned>>,
         /// The flat pattern instead of the folded part.
         flat: bool,
     },
@@ -664,6 +669,30 @@ impl DrawingView {
             ViewKind::Detail { .. } => vec![format!("DETAIL {}", self.identifier), scale],
             ViewKind::Auxiliary { .. } => vec![format!("VIEW {}", self.identifier), scale],
             _ => vec![self.identifier.clone(), scale],
+        }
+    }
+}
+
+/// The end of a section line's first segment (its view looks square to it).
+fn first_segment_end(k: &ViewKind) -> Option<[f64; 2]> {
+    match k {
+        ViewKind::Section { mid, .. } => mid.first().copied(),
+        _ => None,
+    }
+}
+
+impl ViewKind {
+    /// A section view's line in its parent's view plane: `a`, the points
+    /// between, `b`.
+    pub fn section_line(&self) -> Option<Vec<[f64; 2]>> {
+        match self {
+            ViewKind::Section { a, b, mid, .. } => {
+                let mut v = vec![*a];
+                v.extend(mid.iter().copied());
+                v.push(*b);
+                Some(v)
+            }
+            _ => None,
         }
     }
 }
@@ -916,18 +945,21 @@ impl DrawingDocument {
             ViewKind::Section { parent, a, b, .. } | ViewKind::Auxiliary { parent, a, b, .. } => {
                 let fp = self.frame_of(sheet, parent)?;
                 let frame = self.frame_of(sheet, id)?;
-                let d = [b[0] - a[0], b[1] - a[1]];
+                let poly = v.kind.section_line().unwrap_or_else(|| vec![a, b]);
+                let b1 = poly.get(1).copied().unwrap_or(b);
+                let d = [b1[0] - a[0], b1[1] - a[1]];
                 let len = d[0].hypot(d[1]).max(1e-12);
                 let cut = matches!(v.kind, ViewKind::Section { .. })
                     .then(|| crate::kernel::Point3::from(fp.right * a[0] + fp.up * a[1]));
                 LinesJob::Model {
                     model,
                     frame,
-                    aligned: Some(hlr::Aligned {
+                    aligned: Some(Box::new(hlr::Aligned {
                         parent: fp,
                         line: [d[0] / len, d[1] / len],
                         cut,
-                    }),
+                        poly: if poly.len() > 2 { poly } else { Vec::new() },
+                    })),
                     flat,
                 }
             }
@@ -1019,7 +1051,18 @@ impl DrawingDocument {
         at: [f64; 2],
     ) -> Option<u32> {
         let side = self.side_of(parent, a, b, at)?;
-        self.add_child(parent, ViewKind::Section { parent, a, b, side }, at, None)
+        self.add_child(
+            parent,
+            ViewKind::Section {
+                parent,
+                a,
+                b,
+                side,
+                mid: Vec::new(),
+            },
+            at,
+            None,
+        )
     }
 
     /// Auxiliary View of `parent` square to edge `a`–`b`, placed at `at`.
@@ -1061,6 +1104,33 @@ impl DrawingDocument {
 
     /// Which side of line `a`–`b` (parent's view plane) the sheet point `at`
     /// lies on, seen from the parent's position.
+    /// Adds a section view of `parent` whose line runs through `pts` (its
+    /// parent's view plane, two or more points), placed near `at`.
+    pub fn add_section_view_line(
+        &mut self,
+        parent: u32,
+        pts: &[[f64; 2]],
+        at: [f64; 2],
+    ) -> Option<u32> {
+        let (first, last) = (*pts.first()?, *pts.last()?);
+        if pts.len() < 2 {
+            return None;
+        }
+        let side = self.side_of(parent, first, pts[1], at)?;
+        self.add_child(
+            parent,
+            ViewKind::Section {
+                parent,
+                a: first,
+                b: last,
+                side,
+                mid: pts[1..pts.len() - 1].to_vec(),
+            },
+            at,
+            None,
+        )
+    }
+
     fn side_of(&self, parent: u32, a: [f64; 2], b: [f64; 2], at: [f64; 2]) -> Option<i8> {
         let p = self.sheet()?.view(parent)?;
         let d = [b[0] - a[0], b[1] - a[1]];
@@ -1095,6 +1165,7 @@ impl DrawingDocument {
         match v.kind {
             ViewKind::Projected { dir, .. } => align(&mut to, p.position, dir),
             ViewKind::Section { a, b, .. } | ViewKind::Auxiliary { a, b, .. } => {
+                let b = first_segment_end(&v.kind).unwrap_or(b);
                 let d = [b[0] - a[0], b[1] - a[1]];
                 let len = d[0].hypot(d[1]);
                 if len > 1e-9 {
@@ -1121,8 +1192,18 @@ impl DrawingDocument {
             ViewKind::Projected { parent, dir } => self
                 .frame_of(sheet, *parent)?
                 .projected(*dir, self.standard.projection),
-            ViewKind::Section { parent, a, b, side }
-            | ViewKind::Auxiliary { parent, a, b, side } => {
+            ViewKind::Section {
+                parent,
+                a,
+                b,
+                side,
+                mid,
+            } => {
+                let fp = self.frame_of(sheet, *parent)?;
+                self.line_frame(&fp, *a, mid.first().copied().unwrap_or(*b), *side)?
+                    .0
+            }
+            ViewKind::Auxiliary { parent, a, b, side } => {
                 let fp = self.frame_of(sheet, *parent)?;
                 self.line_frame(&fp, *a, *b, *side)?.0
             }
@@ -1183,6 +1264,7 @@ impl DrawingDocument {
                         ProjectDir::Iso(..) => {}
                     },
                     ViewKind::Section { a, b, .. } | ViewKind::Auxiliary { a, b, .. } => {
+                        let b = first_segment_end(&c.kind).unwrap_or(b);
                         let d = [b[0] - a[0], b[1] - a[1]];
                         let len = d[0].hypot(d[1]);
                         if len > 1e-9 {

@@ -561,7 +561,7 @@ impl Grid {
 /// A view square to a line of its parent (section, auxiliary): the
 /// parent's frame and the line's direction there keep the two aligned, and
 /// a section removes the material on the viewer's side of the cut.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Aligned {
     /// The parent's frame.
     pub parent: ViewFrame,
@@ -570,6 +570,10 @@ pub struct Aligned {
     /// Section views: a point of the cutting plane (its normal is the
     /// view's `toward`).
     pub cut: Option<Point3>,
+    /// A section line of several segments in the parent's view plane
+    /// (offset section, projected): each segment cuts along its own plane,
+    /// square to the parent's plane; empty: the one plane through `cut`.
+    pub poly: Vec<[f64; 2]>,
 }
 
 /// The visible and hidden lines of `model` seen in `frame`.
@@ -629,8 +633,25 @@ pub fn view_lines_simplified(
     // A section keeps the material behind the cutting plane (seen from the
     // viewer, who stands on the removed side).
     let cut = aligned.and_then(|a| a.cut);
+    // An offset section: the removed region as convex cells of the
+    // parent's plane, one per segment of the extended line.
+    let cells: Option<(Vec<Cell>, ViewFrame)> = aligned
+        .filter(|a| a.cut.is_some() && a.poly.len() >= 3)
+        .map(|a| {
+            let far = 20.0 * (diag + (hi3 - lo3).norm()) + 1.0;
+            (section_cells(&a.poly, &a.parent, frame, far), a.parent)
+        });
+    let cut = if cells.is_some() { None } else { cut };
     let cut_depth = cut.map(|p| dp(&p));
     let side = |q: &Point3| cut_depth.map_or(-1.0, |c| dp(q) - c);
+    // The kept parts of a curve (model edges, silhouettes).
+    let clip_curve = |pts: &[Point3]| -> Vec<Vec<Point3>> {
+        match &cells {
+            Some((c, pf)) => clip_curve_cells(pts, c, pf),
+            None => clip_polyline(pts, &side),
+        }
+    };
+    let mut chords3: Vec<(Point3, Point3)> = Vec::new();
 
     // Front-facing triangles occlude (the solids are closed); a section
     // clips them to the kept side and collects where they cross the plane.
@@ -642,33 +663,62 @@ pub fn view_lines_simplified(
         for tri in &m.faces.triangles {
             let [a, b, c] = tri.map(|i| pos[i as usize]);
             let nrm = (b - a).cross(&(c - a));
-            let poly: Vec<Point3> = if cut.is_some() {
+            let polys: Vec<Vec<Point3>> = if let Some((cs, pf)) = &cells {
+                let mut pieces = vec![vec![a, b, c]];
+                for cell in cs {
+                    let mut next = Vec::new();
+                    for p in pieces {
+                        next.extend(subtract_cell(p, cell, pf, &mut chords3));
+                    }
+                    pieces = next;
+                    if pieces.is_empty() {
+                        break;
+                    }
+                }
+                pieces
+            } else if cut.is_some() {
                 let (kept, cross) = clip_polygon(&[a, b, c], &side);
                 if let Some((x, y)) = cross {
                     crossings.push((p2(&x), p2(&y)));
                 }
-                kept
+                vec![kept]
             } else {
-                vec![a, b, c]
+                vec![vec![a, b, c]]
             };
-            if poly.len() < 3 || nrm.dot(&t) <= 1e-12 * nrm.norm().max(1e-30) {
+            if nrm.dot(&t) <= 1e-12 * nrm.norm().max(1e-30) {
                 continue;
             }
-            for k in 1..poly.len() - 1 {
-                let (a, b, c) = (poly[0], poly[k], poly[k + 1]);
-                let p = [p2(&a), p2(&b), p2(&c)];
-                for q in &p {
-                    for i in 0..2 {
-                        lo[i] = lo[i].min(q[i]);
-                        hi[i] = hi[i].max(q[i]);
+            for poly in polys.iter().filter(|p| p.len() >= 3) {
+                for k in 1..poly.len() - 1 {
+                    let (a, b, c) = (poly[0], poly[k], poly[k + 1]);
+                    let p = [p2(&a), p2(&b), p2(&c)];
+                    for q in &p {
+                        for i in 0..2 {
+                            lo[i] = lo[i].min(q[i]);
+                            hi[i] = hi[i].max(q[i]);
+                        }
                     }
+                    tris.push(Tri {
+                        p,
+                        d: [dp(&a), dp(&b), dp(&c)],
+                    });
                 }
-                tris.push(Tri {
-                    p,
-                    d: [dp(&a), dp(&b), dp(&c)],
-                });
             }
         }
+    }
+    // Offset section: the cut faces' chords seen in the view, each end's
+    // depth kept (its segment's plane).
+    let mut chord_depth: std::collections::HashMap<(i64, i64), f64> = Default::default();
+    let qk = (diag * 1e-7).max(1e-9);
+    let key = |p: [f64; 2]| ((p[0] / qk).round() as i64, (p[1] / qk).round() as i64);
+    for (x, y) in &chords3 {
+        let (px, py) = (p2(x), p2(y));
+        if (px[0] - py[0]).hypot(px[1] - py[1]) < 1e-12 {
+            continue; // a jog's cut face, seen edge-on
+        }
+        chord_depth.insert(key(px), dp(x));
+        chord_depth.insert(key(py), dp(y));
+        crossings.push((px, py));
     }
     lap("tris");
     let grid = (!tris.is_empty()).then(|| Grid::new(tris, lo, hi));
@@ -679,8 +729,24 @@ pub fn view_lines_simplified(
         .iter()
         .filter(|l| l.len() > 3 && l.first() == l.last())
         .collect();
+    // The depth of each cut face (offset sections: the farthest of its
+    // planes).
+    let loop_depth: Vec<f64> = closed
+        .iter()
+        .map(|l| {
+            l.iter()
+                .filter_map(|p| chord_depth.get(&key(*p)).copied())
+                .fold(f64::MAX, f64::min)
+        })
+        .collect();
     // Behind the plane and inside a cut face: hidden by the cut face.
     let behind_cap = |q: [f64; 2], d: f64| {
+        if cells.is_some() {
+            return closed
+                .iter()
+                .zip(&loop_depth)
+                .any(|(l, ld)| *ld < f64::MAX && d < ld - eps && inside(l, q));
+        }
         cut_depth.is_some_and(|c| d < c - eps)
             && closed.iter().filter(|l| inside(l, q)).count() % 2 == 1
     };
@@ -696,19 +762,29 @@ pub fn view_lines_simplified(
         if short(&e.pts) {
             continue;
         }
-        for part in clip_polyline(&e.pts, &side) {
+        for part in clip_curve(&e.pts) {
             curves.push((part, Some(k as u32)));
         }
     }
     lap("edges");
     for s in silhouettes(model, &t) {
-        for part in clip_polyline(&s, &side) {
+        for part in clip_curve(&s) {
             curves.push((part, None));
         }
     }
     if let Some(c) = cut_depth {
         let lift =
             |q: &[f64; 2]| Point3::from(frame.right * q[0] + frame.up * q[1] + frame.toward * c);
+        for l in &section {
+            curves.push((l.iter().map(lift).collect(), None));
+        }
+    }
+    if cells.is_some() {
+        // Each vertex at its own plane's depth.
+        let lift = |q: &[f64; 2]| {
+            let c = chord_depth.get(&key(*q)).copied().unwrap_or(0.0);
+            Point3::from(frame.right * q[0] + frame.up * q[1] + frame.toward * c)
+        };
         for l in &section {
             curves.push((l.iter().map(lift).collect(), None));
         }
@@ -1025,6 +1101,227 @@ fn chain_loops(segs: &[([f64; 2], [f64; 2])], q: f64) -> Vec<Vec<[f64; 2]>> {
             }
         }
         out.push(line);
+    }
+    out
+}
+
+/// A convex cell of an offset section's removed region, in the parent's
+/// view plane: its edges as (a point, the outward normal, lies on the
+/// section line), the section line's edge last.
+#[derive(Clone, Debug)]
+pub struct Cell {
+    edges: Vec<([f64; 2], [f64; 2], bool)>,
+}
+
+impl Cell {
+    fn f(e: &([f64; 2], [f64; 2], bool), v: [f64; 2]) -> f64 {
+        (v[0] - e.0[0]) * e.1[0] + (v[1] - e.0[1]) * e.1[1]
+    }
+
+    /// Whether `v` lies inside (or on) the cell.
+    pub fn contains(&self, v: [f64; 2]) -> bool {
+        self.edges.iter().all(|e| Self::f(e, v) <= 1e-12)
+    }
+}
+
+/// The removed region of a section line `poly` (the parent's view plane):
+/// the line extended along its end segments, then one convex cell per
+/// segment on the viewer's side, bounded by the segment, the bisectors at
+/// its ends and a far edge (`far` mm away).
+pub fn section_cells(
+    poly: &[[f64; 2]],
+    parent: &ViewFrame,
+    frame: &ViewFrame,
+    far: f64,
+) -> Vec<Cell> {
+    let unit = |v: [f64; 2]| {
+        let l = v[0].hypot(v[1]);
+        if l < 1e-12 {
+            [0.0, 0.0]
+        } else {
+            [v[0] / l, v[1] / l]
+        }
+    };
+    let mut p: Vec<[f64; 2]> = Vec::new();
+    for q in poly {
+        if p.last()
+            .is_none_or(|l: &[f64; 2]| (l[0] - q[0]).hypot(l[1] - q[1]) > 1e-9)
+        {
+            p.push(*q);
+        }
+    }
+    if p.len() < 2 {
+        return Vec::new();
+    }
+    let n = p.len();
+    let d0 = unit([p[1][0] - p[0][0], p[1][1] - p[0][1]]);
+    let dn = unit([p[n - 1][0] - p[n - 2][0], p[n - 1][1] - p[n - 2][1]]);
+    p.insert(0, [p[0][0] - d0[0] * far, p[0][1] - d0[1] * far]);
+    let last = p[p.len() - 1];
+    p.push([last[0] + dn[0] * far, last[1] + dn[1] * far]);
+    // The viewer's side, the same along the whole line.
+    let tw = [
+        frame.toward.dot(&parent.right),
+        frame.toward.dot(&parent.up),
+    ];
+    let left = |d: [f64; 2]| [-d[1], d[0]];
+    let s = if left(d0)[0] * tw[0] + left(d0)[1] * tw[1] >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    let dirs: Vec<[f64; 2]> = p
+        .windows(2)
+        .map(|w| unit([w[1][0] - w[0][0], w[1][1] - w[0][1]]))
+        .collect();
+    let normals: Vec<[f64; 2]> = dirs
+        .iter()
+        .map(|d| {
+            let l = left(*d);
+            [l[0] * s, l[1] * s]
+        })
+        .collect();
+    let rays: Vec<[f64; 2]> = (0..p.len())
+        .map(|i| {
+            if i == 0 {
+                normals[0]
+            } else if i == p.len() - 1 {
+                normals[normals.len() - 1]
+            } else {
+                let b = [
+                    normals[i - 1][0] + normals[i][0],
+                    normals[i - 1][1] + normals[i][1],
+                ];
+                if b[0].hypot(b[1]) < 1e-9 {
+                    normals[i]
+                } else {
+                    unit(b)
+                }
+            }
+        })
+        .collect();
+    let mut cells = Vec::new();
+    for k in 0..dirs.len() {
+        let (a, b) = (p[k], p[k + 1]);
+        let (ra, rb) = (rays[k], rays[k + 1]);
+        // Rays meeting in front of the far edge close the cell there.
+        let den = ra[0] * rb[1] - ra[1] * rb[0];
+        let w = [b[0] - a[0], b[1] - a[1]];
+        let mut verts = vec![a, b];
+        let meet = (den.abs() > 1e-12).then(|| {
+            let t = (w[0] * rb[1] - w[1] * rb[0]) / den;
+            let u = (w[0] * ra[1] - w[1] * ra[0]) / den;
+            (t, u)
+        });
+        match meet {
+            Some((t, u)) if t > 0.0 && u > 0.0 && t < far => {
+                verts.push([a[0] + ra[0] * t, a[1] + ra[1] * t]);
+            }
+            _ => {
+                verts.push([b[0] + rb[0] * far, b[1] + rb[1] * far]);
+                verts.push([a[0] + ra[0] * far, a[1] + ra[1] * far]);
+            }
+        }
+        let area: f64 = (0..verts.len())
+            .map(|i| {
+                let (x, y) = (verts[i], verts[(i + 1) % verts.len()]);
+                x[0] * y[1] - y[0] * x[1]
+            })
+            .sum();
+        if area.abs() < 1e-12 {
+            continue;
+        }
+        let ccw = area > 0.0;
+        let mut edges: Vec<([f64; 2], [f64; 2], bool)> = (0..verts.len())
+            .map(|i| {
+                let (x, y) = (verts[i], verts[(i + 1) % verts.len()]);
+                let e = unit([y[0] - x[0], y[1] - x[1]]);
+                let out = if ccw { [e[1], -e[0]] } else { [-e[1], e[0]] };
+                (x, out, i == 0)
+            })
+            .collect();
+        // The section line's edge last: its chord is then inside the cell.
+        edges.rotate_left(1);
+        cells.push(Cell { edges });
+    }
+    cells
+}
+
+/// The parts of a convex polygon outside `cell`; the chords where it meets
+/// the cell's section-line edge go to `chords`.
+fn subtract_cell(
+    poly: Vec<Point3>,
+    cell: &Cell,
+    parent: &ViewFrame,
+    chords: &mut Vec<(Point3, Point3)>,
+) -> Vec<Vec<Point3>> {
+    let mut out = Vec::new();
+    let mut rest = poly;
+    for e in &cell.edges {
+        let f = |q: &Point3| Cell::f(e, parent.project(q));
+        let g = |q: &Point3| -f(q);
+        if rest.iter().all(|q| f(q) >= 0.0) {
+            out.push(rest);
+            return out;
+        }
+        let (outside, _) = clip_polygon(&rest, &g);
+        if outside.len() >= 3 {
+            out.push(outside);
+        }
+        let (inner, cross) = clip_polygon(&rest, &f);
+        if e.2
+            && let Some(c) = cross
+        {
+            chords.push(c);
+        }
+        rest = inner;
+        if rest.len() < 3 {
+            return out;
+        }
+    }
+    out
+}
+
+/// The parts of a curve outside every cell.
+fn clip_curve_cells(pts: &[Point3], cells: &[Cell], parent: &ViewFrame) -> Vec<Vec<Point3>> {
+    let removed = |q: &Point3| {
+        let v = parent.project(q);
+        cells.iter().any(|c| c.contains(v))
+    };
+    let mut out: Vec<Vec<Point3>> = Vec::new();
+    let mut cur: Vec<Point3> = Vec::new();
+    for w in pts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (va, vb) = (parent.project(&a), parent.project(&b));
+        let mut ts = vec![0.0, 1.0];
+        for c in cells {
+            for e in &c.edges {
+                let (fa, fb) = (Cell::f(e, va), Cell::f(e, vb));
+                if (fa > 0.0) != (fb > 0.0) {
+                    ts.push(fa / (fa - fb));
+                }
+            }
+        }
+        ts.sort_by(f64::total_cmp);
+        ts.dedup_by(|x, y| (*x - *y).abs() < 1e-12);
+        for t in ts.windows(2) {
+            let mid = a + (b - a) * ((t[0] + t[1]) * 0.5);
+            if removed(&mid) {
+                if cur.len() >= 2 {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur.clear();
+            } else {
+                let p0 = a + (b - a) * t[0];
+                if cur.last().is_none_or(|l| (*l - p0).norm() > 1e-12) {
+                    cur.push(p0);
+                }
+                cur.push(a + (b - a) * t[1]);
+            }
+        }
+    }
+    if cur.len() >= 2 {
+        out.push(cur);
     }
     out
 }
