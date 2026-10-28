@@ -2177,10 +2177,8 @@ impl CadCraftApp {
                 _ => None,
             })
             .collect();
-        // Outside corners only: an inside one cannot be rounded or chamfered
-        // yet (spec 5.6 §3.2).
+        // Outside and inside corners (an inside one is filled, spec 5.6).
         matches!(normals.as_slice(), [n1, n2] if n1.dot(n2).abs() < 0.999)
-            && crate::part::select::edge_convex(body, e) != Some(false)
     }
 
     /// The names of the faces along edge `e`.

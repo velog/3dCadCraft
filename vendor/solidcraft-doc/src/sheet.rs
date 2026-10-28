@@ -510,6 +510,10 @@ pub struct SheetBody {
     /// coordinates) with the name of the face it leaves (`CornerRound1.1:round`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub corner_faces: Vec<(String, Seg2)>,
+    /// 3DCadCraft: material added to a panel (`None` = the base, `Some(i)` = flange i's panel;
+    /// flat coordinates): the fill of an inside corner that Corner Round / Corner Chamfer rounds.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub adds: Vec<(Option<usize>, Region2)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1132,7 +1136,18 @@ impl SheetBody {
         let mut points = 0usize;
         for (piece, region) in pieces {
             let panel = fitted_region(&planar_region(&region)?)?;
-            let material = if cuts.is_empty() { vec![panel] } else { material_boolean(&[panel], &cuts, kernel::BoolOp::Cut, work)? };
+            let added: Vec<Region2> = self
+                .adds
+                .iter()
+                .filter(|(pi, _)| matches!(piece, Piece::Panel(q) if q == *pi))
+                .map(|(_, r)| planar_region(r).and_then(|r| fitted_region(&r)))
+                .collect::<Result<_>>()?;
+            let panel = if added.is_empty() {
+                vec![panel]
+            } else {
+                material_union(std::iter::once(panel).chain(added).collect(), work)?
+            };
+            let material = if cuts.is_empty() { panel } else { material_boolean(&panel, &cuts, kernel::BoolOp::Cut, work)? };
             for region in material {
                 points = points.saturating_add(region_complexity(std::slice::from_ref(&region))?.1);
                 if points > MAX_FLAT_POINTS || out.len() >= MAX_FLAT_PIECES {
@@ -1571,6 +1586,9 @@ impl SheetBody {
         for f in &self.flanges {
             regions.push(planar_region(&self.zone(f))?);
             region_complexity(&regions)?;
+        }
+        for (_, add) in &self.adds {
+            regions.push(planar_region(add)?);
         }
         let regions = material_union(regions, &mut work)?;
         let mut cuts = Vec::new();
@@ -4347,6 +4365,7 @@ pub fn base_flange(body: &str, rule: &str, rv: &RuleValues, plane: Plane, region
         bend_relief: (rv.relief_width, rv.relief_depth),
         base_curves: Vec::new(),
         corner_faces: Vec::new(),
+        adds: Vec::new(),
     }
 }
 
@@ -4456,6 +4475,7 @@ pub fn contour_flange_span(body: &str, rule: &str, rv: &RuleValues, plane: &Plan
         bend_relief: (rv.relief_width, rv.relief_depth),
         base_curves: Vec::new(),
         corner_faces: Vec::new(),
+        adds: Vec::new(),
     };
     let (y0, y1) = if ysign > 0.0 { (span.0, span.1) } else { (-span.1, -span.0) };
     // First segment: the base panel.
@@ -7653,9 +7673,17 @@ impl SheetBody {
         }
         let before = self.flat_material()?;
         let probe = c.at + bis * (1e-4 * self.t.max(1.0));
-        if !before.iter().any(|r| r.contains(probe)) {
-            return bad("not supported yet: rounding or chamfering an inside corner");
-        }
+        let inside = !before.iter().any(|r| r.contains(probe));
+        // An inside corner is filled: the panel with material beyond the corner takes it.
+        let panel = if inside {
+            let beyond = c.at - bis * (1e-4 * self.t.max(1.0));
+            match self.panels().into_iter().find(|(_, r)| r.contains(beyond)) {
+                Some((pi, _)) => Some(pi),
+                None => return bad("the corner is not on a panel (at a bend?)"),
+            }
+        } else {
+            None
+        };
         let (ta, tb, area) = match cut {
             CornerCut::Round(r) => {
                 if !(r > 0.0 && r.is_finite()) {
@@ -7676,8 +7704,8 @@ impl SheetBody {
         }
         let (p1, p2) = (c.at + c.da * ta, c.at + c.db * tb);
         // Outside the corner, so the cut-out meets the outline only where the round or the cut
-        // starts and ends.
-        let out = c.at - bis * ta.max(tb).max(self.t);
+        // starts and ends; an inside corner's fill reaches back into the panel the same way.
+        let out = if inside { c.at - bis * (1e-3 * self.t.max(1.0)) } else { c.at - bis * ta.max(tb).max(self.t) };
         let first = match cut {
             CornerCut::Round(r) => {
                 let centre = c.at + bis * (r / (theta / 2.0).sin());
@@ -7696,12 +7724,15 @@ impl SheetBody {
         let lp = Loop2 { segs: vec![first.clone(), Seg2::Line { a: p2, b: out }, Seg2::Line { a: out, b: p1 }] };
         let region = Region2 { outer: lp.ccw(), holes: Vec::new() };
         let mut trial = self.clone();
-        trial.holes.push(region);
+        match panel {
+            Some(pi) => trial.adds.push((pi, region)),
+            None => trial.holes.push(region),
+        }
         let after = trial.flat_material()?;
         if after.len() != before.len() {
             return bad("it would cut the flat pattern apart");
         }
-        let taken = before.iter().map(Region2::area).sum::<f64>() - after.iter().map(Region2::area).sum::<f64>();
+        let taken = (before.iter().map(Region2::area).sum::<f64>() - after.iter().map(Region2::area).sum::<f64>()).abs();
         if (taken - area).abs() > 1e-6 * self.t.max(1.0).powi(2) + 1e-4 * area {
             return bad("the corner is too near other material or a cut-out");
         }

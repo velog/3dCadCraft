@@ -1841,9 +1841,11 @@ fn corner_round_and_chamfer() {
     );
 }
 
-/// An inside corner (the notch of an L-shaped plate) is refused.
+/// An inside corner (the notch of an L-shaped plate) is filled: the round
+/// adds material, tangent to both edges (owner, 2026-10-27: "corner round
+/// does not work for inside edges"); a chamfer adds the triangle.
 #[test]
-fn corner_round_refuses_an_inside_corner() {
+fn corner_round_fills_an_inside_corner() {
     use cadcraft3d::part::sheet_metal::{CornerSet, SheetOp};
     let t = SheetMetalDefaults::default().values().thickness;
     let p = plate(
@@ -1859,20 +1861,97 @@ fn corner_round_refuses_an_inside_corner() {
         SheetMetalDefaults::default(),
     );
     check(&p);
+    let (v0, a0) = (volume(&p), flat_area(&p, "Face1"));
     let c = corner_at(&p, Point3::new(40.0, 30.0, 0.0), t);
     let mut q = p.clone();
-    let e = q
-        .add_sheet_op(cadcraft3d::part::sheet_metal::SheetOpFeature::new(
-            SheetOp::CornerRound {
-                body: "Face1".into(),
-                sets: vec![CornerSet {
-                    corners: vec![c],
-                    radius: 5.0,
-                }],
-            },
-        ))
-        .expect_err("an inside corner");
-    assert!(e.to_string().contains("inside corner"), "{e}");
+    op(
+        &mut q,
+        SheetOp::CornerRound {
+            body: "Face1".into(),
+            sets: vec![CornerSet {
+                corners: vec![c.clone()],
+                radius: 5.0,
+            }],
+        },
+    );
+    check(&q);
+    let added = 25.0 * (1.0 - PI / 4.0);
+    let v1 = volume(&q);
+    assert!(
+        (v1 - v0 - t * added).abs() < 0.02 * t * added,
+        "volume {v0} -> {v1}, expected +{}",
+        t * added
+    );
+    let a1 = flat_area(&q, "Face1");
+    assert!((a1 - a0 - added).abs() < 5e-3 * added, "flat {a0} -> {a1}");
+    let names: Vec<String> = q.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
+    assert!(
+        names.iter().any(|n| n.ends_with("CornerRound1.1:round")),
+        "{names:?}"
+    );
+    // Chamfer 4 × 4: the triangle 8 mm².
+    let mut r = p.clone();
+    op(
+        &mut r,
+        chamfer(
+            vec![c],
+            cadcraft3d::part::sheet_metal::ChamferMethod::Distance,
+            4.0,
+            0.0,
+            0.0,
+            false,
+            None,
+        ),
+    );
+    check(&r);
+    let v2 = volume(&r);
+    assert!((v2 - v0 - 8.0 * t).abs() < 0.02 * 8.0 * t, "{v0} -> {v2}");
+}
+
+/// Corner Round next to a bend: the L-shaped plate with a flange on the
+/// long outer edge keeps its inside round whole and the flat pattern has
+/// one outline without steps or doubled lines; the round of a convex
+/// corner of the base at the flange's end is refused or done cleanly.
+#[test]
+fn corner_round_near_a_bend() {
+    use cadcraft3d::part::sheet_metal::{CornerSet, SheetOp};
+    let t = SheetMetalDefaults::default().values().thickness;
+    let mut p = plate(
+        &[
+            (0.0, 0.0),
+            (80.0, 0.0),
+            (80.0, 30.0),
+            (40.0, 30.0),
+            (40.0, 60.0),
+            (0.0, 60.0),
+        ],
+        &[],
+        SheetMetalDefaults::default(),
+    );
+    flange(&mut p, &[Point3::new(40.0, 0.0, t)], 20.0, |_| {});
+    check(&p);
+    let (v0, a0) = (volume(&p), flat_area(&p, "Face1"));
+    let c = corner_at(&p, Point3::new(40.0, 30.0, 0.0), t);
+    op(
+        &mut p,
+        SheetOp::CornerRound {
+            body: "Face1".into(),
+            sets: vec![CornerSet {
+                corners: vec![c],
+                radius: 8.0,
+            }],
+        },
+    );
+    check(&p);
+    let added = 64.0 * (1.0 - PI / 4.0);
+    let (v1, a1) = (volume(&p), flat_area(&p, "Face1"));
+    assert!(
+        (v1 - v0 - t * added).abs() < 0.02 * t * added,
+        "{v0} -> {v1}"
+    );
+    assert!((a1 - a0 - added).abs() < 5e-3 * added, "flat {a0} -> {a1}");
+    let steps = flat_steps(&p);
+    assert!(steps.is_empty(), "flat steps {steps:?}");
 }
 
 /// The flat pattern's DXF keeps arcs and circles exact (owner, 2026-10-27:

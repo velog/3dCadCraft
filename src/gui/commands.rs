@@ -1856,7 +1856,7 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::SmPlanned(PlannedKind::CornerRound))
         .alias(&["SRD"])
         .at(&[Place::Ribbon("Sheet Metal", "Modify")]).env(PART)
-        .tip("Round the sheet's corners through the thickness, sets of corners with their radii (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
+        .tip("Round the sheet's corners through the thickness (outside corners cut, inside corners filled), sets of corners with their radii").spec("5.6-sheet-metal.md"),
     c("sm.corner_chamfer", "Corner Chamfer", "Скосяване на ъгъл", Icon::SmCornerChamfer)
         .run(Action::SmPlanned(PlannedKind::CornerChamfer))
         .alias(&["SCH"])
