@@ -280,9 +280,9 @@ fn revision_cloud_bulges_out_of_a_concave_outline() {
 }
 
 /// A figure-eight outline (it crosses itself): the signed area is ~0, yet
-/// each lobe's arcs must bulge out of that lobe.
+/// each lobe's arcs must bulge out of that lobe (each arc's side is decided
+/// on its own since 2026-10-28; one side for all put half inside).
 #[test]
-#[ignore = "known: cloud_prims picks one bulge side from the total signed area; a self-crossing outline gets half its arcs inside (reported to the drawings session)"]
 fn revision_cloud_round_a_figure_eight() {
     let pts = vec![[0.0, 0.0], [40.0, 30.0], [40.0, 0.0], [0.0, 30.0]];
     let c = RevisionCloud {

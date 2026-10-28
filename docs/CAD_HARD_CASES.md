@@ -105,7 +105,7 @@ forever), **crash**, **order** (the result depends on selection or face order).
 | FreeCAD #19442 | requests for a better hidden line removal (long-standing quality gap) | — | — |
 | Inventor forum ("Edges missing from drawing", spring) | small parts removed too eagerly; the tangent edges option only adds edges between tangent faces | silent | ✅ coincident hidden lines drawn once (`drawing_hard_cases`); add: a spring / coil front view keeps every turn |
 | Inventor forum (sheet metal bends) | tangent edges of curved flanges add many lines | — | tangent edges on/off on a flange with bends: bend lines only once per bend |
-| ours | revision cloud round a self-crossing outline | silent | ✅ `revision_cloud_round_a_figure_eight` (ignored) |
+| ours | revision cloud round a self-crossing outline | silent | ✅ found and fixed 2026-10-28 (`revision_cloud_round_a_figure_eight` passes) |
 
 ## 9. Sketch solver (FreeCAD Sketcher)
 
