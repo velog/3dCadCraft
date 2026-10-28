@@ -487,40 +487,80 @@ pub fn cloud_prims(c: &RevisionCloud, origin: [f64; 2], width: f64) -> Vec<Prim>
     if pts.len() < 2 {
         return Vec::new();
     }
-    // Arcs bulge to the outside: away from the enclosed area.
-    let area: f64 = (0..pts.len())
-        .map(|k| {
+    // Arcs bulge to the outside: each arc's top must lie outside the
+    // outline (even-odd), decided arc by arc, so a self-crossing outline (a
+    // figure eight) bulges out of both lobes.
+    let inside = |q: [f64; 2]| {
+        let mut odd = false;
+        for k in 0..pts.len() {
             let (a, b) = (pts[k], pts[(k + 1) % pts.len()]);
-            a[0] * b[1] - b[0] * a[1]
-        })
-        .sum();
-    let out_sign = if area >= 0.0 { 1.0 } else { -1.0 };
+            if (a[1] > q[1]) != (b[1] > q[1])
+                && q[0] < a[0] + (q[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0])
+            {
+                odd = !odd;
+            }
+        }
+        odd
+    };
     let closed = pts.len() > 2;
     let n_edges = if closed { pts.len() } else { 1 };
-    let mut path = Vec::new();
+    let edge = |k: usize| (pts[k], pts[(k + 1) % pts.len()]);
+    // Each edge split where another edge crosses it, so no arc straddles a
+    // crossing.
+    let mut pieces: Vec<([f64; 2], [f64; 2])> = Vec::new();
     for k in 0..n_edges {
-        let (a, b) = (pts[k], pts[(k + 1) % pts.len()]);
+        let (a, b) = edge(k);
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let mut ts: Vec<f64> = vec![0.0, 1.0];
+        for m in 0..n_edges {
+            if m == k {
+                continue;
+            }
+            let (p, q) = edge(m);
+            let e = [q[0] - p[0], q[1] - p[1]];
+            let den = d[0] * e[1] - d[1] * e[0];
+            if den.abs() < 1e-12 {
+                continue;
+            }
+            let w = [p[0] - a[0], p[1] - a[1]];
+            let t = (w[0] * e[1] - w[1] * e[0]) / den;
+            let u = (w[0] * d[1] - w[1] * d[0]) / den;
+            if t > 1e-9 && t < 1.0 - 1e-9 && (-1e-9..=1.0 + 1e-9).contains(&u) {
+                ts.push(t);
+            }
+        }
+        ts.sort_by(f64::total_cmp);
+        for w in ts.windows(2) {
+            let at = |t: f64| [a[0] + d[0] * t, a[1] + d[1] * t];
+            pieces.push((at(w[0]), at(w[1])));
+        }
+    }
+    // An arc of 140° over each chord.
+    let half = 70f64.to_radians();
+    let mut path = Vec::new();
+    for (a, b) in pieces {
         let d = [b[0] - a[0], b[1] - a[1]];
         let len = d[0].hypot(d[1]);
         if len < 1e-9 {
             continue;
         }
         let n = (len / c.arc.max(0.5)).ceil().max(1.0) as usize;
-        // Right-hand normal of a counter-clockwise outline points out.
-        let nrm = [d[1] / len * out_sign, -d[0] / len * out_sign];
+        let right = [d[1] / len, -d[0] / len];
         for i in 0..n {
             let p0 = [
                 a[0] + d[0] * i as f64 / n as f64,
                 a[1] + d[1] * i as f64 / n as f64,
             ];
             let chord = len / n as f64;
-            // An arc of 140° over the chord.
-            let half = 70f64.to_radians();
             let r = chord * 0.5 / half.sin();
             let mid = [
                 p0[0] + d[0] / len * chord * 0.5,
                 p0[1] + d[1] / len * chord * 0.5,
             ];
+            let sag = r * (1.0 - half.cos());
+            let top = [mid[0] + right[0] * sag, mid[1] + right[1] * sag];
+            let side = if closed && inside(top) { -1.0 } else { 1.0 };
+            let nrm = [right[0] * side, right[1] * side];
             let centre = [
                 mid[0] - nrm[0] * r * half.cos(),
                 mid[1] - nrm[1] * r * half.cos(),
@@ -532,7 +572,7 @@ pub fn cloud_prims(c: &RevisionCloud, origin: [f64; 2], width: f64) -> Vec<Prim>
                     continue;
                 }
                 // From p0 over the outside to the next point.
-                let t = a0 + out_sign * 2.0 * half * s as f64 / steps as f64;
+                let t = a0 + side * 2.0 * half * s as f64 / steps as f64;
                 path.push([centre[0] + r * t.cos(), centre[1] + r * t.sin()]);
             }
         }
@@ -676,6 +716,27 @@ mod tests {
                 "{s:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_figure_eight_cloud_bulges_out_of_both_lobes() {
+        let c = RevisionCloud {
+            view: None,
+            pts: vec![[0.0, 0.0], [40.0, 30.0], [40.0, 0.0], [0.0, 30.0]],
+            arc: 8.0,
+        };
+        let p = cloud_prims(&c, [0.0, 0.0], 0.35);
+        let Some(Prim::Path { pts, .. }) = p.first() else {
+            panic!("no path");
+        };
+        // The lobes are the triangles (0,0)-(20,15)-(0,30) and
+        // (40,0)-(20,15)-(40,30): inside one, y lies between the diagonals.
+        let in_lobe = |q: &[f64; 2]| {
+            let u = q[0].min(40.0 - q[0]);
+            u > 0.5 && q[1] > 0.75 * u + 0.5 && q[1] < 30.0 - 0.75 * u - 0.5
+        };
+        let inside: Vec<_> = pts.iter().filter(|q| in_lobe(q)).collect();
+        assert!(inside.is_empty(), "arcs inside a lobe: {}", inside.len());
     }
 
     #[test]
