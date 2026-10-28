@@ -572,6 +572,7 @@ fn surfaces_r37() -> PartDocument {
         flip: false,
         vector: None,
         angle: 0.0,
+        alternate: false,
     })))
     .unwrap();
     let mut walls = Vec::new();

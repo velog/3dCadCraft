@@ -1159,7 +1159,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Planned part commands** (`gui/part_planned.rs`): a new one is a `PartPlanned` variant + `pages` + `icon` /
   `section` / `about`, a `pp(..)` entry in `commands.rs` (alias, own icon) and a ribbon place; a selector's kinds
   decide what a view click (`part_planned_click` via `sel_item_at`) and the selection at start fill. Scripted key
-  presses (`gui_win.py key g`) send no `Text` events, so multi-letter aliases need `type grl`.
+  presses (`gui_win.py key g`) send no `Text` events, so multi-letter aliases need `type grl`. A part item picked
+  for a selector of many inputs keeps that selector active (only `SINGLE_KEYS` advance: a second edge went to Vector);
+  an on / off button (Alternate All Faces) is listed in `TOGGLE_BUTTONS` and read with `check`.
 - **Thicken of free-form surfaces** (`kernel/exact/thicken.rs`, `tests/thicken_surfaces.rs`): the kernel
   fits a spline face's offset as a B-spline within a tolerance — Optimized tries 0.01 … 1 mm (≤ 2 % of the
   distance), only a "can't be fitted" error is retried. The fit's (u, v) span comes from a *continued*

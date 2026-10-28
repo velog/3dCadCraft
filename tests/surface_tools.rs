@@ -483,6 +483,7 @@ fn ruled_surfaces_from_a_box_edge() {
                 flip: false,
                 vector,
                 angle: 0.0,
+                alternate: false,
             }),
         );
         assert_eq!(surfaces(&p), 1, "{kind:?}");
@@ -538,6 +539,7 @@ fn replace_the_top_face_by_a_plane_above_and_below() {
                 flip: false,
                 vector: None,
                 angle: 0.0,
+                alternate: false,
             }),
         );
         let (lo, hi) = cadcraft3d::kernel::exact::bounds(
@@ -758,6 +760,7 @@ fn every_surface_command_survives_save_and_load() {
             flip: true,
             vector: Some(LineRef::Origin(2)),
             angle: 0.5,
+            alternate: false,
         }),
         BodyOp::ReplaceFace(ReplaceFaceOp {
             faces: Vec::new(),
@@ -845,6 +848,7 @@ fn a_ruled_surface_leans_by_its_angle() {
             flip: false,
             vector: None,
             angle: 30f64.to_radians(),
+            alternate: false,
         }),
     );
     close(sheet_area(&p), 200.0, 1e-6);
@@ -963,4 +967,56 @@ fn trim_a_cylinder_wall_along_its_seams() {
         );
         close(sheet_area(&q), full / 2.0, 1e-3);
     }
+}
+
+#[test]
+fn ruled_alternate_all_faces_uses_each_edges_other_face() {
+    // The top's front edge: Normal on the top runs up; with Alternate All Faces the
+    // front face decides and the strip runs out of it (-y). Two top edges in two side
+    // planes: two strips stitched into one surface.
+    let ruled = |edges: Vec<SurfEdge>, alternate: bool| {
+        let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        op(
+            &mut p,
+            BodyOp::Ruled(RuledOp {
+                kind: RuledKind::Normal,
+                edges,
+                distance: 5.0,
+                flip: false,
+                vector: None,
+                angle: 0.0,
+                alternate,
+            }),
+        );
+        let (lo, hi) = cadcraft3d::kernel::exact::bounds(
+            p.exact_bodies.0.iter().find(|s| s.is_open()).unwrap(),
+        )
+        .unwrap();
+        (sheet_area(&p), surfaces(&p), lo, hi)
+    };
+    let front = SurfEdge {
+        face: "Box1:Top".into(),
+        hint: [20.0, 0.0, 20.0],
+    };
+    let (area, n, lo, hi) = ruled(vec![front.clone()], false);
+    close(area, 200.0, 1e-6);
+    assert!(n == 1 && lo.z > 19.9 && hi.z < 25.1, "{lo} {hi}");
+    let (area, n, lo, hi) = ruled(vec![front.clone()], true);
+    close(area, 200.0, 1e-6);
+    assert!(
+        n == 1 && hi.y < 0.1 && lo.y > -5.1 && lo.z > 19.9,
+        "{lo} {hi}"
+    );
+    let right = SurfEdge {
+        face: "Box1:Top".into(),
+        hint: [40.0, 15.0, 20.0],
+    };
+    // Two edges of the top, in no particular order: one surface above it.
+    let (area, n, lo, hi) = ruled(vec![front.clone(), right.clone()], false);
+    close(area, 200.0 + 150.0, 1e-6);
+    assert!(n == 1 && lo.z > 19.8 && hi.z < 25.2, "{lo} {hi}");
+    let (area, n, lo, hi) = ruled(vec![front, right], true);
+    close(area, 200.0 + 150.0, 1e-6);
+    assert_eq!(n, 1, "stitched into one surface");
+    assert!(hi.x < 45.1 && lo.y > -5.1 && hi.z < 20.1, "{lo} {hi}");
 }

@@ -15,7 +15,7 @@ use super::placement::{PlaneRef, WorkGeom};
 use super::shell::FaceRef;
 use super::work::LineRef;
 use crate::kernel::exact::{self, ExactSolid, surface_ops};
-use crate::kernel::{BRep, Point3, Real, Vector3};
+use crate::kernel::{BRep, Plane, Point3, Real, Vector3};
 
 /// An edge of the model: the name of a face along it and a point on it (model coordinates).
 /// A surface's free edge has one face; that face's name and the point find it again.
@@ -137,6 +137,9 @@ pub struct RuledOp {
     /// Normal: the strip leans this far (radians) from the face's normal, outward.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub angle: Real,
+    /// Alternate All Faces: each edge's other face decides its strip.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub alternate: bool,
 }
 
 fn is_zero(v: &Real) -> bool {
@@ -739,37 +742,12 @@ pub(super) fn ruled(
     cur: &[ExactSolid],
     sheets: &[ExactSolid],
 ) -> Result<Vec<ExactSolid>, Fail> {
-    use crate::kernel::{Curve, ProfileSegment, Segment2, Surface};
     op.validate().map_err(User)?;
-    // The face of the first edge gives the plane (every edge must lie on it).
-    let first = &op.edges[0];
-    let face = body
-        .faces()
-        .filter(|(_, f)| f.name.as_deref() == Some(first.face.as_str()))
-        .map(|(_, f)| f)
-        .next()
-        .ok_or_else(|| User(format!("the face {} no longer exists", first.face)))?;
-    let plane = match body.surface(face.surface) {
-        Some(Surface::Plane(pl)) if face.facet_of.is_none() => pl.clone(),
-        _ => {
-            return Err(User(
-                "Ruled Surface: only edges of a planar face yet".into(),
-            ));
-        }
-    };
-    let n = plane.normal.into_inner();
-    // The edges as sketch segments in the face's plane.
-    let to2 = |q: &Point3| {
-        let v = q - plane.origin;
-        nalgebra::Point2::new(
-            v.dot(&plane.x_axis.into_inner()),
-            v.dot(&plane.y_axis().into_inner()),
-        )
-    };
-    let mut segs: Vec<ProfileSegment> = Vec::new();
-    let mut outward: Vec<Vector3> = Vec::new();
     let opts = crate::kernel::TessellationOptions::default();
-    for (k, e) in op.edges.iter().enumerate() {
+    // Each edge with the face that decides its strip: the picked face, or the edge's other
+    // face with Alternate All Faces.
+    let mut items: Vec<(Plane, crate::kernel::EdgeId, Point3, Point3, Vector3)> = Vec::new();
+    for e in &op.edges {
         let at = on_edge(body, e).ok_or_else(|| User("an edge no longer exists".into()))?;
         // The edge of the face nearest `at`.
         let mut best: Option<(Real, crate::kernel::EdgeId)> = None;
@@ -802,64 +780,25 @@ pub(super) fn ruled(
         let edge = body
             .edge(eid)
             .ok_or_else(|| User("an edge no longer exists".into()))?;
-        let (a, b) = (
+        let (Some(a), Some(b)) = (
             body.vertex(edge.start).map(|v| v.point),
             body.vertex(edge.end).map(|v| v.point),
-        );
-        let (Some(a), Some(b)) = (a, b) else {
+        ) else {
             return Err(User("an edge no longer exists".into()));
         };
-        for q in [a, b] {
-            if (q - plane.origin).dot(&n).abs() > 1e-6 * (1.0 + (q - plane.origin).norm()) {
-                return Err(User(
-                    "Ruled Surface: the edges must lie in one plane".into(),
-                ));
-            }
-        }
-        let geometry = match body.curve(edge.curve) {
-            Some(Curve::Line(_)) => Segment2::Line {
-                a: to2(&a),
-                b: to2(&b),
-            },
-            Some(Curve::Circle(c)) => {
-                let c2 = to2(&c.center);
-                let (pa, pb) = (to2(&a), to2(&b));
-                let a0 = (pa - c2).y.atan2((pa - c2).x);
-                let a1 = (pb - c2).y.atan2((pb - c2).x);
-                // The sweep that passes the edge's middle.
-                let mid = body
-                    .sample_edge(eid, &opts)
-                    .ok()
-                    .and_then(|pts| pts.get(pts.len() / 2).copied())
-                    .map(|q| to2(&q));
-                let ccw = (a1 - a0).rem_euclid(std::f64::consts::TAU);
-                let ccw = if ccw < 1e-9 {
-                    std::f64::consts::TAU
-                } else {
-                    ccw
-                };
-                let sweep = match mid {
-                    Some(m) => {
-                        let am = (m - c2).y.atan2((m - c2).x);
-                        if (am - a0).rem_euclid(std::f64::consts::TAU) <= ccw + 1e-9 {
-                            ccw
-                        } else {
-                            ccw - std::f64::consts::TAU
-                        }
-                    }
-                    None => ccw,
-                };
-                Segment2::Arc {
-                    c: c2,
-                    r: (pa - c2).norm(),
-                    a0,
-                    sweep,
-                }
-            }
+        let face = body
+            .edge_faces(eid)
+            .into_iter()
+            .filter_map(|f| body.face(f))
+            .find(|f| (f.name.as_deref() == Some(e.face.as_str())) != op.alternate)
+            .ok_or_else(|| User("an edge has no other face".into()))?;
+        let plane = match body.surface(face.surface) {
+            Some(crate::kernel::Surface::Plane(pl)) if face.facet_of.is_none() => pl.clone(),
             _ => {
-                return Err(User("Ruled Surface: lines and arcs only yet".into()));
+                return Err(User("Ruled Surface: only edges of planar faces yet".into()));
             }
         };
+        let n = plane.normal.into_inner();
         // Outward in the face's plane: away from the face's mesh centre.
         let centre = face
             .mesh
@@ -873,25 +812,157 @@ pub(super) fn ruled(
             .unwrap_or_else(|| plane.origin.coords);
         let mid3 = nalgebra::center(&a, &b);
         let out = (mid3.coords - centre) - n * (mid3.coords - centre).dot(&n);
-        outward.push(out.try_normalize(1e-12).unwrap_or_else(Vector3::x));
-        segs.push(ProfileSegment {
-            geometry,
-            name: format!("{k}"),
-        });
+        let out = out.try_normalize(1e-12).unwrap_or_else(Vector3::x);
+        items.push((plane, eid, a, b, out));
     }
+    // Edges of one plane make one strip; the strips of other planes are stitched to it.
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (i, (pl, ..)) in items.iter().enumerate() {
+        let same = |j: usize| {
+            let q = &items[j].0;
+            pl.normal.dot(&q.normal) > 1.0 - 1e-9
+                && (pl.origin - q.origin).dot(&q.normal).abs()
+                    <= 1e-6 * (1.0 + (pl.origin - q.origin).norm())
+        };
+        match groups.iter_mut().find(|g| same(g[0])) {
+            Some(g) => g.push(i),
+            None => groups.push(vec![i]),
+        }
+    }
+    let mut parts = Vec::new();
+    for g in &groups {
+        let plane = &items[g[0]].0;
+        let mut segs = Vec::new();
+        let mut outward = Vec::new();
+        for &i in g {
+            let (_, eid, a, b, out) = &items[i];
+            segs.push(crate::kernel::ProfileSegment {
+                geometry: edge_in_plane(body, *eid, a, b, plane, &opts)?,
+                name: format!("{i}"),
+            });
+            outward.push(*out);
+        }
+        match ruled_strip(op, id, body, works, plane, segs.clone(), &outward) {
+            Ok(s) => parts.push(s),
+            // Edges that are not one chain end to end: a strip each, stitched below.
+            Err(_) if segs.len() > 1 => {
+                for (s, o) in segs.into_iter().zip(outward) {
+                    parts.push(ruled_strip(op, id, body, works, plane, vec![s], &[o])?);
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    let made = if parts.len() == 1 {
+        parts.pop().ok_or_else(|| User("no edges".into()))?
+    } else {
+        let refs: Vec<&ExactSolid> = parts.iter().collect();
+        surface_ops::stitch(&refs, 1e-4, true, id).map_err(User)?
+    };
+    let mut out: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
+    out.push(made);
+    Ok(out)
+}
+
+/// One edge as a sketch segment in `plane` (it lies in it).
+fn edge_in_plane(
+    body: &BRep,
+    eid: crate::kernel::EdgeId,
+    a: &Point3,
+    b: &Point3,
+    plane: &Plane,
+    opts: &crate::kernel::TessellationOptions,
+) -> Result<crate::kernel::Segment2, Fail> {
+    use crate::kernel::{Curve, Segment2};
+    let n = plane.normal.into_inner();
+    for q in [a, b] {
+        if (q - plane.origin).dot(&n).abs() > 1e-6 * (1.0 + (q - plane.origin).norm()) {
+            return Err(User(
+                "Ruled Surface: the edges must lie in one plane".into(),
+            ));
+        }
+    }
+    let to2 = |q: &Point3| {
+        let v = q - plane.origin;
+        nalgebra::Point2::new(
+            v.dot(&plane.x_axis.into_inner()),
+            v.dot(&plane.y_axis().into_inner()),
+        )
+    };
+    let edge = body
+        .edge(eid)
+        .ok_or_else(|| User("an edge no longer exists".into()))?;
+    Ok(match body.curve(edge.curve) {
+        Some(Curve::Line(_)) => Segment2::Line {
+            a: to2(a),
+            b: to2(b),
+        },
+        Some(Curve::Circle(c)) => {
+            let c2 = to2(&c.center);
+            let (pa, pb) = (to2(a), to2(b));
+            let a0 = (pa - c2).y.atan2((pa - c2).x);
+            let a1 = (pb - c2).y.atan2((pb - c2).x);
+            // The sweep that passes the edge's middle.
+            let mid = body
+                .sample_edge(eid, opts)
+                .ok()
+                .and_then(|pts| pts.get(pts.len() / 2).copied())
+                .map(|q| to2(&q));
+            let ccw = (a1 - a0).rem_euclid(std::f64::consts::TAU);
+            let ccw = if ccw < 1e-9 {
+                std::f64::consts::TAU
+            } else {
+                ccw
+            };
+            let sweep = match mid {
+                Some(m) => {
+                    let am = (m - c2).y.atan2((m - c2).x);
+                    if (am - a0).rem_euclid(std::f64::consts::TAU) <= ccw + 1e-9 {
+                        ccw
+                    } else {
+                        ccw - std::f64::consts::TAU
+                    }
+                }
+                None => ccw,
+            };
+            Segment2::Arc {
+                c: c2,
+                r: (pa - c2).norm(),
+                a0,
+                sweep,
+            }
+        }
+        _ => {
+            return Err(User("Ruled Surface: lines and arcs only yet".into()));
+        }
+    })
+}
+
+/// The strip of the edges `segs` lying in `plane` (`outward`: each edge's outward direction).
+fn ruled_strip(
+    op: &RuledOp,
+    id: &str,
+    body: &BRep,
+    works: &WorkGeom,
+    plane: &Plane,
+    segs: Vec<crate::kernel::ProfileSegment>,
+    outward: &[Vector3],
+) -> Result<ExactSolid, Fail> {
+    use crate::kernel::{ProfileSegment, Segment2};
+    let n = plane.normal.into_inner();
     let sign = if op.flip { -1.0 } else { 1.0 };
-    let made = match op.kind {
+    Ok(match op.kind {
         RuledKind::Normal if op.angle == 0.0 => {
-            exact::sweep_sheet_along(&plane, &[segs], n * (op.distance * sign), id).map_err(User)?
+            exact::sweep_sheet_along(plane, &[segs], n * (op.distance * sign), id).map_err(User)?
         }
         RuledKind::Normal => {
             // Leaning outward: each edge along its own direction, the strips stitched.
             let (c, s) = (op.angle.cos(), op.angle.sin());
             let mut parts = Vec::new();
-            for (g, o) in segs.iter().zip(&outward) {
+            for (g, o) in segs.iter().zip(outward) {
                 let dir = (n * c + o * s) * (op.distance * sign);
                 parts.push(
-                    exact::sweep_sheet_along(&plane, &[vec![g.clone()]], dir, id).map_err(User)?,
+                    exact::sweep_sheet_along(plane, &[vec![g.clone()]], dir, id).map_err(User)?,
                 );
             }
             if parts.len() == 1 {
@@ -913,12 +984,12 @@ pub(super) fn ruled(
             if d.dot(&n).abs() < 1e-6 {
                 return Err(User("the sweep direction lies in the edges' plane".into()));
             }
-            exact::sweep_sheet_along(&plane, &[segs], d * (op.distance * sign), id).map_err(User)?
+            exact::sweep_sheet_along(plane, &[segs], d * (op.distance * sign), id).map_err(User)?
         }
         RuledKind::Tangent => {
             // In the plane, outward: one straight edge at a time (a strip).
             let mut parts = Vec::new();
-            for (k, (s, o)) in segs.iter().zip(&outward).enumerate() {
+            for (k, (s, o)) in segs.iter().zip(outward).enumerate() {
                 let Segment2::Line { a, b } = s.geometry else {
                     return Err(User(
                         "Ruled Surface Tangent: straight edges only yet".into(),
@@ -957,7 +1028,7 @@ pub(super) fn ruled(
                     lp
                 };
                 let prof = exact::profile(&lp, &[]).map_err(Kernel)?;
-                parts.push(surface_ops::patch_region(&plane, &prof, id).map_err(User)?);
+                parts.push(surface_ops::patch_region(plane, &prof, id).map_err(User)?);
             }
             if parts.len() == 1 {
                 parts.pop().ok_or_else(|| User("no edges".into()))?
@@ -966,10 +1037,7 @@ pub(super) fn ruled(
                 surface_ops::stitch(&refs, 1e-4, true, id).map_err(User)?
             }
         }
-    };
-    let mut out: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
-    out.push(made);
-    Ok(out)
+    })
 }
 
 /// The body index in `cur` of the solid named in `solids` (or the first).

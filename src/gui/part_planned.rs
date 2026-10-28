@@ -1394,6 +1394,9 @@ pub(super) struct PartDialog {
 /// Buttons that run something (the rest stay disabled).
 const LIVE_BUTTONS: &[&str] = &["Find Remaining Free Edges", "Browse..."];
 
+/// Buttons that switch an option on and off (kept like a check box).
+const TOGGLE_BUTTONS: &[&str] = &["Alternate All Faces"];
+
 /// The selector rows of `kind`, in order; a key on several tabs (Pattern
 /// Component's Components) is one selector.
 pub(super) fn selector_defs(
@@ -1501,6 +1504,11 @@ impl PartDialog {
     /// item again removes it; a new one moves on to the next empty
     /// selector, as Inventor's selectors do.
     pub(super) fn pick(&mut self, what: String) {
+        self.pick_then(what, true);
+    }
+
+    /// [`Self::pick`]; `advance`: a new pick moves on to the next empty selector.
+    fn pick_then(&mut self, what: String, advance: bool) {
         let Some(key) = self.active else {
             return;
         };
@@ -1516,7 +1524,9 @@ impl PartDialog {
             return;
         }
         list.push(what);
-        self.advance(key);
+        if advance {
+            self.advance(key);
+        }
     }
 
     /// [`Self::pick`] of a part item and the model point clicked on it. A
@@ -1539,7 +1549,8 @@ impl PartDialog {
             items.truncate(n);
             items.push((item, at));
         }
-        self.pick(what);
+        // A selector of many inputs (edges, faces) stays active for the next one.
+        self.pick_then(what, false);
     }
 
     /// The items picked for selector `key`.
@@ -1641,6 +1652,7 @@ impl PartDialog {
             .enumerate()
             .find(|(_, r)| match **r {
                 Num(l, ..) | Check(l, _) | Text(l, _) => l == label,
+                Button(l) => TOGGLE_BUTTONS.contains(&l) && l == label,
                 _ => false,
             })
     }
@@ -1676,6 +1688,7 @@ impl PartDialog {
     pub(super) fn check(&self, ti: usize, label: &str) -> bool {
         match self.find_row(ti, label) {
             Some((ri, Check(_, def))) => self.bools.get(&(ti, ri)).copied().unwrap_or(*def),
+            Some((ri, Button(_))) => self.bools.get(&(ti, ri)).copied().unwrap_or(false),
             _ => false,
         }
     }
@@ -1791,6 +1804,18 @@ impl PartDialog {
             Note(t) => {
                 plabel(ui, "");
                 ui.label(RichText::new(t).weak().italics());
+                ui.end_row();
+            }
+            Button(t) if TOGGLE_BUTTONS.contains(&t) => {
+                plabel(ui, "");
+                let on = self.bools.get(&at).copied().unwrap_or(false);
+                if ui
+                    .add_enabled(self.kind.has_logic(), egui::Button::new(t).selected(on))
+                    .on_disabled_hover_text("Comes with the command's logic")
+                    .clicked()
+                {
+                    self.bools.insert(at, !on);
+                }
                 ui.end_row();
             }
             Button(t) => {

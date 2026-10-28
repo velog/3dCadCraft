@@ -359,6 +359,7 @@ impl CadCraftApp {
                     flip: d.check(t, "Flip"),
                     vector,
                     angle: d.num(t, "Angle").unwrap_or(0.0).to_radians(),
+                    alternate: d.check(t, "Alternate All Faces"),
                 })
             }
             PartPlanned::ReplaceFace => {
@@ -559,6 +560,7 @@ impl CadCraftApp {
                 d.set_num(0, "Distance", o.distance);
                 d.set_num(0, "Angle", o.angle.to_degrees());
                 d.set_check(0, "Flip", o.flip);
+                d.set_check(0, "Alternate All Faces", o.alternate);
                 d.set_index(
                     0,
                     "Type",
