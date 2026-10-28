@@ -270,6 +270,8 @@ pub(super) struct DrwUi {
     pub ann_drag: Option<(u32, [f64; 2])>,
     /// Which part of it the drag holds.
     pub ann_part: super::drawing_annot::DragPart,
+    /// A section line's grip being dragged.
+    pub section_drag: Option<super::drawing_section::SectionGrip>,
     /// The Text window.
     pub text_dialog: Option<super::drawing_annot::TextDialog>,
     /// The PDF options window (kept until the file is written).
@@ -1171,7 +1173,9 @@ impl CadCraftApp {
             // Edit View of a base view: its preview and ViewCube.
             None if self.orient_active() => self.orient_tool(&ctx, &painter, rect, &response),
             None => {
-                if !self.annotation_select(rect, &response, &anns, &views) {
+                if !self.section_line_grips(&painter, rect, &response, &views)
+                    && !self.annotation_select(rect, &response, &anns, &views)
+                {
                     self.sheet_select(rect, &response, at_sheet, &views);
                 }
             }
