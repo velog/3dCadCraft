@@ -29,3 +29,22 @@ The tests come in three tiers (`cargo xtask <tier>`, defined in `xtask/src/main.
   name). Measure with
   `RUSTC_BOOTSTRAP=1 cargo test --no-default-features --lib -- -Z unstable-options --report-time`.
 - A test that is not in any list still runs in `quick`: forgetting a list costs time, never coverage.
+
+## Checking a model, not only that it builds
+
+Kernel results can be wrong without an error (see `SOLIDCRAFT_ISSUES.md`, "Reports from agents driving
+SolidCraft 0.24 over MCP"). A geometry test should therefore check numbers, not only `Ok`:
+
+- **Analytic volume** (prism, Pappus, the corner correction ±r²(tan(δ/2) − δ/2) of a fillet with
+  deflection δ = 180° − interior angle), not just "smaller than before". A matching bounding box says
+  nothing about details.
+- **Centre of mass on the symmetry planes** of a symmetric part — cheap, and it catches a mirrored or
+  displaced feature that keeps the volume.
+- **Every warning of a retried Boolean** gets a volume check of that state.
+- **Walk every parameter** a test exposes to both ends of its allowed range, one change after another and
+  back to the default (as edits in the app do), checking volume and centre of mass at each end. Two traps
+  only such a walk finds:
+  - a sketch dimension driven to **0** loses its side: the point can come back on the other side when the
+    value grows again (same volume, moved centre of mass), or the next change fails as a conflict;
+  - a **fractional count** (a pattern's 6.5) rounds while the positions use the exact value, so a centred
+    row shifts.

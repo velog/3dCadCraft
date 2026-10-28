@@ -454,6 +454,24 @@ How 3DCadCraft is used at each stage. The steps marked ⬜ become possible with 
 3. The agent calls `create_sketch`, `add_rectangle`, `add_constraint`, `extrude`, `hole` and gets the IDs and the solver reports.
 4. The user sees the result in the GUI. Every step of the agent is undone with Ctrl+Z.
 
+What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, see
+`SOLIDCRAFT_ISSUES.md`) — requirements for ours:
+- **Long kernel work must be cancellable and observable.** Their calls time out at ~60 s while the work
+  goes on; there is no cancel, only a `running` query, and a hang means restarting the app and losing the
+  unsaved design. Ours: kernel work of a command on a worker with progress, a cancel that leaves the part
+  unchanged (rule 5), a status call, and the same watchdog for the GUI's OK (today it builds on the main
+  thread and a hang freezes the window).
+- **Batches are atomic and name the failing command** (theirs roll back everything; good, but the agent
+  must know which entry and why).
+- **Compact answers by default**: their full design inspection returned huge replies; agents fell back to
+  `measure` / topology queries. Offer per-feature health, warnings (Boolean retries), each sketch's DOF,
+  volume / centre of mass / box as small calls.
+- **A repeated name must be an error**, never a silent rename (theirs renames a body to `Body1`, and later
+  `targets` reach the first one).
+- **Ship agent skills with the API** (`skills/` in the repo, as SolidCraft does): the command names are
+  Inventor's, so one skill can map Inventor workflows to API calls; plus a checking skill (parameter walk,
+  analytic volumes, `docs/TESTING.md`).
+
 ---
 
 ## How progress is checked
