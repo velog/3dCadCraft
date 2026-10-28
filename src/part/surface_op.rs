@@ -63,6 +63,10 @@ pub struct PatchOp {
     /// The region of `sketch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<ProfileRef>,
+    /// Output Solid: the patch is sewn to the surface whose edges bound it, and the result
+    /// becomes a solid when that closes it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub solid: bool,
 }
 
 /// What trims a surface.
@@ -72,6 +76,8 @@ pub enum TrimTool {
     Plane(PlaneRef),
     /// Another surface body (its first face, extended), by name.
     Surface(String),
+    /// The curves of a sketch (by id), swept along the sketch's normal.
+    Sketch(String),
 }
 
 /// **Trim**: a surface body cut by a tool; the piece the user picked goes.
@@ -95,6 +101,9 @@ pub struct ExtendOp {
     pub edges: Vec<SurfEdge>,
     /// Distance (mm).
     pub distance: Real,
+    /// Extents To: each edge goes up to this plane instead (along the surface).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<PlaneRef>,
 }
 
 /// Ruled Surface types.
@@ -125,6 +134,13 @@ pub struct RuledOp {
     /// The direction of a Sweep.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vector: Option<LineRef>,
+    /// Normal: the strip leans this far (radians) from the face's normal, outward.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub angle: Real,
+}
+
+fn is_zero(v: &Real) -> bool {
+    *v == 0.0
 }
 
 /// What a replaced face becomes.
@@ -202,6 +218,14 @@ impl PatchOp {
 }
 
 impl TrimOp {
+    /// The sketch it uses as the cutting tool.
+    pub fn sketch(&self) -> Option<&str> {
+        match &self.tool {
+            TrimTool::Sketch(s) => Some(s),
+            _ => None,
+        }
+    }
+
     /// Refuses a definition that cannot be built.
     pub fn validate(&self) -> Result<(), String> {
         if self.surface.is_empty() {
@@ -217,7 +241,7 @@ impl ExtendOp {
         if self.edges.is_empty() {
             return Err("select the edges to extend".into());
         }
-        if !(self.distance.is_finite() && self.distance > 0.0) {
+        if self.to.is_none() && !(self.distance.is_finite() && self.distance > 0.0) {
             return Err("the distance must be positive".into());
         }
         Ok(())
@@ -305,6 +329,41 @@ fn on_edge(body: &BRep, e: &SurfEdge) -> Option<Point3> {
     best.map(|(_, q)| q)
 }
 
+/// The straight edge of a face named like `e`'s nearest `at` (its ends) and the centre of that
+/// face's mesh.
+fn edge_ends(body: &BRep, e: &SurfEdge, at: &Point3) -> Option<(Point3, Point3, Point3)> {
+    let opts = crate::kernel::TessellationOptions::default();
+    let mut best: Option<(Real, Point3, Point3, Point3)> = None;
+    for (_, f) in body
+        .faces()
+        .filter(|(_, f)| f.name.as_deref() == Some(e.face.as_str()))
+    {
+        let m = f.mesh.as_ref()?;
+        let c = m
+            .positions
+            .iter()
+            .fold(Vector3::zeros(), |s, q| s + q.coords)
+            / m.positions.len().max(1) as Real;
+        for lp in std::iter::once(&f.outer).chain(&f.inner) {
+            for ce in &lp.coedges {
+                let Ok(pts) = body.sample_edge(ce.edge, &opts) else {
+                    continue;
+                };
+                let (Some(a), Some(b)) = (pts.first(), pts.last()) else {
+                    continue;
+                };
+                let ab = b - a;
+                let t = ((at - a).dot(&ab) / ab.norm_squared().max(1e-24)).clamp(0.0, 1.0);
+                let d = (a + ab * t - at).norm();
+                if best.is_none_or(|x| d < x.0) {
+                    best = Some((d, *a, *b, Point3::from(c)));
+                }
+            }
+        }
+    }
+    best.map(|(_, a, b, c)| (a, b, c))
+}
+
 /// The body (solid or surface) holding the edges: the one with a face of the first edge's
 /// name nearest its hint.
 fn edge_body(all: &[ExactSolid], edges: &[SurfEdge]) -> Result<usize, Fail> {
@@ -384,8 +443,32 @@ pub(super) fn patch(
         let all: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
         let b = edge_body(&all, &op.edges)?;
         let pts = edge_points(body, &op.edges)?;
-        surface_ops::patch_edges(&all[b], &pts, id)
-            .map_err(|e| User(format!("the edges do not bound a patch ({e})")))?
+        let patch = surface_ops::patch_edges(&all[b], &pts, id)
+            .map_err(|e| User(format!("the edges do not bound a patch ({e})")))?;
+        if op.solid {
+            // Sewn to the surface it closes: that surface is replaced by the result.
+            if !all[b].is_open() {
+                return Err(User("Output Solid: the edges must be a surface's".into()));
+            }
+            let mut sewn =
+                surface_ops::stitch(&[&all[b], &patch], 1e-4, false, id).map_err(User)?;
+            if sewn.is_open() {
+                return Err(User(
+                    "Output Solid: the patch does not close the surface (other openings remain)"
+                        .into(),
+                ));
+            }
+            if sewn.volume_at(1e-3).is_some_and(|v| v < 0.0) {
+                sewn = surface_ops::reversed(&sewn).map_err(User)?;
+            }
+            sewn.name = all[b].name.clone();
+            let mut out = all;
+            out[b] = sewn;
+            // Solids before surface bodies.
+            out.sort_by_key(|s| s.is_open());
+            return Ok(out);
+        }
+        patch
     };
     let mut out: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
     out.push(made);
@@ -397,6 +480,7 @@ pub(super) fn trim(
     op: &TrimOp,
     body: &BRep,
     works: &WorkGeom,
+    sketches: &[super::PartSketch],
     cur: &[ExactSolid],
     sheets: &[ExactSolid],
 ) -> Result<Vec<ExactSolid>, Fail> {
@@ -419,6 +503,58 @@ pub(super) fn trim(
             };
             (
                 surface_ops::trim(&sheets[i], &surface_ops::TrimBy::Plane(&pl), keep),
+                keep,
+            )
+        }
+        TrimTool::Sketch(sid) => {
+            let ps = sketches
+                .iter()
+                .find(|s| &s.id == sid)
+                .ok_or_else(|| User(format!("sketch {sid} is missing")))?;
+            let sk = &ps.sketch;
+            // Every curve of the sketch (not construction, not projected), one chain each.
+            let chains: Vec<Vec<crate::kernel::ProfileSegment>> = sk
+                .entities()
+                .filter(|(e, _)| {
+                    !ps.is_reference(*e) && sk.style(*e) == crate::sketch::Style::Normal
+                })
+                .filter_map(|(e, _)| {
+                    let op = super::OpenProfile {
+                        curves: vec![e],
+                        flip: false,
+                        match_shape: false,
+                    };
+                    super::extrude::open_chain(&op, sk).ok().map(|c| c.0)
+                })
+                .collect();
+            if chains.is_empty() {
+                return Err(User("the sketch has no curve to cut with".into()));
+            }
+            let pl = &sk.plane;
+            // The kept side: across the curve nearest the removed piece, in the sketch's plane.
+            let q = pl.project(&remove);
+            let mut best: Option<(Real, nalgebra::Vector2<Real>)> = None;
+            for c in &chains {
+                for s in c {
+                    for k in 0..=16 {
+                        let a = s.geometry.point(k as Real / 16.0);
+                        let d = (q - a).norm();
+                        if best.is_none_or(|(x, _)| d < x) {
+                            best = Some((d, q - a));
+                        }
+                    }
+                }
+            }
+            let (d, v) = best.ok_or_else(|| User("the sketch has no curve".into()))?;
+            if d < 1e-9 {
+                return Err(User(
+                    "pick the piece to remove off the cutting curve".into(),
+                ));
+            }
+            let w = pl.x_axis.into_inner() * v.x + pl.y_axis().into_inner() * v.y;
+            let keep = if op.invert { remove } else { remove - w * 2.0 };
+            (
+                surface_ops::trim(&sheets[i], &surface_ops::TrimBy::Curves(pl, &chains), keep),
                 keep,
             )
         }
@@ -457,17 +593,54 @@ pub(super) fn trim(
 pub(super) fn extend(
     op: &ExtendOp,
     body: &BRep,
+    works: &WorkGeom,
     cur: &[ExactSolid],
     sheets: &[ExactSolid],
 ) -> Result<Vec<ExactSolid>, Fail> {
     op.validate().map_err(User)?;
     let i = edge_body(sheets, &op.edges)?;
     let pts = edge_points(body, &op.edges)?;
-    let grown = surface_ops::extend(&sheets[i], &pts, op.distance).map_err(|e| {
+    let fail = |e: String| {
         User(format!(
             "only straight edges of a planar surface extend yet ({e})"
         ))
-    })?;
+    };
+    let grown = match &op.to {
+        None => surface_ops::extend(&sheets[i], &pts, op.distance).map_err(fail)?,
+        Some(r) => {
+            // Up to a plane: each edge by its own distance, along the surface away from it.
+            let target =
+                super::placement::plane_of(r, body, works).map_err(|e| User(e.to_string()))?;
+            let tn = target.normal.into_inner();
+            let mut s = sheets[i].clone();
+            for (e, at) in op.edges.iter().zip(&pts) {
+                let (a, b, centre) = edge_ends(body, e, at)
+                    .ok_or_else(|| User(format!("an edge of {} no longer exists", e.face)))?;
+                let mid = nalgebra::center(&a, &b);
+                let along = (b - a)
+                    .try_normalize(1e-12)
+                    .ok_or_else(|| User("a degenerate edge".into()))?;
+                let away = mid - centre;
+                let out = (away - along * away.dot(&along))
+                    .try_normalize(1e-12)
+                    .ok_or_else(|| User("cannot tell the outward side of an edge".into()))?;
+                let den = out.dot(&tn);
+                if den.abs() < 1e-9 {
+                    return Err(User(
+                        "the edge runs parallel to the plane: it never reaches it".into(),
+                    ));
+                }
+                let d = (target.origin - mid).dot(&tn) / den;
+                if d <= 1e-9 {
+                    return Err(User(
+                        "the plane lies behind an edge: Extend lengthens only".into(),
+                    ));
+                }
+                s = surface_ops::extend(&s, std::slice::from_ref(at), d).map_err(fail)?;
+            }
+            s
+        }
+    };
     let mut out: Vec<ExactSolid> = cur.to_vec();
     for (k, s) in sheets.iter().enumerate() {
         out.push(if k == i { grown.clone() } else { s.clone() });
@@ -626,8 +799,25 @@ pub(super) fn ruled(
     }
     let sign = if op.flip { -1.0 } else { 1.0 };
     let made = match op.kind {
-        RuledKind::Normal => {
+        RuledKind::Normal if op.angle == 0.0 => {
             exact::sweep_sheet_along(&plane, &[segs], n * (op.distance * sign), id).map_err(User)?
+        }
+        RuledKind::Normal => {
+            // Leaning outward: each edge along its own direction, the strips stitched.
+            let (c, s) = (op.angle.cos(), op.angle.sin());
+            let mut parts = Vec::new();
+            for (g, o) in segs.iter().zip(&outward) {
+                let dir = (n * c + o * s) * (op.distance * sign);
+                parts.push(
+                    exact::sweep_sheet_along(&plane, &[vec![g.clone()]], dir, id).map_err(User)?,
+                );
+            }
+            if parts.len() == 1 {
+                parts.pop().ok_or_else(|| User("no edges".into()))?
+            } else {
+                let refs: Vec<&ExactSolid> = parts.iter().collect();
+                surface_ops::stitch(&refs, 1e-4, true, id).map_err(User)?
+            }
         }
         RuledKind::Sweep => {
             let v = op

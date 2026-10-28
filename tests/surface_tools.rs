@@ -287,6 +287,7 @@ fn patch_rect(p: &mut PartDocument, a: (Real, Real), b: (Real, Real)) -> String 
             edges: Vec::new(),
             sketch: Some(id),
             profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
+            solid: false,
         }),
     )
 }
@@ -364,6 +365,7 @@ fn walls_and_two_patches_stitch_into_a_solid() {
             edges: e0,
             sketch: None,
             profile: None,
+            solid: false,
         }),
     );
     let e5 = rim(&p, 5.0);
@@ -373,6 +375,7 @@ fn walls_and_two_patches_stitch_into_a_solid() {
             edges: e5,
             sketch: None,
             profile: None,
+            solid: false,
         }),
     );
     assert_eq!(surfaces(&p), 3);
@@ -406,6 +409,7 @@ fn boundary_patch_of_a_sketch_region() {
             edges: Vec::new(),
             sketch: Some(id),
             profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
+            solid: false,
         }),
     );
     assert_eq!(surfaces(&p), 1);
@@ -453,6 +457,7 @@ fn extend_a_planar_patch() {
         BodyOp::Extend(ExtendOp {
             edges: vec![e],
             distance: 5.0,
+            to: None,
         }),
     );
     close(sheet_area(&p), 150.0, 1e-6);
@@ -477,6 +482,7 @@ fn ruled_surfaces_from_a_box_edge() {
                 distance: 5.0,
                 flip: false,
                 vector,
+                angle: 0.0,
             }),
         );
         assert_eq!(surfaces(&p), 1, "{kind:?}");
@@ -531,6 +537,7 @@ fn replace_the_top_face_by_a_plane_above_and_below() {
                 distance: 5.0,
                 flip: false,
                 vector: None,
+                angle: 0.0,
             }),
         );
         let (lo, hi) = cadcraft3d::kernel::exact::bounds(
@@ -731,6 +738,7 @@ fn every_surface_command_survives_save_and_load() {
             }],
             sketch: None,
             profile: None,
+            solid: false,
         }),
         BodyOp::Trim(TrimOp {
             surface: "A".into(),
@@ -741,6 +749,7 @@ fn every_surface_command_survives_save_and_load() {
         BodyOp::Extend(ExtendOp {
             edges: Vec::new(),
             distance: 2.0,
+            to: Some(PlaneRef::Origin(OriginPlane::YZ)),
         }),
         BodyOp::Ruled(RuledOp {
             kind: RuledKind::Sweep,
@@ -748,6 +757,7 @@ fn every_surface_command_survives_save_and_load() {
             distance: 3.0,
             flip: true,
             vector: Some(LineRef::Origin(2)),
+            angle: 0.5,
         }),
         BodyOp::ReplaceFace(ReplaceFaceOp {
             faces: Vec::new(),
@@ -768,4 +778,137 @@ fn every_surface_command_survives_save_and_load() {
             serde_json::from_str(&json).unwrap_or_else(|e| panic!("{json}: {e}"));
         assert_eq!(back, f, "{json}");
     }
+}
+
+#[test]
+fn trim_a_surface_by_a_sketch_line() {
+    // The strip x = -10..10 cut by a sketch line across it at x = 3 (on XY,
+    // swept along Z): the piece at x = 8 goes, 13 x 10 stays.
+    let mut p = PartDocument::default();
+    let s = wall(&mut p, &[(-10.0, 0.0), (10.0, 0.0)], 10.0);
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_line(Point2::new(3.0, -5.0), Point2::new(3.0, 5.0));
+    let sid = p.sketches[i].id.clone();
+    op(
+        &mut p,
+        BodyOp::Trim(TrimOp {
+            surface: s,
+            tool: TrimTool::Sketch(sid),
+            remove: [8.0, 0.0, 5.0],
+            invert: false,
+        }),
+    );
+    close(sheet_area(&p), 130.0, 1e-6);
+}
+
+#[test]
+fn extend_a_planar_patch_up_to_a_plane() {
+    // The 10 x 10 patch's edge at x = 10 up to the plane x = 17.
+    let mut p = PartDocument::default();
+    patch_rect(&mut p, (0.0, 0.0), (10.0, 10.0));
+    let wp = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::YZ),
+            distance: 17.0,
+        })))
+        .unwrap();
+    let e = edge(&p, [5.0, 5.0, 0.0], [10.0, 5.0, 0.0]);
+    op(
+        &mut p,
+        BodyOp::Extend(ExtendOp {
+            edges: vec![e],
+            distance: 0.0,
+            to: Some(PlaneRef::Work(wp)),
+        }),
+    );
+    close(sheet_area(&p), 170.0, 1e-6);
+}
+
+#[test]
+fn a_ruled_surface_leans_by_its_angle() {
+    // 30 degrees outward from the top's normal along the front top edge:
+    // the strip reaches 5 cos 30 up and 5 sin 30 out (y < 0).
+    let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    op(
+        &mut p,
+        BodyOp::Ruled(RuledOp {
+            kind: RuledKind::Normal,
+            edges: vec![SurfEdge {
+                face: "Box1:Top".into(),
+                hint: [20.0, 0.0, 20.0],
+            }],
+            distance: 5.0,
+            flip: false,
+            vector: None,
+            angle: 30f64.to_radians(),
+        }),
+    );
+    close(sheet_area(&p), 200.0, 1e-6);
+    let (lo, hi) =
+        cadcraft3d::kernel::exact::bounds(p.exact_bodies.0.iter().find(|s| s.is_open()).unwrap())
+            .unwrap();
+    assert!(
+        (hi.z - 20.0 - 5.0 * 30f64.to_radians().cos()).abs() < 0.1,
+        "{hi}"
+    );
+    assert!((lo.y + 2.5).abs() < 0.1, "{lo}");
+}
+
+#[test]
+fn boundary_patch_output_solid_closes_an_open_box() {
+    // Walls of a 20 x 10 rectangle (5 high) and a patch of the bottom rim
+    // stitched: an open box. A Patch of the top rim with Output Solid closes it.
+    let mut p = PartDocument::default();
+    let w = wall(
+        &mut p,
+        &[
+            (0.0, 0.0),
+            (20.0, 0.0),
+            (20.0, 10.0),
+            (0.0, 10.0),
+            (0.0, 0.0),
+        ],
+        5.0,
+    );
+    let rim = |p: &PartDocument, z: Real| -> Vec<SurfEdge> {
+        [(10.0, 0.0), (20.0, 5.0), (10.0, 10.0), (0.0, 5.0)]
+            .iter()
+            .map(|&(x, y)| edge(p, [x, y, 2.5], [x, y, z]))
+            .collect()
+    };
+    let e0 = rim(&p, 0.0);
+    let bottom = op(
+        &mut p,
+        BodyOp::Patch(PatchOp {
+            edges: e0,
+            sketch: None,
+            profile: None,
+            solid: false,
+        }),
+    );
+    op(
+        &mut p,
+        BodyOp::Stitch(StitchOp {
+            surfaces: vec![w, bottom],
+            tolerance: 0.001,
+            keep_surface: false,
+        }),
+    );
+    assert_eq!(surfaces(&p), 1);
+    let e5 = rim(&p, 5.0);
+    op(
+        &mut p,
+        BodyOp::Patch(PatchOp {
+            edges: e5,
+            sketch: None,
+            profile: None,
+            solid: true,
+        }),
+    );
+    assert_eq!(surfaces(&p), 0);
+    close(solid_volume(&p), 1000.0, 1e-6);
 }

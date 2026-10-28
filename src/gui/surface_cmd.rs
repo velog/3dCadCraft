@@ -205,9 +205,7 @@ impl CadCraftApp {
                 })
             }
             PartPlanned::Patch => {
-                if d.index(t, "Output") == 1 {
-                    return Err("Output Solid is not there yet: the patch is a surface".into());
-                }
+                let solid = d.index(t, "Output") == 1;
                 let picks = d.items_of("boundary");
                 let sketch = picks.iter().find_map(|(item, at)| match item {
                     SelItem::Sketch(i) => Some((*i, *at)),
@@ -229,6 +227,7 @@ impl CadCraftApp {
                         edges: Vec::new(),
                         sketch: Some(ps.id.clone()),
                         profile: Some(crate::part::ProfileRef::of(region, region.interior_point())),
+                        solid,
                     })
                 } else {
                     let mut edges = self.surf_edges(picks);
@@ -242,6 +241,7 @@ impl CadCraftApp {
                         edges,
                         sketch: None,
                         profile: None,
+                        solid,
                     })
                 }
             }
@@ -258,6 +258,13 @@ impl CadCraftApp {
                     Some((SelItem::Body(b), _)) if self.is_surface(b) => {
                         TrimTool::Surface(b.clone())
                     }
+                    Some((SelItem::Sketch(i), _)) => TrimTool::Sketch(
+                        self.part()
+                            .sketches
+                            .get(*i)
+                            .map(|s| s.id.clone())
+                            .ok_or_else(|| "the sketch is gone".to_owned())?,
+                    ),
                     Some((item, _)) => {
                         TrimTool::Plane(self.plane_of_pick(item).ok_or_else(|| {
                             "the cutting tool must be a surface or a plane".to_owned()
@@ -291,18 +298,32 @@ impl CadCraftApp {
                 })
             }
             PartPlanned::ExtendSurface => {
-                if d.index(t, "Extents") == 1 {
-                    return Err("Extents To is not there yet: use Distance".into());
-                }
+                let prev = match old {
+                    Some(BodyOp::Extend(o)) => Some(o),
+                    _ => None,
+                };
                 let mut edges = self.surf_edges(d.items_of("edges"));
                 if edges.is_empty()
-                    && let Some(BodyOp::Extend(o)) = old
+                    && let Some(o) = prev
                 {
                     edges = o.edges.clone();
                 }
+                let to = if d.index(t, "Extents") == 1 {
+                    Some(match d.items_of("to").first() {
+                        Some((item, _)) => self
+                            .plane_of_pick(item)
+                            .ok_or_else(|| "extend up to a plane or a planar face".to_owned())?,
+                        None => prev
+                            .and_then(|o| o.to.clone())
+                            .ok_or_else(|| "select the face or plane to extend to".to_owned())?,
+                    })
+                } else {
+                    None
+                };
                 BodyOp::Extend(ExtendOp {
                     edges,
                     distance: d.num(t, "Distance").unwrap_or(5.0),
+                    to,
                 })
             }
             PartPlanned::RuledSurface => {
@@ -337,6 +358,7 @@ impl CadCraftApp {
                     distance: d.num(t, "Distance").unwrap_or(5.0),
                     flip: d.check(t, "Flip"),
                     vector,
+                    angle: d.num(t, "Angle").unwrap_or(0.0).to_radians(),
                 })
             }
             PartPlanned::ReplaceFace => {
@@ -449,6 +471,60 @@ impl CadCraftApp {
         }
     }
 
+    /// A live button of a surface command's panel: the line it shows.
+    pub(super) fn surface_button(&self, d: &PartDialog, button: &str) -> Option<String> {
+        if button != "Find Remaining Free Edges" {
+            return None;
+        }
+        // The picked surfaces' edges that no other picked face shares (within the
+        // tolerance): what Stitch leaves open.
+        let names = self.surfaces_of(d.items_of("surfaces"));
+        let tol = d.num(0, "Maximum Tolerance").unwrap_or(0.00025).max(1e-6);
+        let body = &self.part().body;
+        let opts = crate::kernel::TessellationOptions::default();
+        let mut mids: Vec<(usize, Point3)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (k, n) in names.iter().enumerate() {
+            let prefix = format!("{n}:");
+            for (_, f) in body
+                .faces()
+                .filter(|(_, f)| f.name.as_deref().is_some_and(|x| x.starts_with(&prefix)))
+            {
+                for lp in std::iter::once(&f.outer).chain(&f.inner) {
+                    for ce in &lp.coedges {
+                        if !seen.insert(ce.edge) {
+                            continue;
+                        }
+                        if let Ok(pts) = body.sample_edge(ce.edge, &opts)
+                            && let (Some(a), Some(b)) = (pts.first(), pts.last())
+                        {
+                            let m = pts.get(pts.len() / 2).copied().unwrap_or(*a);
+                            let m = if pts.len() == 2 {
+                                nalgebra::center(a, b)
+                            } else {
+                                m
+                            };
+                            mids.push((k, m));
+                        }
+                    }
+                }
+            }
+        }
+        let free = mids
+            .iter()
+            .filter(|(k, m)| {
+                !mids
+                    .iter()
+                    .any(|(j, q)| j != k && (q - m).norm() <= tol.max(1e-4))
+            })
+            .count();
+        Some(match (names.len(), free) {
+            (0, _) => "Select the surfaces first".into(),
+            (_, 0) => "No free edges: Stitch closes a solid".into(),
+            (_, n) => format!("{n} free edge(s) remain open"),
+        })
+    }
+
     /// Edit Feature of a surface command: its panel again, with the feature's options; picks
     /// left empty keep the feature's references.
     pub(super) fn surface_op_edit(&mut self, k: usize) {
@@ -475,9 +551,13 @@ impl CadCraftApp {
                 d.set_num(0, "Maximum Tolerance", o.tolerance);
                 d.set_check(0, "Keep as Surface", o.keep_surface);
             }
-            BodyOp::Extend(o) => d.set_num(0, "Distance", o.distance),
+            BodyOp::Extend(o) => {
+                d.set_num(0, "Distance", o.distance);
+                d.set_index(0, "Extents", usize::from(o.to.is_some()));
+            }
             BodyOp::Ruled(o) => {
                 d.set_num(0, "Distance", o.distance);
+                d.set_num(0, "Angle", o.angle.to_degrees());
                 d.set_check(0, "Flip", o.flip);
                 d.set_index(
                     0,

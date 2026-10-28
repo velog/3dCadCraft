@@ -80,6 +80,8 @@ pub enum TrimBy<'a> {
     Plane(&'a Plane),
     /// The surface of face `face` (kernel order) of another body, extended.
     Face(&'a ExactSolid, usize),
+    /// Sketch curves on a plane, swept along its normal (each extended past its ends).
+    Curves(&'a Plane, &'a [Vec<crate::kernel::ProfileSegment>]),
 }
 
 /// **Trim**: the pieces of surface body `s` on the side of `keep` of the tool are kept; they
@@ -90,6 +92,24 @@ pub fn trim(s: &ExactSolid, tool: &TrimBy, keep: Point3) -> Result<ExactSolid, S
             let pl = plane_of(p)?;
             guarded("trim", || {
                 sk::trim(&s.body, &sk::SplitTool::Plane(pl), v3(&keep))
+            })?
+        }
+        TrimBy::Curves(p, chains) => {
+            let pl = plane_of(p)?;
+            let mut curves = Vec::new();
+            for c in chains.iter() {
+                let mut segs = Vec::new();
+                for s in c {
+                    segs.extend(super::seg2(&s.geometry)?);
+                }
+                curves.push(segs);
+            }
+            guarded("trim", || {
+                sk::trim(
+                    &s.body,
+                    &sk::SplitTool::Curves { plane: pl, curves },
+                    v3(&keep),
+                )
             })?
         }
         TrimBy::Face(t, face) => guarded("trim", || {

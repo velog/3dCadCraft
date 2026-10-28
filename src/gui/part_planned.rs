@@ -62,7 +62,6 @@ use Row::{Button, Check, Combo, Head, Note, Num, Radio, Sel, Text};
 const FACES: &[PickKind] = &[PickKind::Face, PickKind::PlanarFace];
 const EDGES: &[PickKind] = &[PickKind::Edge, PickKind::StraightEdge];
 const BODIES: &[PickKind] = &[PickKind::Body];
-const SURFACES: &[PickKind] = &[PickKind::Surface];
 const FACES_SURFACES: &[PickKind] = &[PickKind::Face, PickKind::PlanarFace, PickKind::Surface];
 const SKETCH: &[PickKind] = &[PickKind::Sketch];
 const PROFILE: &[PickKind] = &[PickKind::Region, PickKind::Sketch];
@@ -716,7 +715,12 @@ impl PartPlanned {
                         "Select the surface, face, plane or curve that cuts",
                         TOOL,
                     ),
-                    Sel("remove", "Remove", "Select the pieces to remove", SURFACES),
+                    Sel(
+                        "remove",
+                        "Remove",
+                        "Select the pieces to remove",
+                        FACES_SURFACES,
+                    ),
                     Check("Invert Selection", false),
                 ],
             )],
@@ -1378,7 +1382,14 @@ pub(super) struct PartDialog {
     pub items: HashMap<&'static str, Vec<PickedItem>>,
     /// The feature being edited (Edit Feature of a surface command).
     pub feature: Option<usize>,
+    /// A button of the panel pressed this frame (only those with logic).
+    pub pressed: Option<&'static str>,
+    /// A result line the command shows in its panel (free edges found…).
+    pub note: Option<String>,
 }
+
+/// Buttons that run something (the rest stay disabled).
+const LIVE_BUTTONS: &[&str] = &["Find Remaining Free Edges"];
 
 /// The selector rows of `kind`, in order; a key on several tabs (Pattern
 /// Component's Components) is one selector.
@@ -1448,6 +1459,8 @@ impl PartDialog {
             edit: None,
             items: HashMap::new(),
             feature: None,
+            pressed: None,
+            note: None,
         }
     }
 
@@ -1760,9 +1773,20 @@ impl PartDialog {
             }
             Button(t) => {
                 plabel(ui, "");
-                ui.add_enabled(false, egui::Button::new(t))
-                    .on_disabled_hover_text("Comes with the command's logic");
+                let live = self.kind.has_logic() && LIVE_BUTTONS.contains(&t);
+                if ui
+                    .add_enabled(live, egui::Button::new(t))
+                    .on_disabled_hover_text("Comes with the command's logic")
+                    .clicked()
+                {
+                    self.pressed = Some(t);
+                }
                 ui.end_row();
+                if live && let Some(n) = &self.note {
+                    plabel(ui, "");
+                    ui.label(RichText::new(n.as_str()).small());
+                    ui.end_row();
+                }
             }
             Sel(key, ..) => {
                 let Some(i) = flow.selectors.iter().position(|s| s.key == key) else {
@@ -1913,6 +1937,9 @@ impl CadCraftApp {
         };
         self.panel_header(ui, d.kind.icon(), d.kind.title());
         let (cancel, ok) = d.ui(ui);
+        if let Some(b) = d.pressed.take() {
+            d.note = self.surface_button(&d, b);
+        }
         self.part_planned = (!cancel).then_some(d);
         if ok {
             self.planned_ok();

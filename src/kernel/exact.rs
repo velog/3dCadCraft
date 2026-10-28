@@ -386,7 +386,7 @@ fn v2(p: &nalgebra::Point2<Real>) -> sg::Vec2 {
 
 /// One of our profile segments as exact-kernel segments (a B-spline as its
 /// Bézier pieces).
-fn seg2(g: &Segment2) -> Result<Vec<sg::Seg2>, String> {
+pub(crate) fn seg2(g: &Segment2) -> Result<Vec<sg::Seg2>, String> {
     Ok(match g {
         Segment2::Line { a, b } => vec![sg::Seg2::Line { a: v2(a), b: v2(b) }],
         Segment2::Arc { c, r, a0, sweep } => vec![sg::Seg2::Arc {

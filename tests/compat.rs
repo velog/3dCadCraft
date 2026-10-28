@@ -571,6 +571,7 @@ fn surfaces_r37() -> PartDocument {
         distance: 5.0,
         flip: false,
         vector: None,
+        angle: 0.0,
     })))
     .unwrap();
     let mut walls = Vec::new();
@@ -609,6 +610,7 @@ fn surfaces_r37() -> PartDocument {
         edges: Vec::new(),
         sketch: Some(id),
         profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
+        solid: false,
     })))
     .unwrap();
     p

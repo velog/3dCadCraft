@@ -175,7 +175,14 @@ impl CadCraftApp {
             out.push((SelItem::Vertex(name), cand(Category::Vertex, 0.0, surface)));
         }
         if let Some(i) = self.sketch_under(p, rect) {
-            out.push((SelItem::Sketch(i), cand(Category::Sketch, 0.0, false)));
+            // A selector of sketch curves (Boundary Patch, a Trim tool) takes the
+            // sketch as its curves.
+            let cat = if self.cat_on(Category::Sketch) {
+                Category::Sketch
+            } else {
+                Category::SketchEntity
+            };
+            out.push((SelItem::Sketch(i), cand(cat, 0.0, false)));
         }
         let edge_surface = |e: EdgeId| {
             self.picker()
@@ -330,7 +337,7 @@ impl CadCraftApp {
 
     /// A visible sketch with a curve under the cursor.
     pub(super) fn sketch_under(&self, p: egui::Pos2, rect: egui::Rect) -> Option<usize> {
-        if !self.cat_on(Category::Sketch) {
+        if !self.cat_on(Category::Sketch) && !self.cat_on(Category::SketchEntity) {
             return None;
         }
         self.part().sketches.iter().enumerate().find_map(|(i, ps)| {

@@ -440,6 +440,7 @@ impl BodyOpFeature {
     pub fn sketch(&self) -> Option<&str> {
         match &self.op {
             BodyOp::Patch(p) => p.sketch.as_deref(),
+            BodyOp::Trim(t) => t.sketch(),
             _ => None,
         }
     }
