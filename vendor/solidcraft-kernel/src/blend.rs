@@ -1064,18 +1064,27 @@ fn orders<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
 /// round of a curved edge does not have) another order that has none is preferred.
 fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Result<Body> {
     let sound = |b: &Body| crate::tess::boundaries_on_surfaces(&b.solid, (b.size() * 1e-4).max(1e-6));
+    let started = std::time::Instant::now();
     let first = blend_in_order(body, edges, r, shape, what);
+    // 3DCadCraft: a shape the local blend does not support yet (a ball that doesn't fit past an
+    // end, seams at a corner) is refused in every order; trying all 24 orders of four edges took
+    // 100–200 s on an inclined hole's exit over a corner (owner, 2026-10-28).
     let reorder = (2..=MAX_REORDERED).contains(&edges.len())
         && match &first {
             Ok(b) => !sound(b),
-            Err(KernelError::Failed(_)) => true,
+            Err(KernelError::Failed(m)) => !m.contains("not supported yet"),
             Err(_) => false,
         };
     if !reorder {
         return first;
     }
+    // The other orders get a budget of a few times the first attempt.
+    let budget = started.elapsed() * 4 + std::time::Duration::from_secs(2);
     let mut fallback: Option<Body> = None;
     for order in orders(edges).into_iter().skip(1) {
+        if started.elapsed() > budget {
+            break;
+        }
         if let Ok(done) = blend_in_order(body, &order, r, shape, what) {
             if sound(&done) {
                 return Ok(done);
@@ -1879,6 +1888,14 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
             Err(e) if size_refusal(&e) => return Err(e),
             Err(_) => {}
         }
+    }
+    // 3DCadCraft: curved edges joined smoothly (an ellipse the kernel split into pieces where a
+    // drilled hole leaves a face at an angle) as one chain, as the fillet does: edge by edge,
+    // each later piece met the earlier chamfer's faces at its ends and was refused.
+    if edges.len() > 1
+        && let Ok(b) = blend(&cur, edges, distance, Shape::Flat, "chamfer")
+    {
+        return Ok(record::after(b, &cur, &counts));
     }
     for p in edges {
         let step = match chamfer_tool(&cur, *p, distance, 0).and_then(|t| cut_one(&cur, &t)) {

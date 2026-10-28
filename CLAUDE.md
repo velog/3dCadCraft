@@ -1201,6 +1201,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (`DrawingStyles::pen(layer)`); an annotation's layer is `Annotation::layer_name` (own layer, else Object Defaults:
   dimensions → Dimension, centre marks / centrelines → theirs, everything else → Symbol). `DrawingDocument::fix`
   adds the standard's built-in layers an older drawing lacks (`DrawingStyles::complete`).
+- **Blends of an inclined hole's rim**: the cylinder meets the face in an ellipse the kernel splits into pieces
+  (B-splines). Fillet takes them as one chain; Chamfer did them edge by edge and refused the second piece — the vendor
+  `chamfer` now tries the whole chain first. An exit over a corner of the part (two faces) is still refused; the kernel's
+  `blend` must not retry all orders of such edges (24 orders took 100–200 s on the main thread).
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.
