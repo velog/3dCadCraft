@@ -1644,6 +1644,8 @@ fn drawing_r29_project() -> Project {
             at: [60.0, 0.0],
         }));
         d.add_annotation(AnnotationKind::Dimension(Dimension {
+            shift: 0.0,
+            arrows: Default::default(),
             dim: DimKind::Horizontal,
             a: p("E1", PointRole::Start),
             b: Some(p("E1", PointRole::End)),
@@ -1750,6 +1752,84 @@ Nut,4
         }));
     }
     project
+}
+
+fn drawing_r38_project() -> Project {
+    use cadcraft3d::drawing::annot::ArrowSide;
+    use cadcraft3d::drawing::{AnnotationKind, DimKind, Dimension, PointRef, PointRole};
+    let mut project = drawing_r36_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let v = d.sheets[0].views[0].id;
+        let p = |e: &str| PointRef {
+            view: v,
+            edge: e.into(),
+            role: PointRole::Start,
+        };
+        d.add_annotation(AnnotationKind::Dimension(Dimension {
+            dim: DimKind::Angle,
+            a: p("E1"),
+            b: Some(p("E2")),
+            text: [15.0, 15.0],
+            precision: 2,
+            format: Default::default(),
+            shift: 0.0,
+            arrows: Default::default(),
+        }));
+        d.add_annotation(AnnotationKind::Dimension(Dimension {
+            dim: DimKind::Horizontal,
+            a: p("E1"),
+            b: Some(PointRef {
+                role: PointRole::End,
+                ..p("E1")
+            }),
+            text: [0.0, -30.0],
+            precision: 2,
+            format: Default::default(),
+            shift: 12.5,
+            arrows: [ArrowSide::Outside, ArrowSide::Auto],
+        }));
+    }
+    project
+}
+
+/// The revision 38 drawing reads back with its angular dimension and a
+/// slid text with an outside arrowhead.
+#[test]
+fn drawing_r38_reads() {
+    use cadcraft3d::drawing::annot::ArrowSide;
+    use cadcraft3d::drawing::{AnnotationKind, DimKind};
+    let f = root().join("r38/drawing_r38.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let dims: Vec<_> = d.sheets[0]
+        .annotations
+        .iter()
+        .filter_map(|a| match &a.kind {
+            AnnotationKind::Dimension(x) => Some(x.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(dims.iter().any(|x| x.dim == DimKind::Angle));
+    assert!(
+        dims.iter()
+            .any(|x| x.shift == 12.5 && x.arrows == [ArrowSide::Outside, ArrowSide::Auto])
+    );
 }
 
 /// The revision 36 drawing reads back with its general table and revisions.
@@ -2132,6 +2212,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r33_project().save(&f).unwrap();
+        }
+        let f = root().join("r38/drawing_r38.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r38_project().save(&f).unwrap();
         }
         let f = root().join("r36/drawing_r36.3dcadcraft");
         if !f.exists() {

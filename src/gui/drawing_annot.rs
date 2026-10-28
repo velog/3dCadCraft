@@ -143,6 +143,34 @@ pub(super) struct PdfDialog {
     open_after: bool,
 }
 
+/// The part of an annotation a drag holds (Inventor's grips): a
+/// dimension's text slides along its line and moves the line, its line only
+/// moves the line; a leader text's arrow tip moves alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum DragPart {
+    /// The whole annotation (or a dimension's line).
+    #[default]
+    Whole,
+    /// A dimension's text.
+    Text,
+    /// A leader's arrow tip.
+    Tip,
+}
+
+/// Distance from `q` to the nearest text of `prims` (sheet mm).
+fn text_distance(prims: &[Prim], q: [f64; 2]) -> f64 {
+    let texts: Vec<Prim> = prims
+        .iter()
+        .filter(|p| matches!(p, Prim::Text { .. } | Prim::RunText { .. }))
+        .cloned()
+        .collect();
+    if texts.is_empty() {
+        f64::MAX
+    } else {
+        prims_distance(&texts, q)
+    }
+}
+
 /// A resolved annotation of this frame (for painting and picking).
 pub(super) struct ShownAnn {
     id: u32,
@@ -264,7 +292,7 @@ fn paint_prims_with(
                 stretch,
                 center,
             } => {
-                let size = (*height * cam.zoom * 1.35) as f32;
+                let size = (*height * cam.zoom * crate::drawing::rich::EM_PER_CAP) as f32;
                 if size < 4.0 {
                     continue;
                 }
@@ -1073,6 +1101,28 @@ impl CadCraftApp {
                 self.drw.sel_ann = Some(id);
                 self.drw.sel = None;
                 self.drw.ann_drag = Some((id, q));
+                let kind = self
+                    .drawing()
+                    .and_then(|d| d.sheet())
+                    .and_then(|s| s.annotations.iter().find(|a| a.id == id))
+                    .map(|a| a.kind.clone());
+                let near = 2.0f64.max(6.0 / cam.zoom);
+                self.drw.ann_part = match kind {
+                    Some(AnnotationKind::Dimension(_)) => {
+                        let prims = anns.iter().find(|a| a.id == id).map(|a| a.prims.clone());
+                        if prims.is_some_and(|p| text_distance(&p, q) < near * 0.5) {
+                            DragPart::Text
+                        } else {
+                            DragPart::Whole
+                        }
+                    }
+                    Some(AnnotationKind::LeaderText { tip, .. })
+                        if (tip[0] - q[0]).hypot(tip[1] - q[1]) < near =>
+                    {
+                        DragPart::Tip
+                    }
+                    _ => DragPart::Whole,
+                };
                 taken = true;
             }
         }
@@ -1080,6 +1130,21 @@ impl CadCraftApp {
             && response.dragged_by(egui::PointerButton::Primary)
         {
             let delta = [q[0] - last[0], q[1] - last[1]];
+            // A dimension's text slides along its line by the drag's part
+            // along it.
+            let part = self.drw.ann_part;
+            let along = {
+                let map = lookup(views);
+                let view = |vid: u32| map.get(&vid).copied();
+                self.drawing()
+                    .and_then(|d| d.sheet())
+                    .and_then(|s| s.annotations.iter().find(|a| a.id == id))
+                    .and_then(|a| match &a.kind {
+                        AnnotationKind::Dimension(dim) => annot::linear_ends(dim, &view),
+                        _ => None,
+                    })
+                    .map_or(0.0, |(_, _, v)| delta[0] * v[0] + delta[1] * v[1])
+            };
             if delta[0].hypot(delta[1]) > 1e-9 {
                 self.edit_drawing("Move Annotation", |d| {
                     if let Some(a) = d
@@ -1090,6 +1155,13 @@ impl CadCraftApp {
                             AnnotationKind::Dimension(dim) => {
                                 dim.text[0] += delta[0];
                                 dim.text[1] += delta[1];
+                                if part == DragPart::Text {
+                                    dim.shift += along;
+                                }
+                            }
+                            AnnotationKind::LeaderText { tip, .. } if part == DragPart::Tip => {
+                                tip[0] += delta[0];
+                                tip[1] += delta[1];
                             }
                             AnnotationKind::Text { at, .. }
                             | AnnotationKind::LeaderText { at, .. } => {
@@ -1154,7 +1226,31 @@ impl CadCraftApp {
             }
             taken = true;
         }
-        if response.drag_stopped() && self.drw.ann_drag.take().is_some() {
+        if response.drag_stopped()
+            && let Some((id, _)) = self.drw.ann_drag.take()
+        {
+            // A text left near the middle snaps to it.
+            let snap = 1.5f64.max(8.0 / cam.zoom);
+            let near_middle = self
+                .drawing()
+                .and_then(|d| d.sheet())
+                .and_then(|s| s.annotations.iter().find(|a| a.id == id))
+                .is_some_and(|a| {
+                    matches!(&a.kind, AnnotationKind::Dimension(d)
+                        if d.shift != 0.0 && d.shift.abs() < snap)
+                });
+            if near_middle {
+                self.edit_drawing("Move Annotation", |d| {
+                    if let Some(AnnotationKind::Dimension(dim)) = d
+                        .sheet_mut()
+                        .and_then(|s| s.annotations.iter_mut().find(|a| a.id == id))
+                        .map(|a| &mut a.kind)
+                    {
+                        dim.shift = 0.0;
+                    }
+                });
+            }
+            self.drw.ann_part = DragPart::Whole;
             self.history.break_coalescing();
             taken = true;
         }
@@ -1162,6 +1258,15 @@ impl CadCraftApp {
             && let Some(id) = self.drw.hover_ann
         {
             self.open_text_edit(id);
+            return true;
+        }
+        // A click on an arrowhead of the selected dimension flips it inside /
+        // outside (Inventor's arrowhead grip).
+        if response.clicked()
+            && let (Some(id), Some(q)) = (self.drw.sel_ann, at)
+            && self.drw.hover_ann == Some(id)
+            && self.flip_arrow_at(id, q, views)
+        {
             return true;
         }
         if response.clicked() || response.secondary_clicked() {
@@ -1175,6 +1280,55 @@ impl CadCraftApp {
         }
         let _ = views;
         taken
+    }
+
+    /// Flips the arrowhead of dimension `id` nearest `q` when `q` is on it.
+    fn flip_arrow_at(&mut self, id: u32, q: [f64; 2], views: &[ShownView]) -> bool {
+        let map = lookup(views);
+        let view = |vid: u32| map.get(&vid).copied();
+        let Some(dim) = self
+            .drawing()
+            .and_then(|d| d.sheet())
+            .and_then(|s| s.annotations.iter().find(|a| a.id == id))
+            .and_then(|a| match &a.kind {
+                AnnotationKind::Dimension(d) => Some(d.clone()),
+                _ => None,
+            })
+        else {
+            return false;
+        };
+        let Some((la, lb, _)) = annot::linear_ends(&dim, &view) else {
+            return false;
+        };
+        let near = 2.0f64.max(7.0 / self.drw.cam.zoom);
+        let k = if (la[0] - q[0]).hypot(la[1] - q[1]) < near {
+            0
+        } else if (lb[0] - q[0]).hypot(lb[1] - q[1]) < near {
+            1
+        } else {
+            return false;
+        };
+        let ds = &self.drw.look.dim;
+        let span = (lb[0] - la[0]).hypot(lb[1] - la[1]);
+        let out_now = match dim.arrows[k] {
+            annot::ArrowSide::Auto => span < 2.0 * ds.arrow_size + 1.0,
+            annot::ArrowSide::Inside => false,
+            annot::ArrowSide::Outside => true,
+        };
+        self.edit_drawing("Flip Arrowhead", move |d| {
+            if let Some(AnnotationKind::Dimension(x)) = d
+                .sheet_mut()
+                .and_then(|s| s.annotations.iter_mut().find(|a| a.id == id))
+                .map(|a| &mut a.kind)
+            {
+                x.arrows[k] = if out_now {
+                    annot::ArrowSide::Inside
+                } else {
+                    annot::ArrowSide::Outside
+                };
+            }
+        });
+        true
     }
 
     fn open_text_edit(&mut self, id: u32) {
@@ -1515,6 +1669,8 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
     };
     match (&f.what, &draft.second) {
         (PickWhat::Circle(_, full), _) => Some(Dimension {
+            shift: 0.0,
+            arrows: Default::default(),
             dim: if *full {
                 DimKind::Diameter
             } else {
@@ -1543,6 +1699,26 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                 PickWhat::Point(r) => (r, s.at),
                 PickWhat::Line => {
                     let e2 = l.edge(&s.edge)?;
+                    // Two edges that are not parallel: their angle.
+                    let (c, d) = (pl.to_sheet(e2.a), pl.to_sheet(e2.b));
+                    let (u1, u2) = ([b[0] - a[0], b[1] - a[1]], [d[0] - c[0], d[1] - c[1]]);
+                    let cross = u1[0] * u2[1] - u1[1] * u2[0];
+                    let len = u1[0].hypot(u1[1]) * u2[0].hypot(u2[1]);
+                    if s.view == f.view
+                        && len > 1e-12
+                        && (cross / len).abs() > 0.5f64.to_radians().sin()
+                    {
+                        return Some(Dimension {
+                            shift: 0.0,
+                            arrows: Default::default(),
+                            dim: DimKind::Angle,
+                            a: pr(f, PointRole::Start),
+                            b: Some(pr(s, PointRole::Start)),
+                            text,
+                            precision: 2,
+                            format: Default::default(),
+                        });
+                    }
                     (PointRole::Start, pl.to_sheet(e2.a))
                 }
                 PickWhat::Circle(..) => return None,
@@ -1555,6 +1731,8 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                 orient(a, q)
             };
             Some(Dimension {
+                shift: 0.0,
+                arrows: Default::default(),
                 dim,
                 a: pr(f, PointRole::Start),
                 b: Some(pr(s, role)),
@@ -1572,6 +1750,8 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                 center: l.center(),
             };
             Some(Dimension {
+                shift: 0.0,
+                arrows: Default::default(),
                 dim: orient(pl.to_sheet(e.a), pl.to_sheet(e.b)),
                 a: pr(f, PointRole::Start),
                 b: Some(pr(f, PointRole::End)),
@@ -1585,6 +1765,8 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                 return None;
             };
             Some(Dimension {
+                shift: 0.0,
+                arrows: Default::default(),
                 dim: orient(f.at, s.at),
                 a: pr(f, *r1),
                 b: Some(pr(s, r2)),

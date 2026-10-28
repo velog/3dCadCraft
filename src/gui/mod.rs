@@ -870,6 +870,28 @@ enum SketchCtx {
 impl CadCraftApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         i18n::load();
+        // Format Text runs are measured with the font the sheet is drawn in
+        // (screen and PDF), so runs of different styles line up.
+        if let Some(font) = egui::FontDefinitions::default()
+            .font_data
+            .get("Ubuntu-Light")
+            .map(|f| f.font.to_vec())
+        {
+            crate::drawing::rich::set_measure(Box::new(move |s, h| {
+                let face = ttf_parser::Face::parse(&font, 0).ok()?;
+                let em = h * crate::drawing::rich::EM_PER_CAP;
+                let upem = f64::from(face.units_per_em());
+                Some(
+                    s.chars()
+                        .map(|c| {
+                            face.glyph_index(c)
+                                .and_then(|g| face.glyph_hor_advance(g))
+                                .map_or(0.6 * h, |a| f64::from(a) / upem * em)
+                        })
+                        .sum(),
+                )
+            }));
+        }
         let mut project = Project::new("Untitled");
         // A new part starts empty, as in Inventor (sketch on an origin plane).
         let part = PartDocument::default();

@@ -432,6 +432,8 @@ fn annotations_resolve_by_edge_name() {
     let view = |v: u32| (v == 1).then_some((pl, &front));
     let dim = |dim: DimKind, b: Option<PointRef>| {
         AnnotationKind::Dimension(Dimension {
+            shift: 0.0,
+            arrows: Default::default(),
             dim,
             a: PointRef {
                 view: 1,
@@ -458,7 +460,7 @@ fn annotations_resolve_by_edge_name() {
         1e-9,
         "vertical value of a horizontal edge",
     );
-    let a = resolve(&dim(DimKind::Aligned, end), &view).unwrap();
+    let a = resolve(&dim(DimKind::Aligned, end.clone()), &view).unwrap();
     close(a.value.unwrap(), 40.0, 1e-9, "aligned value");
     assert!(
         h.prims
@@ -474,6 +476,86 @@ fn annotations_resolve_by_edge_name() {
         2,
         "two arrows"
     );
+    // The text slides along the line: past the second extension line the
+    // dimension line runs on under it.
+    let slid = |shift: f64, arrows| {
+        let AnnotationKind::Dimension(mut d) = dim(DimKind::Horizontal, end.clone()) else {
+            panic!("a dimension");
+        };
+        d.shift = shift;
+        d.arrows = arrows;
+        AnnotationKind::Dimension(d)
+    };
+    let xs = |k: &AnnotationKind| -> (f64, f64, f64) {
+        let p = resolve(k, &view).unwrap().prims;
+        let tx = p
+            .iter()
+            .find_map(|q| match q {
+                super::sheet::Prim::Text { at, .. } => Some(at[0]),
+                _ => None,
+            })
+            .unwrap();
+        let (lo, hi) = p.iter().fold((f64::MAX, f64::MIN), |(lo, hi), q| match q {
+            super::sheet::Prim::Line { a, b, .. } if (a[1] - b[1]).abs() < 1e-9 => {
+                (lo.min(a[0]).min(b[0]), hi.max(a[0]).max(b[0]))
+            }
+            _ => (lo, hi),
+        });
+        (tx, lo, hi)
+    };
+    let (t0, lo0, hi0) = xs(&slid(0.0, Default::default()));
+    // `shift` runs from the first point to the second (this edge's start
+    // may be on either side).
+    let (t1, lo1, hi1) = xs(&slid(60.0, Default::default()));
+    close((t1 - t0).abs(), 60.0, 1e-9, "text moved along");
+    close(hi0 - lo0, 80.0, 1e-9, "line between the extension lines");
+    assert!(
+        hi1 > hi0 + 15.0 || lo1 < lo0 - 15.0,
+        "line runs on under the text: {lo1} {hi1}"
+    );
+    // Arrowheads outside: the line gets tails past both ends.
+    use super::annot::ArrowSide;
+    let (_, lo2, hi2) = xs(&slid(0.0, [ArrowSide::Outside; 2]));
+    assert!(lo2 < lo0 - 2.0 && hi2 > hi0 + 2.0, "tails: {lo2} {hi2}");
+    // Angle between the 40 mm edge and an upright edge of the box: 90°.
+    let up = front
+        .edges
+        .iter()
+        .find(|e| e.straight && e.visible && (e.b[0] - e.a[0]).abs() < 1e-6)
+        .and_then(|e| e.name.clone())
+        .expect("an upright edge");
+    let AnnotationKind::Dimension(mut ang) = dim(DimKind::Angle, None) else {
+        panic!("a dimension");
+    };
+    ang.b = Some(PointRef {
+        view: 1,
+        edge: up,
+        role: PointRole::Start,
+    });
+    // Inside the box's corner region near its middle.
+    ang.text = [0.0, 0.0];
+    let r = resolve(&AnnotationKind::Dimension(ang.clone()), &view).unwrap();
+    close(r.value.unwrap(), 90.0, 1e-6, "right angle");
+    assert!(
+        r.prims
+            .iter()
+            .any(|p| matches!(p, super::sheet::Prim::Text { text, .. } if text == "90°")),
+        "angle text: {:?}",
+        r.prims
+            .iter()
+            .filter_map(|p| match p {
+                super::sheet::Prim::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    );
+    // Two parallel edges have no angle.
+    ang.b = Some(PointRef {
+        view: 1,
+        edge: name.clone(),
+        role: PointRole::End,
+    });
+    assert!(resolve(&AnnotationKind::Dimension(ang), &view).is_err());
     // Orphan: an edge that does not exist.
     let orphan = AnnotationKind::CenterMark {
         view: 1,
@@ -512,6 +594,8 @@ fn annotations_resolve_by_edge_name() {
     };
     let view = |v: u32| (v == 2).then_some((pl, &top));
     let d = AnnotationKind::Dimension(Dimension {
+        shift: 0.0,
+        arrows: Default::default(),
         dim: DimKind::Diameter,
         a: PointRef {
             view: 2,
@@ -1131,6 +1215,8 @@ fn styles_drive_annotations() {
     };
     let view = |v: u32| (v == 1).then_some((pl, &front));
     let dim = AnnotationKind::Dimension(Dimension {
+        shift: 0.0,
+        arrows: Default::default(),
         dim: DimKind::Horizontal,
         a: PointRef {
             view: 1,
@@ -1724,6 +1810,8 @@ fn arrange_puts_dimensions_in_rows() {
         role,
     };
     let dim = |text: [f64; 2]| Dimension {
+        shift: 0.0,
+        arrows: Default::default(),
         dim: DimKind::Horizontal,
         a: p(PointRole::Start),
         b: Some(p(PointRole::End)),

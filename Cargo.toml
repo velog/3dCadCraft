@@ -30,7 +30,7 @@ default = ["gui"]
 # egui UI + wgpu renderer. eframe re-exports its own wgpu (`eframe::wgpu`), so we
 # deliberately don't depend on `wgpu` directly: that guarantees a single wgpu
 # version in the dependency graph.
-gui = ["dep:eframe", "dep:chrono"]
+gui = ["dep:eframe", "dep:chrono", "dep:ttf-parser"]
 
 [dependencies]
 # --- Math & kernel ---------------------------------------------------------
@@ -73,6 +73,8 @@ eframe = { version = "0.36", optional = true, default-features = false, features
 ] }
 # Local times in the file dialog (already in the tree through truck-stepio).
 chrono = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
+# Advance widths of the drawing font (Format Text runs line up as drawn).
+ttf-parser = { version = "0.25", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 approx = "0.5"

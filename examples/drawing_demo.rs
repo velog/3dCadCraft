@@ -128,6 +128,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let name = e.name.clone().unwrap_or_default();
         d.add_annotation(AnnotationKind::Dimension(Dimension {
+            shift: 0.0,
+            arrows: Default::default(),
             dim: DimKind::Horizontal,
             a: PointRef {
                 view: top,

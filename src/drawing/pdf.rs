@@ -120,7 +120,7 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
                     let Some(f) = &font else {
                         continue;
                     };
-                    let size = (height / 0.7 * PT) as f32;
+                    let size = (height * super::rich::EM_PER_CAP * PT) as f32;
                     let shift = if *center {
                         -text_width(text, *height) * stretch * 0.5
                     } else {

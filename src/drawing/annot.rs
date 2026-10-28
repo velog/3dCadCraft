@@ -163,6 +163,29 @@ pub enum DimKind {
     Diameter,
     /// Radius of a circle or arc.
     Radius,
+    /// Angle between two straight edges (`a` and `b` name them); the text's
+    /// place picks the sector (format revision 38).
+    Angle,
+}
+
+/// Where a dimension's arrowhead sits at one end.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArrowSide {
+    /// Inside the extension lines when there is room, else outside.
+    #[default]
+    Auto,
+    /// Inside, pointing out to the extension line.
+    Inside,
+    /// Outside, pointing in to the extension line.
+    Outside,
+}
+
+fn is_auto(a: &[ArrowSide; 2]) -> bool {
+    *a == [ArrowSide::Auto; 2]
+}
+
+fn is_zero(v: &f64) -> bool {
+    v.abs() < 1e-12
 }
 
 /// A dimension between view geometry.
@@ -185,6 +208,13 @@ pub struct Dimension {
     /// Edit Dimension: text, precision, tolerance, inspection (additive).
     #[serde(default, skip_serializing_if = "super::dimtext::DimFormat::is_plain")]
     pub format: super::dimtext::DimFormat,
+    /// Linear dimensions: the text's distance from the middle of the
+    /// dimension line, along it (sheet mm; dragging the text sets it).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub shift: f64,
+    /// Arrowheads at the first and second end.
+    #[serde(default, skip_serializing_if = "is_auto")]
+    pub arrows: [ArrowSide; 2],
 }
 
 fn precision() -> u8 {
@@ -713,6 +743,7 @@ impl Draw<'_> {
                     value: Some(if diameter { 2.0 * r } else { r }),
                 });
             }
+            DimKind::Angle => return self.angle(d, view),
             DimKind::Horizontal | DimKind::Vertical | DimKind::Aligned => {}
         }
         let b = d.b.as_ref().ok_or(Orphan::NoView)?;
@@ -752,24 +783,58 @@ impl Draw<'_> {
                 ));
             }
         }
-        prims.push(line(la, lb));
         let along = sub(lb, la);
         let span = norm(along);
+        let v = if span > 1e-9 {
+            mul(along, 1.0 / span)
+        } else {
+            u
+        };
+        let label = self.label(d, value, "");
+        // The text slides along the line (`shift`); past an extension line
+        // the dimension line runs on under it.
+        let mid = add(mul(add(la, lb), 0.5), mul(v, d.shift));
+        let half = label.width * 0.5 + ds.gap;
+        let s_mid = dot(sub(mid, la), v);
+        let (mut s0, mut s1) = (0.0_f64, span);
+        if s_mid - half < 0.0 {
+            s0 = s_mid - half;
+        }
+        if s_mid + half > span {
+            s1 = s_mid + half;
+        }
+        // Arrowheads: inside when there is room for both, else outside with
+        // a tail (or as set per end).
+        let room = span >= 2.0 * ds.arrow_size + 1.0;
+        let out = |k: usize| match d.arrows[k] {
+            ArrowSide::Auto => !room,
+            ArrowSide::Inside => false,
+            ArrowSide::Outside => true,
+        };
+        let tail = ds.arrow_size + 2.0;
+        if out(0) {
+            s0 = s0.min(-tail);
+        }
+        if out(1) {
+            s1 = s1.max(span + tail);
+        }
+        prims.push(line(add(la, mul(v, s0)), add(la, mul(v, s1))));
         if span > 1e-9 {
-            let v = mul(along, 1.0 / span);
-            self.arrow(&mut prims, la, mul(v, -1.0));
-            self.arrow(&mut prims, lb, v);
+            let (d0, d1) = (
+                if out(0) { v } else { mul(v, -1.0) },
+                if out(1) { mul(v, -1.0) } else { v },
+            );
+            self.arrow(&mut prims, la, d0);
+            self.arrow(&mut prims, lb, d1);
         }
         // Text above the line, readable from the bottom or the right (ISO),
         // or always horizontal (ANSI).
-        let mid = mul(add(la, lb), 0.5);
         let mut ang = u[1].atan2(u[0]);
         if ang > std::f64::consts::FRAC_PI_2 + 1e-9 {
             ang -= std::f64::consts::PI;
         } else if ang <= -std::f64::consts::FRAC_PI_2 + 1e-9 {
             ang += std::f64::consts::PI;
         }
-        let label = self.label(d, value, "");
         let (at, ang) = match ds.orientation {
             TextOrientation::Aligned => {
                 let up = [-ang.sin(), ang.cos()];
@@ -797,6 +862,173 @@ impl Draw<'_> {
     }
 }
 
+impl Draw<'_> {
+    /// An angular dimension: the arc about the crossing of the two edges'
+    /// lines through the text, in the sector holding the text, extension
+    /// lines out to it, arrowheads at its ends, the text on its middle.
+    fn angle<'a>(
+        &self,
+        d: &Dimension,
+        view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+    ) -> Result<Shown, Orphan> {
+        let ds = &self.look.dim;
+        let b = d.b.as_ref().ok_or(Orphan::NoView)?;
+        let g = angle_geometry(d, b, view)?;
+        let mut prims = Vec::new();
+        let r = g.radius;
+        let c = g.vertex;
+        let at = |a: f64| [c[0] + r * a.cos(), c[1] + r * a.sin()];
+        // Extension lines from an edge's far end out to the arc.
+        for (dir, reach) in [(g.a0, g.reach[0]), (g.a0 + g.sweep, g.reach[1])] {
+            if reach + ds.origin_offset < r {
+                let u = [dir.cos(), dir.sin()];
+                prims.push(line(
+                    add(c, mul(u, reach + ds.origin_offset)),
+                    add(c, mul(u, r + ds.extension)),
+                ));
+            }
+        }
+        let n = 48;
+        let pts: Vec<[f64; 2]> = (0..=n)
+            .map(|k| at(g.a0 + g.sweep * k as f64 / n as f64))
+            .collect();
+        for w in pts.windows(2) {
+            prims.push(line(w[0], w[1]));
+        }
+        // Arrowheads along the arc's tangent, pointing out of it.
+        let s = g.sweep.signum();
+        let t0 = g.a0;
+        let t1 = g.a0 + g.sweep;
+        self.arrow(&mut prims, at(t0), [s * t0.sin(), -s * t0.cos()]);
+        self.arrow(&mut prims, at(t1), [-s * t1.sin(), s * t1.cos()]);
+        // The value in degrees, the angular precision.
+        let mut st = ds.clone();
+        st.precision = ds.angular_precision;
+        st.suffix = format!("°{}", ds.suffix);
+        let label = super::dimtext::Label::build(
+            g.value.to_degrees(),
+            "",
+            &d.format,
+            &st,
+            self.look.dim_text.height,
+            self.look.dim_text.width_scale,
+        );
+        let m = g.a0 + g.sweep * 0.5;
+        let pos = add(at(m), mul([m.cos(), m.sin()], ds.gap));
+        // Readable: turned with the arc's tangent, never upside down (ISO);
+        // horizontal for ANSI.
+        let mut ang = m - std::f64::consts::FRAC_PI_2;
+        while ang > std::f64::consts::FRAC_PI_2 + 1e-9 {
+            ang -= std::f64::consts::PI;
+        }
+        while ang <= -std::f64::consts::FRAC_PI_2 + 1e-9 {
+            ang += std::f64::consts::PI;
+        }
+        let ang = match ds.orientation {
+            TextOrientation::Aligned => ang,
+            TextOrientation::Horizontal => 0.0,
+        };
+        prims.extend(label.prims(pos, ang));
+        Ok(Shown {
+            prims,
+            value: Some(g.value.to_degrees()),
+        })
+    }
+}
+
+/// The geometry of an angular dimension on the sheet.
+#[derive(Clone, Copy, Debug)]
+pub struct AngleGeometry {
+    /// Where the two edges' lines cross.
+    pub vertex: [f64; 2],
+    /// Arc radius (through the text).
+    pub radius: f64,
+    /// Direction of the arc's start (radians).
+    pub a0: f64,
+    /// Signed sweep of the arc (radians, |sweep| < π).
+    pub sweep: f64,
+    /// The measured angle (radians, 0..π).
+    pub value: f64,
+    /// How far each edge reaches from the vertex along its ray.
+    pub reach: [f64; 2],
+}
+
+/// The arc of angular dimension `d` between its edges `d.a` and `b`.
+pub fn angle_geometry<'a>(
+    d: &Dimension,
+    b: &PointRef,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+) -> Result<AngleGeometry, Orphan> {
+    let ends = |r: &PointRef| -> Result<([f64; 2], [f64; 2], Placement), Orphan> {
+        let s = PointRef {
+            role: PointRole::Start,
+            ..r.clone()
+        };
+        let e = PointRef {
+            role: PointRole::End,
+            ..r.clone()
+        };
+        let (_, p, pl) = point(&s, view)?;
+        let (_, q, _) = point(&e, view)?;
+        Ok((p, q, pl))
+    };
+    let (a0, a1, pl) = ends(&d.a)?;
+    let (b0, b1, _) = ends(b)?;
+    let (da, db) = (sub(a1, a0), sub(b1, b0));
+    let den = da[0] * db[1] - da[1] * db[0];
+    if den.abs() < 1e-9 * norm(da).max(1e-9) * norm(db).max(1e-9) {
+        return Err(Orphan::Missing("parallel edges".into()));
+    }
+    let w = sub(b0, a0);
+    let k = (w[0] * db[1] - w[1] * db[0]) / den;
+    let c = add(a0, mul(da, k));
+    let t = add(pl.position, d.text);
+    let r = norm(sub(t, c)).max(1.0);
+    let ta = (t[1] - c[1]).atan2(t[0] - c[0]);
+    let unit = |v: [f64; 2]| mul(v, 1.0 / norm(v));
+    let (ua, ub) = (unit(da), unit(db));
+    let reach =
+        |p: [f64; 2], q: [f64; 2], u: [f64; 2]| dot(sub(p, c), u).max(dot(sub(q, c), u)).max(0.0);
+    // The sector holding the text: the rays ±ua, ±ub around it.
+    let mut best: Option<AngleGeometry> = None;
+    for sa in [1.0, -1.0] {
+        for sb in [1.0, -1.0] {
+            let (ra, rb) = (mul(ua, sa), mul(ub, sb));
+            let a_ang = ra[1].atan2(ra[0]);
+            let mut sweep = rb[1].atan2(rb[0]) - a_ang;
+            while sweep > std::f64::consts::PI {
+                sweep -= std::f64::consts::TAU;
+            }
+            while sweep < -std::f64::consts::PI {
+                sweep += std::f64::consts::TAU;
+            }
+            let mut dt = ta - a_ang;
+            while dt > std::f64::consts::PI {
+                dt -= std::f64::consts::TAU;
+            }
+            while dt < -std::f64::consts::PI {
+                dt += std::f64::consts::TAU;
+            }
+            let inside = if sweep >= 0.0 {
+                dt >= -1e-9 && dt <= sweep + 1e-9
+            } else {
+                dt <= 1e-9 && dt >= sweep - 1e-9
+            };
+            if inside {
+                best = Some(AngleGeometry {
+                    vertex: c,
+                    radius: r,
+                    a0: a_ang,
+                    sweep,
+                    value: sweep.abs(),
+                    reach: [reach(a0, a1, ra), reach(b0, b1, rb)],
+                });
+            }
+        }
+    }
+    best.ok_or_else(|| Orphan::Missing("angle".into()))
+}
+
 /// A point in its view's plane, on the sheet, and the view's placement.
 type ViewPoint = ([f64; 2], [f64; 2], Placement);
 
@@ -811,6 +1043,35 @@ pub fn dim_points<'a>(
     let (_, pb, _) = point(b, view).ok()?;
     let (_, lines) = view(d.a.view)?;
     Some((pa, pb, pl, lines))
+}
+
+/// A linear dimension's line ends on the sheet (where its arrowheads sit)
+/// and its direction from the first to the second.
+pub fn linear_ends<'a>(
+    d: &Dimension,
+    view: &dyn Fn(u32) -> Option<(Placement, &'a ViewLines)>,
+) -> Option<([f64; 2], [f64; 2], [f64; 2])> {
+    let (pa, pb, pl, _) = dim_points(d, view)?;
+    let u = match d.dim {
+        DimKind::Horizontal => [1.0, 0.0],
+        DimKind::Vertical => [0.0, 1.0],
+        DimKind::Aligned => {
+            let dd = sub(pb, pa);
+            let l = norm(dd);
+            if l < 1e-12 {
+                return None;
+            }
+            [dd[0] / l, dd[1] / l]
+        }
+        _ => return None,
+    };
+    let n = [-u[1], u[0]];
+    let t = add(pl.position, d.text);
+    let la = add(pa, mul(n, dot(sub(t, pa), n)));
+    let lb = add(pb, mul(n, dot(sub(t, pb), n)));
+    let v = sub(lb, la);
+    let l = norm(v);
+    Some((la, lb, if l > 1e-12 { mul(v, 1.0 / l) } else { u }))
 }
 
 /// A dimension set's points resolved: sheet points, coordinates along the
@@ -897,6 +1158,8 @@ pub fn set_members<'a>(
         t[ax] = (pa[ax] + pb[ax]) * 0.5;
         t[nx] = line;
         Dimension {
+            shift: 0.0,
+            arrows: Default::default(),
             dim: if ax == 0 {
                 DimKind::Horizontal
             } else {

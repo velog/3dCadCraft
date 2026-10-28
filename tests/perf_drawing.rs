@@ -420,6 +420,8 @@ fn drawing_views_of_large_models() {
             .map(|k| {
                 let e = edges[k % edges.len()].clone();
                 Dimension {
+                    shift: 0.0,
+                    arrows: Default::default(),
                     dim: DimKind::Horizontal,
                     a: PointRef {
                         view: 1,

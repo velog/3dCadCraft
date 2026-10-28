@@ -444,9 +444,30 @@ pub fn glyph(c: char, o: [f64; 2], h: f64, k: f64) -> Option<(Vec<Prim>, f64)> {
     Some((out, w * 1.15))
 }
 
+/// Font size (em) per cap height of formatted runs, on the screen and in
+/// the PDF.
+pub const EM_PER_CAP: f64 = 1.35;
+
+/// Measures a text run's advance (mm) for a cap height, from the font the
+/// sheet is drawn with (`None`: the estimate).
+pub type Measure = dyn Fn(&str, f64) -> Option<f64> + Send + Sync;
+
+static MEASURE: std::sync::OnceLock<Box<Measure>> = std::sync::OnceLock::new();
+
+/// Sets how runs are measured (the GUI passes its drawing font, so runs of
+/// different styles line up as drawn); without it the 0.6 × height
+/// estimate of `text_width` is used.
+pub fn set_measure(m: Box<Measure>) {
+    let _ = MEASURE.set(m);
+}
+
 /// Advance of a text run (mm).
 fn run_width(s: &str, size: f64, stretch: f64) -> f64 {
-    text_width(s, size) * stretch
+    MEASURE
+        .get()
+        .and_then(|m| m(s, size))
+        .unwrap_or_else(|| text_width(s, size))
+        * stretch
 }
 
 /// One piece of a line: text in one style, or a symbol.

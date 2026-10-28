@@ -268,6 +268,8 @@ pub(super) struct DrwUi {
     pub hover_ann: Option<u32>,
     /// Dragged annotation and the last pointer point (sheet mm).
     pub ann_drag: Option<(u32, [f64; 2])>,
+    /// Which part of it the drag holds.
+    pub ann_part: super::drawing_annot::DragPart,
     /// The Text window.
     pub text_dialog: Option<super::drawing_annot::TextDialog>,
     /// The PDF options window (kept until the file is written).
@@ -728,7 +730,7 @@ impl CadCraftApp {
             Some(DrwTool::Centerline(Some(_))) => {
                 "Centerline: click the second circle of the same view".into()
             }
-            Some(DrwTool::Dimension(_)) => "Dimension: click an edge, a circle or two points, then click where the dimension goes (Esc ends)".into(),
+            Some(DrwTool::Dimension(_)) => "Dimension: click an edge, a circle, two points, or two edges for their angle, then click where the dimension goes (Esc ends)".into(),
             Some(DrwTool::Text) => "Text: click where the text goes".into(),
             Some(DrwTool::LeaderText(None)) => "Leader Text: click where the arrow points".into(),
             Some(DrwTool::LeaderText(Some(_))) => "Leader Text: click where the text goes".into(),
@@ -2553,6 +2555,11 @@ impl CadCraftApp {
             plain.layer_name(&d.styles.defaults).to_owned()
         };
         let mut layer = a.layer.clone();
+        let mut dim = match &a.kind {
+            crate::drawing::AnnotationKind::Dimension(d) => Some(d.clone()),
+            _ => None,
+        };
+        let dim_before = dim.clone();
         egui::Grid::new("drw_ann_props")
             .num_columns(2)
             .min_col_width(label_w)
@@ -2578,7 +2585,23 @@ impl CadCraftApp {
                         }
                     });
                 ui.end_row();
+                if let Some(d) = &mut dim {
+                    dimension_rows(ui, d);
+                }
             });
+        if dim != dim_before
+            && let Some(d) = dim
+        {
+            let id = a.id;
+            self.edit_drawing("Edit Dimension", move |doc| {
+                if let Some(x) = doc
+                    .sheet_mut()
+                    .and_then(|s| s.annotations.iter_mut().find(|x| x.id == id))
+                {
+                    x.kind = crate::drawing::AnnotationKind::Dimension(d);
+                }
+            });
+        }
         if layer != a.layer {
             let id = a.id;
             self.edit_drawing("Layer", move |d| {
@@ -2591,6 +2614,68 @@ impl CadCraftApp {
             });
         }
     }
+}
+
+/// The Properties rows of a dimension: its type (radius / diameter for a
+/// circle, horizontal / vertical / aligned for a distance; Inventor's
+/// Dimension Type menu), the arrowheads at each end and the text's place.
+fn dimension_rows(ui: &mut egui::Ui, d: &mut crate::drawing::Dimension) {
+    use crate::drawing::DimKind;
+    use crate::drawing::annot::ArrowSide;
+    let kinds: &[(DimKind, &str)] = match d.dim {
+        DimKind::Diameter | DimKind::Radius => {
+            &[(DimKind::Diameter, "Diameter"), (DimKind::Radius, "Radius")]
+        }
+        DimKind::Horizontal | DimKind::Vertical | DimKind::Aligned => &[
+            (DimKind::Horizontal, "Horizontal"),
+            (DimKind::Vertical, "Vertical"),
+            (DimKind::Aligned, "Aligned"),
+        ],
+        DimKind::Angle => &[(DimKind::Angle, "Angle")],
+    };
+    super::panels::plabel(ui, "Dimension Type");
+    let name = kinds
+        .iter()
+        .find(|(k, _)| *k == d.dim)
+        .map_or("", |(_, n)| *n);
+    egui::ComboBox::from_id_salt("drw_dim_type")
+        .selected_text(name)
+        .show_ui(ui, |ui| {
+            for (k, n) in kinds {
+                ui.selectable_value(&mut d.dim, *k, *n);
+            }
+        });
+    ui.end_row();
+    if !matches!(
+        d.dim,
+        DimKind::Horizontal | DimKind::Vertical | DimKind::Aligned
+    ) {
+        return;
+    }
+    for (k, label) in [(0, "Arrowhead 1"), (1, "Arrowhead 2")] {
+        super::panels::plabel(ui, label);
+        ui.horizontal(|ui| {
+            for (s, n) in [
+                (ArrowSide::Auto, "Auto"),
+                (ArrowSide::Inside, "Inside"),
+                (ArrowSide::Outside, "Outside"),
+            ] {
+                ui.selectable_value(&mut d.arrows[k], s, n);
+            }
+        });
+        ui.end_row();
+    }
+    super::panels::plabel(ui, "Text");
+    ui.add_enabled_ui(d.shift != 0.0, |ui| {
+        if ui
+            .button("Center Text")
+            .on_hover_text("Back to the middle of the dimension line")
+            .clicked()
+        {
+            d.shift = 0.0;
+        }
+    });
+    ui.end_row();
 }
 
 /// Display name of an annotation kind.

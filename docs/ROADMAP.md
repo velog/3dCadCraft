@@ -339,7 +339,7 @@ foundations; the order below builds those first. Each stage: spec rows first, In
 | D-S3 | Dimensions: angular (two lines, three points, arc), arc length, chord, quadrant / tangent of circles, implied intersection, linear diameter, Dimension Type menu (radius ↔ diameter ↔ linear), per-end arrowheads, hide extension lines; multi-vertex leaders, Add / Delete Leader; hole note templates per hole type | ⬜ |
 | D-S4 | Surface Texture, Feature Control Frame, Datum Identifier; Centerline Bisector, Centered Pattern, Automated Centerlines | ⬜ |
 | D-S5 | Drawing sketches (sheet and view), Define Title Block / Border (zones, prompted entries) / Sketched Symbol, templates | ⬜ |
-| D-S6 | Break, Break Out, multi-segment section lines, section depth, hatch editing per region, rectangular detail fence, Crop, view display flags (tangent edges, threads, interference edges) | ⬜ |
+| D-S6 | Section line as a sketch of the parent view (sketch snaps, drag segments / points, Edit opens the sketch; owner's priority, right after D-S3), Break, Break Out, multi-segment section lines, section depth, hatch editing per region, rectangular detail fence, Crop, view display flags (tangent edges, threads, interference edges) | ⬜ |
 | D-S7 | Retrieve Model Annotations (sketch / feature dimensions into a view), Edit Model Dimension | ⬜ |
 | D-S8 | DXF export, parts list export / filters / grouping, hole table row merge and filters, PDF options | ⬜ |
 | D-S9 | Dual units, Linear / Angular Sum, foreshortened dimensions, welding / caterpillar / end fill, datum targets, Slice, Overlay, Draft View, punch and slot notes | ⬜ |

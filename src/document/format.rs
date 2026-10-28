@@ -133,7 +133,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   `RevisionCloud`) (2026-10-28).
 /// - 37: the surface commands (`BodyOp::Stitch`, `Patch`, `Trim`, `Extend`,
 ///   `Ruled`, `ReplaceFace`, `Sculpt`) (2026-10-28).
-pub const FORMAT_REVISION: u32 = 37;
+/// - 38: angular dimensions in drawings (`DimKind::Angle`) (2026-10-28).
+pub const FORMAT_REVISION: u32 = 38;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
