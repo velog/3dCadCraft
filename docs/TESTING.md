@@ -55,4 +55,5 @@ SolidCraft 0.24 over MCP"). A geometry test should therefore check numbers, not 
 surfaces), each compared with what Inventor / SolidWorks do. A case that cannot pass yet is marked
 `#[ignore = "known: <why>"]` — it documents the gap and is run with
 `cargo test --no-default-features --test <file> -- --ignored`; when it starts passing, drop the
-`ignore`.
+`ignore`. Cases still to write, from other programs' trackers and forums, are listed by module in
+[CAD_HARD_CASES.md](CAD_HARD_CASES.md).
