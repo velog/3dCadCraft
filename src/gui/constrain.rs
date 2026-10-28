@@ -713,6 +713,10 @@ impl CadCraftApp {
     /// Joint origins under the cursor: on the planar face under it (or the
     /// one Shift holds) the nearest snap within 20 px — centre, edge middle,
     /// vertex, circle centre — else its centre; elsewhere an edge or axis.
+    pub(super) fn joint_snap_under_pub(&mut self, pos: Pos2, rect: Rect) -> Option<GeomRef> {
+        self.joint_snap_under(pos, rect, false)
+    }
+
     fn joint_snap_under(&mut self, pos: Pos2, rect: Rect, shift: bool) -> Option<GeomRef> {
         let hit = self.asm_pick_pub(pos, rect);
         if !shift {

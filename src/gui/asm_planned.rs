@@ -28,6 +28,8 @@ const EDGE: &[PickKind] = &[PickKind::Edge, PickKind::StraightEdge];
 const CIRCLE: &[PickKind] = &[PickKind::Edge];
 const LINE: &[PickKind] = &[PickKind::StraightEdge, PickKind::Axis];
 const CYLINDER: &[PickKind] = &[PickKind::Face];
+/// A face or edge of a feature (its feature pattern).
+const FEATURE_FACE: &[PickKind] = &[PickKind::Face, PickKind::Edge];
 const POINT: &[PickKind] = &[PickKind::Point];
 const GEOMETRY: &[PickKind] = &[
     PickKind::Face,
@@ -392,7 +394,7 @@ impl AsmPlanned {
                             "feature",
                             "Feature Pattern",
                             "select a feature pattern of a part",
-                            CYLINDER,
+                            FEATURE_FACE,
                         ),
                         Note("Count and spacing follow the feature pattern"),
                     ],
@@ -1232,13 +1234,46 @@ impl CadCraftApp {
     /// Gives a component's geometry (a click in the view or an origin /
     /// work row of the browser) to the open planned panel's selector.
     pub(super) fn planned_take_ref(&mut self, g: crate::assembly::GeomRef) {
-        let label = self.geom_label(&g);
+        use crate::assembly::relation::GeomRef;
+        let mut label = self.geom_label(&g);
+        // Pattern's Feature Pattern row: the pattern's name, not the face.
+        if self
+            .part_planned
+            .as_ref()
+            .is_some_and(|d| d.active == Some("feature"))
+        {
+            let names = match &g {
+                GeomRef::Face { name, .. } => vec![name.clone()],
+                GeomRef::Edge { edge, .. } => edge.faces.to_vec(),
+                _ => Vec::new(),
+            };
+            let found = self
+                .assembly()
+                .and_then(|a| a.find(g.occurrence()))
+                .and_then(|o| {
+                    self.with_part(o.component, |p| {
+                        names
+                            .iter()
+                            .find_map(|n| crate::assembly::pattern::pattern_of_face(p, n))
+                    })
+                })
+                .flatten();
+            match found {
+                Some(id) => label = format!("{id} · feature pattern"),
+                None => {
+                    self.file_status = Some(Err(
+                        "Pattern Component: that face belongs to no feature pattern".into(),
+                    ));
+                    return;
+                }
+            }
+        }
         let Some(d) = self.part_planned.as_mut() else {
             return;
         };
         // Pattern Component's directions and axis take one pick each.
         let single = d.kind == Planned::Asm(AsmPlanned::Pattern)
-            && matches!(d.active, Some("column" | "row" | "axis"));
+            && matches!(d.active, Some("column" | "row" | "axis" | "feature"));
         d.pick_ref(label, g, single);
     }
 }

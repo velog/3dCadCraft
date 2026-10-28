@@ -894,7 +894,7 @@ Finds the overlapping volumes between components, shows them in red and gives th
 
 **Specification of the whole command set:** [spec/3.0-assembly-commands.md](spec/3.0-assembly-commands.md) (interface done 2026-10-27, logic ⬜)
 
-**Done 2026-10-28:** Pattern Component, Rectangular and Circular (`assembly::pattern`, GUI `gui/asm_pattern.rs`): the copies are real occurrences placed by the pattern (they follow their sources after every solve or drag; the solver and drags never move them), a see-through preview while the panel is open, the browser node with Element:1 (the sources) … Element:n, Edit / Delete, Undo; saved in the assembly (additive field). Associative (following a part's feature pattern), Independent / Suppress of single elements, Mirror ⬜.
+**Done 2026-10-28:** Pattern Component, Rectangular and Circular (`assembly::pattern`, GUI `gui/asm_pattern.rs`): the copies are real occurrences placed by the pattern (they follow their sources after every solve or drag; the solver and drags never move them), a see-through preview while the panel is open, the browser node with Element:1 (the sources) … Element:n, Edit / Delete, Undo; saved in the assembly (additive field). Associative (following a part's feature pattern; the copies follow its count when the assembly is shown again) done too. Independent / Suppress of single elements, Mirror ⬜.
 
 **Kinds.**
 - **Patterns:** rectangular, circular, following a feature pattern in a part (bolts in the holes of a flange).

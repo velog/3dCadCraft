@@ -3725,6 +3725,7 @@ impl CadCraftApp {
                         self.selection = Selection::Body;
                         self.after_restore();
                         self.asm_refresh_status();
+                        self.follow_patterns();
                         self.fit_view();
                         Ok(msg)
                     }

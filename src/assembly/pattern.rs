@@ -69,6 +69,15 @@ pub enum Layout {
         #[serde(default)]
         row_spacing: Real,
     },
+    /// Follows a feature pattern of a component's part (Associative): one
+    /// element per instance of the pattern, moved as that instance; a
+    /// changed count in the part changes the elements.
+    Feature {
+        /// The occurrence whose part holds the pattern.
+        occurrence: u32,
+        /// The pattern feature's id (`CircularPattern1`).
+        feature: String,
+    },
     /// Copies turned about an axis.
     Circular {
         /// Rotation axis (straight edge, axis, round edge or cylinder).
@@ -98,6 +107,8 @@ impl Layout {
                 ..
             } => column_count.max(&1) * if row.is_some() { *row_count.max(&1) } else { 1 },
             Layout::Circular { count, .. } => *count.max(&1),
+            // Known only from the part.
+            Layout::Feature { .. } => 0,
         }
     }
 
@@ -108,6 +119,33 @@ impl Layout {
                 std::iter::once(column).chain(row.as_ref()).collect()
             }
             Layout::Circular { axis, .. } => vec![axis],
+            Layout::Feature { .. } => Vec::new(),
+        }
+    }
+}
+
+/// Element indices (from 2) and motions of a feature pattern's instances.
+pub type Instances = Result<Vec<(u32, Transform3)>, String>;
+
+/// What a pattern reads from the components' parts.
+pub struct Lookup<'a> {
+    /// A reference's geometry in its part.
+    pub local: &'a dyn Fn(&GeomRef) -> Result<Geom, String>,
+    /// The instances (element index from 2, motion in part coordinates)
+    /// of feature pattern `id` in the part of occurrence `occurrence`.
+    pub feature: &'a dyn Fn(u32, &str) -> Instances,
+}
+
+fn no_features(_: u32, _: &str) -> Result<Vec<(u32, Transform3)>, String> {
+    Err("feature patterns cannot be read here".into())
+}
+
+impl<'a> Lookup<'a> {
+    /// Geometry only (no feature patterns).
+    pub fn geometry(local: &'a dyn Fn(&GeomRef) -> Result<Geom, String>) -> Self {
+        Self {
+            local,
+            feature: &no_features,
         }
     }
 }
@@ -150,11 +188,23 @@ fn axis_of(g: &Geom) -> Result<(Point3, Vector3), String> {
 /// coordinates, applied on top of a source's placement.
 pub fn motions(
     layout: &Layout,
-    local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
+    look: &Lookup,
     at: &dyn Fn(u32) -> Option<Transform3>,
 ) -> Result<Vec<(u32, Transform3)>, String> {
+    let local = look.local;
     let mut out = Vec::new();
     match layout {
+        Layout::Feature {
+            occurrence,
+            feature,
+        } => {
+            let t =
+                at(*occurrence).ok_or("the component of the feature pattern no longer exists")?;
+            let inv = t.inverse();
+            for (k, m) in (look.feature)(*occurrence, feature)? {
+                out.push((k, t * m * inv));
+            }
+        }
         Layout::Rectangular {
             column,
             column_flip,
@@ -208,6 +258,59 @@ pub fn motions(
     Ok(out)
 }
 
+/// The feature pattern a picked face of `part` belongs to: a copy's face
+/// (`<pattern>#k:...`) or a face of a feature the pattern copies.
+pub fn pattern_of_face(part: &crate::part::PartDocument, face: &str) -> Option<String> {
+    use crate::part::Feature;
+    let patterns = || {
+        part.features
+            .iter()
+            .enumerate()
+            .filter_map(|(k, f)| match f {
+                Feature::Pattern(p) if !part.is_suppressed(k) => Some(p),
+                _ => None,
+            })
+    };
+    if let Some((id, _)) = face.split_once('#')
+        && patterns().any(|p| p.id == id)
+    {
+        return Some(id.to_owned());
+    }
+    let owner = face.split(':').next()?;
+    patterns()
+        .find(|p| p.features.iter().any(|f| f == owner))
+        .map(|p| p.id.clone())
+}
+
+/// The instances of feature pattern `id` of `part` (element index from 2,
+/// rigid motion in part coordinates); a mirror cannot move a component.
+pub fn feature_instances(
+    part: &crate::part::PartDocument,
+    id: &str,
+) -> Result<Vec<(u32, Transform3)>, String> {
+    use crate::part::Feature;
+    let (k, p) = part
+        .features
+        .iter()
+        .enumerate()
+        .find_map(|(k, f)| match f {
+            Feature::Pattern(p) if p.id == id => Some((k, p)),
+            _ => None,
+        })
+        .ok_or_else(|| format!("the feature pattern {id} no longer exists"))?;
+    if part.is_suppressed(k) {
+        return Err(format!("{} is suppressed", p.name));
+    }
+    p.placements(&part.body, &part.work)?
+        .into_iter()
+        .map(|(k, m)| {
+            nalgebra::try_convert::<_, Transform3>(m)
+                .map(|t| (k as u32, t))
+                .ok_or_else(|| format!("{} mirrors: a component cannot follow it", p.name))
+        })
+        .collect()
+}
+
 impl AssemblyDocument {
     /// Whether occurrence `id` is a copy made by a pattern (placed by it,
     /// never by the solver or a drag).
@@ -234,7 +337,7 @@ impl AssemblyDocument {
         &mut self,
         sources: Vec<u32>,
         layout: Layout,
-        local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
+        look: &Lookup,
     ) -> Result<u32, String> {
         if sources.is_empty() {
             return Err("select the components to pattern".into());
@@ -263,7 +366,7 @@ impl AssemblyDocument {
             layout,
             elements: Vec::new(),
         });
-        if let Err(e) = place(self, local) {
+        if let Err(e) = place(self, look) {
             self.remove_pattern(id);
             return Err(e);
         }
@@ -311,15 +414,12 @@ impl AssemblyDocument {
 /// removes extra ones — and places them from their sources. A pattern whose
 /// references no longer resolve keeps its copies where they are; the
 /// errors come back by pattern id.
-pub fn place(
-    asm: &mut AssemblyDocument,
-    local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
-) -> Result<(), String> {
+pub fn place(asm: &mut AssemblyDocument, look: &Lookup) -> Result<(), String> {
     let mut errors = Vec::new();
     for k in 0..asm.patterns.len() {
         let p = asm.patterns[k].clone();
         let at = |id: u32| asm.find(id).map(|o| o.transform);
-        let moves = match motions(&p.layout, local, &at) {
+        let moves = match motions(&p.layout, look, &at) {
             Ok(m) => m,
             Err(e) => {
                 errors.push(format!("{}: {e}", p.name));
@@ -443,7 +543,9 @@ mod tests {
             row_count: 2,
             row_spacing: 10.0,
         };
-        let pid = a.add_pattern(vec![s], layout, &local).unwrap();
+        let pid = a
+            .add_pattern(vec![s], layout, &Lookup::geometry(&local))
+            .unwrap();
         assert_eq!(a.occurrences.len(), 6);
         let p = a.patterns[0].clone();
         assert_eq!(p.name, "Component Pattern 1");
@@ -457,7 +559,7 @@ mod tests {
         assert_eq!(a.find(p.elements[0].occurrences[0]).unwrap().name, "Bolt:2");
 
         crate::assembly::move_by(a.find_mut(s).unwrap(), Vector3::new(0.0, 0.0, 7.0));
-        place(&mut a, &local).unwrap();
+        place(&mut a, &Lookup::geometry(&local)).unwrap();
         assert!(
             (origin(&a, p.elements[4].occurrences[0]) - Point3::new(45.0, -10.0, 7.0)).norm()
                 < 1e-9
@@ -466,7 +568,7 @@ mod tests {
         if let Layout::Rectangular { row_count, .. } = &mut a.patterns[0].layout {
             *row_count = 1;
         }
-        place(&mut a, &local).unwrap();
+        place(&mut a, &Lookup::geometry(&local)).unwrap();
         assert_eq!(a.occurrences.len(), 3);
         assert_eq!(a.patterns[0].elements.len(), 2);
 
@@ -487,7 +589,8 @@ mod tests {
             count: 4,
             angle: std::f64::consts::FRAC_PI_2,
         };
-        a.add_pattern(vec![s1, s2], layout, &local).unwrap();
+        a.add_pattern(vec![s1, s2], layout, &Lookup::geometry(&local))
+            .unwrap();
         let p = a.patterns[0].clone();
         assert_eq!(p.elements.len(), 3);
         assert!(p.elements.iter().all(|e| e.occurrences.len() == 2));
@@ -497,6 +600,58 @@ mod tests {
         let e4 = &p.elements[2];
         assert!((origin(&a, e4.occurrences[0]) - Point3::new(0.0, -10.0, 0.0)).norm() < 1e-9);
         assert_eq!(a.find(e4.occurrences[1]).unwrap().name, "Nut:4");
+    }
+
+    /// Associative: one element per instance of the part's pattern, moved
+    /// as that instance in assembly coordinates (the part turned 90° about
+    /// Z); a pattern with fewer instances later drops elements.
+    #[test]
+    fn associative_follows_the_feature_pattern() {
+        let mut a = AssemblyDocument::default();
+        let plate = a.place(
+            doc(),
+            "Plate",
+            Transform3::rotation(Vector3::z() * std::f64::consts::FRAC_PI_2),
+            true,
+        );
+        let bolt = a.place(
+            doc(),
+            "Bolt",
+            Transform3::translation(0.0, 10.0, 0.0),
+            false,
+        );
+        let count = std::cell::Cell::new(4u32);
+        let feature = |occ: u32, id: &str| -> Result<Vec<(u32, Transform3)>, String> {
+            assert_eq!((occ, id), (plate, "RectangularPattern1"));
+            // Holes every 20 mm along the part's X.
+            Ok((2..=count.get())
+                .map(|k| {
+                    (
+                        k,
+                        Transform3::translation(20.0 * f64::from(k - 1), 0.0, 0.0),
+                    )
+                })
+                .collect())
+        };
+        let look = Lookup {
+            local: &local,
+            feature: &feature,
+        };
+        let layout = Layout::Feature {
+            occurrence: plate,
+            feature: "RectangularPattern1".into(),
+        };
+        a.add_pattern(vec![bolt], layout, &look).unwrap();
+        assert_eq!(a.patterns[0].elements.len(), 3);
+        // The part's X is the assembly's Y.
+        let e =
+            |a: &AssemblyDocument, k: usize| origin(a, a.patterns[0].elements[k].occurrences[0]);
+        assert!((e(&a, 0) - Point3::new(0.0, 30.0, 0.0)).norm() < 1e-9);
+        assert!((e(&a, 2) - Point3::new(0.0, 70.0, 0.0)).norm() < 1e-9);
+        count.set(2);
+        place(&mut a, &look).unwrap();
+        assert_eq!(a.patterns[0].elements.len(), 1);
+        assert_eq!(a.occurrences.len(), 3);
     }
 
     /// A copy deleted leaves a gap; a source deleted takes the pattern;
@@ -515,12 +670,16 @@ mod tests {
             row_count: 1,
             row_spacing: 0.0,
         };
-        a.add_pattern(vec![s], layout.clone(), &local).unwrap();
+        a.add_pattern(vec![s], layout.clone(), &Lookup::geometry(&local))
+            .unwrap();
         let copy = a.patterns[0].elements[0].occurrences[0];
-        assert!(a.add_pattern(vec![copy], layout.clone(), &local).is_err());
+        assert!(
+            a.add_pattern(vec![copy], layout.clone(), &Lookup::geometry(&local))
+                .is_err()
+        );
         a.forget_in_patterns(copy);
         a.remove(copy);
-        place(&mut a, &local).unwrap();
+        place(&mut a, &Lookup::geometry(&local)).unwrap();
         assert_eq!(a.occurrences.len(), 2, "the gap is not filled again");
 
         let text = serde_json::to_string(&a).unwrap();

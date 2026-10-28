@@ -105,6 +105,10 @@ pub(super) struct AsmUi {
     pub interference: super::interference::InterferenceUi,
     /// Pattern Component: the key of the copies drawn as its preview.
     pub pattern_preview: Option<String>,
+    /// Where the view's context menu was opened (cursor, view rect): its
+    /// Constrain / Joint take the face under it as the first selection.
+    /// `None` when the menu came from the browser.
+    pub menu_at: Option<(Pos2, Rect)>,
 }
 
 /// Selected occurrences: blue; under the cursor: green (as faces in a
@@ -250,6 +254,7 @@ impl CadCraftApp {
         };
         self.after_restore();
         self.asm_refresh_status();
+        self.follow_patterns();
         self.scene_dirty = true;
         self.fit_view();
     }
@@ -790,6 +795,9 @@ impl CadCraftApp {
 
         // --- context menu (the ViewCube's own when it was clicked) ---
         let cube_menu = self.cube_context;
+        if response.secondary_clicked() {
+            self.asm.menu_at = ui.input(|i| i.pointer.interact_pos()).map(|p| (p, rect));
+        }
         response.context_menu(|ui| {
             if cube_menu {
                 return;
@@ -1182,6 +1190,23 @@ impl CadCraftApp {
 
     /// Grounded / Visibility / Open / Delete for occurrences (view and
     /// browser menus).
+    /// Constrain / Joint started from the view's menu: the face, edge or
+    /// (Joint) snap point of the component under the cursor where the menu
+    /// opened becomes the first selection (rule 17).
+    fn menu_first_pick(&mut self, ids: &[u32], joint: bool) {
+        let Some((p, rect)) = self.asm.menu_at.take() else {
+            return;
+        };
+        let g = if joint {
+            self.joint_snap_under_pub(p, rect)
+        } else {
+            self.geom_under_pub(p, rect)
+        };
+        if let Some(g) = g.filter(|g| ids.contains(&g.occurrence())) {
+            self.constrain_pick(g);
+        }
+    }
+
     pub(super) fn occurrence_menu(&mut self, ui: &mut egui::Ui, ids: &[u32]) {
         let Some(a) = self.assembly() else {
             return;
@@ -1198,10 +1223,12 @@ impl CadCraftApp {
         // Inventor's first group: relate the component to another one.
         if ui.button("Constrain...").clicked() {
             self.asm_apply(Action::AsmConstrain);
+            self.menu_first_pick(ids, false);
             ui.close();
         }
         if ui.button("Joint...").clicked() {
             self.asm_apply(Action::AsmJoint);
+            self.menu_first_pick(ids, true);
             ui.close();
         }
         if ui.button("Measure").clicked() {

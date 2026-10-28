@@ -1903,7 +1903,8 @@ fn speed_budgets() {
             row_count: 30,
             row_spacing: 10.0,
         };
-        asm.add_pattern(vec![a, b], layout, &local).unwrap();
+        asm.add_pattern(vec![a, b], layout, &pattern::Lookup::geometry(&local))
+            .unwrap();
         assert_eq!(asm.occurrences.len(), 1800);
         rows.push((
             "assembly: Pattern Component, 30 x 30 grid of 2 components placed again",
@@ -1914,7 +1915,7 @@ fn speed_budgets() {
                         cadcraft3d::assembly::move_by(o, Vector3::new(0.1, 0.0, 0.0));
                     }
                 }
-                pattern::place(&mut asm, &local).unwrap();
+                pattern::place(&mut asm, &pattern::Lookup::geometry(&local)).unwrap();
             }),
         ));
     }

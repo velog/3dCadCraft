@@ -127,6 +127,7 @@ impl CadCraftApp {
                         self.asm.hover = Some(id);
                     }
                     r.context_menu(|ui| {
+                        self.asm.menu_at = None;
                         if !self.asm.sel.contains(&id) {
                             self.asm.sel = vec![id];
                         }

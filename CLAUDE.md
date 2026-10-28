@@ -1094,7 +1094,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Component patterns** (`assembly::pattern`, GUI `gui/asm_pattern.rs`): the copies are ordinary occurrences listed in
   `ComponentPattern::elements`; `pattern::place` moves them from their sources at the end of every `asm_solve` /
   `asm_try` (also with no constraints), and `solve` never frees an element (`is_element`). `AssemblyDocument::remove`
-  handles patterns (a source takes its pattern, a copy leaves a gap). Planned assembly panels keep the geometry of
+  handles patterns (a source takes its pattern, a copy leaves a gap). Associative layouts read the part through
+  `pattern::Lookup::feature` (`feature_instances` = `PatternFeature::placements` as rigid motions); `follow_patterns`
+  re-places them when an assembly is opened or shown again (a part's count may have changed). Planned assembly panels keep the geometry of
   their face / edge picks in `PartDialog::refs` (aligned with `picks`), so a command's logic never re-parses labels.
 - **Edge picking in an assembly** (`constrain.rs::geom_under`): the occlusion test takes the edge's point nearest
   the eye ray and a depth margin of 2 % of the distance — with the screen parameter and a 0.1 mm margin no plate

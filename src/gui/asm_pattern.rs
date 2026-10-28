@@ -10,7 +10,7 @@ use super::CadCraftApp;
 use super::asm_planned::AsmPlanned;
 use super::icons::Icon;
 use super::part_planned::{PartDialog, Planned};
-use crate::assembly::pattern::{self, ComponentPattern, Layout};
+use crate::assembly::pattern::{self, ComponentPattern, Layout, Lookup};
 use crate::assembly::relation::{self, Geom, GeomRef};
 use crate::document::AssemblyDocument;
 use crate::kernel::Transform3;
@@ -48,13 +48,60 @@ impl CadCraftApp {
             .map_err(|e| format!("{name}: {e}"))
     }
 
+    /// The feature pattern `id` of occurrence `occ`'s part (Associative).
+    fn feature_instances_in(
+        &self,
+        a: &AssemblyDocument,
+        occ: u32,
+        id: &str,
+    ) -> Result<Vec<(u32, Transform3)>, String> {
+        let o = a.find(occ).ok_or("the component no longer exists")?;
+        let name = o.name.clone();
+        self.with_part(o.component, |p| pattern::feature_instances(p, id))
+            .ok_or_else(|| format!("{name}: its part file was not found"))?
+            .map_err(|e| format!("{name}: {e}"))
+    }
+
     /// Places the copies of every pattern of `a` from their sources.
     pub(super) fn place_patterns(&self, a: &mut AssemblyDocument) -> Result<(), String> {
         if a.patterns.is_empty() {
             return Ok(());
         }
         let snapshot = a.clone();
-        pattern::place(a, &|r| self.asm_local_in(&snapshot, r))
+        let local = |r: &GeomRef| self.asm_local_in(&snapshot, r);
+        let feature = |o: u32, id: &str| self.feature_instances_in(&snapshot, o, id);
+        pattern::place(
+            a,
+            &Lookup {
+                local: &local,
+                feature: &feature,
+            },
+        )
+    }
+
+    /// On opening an assembly (or coming back to it from a part): pattern
+    /// copies follow what changed meanwhile — an Associative pattern's
+    /// count, a moved direction edge. Not an Undo step (Inventor updates the
+    /// same way).
+    pub(super) fn follow_patterns(&mut self) {
+        let Some(mut a) = self.assembly().filter(|a| !a.patterns.is_empty()).cloned() else {
+            return;
+        };
+        if let Err(e) = self.place_patterns(&mut a) {
+            log::warn!("{e}");
+        }
+        let changed = self.assembly().is_some_and(|cur| {
+            cur.occurrences.len() != a.occurrences.len()
+                || cur
+                    .occurrences
+                    .iter()
+                    .zip(&a.occurrences)
+                    .any(|(x, y)| x.id != y.id || x.transform != y.transform)
+        });
+        if changed && let Some(cur) = self.assembly_mut() {
+            *cur = a;
+            self.scene_dirty = true;
+        }
     }
 
     /// The sources and layout the panel describes.
@@ -75,10 +122,30 @@ impl CadCraftApp {
         let count = |v: Option<f64>| v.unwrap_or(1.0).round().max(1.0) as u32;
         let layout = match d.tab() {
             ASSOCIATIVE => {
-                return Err(
-                    "the Associative tab (following a feature pattern) comes later; use Rectangular or Circular"
-                        .into(),
-                );
+                // A face, or an edge (either of its faces), of the pattern.
+                let (occurrence, names) = match r("feature") {
+                    Some(GeomRef::Face {
+                        occurrence, name, ..
+                    }) => (occurrence, vec![name]),
+                    Some(GeomRef::Edge { occurrence, edge }) => (occurrence, edge.faces.to_vec()),
+                    _ => return Err("select a face of a feature pattern of a part".into()),
+                };
+                let o = a.find(occurrence).ok_or("the component no longer exists")?;
+                let feature = self
+                    .with_part(o.component, |p| {
+                        names.iter().find_map(|n| pattern::pattern_of_face(p, n))
+                    })
+                    .flatten()
+                    .ok_or_else(|| {
+                        format!("{}: that face belongs to no feature pattern", o.name)
+                    })?;
+                if sources.contains(&occurrence) {
+                    return Err("the part with the feature pattern cannot follow it".into());
+                }
+                Layout::Feature {
+                    occurrence,
+                    feature,
+                }
             }
             RECTANGULAR => Layout::Rectangular {
                 column: r("column").ok_or("select the column direction")?,
@@ -98,7 +165,7 @@ impl CadCraftApp {
             },
             _ => return Err("no such tab".into()),
         };
-        if layout.count() < 2 {
+        if !matches!(layout, Layout::Feature { .. }) && layout.count() < 2 {
             return Err("the count makes no copies".into());
         }
         if layout.count() > 1000 {
@@ -123,6 +190,11 @@ impl CadCraftApp {
         };
         let snapshot = a.clone();
         let local = |r: &GeomRef| self.asm_local_in(&snapshot, r);
+        let feature = |o: u32, id: &str| self.feature_instances_in(&snapshot, o, id);
+        let local = Lookup {
+            local: &local,
+            feature: &feature,
+        };
         let done = match d.edit {
             Some(id) => match a.patterns.iter_mut().find(|p| p.id == id) {
                 Some(p) => {
@@ -177,7 +249,13 @@ impl CadCraftApp {
             return Vec::new();
         };
         let at = |id: u32| a.find(id).map(|o| o.transform);
-        let Ok(moves) = pattern::motions(&layout, &|r| self.asm_local_in(a, r), &at) else {
+        let local = |r: &GeomRef| self.asm_local_in(a, r);
+        let feature = |o: u32, id: &str| self.feature_instances_in(a, o, id);
+        let look = Lookup {
+            local: &local,
+            feature: &feature,
+        };
+        let Ok(moves) = pattern::motions(&layout, &look, &at) else {
             return Vec::new();
         };
         // Editing: the pattern's own copies are already drawn.
@@ -276,6 +354,36 @@ impl CadCraftApp {
                 d.set_check(RECTANGULAR, "Flip row", *row_flip);
                 d.set_num(RECTANGULAR, "Row Count", f64::from(*row_count));
                 d.set_num(RECTANGULAR, "Row Spacing", *row_spacing);
+            }
+            Layout::Feature {
+                occurrence,
+                feature,
+            } => {
+                d.set_tab(ASSOCIATIVE);
+                // A face of one of the pattern's copies stands for it.
+                let prefix = format!("{feature}#");
+                let face = self
+                    .assembly()
+                    .and_then(|a| a.find(*occurrence))
+                    .and_then(|o| {
+                        self.with_part(o.component, |p| {
+                            p.body
+                                .faces()
+                                .filter_map(|(_, f)| f.name.clone())
+                                .find(|n| n.starts_with(&prefix))
+                        })
+                        .flatten()
+                    });
+                if let Some(name) = face {
+                    let g = GeomRef::Face {
+                        occurrence: *occurrence,
+                        name,
+                        hint: [0.0; 3],
+                    };
+                    d.picks
+                        .insert("feature", vec![format!("{feature} · feature pattern")]);
+                    d.refs.insert("feature", vec![g]);
+                }
             }
             Layout::Circular {
                 axis,
@@ -389,6 +497,7 @@ impl CadCraftApp {
                                 self.asm.hover = Some(id);
                             }
                             r.context_menu(|ui| {
+                                self.asm.menu_at = None;
                                 if !self.asm.sel.contains(&id) {
                                     self.asm.sel = vec![id];
                                 }
