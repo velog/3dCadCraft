@@ -16,7 +16,6 @@ use crate::drawing::hlr::ViewLines;
 use crate::drawing::sheet::{Anchor, Prim};
 use crate::drawing::{AnnotationKind, DimKind, Dimension, PointRef, PointRole};
 
-const INK: Color32 = Color32::from_rgb(20, 20, 24);
 const SEL: Color32 = Color32::from_rgb(40, 120, 230);
 const HOVER: Color32 = Color32::from_rgb(230, 120, 40);
 const PREVIEW: Color32 = Color32::from_rgb(60, 140, 90);
@@ -95,6 +94,7 @@ pub(super) struct PdfDialog {
     to: usize,
     excluded: bool,
     remove_weights: bool,
+    all_black: bool,
     open_after: bool,
 }
 
@@ -108,6 +108,8 @@ pub(super) struct ShownAnn {
     area: Option<([f64; 2], [f64; 2])>,
     /// The measured value (dimensions).
     pub value: Option<f64>,
+    /// Its layer's colour.
+    ink: Color32,
 }
 
 impl ShownAnn {
@@ -158,7 +160,8 @@ pub(super) fn lookup(views: &[ShownView]) -> HashMap<u32, (Placement, &ViewLines
         .collect()
 }
 
-/// Paints sheet primitives in `color`.
+/// Paints sheet primitives in `color` (a highlight or preview: the
+/// layers' pens are ignored).
 pub(super) fn paint_prims(
     p: &egui::Painter,
     cam: &SheetCam,
@@ -166,10 +169,38 @@ pub(super) fn paint_prims(
     prims: &[Prim],
     color: Color32,
 ) {
+    paint_prims_with(p, cam, rect, prims, color, false);
+}
+
+/// Paints sheet primitives in their layers' colours (`Prim::Pen`), starting
+/// with `color`.
+pub(super) fn paint_prims_styled(
+    p: &egui::Painter,
+    cam: &SheetCam,
+    rect: Rect,
+    prims: &[Prim],
+    color: Color32,
+) {
+    paint_prims_with(p, cam, rect, prims, color, true);
+}
+
+fn paint_prims_with(
+    p: &egui::Painter,
+    cam: &SheetCam,
+    rect: Rect,
+    prims: &[Prim],
+    mut color: Color32,
+    follow: bool,
+) {
     let to = |q: [f64; 2]| cam.to_screen(rect, q);
     let px = |mm: f64| ((mm * cam.zoom) as f32).clamp(1.0, 6.0);
     for prim in prims {
         match prim {
+            Prim::Pen { color: c, .. } => {
+                if follow {
+                    color = Color32::from_rgb(c[0], c[1], c[2]);
+                }
+            }
             Prim::Line { a, b, weight } => {
                 p.line_segment([to(*a), to(*b)], Stroke::new(px(weight.mm()), color));
             }
@@ -261,6 +292,7 @@ fn prims_distance(prims: &[Prim], q: [f64; 2]) -> f64 {
     let mut best = f64::MAX;
     for p in prims {
         let d = match p {
+            Prim::Pen { .. } => f64::MAX,
             Prim::Line { a, b, .. } | Prim::Center { a, b, .. } => seg(*a, *b),
             Prim::Path { pts, .. } | Prim::Fill { pts } => pts
                 .windows(2)
@@ -292,13 +324,25 @@ impl CadCraftApp {
         let map = lookup(views);
         let view = |id: u32| map.get(&id).copied();
         let tables = self.drw.tables.clone();
+        let fallback = crate::drawing::style::DrawingStyles::default();
+        let styles = self.drawing().map_or(&fallback, |d| &d.styles);
         sheet
             .annotations
             .iter()
+            .filter_map(|a| {
+                // A layer that is off hides its annotations (not pickable).
+                match styles.pen(a.layer_name(&styles.defaults)) {
+                    Some(Prim::Pen { color, .. }) => {
+                        Some((a, Color32::from_rgb(color[0], color[1], color[2])))
+                    }
+                    _ => None,
+                }
+            })
             .map(
-                |a| match annot::resolve_in(&a.kind, &view, &self.drw.look, &tables) {
+                |(a, ink)| match annot::resolve_in(&a.kind, &view, &self.drw.look, &tables) {
                     Ok(s) => ShownAnn {
                         id: a.id,
+                        ink,
                         area: matches!(
                             a.kind,
                             AnnotationKind::PartsList(_)
@@ -328,6 +372,7 @@ impl CadCraftApp {
                         };
                         ShownAnn {
                             id: a.id,
+                            ink,
                             area: None,
                             value: None,
                             prims: Vec::new(),
@@ -351,7 +396,7 @@ impl CadCraftApp {
             } else if self.drw.hover_ann == Some(a.id) {
                 HOVER
             } else {
-                INK
+                a.ink
             };
             paint_prims(p, &cam, rect, &a.prims, color);
             if let Some(o) = a.orphan {
@@ -1191,6 +1236,7 @@ impl CadCraftApp {
             to: n,
             excluded: false,
             remove_weights: false,
+            all_black: false,
             open_after: false,
         });
     }
@@ -1224,12 +1270,9 @@ impl CadCraftApp {
                 ui.checkbox(&mut d.excluded, "Print Excluded Sheets");
                 ui.separator();
                 ui.label(RichText::new("Settings").strong());
-                let mut black = true;
-                ui.add_enabled(false, egui::Checkbox::new(&mut black, "All Colors Black"))
-                    .on_disabled_hover_text(
-                        "Everything is black until shaded views and colours come",
-                    );
                 ui.checkbox(&mut d.remove_weights, "Remove Object Line Weights");
+                ui.checkbox(&mut d.all_black, "All Colors as Black")
+                    .on_hover_text("Every layer colour prints black");
                 ui.add_enabled_ui(false, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Vector Resolution");
@@ -1316,6 +1359,7 @@ impl CadCraftApp {
             font,
             crate::drawing::pdf::PdfOptions {
                 remove_line_weights: opts.remove_weights,
+                all_black: opts.all_black,
             },
         )
         .and_then(|bytes| std::fs::write(path, bytes).map_err(|e| format!("Export PDF: {e}")));

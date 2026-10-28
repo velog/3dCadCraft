@@ -18,6 +18,8 @@ use super::sheet::{Anchor, Prim};
 pub struct PdfOptions {
     /// Every line at one weight (0.25 mm).
     pub remove_line_weights: bool,
+    /// Every layer colour printed black (Inventor's All Colors as Black).
+    pub all_black: bool,
 }
 
 /// One page: paper size (mm) and what is on it.
@@ -34,9 +36,12 @@ const PT: f64 = 72.0 / 25.4;
 /// Writes `pages` as a PDF. `font` is a TrueType / OpenType font for the
 /// texts (without one, texts are left out).
 pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<Vec<u8>, String> {
-    let mut doc = Document::new();
+    // Tests read the content streams, so they stay uncompressed there.
+    let mut doc = Document::new_with(krilla::SerializeSettings {
+        compress_content_streams: !cfg!(test),
+        ..Default::default()
+    });
     let font = font.and_then(|f| Font::new(f.into(), 0));
-    let black: krilla::paint::Paint = rgb::Color::new(0, 0, 0).into();
     for page in pages {
         let (w, h) = page.size;
         let settings = PageSettings::from_wh((w * PT) as f32, (h * PT) as f32)
@@ -45,8 +50,11 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
         let mut s = p.surface();
         // Sheet mm (y up) → PDF points (y down from the top).
         let at = |q: [f64; 2]| Point::from_xy((q[0] * PT) as f32, ((h - q[1]) * PT) as f32);
-        let stroke = |width_mm: f64, dash: Option<Vec<f64>>| Stroke {
-            paint: black.clone(),
+        // The layer pen: its colour, and whether it prints at all.
+        let mut ink: krilla::paint::Paint = rgb::Color::new(0, 0, 0).into();
+        let mut plot = true;
+        let stroke = |ink: &krilla::paint::Paint, width_mm: f64, dash: Option<Vec<f64>>| Stroke {
+            paint: ink.clone(),
             width: (if opts.remove_line_weights {
                 0.25
             } else {
@@ -75,18 +83,28 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
             pb.finish()
         };
         for prim in &page.prims {
+            if let Prim::Pen { color, plot: p } = prim {
+                let c = if opts.all_black { [0, 0, 0] } else { *color };
+                ink = rgb::Color::new(c[0], c[1], c[2]).into();
+                plot = *p;
+                continue;
+            }
+            if !plot {
+                continue;
+            }
             match prim {
+                Prim::Pen { .. } => {}
                 Prim::Line { a, b, weight } => {
                     if let Some(pa) = path(&[*a, *b], false) {
                         s.set_fill(None);
-                        s.set_stroke(Some(stroke(weight.mm(), None)));
+                        s.set_stroke(Some(stroke(&ink, weight.mm(), None)));
                         s.draw_path(&pa);
                     }
                 }
                 Prim::Path { pts, width, dashed } => {
                     if let Some(pa) = path(pts, false) {
                         s.set_fill(None);
-                        s.set_stroke(Some(stroke(*width, dashed.then(|| vec![3.0, 1.5]))));
+                        s.set_stroke(Some(stroke(&ink, *width, dashed.then(|| vec![3.0, 1.5]))));
                         s.draw_path(&pa);
                     }
                 }
@@ -94,7 +112,7 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
                     if let Some(pa) = path(&[*a, *b], false) {
                         s.set_fill(None);
                         let dash = chain.then(|| vec![12.0, 1.5, 1.5, 1.5]);
-                        s.set_stroke(Some(stroke(*width, dash)));
+                        s.set_stroke(Some(stroke(&ink, *width, dash)));
                         s.draw_path(&pa);
                     }
                 }
@@ -102,7 +120,7 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
                     if let Some(pa) = path(pts, true) {
                         s.set_stroke(None);
                         s.set_fill(Some(Fill {
-                            paint: black.clone(),
+                            paint: ink.clone(),
                             opacity: NormalizedF32::ONE,
                             rule: FillRule::NonZero,
                         }));
@@ -128,7 +146,7 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
                     let origin = at(*q);
                     s.set_stroke(None);
                     s.set_fill(Some(Fill {
-                        paint: black.clone(),
+                        paint: ink.clone(),
                         opacity: NormalizedF32::ONE,
                         rule: FillRule::NonZero,
                     }));

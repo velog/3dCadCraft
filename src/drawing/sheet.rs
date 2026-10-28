@@ -177,6 +177,16 @@ pub enum Prim {
         /// Hidden-line dashes.
         dashed: bool,
     },
+    /// From here on, the colour of a layer; `plot: false` = shown but not
+    /// printed (Inventor's layer Plot flag). Every group of the display list
+    /// (the border, a view's visible lines, an annotation…) starts with the
+    /// pen of its layer; a layer that is off leaves its group out.
+    Pen {
+        /// sRGB.
+        color: [u8; 3],
+        /// Printed and published.
+        plot: bool,
+    },
     /// A centre line (long dash, dot).
     Center {
         /// Start (mm).

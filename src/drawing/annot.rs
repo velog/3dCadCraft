@@ -23,6 +23,9 @@ pub struct Annotation {
     /// What it is.
     #[serde(flatten)]
     pub kind: AnnotationKind,
+    /// Its own layer (else the one Object Defaults gives its kind).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
 }
 
 /// The annotation kinds.
@@ -1025,6 +1028,21 @@ pub(super) fn norm(a: [f64; 2]) -> f64 {
 }
 
 impl Annotation {
+    /// The layer it is drawn on: its own, else the Object Defaults' layer
+    /// of its kind (Inventor: dimensions on Dimension, centre marks and
+    /// centrelines on theirs, every note, table, balloon and tag on Symbol).
+    pub fn layer_name<'a>(&'a self, d: &'a super::style::ObjectDefaults) -> &'a str {
+        if let Some(l) = &self.layer {
+            return l;
+        }
+        match &self.kind {
+            AnnotationKind::Dimension(_) | AnnotationKind::DimSet(_) => &d.dimension_layer,
+            AnnotationKind::CenterMark { .. } => &d.center_layer,
+            AnnotationKind::Centerline { .. } => &d.centerline_layer,
+            _ => &d.symbol_layer,
+        }
+    }
+
     /// The view it belongs to (`None`: a sheet text).
     pub fn view(&self) -> Option<u32> {
         match &self.kind {

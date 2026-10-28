@@ -1018,9 +1018,12 @@ impl CadCraftApp {
         );
         painter.rect_filled(paper, 0.0, PAPER);
 
-        // Border and title block.
-        let prims = self.format_prims_active();
-        super::drawing_annot::paint_prims(&painter, &cam, rect, &prims, INK);
+        // Border and title block, on the border layer.
+        let inks = self.layer_inks();
+        if let Some(ink) = inks.border {
+            let prims = self.format_prims_active();
+            super::drawing_annot::paint_prims(&painter, &cam, rect, &prims, ink);
+        }
 
         // Views.
         let views = self.shown_views(&ctx);
@@ -1034,7 +1037,15 @@ impl CadCraftApp {
         };
         self.drw.hover = at_sheet.and_then(hit);
         for v in &views {
-            draw_view(&painter, &cam, rect, v, self.drw.weights);
+            draw_view_inks(
+                &painter,
+                &cam,
+                rect,
+                v,
+                inks.visible,
+                inks.hidden,
+                self.drw.weights,
+            );
             let frame_color = if self.drw.sel == Some(v.id) {
                 Some(SEL)
             } else if self.drw.hover == Some(v.id)
@@ -1079,7 +1090,7 @@ impl CadCraftApp {
                 .collect();
             let extras =
                 crate::drawing::render::view_extras(d, d.active_sheet, &|id| map.get(&id).copied());
-            super::drawing_annot::paint_prims(&painter, &cam, rect, &extras, INK);
+            super::drawing_annot::paint_prims_styled(&painter, &cam, rect, &extras, INK);
         }
 
         // Annotations (parts lists and balloons read this frame's BOM).
@@ -2018,6 +2029,15 @@ impl CadCraftApp {
             return;
         };
         let label_w = super::panels::label_width(ui.ctx());
+        if let Some(a) = self
+            .drw
+            .sel_ann
+            .and_then(|id| sheet.annotations.iter().find(|a| a.id == id))
+            .cloned()
+        {
+            self.annotation_properties(ui, &a, label_w);
+            return;
+        }
         let view = self.drw.sel.and_then(|id| sheet.view(id)).cloned();
         let Some(v) = view else {
             let (w, h) = sheet.dims();
@@ -2513,8 +2533,134 @@ fn dashed_rect(p: &egui::Painter, a: Pos2, b: Pos2, c: Color32) {
     p.extend(Shape::dashed_line(&pts, Stroke::new(1.2, c), 6.0, 4.0));
 }
 
-fn draw_view(p: &egui::Painter, cam: &SheetCam, rect: Rect, v: &ShownView, weights: [f64; 2]) {
-    draw_view_colored(p, cam, rect, v, INK, weights);
+impl CadCraftApp {
+    /// Properties of the selected annotation: its kind and its layer (By
+    /// Standard = the Object Defaults' layer of its kind; Inventor's Format
+    /// › Layer list).
+    fn annotation_properties(
+        &mut self,
+        ui: &mut egui::Ui,
+        a: &crate::drawing::annot::Annotation,
+        label_w: f32,
+    ) {
+        let Some(d) = self.drawing() else {
+            return;
+        };
+        let layers: Vec<String> = d.styles.layers.iter().map(|l| l.name.clone()).collect();
+        let by_standard = {
+            let mut plain = a.clone();
+            plain.layer = None;
+            plain.layer_name(&d.styles.defaults).to_owned()
+        };
+        let mut layer = a.layer.clone();
+        egui::Grid::new("drw_ann_props")
+            .num_columns(2)
+            .min_col_width(label_w)
+            .show(ui, |ui| {
+                super::panels::plabel(ui, "Annotation");
+                ui.label(annotation_kind_name(&a.kind));
+                ui.end_row();
+                super::panels::plabel(ui, "Layer");
+                let shown = match &layer {
+                    Some(l) => l.clone(),
+                    None => format!("By Standard ({by_standard})"),
+                };
+                egui::ComboBox::from_id_salt("drw_ann_layer")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut layer,
+                            None,
+                            format!("By Standard ({by_standard})"),
+                        );
+                        for l in &layers {
+                            ui.selectable_value(&mut layer, Some(l.clone()), l);
+                        }
+                    });
+                ui.end_row();
+            });
+        if layer != a.layer {
+            let id = a.id;
+            self.edit_drawing("Layer", move |d| {
+                if let Some(x) = d
+                    .sheet_mut()
+                    .and_then(|s| s.annotations.iter_mut().find(|x| x.id == id))
+                {
+                    x.layer = layer;
+                }
+            });
+        }
+    }
+}
+
+/// Display name of an annotation kind.
+fn annotation_kind_name(k: &crate::drawing::AnnotationKind) -> &'static str {
+    match k {
+        crate::drawing::AnnotationKind::CenterMark { .. } => "Center Mark",
+        crate::drawing::AnnotationKind::Centerline { .. } => "Centerline",
+        crate::drawing::AnnotationKind::Dimension(_) => "Dimension",
+        crate::drawing::AnnotationKind::HoleNote { .. } => "Hole and Thread Note",
+        crate::drawing::AnnotationKind::ChamferNote(_) => "Chamfer Note",
+        crate::drawing::AnnotationKind::LeaderText { .. } => "Leader Text",
+        crate::drawing::AnnotationKind::BendNote { .. } => "Bend Note",
+        crate::drawing::AnnotationKind::PartsList(_) => "Parts List",
+        crate::drawing::AnnotationKind::BendTable(_) => "Bend Table",
+        crate::drawing::AnnotationKind::DimSet(_) => "Dimension Set",
+        crate::drawing::AnnotationKind::HoleTable(_) => "Hole Table",
+        crate::drawing::AnnotationKind::Balloon(_) => "Balloon",
+        crate::drawing::AnnotationKind::Table(_) => "Table",
+        crate::drawing::AnnotationKind::RevisionTable(_) => "Revision Table",
+        crate::drawing::AnnotationKind::RevisionTag(_) => "Revision Tag",
+        crate::drawing::AnnotationKind::RevisionCloud(_) => "Revision Cloud",
+        crate::drawing::AnnotationKind::Text { .. } => "Text",
+    }
+}
+
+/// The colours of the sheet's layers this frame (`None`: the layer is off).
+pub(super) struct LayerInks {
+    pub border: Option<Color32>,
+    pub visible: Option<Color32>,
+    pub hidden: Option<Color32>,
+}
+
+impl CadCraftApp {
+    /// The border, visible and hidden layers' colours of the drawing.
+    pub(super) fn layer_inks(&self) -> LayerInks {
+        let ink = |name: &str| {
+            self.drawing().and_then(|d| match d.styles.pen(name) {
+                Some(Prim::Pen { color, .. }) => {
+                    Some(Color32::from_rgb(color[0], color[1], color[2]))
+                }
+                _ => None,
+            })
+        };
+        let Some(d) = self.drawing() else {
+            return LayerInks {
+                border: Some(INK),
+                visible: Some(INK),
+                hidden: Some(HIDDEN_INK),
+            };
+        };
+        let o = &d.styles.defaults;
+        LayerInks {
+            border: ink(&o.border_layer),
+            visible: ink(&o.visible_layer),
+            hidden: ink(&o.hidden_layer),
+        }
+    }
+}
+
+/// A view's lines in its layers' colours; a layer that is off is left out.
+fn draw_view_inks(
+    p: &egui::Painter,
+    cam: &SheetCam,
+    rect: Rect,
+    v: &ShownView,
+    visible: Option<Color32>,
+    hidden: Option<Color32>,
+    weights: [f64; 2],
+) {
+    paint_view(p, cam, rect, v, visible, hidden, weights);
 }
 
 /// A view's lines: visible solid (0.5 mm), hidden dashed (0.35 mm) when the
@@ -2525,6 +2671,23 @@ pub(super) fn draw_view_colored(
     rect: Rect,
     v: &ShownView,
     ink: Color32,
+    weights: [f64; 2],
+) {
+    let hidden = if ink == INK {
+        HIDDEN_INK
+    } else {
+        ink.gamma_multiply(0.7)
+    };
+    paint_view(p, cam, rect, v, Some(ink), Some(hidden), weights);
+}
+
+fn paint_view(
+    p: &egui::Painter,
+    cam: &SheetCam,
+    rect: Rect,
+    v: &ShownView,
+    ink: Option<Color32>,
+    hidden: Option<Color32>,
     weights: [f64; 2],
 ) {
     let Some(lines) = &v.lines else {
@@ -2542,12 +2705,9 @@ pub(super) fn draw_view_colored(
     };
     let w = ((weights[0] * cam.zoom) as f32).clamp(1.0, 4.0);
     let hw = ((weights[1] * cam.zoom) as f32).clamp(0.8, 3.0);
-    if v.style == ViewStyle::HiddenShown {
-        let hidden = if ink == INK {
-            HIDDEN_INK
-        } else {
-            ink.gamma_multiply(0.7)
-        };
+    if v.style == ViewStyle::HiddenShown
+        && let Some(hidden) = hidden
+    {
         let dash = ((3.0 * cam.zoom) as f32).clamp(3.0, 40.0);
         let gap = ((1.5 * cam.zoom) as f32).clamp(2.0, 20.0);
         for l in &lines.hidden {
@@ -2555,6 +2715,9 @@ pub(super) fn draw_view_colored(
             p.extend(Shape::dashed_line(&pts, Stroke::new(hw, hidden), dash, gap));
         }
     }
+    let Some(ink) = ink else {
+        return;
+    };
     for l in &lines.visible {
         let pts: Vec<Pos2> = l.iter().map(map).collect();
         p.add(Shape::line(pts, Stroke::new(w, ink)));

@@ -38,7 +38,31 @@
       "hatch": 0.18,
       "section_line": 0.7,
       "border": 0.7,
-      "title": 0.5
+      "title": 0.5,
+      "centerline": 0.25,
+      "symbol": 0.25,
+      "detail_boundary": 0.25,
+      "break_line": 0.25,
+      "visible_narrow": 0.35,
+      "hidden_narrow": 0.254,
+      "sketch_geometry": 0.25
+    },
+    "object_layers": {
+      "dimension": "Dimension (ISO)",
+      "center_mark": "Center Mark (ISO)",
+      "centerline": "Centerline (ISO)",
+      "general_note": "Symbol (ISO)",
+      "leader_text": "Symbol (ISO)",
+      "hole_note": "Symbol (ISO)",
+      "parts_list": "Symbol (ISO)",
+      "balloon": "Symbol (ISO)",
+      "revision_table": "Symbol (ISO)",
+      "table": "Symbol (ISO)",
+      "view_label": "Symbol (ISO)",
+      "detail_callout": "Detail Boundary (ISO)",
+      "section_line": "Section Line (ISO)",
+      "border": "Border (ISO)",
+      "title_block": "Title (ISO)"
     },
     "border": {
       "margin": 10.0,

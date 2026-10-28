@@ -690,15 +690,17 @@ fn style_pane(
                                 .range(0.05..=3.0)
                                 .suffix(" mm"),
                         );
-                        ui.add_enabled(false, egui::Checkbox::new(&mut l.plot, ""))
-                            .on_disabled_hover_text("Plot: planned (every layer prints)");
+                        ui.checkbox(&mut l.plot, "").on_hover_text(
+                            "Printed and published (PDF); the layer still shows on the screen",
+                        );
                         ui.label("");
                         ui.end_row();
                     }
                 });
+            ui.weak("Colours, On and Plot apply on the screen and in the PDF; a layer that is off hides its objects.");
             planned(
                 ui,
-                "Line types of layers draw from the object (hidden dashed, centre chain) for now; colours on screen and paper are planned",
+                "Line types of layers draw from the object (hidden dashed, centre chain) for now",
                 "spec 4.6 §3.4",
             );
         }

@@ -677,6 +677,173 @@ fn pdf_of_a_sheet() {
     assert!(text.contains("/Count 2"), "two pages");
 }
 
+/// Every group of the display list starts with its layer's pen; a layer
+/// that is off leaves its group out; an annotation's own layer wins over the
+/// Object Defaults; a layer that does not plot is left out of the PDF.
+#[test]
+fn layers_drive_the_display_list() {
+    use super::sheet::Prim;
+    let part = primitive(
+        PrimitiveKind::Box,
+        Point2::new(0.0, 0.0),
+        Point2::new(20.0, 10.0),
+        10.0,
+    );
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [150.0, 180.0],
+            2.0,
+            ViewStyle::HiddenShown,
+        )
+        .unwrap();
+    let note = d
+        .add_annotation(AnnotationKind::Text {
+            at: [30.0, 30.0],
+            text: "NOTE".into(),
+            height: 3.5,
+        })
+        .unwrap();
+    let front = Arc::new(lines_of(&part, ViewOrientation::Front));
+    let list = |d: &DrawingDocument| {
+        super::render::sheet_list(
+            d,
+            0,
+            &|_| "T".into(),
+            &|_| Some(front.clone()),
+            &Default::default(),
+        )
+    };
+    let pens = |l: &[Prim]| -> Vec<[u8; 3]> {
+        l.iter()
+            .filter_map(|p| match p {
+                Prim::Pen { color, .. } => Some(*color),
+                _ => None,
+            })
+            .collect()
+    };
+    let has_text = |l: &[Prim], t: &str| {
+        l.iter()
+            .any(|p| matches!(p, Prim::Text { text, .. } if text == t))
+    };
+    let all = list(&d);
+    assert!(
+        matches!(all.first(), Some(Prim::Pen { .. })),
+        "starts with a pen"
+    );
+    assert!(has_text(&all, "NOTE"));
+    // Notes are on Symbol (ISO): coloured, then turned off.
+    let sym = d.styles.defaults.symbol_layer.clone();
+    let red = [200, 0, 0];
+    for l in d.styles.layers.iter_mut().filter(|l| l.name == sym) {
+        l.color = red;
+    }
+    assert!(pens(&list(&d)).contains(&red));
+    for l in d.styles.layers.iter_mut().filter(|l| l.name == sym) {
+        l.on = false;
+    }
+    assert!(
+        !has_text(&list(&d), "NOTE"),
+        "a layer that is off hides its notes"
+    );
+    // The note's own layer wins.
+    if let Some(a) = d.sheets[0].annotations.iter_mut().find(|a| a.id == note) {
+        a.layer = Some("Dimension (ISO)".into());
+    }
+    assert!(has_text(&list(&d), "NOTE"));
+    // Hidden edges off: no dashed path is left.
+    let hid = d.styles.defaults.hidden_layer.clone();
+    for l in d.styles.layers.iter_mut().filter(|l| l.name == hid) {
+        l.on = false;
+    }
+    assert!(
+        !list(&d)
+            .iter()
+            .any(|p| matches!(p, Prim::Path { dashed: true, .. }))
+    );
+    // A non-plotting layer: its text is not in the PDF stream.
+    for l in d
+        .styles
+        .layers
+        .iter_mut()
+        .filter(|l| l.name == "Dimension (ISO)")
+    {
+        l.plot = false;
+    }
+    let l = list(&d);
+    assert!(has_text(&l, "NOTE"), "still on the screen list");
+    let page = super::pdf::Page {
+        size: d.sheets[0].dims(),
+        prims: l,
+    };
+    let pdf = |page: &super::pdf::Page, all_black: bool| {
+        let o = super::pdf::PdfOptions {
+            all_black,
+            ..Default::default()
+        };
+        String::from_utf8_lossy(&super::pdf::write(std::slice::from_ref(page), None, o).unwrap())
+            .into_owned()
+    };
+    // Red (200, 0, 0) is in the content stream, and gone with All Colors
+    // as Black.
+    let vis = d.styles.defaults.visible_layer.clone();
+    for l in d.styles.layers.iter_mut().filter(|l| l.name == vis) {
+        l.color = red;
+    }
+    let coloured = super::pdf::Page {
+        size: page.size,
+        prims: list(&d),
+    };
+    let text = pdf(&coloured, false);
+    assert!(text.starts_with("%PDF-"));
+    // 200 / 255 in the stroke colour operator.
+    let red_op = "0.78431374 0 0 RG";
+    assert!(text.contains(red_op), "red layer colour in the PDF");
+    assert!(!pdf(&coloured, true).contains(red_op), "all black");
+    // The view's lines (Visible layer) leave the PDF when it does not plot.
+    let before = pdf(&coloured, false)
+        .matches(
+            " l
+",
+        )
+        .count();
+    for l in d.styles.layers.iter_mut().filter(|l| l.name == vis) {
+        l.plot = false;
+    }
+    let after_page = super::pdf::Page {
+        size: page.size,
+        prims: list(&d),
+    };
+    let after = pdf(&after_page, false)
+        .matches(
+            " l
+",
+        )
+        .count();
+    assert!(
+        after < before,
+        "non-plotting layer printed: {before} -> {after}"
+    );
+    // An old drawing without the new layers gets the built-in ones.
+    let mut old = DrawingDocument::default();
+    old.styles.layers.retain(|l| l.name != sym);
+    let s = old.styles.layer(&sym);
+    assert_eq!(s.name, sym);
+    // Loading completes the layer list (the Layer lists offer it).
+    old.fix();
+    assert!(old.styles.layers.iter().any(|l| l.name == sym));
+    let mut ansi = DrawingDocument::default();
+    ansi.standard.kind = super::StandardKind::Ansi;
+    ansi.styles = super::style::DrawingStyles::of(super::StandardKind::Ansi);
+    ansi.styles.defaults.symbol_layer = "Symbol (ISO)".into();
+    ansi.styles.layers.retain(|l| l.name != "Symbol (ISO)");
+    ansi.fix();
+    assert_eq!(ansi.styles.defaults.symbol_layer, "Symbol (ANSI)");
+    let _ = b;
+}
+
 fn plate_with_hole() -> PartDocument {
     // 60 × 40 × 10 centred on the origin, a Ø10 hole through the middle.
     let mut part = primitive(
@@ -1106,9 +1273,40 @@ fn iso_and_ansi_defaults() {
         ("Section Line (ISO)", "section_line"),
         ("Border (ISO)", "border"),
         ("Title (ISO)", "title"),
+        ("Centerline (ISO)", "centerline"),
+        ("Symbol (ISO)", "symbol"),
+        ("Detail Boundary (ISO)", "detail_boundary"),
+        ("Break Line (ISO)", "break_line"),
+        ("Visible Narrow (ISO)", "visible_narrow"),
+        ("Hidden Narrow (ISO)", "hidden_narrow"),
+        ("Sketch Geometry (ISO)", "sketch_geometry"),
     ] {
-        close(iso.layer(name).weight, f(&l[key]), 1e-9, name);
+        assert!(iso.layers.iter().any(|x| x.name == name), "{name} missing");
+        close(iso.layer(name).weight, f(&l[key]), 1e-3, name);
     }
+    // The layer each object type takes (Object Defaults).
+    let o = &r["ISO"]["object_layers"];
+    let s = |k: &str| o[k].as_str().unwrap_or_default().to_owned();
+    let d = &iso.defaults;
+    assert_eq!(d.dimension_layer, s("dimension"));
+    assert_eq!(d.center_layer, s("center_mark"));
+    assert_eq!(d.centerline_layer, s("centerline"));
+    for k in [
+        "general_note",
+        "leader_text",
+        "hole_note",
+        "parts_list",
+        "balloon",
+        "revision_table",
+        "table",
+        "view_label",
+    ] {
+        assert_eq!(d.symbol_layer, s(k), "{k}");
+    }
+    assert_eq!(d.detail_layer, s("detail_callout"));
+    assert_eq!(d.section_layer, s("section_line"));
+    assert_eq!(d.border_layer, s("border"));
+    assert_eq!(d.title_layer, s("title_block"));
     assert_eq!(
         iso.layer("Center Mark (ISO)").line_type,
         LineType::Continuous

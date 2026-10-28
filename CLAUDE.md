@@ -1183,6 +1183,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   find the edge again by the distance to its *segments* (a straight edge samples as its two ends — a tie picked
   the wrong edge). A Sculpt / Stitch body closed by a rim patch may come out inside-out: check its volume's sign
   (`surface_ops::reversed`); a revolved dome closed that way still fails the kernel's Boolean.
+- **Drawing layers are pens in the display list** (`Prim::Pen { color, plot }`, `render::sheet_list`): every group
+  (border, a view's visible / hidden lines, hatching, section lines, labels, each annotation) starts with its layer's
+  pen, and a layer that is off leaves the group out. `paint_prims` (highlight / preview colour) ignores pens,
+  `paint_prims_styled` follows them; the PDF skips non-plotting layers. A new drawn group must push its pen
+  (`DrawingStyles::pen(layer)`); an annotation's layer is `Annotation::layer_name` (own layer, else Object Defaults:
+  dimensions → Dimension, centre marks / centrelines → theirs, everything else → Symbol). `DrawingDocument::fix`
+  adds the standard's built-in layers an older drawing lacks (`DrawingStyles::complete`).
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

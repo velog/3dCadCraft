@@ -254,7 +254,7 @@ Before each step: verify its rows against the Inventor 2027 help (spec §7).
 | Dragging within the freedom, interference check | 3.4, 3.5 |
 | BOM | 3.6 |
 | Component patterns | 3.7 |
-| Drawing: sheets, title block, ISO/ANSI; Base, Projected, Section, Detail views; HLR (🟡 2026-10-26: sheets, title block, Base / Projected / Section / Detail / Auxiliary views with HLR, dimensions, centre marks, centrelines, hole notes, texts, PDF; 2026-10-26 later: assembly views, Parts List, Balloon, Auto Balloon (spec 4.4); 2026-10-27: Edit Dimension tolerances / fits, baseline / chain / ordinate dimensions and sets, Arrange, hole tables, Chamfer Note (spec 4.7); 2026-10-28: general table (Empty / CSV), revision table / tags / clouds (format revision 36); next: Break / Break Out / Crop, angular dimensions, tangent-edge option, DXF) | 4.1, 4.2 |
+| Drawing: sheets, title block, ISO/ANSI; Base, Projected, Section, Detail views; HLR (🟡 2026-10-26: sheets, title block, Base / Projected / Section / Detail / Auxiliary views with HLR, dimensions, centre marks, centrelines, hole notes, texts, PDF; 2026-10-26 later: assembly views, Parts List, Balloon, Auto Balloon (spec 4.4); 2026-10-27: Edit Dimension tolerances / fits, baseline / chain / ordinate dimensions and sets, Arrange, hole tables, Chamfer Note (spec 4.7); 2026-10-28: general table (Empty / CSV), revision table / tags / clouds (format revision 36); gap review against Inventor 2027 → stages D-S1..D-S9 below; next: D-S2 (Format Text, symbols, fields)) | 4.1, 4.2 |
 | Dimensions, hole notes, centerlines, Parts List + balloons; export to PDF and DXF | 4.3–4.5 |
 | Patterns and mirror of features and bodies (🟡 done, waiting for a visual check — step 2.7) | 2.11, 2.12 |
 | Home start page and one file per document (owner, 2026-10-26; specs [0.17](spec/0.17-home.md), [0.6a](spec/0.6a-file-types-projects.md)): H1 Home page + `FileType` / `DesignProject` (🟡 2026-10-26, waiting for the owner's check) → H2 Save As per kind (`.ccpart` / `.ccasm` / `.ccdrw`), Open filters, drawings / assemblies linking single files → H3 Projects editor, active project, per-project recent lists, workspace start folders → H4 Pack and Go to `.3dcadcraft`, `OldVersions`, Home commands with aliases, reduced ribbon on Home | 0.6, 0.17 |
@@ -326,6 +326,25 @@ disabled) → logic, command by command** (rules 7, 14, 15, 17). The part comman
 | P0.7 | The hover tooltip of a face covers the mini-toolbar | `gui/mod.rs` | ⬜ |
 
 ### P — part environment
+
+### Drawing stages after the 2026-10-28 gap review
+
+The review of Inventor 2027's drawing environment found that most missing commands lean on three shared
+foundations; the order below builds those first. Each stage: spec rows first, Inventor as the reference.
+
+| Stage | Content | Status |
+|---|---|---|
+| D-S1 | Layers and styles drawn: layer colour / On / Plot on the screen and in the PDF, Object Defaults per object type (Symbol layer for notes, tables, balloons, tags, labels), an annotation's own layer, PDF All Colors as Black | 🟡 2026-10-28 (line types per layer, Format panel Style / Layer lists, scale by line weight ⬜) |
+| D-S2 | Format Text: runs (font, size, colour, bold / italic / underline), justification, line spacing, rotation, border / fill; grouped symbol palette; live fields (parameters, iProperties, sheet properties, parts-list cell, prompted entries) with precision; stacks; view label templates | ⬜ |
+| D-S3 | Dimensions: angular (two lines, three points, arc), arc length, chord, quadrant / tangent of circles, implied intersection, linear diameter, Dimension Type menu (radius ↔ diameter ↔ linear), per-end arrowheads, hide extension lines; multi-vertex leaders, Add / Delete Leader; hole note templates per hole type | ⬜ |
+| D-S4 | Surface Texture, Feature Control Frame, Datum Identifier; Centerline Bisector, Centered Pattern, Automated Centerlines | ⬜ |
+| D-S5 | Drawing sketches (sheet and view), Define Title Block / Border (zones, prompted entries) / Sketched Symbol, templates | ⬜ |
+| D-S6 | Break, Break Out, multi-segment section lines, section depth, hatch editing per region, rectangular detail fence, Crop, view display flags (tangent edges, threads, interference edges) | ⬜ |
+| D-S7 | Retrieve Model Annotations (sketch / feature dimensions into a view), Edit Model Dimension | ⬜ |
+| D-S8 | DXF export, parts list export / filters / grouping, hole table row merge and filters, PDF options | ⬜ |
+| D-S9 | Dual units, Linear / Angular Sum, foreshortened dimensions, welding / caterpillar / end fill, datum targets, Slice, Overlay, Draft View, punch and slot notes | ⬜ |
+
+
 
 | Step | Content | Spec | Status |
 |---|---|---|---|

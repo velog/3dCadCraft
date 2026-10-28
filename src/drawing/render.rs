@@ -57,19 +57,26 @@ pub fn sheet_list(
     lines: &dyn Fn(u32) -> Option<Arc<ViewLines>>,
     tables: &super::parts::Tables,
 ) -> Vec<Prim> {
-    let mut out = sheet::format_prims(doc, i, title);
+    let st = &doc.styles;
+    let mut out = Vec::new();
+    if let Some(pen) = st.pen(&st.defaults.border_layer) {
+        out.push(pen);
+        out.extend(sheet::format_prims(doc, i, title));
+    }
     let Some(sheet) = doc.sheets.get(i) else {
         return out;
     };
     let placed = placements(doc, i, lines);
-    let st = &doc.styles;
     let visible = st.layer(&st.defaults.visible_layer);
     let hidden = st.layer(&st.defaults.hidden_layer);
     for v in &sheet.views {
         let Some((pl, style, l)) = placed.get(&v.id) else {
             continue;
         };
-        if *style == ViewStyle::HiddenShown && hidden.on {
+        if *style == ViewStyle::HiddenShown
+            && let Some(pen) = st.pen(&hidden.name)
+        {
+            out.push(pen);
             for h in &l.hidden {
                 out.push(Prim::Path {
                     pts: h.iter().map(|q| pl.to_sheet(*q)).collect(),
@@ -78,7 +85,8 @@ pub fn sheet_list(
                 });
             }
         }
-        if visible.on {
+        if let Some(pen) = st.pen(&visible.name) {
+            out.push(pen);
             for p in &l.visible {
                 out.push(Prim::Path {
                     pts: p.iter().map(|q| pl.to_sheet(*q)).collect(),
@@ -90,12 +98,14 @@ pub fn sheet_list(
     }
     let view = |id: u32| placed.get(&id).map(|(pl, _, l)| (*pl, l.as_ref()));
     out.extend(view_extras(doc, i, &view));
-    if st.layer(&st.defaults.dimension_layer).on {
-        let look = st.look();
-        for a in &sheet.annotations {
-            if let Ok(s) = annot::resolve_in(&a.kind, &view, &look, tables) {
-                out.extend(s.prims);
-            }
+    let look = st.look();
+    for a in &sheet.annotations {
+        let Some(pen) = st.pen(a.layer_name(&st.defaults)) else {
+            continue;
+        };
+        if let Ok(s) = annot::resolve_in(&a.kind, &view, &look, tables) {
+            out.push(pen);
+            out.extend(s.prims);
         }
     }
     out
@@ -119,13 +129,25 @@ pub fn view_extras<'a>(
     let center_w = st.layer(&st.defaults.section_layer).weight;
     let va = st.view_annotation(&st.defaults.view_annotation);
     let (bend_c, bend_x) = st.bend_layers();
+    let pen = |l: &super::style::LayerStyle| {
+        l.on.then_some(Prim::Pen {
+            color: l.color,
+            plot: l.plot,
+        })
+    };
+    let section_pen = st.pen(&st.defaults.section_layer);
+    let detail_pen = st.pen(&st.defaults.detail_layer);
+    let symbol_pen = st.pen(&st.defaults.symbol_layer);
     for v in &sheet.views {
         let Some((pl, l)) = view(v.id) else {
             continue;
         };
         // Flat patterns: bend centre lines and bend extents.
         for b in &l.bends {
-            if bend_c.on && v.display.bend_centerlines {
+            if let Some(p) = pen(&bend_c)
+                && v.display.bend_centerlines
+            {
+                out.push(p);
                 out.push(Prim::Center {
                     a: pl.to_sheet(b.centre[0]),
                     b: pl.to_sheet(b.centre[1]),
@@ -133,7 +155,10 @@ pub fn view_extras<'a>(
                     chain: bend_c.line_type != super::style::LineType::Continuous,
                 });
             }
-            if bend_x.on && v.display.bend_extents {
+            if let Some(p) = pen(&bend_x)
+                && v.display.bend_extents
+            {
+                out.push(p);
                 for z in &b.zone {
                     out.push(Prim::Path {
                         pts: vec![pl.to_sheet(z[0]), pl.to_sheet(z[1])],
@@ -144,7 +169,10 @@ pub fn view_extras<'a>(
             }
         }
         // Hatching of cut faces (the hatch style: angle, spacing, double).
-        if v.display.hatching && hatch_layer.on {
+        if v.display.hatching
+            && let Some(p) = pen(&hatch_layer)
+        {
+            out.push(p);
             let loops: Vec<Vec<[f64; 2]>> = l
                 .section
                 .iter()
@@ -166,7 +194,10 @@ pub fn view_extras<'a>(
             }
         }
         // The detail view's boundary.
-        if let ViewKind::Detail { radius, .. } = v.kind {
+        if let ViewKind::Detail { radius, .. } = v.kind
+            && let Some(p) = detail_pen.clone()
+        {
+            out.push(p);
             out.push(circle(v.position, radius * pl.scale));
         }
         // Definitions drawn on the parent.
@@ -175,7 +206,8 @@ pub fn view_extras<'a>(
             && let Some((ppl, _)) = view(pid)
         {
             match v.kind {
-                ViewKind::Section { a, b, side, .. } => {
+                ViewKind::Section { a, b, side, .. } if section_pen.is_some() => {
+                    out.extend(section_pen.clone());
                     section_line(
                         &mut out,
                         doc,
@@ -186,7 +218,8 @@ pub fn view_extras<'a>(
                         va.identifier_height,
                     );
                 }
-                ViewKind::Detail { center, radius, .. } => {
+                ViewKind::Detail { center, radius, .. } if detail_pen.is_some() => {
+                    out.extend(detail_pen.clone());
                     let c = ppl.to_sheet(center);
                     let r = radius * ppl.scale;
                     out.push(circle(c, r));
@@ -203,7 +236,10 @@ pub fn view_extras<'a>(
             }
         }
         // The label under the view.
-        if v.label_visible {
+        if v.label_visible
+            && let Some(p) = symbol_pen.clone()
+        {
+            out.push(p);
             let (_, h) = l.size();
             let below = match v.kind {
                 ViewKind::Detail { radius, .. } => v.position[1] - radius * pl.scale,

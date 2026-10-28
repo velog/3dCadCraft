@@ -384,6 +384,15 @@ pub struct ObjectDefaults {
     pub bend_center_layer: String,
     /// Layer of the bend extents of flat pattern views.
     pub bend_extent_layer: String,
+    /// Layer of notes, leader texts, tables, balloons, tags and view labels
+    /// (Inventor's Symbol layer).
+    pub symbol_layer: String,
+    /// Layer of centrelines (centre marks keep `center_layer`).
+    pub centerline_layer: String,
+    /// Layer of the title block (the border keeps `border_layer`).
+    pub title_layer: String,
+    /// Layer of detail view boundaries.
+    pub detail_layer: String,
 }
 
 impl Default for ObjectDefaults {
@@ -404,6 +413,10 @@ impl Default for ObjectDefaults {
             border_layer: "Border (ISO)".into(),
             bend_center_layer: "Bend Centerline (ISO)".into(),
             bend_extent_layer: "Bend Extent (ISO)".into(),
+            symbol_layer: "Symbol (ISO)".into(),
+            centerline_layer: "Centerline (ISO)".into(),
+            title_layer: "Title (ISO)".into(),
+            detail_layer: "Detail Boundary (ISO)".into(),
         }
     }
 }
@@ -505,6 +518,14 @@ impl DrawingStyles {
                 layer(&n("Title"), black, LineType::Continuous, 0.5),
                 layer(&n("Bend Centerline"), black, LineType::Chain, 0.25),
                 layer(&n("Bend Extent"), black, LineType::Continuous, 0.5),
+                // Inventor 2027's ISO template (all black).
+                layer(&n("Centerline"), black, LineType::Continuous, 0.25),
+                layer(&n("Symbol"), black, LineType::Continuous, 0.25),
+                layer(&n("Detail Boundary"), black, LineType::Continuous, 0.25),
+                layer(&n("Break Line"), black, LineType::Continuous, 0.25),
+                layer(&n("Visible Narrow"), black, LineType::Continuous, 0.35),
+                layer(&n("Hidden Narrow"), black, LineType::Dashed, 0.254),
+                layer(&n("Sketch Geometry"), black, LineType::Continuous, 0.25),
             ],
             dimension: vec![DimensionStyle {
                 name: n("Default"),
@@ -549,6 +570,10 @@ impl DrawingStyles {
                 border_layer: n("Border"),
                 bend_center_layer: n("Bend Centerline"),
                 bend_extent_layer: n("Bend Extent"),
+                symbol_layer: n("Symbol"),
+                centerline_layer: n("Centerline"),
+                title_layer: n("Title"),
+                detail_layer: n("Detail Boundary"),
             },
         };
         if kind == StandardKind::Ansi {
@@ -590,14 +615,56 @@ impl DrawingStyles {
         )
     }
 
-    /// The layer named `name`, else the first.
+    /// The layer named `name`; a drawing from before that layer existed
+    /// gets the standard's built-in one of that name, else the first layer.
     pub fn layer(&self, name: &str) -> LayerStyle {
         self.layers
             .iter()
             .find(|l| l.name == name)
-            .or(self.layers.first())
             .cloned()
+            .or_else(|| builtin_layer(name))
+            .or_else(|| self.layers.first().cloned())
             .unwrap_or_else(|| layer(name, [0, 0, 0], LineType::Continuous, 0.25))
+    }
+
+    /// Adds what a drawing from an older build lacks: the standard's
+    /// built-in layers it does not have (by name; the user's own layers and
+    /// changes stay), and Object Defaults layers that name no layer of the
+    /// drawing get the standard's (a field added later defaults to ISO).
+    pub fn complete(&mut self, kind: StandardKind) {
+        let base = Self::of(kind);
+        for l in &base.layers {
+            if !self.layers.iter().any(|x| x.name == l.name) {
+                self.layers.push(l.clone());
+            }
+        }
+        let has = |n: &str, ls: &[LayerStyle]| ls.iter().any(|x| x.name == n);
+        let b = &base.defaults;
+        let layers = self.layers.clone();
+        let d = &mut self.defaults;
+        for (field, want) in [
+            (&mut d.symbol_layer, &b.symbol_layer),
+            (&mut d.centerline_layer, &b.centerline_layer),
+            (&mut d.title_layer, &b.title_layer),
+            (&mut d.detail_layer, &b.detail_layer),
+            (&mut d.bend_center_layer, &b.bend_center_layer),
+            (&mut d.bend_extent_layer, &b.bend_extent_layer),
+            (&mut d.section_layer, &b.section_layer),
+        ] {
+            if !has(field, &layers) {
+                *field = want.clone();
+            }
+        }
+    }
+
+    /// The pen that starts a group drawn on layer `name`; `None` when the
+    /// layer is off (the group is left out).
+    pub fn pen(&self, name: &str) -> Option<super::sheet::Prim> {
+        let l = self.layer(name);
+        l.on.then_some(super::sheet::Prim::Pen {
+            color: l.color,
+            plot: l.plot,
+        })
     }
 
     /// The layer named `name`, or `fallback` when the drawing has none of
@@ -785,6 +852,12 @@ impl DrawingStyles {
                     &mut d.dimension_layer,
                     &mut d.hatch_layer,
                     &mut d.border_layer,
+                    &mut d.bend_center_layer,
+                    &mut d.bend_extent_layer,
+                    &mut d.symbol_layer,
+                    &mut d.centerline_layer,
+                    &mut d.title_layer,
+                    &mut d.detail_layer,
                 ] {
                     fix(l);
                 }
@@ -814,6 +887,20 @@ impl DrawingStyles {
         }
         Ok(())
     }
+}
+
+/// A layer of the built-in ISO / ANSI / DIN styles by name.
+fn builtin_layer(name: &str) -> Option<LayerStyle> {
+    static ALL: std::sync::OnceLock<Vec<LayerStyle>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| {
+        [StandardKind::Iso, StandardKind::Ansi, StandardKind::Din]
+            .into_iter()
+            .flat_map(|k| DrawingStyles::of(k).layers)
+            .collect()
+    })
+    .iter()
+    .find(|l| l.name == name)
+    .cloned()
 }
 
 fn section_layer() -> String {

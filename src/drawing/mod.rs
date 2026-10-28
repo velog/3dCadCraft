@@ -1272,13 +1272,18 @@ impl DrawingDocument {
             .max()
             .unwrap_or(0);
         self.next_annotation_id = self.next_annotation_id.max(max + 1);
+        self.styles.complete(self.standard.kind);
     }
 
     /// Adds an annotation to the active sheet; returns its id.
     pub fn add_annotation(&mut self, kind: AnnotationKind) -> Option<u32> {
         let id = self.next_annotation_id.max(1);
         let sheet = self.sheets.get_mut(self.active_sheet)?;
-        sheet.annotations.push(Annotation { id, kind });
+        sheet.annotations.push(Annotation {
+            id,
+            kind,
+            layer: None,
+        });
         self.next_annotation_id = id + 1;
         Some(id)
     }
