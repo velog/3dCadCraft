@@ -194,6 +194,26 @@ pub(super) fn add_part_meshes_seen(
     tint: Option<[f32; 3]>,
     alpha: Option<f32>,
 ) {
+    add_part_meshes_with(g, part, place, alpha, &|_| FaceOver { look: None, tint });
+}
+
+/// What an assembly changes on one face of an occurrence: its appearance
+/// override and a selection / prehighlight tint.
+#[derive(Clone, Debug, Default)]
+pub(super) struct FaceOver {
+    pub look: Option<Appearance>,
+    pub tint: Option<[f32; 3]>,
+}
+
+/// [`add_part_meshes_seen`] with a per-face override `over` (called with
+/// the face's persistent name).
+pub(super) fn add_part_meshes_with(
+    g: &mut SceneGeometry,
+    part: &PartDocument,
+    place: Option<&crate::kernel::Transform3>,
+    alpha: Option<f32>,
+    over: &dyn Fn(Option<&str>) -> FaceOver,
+) {
     let body = &part.body;
     let looks = Resolver::new(part).face_looks();
     let fallback = (Appearance::fallback(), LookSource::Material);
@@ -219,11 +239,15 @@ pub(super) fn add_part_meshes_seen(
         let mut clear: Vec<([f32; 4], Vec<[u32; 3]>)> = Vec::new();
         for (fid, range) in &mesh.face_triangles {
             let (look, src) = looks.get(fid).unwrap_or(&fallback);
-            let mut paint = face_paint(look, *src, solid.open);
+            let o = over(body.face(*fid).and_then(|f| f.name.as_deref()));
+            let mut paint = match &o.look {
+                Some(l) => face_paint(l, LookSource::Face, solid.open),
+                None => face_paint(look, *src, solid.open),
+            };
             if let Some(a) = alpha {
                 paint.alpha = paint.alpha.min(a);
             }
-            if let Some(c) = tint {
+            if let Some(c) = o.tint {
                 for (x, t) in paint.rgb.iter_mut().zip(c) {
                     *x = 0.5 * (*x + t);
                 }
@@ -678,6 +702,12 @@ impl CadCraftApp {
 
     /// Material and Appearance lists of the Quick Access Toolbar.
     pub(super) fn material_qat(&mut self, ui: &mut egui::Ui) {
+        // An assembly has no material list; its appearances are overrides
+        // of the components (`gui/asm_select.rs`).
+        if self.is_assembly() {
+            self.asm_appearance_qat(ui);
+            return;
+        }
         let mut todo = None;
         let current = self
             .part()
@@ -699,7 +729,7 @@ impl CadCraftApp {
         .on_hover_text("Material of the part, or of the selected bodies");
         ui.menu_button(format!("Appearance: {}", self.appearance_label()), |ui| {
             ui.set_max_height(480.0);
-            if let Some(n) = self.appearance_items(ui) {
+            if let Some(n) = self.appearance_items(ui, &self.part().looks.appearances) {
                 todo = Some(Do::Appearance(n));
             }
             ui.separator();
@@ -754,7 +784,12 @@ impl CadCraftApp {
     }
 
     /// Appearance entries by category; `Some(None)` = As Material.
-    fn appearance_items(&self, ui: &mut egui::Ui) -> Option<Option<String>> {
+    /// `doc`: the document's own copies, listed first.
+    pub(super) fn appearance_items(
+        &self,
+        ui: &mut egui::Ui,
+        doc: &[Appearance],
+    ) -> Option<Option<String>> {
         let mut picked = None;
         if ui
             .button("As Material")
@@ -764,7 +799,16 @@ impl CadCraftApp {
             picked = Some(None);
             ui.close();
         }
-        let doc = &self.part().looks.appearances;
+        picked.or_else(|| self.appearance_items_without_reset(ui, doc))
+    }
+
+    /// The document's and the library's appearances (no "As Material").
+    pub(super) fn appearance_items_without_reset(
+        &self,
+        ui: &mut egui::Ui,
+        doc: &[Appearance],
+    ) -> Option<Option<String>> {
+        let mut picked = None;
         if !doc.is_empty() {
             ui.label(RichText::new("Document Appearances").weak());
             for a in doc {
@@ -801,7 +845,7 @@ impl CadCraftApp {
         let mut out = None;
         ui.menu_button("Appearance", |ui| {
             ui.set_max_height(480.0);
-            out = self.appearance_items(ui);
+            out = self.appearance_items(ui, &self.part().looks.appearances);
         });
         out
     }

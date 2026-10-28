@@ -27,6 +27,7 @@ mod alias_input;
 mod asm_browser;
 mod asm_pattern;
 mod asm_planned;
+mod asm_select;
 mod assembly;
 mod blend;
 mod bom;
@@ -5018,7 +5019,11 @@ impl CadCraftApp {
                 self.rebuild_all();
             }
             ui.separator();
-            self.select_menu(ui);
+            if self.is_assembly() {
+                self.asm_select_menu(ui);
+            } else {
+                self.select_menu(ui);
+            }
             ui.separator();
             self.material_qat(ui);
             ui.separator();

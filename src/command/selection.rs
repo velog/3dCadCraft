@@ -234,6 +234,56 @@ impl BoxMode {
     }
 }
 
+/// Select Priority in an assembly (`docs/spec/3.0-assembly-commands.md`
+/// §3.7): what one click takes from the component under the cursor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AsmPriority {
+    /// Whole first-level components (the default).
+    #[default]
+    Component,
+    /// Parts, also inside subassemblies.
+    Part,
+    /// The feature that made the face under the cursor.
+    Feature,
+    /// The face or edge itself.
+    FacesEdges,
+    /// Sketch geometry (not drawn in an assembly yet: disabled).
+    SketchFeatures,
+}
+
+impl AsmPriority {
+    /// Every priority, in menu order.
+    pub const ALL: [AsmPriority; 5] = [
+        AsmPriority::Component,
+        AsmPriority::Part,
+        AsmPriority::Feature,
+        AsmPriority::FacesEdges,
+        AsmPriority::SketchFeatures,
+    ];
+
+    /// Inventor's name.
+    pub fn label(self) -> &'static str {
+        match self {
+            AsmPriority::Component => "Component Priority",
+            AsmPriority::Part => "Part Priority",
+            AsmPriority::Feature => "Feature Priority",
+            AsmPriority::FacesEdges => "Select Faces and Edges",
+            AsmPriority::SketchFeatures => "Select Sketch Features",
+        }
+    }
+
+    /// Whether it can be chosen yet.
+    pub fn available(self) -> bool {
+        !matches!(self, AsmPriority::SketchFeatures)
+    }
+
+    /// Whether a click takes whole components (else a feature, face or
+    /// edge of one).
+    pub fn takes_components(self) -> bool {
+        matches!(self, AsmPriority::Component | AsmPriority::Part)
+    }
+}
+
 /// The persisted selection settings (`AppOptions::selection`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -247,6 +297,8 @@ pub struct SelectSettings {
     pub box_mode: BoxMode,
     /// Enable Prehighlight.
     pub prehighlight: bool,
+    /// Select Priority in an assembly (separate from the part's).
+    pub asm_priority: AsmPriority,
 }
 
 impl Default for SelectSettings {
@@ -256,6 +308,7 @@ impl Default for SelectSettings {
             filter: Filter::all(),
             box_mode: BoxMode::default(),
             prehighlight: true,
+            asm_priority: AsmPriority::default(),
         }
     }
 }

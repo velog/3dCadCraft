@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub mod bom;
 pub mod interference;
 pub mod joint;
+pub mod looks;
 pub mod pattern;
 pub mod physical;
 pub mod relation;

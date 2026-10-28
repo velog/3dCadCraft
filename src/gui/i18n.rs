@@ -85,6 +85,14 @@ const TABLE: &[(&str, &str)] = &[
         "Сглобяването е празно. Assemble > Place (P) поставя детайл от проекта",
     ),
     (
+        "Feature Priority: click a feature of a component to select it (Ctrl adds); right-click for Appearance, Constrain, Measure",
+        "Feature Priority: щракнете елемент на компонент, за да го изберете (Ctrl добавя); десен бутон за Appearance, Constrain, Measure",
+    ),
+    (
+        "Select Faces and Edges: click a face or an edge of a component (Ctrl adds); right-click for Appearance, Constrain, Measure",
+        "Select Faces and Edges: щракнете лице или ръб на компонент (Ctrl добавя); десен бутон за Appearance, Constrain, Measure",
+    ),
+    (
         "Click a component to select it (Ctrl adds), drag one that is not grounded to move it; double-click opens its part",
         "Щракнете компонент, за да го изберете (Ctrl добавя), влачете нефиксиран, за да го преместите; двойно щракване отваря детайла му",
     ),

@@ -89,8 +89,16 @@ pub(super) struct AsmUi {
     pub libs: super::place::LibCache,
     /// Picking triangles per component (by its body signature).
     meshes: std::cell::RefCell<HashMap<DocRef, (String, Arc<PickMesh>)>>,
+    /// Features, faces and edges selected under Feature priority / Select
+    /// Faces and Edges (`gui/asm_select.rs`), and the one under the cursor.
+    pub sub: Vec<super::asm_select::AsmSub>,
+    pub sub_hover: Option<super::asm_select::AsmSub>,
     /// The (selection, hover) the scene was last built with.
     scene_state: (Vec<u32>, Option<u32>),
+    scene_sub: (
+        Vec<super::asm_select::AsmSub>,
+        Option<super::asm_select::AsmSub>,
+    ),
     /// The assembly a component was opened from (browser *Return*).
     pub came_from: Option<DocumentId>,
     /// Copied occurrences (Ctrl+C): component, placement, name.
@@ -110,11 +118,6 @@ pub(super) struct AsmUi {
     /// `None` when the menu came from the browser.
     pub menu_at: Option<(Pos2, Rect)>,
 }
-
-/// Selected occurrences: blue; under the cursor: green (as faces in a
-/// part).
-const SEL_TINT: [f32; 3] = [0.25, 0.5, 0.95];
-const HOVER_TINT: [f32; 3] = [0.4, 0.82, 0.45];
 
 impl CadCraftApp {
     /// Whether the active document is an assembly.
@@ -139,7 +142,7 @@ impl CadCraftApp {
 
     /// Changes the active assembly after an Undo checkpoint `label`
     /// (nothing happens without an assembly).
-    fn edit_assembly(&mut self, label: &str, f: impl FnOnce(&mut AssemblyDocument)) {
+    pub(super) fn edit_assembly(&mut self, label: &str, f: impl FnOnce(&mut AssemblyDocument)) {
         if !self.is_assembly() {
             return;
         }
@@ -603,6 +606,7 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return;
         };
+        let looks = self.asm_scene_looks();
         for o in a.occurrences.iter().filter(|o| self.asm_shown(o)) {
             // The Constrain preview moves components before OK.
             let place = self
@@ -611,13 +615,6 @@ impl CadCraftApp {
                 .as_ref()
                 .and_then(|p| p.get(&o.id).copied())
                 .unwrap_or(o.transform);
-            let tint = if self.asm.sel.contains(&o.id) {
-                Some(SEL_TINT)
-            } else if self.asm.hover == Some(o.id) {
-                Some(HOVER_TINT)
-            } else {
-                None
-            };
             // Disabled: faint; Transparent (or showing an interference):
             // see-through.
             let overlap = self
@@ -633,9 +630,7 @@ impl CadCraftApp {
             } else {
                 None
             };
-            self.with_part(o.component, |part| {
-                super::material::add_part_meshes_seen(g, part, Some(&place), tint, alpha)
-            });
+            self.add_occurrence_mesh(g, o, &place, alpha, &looks);
         }
         self.interference_scene(g);
         self.pattern_preview_scene(g);
@@ -679,6 +674,7 @@ impl CadCraftApp {
                     self.asm.place_turn = None;
                 } else {
                     self.asm.sel.clear();
+                    self.asm.sub.clear();
                 }
             }
             if ui.input(|i| i.key_pressed(egui::Key::Delete)) && !ctx.egui_wants_keyboard_input() {
@@ -695,8 +691,19 @@ impl CadCraftApp {
             (Some(p), false, false) if self.asm.drag.is_none() => self.asm_pick(p, rect),
             _ => None,
         };
+        // Feature priority / Select Faces and Edges take a feature, face or
+        // edge of the component under the cursor (`gui/asm_select.rs`).
+        let sub_mode = !self.asm_priority().takes_components();
+        let sub_hit = match (pointer, hit) {
+            (Some(p), Some(_)) if sub_mode && self.asm.tool.is_none() => {
+                self.asm_sub_under(p, rect)
+            }
+            _ => None,
+        };
         if self.asm.drag.is_none() {
-            self.asm.hover = hit.map(|(h, _)| h.occurrence);
+            let pre = self.select.prehighlight;
+            self.asm.hover = hit.map(|(h, _)| h.occurrence).filter(|_| pre && !sub_mode);
+            self.asm.sub_hover = sub_hit.clone().filter(|_| pre);
         }
         // Measure (no command open) takes the clicks on faces and edges.
         let measuring = self.measure.open && !constraining && self.asm.tool.is_none();
@@ -737,6 +744,7 @@ impl CadCraftApp {
                         self.asm.sel = vec![h.occurrence];
                     }
                 }
+                _ if sub_mode => self.asm_sub_click(sub_hit.clone(), ctrl),
                 _ => match hit {
                     Some((h, _)) if ctrl => {
                         let id = h.occurrence;
@@ -820,13 +828,22 @@ impl CadCraftApp {
                 }
                 return;
             }
-            self.asm_context_menu(ui, hit.map(|(h, _)| h.occurrence))
+            if sub_mode && self.asm.tool.is_none() {
+                self.asm_sub_menu(ui, sub_hit.clone());
+            } else {
+                self.asm_context_menu(ui, hit.map(|(h, _)| h.occurrence))
+            }
         });
 
         // --- 3D ---
         let state = (self.asm.sel.clone(), self.asm.hover);
         if state != self.asm.scene_state {
             self.asm.scene_state = state;
+            self.scene_dirty = true;
+        }
+        let sub = (self.asm.sub.clone(), self.asm.sub_hover.clone());
+        if sub != self.asm.scene_sub {
+            self.asm.scene_sub = sub;
             self.scene_dirty = true;
         }
         let painter = ui.painter_at(rect);
@@ -856,6 +873,7 @@ impl CadCraftApp {
         if measuring || !self.measure.open {
             self.asm_measure_view(&painter, rect, pointer.filter(|_| on_view), measure_click);
         }
+        self.asm_sub_overlay(&painter, rect);
         if let Some(g) = self.cons.browser_hover.clone() {
             self.draw_geom(&painter, rect, &g, Color32::from_rgb(110, 220, 120));
         }
@@ -1101,6 +1119,8 @@ impl CadCraftApp {
             Some(AsmTool::FreeRotate(Some(_))) => "Free Rotate: drag inside the circle to turn freely, on its rim to turn in the screen plane; click another component to switch; Esc ends".into(),
             None => match self.assembly().map(|a| a.occurrences.len()) {
                 Some(0) => "The assembly is empty. Assemble > Place (P) puts a part of the project in it".into(),
+                _ if self.asm_priority() == crate::command::selection::AsmPriority::Feature => "Feature Priority: click a feature of a component to select it (Ctrl adds); right-click for Appearance, Constrain, Measure".into(),
+                _ if self.asm_priority() == crate::command::selection::AsmPriority::FacesEdges => "Select Faces and Edges: click a face or an edge of a component (Ctrl adds); right-click for Appearance, Constrain, Measure".into(),
                 _ => "Click a component to select it (Ctrl adds), drag one that is not grounded to move it; double-click opens its part".into(),
             },
         }
@@ -1193,7 +1213,7 @@ impl CadCraftApp {
     /// Constrain / Joint started from the view's menu: the face, edge or
     /// (Joint) snap point of the component under the cursor where the menu
     /// opened becomes the first selection (rule 17).
-    fn menu_first_pick(&mut self, ids: &[u32], joint: bool) {
+    pub(super) fn menu_first_pick(&mut self, ids: &[u32], joint: bool) {
         let Some((p, rect)) = self.asm.menu_at.take() else {
             return;
         };
@@ -1387,6 +1407,27 @@ impl CadCraftApp {
                     }
                     ui.end_row();
                 }
+                // The assembly's appearance override (spec 3.0 §3.7).
+                super::panels::plabel(ui, "Appearance");
+                let doc = self
+                    .assembly()
+                    .map(|a| a.appearances.clone())
+                    .unwrap_or_default();
+                let now = o
+                    .looks
+                    .appearance
+                    .clone()
+                    .unwrap_or_else(|| "As Part".into());
+                let mut pick = None;
+                ui.menu_button(now, |ui| {
+                    ui.set_max_height(480.0);
+                    pick = self.asm_appearance_items(ui, &doc);
+                });
+                if let Some(n) = pick {
+                    let t = [crate::assembly::looks::AsmLookTarget::Occurrence(o.id)];
+                    self.asm_set_look(&t, n.as_deref());
+                }
+                ui.end_row();
                 super::panels::plabel(ui, "DOF");
                 let copy = self.assembly().is_some_and(|a| a.is_element(o.id));
                 ui.label(if copy {

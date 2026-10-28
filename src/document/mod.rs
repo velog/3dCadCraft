@@ -240,6 +240,63 @@ pub struct Occurrence {
     /// Transparent: drawn see-through (still picked).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub transparent: bool,
+    /// Appearance overrides of this occurrence (the assembly's, never
+    /// written into the part — rule 8).
+    #[serde(default, skip_serializing_if = "OccurrenceLooks::is_empty")]
+    pub looks: OccurrenceLooks,
+}
+
+/// Appearance overrides an assembly gives one occurrence, by appearance
+/// name (copies in [`AssemblyDocument::appearances`]). Precedence: face >
+/// feature > the whole occurrence > the part's own looks.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OccurrenceLooks {
+    /// The whole occurrence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<String>,
+    /// Per feature of the part (by feature id): the faces it made.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub features: std::collections::BTreeMap<String, String>,
+    /// Per face (by persistent face name).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub faces: std::collections::BTreeMap<String, String>,
+}
+
+impl OccurrenceLooks {
+    /// No override.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The appearance a face named `face` gets from the assembly, if any.
+    pub fn face_look(&self, face: Option<&str>) -> Option<&str> {
+        if let Some(f) = face {
+            if let Some(a) = self.faces.get(f) {
+                return Some(a);
+            }
+            if let Some(a) = self.features.get(feature_of_face(f)) {
+                return Some(a);
+            }
+        }
+        self.appearance.as_deref()
+    }
+
+    /// Every appearance name in use.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.appearance
+            .iter()
+            .chain(self.features.values())
+            .chain(self.faces.values())
+            .map(String::as_str)
+    }
+}
+
+/// The feature that made a face, from its persistent name: `Extrusion1:Top`
+/// → `Extrusion1`; a pattern copy `Pattern1#3:Extrusion1:Top` → `Pattern1`;
+/// a split piece `Box1:Top~Split1.2` → `Box1`.
+pub fn feature_of_face(name: &str) -> &str {
+    let end = name.find([':', '#', '~']).unwrap_or(name.len());
+    &name[..end]
 }
 
 fn is_zero(v: &u32) -> bool {
@@ -269,6 +326,7 @@ impl Occurrence {
             suppressed: false,
             enabled: true,
             transparent: false,
+            looks: OccurrenceLooks::default(),
         }
     }
 
@@ -298,6 +356,11 @@ pub struct AssemblyDocument {
     /// the occurrences, so older builds show them where they were saved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub patterns: Vec<crate::assembly::pattern::ComponentPattern>,
+    /// Document copies of the appearances the occurrences' overrides use
+    /// (`Occurrence::looks`), so the file shows the same without the
+    /// user's library.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub appearances: Vec<crate::materials::Appearance>,
 }
 
 /// The payload of a document.
@@ -596,6 +659,7 @@ mod tests {
                 .collect(),
             constraints: Vec::new(),
             patterns: Vec::new(),
+            appearances: Vec::new(),
         })
     }
 
