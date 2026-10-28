@@ -220,11 +220,12 @@ impl CadCraftApp {
                 if find == Some(id) {
                     cmds.push(TreeCmd::Select(id, false));
                 }
+                let sub = crate::assembly::tree::assembly_of(&self.project, component).is_some();
                 let header = fold(ui, ("asm_occ", id), false, |ui| {
                     if visibility_button(ui, visible) {
                         cmds.push(TreeCmd::ToggleVisible(id));
                     }
-                    super::panels::tree_icon(ui, Icon::Part);
+                    super::panels::tree_icon(ui, if sub { Icon::Assembly } else { Icon::Part });
                     if grounded {
                         super::panels::tree_icon(ui, Icon::Ground);
                     }

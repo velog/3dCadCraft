@@ -327,6 +327,17 @@ impl CadCraftApp {
             .into_iter()
             .map(|(id, name)| (DocRef::local(id), name))
             .collect();
+        // Assemblies of this file as subassemblies (spec 3.1a), except the
+        // active one and those that contain it.
+        if self.is_assembly() {
+            for d in self.project.documents() {
+                if matches!(d.data, DocumentData::Assembly(_))
+                    && !crate::assembly::tree::would_loop(&self.project, self.part_id, d.id)
+                {
+                    v.push((DocRef::local(d.id), format!("{} (assembly)", d.name)));
+                }
+            }
+        }
         for l in self.project.libraries() {
             let Some(path) = self.library_path(l.id) else {
                 continue;
@@ -429,6 +440,8 @@ impl CadCraftApp {
                         let _ = part.regenerate();
                         Some(Arc::new(PickMesh::of(&part)))
                     }
+                    // A subassembly: its parts as one mesh.
+                    Some(DocumentData::Assembly(_)) => self.asm_mesh(r),
                     _ => None,
                 },
                 Some(_) => self.with_part(r, |p| Arc::new(PickMesh::of(p))),

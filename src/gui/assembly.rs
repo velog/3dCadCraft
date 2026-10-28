@@ -164,6 +164,9 @@ impl CadCraftApp {
 
     /// The picking triangles of a component (cached by body signature).
     pub(super) fn asm_mesh(&self, r: DocRef) -> Option<Arc<PickMesh>> {
+        if crate::assembly::tree::assembly_of(&self.project, r).is_some() {
+            return self.subassembly_mesh(r);
+        }
         let sig = self.with_part(r, |p| p.body_signature())?;
         if let Some((k, m)) = self.asm.meshes.borrow().get(&r)
             && *k == sig
@@ -173,6 +176,43 @@ impl CadCraftApp {
         let m = Arc::new(self.with_part(r, PickMesh::of)?);
         self.asm.meshes.borrow_mut().insert(r, (sig, m.clone()));
         Some(m)
+    }
+
+    /// A subassembly's parts as one picking mesh in its own coordinates
+    /// (spec 3.1a: it is picked and moved as a whole), cached by its
+    /// content and its parts' bodies.
+    fn subassembly_mesh(&self, r: DocRef) -> Option<Arc<PickMesh>> {
+        let sub = crate::assembly::tree::assembly_of(&self.project, r)?;
+        let leaves = crate::assembly::tree::leaves(&self.project, r.document, sub);
+        let mut sig = serde_json::to_string(sub).unwrap_or_default();
+        let mut parts = Vec::new();
+        for l in &leaves {
+            let c = l.occurrence.component;
+            sig.push_str(
+                &self
+                    .with_part(c, |p| p.body_signature())
+                    .unwrap_or_default(),
+            );
+            if let Some(m) = self.part_mesh(c) {
+                parts.push((m, l.world));
+            }
+        }
+        if let Some((k, m)) = self.asm.meshes.borrow().get(&r)
+            && *k == sig
+        {
+            return Some(m.clone());
+        }
+        let m = Arc::new(PickMesh::merged(parts.iter().map(|(m, t)| (&**m, *t))));
+        self.asm.meshes.borrow_mut().insert(r, (sig, m.clone()));
+        Some(m)
+    }
+
+    /// A part's picking mesh (never a subassembly's: no recursion here).
+    fn part_mesh(&self, r: DocRef) -> Option<Arc<PickMesh>> {
+        if crate::assembly::tree::assembly_of(&self.project, r).is_some() {
+            return None;
+        }
+        self.asm_mesh(r)
     }
 
     /// The occurrence under the screen point and the model point hit.

@@ -19,6 +19,7 @@ pub mod physical;
 pub mod relation;
 pub mod replace;
 pub mod solve;
+pub mod tree;
 
 pub use relation::{Constraint, ConstraintKind, Geom, GeomRef};
 pub use solve::{Drag, Solved, solve};
@@ -179,6 +180,24 @@ impl PickMesh {
                     }
                     tris.push((*fid, p));
                 }
+            }
+        }
+        Self { tris, bbox }
+    }
+
+    /// One mesh of several placed meshes (a subassembly's parts in its own
+    /// coordinates). The face ids keep their parts' and only tell that a
+    /// triangle was hit: a subassembly is picked as a whole.
+    pub fn merged<'a>(parts: impl IntoIterator<Item = (&'a PickMesh, Transform3)>) -> Self {
+        let mut tris = Vec::new();
+        let mut bbox: Option<(Point3, Point3)> = None;
+        for (m, t) in parts {
+            for (f, tri) in &m.tris {
+                let p = tri.map(|q| t * q);
+                for q in &p {
+                    bbox = Some(bbox.map_or((*q, *q), |(lo, hi)| (lo.inf(q), hi.sup(q))));
+                }
+                tris.push((*f, p));
             }
         }
         Self { tris, bbox }

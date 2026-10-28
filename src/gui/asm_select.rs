@@ -185,6 +185,31 @@ impl CadCraftApp {
                 }
             }),
         };
+        // A subassembly (spec 3.1a): its parts where its own solve put
+        // them; its appearance override covers them all, else theirs apply.
+        if let Some(sub) = crate::assembly::tree::assembly_of(&self.project, o.component) {
+            let own = o
+                .looks
+                .appearance
+                .as_deref()
+                .and_then(|n| looks.get(n).cloned());
+            for l in crate::assembly::tree::leaves(&self.project, o.component.document, sub) {
+                let inner = &l.occurrence.looks;
+                let leaf_over = |name: Option<&str>| FaceOver {
+                    look: own.clone().or_else(|| {
+                        inner
+                            .face_look(name)
+                            .and_then(|n| sub.appearance(n, &self.mat.lib))
+                    }),
+                    tint: whole,
+                };
+                let at = place * l.world;
+                self.with_part(l.occurrence.component, |part| {
+                    super::material::add_part_meshes_with(g, part, Some(&at), alpha, &leaf_over)
+                });
+            }
+            return;
+        }
         self.with_part(o.component, |part| {
             super::material::add_part_meshes_with(g, part, Some(place), alpha, &over)
         });
