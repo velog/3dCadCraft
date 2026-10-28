@@ -350,12 +350,10 @@ fn axis_mates_and_angles() {
 }
 
 /// Inventor holds an Angle of 0° or 180° (parallel faces) exactly and
-/// counts the turn as fixed. Ours reports "converged" with the faces still
-/// 7.5e-5 rad apart (1e-4 comes out as 1.1e-4) and one freedom left: the
-/// residual is measured on the cosine, flat at 0 and π (a double root, as
-/// tangency in the sketch solver).
+/// counts the turn as fixed. The cosine residual used to be flat there (a
+/// double root: 7.5e-5 rad left, one freedom); the solver now measures the
+/// angle by atan2 and parallel faces by their normals' difference.
 #[test]
-#[ignore = "known: Angle near 0 / 180 deg is a double root in the assembly solver (reported to the assemblies session)"]
 fn angles_at_the_ends_of_their_range() {
     for angle in [0.0, std::f64::consts::PI, 1e-4, std::f64::consts::PI - 1e-4] {
         let (a, s) = shaft_and_angle(angle);

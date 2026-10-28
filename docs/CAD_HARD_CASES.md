@@ -69,7 +69,7 @@ forever), **crash**, **order** (the result depends on selection or face order).
 
 | Source | Case | Symptom | Our test idea |
 |---|---|---|---|
-| Inventor help + Arkance KB, Inventor forum | **Angle at 0° / 180° flips**: the directed angle can turn the wrong way there; advice: never drive to or through 0°, use an explicit reference vector | silent | ✅ found in ours too (`angles_at_the_ends_of_their_range`, ignored: 7.5e-5 rad off, one DOF left) |
+| Inventor help + Arkance KB, Inventor forum | **Angle at 0° / 180° flips**: the directed angle can turn the wrong way there; advice: never drive to or through 0°, use an explicit reference vector | silent | ✅ found in ours too (7.5e-5 rad off, one DOF left) and fixed 2026-10-28 (`angles_at_the_ends_of_their_range` passes) |
 | FreeCAD #30585 | a revolute drive of π (or 3.14159) moves only a quarter turn, 3.1418 is fine | silent | drive a joint by π, 2π, 3.14159: the angle reached equals the value |
 | FreeCAD #32477 | Fixed joint with opposite connector axes (face to face) settles rotated by exactly 180° | silent | Rigid joint of two faces face to face: the turn about the normal is the one asked |
 | FreeCAD #16057, #17625 | cylindrical joint fails unless the parts start nearly aligned; or depending on which part is selected first | fail, order | ✅ starts far away covered (`components_far_from_their_solution`); add: Insert with a / b swapped gives the same placement |
