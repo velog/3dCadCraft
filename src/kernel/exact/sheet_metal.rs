@@ -719,20 +719,25 @@ pub fn edge_point(m: &SheetModel, name: &str, near: Point3) -> Option<Point3> {
     m.0.edge_by_name(name, v3(&near)).map(p3)
 }
 
+/// The folded sheet as a solid, its faces named under `prefix`.
+pub fn sheet_solid(m: &SheetModel, prefix: &str) -> Result<ExactSolid, String> {
+    named_solid(&m.0, prefix, false)
+}
+
 /// Flanges on sheet edges (one feature `tag`): every edge trimmed back, the
-/// corners between them closed with the rule's gap. Returns the new solid
-/// and model, and notes on corners left open.
+/// corners between them closed with the rule's gap. Returns the new model
+/// and notes on corners left open; [`sheet_solid`] makes the solid (once
+/// for a chain of flanges on flanges).
 #[allow(clippy::too_many_arguments)]
-pub fn flanges(
+pub fn flanges_model(
     m: &SheetModel,
-    prefix: &str,
     tag: &str,
     edges: &[FlangeEdge],
     radius: Real,
     position: BendPosition,
     flip: bool,
     corners: &FlangeCorners,
-) -> Result<(ExactSolid, SheetModel, Vec<String>), String> {
+) -> Result<(SheetModel, Vec<String>), String> {
     let mut next = (*m.0).clone();
     if next.flat {
         return Err("refold the sheet before adding flanges".into());
@@ -784,8 +789,7 @@ pub fn flanges(
     (next.relief, next.relief_size, next.gap) = rule;
     next.relief_at_vertex = false;
     next.laser_corners = true;
-    let s = named_solid(&next, prefix, false)?;
-    Ok((s, SheetModel(Arc::new(next)), notes))
+    Ok((SheetModel(Arc::new(next)), notes))
 }
 
 /// The flat pattern as a solid (the outline with its cut-outs, the
@@ -966,9 +970,8 @@ mod tests {
         let name = edge_name(&m, edge).expect("the front edge has a name");
         let at = edge_point(&m, &name, edge).unwrap();
         assert!((at - edge).norm() < 1.0, "{at}");
-        let (f, m2, _) = flanges(
+        let (m2, _) = flanges_model(
             &m,
-            "Face1",
             "Flange1",
             &[FlangeEdge {
                 at,
@@ -982,6 +985,7 @@ mod tests {
             &FlangeCorners::default(),
         )
         .unwrap();
+        let f = sheet_solid(&m2, "Face1").unwrap();
         let (lo, hi) = super::super::bounds(&f).unwrap();
         // The flange stands 20 high and the base keeps its 60 mm depth.
         assert!((hi.z - lo.z - 20.0).abs() < 1.0, "{lo} {hi}");

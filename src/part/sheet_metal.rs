@@ -383,7 +383,12 @@ pub struct SheetFlangeFeature {
     /// Corner Overrides: single corners between two of its flanges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seams: Vec<CornerOverride>,
-    /// Equations of the fields (`height`, `angle`, `offset1`, `offset2`, `width`).
+    /// Further bends (SolidCraft's `then`): bend `k + 2` is a flange on the
+    /// far edge of every panel of the bend before it, all in this feature.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bends: Vec<FlangeBend>,
+    /// Equations of the fields (`height`, `angle`, `offset1`, `offset2`,
+    /// `width`, a further bend's `height<k>` / `angle<k>`).
     #[serde(
         default,
         skip_serializing_if = "super::params::FeatureParams::is_empty"
@@ -391,11 +396,71 @@ pub struct SheetFlangeFeature {
     pub params: super::params::FeatureParams,
 }
 
+/// A further bend of a Flange: a flange of `height` at `angle` on the far
+/// edge of the bend before it (SolidCraft's `then`; Inventor makes each a
+/// Flange of its own).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FlangeBend {
+    /// Height to the outer face, from the virtual sharp (mm).
+    pub height: Real,
+    /// Bend angle (radians, 0..π).
+    pub angle: Real,
+    /// Turns the other way than the bend before it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip: bool,
+}
+
+/// Most further bends one Flange may have (SolidCraft's limit).
+pub const MAX_FLANGE_BENDS: usize = 16;
+
+/// The parameter fields of further bend `k` (0-based; the feature's own
+/// bend is bend 1, so these are `height2` / `angle2` …).
+const BEND_FIELDS: [(&str, &str); MAX_FLANGE_BENDS] = [
+    ("height2", "angle2"),
+    ("height3", "angle3"),
+    ("height4", "angle4"),
+    ("height5", "angle5"),
+    ("height6", "angle6"),
+    ("height7", "angle7"),
+    ("height8", "angle8"),
+    ("height9", "angle9"),
+    ("height10", "angle10"),
+    ("height11", "angle11"),
+    ("height12", "angle12"),
+    ("height13", "angle13"),
+    ("height14", "angle14"),
+    ("height15", "angle15"),
+    ("height16", "angle16"),
+    ("height17", "angle17"),
+];
+
+/// The (height, angle) field names of further bend `k` (0-based).
+pub fn bend_fields(k: usize) -> Option<(&'static str, &'static str)> {
+    BEND_FIELDS.get(k).copied()
+}
+
+/// Which further bend (0-based) a field belongs to, and whether it is the
+/// angle.
+fn bend_field(field: &str) -> Option<(usize, bool)> {
+    BEND_FIELDS.iter().enumerate().find_map(|(k, &(h, a))| {
+        if field == h {
+            Some((k, false))
+        } else if field == a {
+            Some((k, true))
+        } else {
+            None
+        }
+    })
+}
+
 impl SheetFlangeFeature {
     /// Its numeric fields (parameters).
     pub fn fields(&self) -> Vec<(&'static str, super::expr::Unit)> {
         use super::expr::Unit;
         let mut v = vec![("height", Unit::Mm), ("angle", Unit::Deg)];
+        for (h, a) in BEND_FIELDS.iter().take(self.bends.len()) {
+            v.extend([(*h, Unit::Mm), (*a, Unit::Deg)]);
+        }
         match self.extents {
             FlangeWidth::Edge => {}
             FlangeWidth::Width => {
@@ -442,7 +507,11 @@ impl SheetFlangeFeature {
             "offset1" => Some(self.offset1),
             "offset2" => Some(self.offset2),
             "width" => Some(self.width),
-            _ => None,
+            _ => {
+                let (k, angle) = bend_field(field)?;
+                let b = self.bends.get(k)?;
+                Some(if angle { b.angle } else { b.height })
+            }
         }
     }
 
@@ -454,7 +523,62 @@ impl SheetFlangeFeature {
             "offset1" => self.offset1 = v,
             "offset2" => self.offset2 = v,
             "width" => self.width = v,
-            _ => {}
+            _ => {
+                if let Some((k, angle)) = bend_field(field)
+                    && let Some(b) = self.bends.get_mut(k)
+                {
+                    if angle {
+                        b.angle = v;
+                    } else {
+                        b.height = v;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Adds a further bend after the last one (the same height and angle),
+    /// unless there are [`MAX_FLANGE_BENDS`] already.
+    pub fn add_bend(&mut self) -> bool {
+        if self.bends.len() >= MAX_FLANGE_BENDS {
+            return false;
+        }
+        let (height, angle) = self
+            .bends
+            .last()
+            .map_or((self.height, self.angle), |b| (b.height, b.angle));
+        self.bends.push(FlangeBend {
+            height,
+            angle,
+            flip: false,
+        });
+        true
+    }
+
+    /// Removes further bend `k` (0-based); the equations of the bends after
+    /// it move up with them.
+    pub fn remove_bend(&mut self, k: usize) {
+        if k >= self.bends.len() {
+            return;
+        }
+        self.bends.remove(k);
+        for j in k..MAX_FLANGE_BENDS {
+            for pick in [0, 1] {
+                let field = |i: usize| {
+                    let (h, a) = BEND_FIELDS[i];
+                    if pick == 0 { h } else { a }
+                };
+                let next = BEND_FIELDS.get(j + 1).map(|_| field(j + 1));
+                let moved = next.and_then(|n| self.params.0.remove(n));
+                match moved {
+                    Some(p) => {
+                        self.params.0.insert(field(j).to_owned(), p);
+                    }
+                    None => {
+                        self.params.0.remove(field(j));
+                    }
+                }
+            }
         }
     }
 
@@ -481,6 +605,7 @@ impl SheetFlangeFeature {
             relief_placement: ReliefPlacement::Intersection,
             laser_corners: true,
             seams: Vec::new(),
+            bends: Vec::new(),
             params: Default::default(),
         }
     }

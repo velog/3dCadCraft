@@ -3271,6 +3271,9 @@ impl CadCraftApp {
     /// The current value of the field a handle edits.
     fn handle_value(&self, h: &manip::Handle) -> Option<f64> {
         use crate::part::params::feature_value;
+        if self.sm.draft.is_some() {
+            return self.sm_handle_value(h.field);
+        }
         if let Some(d) = &self.work_draft {
             return match h.field {
                 "distance" => Some(d.distance),
@@ -6957,52 +6960,6 @@ impl CadCraftApp {
                 painter.extend(egui::Shape::dashed_line(&[a, b], stroke, 12.0, 6.0));
             }
         }
-        // Manipulators: while a feature's handle is dragged, show it at the
-        // pending value (the feature changes on release).
-        if let Some((owner, hs)) = self.handles() {
-            let hs = match (&self.manip_drag, owner) {
-                (Some((ManipOwner::Feature(k), h, v)), ManipOwner::Feature(_)) if v.is_finite() => {
-                    let part = self.part();
-                    part.features
-                        .get(*k)
-                        .cloned()
-                        .and_then(|mut f| {
-                            crate::part::params::set_feature_field_value(&mut f, h.field, *v);
-                            let sk = &part
-                                .sketches
-                                .iter()
-                                .find(|s| Some(s.id.as_str()) == f.sketch())?
-                                .sketch;
-                            Some(match &f {
-                                crate::part::Feature::Extrude(e) => manip::extrude_handles(e, sk),
-                                crate::part::Feature::Revolve(r) => {
-                                    manip::revolve_handles(r, sk, &part.work)
-                                }
-                                _ => Vec::new(),
-                            })
-                        })
-                        .unwrap_or(hs)
-                }
-                _ => hs,
-            };
-            let (hot, label) = match &self.manip_drag {
-                Some((_, h, v)) => {
-                    let i = hs.iter().position(|x| x.field == h.field);
-                    let v = if v.is_finite() {
-                        *v
-                    } else {
-                        i.and_then(|i| self.handle_value(&hs[i])).unwrap_or(0.0)
-                    };
-                    (i, Some(manip::text(h, v)))
-                }
-                None => (
-                    hot_handle,
-                    hot_handle
-                        .and_then(|i| self.handle_value(&hs[i]).map(|v| manip::text(&hs[i], v))),
-                ),
-            };
-            manip::draw(&painter, &self.camera, rect, &hs, hot, label);
-        }
         // Extrude preview: the edges of the solid-to-be.
         if self.extrude.is_some()
             && let Ok(edges) = self.extrude_preview()
@@ -7325,6 +7282,54 @@ impl CadCraftApp {
             pointer.filter(|_| on_cube.is_none()),
             sm_click,
         );
+        // Manipulators: on top of every preview (a sheet metal preview is
+        // painted see-through over the flange it drags). While a feature's
+        // handle is dragged, show it at the pending value (the feature
+        // changes on release).
+        if let Some((owner, hs)) = self.handles() {
+            let hs = match (&self.manip_drag, owner) {
+                (Some((ManipOwner::Feature(k), h, v)), ManipOwner::Feature(_)) if v.is_finite() => {
+                    let part = self.part();
+                    part.features
+                        .get(*k)
+                        .cloned()
+                        .and_then(|mut f| {
+                            crate::part::params::set_feature_field_value(&mut f, h.field, *v);
+                            let sk = &part
+                                .sketches
+                                .iter()
+                                .find(|s| Some(s.id.as_str()) == f.sketch())?
+                                .sketch;
+                            Some(match &f {
+                                crate::part::Feature::Extrude(e) => manip::extrude_handles(e, sk),
+                                crate::part::Feature::Revolve(r) => {
+                                    manip::revolve_handles(r, sk, &part.work)
+                                }
+                                _ => Vec::new(),
+                            })
+                        })
+                        .unwrap_or(hs)
+                }
+                _ => hs,
+            };
+            let (hot, label) = match &self.manip_drag {
+                Some((_, h, v)) => {
+                    let i = hs.iter().position(|x| x.field == h.field);
+                    let v = if v.is_finite() {
+                        *v
+                    } else {
+                        i.and_then(|i| self.handle_value(&hs[i])).unwrap_or(0.0)
+                    };
+                    (i, Some(manip::text(h, v)))
+                }
+                None => (
+                    hot_handle,
+                    hot_handle
+                        .and_then(|i| self.handle_value(&hs[i]).map(|v| manip::text(&hs[i], v))),
+                ),
+            };
+            manip::draw(&painter, &self.camera, rect, &hs, hot, label);
+        }
         self.draw_cog(&painter, rect);
         if self.layout.visible(layout::Element::Triad) {
             viewcube::draw_triad(&painter, &self.camera, rect);

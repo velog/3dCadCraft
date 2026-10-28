@@ -2155,6 +2155,32 @@ fn speed_budgets() {
                 assert_eq!(p.flat_patterns()[0].bends.len(), 4);
             }),
         ));
+        // The same Flange with three further bends (§3.4, Further Bends): a
+        // lip, a return and a hem-like turn on every edge, 16 bends in one
+        // feature, the corners of each level closed.
+        let mut chain = SheetFlangeFeature::new(&body, edges.clone(), 30.0);
+        for (h, a, flip) in [
+            (15.0, std::f64::consts::FRAC_PI_2, true),
+            (10.0, std::f64::consts::FRAC_PI_2, false),
+            (6.0, 1.0, false),
+        ] {
+            chain.bends.push(cadcraft3d::part::sheet_metal::FlangeBend {
+                height: h,
+                angle: a,
+                flip,
+            });
+        }
+        rows.push((
+            "sheet metal: Flange with 3 further bends on 4 edges (16 bends) + flat pattern",
+            1000.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_flange(chain.clone()).unwrap();
+                assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+                assert_eq!(p.flat_patterns()[0].bends.len(), 16);
+            }),
+        ));
     }
     // Corner Round (docs/spec/5.6 §3.2): the four corners of a 200 × 120
     // Face rounded R10 in one feature, then the flat pattern.

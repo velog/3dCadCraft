@@ -4076,6 +4076,77 @@ pub(super) fn sheet_convert(
     Ok((next, super::sheet_metal::SheetState::new(model, faces)))
 }
 
+/// A Flange's further bends: bend `k + 2` stands on the far edge of every
+/// panel of the bend before it (on the same face as the edge that bend
+/// stands on, the other face when it turns the other way), all panels of one
+/// bend in one call so their corners
+/// close as the first bend's do. Panels of bend `k` are tagged `<id>-<k>.<n>`
+/// (the first bend's stay `<id>.<n>`).
+fn flange_bends(
+    fl: &super::sheet_metal::SheetFlangeFeature,
+    mut model: crate::kernel::exact::sheet_metal::SheetModel,
+    first: &[crate::kernel::exact::sheet_metal::FlangeEdge],
+    radius: Real,
+) -> Result<crate::kernel::exact::sheet_metal::SheetModel, Fail> {
+    use crate::kernel::exact::sheet_metal as ksm;
+    let mut prev = fl.id.clone();
+    let mut near: Vec<Point3> = first.iter().map(|e| e.at).collect();
+    // Each panel's side: a bend on the same face's edge as the bend before
+    // turns the same way (a U), on the other face's the other way (a Z).
+    let mut top: Vec<bool> = fl
+        .edges
+        .iter()
+        .map(|e| !e.name.ends_with(":bottom"))
+        .collect();
+    for (j, b) in fl.bends.iter().enumerate() {
+        let n = j + 2;
+        if !(b.height.is_finite() && b.height > 0.0) {
+            return Err(User(format!("bend {n}: the height must be positive")));
+        }
+        for t in &mut top {
+            *t ^= b.flip;
+        }
+        let mut edges = Vec::with_capacity(near.len());
+        for (k, p) in near.iter().enumerate() {
+            let side = if top[k] { "top" } else { "bottom" };
+            let name = format!("{prev}.{}:far:{side}", k + 1);
+            let at = ksm::edge_point(&model, &name, *p)
+                .ok_or_else(|| User(format!("bend {n}: bend {} has no far edge", n - 1)))?;
+            edges.push(ksm::FlangeEdge {
+                at,
+                height: b.height,
+                angle: b.angle,
+                offsets: (0.0, 0.0),
+            });
+        }
+        let tag = format!("{}-{n}", fl.id);
+        let (m, notes) = ksm::flanges_model(
+            &model,
+            &tag,
+            &edges,
+            radius,
+            fl.position.kernel_pub(),
+            false,
+            &ksm::FlangeCorners {
+                shape: fl.corner_shape.map(|c| c.kernel_pub()),
+                size: fl.corner_size,
+                gap: fl.corner_gap,
+                at_vertex: fl.relief_placement == super::sheet_metal::ReliefPlacement::Vertex,
+                laser_corners: fl.laser_corners,
+                seams: Vec::new(),
+            },
+        )
+        .map_err(|e| User(format!("bend {n}: {e}")))?;
+        for note in notes {
+            log::info!("{tag}: {note}");
+        }
+        model = m;
+        near = edges.iter().map(|e| e.at).collect();
+        prev = tag;
+    }
+    Ok(model)
+}
+
 pub(super) fn sheet_flange(
     fl: &super::sheet_metal::SheetFlangeFeature,
     solids: &[ExactSolid],
@@ -4117,9 +4188,8 @@ pub(super) fn sheet_flange(
         });
     }
     let radius = fl.radius.unwrap_or(rule.values().bend_radius);
-    let (solid, model, notes) = ksm::flanges(
+    let (model, notes) = ksm::flanges_model(
         &state.model,
-        &fl.body,
         &fl.id,
         &edges,
         radius,
@@ -4142,6 +4212,8 @@ pub(super) fn sheet_flange(
     for n in notes {
         log::info!("{}: {n}", fl.id);
     }
+    let model = flange_bends(fl, model, &edges, radius)?;
+    let solid = ksm::sheet_solid(&model, &fl.body).map_err(User)?;
     let faces = solid.face_names.len();
     let mut next = solids.to_vec();
     next[k] = solid;

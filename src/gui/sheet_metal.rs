@@ -5,13 +5,15 @@
 //! single picks move on), **Behavior** / **Bend Properties** / **Corner**
 //! sections with expression fields, **OK / Apply / Cancel** — shows the result
 //! as a see-through preview computed on a worker thread (`sm_preview`), and
-//! has drag arrows where a length can be dragged (`sm_handles`): Flange height
-//! and width offsets, Hem length, Contour Flange distance. Edit Feature
+//! has drag handles where a value can be dragged (`sm_handles`): Flange
+//! height and angle (of every further bend too) and width offsets, Hem
+//! length, Contour Flange distance. Edit Feature
 //! reopens the same panel (`sm_edit`). Sheet Metal Defaults is a window;
 //! Flat Pattern shows the unfolded part.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::f64::consts::PI;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke};
@@ -278,6 +280,41 @@ enum Pick {
 }
 
 /// Builds the draft's feature into `part` (a new one, or Edit Feature).
+/// The smallest bend angle a dragged arc gives (1°).
+const MIN_ANGLE: f64 = PI / 180.0;
+
+/// A Flange bend's angle arc: about the bend line through `mid`, from the
+/// panel's own plane (`out`, 0°) to the flange (`angle` towards `up`), at
+/// half the flange's height; its grip drags `field` (Inventor's angle
+/// manipulator).
+fn flange_angle_handle(
+    field: &'static str,
+    mid: Point3,
+    out: Vector3,
+    up: Vector3,
+    angle: f64,
+    height: f64,
+) -> super::manip::Handle {
+    use super::manip::{AngleMap, DragGeom, Handle};
+    let r = (height * 0.5).clamp(4.0, 40.0);
+    let at = |t: f64| mid + (out * t.cos() + up * t.sin()) * r;
+    let n = ((angle / (PI / 48.0)).ceil() as usize).max(2);
+    Handle {
+        field,
+        path: (0..=n).map(|k| at(angle * k as f64 / n as f64)).collect(),
+        grip: at(angle),
+        geom: DragGeom::Angle {
+            center: mid,
+            axis: out.cross(&up),
+            reference: out * r,
+            map: AngleMap::Plain,
+        },
+        arrow: None,
+        angle: true,
+        signed: false,
+    }
+}
+
 fn build(
     part: &mut PartDocument,
     feature: Feature,
@@ -717,12 +754,23 @@ impl CadCraftApp {
         };
         self.panel_header(ui, feature_icon(&f), f.name());
         let text = match &f {
-            Feature::SheetFlange(fl) => format!(
-                "Flange on {} edge(s), {:.2} mm at {:.1}°",
-                fl.edges.len(),
-                fl.height,
-                fl.angle.to_degrees()
-            ),
+            Feature::SheetFlange(fl) => {
+                let mut t = format!(
+                    "Flange on {} edge(s), {:.2} mm at {:.1}°",
+                    fl.edges.len(),
+                    fl.height,
+                    fl.angle.to_degrees()
+                );
+                for b in &fl.bends {
+                    t += &format!(
+                        ", then {:.2} mm at {:.1}°{}",
+                        b.height,
+                        b.angle.to_degrees(),
+                        if b.flip { " (flipped)" } else { "" }
+                    );
+                }
+                t
+            }
             Feature::SheetOp(o) => o.describe(),
             Feature::SheetConvert(c) => {
                 format!(
@@ -1006,6 +1054,7 @@ impl CadCraftApp {
                         });
                         ui.end_row();
                     });
+                    further_bends(ui, &mut fx, f, &snapshot);
                     psection(ui, "sm_flange_bend", "Bend Properties", |ui| {
                         radius_row(ui, &mut f.radius, rule.bend_radius);
                     });
@@ -2489,8 +2538,8 @@ impl CadCraftApp {
 
     // ---- manipulators ------------------------------------------------------
 
-    /// Drag arrows: Flange height and width offsets, Hem length, Contour
-    /// Flange distance.
+    /// Drag handles: Flange height arrows and angle arcs (one pair per
+    /// bend) and width offsets, Hem length, Contour Flange distance.
     pub(super) fn sm_handles(&self) -> Vec<super::manip::Handle> {
         use super::manip::{DragGeom, Handle};
         let Some(d) = &self.sm.draft else {
@@ -2550,11 +2599,30 @@ impl CadCraftApp {
                 let up = if f.flip { -n } else { n };
                 let rise = (out * f.angle.cos() + up * f.angle.sin()).normalize();
                 let mid = a + dd * (o1 + (len - o1 - o2) * 0.5);
-                vec![
+                let mut hs = vec![
                     arrow("height", mid, rise, f.height),
+                    flange_angle_handle("angle", mid, out, up, f.angle, f.height),
                     side("offset1", a, dd, o1),
                     side("offset2", b, -dd, o2),
-                ]
+                ];
+                // Further bends: each starts where the one before ends (its
+                // virtual sharp; thickness and radius are left out — the
+                // handles only need to sit on the bend they drag) and turns
+                // on about the same axis unless flipped.
+                let (mut o, mut out, mut up, mut rise, mut h) = (mid, out, up, rise, f.height);
+                for (k, bend) in f.bends.iter().enumerate() {
+                    let Some((hf, af)) = crate::part::sheet_metal::bend_fields(k) else {
+                        break;
+                    };
+                    let turn = out.cross(&up).cross(&rise);
+                    o += rise * h;
+                    (out, up) = (rise, if bend.flip { -turn } else { turn });
+                    rise = (out * bend.angle.cos() + up * bend.angle.sin()).normalize();
+                    h = bend.height;
+                    hs.push(arrow(hf, o, rise, h));
+                    hs.push(flange_angle_handle(af, o, out, up, bend.angle, h));
+                }
+                hs
             }
             Feature::SheetOp(o) => match &o.op {
                 SheetOp::Hem {
@@ -2650,9 +2718,29 @@ impl CadCraftApp {
         if v <= 1e-6 {
             return;
         }
+        // A flange bends 1°..180° (past 180° the arc's grip is on the far
+        // side: it stops at the nearer end).
+        let angle = field.starts_with("angle");
+        let v = match () {
+            _ if angle && v > PI => {
+                if v > 1.5 * PI {
+                    MIN_ANGLE
+                } else {
+                    PI
+                }
+            }
+            _ if angle => v.max(MIN_ANGLE),
+            _ => v,
+        };
         if let Some(d) = self.sm.draft.as_mut() {
             crate::part::params::set_feature_field_value(&mut d.feature, field, v);
         }
+    }
+
+    /// The open sheet metal command's value of a handle's field.
+    pub(super) fn sm_handle_value(&self, field: &str) -> Option<f64> {
+        let d = self.sm.draft.as_ref()?;
+        crate::part::params::feature_value(&d.feature, field)
     }
 
     // ---- Sheet Metal Defaults, Flat Pattern --------------------------------
@@ -2911,6 +2999,54 @@ pub(super) fn feature_icon(f: &Feature) -> super::icons::Icon {
 }
 
 /// Default / Flipped as two toggles (Inventor's direction buttons).
+/// Flange › Further Bends: each bend after the first on the far edge of the
+/// one before (Distance, Angle, Direction), removed with `x`, added with Add
+/// Bend (a copy of the last).
+fn further_bends(ui: &mut egui::Ui, fx: &mut Fields, f: &mut SheetFlangeFeature, snap: &Feature) {
+    use crate::part::sheet_metal::{MAX_FLANGE_BENDS, bend_fields};
+    let mut remove = None;
+    psection(ui, "sm_flange_bends", "Further Bends", |ui| {
+        for (k, b) in f.bends.iter_mut().enumerate() {
+            let Some((h, a)) = bend_fields(k) else {
+                break;
+            };
+            plabel(ui, &format!("Bend {}", k + 2));
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut b.flip, false, "Default")
+                    .on_hover_text("Turns the same way as the bend before it");
+                ui.selectable_value(&mut b.flip, true, "Flipped")
+                    .on_hover_text("Turns the other way than the bend before it");
+                if ui
+                    .small_button("x")
+                    .on_hover_text("Remove this bend")
+                    .clicked()
+                {
+                    remove = Some(k);
+                }
+            });
+            ui.end_row();
+            field_row(ui, fx, "Distance", snap, h);
+            field_row(ui, fx, "Angle", snap, a);
+        }
+        plabel(ui, "");
+        let more = f.bends.len() < MAX_FLANGE_BENDS;
+        if ui
+            .add_enabled(more, egui::Button::new("Add Bend"))
+            .on_hover_text(
+                "Another bend on the far edge of the last one, in this Flange \
+                 (a copy of the last bend; at most 16)",
+            )
+            .clicked()
+        {
+            f.add_bend();
+        }
+        ui.end_row();
+    });
+    if let Some(k) = remove {
+        f.remove_bend(k);
+    }
+}
+
 fn direction_row(ui: &mut egui::Ui, flip: &mut bool, tip: &str) {
     ui.horizontal(|ui| {
         ui.selectable_value(flip, false, "Default");

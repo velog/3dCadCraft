@@ -87,6 +87,11 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
 
 ## Log
 
+- 2026-10-28 — **Flange › Further Bends.** *Flange with 3 further bends on 4 edges (16 bends) + flat pattern*:
+  each bend level built and its solid made took 1.2–4.2 s (four `named_solid` calls); the levels now only change
+  the sheet model (`ksm::flanges_model`) and the solid is made once (`ksm::sheet_solid`): 0.57–0.65 s (budget
+  1000 ms; the solid ~0.19 s, the flat pattern ~0.3 s). Both grow faster than the face count (4 flanges: 61 ms
+  in all) — see Open.
 - 2026-10-26 — **Laser-ready sheet metal corners.** Round / Square reliefs are now flat cut-outs checked by a flat
   trial (`reliefs_fit`): *Flange on 4 edges of a 200 x 120 Face + flat pattern* 120 ms (budget 200); the other
   sheet cases unchanged. In the same run (another session compiling) *shell 1.5*, *split by an open spline*
@@ -234,6 +239,10 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
   in parallel). Threads are cut after all features (cached).
 
 ## Open
+
+- Sheet metal solids (2026-10-28): `named_solid` and the flat pattern grow faster than the number of panels —
+  4 flanges 61 ms in all, 16 (a Flange with 3 further bends on 4 edges) ~0.19 s for the solid and ~0.3 s for
+  the flat. Not measured inside the vendored `solidcraft-doc` yet.
 
 - Assembly solver: v1 (dense, 2026-10-23) took 185 ms for 30 components. v2 (2026-10-24): passes along
   the constraint graph, per-constraint Jacobians — 30 cubes 1.2 ms, 200 / 500 / 1000 cubes with the first

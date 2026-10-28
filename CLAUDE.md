@@ -578,7 +578,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (`ProfileCurve::Spline`/`Segment2::Spline::knots`, `BSplineCurve::sketch_spline`,
   `Geo::spline`). Empty knots = clamped uniform (CV splines, old files). End handles
   are dimensionless (1 = chord speed); set them via `set_spline_handle_grip`.
-- **Manipulators** (`gui/manip.rs`) are built from the feature definition each frame
+- **Manipulators** (`gui/manip.rs`) are drawn last in `viewport` (above every preview: the sheet metal preview is
+  painted see-through over the flange its height arrow lies on and hid it). They are built from the feature definition each frame
   (`extrude_handles`, `revolve_handles`); a drag maps the eye ray to a value
   (`drag_value`), snaps it, updates the dialog live but an existing feature only on
   release (one regeneration, one Undo step). They are picked before sketch drags and
@@ -1036,7 +1037,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (a corner relief moves the bends' ends off the corner, so `corners()` sees none).
   A sheet edge is `<panel>:<side>:top|bottom`: a second click switches to the other face's edge
   (`sm_other_face_edge`), Ctrl+click removes. A Flange's own corner settings (`corner_shape/size/gap`,
-  `seams` by edge index) are applied in `ksm::flanges` by swapping the model's `relief`/`gap` for its call.
+  `seams` by edge index) are applied in `ksm::flanges_model` by swapping the model's `relief`/`gap` for its call.
+  **Further Bends** (`SheetFlangeFeature::bends`, `FlangeBend`): bend `k` stands on `<prev tag>.<n>:far:<side>` of every
+  panel of the bend before (side = that bend's edge face, toggled by `flip`: same face = same turn, a U); its panels
+  are tagged `<id>-<k>.<n>`; fields `height<k>` / `angle<k>` (`bend_fields`). The levels only change the model
+  (`ksm::flanges_model`) and the solid is made once (`ksm::sheet_solid`): one solid per level took 4× as long.
   A sheet metal Cut's profiles are `PartSketch::own_regions` (projected edges do not split them): a rectangle
   sketched across a face's edge is one profile, which Cut Across Bend carries over the bend (owner's journal
   `tests/data/sheet_cut_across_journal.jsonl`). Old Cuts still resolve their profiles by the seed point.

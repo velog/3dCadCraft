@@ -1110,7 +1110,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 |---|---|
 | Face | a plate from a profile with the thickness from the rules |
 | Contour Flange | a bent profile from an open line (L, U, Z) |
-| Flange | a flange along an edge, with angle, height, position |
+| Flange | a flange along an edge, with angle, height, position; height arrow and angle arc in the view; **Further Bends** — a chain of up to 16 more bends (each on the far edge of the one before, Default / Flipped) in the same feature, each with its own fields and handles (2026-10-28) |
 | Hem | a hem (single, double, teardrop, rolled) |
 | Fold | a fold along a sketch line |
 | Bend | a bend between two plates |
