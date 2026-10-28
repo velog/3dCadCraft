@@ -443,7 +443,19 @@ impl CadCraftApp {
         })
         .body(|ui| {
             let bodies = part.body.solids().filter(|(_, s)| !s.open).count();
-            let surfaces = part.body.solids().filter(|(_, s)| s.open).count();
+            // One row per surface body name: a body in pieces apart (stitched strips meeting at a
+            // point) is several solids of the B-rep with one name.
+            let surfaces = {
+                let mut names: Vec<Option<&String>> = part
+                    .body
+                    .solids()
+                    .filter(|(_, s)| s.open)
+                    .map(|(_, s)| s.name.as_ref())
+                    .collect();
+                names.sort();
+                names.dedup_by(|a, b| a.is_some() && a == b);
+                names.len()
+            };
             egui::collapsing_header::CollapsingState::load_with_default_open(
                 ui.ctx(),
                 ui.make_persistent_id("solid_bodies"),
