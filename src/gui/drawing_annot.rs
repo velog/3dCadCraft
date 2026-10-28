@@ -72,10 +72,55 @@ pub(super) struct TextDialog {
     at: [f64; 2],
     text: String,
     height: f64,
-    edit: Option<u32>,
+    pub(super) edit: Option<u32>,
     focus: bool,
     /// Leader Text: the arrow's tip.
     leader: Option<[f64; 2]>,
+    /// Its formatting (Format Text).
+    rich: crate::drawing::rich::RichText,
+    /// Selection and cursor of the editor.
+    ed: super::format_text::Editor,
+}
+
+impl TextDialog {
+    fn new(at: [f64; 2], leader: Option<[f64; 2]>) -> Self {
+        Self {
+            at,
+            text: String::new(),
+            height: 3.5,
+            edit: None,
+            focus: true,
+            leader,
+            rich: Default::default(),
+            ed: Default::default(),
+        }
+    }
+
+    /// The annotation it makes (plain when nothing is formatted, so older
+    /// builds show the same).
+    fn kind(&self, text: String) -> AnnotationKind {
+        let rich =
+            (self.rich != crate::drawing::rich::RichText::default()).then(|| self.rich.clone());
+        match self.leader {
+            Some(tip) => AnnotationKind::LeaderText {
+                tip,
+                at: self.at,
+                text,
+                rich,
+            },
+            None => AnnotationKind::Text {
+                at: self.at,
+                text,
+                height: self.height,
+                rich,
+            },
+        }
+    }
+
+    /// The note as it will look (the live preview on the sheet).
+    pub(super) fn preview(&self) -> Option<AnnotationKind> {
+        (!self.text.trim().is_empty()).then(|| self.kind(self.text.trim_end().to_string()))
+    }
 }
 
 /// Which sheets go to the PDF.
@@ -194,12 +239,71 @@ fn paint_prims_with(
 ) {
     let to = |q: [f64; 2]| cam.to_screen(rect, q);
     let px = |mm: f64| ((mm * cam.zoom) as f32).clamp(1.0, 6.0);
+    // The layer's colour, while a formatted run overrides `color`.
+    let mut layer = color;
     for prim in prims {
         match prim {
             Prim::Pen { color: c, .. } => {
                 if follow {
                     color = Color32::from_rgb(c[0], c[1], c[2]);
+                    layer = color;
                 }
+            }
+            Prim::Ink { color: c } => {
+                if follow {
+                    color = c.map_or(layer, |c| Color32::from_rgb(c[0], c[1], c[2]));
+                }
+            }
+            Prim::RunText {
+                at,
+                height,
+                text,
+                angle,
+                bold,
+                italic,
+                stretch,
+                center,
+            } => {
+                let size = (*height * cam.zoom * 1.35) as f32;
+                if size < 4.0 {
+                    continue;
+                }
+                let mut job = egui::text::LayoutJob::default();
+                job.append(
+                    text,
+                    0.0,
+                    egui::TextFormat {
+                        font_id: FontId::proportional(size),
+                        color,
+                        italics: *italic,
+                        // The width factor as letter spacing (egui cannot
+                        // scale glyphs along x).
+                        extra_letter_spacing: ((*stretch - 1.0) * *height * 0.6 * cam.zoom) as f32,
+                        ..Default::default()
+                    },
+                );
+                let galley = p.fonts_mut(|f| f.layout_job(job));
+                let w = galley.size().x;
+                let h = galley.size().y;
+                let shift = if *center { -w * 0.5 } else { 0.0 };
+                let (s, c) = (-*angle as f32).sin_cos();
+                let base = to(*at);
+                let off = egui::vec2(shift, -h * 0.8);
+                let rot = egui::vec2(off.x * c - off.y * s, off.x * s + off.y * c);
+                let at = base + rot;
+                // Bold: drawn twice, a hair apart.
+                if *bold {
+                    let d = (size * 0.05).max(0.6);
+                    p.add(
+                        egui::epaint::TextShape::new(
+                            at + egui::vec2(d * c, d * s),
+                            galley.clone(),
+                            color,
+                        )
+                        .with_angle(-*angle as f32),
+                    );
+                }
+                p.add(egui::epaint::TextShape::new(at, galley, color).with_angle(-*angle as f32));
             }
             Prim::Line { a, b, weight } => {
                 p.line_segment([to(*a), to(*b)], Stroke::new(px(weight.mm()), color));
@@ -292,7 +396,24 @@ fn prims_distance(prims: &[Prim], q: [f64; 2]) -> f64 {
     let mut best = f64::MAX;
     for p in prims {
         let d = match p {
-            Prim::Pen { .. } => f64::MAX,
+            Prim::Pen { .. } | Prim::Ink { .. } => f64::MAX,
+            Prim::RunText {
+                at,
+                height,
+                text,
+                stretch,
+                center,
+                ..
+            } => {
+                let w = annot::text_width(text, *height) * stretch;
+                let c = [
+                    if *center { at[0] } else { at[0] + w * 0.5 },
+                    at[1] + height * 0.5,
+                ];
+                let dx = ((q[0] - c[0]).abs() - w * 0.5).max(0.0);
+                let dy = ((q[1] - c[1]).abs() - height * 0.7).max(0.0);
+                dx.hypot(dy)
+            }
             Prim::Line { a, b, .. } | Prim::Center { a, b, .. } => seg(*a, *b),
             Prim::Path { pts, .. } | Prim::Fill { pts } => pts
                 .windows(2)
@@ -390,15 +511,25 @@ impl CadCraftApp {
     /// Paints the annotations (selected blue, orphans red).
     pub(super) fn paint_annotations(&self, p: &egui::Painter, rect: Rect, anns: &[ShownAnn]) {
         let cam = self.drw.cam;
+        // The Text window previews its note live; the note it edits waits.
+        let editing = self.drw.text_dialog.as_ref().and_then(|d| d.edit);
+        if let Some(k) = self.drw.text_dialog.as_ref().and_then(|d| d.preview())
+            && let Ok(s) = annot::resolve_with(&k, &|_| None, &self.drw.look)
+        {
+            paint_prims_styled(p, &cam, rect, &s.prims, PREVIEW);
+        }
         for a in anns {
-            let color = if self.drw.sel_ann == Some(a.id) {
-                SEL
+            if editing == Some(a.id) {
+                continue;
+            }
+            if self.drw.sel_ann == Some(a.id) {
+                paint_prims(p, &cam, rect, &a.prims, SEL);
             } else if self.drw.hover_ann == Some(a.id) {
-                HOVER
+                paint_prims(p, &cam, rect, &a.prims, HOVER);
             } else {
-                a.ink
-            };
-            paint_prims(p, &cam, rect, &a.prims, color);
+                // Formatted runs keep their own colours.
+                paint_prims_styled(p, &cam, rect, &a.prims, a.ink);
+            }
             if let Some(o) = a.orphan {
                 let c = cam.to_screen(rect, o);
                 p.circle_stroke(c, 9.0, Stroke::new(2.0, ORPHAN));
@@ -743,14 +874,7 @@ impl CadCraftApp {
                 if response.clicked()
                     && let Some(q) = at
                 {
-                    self.drw.text_dialog = Some(TextDialog {
-                        at: super::drawing::snap(q),
-                        text: String::new(),
-                        height: 3.5,
-                        edit: None,
-                        focus: true,
-                        leader: None,
-                    });
+                    self.drw.text_dialog = Some(TextDialog::new(super::drawing::snap(q), None));
                 }
             }
             DrwTool::LeaderText(tip) => {
@@ -774,14 +898,8 @@ impl CadCraftApp {
                                 Stroke::new(1.5, PREVIEW),
                             );
                             if response.clicked() {
-                                self.drw.text_dialog = Some(TextDialog {
-                                    at: super::drawing::snap(q),
-                                    text: String::new(),
-                                    height: 3.5,
-                                    edit: None,
-                                    focus: true,
-                                    leader: Some(t),
-                                });
+                                self.drw.text_dialog =
+                                    Some(TextDialog::new(super::drawing::snap(q), Some(t)));
                                 self.drw.tool = Some(DrwTool::LeaderText(None));
                             }
                         }
@@ -1065,9 +1183,19 @@ impl CadCraftApp {
             .and_then(|d| d.sheet())
             .and_then(|s| s.annotations.iter().find(|a| a.id == id))
             .map(|a| a.kind.clone());
-        let (at, text, height, leader) = match kind {
-            Some(AnnotationKind::Text { at, text, height }) => (at, text, height, None),
-            Some(AnnotationKind::LeaderText { tip, at, text }) => (at, text, 3.5, Some(tip)),
+        let (at, text, height, leader, rich) = match kind {
+            Some(AnnotationKind::Text {
+                at,
+                text,
+                height,
+                rich,
+            }) => (at, text, height, None, rich),
+            Some(AnnotationKind::LeaderText {
+                tip,
+                at,
+                text,
+                rich,
+            }) => (at, text, 3.5, Some(tip), rich),
             Some(AnnotationKind::PartsList(_)) => {
                 self.open_parts_list_editor(id);
                 return;
@@ -1097,14 +1225,12 @@ impl CadCraftApp {
                 return;
             }
         };
-        self.drw.text_dialog = Some(TextDialog {
-            at,
-            text,
-            height,
-            edit: Some(id),
-            focus: true,
-            leader,
-        });
+        let mut d = TextDialog::new(at, leader);
+        d.text = text;
+        d.height = height;
+        d.edit = Some(id);
+        d.rich = rich.unwrap_or_default();
+        self.drw.text_dialog = Some(d);
     }
 
     /// Deletes annotation `id` (one Undo step).
@@ -1137,27 +1263,16 @@ impl CadCraftApp {
         let win = egui::Window::new(title)
             .open(&mut open)
             .resizable(false)
-            .collapsible(false);
+            .collapsible(false)
+            .default_width(520.0);
         self.layout
             .place("drawing_text", ctx.content_rect(), false, win)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Text height");
-                    ui.add(
-                        ExprValue::new(&mut d.height)
-                            .range(1.0..=50.0)
-                            .suffix(" mm"),
-                    );
-                });
-                let r = ui.add(
-                    egui::TextEdit::multiline(&mut d.text)
-                        .desired_rows(4)
-                        .desired_width(320.0),
-                );
                 if d.focus {
-                    r.request_focus();
+                    d.ed.focus = true;
                     d.focus = false;
                 }
+                super::format_text::editor(ui, &mut d.text, &mut d.rich, &mut d.ed, &mut d.height);
                 ui.weak("Enter starts a new line; Ctrl+Enter or OK places the text");
                 ui.horizontal(|ui| {
                     if ui.button("OK").clicked() || super::keys::panel_ok_key(ui, true) {
@@ -1178,6 +1293,7 @@ impl CadCraftApp {
             if text.is_empty() {
                 return;
             }
+            let kind = d.kind(text);
             match d.edit {
                 Some(id) => {
                     self.edit_drawing("Edit Text", |doc| {
@@ -1185,36 +1301,12 @@ impl CadCraftApp {
                             .sheet_mut()
                             .and_then(|s| s.annotations.iter_mut().find(|a| a.id == id))
                         {
-                            a.kind = match d.leader {
-                                Some(tip) => AnnotationKind::LeaderText {
-                                    tip,
-                                    at: d.at,
-                                    text,
-                                },
-                                None => AnnotationKind::Text {
-                                    at: d.at,
-                                    text,
-                                    height: d.height,
-                                },
-                            };
+                            a.kind = kind;
                         }
                     });
                 }
                 None => {
-                    self.edit_drawing("Text", |doc| {
-                        doc.add_annotation(match d.leader {
-                            Some(tip) => AnnotationKind::LeaderText {
-                                tip,
-                                at: d.at,
-                                text,
-                            },
-                            None => AnnotationKind::Text {
-                                at: d.at,
-                                text,
-                                height: d.height,
-                            },
-                        })
-                    });
+                    self.edit_drawing("Text", |doc| doc.add_annotation(kind));
                 }
             }
             return;

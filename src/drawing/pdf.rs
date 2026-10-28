@@ -53,6 +53,8 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
         // The layer pen: its colour, and whether it prints at all.
         let mut ink: krilla::paint::Paint = rgb::Color::new(0, 0, 0).into();
         let mut plot = true;
+        // The layer's colour, while a formatted run overrides `ink`.
+        let mut layer_ink = ink.clone();
         let stroke = |ink: &krilla::paint::Paint, width_mm: f64, dash: Option<Vec<f64>>| Stroke {
             paint: ink.clone(),
             width: (if opts.remove_line_weights {
@@ -86,14 +88,83 @@ pub fn write(pages: &[Page], font: Option<Vec<u8>>, opts: PdfOptions) -> Result<
             if let Prim::Pen { color, plot: p } = prim {
                 let c = if opts.all_black { [0, 0, 0] } else { *color };
                 ink = rgb::Color::new(c[0], c[1], c[2]).into();
+                layer_ink = ink.clone();
                 plot = *p;
+                continue;
+            }
+            if let Prim::Ink { color } = prim {
+                ink = match color {
+                    Some(c) if !opts.all_black => rgb::Color::new(c[0], c[1], c[2]).into(),
+                    // A white background fill stays white on a black print.
+                    Some(c) if c.iter().all(|v| *v > 240) => rgb::Color::new(255, 255, 255).into(),
+                    Some(_) => rgb::Color::new(0, 0, 0).into(),
+                    None => layer_ink.clone(),
+                };
                 continue;
             }
             if !plot {
                 continue;
             }
             match prim {
-                Prim::Pen { .. } => {}
+                Prim::Pen { .. } | Prim::Ink { .. } => {}
+                Prim::RunText {
+                    at: q,
+                    height,
+                    text,
+                    angle,
+                    bold,
+                    italic,
+                    stretch,
+                    center,
+                } => {
+                    let Some(f) = &font else {
+                        continue;
+                    };
+                    let size = (height / 0.7 * PT) as f32;
+                    let shift = if *center {
+                        -text_width(text, *height) * stretch * 0.5
+                    } else {
+                        0.0
+                    };
+                    let origin = at(*q);
+                    s.set_fill(Some(Fill {
+                        paint: ink.clone(),
+                        opacity: NormalizedF32::ONE,
+                        rule: FillRule::NonZero,
+                    }));
+                    // Bold: the outline stroked as well as filled.
+                    s.set_stroke(bold.then(|| Stroke {
+                        paint: ink.clone(),
+                        width: (height * 0.06 * PT) as f32,
+                        ..Stroke::default()
+                    }));
+                    s.push_transform(&Transform::from_rotate_at(
+                        -angle.to_degrees() as f32,
+                        origin.x,
+                        origin.y,
+                    ));
+                    // Width factor and slant about the baseline's start.
+                    let skew = if *italic { -0.2 } else { 0.0 };
+                    s.push_transform(&Transform::from_row(
+                        *stretch as f32,
+                        0.0,
+                        skew,
+                        1.0,
+                        origin.x - origin.x * *stretch as f32 - skew * origin.y,
+                        0.0,
+                    ));
+                    s.draw_text(
+                        Point::from_xy(origin.x + (shift * PT) as f32 / *stretch as f32, origin.y),
+                        f.clone(),
+                        size,
+                        text,
+                        false,
+                        TextDirection::Auto,
+                    );
+                    s.pop();
+                    s.pop();
+                    s.set_stroke(None);
+                }
                 Prim::Line { a, b, weight } => {
                     if let Some(pa) = path(&[*a, *b], false) {
                         s.set_fill(None);

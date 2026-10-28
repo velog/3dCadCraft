@@ -187,6 +187,32 @@ pub enum Prim {
         /// Printed and published.
         plot: bool,
     },
+    /// A colour for what follows (a formatted run, a background fill);
+    /// `None` returns to the layer's pen.
+    Ink {
+        /// sRGB, or back to the pen.
+        color: Option<[u8; 3]>,
+    },
+    /// A formatted text run (Format Text): `at` is its baseline's left end,
+    /// or its middle when `center`.
+    RunText {
+        /// Position (mm).
+        at: [f64; 2],
+        /// Cap height (mm).
+        height: f64,
+        /// Contents.
+        text: String,
+        /// Rotation about `at` (radians, counter-clockwise).
+        angle: f64,
+        /// Bold.
+        bold: bool,
+        /// Italic (slanted).
+        italic: bool,
+        /// Width factor.
+        stretch: f64,
+        /// `at` is the middle.
+        center: bool,
+    },
     /// A centre line (long dash, dot).
     Center {
         /// Start (mm).

@@ -599,6 +599,7 @@ fn annotations_in_the_document() {
             at: [20.0, 20.0],
             text: "NOTE 1\nЗабележка".into(),
             height: 3.5,
+            rich: None,
         })
         .unwrap();
     assert!(t > cm);
@@ -704,6 +705,7 @@ fn layers_drive_the_display_list() {
             at: [30.0, 30.0],
             text: "NOTE".into(),
             height: 3.5,
+            rich: None,
         })
         .unwrap();
     let front = Arc::new(lines_of(&part, ViewOrientation::Front));
@@ -1090,6 +1092,7 @@ fn hole_notes_and_leader_texts() {
             tip: [50.0, 50.0],
             at: [70.0, 60.0],
             text: "WELD ALL ROUND".into(),
+            rich: None,
         },
         &view,
     )

@@ -71,6 +71,9 @@ pub enum AnnotationKind {
         at: [f64; 2],
         /// The text (lines split by `\n`).
         text: String,
+        /// Its formatting (Format Text; none: plain).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rich: Option<super::rich::RichText>,
     },
     /// Bend note on a bend of a flat pattern view: direction, angle and
     /// radius, on the bend's centre line.
@@ -115,6 +118,9 @@ pub enum AnnotationKind {
         /// Cap height (mm).
         #[serde(default = "text_height")]
         height: f64,
+        /// Its formatting (Format Text; none: plain).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rich: Option<super::rich::RichText>,
     },
 }
 
@@ -322,7 +328,24 @@ pub fn resolve_in<'a>(
                 value: None,
             })
         }
-        AnnotationKind::Text { at, text, height } => {
+        AnnotationKind::Text {
+            at,
+            text,
+            height,
+            rich,
+        } if rich.is_some() || super::rich::has_glyphs(text) => Ok(Shown {
+            prims: super::rich::layout(
+                text,
+                &rich.clone().unwrap_or_default(),
+                *at,
+                *height,
+                look.leader_text.line_spacing,
+            ),
+            value: None,
+        }),
+        AnnotationKind::Text {
+            at, text, height, ..
+        } => {
             let spacing = look.leader_text.line_spacing;
             let prims = text
                 .lines()
@@ -411,13 +434,42 @@ pub fn resolve_in<'a>(
                 value: Some(v.distance1),
             })
         }
-        AnnotationKind::LeaderText { tip, at, text } => {
+        AnnotationKind::LeaderText {
+            tip,
+            at,
+            text,
+            rich,
+        } => {
             let d = sub(*tip, *at);
             let right = d[0] <= 0.0;
-            Ok(Shown {
-                prims: st.leader(*tip, *at, text, right),
-                value: None,
-            })
+            let mut prims = st.leader(*tip, *at, text, right);
+            let plain = super::rich::RichText::default();
+            let rich = rich
+                .as_ref()
+                .or_else(|| super::rich::has_glyphs(text).then_some(&plain));
+            if let Some(r) = rich {
+                // The leader and its shoulder as for plain text; the text
+                // formatted above the shoulder, its last line lowest.
+                prims.retain(|p| !matches!(p, Prim::Text { .. }));
+                let h = look.leader_text.height;
+                let w = text
+                    .lines()
+                    .map(|l| text_width(l, h) * look.leader_text.width_scale)
+                    .fold(0.0, f64::max)
+                    .max(4.0);
+                let x0 = if right { at[0] } else { at[0] - w };
+                let mut r = r.clone();
+                r.h = super::rich::HAlign::Left;
+                r.v = super::rich::VAlign::Bottom;
+                prims.extend(super::rich::layout(
+                    text,
+                    &r,
+                    [x0, at[1] + 0.8],
+                    h,
+                    look.leader_text.line_spacing,
+                ));
+            }
+            Ok(Shown { prims, value: None })
         }
     }
 }

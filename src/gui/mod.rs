@@ -66,6 +66,7 @@ mod drawing_styles;
 mod drive;
 mod feature_cmd;
 mod files;
+mod format_text;
 mod hole;
 mod hole_dims;
 mod hole_panel;

@@ -148,6 +148,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at: [30.0, 30.0],
         text: "NOTES:\n1. Break all sharp edges.\n2. Забележка: без чапаци.".into(),
         height: 3.5,
+        rich: None,
     });
     let _ = (side, sec);
     let drawing_id = project.add_document("Drawing1", DocumentData::Drawing(d.clone()));

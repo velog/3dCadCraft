@@ -25,6 +25,7 @@ pub mod parts;
 pub mod pdf;
 pub mod render;
 pub mod revision;
+pub mod rich;
 pub mod sheet;
 pub mod style;
 pub mod table;
