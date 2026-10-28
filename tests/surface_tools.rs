@@ -214,3 +214,558 @@ fn a_revolved_spline_shows_as_one_face() {
         }
     }
 }
+
+// ------------------------------------------------------------ surface tools ---
+
+use cadcraft3d::part::surface_op::{
+    ExtendOp, PatchOp, ReplaceFaceOp, ReplaceWith, RuledKind, RuledOp, SculptOp, SculptOperation,
+    StitchOp, SurfEdge, TrimOp, TrimTool,
+};
+use cadcraft3d::part::{
+    BodyOp, BodyOpFeature, FaceRef, LineRef, PlaneRef, ProfileRef, WorkDef, WorkFeature,
+    WorkPlaneDef,
+};
+
+fn op(p: &mut PartDocument, o: BodyOp) -> String {
+    let id = p.add_body_op(BodyOpFeature::new(o)).unwrap();
+    assert!(p.exact, "exact kernel");
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    id
+}
+
+fn solid_volume(p: &PartDocument) -> Real {
+    p.exact_bodies
+        .0
+        .iter()
+        .filter(|s| !s.is_open())
+        .filter_map(|s| s.volume_at(1e-4))
+        .sum()
+}
+
+/// A surface extruded `h` along +Z from lines through `pts` on XY (a closed
+/// polygon gives its walls).
+fn wall(p: &mut PartDocument, pts: &[(Real, Real)], h: Real) -> String {
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    let curves: Vec<EntityId> = pts
+        .windows(2)
+        .map(|w| sk.add_line(Point2::new(w[0].0, w[0].1), Point2::new(w[1].0, w[1].1)))
+        .collect();
+    let closed = pts.first() == pts.last();
+    let mut f = if closed {
+        let r = p.sketches[i].sketch.regions();
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], h)
+    } else {
+        let mut f = ExtrudeFeature::new(Vec::new(), h);
+        f.open = Some(OpenProfile {
+            curves,
+            flip: false,
+            match_shape: false,
+        });
+        f
+    };
+    f.output = Output::Surface;
+    p.add_extrude(i, f).unwrap()
+}
+
+/// A planar patch of a rectangle on XY.
+fn patch_rect(p: &mut PartDocument, a: (Real, Real), b: (Real, Real)) -> String {
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let id = p.sketches[i].id.clone();
+    op(
+        p,
+        BodyOp::Patch(PatchOp {
+            edges: Vec::new(),
+            sketch: Some(id),
+            profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
+        }),
+    )
+}
+
+/// The name of the face of the display body nearest `q`.
+fn face_near(p: &PartDocument, q: [Real; 3]) -> String {
+    let q = cadcraft3d::kernel::Point3::new(q[0], q[1], q[2]);
+    let d = |f: &cadcraft3d::kernel::Face| {
+        f.mesh.as_ref().map_or(Real::MAX, |m| {
+            m.positions
+                .iter()
+                .map(|x| (x - q).norm())
+                .fold(Real::MAX, Real::min)
+        })
+    };
+    p.body
+        .faces()
+        .filter(|(_, f)| f.name.is_some())
+        .min_by(|a, b| d(a.1).total_cmp(&d(b.1)))
+        .and_then(|(_, f)| f.name.clone())
+        .unwrap()
+}
+
+fn edge(p: &PartDocument, on_face: [Real; 3], at: [Real; 3]) -> SurfEdge {
+    SurfEdge {
+        face: face_near(p, on_face),
+        hint: at,
+    }
+}
+
+#[test]
+fn stitch_two_walls_into_one_surface() {
+    let mut p = PartDocument::default();
+    let a = wall(&mut p, &[(0.0, 0.0), (10.0, 0.0)], 10.0);
+    let b = wall(&mut p, &[(10.0, 0.0), (10.0, 10.0)], 10.0);
+    assert_eq!(surfaces(&p), 2);
+    op(
+        &mut p,
+        BodyOp::Stitch(StitchOp {
+            surfaces: vec![a, b],
+            tolerance: 0.001,
+            keep_surface: false,
+        }),
+    );
+    assert_eq!(surfaces(&p), 1);
+    close(sheet_area(&p), 200.0, 1e-6);
+}
+
+#[test]
+fn walls_and_two_patches_stitch_into_a_solid() {
+    // The walls of a 20 x 10 rectangle, 5 high; Boundary Patch of the
+    // bottom and the top rims; Stitch closes a 20 x 10 x 5 box.
+    let mut p = PartDocument::default();
+    let w = wall(
+        &mut p,
+        &[
+            (0.0, 0.0),
+            (20.0, 0.0),
+            (20.0, 10.0),
+            (0.0, 10.0),
+            (0.0, 0.0),
+        ],
+        5.0,
+    );
+    let rim = |p: &PartDocument, z: Real| -> Vec<SurfEdge> {
+        [(10.0, 0.0), (20.0, 5.0), (10.0, 10.0), (0.0, 5.0)]
+            .iter()
+            .map(|&(x, y)| edge(p, [x, y, 2.5], [x, y, z]))
+            .collect()
+    };
+    let e0 = rim(&p, 0.0);
+    let bottom = op(
+        &mut p,
+        BodyOp::Patch(PatchOp {
+            edges: e0,
+            sketch: None,
+            profile: None,
+        }),
+    );
+    let e5 = rim(&p, 5.0);
+    let top = op(
+        &mut p,
+        BodyOp::Patch(PatchOp {
+            edges: e5,
+            sketch: None,
+            profile: None,
+        }),
+    );
+    assert_eq!(surfaces(&p), 3);
+    op(
+        &mut p,
+        BodyOp::Stitch(StitchOp {
+            surfaces: vec![w, bottom, top],
+            tolerance: 0.001,
+            keep_surface: false,
+        }),
+    );
+    assert_eq!(surfaces(&p), 0);
+    close(solid_volume(&p), 1000.0, 1e-6);
+}
+
+#[test]
+fn boundary_patch_of_a_sketch_region() {
+    let mut p = PartDocument::default();
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 5.0)
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let id = p.sketches[i].id.clone();
+    op(
+        &mut p,
+        BodyOp::Patch(PatchOp {
+            edges: Vec::new(),
+            sketch: Some(id),
+            profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
+        }),
+    );
+    assert_eq!(surfaces(&p), 1);
+    close(sheet_area(&p), PI * 25.0, 5e-3);
+}
+
+#[test]
+fn trim_a_surface_by_a_plane_and_by_a_surface() {
+    // A strip from x = -10 to 10, 10 high, trimmed by the YZ plane: the
+    // piece at x = 5 goes.
+    let mut p = PartDocument::default();
+    let s = wall(&mut p, &[(-10.0, 0.0), (10.0, 0.0)], 10.0);
+    op(
+        &mut p,
+        BodyOp::Trim(TrimOp {
+            surface: s.clone(),
+            tool: TrimTool::Plane(PlaneRef::Origin(OriginPlane::YZ)),
+            remove: [5.0, 0.0, 5.0],
+            invert: false,
+        }),
+    );
+    close(sheet_area(&p), 100.0, 1e-6);
+    // By another surface (a wall across at x = -4).
+    let t = wall(&mut p, &[(-4.0, -5.0), (-4.0, 5.0)], 10.0);
+    op(
+        &mut p,
+        BodyOp::Trim(TrimOp {
+            surface: s,
+            tool: TrimTool::Surface(t),
+            remove: [-8.0, 0.0, 5.0],
+            invert: false,
+        }),
+    );
+    // The strip keeps x in [-4, 0] (40) and the tool wall stays (100).
+    close(sheet_area(&p), 40.0 + 100.0, 1e-6);
+}
+
+#[test]
+fn extend_a_planar_patch() {
+    let mut p = PartDocument::default();
+    patch_rect(&mut p, (0.0, 0.0), (10.0, 10.0));
+    let e = edge(&p, [5.0, 5.0, 0.0], [10.0, 5.0, 0.0]);
+    op(
+        &mut p,
+        BodyOp::Extend(ExtendOp {
+            edges: vec![e],
+            distance: 5.0,
+        }),
+    );
+    close(sheet_area(&p), 150.0, 1e-6);
+}
+
+#[test]
+fn ruled_surfaces_from_a_box_edge() {
+    for (kind, vector) in [
+        (RuledKind::Normal, None),
+        (RuledKind::Tangent, None),
+        (RuledKind::Sweep, Some(LineRef::Origin(2))),
+    ] {
+        let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        op(
+            &mut p,
+            BodyOp::Ruled(RuledOp {
+                kind,
+                edges: vec![SurfEdge {
+                    face: "Box1:Top".into(),
+                    hint: [20.0, 0.0, 20.0],
+                }],
+                distance: 5.0,
+                flip: false,
+                vector,
+            }),
+        );
+        assert_eq!(surfaces(&p), 1, "{kind:?}");
+        close(sheet_area(&p), 200.0, 1e-6);
+        // Normal / Sweep: above the top; Tangent: out beyond y = 0.
+        let (lo, hi) = cadcraft3d::kernel::exact::bounds(
+            p.exact_bodies.0.iter().find(|s| s.is_open()).unwrap(),
+        )
+        .unwrap();
+        match kind {
+            RuledKind::Normal | RuledKind::Sweep => {
+                assert!(lo.z > 19.9 && hi.z < 25.1, "{kind:?} {lo} {hi}")
+            }
+            RuledKind::Tangent => assert!(hi.y < 0.1 && lo.y > -5.1, "{lo} {hi}"),
+        }
+    }
+}
+
+#[test]
+fn replace_the_top_face_by_a_plane_above_and_below() {
+    for (z, want) in [(25.0, 40.0 * 30.0 * 25.0), (15.0, 40.0 * 30.0 * 15.0)] {
+        let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+        let wp = p
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: z,
+            })))
+            .unwrap();
+        op(
+            &mut p,
+            BodyOp::ReplaceFace(ReplaceFaceOp {
+                faces: vec![FaceRef {
+                    face: "Box1:Top".into(),
+                    hint: [20.0, 15.0, 20.0],
+                }],
+                new: ReplaceWith::Plane(PlaneRef::Work(wp)),
+            }),
+        );
+        close(solid_volume(&p), want, 1e-6);
+        // The new top is the feature's face; a Ruled Surface on its front
+        // edge (picked half way along it) runs along that edge.
+        let names: Vec<String> = p.body.faces().filter_map(|(_, f)| f.name.clone()).collect();
+        assert!(names.iter().any(|n| n.ends_with(":Face")), "{names:?}");
+        op(
+            &mut p,
+            BodyOp::Ruled(RuledOp {
+                kind: RuledKind::Normal,
+                edges: vec![SurfEdge {
+                    face: "Box1:Front".into(),
+                    hint: [20.0, 0.0, z],
+                }],
+                distance: 5.0,
+                flip: false,
+                vector: None,
+            }),
+        );
+        let (lo, hi) = cadcraft3d::kernel::exact::bounds(
+            p.exact_bodies.0.iter().find(|s| s.is_open()).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            (hi.x - lo.x - 40.0).abs() < 0.1 && (hi.z - z).abs() < 0.1,
+            "{lo} {hi}"
+        );
+    }
+}
+
+#[test]
+fn sculpt_removes_a_side() {
+    // A wall across the 40 x 30 x 20 box at y = 15 (x -10..50, z -5..25):
+    // Remove takes the front side (the side the wall faces) - half the box.
+    let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let wp = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: -5.0,
+        })))
+        .unwrap();
+    let i = p
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(wp),
+                ..Default::default()
+            },
+            &opts(),
+        )
+        .unwrap();
+    let l = p.sketches[i]
+        .sketch
+        .add_line(Point2::new(-10.0, 15.0), Point2::new(50.0, 15.0));
+    let mut f = ExtrudeFeature::new(Vec::new(), 30.0);
+    f.output = Output::Surface;
+    f.open = Some(OpenProfile {
+        curves: vec![l],
+        flip: false,
+        match_shape: false,
+    });
+    let s = p.add_extrude(i, f).unwrap();
+    op(
+        &mut p,
+        BodyOp::Sculpt(SculptOp {
+            surfaces: vec![s],
+            operation: SculptOperation::Remove,
+            solids: Vec::new(),
+            side: None,
+            flip: false,
+        }),
+    );
+    close(solid_volume(&p), 12000.0, 1e-6);
+}
+
+/// A hemisphere surface r 8 about a vertical axis through (20, 15), its
+/// rim at height `z` (a quarter arc revolved).
+fn dome(p: &mut PartDocument, z: Real) -> String {
+    let wp = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XZ),
+            distance: -15.0,
+        })))
+        .unwrap();
+    let i = p
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(wp),
+                ..Default::default()
+            },
+            &opts(),
+        )
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    let pl = sk.plane.clone();
+    // The sketch point of a world point (the plane's frame may run either way).
+    let at = |x: Real, z: Real| {
+        let q = pl.project(&cadcraft3d::kernel::Point3::new(x, 15.0, z));
+        Point2::new(q.x, q.y)
+    };
+    let o = sk.add_point(at(20.0, z));
+    let a = sk.add_point(at(28.0, z));
+    let b = sk.add_point(at(20.0, z + 8.0));
+    // The arc runs counter-clockwise in the sketch: from whichever end makes
+    // it the quarter, not three quarters.
+    let arc = match sk.add_arc(o, a, b) {
+        Ok(x) if sk.circle_geometry(x).is_some() => x,
+        _ => panic!("arc"),
+    };
+    let ax = sk.add_line(at(20.0, z - 10.0), at(20.0, z + 20.0));
+    let mut rv = RevolveFeature::new(Vec::new(), AxisRef::SketchLine(ax));
+    rv.output = Output::Surface;
+    rv.open = vec![arc];
+    let id = p.add_revolve(i, rv).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    id
+}
+
+#[test]
+fn sculpt_adds_a_box_of_surfaces_and_makes_a_new_solid() {
+    // Walls of a 20 x 10 rectangle at (30..50, 10..20), 10 high from z = 15,
+    // closed by their rims' patches: Add joins the part above the box.
+    let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let wp = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 15.0,
+        })))
+        .unwrap();
+    let i = p
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(wp),
+                ..Default::default()
+            },
+            &opts(),
+        )
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(30.0, 10.0), Point2::new(50.0, 20.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let mut f = ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 10.0);
+    f.output = Output::Surface;
+    let w = p.add_extrude(i, f).unwrap();
+    op(
+        &mut p,
+        BodyOp::Sculpt(SculptOp {
+            surfaces: vec![w.clone()],
+            operation: SculptOperation::Add,
+            solids: Vec::new(),
+            side: None,
+            flip: false,
+        }),
+    );
+    // Above the box: 20 x 10 x 5; beside it (x 40..50, z 15..20): 10 x 10 x 5.
+    close(solid_volume(&p), 24000.0 + 1000.0 + 500.0, 1e-6);
+}
+
+#[test]
+#[ignore = "a revolved dome closed by Stitch does not go through the kernel's Booleans yet"]
+fn sculpt_adds_a_dome_and_makes_a_new_solid() {
+    let cap = |h: Real| PI * h * h * (3.0 * 8.0 - h) / 3.0;
+    // The dome's rim 5 below the top: the cap above the top is added.
+    let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let d = dome(&mut p, 15.0);
+    let area = sheet_area(&p);
+    assert!(
+        (area - 2.0 * PI * 64.0).abs() < 0.01 * 2.0 * PI * 64.0
+            || (area - 6.0 * PI * 64.0).abs() < 0.01 * 6.0 * PI * 64.0,
+        "{area}"
+    );
+    op(
+        &mut p,
+        BodyOp::Sculpt(SculptOp {
+            surfaces: vec![d],
+            operation: SculptOperation::Add,
+            solids: Vec::new(),
+            side: None,
+            flip: false,
+        }),
+    );
+    close(solid_volume(&p), 24000.0 + cap(3.0), 1e-2);
+
+    // New Solid: the dome closed by its rim.
+    let mut p = PartDocument::default();
+    let d = dome(&mut p, 30.0);
+    op(
+        &mut p,
+        BodyOp::Sculpt(SculptOp {
+            surfaces: vec![d],
+            operation: SculptOperation::NewSolid,
+            solids: Vec::new(),
+            side: None,
+            flip: false,
+        }),
+    );
+    close(solid_volume(&p), 2.0 / 3.0 * PI * 512.0, 1e-2);
+}
+
+#[test]
+fn every_surface_command_survives_save_and_load() {
+    // Each operation's JSON is read back into the same feature (a field
+    // named like the operation's tag, `kind`, broke loading once).
+    let ops = vec![
+        BodyOp::Stitch(StitchOp {
+            surfaces: vec!["A".into(), "B".into()],
+            tolerance: 0.001,
+            keep_surface: true,
+        }),
+        BodyOp::Patch(PatchOp {
+            edges: vec![SurfEdge {
+                face: "A:Side:0".into(),
+                hint: [1.0, 2.0, 3.0],
+            }],
+            sketch: None,
+            profile: None,
+        }),
+        BodyOp::Trim(TrimOp {
+            surface: "A".into(),
+            tool: TrimTool::Plane(PlaneRef::Origin(OriginPlane::YZ)),
+            remove: [1.0, 0.0, 0.0],
+            invert: true,
+        }),
+        BodyOp::Extend(ExtendOp {
+            edges: Vec::new(),
+            distance: 2.0,
+        }),
+        BodyOp::Ruled(RuledOp {
+            kind: RuledKind::Sweep,
+            edges: Vec::new(),
+            distance: 3.0,
+            flip: true,
+            vector: Some(LineRef::Origin(2)),
+        }),
+        BodyOp::ReplaceFace(ReplaceFaceOp {
+            faces: Vec::new(),
+            new: ReplaceWith::Surface("S".into()),
+        }),
+        BodyOp::Sculpt(SculptOp {
+            surfaces: vec!["S".into()],
+            operation: SculptOperation::Remove,
+            solids: vec!["Box1".into()],
+            side: Some([0.0, 1.0, 2.0]),
+            flip: true,
+        }),
+    ];
+    for o in ops {
+        let f = cadcraft3d::part::Feature::BodyOp(BodyOpFeature::new(o));
+        let json = serde_json::to_string(&f).unwrap();
+        let back: cadcraft3d::part::Feature =
+            serde_json::from_str(&json).unwrap_or_else(|e| panic!("{json}: {e}"));
+        assert_eq!(back, f, "{json}");
+    }
+}

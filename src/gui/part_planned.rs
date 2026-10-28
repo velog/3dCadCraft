@@ -679,6 +679,7 @@ impl PartPlanned {
                     ),
                     Radio("Operation", &["Add", "Remove", "New Solid"], 0),
                     Combo("Side", &["One side", "Both sides"], 0),
+                    Check("Flip", false),
                     Check("Automatic Face Chain", true),
                 ],
             )],
@@ -1296,6 +1297,14 @@ impl Planned {
             Planned::Asm(
                 super::asm_planned::AsmPlanned::Interference
                     | super::asm_planned::AsmPlanned::Pattern
+            ) | Planned::Part(
+                PartPlanned::Stitch
+                    | PartPlanned::Patch
+                    | PartPlanned::TrimSurface
+                    | PartPlanned::ExtendSurface
+                    | PartPlanned::RuledSurface
+                    | PartPlanned::ReplaceFace
+                    | PartPlanned::Sculpt
             )
         )
     }
@@ -1363,6 +1372,12 @@ pub(super) struct PartDialog {
     pub refs: HashMap<&'static str, Vec<crate::assembly::GeomRef>>,
     /// The assembly pattern being edited (Edit of a Component Pattern).
     pub edit: Option<u32>,
+    /// The part items of a selector's picks with the model point clicked, in
+    /// the order of `picks` (the surface commands build their references
+    /// from them).
+    pub items: HashMap<&'static str, Vec<PickedItem>>,
+    /// The feature being edited (Edit Feature of a surface command).
+    pub feature: Option<usize>,
 }
 
 /// The selector rows of `kind`, in order; a key on several tabs (Pattern
@@ -1402,6 +1417,12 @@ fn tab_keys(kind: Planned, ti: usize) -> Vec<&'static str> {
     })
 }
 
+/// A part item picked in a panel and the model point clicked on it.
+pub(super) type PickedItem = (SelItem, Option<[f64; 3]>);
+
+/// Selectors that take one input: a new pick replaces the old one.
+const SINGLE_KEYS: &[&str] = &["tool", "remove", "vector", "to", "new"];
+
 /// Selector colours by position (the dots of the rows).
 const COLORS: [[u8; 3]; 5] = [
     colors::FACES,
@@ -1425,6 +1446,8 @@ impl PartDialog {
             picks: HashMap::new(),
             refs: HashMap::new(),
             edit: None,
+            items: HashMap::new(),
+            feature: None,
         }
     }
 
@@ -1471,10 +1494,59 @@ impl PartDialog {
             if let Some(r) = self.refs.get_mut(key).filter(|r| i < r.len()) {
                 r.remove(i);
             }
+            if let Some(r) = self.items.get_mut(key).filter(|r| i < r.len()) {
+                r.remove(i);
+            }
             return;
         }
         list.push(what);
         self.advance(key);
+    }
+
+    /// [`Self::pick`] of a part item and the model point clicked on it. A
+    /// selector of one input (a cutting tool, a direction, the new face)
+    /// replaces its pick.
+    pub(super) fn pick_item(&mut self, what: String, item: SelItem, at: Option<[f64; 3]>) {
+        let Some(key) = self.active else {
+            return;
+        };
+        if SINGLE_KEYS.contains(&key) {
+            self.picks.insert(key, vec![what]);
+            self.items.insert(key, vec![(item, at)]);
+            self.advance(key);
+            return;
+        }
+        let same = self.picks.get(key).is_some_and(|l| l.contains(&what));
+        if !same {
+            let n = self.picks.get(key).map_or(0, Vec::len);
+            let items = self.items.entry(key).or_default();
+            items.truncate(n);
+            items.push((item, at));
+        }
+        self.pick(what);
+    }
+
+    /// The items picked for selector `key`.
+    pub(super) fn items_of(&self, key: &str) -> &[PickedItem] {
+        self.items.get(key).map_or(&[], Vec::as_slice)
+    }
+
+    /// The choice of radio / drop-down row `label` of tab `ti` (its default
+    /// until changed).
+    pub(super) fn index(&self, ti: usize, label: &str) -> usize {
+        let Some(page) = self.kind.pages().get(ti) else {
+            return 0;
+        };
+        page.1
+            .iter()
+            .enumerate()
+            .find_map(|(ri, r)| match *r {
+                Radio(l, _, def) | Combo(l, _, def) if l == label => {
+                    Some(self.indices.get(&(ti, ri)).copied().unwrap_or(def))
+                }
+                _ => None,
+            })
+            .unwrap_or(0)
     }
 
     /// Takes a component's face / edge for the active selector: `single`
@@ -1577,6 +1649,20 @@ impl PartDialog {
     pub(super) fn set_num(&mut self, ti: usize, label: &str, v: f64) {
         if let Some((ri, _)) = self.find_row(ti, label) {
             self.nums.insert((ti, ri), v);
+        }
+    }
+
+    /// Sets the choice of radio / drop-down row `label` of tab `ti`.
+    pub(super) fn set_index(&mut self, ti: usize, label: &str, v: usize) {
+        let Some(page) = self.kind.pages().get(ti) else {
+            return;
+        };
+        if let Some(ri) = page
+            .1
+            .iter()
+            .position(|r| matches!(*r, Radio(l, ..) | Combo(l, ..) if l == label))
+        {
+            self.indices.insert((ti, ri), v);
         }
     }
 
@@ -1779,6 +1865,8 @@ impl CadCraftApp {
                         .entry(first.0)
                         .or_default()
                         .push(self.item_label(&item));
+                    let at = self.item_point(&item).map(|p| [p.x, p.y, p.z]);
+                    d.items.entry(first.0).or_default().push((item, at));
                 }
             }
             if d.picks.contains_key(first.0)
@@ -1812,8 +1900,9 @@ impl CadCraftApp {
             return;
         }
         let what = self.item_label(&item);
+        let at = self.click_point(&item, p, rect).map(|q| [q.x, q.y, q.z]);
         if let Some(d) = self.part_planned.as_mut() {
-            d.pick(what);
+            d.pick_item(what, item, at);
         }
     }
 
@@ -1843,6 +1932,11 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::Pattern) => {
                 if self.pattern_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Part(_) if d.kind.has_logic() => {
+                if self.surface_ok(&d) {
                     self.part_planned = None;
                 }
             }

@@ -1070,7 +1070,9 @@ point, Surface, conditions together with rails ⬜ (clear refusal). Waiting for 
 
 Springs and helical surfaces. Defined by height and pitch, number of revolutions and height, or number of revolutions and pitch. There are tapered coils and closed ends.
 
-## 5.4 Surfaces — ⬜ · XL
+## 5.4 Surfaces — 🟡 (Stitch, Boundary Patch, Trim, Extend, Ruled Surface, Replace Face, Sculpt: the main cases, 2026-10-28) · XL
+
+**Specification:** [spec/5.4-surfaces.md](spec/5.4-surfaces.md)
 
 **Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
 

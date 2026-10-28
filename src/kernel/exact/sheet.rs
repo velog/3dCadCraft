@@ -125,6 +125,38 @@ pub fn revolve_sheet(
     Ok(named_sheet(body, &names, prefix))
 }
 
+/// A surface swept from `chains` on `plane` straight along `along` (any direction, not only
+/// the plane's normal): a Ruled Surface of the Normal / Sweep type. Faces
+/// `<prefix>:Side:<segment>`.
+pub fn sweep_sheet_along(
+    plane: &Plane,
+    chains: &[Vec<ProfileSegment>],
+    along: Vector3,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    let pl = plane_of(plane)?;
+    let (segs, names) = chains_of(chains)?;
+    let start = chains
+        .first()
+        .and_then(|c| c.first())
+        .map(|s| s.geometry.start())
+        .ok_or_else(|| "no curves".to_owned())?;
+    let a =
+        plane.origin + plane.x_axis.into_inner() * start.x + plane.y_axis().into_inner() * start.y;
+    let b = a + along;
+    let body = guarded("ruled surface", || {
+        sk::sweep_sheet(
+            &pl,
+            &segs,
+            &[sk::PathSeg::Line {
+                a: super::v3(&a),
+                b: super::v3(&b),
+            }],
+        )
+    })?;
+    Ok(named_sheet(body, &names, prefix))
+}
+
 /// Which side of a surface body a point is on: the signed distance to the
 /// nearest of its triangles, along that triangle's normal (the kernel's face
 /// orientation). Points beyond the sheet's border take the side of the

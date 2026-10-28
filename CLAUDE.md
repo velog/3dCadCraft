@@ -1177,6 +1177,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   plane as one face (no seam drawn, one pick). Revolve open curves: `RevolveFeature::open` (surface only).
 - **The status bar's "ms" is the CPU work of a frame** (measured in `App::ui`); `unstable_dt` (time between
   frames) grew while the mouse stood still and looked like a slow view.
+- **Surface commands** (`part::surface_op`, `kernel::exact::surface_ops`, GUI `gui/surface_cmd.rs`, spec 5.4):
+  `BodyOp` variants of format revision 37 built from the planned panels' picks (`PartDialog::items` keeps the
+  `SelItem` and the clicked model point per selector). Edges are `SurfEdge` (a face's name + a point on the edge);
+  find the edge again by the distance to its *segments* (a straight edge samples as its two ends — a tie picked
+  the wrong edge). A Sculpt / Stitch body closed by a rim patch may come out inside-out: check its volume's sign
+  (`surface_ops::reversed`); a revolved dome closed that way still fails the kernel's Boolean.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

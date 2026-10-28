@@ -175,6 +175,20 @@ pub enum BodyOp {
     DeleteFace(DeleteFaceOp),
     /// Move Bodies (format revision 35).
     MoveBodies(MoveBodiesOp),
+    /// Stitch (format revision 37, like every surface command below).
+    Stitch(super::surface_op::StitchOp),
+    /// Boundary Patch.
+    Patch(super::surface_op::PatchOp),
+    /// Trim (a surface).
+    Trim(super::surface_op::TrimOp),
+    /// Extend (a surface).
+    Extend(super::surface_op::ExtendOp),
+    /// Ruled Surface.
+    Ruled(super::surface_op::RuledOp),
+    /// Replace Face.
+    ReplaceFace(super::surface_op::ReplaceFaceOp),
+    /// Sculpt.
+    Sculpt(super::surface_op::SculptOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -412,6 +426,37 @@ impl BodyOpFeature {
             BodyOp::Thicken(_) => "Thicken",
             BodyOp::DeleteFace(_) => "DeleteFace",
             BodyOp::MoveBodies(_) => "MoveBodies",
+            BodyOp::Stitch(_) => "Stitch",
+            BodyOp::Patch(_) => "BoundaryPatch",
+            BodyOp::Trim(_) => "TrimSurface",
+            BodyOp::Extend(_) => "ExtendSurface",
+            BodyOp::Ruled(_) => "RuledSurface",
+            BodyOp::ReplaceFace(_) => "ReplaceFace",
+            BodyOp::Sculpt(_) => "Sculpt",
+        }
+    }
+
+    /// The sketch it uses (a Boundary Patch of a sketch region).
+    pub fn sketch(&self) -> Option<&str> {
+        match &self.op {
+            BodyOp::Patch(p) => p.sketch.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Refuses a definition that cannot be built (before any geometry).
+    pub fn validate(&self) -> Result<(), String> {
+        match &self.op {
+            BodyOp::Thicken(t) => t.validate(),
+            BodyOp::DeleteFace(d) => d.validate(),
+            BodyOp::MoveBodies(m) => m.validate(),
+            BodyOp::Stitch(o) => o.validate(),
+            BodyOp::Patch(o) => o.validate(),
+            BodyOp::Trim(o) => o.validate(),
+            BodyOp::Extend(o) => o.validate(),
+            BodyOp::Ruled(o) => o.validate(),
+            BodyOp::ReplaceFace(o) => o.validate(),
+            BodyOp::Sculpt(o) => o.validate(),
         }
     }
 
@@ -421,7 +466,13 @@ impl BodyOpFeature {
             BodyOp::Thicken(t) => {
                 t.output == ThickenOutput::Surface || t.operation == Operation::NewSolid
             }
-            BodyOp::DeleteFace(_) | BodyOp::MoveBodies(_) => false,
+            BodyOp::Patch(_) | BodyOp::Ruled(_) | BodyOp::Stitch(_) => true,
+            BodyOp::Sculpt(s) => s.operation == super::surface_op::SculptOperation::NewSolid,
+            BodyOp::DeleteFace(_)
+            | BodyOp::MoveBodies(_)
+            | BodyOp::Trim(_)
+            | BodyOp::Extend(_)
+            | BodyOp::ReplaceFace(_) => false,
         }
     }
 
@@ -429,7 +480,13 @@ impl BodyOpFeature {
     pub fn fields(&self) -> Vec<(&'static str, Unit)> {
         match &self.op {
             BodyOp::Thicken(_) => vec![("distance", Unit::Mm)],
-            BodyOp::DeleteFace(_) => Vec::new(),
+            BodyOp::Extend(_) | BodyOp::Ruled(_) => vec![("distance", Unit::Mm)],
+            BodyOp::DeleteFace(_)
+            | BodyOp::Stitch(_)
+            | BodyOp::Patch(_)
+            | BodyOp::Trim(_)
+            | BodyOp::ReplaceFace(_)
+            | BodyOp::Sculpt(_) => Vec::new(),
             BodyOp::MoveBodies(m) => m
                 .steps
                 .iter()
@@ -443,6 +500,8 @@ impl BodyOpFeature {
     pub fn value(&self, field: &str) -> Option<Real> {
         match (&self.op, field) {
             (BodyOp::Thicken(t), "distance") => Some(t.distance),
+            (BodyOp::Extend(o), "distance") => Some(o.distance),
+            (BodyOp::Ruled(o), "distance") => Some(o.distance),
             (BodyOp::MoveBodies(m), f) => step_value(&mut m.clone(), f).map(|v| *v),
             _ => None,
         }
@@ -452,6 +511,8 @@ impl BodyOpFeature {
     pub fn set(&mut self, field: &str, v: Real) {
         match (&mut self.op, field) {
             (BodyOp::Thicken(t), "distance") => t.distance = v,
+            (BodyOp::Extend(o), "distance") => o.distance = v,
+            (BodyOp::Ruled(o), "distance") => o.distance = v,
             (BodyOp::MoveBodies(m), f) => {
                 if let Some(x) = step_value(m, f) {
                     *x = v;
@@ -487,6 +548,25 @@ impl BodyOpFeature {
                 let steps: Vec<&str> = m.steps.iter().map(MoveStep::label).collect();
                 format!("Move {} body(ies): {}", m.bodies.len(), steps.join(", "))
             }
+            BodyOp::Stitch(o) => format!("Stitch of {} surface(s)", o.surfaces.len()),
+            BodyOp::Patch(o) => match &o.sketch {
+                Some(s) => format!("Boundary Patch of a region of {s}"),
+                None => format!("Boundary Patch of {} edge(s)", o.edges.len()),
+            },
+            BodyOp::Trim(o) => format!("Trim of {}", o.surface),
+            BodyOp::Extend(o) => format!("Extend {} edge(s) by {} mm", o.edges.len(), o.distance),
+            BodyOp::Ruled(o) => format!(
+                "Ruled Surface ({:?}) of {} edge(s), {} mm",
+                o.kind,
+                o.edges.len(),
+                o.distance
+            ),
+            BodyOp::ReplaceFace(o) => format!("Replace {} face(s)", o.faces.len()),
+            BodyOp::Sculpt(o) => format!(
+                "Sculpt ({:?}) with {} surface(s)",
+                o.operation,
+                o.surfaces.len()
+            ),
         }
     }
 }

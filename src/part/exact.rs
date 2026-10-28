@@ -1157,9 +1157,11 @@ pub(super) fn body_op(
     f: &super::BodyOpFeature,
     body: &BRep,
     works: &super::placement::WorkGeom,
+    sketches: &[super::PartSketch],
     cur: &[ExactSolid],
     sheets: &[ExactSolid],
 ) -> Result<Vec<ExactSolid>, Fail> {
+    use super::surface_op as so;
     match &f.op {
         super::BodyOp::Thicken(t) => thicken(t, &f.id, cur, sheets).map(|mut out| {
             out.extend(sheets.iter().cloned());
@@ -1167,6 +1169,13 @@ pub(super) fn body_op(
         }),
         super::BodyOp::DeleteFace(d) => delete_face(d, cur, sheets),
         super::BodyOp::MoveBodies(m) => move_bodies(m, body, works, cur, sheets),
+        super::BodyOp::Stitch(o) => so::stitch(o, &f.id, cur, sheets),
+        super::BodyOp::Patch(o) => so::patch(o, &f.id, body, sketches, cur, sheets),
+        super::BodyOp::Trim(o) => so::trim(o, body, works, cur, sheets),
+        super::BodyOp::Extend(o) => so::extend(o, body, cur, sheets),
+        super::BodyOp::Ruled(o) => so::ruled(o, &f.id, body, works, cur, sheets),
+        super::BodyOp::ReplaceFace(o) => so::replace_face(o, &f.id, body, works, cur, sheets),
+        super::BodyOp::Sculpt(o) => so::sculpt(o, &f.id, cur, sheets),
     }
 }
 

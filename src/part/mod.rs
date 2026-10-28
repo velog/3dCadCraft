@@ -55,6 +55,7 @@ pub mod sheet_metal;
 pub mod shell;
 pub mod split;
 pub mod standards;
+pub mod surface_op;
 pub mod sweep;
 pub mod thumbnail;
 pub mod units;
@@ -468,7 +469,7 @@ impl Feature {
             Feature::SheetFace(f) => Some(&f.sketch),
             Feature::SheetFlange(_) | Feature::SheetConvert(_) => None,
             Feature::SheetOp(f) => f.sketch(),
-            Feature::BodyOp(_) => None,
+            Feature::BodyOp(f) => f.sketch(),
         }
     }
 
@@ -1204,7 +1205,7 @@ impl PartDocument {
                 )),
                 BuildStep::Shell(sh) if use_exact => exact::shell(sh, &solids).map(Some),
                 BuildStep::BodyOp(op) if use_exact => {
-                    exact::body_op(op, &body, &works, &solids, &sheets).map(Some)
+                    exact::body_op(op, &body, &works, &self.sketches, &solids, &sheets).map(Some)
                 }
                 BuildStep::BodyOp(op) => Err(exact::Fail::User(format!(
                     "{} needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)",
@@ -2246,11 +2247,7 @@ impl PartDocument {
     /// A body operation (**Thicken/Offset** …): the id is the command's name
     /// and a number (`Thicken1`). On failure nothing changes.
     pub fn add_body_op(&mut self, mut def: BodyOpFeature) -> Result<String, PartError> {
-        match &def.op {
-            BodyOp::Thicken(t) => t.validate().map_err(PartError::Feature)?,
-            BodyOp::DeleteFace(d) => d.validate().map_err(PartError::Feature)?,
-            BodyOp::MoveBodies(m) => m.validate().map_err(PartError::Feature)?,
-        }
+        def.validate().map_err(PartError::Feature)?;
         let id = self.next_feature_id(def.kind_name());
         (def.id, def.name) = (id.clone(), id.clone());
         self.insert_feature_checked(Feature::BodyOp(def))?;

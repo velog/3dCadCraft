@@ -530,6 +530,90 @@ fn sheet_r22() -> PartDocument {
     p
 }
 
+/// Revision 37: the surface commands. A 40 × 30 × 20 box whose top is
+/// replaced by a work plane 25 up (Replace Face); a Ruled Surface (Normal)
+/// on its bottom front edge; two walls beside it stitched into one surface;
+/// a Boundary Patch of a circle.
+fn surfaces_r37() -> PartDocument {
+    use cadcraft3d::part::surface_op::{
+        PatchOp, ReplaceFaceOp, ReplaceWith, RuledKind, RuledOp, StitchOp, SurfEdge,
+    };
+    use cadcraft3d::part::{
+        BodyOp, BodyOpFeature, ExtrudeFeature, FaceRef, OpenProfile, OriginPlane, Output, PlaneRef,
+        ProfileRef, WorkDef, WorkFeature, WorkPlaneDef,
+    };
+    use cadcraft3d::sketch::Point2;
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let wp = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 25.0,
+        })))
+        .unwrap();
+    p.add_body_op(BodyOpFeature::new(BodyOp::ReplaceFace(ReplaceFaceOp {
+        faces: vec![FaceRef {
+            face: "Box1:Top".into(),
+            hint: [20.0, 15.0, 20.0],
+        }],
+        new: ReplaceWith::Plane(PlaneRef::Work(wp)),
+    })))
+    .unwrap();
+    p.add_body_op(BodyOpFeature::new(BodyOp::Ruled(RuledOp {
+        kind: RuledKind::Normal,
+        edges: vec![SurfEdge {
+            face: "Box1:Front".into(),
+            hint: [20.0, 0.0, 0.0],
+        }],
+        distance: 5.0,
+        flip: false,
+        vector: None,
+    })))
+    .unwrap();
+    let mut walls = Vec::new();
+    for (a, b) in [((60.0, 0.0), (80.0, 0.0)), ((80.0, 0.0), (80.0, 20.0))] {
+        let i = p
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        let l = p.sketches[i]
+            .sketch
+            .add_line(Point2::new(a.0, a.1), Point2::new(b.0, b.1));
+        let mut f = ExtrudeFeature::new(Vec::new(), 10.0);
+        f.output = Output::Surface;
+        f.open = Some(OpenProfile {
+            curves: vec![l],
+            flip: false,
+            match_shape: false,
+        });
+        walls.push(p.add_extrude(i, f).unwrap());
+    }
+    p.add_body_op(BodyOpFeature::new(BodyOp::Stitch(StitchOp {
+        surfaces: walls,
+        tolerance: 0.001,
+        keep_surface: false,
+    })))
+    .unwrap();
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_circle(Point2::new(-30.0, 10.0), 5.0)
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let id = p.sketches[i].id.clone();
+    p.add_body_op(BodyOpFeature::new(BodyOp::Patch(PatchOp {
+        edges: Vec::new(),
+        sketch: Some(id),
+        profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
+    })))
+    .unwrap();
+    p
+}
+
 /// Revision 35: a 40 × 30 × 20 box and a 10 mm block beside it (two
 /// bodies); Move Bodies turns the block 90° about Z, then moves it 5 up.
 fn move_bodies_r35() -> PartDocument {
@@ -2051,6 +2135,13 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r36_project().save(&f).unwrap();
+        }
+        let f = root().join("r37/surfaces_r37.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("SurfacesR37");
+            project.add_document("Part1", DocumentData::Part(surfaces_r37()));
+            project.save(&f).unwrap();
         }
         let f = root().join("r35/move_bodies_r35.3dcadcraft");
         if !f.exists() {

@@ -583,6 +583,13 @@ impl CadCraftApp {
             BodyOp::Thicken(_) => Icon::Thicken,
             BodyOp::DeleteFace(_) => Icon::DeleteFace,
             BodyOp::MoveBodies(_) => Icon::MoveBodies,
+            BodyOp::Stitch(_) => Icon::Stitch,
+            BodyOp::Patch(_) => Icon::Patch,
+            BodyOp::Trim(_) => Icon::TrimSurface,
+            BodyOp::Extend(_) => Icon::ExtendSurface,
+            BodyOp::Ruled(_) => Icon::RuledSurface,
+            BodyOp::ReplaceFace(_) => Icon::ReplaceFace,
+            BodyOp::Sculpt(_) => Icon::Sculpt,
         };
         self.panel_header(ui, icon, f.name());
         if let Some(h) = self.part().feature_health.get(f.id()) {
@@ -594,6 +601,7 @@ impl CadCraftApp {
                 BodyOp::Thicken(_) => self.thicken_edit(k),
                 BodyOp::DeleteFace(_) => self.delete_face_edit(k),
                 BodyOp::MoveBodies(_) => self.move_bodies_edit(k),
+                _ => self.surface_op_edit(k),
             }
         }
     }

@@ -100,6 +100,7 @@ mod shell;
 mod show_dims;
 mod sketch_tools;
 mod sm_planned;
+mod surface_cmd;
 mod sweep;
 mod thicken;
 mod valuefield;
@@ -1603,6 +1604,7 @@ impl CadCraftApp {
                 crate::part::BodyOp::Thicken(_) => self.thicken_edit(k),
                 crate::part::BodyOp::DeleteFace(_) => self.delete_face_edit(k),
                 crate::part::BodyOp::MoveBodies(_) => self.move_bodies_edit(k),
+                _ => self.surface_op_edit(k),
             },
             Feature::Extrude(e) => {
                 let Some(sketch) = sketch_of(self, &e.sketch) else {
