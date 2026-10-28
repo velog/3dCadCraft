@@ -25,6 +25,7 @@
 
 mod alias_input;
 mod asm_browser;
+mod asm_pattern;
 mod asm_planned;
 mod assembly;
 mod blend;
@@ -7569,6 +7570,7 @@ impl eframe::App for CadCraftApp {
             self.drive_window(&ctx);
             self.interference_poll(&ctx);
             self.interference_window(&ctx);
+            self.pattern_preview_poll();
         }
         self.offset_window(&ctx);
         self.dimension_windows(&ctx);

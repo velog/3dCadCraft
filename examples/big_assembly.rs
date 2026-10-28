@@ -84,6 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         DocumentData::Assembly(AssemblyDocument {
             occurrences,
             constraints: Vec::new(),
+            patterns: Vec::new(),
         }),
     );
     project.save(std::path::Path::new(&path))?;

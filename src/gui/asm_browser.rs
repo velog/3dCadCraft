@@ -31,9 +31,12 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return;
         };
+        // A pattern's copies are listed under its elements.
+        let patterns = a.patterns.clone();
         let occs: Vec<(u32, String, bool, bool, crate::document::DocRef)> = a
             .occurrences
             .iter()
+            .filter(|o| a.pattern_of(o.id).is_none())
             .map(|o| (o.id, o.name.clone(), o.grounded, o.visible, o.component))
             .collect();
         // Suppressed: struck through; Enabled off: italic (Inventor).
@@ -47,6 +50,7 @@ impl CadCraftApp {
         // Find in Browser: open and show that row (once).
         let find = self.asm.find_in_browser.take();
         let mut cmds = Vec::new();
+        let mut pcmds = Vec::new();
         self.cons.browser_hover = None;
         let asm_doc = self.part_id;
         let mut iprops = false;
@@ -175,6 +179,11 @@ impl CadCraftApp {
                     }
                 });
             }
+            // Patterns after the components, their sources and copies
+            // inside (Inventor's browser).
+            for p in &patterns {
+                self.pattern_rows(ui, p, &mut pcmds);
+            }
         });
         for c in cmds {
             match c {
@@ -192,7 +201,9 @@ impl CadCraftApp {
                 }
                 TreeCmd::Open(id) => self.open_component(id),
                 TreeCmd::Pick(g) => {
-                    if self.cons.draft.is_some() {
+                    if self.part_planned.is_some() {
+                        self.planned_take_ref(g);
+                    } else if self.cons.draft.is_some() {
                         self.constrain_pick(g);
                     } else {
                         self.file_status = Some(Ok(
@@ -210,6 +221,9 @@ impl CadCraftApp {
                 TreeCmd::DeleteConstraint(id) => self.delete_constraint(id),
                 TreeCmd::Drive(id) => self.open_drive(id),
             }
+        }
+        for c in pcmds {
+            self.pattern_cmd(c);
         }
     }
 

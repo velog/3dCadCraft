@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub mod bom;
 pub mod interference;
 pub mod joint;
+pub mod pattern;
 pub mod physical;
 pub mod relation;
 pub mod solve;
@@ -91,8 +92,11 @@ impl AssemblyDocument {
     }
 
     /// Removes the occurrence `id` (Delete) and the constraints that use
-    /// it; `None` if there is none.
+    /// it (a pattern's source takes its pattern and copies along); `None`
+    /// if there is none.
     pub fn remove(&mut self, id: u32) -> Option<Occurrence> {
+        self.find(id)?;
+        self.forget_in_patterns(id);
         let i = self.occurrences.iter().position(|o| o.id == id)?;
         self.constraints.retain(|c| !c.uses(id));
         Some(self.occurrences.remove(i))

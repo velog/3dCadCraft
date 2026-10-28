@@ -196,17 +196,28 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return;
         };
-        if a.constraints.is_empty() {
+        if a.constraints.is_empty() && a.patterns.is_empty() {
             self.cons.last = Solved::default();
             return;
         }
-        let s = self.solve_copy(a, drag);
-        if let Some(a) = self.assembly_mut() {
-            for (id, t) in &s.transforms {
-                if let Some(o) = a.find_mut(*id) {
-                    o.transform = *t;
-                }
+        let s = if a.constraints.is_empty() {
+            Solved::default()
+        } else {
+            self.solve_copy(a, drag)
+        };
+        let mut a = a.clone();
+        for (id, t) in &s.transforms {
+            if let Some(o) = a.find_mut(*id) {
+                o.transform = *t;
             }
+        }
+        // Pattern copies follow their sources (a reference that no longer
+        // resolves leaves them where they are).
+        if let Err(e) = self.place_patterns(&mut a) {
+            log::warn!("{e}");
+        }
+        if let Some(cur) = self.assembly_mut() {
+            *cur = a;
         }
         self.cons.last = s;
         self.scene_dirty = true;
@@ -241,6 +252,9 @@ impl CadCraftApp {
             if let Some(o) = a.find_mut(*id) {
                 o.transform = *t;
             }
+        }
+        if let Err(e) = self.place_patterns(&mut a) {
+            log::warn!("{e}");
         }
         self.checkpoint(label);
         if let Some(cur) = self.assembly_mut() {
@@ -398,15 +412,20 @@ impl CadCraftApp {
                     else {
                         continue;
                     };
-                    let (d, s) = seg_dist(pos, sp, sq);
+                    let (d, _) = seg_dist(pos, sp, sq);
                     if d > PICK_PX || best.as_ref().is_some_and(|b| b.0 <= d) {
                         continue;
                     }
-                    // Hidden behind a face nearer the eye?
-                    let at = p + (q - p) * s as Real;
+                    // Hidden behind a face nearer the eye? The edge's point
+                    // nearest the eye ray (the screen parameter mapped onto
+                    // the segment is millimetres off under perspective), and
+                    // a depth margin that grows with the distance: a face
+                    // the edge bounds is hit a few pixels away from it.
+                    let at = super::closest_on_segment_pub(&p, &q, &o, &dir);
                     let t_edge = (at - o).dot(&dir);
                     let size = (q - p).norm().max(1.0);
-                    if face.is_some_and(|(h, _)| h.t + 1e-3 * size.max(10.0) < t_edge) {
+                    let margin = (1e-3 * size.max(10.0)).max(0.02 * t_edge.abs());
+                    if face.is_some_and(|(h, _)| h.t + margin < t_edge) {
                         continue;
                     }
                     best = Some((

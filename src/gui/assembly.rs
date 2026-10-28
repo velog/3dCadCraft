@@ -103,6 +103,8 @@ pub(super) struct AsmUi {
     pub find_in_browser: Option<u32>,
     /// Analyze Interference: the running search and its result window.
     pub interference: super::interference::InterferenceUi,
+    /// Pattern Component: the key of the copies drawn as its preview.
+    pub pattern_preview: Option<String>,
 }
 
 /// Selected occurrences: blue; under the cursor: green (as faces in a
@@ -631,6 +633,7 @@ impl CadCraftApp {
             });
         }
         self.interference_scene(g);
+        self.pattern_preview_scene(g);
     }
 
     /// Everything the view does while an assembly is active: picking,
@@ -1335,6 +1338,14 @@ impl CadCraftApp {
                     self.toggle_visible(&[o.id]);
                 }
                 ui.end_row();
+                if self
+                    .assembly()
+                    .is_some_and(|a| a.pattern_of(o.id).is_some())
+                {
+                    super::panels::plabel(ui, "Pattern");
+                    self.pattern_note(ui, o.id);
+                    ui.end_row();
+                }
                 type Flag = fn(&mut crate::document::Occurrence) -> &mut bool;
                 let flags: [(&str, bool, Flag); 3] = [
                     ("Transparent", o.transparent, |o| &mut o.transparent),
@@ -1350,7 +1361,10 @@ impl CadCraftApp {
                     ui.end_row();
                 }
                 super::panels::plabel(ui, "DOF");
-                ui.label(if o.grounded {
+                let copy = self.assembly().is_some_and(|a| a.is_element(o.id));
+                ui.label(if copy {
+                    "0 (placed by its pattern)".to_owned()
+                } else if o.grounded {
                     "0 (grounded)".to_owned()
                 } else {
                     let n = self.cons.last.dof.get(&o.id).copied().unwrap_or(6);
@@ -1374,21 +1388,25 @@ impl CadCraftApp {
             clean(rz.to_degrees()),
         ];
         let before = vals;
-        egui::Grid::new("occurrence_pos")
-            .min_col_width(super::panels::label_width(ui.ctx()))
-            .num_columns(2)
-            .show(ui, |ui| {
-                for (k, label) in ["X", "Y", "Z", "Rotation X", "Rotation Y", "Rotation Z"]
-                    .into_iter()
-                    .enumerate()
-                {
-                    super::panels::plabel(ui, label);
-                    let suffix = if k < 3 { " mm" } else { "°" };
-                    ui.add(ExprValue::new(&mut vals[k]).suffix(suffix));
-                    ui.end_row();
-                }
-            });
-        if vals != before {
+        // A pattern's copy is placed by its pattern.
+        let copy = self.assembly().is_some_and(|a| a.is_element(o.id));
+        ui.add_enabled_ui(!copy, |ui| {
+            egui::Grid::new("occurrence_pos")
+                .min_col_width(super::panels::label_width(ui.ctx()))
+                .num_columns(2)
+                .show(ui, |ui| {
+                    for (k, label) in ["X", "Y", "Z", "Rotation X", "Rotation Y", "Rotation Z"]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        super::panels::plabel(ui, label);
+                        let suffix = if k < 3 { " mm" } else { "°" };
+                        ui.add(ExprValue::new(&mut vals[k]).suffix(suffix));
+                        ui.end_row();
+                    }
+                });
+        });
+        if vals != before && !copy {
             let r = nalgebra::UnitQuaternion::from_euler_angles(
                 vals[3].to_radians(),
                 vals[4].to_radians(),

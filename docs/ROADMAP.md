@@ -347,7 +347,7 @@ disabled) → logic, command by command** (rules 7, 14, 15, 17). The part comman
 | AU4 | Inspect in an assembly: Interference (3.5), Physical Properties of the assembly, Center of Gravity | 🟡 2026-10-27: Analyze Interference done (checked in the app: plate + pin + blocks, 678.1 and 600 mm³, touching block not listed); Physical Properties of the assembly and View › Center of Gravity done |
 | AU5 | Browser: the part's features under an occurrence, visibility toggle, filter, Assembly / Modeling view; components listed under the assembly only | ⬜ |
 | AU6 | View in an assembly: Visual Styles, Section View (P4 serves both), Representations (View, Positional, Model States — 3.9), DOF glyph | ⬜ |
-| AU7 | Logic in the A-plan order: A4 (Drive / Animate rest) → A5 (Pattern Component, Interference, subassemblies) → Replace (3.8) → Edit in place / adaptive (3.10) → Representations (3.9) → Contact Solver (3.4); Mate point–point (vertex picking), Angle Directed / Explicit, Lock Rotation, automatic joint type, Free Rotate handles | ⬜ |
+| AU7 | Logic in the A-plan order: A4 (Drive / Animate rest) → A5 (Pattern Component — 🟡 2026-10-28 Rectangular and Circular done, Associative ⬜ — Interference, subassemblies) → Replace (3.8) → Edit in place / adaptive (3.10) → Representations (3.9) → Contact Solver (3.4); Mate point–point (vertex picking), Angle Directed / Explicit, Lock Rotation, automatic joint type, Free Rotate handles | ⬜ |
 
 ---
 

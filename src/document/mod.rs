@@ -294,6 +294,10 @@ pub struct AssemblyDocument {
     /// ignore them (the components keep their saved places).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub constraints: Vec<crate::assembly::Constraint>,
+    /// Component patterns (`assembly::pattern`); their copies are among
+    /// the occurrences, so older builds show them where they were saved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patterns: Vec<crate::assembly::pattern::ComponentPattern>,
 }
 
 /// The payload of a document.
@@ -591,6 +595,7 @@ mod tests {
                 })
                 .collect(),
             constraints: Vec::new(),
+            patterns: Vec::new(),
         })
     }
 

@@ -1165,6 +1165,10 @@ impl CadCraftApp {
         self.part_planned = Some(d);
     }
 
+    pub(super) fn occurrence_label_pub(&self, id: u32) -> Option<String> {
+        self.occurrence_label(id)
+    }
+
     fn occurrence_label(&self, id: u32) -> Option<String> {
         self.assembly()?
             .find(id)
@@ -1181,26 +1185,61 @@ impl CadCraftApp {
         else {
             return;
         };
-        let what = if kinds.contains(&PickKind::Body) {
-            self.asm_pick_pub(p, rect)
-                .and_then(|(h, _)| self.occurrence_label(h.occurrence))
-        } else {
-            use crate::assembly::relation::GeomRef;
-            let face = kinds
-                .iter()
-                .any(|k| matches!(k, PickKind::Face | PickKind::PlanarFace));
-            let edge = kinds
-                .iter()
-                .any(|k| matches!(k, PickKind::Edge | PickKind::StraightEdge));
-            match self.geom_under_pub(p, rect) {
-                Some(g @ GeomRef::Face { .. }) if face => Some(self.geom_label(&g)),
-                Some(g @ GeomRef::Edge { .. }) if edge => Some(self.geom_label(&g)),
-                _ => None,
+        if kinds.contains(&PickKind::Body) {
+            let what = self
+                .asm_pick_pub(p, rect)
+                .and_then(|(h, _)| self.occurrence_label(h.occurrence));
+            if let (Some(w), Some(d)) = (what, self.part_planned.as_mut()) {
+                d.pick(w);
+            }
+            return;
+        }
+        use crate::assembly::relation::GeomRef;
+        let face = kinds
+            .iter()
+            .any(|k| matches!(k, PickKind::Face | PickKind::PlanarFace));
+        let edge = kinds
+            .iter()
+            .any(|k| matches!(k, PickKind::Edge | PickKind::StraightEdge));
+        // An axis selector also takes a round face (its axis).
+        let axis = kinds.contains(&PickKind::Axis);
+        let g = match self.geom_under_pub(p, rect) {
+            Some(g @ GeomRef::Face { .. }) if face => g,
+            Some(g @ GeomRef::Face { .. })
+                if axis
+                    && matches!(
+                        self.asm_local_geom(&g),
+                        Ok(crate::assembly::Geom::Cylinder { .. })
+                    ) =>
+            {
+                g
+            }
+            Some(g @ GeomRef::Edge { .. }) if edge => g,
+            other => {
+                if let (Some(d), Some(s)) = (&self.part_planned, other) {
+                    let what = self.geom_label(&s);
+                    self.file_status = Some(Err(format!(
+                        "{}: {what} cannot be used here",
+                        d.kind.title()
+                    )));
+                }
+                return;
             }
         };
-        if let (Some(w), Some(d)) = (what, self.part_planned.as_mut()) {
-            d.pick(w);
-        }
+        self.planned_take_ref(g);
+    }
+
+    /// Gives a component's geometry (a click in the view or an origin /
+    /// work row of the browser) to the open planned panel's selector.
+    pub(super) fn planned_take_ref(&mut self, g: crate::assembly::GeomRef) {
+        let label = self.geom_label(&g);
+        let Some(d) = self.part_planned.as_mut() else {
+            return;
+        };
+        // Pattern Component's directions and axis take one pick each.
+        let single = d.kind == Planned::Asm(AsmPlanned::Pattern)
+            && matches!(d.active, Some("column" | "row" | "axis"));
+        d.pick_ref(label, g, single);
     }
 }
 
@@ -1247,6 +1286,36 @@ mod tests {
             assert!(!cmd.aliases.is_empty(), "{} has no alias", cmd.id);
             assert_eq!(cmd.icon, k.icon(), "{}", cmd.id);
         }
+    }
+
+    /// Pattern Component's panel gives its numbers, check boxes and the
+    /// geometry of its picks; a direction takes one pick (a new one
+    /// replaces it), and clearing a pick drops its geometry with it.
+    #[test]
+    fn pattern_panel_values_and_geometry() {
+        use crate::assembly::relation::{ASSEMBLY, GeomRef, OriginItem};
+        let mut d = PartDialog::new(AsmPlanned::Pattern);
+        assert_eq!(d.num(1, "Column Count"), Some(2.0));
+        assert_eq!(d.num(2, "Angle"), Some(90.0));
+        d.set_num(1, "Column Count", 5.0);
+        d.set_check(2, "Flip", true);
+        assert_eq!(d.num(1, "Column Count"), Some(5.0));
+        assert!(d.check(2, "Flip") && !d.check(1, "Flip row"));
+        let axis = |item| GeomRef::Origin {
+            occurrence: ASSEMBLY,
+            item,
+        };
+        d.set_tab(1);
+        d.active = Some("column");
+        d.pick_ref("X Axis".into(), axis(OriginItem::XAxis), true);
+        assert_eq!(d.active, Some("row"), "on to the next empty selector");
+        d.active = Some("column");
+        d.pick_ref("Y Axis".into(), axis(OriginItem::YAxis), true);
+        assert_eq!(d.refs["column"], vec![axis(OriginItem::YAxis)]);
+        assert_eq!(d.picks_of("column"), ["Y Axis".to_owned()]);
+        d.active = Some("column");
+        d.pick("Y Axis".into());
+        assert!(d.picks_of("column").is_empty() && d.refs["column"].is_empty());
     }
 
     /// Selector keys are unique within a panel, labels within a tab (a

@@ -1293,7 +1293,10 @@ impl Planned {
     pub fn has_logic(self) -> bool {
         matches!(
             self,
-            Planned::Asm(super::asm_planned::AsmPlanned::Interference)
+            Planned::Asm(
+                super::asm_planned::AsmPlanned::Interference
+                    | super::asm_planned::AsmPlanned::Pattern
+            )
         )
     }
 
@@ -1355,6 +1358,11 @@ pub(super) struct PartDialog {
     pub active: Option<&'static str>,
     /// Picks per selector key (descriptions).
     pub picks: HashMap<&'static str, Vec<String>>,
+    /// The assembly geometry of a selector's picks, in the order of
+    /// `picks` (only selectors whose picks are faces / edges of components).
+    pub refs: HashMap<&'static str, Vec<crate::assembly::GeomRef>>,
+    /// The assembly pattern being edited (Edit of a Component Pattern).
+    pub edit: Option<u32>,
 }
 
 /// The selector rows of `kind`, in order; a key on several tabs (Pattern
@@ -1415,6 +1423,8 @@ impl PartDialog {
             texts: HashMap::new(),
             active: selector_defs(kind).first().map(|s| s.0),
             picks: HashMap::new(),
+            refs: HashMap::new(),
+            edit: None,
         }
     }
 
@@ -1458,9 +1468,42 @@ impl PartDialog {
         let list = self.picks.entry(key).or_default();
         if let Some(i) = list.iter().position(|w| *w == what) {
             list.remove(i);
+            if let Some(r) = self.refs.get_mut(key).filter(|r| i < r.len()) {
+                r.remove(i);
+            }
             return;
         }
         list.push(what);
+        self.advance(key);
+    }
+
+    /// Takes a component's face / edge for the active selector: `single`
+    /// selectors (a direction, an axis) replace their pick, others add it
+    /// (the same geometry again removes it).
+    pub(super) fn pick_ref(&mut self, what: String, g: crate::assembly::GeomRef, single: bool) {
+        let Some(key) = self.active else {
+            return;
+        };
+        let refs = self.refs.entry(key).or_default();
+        let list = self.picks.entry(key).or_default();
+        if single {
+            *refs = vec![g];
+            *list = vec![what];
+        } else if let Some(i) = refs.iter().position(|r| *r == g) {
+            refs.remove(i);
+            if i < list.len() {
+                list.remove(i);
+            }
+            return;
+        } else {
+            refs.push(g);
+            list.push(what);
+        }
+        self.advance(key);
+    }
+
+    /// After a pick in selector `key`: on to the next empty selector.
+    fn advance(&mut self, key: &'static str) {
         // The next selector of the tab on show (another tab's is not seen).
         let keys = tab_keys(self.kind, self.tab);
         if let Some(i) = keys.iter().position(|k| *k == key)
@@ -1488,6 +1531,60 @@ impl PartDialog {
     /// The picks of selector `key` (their descriptions).
     pub(super) fn picks_of(&self, key: &str) -> &[String] {
         self.picks.get(key).map_or(&[], Vec::as_slice)
+    }
+
+    /// The shown tab.
+    pub(super) fn tab(&self) -> usize {
+        self.tab
+    }
+
+    /// Shows tab `ti`.
+    pub(super) fn set_tab(&mut self, ti: usize) {
+        self.tab = ti;
+    }
+
+    /// Where the row `label` of tab `ti` is, and the row.
+    fn find_row(&self, ti: usize, label: &str) -> Option<(usize, &'static Row)> {
+        self.kind
+            .pages()
+            .get(ti)?
+            .1
+            .iter()
+            .enumerate()
+            .find(|(_, r)| match **r {
+                Num(l, ..) | Check(l, _) => l == label,
+                _ => false,
+            })
+    }
+
+    /// The number in row `label` of tab `ti` (its default until changed).
+    pub(super) fn num(&self, ti: usize, label: &str) -> Option<f64> {
+        match self.find_row(ti, label)? {
+            (ri, Num(_, def, _)) => Some(self.nums.get(&(ti, ri)).copied().unwrap_or(*def)),
+            _ => None,
+        }
+    }
+
+    /// The check box `label` of tab `ti`.
+    pub(super) fn check(&self, ti: usize, label: &str) -> bool {
+        match self.find_row(ti, label) {
+            Some((ri, Check(_, def))) => self.bools.get(&(ti, ri)).copied().unwrap_or(*def),
+            _ => false,
+        }
+    }
+
+    /// Sets the number in row `label` of tab `ti`.
+    pub(super) fn set_num(&mut self, ti: usize, label: &str, v: f64) {
+        if let Some((ri, _)) = self.find_row(ti, label) {
+            self.nums.insert((ti, ri), v);
+        }
+    }
+
+    /// Sets the check box `label` of tab `ti`.
+    pub(super) fn set_check(&mut self, ti: usize, label: &str, v: bool) {
+        if let Some((ri, _)) = self.find_row(ti, label) {
+            self.bools.insert((ti, ri), v);
+        }
     }
 
     /// Draws the panel body: whether Cancel or OK was pressed.
@@ -1530,6 +1627,7 @@ impl PartDialog {
         }
         if let Some(k) = ev.clear {
             self.picks.remove(k);
+            self.refs.remove(k);
             self.active = Some(k);
         }
         ui.separator();
@@ -1740,6 +1838,11 @@ impl CadCraftApp {
         match d.kind {
             Planned::Asm(super::asm_planned::AsmPlanned::Interference) => {
                 if self.start_interference(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Pattern) => {
+                if self.pattern_ok(&d) {
                     self.part_planned = None;
                 }
             }

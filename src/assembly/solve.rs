@@ -459,7 +459,8 @@ pub fn solve(
     let mut blocks: Vec<u32> = Vec::new();
     for k in &cons {
         for id in k.ends() {
-            let free = asm.find(id).is_some_and(|o| !o.grounded);
+            // A pattern's copy is placed by its pattern, never solved.
+            let free = asm.find(id).is_some_and(|o| !o.grounded) && !asm.is_element(id);
             if free && !blocks.contains(&id) {
                 blocks.push(id);
             }

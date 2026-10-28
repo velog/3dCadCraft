@@ -275,6 +275,9 @@ const BUDGET_SPLIT: f64 = 500.0;
 /// intersections of 10k-triangle meshes on the cores (24 cores 0.29 s, one
 /// thread 2.4 s).
 const BUDGET_INTERFERENCE: f64 = 1000.0;
+/// Placing a pattern's copies runs after every solve and drag step, so it
+/// must stay well inside a frame.
+const BUDGET_PATTERN_PLACE: f64 = 16.0;
 /// One kernel call (`split_body`, the section through four rounds at an
 /// angle) is ~0.8 s; classifying the parts by volume added 1.4 s (removed).
 const BUDGET_SPLIT_INCLINED: f64 = 1500.0;
@@ -1862,6 +1865,56 @@ fn speed_budgets() {
                     .collect();
                 let found = itf::analyze(&bodies, &itf::pairs(&ids, &[]));
                 assert_eq!(found.len(), 19);
+            }),
+        ));
+    }
+    // Pattern Component (docs/spec/3.0 §3.7): a 30 × 30 grid of two
+    // components (1798 copies) placed again after its sources moved — what
+    // every drag step of a source does.
+    {
+        use cadcraft3d::assembly::pattern::{self, Layout};
+        use cadcraft3d::assembly::relation::{ASSEMBLY, Geom, GeomRef, OriginItem};
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+        use cadcraft3d::kernel::{Transform3, Vector3};
+        let doc = DocRef {
+            document: DocumentId::new_random(),
+            library: None,
+        };
+        let local = |r: &GeomRef| -> Result<Geom, String> {
+            match r {
+                GeomRef::Origin { item, .. } => Ok(item.geom()),
+                _ => Err("origin only".into()),
+            }
+        };
+        let axis = |item| GeomRef::Origin {
+            occurrence: ASSEMBLY,
+            item,
+        };
+        let mut asm = AssemblyDocument::default();
+        let a = asm.place(doc, "Bolt", Transform3::identity(), false);
+        let b = asm.place(doc, "Nut", Transform3::translation(0.0, 0.0, 5.0), false);
+        let layout = Layout::Rectangular {
+            column: axis(OriginItem::XAxis),
+            column_flip: false,
+            column_count: 30,
+            column_spacing: 10.0,
+            row: Some(axis(OriginItem::YAxis)),
+            row_flip: false,
+            row_count: 30,
+            row_spacing: 10.0,
+        };
+        asm.add_pattern(vec![a, b], layout, &local).unwrap();
+        assert_eq!(asm.occurrences.len(), 1800);
+        rows.push((
+            "assembly: Pattern Component, 30 x 30 grid of 2 components placed again",
+            BUDGET_PATTERN_PLACE,
+            median_ms(5, || {
+                for id in [a, b] {
+                    if let Some(o) = asm.find_mut(id) {
+                        cadcraft3d::assembly::move_by(o, Vector3::new(0.1, 0.0, 0.0));
+                    }
+                }
+                pattern::place(&mut asm, &local).unwrap();
             }),
         ));
     }
