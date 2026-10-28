@@ -987,13 +987,15 @@ A section is a Boolean intersection with a half-space (2.13) plus hatching by ma
 
 🟡 2026-10-26: Dimension (length, diameter / radius, point to point; horizontal / vertical / aligned),
 Center Mark, Centerline, Text; attached to edges by name, orphans marked. Waiting for a visual check.
+🟡 2026-10-28: annotations are drawn on their layers (Object Defaults as in Inventor's ISO template, own layer
+per annotation; colour / On / Plot on the screen and in the PDF; spec [4.6](spec/4.6-drawing-styles.md)).
 
 **Kinds.**
 - **Dimensions:** general, baseline (from one datum), ordinate, chain.
 - **Retrieve Model Dimensions:** pulls in the dimensions from the sketches and features.
 - **Hole and thread notes:** from the Hole semantics (2.3), e.g. "4× M8 – 6H ↧ 15".
 - **Centre marks and centrelines.**
-- **Text and leaders.**
+- **Text and leaders:** rich text with symbols and live fields — ⬜ stage D-S2, **Specification:** [spec/4.9-format-text.md](spec/4.9-format-text.md).
 - **Surface roughness.**
 - **GD&T:** feature control frames for form and position tolerances, datums.
 - **Welding symbols.**
