@@ -78,6 +78,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [1.9-profiles.md](1.9-profiles.md) | Profiles and regions |
 | [2.0-part-commands.md](2.0-part-commands.md) | The whole Inventor part command set (3D Model, Inspect, Tools, Manage, View, Environments) with every dialog, interface first; right-click menus by object kind (rule 17) |
 | [5.4-surfaces.md](5.4-surfaces.md) | Stitch, Boundary Patch, Trim, Extend, Ruled Surface, Replace Face, Sculpt as `BodyOp` variants (format revision 37) |
+| [5.4a-surface-workflow.md](5.4a-surface-workflow.md) | Review of surface work: highlight, visibility (Alt+V), Trim preview, Loft / Patch between surfaces, Creo-like chains; the order of work |
 | [2.14-delete-face.md](2.14-delete-face.md) | Delete Face: Individual Faces (Heal or open into a surface) or a whole Lump or Void; `BodyOp::DeleteFace` |
 | [2.14-thicken-offset.md](2.14-thicken-offset.md) | Thicken/Offset: faces or quilts thickened (Join, Cut, Intersect, New Solid) or offset into a surface; `Feature::BodyOp` |
 | [2.1-extrude.md](2.1-extrude.md) | Extrude, including consumed and shared sketches |
