@@ -37,6 +37,11 @@ pub(super) struct GeoPick {
 }
 
 impl GeoPick {
+    /// An end point or a centre (not a curve).
+    pub(super) fn is_point(&self) -> bool {
+        matches!(self.what, PickWhat::Point(_))
+    }
+
     /// The pick as text (a planned command's selector list).
     pub(super) fn describe(&self) -> String {
         let what = match self.what {

@@ -2157,6 +2157,10 @@ fn view_sketch_line_is_its_chain() {
     let pts = [[0.0, 30.0], [0.0, -10.0], [20.0, -10.0], [20.0, -30.0]];
     let mut s = ViewSketch::from_line(&pts);
     assert_eq!(s.line().unwrap(), pts.to_vec());
+    // Its direction is the first line's, whichever end the walk finds.
+    let mut back = pts;
+    back.reverse();
+    assert_eq!(ViewSketch::from_line(&back).line().unwrap(), back.to_vec());
     let c = s.0.add_line(Point2::new(50.0, 0.0), Point2::new(60.0, 0.0));
     s.0.set_style(c, Style::Construction).unwrap();
     assert_eq!(s.line().unwrap().len(), 4, "construction left out");

@@ -16,13 +16,13 @@ use super::CadCraftApp;
 use super::drawing::{DrwTool, SheetCam, ShownView};
 use super::drawing_section::SectionDraft;
 use super::overlay::{self, Projector};
-use super::sketch_tools::{Align, Pick, SketchTools, Snap, Tool};
+use super::sketch_tools::{Align, ConstraintTool, Pick, SketchTools, Snap, Tool};
 use crate::drawing::ViewKind;
 use crate::drawing::annot::Placement;
 use crate::drawing::view_sketch::ViewSketch;
 use crate::kernel::Point3;
 use crate::part::PartSketch;
-use crate::sketch::{ConstraintId, Point2};
+use crate::sketch::{ConstraintId, Point2, PointId};
 
 /// What finishing a view sketch does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +46,33 @@ pub(super) struct DrwSketch {
     /// A dimension waiting for its value: the constraint and the value
     /// typed so far.
     pub dim: Option<(ConstraintId, f64)>,
+    /// Project Geometry is running: clicks on the view's geometry copy it
+    /// into the sketch as fixed reference geometry.
+    pub project: bool,
+    /// The point being dragged (Select tool).
+    pub drag: Option<PointId>,
 }
+
+/// The tools of a view sketch's toolbar, in Inventor's Sketch tab order.
+const TOOLBAR: [Tool; 17] = [
+    Tool::Select,
+    Tool::Line,
+    Tool::CircleCenter,
+    Tool::ArcThreePoint,
+    Tool::RectTwoPoint,
+    Tool::Point,
+    Tool::Fillet,
+    Tool::Dimension,
+    Tool::Constrain(ConstraintTool::Coincident),
+    Tool::Constrain(ConstraintTool::Parallel),
+    Tool::Constrain(ConstraintTool::Perpendicular),
+    Tool::Constrain(ConstraintTool::Horizontal),
+    Tool::Constrain(ConstraintTool::Vertical),
+    Tool::Constrain(ConstraintTool::Equal),
+    Tool::Constrain(ConstraintTool::Fix),
+    Tool::Trim,
+    Tool::Offset,
+];
 
 impl DrwSketch {
     /// A sketch of view `view` holding `sketch`, the Line tool running.
@@ -59,6 +85,92 @@ impl DrwSketch {
             ps: PartSketch::new("Section Line", sketch.0),
             tools,
             dim: None,
+            project: false,
+            drag: None,
+        }
+    }
+
+    /// Projects view geometry into the sketch (Project Geometry): a straight
+    /// edge as a reference line between fixed points, a whole circle with a
+    /// fixed centre and radius (both construction, so a section line never
+    /// takes them), an end point or centre as a fixed point. Positions are
+    /// the view plane's.
+    pub(super) fn project_edge(&mut self, e: &crate::drawing::hlr::ViewEdge) -> Result<(), String> {
+        let sk = &mut self.ps.sketch;
+        let p = |q: [f64; 2]| Point2::new(q[0], q[1]);
+        if let Some((c, r)) = e.circle {
+            if !e.full_circle && (e.a[0] - e.b[0]).hypot(e.a[1] - e.b[1]) > 1e-9 {
+                return Err("Project Geometry: arcs of a view are not projected yet".into());
+            }
+            let center = sk.add_fixed_point(p(c));
+            let circle = sk.add_circle_at(center, r).map_err(|x| x.to_string())?;
+            sk.set_radius_fixed(circle, true)
+                .map_err(|x| x.to_string())?;
+            // Construction: a reference, never part of a section line.
+            let _ = sk.set_style(circle, crate::sketch::Style::Construction);
+            self.ps.reference_lines.push(circle);
+            return Ok(());
+        }
+        if e.straight {
+            let a = sk.add_fixed_point(p(e.a));
+            let b = sk.add_fixed_point(p(e.b));
+            let line = sk.add_line_between(a, b).map_err(|x| x.to_string())?;
+            let _ = sk.set_style(line, crate::sketch::Style::Construction);
+            self.ps.reference_lines.push(line);
+            return Ok(());
+        }
+        Err("Project Geometry: only straight edges and whole circles are projected yet".into())
+    }
+
+    /// Projects a point of the view (fixed).
+    pub(super) fn project_point(&mut self, q: Point2) {
+        self.ps.sketch.add_fixed_point(q);
+    }
+
+    /// Delete: the selected curves (reference geometry too) and the points
+    /// left alone by them.
+    pub(super) fn delete_selected(&mut self) -> bool {
+        let sel = std::mem::take(&mut self.tools.selected);
+        let sk = &mut self.ps.sketch;
+        let mut gone = false;
+        for e in sel {
+            let ends = sk.entity(e).map(|x| x.points()).unwrap_or_default();
+            if sk.remove_entity(e).is_ok() {
+                gone = true;
+                self.ps.reference_lines.retain(|r| *r != e);
+                for p in ends {
+                    let used = sk.entities().any(|(_, x)| x.points().contains(&p));
+                    if !used {
+                        let _ = sk.remove_point(p);
+                    }
+                }
+            }
+        }
+        for p in std::mem::take(&mut self.tools.selected_points) {
+            gone |= sk.remove_point(p).is_ok();
+        }
+        if gone {
+            let _ = sk.solve();
+        }
+        gone
+    }
+
+    /// Moves point `id` to `to`, the rest following (as a part sketch's
+    /// drag); a move the constraints refuse leaves the sketch as it was.
+    pub(super) fn drag_point(&mut self, id: PointId, to: Point2) {
+        let sk = &mut self.ps.sketch;
+        if sk.point(id).is_none_or(|q| q.fixed) {
+            return;
+        }
+        let before = sk.clone();
+        let _ = sk.move_point(id, to);
+        let _ = sk.set_fixed(id, true);
+        let held = solved(sk);
+        let _ = sk.set_fixed(id, false);
+        // Held exactly under the pointer, else pulled to the nearest place
+        // the constraints allow; else the move is undone.
+        if !(held || solved(sk)) {
+            *sk = before;
         }
     }
 
@@ -70,6 +182,12 @@ impl DrwSketch {
         };
         format!("{what}: {} (Enter: Finish Sketch)", self.tools.prompt())
     }
+}
+
+/// Solves `sk`: true when every constraint holds (a failed solve leaves
+/// the sketch as it was, and is an `Ok` report too).
+fn solved(sk: &mut crate::sketch::Sketch) -> bool {
+    matches!(sk.solve(), Ok(r) if r.status == crate::sketch::SolveStatus::Solved)
 }
 
 /// A view's plane on the screen: view-plane mm → sheet → screen.
@@ -181,6 +299,10 @@ impl CadCraftApp {
         if s.dim.is_some() {
             return true; // the value box has the keys
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
+            s.delete_selected();
+            return true;
+        }
         let (l, d, enter, esc) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::L),
@@ -194,7 +316,9 @@ impl CadCraftApp {
         } else if d {
             s.tools.set_tool(Tool::Dimension);
         } else if esc {
-            if s.tools.pick_count() > 0 || s.tools.tool != Tool::Select {
+            if s.project {
+                s.project = false;
+            } else if s.tools.pick_count() > 0 || s.tools.tool != Tool::Select {
                 s.tools.escape();
             } else {
                 self.drw.sketch = None;
@@ -312,8 +436,88 @@ impl CadCraftApp {
             overlay::draw_snap(painter, &proj, rect, &s.ps.sketch, p);
         }
 
-        // Clicks.
+        // The toolbar (the sketch tab of the view sketch).
+        let mut finish = false;
+        let mut cancel = false;
+        self.view_sketch_toolbar(&response.ctx, rect, &mut s, &mut finish, &mut cancel);
+
+        // Select: a press on a point drags it.
+        let press = response
+            .drag_started_by(egui::PointerButton::Primary)
+            .then(|| response.ctx.input(|i| i.pointer.press_origin()))
+            .flatten();
+        if s.tools.tool == Tool::Select
+            && !s.project
+            && let Some(p) = press
+        {
+            s.drag = overlay::pick_any_point(&proj, rect, &s.ps.sketch, p, overlay::POINT_SNAP_PX);
+        }
+        if let (Some(id), Some(p)) = (s.drag, pointer)
+            && response.dragged()
+        {
+            s.drag_point(id, to_view(cam.to_sheet(rect, p)));
+        }
+        if response.drag_stopped() {
+            s.drag = None;
+        }
+
+        // Project Geometry: a click on the view's geometry.
+        if s.project
+            && response.clicked()
+            && let Some(p) = pointer
+        {
+            let pv = views.iter().find(|v| v.id == s.view);
+            match self.geometry_under(views, rect, p) {
+                Some(g) if g.view == s.view && g.is_point() => {
+                    s.project_point(to_view(g.at));
+                }
+                Some(g) if g.view == s.view => {
+                    let edge = pv
+                        .and_then(|v| v.lines.as_deref())
+                        .and_then(|l| l.edge(&g.edge))
+                        .cloned();
+                    if let Some(e) = edge
+                        && let Err(msg) = s.project_edge(&e)
+                    {
+                        self.file_status = Some(Err(msg));
+                    }
+                }
+                _ => {
+                    self.file_status = Some(Err(
+                        "Project Geometry: click an edge, a circle or a point of this view".into(),
+                    ));
+                }
+            }
+        }
+
+        // Select: a click on a curve selects it (Shift / Ctrl add).
+        if s.tools.tool == Tool::Select
+            && !s.project
+            && response.clicked()
+            && let Some(p) = pointer
+        {
+            let add = response
+                .ctx
+                .input(|i| i.modifiers.shift || i.modifiers.command);
+            if !add {
+                s.tools.selected.clear();
+                s.tools.selected_points.clear();
+            }
+            if let Some((e, _)) =
+                overlay::pick_entity(&proj, rect, &s.ps.sketch, p, overlay::CURVE_SNAP_PX)
+            {
+                if let Some(k) = s.tools.selected.iter().position(|x| *x == e) {
+                    s.tools.selected.remove(k);
+                } else {
+                    s.tools.selected.push(e);
+                }
+            }
+        }
+
+        // Clicks of the drawing tools.
         if s.dim.is_none()
+            && !s.project
+            && s.tools.tool != Tool::Select
             && response.clicked()
             && let Some(p) = pick
         {
@@ -338,8 +542,6 @@ impl CadCraftApp {
         }
 
         // The right-click menu.
-        let mut finish = false;
-        let mut cancel = false;
         response.context_menu(|ui| {
             if ui.button("Finish Sketch").clicked() {
                 finish = true;
@@ -402,7 +604,7 @@ impl CadCraftApp {
             s.dim = Some((c, value));
             if apply {
                 let before = s.ps.sketch.clone();
-                let ok = s.ps.sketch.set_dimension(c, value).is_ok() && s.ps.sketch.solve().is_ok();
+                let ok = s.ps.sketch.set_dimension(c, value).is_ok() && solved(&mut s.ps.sketch);
                 if ok {
                     s.dim = None;
                 } else {
@@ -437,6 +639,84 @@ impl CadCraftApp {
     }
 }
 
+impl CadCraftApp {
+    /// The toolbar over the sheet while a view sketch is open: its tools
+    /// (the part sketch's icons and names), Project Geometry, Delete,
+    /// Finish Sketch and Cancel.
+    fn view_sketch_toolbar(
+        &mut self,
+        ctx: &egui::Context,
+        rect: Rect,
+        s: &mut DrwSketch,
+        finish: &mut bool,
+        cancel: &mut bool,
+    ) {
+        let palette = super::icons::Palette::ENABLED;
+        egui::Area::new(egui::Id::new("drw_sketch_toolbar"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.left_top() + egui::vec2(10.0, 10.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let icon = |ui: &mut egui::Ui,
+                                    on: bool,
+                                    i: super::icons::Icon,
+                                    tip: &str| {
+                            let (r, resp) = ui
+                                .allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::click());
+                            if on {
+                                ui.painter()
+                                    .rect_filled(r, 3.0, ui.visuals().selection.bg_fill);
+                            } else if resp.hovered() {
+                                ui.painter().rect_filled(
+                                    r,
+                                    3.0,
+                                    ui.visuals().widgets.hovered.bg_fill,
+                                );
+                            }
+                            super::icons::paint(ui.painter(), r.shrink(3.0), i, &palette);
+                            resp.on_hover_text(tip).clicked()
+                        };
+                        for t in TOOLBAR {
+                            let on = !s.project && s.tools.tool == t;
+                            if icon(ui, on, super::ribbon::tool_icon(t), t.label()) {
+                                s.project = false;
+                                s.tools.escape();
+                                s.tools.set_tool(t);
+                            }
+                        }
+                        ui.separator();
+                        let pg = super::icons::Icon::ProjectGeometry;
+                        if icon(
+                            ui,
+                            s.project,
+                            pg,
+                            "Project Geometry: click edges, circles or points of the view",
+                        ) {
+                            s.project = !s.project;
+                            s.tools.escape();
+                        }
+                        if icon(
+                            ui,
+                            false,
+                            super::icons::Icon::DocDelete,
+                            "Delete the selected curves (Delete)",
+                        ) {
+                            s.delete_selected();
+                        }
+                        ui.separator();
+                        if ui.button("Finish Sketch").clicked() {
+                            *finish = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            *cancel = true;
+                        }
+                    });
+                });
+            });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,6 +728,82 @@ mod tests {
             infer: None,
             align: Align::default(),
         }
+    }
+
+    /// Projected view geometry is fixed construction: a line drawn to its
+    /// end is the section line, the projection is not part of it; Delete
+    /// removes a selected projection and its points.
+    #[test]
+    fn projected_edges_stay_out_of_the_line() {
+        use crate::drawing::hlr::ViewEdge;
+        let mut s = DrwSketch::new(1, SketchFor::NewSection, ViewSketch::default());
+        let edge = ViewEdge {
+            name: Some("Box1:E1".into()),
+            a: [0.0, 0.0],
+            b: [40.0, 0.0],
+            circle: None,
+            full_circle: false,
+            straight: true,
+            visible: true,
+            note: None,
+            hole: None,
+        };
+        s.project_edge(&edge).unwrap();
+        let end =
+            s.ps.sketch
+                .points()
+                .find(|(_, p)| p.position.x > 39.0)
+                .map(|(id, _)| id)
+                .unwrap();
+        let on_end = Pick {
+            pos: Point2::new(40.0, 0.0),
+            snap: Snap::Point(end),
+            infer: None,
+            align: Align::default(),
+        };
+        s.tools.click(&mut s.ps, at(40.0, 30.0)).unwrap();
+        s.tools.click(&mut s.ps, on_end).unwrap();
+        s.ps.sketch.solve().unwrap();
+        let line = ViewSketch(s.ps.sketch.clone()).line().unwrap();
+        assert_eq!(line.len(), 2);
+        assert!(
+            (line[1][0] - 40.0).abs() < 1e-9 && line[1][1].abs() < 1e-9,
+            "{line:?}"
+        );
+        let projected = s.ps.reference_lines[0];
+        s.tools.selected = vec![projected];
+        assert!(s.delete_selected());
+        assert!(s.ps.sketch.entity(projected).is_none());
+        // The shared end stays with the section line; the other end goes.
+        assert_eq!(s.ps.sketch.points().count(), 2);
+    }
+
+    /// Dragging the free end of a vertical line keeps it vertical (the
+    /// point is pulled onto the line's x), as a part sketch's drag does.
+    #[test]
+    fn a_drag_keeps_the_constraints() {
+        let mut s = DrwSketch::new(1, SketchFor::NewSection, ViewSketch::default());
+        let mut v = at(0.0, -30.0);
+        v.infer = Some(super::super::sketch_tools::Infer::Vertical);
+        s.tools.click(&mut s.ps, at(0.0, 0.0)).unwrap();
+        s.tools.click(&mut s.ps, v).unwrap();
+        s.ps.sketch.solve().unwrap();
+        let first =
+            s.ps.sketch
+                .points()
+                .find(|(_, p)| p.position.y > -1.0)
+                .map(|(id, _)| id)
+                .unwrap();
+        s.ps.sketch.set_fixed(first, true).unwrap();
+        let end =
+            s.ps.sketch
+                .points()
+                .find(|(_, p)| p.position.y < -29.0)
+                .map(|(id, _)| id)
+                .unwrap();
+        s.drag_point(end, Point2::new(12.0, -40.0));
+        let q = s.ps.sketch.point(end).unwrap().position;
+        assert!(q.x.abs() < 1e-6, "still vertical: {q:?}");
     }
 
     /// Three clicks of the Line tool give a line of two segments.
