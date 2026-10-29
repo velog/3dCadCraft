@@ -154,6 +154,12 @@ impl CadCraftApp {
             return;
         }
         self.leave_document();
+        // Changes it kept unsaved are no longer what assemblies show.
+        if !self.file_path.trim().is_empty() {
+            self.asm
+                .libs
+                .forget(std::path::Path::new(self.file_path.trim()));
+        }
         self.tabs.remove(self.active_tab);
         let k = self.active_tab.min(self.tabs.len() - 1);
         if let Some(t) = self.tabs[k].take() {

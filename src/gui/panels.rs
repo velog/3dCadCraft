@@ -152,15 +152,19 @@ impl CadCraftApp {
         self.browser_hover = None;
         let mut cmds = Vec::new();
         let mut activate = None;
-        if let Some(back) = self
-            .asm
-            .came_from
-            .and_then(|id| self.project.document(id))
-            .map(|d| d.name.clone())
-            && ui
-                .button(format!("Return to {back}"))
-                .on_hover_text("Back to the assembly this part was opened from")
-                .clicked()
+        let linked_back = self
+            .in_place_now()
+            .and_then(|ip| ip.linked.as_ref())
+            .map(|le| le.assembly_name.clone());
+        if let Some(back) = linked_back.or_else(|| {
+            self.asm
+                .came_from
+                .and_then(|id| self.project.document(id))
+                .map(|d| d.name.clone())
+        }) && ui
+            .button(format!("Return to {back}"))
+            .on_hover_text("Back to the assembly this part was opened from")
+            .clicked()
         {
             self.return_to_assembly();
             return;

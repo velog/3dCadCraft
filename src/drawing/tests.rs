@@ -1690,6 +1690,7 @@ fn assembly_parts_list_and_balloons() {
         .iter()
         .map(|o| hlr::Instance {
             id: o.id,
+            sub: Vec::new(),
             transform: o.transform,
             model: if o.component.document == plate {
                 mp.clone()
@@ -2323,4 +2324,28 @@ fn detail_view_options_and_fence_edit() {
         (rect, jagged, full_boundary, connection),
         (None, false, true, false)
     );
+}
+
+/// Parts inside a subassembly (spec 3.1a) keep their edges apart in an
+/// assembly view, and their edges still belong to the top-level occurrence
+/// (balloons and parts lists count those).
+#[test]
+fn nested_parts_name_their_edges_by_path() {
+    let part = PartDocument::with_box("Box1", [10.0, 10.0, 10.0]).unwrap();
+    let m = std::sync::Arc::new(hlr::part_model(&part));
+    let inst = |sub: Vec<u32>, x: f64| hlr::Instance {
+        id: 3,
+        sub,
+        transform: crate::kernel::Transform3::translation(x, 0.0, 0.0),
+        model: m.clone(),
+    };
+    let vm = hlr::assembly_model(
+        &[inst(vec![1], 0.0), inst(vec![2], 30.0)],
+        hlr::Simplify::default(),
+    );
+    let names: Vec<&str> = vm.edges.iter().filter_map(|e| e.name.as_deref()).collect();
+    let first = names.iter().filter(|n| n.starts_with("o3/s1/")).count();
+    let second = names.iter().filter(|n| n.starts_with("o3/s2/")).count();
+    assert!(first > 0 && first == second, "{names:?}");
+    assert!(names.iter().all(|n| hlr::occurrence_of(n) == Some(3)));
 }

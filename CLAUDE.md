@@ -1167,7 +1167,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Subassemblies of linked files** (`assembly::tree::Linked`, `CadCraftApp::linked`): every tree function takes the linked
   projects; a nested occurrence's `component` is in *its own file's* terms — use `Leaf::component` / `Nested::component`
   (rebased onto the top file) or `tree::rebased` for a copy of the assembly. `library_path` also finds the links of loaded
-  linked files (`LibCache::links`).
+  linked files (`LibCache::links`). Edit in place of a linked part (`InPlace::linked`) opens its file's tab with copies of the
+  other parts; `reset_asm_ui` keeps that `in_place`, Return hands the tab's project to `LibCache::take_open`, and closing a
+  tab calls `LibCache::forget`. Drawing views walk the tree too (`drawing_bom::drawing_leaves`, `hlr::Instance::sub`).
 - **`git stash` is shared by every worktree**: in a worktree with only new (untracked) files, `git stash` saves
   nothing and `stash pop` applies *another session's* stash. Never stash in a shared repo; commit or use a
   scratch branch.

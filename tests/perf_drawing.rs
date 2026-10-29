@@ -58,6 +58,7 @@ fn assembly(n: usize, plate: &Arc<ViewModel>, bolt: &Arc<ViewModel>) -> Vec<Inst
             let is_plate = k % 20 == 0;
             Instance {
                 id: k as u32 + 1,
+                sub: Vec::new(),
                 transform: Transform3::translation(
                     i * 90.0,
                     j * 70.0,

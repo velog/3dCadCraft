@@ -157,8 +157,11 @@ pub struct ModelEdge {
 /// by every occurrence of that component).
 #[derive(Clone, Debug)]
 pub struct Instance {
-    /// Occurrence id.
+    /// Occurrence id (the top-level one for a part inside a subassembly).
     pub id: u32,
+    /// The path below it to a part inside a subassembly (spec 3.1a; empty
+    /// for a first-level part): its edges are `o<id>/s<a>.<b>/<edge name>`.
+    pub sub: Vec<u32>,
     /// Placement in assembly coordinates.
     pub transform: Transform3,
     /// The component's view model (computed once per component).
@@ -182,6 +185,15 @@ pub struct Simplify {
 /// The occurrence an assembly view's edge name belongs to (`o<id>/…`).
 pub fn occurrence_of(edge: &str) -> Option<u32> {
     edge.strip_prefix('o')?.split_once('/')?.0.parse().ok()
+}
+
+/// Edge `n` of instance `inst` in an assembly view.
+fn instance_edge(inst: &Instance, n: &str) -> String {
+    if inst.sub.is_empty() {
+        return format!("o{}/{n}", inst.id);
+    }
+    let sub: Vec<String> = inst.sub.iter().map(u32::to_string).collect();
+    format!("o{}/s{}/{n}", inst.id, sub.join("."))
 }
 
 /// The diagonal of a model's bounding box (mm).
@@ -236,7 +248,7 @@ pub fn assembly_model(instances: &[Instance], simplify: Simplify) -> ViewModel {
         }));
         for e in &m.edges {
             out.edges.push(ModelEdge {
-                name: e.name.as_ref().map(|n| format!("o{}/{n}", inst.id)),
+                name: e.name.as_ref().map(|n| instance_edge(inst, n)),
                 pts: e.pts.iter().map(|q| t * *q).collect(),
                 circle: e.circle.map(|(c, n, r)| (t * c, t * n, r)),
                 line: e.line,
@@ -253,6 +265,7 @@ pub fn transformed(m: &ViewModel, t: &Transform3) -> ViewModel {
     let moved = assembly_model(
         &[Instance {
             id: 0,
+            sub: Vec::new(),
             transform: *t,
             model: std::sync::Arc::new(m.clone()),
         }],
