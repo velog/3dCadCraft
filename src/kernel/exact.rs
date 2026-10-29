@@ -3305,6 +3305,8 @@ fn sense_by_geometry(
 
 fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String> {
     let body = &s.body;
+    // Once: it walks every shell.
+    let open = s.is_open();
     let mesh = guarded("display mesh", || body.display_mesh(DISPLAY_TOL))?;
     let nf = body.face_count();
     // Triangles per face (our mesh type), and the directed triangle edges of
@@ -3428,8 +3430,13 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
             if f >= nf {
                 continue;
             }
-            // A seam: the face meets itself, once in each direction.
-            if faces.iter().filter(|&&g| g == f).count() > 1 || distinct.len() == 1 {
+            // A seam: the face meets itself, once in each direction. An edge of one face that
+            // its triangles run one way only is a free edge (a surface body's rim), not a seam
+            // (Surface bodies only: in a solid every edge has two sides, so one face there is a
+            // seam the mesh lists once.)
+            let both_ways = directed[f].contains(&(k0, k1)) && directed[f].contains(&(k1, k0));
+            let free = open && !both_ways && faces.len() == 1;
+            if faces.iter().filter(|&&g| g == f).count() > 1 || (distinct.len() == 1 && !free) {
                 by_face[f].push((edges.len() - 1, Sense::Same));
                 by_face[f].push((edges.len() - 1, Sense::Reversed));
                 continue;

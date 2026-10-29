@@ -232,6 +232,16 @@ impl CadCraftApp {
                     ]);
                 }
             }
+            // Edge sections: their edges.
+            for s in &d.def.sections {
+                if let LoftSection::Edges(list) = s {
+                    for e in list {
+                        if let Some(pts) = surf_edge_points(&part.body, e) {
+                            out.push(pts);
+                        }
+                    }
+                }
+            }
             for s in &d.def.sections {
                 if let LoftSection::Profile { sketch, profile } = s
                     && let Some(ps) = part.sketches.iter().find(|p| &p.id == sketch)
@@ -898,8 +908,13 @@ impl CadCraftApp {
                 SweepType::PathAndGuideSurface => "Path & Guide Surface",
             });
             ui.end_row();
-            plabel(ui, "Operation");
-            ui.label(s.operation.label());
+            if s.output == Output::Surface {
+                plabel(ui, "Output");
+                ui.label("Surface");
+            } else {
+                plabel(ui, "Operation");
+                ui.label(s.operation.label());
+            }
             ui.end_row();
         });
         if ui.button("Edit Feature").clicked() {
@@ -935,8 +950,13 @@ impl CadCraftApp {
                 }
             });
             ui.end_row();
-            plabel(ui, "Operation");
-            ui.label(l.operation.label());
+            if l.output == Output::Surface {
+                plabel(ui, "Output");
+                ui.label("Surface");
+            } else {
+                plabel(ui, "Operation");
+                ui.label(l.operation.label());
+            }
             ui.end_row();
         });
         if ui.button("Edit Feature").clicked() {
@@ -996,6 +1016,42 @@ impl CadCraftApp {
             _ => d.def.sections.push(LoftSection::Edges(vec![e])),
         }
     }
+}
+
+/// The display points of the model edge `e` names: of the edges of faces named `e.face`, the one
+/// whose pieces pass nearest its point.
+fn surf_edge_points(
+    body: &crate::kernel::BRep,
+    e: &crate::part::surface_op::SurfEdge,
+) -> Option<Vec<Point3>> {
+    let q = Point3::from(e.hint);
+    let opts = crate::kernel::TessellationOptions::default();
+    let mut best: Option<(crate::kernel::Real, Vec<Point3>)> = None;
+    for (_, f) in body
+        .faces()
+        .filter(|(_, f)| f.name.as_deref() == Some(e.face.as_str()))
+    {
+        for lp in std::iter::once(&f.outer).chain(&f.inner) {
+            for ce in &lp.coedges {
+                let Ok(pts) = body.sample_edge(ce.edge, &opts) else {
+                    continue;
+                };
+                let d = pts
+                    .windows(2)
+                    .map(|w| {
+                        let ab = w[1] - w[0];
+                        let t =
+                            ((q - w[0]).dot(&ab) / ab.norm_squared().max(1e-24)).clamp(0.0, 1.0);
+                        (w[0] + ab * t - q).norm()
+                    })
+                    .fold(crate::kernel::Real::MAX, crate::kernel::Real::min);
+                if best.as_ref().is_none_or(|(x, _)| d < *x) {
+                    best = Some((d, pts));
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 /// The point of polyline `pts` nearest `q`.

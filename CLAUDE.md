@@ -1236,6 +1236,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `gui/drawing_sketch.rs` maps it through the view's `Placement` and the `SheetCam`. A new overlay sketch function
   must take a `Projector` too, or drawing sketches cannot use it. A view sketch takes the keys in `shortcuts`
   (`view_sketch_keys`) before the drawing's letters.
+- **Free edges of surface bodies** (`exact.rs::add_solid`): an edge listed with one face used to be taken for a seam
+  (both senses, broken loops, not drawn — surfaces showed no outline). In a surface body it is a free edge when the
+  face's triangles run it one way only; in solids the old rule stays (a seam listed once). `s.is_open()` walks every
+  shell: take it once per body, never per edge (it doubled a 5 s Cut).
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

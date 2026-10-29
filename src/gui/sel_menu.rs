@@ -201,10 +201,20 @@ impl CadCraftApp {
     /// Whether model face `name` is planar.
     fn face_is_planar(&self, name: &str) -> bool {
         let body = &self.part().body;
-        body.find_face(name)
-            .and_then(|f| body.face(f))
-            .and_then(|x| body.surface(x.facet_of.unwrap_or(x.surface)))
-            .is_some_and(|s| matches!(s, Surface::Plane(_)))
+        let Some(face) = body.find_face(name).and_then(|f| body.face(f)) else {
+            return false;
+        };
+        let plane = body
+            .surface(face.facet_of.unwrap_or(face.surface))
+            .is_some_and(|s| matches!(s, Surface::Plane(_)));
+        // Free-form faces carry a placeholder plane: the mesh's normals tell (all parallel).
+        let flat = face.mesh.as_ref().is_none_or(|m| {
+            let Some(n0) = m.normals.first() else {
+                return true;
+            };
+            m.normals.iter().all(|n| n.dot(n0) > 1.0 - 1e-6)
+        });
+        plane && flat
     }
 
     /// A point on face `name` (for commands that want the click point).
