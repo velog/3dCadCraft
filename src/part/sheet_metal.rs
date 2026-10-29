@@ -629,6 +629,29 @@ pub struct SheetConvertFeature {
     pub face: super::shell::FaceRef,
     /// The bend edges.
     pub bends: Vec<super::blend::EdgeRef>,
+    /// The body is sheet metal already (an imported part): its round bends
+    /// are found from the fixed face, `bends` stays empty (format revision
+    /// 46; spec 5.6 §6.1e).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recognize: bool,
+}
+
+impl SheetConvertFeature {
+    /// One line for the browser's hover / Properties.
+    pub fn describe(&self) -> String {
+        if self.recognize {
+            format!(
+                "Convert {} to sheet metal (its round bends found)",
+                self.body
+            )
+        } else {
+            format!(
+                "Convert {} to sheet metal ({} bends)",
+                self.body,
+                self.bends.len()
+            )
+        }
+    }
 }
 
 /// Which way a Contour Flange's width runs from its sketch plane

@@ -520,6 +520,7 @@ fn convert_solid_to_sheet_metal() {
             edge("Box1:Top", "Box1:Front", [50.0, 0.0, 40.0]),
             edge("Box1:Top", "Box1:Back", [50.0, 60.0, 40.0]),
         ],
+        recognize: false,
     };
     p.add_sheet_convert(def).unwrap();
     check(&p);
@@ -557,6 +558,7 @@ fn convert_solid_to_sheet_metal() {
             hint: [50.0, 30.0, 40.0],
         },
         bends: Vec::new(),
+        recognize: false,
     };
     assert!(q.add_sheet_convert(bad).is_err());
     assert_eq!(q.features.len(), n);
@@ -592,6 +594,7 @@ fn convert_shelled_box_keeps_its_walls() {
             edge("Box1:Bottom", "Box1:Back", [50.0, 60.0, 0.0]),
             edge("Box1:Bottom", "Box1:Left", [0.0, 30.0, 0.0]),
         ],
+        recognize: false,
     };
     p.add_sheet_convert(def).unwrap();
     check(&p);

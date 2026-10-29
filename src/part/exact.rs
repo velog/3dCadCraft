@@ -4117,7 +4117,7 @@ pub(super) fn sheet_convert(
         .iter()
         .position(|s| s.name.as_deref() == Some(sc.body.as_str()))
         .ok_or_else(|| User(format!("the solid {} no longer exists", sc.body)))?;
-    if sc.bends.is_empty() {
+    if sc.bends.is_empty() && !sc.recognize {
         return Err(User("select the edges that become bends".into()));
     }
     let hint = Point3::from(sc.face.hint);
@@ -4126,6 +4126,14 @@ pub(super) fn sheet_convert(
         .first()
         .and_then(|&f| exact::face_point(&solids[k], f))
         .ok_or_else(|| User(format!("the face {} no longer exists", sc.face.face)))?;
+    if sc.recognize {
+        let (solid, model) =
+            ksm::recognize(&solids[k], &sc.id, &rule.values(), face).map_err(User)?;
+        let faces = solid.face_names.len();
+        let mut next = solids.to_vec();
+        next[k] = solid;
+        return Ok((next, super::sheet_metal::SheetState::new(model, faces)));
+    }
     let body = exact::to_brep(solids).map_err(User)?;
     let index: Vec<crate::kernel::SolidId> = body.solids().map(|(id, _)| id).collect();
     let mut bends = Vec::with_capacity(sc.bends.len());

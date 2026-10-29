@@ -1073,6 +1073,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   Bend (`SheetOp::Bend`, revision 45; vendor `join_bend`): the second face's sheet becomes flanges of the first (its
   face the last flange's `shape` panel, mapped by `region_to_flat`); regeneration drops its solid and `metal` entry
   (`part/mod.rs`). Only a one-face second sheet for now. Planned-panel items of its edges are `<body>|<sheet edge>`.
+  Imported sheets (`SheetConvertFeature::recognize`, revision 46; `ksm::recognize` in
+  `kernel/exact/sheet_metal/recognize.rs`): panels walked across round bends on the base face's skin, each next
+  panel a flange `shape` through `region_to_flat`; the refolded volume must match the body's (else refused).
+  The Convert panel sets `recognize` whenever no bend edge is picked.
   Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry
   of old files without such a field). Corner reliefs (Round / Square) are cut-outs in `SheetBody::holes` about the crossing of the bends' centre

@@ -170,14 +170,19 @@ impl SmDraft {
                     true,
                     usize::from(!c.face.face.is_empty()),
                 ),
-                sel(
-                    "bends",
-                    "Bends",
-                    "click the edges that become bends (a second click removes one)",
-                    &[PickKind::Edge][..],
-                    false,
-                    c.bends.len(),
-                ),
+                Selector {
+                    // None picked: the body's own round bends are found
+                    // (an imported sheet).
+                    required: false,
+                    ..sel(
+                        "bends",
+                        "Bends",
+                        "click the sharp edges that become bends (none: the round bends of an imported sheet are found)",
+                        &[PickKind::Edge][..],
+                        false,
+                        c.bends.len(),
+                    )
+                },
             ],
             Feature::SheetOp(o) => match &o.op {
                 SheetOp::Hem { edges, .. } => vec![sel(
@@ -519,6 +524,7 @@ impl CadCraftApp {
                             hint: [0.0; 3],
                         },
                         bends: Vec::new(),
+                        recognize: false,
                     };
                     self.sm_open(SmDraft::new(Feature::SheetConvert(def), "face"));
                     self.tab = super::ribbon::Tab::SheetMetal;
@@ -776,13 +782,7 @@ impl CadCraftApp {
                 t
             }
             Feature::SheetOp(o) => o.describe(),
-            Feature::SheetConvert(c) => {
-                format!(
-                    "Convert {} to sheet metal ({} bends)",
-                    c.body,
-                    c.bends.len()
-                )
-            }
+            Feature::SheetConvert(c) => c.describe(),
             _ => String::new(),
         };
         ui.label(text);
@@ -1151,15 +1151,28 @@ impl CadCraftApp {
                         });
                     }
                 }
-                Feature::SheetConvert(_) => {
+                Feature::SheetConvert(c) => {
+                    let found = c.bends.is_empty();
                     psection(ui, "sm_convert", "Behavior", |ui| {
                         plabel(ui, "Thickness");
-                        ui.label(format!("{:.3} mm", rule.thickness)).on_hover_text(
-                            "From Sheet Metal Defaults; a shelled solid keeps its own walls",
-                        );
+                        if found {
+                            ui.label("found from the body").on_hover_text(
+                                "The distance from the base face to the sheet's other side",
+                            );
+                        } else {
+                            ui.label(format!("{:.3} mm", rule.thickness)).on_hover_text(
+                                "From Sheet Metal Defaults; a shelled solid keeps its own walls",
+                            );
+                        }
                         ui.end_row();
-                        plabel(ui, "Other edges");
-                        ui.weak("cut open (rips)");
+                        plabel(ui, "Bends");
+                        if found {
+                            ui.weak("the body's round bends (an imported sheet)").on_hover_text(
+                                "No edges picked: every round bend reached from the base face is found,                                  with its own radius and angle; the body must be a sheet of one thickness",
+                            );
+                        } else {
+                            ui.weak("the picked edges; other edges cut open (rips)");
+                        }
                         ui.end_row();
                     });
                 }
@@ -2502,6 +2515,7 @@ impl CadCraftApp {
                     face: name,
                     hint: [hit.x, hit.y, hit.z],
                 };
+                c.recognize = c.bends.is_empty();
             }
             (Feature::SheetConvert(c), Pick::Bend(r)) => {
                 match c.bends.iter().position(|b| b.faces == r.faces) {
@@ -2510,6 +2524,7 @@ impl CadCraftApp {
                     }
                     None => c.bends.push(r),
                 }
+                c.recognize = c.bends.is_empty();
             }
             (Feature::SheetOp(o), pick) => match (&mut o.op, pick) {
                 (SheetOp::Hem { body, edges, .. }, Pick::SheetEdge(b, e)) => {
@@ -3504,7 +3519,8 @@ mod tests {
         assert!(!p.sheet_is_flat(&body));
     }
 
-    /// Convert: the base face is a single pick that moves on to Bends.
+    /// Convert: the base face is a single pick that moves on to Bends, which
+    /// may stay empty (an imported sheet: its round bends are found).
     #[test]
     fn convert_flow_moves_on_after_the_face() {
         let c = SheetConvertFeature {
@@ -3516,6 +3532,7 @@ mod tests {
                 hint: [0.0; 3],
             },
             bends: Vec::new(),
+            recognize: false,
         };
         let mut d = SmDraft::new(Feature::SheetConvert(c), "face");
         assert_eq!(d.flow().active_key(), Some("face"));
@@ -3525,7 +3542,10 @@ mod tests {
         let mut flow = d.flow();
         assert!(flow.picked());
         assert_eq!(flow.active_key(), Some("bends"));
-        assert!(!flow.ready(), "bends are required");
+        assert!(
+            flow.ready(),
+            "no bends picked: an imported sheet's round bends are found"
+        );
         sm_clear(&mut d, "face");
         assert!(matches!(&d.feature, Feature::SheetConvert(c) if c.face.face.is_empty()));
     }

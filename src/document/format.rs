@@ -144,7 +144,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 44: cross-part references (`PlaneRef::Context`,
 ///   `PartDocument::context`) (2026-10-29).
 /// - 45: sheet metal Bend (`SheetOp::Bend`) (2026-10-29).
-pub const FORMAT_REVISION: u32 = 45;
+/// - 46: Convert to Sheet Metal finding an imported sheet's round bends
+///   (`SheetConvertFeature::recognize`) (2026-10-29).
+pub const FORMAT_REVISION: u32 = 46;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

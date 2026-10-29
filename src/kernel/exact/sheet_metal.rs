@@ -815,6 +815,9 @@ pub fn edge_frame(
     ))
 }
 
+mod recognize;
+pub use recognize::recognize;
+
 /// Convert a solid to a sheet (SolidWorks / Inventor Convert to Sheet
 /// Metal): `face` is a point on the face that stays put, `bends` points on
 /// the sharp edges that become bends; a shelled body keeps its wall

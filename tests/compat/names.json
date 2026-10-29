@@ -912,5 +912,21 @@
     "Face3:base:rim.3v1",
     "Face3:base:rim.4v1",
     "Face3:base:top"
+  ],
+  "r46/recognize_r46.3dcadcraft": [
+    "Convert1:Bend:1",
+    "Convert1:Bend:2",
+    "Convert1:Convert1.1:bottom",
+    "Convert1:Convert1.1:rim.bend0",
+    "Convert1:Convert1.1:rim.bend1",
+    "Convert1:Convert1.1:rim.far",
+    "Convert1:Convert1.1:rim.side0",
+    "Convert1:Convert1.1:rim.side1",
+    "Convert1:Convert1.1:top",
+    "Convert1:base:bottom",
+    "Convert1:base:rim.E1",
+    "Convert1:base:rim.E3",
+    "Convert1:base:rim.E4",
+    "Convert1:base:top"
   ]
 }

@@ -2607,6 +2607,7 @@ fn speed_budgets() {
                 e("Box1:Top", "Box1:Back", [100.0, 120.0, 60.0]),
                 e("Box1:Top", "Box1:Left", [0.0, 60.0, 60.0]),
             ],
+            recognize: false,
         };
         rows.push((
             "sheet metal: Convert a box to a tray (4 bends) + flat pattern",
@@ -2849,6 +2850,82 @@ fn speed_budgets() {
                 p.build_cache = Default::default();
                 p.add_sheet_op(SheetOpFeature::new(op.clone())).unwrap();
                 assert!(p.flat_pattern_dxf(&body).unwrap().contains("BEND"));
+            }),
+        ));
+    }
+    // Convert of an imported sheet (docs/spec/5.6 §6.1e): a tray of four
+    // flanges written to STEP and imported; the conversion finds its bends.
+    {
+        use cadcraft3d::part::import::ImportOp;
+        use cadcraft3d::part::sheet_metal::{SheetConvertFeature, SheetFlangeFeature};
+        use cadcraft3d::part::shell::FaceRef;
+        use cadcraft3d::part::{BodyOp, BodyOpFeature, OriginPlane, ProfileRef};
+        use cadcraft3d::sketch::Point2;
+        let mut src = PartDocument::default();
+        src.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = src
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        src.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(200.0, 120.0))
+            .unwrap();
+        let r = src.sketches[i].sketch.regions();
+        src.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+            .unwrap();
+        let mut edges = Vec::new();
+        let mut body = String::new();
+        for (x, y) in [(200.0, 60.0), (0.0, 60.0), (100.0, 0.0), (100.0, 120.0)] {
+            let (b, e) = src.sheet_edge_at(Point3::new(x, y, 2.0)).unwrap();
+            body = b;
+            edges.push(e);
+        }
+        src.add_sheet_flange(SheetFlangeFeature::new(&body, edges, 30.0))
+            .unwrap();
+        let text = cadcraft3d::kernel::exact::step_text(&src.exact_bodies.0, "Tray").unwrap();
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        base.add_body_op(BodyOpFeature::new(BodyOp::Import(ImportOp::new(
+            "tray.step",
+            text.as_str(),
+        ))))
+        .unwrap();
+        let name = base
+            .body
+            .faces()
+            .find_map(|(_, f)| {
+                let Some(cadcraft3d::kernel::Surface::Plane(pl)) = base.body.surface(f.surface)
+                else {
+                    return None;
+                };
+                (pl.normal.z.abs() > 1.0 - 1e-9 && pl.origin.z.abs() < 1e-6)
+                    .then(|| f.name.clone())
+                    .flatten()
+            })
+            .unwrap();
+        let def = SheetConvertFeature {
+            id: String::new(),
+            name: String::new(),
+            body: base.exact_bodies.0[0].name.clone().unwrap(),
+            face: FaceRef {
+                face: name,
+                hint: [100.0, 60.0, 0.0],
+            },
+            bends: Vec::new(),
+            recognize: true,
+        };
+        rows.push((
+            "sheet metal: Convert of an imported tray (4 round bends found) + flat",
+            500.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_convert(def.clone()).unwrap();
+                assert_eq!(p.flat_patterns()[0].bends.len(), 4);
             }),
         ));
     }

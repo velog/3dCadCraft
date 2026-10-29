@@ -6620,14 +6620,7 @@ pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
             },
             f.describe(),
         ),
-        Feature::SheetConvert(f) => (
-            Icon::SheetMetal,
-            format!(
-                "Convert {} to sheet metal ({} bends)",
-                f.body,
-                f.bends.len()
-            ),
-        ),
+        Feature::SheetConvert(f) => (Icon::SheetMetal, f.describe()),
         Feature::SheetFlange(f) => (
             sm_icon,
             format!(

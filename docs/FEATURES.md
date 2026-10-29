@@ -1113,6 +1113,8 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 
 **What it does.** Parts from sheet stock that are **unfolded** into a flat pattern for laser/punching and bent on a press brake.
 
+**Imported sheet metal** (2026-10-29): Convert to Sheet Metal of a STEP body with round bends — pick the base face, no edges: the thickness and every bend are found, then Flat Pattern / DXF work (spec §6.1e).
+
 **Sheet metal rules (Sheet Metal Rules / Styles):**
 - thickness;
 - bend radius;

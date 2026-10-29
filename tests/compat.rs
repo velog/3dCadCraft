@@ -617,6 +617,70 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 46: Convert to Sheet Metal of an imported sheet — a 100 × 60 Face
+/// with a flange, written to STEP, imported into an empty part and converted
+/// with its round bend found (`recognize`).
+fn recognize_r46() -> PartDocument {
+    use cadcraft3d::part::import::ImportOp;
+    use cadcraft3d::part::sheet_metal::{SheetConvertFeature, SheetFlangeFeature};
+    use cadcraft3d::part::shell::FaceRef;
+    use cadcraft3d::part::{BodyOp, BodyOpFeature, OriginPlane, ProfileRef};
+    use cadcraft3d::sketch::Point2;
+    let mut src = PartDocument::default();
+    src.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = src
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    src.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 60.0))
+        .unwrap();
+    let r = src.sketches[i].sketch.regions();
+    let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    src.add_sheet_face(i, prof, false).unwrap();
+    let (body, edge) = src.sheet_edge_at(Point3::new(100.0, 30.0, 2.0)).unwrap();
+    src.add_sheet_flange(SheetFlangeFeature::new(&body, vec![edge], 30.0))
+        .unwrap();
+    let text = cadcraft3d::kernel::exact::step_text(&src.exact_bodies.0, "Sheet").unwrap();
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    p.add_body_op(BodyOpFeature::new(BodyOp::Import(ImportOp::new(
+        "sheet.step",
+        text.as_str(),
+    ))))
+    .unwrap();
+    let name = p
+        .body
+        .faces()
+        .find_map(|(_, f)| {
+            let Some(cadcraft3d::kernel::Surface::Plane(pl)) = p.body.surface(f.surface) else {
+                return None;
+            };
+            (pl.normal.z.abs() > 1.0 - 1e-9 && pl.origin.z.abs() < 1e-6)
+                .then(|| f.name.clone())
+                .flatten()
+        })
+        .unwrap();
+    let body = p.exact_bodies.0[0].name.clone().unwrap();
+    p.add_sheet_convert(SheetConvertFeature {
+        id: String::new(),
+        name: String::new(),
+        body,
+        face: FaceRef {
+            face: name,
+            hint: [30.0, 30.0, 0.0],
+        },
+        bends: Vec::new(),
+        recognize: true,
+    })
+    .unwrap();
+    p
+}
+
 /// Revision 45: Bend — a 100 × 50 Face, a wall Face in the plane x = 120
 /// joined to it by a Bend, and a third Face 20 above, left of the first, not
 /// joined (a Double Bend case for the GUI).
@@ -1159,6 +1223,7 @@ fn sheet_r20() -> PartDocument {
             e("Box1:Top", "Box1:Front", [50.0, 0.0, 40.0]),
             e("Box1:Top", "Box1:Back", [50.0, 60.0, 40.0]),
         ],
+        recognize: false,
     })
     .unwrap();
     let (body, edge) = p.sheet_edge_at(Point3::new(50.0, 1.0, 0.0)).unwrap();
@@ -2560,6 +2625,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("SurfacesR37");
             project.add_document("Part1", DocumentData::Part(surfaces_r37()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r46/recognize_r46.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("RecognizeR46");
+            project.add_document("Part1", DocumentData::Part(recognize_r46()));
             project.save(&f).unwrap();
         }
         let f = root().join("r45/bend_r45.3dcadcraft");
