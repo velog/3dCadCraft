@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::tree::Linked;
 use crate::assembly::relation::GeomRef;
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Project};
 use crate::kernel::{Point3, Real, Transform3, Vector3};
@@ -113,13 +114,50 @@ pub struct Orientation {
     pub flip: bool,
 }
 
+/// The skeleton line a member follows.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Skeleton {
+    /// A straight model edge of a component.
+    Edge(GeomRef),
+    /// A line of a component part's sketch (by sketch id and entity id).
+    SketchLine {
+        /// The occurrence's id.
+        occurrence: u32,
+        /// Occurrence ids below it down to the part (spec 3.1a).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sub: Vec<u32>,
+        /// The part sketch's id.
+        sketch: String,
+        /// The line.
+        line: crate::sketch::EntityId,
+    },
+}
+
+impl Skeleton {
+    /// The occurrence it lies on.
+    pub fn occurrence(&self) -> u32 {
+        match self {
+            Skeleton::Edge(g) => g.occurrence(),
+            Skeleton::SketchLine { occurrence, .. } => *occurrence,
+        }
+    }
+
+    /// The path below the occurrence to the part.
+    pub fn sub(&self) -> &[u32] {
+        match self {
+            Skeleton::Edge(g) => g.sub(),
+            Skeleton::SketchLine { sub, .. } => sub,
+        }
+    }
+}
+
 /// One member: what it was made from.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrameMember {
     /// Its occurrence in the assembly.
     pub occurrence: u32,
-    /// The skeleton edge it follows.
-    pub skeleton: GeomRef,
+    /// The skeleton line it follows.
+    pub skeleton: Skeleton,
     /// Section family and size (copied into the part; kept to tell the
     /// user and for Change / Refresh).
     pub family: String,
@@ -213,42 +251,57 @@ pub struct InsertOptions {
     pub orientation: Orientation,
 }
 
-/// A straight skeleton edge in assembly coordinates: its start and end.
+/// A skeleton line in assembly coordinates: its start and end. `linked`
+/// holds the linked part files (a skeleton placed from another file).
 pub fn skeleton_line(
     project: &Project,
+    linked: &Linked,
     asm: &AssemblyDocument,
-    r: &GeomRef,
+    r: &Skeleton,
 ) -> Result<(Point3, Point3), String> {
-    let GeomRef::Edge {
-        occurrence,
-        sub,
-        edge,
-    } = r
-    else {
-        return Err("a frame member follows an edge".into());
-    };
-    let linked = super::tree::Linked::new();
-    let n = super::tree::nested(project, &linked, asm, *occurrence, sub)?;
-    let part = super::tree::part_of(project, &linked, n.component)
+    let n = super::tree::nested(project, linked, asm, r.occurrence(), r.sub())?;
+    let part = super::tree::part_of(project, linked, n.component)
         .ok_or_else(|| format!("{} shows no part", n.name))?;
-    let body = &part.body;
-    let id = crate::part::draft::edge_of(body, edge)
-        .ok_or_else(|| format!("{}: its skeleton edge no longer exists", n.name))?;
-    let e = body.edge(id).ok_or("the skeleton edge no longer exists")?;
-    if !matches!(body.curve(e.curve), Some(crate::kernel::Curve::Line(_))) {
-        return Err("only straight edges take frame members yet".into());
-    }
-    let pts = body
-        .sample_edge(id, &crate::kernel::TessellationOptions::default())
-        .map_err(|x| x.to_string())?;
-    let (Some(a), Some(b)) = (pts.first(), pts.last()) else {
-        return Err("the skeleton edge has no ends".into());
+    let (a, b) = match r {
+        Skeleton::Edge(GeomRef::Edge { edge, .. }) => {
+            let body = &part.body;
+            let id = crate::part::draft::edge_of(body, edge)
+                .ok_or_else(|| format!("{}: its skeleton edge no longer exists", n.name))?;
+            let e = body.edge(id).ok_or("the skeleton edge no longer exists")?;
+            if !matches!(body.curve(e.curve), Some(crate::kernel::Curve::Line(_))) {
+                return Err("only straight edges take frame members yet".into());
+            }
+            let pts = body
+                .sample_edge(id, &crate::kernel::TessellationOptions::default())
+                .map_err(|x| x.to_string())?;
+            match (pts.first(), pts.last()) {
+                (Some(a), Some(b)) => (*a, *b),
+                _ => return Err("the skeleton edge has no ends".into()),
+            }
+        }
+        Skeleton::Edge(_) => return Err("a frame member follows an edge or a sketch line".into()),
+        Skeleton::SketchLine { sketch, line, .. } => {
+            let ps = part
+                .sketches
+                .iter()
+                .find(|s| &s.id == sketch)
+                .ok_or_else(|| format!("{}: its skeleton sketch no longer exists", n.name))?;
+            let sk = &ps.sketch;
+            let (p, q) = sk
+                .line_points(*line)
+                .map_err(|_| format!("{}: its skeleton line no longer exists", n.name))?;
+            let at = |id| sk.point(id).map(|x| sk.to_world(&x.position));
+            match (at(p), at(q)) {
+                (Some(a), Some(b)) => (a, b),
+                _ => return Err("the skeleton line has no ends".into()),
+            }
+        }
     };
     let top = asm
-        .find(*occurrence)
+        .find(r.occurrence())
         .ok_or("the component no longer exists")?;
     let m = top.transform * n.at;
-    Ok((m.transform_point(a), m.transform_point(b)))
+    Ok((m.transform_point(&a), m.transform_point(&b)))
 }
 
 /// The occurrence placement of a member of section `s` along `a → b`:
@@ -311,8 +364,9 @@ fn asm_mut(project: &mut Project, id: DocumentId) -> Result<&mut AssemblyDocumen
 /// Returns the frame id and the new occurrences.
 pub fn insert(
     project: &mut Project,
+    linked: &Linked,
     asm: DocumentId,
-    edges: &[GeomRef],
+    edges: &[Skeleton],
     o: &InsertOptions,
     lib: &Library,
     into: Option<u32>,
@@ -329,7 +383,7 @@ pub fn insert(
         let mut made = Vec::new();
         for e in edges {
             let a = asm_of(project, asm)?;
-            let (p, q) = skeleton_line(project, a, e)?;
+            let (p, q) = skeleton_line(project, linked, a, e)?;
             let length = (q - p).norm();
             let place = placement(&section, p, q, &o.orientation)
                 .ok_or("the skeleton edge has no length")?;
@@ -394,7 +448,7 @@ pub struct Solved {
 /// Follows the skeleton: every member of assembly `asm` gets the place and
 /// length of its skeleton edge now. A member whose edge is gone keeps its
 /// last state and is reported.
-pub fn solve(project: &mut Project, asm: DocumentId) -> Result<Solved, String> {
+pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<Solved, String> {
     let a = asm_of(project, asm)?;
     let mut todo: Vec<(u32, Transform3, Real, DocumentId)> = Vec::new();
     let mut out = Solved::default();
@@ -406,7 +460,7 @@ pub fn solve(project: &mut Project, asm: DocumentId) -> Result<Solved, String> {
             continue;
         }
         let doc = occ.component.document;
-        let line = skeleton_line(project, a, &m.skeleton);
+        let line = skeleton_line(project, linked, a, &m.skeleton);
         let sec = m.section();
         match (line, sec) {
             (Ok((p, q)), Some(s)) => match placement(&s, p, q, &m.orientation) {
@@ -505,15 +559,15 @@ mod tests {
     }
 
     /// The box edge between two faces, by a point on it.
-    fn edge(f0: &str, f1: &str, hint: [Real; 3]) -> GeomRef {
-        GeomRef::Edge {
+    fn edge(f0: &str, f1: &str, hint: [Real; 3]) -> Skeleton {
+        Skeleton::Edge(GeomRef::Edge {
             occurrence: 1,
             sub: Vec::new(),
             edge: EdgeRef {
                 faces: [format!("Box1:{f0}"), format!("Box1:{f1}")],
                 hint,
             },
-        }
+        })
     }
 
     fn opts() -> InsertOptions {
@@ -541,7 +595,16 @@ mod tests {
     fn a_member_follows_its_edge_with_the_section_square_to_it() {
         let (mut p, aid, _) = project();
         let e = find_edge(&p, aid, Point3::new(200.0, 0.0, 0.0));
-        let (fid, occs) = insert(&mut p, aid, &[e], &opts(), Library::builtin(), None).unwrap();
+        let (fid, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[e],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
         let a = asm(&p, aid);
         assert_eq!(a.frames.len(), 1);
         assert_eq!(a.frames[0].id, fid);
@@ -629,12 +692,21 @@ mod tests {
     fn a_changed_skeleton_changes_the_member() {
         let (mut p, aid, sk) = project();
         let e = find_edge(&p, aid, Point3::new(200.0, 0.0, 0.0));
-        let (_, occs) = insert(&mut p, aid, &[e], &opts(), Library::builtin(), None).unwrap();
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[e],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
         if let Some(DocumentData::Part(b)) = p.document_mut(sk).map(|d| &mut d.data) {
             b.box_feature_mut().unwrap().size[0] = 600.0;
             b.regenerate().unwrap();
         }
-        let s = solve(&mut p, aid).unwrap();
+        let s = solve(&mut p, &Linked::new(), aid).unwrap();
         assert!(s.sick.is_empty(), "{:?}", s.sick);
         assert_eq!(s.moved, 1);
         let a = asm(&p, aid);
@@ -648,7 +720,7 @@ mod tests {
             .sum();
         assert!((v - 421.0 * 600.0).abs() < 0.01 * 421.0 * 600.0, "{v}");
         // A second solve has nothing to do.
-        assert_eq!(solve(&mut p, aid).unwrap().moved, 0);
+        assert_eq!(solve(&mut p, &Linked::new(), aid).unwrap().moved, 0);
     }
 
     /// An edge that is gone leaves the member as it was and reports it.
@@ -656,14 +728,23 @@ mod tests {
     fn a_member_without_its_edge_keeps_its_shape() {
         let (mut p, aid, _) = project();
         let e = find_edge(&p, aid, Point3::new(200.0, 0.0, 0.0));
-        let (_, occs) = insert(&mut p, aid, &[e], &opts(), Library::builtin(), None).unwrap();
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[e],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
         let before = asm(&p, aid).find(occs[0]).unwrap().transform;
         if let Ok(a) = asm_mut(&mut p, aid)
-            && let GeomRef::Edge { edge, .. } = &mut a.frames[0].members[0].skeleton
+            && let Skeleton::Edge(GeomRef::Edge { edge, .. }) = &mut a.frames[0].members[0].skeleton
         {
             edge.faces[0] = "Box1:Gone".into();
         }
-        let s = solve(&mut p, aid).unwrap();
+        let s = solve(&mut p, &Linked::new(), aid).unwrap();
         assert_eq!(s.sick.len(), 1);
         assert_eq!(asm(&p, aid).find(occs[0]).unwrap().transform, before);
     }
@@ -675,13 +756,35 @@ mod tests {
         let e = find_edge(&p, aid, Point3::new(200.0, 0.0, 0.0));
         let bad = edge("Gone", "Front", [0.0, 0.0, 0.0]);
         let n = p.documents().len();
-        assert!(insert(&mut p, aid, &[e, bad], &opts(), Library::builtin(), None).is_err());
+        assert!(
+            insert(
+                &mut p,
+                &Linked::new(),
+                aid,
+                &[e, bad],
+                &opts(),
+                Library::builtin(),
+                None
+            )
+            .is_err()
+        );
         assert_eq!(p.documents().len(), n);
         assert!(asm(&p, aid).frames.is_empty());
         let mut o = opts();
         o.size = "1x1x1".into();
         let e = find_edge(&p, aid, Point3::new(200.0, 0.0, 0.0));
-        assert!(insert(&mut p, aid, &[e], &o, Library::builtin(), None).is_err());
+        assert!(
+            insert(
+                &mut p,
+                &Linked::new(),
+                aid,
+                &[e],
+                &o,
+                Library::builtin(),
+                None
+            )
+            .is_err()
+        );
     }
 
     /// Every edge of the box: twelve members, the save round trip keeps
@@ -703,11 +806,20 @@ mod tests {
             [0.0, 300.0, 100.0],
             [400.0, 300.0, 100.0],
         ];
-        let edges: Vec<GeomRef> = mids
+        let edges: Vec<Skeleton> = mids
             .iter()
             .map(|m| find_edge(&p, aid, Point3::new(m[0], m[1], m[2])))
             .collect();
-        let (_, occs) = insert(&mut p, aid, &edges, &opts(), Library::builtin(), None).unwrap();
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &edges,
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
         assert_eq!(occs.len(), 12);
         let a = asm(&p, aid);
         let total: Real = occs
@@ -723,8 +835,68 @@ mod tests {
         assert_eq!(back.frames, a.frames);
     }
 
+    /// A line of a skeleton part's sketch takes a member; a longer line
+    /// lengthens the member on the next solve.
+    #[test]
+    fn a_sketch_line_is_a_skeleton() {
+        use crate::part::{OriginPlane, SketchOptions, SketchPlacement};
+        use crate::sketch::Point2;
+        let mut sk = PartDocument::default();
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = sk
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        let line = sk.sketches[i]
+            .sketch
+            .add_line(Point2::new(0.0, 0.0), Point2::new(0.0, 750.0));
+        let sid = sk.sketches[i].id.clone();
+        let mut p = Project::new("T");
+        let skd = p.add_document("Skeleton", DocumentData::Part(sk));
+        let mut a = AssemblyDocument::default();
+        let t = Transform3::new(Vector3::new(100.0, 0.0, 0.0), Vector3::zeros());
+        a.place(DocRef::local(skd), "Skeleton:1", t, true);
+        let aid = p.add_document("Frame", DocumentData::Assembly(a));
+        let s = Skeleton::SketchLine {
+            occurrence: 1,
+            sub: Vec::new(),
+            sketch: sid,
+            line,
+        };
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[s],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let o = asm(&p, aid).find(occs[0]).unwrap();
+        let start = o.transform.transform_point(&Point3::origin());
+        assert!(
+            (start - Point3::new(100.0, 0.0, 0.0)).norm() < 1e-9,
+            "{start}"
+        );
+        let z = o.transform.transform_vector(&Vector3::z());
+        assert!((z - Vector3::y()).norm() < 1e-9, "{z}");
+        assert!((length_of(&part(&p, asm(&p, aid), occs[0])).unwrap() - 750.0).abs() < 1e-9);
+        // The line's end moves: the member follows.
+        if let Some(DocumentData::Part(x)) = p.document_mut(skd).map(|d| &mut d.data) {
+            let sk = &mut x.sketches[0].sketch;
+            let (_, end) = sk.line_points(line).unwrap();
+            sk.move_point(end, Point2::new(0.0, 900.0)).unwrap();
+        }
+        assert_eq!(solve(&mut p, &Linked::new(), aid).unwrap().moved, 1);
+        assert!((length_of(&part(&p, asm(&p, aid), occs[0])).unwrap() - 900.0).abs() < 1e-9);
+    }
+
     /// The skeleton edge through `at` (its two face names and the point).
-    fn find_edge(p: &Project, aid: DocumentId, at: Point3) -> GeomRef {
+    fn find_edge(p: &Project, aid: DocumentId, at: Point3) -> Skeleton {
         let a = asm(p, aid);
         let o = a.find(1).unwrap();
         let body = match p.document(o.component.document).map(|d| &d.data) {
@@ -741,14 +913,14 @@ mod tests {
             if (s + d * t - at).norm() < 1e-6 {
                 let faces = body.edge_faces(id);
                 let name = |f| body.face(f).and_then(|f| f.name.clone()).unwrap();
-                return GeomRef::Edge {
+                return Skeleton::Edge(GeomRef::Edge {
                     occurrence: 1,
                     sub: Vec::new(),
                     edge: EdgeRef {
                         faces: [name(faces[0]), name(faces[1])],
                         hint: [at.x, at.y, at.z],
                     },
-                };
+                });
             }
         }
         panic!("no edge at {at}");

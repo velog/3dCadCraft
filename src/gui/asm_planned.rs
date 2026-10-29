@@ -1709,6 +1709,10 @@ impl CadCraftApp {
             }
             return;
         }
+        // Insert Frame: a line of a component's sketch under the cursor.
+        if self.frame_pick_sketch_line(p, rect) {
+            return;
+        }
         use crate::assembly::relation::GeomRef;
         let face = kinds
             .iter()
@@ -1783,6 +1787,10 @@ impl CadCraftApp {
         let Some(d) = self.part_planned.as_mut() else {
             return;
         };
+        if d.kind == Planned::Asm(AsmPlanned::InsertFrame) && d.active == Some("edges") {
+            d.pick_skeleton(label, crate::assembly::frame::Skeleton::Edge(g));
+            return;
+        }
         // Pattern Component's directions and axis take one pick each.
         let single = d.kind == Planned::Asm(AsmPlanned::Pattern)
             && matches!(d.active, Some("column" | "row" | "axis" | "feature"));

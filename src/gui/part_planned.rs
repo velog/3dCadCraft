@@ -1468,6 +1468,9 @@ pub(super) struct PartDialog {
     pub note: Option<String>,
     /// Import: the STEP text Browse... read (Edit Feature without it keeps the embedded one).
     pub file_text: Option<std::sync::Arc<str>>,
+    /// Insert Frame: the skeleton lines picked (edges and sketch lines), in
+    /// the order of `picks["edges"]`.
+    pub skeletons: Vec<crate::assembly::frame::Skeleton>,
 }
 
 /// Buttons that run something (the rest stay disabled).
@@ -1552,6 +1555,7 @@ impl PartDialog {
             pressed: None,
             note: None,
             file_text: None,
+            skeletons: Vec::new(),
         }
     }
 
@@ -1734,6 +1738,21 @@ impl PartDialog {
         }
     }
 
+    /// Insert Frame's edges selector takes skeleton line `s` (the same one
+    /// again removes it).
+    pub(super) fn pick_skeleton(&mut self, what: String, s: crate::assembly::frame::Skeleton) {
+        let list = self.picks.entry("edges").or_default();
+        if let Some(i) = self.skeletons.iter().position(|x| *x == s) {
+            self.skeletons.remove(i);
+            if i < list.len() {
+                list.remove(i);
+            }
+        } else {
+            self.skeletons.push(s);
+            list.push(what);
+        }
+    }
+
     /// After a pick in selector `key`: on to the next empty selector.
     fn advance(&mut self, key: &'static str) {
         // The next selector of the tab on show (another tab's is not seen).
@@ -1895,6 +1914,9 @@ impl PartDialog {
         if let Some(k) = ev.clear {
             self.picks.remove(k);
             self.refs.remove(k);
+            if k == "edges" {
+                self.skeletons.clear();
+            }
             self.items.remove(k);
             self.active = Some(k);
         }

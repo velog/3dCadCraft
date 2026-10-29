@@ -1259,12 +1259,13 @@ fn speed_budgets() {
     // the section extruded by its length), then a solve that has nothing to change.
     {
         use cadcraft3d::assembly::GeomRef;
-        use cadcraft3d::assembly::frame::{InsertOptions, insert, solve};
+        use cadcraft3d::assembly::frame::{InsertOptions, Skeleton, insert, solve};
+        use cadcraft3d::assembly::tree::Linked;
         use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentData, Project};
         use cadcraft3d::kernel::{TessellationOptions, Transform3};
         let mut base = Project::new("Frame");
         let sk = PartDocument::with_box("Box1", [400.0, 300.0, 200.0]).unwrap();
-        let edges: Vec<GeomRef> = sk
+        let edges: Vec<Skeleton> = sk
             .body
             .edges()
             .filter_map(|(id, _)| {
@@ -1277,14 +1278,14 @@ fn speed_budgets() {
                 let m = cadcraft3d::kernel::Point3::from(
                     (pts[0].coords + pts[pts.len() - 1].coords) / 2.0,
                 );
-                Some(GeomRef::Edge {
+                Some(Skeleton::Edge(GeomRef::Edge {
                     occurrence: 1,
                     sub: Vec::new(),
                     edge: EdgeRef {
                         faces: [name(0)?, name(1)?],
                         hint: [m.x, m.y, m.z],
                     },
-                })
+                }))
             })
             .collect();
         assert_eq!(edges.len(), 12);
@@ -1309,9 +1310,9 @@ fn speed_budgets() {
             400.0,
             median_ms(3, || {
                 let mut p = base.clone();
-                let (_, occs) = insert(&mut p, aid, &edges, &o, lib, None).unwrap();
+                let (_, occs) = insert(&mut p, &Linked::new(), aid, &edges, &o, lib, None).unwrap();
                 assert_eq!(occs.len(), 12);
-                assert_eq!(solve(&mut p, aid).unwrap().moved, 0);
+                assert_eq!(solve(&mut p, &Linked::new(), aid).unwrap().moved, 0);
             }),
         ));
     }

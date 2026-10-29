@@ -8,8 +8,18 @@
 use super::CadCraftApp;
 use super::asm_planned::AsmPlanned;
 use super::part_planned::{PartDialog, Planned};
+use crate::assembly::frame::Skeleton;
 use crate::assembly::frame::{self, Anchor, InsertOptions, Orientation};
+use crate::kernel::Point3;
 use crate::part::frame::Library;
+use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
+
+/// Colour of component sketches in the assembly view.
+const SKETCH: Color32 = Color32::from_rgb(70, 110, 170);
+/// Colour of picked skeleton lines.
+const PICKED: Color32 = Color32::from_rgb(110, 220, 120);
+/// Colour of the line under the cursor.
+const HOVER: Color32 = Color32::from_rgb(255, 160, 50);
 
 /// Is `d` a frame panel whose lists come from the section table?
 fn is_frame(d: &PartDialog) -> bool {
@@ -73,9 +83,9 @@ impl CadCraftApp {
         if d.refs.get("align").is_some_and(|v| !v.is_empty()) {
             return fail(self, "Align comes with stage F2 (spec 6.1)");
         }
-        let edges = d.refs.get("edges").cloned().unwrap_or_default();
+        let edges = d.skeletons.clone();
         if edges.is_empty() {
-            return fail(self, "select the skeleton edges");
+            return fail(self, "select the skeleton edges or sketch lines");
         }
         let (Some(family), Some(size)) = (frame_choice(d, 0, "Family"), frame_choice(d, 0, "Size"))
         else {
@@ -89,8 +99,10 @@ impl CadCraftApp {
             orientation: orientation(d),
         };
         let mut trial = self.project.clone();
+        let linked = self.linked();
         match frame::insert(
             &mut trial,
+            &linked,
             self.part_id,
             &edges,
             &o,
@@ -123,7 +135,8 @@ impl CadCraftApp {
         if !self.assembly().is_some_and(|a| !a.frames.is_empty()) {
             return;
         }
-        match frame::solve(&mut self.project, self.part_id) {
+        let linked = self.linked();
+        match frame::solve(&mut self.project, &linked, self.part_id) {
             Ok(s) => {
                 for (occ, why) in &s.sick {
                     log::warn!("frame member {occ}: {why}");
@@ -141,4 +154,147 @@ impl CadCraftApp {
             Err(e) => log::warn!("{e}"),
         }
     }
+
+    /// The straight lines of the visible sketches of the components on show
+    /// (first-level occurrences), in assembly coordinates, with what picks
+    /// each one.
+    fn sketch_lines(&self) -> Vec<(Skeleton, String, Point3, Point3)> {
+        let Some(a) = self.assembly() else {
+            return Vec::new();
+        };
+        // Each component's lines once (part coordinates: sketch id, name,
+        // line, ends), then per occurrence.
+        type Local = Vec<(String, String, crate::sketch::EntityId, Point3, Point3)>;
+        let mut parts: std::collections::HashMap<crate::document::DocRef, Local> =
+            std::collections::HashMap::new();
+        let mut out = Vec::new();
+        for o in a.occurrences.iter().filter(|o| self.asm_shown(o)) {
+            let local = parts.entry(o.component).or_insert_with(|| {
+                self.with_part(o.component, |p| {
+                    let mut v = Local::new();
+                    for ps in p.sketches.iter().filter(|s| s.visible) {
+                        let sk = &ps.sketch;
+                        for (id, e) in sk.entities() {
+                            if let crate::sketch::Entity::Line { start, end } = *e
+                                && let (Some(a), Some(b)) = (sk.point(start), sk.point(end))
+                            {
+                                v.push((
+                                    ps.id.clone(),
+                                    ps.name.clone(),
+                                    id,
+                                    sk.to_world(&a.position),
+                                    sk.to_world(&b.position),
+                                ));
+                            }
+                        }
+                    }
+                    v
+                })
+                .unwrap_or_default()
+            });
+            let t = o.transform;
+            for (sketch, name, line, pa, pb) in local.iter() {
+                out.push((
+                    Skeleton::SketchLine {
+                        occurrence: o.id,
+                        sub: Vec::new(),
+                        sketch: sketch.clone(),
+                        line: *line,
+                    },
+                    format!("{} · {name} line", o.name),
+                    t.transform_point(pa),
+                    t.transform_point(pb),
+                ));
+            }
+        }
+        out
+    }
+
+    /// Is Insert Frame open with its edges selector active?
+    fn frame_takes_lines(&self) -> bool {
+        self.part_planned.as_ref().is_some_and(|d| {
+            d.kind == Planned::Asm(AsmPlanned::InsertFrame) && d.active == Some("edges")
+        })
+    }
+
+    /// The sketch line nearest `p` on screen, within the snap radius.
+    fn sketch_line_under(&self, p: Pos2, rect: Rect) -> Option<(Skeleton, String, Point3, Point3)> {
+        let near = super::overlay::CURVE_SNAP_PX;
+        self.sketch_lines()
+            .into_iter()
+            .filter_map(|l| {
+                let a = self.camera.project(&l.2, rect)?;
+                let b = self.camera.project(&l.3, rect)?;
+                let d = segment_distance(p, a, b);
+                (d <= near).then_some((d, l))
+            })
+            .min_by(|x, y| x.0.total_cmp(&y.0))
+            .map(|(_, l)| l)
+    }
+
+    /// A click of Insert Frame on a component's sketch line: it becomes a
+    /// skeleton line of the panel. False when no line is under `p`.
+    pub(super) fn frame_pick_sketch_line(&mut self, p: Pos2, rect: Rect) -> bool {
+        if !self.frame_takes_lines() {
+            return false;
+        }
+        let Some((s, what, ..)) = self.sketch_line_under(p, rect) else {
+            return false;
+        };
+        if let Some(d) = self.part_planned.as_mut() {
+            d.pick_skeleton(what, s);
+        }
+        true
+    }
+
+    /// The components' visible sketches (thin lines, always, as Inventor
+    /// shows a skeleton's sketches); while Insert Frame is open also the
+    /// picked skeleton lines (thick) and the line under the cursor.
+    pub(super) fn frame_overlay(&self, painter: &egui::Painter, rect: Rect, pointer: Option<Pos2>) {
+        let seg = |a: &Point3, b: &Point3| -> Option<[Pos2; 2]> {
+            Some([self.camera.project(a, rect)?, self.camera.project(b, rect)?])
+        };
+        let lines = self.sketch_lines();
+        for (_, _, a, b) in &lines {
+            if let Some(s) = seg(a, b) {
+                painter.line_segment(s, Stroke::new(1.5, SKETCH));
+            }
+        }
+        let Some(d) = self.part_planned.as_ref() else {
+            return;
+        };
+        if d.kind != Planned::Asm(AsmPlanned::InsertFrame) {
+            return;
+        }
+        for s in &d.skeletons {
+            match s {
+                Skeleton::Edge(g) => self.draw_geom(painter, rect, g, PICKED),
+                Skeleton::SketchLine { .. } => {
+                    if let Some((_, _, a, b)) = lines.iter().find(|l| &l.0 == s)
+                        && let Some(s) = seg(a, b)
+                    {
+                        painter.line_segment(s, Stroke::new(3.0, PICKED));
+                    }
+                }
+            }
+        }
+        if self.frame_takes_lines()
+            && let Some(p) = pointer
+            && let Some((_, _, a, b)) = self.sketch_line_under(p, rect)
+            && let Some(s) = seg(&a, &b)
+        {
+            painter.line_segment(s, Stroke::new(3.0, HOVER));
+        }
+    }
+}
+
+/// Screen distance from `p` to the segment `a`–`b`.
+fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let t = if ab.length_sq() > 0.0 {
+        ((p - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (a + ab * t - p).length()
 }

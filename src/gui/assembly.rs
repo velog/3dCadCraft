@@ -1386,6 +1386,7 @@ impl CadCraftApp {
             self.asm_measure_view(&painter, rect, pointer.filter(|_| on_view), measure_click);
         }
         self.asm_sub_overlay(&painter, rect);
+        self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
         if let Some(g) = self.cons.browser_hover.clone() {
             self.draw_geom(&painter, rect, &g, Color32::from_rgb(110, 220, 120));
         }
