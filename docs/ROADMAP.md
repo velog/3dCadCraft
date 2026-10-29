@@ -4,6 +4,8 @@ Legend: ✅ done · 🟡 in progress · ⬜ to do. The numbers (2.1, 3.3…) poi
 
 Every phase ends with **acceptance criteria**, checked by tests *and visually* in the application.
 
+Review against Inventor 2027 (workflow, interface, gaps, suggested order), 2026-10-29: [INVENTOR_REVIEW.md](INVENTOR_REVIEW.md).
+
 ---
 
 ## ⚠ Critical fixes
