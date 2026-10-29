@@ -288,10 +288,10 @@ Before each step: verify its rows against the Inventor 2027 help (spec §7).
 
 ## Phase 5 — Specialized environments
 
-- Frame Generator (6.1).
+- Frame Generator (6.1): [spec](spec/6.1-frame-generator.md) written 2026-10-29, stages F0–F5.
 - Libraries of standard components (6.3).
 - Bolted connections, shafts and gears (6.2).
-- Weldments (6.4).
+- Weldments (6.4): [spec](spec/6.4-weldments.md) written 2026-10-29, stages W0–W5.
 - Tube & pipe and cables (6.5, 6.6).
 
 ## Phase 6 — Analysis, visualization, automation

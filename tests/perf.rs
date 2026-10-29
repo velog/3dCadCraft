@@ -1237,7 +1237,7 @@ fn speed_budgets() {
         let mut k = 0;
         rows.push((
             "import: the rounded box from STEP (add_body_op)",
-            150.0,
+            60.0,
             median_ms(3, || {
                 k += 1;
                 let t = format!(

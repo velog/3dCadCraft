@@ -59,7 +59,8 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [4.10-break-view.md](4.10-break-view.md) | Break view: Rectangular / Structural breaks, gap, display, symbols, true dimensions across a break (stage D-S6) |
 | [4.6-drawing-styles.md](4.6-drawing-styles.md) | Drawing styles: the Style and Standard Editor of drawings (dimension, text, leader, centre mark, hatch, view annotation styles, layers, Object Defaults) |
 | [4.7-drawing-commands.md](4.7-drawing-commands.md) | The whole Inventor drawing command set (Place Views, Annotate, Manage): each command's dialog first, logic later (parts list / BOM source, balloons, dimension sets, tolerances, symbols, welding, hole tables, revisions, model reference) |
-| [6.1-frame-generator.md](6.1-frame-generator.md) | Frames (Frame Generator) — research document and stages F1–F4 |
+| [6.1-frame-generator.md](6.1-frame-generator.md) | Frames (Frame Generator): Insert Frame, End Cap, Change, Miter, Corner Joint, Trim/Extend, Notch, Lengthen/Shorten, Reuse, Frame Member Info, Refresh, naming, cut lists — stages F0–F5 |
+| [6.4-weldments.md](6.4-weldments.md) | Weldments: Convert to Weldment, Preparation / Welds / Machining groups, Fillet, Groove and Cosmetic welds, Welding Symbol, Bead Report, drawing states — stages W0–W5 |
 | [6.3-content-center.md](6.3-content-center.md) | Library of standard components (Content Center) — research document and stages L1–L5 |
 | [5.6-sheet-metal.md](5.6-sheet-metal.md) | Sheet Metal: rules, features, flat pattern, DXF — research document and stages (nothing implemented yet) |
 | [3.0-assembly-commands.md](3.0-assembly-commands.md) | The whole assembly command set (Assemble, Design, Inspect, Manage, View, Environments) with every dialog, interface first |

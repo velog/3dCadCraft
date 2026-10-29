@@ -1176,7 +1176,7 @@ Inventor 2027 improved working with point clouds: sections, point size, coordina
 
 ## 6.1 Steel structures (Frame Generator) — ⬜ · L
 
-**Specification (research first):** [spec/6.1-frame-generator.md](spec/6.1-frame-generator.md) — stages F1–F4.
+**Specification:** [spec/6.1-frame-generator.md](spec/6.1-frame-generator.md) — every command and option, stages F0–F5.
 
 **What it does.** Places **standard profiles** on a skeleton (lines in a 3D sketch, or edges): I/H beams, channels, angles, tubes.
 
@@ -1216,6 +1216,8 @@ Generators that **calculate** and **model** standard machine elements:
 - Pack embeds whatever is used when sending a project out.
 
 ## 6.4 Weldments — ⬜ · L
+
+**Specification:** [spec/6.4-weldments.md](spec/6.4-weldments.md) — every command and option, stages W0–W5.
 
 **Sequence.**
 1. **Preparation** of the edges (weld chamfers).
