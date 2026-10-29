@@ -144,15 +144,18 @@ fn named_solid(m: &sd::SheetBody, prefix: &str, flat: bool) -> Result<ExactSolid
         profiles: Vec::new(),
     };
     let samples = super::face_samples(&s)?;
+    // Panel faces of every sample at once (an unfolded sheet's flat is worked out once).
+    let points: Vec<_> = samples.iter().flatten().map(v3).collect();
+    let mut panels = m.panel_faces_at(&points, m.t * 0.2).into_iter();
     let mut k = 0usize;
     s.face_names = samples
         .iter()
         .map(|p| {
+            let panel = p.and_then(|_| panels.next().flatten().map(|(n, _)| n));
             // A Corner Round / Chamfer face first: its sample lies by a rim too.
-            let named = p.and_then(|p| {
-                m.corner_face_at(v3(&p), m.t * 0.05)
-                    .or_else(|| m.panel_face_at(v3(&p), m.t * 0.2).map(|(n, _)| n))
-            });
+            let named = p
+                .and_then(|p| m.corner_face_at(v3(&p), m.t * 0.05))
+                .or(panel);
             Some(match named {
                 Some(n) => format!("{prefix}:{n}"),
                 None => {

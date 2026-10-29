@@ -2824,6 +2824,52 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Unfold of a box (docs/spec/5.6): a 200 x 120 Face, four 60 mm flanges
+    // with a 20 mm flange on each one's far edge, then Unfold. Naming each
+    // face of the unfolded sheet once worked the whole flat out again per face
+    // (an owner's box: 4 s); it is worked out once now.
+    {
+        use cadcraft3d::part::sheet_metal::{SheetFlangeFeature, SheetOp, SheetOpFeature};
+        use cadcraft3d::part::{OriginPlane, ProfileRef};
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        base.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(200.0, 120.0))
+            .unwrap();
+        let r = base.sketches[i].sketch.regions();
+        base.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+            .unwrap();
+        let mut edges = Vec::new();
+        let mut body = String::new();
+        for (x, y) in [(200.0, 60.0), (0.0, 60.0), (100.0, 0.0), (100.0, 120.0)] {
+            let (b, e) = base.sheet_edge_at(Point3::new(x, y, 2.0)).unwrap();
+            body = b;
+            edges.push(e);
+        }
+        base.add_sheet_flange(SheetFlangeFeature::new(&body, edges, 60.0))
+            .unwrap();
+        let faces = base.body.faces().count();
+        rows.push((
+            "sheet metal: Unfold of a tray of four flanges (each face named once)",
+            300.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_op(SheetOpFeature::new(SheetOp::Unfold { body: body.clone() }))
+                    .unwrap();
+                assert!(p.feature_health.is_empty() && p.body.faces().count() != faces);
+            }),
+        ));
+    }
     // Hem types (docs/spec/5.6 §6.1c): a 200 x 120 Face, a Double hem on its
     // right edge and a Teardrop hem on its left one (four bends), then the
     // flat pattern's DXF.

@@ -4225,12 +4225,37 @@ impl SheetBody {
     /// `<panel>:bottom`, or a rim's `<panel>:rim.<edge>`) and its plane (see
     /// [`panel_face`](Self::panel_face)).
     pub fn panel_face_at(&self, p: Vec3, tol: f64) -> Option<(String, Plane)> {
-        let tol = tol.min(self.t * 0.25);
-        let flat = if self.flat { self.flat_regions().ok()? } else { Vec::new() };
+        self.panel_faces_at(&[p], tol).pop().flatten()
+    }
+
+    /// [`SheetBody::panel_face_at`] of many points: the panels (and an unfolded sheet's flat
+    /// regions, a whole unfold) are worked out once, not once a point — naming the 220 faces
+    /// of an unfolded box took 4 s point by point.
+    pub fn panel_faces_at(&self, ps: &[Vec3], tol: f64) -> Vec<Option<(String, Plane)>> {
+        let flat = if self.flat {
+            match self.flat_regions() {
+                Ok(f) => f,
+                Err(_) => return ps.iter().map(|_| None).collect(),
+            }
+        } else {
+            Vec::new()
+        };
         let panels = if self.flat { vec![(None, self.base.clone())] } else { self.panels() };
-        for (pi, region) in panels {
-            let world = self.world(pi);
-            let Some(inverse) = mat_inverse(&world) else { continue };
+        let worlds: Vec<_> = panels
+            .iter()
+            .map(|(pi, region)| {
+                let world = self.world(*pi);
+                (*pi, region, world, mat_inverse(&world))
+            })
+            .collect();
+        ps.iter().map(|&p| self.panel_face_in(p, tol, &flat, &worlds)).collect()
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn panel_face_in(&self, p: Vec3, tol: f64, flat: &[Region2], worlds: &[(Option<usize>, &Region2, Mat, Option<Mat>)]) -> Option<(String, Plane)> {
+        let tol = tol.min(self.t * 0.25);
+        for &(pi, region, world, inverse) in worlds {
+            let Some(inverse) = inverse else { continue };
             let q = apply_point(&inverse, p);
             let top = (q.z - self.t).abs() < q.z.abs();
             if (if top { (q.z - self.t).abs() } else { q.z.abs() }) > tol {
