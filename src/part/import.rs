@@ -579,4 +579,32 @@ mod tests {
         assert!(!gone.changed(), "a missing file cannot update");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// A 40 × 30 × 10 plate with a Ø10 through hole as other CAD systems write it: each rim of
+    /// the hole one closed circle edge with one vertex, the hole's wall one face bounded by both.
+    const PLATE_STEP: &str = include_str!("../../tests/data/plate_hole.stp");
+
+    /// The plate read, written by our exporter and read again is still one valid solid of the
+    /// same volume (ROADMAP K8: the hole's wall, one face round the cylinder with a seam, came out
+    /// as three loops and failed Euler's formula).
+    #[test]
+    fn a_reexported_hole_reads_back_as_a_solid() {
+        let valid = |text: &str| -> (f64, bool) {
+            let r = exact::step_bodies(text, "C").expect("read");
+            let s = &r.bodies[0].solid;
+            let b = exact::to_brep_with(std::slice::from_ref(s), true).expect("brep");
+            let ok = b
+                .solids()
+                .all(|(id, so)| !so.open && b.validate_solid(id).is_ok());
+            (s.volume_at(1e-3).unwrap_or(0.0), ok)
+        };
+        let (v0, ok0) = valid(PLATE_STEP);
+        let want = 40.0 * 30.0 * 10.0 - std::f64::consts::PI * 25.0 * 10.0;
+        assert!(ok0 && (v0 - want).abs() < 1e-3 * want, "{v0} {ok0}");
+        let r = exact::step_bodies(PLATE_STEP, "C").expect("read");
+        let again = exact::step_text(&[r.bodies[0].solid.clone()], "Plate").expect("export");
+        let (v1, ok1) = valid(&again);
+        assert!(ok1, "the re-export is no valid solid");
+        assert!((v1 - v0).abs() < 1e-3 * v0, "{v1} vs {v0}");
+    }
 }

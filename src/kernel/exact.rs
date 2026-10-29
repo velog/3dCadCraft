@@ -24,8 +24,8 @@ use solidcraft_kernel::history::{FaceOrigin, History};
 use super::extrude::Segment2;
 use super::mesh::TriangleMesh;
 use super::{
-    BRep, Circle, Coedge, Cone, Curve, Cylinder, FaceId, Line, Loop, Plane, Point3, Real, Sense,
-    Shell, Solid, Sphere, Surface, Torus, Vector3, VertexId,
+    BRep, Circle, Coedge, Cone, Curve, Cylinder, EdgeId, FaceId, Line, Loop, Plane, Point3, Real,
+    Sense, Shell, Solid, Sphere, Surface, Torus, Vector3, VertexId,
 };
 
 /// A solid of the exact kernel with the persistent names of its faces (in
@@ -3853,6 +3853,16 @@ fn chain_loops(out: &BRep, all: Vec<Coedge>) -> Vec<Loop> {
         used[i] = true;
         Some(i)
     };
+    // Seams: edges this face uses twice (both senses). A face round a closed surface in one
+    // piece (a cylinder read from a STEP file) has one loop: top circle, seam, bottom circle,
+    // seam back. Closed at the first return to its start it came out as three loops (top, bottom
+    // and the seam pair) and broke Euler's formula (ROADMAP K8): loops meeting a seamed one at
+    // a vertex are spliced into it.
+    let mut count: HashMap<EdgeId, usize> = HashMap::new();
+    for ce in &all {
+        *count.entry(ce.edge).or_default() += 1;
+    }
+    let has_seams = count.values().any(|&n| n > 1);
     let mut loops = Vec::new();
     for first in 0..all.len() {
         if used[first] {
@@ -3872,7 +3882,62 @@ fn chain_loops(out: &BRep, all: Vec<Coedge>) -> Vec<Loop> {
         }
         loops.push(Loop { coedges: lp });
     }
+    if has_seams {
+        splice_seamed(
+            &mut loops,
+            &|c: &Coedge| {
+                out.edge(c.edge).map(|e| match c.sense {
+                    Sense::Same => e.start,
+                    Sense::Reversed => e.end,
+                })
+            },
+            &|c: &Coedge| count.get(&c.edge).copied().unwrap_or(0) > 1,
+        );
+    }
     loops
+}
+
+/// Joins into each loop holding a seam every loop that passes through one of its vertices,
+/// spliced in at that vertex (one loop per face round a closed surface, see `chain_loops`).
+fn splice_seamed(
+    loops: &mut Vec<Loop>,
+    start_of: &dyn Fn(&Coedge) -> Option<VertexId>,
+    seam: &dyn Fn(&Coedge) -> bool,
+) {
+    loop {
+        let mut joined = false;
+        'outer: for i in 0..loops.len() {
+            if !loops[i].coedges.iter().any(seam) {
+                continue;
+            }
+            for j in 0..loops.len() {
+                if i == j {
+                    continue;
+                }
+                // A vertex of loop j where loop i has a coedge starting.
+                let hit = loops[j].coedges.iter().enumerate().find_map(|(m, c)| {
+                    let v = start_of(c)?;
+                    let at = loops[i]
+                        .coedges
+                        .iter()
+                        .position(|d| start_of(d) == Some(v))?;
+                    Some((m, at))
+                });
+                if let Some((m, at)) = hit {
+                    let mut other = loops.remove(j).coedges;
+                    other.rotate_left(m);
+                    let i = if j < i { i - 1 } else { i };
+                    let lp = &mut loops[i].coedges;
+                    lp.splice(at..at, other);
+                    joined = true;
+                    break 'outer;
+                }
+            }
+        }
+        if !joined {
+            break;
+        }
+    }
 }
 
 /// The outer loop (the longest) and the holes.
@@ -4076,6 +4141,67 @@ fn name_edges_and_vertices(out: &mut BRep, solid: super::SolidId, profiles: &[Pr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One face round a whole cylinder with a seam (ROADMAP K8): bottom circle (two halves),
+    /// seam up, top circle (two halves), seam down is one loop, whatever the order of its
+    /// coedges; three loops broke Euler's formula on a supplier part written back to STEP.
+    #[test]
+    fn a_seamed_face_is_one_loop() {
+        let mut b = BRep::new();
+        let v = |b: &mut BRep, x: Real, z: Real| b.add_vertex(Point3::new(x, 0.0, z));
+        let (b0, b1, t0, t1) = (
+            v(&mut b, 0.0, 0.0),
+            v(&mut b, 1.0, 0.0),
+            v(&mut b, 0.0, 1.0),
+            v(&mut b, 1.0, 1.0),
+        );
+        let e = |b: &mut BRep, s: VertexId, t: VertexId| b.add_line_edge(s, t).expect("edge");
+        let (ba, bb, seam, ta, tb) = (
+            e(&mut b, b0, b1),
+            e(&mut b, b1, b0),
+            e(&mut b, b0, t0),
+            e(&mut b, t0, t1),
+            e(&mut b, t1, t0),
+        );
+        let c = |edge, sense| Coedge { edge, sense };
+        // The bottom circle first: walked alone it closes on itself before the seam is reached.
+        let all = vec![
+            c(ba, Sense::Reversed),
+            c(bb, Sense::Reversed),
+            c(seam, Sense::Same),
+            c(ta, Sense::Same),
+            c(tb, Sense::Same),
+            c(seam, Sense::Reversed),
+        ];
+        let loops = chain_loops(&b, all);
+        assert_eq!(loops.len(), 1, "{loops:?}");
+        let lp = &loops[0].coedges;
+        assert_eq!(lp.len(), 6);
+        // Every coedge ends where the next one starts.
+        let ends = |ce: &Coedge| {
+            let e = b.edge(ce.edge).expect("edge");
+            match ce.sense {
+                Sense::Same => (e.start, e.end),
+                Sense::Reversed => (e.end, e.start),
+            }
+        };
+        for k in 0..lp.len() {
+            assert_eq!(ends(&lp[k]).1, ends(&lp[(k + 1) % lp.len()]).0, "{lp:?}");
+        }
+        // A face without seams keeps its separate loops (a plate's outline and its hole).
+        let (h0, h1) = (v(&mut b, 5.0, 0.0), v(&mut b, 6.0, 0.0));
+        let (ha, hb) = (e(&mut b, h0, h1), e(&mut b, h1, h0));
+        let loops = chain_loops(
+            &b,
+            vec![
+                c(ba, Sense::Same),
+                c(bb, Sense::Same),
+                c(ha, Sense::Same),
+                c(hb, Sense::Same),
+            ],
+        );
+        assert_eq!(loops.len(), 2);
+    }
 
     fn rounded_box() -> ExactSolid {
         let b = box_named(
