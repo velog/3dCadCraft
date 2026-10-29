@@ -1319,6 +1319,7 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::InsertFrame
                     | super::asm_planned::AsmPlanned::Miter
                     | super::asm_planned::AsmPlanned::RemoveEndTreatments
+                    | super::asm_planned::AsmPlanned::FrameChange
                     | super::asm_planned::AsmPlanned::CornerJoint
                     | super::asm_planned::AsmPlanned::TrimExtend
                     | super::asm_planned::AsmPlanned::LengthenShorten
@@ -1386,6 +1387,11 @@ impl Planned {
                 "Merge Frame Members" | "Apply Appearance to Part",
                 None,
             ) => Some("Comes with stage F3 (spec 6.1 Insert Frame)"),
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::FrameChange),
+                "Apply Appearance to Part",
+                None,
+            ) => Some("Comes with stage F3 (spec 6.1 Change)"),
             (
                 Planned::Asm(super::asm_planned::AsmPlanned::Miter),
                 "Miter Type",
@@ -1492,6 +1498,9 @@ pub(super) struct PartDialog {
     /// Where each component pick was clicked (its label, assembly
     /// coordinates): Lengthen/Shorten takes the end nearer the click.
     pub clicks: Vec<(String, [f64; 3])>,
+    /// The frame end treatment this panel edits (frame id, index): OK
+    /// replaces it (`gui/frame_edit.rs`).
+    pub frame_edit: Option<(u32, usize)>,
 }
 
 /// A chain of edges the right-click menu of an open command adds ([`CadCraftApp::chain_edges`]).
@@ -1589,6 +1598,7 @@ impl PartDialog {
             file_text: None,
             skeletons: Vec::new(),
             clicks: Vec::new(),
+            frame_edit: None,
         }
     }
 
@@ -2399,6 +2409,11 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::Miter) => {
                 if self.miter_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::FrameChange) => {
+                if self.change_ok(&d) {
                     self.part_planned = None;
                 }
             }

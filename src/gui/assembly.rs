@@ -105,6 +105,8 @@ pub(super) struct AsmUi {
     pub search: String,
     /// The (selection, hover) the scene was last built with.
     scene_state: (Vec<u32>, Option<u32>),
+    /// The frame panel's tinted members the scene was last built with.
+    scene_frame: Vec<(u32, [u8; 3])>,
     scene_sub: (
         Vec<super::asm_select::AsmSub>,
         Option<super::asm_select::AsmSub>,
@@ -1142,6 +1144,16 @@ impl CadCraftApp {
         if ids.is_empty() {
             return;
         }
+        // Frame members go with their parts and end treatments.
+        let (members, ids): (Vec<u32>, Vec<u32>) =
+            ids.iter().partition(|&&o| self.is_frame_member(o));
+        if !members.is_empty() {
+            self.frame_delete_members(&members);
+        }
+        let ids = ids.as_slice();
+        if ids.is_empty() {
+            return;
+        }
         self.edit_assembly("Delete", |a| {
             for &i in ids {
                 a.remove(i);
@@ -1304,7 +1316,8 @@ impl CadCraftApp {
         };
         if self.asm.drag.is_none() {
             let pre = self.select.prehighlight;
-            self.asm.hover = hit.map(|(h, _)| h.occurrence).filter(|_| pre && !sub_mode);
+            let hover = hit.map(|(h, _)| h.occurrence).filter(|_| pre && !sub_mode);
+            self.asm.hover = self.frame_hover(hover);
             self.asm.sub_hover = sub_hit.clone().filter(|_| pre);
         }
         // Measure (no command open) takes the clicks on faces and edges.
@@ -1452,6 +1465,11 @@ impl CadCraftApp {
             self.asm.scene_state = state;
             self.scene_dirty = true;
         }
+        let tints = self.frame_tints();
+        if tints != self.asm.scene_frame {
+            self.asm.scene_frame = tints;
+            self.scene_dirty = true;
+        }
         let sub = (
             self.asm.sub.clone(),
             self.asm.sub_hover.clone().or(self.asm.tree_hover.clone()),
@@ -1489,6 +1507,7 @@ impl CadCraftApp {
         }
         self.asm_sub_overlay(&painter, rect);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
+        self.frame_select_overlay(&painter, rect, pointer.filter(|_| on_view));
         if let Some(g) = self.cons.browser_hover.clone() {
             self.draw_geom(&painter, rect, &g, Color32::from_rgb(110, 220, 120));
         }
@@ -1784,6 +1803,9 @@ impl CadCraftApp {
         }
         let ids = self.asm.sel.clone();
         if !ids.is_empty() {
+            if self.frame_member_menu(ui, &ids) {
+                ui.separator();
+            }
             self.occurrence_menu(ui, &ids);
             if ui.button("Copy        Ctrl+C").clicked() {
                 self.copy_occurrences();

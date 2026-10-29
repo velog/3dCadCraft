@@ -69,6 +69,16 @@ fn orientation(d: &PartDialog) -> Orientation {
     }
 }
 
+/// The panel's section, material and orientation (Insert Frame, Change).
+pub(super) fn insert_options(d: &PartDialog) -> Option<InsertOptions> {
+    Some(InsertOptions {
+        family: frame_choice(d, 0, "Family")?,
+        size: frame_choice(d, 0, "Size")?,
+        material: super::asm_planned::choice(d, 0, "Material").map(str::to_owned),
+        orientation: orientation(d),
+    })
+}
+
 impl CadCraftApp {
     /// OK of Insert Frame: a member on every picked edge. False (with the
     /// reason in the status bar) leaves everything as it was.
@@ -87,16 +97,8 @@ impl CadCraftApp {
         if edges.is_empty() {
             return fail(self, "select the skeleton edges or sketch lines");
         }
-        let (Some(family), Some(size)) = (frame_choice(d, 0, "Family"), frame_choice(d, 0, "Size"))
-        else {
+        let Some(o) = insert_options(d) else {
             return fail(self, "the section table is empty");
-        };
-        let material = super::asm_planned::choice(d, 0, "Material").map(str::to_owned);
-        let o = InsertOptions {
-            family,
-            size,
-            material,
-            orientation: orientation(d),
         };
         let mut trial = self.project.clone();
         let linked = self.linked();
@@ -290,7 +292,7 @@ impl CadCraftApp {
 
 impl CadCraftApp {
     /// The frame members picked in selector `key` (occurrence ids).
-    fn picked_members(&self, d: &PartDialog, key: &str) -> Vec<u32> {
+    pub(super) fn picked_members(&self, d: &PartDialog, key: &str) -> Vec<u32> {
         let Some(a) = self.assembly() else {
             return Vec::new();
         };
@@ -333,7 +335,7 @@ impl CadCraftApp {
             _ => frame::MiterOffset::Default,
         };
         let gap = d.num(0, "Distance").unwrap_or(0.0);
-        let mut trial = self.project.clone();
+        let mut trial = self.frame_trial(d);
         match frame::add_miter(&mut trial, &linked, self.part_id, &pairs, gap, offset) {
             Ok(_) => {
                 self.history.break_coalescing();
@@ -456,7 +458,7 @@ impl CadCraftApp {
             }
         };
         let linked = self.linked();
-        let mut trial = self.project.clone();
+        let mut trial = self.frame_trial(d);
         match frame::add_treatments(&mut trial, &linked, self.part_id, ts) {
             Ok(_) => {
                 self.history.break_coalescing();

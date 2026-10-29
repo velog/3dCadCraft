@@ -1238,7 +1238,7 @@ impl AsmPlanned {
                     Sel(
                         "members",
                         "Frame Members",
-                        "select the members near the end to lengthen or shorten",
+                        "select the members near the end to change (a picked one again: its other end)",
                         MEMBERS,
                     ),
                     Radio(
@@ -1662,7 +1662,8 @@ impl CadCraftApp {
         self.asm.tool = None;
         let mut d = PartDialog::new(kind);
         let defs = selector_defs(Planned::Asm(kind));
-        if let Some(first) = defs.first()
+        if !self.frame_preselect(&mut d)
+            && let Some(first) = defs.first()
             && first.3.contains(&PickKind::Body)
             && !self.asm.sel.is_empty()
         {
@@ -1700,6 +1701,11 @@ impl CadCraftApp {
         else {
             return;
         };
+        // Frame commands: a member selector takes only frame members.
+        let member = self.asm_pick_pub(p, rect).map(|(h, at)| (h.occurrence, at));
+        if self.frame_member_click(member) {
+            return;
+        }
         if kinds.contains(&PickKind::Body) {
             let hit = self.asm_pick_pub(p, rect);
             let what = hit.and_then(|(h, _)| self.occurrence_label(h.occurrence));

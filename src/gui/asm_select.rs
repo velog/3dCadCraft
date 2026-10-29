@@ -182,7 +182,9 @@ impl CadCraftApp {
         alpha: Option<f32>,
         looks: &HashMap<String, Appearance>,
     ) {
-        let whole = if self.asm.sel.contains(&o.id) {
+        let whole = if let Some(c) = self.frame_tint(o.id) {
+            Some(c)
+        } else if self.asm.sel.contains(&o.id) {
             Some(SEL)
         } else if self.asm.hover == Some(o.id) {
             Some(HOVER)

@@ -287,7 +287,8 @@ impl Treatment {
         }
     }
 
-    fn label(&self) -> &'static str {
+    /// The command's name (`Miter`, `Corner Joint`…).
+    pub fn label(&self) -> &'static str {
         match self {
             Treatment::Miter { .. } => "Miter",
             Treatment::CornerJoint { .. } => "Corner Joint",
@@ -1078,6 +1079,158 @@ pub fn add_treatments(
     result
 }
 
+/// Change: members `members` get the section, material and orientation of
+/// `o`; their end treatments are kept and solved again. On an error nothing
+/// changes (rule 5).
+pub fn change(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    members: &[u32],
+    o: &InsertOptions,
+    lib: &Library,
+) -> Result<Solved, String> {
+    if members.is_empty() {
+        return Err("select the frame members".into());
+    }
+    let section = lib
+        .find(&o.family, &o.size)
+        .ok_or_else(|| format!("{} {} is not in the library", o.family, o.size))?
+        .clone();
+    let before = project.clone();
+    let result = (|| {
+        for &occ in members {
+            let a = asm_of(project, asm)?;
+            let m = a
+                .frames
+                .iter()
+                .flat_map(|f| &f.members)
+                .find(|m| m.occurrence == occ)
+                .ok_or("only frame members can be changed")?;
+            let doc = a
+                .find(occ)
+                .map(|x| x.component)
+                .filter(|c| c.library.is_none())
+                .ok_or("the member's part is not in this file")?
+                .document;
+            let (p, q) = skeleton_line(project, linked, a, &m.skeleton)?;
+            let length = (q - p).norm();
+            let part = section
+                .member_part(length, o.material.as_deref())
+                .map_err(|e| e.to_string())?;
+            if let Some(d) = project.document_mut(doc) {
+                d.data = DocumentData::Part(part);
+                d.properties = section.member_properties(length);
+            }
+            let a = asm_mut(project, asm)?;
+            if let Some(m) = a
+                .frames
+                .iter_mut()
+                .flat_map(|f| &mut f.members)
+                .find(|m| m.occurrence == occ)
+            {
+                m.family = section.family.clone();
+                m.size = section.size.clone();
+                m.section = SectionData::of(&section);
+                m.orientation = o.orientation;
+                // The part is uncut now: solve cuts it again.
+                m.built = Some(Shape {
+                    length,
+                    ..Default::default()
+                });
+            }
+        }
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(o, _)| members.contains(o)) {
+            return Err(why.clone());
+        }
+        Ok(s)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+/// The end treatments of every frame of `a` with their browser names
+/// (`Miter 1`, `Corner Joint 2`: numbered per command in creation order):
+/// (frame id, index in the frame, name, treatment).
+pub fn treatment_rows(a: &AssemblyDocument) -> Vec<(u32, usize, String, &Treatment)> {
+    let mut count: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for f in &a.frames {
+        for (i, t) in f.treatments.iter().enumerate() {
+            let n = count.entry(t.label()).or_default();
+            *n += 1;
+            out.push((f.id, i, format!("{} {n}", t.label()), t));
+        }
+    }
+    out
+}
+
+/// Takes end treatment `index` out of frame `frame` (no solve: Edit puts a
+/// new one in its place through [`add_treatments`] / [`add_miter`]).
+pub fn take_treatment(a: &mut AssemblyDocument, frame: u32, index: usize) -> Option<Treatment> {
+    let f = a.frames.iter_mut().find(|f| f.id == frame)?;
+    (index < f.treatments.len()).then(|| f.treatments.remove(index))
+}
+
+/// Deletes end treatment `index` of frame `frame`; its members are rebuilt.
+pub fn delete_treatment(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    frame: u32,
+    index: usize,
+) -> Result<Solved, String> {
+    take_treatment(asm_mut(project, asm)?, frame, index).ok_or("no such end treatment")?;
+    solve(project, linked, asm)
+}
+
+/// Deletes frame members: their occurrences, their parts (when nothing
+/// else places them) and every end treatment they take part in; a frame
+/// left without members goes too.
+pub fn delete_members(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    members: &[u32],
+) -> Result<Solved, String> {
+    let before = project.clone();
+    let result = (|| {
+        let a = asm_mut(project, asm)?;
+        let mut docs = Vec::new();
+        for &occ in members {
+            if !a
+                .frames
+                .iter()
+                .any(|f| f.members.iter().any(|m| m.occurrence == occ))
+            {
+                return Err("only frame members can be deleted here".to_owned());
+            }
+            for f in &mut a.frames {
+                f.members.retain(|m| m.occurrence != occ);
+                f.treatments.retain(|t| !t.members().contains(&occ));
+            }
+            if let Some(o) = a.remove(occ)
+                && o.component.library.is_none()
+            {
+                docs.push(o.component.document);
+            }
+        }
+        a.frames.retain(|f| !f.members.is_empty());
+        for d in docs {
+            // Still placed elsewhere (a reused member): kept.
+            let _ = project.remove_document(d);
+        }
+        solve(project, linked, asm)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
 /// A member's run in assembly coordinates (start, end; Flip applied).
 pub fn member_run(
     project: &Project,
@@ -1638,6 +1791,70 @@ mod tests {
         assert!((vb - 200.0 * 280.0).abs() < 0.002 * 200.0 * 280.0, "{vb}");
     }
 
+    /// Change keeps the corner joint and solves it with the new section;
+    /// a treatment deleted on its own leaves the others; deleting a member
+    /// takes its part and its treatments.
+    #[test]
+    fn change_and_delete_keep_the_rest_of_the_frame() {
+        let (mut p, aid, _) = project();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let z = find_edge(&p, aid, Point3::new(0.0, 0.0, 100.0));
+        let mut o = opts();
+        o.family = "Flat bar (EN 10058)".into();
+        o.size = "40x5".into();
+        let lk = Linked::new();
+        let (fid, occs) =
+            insert(&mut p, &lk, aid, &[x, y, z], &o, Library::builtin(), None).unwrap();
+        let t = Treatment::CornerJoint {
+            a: occs[0],
+            b: occs[1],
+            offsets: [0.0, 0.0],
+        };
+        add_treatments(&mut p, &lk, aid, vec![t]).unwrap();
+        let l = Treatment::Lengthen {
+            member: occs[2],
+            offsets: [0.0, 15.0],
+        };
+        add_treatments(&mut p, &lk, aid, vec![l]).unwrap();
+        // 60 mm flats: a runs 30 past the corner, b stops 30 short.
+        o.size = "60x10".into();
+        change(
+            &mut p,
+            &lk,
+            aid,
+            &[occs[0], occs[1]],
+            &o,
+            Library::builtin(),
+        )
+        .unwrap();
+        let a = asm(&p, aid);
+        assert_eq!(a.frames[0].members[0].size, "60x10");
+        let la = outer_length(&part(&p, a, occs[0])).unwrap();
+        let lb = outer_length(&part(&p, a, occs[1])).unwrap();
+        assert!((la - 430.0).abs() < 1e-3, "{la}");
+        assert!((lb - 270.0).abs() < 1e-3, "{lb}");
+        let rows = treatment_rows(a);
+        let names: Vec<&str> = rows.iter().map(|r| r.2.as_str()).collect();
+        assert_eq!(names, ["Corner Joint 1", "Lengthen/Shorten 1"]);
+        // Delete the corner joint only.
+        delete_treatment(&mut p, &lk, aid, fid, 0).unwrap();
+        let a = asm(&p, aid);
+        assert_eq!(a.frames[0].treatments.len(), 1);
+        assert!((outer_length(&part(&p, a, occs[0])).unwrap() - 400.0).abs() < 1e-3);
+        assert!((outer_length(&part(&p, a, occs[2])).unwrap() - 215.0).abs() < 1e-3);
+        // Delete the upright: its part and its Lengthen go.
+        let doc = a.find(occs[2]).unwrap().component.document;
+        delete_members(&mut p, &lk, aid, &[occs[2]]).unwrap();
+        let a = asm(&p, aid);
+        assert_eq!(a.frames[0].members.len(), 2);
+        assert!(a.frames[0].treatments.is_empty());
+        assert!(p.document(doc).is_none());
+        // The skeleton is no member.
+        assert!(delete_members(&mut p, &lk, aid, &[1]).is_err());
+        assert!(change(&mut p, &lk, aid, &[1], &o, Library::builtin()).is_err());
+    }
+
     /// Trim/Extend to the skeleton box's top face (offset 10): the vertical
     /// member at a corner ends 10 mm below it; Lengthen/Shorten then adds 25.
     #[test]
@@ -1744,6 +1961,43 @@ mod tests {
     }
 
     /// The skeleton edge through `at` (its two face names and the point).
+    /// A demo frame for the GUI checks: the box's 4 top edges and 4
+    /// uprights as SHS members, saved to `CADCRAFT_FRAME_DEMO` (run with
+    /// `--ignored`).
+    #[test]
+    #[ignore]
+    fn write_demo_frame() {
+        let Ok(path) = std::env::var("CADCRAFT_FRAME_DEMO") else {
+            return;
+        };
+        let (mut p, aid, _) = project();
+        let at = [
+            (200.0, 0.0, 200.0),
+            (400.0, 150.0, 200.0),
+            (200.0, 300.0, 200.0),
+            (0.0, 150.0, 200.0),
+            (0.0, 0.0, 100.0),
+            (400.0, 0.0, 100.0),
+            (400.0, 300.0, 100.0),
+            (0.0, 300.0, 100.0),
+        ];
+        let edges: Vec<Skeleton> = at
+            .iter()
+            .map(|&(x, y, z)| find_edge(&p, aid, Point3::new(x, y, z)))
+            .collect();
+        insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &edges,
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        p.save(std::path::Path::new(&path)).unwrap();
+    }
+
     fn find_edge(p: &Project, aid: DocumentId, at: Point3) -> Skeleton {
         let a = asm(p, aid);
         let o = a.find(1).unwrap();

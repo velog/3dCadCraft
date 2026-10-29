@@ -119,6 +119,12 @@ impl CadCraftApp {
             .occurrences
             .iter()
             .filter(|o| a.pattern_of(o.id).is_none())
+            // Frame members are listed under their frame.
+            .filter(|o| {
+                !a.frames
+                    .iter()
+                    .any(|f| f.members.iter().any(|m| m.occurrence == o.id))
+            })
             .map(|o| (o.id, o.name.clone(), o.grounded, o.visible, o.component))
             .collect();
         // Suppressed: struck through; Enabled off: italic (Inventor).
@@ -145,6 +151,7 @@ impl CadCraftApp {
         let find = self.asm.find_in_browser.take();
         let mut cmds = Vec::new();
         let mut pcmds = Vec::new();
+        let mut fcmds = Vec::new();
         self.cons.browser_hover = None;
         let asm_doc = self.part_id;
         let mut iprops = false;
@@ -338,6 +345,7 @@ impl CadCraftApp {
             for p in &patterns {
                 self.pattern_rows(ui, p, &mut pcmds);
             }
+            self.frame_rows(ui, &mut fcmds);
         });
         for c in cmds {
             match c {
@@ -403,6 +411,9 @@ impl CadCraftApp {
         }
         for c in pcmds {
             self.pattern_cmd(c);
+        }
+        for c in fcmds {
+            self.frame_cmd(c);
         }
     }
 

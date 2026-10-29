@@ -72,6 +72,8 @@ mod feature_cmd;
 mod files;
 mod format_text;
 mod frame;
+mod frame_edit;
+mod frame_select;
 mod hole;
 mod hole_dims;
 mod hole_panel;
