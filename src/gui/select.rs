@@ -763,6 +763,33 @@ impl CadCraftApp {
         rect: egui::Rect,
         hover: Option<&SelItem>,
     ) {
+        let hover = hover.filter(|_| self.select.prehighlight);
+        self.draw_items(painter, rect, &self.sel, hover, false);
+    }
+
+    /// The selected edges of a command's panel (`gui/part_planned.rs`) and the item under the
+    /// cursor, as [`Self::draw_selection`] draws them; faces and bodies also get their outline,
+    /// so a picked surface is seen at once.
+    pub(super) fn draw_planned_edges(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        picked: &[SelItem],
+        hover: Option<&SelItem>,
+    ) {
+        self.draw_items(painter, rect, picked, hover, true);
+    }
+
+    /// Edges, vertices and sketches of `sel` (blue) and `hover` (green); `outline`: the
+    /// visible edges round faces and bodies too.
+    fn draw_items(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        sel: &[SelItem],
+        hover: Option<&SelItem>,
+        outline: bool,
+    ) {
         let polys = self.edge_polylines();
         // Edges are drawn on top of the view, without their hidden pieces;
         // every kernel piece of the visible edge (a circle in arcs).
@@ -795,26 +822,33 @@ impl CadCraftApp {
                 painter.circle_filled(s, 5.0, color);
             }
         };
+        // The outline of faces and bodies: every visible edge bounding one of their faces.
+        let rim = |x: &SelItem, color: Color32| {
+            if !outline || !matches!(x, SelItem::Face(_) | SelItem::Body(_)) {
+                return;
+            }
+            let faces = self.item_faces(x);
+            for (e, pts) in polys.iter() {
+                if self.picker().faces_of(*e).iter().any(|f| faces.contains(f)) {
+                    self.draw_visible_polyline(painter, rect, pts, egui::Stroke::new(3.0, color));
+                }
+            }
+        };
         let blue = Color32::from_rgb(40, 110, 230);
         let green = Color32::from_rgb(60, 190, 90);
-        for x in &self.sel {
-            match x {
-                SelItem::Edge(e) => line(*e, blue),
-                SelItem::Sketch(i) => sketch(*i, blue),
-                SelItem::Vertex(n) => vertex(n, blue),
-                _ => {}
-            }
+        let draw = |x: &SelItem, color: Color32| match x {
+            SelItem::Edge(e) => line(*e, color),
+            SelItem::Sketch(i) => sketch(*i, color),
+            SelItem::Vertex(n) => vertex(n, color),
+            other => rim(other, color),
+        };
+        for x in sel {
+            draw(x, blue);
         }
-        if self.select.prehighlight
-            && let Some(h) = hover
-            && !self.sel.contains(h)
+        if let Some(h) = hover
+            && !sel.contains(h)
         {
-            match h {
-                SelItem::Edge(e) => line(*e, green),
-                SelItem::Sketch(i) => sketch(*i, green),
-                SelItem::Vertex(n) => vertex(n, green),
-                _ => {}
-            }
+            draw(h, green);
         }
     }
 

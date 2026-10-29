@@ -307,8 +307,27 @@ impl CadCraftApp {
                 super::combine_split::BodyPick::Surface(n)
                 | super::combine_split::BodyPick::Body(n),
             ) if self.move_draft.is_some() => self.move_bodies_pick_body(n),
+            // A planned panel (Copy Object, the surface commands) takes body rows too.
+            BrowserCmd::CommandPick(
+                super::combine_split::BodyPick::Surface(n)
+                | super::combine_split::BodyPick::Body(n),
+            ) if self.part_planned.is_some() => self.part_planned_pick_body(n),
             BrowserCmd::CommandPick(p) => {
-                self.body_cmd_browser_pick(p);
+                let row = match &p {
+                    super::combine_split::BodyPick::Surface(n)
+                    | super::combine_split::BodyPick::Body(n) => Some(n.clone()),
+                    _ => None,
+                };
+                // No command takes it: the body is selected (Visibility, Alt+V, its menu),
+                // hidden ones too.
+                if !self.body_cmd_browser_pick(p)
+                    && let Some(n) = row
+                    && self.editing.is_none()
+                {
+                    self.sel = vec![super::select::SelItem::Body(n)];
+                    self.face_sel = None;
+                    self.edge_sel = None;
+                }
             }
             // Split's tool from the browser: a work plane or a sketch row.
             BrowserCmd::Select(Selection::Feature(k))
@@ -493,7 +512,10 @@ impl CadCraftApp {
                             RichText::new(label).weak()
                         };
                         let r = ui
-                            .selectable_label(self.selection == Selection::Body, text)
+                            .selectable_label(
+                                self.sel.contains(&super::select::SelItem::Body(id.clone())),
+                                text,
+                            )
                             .on_hover_text(format!("Created by {id}"));
                         if r.clicked() {
                             cmds.push(BrowserCmd::Select(Selection::Body));
@@ -554,7 +576,10 @@ impl CadCraftApp {
                                 RichText::new(label).weak()
                             };
                             let r = ui
-                                .selectable_label(false, text)
+                                .selectable_label(
+                                    self.sel.contains(&super::select::SelItem::Body(id.clone())),
+                                    text,
+                                )
                                 .on_hover_text(format!("Surface body {id} (a Split tool)"));
                             if r.clicked() {
                                 cmds.push(BrowserCmd::CommandPick(

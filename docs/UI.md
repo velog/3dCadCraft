@@ -109,6 +109,7 @@ By default they are **as in Inventor**. Today they are **hard-coded**; remapping
 | letters (S, E, R, H, L, C, D, X, O) | only alone or with Shift; with Ctrl or Alt they start nothing (Alt+S is the command search) | 🟡 |
 | **Ctrl+Tab / Ctrl+Shift+Tab** | next / previous document tab | 🟡 |
 | **Alt+S** | the "Search commands" field in the Quick Access (↑/↓/Tab, Enter starts, Esc clears / leaves) | 🟡 |
+| **Alt+V** | Visibility of the selected bodies / surfaces (of the bodies of selected faces): hides them, or shows them when hidden (a hidden body picked in the browser comes back); also *Visibility (Alt+V)* in their right-click menu, and *Show All Bodies* in the view's menu while some are hidden | 🟡 |
 | letters with *Show command alias input dialog* off (default) | multi-letter aliases gather in the status bar (`Command: SM_  (Flange)`); an alias no longer one starts with runs at once (`SMF`, `E`), one with longer ones after 0.6 s or Enter / Space (`S`); Backspace, Esc clears; red when nothing matches | 🟡 |
 | right-click a ribbon tab | **Show Tabs** (turn tabs on / off, Show All), **Minimize Ribbon** | 🟡 |
 | letters with *Show command alias input dialog* on | open the field next to the cursor; Enter / Space starts the highlighted command, Esc closes | 🟡 |

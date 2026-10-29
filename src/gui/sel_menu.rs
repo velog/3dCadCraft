@@ -55,6 +55,8 @@ pub(super) enum Entry {
     EditSketch,
     EditFeature,
     LookAt,
+    /// Visibility of the selected bodies (of the bodies of selected faces); Alt+V.
+    Visibility,
     Planned(Pp),
     Separator,
 }
@@ -83,6 +85,7 @@ impl Entry {
             Entry::EditSketch => "Edit Sketch",
             Entry::EditFeature => "Edit Feature",
             Entry::LookAt => "Look At",
+            Entry::Visibility => "Visibility (Alt+V)",
             Entry::Planned(p) => p.title(),
             Entry::Separator => "",
         }
@@ -179,6 +182,14 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
         v.push(E::Separator);
         v.extend_from_slice(edits);
     }
+    // Bodies, surfaces and faces can be hidden (Inventor: Visibility, Alt+V).
+    if matches!(
+        kind,
+        SelKind::Solid | SelKind::SurfaceBody | SelKind::PlanarFace | SelKind::CurvedFace
+    ) {
+        v.push(E::Separator);
+        v.push(E::Visibility);
+    }
     // Commands that take one item only.
     if !one {
         v.retain(|e| !matches!(e, E::NewSketch | E::PressPull | E::LookAt | E::Thread));
@@ -243,6 +254,73 @@ impl CadCraftApp {
             ) => SelKind::CurvedFace,
             _ => SelKind::Mixed,
         }))
+    }
+
+    /// The bodies of the selection: selected bodies, and the bodies of selected faces.
+    fn bodies_of_selection(&self) -> Vec<String> {
+        let body = &self.part().body;
+        let mut out: Vec<String> = Vec::new();
+        for x in &self.sel {
+            let name = match x {
+                SelItem::Body(b) => Some(b.clone()),
+                SelItem::Face(n) => body
+                    .find_face(n)
+                    .and_then(|f| crate::part::select::body_of_face(body, f)),
+                _ => None,
+            };
+            if let Some(n) = name
+                && !out.contains(&n)
+            {
+                out.push(n);
+            }
+        }
+        out
+    }
+
+    /// Visibility (Alt+V): each body of the selection is hidden, or shown when it was hidden
+    /// (a hidden body picked in the browser comes back). One Undo step.
+    pub(super) fn toggle_selection_visibility(&mut self) {
+        let bodies = self.bodies_of_selection();
+        if bodies.is_empty() {
+            return;
+        }
+        self.checkpoint("Visibility");
+        let part = self.part_mut();
+        for b in &bodies {
+            if let Some(i) = part.hidden_bodies.iter().position(|h| h == b) {
+                part.hidden_bodies.remove(i);
+            } else {
+                part.hidden_bodies.push(b.clone());
+            }
+        }
+        // A hidden body cannot stay selected in the view.
+        let hidden = self.part().hidden_bodies.clone();
+        let keep: Vec<bool> = {
+            let body = &self.part().body;
+            self.sel
+                .iter()
+                .map(|x| match x {
+                    SelItem::Face(n) => body
+                        .find_face(n)
+                        .and_then(|f| crate::part::select::body_of_face(body, f))
+                        .is_none_or(|b| !hidden.contains(&b)),
+                    _ => true,
+                })
+                .collect()
+        };
+        let mut k = keep.into_iter();
+        self.sel.retain(|_| k.next().unwrap_or(true));
+        self.scene_dirty = true;
+    }
+
+    /// Show All Bodies: every hidden body of the part visible again.
+    pub(super) fn show_all_bodies(&mut self) {
+        if self.part().hidden_bodies.is_empty() {
+            return;
+        }
+        self.checkpoint("Show All Bodies");
+        self.part_mut().hidden_bodies.clear();
+        self.scene_dirty = true;
     }
 
     /// A right click on an item that is not selected selects it (alone).
@@ -440,6 +518,7 @@ impl CadCraftApp {
                     self.look_at_face(n);
                 }
             }
+            E::Visibility => self.toggle_selection_visibility(),
             E::Planned(p) => self.start_part_planned(p),
             E::Separator => {}
         }

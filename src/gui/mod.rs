@@ -4798,6 +4798,15 @@ impl CadCraftApp {
         if ctx.egui_wants_keyboard_input() || self.file_window_open() {
             return; // typing into a text field
         }
+        // Alt+V: Visibility of the selected bodies (Inventor's shortcut).
+        if !self.is_drawing()
+            && !self.is_assembly()
+            && self.editing.is_none()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, Key::V))
+        {
+            self.toggle_selection_visibility();
+            return;
+        }
         // Home has no document: only New, Open and Help (spec 0.17 §3.1).
         if self.home.shown {
             let (cmd, f1) = ctx.input(|i| (i.modifiers.command, i.key_pressed(Key::F1)));
@@ -5138,6 +5147,20 @@ impl CadCraftApp {
                         .map(|(p, n)| p + n * eps)
                         .collect();
                     g.add_mesh(&pos, &m.normals, &m.triangles, color);
+                    // A surface is seen from both sides: its highlight goes on the back too
+                    // (turned over), or a face whose normal points away stayed hidden behind it.
+                    if crate::part::select::face_on_surface(body, f) {
+                        let back: Vec<Point3> = m
+                            .positions
+                            .iter()
+                            .zip(&m.normals)
+                            .map(|(p, n)| p - n * eps)
+                            .collect();
+                        let normals: Vec<_> = m.normals.iter().map(|n| -n).collect();
+                        let tris: Vec<[u32; 3]> =
+                            m.triangles.iter().map(|t| [t[0], t[2], t[1]]).collect();
+                        g.add_mesh(&back, &normals, &tris, color);
+                    }
                 }
             }
         };
@@ -5902,6 +5925,13 @@ impl CadCraftApp {
                     self.selection_menu(ui);
                     self.appearance_context_menu(ui);
                     self.measure_context(ui);
+                }
+                if self.editing.is_none() && !self.part().hidden_bodies.is_empty() {
+                    let n = self.part().hidden_bodies.len();
+                    if ui.button(format!("Show All Bodies ({n} hidden)")).clicked() {
+                        self.show_all_bodies();
+                        ui.close();
+                    }
                 }
                 ui.menu_button("Projection", |ui| {
                     for p in [
@@ -6697,6 +6727,17 @@ impl CadCraftApp {
                             .map(select::SelItem::Face)
                             .or_else(|| self.body_cmd_hover_item(body_hover.as_ref())),
                     )
+                }
+                // A planned panel (the surface commands, Copy Object): its picks, and what
+                // a click would take.
+                None if self.part_planned.is_some() => {
+                    let hover = match (pointer, on_cube) {
+                        (Some(p), None) => self.part_planned_item_at(p, rect),
+                        _ => None,
+                    };
+                    let picked = self.part_planned_items();
+                    self.draw_planned_edges(&painter, rect, &picked, hover.as_ref());
+                    (picked, hover)
                 }
                 None => (
                     self.sel.clone(),

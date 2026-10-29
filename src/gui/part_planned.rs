@@ -2006,51 +2006,72 @@ impl CadCraftApp {
     /// A click in the view while a planned panel is open: the item under
     /// the cursor (through the pick filter of the active selector).
     pub(super) fn part_planned_click(&mut self, p: egui::Pos2, rect: egui::Rect) {
-        let Some(d) = &self.part_planned else {
+        let Some(item) = self.part_planned_item_at(p, rect) else {
             return;
         };
-        let Some(kinds) = d.flow().current().map(|s| s.accepts) else {
-            return;
-        };
+        let what = self.item_label(&item);
+        let at = self.click_point(&item, p, rect).map(|q| [q.x, q.y, q.z]);
+        if let Some(d) = self.part_planned.as_mut() {
+            d.pick_item(what, item, at);
+        }
+    }
+
+    /// What a click at `p` would give the active selector of the planned panel (also the
+    /// prehighlight under the cursor).
+    pub(super) fn part_planned_item_at(&self, p: egui::Pos2, rect: egui::Rect) -> Option<SelItem> {
+        let d = self.part_planned.as_ref()?;
+        let kinds = d.flow().current().map(|s| s.accepts)?;
         let item = if kinds.contains(&PickKind::Body) && !kinds.contains(&PickKind::Face) {
             // A selector of whole bodies (Copy Object's Body mode): the body of the face under
             // the cursor (the pick filter leaves faces out, so they are not asked through it).
-            let Some((o, dir)) = self.camera.ray(p, rect) else {
-                return;
-            };
-            let Some(dir) = dir.try_normalize(1e-12) else {
-                return;
-            };
-            let Some((f, t)) = self.picker().pick(&o, &dir) else {
-                return;
-            };
-            let Some(name) = self.part().body.face(f).and_then(|x| x.name.clone()) else {
-                return;
-            };
+            let (o, dir) = self.camera.ray(p, rect)?;
+            let dir = dir.try_normalize(1e-12)?;
+            let (f, t) = self.picker().pick(&o, &dir)?;
+            let name = self.part().body.face(f).and_then(|x| x.name.clone())?;
             let at = o + dir * t;
-            match self.body_of_face(&name, Some([at.x, at.y, at.z])) {
-                Some(b) => SelItem::Body(b),
-                None => return,
-            }
+            SelItem::Body(self.body_of_face(&name, Some([at.x, at.y, at.z]))?)
         } else {
             let edge = self.edge_under(p, rect);
             let face = match (edge, self.plane_under(p, rect, false)) {
                 (None, Some(crate::part::PlaneRef::Face(n))) => Some(n),
                 _ => None,
             };
-            let Some(item) = self.sel_item_at(p, rect, edge, face.as_deref()) else {
-                return;
-            };
-            item
+            self.sel_item_at(p, rect, edge, face.as_deref())?
         };
+        takes(kinds, &item).then_some(item)
+    }
+
+    /// A body row of the browser for the planned panel's active selector (when it takes
+    /// bodies).
+    pub(super) fn part_planned_pick_body(&mut self, name: String) {
+        let Some(d) = &self.part_planned else {
+            return;
+        };
+        let Some(kinds) = d.flow().current().map(|s| s.accepts) else {
+            return;
+        };
+        let item = SelItem::Body(name);
         if !takes(kinds, &item) {
             return;
         }
         let what = self.item_label(&item);
-        let at = self.click_point(&item, p, rect).map(|q| [q.x, q.y, q.z]);
         if let Some(d) = self.part_planned.as_mut() {
-            d.pick_item(what, item, at);
+            d.pick_item(what, item, None);
         }
+    }
+
+    /// Every item picked in the planned panel's selectors (drawn as selected in the view).
+    pub(super) fn part_planned_items(&self) -> Vec<SelItem> {
+        let Some(d) = &self.part_planned else {
+            return Vec::new();
+        };
+        let mut out: Vec<SelItem> = Vec::new();
+        for (item, _) in d.items.values().flatten() {
+            if !out.contains(item) {
+                out.push(item.clone());
+            }
+        }
+        out
     }
 
     /// The planned command's panel (Properties).
