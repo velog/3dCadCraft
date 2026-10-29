@@ -1300,6 +1300,7 @@ impl Planned {
             self,
             Planned::Asm(
                 super::asm_planned::AsmPlanned::Interference
+                    | super::asm_planned::AsmPlanned::Create
                     | super::asm_planned::AsmPlanned::Pattern
                     | super::asm_planned::AsmPlanned::Replace
                     | super::asm_planned::AsmPlanned::Copy
@@ -2102,6 +2103,11 @@ impl CadCraftApp {
         match d.kind {
             Planned::Asm(super::asm_planned::AsmPlanned::Interference) => {
                 if self.start_interference(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Create) => {
+                if self.create_ok(&d) {
                     self.part_planned = None;
                 }
             }

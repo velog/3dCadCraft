@@ -25,6 +25,7 @@
 
 mod alias_input;
 mod asm_browser;
+mod asm_create;
 mod asm_pattern;
 mod asm_planned;
 mod asm_replace;

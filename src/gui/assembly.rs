@@ -334,6 +334,12 @@ impl CadCraftApp {
         else {
             return;
         };
+        self.open_doc(r);
+    }
+
+    /// Opens component document `r` (a part or a subassembly; Return comes
+    /// back to the assembly open now).
+    pub(super) fn open_doc(&mut self, r: DocRef) {
         // A linked part file opens in a tab of its own (Inventor: Open).
         if let Some(lib) = r.library {
             match self.library_path(lib) {

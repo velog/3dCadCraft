@@ -10,6 +10,10 @@
 //! relationships under each component) or Modeling View (each component's
 //! part features instead), a search field, Display Preferences filters and a
 //! visibility button per component.
+//!
+//! A subassembly's node lists its own components and relationships
+//! (`docs/spec/3.1a-subassemblies.md` S4): read-only, greyed eyes; a click
+//! selects a part inside it, a double-click opens its document.
 
 use eframe::egui::{self, Color32, RichText};
 
@@ -89,6 +93,10 @@ enum TreeCmd {
     FeatureLook(u32, String, Option<String>),
     ToggleVisible(u32),
     Open(u32),
+    /// A component inside a subassembly (top occurrence, path), Ctrl adds.
+    SelectNested(u32, Vec<u32>, bool),
+    /// Open a component's document (a part or subassembly inside one).
+    OpenDoc(crate::document::DocRef),
     Pick(GeomRef),
     SelectConstraint(u32),
     EditConstraint(u32),
@@ -274,6 +282,10 @@ impl CadCraftApp {
                     if !opts.hide_work && query.is_empty() {
                         self.origin_folder(ui, id, &mut cmds);
                     }
+                    if sub {
+                        let mut stack = vec![asm_doc];
+                        self.nested_rows(ui, id, component, &[], &mut stack, &mut cmds);
+                    }
                     if opts.modeling {
                         // Modeling View: the part's features in history
                         // order (work features among them).
@@ -339,6 +351,11 @@ impl CadCraftApp {
                     self.cons.selected = None;
                 }
                 TreeCmd::Open(id) => self.open_component(id),
+                TreeCmd::SelectNested(occurrence, sub, add) => {
+                    let s = super::asm_select::AsmSub::Part { occurrence, sub };
+                    self.asm_sub_click(Some(s), add);
+                }
+                TreeCmd::OpenDoc(r) => self.open_doc(r),
                 TreeCmd::SelectFeature(occurrence, fid, add) => {
                     let sub = super::asm_select::AsmSub::Feature {
                         occurrence,
@@ -384,6 +401,102 @@ impl CadCraftApp {
         for c in pcmds {
             self.pattern_cmd(c);
         }
+    }
+
+    /// The components of subassembly `doc` below the node of occurrence
+    /// `top` (`path`: the occurrences above them inside it): read-only rows,
+    /// its relationships greyed in their folder; `stack` guards against an
+    /// assembly that contains itself.
+    fn nested_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        top: u32,
+        doc: crate::document::DocRef,
+        path: &[u32],
+        stack: &mut Vec<crate::document::DocumentId>,
+        cmds: &mut Vec<TreeCmd>,
+    ) {
+        use crate::assembly::tree;
+        if stack.contains(&doc.document) || stack.len() > tree::MAX_DEPTH {
+            ui.label(RichText::new("(the assembly contains itself)").weak());
+            return;
+        }
+        let Some(a) = tree::assembly_of(&self.project, doc).cloned() else {
+            return;
+        };
+        stack.push(doc.document);
+        if !a.constraints.is_empty() {
+            fold(ui, ("asm_sub_rel", top, path.to_vec()), false, |ui| {
+                super::panels::tree_icon(ui, Icon::Coincident);
+                ui.label(RichText::new("Relationships").weak());
+            })
+            .body(|ui| {
+                let name = |r: &GeomRef| {
+                    a.find(r.occurrence())
+                        .map_or("Assembly".to_owned(), |o| o.name.clone())
+                };
+                for c in &a.constraints {
+                    let text = format!("{} ({}, {})", c.name, name(&c.a), name(&c.b));
+                    ui.horizontal(|ui| {
+                        super::panels::tree_icon(ui, Icon::Coincident);
+                        ui.label(RichText::new(text).weak()).on_hover_text(
+                            "Relationships of the subassembly: Open it to edit them",
+                        );
+                    });
+                }
+            });
+        }
+        for o in &a.occurrences {
+            let mut p = path.to_vec();
+            p.push(o.id);
+            let inner = tree::assembly_of(&self.project, o.component).is_some();
+            let me = super::asm_select::AsmSub::Part {
+                occurrence: top,
+                sub: p.clone(),
+            };
+            let selected = self.asm.sub.contains(&me);
+            let mut row = |ui: &mut egui::Ui, this: &mut Self| {
+                // Visibility inside a subassembly is the subassembly's own.
+                ui.add_enabled_ui(false, |ui| visibility_button(ui, o.visible));
+                super::panels::tree_icon(ui, if inner { Icon::Assembly } else { Icon::Part });
+                if o.grounded {
+                    super::panels::tree_icon(ui, Icon::Ground);
+                }
+                let mut text = RichText::new(&o.name);
+                if !o.shown() {
+                    text = text.weak();
+                }
+                let r = ui.selectable_label(selected, text);
+                if r.clicked() {
+                    let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+                    cmds.push(TreeCmd::SelectNested(top, p.clone(), add));
+                }
+                if r.double_clicked() {
+                    cmds.push(TreeCmd::OpenDoc(o.component));
+                }
+                if r.hovered() && !inner {
+                    this.asm.tree_hover = Some(me.clone());
+                }
+                r.context_menu(|ui| {
+                    if ui.button("Open").clicked() {
+                        cmds.push(TreeCmd::OpenDoc(o.component));
+                        ui.close();
+                    }
+                });
+            };
+            if inner {
+                fold(ui, ("asm_sub_occ", top, p.clone()), false, |ui| {
+                    row(ui, self)
+                })
+                .body(|ui| self.nested_rows(ui, top, o.component, &p, stack, cmds));
+            } else {
+                ui.horizontal(|ui| {
+                    ui.add_space(18.0);
+                    row(ui, self);
+                });
+            }
+        }
+        stack.pop();
     }
 
     /// The Origin folder of a component (or of the assembly).
