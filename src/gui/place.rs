@@ -163,6 +163,36 @@ fn base_name(path: &Path, parts: &[(DocumentId, String)], doc: DocumentId) -> St
     }
 }
 
+impl LibCache {
+    /// The project of the open tab of file `path` stands for the file (the
+    /// assembly shows a part as edited in its tab, saved or not); the file's
+    /// next save on disk replaces it as usual.
+    pub(super) fn take_open(&self, path: &Path, project: Rc<Project>) {
+        let Ok(key) = path.canonicalize() else {
+            return;
+        };
+        let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
+        self.files.borrow_mut().insert(
+            key,
+            LibEntry {
+                project,
+                modified,
+                checked: Instant::now(),
+            },
+        );
+        *self.linked.borrow_mut() = None;
+    }
+
+    /// Forgets file `path` (its tab closed: it is read from disk again).
+    pub(super) fn forget(&self, path: &Path) {
+        if let Ok(key) = path.canonicalize()
+            && self.files.borrow_mut().remove(&key).is_some()
+        {
+            *self.linked.borrow_mut() = None;
+        }
+    }
+}
+
 impl CadCraftApp {
     /// Where the file of library link `lib` is (next to the assembly by its
     /// relative path, or by its name in the assembly's folder); a link of a

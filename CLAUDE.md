@@ -1167,7 +1167,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Subassemblies of linked files** (`assembly::tree::Linked`, `CadCraftApp::linked`): every tree function takes the linked
   projects; a nested occurrence's `component` is in *its own file's* terms — use `Leaf::component` / `Nested::component`
   (rebased onto the top file) or `tree::rebased` for a copy of the assembly. `library_path` also finds the links of loaded
-  linked files (`LibCache::links`).
+  linked files (`LibCache::links`). Edit in place of a linked part (`InPlace::linked`) opens its file's tab with copies of the
+  other parts; `reset_asm_ui` keeps that `in_place`, Return hands the tab's project to `LibCache::take_open`, and closing a
+  tab calls `LibCache::forget`. Drawing views walk the tree too (`drawing_bom::drawing_leaves`, `hlr::Instance::sub`).
 - **`git stash` is shared by every worktree**: in a worktree with only new (untracked) files, `git stash` saves
   nothing and `stash pop` applies *another session's* stash. Never stash in a shared repo; commit or use a
   scratch branch.
@@ -1252,6 +1254,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   reversed"). Loft bridges: a face whose boundary edges stray from its surface is not meshed at all (0 triangles,
   a hole in the view): bridge rows run through 256 points of each edge (64 was not enough on a trimmed wavy edge), so
   the surfaces' own edges can bound them and Stitch / Output Solid close without gaps.
+- **Stitch matches edges by geometry** (vendor `stitch`): the same ends and the middle of one on the other curve (two
+  curves along one edge are parametrised differently — the parameter middles of a loft bridge's spline and a trim edge
+  were millimetres apart), and an edge carrying another edge's vertex within the tolerance is cut there first
+  (`t_junction_pieces`). Without both, surfaces split at different places never closed.
 - **Free edges of surface bodies** (`exact.rs::add_solid`): an edge listed with one face used to be taken for a seam
   (both senses, broken loops, not drawn — surfaces showed no outline). In a surface body it is a free edge when the
   face's triangles run it one way only; in solids the old rule stays (a seam listed once). `s.is_open()` walks every

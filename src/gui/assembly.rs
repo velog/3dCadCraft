@@ -143,6 +143,23 @@ pub(super) struct InPlace {
     pub document: DocumentId,
     /// Its placement in the assembly.
     pub place: Transform3,
+    /// A part of a linked file: edited in its file's tab, away from the
+    /// assembly.
+    pub linked: Option<LinkedEdit>,
+}
+
+/// Edit in place of a linked part file (spec 3.10 §3.2): the part's file is
+/// the active tab, so the assembly around it is kept as copies taken at the
+/// start.
+#[derive(Clone, Debug)]
+pub(super) struct LinkedEdit {
+    /// The assembly's file and its name (for *Return*).
+    pub assembly_path: String,
+    pub assembly_name: String,
+    /// The edited part's file.
+    pub part_path: std::path::PathBuf,
+    /// The other parts in the edited part's coordinates.
+    pub context: Vec<(std::rc::Rc<crate::part::PartDocument>, Transform3)>,
 }
 
 /// The other components while a part is edited in place: grey, see-through.
@@ -157,8 +174,11 @@ impl CadCraftApp {
     /// again inside one frame (the pause on changing tabs).
     pub(super) fn reset_asm_ui(&mut self) {
         let libs = std::mem::take(&mut self.asm.libs);
+        // Edit in place of a linked part lives across its tab switch.
+        let in_place = self.asm.in_place.take().filter(|ip| ip.linked.is_some());
         self.asm = AsmUi {
             libs,
+            in_place,
             ..Default::default()
         };
     }
@@ -433,6 +453,20 @@ impl CadCraftApp {
 
     /// Back to the assembly a component was opened from.
     pub(super) fn return_to_assembly(&mut self) {
+        if let Some(le) = self.in_place_now().and_then(|ip| ip.linked.as_ref()) {
+            let (back, part) = (le.assembly_path.clone(), le.part_path.clone());
+            // The assembly shows the part as edited, saved or not.
+            self.asm
+                .libs
+                .take_open(&part, std::rc::Rc::new(self.project.clone()));
+            self.asm.in_place = None;
+            match self.tab_of_path(std::path::Path::new(&back)) {
+                Some(k) => self.switch_tab(k),
+                None => self.open_path(std::path::Path::new(&back)),
+            }
+            self.scene_dirty = true;
+            return;
+        }
         self.asm.in_place = None;
         if let Some(a) = self.asm.came_from.take() {
             self.activate_document(a);
@@ -457,10 +491,12 @@ impl CadCraftApp {
         let Some(place) = a.find(top).map(|t| t.transform * n.at) else {
             return;
         };
-        if r.library.is_some()
-            || crate::assembly::tree::assembly_of(&self.project, &linked, r).is_some()
-        {
+        if crate::assembly::tree::assembly_of(&self.project, &linked, r).is_some() {
             self.open_doc(r);
+            return;
+        }
+        if let Some(lib) = r.library {
+            self.edit_linked_in_place(lib, r.document, top, sub, place, name);
             return;
         }
         self.asm.came_from = Some(asm_id);
@@ -472,14 +508,95 @@ impl CadCraftApp {
             sub,
             document: r.document,
             place,
+            linked: None,
         });
         self.scene_dirty = true;
         self.file_status = Some(Ok(format!("Edit: {name} in place (Return goes back)")));
     }
 
+    /// Edit in place of part `doc` of linked file `lib`: copies of the other
+    /// parts are taken, then the part's file opens in its tab.
+    fn edit_linked_in_place(
+        &mut self,
+        lib: crate::document::LibraryId,
+        doc: DocumentId,
+        top: u32,
+        sub: Vec<u32>,
+        place: Transform3,
+        name: String,
+    ) {
+        let Some(part_path) = self.library_path(lib) else {
+            self.file_status = Some(Err("Edit: the part file was not found".into()));
+            return;
+        };
+        let linked = self.linked();
+        let Some(a) = self.assembly() else {
+            return;
+        };
+        let mut edited = vec![top];
+        edited.extend(&sub);
+        let inv = place.inverse();
+        let mut parts: HashMap<DocRef, std::rc::Rc<crate::part::PartDocument>> = HashMap::new();
+        let mut context = Vec::new();
+        for l in
+            crate::assembly::tree::leaves(&self.project, &linked, DocRef::local(self.part_id), a)
+        {
+            if l.path == edited {
+                continue;
+            }
+            let p = match parts.get(&l.component) {
+                Some(p) => p.clone(),
+                None => match self.with_part(l.component, |p| std::rc::Rc::new(p.clone())) {
+                    Some(p) => {
+                        parts.insert(l.component, p.clone());
+                        p
+                    }
+                    None => continue,
+                },
+            };
+            context.push((p, inv * l.world));
+        }
+        let le = LinkedEdit {
+            assembly_path: self.file_path.clone(),
+            assembly_name: self.document_title(),
+            part_path: part_path.clone(),
+            context,
+        };
+        let asm_id = self.part_id;
+        self.open_path(&part_path);
+        if self.file_path.trim() != part_path.display().to_string()
+            || self.project.document(doc).is_none()
+        {
+            return;
+        }
+        if self.part_id != doc {
+            self.activate_document(doc);
+        }
+        self.asm.in_place = Some(InPlace {
+            assembly: asm_id,
+            top,
+            sub,
+            document: doc,
+            place,
+            linked: Some(le),
+        });
+        self.scene_dirty = true;
+        self.file_status = Some(Ok(format!(
+            "Edit: {name} in place, in its file {} (Return goes back)",
+            part_path.display()
+        )));
+    }
+
     /// The in-place context while it holds: the edited part is the active
-    /// document and came from that assembly.
+    /// document and came from that assembly (a linked part: its file is the
+    /// active tab).
     pub(super) fn in_place_now(&self) -> Option<&InPlace> {
+        if let Some(ip) = &self.asm.in_place
+            && let Some(le) = &ip.linked
+        {
+            let here = std::path::Path::new(self.file_path.trim()) == le.part_path;
+            return (here && ip.document == self.part_id).then_some(ip);
+        }
         self.asm
             .in_place
             .as_ref()
@@ -492,6 +609,16 @@ impl CadCraftApp {
         let Some(ip) = self.in_place_now() else {
             return;
         };
+        let grey = |_: Option<&str>| super::material::FaceOver {
+            look: None,
+            tint: Some(CONTEXT_GREY),
+        };
+        if let Some(le) = &ip.linked {
+            for (p, t) in &le.context {
+                super::material::add_part_meshes_with(g, p, Some(t), Some(CONTEXT_ALPHA), &grey);
+            }
+            return;
+        }
         let linked = self.linked();
         let Some(a) =
             crate::assembly::tree::assembly_of(&self.project, &linked, DocRef::local(ip.assembly))
@@ -501,10 +628,6 @@ impl CadCraftApp {
         let mut edited = vec![ip.top];
         edited.extend(&ip.sub);
         let inv = ip.place.inverse();
-        let grey = |_: Option<&str>| super::material::FaceOver {
-            look: None,
-            tint: Some(CONTEXT_GREY),
-        };
         for l in
             crate::assembly::tree::leaves(&self.project, &linked, DocRef::local(ip.assembly), a)
         {

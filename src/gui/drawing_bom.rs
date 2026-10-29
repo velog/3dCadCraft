@@ -48,11 +48,15 @@ pub(super) enum AsmSrc {
     File { dir: PathBuf, project: Rc<Project> },
 }
 
+/// A part of an assembly view: its top-level occurrence, the path below it,
+/// its component (in the drawing file's terms) and its placement.
+type ViewLeaf = (u32, Vec<u32>, DocRef, Transform3);
+
 /// What a view's lines are computed from: copies of the parts and, for an
 /// assembly, the occurrences (id, placement, index into `parts`).
 pub(super) struct ModelJob {
     parts: Vec<PartDocument>,
-    occurrences: Vec<(u32, Transform3, usize)>,
+    occurrences: Vec<(u32, Vec<u32>, Transform3, usize)>,
     assembly: bool,
     /// A part's flat pattern instead of the folded part.
     flat: bool,
@@ -89,11 +93,12 @@ impl ModelJob {
         let instances: Vec<hlr::Instance> = self
             .occurrences
             .iter()
-            .filter_map(|&(id, transform, k)| {
+            .filter_map(|(id, sub, transform, k)| {
                 Some(hlr::Instance {
-                    id,
-                    transform,
-                    model: models.get(k)?.clone(),
+                    id: *id,
+                    sub: sub.clone(),
+                    transform: *transform,
+                    model: models.get(*k)?.clone(),
                 })
             })
             .collect();
@@ -273,25 +278,42 @@ impl CadCraftApp {
     /// The signature of an assembly view's model (`None`: not an assembly):
     /// each component's body and each occurrence's placement.
     pub(super) fn assembly_signature(&self, model: DocRef) -> Option<String> {
-        let (asm, src) = self.drawing_assembly(model)?;
         let mut s = String::new();
         let mut seen: Vec<DocRef> = Vec::new();
-        for o in asm.occurrences.iter().filter(|o| o.shown()) {
-            if !seen.contains(&o.component) {
-                seen.push(o.component);
+        for (id, sub, c, t) in self.drawing_leaves(model)? {
+            if !seen.contains(&c) {
+                seen.push(c);
                 let sig = self
-                    .src_part(&src, o.component, |p| p.body_signature())
+                    .with_part(c, |p| p.body_signature())
                     .unwrap_or_default();
-                s.push_str(&format!("{:?}={sig};", o.component));
+                s.push_str(&format!("{c:?}={sig};"));
             }
-            s.push_str(&format!("{}:{:?}:{:.6?};", o.id, o.component, o.transform));
+            s.push_str(&format!("{id}{sub:?}:{c:?}:{t:.6?};"));
         }
         Some(s)
     }
 
+    /// Every shown part of assembly `model` at any depth (subassemblies of
+    /// this file and of linked files, spec 3.1a): its top-level occurrence
+    /// (balloons and parts lists count those), its component in this file's
+    /// terms and its placement. `None`: `model` is no assembly.
+    fn drawing_leaves(&self, model: DocRef) -> Option<Vec<ViewLeaf>> {
+        let linked = self.linked();
+        let asm = crate::assembly::tree::assembly_of(&self.project, &linked, model)?;
+        Some(
+            crate::assembly::tree::leaves(&self.project, &linked, model, asm)
+                .into_iter()
+                .filter_map(|l| {
+                    let (top, sub) = l.path.split_first()?;
+                    Some((*top, sub.to_vec(), l.component, l.world))
+                })
+                .collect(),
+        )
+    }
+
     /// Copies of what a view of `model` is computed from.
     pub(super) fn model_job(&self, model: DocRef, flat: bool) -> Option<ModelJob> {
-        let Some((asm, src)) = self.drawing_assembly(model) else {
+        let Some(leaves) = self.drawing_leaves(model) else {
             let part = self.with_part(model, |p| p.clone())?;
             return Some(ModelJob {
                 parts: vec![part],
@@ -303,19 +325,19 @@ impl CadCraftApp {
         let mut comps: Vec<DocRef> = Vec::new();
         let mut parts = Vec::new();
         let mut occurrences = Vec::new();
-        for o in asm.occurrences.iter().filter(|o| o.shown()) {
-            let k = match comps.iter().position(|c| *c == o.component) {
+        for (id, sub, c, t) in leaves {
+            let k = match comps.iter().position(|x| *x == c) {
                 Some(k) => k,
                 None => {
-                    let Some(p) = self.src_part(&src, o.component, |p| p.clone()) else {
+                    let Some(p) = self.with_part(c, |p| p.clone()) else {
                         continue;
                     };
-                    comps.push(o.component);
+                    comps.push(c);
                     parts.push(p);
                     parts.len() - 1
                 }
             };
-            occurrences.push((o.id, o.transform, k));
+            occurrences.push((id, sub, t, k));
         }
         Some(ModelJob {
             parts,

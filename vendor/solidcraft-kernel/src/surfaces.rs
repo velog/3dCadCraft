@@ -428,30 +428,37 @@ pub fn bridge_edges(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3]) -> Result<
         if let (Some(la), Some(lb)) = (longest_loop(a, at_a)?, longest_loop(b, at_b)?) {
             return bridge_loops(a, &la, b, &lb);
         }
-        let pa = chain_points(&picked_chain(a, at_a)?)?;
-        let mut pb = chain_points(&picked_chain(b, at_b)?)?;
-        let (Some(&a0), Some(&a1), Some(&b0), Some(&b1)) = (pa.first(), pa.last(), pb.first(), pb.last()) else {
-            return Err(KernelError::Invalid("a section has no points".into()));
+        // Open chains: one bridge on the chains' own edges (as the sides of whole boundaries).
+        let ea = picked_chain(a, at_a)?;
+        let mut eb = picked_chain(b, at_b)?;
+        let end = |c: &[mt::Edge], last: bool| -> Result<Vec3> {
+            let e = if last { c.last() } else { c.first() };
+            e.map(|e| from_p3(if last { e.back().point() } else { e.front().point() }))
+                .ok_or_else(|| KernelError::Invalid("a section has no edges".into()))
         };
+        let (a0, a1) = (end(&ea, false)?, end(&ea, true)?);
+        let (b0, b1) = (end(&eb, false)?, end(&eb, true)?);
         if a0.dist(b1) + a1.dist(b0) < a0.dist(b0) + a1.dist(b1) {
-            pb.reverse();
+            eb = eb.iter().rev().map(mt::Edge::inverse).collect();
         }
-        let (b0, b1) = (pb[0], pb[pb.len() - 1]);
+        let (b0, b1) = (end(&eb, false)?, end(&eb, true)?);
         let tol = solidcraft_geom::LINEAR_TOL;
         if a0.dist(b0) <= tol || a1.dist(b1) <= tol {
             return Err(KernelError::Invalid("the sections touch: use Boundary Patch".into()));
         }
-        let ca = interpolated(&pa)?;
-        let cb = interpolated(&pb)?;
-        let surface = mt::BSplineSurface::homotopy(ca.clone(), cb.clone());
-        let v = |q: Vec3| mt::builder::vertex(p3(q));
-        let (va0, va1, vb0, vb1) = (v(a0), v(a1), v(b0), v(b1));
-        let ea = mt::Edge::new(&va0, &va1, mt::Curve::BSplineCurve(ca));
-        let eb = mt::Edge::new(&vb0, &vb1, mt::Curve::BSplineCurve(cb));
-        // Counter-clockwise in (u, v): along A (v = 0), up the end line (u = 1), back along B
-        // (v = 1), down the start line (u = 0).
-        let wire: mt::Wire = vec![ea, mt::builder::line(&va1, &vb1), eb.inverse(), mt::builder::line(&vb0, &va0)].into();
-        let face = mt::Face::try_new(vec![wire], mt::Surface::BSplineSurface(surface))
+        let surface = ruled_facing(&side_points(&ea)?, &side_points(&eb)?)?;
+        let corner = |c: &[mt::Edge], last: bool| -> Result<mt::Vertex> {
+            let e = if last { c.last() } else { c.first() };
+            e.map(|e| if last { e.back().clone() } else { e.front().clone() })
+                .ok_or_else(|| KernelError::Invalid("a section has no edges".into()))
+        };
+        let (va0, va1, vb0, vb1) = (corner(&ea, false)?, corner(&ea, true)?, corner(&eb, false)?, corner(&eb, true)?);
+        // Along A, up the end line, back along B, down the start line.
+        let mut wire: Vec<mt::Edge> = ea.clone();
+        wire.push(mt::builder::line(&va1, &vb1));
+        wire.extend(eb.iter().rev().map(mt::Edge::inverse));
+        wire.push(mt::builder::line(&vb0, &va0));
+        let face = mt::Face::try_new(vec![wire.into()], mt::Surface::BSplineSurface(surface))
             .map_err(|e| KernelError::Failed(format!("bridge: {e}")))?;
         let mut rec = Rebuild::default();
         rec.made(&face, Vec::new());
@@ -866,6 +873,94 @@ pub(crate) fn nearest_face(body: &Body, p: Vec3) -> Result<usize> {
 /// Sew surface bodies along edges that coincide (within `tol`): one body, a solid when the
 /// faces close up. Faces are turned so that neighbours agree. The result's history is over
 /// `bodies`: each face the one it was sewn from, each edge the edges sewn into it.
+/// Whether `q` lies within `tol` of curve `c` (nearest point searched from a coarse sampling).
+fn on_curve(c: &mt::Curve, q: mt::Point3, tol: f64) -> bool {
+    let (t0, t1) = c.range_tuple();
+    let n = 32;
+    let Some(ts) = (0..=n)
+        .map(|k| t0 + (t1 - t0) * k as f64 / n as f64)
+        .min_by(|a, b| c.subs(*a).distance(q).total_cmp(&c.subs(*b).distance(q)))
+    else {
+        return false;
+    };
+    c.search_nearest_parameter(q, Some(ts), 100).is_some_and(|t| c.subs(t).distance(q) <= tol)
+}
+
+/// The edges of `faces` (in their own direction, by id) that carry another edge's vertex within
+/// `tol` of their inside, cut at those vertices into pieces (the curve cut at its nearest
+/// parameter; the pieces end on that vertex).
+fn t_junction_pieces(faces: &[mt::Face], tol: f64) -> HashMap<mt::EdgeID, Vec<mt::Edge>> {
+    let mut edges: Vec<mt::Edge> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut verts: Vec<mt::Vertex> = Vec::new();
+    let mut vseen = std::collections::HashSet::new();
+    for f in faces {
+        for w in f.absolute_boundaries() {
+            for e in w.edge_iter() {
+                let abs = if e.orientation() { e.clone() } else { e.inverse() };
+                for v in [abs.front(), abs.back()] {
+                    if vseen.insert(v.id()) {
+                        verts.push(v.clone());
+                    }
+                }
+                if seen.insert(abs.id()) {
+                    edges.push(abs);
+                }
+            }
+        }
+    }
+    let mut out = HashMap::new();
+    for e in edges {
+        let c = e.curve();
+        let (t0, t1) = c.range_tuple();
+        // A coarse polyline for the search's start and a quick distance test.
+        let n = 32;
+        let samples: Vec<(f64, mt::Point3)> = (0..=n).map(|k| {
+            let t = t0 + (t1 - t0) * k as f64 / n as f64;
+            (t, c.subs(t))
+        }).collect();
+        let (p0, p1) = (e.front().point(), e.back().point());
+        let mut cuts: Vec<(f64, mt::Vertex)> = Vec::new();
+        for v in &verts {
+            if v.id() == e.front().id() || v.id() == e.back().id() {
+                continue;
+            }
+            let q = v.point();
+            if q.distance(p0) <= tol || q.distance(p1) <= tol {
+                continue;
+            }
+            let Some((ts, d)) = samples.iter().map(|(t, p)| (*t, p.distance(q))).min_by(|a, b| a.1.total_cmp(&b.1)) else { continue };
+            // Far from every sample by more than a chord's sag allows: not on this edge.
+            let chord = samples.windows(2).map(|w| w[0].1.distance(w[1].1)).fold(0.0, f64::max);
+            if d > tol + chord {
+                continue;
+            }
+            let Some(t) = c.search_nearest_parameter(q, Some(ts), 100) else { continue };
+            if !(t > t0 && t < t1) || c.subs(t).distance(q) > tol {
+                continue;
+            }
+            cuts.push((t, v.clone()));
+        }
+        if cuts.is_empty() {
+            continue;
+        }
+        cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        cuts.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-12);
+        let mut rest = c;
+        let mut start = e.front().clone();
+        let mut parts = Vec::with_capacity(cuts.len() + 1);
+        for (t, v) in cuts {
+            let tail = mt::Cut::cut(&mut rest, t);
+            parts.push(mt::Edge::new(&start, &v, rest));
+            rest = tail;
+            start = v;
+        }
+        parts.push(mt::Edge::new(&start, e.back(), rest));
+        out.insert(e.id(), parts);
+    }
+    out
+}
+
 pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
     if bodies.is_empty() {
         return Err(KernelError::Invalid("nothing to stitch".into()));
@@ -877,6 +972,10 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
     let tol = if tol.is_finite() && tol > 0.0 { tol } else { size * 1e-6 + 1e-6 };
     guard("stitch", || {
         let faces: Vec<mt::Face> = bodies.iter().flat_map(|b| b.solid.face_iter().cloned().collect::<Vec<_>>()).collect();
+        // T-junctions: an edge with another edge's vertex lying on it (within the tolerance, off
+        // its ends) is cut there first, so a long edge meets the pieces of its neighbour edge by
+        // edge (3DCadCraft addition).
+        let pieces = t_junction_pieces(&faces, tol);
         // Shared vertices by position, shared edges by their ends and middle.
         let mut verts: Vec<mt::Vertex> = Vec::new();
         let mut vmap: HashMap<mt::VertexID, mt::Vertex> = HashMap::new();
@@ -902,14 +1001,20 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
             let mut wires = Vec::new();
             for w in f.absolute_boundaries() {
                 let mut nw = Vec::new();
-                for e in w.edge_iter() {
-                    let abs = if e.orientation() { e.clone() } else { e.inverse() };
+                for e0 in w.edge_iter() {
+                    let abs0 = if e0.orientation() { e0.clone() } else { e0.inverse() };
+                    let parts = pieces.get(&abs0.id()).cloned().unwrap_or_else(|| vec![abs0.clone()]);
+                    let mut run: Vec<mt::Edge> = Vec::with_capacity(parts.len());
+                    for abs in parts {
                     let (a, b) = (canon(abs.front(), &mut verts), canon(abs.back(), &mut verts));
                     let c = abs.curve();
                     let (t0, t1) = c.range_tuple();
                     let mid = c.subs(0.5 * (t0 + t1));
                     let found = edges.iter().find_map(|(x, m)| {
-                        if m.distance(mid) > tol * 10.0 {
+                        // Same ends; and the middle of one on the other — by geometry, not by
+                        // parameter: two curves along one edge may be parametrised differently
+                        // (a loft bridge's own spline against a surface's trim edge).
+                        if m.distance(mid) > tol * 10.0 && !on_curve(&x.curve(), mid, tol * 10.0) {
                             return None;
                         }
                         if x.front().id() == a.id() && x.back().id() == b.id() {
@@ -928,8 +1033,14 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
                             x
                         }
                     };
-                    rec.piece(&ne, &abs);
-                    nw.push(if e.orientation() { ne } else { ne.inverse() });
+                    rec.piece(&ne, &abs0);
+                    run.push(ne);
+                    }
+                    if e0.orientation() {
+                        nw.extend(run);
+                    } else {
+                        nw.extend(run.iter().rev().map(mt::Edge::inverse));
+                    }
                 }
                 wires.push(mt::Wire::from(nw));
             }
