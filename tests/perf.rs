@@ -2841,6 +2841,7 @@ fn speed_budgets() {
             double: Default::default(),
             flip_fixed: false,
             radius: None,
+            aligned: false,
         };
         rows.push((
             "sheet metal: Bend of two faces (Fix Edges) + DXF",

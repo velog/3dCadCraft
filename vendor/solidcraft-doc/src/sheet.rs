@@ -3280,7 +3280,13 @@ impl SheetBody {
     /// when the faces are too close for tangent bends). Returns the new flanges, first first;
     /// the last one's panel is `other`'s face.
     #[allow(clippy::too_many_arguments)]
-    pub fn join_bend(&mut self, other: &SheetBody, p1: Vec3, p2: Vec3, radius: f64, double: DoubleBend, first_fixed: bool) -> Result<Vec<usize>> {
+    ///
+    /// Edges of different lengths (or shifted along each other) are bent over the part they
+    /// share. `aligned` (Inventor's Extend Bend *Aligned to Side Face*) extends or trims each
+    /// face over its whole edge; otherwise (*Perpendicular to Side Face*) a face is extended
+    /// only over the shared part, the rest of its edge stays where it was.
+    #[allow(clippy::too_many_arguments)]
+    pub fn join_bend(&mut self, other: &SheetBody, p1: Vec3, p2: Vec3, radius: f64, double: DoubleBend, first_fixed: bool, aligned: bool) -> Result<Vec<usize>> {
         use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
         let bad = |m: &str| -> Result<Vec<usize>> { Err(DocError::Invalid(m.into())) };
         if self.flat || other.flat {
@@ -3318,9 +3324,19 @@ impl SheetBody {
         }
         let (lo1, hi1) = (a1.dot(d1).min(b1.dot(d1)), a1.dot(d1).max(b1.dot(d1)));
         let (lo2, hi2) = (pa.dot(dd).min(pb.dot(dd)), pa.dot(dd).max(pb.dot(dd)));
-        if (lo1 - lo2).abs() > 1e-4 || (hi1 - hi2).abs() > 1e-4 {
-            return bad("not yet: edges of different lengths or shifted along each other (Width Extents)");
+        // The part both edges share (along d1, in this panel's flat).
+        let (lo, hi) = (lo1.max(lo2), hi1.min(hi2));
+        if hi - lo < 1e-6 {
+            return bad("the two edges do not overlap along their length");
         }
+        let whole1 = lo - lo1 < 1e-6 && hi1 - hi < 1e-6;
+        let whole2 = lo - lo2 < 1e-6 && hi2 - hi < 1e-6;
+        let on1 = |u: f64| a1 + d1 * (u - a1.dot(d1));
+        let (ao, bo) = (on1(lo), on1(hi));
+        // The same span on the second face's edge, in its own flat.
+        let sgn = if (pb - pa).dot(dd) > 0.0 { 1.0 } else { -1.0 };
+        let on2 = |u: f64| a2 + d2 * ((u - pa.dot(dd)) * sgn);
+        let (ao2, bo2) = (on2(lo), on2(hi));
         // The section square to the edges: s out of this panel's edge, z through this sheet.
         let s_of = |q: Vec3| (Vec2::new(q.x, q.y) - a1).dot(n1);
         let u3 = apply_vector(&m, v3(n2) * -1.0);
@@ -3427,7 +3443,12 @@ impl SheetBody {
             ext1 = x1;
         }
         // This panel's edge moves to where the first bend starts.
+        let partial = !whole1 && !aligned && ext1 > 1e-9;
         let start = match pan1 {
+            None if partial => {
+                self.base = grown(&self.base, ao, bo, n1 * ext1)?;
+                (ao + n1 * ext1, hi - lo)
+            }
             None => {
                 if ext1 < -1e-9 {
                     self.trim(None, a1, b1, -ext1, (false, false))?;
@@ -3435,6 +3456,17 @@ impl SheetBody {
                     self.base = grown(&self.base, a1, b1, n1 * ext1)?;
                 }
                 self.edge_on_line(None, a1, b1, d1, a1 + n1 * ext1)?
+            }
+            Some(i) if partial => {
+                let f = self.flanges.get(i).ok_or_else(|| DocError::Invalid("flange".into()))?;
+                let tip = f.p + f.n * (self.allowance(f) + f.leg);
+                if f.shape.is_some() || (a1 - tip).dot(f.n).abs() > 1e-6 || f.n.dot(n1) < 1.0 - 1e-9 {
+                    return bad("not yet: a bend from a flange's side edge (pick its far edge)");
+                }
+                // A tab on the flange's panel over the shared part only.
+                let tab = rect(ao, bo, bo + n1 * ext1, ao + n1 * ext1);
+                self.adds.push((Some(i), Region2 { outer: tab.outer.ccw(), holes: Vec::new() }));
+                (ao + n1 * ext1, hi - lo)
             }
             Some(i) => {
                 let f = self.flanges.get(i).ok_or_else(|| DocError::Invalid("flange".into()))?;
@@ -3450,6 +3482,13 @@ impl SheetBody {
                 }
                 self.edge_on_line(Some(i), a1, b1, d1, a1 + n1 * ext1)?
             }
+        };
+        // The bend runs over the shared part only.
+        let start = if whole1 || partial {
+            start
+        } else {
+            let u0 = start.0.dot(d1);
+            (start.0 + d1 * (lo - u0), hi - lo)
         };
         let (mut p, len) = (snap(start.0), start.1);
         let mut parent = pan1;
@@ -3481,6 +3520,8 @@ impl SheetBody {
         let mut o2 = other.clone();
         if ext2 < -1e-9 {
             o2.trim(None, a2, b2, -ext2, (false, false))?;
+        } else if ext2 > 1e-9 && !whole2 && !aligned {
+            o2.base = grown(&o2.base, ao2, bo2, n2 * ext2)?;
         } else if ext2 > 1e-9 {
             o2.base = grown(&o2.base, a2, b2, n2 * ext2)?;
         }

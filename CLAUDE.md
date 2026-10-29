@@ -1072,7 +1072,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   over the picked face. Inventor's flat lengths and heights are the expectations of `tests/sheet_hem_types.rs`.
   Bend (`SheetOp::Bend`, revision 45; vendor `join_bend`): the second face's sheet becomes flanges of the first (its
   face the last flange's `shape` panel, mapped by `region_to_flat`); regeneration drops its solid and `metal` entry
-  (`part/mod.rs`). Only a one-face second sheet for now. Planned-panel items of its edges are `<body>|<sheet edge>`.
+  (`part/mod.rs`: the sheet that is not the result's). Only a one-face second sheet: when only the first is plain the two
+  swap (`ksm::is_plain`), so the kept body may be `other`. Edges of different lengths bend over their shared part
+  (`aligned` = Aligned to Side Face). Planned-panel items of its edges are `<body>|<sheet edge>`.
   Imported sheets (`SheetConvertFeature::recognize`, revision 46; `ksm::recognize` in
   `kernel/exact/sheet_metal/recognize.rs`): panels walked across round bends on the base face's skin, each next
   panel a flange `shape` through `region_to_flat`; the refolded volume must match the body's (else refused).

@@ -1059,6 +1059,11 @@ pub enum SheetOp {
         /// Inner bend radius (mm); `None`: the rule's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         radius: Option<Real>,
+        /// Extend Bend *Aligned to Side Face*: edges of different lengths
+        /// extend each face over its whole edge (default: only over the part
+        /// both edges share, *Perpendicular to Side Face*).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        aligned: bool,
     },
 }
 

@@ -4005,6 +4005,7 @@ pub(super) fn sheet_op(
             double,
             flip_fixed,
             radius,
+            aligned,
         } => {
             use super::sheet_metal::DoubleBendType;
             if body == other {
@@ -4025,21 +4026,31 @@ pub(super) fn sheet_op(
                 DoubleBendType::Deg90 => ksm::DoubleBend::Deg90,
                 DoubleBendType::FullRadius => ksm::DoubleBend::FullRadius,
             };
+            // The second sheet must be a plain face: when only the first is,
+            // the sheets swap (the plain one joins the other; its edge stays
+            // the fixed one unless flipped, as picked).
+            let swap = !ksm::is_plain(&state2.model) && ksm::is_plain(&state.model);
+            let (a, b, pa, pb, keep, name) = if swap {
+                (state2, state, p2, p1, k2, other)
+            } else {
+                (state, state2, p1, p2, k, body)
+            };
             let (solid, model) = ksm::bend(
-                &state.model,
-                &state2.model,
-                body,
+                &a.model,
+                &b.model,
+                name,
                 &op.id,
-                p1,
-                p2,
+                pa,
+                pb,
                 radius.unwrap_or(rv.bend_radius),
                 kind,
-                !flip_fixed,
+                swap == *flip_fixed,
+                *aligned,
             )
             .map_err(User)?;
-            let (mut next, st) = replace(k, solid, model, body);
-            // The second sheet is now part of the first.
-            next.remove(k2);
+            let (mut next, st) = replace(keep, solid, model, name);
+            // The other sheet is now part of this one.
+            next.remove(if swap { k } else { k2 });
             Ok((next, st))
         }
         SheetOp::CornerChamfer {

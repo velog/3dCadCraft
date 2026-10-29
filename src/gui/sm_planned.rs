@@ -503,6 +503,7 @@ impl Planned {
                         .unwrap_or_default(),
                     flip_fixed: self.flip_fixed,
                     radius: self.radius,
+                    aligned: self.extend_aligned,
                 })
             }
             PlannedKind::CornerRound => {
@@ -580,8 +581,10 @@ impl Planned {
                 double,
                 flip_fixed,
                 radius,
+                aligned,
             } => {
                 let mut p = Self::new(PlannedKind::Bend, rule);
+                p.extend_aligned = *aligned;
                 p.double_bend = DoubleBendType::ALL
                     .iter()
                     .position(|d| d == double)
@@ -669,14 +672,15 @@ impl Planned {
                     false,
                     "Perpendicular to Side Face",
                 )
-                .on_hover_text("The new material runs square to the bend (default)");
-                ui.add_enabled_ui(false, |ui| {
-                    ui.radio_value(&mut self.extend_aligned, true, "Aligned to Side Face")
-                        .on_disabled_hover_text(
-                            "The new material follows the side faces the bend joins: not yet \
-                             (docs/spec/5.6-sheet-metal.md §6.1d)",
-                        );
-                });
+                .on_hover_text(concat!(
+                    "Edges of different lengths: each face is extended to the bend ",
+                    "only over the part both edges share (default)"
+                ));
+                ui.radio_value(&mut self.extend_aligned, true, "Aligned to Side Face")
+                    .on_hover_text(concat!(
+                        "Edges of different lengths: each face is extended to the bend ",
+                        "over its whole edge"
+                    ));
             });
             ui.end_row();
         });

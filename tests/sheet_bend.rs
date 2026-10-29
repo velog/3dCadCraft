@@ -88,6 +88,7 @@ fn bend(second: Second, double: DoubleBendType, flip_fixed: bool) -> Result<Part
         double,
         flip_fixed,
         radius: None,
+        aligned: false,
     }))
     .map_err(|e| e.to_string())?;
     Ok(p)
@@ -335,4 +336,98 @@ fn bends_refuse() {
             double.label()
         );
     }
+}
+
+/// Edges of different lengths (Inventor's behaviour): the 100 × 50 face on
+/// XY and a wall at x = 110 (z 10..60) whose edge runs from y0 to y1. The
+/// bend covers the part both edges share; *Perpendicular to Side Face*
+/// extends each face to it only there, *Aligned to Side Face* over its whole
+/// edge. Inventor's volumes; the flat is 168.712 long in every case.
+#[test]
+fn edges_of_different_lengths() {
+    // (y0, y1, aligned, volume, flat width)
+    let cases = [
+        (10.0, 40.0, true, 14_442.743_338_823_1, 50.0),
+        (10.0, 40.0, false, 14_122.743_338_823_1, 50.0),
+        (-10.0, 60.0, true, 19_111.238_898_038_4, 70.0),
+        (-10.0, 60.0, false, 18_871.238_898_038_4, 70.0),
+        (20.0, 70.0, true, 16_682.743_338_823_1, 70.0),
+        (20.0, 70.0, false, 16_122.743_338_823_1, 70.0),
+    ];
+    let mut bad = Vec::new();
+    for (y0, y1, aligned, want, width) in cases {
+        let what = format!("y {y0}..{y1}, aligned {aligned}");
+        let mut p = PartDocument::default();
+        p.make_sheet_metal(Some(SheetMetalDefaults {
+            thickness: T,
+            k_factor: 0.5,
+            ..Default::default()
+        }));
+        face(&mut p, OriginPlane::XY, 0.0, (0.0, 0.0), (100.0, 50.0));
+        face(&mut p, OriginPlane::YZ, 110.0, (y0, 10.0), (y1, 60.0));
+        let (body, edge1) = p.sheet_edge_at(Point3::new(100.0, 25.0, T)).unwrap();
+        let (other, edge2) = p
+            .sheet_edge_at(Point3::new(110.0, (y0 + y1) / 2.0, 10.0))
+            .unwrap();
+        let r = p.add_sheet_op(SheetOpFeature::new(SheetOp::Bend {
+            body,
+            edge1,
+            other,
+            edge2,
+            double: FixEdges,
+            flip_fixed: false,
+            radius: None,
+            aligned,
+        }));
+        if let Err(e) = r {
+            bad.push(format!("{what}: {e}"));
+            continue;
+        }
+        let v = volume(&p);
+        let fp = &p.flat_patterns()[0];
+        let (len, wid) = (fp.size.0.max(fp.size.1), fp.size.0.min(fp.size.1));
+        if (v - want).abs() > 1e-3 * want
+            || (len - 168.712_388_980_385).abs() > 1e-3
+            || (wid - width).abs() > 1e-3
+        {
+            bad.push(format!(
+                "{what}: volume {v:.3} (Inventor {want:.3}), flat {len:.4} x {wid:.4} (168.7124 x {width})"
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// The second face's sheet may have flanges when the first is a plain face:
+/// the sheets swap (the plain face joins the other).
+#[test]
+fn a_plain_face_joins_a_sheet_with_flanges() {
+    use cadcraft3d::part::sheet_metal::SheetFlangeFeature;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(Some(SheetMetalDefaults {
+        thickness: T,
+        k_factor: 0.5,
+        ..Default::default()
+    }));
+    face(&mut p, OriginPlane::XY, 0.0, (0.0, 0.0), (100.0, 50.0));
+    let (b, e) = p.sheet_edge_at(Point3::new(0.0, 25.0, T)).unwrap();
+    p.add_sheet_flange(SheetFlangeFeature::new(&b, vec![e], 20.0))
+        .unwrap();
+    face(&mut p, OriginPlane::YZ, 120.0, (0.0, 10.0), (50.0, 60.0));
+    let (body, edge1) = p.sheet_edge_at(Point3::new(120.0, 25.0, 10.0)).unwrap();
+    let (other, edge2) = p.sheet_edge_at(Point3::new(100.0, 25.0, T)).unwrap();
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::Bend {
+        body,
+        edge1,
+        other,
+        edge2,
+        double: FixEdges,
+        flip_fixed: false,
+        radius: None,
+        aligned: false,
+    }))
+    .unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    assert_eq!(p.exact_bodies.0.len(), 1);
+    assert_eq!(p.flat_patterns()[0].bends.len(), 2);
 }

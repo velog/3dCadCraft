@@ -352,9 +352,16 @@ pub enum DoubleBend {
     FullRadius,
 }
 
+/// Whether the sheet is one plain face: no flanges, no corner fills (what
+/// [`bend`] takes as its second sheet).
+pub fn is_plain(m: &SheetModel) -> bool {
+    m.0.flanges.is_empty() && m.0.adds.is_empty()
+}
+
 /// Bend: sheet `other` (one face, its cut-outs kept) joined to `m` between
 /// the edge at `e1` (on `m`) and the edge at `e2` (on `other`); `radius` the
-/// inner bend radius; `first_fixed`: the second edge moves (parallel faces).
+/// inner bend radius; `first_fixed`: the second edge moves (parallel faces);
+/// `aligned`: edges of different lengths extend each face over its whole edge.
 /// The new bends are tagged `<tag>.1`, `<tag>-2.1`, ….
 #[allow(clippy::too_many_arguments)]
 pub fn bend(
@@ -367,6 +374,7 @@ pub fn bend(
     radius: Real,
     double: DoubleBend,
     first_fixed: bool,
+    aligned: bool,
 ) -> Result<(ExactSolid, SheetModel), String> {
     let mut next = (*m.0).clone();
     let kind = match double {
@@ -377,7 +385,15 @@ pub fn bend(
     };
     guarded_sheet("Bend", || {
         let made = next
-            .join_bend(&other.0, v3(&e1), v3(&e2), radius, kind, first_fixed)
+            .join_bend(
+                &other.0,
+                v3(&e1),
+                v3(&e2),
+                radius,
+                kind,
+                first_fixed,
+                aligned,
+            )
             .map_err(|e| e.to_string())?;
         for (k, i) in made.into_iter().enumerate() {
             if let Some(f) = next.flanges.get_mut(i) {

@@ -1452,12 +1452,19 @@ impl PartDocument {
                 BuildStep::SheetOp(op) if use_exact => {
                     match exact::sheet_op(op, &solids, &metal, &rule, &self.sketches) {
                         Ok((next, state)) => {
+                            let kept = state.as_ref().map(|(b, _)| b.clone());
                             if let Some((body, state)) = state {
                                 metal.insert(body, state);
                             }
-                            // A Bend takes the second face's sheet into the first.
-                            if let sheet_metal::SheetOp::Bend { other, .. } = &op.op {
-                                metal.remove(other);
+                            // A Bend takes one sheet into the other (the second
+                            // into the first, unless only the first is a plain face).
+                            if let sheet_metal::SheetOp::Bend { body, other, .. } = &op.op {
+                                let gone = if kept.as_deref() == Some(other.as_str()) {
+                                    body
+                                } else {
+                                    other
+                                };
+                                metal.remove(gone);
                             }
                             Ok(Some(next))
                         }

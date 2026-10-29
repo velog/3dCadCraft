@@ -731,6 +731,7 @@ fn bend_r45() -> PartDocument {
         double: Default::default(),
         flip_fixed: false,
         radius: None,
+        aligned: false,
     }))
     .unwrap();
     p
