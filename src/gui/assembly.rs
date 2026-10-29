@@ -110,6 +110,9 @@ pub(super) struct AsmUi {
     ),
     /// The assembly a component was opened from (browser *Return*).
     pub came_from: Option<DocumentId>,
+    /// Edit in place (spec 3.10 §3.2): the part being edited and where it
+    /// lies in the assembly it came from (the rest is drawn around it).
+    pub in_place: Option<InPlace>,
     /// Copied occurrences (Ctrl+C): component, placement, name.
     clipboard: Vec<(DocRef, Transform3, String)>,
     /// Isolate: only these occurrences are drawn and picked until Undo
@@ -127,6 +130,24 @@ pub(super) struct AsmUi {
     /// `None` when the menu came from the browser.
     pub menu_at: Option<(Pos2, Rect)>,
 }
+
+/// A part edited in place (spec 3.10 §3.2).
+#[derive(Clone, Debug)]
+pub(super) struct InPlace {
+    /// The assembly it was opened from.
+    pub assembly: DocumentId,
+    /// Its occurrence there and the path inside a subassembly.
+    pub top: u32,
+    pub sub: Vec<u32>,
+    /// The edited part.
+    pub document: DocumentId,
+    /// Its placement in the assembly.
+    pub place: Transform3,
+}
+
+/// The other components while a part is edited in place: grey, see-through.
+const CONTEXT_GREY: [f32; 3] = [0.62, 0.63, 0.66];
+const CONTEXT_ALPHA: f32 = 0.22;
 
 impl CadCraftApp {
     /// Forgets the assembly UI state of the document being left (selection,
@@ -411,8 +432,81 @@ impl CadCraftApp {
 
     /// Back to the assembly a component was opened from.
     pub(super) fn return_to_assembly(&mut self) {
+        self.asm.in_place = None;
         if let Some(a) = self.asm.came_from.take() {
             self.activate_document(a);
+        }
+    }
+
+    /// Edit (double-click, right-click › Edit; spec 3.10 §3.2): the part at
+    /// `sub` below occurrence `top` becomes the edited document, drawn where
+    /// it lies with the rest of the assembly around it; *Return* comes back.
+    /// A subassembly or a linked part file opens as with Open (in place for
+    /// them comes later).
+    pub(super) fn edit_in_place(&mut self, top: u32, sub: Vec<u32>) {
+        let asm_id = self.part_id;
+        let Some(a) = self.assembly() else {
+            return;
+        };
+        let Ok((o, at, name)) = crate::assembly::tree::nested(&self.project, a, top, &sub) else {
+            return;
+        };
+        let r = o.component;
+        let Some(place) = a.find(top).map(|t| t.transform * at) else {
+            return;
+        };
+        if r.library.is_some() || crate::assembly::tree::assembly_of(&self.project, r).is_some() {
+            self.open_doc(r);
+            return;
+        }
+        self.asm.came_from = Some(asm_id);
+        self.activate_document(r.document);
+        self.asm.came_from = Some(asm_id);
+        self.asm.in_place = Some(InPlace {
+            assembly: asm_id,
+            top,
+            sub,
+            document: r.document,
+            place,
+        });
+        self.scene_dirty = true;
+        self.file_status = Some(Ok(format!("Edit: {name} in place (Return goes back)")));
+    }
+
+    /// The in-place context while it holds: the edited part is the active
+    /// document and came from that assembly.
+    pub(super) fn in_place_now(&self) -> Option<&InPlace> {
+        self.asm
+            .in_place
+            .as_ref()
+            .filter(|ip| ip.document == self.part_id && self.asm.came_from == Some(ip.assembly))
+    }
+
+    /// The other components around a part edited in place: see-through and
+    /// grey, in the part's coordinates.
+    pub(super) fn in_place_scene(&self, g: &mut super::renderer::SceneGeometry) {
+        let Some(ip) = self.in_place_now() else {
+            return;
+        };
+        let Some(a) = crate::assembly::tree::assembly_of(&self.project, DocRef::local(ip.assembly))
+        else {
+            return;
+        };
+        let mut edited = vec![ip.top];
+        edited.extend(&ip.sub);
+        let inv = ip.place.inverse();
+        let grey = |_: Option<&str>| super::material::FaceOver {
+            look: None,
+            tint: Some(CONTEXT_GREY),
+        };
+        for l in crate::assembly::tree::leaves(&self.project, ip.assembly, a) {
+            if l.path == edited {
+                continue;
+            }
+            let t = inv * l.world;
+            self.with_part(l.occurrence.component, |p| {
+                super::material::add_part_meshes_with(g, p, Some(&t), Some(CONTEXT_ALPHA), &grey)
+            });
         }
     }
 
@@ -912,7 +1006,14 @@ impl CadCraftApp {
             && !constraining
             && let Some((h, _)) = hit
         {
-            self.open_component(h.occurrence);
+            // Edit in place; under Part Priority the part inside a
+            // subassembly.
+            let nested = (self.asm_priority() == crate::command::selection::AsmPriority::Part)
+                .then(|| pointer.and_then(|p| self.part_hit(p, rect)))
+                .flatten()
+                .map(|(part, _, _)| (part.top, part.sub));
+            let (top, sub) = nested.unwrap_or((h.occurrence, Vec::new()));
+            self.edit_in_place(top, sub);
             return;
         }
 
@@ -1401,6 +1502,10 @@ impl CadCraftApp {
             ui.close();
         }
         ui.separator();
+        if ids.len() == 1 && ui.button("Edit").clicked() {
+            self.edit_in_place(ids[0], Vec::new());
+            ui.close();
+        }
         if ids.len() == 1 && ui.button("Open").clicked() {
             self.open_component(ids[0]);
             ui.close();

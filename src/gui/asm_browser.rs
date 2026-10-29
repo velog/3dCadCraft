@@ -92,11 +92,12 @@ enum TreeCmd {
     /// The assembly's appearance override of a feature.
     FeatureLook(u32, String, Option<String>),
     ToggleVisible(u32),
-    Open(u32),
     /// A component inside a subassembly (top occurrence, path), Ctrl adds.
     SelectNested(u32, Vec<u32>, bool),
     /// Open a component's document (a part or subassembly inside one).
     OpenDoc(crate::document::DocRef),
+    /// Edit in place the part at a path below a top occurrence.
+    Edit(u32, Vec<u32>),
     Pick(GeomRef),
     SelectConstraint(u32),
     EditConstraint(u32),
@@ -264,7 +265,7 @@ impl CadCraftApp {
                         cmds.push(TreeCmd::Select(id, add));
                     }
                     if r.double_clicked() {
-                        cmds.push(TreeCmd::Open(id));
+                        cmds.push(TreeCmd::Edit(id, Vec::new()));
                     }
                     if r.hovered() {
                         self.asm.hover = Some(id);
@@ -350,12 +351,12 @@ impl CadCraftApp {
                     }
                     self.cons.selected = None;
                 }
-                TreeCmd::Open(id) => self.open_component(id),
                 TreeCmd::SelectNested(occurrence, sub, add) => {
                     let s = super::asm_select::AsmSub::Part { occurrence, sub };
                     self.asm_sub_click(Some(s), add);
                 }
                 TreeCmd::OpenDoc(r) => self.open_doc(r),
+                TreeCmd::Edit(top, sub) => self.edit_in_place(top, sub),
                 TreeCmd::SelectFeature(occurrence, fid, add) => {
                     let sub = super::asm_select::AsmSub::Feature {
                         occurrence,
@@ -472,12 +473,16 @@ impl CadCraftApp {
                     cmds.push(TreeCmd::SelectNested(top, p.clone(), add));
                 }
                 if r.double_clicked() {
-                    cmds.push(TreeCmd::OpenDoc(o.component));
+                    cmds.push(TreeCmd::Edit(top, p.clone()));
                 }
                 if r.hovered() && !inner {
                     this.asm.tree_hover = Some(me.clone());
                 }
                 r.context_menu(|ui| {
+                    if ui.button("Edit").clicked() {
+                        cmds.push(TreeCmd::Edit(top, p.clone()));
+                        ui.close();
+                    }
                     if ui.button("Open").clicked() {
                         cmds.push(TreeCmd::OpenDoc(o.component));
                         ui.close();

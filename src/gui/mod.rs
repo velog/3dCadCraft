@@ -5131,6 +5131,8 @@ impl CadCraftApp {
         }
         // Faces in their appearance (face > feature > body > part > material).
         material::add_part_meshes(&mut g, self.part());
+        // Edit in place: the rest of the assembly around it (spec 3.10).
+        self.in_place_scene(&mut g);
         // Cosmetic threads: a banded texture on their faces (one mesh).
         if self.thread_texture {
             g.add_thread_bands(&crate::part::ThreadBands::of(&self.part().cosmetic_threads));
