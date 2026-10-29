@@ -1228,6 +1228,52 @@ fn speed_budgets() {
         ));
     }
 
+    // Loft between edges: the owner's two trimmed spline surfaces bridged by a ruled surface.
+    {
+        use cadcraft3d::document::{DocumentData, Project};
+        use cadcraft3d::part::surface_op::SurfEdge;
+        use cadcraft3d::part::{LoftFeature, LoftSection, Output};
+        let pr = Project::load(std::path::Path::new(
+            "tests/data/surface_test_owner.3dcadcraft",
+        ))
+        .unwrap();
+        let mut owner = pr
+            .documents()
+            .iter()
+            .find_map(|d| match &d.data {
+                DocumentData::Part(p) => Some(p.clone()),
+                _ => None,
+            })
+            .unwrap();
+        owner.regenerate().unwrap();
+        // The trimmed edges (points measured on them in the owner's file).
+        let def = {
+            let mut d = LoftFeature::new(vec![
+                LoftSection::Edges(vec![SurfEdge {
+                    face: "Extrusion2:Side:1v1:0".into(),
+                    hint: [67.5970430256771, -2.458149506572493, 70.00566486113327],
+                }]),
+                LoftSection::Edges(vec![SurfEdge {
+                    face: "Extrusion4:Side:2v1:0".into(),
+                    hint: [67.57014137001036, 0.21164937845599746, 35.32154111065427],
+                }]),
+            ]);
+            d.output = Output::Surface;
+            d
+        };
+        rows.push((
+            "loft between edges: the owner's two trimmed surfaces bridged (add_loft)",
+            500.0,
+            // The steps before the loft are cache hits; each run has its own copy of the cache,
+            // so the loft itself is built every time.
+            median_ms(3, || {
+                let mut p = owner.clone();
+                p.build_cache = owner.build_cache.detached();
+                p.add_loft(def.clone()).unwrap();
+            }),
+        ));
+    }
+
     // Face Draft of a box's sides and vertical rounds (one tangent chain
     // from the front), fixed plane XY.
     let mut vertical_rounds = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();

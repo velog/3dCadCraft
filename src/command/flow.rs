@@ -413,8 +413,8 @@ pub fn shell_selectors(s: &crate::part::ShellFeature) -> Vec<Selector> {
 /// Prompts of the Loft selectors (status bar: `Loft: <prompt>`).
 pub mod loft_prompts {
     /// Sections.
-    pub const SECTIONS: &str = "Select the sections in order (closed regions, planar faces, or a \
-                                sketch point at an end; a second click drops one)";
+    pub const SECTIONS: &str = "Select the sections in order (closed regions, planar faces, edges of \
+                                a surface, or a sketch point at an end; a second click drops one)";
     /// Rails.
     pub const RAILS: &str = "Select rails (sketch curves or edges that touch every section), or OK";
     /// Center Line.
@@ -427,6 +427,7 @@ const SECTIONS: &[PickKind] = &[
     PickKind::Region,
     PickKind::PlanarFace,
     PickKind::SketchPoint,
+    PickKind::Edge,
 ];
 const GUIDE_CURVES: &[PickKind] = &[PickKind::SketchCurve, PickKind::Edge];
 const SECTION_POINTS: &[PickKind] = &[PickKind::SectionPoint];

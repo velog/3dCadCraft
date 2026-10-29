@@ -16,6 +16,14 @@ use crate::{KernelError, Result};
 /// every edge. Its history is over `[body]`: the face is new, its edges the body's own. Call it
 /// under [`crate::guard`].
 pub(crate) fn fill_loop(body: &Body, chain: &[mt::Edge]) -> Result<Body> {
+    let face = fill_face(body, chain)?;
+    let mut rec = Rebuild::default();
+    rec.made(&face, Vec::new());
+    Ok(rebuilt_body(crate::surfaces::surface_body(vec![face]), &[&body.solid], &rec))
+}
+
+/// The face of [`fill_loop`] (its tolerance from `body`), before it becomes a body.
+pub(crate) fn fill_face(body: &Body, chain: &[mt::Edge]) -> Result<mt::Face> {
     let tol = face_tolerance(body);
     let mut sides: Vec<(EdgeSampler, Vec3)> = Vec::with_capacity(chain.len());
     for e in chain {
@@ -34,10 +42,7 @@ pub(crate) fn fill_loop(body: &Body, chain: &[mt::Edge]) -> Result<Body> {
     // The wire runs counter-clockwise about the surface's normal.
     let wire: mt::Wire =
         if fill.counter_clockwise { chain.to_vec().into() } else { chain.iter().rev().map(mt::Edge::inverse).collect::<Vec<_>>().into() };
-    let face = mt::Face::try_new(vec![wire], crate::spline_conv::surface(&fill.surface)?).map_err(|e| KernelError::Failed(format!("fill: {e}")))?;
-    let mut rec = Rebuild::default();
-    rec.made(&face, Vec::new());
-    Ok(rebuilt_body(crate::surfaces::surface_body(vec![face]), &[&body.solid], &rec))
+    mt::Face::try_new(vec![wire], crate::spline_conv::surface(&fill.surface)?).map_err(|e| KernelError::Failed(format!("fill: {e}")))
 }
 
 /// How far a loop's edges may be from a plane for its patch to be that plane: `10⁻⁷` of the

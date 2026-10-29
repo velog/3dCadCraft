@@ -221,6 +221,15 @@ enum Sweep<'a> {
 #[derive(Clone, Default)]
 pub struct BuildCache(std::sync::Arc<std::sync::Mutex<Vec<CachedStep>>>);
 
+impl BuildCache {
+    /// A copy of the cached steps that is no longer shared (a timed run that must build its own
+    /// new steps while the earlier ones stay hits).
+    pub fn detached(&self) -> BuildCache {
+        let steps = self.0.lock().map(|v| v.clone()).unwrap_or_default();
+        BuildCache(std::sync::Arc::new(std::sync::Mutex::new(steps)))
+    }
+}
+
 #[derive(Clone)]
 struct CachedStep {
     key: u64,
@@ -1320,7 +1329,11 @@ impl PartDocument {
                     }
                     Err(e) => Err(e),
                 },
-                BuildStep::Loft(lo) if use_exact => match lo.build(&self.sketches, &body) {
+                BuildStep::Loft(lo) if use_exact => match lo.build_in(&self.sketches, &body, &{
+                    let mut all = solids.clone();
+                    all.extend(sheets.iter().cloned());
+                    all
+                }) {
                     // Output Surface: new surface bodies, no operation.
                     Ok(added) if lo.output == Output::Surface => {
                         let mut next = solids.clone();

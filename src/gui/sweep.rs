@@ -335,6 +335,28 @@ impl CadCraftApp {
                     ));
                 }
             }
+            // Loft: an edge (of a surface) is part of an edge section; edges come before faces.
+            if loft_takes(PickKind::Edge)
+                && let Some(e) = self.edge_under(p, rect)
+                && let Some(face) = self
+                    .picker()
+                    .faces_of(e)
+                    .into_iter()
+                    .find_map(|f| part.body.face(f).and_then(|x| x.name.clone()))
+                && let Some(at) = self.click_point(&super::select::SelItem::Edge(e), p, rect)
+            {
+                let pts = part
+                    .body
+                    .sample_edge(e, &crate::kernel::TessellationOptions::default())
+                    .unwrap_or_default();
+                return Some((
+                    Pick::SurfEdge(crate::part::surface_op::SurfEdge {
+                        face,
+                        hint: [at.x, at.y, at.z],
+                    }),
+                    vec![pts],
+                ));
+            }
             // Loft: a planar face is a face-loop section.
             if loft_takes(PickKind::PlanarFace)
                 && let Some((o, dir)) = self.camera.ray(p, rect)
@@ -449,6 +471,10 @@ impl CadCraftApp {
                 },
                 Pick::Point(sketch, point) => LoftSection::Point { sketch, point },
                 Pick::Face(f) => LoftSection::FaceLoop(f),
+                Pick::SurfEdge(e) => {
+                    self.loft_pick_edge(e);
+                    return;
+                }
                 Pick::Path(_) | Pick::Edge(_) | Pick::MapPoint(_) => return,
             };
             let Some(d) = self.loft_draft.as_mut() else {
@@ -927,8 +953,49 @@ enum Pick {
     Edge(crate::part::EdgeRef),
     Point(String, crate::sketch::PointId),
     Face(crate::part::FaceRef),
+    /// An edge of the model for a loft's edge section (a face along it + the point picked).
+    SurfEdge(crate::part::surface_op::SurfEdge),
     /// A point on a loft section's outline (model space).
     MapPoint([crate::kernel::Real; 3]),
+}
+
+impl CadCraftApp {
+    /// An edge picked for a loft section: added to the last section when that is a chain of
+    /// edges of the same body (the same edge again drops it), else a new edge section.
+    fn loft_pick_edge(&mut self, e: crate::part::surface_op::SurfEdge) {
+        let body_of = |app: &Self, x: &crate::part::surface_op::SurfEdge| {
+            app.body_of_face(&x.face, Some(x.hint))
+        };
+        let mine = body_of(self, &e);
+        let last_body = match self.loft_draft.as_ref().and_then(|d| d.def.sections.last()) {
+            Some(LoftSection::Edges(list)) => list.first().and_then(|x| body_of(self, x)),
+            _ => None,
+        };
+        let near = |a: &[crate::kernel::Real; 3], b: &[crate::kernel::Real; 3]| {
+            (Point3::from(*a) - Point3::from(*b)).norm() < 1e-3
+        };
+        let Some(d) = self.loft_draft.as_mut() else {
+            return;
+        };
+        // The same edge again (same face, a point on it near the first): dropped.
+        for k in 0..d.def.sections.len() {
+            if let LoftSection::Edges(list) = &mut d.def.sections[k]
+                && let Some(i) = list
+                    .iter()
+                    .position(|x| x.face == e.face && near(&x.hint, &e.hint))
+            {
+                list.remove(i);
+                if list.is_empty() {
+                    d.def.sections.remove(k);
+                }
+                return;
+            }
+        }
+        match d.def.sections.last_mut() {
+            Some(LoftSection::Edges(list)) if mine.is_some() && mine == last_body => list.push(e),
+            _ => d.def.sections.push(LoftSection::Edges(vec![e])),
+        }
+    }
 }
 
 /// The point of polyline `pts` nearest `q`.
@@ -1095,5 +1162,10 @@ pub(super) fn describe_section(s: &LoftSection, part: &crate::part::PartDocument
         LoftSection::Profile { sketch, .. } => format!("Profile of {}", name(sketch)),
         LoftSection::Point { sketch, .. } => format!("Point of {}", name(sketch)),
         LoftSection::FaceLoop(f) => format!("Face {}", f.face),
+        LoftSection::Edges(e) => format!(
+            "{} edge(s) along {}",
+            e.len(),
+            e.first().map_or("", |x| x.face.as_str())
+        ),
     }
 }

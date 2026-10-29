@@ -411,6 +411,124 @@ pub fn patch_edges(body: &Body, at: &[Vec3]) -> Result<Body> {
     })
 }
 
+/// A surface bridging two open chains of edges (of `a` and of `b`, each edge picked by a point on
+/// it): the ruled surface between them — each chain interpolated as a cubic B-spline through
+/// points along it by chord length, chain B run the way that pairs its ends with A's nearest,
+/// the two joined by straight lines at the ends (G0 to both). Its edges are its own (within the
+/// interpolation's error of the chains). Its history is over `[a, b]`: the face is new.
+/// (3DCadCraft addition: Loft between surface edges.)
+pub fn bridge_edges(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3]) -> Result<Body> {
+    a.require_brep("bridge")?;
+    b.require_brep("bridge")?;
+    if at_a.is_empty() || at_b.is_empty() || at_a.len() + at_b.len() > 10_000 {
+        return Err(KernelError::Invalid("pick the edges of both sections".into()));
+    }
+    guard("bridge", || {
+        let pa = chain_points(&picked_chain(a, at_a)?)?;
+        let mut pb = chain_points(&picked_chain(b, at_b)?)?;
+        let (Some(&a0), Some(&a1), Some(&b0), Some(&b1)) = (pa.first(), pa.last(), pb.first(), pb.last()) else {
+            return Err(KernelError::Invalid("a section has no points".into()));
+        };
+        if a0.dist(b1) + a1.dist(b0) < a0.dist(b0) + a1.dist(b1) {
+            pb.reverse();
+        }
+        let (b0, b1) = (pb[0], pb[pb.len() - 1]);
+        let tol = solidcraft_geom::LINEAR_TOL;
+        if a0.dist(b0) <= tol || a1.dist(b1) <= tol {
+            return Err(KernelError::Invalid("the sections touch: use Boundary Patch".into()));
+        }
+        let ca = interpolated(&pa)?;
+        let cb = interpolated(&pb)?;
+        let surface = mt::BSplineSurface::homotopy(ca.clone(), cb.clone());
+        let v = |q: Vec3| mt::builder::vertex(p3(q));
+        let (va0, va1, vb0, vb1) = (v(a0), v(a1), v(b0), v(b1));
+        let ea = mt::Edge::new(&va0, &va1, mt::Curve::BSplineCurve(ca));
+        let eb = mt::Edge::new(&vb0, &vb1, mt::Curve::BSplineCurve(cb));
+        // Counter-clockwise in (u, v): along A (v = 0), up the end line (u = 1), back along B
+        // (v = 1), down the start line (u = 0).
+        let wire: mt::Wire = vec![ea, mt::builder::line(&va1, &vb1), eb.inverse(), mt::builder::line(&vb0, &va0)].into();
+        let face = mt::Face::try_new(vec![wire], mt::Surface::BSplineSurface(surface))
+            .map_err(|e| KernelError::Failed(format!("bridge: {e}")))?;
+        let mut rec = Rebuild::default();
+        rec.made(&face, Vec::new());
+        Ok(rebuilt_body(surface_body(vec![face]), &[&a.solid, &b.solid], &rec))
+    })
+}
+
+/// Points along a chain of edges (64 per edge, the joints once), in the chain's direction.
+fn chain_points(chain: &[mt::Edge]) -> Result<Vec<Vec3>> {
+    const PER_EDGE: usize = 64;
+    let mut pts: Vec<Vec3> = Vec::new();
+    for e in chain {
+        let mut s = crate::plane_fit::EdgeSampler::new(e)
+            .ok_or_else(|| KernelError::Invalid("an edge has no parameter range".into()))?;
+        for k in 0..=PER_EDGE {
+            if k == 0 && !pts.is_empty() {
+                continue;
+            }
+            let q = s
+                .at(k as f64 / PER_EDGE as f64)
+                .ok_or_else(|| KernelError::Invalid("a point of an edge could not be found".into()))?;
+            pts.push(q);
+        }
+    }
+    Ok(pts)
+}
+
+/// A cubic B-spline through `pts` at chord-length parameters on [0, 1].
+fn interpolated(pts: &[Vec3]) -> Result<mt::BSplineCurve<mt::Point3>> {
+    let mut t = vec![0.0];
+    for w in pts.windows(2) {
+        let last = t[t.len() - 1];
+        t.push(last + w[0].dist(w[1]));
+    }
+    let len = t[t.len() - 1];
+    if len <= solidcraft_geom::LINEAR_TOL {
+        return Err(KernelError::Invalid("a section has no length".into()));
+    }
+    let params: Vec<f64> = t.iter().map(|x| x / len).collect();
+    let coords: Vec<[f64; 3]> = pts.iter().map(|q| [q.x, q.y, q.z]).collect();
+    let c = solidcraft_geom::bspline::CurveN::<3>::interpolate(&params, &coords, 3)
+        .map_err(|e| KernelError::Invalid(format!("a section cannot be interpolated: {e:?}")))?;
+    let ctrl: Vec<mt::Point3> = c.ctrl.iter().map(|p| mt::Point3::new(p[0], p[1], p[2])).collect();
+    mt::BSplineCurve::try_new(mt::KnotVec::from(c.knots), ctrl)
+        .map_err(|e| KernelError::Invalid(format!("a section's curve: {e}")))
+}
+
+/// The edges of `body` picked by points on them, chained into one open chain (each turned to
+/// run along it). Call it under [`guard`].
+fn picked_chain(body: &Body, at: &[Vec3]) -> Result<Vec<mt::Edge>> {
+    let mut pool: Vec<mt::Edge> = Vec::new();
+    for p in at {
+        let e = edge_near(body, *p).ok_or_else(|| KernelError::Invalid(format!("no edge at {p:?}")))?;
+        if !pool.iter().any(|x| x.id() == e.id()) {
+            pool.push(e);
+        }
+    }
+    let uses = |v: mt::VertexID, pool: &[mt::Edge]| {
+        pool.iter().filter(|e| e.front().id() == v || e.back().id() == v).count()
+    };
+    // Start at an edge with a free end (a closed loop has none: it is not a bridge section).
+    let k = pool
+        .iter()
+        .position(|e| uses(e.front().id(), &pool) == 1 || uses(e.back().id(), &pool) == 1)
+        .ok_or_else(|| KernelError::Invalid("a section's edges close a loop: use Loft or Boundary Patch".into()))?;
+    let first = pool.remove(k);
+    let first = if uses(first.front().id(), &pool) == 0 { first } else { first.inverse() };
+    let mut at_v = first.back().clone();
+    let mut chain = vec![first];
+    while let Some(k) = pool.iter().position(|e| e.front().id() == at_v.id() || e.back().id() == at_v.id()) {
+        let e = pool.remove(k);
+        let e = if e.front().id() == at_v.id() { e } else { e.inverse() };
+        at_v = e.back().clone();
+        chain.push(e);
+    }
+    if !pool.is_empty() {
+        return Err(KernelError::Invalid("a section's edges do not form one chain".into()));
+    }
+    Ok(chain)
+}
+
 /// The edges of `body` picked by points on them, chained into one closed loop (each turned to
 /// run along it). Call it under [`guard`]: sampling an intersection curve can fail in truck.
 pub(crate) fn picked_loop(body: &Body, at: &[Vec3]) -> Result<Vec<mt::Edge>> {

@@ -1020,3 +1020,122 @@ fn ruled_alternate_all_faces_uses_each_edges_other_face() {
     assert_eq!(n, 1, "stitched into one surface");
     assert!(hi.x < 45.1 && lo.y > -5.1 && hi.z < 20.1, "{lo} {hi}");
 }
+
+/// Loft between edges (spec 5.4a L1): the top edges of two parallel walls bridged by one
+/// surface — a flat strip 20 × 10 at the walls' top; edges of one surface stay one section.
+#[test]
+fn loft_bridges_the_edges_of_two_surfaces() {
+    use cadcraft3d::part::{LoftFeature, LoftSection};
+    let mut p = PartDocument::default();
+    wall(&mut p, &[(0.0, 0.0), (20.0, 0.0)], 10.0);
+    wall(&mut p, &[(0.0, 10.0), (20.0, 10.0)], 10.0);
+    let before = sheet_area(&p);
+    let a = edge(&p, [10.0, 0.0, 5.0], [10.0, 0.0, 10.0]);
+    let b = edge(&p, [10.0, 10.0, 5.0], [10.0, 10.0, 10.0]);
+    let mut def = LoftFeature::new(vec![
+        LoftSection::Edges(vec![a]),
+        LoftSection::Edges(vec![b]),
+    ]);
+    // A solid between open edges is refused, and nothing changes.
+    let n = p.features.len();
+    assert!(p.add_loft(def.clone()).is_err());
+    assert_eq!(p.features.len(), n);
+    def.output = Output::Surface;
+    p.add_loft(def).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    assert_eq!(surfaces(&p), 3);
+    close(sheet_area(&p) - before, 200.0, 1e-3);
+    // The feature survives a save and load.
+    let text = serde_json::to_string(&p.features).unwrap();
+    let back: Vec<cadcraft3d::part::Feature> = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, p.features);
+}
+
+/// Bridging the top edge of a wall and the top edge of a lower wall: a slanted strip.
+#[test]
+fn loft_bridges_edges_at_different_heights() {
+    use cadcraft3d::part::{LoftFeature, LoftSection};
+    let mut p = PartDocument::default();
+    wall(&mut p, &[(0.0, 0.0), (20.0, 0.0)], 10.0);
+    wall(&mut p, &[(0.0, 10.0), (20.0, 10.0)], 4.0);
+    let before = sheet_area(&p);
+    let a = edge(&p, [10.0, 0.0, 5.0], [10.0, 0.0, 10.0]);
+    let b = edge(&p, [10.0, 10.0, 2.0], [10.0, 10.0, 4.0]);
+    let mut def = LoftFeature::new(vec![
+        LoftSection::Edges(vec![a]),
+        LoftSection::Edges(vec![b]),
+    ]);
+    def.output = Output::Surface;
+    p.add_loft(def).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    // A plane strip from z = 10 down to z = 4 over 10: width 20 × slant length √(100 + 36).
+    close(sheet_area(&p) - before, 20.0 * (136.0 as Real).sqrt(), 1e-3);
+}
+
+/// The owner's test part (2026-10-29): two spline surfaces trimmed by a curved wall; a Loft
+/// between their trimmed edges (which lie on the curved wall, not in a plane) bridges them.
+#[test]
+fn loft_bridges_the_owners_trimmed_surfaces() {
+    use cadcraft3d::document::{DocumentData, Project};
+    use cadcraft3d::kernel::{Point3, TessellationOptions};
+    use cadcraft3d::part::{LoftFeature, LoftSection};
+    let pr = Project::load(std::path::Path::new(
+        "tests/data/surface_test_owner.3dcadcraft",
+    ))
+    .unwrap();
+    let mut p = pr
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    p.regenerate().unwrap();
+    let before = (surfaces(&p), sheet_area(&p));
+    // The free edge of each trimmed surface nearest the wall's middle.
+    let wall = p
+        .exact_bodies
+        .0
+        .iter()
+        .find(|s| s.name.as_deref() == Some("Extrusion3"))
+        .unwrap();
+    let tris = wall.triangles().unwrap();
+    let c = Point3::from(
+        tris.iter()
+            .fold(nalgebra::Vector3::zeros(), |a, t| a + t[0].coords)
+            / tris.len() as Real,
+    );
+    let opts = TessellationOptions::default();
+    let free_edge = |prefix: &str| {
+        p.body
+            .edges()
+            .filter_map(|(e, _)| {
+                let faces = p.body.edge_faces(e);
+                let name = p.body.face(*faces.first()?)?.name.clone()?;
+                (faces.len() == 1 && name.starts_with(prefix)).then_some(())?;
+                let pts = p.body.sample_edge(e, &opts).ok()?;
+                let m = pts[pts.len() / 2];
+                Some((name, m))
+            })
+            .min_by(|a, b| (a.1 - c).norm().total_cmp(&(b.1 - c).norm()))
+            .map(|(face, m)| SurfEdge {
+                face,
+                hint: [m.x, m.y, m.z],
+            })
+            .unwrap()
+    };
+    let a = free_edge("Extrusion2:");
+    let b = free_edge("Extrusion4:");
+    let mut def = LoftFeature::new(vec![
+        LoftSection::Edges(vec![a]),
+        LoftSection::Edges(vec![b]),
+    ]);
+    def.output = Output::Surface;
+    p.add_loft(def).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    assert_eq!(surfaces(&p), before.0 + 1);
+    // The bridge spans the gap between the surfaces (about 35 mm) along the wall's curve.
+    let added = sheet_area(&p) - before.1;
+    assert!(added > 1000.0, "bridge area {added}");
+}

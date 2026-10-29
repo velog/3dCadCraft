@@ -107,6 +107,7 @@ mod sm_planned;
 mod surface_cmd;
 mod sweep;
 mod thicken;
+mod trim_preview;
 mod valuefield;
 mod view_style;
 mod viewcube;
@@ -767,6 +768,10 @@ struct CadCraftApp {
     /// The selection and the prehighlighted item the scene was built with
     /// (selected faces are drawn in the 3D scene, with depth).
     scene_sel: (Vec<select::SelItem>, Option<select::SelItem>),
+    /// Trim's preview: its key and the triangles OK would remove (`gui/trim_preview.rs`).
+    trim_preview: Option<(String, Vec<[Point3; 3]>)>,
+    /// The Trim tool's side test, made once per tool.
+    trim_side: Option<(String, std::rc::Rc<trim_preview::Side>)>,
     /// Sampled visible edges of the body, keyed by a body signature.
     edge_cache: std::cell::RefCell<Option<(String, EdgePolylines)>>,
     /// Picking data of the body (see [`PickCache`]).
@@ -1016,6 +1021,8 @@ impl CadCraftApp {
             prev_sel: Vec::new(),
             sel_key: String::new(),
             scene_sel: (Vec::new(), None),
+            trim_preview: None,
+            trim_side: None,
             select_other: None,
             rest: None,
             edge_cache: std::cell::RefCell::new(None),
@@ -5180,6 +5187,7 @@ impl CadCraftApp {
         {
             paint(self.item_faces(h), [0.4, 0.82, 0.45]);
         }
+        self.add_trim_preview(&mut g);
         g
     }
 
@@ -6679,6 +6687,8 @@ impl CadCraftApp {
                 hovered_origin,
             );
         }
+        // Trim's preview (cleared once its panel is closed).
+        self.update_trim_preview(pointer.filter(|_| on_cube.is_none()).map(|p| (p, rect)));
         // Selected and prehighlighted faces, the name next to the cursor.
         {
             let hover_item = match (idle, pointer) {
@@ -6742,7 +6752,30 @@ impl CadCraftApp {
                         (Some(p), None) => self.part_planned_item_at(p, rect),
                         _ => None,
                     };
-                    let picked = self.part_planned_items();
+                    let mut picked = self.part_planned_items();
+                    // Trim's preview shows the surface being cut itself (its removed side red):
+                    // its own highlight would cover it.
+                    let hover = if self.trim_preview.is_some() {
+                        let cut: Vec<select::SelItem> = self
+                            .part_planned
+                            .as_ref()
+                            .map(|d| {
+                                d.items_of("remove")
+                                    .iter()
+                                    .map(|(x, _)| x.clone())
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        picked.retain(|x| !cut.contains(x));
+                        let removing = self
+                            .part_planned
+                            .as_ref()
+                            .and_then(|d| d.flow().current().map(|s| s.key))
+                            == Some("remove");
+                        hover.filter(|_| !removing)
+                    } else {
+                        hover
+                    };
                     self.draw_planned_edges(&painter, rect, &picked, hover.as_ref());
                     (picked, hover)
                 }

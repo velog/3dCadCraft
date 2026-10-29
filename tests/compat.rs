@@ -617,6 +617,55 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 41: two parallel surface walls and a Loft (Output Surface) bridging their top edges.
+fn loft_edges_r41() -> PartDocument {
+    use cadcraft3d::part::surface_op::SurfEdge;
+    use cadcraft3d::part::{
+        ExtrudeFeature, LoftFeature, LoftSection, OpenProfile, OriginPlane, Output,
+    };
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let mut names = Vec::new();
+    for y in [0.0, 10.0] {
+        let i = p
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        let l = p.sketches[i]
+            .sketch
+            .add_line(Point2::new(0.0, y), Point2::new(20.0, y));
+        let mut f = ExtrudeFeature::new(Vec::new(), 10.0);
+        f.open = Some(OpenProfile {
+            curves: vec![l],
+            flip: false,
+            match_shape: false,
+        });
+        f.output = Output::Surface;
+        names.push(p.add_extrude(i, f).unwrap());
+    }
+    let side = |p: &PartDocument, y: f64| {
+        p.body
+            .faces()
+            .filter_map(|(_, f)| f.name.clone())
+            .find(|n| n.starts_with(&format!("{}:", names[usize::from(y > 5.0)])))
+            .map(|face| SurfEdge {
+                face,
+                hint: [10.0, y, 10.0],
+            })
+            .unwrap()
+    };
+    let mut def = LoftFeature::new(vec![
+        LoftSection::Edges(vec![side(&p, 0.0)]),
+        LoftSection::Edges(vec![side(&p, 10.0)]),
+    ]);
+    def.output = Output::Surface;
+    p.add_loft(def).unwrap();
+    p
+}
+
 /// Revision 40: a 40 × 30 × 20 box and a 10 mm block beside it; Copy Object of the box's top
 /// face (Surface) and of the block (Multiple Solids).
 fn copy_object_r40() -> PartDocument {
@@ -2337,6 +2386,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("SurfacesR37");
             project.add_document("Part1", DocumentData::Part(surfaces_r37()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r41/loft_edges_r41.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("LoftEdgesR41");
+            project.add_document("Part1", DocumentData::Part(loft_edges_r41()));
             project.save(&f).unwrap();
         }
         let f = root().join("r40/copy_object_r40.3dcadcraft");

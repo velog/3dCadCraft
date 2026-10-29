@@ -41,6 +41,9 @@ pub enum LoftSection {
     },
     /// The outer loop of a planar face.
     FaceLoop(FaceRef),
+    /// A chain of model edges, e.g. a surface's free edges (format revision 41): two such
+    /// sections give a surface bridging them (Output Surface).
+    Edges(Vec<super::surface_op::SurfEdge>),
 }
 
 impl LoftSection {
@@ -48,7 +51,7 @@ impl LoftSection {
     pub fn sketch_id(&self) -> Option<&str> {
         match self {
             LoftSection::Profile { sketch, .. } | LoftSection::Point { sketch, .. } => Some(sketch),
-            LoftSection::FaceLoop(_) => None,
+            LoftSection::FaceLoop(_) | LoftSection::Edges(_) => None,
         }
     }
 }
@@ -263,13 +266,22 @@ impl LoftFeature {
                 .any(|c| matches!(c.kind, ConditionKind::Tangent | ConditionKind::Direction))
     }
 
-    /// The loft's solid, before its operation.
-    pub(super) fn build(
+    /// The loft's solid, before its operation. `bodies`: the part's bodies so far (solids and
+    /// surface bodies), which edge sections are found on.
+    pub(super) fn build_in(
         &self,
         sketches: &[PartSketch],
         body: &BRep,
+        bodies: &[ExactSolid],
     ) -> Result<Vec<ExactSolid>, Fail> {
         use Fail::User;
+        if self
+            .sections
+            .iter()
+            .any(|s| matches!(s, LoftSection::Edges(_)))
+        {
+            return self.bridge(bodies).map(|s| vec![s]);
+        }
         let kernel = |e: String| User(format!("the geometry kernel cannot build it ({e})"));
         let surface = self.output == Output::Surface;
         if surface && (self.guided() || self.closed_loop) {
@@ -350,6 +362,68 @@ impl LoftFeature {
             kx::loft(&refs, &self.id).map_err(kernel)?
         };
         Ok(vec![s])
+    }
+
+    /// Two edge sections bridged by one surface (G0 to both): Output Surface, no rails, centre
+    /// line or conditions yet.
+    fn bridge(&self, bodies: &[ExactSolid]) -> Result<ExactSolid, Fail> {
+        use Fail::User;
+        if self.output != Output::Surface {
+            return Err(User(
+                "edge sections make a surface: set Output to Surface".into(),
+            ));
+        }
+        let chains: Vec<&Vec<super::surface_op::SurfEdge>> = self
+            .sections
+            .iter()
+            .map(|s| match s {
+                LoftSection::Edges(e) => Ok(e),
+                _ => Err(User(
+                    "edge sections go with edge sections only (two of them) for now".into(),
+                )),
+            })
+            .collect::<Result<_, _>>()?;
+        let [a, b] = chains.as_slice() else {
+            return Err(User(
+                "a loft between edges takes two edge sections for now".into(),
+            ));
+        };
+        if self.guided() {
+            return Err(User(
+                "a loft between edges with rails, a centre line or conditions is not supported yet"
+                    .into(),
+            ));
+        }
+        // Each section: the body holding its edges, and a point on each edge.
+        let side = |chain: &[super::surface_op::SurfEdge], k: usize| {
+            let refs: Vec<(&str, Point3)> = chain
+                .iter()
+                .map(|e| (e.face.as_str(), Point3::from(e.hint)))
+                .collect();
+            let found = kx::faces_in_solids(bodies, &refs);
+            let mut owner: Option<usize> = None;
+            for (e, f) in chain.iter().zip(found) {
+                let Some((i, _)) = f else {
+                    return Err(User(format!(
+                        "section {k}: the edge along {} no longer exists",
+                        e.face
+                    )));
+                };
+                if owner.is_some_and(|o| o != i) {
+                    return Err(User(format!(
+                        "section {k}: its edges belong to different bodies"
+                    )));
+                }
+                owner = Some(i);
+            }
+            let i = owner.ok_or_else(|| User(format!("section {k} has no edges")))?;
+            let pts: Vec<Point3> = chain.iter().map(|e| Point3::from(e.hint)).collect();
+            Ok((i, pts))
+        };
+        let (ia, pa) = side(a, 1)?;
+        let (ib, pb) = side(b, 2)?;
+        kx::surface_ops::bridge_edges(&bodies[ia], &pa, &bodies[ib], &pb, &self.id)
+            .map_err(|e| User(format!("the geometry kernel cannot bridge the edges ({e})")))
     }
 
     /// Refuses conditions that do not fit their section or are not built yet.
@@ -594,6 +668,10 @@ impl LoftFeature {
                 Ok((ps.sketch.plane.clone(), kx::profile(&outer, &holes)?))
             }
             Some(LoftSection::FaceLoop(f)) => face_profile(body, f),
+            Some(LoftSection::Edges(_)) => Err(format!(
+                "section {} is a chain of edges (only with another edge section)",
+                k + 1
+            )),
             Some(LoftSection::Point { .. }) => Err(format!(
                 "section {} is a point (only the first or the last may be)",
                 k + 1

@@ -253,5 +253,6 @@
   "r37/surfaces_r37.3dcadcraft": {"volume": 35333.333333333365, "faces": 10, "features": 8, "sketches": 3, "exact": true},
   "r38/drawing_r38.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
   "r39/drawing_r39.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
-  "r40/copy_object_r40.3dcadcraft": {"volume": 33999.99999999997, "faces": 19, "features": 4, "sketches": 1, "exact": true}
+  "r40/copy_object_r40.3dcadcraft": {"volume": 33999.99999999997, "faces": 19, "features": 4, "sketches": 1, "exact": true},
+  "r41/loft_edges_r41.3dcadcraft": {"volume": -1333.3333333333337, "faces": 3, "features": 3, "sketches": 2, "exact": true}
 }

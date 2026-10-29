@@ -47,6 +47,28 @@ pub fn stitch(
     ))
 }
 
+/// **Loft between edges**: a surface bridging an open chain of `a`'s edges and one of `b`'s
+/// (each edge picked by a point on it), G0 to both: a new surface body `name` (one face
+/// `<name>:Bridge`).
+pub fn bridge_edges(
+    a: &ExactSolid,
+    at_a: &[Point3],
+    b: &ExactSolid,
+    at_b: &[Point3],
+    name: &str,
+) -> Result<ExactSolid, String> {
+    let pa: Vec<_> = at_a.iter().map(v3).collect();
+    let pb: Vec<_> = at_b.iter().map(v3).collect();
+    let body = guarded("bridge", || sk::bridge_edges(&a.body, &pa, &b.body, &pb))?;
+    Ok(named(
+        body,
+        &[],
+        &format!("{name}:Bridge"),
+        Some(name.to_owned()),
+        true,
+    ))
+}
+
 /// **Boundary Patch** of a closed loop of `s`'s edges, each picked by a point on it: a new
 /// surface body `name` (one face `<name>:Patch`, planar when the loop is).
 pub fn patch_edges(s: &ExactSolid, at: &[Point3], name: &str) -> Result<ExactSolid, String> {

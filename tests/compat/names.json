@@ -826,5 +826,10 @@
     "Extrusion1:Side:3v1:0",
     "Extrusion1:Side:4v1:0",
     "Extrusion1:Start"
+  ],
+  "r41/loft_edges_r41.3dcadcraft": [
+    "Extrusion1:Side:1v1:0",
+    "Extrusion2:Side:1v1:0",
+    "Loft1:Bridge"
   ]
 }

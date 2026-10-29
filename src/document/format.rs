@@ -137,7 +137,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 39: section lines of several segments (`ViewKind::Section::mid`,
 ///   offset sections) (2026-10-28).
 /// - 40: Copy Object (`BodyOp::CopyObject`) (2026-10-29).
-pub const FORMAT_REVISION: u32 = 40;
+/// - 41: loft sections of model edges (`LoftSection::Edges`) (2026-10-29).
+pub const FORMAT_REVISION: u32 = 41;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

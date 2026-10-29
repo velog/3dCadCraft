@@ -138,19 +138,19 @@ fn overlap(a: &[Point3; 2], b: &[Point3; 2], tol: Real) -> bool {
     [a[0], a[1], m].iter().filter(|q| on(q)).count() >= 2
 }
 
-/// Faces `faces` (kernel indices) of `s` in sets of contiguous faces (sharing an edge).
-fn contiguous(s: &ExactSolid, faces: &[usize]) -> Result<Vec<Vec<usize>>, Fail> {
+/// Faces `faces` (kernel indices) of `s` in sets of contiguous faces (sharing an edge), and
+/// the copy of them all (when they are one set it is that set's surface).
+fn contiguous(
+    s: &ExactSolid,
+    faces: &[usize],
+) -> Result<(Vec<Vec<usize>>, Option<ExactSolid>), Fail> {
     if faces.len() < 2 {
-        return Ok(vec![faces.to_vec()]);
+        return Ok((vec![faces.to_vec()], None));
     }
-    let tol = (s.size() * 1e-6).max(1e-5);
-    let mut segs = Vec::with_capacity(faces.len());
-    for &f in faces {
-        let one =
-            exact::face_sheet(s, &[f]).map_err(|e| User(format!("cannot copy a face ({e})")))?;
-        segs.push(segments(&one));
-    }
-    // Union-find over the faces.
+    // One copy of all the faces: its faces come in the order picked, and faces that met in the
+    // body share their edges in it.
+    let all =
+        exact::face_sheet(s, faces).map_err(|e| User(format!("cannot copy the faces ({e})")))?;
     let mut root: Vec<usize> = (0..faces.len()).collect();
     fn find(root: &mut [usize], i: usize) -> usize {
         let mut i = i;
@@ -160,14 +160,41 @@ fn contiguous(s: &ExactSolid, faces: &[usize]) -> Result<Vec<Vec<usize>>, Fail> 
         }
         i
     }
-    for i in 0..faces.len() {
-        for j in i + 1..faces.len() {
-            let meet = segs[i]
-                .iter()
-                .any(|a| segs[j].iter().any(|b| overlap(a, b, tol)));
-            if meet {
-                let (ri, rj) = (find(&mut root, i), find(&mut root, j));
-                root[ri] = rj;
+    match exact::to_brep(std::slice::from_ref(&all)) {
+        Ok(b) if b.faces().count() == faces.len() => {
+            let index: std::collections::HashMap<crate::kernel::FaceId, usize> =
+                b.faces().enumerate().map(|(k, (f, _))| (f, k)).collect();
+            for (e, _) in b.edges() {
+                let fs: Vec<usize> = b
+                    .edge_faces(e)
+                    .iter()
+                    .filter_map(|f| index.get(f).copied())
+                    .collect();
+                for w in fs.windows(2) {
+                    let (ri, rj) = (find(&mut root, w[0]), find(&mut root, w[1]));
+                    root[ri] = rj;
+                }
+            }
+        }
+        // The copy's faces could not be matched to the picks: compare the faces' edges.
+        _ => {
+            let tol = (s.size() * 1e-6).max(1e-5);
+            let mut segs = Vec::with_capacity(faces.len());
+            for &f in faces {
+                let one = exact::face_sheet(s, &[f])
+                    .map_err(|e| User(format!("cannot copy a face ({e})")))?;
+                segs.push(segments(&one));
+            }
+            for i in 0..faces.len() {
+                for j in i + 1..faces.len() {
+                    let meet = segs[i]
+                        .iter()
+                        .any(|a| segs[j].iter().any(|b| overlap(a, b, tol)));
+                    if meet {
+                        let (ri, rj) = (find(&mut root, i), find(&mut root, j));
+                        root[ri] = rj;
+                    }
+                }
             }
         }
     }
@@ -179,7 +206,7 @@ fn contiguous(s: &ExactSolid, faces: &[usize]) -> Result<Vec<Vec<usize>>, Fail> 
             None => groups.push((r, vec![f])),
         }
     }
-    Ok(groups.into_iter().map(|(_, v)| v).collect())
+    Ok((groups.into_iter().map(|(_, v)| v).collect(), Some(all)))
 }
 
 /// Several bodies sewn into one where they meet (side by side elsewhere); `solid`: it must
@@ -297,9 +324,16 @@ pub(super) fn copy_object(
                 CopyOutput::Surface | CopyOutput::MultipleSolids => {
                     let solid = op.output == CopyOutput::MultipleSolids;
                     for (i, faces) in &by_body {
-                        for g in contiguous(&all[*i], faces)? {
+                        let (groups, whole) = contiguous(&all[*i], faces)?;
+                        let one = groups.len() == 1;
+                        let mut whole = whole.filter(|_| one);
+                        for g in groups {
                             let name = body_name(id, made.len());
-                            let s = sheet(*i, &g)?.flagged(!solid).map_err(User)?;
+                            let copy = match whole.take() {
+                                Some(w) => w,
+                                None => sheet(*i, &g)?,
+                            };
+                            let s = copy.flagged(!solid).map_err(User)?;
                             made.push(named(s, &name));
                         }
                     }

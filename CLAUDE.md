@@ -1226,6 +1226,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `Planned::option_off(label, choice)` (a check box, or one choice of a radio row). A selector of whole bodies (Copy
   Object's Body mode: kinds `Body`/`Surface` without `Face`) takes the body of the face under the ray
   (`picker().pick`), since the pick filter leaves faces out of `plane_under` / `sel_item_at`.
+- **Loft between edges** (`LoftSection::Edges`, revision 41): the loft step gets the part's bodies (solids + surface
+  bodies, `LoftFeature::build_in`) to find the edges; two edge sections → `exact::surface_ops::bridge_edges` (vendor
+  `bridge_edges`: ruled B-spline between the chains, own edges). A fill of the 4-sided loop (`fill_loop`) was tried first
+  and failed on curved trim edges (3e-3 mm off its tolerance).
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

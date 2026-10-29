@@ -1066,6 +1066,8 @@ A smooth surface or body through several sections. It can be controlled by **rai
 **Ours:** sections from sketches (also with holes — a hollow body), face loops, a point at the end
 (pyramid); 2 sections ruled, ≥ 3 smooth; Join / Cut / Intersect / New Solid 🟡; Output Surface 🟡 (sections
 without holes, no rails / centre line / conditions / point / Closed Loop yet: a clear refusal).
+**Edge sections** 🟡 (format revision 41): chains of model edges, e.g. the free edges of two surfaces; two of them
+with Output Surface are bridged by a ruled surface (G0; Tangent / Smooth to the surfaces still to do).
 **Rails** 🟡 (1, 2, 3 and more rails that touch every section; stations fitted to the
 rails), **Center Line** 🟡 (sections perpendicular to the curve, frames without twist),
 **Area Loft** 🟡 (placed sections with an area or a scale, Proportional / Absolute, Driving /
