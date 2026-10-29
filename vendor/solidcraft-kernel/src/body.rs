@@ -186,8 +186,45 @@ fn mesh_shells_within(solid: &Solid, deflection: Deflection) -> Vec<MeshedShell>
         // The robust search tries the exact one first, so exact geometry costs nothing extra; a
         // face can also come back as an empty mesh rather than none (boolean results with
         // approximate intersection curves), so always use it.
-        .map(|sh| sh.robust_triangulation_within(deflection))
+        .map(|sh| sh.robust_triangulation_within(revolved_cap(sh, deflection)))
         .collect()
+}
+
+/// 3DCadCraft: a chord tolerance no coarser than 2 % of the smallest face on a revolved B-spline.
+/// truck's mesher did not finish (minutes, growing with the tolerance) on a B-spline profile
+/// revolved about an axis in its own plane when the chord was about 4 % of the face or more
+/// (an imported Creo part: 1 mm on a 25 mm face); at 2 % such a face meshes in milliseconds.
+fn revolved_cap(sh: &mt::Shell, d: Deflection) -> Deflection {
+    let mut cap = f64::INFINITY;
+    for f in sh.face_iter() {
+        // Only free-form profiles: cylinders, cones and spheres are revolved lines and arcs too,
+        // and capping them made a small part with 25 tiny cones mesh for 15-35 s.
+        let mt::Surface::RevolutedCurve(r) = f.surface() else {
+            continue;
+        };
+        if !matches!(r.entity().entity_curve(), mt::Curve::BSplineCurve(_)) {
+            continue;
+        }
+        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for w in f.boundaries() {
+            for v in w.vertex_iter() {
+                let p = v.point();
+                for (k, x) in [p.x, p.y, p.z].into_iter().enumerate() {
+                    lo[k] = lo[k].min(x);
+                    hi[k] = hi[k].max(x);
+                }
+            }
+        }
+        let size = (0..3).map(|k| (hi[k] - lo[k]).max(0.0).powi(2)).sum::<f64>().sqrt();
+        if size.is_finite() && size > 0.0 {
+            cap = cap.min(size * 0.02);
+        }
+    }
+    if cap < d.chord {
+        Deflection { chord: cap, floor: d.floor.min(cap), ..d }
+    } else {
+        d
+    }
 }
 
 /// A face's triangles (corner positions and normals, in the mesh's winding) with every edge

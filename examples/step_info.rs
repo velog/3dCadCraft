@@ -126,9 +126,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .iter()
                                     .filter_map(|s| s.volume_at(1e-3))
                                     .sum();
+                                let mut again = part.clone();
+                                again.build_cache = Default::default();
+                                let t = Instant::now();
+                                let _ = again.regenerate();
                                 println!(
-                                    "  part {:<14} volume {v:.1}  health {:?}",
-                                    d.name, part.feature_health
+                                    "  part {:<14} volume {v:.1}  health {:?}  rebuild {:.2} s",
+                                    d.name,
+                                    part.feature_health,
+                                    t.elapsed().as_secs_f64()
                                 );
                             }
                         }

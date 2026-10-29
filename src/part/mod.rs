@@ -1716,6 +1716,19 @@ impl PartDocument {
                                 Some((f.id().to_owned(), format!("invalid result ({why})")));
                             return Ok(false);
                         }
+                        // Import: a damaged solid of the file comes in as a surface body (as
+                        // Inventor imports it), so the part opens and the rest is usable.
+                        Some(why)
+                            if matches!(f, Feature::BodyOp(b) if matches!(b.op, BodyOp::Import(_)))
+                                && let Some((n2, b2)) = invalid_as_surfaces(&next, &b) =>
+                        {
+                            log::warn!(
+                                "{}: damaged solids imported as surface bodies ({why})",
+                                f.id()
+                            );
+                            solids = n2;
+                            body = b2;
+                        }
                         Some(why) => {
                             let msg = format!("the geometry kernel made an invalid solid ({why})");
                             self.feature_health.insert(f.id().to_owned(), msg.clone());
@@ -3061,6 +3074,34 @@ fn describe(source: &PointRef) -> String {
 
 /// Why `body` is not a valid set of solids (closed, oriented, manifold),
 /// if it is not; surface bodies are not checked.
+/// `next` with its solids that are invalid in `body` turned into surface bodies, and the B-rep of
+/// that; `None` when it is still invalid.
+fn invalid_as_surfaces(
+    next: &[crate::kernel::exact::ExactSolid],
+    body: &BRep,
+) -> Option<(Vec<crate::kernel::exact::ExactSolid>, BRep)> {
+    let bad: Vec<String> = body
+        .solids()
+        .filter(|(id, s)| !s.open && body.validate_solid(*id).is_err())
+        .filter_map(|(_, s)| s.name.clone())
+        .collect();
+    if bad.is_empty() {
+        return None;
+    }
+    let n2: Vec<_> = next
+        .iter()
+        .map(|s| {
+            if s.name.as_ref().is_some_and(|n| bad.contains(n)) {
+                s.clone().flagged(true).unwrap_or_else(|_| s.clone())
+            } else {
+                s.clone()
+            }
+        })
+        .collect();
+    let b2 = crate::kernel::exact::to_brep_with(&n2, true).ok()?;
+    invalid_solid(&b2).is_none().then_some((n2, b2))
+}
+
 fn invalid_solid(body: &BRep) -> Option<String> {
     body.solids()
         .filter(|(_, s)| !s.open)

@@ -151,12 +151,14 @@ impl ImportOp {
     pub fn read(&self, id: &str) -> Result<(Vec<ExactSolid>, Vec<String>), String> {
         let r = exact::step_bodies(&self.text, id)?;
         let total = r.bodies.len();
-        let kept: Vec<ExactSolid> = r
-            .bodies
-            .into_iter()
-            .filter(|b| if b.closed { self.solids } else { self.surfaces })
-            .map(|b| self.renamed(b.solid))
-            .collect();
+        let warnings = r.warnings;
+        let mut kept: Vec<ExactSolid> = Vec::new();
+        for b in r.bodies {
+            if !(if b.closed { self.solids } else { self.surfaces }) {
+                continue;
+            }
+            kept.push(self.renamed(b.solid));
+        }
         if kept.is_empty() {
             return Err(match (total, self.solids) {
                 (0, _) => "the file has no bodies the reader could build".into(),
@@ -164,7 +166,7 @@ impl ImportOp {
                 (_, false) => "the file has no surface bodies (turn on Solids?)".into(),
             });
         }
-        Ok((kept, r.warnings))
+        Ok((kept, warnings))
     }
 }
 

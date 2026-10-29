@@ -52,8 +52,9 @@ struct Builder<'a> {
     bodies: &'a [StepBody],
     index: P21Index<'a>,
     project: &'a mut Project,
-    /// Part documents by their bodies' solid entities.
-    parts: HashMap<Vec<u64>, DocumentId>,
+    /// Part documents by their bodies' solid entities (`None`: it could not be made; its other
+    /// instances are not tried again).
+    parts: HashMap<Vec<u64>, Option<DocumentId>>,
     /// Assembly documents by product name and component count.
     assemblies: HashMap<(String, usize), DocumentId>,
     /// Names given to documents (unique in the project).
@@ -85,13 +86,20 @@ impl Builder<'_> {
             .collect();
         key.sort_unstable();
         if let Some(id) = self.parts.get(&key) {
-            return Some(*id);
+            return *id;
         }
+        let made = self.make_part(name, &key);
+        self.parts.insert(key, made);
+        made
+    }
+
+    /// A new part document of the solids `key` (`None`, with a warning, when it cannot be made).
+    fn make_part(&mut self, name: &str, key: &[u64]) -> Option<DocumentId> {
         if key.is_empty() {
             return None;
         }
         let doc_name = self.unique(name);
-        let Some(text) = self.index.extract(&key, &doc_name) else {
+        let Some(text) = self.index.extract(key, &doc_name) else {
             self.out.warnings.push(format!(
                 "{name}: its solids cannot be cut out of the file; left out"
             ));
@@ -106,7 +114,6 @@ impl Builder<'_> {
         let id = self
             .project
             .add_document(doc_name, DocumentData::Part(part));
-        self.parts.insert(key, id);
         self.out.parts += 1;
         Some(id)
     }
