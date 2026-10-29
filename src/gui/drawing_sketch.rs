@@ -207,6 +207,7 @@ fn placement(v: &ShownView) -> Option<Placement> {
         position: v.position,
         scale: v.scale,
         center: v.lines.as_deref()?.center(),
+        breaks: v.lines.as_deref()?.breaks,
     })
 }
 
@@ -351,10 +352,8 @@ impl CadCraftApp {
         let cam = self.drw.cam;
         let proj = SheetProjector { cam, pl };
         let to_view = |p: [f64; 2]| {
-            Point2::new(
-                pl.center[0] + (p[0] - pl.position[0]) / pl.scale,
-                pl.center[1] + (p[1] - pl.position[1]) / pl.scale,
-            )
+            let q = pl.to_view(p);
+            Point2::new(q[0], q[1])
         };
         let pointer = response.hover_pos();
         let ctrl = response.ctx.input(|i| i.modifiers.command);

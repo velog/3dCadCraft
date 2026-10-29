@@ -107,11 +107,12 @@ pub(super) struct HtEdit {
 
 /// A sheet point in a view's plane.
 fn to_view(v: &ShownView, p: [f64; 2]) -> Option<[f64; 2]> {
-    let c = v.lines.as_deref()?.center();
-    Some([
+    let l = v.lines.as_deref()?;
+    let c = l.center();
+    Some(l.breaks.lengthen([
         c[0] + (p[0] - v.position[0]) / v.scale,
         c[1] + (p[1] - v.position[1]) / v.scale,
-    ])
+    ]))
 }
 
 fn placement(v: &ShownView) -> Option<Placement> {
@@ -119,6 +120,7 @@ fn placement(v: &ShownView) -> Option<Placement> {
         position: v.position,
         scale: v.scale,
         center: v.lines.as_deref()?.center(),
+        breaks: v.lines.as_deref()?.breaks,
     })
 }
 

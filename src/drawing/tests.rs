@@ -428,6 +428,7 @@ fn annotations_resolve_by_edge_name() {
         position: [100.0, 100.0],
         scale: 2.0,
         center: front.center(),
+        breaks: front.breaks,
     };
     let view = |v: u32| (v == 1).then_some((pl, &front));
     let dim = |dim: DimKind, b: Option<PointRef>| {
@@ -591,6 +592,7 @@ fn annotations_resolve_by_edge_name() {
         position: [50.0, 50.0],
         scale: 1.0,
         center: top.center(),
+        breaks: top.breaks,
     };
     let view = |v: u32| (v == 2).then_some((pl, &top));
     let d = AnnotationKind::Dimension(Dimension {
@@ -1356,6 +1358,7 @@ fn hole_notes_and_leader_texts() {
         ..Default::default()
     };
     let pl = Placement {
+        breaks: Default::default(),
         position: [100.0, 100.0],
         scale: 1.0,
         center: [0.0, 0.0],
@@ -1433,6 +1436,7 @@ fn styles_drive_annotations() {
         position: [100.0, 100.0],
         scale: 1.0,
         center: front.center(),
+        breaks: front.breaks,
     };
     let view = |v: u32| (v == 1).then_some((pl, &front));
     let dim = AnnotationKind::Dimension(Dimension {
@@ -1749,6 +1753,7 @@ fn assembly_parts_list_and_balloons() {
         position: [120.0, 180.0],
         scale: 1.0,
         center: lines.center(),
+        breaks: lines.breaks,
     };
     let view = |id: u32| (id == v).then_some((pl, &lines));
     let look = d.styles.look();
@@ -1842,6 +1847,7 @@ fn flat_pattern_view_and_bend_note() {
         position: [200.0, 150.0],
         scale: 1.0,
         center: lines.center(),
+        breaks: lines.breaks,
     };
     let view = |id: u32| (id == 1).then_some((pl, &lines));
     let note = AnnotationKind::BendNote {
@@ -1945,6 +1951,7 @@ fn dimension_sets_measure_from_the_origin() {
         position: [100.0, 100.0],
         scale: 1.0,
         center: front.center(),
+        breaks: front.breaks,
     };
     let view = |v: u32| (v == 1).then_some((pl, &front));
     // Every end point of the visible straight edges.
@@ -2018,6 +2025,7 @@ fn arrange_puts_dimensions_in_rows() {
         position: [100.0, 100.0],
         scale: 1.0,
         center: front.center(),
+        breaks: front.breaks,
     };
     let view = |v: u32| (v == 1).then_some((pl, &front));
     let e = front
@@ -2112,6 +2120,7 @@ fn chamfer_notes_measure_from_the_reference() {
         position: [100.0, 100.0],
         scale: 1.0,
         center: lines.center(),
+        breaks: lines.breaks,
     };
     let mut texts = Vec::new();
     for ch in named.iter().filter(|e| slanted(e)) {
@@ -2348,4 +2357,241 @@ fn nested_parts_name_their_edges_by_path() {
     let second = names.iter().filter(|n| n.starts_with("o3/s2/")).count();
     assert!(first > 0 && first == second, "{names:?}");
     assert!(names.iter().all(|n| hlr::occurrence_of(n) == Some(3)));
+}
+
+/// Break views (spec 4.10), Inventor's numbers for a 200 × 30 × 10 bar seen
+/// from the top at 1:1 with a break from x = 60 to 140: the view is
+/// 120 + 6 mm wide (the default gap 6 mm; 125 with a 5 mm gap), keeps its
+/// centre, nothing is drawn in the removed stretch, and a dimension over
+/// the whole bar still reads 200 while its ends lie 126 mm apart.
+#[test]
+fn break_views_shorten_and_keep_true_values() {
+    use super::annot::{Orphan, Placement, resolve};
+    use super::brk::{self, BreakOrientation, BreakStyle, ViewBreak};
+    let part = PartDocument::with_box("Box1", [200.0, 30.0, 10.0]).unwrap();
+    let whole = lines_of(&part, ViewOrientation::Top);
+    let (w, h) = whole.size();
+    close(w, 200.0, 1e-6, "whole width");
+    close(h, 30.0, 1e-6, "whole height");
+    let x0 = whole.min[0];
+    let b = ViewBreak::new(BreakOrientation::Horizontal, x0 + 140.0, x0 + 60.0);
+    assert_eq!(
+        (b.from, b.to),
+        (x0 + 60.0, x0 + 140.0),
+        "taken in either order"
+    );
+    assert_eq!(
+        (b.gap, b.display, b.style),
+        (6.0, 5, BreakStyle::Rectangular)
+    );
+    let broken = brk::apply(&whole, std::slice::from_ref(&b), 1.0);
+    let (w, h) = broken.size();
+    close(w, 126.0, 1e-9, "broken width (Inventor: 126)");
+    close(h, 30.0, 1e-9, "height unchanged");
+    let narrow = brk::apply(
+        &whole,
+        &[ViewBreak {
+            gap: 5.0,
+            ..b.clone()
+        }],
+        1.0,
+    );
+    close(narrow.size().0, 125.0, 1e-9, "gap 5 (Inventor: 125)");
+    // At 1:2 the gap stays 6 sheet mm: 120 / 2 + 6 = 66 mm on the sheet.
+    close(
+        brk::apply(&whole, std::slice::from_ref(&b), 0.5).size().0 * 0.5,
+        66.0,
+        1e-9,
+        "1:2",
+    );
+    for p in broken.visible.iter().chain(&broken.hidden).flatten() {
+        assert!(
+            !broken.breaks.removed(*p),
+            "a point in the removed stretch: {p:?}"
+        );
+    }
+    assert_eq!(
+        broken.visible.len(),
+        whole.visible.len() + 2,
+        "the two long edges each cut in two"
+    );
+    let pl = Placement {
+        position: [200.0, 90.0],
+        scale: 1.0,
+        center: broken.center(),
+        breaks: broken.breaks,
+    };
+    let (a, z) = (pl.to_sheet(broken.min), pl.to_sheet(broken.max));
+    close(a[0], 137.0, 1e-9, "left end on the sheet (Inventor: 137)");
+    close(z[0], 263.0, 1e-9, "right end on the sheet (Inventor: 263)");
+    close((a[1] + z[1]) * 0.5, 90.0, 1e-9, "centre kept");
+    // Sheet → view and back, a point in the gap going to the stretch's end.
+    let q = [x0 + 150.0, whole.min[1] + 5.0];
+    let back = pl.to_view(pl.to_sheet(q));
+    close(back[0], q[0], 1e-9, "round trip x");
+    close(back[1], q[1], 1e-9, "round trip y");
+    close(
+        pl.to_view([199.0, 90.0])[0],
+        x0 + 60.0,
+        1e-9,
+        "gap, left half",
+    );
+    close(
+        pl.to_view([201.0, 90.0])[0],
+        x0 + 140.0,
+        1e-9,
+        "gap, right half",
+    );
+    // A dimension over the whole bar.
+    let e = broken
+        .edges
+        .iter()
+        .find(|e| e.straight && e.visible && ((e.b[0] - e.a[0]).abs() - 200.0).abs() < 1e-6)
+        .expect("a 200 mm edge");
+    let name = e.name.clone().expect("named edge");
+    let dim = AnnotationKind::Dimension(Dimension {
+        shift: 0.0,
+        arrows: Default::default(),
+        dim: DimKind::Horizontal,
+        a: PointRef {
+            view: 1,
+            edge: name.clone(),
+            role: PointRole::Start,
+        },
+        b: Some(PointRef {
+            view: 1,
+            edge: name.clone(),
+            role: PointRole::End,
+        }),
+        text: [0.0, 30.0],
+        precision: 2,
+        format: Default::default(),
+    });
+    let view = |v: u32| (v == 1).then_some((pl, &broken));
+    let s = resolve(&dim, &view).unwrap();
+    close(
+        s.value.unwrap(),
+        200.0,
+        1e-9,
+        "the true length (Inventor: 200)",
+    );
+    let xs: Vec<f64> = s
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            super::sheet::Prim::Line { a, b, .. } => Some([a[0], b[0]]),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let span =
+        xs.iter().copied().fold(f64::MIN, f64::max) - xs.iter().copied().fold(f64::MAX, f64::min);
+    assert!(span < 130.0, "drawn across the shortened view: {span}");
+    // An end in a removed stretch hides the dimension.
+    let end = brk::apply(
+        &whole,
+        &[
+            b.clone(),
+            ViewBreak::new(BreakOrientation::Horizontal, x0 + 150.0, x0 + 210.0),
+        ],
+        1.0,
+    );
+    let pl2 = Placement {
+        center: end.center(),
+        breaks: end.breaks,
+        ..pl
+    };
+    assert_eq!(
+        resolve(&dim, &|v: u32| (v == 1).then_some((pl2, &end))),
+        Err(Orphan::Broken)
+    );
+}
+
+/// Breaks refuse empty and overlapping stretches; cut faces are split into
+/// closed loops; the break lines sit at both piece ends; files without
+/// breaks keep no `breaks` key and breaks survive a save.
+#[test]
+fn breaks_check_clip_and_save() {
+    use super::brk::{self, BreakError, BreakMap, BreakOrientation, BreakStyle, ViewBreak};
+    let b = ViewBreak::new(BreakOrientation::Horizontal, 10.0, 20.0);
+    assert_eq!(
+        brk::check(
+            &ViewBreak::new(BreakOrientation::Horizontal, 5.0, 5.0),
+            &[],
+            None
+        ),
+        Err(BreakError::Empty)
+    );
+    let over = ViewBreak::new(BreakOrientation::Horizontal, 15.0, 30.0);
+    assert_eq!(
+        brk::check(&over, std::slice::from_ref(&b), None),
+        Err(BreakError::Overlaps)
+    );
+    assert_eq!(
+        brk::check(&over, std::slice::from_ref(&b), Some(0)),
+        Ok(()),
+        "editing itself"
+    );
+    let across = ViewBreak::new(BreakOrientation::Vertical, 15.0, 30.0);
+    assert_eq!(
+        brk::check(&across, std::slice::from_ref(&b), None),
+        Ok(()),
+        "other axis"
+    );
+    let map = BreakMap::new(std::slice::from_ref(&b), 1.0);
+    let square = vec![[0.0, 0.0], [30.0, 0.0], [30.0, 5.0], [0.0, 5.0], [0.0, 0.0]];
+    let loops = map.clip_loop(&square);
+    assert_eq!(loops.len(), 2, "one loop per piece");
+    for lp in &loops {
+        assert_eq!(lp.first(), lp.last(), "closed");
+        for p in lp {
+            assert!(!map.removed(*p));
+        }
+    }
+    let line = vec![[0.0, 1.0], [12.0, 1.0], [30.0, 1.0]];
+    let pieces = map.clip_polyline(&line);
+    assert_eq!(
+        pieces,
+        vec![
+            vec![[0.0, 1.0], [10.0, 1.0]],
+            vec![[20.0, 1.0], [30.0, 1.0]]
+        ]
+    );
+    // Break lines: two per break, Structural with its symbols past the span.
+    let ends = [([0.0, 0.0], [0.0, 30.0]), ([6.0, 0.0], [6.0, 30.0])];
+    let rect = brk::break_lines(&b, ends);
+    assert_eq!(rect.len(), 2);
+    let st = ViewBreak {
+        style: BreakStyle::Structural,
+        symbols: 3,
+        ..b.clone()
+    };
+    let lines = brk::break_lines(&st, ends);
+    assert_eq!(lines[0].len(), 2 + 4 * 3, "three Z symbols");
+    assert!(
+        lines[0][0][1] < 0.0 && lines[0].last().unwrap()[1] > 30.0,
+        "past the geometry"
+    );
+    // Saved with the view, absent when there is none.
+    let mut d = DrawingDocument::default();
+    let v = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    assert!(!serde_json::to_string(&d).unwrap().contains("breaks"));
+    assert_eq!(d.add_break(v, b.clone()), Ok(0));
+    assert_eq!(d.add_break(v, over.clone()), Err(BreakError::Overlaps));
+    let text = serde_json::to_string(&d).unwrap();
+    let back: DrawingDocument = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        back.sheet().unwrap().view(v).unwrap().breaks,
+        vec![b.clone()]
+    );
+    assert!(d.remove_break(v, 0));
+    assert!(d.sheet().unwrap().view(v).unwrap().breaks.is_empty());
 }

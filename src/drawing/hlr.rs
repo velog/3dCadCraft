@@ -42,6 +42,9 @@ pub struct ViewLines {
     pub max: [f64; 2],
     /// Flat pattern views: the bends.
     pub bends: Vec<ViewBend>,
+    /// Break views: the removed stretches at the view's scale (empty
+    /// until [`super::brk::apply`]); the lines stay in true coordinates.
+    pub breaks: super::brk::BreakMap,
 }
 
 /// A bend of a flat pattern view (view plane).
@@ -74,16 +77,20 @@ impl ViewBend {
 impl ViewLines {
     /// The point placed at the view's position: the anchor, else the
     /// middle of the extent.
+    /// In a broken view it is a point of the shortened view
+    /// ([`super::brk::BreakMap::shorten`]).
     pub fn center(&self) -> [f64; 2] {
-        self.anchor.unwrap_or([
-            (self.min[0] + self.max[0]) * 0.5,
-            (self.min[1] + self.max[1]) * 0.5,
-        ])
+        let b = &self.breaks;
+        self.anchor.map(|a| b.shorten(a)).unwrap_or_else(|| {
+            let (lo, hi) = (b.shorten(self.min), b.shorten(self.max));
+            [(lo[0] + hi[0]) * 0.5, (lo[1] + hi[1]) * 0.5]
+        })
     }
 
-    /// Width and height of the extent.
+    /// Width and height of the extent (shortened by breaks).
     pub fn size(&self) -> (f64, f64) {
-        (self.max[0] - self.min[0], self.max[1] - self.min[1])
+        let (lo, hi) = (self.breaks.shorten(self.min), self.breaks.shorten(self.max));
+        (hi[0] - lo[0], hi[1] - lo[1])
     }
 
     /// Whether nothing was found.
@@ -1893,6 +1900,7 @@ pub fn clip_fence(lines: &ViewLines, fence: &Fence) -> ViewLines {
     let reach = 1.0 + if fence.jagged { JAG } else { 0.0 };
     let c = fence.center;
     ViewLines {
+        breaks: Default::default(),
         visible,
         visible_src,
         hidden,

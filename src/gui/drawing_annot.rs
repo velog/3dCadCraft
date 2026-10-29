@@ -230,6 +230,7 @@ pub(super) fn lookup(views: &[ShownView]) -> HashMap<u32, (Placement, &ViewLines
                         position: v.position,
                         scale: v.scale,
                         center: l.center(),
+                        breaks: l.breaks,
                     },
                     l,
                 ),
@@ -531,7 +532,7 @@ impl CadCraftApp {
                             value: None,
                             prims: Vec::new(),
                             orphan: match why {
-                                Orphan::NoView => None,
+                                Orphan::NoView | Orphan::Broken => None,
                                 Orphan::Missing(_) => at,
                             },
                         }
@@ -619,6 +620,7 @@ impl CadCraftApp {
                 position: v.position,
                 scale: v.scale,
                 center: l.center(),
+                breaks: l.breaks,
             };
             let scr = |q: [f64; 2]| cam.to_screen(rect, pl.to_sheet(q));
             for e in l.edges.iter().filter(|e| e.visible) {
@@ -786,6 +788,7 @@ impl CadCraftApp {
                     position: v.position,
                     scale: v.scale,
                     center: l.center(),
+                    breaks: l.breaks,
                 };
                 for (k, piece) in l.visible.iter().enumerate() {
                     // Every piece of the same circle lights up with it.
@@ -1697,6 +1700,7 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                 position: v.position,
                 scale: v.scale,
                 center: l.center(),
+                breaks: l.breaks,
             };
             let (a, b) = (pl.to_sheet(e.a), pl.to_sheet(e.b));
             let (dx, dy) = ((b[0] - a[0]).abs(), (b[1] - a[1]).abs());
@@ -1753,6 +1757,7 @@ fn dimension_from(draft: &DimDraft, t: [f64; 2], views: &[ShownView]) -> Option<
                 position: v.position,
                 scale: v.scale,
                 center: l.center(),
+                breaks: l.breaks,
             };
             Some(Dimension {
                 shift: 0.0,

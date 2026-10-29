@@ -84,6 +84,7 @@ fn line_under(
             position: v.position,
             scale: v.scale,
             center: l.center(),
+            breaks: l.breaks,
         };
         let scr = |q: [f64; 2]| cam.to_screen(rect, pl.to_sheet(q));
         for (k, piece) in l.visible.iter().enumerate() {
@@ -151,6 +152,7 @@ impl CadCraftApp {
             position: v.position,
             scale: v.scale,
             center: l.center(),
+            breaks: l.breaks,
         };
         let cam = self.drw.cam;
         p.line_segment(

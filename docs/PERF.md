@@ -102,6 +102,8 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
   (the open two-mode item below), *36 countersunk holes* and *primitives* were over budget; none of them touches
   sheet metal code.
 
+- 2026-10-29: **Break views** (`tests/perf_drawing.rs`): three breaks over a view of 2 000 polylines (100 000 points)
+  and 500 cut-face loops clip in 4.4 ms (release, budget 50 ms); the GUI caches the result per view.
 - 2026-10-27: **Chamfer notes** (`tests/perf_drawing.rs`): 1 000 notes on a view of 4 000 straight edges resolve in
   14.7 ms (budget 50 ms; each note finds its two edges by name). In the same run the *assembly view 20 000* cases
   were over budget (21.4 / 18.3 s) while other sessions compiled — the known noisy case, untouched by this change.

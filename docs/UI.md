@@ -387,7 +387,7 @@ Delete at the top; every change redraws the sheet and is one Undo step.
 kinds and annotations) and writes `plate.pdf`.
 The other drawing commands open their Inventor dialog with OK disabled (interface first,
 [spec/4.7-drawing-commands.md](spec/4.7-drawing-commands.md)); a click on the sheet fills the active selector.
-Aliases: Overlay **OV**, Draft View **DFV**, Break **BRK**, Break Out **BO**, Slice **SL**, Crop **CR**, Align
+**BRK** = Break (the selected view or a click on one, then the two break lines; the options float over the sheet; drag a break line or its gap to change it; right-click it › Edit Break / Delete Break). Aliases: Overlay **OV**, Draft View **DFV**, Break **BRK**, Break Out **BO**, Slice **SL**, Crop **CR**, Align
 **ALH / ALV / ALP / ALB**, New Sketch **DS**, Baseline / Ordinate / Chain **BD / OD / CD** (sets **BDS / ODS /
 CDS**), Arrange **AD**, Retrieve **RMA**, Chamfer / Punch / Bend Note **CN / PN / BN**, Symbols **SY**, Surface
 Texture **ST**, Welding **WS**, Caterpillar **CAT**, End Fill **EF**, FCF **FCF**, Datum / Feature Identifier
