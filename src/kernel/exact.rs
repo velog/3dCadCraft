@@ -3469,10 +3469,13 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
         }
     }
 
-    // Inside test for the orientation fallback below.
+    // Inside test for the orientation fallback below. A surface body has no inside: asking
+    // the kernel cast rays at its B-spline faces (seconds for a patch stitched into a holed
+    // surface) for an answer that means nothing there.
     let eps = body.size().max(1e-9) * 1e-5;
-    let inside =
-        |p: Point3| crate::diagnostics::crash::guard(|| body.contains(v3(&p))).unwrap_or(false);
+    let inside = |p: Point3| {
+        !open && crate::diagnostics::crash::guard(|| body.contains(v3(&p))).unwrap_or(false)
+    };
     // Vertices: edge polyline ends, welded.
     let mut vid: HashMap<Key, VertexId> = HashMap::new();
     let mut vertex = |out: &mut BRep, p: Point3| -> VertexId {

@@ -363,4 +363,37 @@ fn patch_of_a_hole_in_a_wavy_surface() {
     );
     let added = sheet_area(&p) - before;
     assert!(added > 4_000.0 && added < 9_000.0, "patch area {added}");
+    // Stitched into the holed surface, the patch closes the hole: one surface, whose free
+    // edges are the outer rim only (the 4 arcs of the hole are shared now).
+    let free = |p: &PartDocument| {
+        p.body
+            .edges()
+            .filter(|(e, _)| p.body.edge_faces(*e).len() == 1)
+            .count()
+    };
+    let n = free(&p);
+    let t = std::time::Instant::now();
+    op(
+        &mut p,
+        BodyOp::Stitch(cadcraft3d::part::surface_op::StitchOp {
+            surfaces: vec!["Extrusion2".into(), "BoundaryPatch1".into()],
+            tolerance: 0.01,
+            keep_surface: false,
+        }),
+    );
+    let took = t.elapsed();
+    let st = p
+        .exact_bodies
+        .0
+        .iter()
+        .find(|s| s.name.as_deref() == Some("Stitch1"))
+        .unwrap();
+    assert!(st.is_open(), "the outer rim stays open");
+    assert_eq!(
+        free(&p),
+        n - 8,
+        "the hole's 4 arcs are no longer free edges"
+    );
+    // It took 7 s while the conversion asked the kernel whether points lie inside a surface.
+    assert!(took.as_secs_f64() < 5.0, "stitch took {took:?}");
 }
