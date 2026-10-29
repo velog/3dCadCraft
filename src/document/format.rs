@@ -136,7 +136,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 38: angular dimensions in drawings (`DimKind::Angle`) (2026-10-28).
 /// - 39: section lines of several segments (`ViewKind::Section::mid`,
 ///   offset sections) (2026-10-28).
-pub const FORMAT_REVISION: u32 = 39;
+/// - 40: Copy Object (`BodyOp::CopyObject`) (2026-10-29).
+pub const FORMAT_REVISION: u32 = 40;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

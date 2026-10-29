@@ -189,6 +189,8 @@ pub enum BodyOp {
     ReplaceFace(super::surface_op::ReplaceFaceOp),
     /// Sculpt.
     Sculpt(super::surface_op::SculptOp),
+    /// Copy Object (format revision 40).
+    CopyObject(super::copy_object::CopyObjectOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -433,6 +435,7 @@ impl BodyOpFeature {
             BodyOp::Ruled(_) => "RuledSurface",
             BodyOp::ReplaceFace(_) => "ReplaceFace",
             BodyOp::Sculpt(_) => "Sculpt",
+            BodyOp::CopyObject(_) => "CopyObject",
         }
     }
 
@@ -458,6 +461,7 @@ impl BodyOpFeature {
             BodyOp::Ruled(o) => o.validate(),
             BodyOp::ReplaceFace(o) => o.validate(),
             BodyOp::Sculpt(o) => o.validate(),
+            BodyOp::CopyObject(o) => o.validate(),
         }
     }
 
@@ -467,7 +471,7 @@ impl BodyOpFeature {
             BodyOp::Thicken(t) => {
                 t.output == ThickenOutput::Surface || t.operation == Operation::NewSolid
             }
-            BodyOp::Patch(_) | BodyOp::Ruled(_) | BodyOp::Stitch(_) => true,
+            BodyOp::Patch(_) | BodyOp::Ruled(_) | BodyOp::Stitch(_) | BodyOp::CopyObject(_) => true,
             BodyOp::Sculpt(s) => s.operation == super::surface_op::SculptOperation::NewSolid,
             BodyOp::DeleteFace(_)
             | BodyOp::MoveBodies(_)
@@ -487,7 +491,8 @@ impl BodyOpFeature {
             | BodyOp::Patch(_)
             | BodyOp::Trim(_)
             | BodyOp::ReplaceFace(_)
-            | BodyOp::Sculpt(_) => Vec::new(),
+            | BodyOp::Sculpt(_)
+            | BodyOp::CopyObject(_) => Vec::new(),
             BodyOp::MoveBodies(m) => m
                 .steps
                 .iter()
@@ -568,6 +573,7 @@ impl BodyOpFeature {
                 o.operation,
                 o.surfaces.len()
             ),
+            BodyOp::CopyObject(o) => o.describe(),
         }
     }
 }

@@ -1312,8 +1312,26 @@ impl Planned {
                     | PartPlanned::RuledSurface
                     | PartPlanned::ReplaceFace
                     | PartPlanned::Sculpt
+                    | PartPlanned::CopyObject
             )
         )
+    }
+
+    /// Why option `label` (a check box, or choice `choice` of a radio row) is off in a command
+    /// whose logic exists: `Some(tooltip)` draws it disabled.
+    pub fn option_off(self, label: &str, choice: Option<&str>) -> Option<&'static str> {
+        match (self, label, choice) {
+            (Planned::Part(PartPlanned::CopyObject), "Create New", Some("Group")) => Some(
+                "Needs the construction environment, not available yet (spec 2.13 Copy Object)",
+            ),
+            (Planned::Part(PartPlanned::CopyObject), "Select Existing" | "Associative", None) => {
+                Some(concat!(
+                    "Only when editing a part in an assembly (spec 2.13 Copy Object); ",
+                    "in a part a copy always follows its source"
+                ))
+            }
+            _ => None,
+        }
     }
 
     pub fn title(self) -> &'static str {
@@ -1481,7 +1499,7 @@ impl PartDialog {
                 key,
                 label,
                 prompt,
-                accepts,
+                accepts: self.accepts(key, accepts),
                 single: false,
                 required: false,
                 count: self.picks.get(key).map_or(0, Vec::len),
@@ -1489,6 +1507,20 @@ impl PartDialog {
             })
             .collect();
         Flow::new(sels, self.active)
+    }
+
+    /// What selector `key` takes now: Copy Object's Objects follow its Select (Face · Body).
+    fn accepts(&self, key: &str, def: &'static [PickKind]) -> &'static [PickKind] {
+        match (self.kind, key) {
+            (Planned::Part(PartPlanned::CopyObject), "objects") => {
+                if self.index(0, "Select") == 1 {
+                    &[PickKind::Body, PickKind::Surface]
+                } else {
+                    FACES
+                }
+            }
+            _ => def,
+        }
     }
 
     /// The status-bar prompt: `<Command>: <prompt>`.
@@ -1762,6 +1794,7 @@ impl PartDialog {
         if let Some(k) = ev.clear {
             self.picks.remove(k);
             self.refs.remove(k);
+            self.items.remove(k);
             self.active = Some(k);
         }
         ui.separator();
@@ -1849,25 +1882,45 @@ impl PartDialog {
                 ui.end_row();
             }
             Check(label, on) => {
+                let off = self.kind.option_off(label, None);
                 let v = self.bools.entry(at).or_insert(on);
                 plabel(ui, "");
-                ui.checkbox(v, label);
+                let r = ui.add_enabled(off.is_none(), egui::Checkbox::new(v, label));
+                if let Some(t) = off {
+                    r.on_disabled_hover_text(t);
+                }
                 ui.end_row();
             }
             Radio(label, opts, def) => {
                 plabel(ui, label);
+                let kind = self.kind;
                 let v = self.indices.entry(at).or_insert(def);
+                let before = *v;
                 // Two short choices side by side; more one under another, so
                 // the panel keeps its width.
                 let draw = |ui: &mut egui::Ui, v: &mut usize| {
                     for (i, o) in opts.iter().enumerate() {
-                        ui.radio_value(v, i, *o);
+                        let off = kind.option_off(label, Some(o));
+                        let r = ui.add_enabled(off.is_none(), egui::RadioButton::new(*v == i, *o));
+                        if r.clicked() {
+                            *v = i;
+                        }
+                        if let Some(t) = off {
+                            r.on_disabled_hover_text(t);
+                        }
                     }
                 };
                 if opts.len() <= 2 && opts.iter().map(|o| o.len()).sum::<usize>() <= 24 {
                     ui.horizontal(|ui| draw(ui, v));
                 } else {
                     ui.vertical(|ui| draw(ui, v));
+                }
+                // Copy Object: switching Face / Body clears the selection (Inventor).
+                if *v != before
+                    && label == "Select"
+                    && kind == Planned::Part(PartPlanned::CopyObject)
+                {
+                    ev.clear = Some("objects");
                 }
                 ui.end_row();
             }
@@ -1959,13 +2012,36 @@ impl CadCraftApp {
         let Some(kinds) = d.flow().current().map(|s| s.accepts) else {
             return;
         };
-        let edge = self.edge_under(p, rect);
-        let face = match (edge, self.plane_under(p, rect, false)) {
-            (None, Some(crate::part::PlaneRef::Face(n))) => Some(n),
-            _ => None,
-        };
-        let Some(item) = self.sel_item_at(p, rect, edge, face.as_deref()) else {
-            return;
+        let item = if kinds.contains(&PickKind::Body) && !kinds.contains(&PickKind::Face) {
+            // A selector of whole bodies (Copy Object's Body mode): the body of the face under
+            // the cursor (the pick filter leaves faces out, so they are not asked through it).
+            let Some((o, dir)) = self.camera.ray(p, rect) else {
+                return;
+            };
+            let Some(dir) = dir.try_normalize(1e-12) else {
+                return;
+            };
+            let Some((f, t)) = self.picker().pick(&o, &dir) else {
+                return;
+            };
+            let Some(name) = self.part().body.face(f).and_then(|x| x.name.clone()) else {
+                return;
+            };
+            let at = o + dir * t;
+            match self.body_of_face(&name, Some([at.x, at.y, at.z])) {
+                Some(b) => SelItem::Body(b),
+                None => return,
+            }
+        } else {
+            let edge = self.edge_under(p, rect);
+            let face = match (edge, self.plane_under(p, rect, false)) {
+                (None, Some(crate::part::PlaneRef::Face(n))) => Some(n),
+                _ => None,
+            };
+            let Some(item) = self.sel_item_at(p, rect, edge, face.as_deref()) else {
+                return;
+            };
+            item
         };
         if !takes(kinds, &item) {
             return;

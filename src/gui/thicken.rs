@@ -590,6 +590,7 @@ impl CadCraftApp {
             BodyOp::Ruled(_) => Icon::RuledSurface,
             BodyOp::ReplaceFace(_) => Icon::ReplaceFace,
             BodyOp::Sculpt(_) => Icon::Sculpt,
+            BodyOp::CopyObject(_) => Icon::CopyObject,
         };
         self.panel_header(ui, icon, f.name());
         if let Some(h) = self.part().feature_health.get(f.id()) {

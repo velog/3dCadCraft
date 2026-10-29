@@ -1192,6 +1192,42 @@ fn speed_budgets() {
         ));
     }
 
+    // Copy Object of every face of the rounded box: into one solid, and into
+    // surface bodies (the faces sorted into contiguous sets first).
+    for (case, output) in [
+        (
+            "copy object: every face of the rounded box into a solid (add_body_op)",
+            cadcraft3d::part::copy_object::CopyOutput::Solid,
+        ),
+        (
+            "copy object: every face of the rounded box into surfaces (add_body_op)",
+            cadcraft3d::part::copy_object::CopyOutput::Surface,
+        ),
+    ] {
+        rows.push((
+            case,
+            800.0,
+            median_ms(3, || {
+                use cadcraft3d::part::copy_object::CopyObjectOp;
+                use cadcraft3d::part::{BodyOp, BodyOpFeature};
+                let mut p = rb.clone();
+                p.build_cache = Default::default();
+                let faces = p
+                    .body
+                    .faces()
+                    .filter_map(|(f, _)| cadcraft3d::part::shell::face_ref(&p.body, f, None))
+                    .collect();
+                let op = CopyObjectOp {
+                    faces,
+                    output,
+                    ..Default::default()
+                };
+                p.add_body_op(BodyOpFeature::new(BodyOp::CopyObject(op)))
+                    .unwrap();
+            }),
+        ));
+    }
+
     // Face Draft of a box's sides and vertical rounds (one tangent chain
     // from the front), fixed plane XY.
     let mut vertical_rounds = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();

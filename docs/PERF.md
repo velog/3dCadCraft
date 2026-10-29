@@ -23,6 +23,8 @@ Target times for interactive work:
 | chamfer 2 of the same edges (wedges) | 1200 ms | 371 ms |
 | Face Draft 3° of the sides and the vertical fillets of a box (`add_draft`) | 200 ms | 55 ms (2026-10-19) |
 | Thicken 3 mm of the rounded box's top face, Join (`add_body_op`) | 400 ms | 207 ms (2026-10-27, machine 49 % busy) |
+| Copy Object of every face of the rounded box into one solid (`add_body_op`) | 800 ms | 299 ms (2026-10-29, machine 54 % busy) |
+| Copy Object of every face of the rounded box into surfaces (contiguous sets, `add_body_op`) | 800 ms | 467 ms (2026-10-29, machine 56 % busy) |
 | Delete Face with Heal of the 36 hole walls of a plate (`add_body_op`, the step alone) | 300 ms | 39 ms (2026-10-27; 9 s before `faces_named_many` made the mesh once for all references) |
 | Project Cut Edges of a plate with 36 holes (outline + 36 circles) | 60 ms | 1.2 ms (2026-10-27; 7 s through the kernel's split and `to_brep` before the section came from the face triangles + exact surfaces) |
 | Project Geometry of a face with 36 holes (every loop, linked) | 60 ms | 6.5 ms (2026-10-27) |

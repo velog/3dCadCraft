@@ -805,5 +805,26 @@
     "RuledSurface1:Side:0"
   ],
   "r38/drawing_r38.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
-  "r39/drawing_r39.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"]
+  "r39/drawing_r39.3dcadcraft": ["Face1:Bend:1", "Face1:Bend:10", "Face1:Bend:11", "Face1:Bend:12", "Face1:Bend:13", "Face1:Bend:14", "Face1:Bend:15", "Face1:Bend:16", "Face1:Bend:17", "Face1:Bend:18", "Face1:Bend:19", "Face1:Bend:2", "Face1:Bend:20", "Face1:Bend:21", "Face1:Bend:22", "Face1:Bend:23", "Face1:Bend:24", "Face1:Bend:25", "Face1:Bend:26", "Face1:Bend:27", "Face1:Bend:28", "Face1:Bend:29", "Face1:Bend:3", "Face1:Bend:30", "Face1:Bend:31", "Face1:Bend:4", "Face1:Bend:5", "Face1:Bend:6", "Face1:Bend:7", "Face1:Bend:8", "Face1:Bend:9", "Face1:Flange1.1:bottom", "Face1:Flange1.1:rim.far", "Face1:Flange1.1:rim.side0", "Face1:Flange1.1:rim.side1", "Face1:Flange1.1:top", "Face1:Flange1.2:bottom", "Face1:Flange1.2:rim.far", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side0", "Face1:Flange1.2:rim.side1", "Face1:Flange1.2:top", "Face1:Flange1.3:bottom", "Face1:Flange1.3:rim.far", "Face1:Flange1.3:rim.side0", "Face1:Flange1.3:rim.side1", "Face1:Flange1.3:top", "Face1:Flange1.4:bottom", "Face1:Flange1.4:rim.far", "Face1:Flange1.4:rim.side0", "Face1:Flange1.4:rim.side1", "Face1:Flange1.4:top", "Face1:base:bottom", "Face1:base:top"],
+  "r40/copy_object_r40.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top",
+    "CopyObject1:Box1:Top",
+    "CopyObject2:Extrusion1:End",
+    "CopyObject2:Extrusion1:Side:1v1:0",
+    "CopyObject2:Extrusion1:Side:2v1:0",
+    "CopyObject2:Extrusion1:Side:3v1:0",
+    "CopyObject2:Extrusion1:Side:4v1:0",
+    "CopyObject2:Extrusion1:Start",
+    "Extrusion1:End",
+    "Extrusion1:Side:1v1:0",
+    "Extrusion1:Side:2v1:0",
+    "Extrusion1:Side:3v1:0",
+    "Extrusion1:Side:4v1:0",
+    "Extrusion1:Start"
+  ]
 }

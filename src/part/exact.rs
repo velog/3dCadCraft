@@ -1176,6 +1176,7 @@ pub(super) fn body_op(
         super::BodyOp::Ruled(o) => so::ruled(o, &f.id, body, works, cur, sheets),
         super::BodyOp::ReplaceFace(o) => so::replace_face(o, &f.id, body, works, cur, sheets),
         super::BodyOp::Sculpt(o) => so::sculpt(o, &f.id, cur, sheets),
+        super::BodyOp::CopyObject(o) => super::copy_object::copy_object(o, &f.id, cur, sheets),
     }
 }
 

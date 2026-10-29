@@ -28,6 +28,7 @@ pub mod body_op;
 pub mod boolean;
 pub mod coil;
 pub mod combine;
+pub mod copy_object;
 mod cut_edges;
 pub mod draft;
 mod exact;

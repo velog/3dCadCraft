@@ -6568,6 +6568,7 @@ pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
                 crate::part::BodyOp::Ruled(_) => Icon::RuledSurface,
                 crate::part::BodyOp::ReplaceFace(_) => Icon::ReplaceFace,
                 crate::part::BodyOp::Sculpt(_) => Icon::Sculpt,
+                crate::part::BodyOp::CopyObject(_) => Icon::CopyObject,
             },
             f.describe(),
         ),

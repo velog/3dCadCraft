@@ -1,7 +1,8 @@
 //! The surface commands' logic behind their panels (`docs/spec/5.4-surfaces.md`): Stitch,
-//! Boundary Patch, Trim, Extend, Ruled Surface, Replace Face and Sculpt use the planned-panel
-//! interface of `part_planned` (selectors, options); OK turns its picks into a
-//! [`BodyOp`](crate::part::BodyOp) (`part::surface_op`) and adds or replaces the feature.
+//! Boundary Patch, Trim, Extend, Ruled Surface, Replace Face and Sculpt — and Copy Object
+//! (`docs/spec/2.13-copy-object.md`) — use the planned-panel interface of `part_planned`
+//! (selectors, options); OK turns its picks into a [`BodyOp`](crate::part::BodyOp)
+//! (`part::surface_op`, `part::copy_object`) and adds or replaces the feature.
 
 use eframe::egui;
 
@@ -9,6 +10,7 @@ use super::CadCraftApp;
 use super::part_planned::{PartDialog, PartPlanned, Planned};
 use super::select::SelItem;
 use crate::kernel::{Point3, Real};
+use crate::part::copy_object::{CopyObjectOp, CopyOutput, CopySelect};
 use crate::part::surface_op::{
     ExtendOp, PatchOp, ReplaceFaceOp, ReplaceWith, RuledKind, RuledOp, SculptOp, SculptOperation,
     StitchOp, SurfEdge, TrimOp, TrimTool,
@@ -99,7 +101,7 @@ impl CadCraftApp {
     }
 
     /// The name of the body (solid or surface) holding face `name` nearest `at`.
-    fn body_of_face(&self, name: &str, at: Option<[f64; 3]>) -> Option<String> {
+    pub(super) fn body_of_face(&self, name: &str, at: Option<[f64; 3]>) -> Option<String> {
         let all = &self.part().exact_bodies.0;
         let at = at.map_or_else(Point3::origin, |h| Point3::new(h[0], h[1], h[2]));
         crate::kernel::exact::faces_in_solids(all, &[(name, at)])
@@ -425,6 +427,66 @@ impl CadCraftApp {
                     flip: d.check(t, "Flip"),
                 })
             }
+            PartPlanned::CopyObject => {
+                let prev = match old {
+                    Some(BodyOp::CopyObject(o)) => Some(o),
+                    _ => None,
+                };
+                let select = if d.index(t, "Select") == 1 {
+                    CopySelect::Body
+                } else {
+                    CopySelect::Face
+                };
+                let picks = d.items_of("objects");
+                let mut faces: Vec<FaceRef> = Vec::new();
+                let mut bodies: Vec<String> = Vec::new();
+                for (item, at) in picks {
+                    match (select, item) {
+                        (CopySelect::Face, SelItem::Face(f)) => {
+                            let hint = at
+                                .or_else(|| self.item_point(item).map(|q| [q.x, q.y, q.z]))
+                                .ok_or_else(|| format!("no point on face {f}"))?;
+                            faces.push(FaceRef {
+                                face: f.clone(),
+                                hint,
+                            });
+                        }
+                        (CopySelect::Body, SelItem::Body(b)) => bodies.push(b.clone()),
+                        (CopySelect::Body, SelItem::Face(f)) => {
+                            if let Some(b) = self.body_of_face(f, *at) {
+                                bodies.push(b);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                bodies.dedup();
+                // Selectors left empty keep the feature's own picks (Edit Feature).
+                if picks.is_empty()
+                    && let Some(o) = prev.filter(|o| o.select == select)
+                {
+                    faces = o.faces.clone();
+                    bodies = o.bodies.clone();
+                }
+                let output = match d.index(t, "Create New") {
+                    0 => {
+                        return Err(
+                            "Group needs the construction environment (not available yet)".into(),
+                        );
+                    }
+                    2 => CopyOutput::Composite,
+                    3 => CopyOutput::Solid,
+                    4 => CopyOutput::MultipleSolids,
+                    _ => CopyOutput::Surface,
+                };
+                BodyOp::CopyObject(CopyObjectOp {
+                    select,
+                    faces,
+                    bodies,
+                    output,
+                    delete_original: d.check(t, "Delete Original"),
+                })
+            }
             _ => return Err("only the interface exists yet".into()),
         })
     }
@@ -540,6 +602,7 @@ impl CadCraftApp {
             BodyOp::Ruled(_) => PartPlanned::RuledSurface,
             BodyOp::ReplaceFace(_) => PartPlanned::ReplaceFace,
             BodyOp::Sculpt(_) => PartPlanned::Sculpt,
+            BodyOp::CopyObject(_) => PartPlanned::CopyObject,
             _ => return,
         };
         self.start_part_planned(kind);
@@ -572,6 +635,20 @@ impl CadCraftApp {
                 );
             }
             BodyOp::Trim(o) => d.set_check(0, "Invert Selection", o.invert),
+            BodyOp::CopyObject(o) => {
+                d.set_index(0, "Select", usize::from(o.select == CopySelect::Body));
+                d.set_index(
+                    0,
+                    "Create New",
+                    match o.output {
+                        CopyOutput::Surface => 1,
+                        CopyOutput::Composite => 2,
+                        CopyOutput::Solid => 3,
+                        CopyOutput::MultipleSolids => 4,
+                    },
+                );
+                d.set_check(0, "Delete Original", o.delete_original);
+            }
             BodyOp::Sculpt(o) => {
                 d.set_check(0, "Flip", o.flip);
                 d.set_index(

@@ -757,7 +757,13 @@ bodies moved by Free Drag (X, Y, Z), Move Along Ray (an edge or axis, Flip, Offs
 (an edge or axis, Flip, Angle), several moves in one feature (*Click to add*); names stay, so later features
 follow; dragging the preview is still to do. **Specification:** [spec/2.13-move-bodies.md](spec/2.13-move-bodies.md)
 
-**Inventor equivalent.** Combine, Split, Move Bodies, Make Components.
+**Copy Object** — 🟡 implemented 2026-10-29 (format revision 40, `BodyOp::CopyObject`), checked in the app: faces or
+bodies copied into surface bodies (one per contiguous set of faces), one composite, one solid (the faces must close)
+or several solids; Delete Original removes the copied bodies or opens their body; copies follow their source and get
+names of their own (`CopyObject1:Box1:Top`). Group and Select Existing / Associative (in-place editing) are not
+available; no preview yet. **Specification:** [spec/2.13-copy-object.md](spec/2.13-copy-object.md)
+
+**Inventor equivalent.** Combine, Split, Move Bodies, Copy Object, Make Components.
 
 ## 2.14 Thicken / Offset, Delete Face, Replace Face — 🟡 (Thicken/Offset, Delete Face; waiting for a visual check) · L
 

@@ -99,6 +99,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [2.10-work-features.md](2.10-work-features.md) | Work planes, axes, points |
 | [2.13-booleans.md](2.13-booleans.md) | Join / Cut / Intersect, Surface, representation of the result |
 | [2.13-move-bodies.md](2.13-move-bodies.md) | Move Bodies: Free Drag, Move Along Ray, Rotate About Line, several moves; `BodyOp::MoveBodies` |
+| [2.13-copy-object.md](2.13-copy-object.md) | Copy Object: faces or bodies into surfaces, a composite, a solid or solids; Delete Original; `BodyOp::CopyObject` |
 | [2.13-combine-split.md](2.13-combine-split.md) | Combine (Base, Toolbodies, Keep Toolbody) and Split (Split Face, Trim Solid, Split Solid) |
 | [2.15-materials.md](2.15-materials.md) | Materials, appearances, overrides, libraries, Styles Editor |
 | [2.16-browser.md](2.16-browser.md) | Model browser: order, nested sketches, bodies, End of Part, reordering, Suppress, Delete, Rename |

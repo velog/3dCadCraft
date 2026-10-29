@@ -617,6 +617,51 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 40: a 40 × 30 × 20 box and a 10 mm block beside it; Copy Object of the box's top
+/// face (Surface) and of the block (Multiple Solids).
+fn copy_object_r40() -> PartDocument {
+    use cadcraft3d::part::copy_object::{CopyObjectOp, CopyOutput, CopySelect};
+    use cadcraft3d::part::shell::FaceRef;
+    use cadcraft3d::part::{BodyOp, BodyOpFeature, ExtrudeFeature, OriginPlane, ProfileRef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(60.0, 0.0), Point2::new(70.0, 10.0))
+        .unwrap();
+    let profiles: Vec<ProfileRef> = sk
+        .regions()
+        .iter()
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
+    p.add_extrude(i, ExtrudeFeature::new(profiles, 10.0))
+        .unwrap();
+    p.add_body_op(BodyOpFeature::new(BodyOp::CopyObject(CopyObjectOp {
+        select: CopySelect::Face,
+        faces: vec![FaceRef {
+            face: "Box1:Top".into(),
+            hint: [20.0, 15.0, 20.0],
+        }],
+        output: CopyOutput::Surface,
+        ..Default::default()
+    })))
+    .unwrap();
+    p.add_body_op(BodyOpFeature::new(BodyOp::CopyObject(CopyObjectOp {
+        select: CopySelect::Body,
+        bodies: vec!["Extrusion1".into()],
+        output: CopyOutput::MultipleSolids,
+        ..Default::default()
+    })))
+    .unwrap();
+    p
+}
+
 /// Revision 35: a 40 × 30 × 20 box and a 10 mm block beside it (two
 /// bodies); Move Bodies turns the block 90° about Z, then moves it 5 up.
 fn move_bodies_r35() -> PartDocument {
@@ -2292,6 +2337,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("SurfacesR37");
             project.add_document("Part1", DocumentData::Part(surfaces_r37()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r40/copy_object_r40.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("CopyObjectR40");
+            project.add_document("Part1", DocumentData::Part(copy_object_r40()));
             project.save(&f).unwrap();
         }
         let f = root().join("r35/move_bodies_r35.3dcadcraft");

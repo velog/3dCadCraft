@@ -21,6 +21,22 @@ impl ExactSolid {
         self.sheet || self.body.is_surface()
     }
 
+    /// Whether every shell of the body closes (it bounds a volume), whatever
+    /// its surface flag says.
+    pub fn closes(&self) -> bool {
+        !self.body.is_surface()
+    }
+
+    /// The body flagged as a surface body (`true`) or as a solid (`false`,
+    /// only when it closes — Copy Object's Solid output).
+    pub fn flagged(mut self, sheet: bool) -> Result<Self, String> {
+        if !sheet && !self.closes() {
+            return Err("the faces do not close a volume".into());
+        }
+        self.sheet = sheet;
+        Ok(self)
+    }
+
     /// The display-triangle corners of the whole body (kernel orientation),
     /// for [`SheetSide`].
     pub fn triangles(&self) -> Result<Vec<[Point3; 3]>, String> {
