@@ -1,5 +1,5 @@
 //! Update of cross-part references (spec 3.10 §3.3, T3): each part's
-//! [`ContextRef`] copies are compared with their sources in the assembly
+//! [`ContextRef`](crate::part::context::ContextRef) copies are compared with their sources in the assembly
 //! they were made in, and changed copies are written into the part, which
 //! then regenerates (the part never looks its sources up itself, rule 8).
 
