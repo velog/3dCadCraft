@@ -24,6 +24,7 @@ use super::valuefield::ExprValue;
 use crate::assembly::{self as asm, Hit, PickMesh};
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId};
 use crate::kernel::{Plane, Point3, Real, Transform3, Vector3};
+use crate::part::PlaneRef;
 
 /// An open assembly command.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,6 +114,9 @@ pub(super) struct AsmUi {
     /// Edit in place (spec 3.10 §3.2): the part being edited and where it
     /// lies in the assembly it came from (the rest is drawn around it).
     pub in_place: Option<InPlace>,
+    /// The cross-part reference a sketch-plane click on another component
+    /// makes (taken by `plane_picked` after its Undo checkpoint).
+    pub pending_context: Option<crate::part::context::ContextRef>,
     /// Copied occurrences (Ctrl+C): component, placement, name.
     clipboard: Vec<(DocRef, Transform3, String)>,
     /// Isolate: only these occurrences are drawn and picked until Undo
@@ -470,6 +474,16 @@ impl CadCraftApp {
         self.asm.in_place = None;
         if let Some(a) = self.asm.came_from.take() {
             self.activate_document(a);
+            // What was built on other components follows them.
+            if self.is_assembly() {
+                self.checkpoint("Update");
+                let r = self.context_update();
+                if r.changed.is_empty() && r.sick.is_empty() {
+                    self.history.cancel();
+                } else if !r.sick.is_empty() {
+                    self.file_status = Some(Err(format!("Update: {}", r.sick.join("; "))));
+                }
+            }
         }
     }
 
@@ -601,6 +615,121 @@ impl CadCraftApp {
             .in_place
             .as_ref()
             .filter(|ip| ip.document == self.part_id && self.asm.came_from == Some(ip.assembly))
+    }
+
+    /// A planar face of another component under the cursor while a part of
+    /// this design file is edited in place (spec 3.10 §3.3): its distance
+    /// along the (unit) eye ray and the cross-part reference a sketch on it
+    /// makes.
+    pub(super) fn context_face_under(
+        &self,
+        pos: Pos2,
+        rect: Rect,
+    ) -> Option<(f64, crate::part::context::ContextRef)> {
+        use crate::part::context::{ContextRef, ContextSource};
+        let ip = self.in_place_now().filter(|ip| ip.linked.is_none())?;
+        let (o, d) = self.camera.ray(pos, rect)?;
+        let d = d.normalize();
+        let linked = self.linked();
+        let asm = DocRef::local(ip.assembly);
+        let a = crate::assembly::tree::assembly_of(&self.project, &linked, asm)?;
+        let mut edited = vec![ip.top];
+        edited.extend(&ip.sub);
+        let inv = ip.place.inverse();
+        let mut best: Option<(f64, Vec<u32>, String, Point3)> = None;
+        for l in crate::assembly::tree::leaves(&self.project, &linked, asm, a) {
+            if l.path == edited || !l.occurrence.pickable() {
+                continue;
+            }
+            // The leaf's frame seen from the edited part (rigid: same t).
+            let to_leaf = (inv * l.world).inverse();
+            let (lo, ld) = (to_leaf * o, to_leaf * d);
+            let Some((f, t)) = self.asm_mesh(l.component).and_then(|m| m.hit(&lo, &ld)) else {
+                continue;
+            };
+            if best.as_ref().is_some_and(|b| b.0 <= t) {
+                continue;
+            }
+            let name = self
+                .with_part(l.component, |p| {
+                    p.body.face_plane(f)?;
+                    p.body.face(f)?.name.clone()
+                })
+                .flatten();
+            if let Some(name) = name {
+                best = Some((t, l.path.clone(), name, lo + ld * t));
+            }
+        }
+        let (t, path, face, q) = best?;
+        let (&top, sub) = path.split_first()?;
+        let label = crate::assembly::tree::nested(&self.project, &linked, a, top, sub)
+            .map_or_else(|_| "?".to_owned(), |n| n.name);
+        let source = ContextSource {
+            assembly: ip.assembly,
+            target: edited,
+            path,
+            face,
+            hint: [q.x, q.y, q.z],
+            label: format!("{label} face"),
+        };
+        let geom = crate::assembly::context::current(&self.project, &linked, a, &source).ok()?;
+        Some((
+            t,
+            ContextRef {
+                id: String::new(),
+                source,
+                geom,
+            },
+        ))
+    }
+
+    /// The sketch plane under the cursor: the edited part's own (faces,
+    /// work and origin planes), or a face of another component in front of
+    /// them while editing in place — then `PlaneRef::Context("")`, and the
+    /// reference waits in `pending_context` for the click.
+    pub(super) fn sketch_plane_under(
+        &mut self,
+        pos: Pos2,
+        rect: Rect,
+        click: bool,
+    ) -> Option<PlaneRef> {
+        let own = self.plane_under_pub(pos, rect);
+        let ctx = self.context_face_under(pos, rect);
+        let own_t = self.camera.ray(pos, rect).and_then(|(o, d)| {
+            let d = d.normalize();
+            self.face_hit(&o, &d).map(|(_, t)| t)
+        });
+        match ctx {
+            Some((t, c)) if own.is_none() || own_t.is_some_and(|o| t < o) => {
+                if click {
+                    self.asm.pending_context = Some(c);
+                }
+                Some(PlaneRef::Context(String::new()))
+            }
+            _ => own,
+        }
+    }
+
+    /// `plane` with a pending cross-part reference added to the active part
+    /// (after the caller's Undo checkpoint).
+    pub(super) fn take_context_plane(&mut self, plane: PlaneRef) -> PlaneRef {
+        match (&plane, self.asm.pending_context.take()) {
+            (PlaneRef::Context(id), Some(c)) if id.is_empty() => {
+                PlaneRef::Context(self.part_mut().add_context(c))
+            }
+            _ => plane,
+        }
+    }
+
+    /// Update of the cross-part references made in the active assembly
+    /// (spec 3.10 §3.3): changed copies are written, their parts rebuilt.
+    pub(super) fn context_update(&mut self) -> crate::assembly::context::Report {
+        let linked = self.linked();
+        let r = crate::assembly::context::update(&mut self.project, &linked, self.part_id);
+        if !r.changed.is_empty() {
+            self.scene_dirty = true;
+        }
+        r
     }
 
     /// The other components around a part edited in place: see-through and
@@ -808,7 +937,12 @@ impl CadCraftApp {
         }
         self.checkpoint("Update");
         self.asm_solve(None);
+        let ctx = self.context_update();
         self.scene_dirty = true;
+        if !ctx.sick.is_empty() {
+            self.file_status = Some(Err(format!("Update: {}", ctx.sick.join("; "))));
+            return;
+        }
         let sick = self.cons.last.sick.len();
         self.file_status = Some(if sick == 0 {
             Ok("Update: the part files were read again and the constraints solved".into())

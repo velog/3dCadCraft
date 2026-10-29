@@ -3151,6 +3151,10 @@ impl CadCraftApp {
             crate::part::PlaneRef::Origin(o) => format!("{o:?} Plane"),
             crate::part::PlaneRef::Face(n) => n.clone(),
             crate::part::PlaneRef::Work(id) => id.clone(),
+            crate::part::PlaneRef::Context(id) => self
+                .part()
+                .context_ref(id)
+                .map_or_else(|| id.clone(), |c| c.source.label.clone()),
             crate::part::PlaneRef::Fixed => "fixed".into(),
         };
         let line = |l: &crate::part::LineRef| match l {

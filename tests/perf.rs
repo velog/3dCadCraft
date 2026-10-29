@@ -1930,6 +1930,80 @@ fn speed_budgets() {
             assert!(p.feature_health.is_empty());
         }),
     ));
+    // Cross-part references (spec 3.10 §3.3, T3): Update after the base
+    // moved — 20 parts, each with a cylinder sketched on the base's top
+    // face, get their new copies and regenerate.
+    {
+        use cadcraft3d::assembly::context::{current, update};
+        use cadcraft3d::assembly::tree::Linked;
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentData, Project};
+        use cadcraft3d::kernel::Transform3;
+        use cadcraft3d::part::context::{ContextRef, ContextSource};
+        use cadcraft3d::part::{PlaneRef, ProfileRef};
+        let mut project = Project::new("Context");
+        let base = PartDocument::with_box("Box1", [200.0, 200.0, 10.0]).unwrap();
+        let b = project.add_document("Base", DocumentData::Part(base));
+        let mut asm = AssemblyDocument::default();
+        asm.place(DocRef::local(b), "Base", Transform3::identity(), true);
+        let mut parts = Vec::new();
+        for k in 0..20 {
+            let d =
+                project.add_document(format!("P{k}"), DocumentData::Part(PartDocument::default()));
+            let t = Transform3::translation((k % 5) as f64 * 40.0, (k / 5) as f64 * 40.0, 10.0);
+            asm.place(DocRef::local(d), "P", t, false);
+            parts.push(d);
+        }
+        let aid = project.add_document("Top", DocumentData::Assembly(asm.clone()));
+        for (k, &d) in parts.iter().enumerate() {
+            let source = ContextSource {
+                assembly: aid,
+                target: vec![k as u32 + 2],
+                path: vec![1],
+                face: "Box1:Top".into(),
+                hint: [100.0, 100.0, 10.0],
+                label: "Base:1 face".into(),
+            };
+            let geom = current(&project, &Linked::new(), &asm, &source).unwrap();
+            if let Some(DocumentData::Part(p)) = project.document_mut(d).map(|x| &mut x.data) {
+                let id = p.add_context(ContextRef {
+                    id: String::new(),
+                    source,
+                    geom,
+                });
+                let placement = SketchPlacement {
+                    plane: PlaneRef::Context(id),
+                    ..Default::default()
+                };
+                let i = p.create_sketch(placement, &Default::default()).unwrap();
+                p.sketches[i]
+                    .sketch
+                    .add_circle(cadcraft3d::sketch::Point2::new(10.0, 10.0), 5.0)
+                    .unwrap();
+                let r = p.sketches[i].sketch.regions();
+                p.add_extrude(
+                    i,
+                    ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 8.0),
+                )
+                .unwrap();
+            }
+        }
+        let mut z = 0.0;
+        rows.push((
+            "assembly: Update of 20 parts sketched on a moved base (cross-part references)",
+            300.0,
+            median_ms(3, || {
+                z += 1.0;
+                if let Some(DocumentData::Assembly(a)) =
+                    project.document_mut(aid).map(|x| &mut x.data)
+                {
+                    a.find_mut(1).unwrap().transform = Transform3::translation(0.0, 0.0, z);
+                }
+                let r = update(&mut project, &Linked::new(), aid);
+                assert_eq!(r.changed.len(), 20);
+            }),
+        ));
+    }
+
     // Assembly picking (docs/spec/3.1, A1): the occurrence under the cursor
     // every frame — 100 occurrences of the 36-hole plate, the ray taken into
     // each occurrence's frame against the part's cached triangles.

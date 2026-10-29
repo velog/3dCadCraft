@@ -94,6 +94,7 @@ fn plane_text(r: &PlaneRef) -> String {
         PlaneRef::Origin(p) => p.label().to_owned(),
         PlaneRef::Face(f) => format!("Face {f}"),
         PlaneRef::Work(id) => id.replace("WorkPlane", "Work Plane"),
+        PlaneRef::Context(id) => format!("Face of another component ({id})"),
         PlaneRef::Fixed => "Plane".to_owned(),
     }
 }

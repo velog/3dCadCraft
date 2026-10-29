@@ -475,7 +475,7 @@ pub(super) fn describe_plane(p: &PlaneRef) -> String {
     match p {
         PlaneRef::Origin(o) => format!("{o:?} Plane (normal)"),
         PlaneRef::Face(n) => n.clone(),
-        PlaneRef::Work(id) => id.clone(),
+        PlaneRef::Work(id) | PlaneRef::Context(id) => id.clone(),
         PlaneRef::Fixed => "fixed".into(),
     }
 }

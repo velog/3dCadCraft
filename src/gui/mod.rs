@@ -1226,6 +1226,7 @@ impl CadCraftApp {
             PickPurpose::NewSketch => {
                 let name = self.part().next_sketch_name();
                 self.checkpoint(&format!("Create {name}"));
+                let plane = self.take_context_plane(plane);
                 let placement = SketchPlacement {
                     plane,
                     ..Default::default()
@@ -1237,6 +1238,7 @@ impl CadCraftApp {
             }
             PickPurpose::Redefine(i) => {
                 self.checkpoint("Redefine Sketch");
+                let plane = self.take_context_plane(plane);
                 if let Err(e) = self.part_mut().redefine_sketch(i, plane, &opts) {
                     self.file_status = Some(Err(e.to_string()));
                 }
@@ -5300,6 +5302,11 @@ impl CadCraftApp {
     /// The plane under the cursor. A model face wins over the origin planes
     /// (which are large, translucent and usually *in front of* the faces
     /// the user is aiming at); origin planes are picked where no face is.
+    /// [`Self::plane_under`] for a sketch plane, origin planes included.
+    pub(super) fn plane_under_pub(&self, pos: egui::Pos2, rect: egui::Rect) -> Option<PlaneRef> {
+        self.plane_under(pos, rect, true)
+    }
+
     fn plane_under(
         &self,
         pos: egui::Pos2,
@@ -5452,12 +5459,13 @@ impl CadCraftApp {
         }
         // --- picking a sketch plane ---
         let picking = matches!(self.mode, Mode::PickPlane(_));
+        let click = response.clicked_by(PointerButton::Primary);
         let plane_hover = match (picking, pointer, on_cube) {
-            (true, Some(p), None) => self.plane_under(p, rect, true),
+            (true, Some(p), None) => self.sketch_plane_under(p, rect, click),
             _ => None,
         };
         if picking
-            && response.clicked_by(PointerButton::Primary)
+            && click
             && on_cube.is_none()
             && let Some(plane) = plane_hover.clone()
         {

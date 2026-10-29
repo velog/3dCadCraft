@@ -262,6 +262,9 @@ pub(super) fn describe_tool(part: &PartDocument, t: &SplitToolRef) -> String {
             .map_or_else(|| id.clone(), |f| f.name().to_owned()),
         SplitToolRef::Plane(PlaneRef::Face(n)) => n.clone(),
         SplitToolRef::Plane(PlaneRef::Fixed) => "fixed".into(),
+        SplitToolRef::Plane(PlaneRef::Context(id)) => part
+            .context_ref(id)
+            .map_or_else(|| id.clone(), |c| c.source.label.clone()),
         SplitToolRef::Sketch(id) => part
             .sketches
             .iter()

@@ -141,7 +141,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 42: Import of a STEP file (`BodyOp::Import`) (2026-10-29).
 /// - 43: hem types (`SheetOp::Hem::hem_type`: Single / Teardrop / Rolled /
 ///   Double, radius, angle) (2026-10-29).
-pub const FORMAT_REVISION: u32 = 43;
+/// - 44: cross-part references (`PlaneRef::Context`,
+///   `PartDocument::context`) (2026-10-29).
+pub const FORMAT_REVISION: u32 = 44;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

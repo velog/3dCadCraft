@@ -76,6 +76,10 @@ pub enum PlaneRef {
     Face(String),
     /// A work plane, by the id of its feature.
     Work(String),
+    /// A face of another component of an assembly, by the id of the part's
+    /// cross-part reference (`PartDocument::context`, spec 3.10 §3.3;
+    /// format revision 44).
+    Context(String),
     /// No model reference: the sketch keeps the plane stored in it
     /// (files written before placements existed, or detached sketches).
     Fixed,
@@ -145,6 +149,9 @@ pub enum PlacementError {
     /// The work plane is missing (deleted, or sick).
     #[error("work feature '{0}' is not available")]
     WorkFeatureMissing(String),
+    /// The cross-part reference is gone (spec 3.10 §3.3).
+    #[error("the reference '{0}' to another component no longer exists")]
+    ContextMissing(String),
     /// The plane's frame could not be built (zero or parallel axes).
     #[error("degenerate sketch frame: {0}")]
     DegenerateFrame(String),
@@ -165,6 +172,8 @@ pub struct WorkGeom {
     pub axes: std::collections::HashMap<String, (Point3, Vector3)>,
     /// Work points.
     pub points: std::collections::HashMap<String, Point3>,
+    /// The planes of the cross-part references (their copies).
+    pub context: std::collections::HashMap<String, Plane>,
 }
 
 impl WorkGeom {
@@ -197,6 +206,11 @@ pub fn plane_of(r: &PlaneRef, body: &BRep, works: &WorkGeom) -> Result<Plane, Pl
             .get(id)
             .cloned()
             .ok_or_else(|| PlacementError::WorkFeatureMissing(id.clone())),
+        PlaneRef::Context(id) => works
+            .context
+            .get(id)
+            .cloned()
+            .ok_or_else(|| PlacementError::ContextMissing(id.clone())),
         PlaneRef::Fixed => Ok(Plane::xy()),
     }
 }
@@ -268,6 +282,7 @@ impl SketchPlacement {
             PlaneRef::Origin(p) => p.label().to_owned(),
             PlaneRef::Face(f) => format!("Face {f}"),
             PlaneRef::Work(id) => format!("Work plane {id}"),
+            PlaneRef::Context(id) => format!("Face of another component ({id})"),
             PlaneRef::Fixed => "Fixed plane".to_owned(),
         }
     }
@@ -287,7 +302,7 @@ impl SketchPlacement {
     ) -> Result<Plane, PlacementError> {
         let (base, normal, default_x) = match &self.plane {
             PlaneRef::Fixed => return Ok(current.clone()),
-            PlaneRef::Work(_) => {
+            PlaneRef::Work(_) | PlaneRef::Context(_) => {
                 let p = plane_of(&self.plane, body, works)?;
                 (p.origin, p.normal.into_inner(), p.x_axis.into_inner())
             }
@@ -336,7 +351,7 @@ impl SketchPlacement {
 }
 
 /// Default x axis for a sketch on a face with outward normal `n`.
-fn default_face_x(n: &Vector3) -> Vector3 {
+pub(crate) fn default_face_x(n: &Vector3) -> Vector3 {
     if n.z.abs() < 0.9 {
         // Wall: y = world Z projected into the plane, x = y × n.
         let up = Vector3::z() - n * n.z;

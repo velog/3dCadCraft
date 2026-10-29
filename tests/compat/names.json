@@ -880,5 +880,11 @@
     "Face1:base:rim.1v1",
     "Face1:base:rim.3v1",
     "Face1:base:top"
+  ],
+  "r44/context_r44.3dcadcraft": [
+    "Extrusion1:End",
+    "Extrusion1:Side:1v1:0",
+    "Extrusion1:Side:1v1:0",
+    "Extrusion1:Start"
   ]
 }

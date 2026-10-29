@@ -28,6 +28,7 @@ pub mod body_op;
 pub mod boolean;
 pub mod coil;
 pub mod combine;
+pub mod context;
 pub mod copy_object;
 mod cut_edges;
 pub mod draft;
@@ -924,6 +925,10 @@ pub struct PartDocument {
     /// (by feature id); sick ones are missing.
     #[serde(skip)]
     pub work: placement::WorkGeom,
+    /// Cross-part references (spec 3.10 §3.3): geometry of other
+    /// components copied into this part's coordinates (format revision 44).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context: Vec<context::ContextRef>,
     /// Whether the last regeneration used the exact kernel (`false`: the
     /// faceted one, see [`PartDocument::regenerate`]).
     #[serde(skip)]
@@ -1087,12 +1092,17 @@ impl PartDocument {
         use crate::kernel::exact::{ExactSolid, to_brep};
         self.feature_health.clear();
         let mut works = placement::WorkGeom::new();
+        works.context = self
+            .context
+            .iter()
+            .map(|c| (c.id.clone(), c.geom.plane().clone()))
+            .collect();
         let mut body = BRep::new();
         // The exact solids so far (exact build only).
         let mut solids: Vec<ExactSolid> = Vec::new();
         // Edit Feature's rollback and the End of Part: the smaller wins.
         let limit = self.build_limit();
-        let mut prev_key = 0u64;
+        let mut prev_key = self.context_key();
         // The tools of the features built so far (by id), for patterns.
         let mut tools: HashMap<String, Vec<pattern::ToolSet>> = HashMap::new();
         // Holes, cosmetic and modeled threads of the features so far.

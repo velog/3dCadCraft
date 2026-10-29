@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 pub mod bom;
+pub mod context;
 pub mod copy;
 pub mod create;
 pub mod interference;

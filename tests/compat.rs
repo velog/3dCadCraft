@@ -739,6 +739,49 @@ fn import_r42() -> PartDocument {
     p
 }
 
+/// Revision 44: a cross-part reference (a face of another component 10 mm
+/// up, copied into the part) and a Ø8 × 5 cylinder extruded from a sketch on
+/// it.
+fn context_r44() -> PartDocument {
+    use cadcraft3d::document::DocumentId;
+    use cadcraft3d::kernel::{Plane, Vector3};
+    use cadcraft3d::part::PlaneRef;
+    use cadcraft3d::part::context::{ContextGeom, ContextRef, ContextSource};
+    let mut p = PartDocument::default();
+    let id = p.add_context(ContextRef {
+        id: String::new(),
+        source: ContextSource {
+            assembly: DocumentId::new_random(),
+            target: vec![2],
+            path: vec![1],
+            face: "Box1:Top".into(),
+            hint: [5.0, 5.0, 10.0],
+            label: "Base:1 face".into(),
+        },
+        geom: ContextGeom::Plane {
+            plane: Plane::new(Point3::new(0.0, 0.0, 10.0), Vector3::z(), Vector3::x()).unwrap(),
+        },
+    });
+    let placement = SketchPlacement {
+        plane: PlaneRef::Context(id),
+        ..Default::default()
+    };
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p.create_sketch(placement, &o).unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    sk.add_circle(Point2::new(0.0, 0.0), 4.0).unwrap();
+    let r = sk.regions();
+    p.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 5.0),
+    )
+    .unwrap();
+    p
+}
+
 /// Revision 40: a 40 × 30 × 20 box and a 10 mm block beside it; Copy Object of the box's top
 /// face (Surface) and of the block (Multiple Solids).
 fn copy_object_r40() -> PartDocument {
@@ -2483,6 +2526,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("ImportR42");
             project.add_document("Part1", DocumentData::Part(import_r42()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r44/context_r44.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ContextR44");
+            project.add_document("Part1", DocumentData::Part(context_r44()));
             project.save(&f).unwrap();
         }
         let f = root().join("r40/copy_object_r40.3dcadcraft");

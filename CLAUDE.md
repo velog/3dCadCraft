@@ -1181,6 +1181,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   linked files (`LibCache::links`). Edit in place of a linked part (`InPlace::linked`) opens its file's tab with copies of the
   other parts; `reset_asm_ui` keeps that `in_place`, Return hands the tab's project to `LibCache::take_open`, and closing a
   tab calls `LibCache::forget`. Drawing views walk the tree too (`drawing_bom::drawing_leaves`, `hlr::Instance::sub`).
+- **Cross-part references** (`part::context`, `assembly::context`, spec 3.10 T3, revision 44): a part keeps `ContextRef`s =
+  source + a *copy* of the geometry in its own coordinates; `PlaneRef::Context(id)` resolves from `WorkGeom::context`
+  (filled from the copies at the start of `build_features`; `add_context` fills it at once). Only
+  `assembly::context::update` writes copies (on Return from Edit and Manage › Update) — never look a source up while the part
+  regenerates. A sketch-plane click on another component is `PlaneRef::Context("")` + `AsmUi::pending_context` until
+  `take_context_plane` adds it after the Undo checkpoint.
 - **`git stash` is shared by every worktree**: in a worktree with only new (untracked) files, `git stash` saves
   nothing and `stash pop` applies *another session's* stash. Never stash in a shared repo; commit or use a
   scratch branch.

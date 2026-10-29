@@ -924,11 +924,13 @@ Finds the overlapping volumes between components, shows them in red and gives th
 - **Positional representations:** different positions of the mechanism, e.g. "open" and "closed".
 - **Model States:** variants of the same document with different parameters or suppressed features and components, e.g. "short/long" or "simplified" configurations. In 3DCadCraft this is the common mechanism for **configurations** (see 5.7).
 
-## 3.10 Top-down design — ⬜ · L
+## 3.10 Top-down design — 🟡 · L
 
 **Specification:** [spec/3.10-top-down.md](spec/3.10-top-down.md) (plan of work T0–T10)
 
-- **Create in place:** creating a part directly in the assembly, with a sketch on a face of another component.
+- **Create in place:** creating a part directly in the assembly, with a sketch on a face of another component
+  (🟡 2026-10-29: Create In-Place, Edit in place of parts of this file and of linked files, a sketch on another
+  component's face that follows it on Update).
 - **Adaptivity:** a part's size driven by the assembly.
 - **Derive:** a part derived from another, e.g. a casting mould from a model.
 - **Skeleton / layout:** one master skeleton drives the whole product.
