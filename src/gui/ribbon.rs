@@ -1616,6 +1616,22 @@ pub(super) fn icon_button(
     selected: bool,
     arrow: bool,
 ) -> egui::Response {
+    icon_button_in(ui, icon, label, size, enabled, false, selected, arrow)
+}
+
+/// [`icon_button`] whose icon is drawn grey while the button stays
+/// clickable when `grey` (a command with its interface only, rule 18).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn icon_button_in(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    label: &str,
+    size: Size,
+    enabled: bool,
+    grey: bool,
+    selected: bool,
+    arrow: bool,
+) -> egui::Response {
     let text_color = if enabled {
         ui.visuals().text_color()
     } else {
@@ -1653,7 +1669,7 @@ pub(super) fn icon_button(
     } else if enabled && response.hovered() {
         painter.rect_filled(rect, 3.0, v.widgets.hovered.weak_bg_fill);
     }
-    let palette = if enabled {
+    let palette = if enabled && !grey {
         Palette::ENABLED
     } else {
         Palette::DISABLED
@@ -1748,8 +1764,16 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                 Action::Ui(UiCmd::FullScreen) => st.full_screen,
                 _ => false,
             };
-            let r = icon_button(ui, cmd.icon, cmd.label, cmd.size, true, selected, false)
-                .on_hover_text(name(&format!("{help}{key}")));
+            let grey = commands::interface_only(*action);
+            let help = if grey {
+                format!("{help}\nInterface only: the logic comes later{key}")
+            } else {
+                format!("{help}{key}")
+            };
+            let r = icon_button_in(
+                ui, cmd.icon, cmd.label, cmd.size, true, grey, selected, false,
+            )
+            .on_hover_text(name(&help));
             // Right click: Assign Shortcut and the other key items.
             super::keymap::button_menu(&r, cmd.id);
             r.clicked().then_some(*action)
@@ -1783,7 +1807,8 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                         Action::Ui(UiCmd::ObjVis(k)) => st.obj_vis.get(*k),
                         _ => false,
                     };
-                    let b = icon_button(ui, *icon, label, Size::Small, true, on, false);
+                    let grey = commands::interface_only(*action);
+                    let b = icon_button_in(ui, *icon, label, Size::Small, true, grey, on, false);
                     super::keymap::button_menu(&b, id);
                     if b.clicked() {
                         picked = Some(*action);

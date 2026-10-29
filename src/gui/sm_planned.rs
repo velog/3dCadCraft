@@ -37,6 +37,12 @@ pub(super) enum PlannedKind {
 }
 
 impl PlannedKind {
+    /// Its logic is there (Corner Round and Corner Chamfer, 2026-10-27);
+    /// the others are interface only.
+    pub(super) fn has_logic(self) -> bool {
+        matches!(self, PlannedKind::CornerRound | PlannedKind::CornerChamfer)
+    }
+
     pub(super) fn title(self) -> &'static str {
         match self {
             Self::Bend => "Bend",
@@ -436,10 +442,7 @@ impl Planned {
     /// Its logic is there: OK builds [`Planned::op`] (Corner Round and
     /// Corner Chamfer, 2026-10-27).
     pub(super) fn has_logic(&self) -> bool {
-        matches!(
-            self.kind,
-            PlannedKind::CornerRound | PlannedKind::CornerChamfer
-        )
+        self.kind.has_logic()
     }
 
     /// The operation the panel defines (`None` for the commands without

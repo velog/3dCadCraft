@@ -252,6 +252,7 @@ Source: Autodesk forum, "RE BUILD ALL vs LOCAL UPDATE" (behaviour as described b
 | **Sketch state** | in the status bar, in the state's colour: "Fully constrained", "Needs N dimension(s)/constraint(s)", redundant, conflict | ✅ |
 | **Command tooltips** | every button says what it does and its key | ✅ |
 | **Unavailable commands** | grey, with a reason: "Planned — FEATURES X.Y" or "Needs Boolean operations (2.13)" | ✅ |
+| **Interface-only commands** (rule 18) | the panel opens (OK disabled), but the icon is grey like a disabled one until the logic exists; the label stays normal and the tooltip adds "Interface only: the logic comes later" | 🟡 2026-10-29, waiting for the owner's check |
 | **Error messages** | red in the status bar, in the form `<Command>: <reason>` ("Extrude: the radius is too large…"). No technical jargon and no stack trace | ✅ |
 | **Warnings ("health")** | "sick" sketches and features are orange in the browser, and the reason is in the tooltip and in Properties | ✅ |
 | **Questions on conflict** | a dimension that over-constrains → a question whether it should be driven | ✅ |

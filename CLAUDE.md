@@ -169,6 +169,13 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     listed in that selection's right-click menu, and starting it from there fills that input (like
     Inventor's selection menus and mini-toolbar). A new command adds itself to the menus of the
     selection kinds it accepts (`PickKind`s of its first selector).
+18. **An icon is grey until its logic exists** (owner's rule, 2026-10-29): a command that has only its
+    interface (rule 15: the panel opens, OK disabled) draws its ribbon icon in the disabled palette
+    while the button stays clickable, and its tooltip adds "Interface only: the logic comes later". The
+    icon gets its colours with the logic's first row. One place decides it:
+    `commands::interface_only(action)` (`PartPlanned` / `AsmPlanned` through `Planned::has_logic`,
+    `SmPlanned` through `PlannedKind::has_logic`, every drawing `DrwCmd::Planned`) — a command that gets
+    its logic is added to `has_logic` in the same change.
 
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 

@@ -2584,6 +2584,19 @@ pub fn by_action(a: Action) -> Option<&'static Command> {
     COMMANDS.iter().find(|c| c.action == Some(a))
 }
 
+/// `a` opens its panel but has no logic yet (rule 15 interface): its icon is
+/// drawn grey until the logic exists (rule 18), the button stays clickable.
+pub fn interface_only(a: Action) -> bool {
+    use super::part_planned::Planned;
+    match a {
+        Action::PartPlanned(p) => !Planned::Part(p).has_logic(),
+        Action::AsmPlanned(p) => !Planned::Asm(p).has_logic(),
+        Action::SmPlanned(k) => !k.has_logic(),
+        Action::Drawing(DrwCmd::Planned(_)) => true,
+        _ => false,
+    }
+}
+
 /// Length of the recent-command list (spec §5.1 rule 4).
 pub const RECENT_MAX: usize = 10;
 
@@ -2748,6 +2761,17 @@ pub fn search_in(
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    /// Rule 18: a panel without logic is grey, one with logic is not.
+    #[test]
+    fn interface_only_commands_are_the_ones_without_logic() {
+        assert!(interface_only(Action::AsmPlanned(Ap::InsertFrame)));
+        assert!(!interface_only(Action::AsmPlanned(Ap::Pattern)));
+        assert!(interface_only(Action::SmPlanned(PlannedKind::Bend)));
+        assert!(!interface_only(Action::SmPlanned(PlannedKind::CornerRound)));
+        assert!(!interface_only(Action::PartPlanned(Pp::Stitch)));
+        assert!(!interface_only(Action::Revolve));
+    }
 
     #[test]
     fn ids_are_unique_and_stable_looking() {
