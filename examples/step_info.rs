@@ -16,9 +16,13 @@ use cadcraft3d::part::{BodyOp, BodyOpFeature, PartDocument};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut files = Vec::new();
     let mut save: Option<PathBuf> = None;
+    let mut each = false;
     let mut args = std::env::args_os().skip(1);
+    // `--each`: every solid of the file read on its own (finding the one that hangs).
     while let Some(a) = args.next() {
-        if a == "--save" {
+        if a == "--each" {
+            each = true;
+        } else if a == "--save" {
             save = args.next().map(PathBuf::from);
         } else {
             files.push(PathBuf::from(a));
@@ -29,7 +33,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     for f in files {
         println!("== {}", f.display());
-        let text = std::fs::read_to_string(&f)?;
+        let text = String::from_utf8_lossy(&std::fs::read(&f)?).into_owned();
+        if each {
+            // Every solid on its own, 20 s each (a solid that does not finish is reported and
+            // left running).
+            for (id, t) in cadcraft3d::assembly::import::solid_texts(&text) {
+                let faces = t.matches("ADVANCED_FACE").count();
+                let (tx, rx) = std::sync::mpsc::channel();
+                let start = Instant::now();
+                std::thread::spawn(move || {
+                    let _ = tx.send(
+                        cadcraft3d::kernel::exact::step_bodies(&t, "S").map(|r| r.bodies.len()),
+                    );
+                });
+                match rx.recv_timeout(std::time::Duration::from_secs(20)) {
+                    Ok(r) => println!(
+                        "solid #{id}: {faces} faces, {:.2} s, {:?}",
+                        start.elapsed().as_secs_f64(),
+                        r
+                    ),
+                    Err(_) => println!("solid #{id}: {faces} faces, NOT DONE after 20 s"),
+                }
+            }
+            continue;
+        }
         let t = Instant::now();
         let op = ImportOp::new(f.display().to_string(), text.as_str());
         match op.read("Import1") {

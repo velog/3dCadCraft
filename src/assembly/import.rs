@@ -284,6 +284,27 @@ impl<'a> P21Index<'a> {
     }
 }
 
+/// Every solid of STEP `text` cut out on its own (its entity and a STEP text of just it), for
+/// finding which one a reader cannot build (`examples/step_info.rs --each`).
+pub fn solid_texts(text: &str) -> Vec<(u64, String)> {
+    let Some(index) = P21Index::new(text) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<u64> = index
+        .entities
+        .iter()
+        .filter(|(_, e)| {
+            let rest = e.split_once('=').map_or("", |x| x.1).trim_start();
+            rest.starts_with("MANIFOLD_SOLID_BREP") || rest.starts_with("BREP_WITH_VOIDS")
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    ids.sort_unstable();
+    ids.into_iter()
+        .filter_map(|id| Some((id, index.extract(&[id], &format!("#{id}"))?)))
+        .collect()
+}
+
 /// The assembly of STEP `text` (read as `r`) added to `project` as documents: the top assembly is
 /// the last one added. `file`: the source's name (shown in each part's Import). Document names
 /// stay unique in the project. On an error some documents may have been added: callers work on a
