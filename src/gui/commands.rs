@@ -2811,7 +2811,7 @@ mod tests {
         assert!(interface_only(Action::AsmPlanned(Ap::Miter)));
         assert!(!interface_only(Action::AsmPlanned(Ap::InsertFrame)));
         assert!(!interface_only(Action::AsmPlanned(Ap::Pattern)));
-        assert!(interface_only(Action::SmPlanned(PlannedKind::Bend)));
+        assert!(interface_only(Action::SmPlanned(PlannedKind::ContourRoll)));
         assert!(!interface_only(Action::SmPlanned(PlannedKind::CornerRound)));
         assert!(!interface_only(Action::PartPlanned(Pp::Stitch)));
         assert!(!interface_only(Action::Revolve));

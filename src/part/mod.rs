@@ -1455,6 +1455,10 @@ impl PartDocument {
                             if let Some((body, state)) = state {
                                 metal.insert(body, state);
                             }
+                            // A Bend takes the second face's sheet into the first.
+                            if let sheet_metal::SheetOp::Bend { other, .. } = &op.op {
+                                metal.remove(other);
+                            }
                             Ok(Some(next))
                         }
                         Err(e) => Err(e),

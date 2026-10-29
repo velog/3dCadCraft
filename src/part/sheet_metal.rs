@@ -1016,6 +1016,61 @@ pub enum SheetOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         edge: Option<String>,
     },
+    /// Bend: joins a second face's sheet to this one with material between
+    /// an edge of each (format revision 45; spec 5.6 §6.1d).
+    Bend {
+        /// The sheet that keeps its name (the first edge's).
+        body: String,
+        /// The first edge.
+        edge1: SheetEdge,
+        /// The second face's sheet (it becomes part of `body`).
+        other: String,
+        /// The second edge (on `other`).
+        edge2: SheetEdge,
+        /// Parallel faces: how they are joined.
+        #[serde(default, skip_serializing_if = "DoubleBendType::is_default")]
+        double: DoubleBendType,
+        /// Parallel faces: the first edge moves instead of the second.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip_fixed: bool,
+        /// Inner bend radius (mm); `None`: the rule's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<Real>,
+    },
+}
+
+/// Bend between parallel faces (Inventor's Double Bend).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DoubleBendType {
+    /// Both edges stay; two opposite bends and a panel tangent to both (a Z).
+    #[default]
+    FixEdges,
+    /// Two opposite 45° bends (a Z); one edge moves.
+    Deg45,
+    /// One 180° bend, half the gap between the inner faces (a U).
+    FullRadius,
+    /// Two 90° bends and a wall (a U).
+    Deg90,
+}
+
+impl DoubleBendType {
+    /// Every type in Inventor's order.
+    pub const ALL: [DoubleBendType; 4] =
+        [Self::FixEdges, Self::Deg45, Self::FullRadius, Self::Deg90];
+
+    fn is_default(&self) -> bool {
+        *self == Self::FixEdges
+    }
+
+    /// The name in the panel.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::FixEdges => "Fix Edges",
+            Self::Deg45 => "45 Degree",
+            Self::FullRadius => "Full Radius",
+            Self::Deg90 => "90 Degree",
+        }
+    }
 }
 
 /// A further sheet metal feature (`Hem1`, `Fold1`, `ContourFlange1`,
@@ -1059,6 +1114,7 @@ impl SheetOpFeature {
             SheetOp::CornerSeam { .. } => "CornerSeam",
             SheetOp::CornerRound { .. } => "CornerRound",
             SheetOp::CornerChamfer { .. } => "CornerChamfer",
+            SheetOp::Bend { .. } => "Bend",
         }
     }
 
@@ -1123,6 +1179,9 @@ impl SheetOpFeature {
                 .take(sets.len())
                 .map(|f| (*f, Unit::Mm))
                 .collect(),
+            SheetOp::Bend {
+                radius: Some(_), ..
+            } => vec![("radius", Unit::Mm)],
             SheetOp::CornerChamfer { method, .. } => match method {
                 ChamferMethod::Distance => vec![("distance", Unit::Mm)],
                 ChamferMethod::DistanceAngle => {
@@ -1152,6 +1211,7 @@ impl SheetOpFeature {
                 let k = ROUND_FIELDS.iter().position(|x| *x == f)?;
                 sets.get(k).map(|s| s.radius)
             }
+            (SheetOp::Bend { radius, .. }, "radius") => *radius,
             (SheetOp::CornerChamfer { distance, .. }, "distance") => Some(*distance),
             (SheetOp::CornerChamfer { angle, .. }, "angle") => Some(*angle),
             (SheetOp::CornerChamfer { distance2, .. }, "distance2") => Some(*distance2),
@@ -1180,6 +1240,7 @@ impl SheetOpFeature {
                     s.radius = v;
                 }
             }
+            (SheetOp::Bend { radius, .. }, "radius") => *radius = Some(v),
             (SheetOp::CornerChamfer { distance, .. }, "distance") => *distance = v,
             (SheetOp::CornerChamfer { angle, .. }, "angle") => *angle = v,
             (SheetOp::CornerChamfer { distance2, .. }, "distance2") => *distance2 = v,
@@ -1242,6 +1303,15 @@ impl SheetOpFeature {
                 "Corner Chamfer of {} corner(s), {distance:.2} mm",
                 corners.len()
             ),
+            SheetOp::Bend {
+                edge1,
+                edge2,
+                radius,
+                ..
+            } => match radius {
+                Some(r) => format!("Bend {} – {}, R{r:.2} mm", edge1.name, edge2.name),
+                None => format!("Bend {} – {}", edge1.name, edge2.name),
+            },
         }
     }
 }

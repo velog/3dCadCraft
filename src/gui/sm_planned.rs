@@ -18,7 +18,9 @@ use super::valuefield::ExprValue;
 use crate::command::flow::{PickKind, Selector};
 use crate::kernel::Point3;
 use crate::kernel::exact::sheet_metal::RuleValues as SheetRuleValues;
-use crate::part::sheet_metal::{ChamferMethod, CornerEdge, CornerSet, SheetOp};
+use crate::part::sheet_metal::{
+    ChamferMethod, CornerEdge, CornerSet, DoubleBendType, SheetEdge, SheetOp,
+};
 
 /// Selector dot colours (as the other sheet metal commands).
 const C_INPUT: [u8; 3] = [40, 120, 230];
@@ -40,7 +42,10 @@ impl PlannedKind {
     /// Its logic is there (Corner Round and Corner Chamfer, 2026-10-27);
     /// the others are interface only.
     pub(super) fn has_logic(self) -> bool {
-        matches!(self, PlannedKind::CornerRound | PlannedKind::CornerChamfer)
+        matches!(
+            self,
+            PlannedKind::Bend | PlannedKind::CornerRound | PlannedKind::CornerChamfer
+        )
     }
 
     pub(super) fn title(self) -> &'static str {
@@ -109,6 +114,21 @@ fn corner_of(item: &Item) -> Option<CornerEdge> {
         faces: [a.to_owned(), b.to_owned()],
         hint: [m.x, m.y, m.z],
     })
+}
+
+/// A Bend edge item (`<sheet body>|<sheet edge name>`, the edge's line) as
+/// the feature stores it: the body and the edge with its middle.
+fn sheet_edge_of(item: &Item) -> Option<(String, SheetEdge)> {
+    let (body, name) = item.0.split_once('|')?;
+    let line = item.1.first()?;
+    let m = crate::part::select::polyline_middle(line)?;
+    Some((
+        body.to_owned(),
+        SheetEdge {
+            name: name.to_owned(),
+            hint: [m.x, m.y, m.z],
+        },
+    ))
 }
 
 /// The panel state of a planned command.
@@ -458,6 +478,33 @@ impl Planned {
                 .to_owned()
         };
         match self.kind {
+            PlannedKind::Bend => {
+                let first = self.items("edge1").first().and_then(sheet_edge_of);
+                let second = self.items("edge2").first().and_then(sheet_edge_of);
+                let blank = || {
+                    (
+                        String::new(),
+                        SheetEdge {
+                            name: String::new(),
+                            hint: [0.0; 3],
+                        },
+                    )
+                };
+                let (body, edge1) = first.unwrap_or_else(blank);
+                let (other, edge2) = second.unwrap_or_else(blank);
+                Some(SheetOp::Bend {
+                    body,
+                    edge1,
+                    other,
+                    edge2,
+                    double: DoubleBendType::ALL
+                        .get(self.double_bend as usize)
+                        .copied()
+                        .unwrap_or_default(),
+                    flip_fixed: self.flip_fixed,
+                    radius: self.radius,
+                })
+            }
             PlannedKind::CornerRound => {
                 let sets: Vec<CornerSet> = if self.feature_priority {
                     vec![CornerSet {
@@ -525,6 +572,28 @@ impl Planned {
         let item =
             |c: &CornerEdge| -> Item { (format!("{}|{}", c.faces[0], c.faces[1]), vec![line(c)]) };
         match op {
+            SheetOp::Bend {
+                body,
+                edge1,
+                other,
+                edge2,
+                double,
+                flip_fixed,
+                radius,
+            } => {
+                let mut p = Self::new(PlannedKind::Bend, rule);
+                p.double_bend = DoubleBendType::ALL
+                    .iter()
+                    .position(|d| d == double)
+                    .unwrap_or(0) as u8;
+                p.flip_fixed = *flip_fixed;
+                p.radius = *radius;
+                for (key, b, e) in [("edge1", body, edge1), ("edge2", other, edge2)] {
+                    let at = Point3::from(e.hint);
+                    p.add(key, (format!("{b}|{}", e.name), vec![vec![at, at]]));
+                }
+                Some(p)
+            }
             SheetOp::CornerRound { sets, .. } => {
                 let mut p = Self::new(PlannedKind::CornerRound, rule);
                 p.radii = sets.iter().map(|s| s.radius).take(SET_KEYS.len()).collect();
@@ -601,8 +670,13 @@ impl Planned {
                     "Perpendicular to Side Face",
                 )
                 .on_hover_text("The new material runs square to the bend (default)");
-                ui.radio_value(&mut self.extend_aligned, true, "Aligned to Side Face")
-                    .on_hover_text("The new material follows the side faces the bend joins");
+                ui.add_enabled_ui(false, |ui| {
+                    ui.radio_value(&mut self.extend_aligned, true, "Aligned to Side Face")
+                        .on_disabled_hover_text(
+                            "The new material follows the side faces the bend joins: not yet \
+                             (docs/spec/5.6-sheet-metal.md §6.1d)",
+                        );
+                });
             });
             ui.end_row();
         });

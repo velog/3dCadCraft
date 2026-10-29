@@ -485,6 +485,31 @@ impl HemShape {
     }
 }
 
+/// How [`SheetBody::join_bend`] joins parallel faces (Inventor's Double Bend).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DoubleBend {
+    /// Both edges stay; two opposite bends and a panel tangent to both (a Z).
+    FixEdges,
+    /// Two opposite 45° bends (a Z); one edge moves.
+    Deg45,
+    /// Two 90° bends and a wall (a U); one edge moves to the other's line.
+    Deg90,
+    /// One 180° bend, half the gap between the inner faces (a U).
+    FullRadius,
+}
+
+/// `region` with the strip from its edge a→b out by `out` added (3DCadCraft: Bend extends a
+/// face to its bend).
+fn grown(region: &Region2, a: Vec2, b: Vec2, out: Vec2) -> Result<Region2> {
+    let strip = rect(a, b, b + out, a + out);
+    let strip = Region2 { outer: strip.outer.ccw(), holes: Vec::new() };
+    let mut joined = material_union(vec![region.clone(), strip], &mut FlatWork::new())?;
+    if joined.len() != 1 {
+        return Err(DocError::Invalid("the face's extension to the bend does not join it".into()));
+    }
+    Ok(joined.remove(0))
+}
+
 /// A flange: a bend along a panel edge and the flat panel past it (flat coordinates).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SheetFlange {
@@ -3242,6 +3267,261 @@ impl SheetBody {
             self.flanges.push(f);
             parent = Some(self.flanges.len() - 1);
             made.push(self.flanges.len() - 1);
+        }
+        Ok(made)
+    }
+
+    /// Bend (3DCadCraft; Inventor's Bend): joins `other` — a sheet of one face, its cut-outs
+    /// kept — to this sheet with material between the edge nearest `p1` here and the edge
+    /// nearest `p2` there (world points). Faces at an angle get one bend of `radius` whose inside
+    /// is tangent to both faces' inner sides, the faces extended or trimmed to it. Parallel faces
+    /// (not in one plane) get a double bend of the kind `double`; the edge that moves is the
+    /// second unless `first_fixed` is off (for Fix Edges the other way round, as Inventor does
+    /// when the faces are too close for tangent bends). Returns the new flanges, first first;
+    /// the last one's panel is `other`'s face.
+    #[allow(clippy::too_many_arguments)]
+    pub fn join_bend(&mut self, other: &SheetBody, p1: Vec3, p2: Vec3, radius: f64, double: DoubleBend, first_fixed: bool) -> Result<Vec<usize>> {
+        use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        let bad = |m: &str| -> Result<Vec<usize>> { Err(DocError::Invalid(m.into())) };
+        if self.flat || other.flat {
+            return bad("refold the sheets before a bend");
+        }
+        let t = self.t;
+        if (other.t - t).abs() > 1e-6 {
+            return bad("the two faces must have the same thickness");
+        }
+        if !other.flanges.is_empty() || !other.adds.is_empty() {
+            return bad("not yet: a second face whose sheet has flanges or corner fills (pick that face first)");
+        }
+        if !(radius >= 0.0) {
+            return bad("the bend radius must not be negative");
+        }
+        let (pan1, a1, b1, _, dist1) = self.edge_at(p1).ok_or_else(|| DocError::Invalid("no sheet edge at the first pick".into()))?;
+        let (pan2, a2, b2, _, dist2) = other.edge_at(p2).ok_or_else(|| DocError::Invalid("no sheet edge at the second pick".into()))?;
+        if dist1 > t * 2.0 + 1e-3 || dist2 > t * 2.0 + 1e-3 || pan2.is_some() {
+            return bad("pick an edge of each face");
+        }
+        let d1 = (b1 - a1).normalized().ok_or_else(|| DocError::Invalid("edge".into()))?;
+        let n1 = Vec2::new(d1.y, -d1.x);
+        let d2 = (b2 - a2).normalized().ok_or_else(|| DocError::Invalid("edge".into()))?;
+        let n2 = Vec2::new(d2.y, -d2.x);
+        // The second sheet in this panel's flat coordinates (x, y in the flat, z through the sheet).
+        let inv1 = mat_inverse(&self.world(pan1)).ok_or_else(|| DocError::Invalid("invalid sheet panel frame".into()))?;
+        let m = mat_mul(&inv1, &other.world(None));
+        let at = |p: Vec2, z: f64| apply_point(&m, v3(p) + Vec3::Z * z);
+        let (pa, pb, pt) = (at(a2, 0.0), at(b2, 0.0), at(a2, t));
+        let along = pb - pa;
+        let dd = v3(d1);
+        let scale = along.len().max(1.0);
+        if along.z.abs() > 1e-6 * scale || along.cross(dd).len() > 1e-6 * scale {
+            return bad("the two edges must be parallel");
+        }
+        let (lo1, hi1) = (a1.dot(d1).min(b1.dot(d1)), a1.dot(d1).max(b1.dot(d1)));
+        let (lo2, hi2) = (pa.dot(dd).min(pb.dot(dd)), pa.dot(dd).max(pb.dot(dd)));
+        if (lo1 - lo2).abs() > 1e-4 || (hi1 - hi2).abs() > 1e-4 {
+            return bad("not yet: edges of different lengths or shifted along each other (Width Extents)");
+        }
+        // The section square to the edges: s out of this panel's edge, z through this sheet.
+        let s_of = |q: Vec3| (Vec2::new(q.x, q.y) - a1).dot(n1);
+        let u3 = apply_vector(&m, v3(n2) * -1.0);
+        let (us, uz) = (u3.dot(v3(n1)), u3.z);
+        let e = s_of(pa);
+        // Mirrored so that the second face lies above / turns up (the bends' sign comes back below).
+        let parallel = uz.abs() < 1e-6;
+        let sigma = if parallel {
+            let (zl, zh) = (pa.z.min(pt.z), pa.z.max(pt.z));
+            if zl >= t - 1e-6 {
+                1.0
+            } else if zh <= 1e-6 {
+                -1.0
+            } else {
+                return bad("the two faces lie in one plane: a bend joins faces at an angle or parallel faces apart");
+            }
+        } else if uz > 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
+        let zm = |z: f64| if sigma > 0.0 { z } else { t - z };
+        let (q0, q1) = (Vec2::new(e, zm(pa.z)), Vec2::new(s_of(pt), zm(pt.z)));
+        let u = Vec2::new(us, uz * sigma);
+        // (signed turn, inner radius, flat run past it); the last one's panel is the second face.
+        let mut steps: Vec<(f64, f64, f64)> = Vec::new();
+        let (ext1, ext2);
+        if !parallel {
+            let th = u.y.atan2(u.x);
+            let mn = Vec2::new(-th.sin(), th.cos());
+            let c = q0.dot(mn).min(q1.dot(mn));
+            let s0 = ((t + radius) * th.cos() - c - t - radius) / th.sin();
+            let centre = Vec2::new(s0, t + radius);
+            ext1 = s0;
+            ext2 = q0.dot(u) - centre.dot(u);
+            steps.push((sigma * th, radius, 0.0));
+        } else {
+            let cl = q0.y.min(q1.y);
+            let (mut x1, mut x2) = (0.0, e);
+            if us > 0.0 {
+                // A Z: the second face runs on away from this one.
+                let s2 = 2.0 * radius + t;
+                let dz = (cl - radius) - (t + radius);
+                match double {
+                    DoubleBend::FixEdges => {
+                        if Vec2::new(x2 - x1, dz).len() < s2 + 1e-9 {
+                            let back = (s2 * s2 - dz * dz).max(0.0).sqrt();
+                            if first_fixed {
+                                x1 -= back;
+                            } else {
+                                x2 += back;
+                            }
+                        }
+                    }
+                    DoubleBend::Deg45 => {
+                        let dx = (FRAC_PI_4.cos() * dz + s2) / FRAC_PI_4.sin();
+                        if first_fixed {
+                            x2 = x1 + dx;
+                        } else {
+                            x1 = x2 - dx;
+                        }
+                    }
+                    _ => return bad("90 Degree and Full Radius join a face that runs back over this one (a U); use Fix Edges or 45 Degree"),
+                }
+                let dv = Vec2::new(x2 - x1, dz);
+                if dv.len() <= s2 + 1e-6 {
+                    return bad("the faces are too close for two bends of this radius");
+                }
+                let phi = dz.atan2(x2 - x1) + (s2 / dv.len()).asin();
+                if !(phi > 1e-6 && phi < PI - 1e-6) {
+                    return bad("the faces are too close for two bends of this radius");
+                }
+                let run = (dv.len2() - s2 * s2).sqrt();
+                steps.push((sigma * phi, radius, run));
+                steps.push((-sigma * phi, radius, 0.0));
+                ext2 = e - x2;
+            } else {
+                // A U: the second face runs back over this one.
+                if first_fixed {
+                    x2 = x1;
+                } else {
+                    x1 = x2;
+                }
+                match double {
+                    DoubleBend::Deg90 => {
+                        let wall = cl - t - 2.0 * radius;
+                        if wall < -1e-9 {
+                            return bad("the faces are too close for two 90° bends of this radius");
+                        }
+                        steps.push((sigma * FRAC_PI_2, radius, wall.max(0.0)));
+                        steps.push((sigma * FRAC_PI_2, radius, 0.0));
+                    }
+                    DoubleBend::FullRadius => {
+                        let ri = (cl - t) / 2.0;
+                        if !(ri > 1e-6) {
+                            return bad("the faces are too close for a full radius");
+                        }
+                        steps.push((sigma * PI, ri, 0.0));
+                    }
+                    _ => return bad("Fix Edges and 45 Degree join a face that runs on away from this one (a Z); use 90 Degree or Full Radius"),
+                }
+                ext2 = x2 - e;
+            }
+            ext1 = x1;
+        }
+        // This panel's edge moves to where the first bend starts.
+        let start = match pan1 {
+            None => {
+                if ext1 < -1e-9 {
+                    self.trim(None, a1, b1, -ext1, (false, false))?;
+                } else if ext1 > 1e-9 {
+                    self.base = grown(&self.base, a1, b1, n1 * ext1)?;
+                }
+                self.edge_on_line(None, a1, b1, d1, a1 + n1 * ext1)?
+            }
+            Some(i) => {
+                let f = self.flanges.get(i).ok_or_else(|| DocError::Invalid("flange".into()))?;
+                let tip = f.p + f.n * (self.allowance(f) + f.leg);
+                if f.shape.is_some() || (a1 - tip).dot(f.n).abs() > 1e-6 || f.n.dot(n1) < 1.0 - 1e-9 {
+                    return bad("not yet: a bend from a flange's side edge (pick its far edge)");
+                }
+                if f.leg + ext1 < -1e-9 {
+                    return bad("the bend would take the flange away");
+                }
+                if let Some(f) = self.flanges.get_mut(i) {
+                    f.leg = (f.leg + ext1).max(0.0);
+                }
+                self.edge_on_line(Some(i), a1, b1, d1, a1 + n1 * ext1)?
+            }
+        };
+        let (mut p, len) = (snap(start.0), start.1);
+        let mut parent = pan1;
+        let mut made = Vec::new();
+        for (angle, r, leg) in steps {
+            let f = SheetFlange {
+                parent,
+                p,
+                d: d1,
+                len,
+                n: n1,
+                angle,
+                radius: r,
+                leg,
+                ext: (0.0, 0.0),
+                slope: (0.0, 0.0),
+                tear: (false, false),
+                mitre: (Vec::new(), Vec::new()),
+                shape: None,
+                tag: String::new(),
+            };
+            p = snap(p + n1 * (self.allowance(&f) + leg));
+            self.flanges.push(f);
+            parent = Some(self.flanges.len() - 1);
+            made.push(self.flanges.len() - 1);
+        }
+        let last = *made.last().ok_or_else(|| DocError::Invalid("bend".into()))?;
+        // The second face, its edge moved to where the last bend ends, in the flat.
+        let mut o2 = other.clone();
+        if ext2 < -1e-9 {
+            o2.trim(None, a2, b2, -ext2, (false, false))?;
+        } else if ext2 > 1e-9 {
+            o2.base = grown(&o2.base, a2, b2, n2 * ext2)?;
+        }
+        let flat = self.region_to_flat(Some(last), &o2.frame, &o2.base)?;
+        let (fp, ba) = match self.flanges.get(last) {
+            Some(f) => (f.p, self.allowance(f)),
+            None => return bad("bend"),
+        };
+        let mut pts = Vec::new();
+        for sg in &flat.outer.segs {
+            match sg {
+                Seg2::Line { a, .. } => pts.push(*a),
+                _ => return bad("not yet: a second face with curved outline edges"),
+            }
+        }
+        // Onto the bend zone's far edge exactly where it lies on it (the two share that edge).
+        let mut shape: Vec<Vec2> = pts
+            .into_iter()
+            .map(|q| {
+                let off = (q - fp).dot(n1) - ba;
+                snap(if off.abs() < 1e-6 { q - n1 * off } else { q })
+            })
+            .collect();
+        let leg = shape.iter().map(|q| (*q - fp).dot(n1) - ba).fold(0.0, f64::max);
+        if !(leg > 1e-6) {
+            return bad("nothing of the second face is left past the bend");
+        }
+        if signed_area(&shape) < 0.0 {
+            shape.reverse();
+        }
+        if let Some(f) = self.flanges.get_mut(last) {
+            f.shape = Some(shape);
+            f.leg = leg;
+        }
+        // Its holes and cut-outs become cut-outs of this flat.
+        for h in &flat.holes {
+            self.holes.push(Region2 { outer: h.clone().ccw(), holes: Vec::new() });
+        }
+        for h in &o2.holes {
+            let r = self.region_to_flat(Some(last), &o2.frame, h)?;
+            self.holes.push(r);
         }
         Ok(made)
     }

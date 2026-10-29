@@ -617,6 +617,61 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 45: Bend — a 100 × 50 Face, a wall Face in the plane x = 120
+/// joined to it by a Bend, and a third Face 20 above, left of the first, not
+/// joined (a Double Bend case for the GUI).
+fn bend_r45() -> PartDocument {
+    use cadcraft3d::part::sheet_metal::{SheetOp, SheetOpFeature};
+    use cadcraft3d::part::{OriginPlane, PlaneRef, ProfileRef, WorkDef, WorkFeature, WorkPlaneDef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let face = |p: &mut PartDocument, plane: OriginPlane, d: f64, a: (f64, f64), b: (f64, f64)| {
+        let placement = if d == 0.0 {
+            SketchPlacement::on_origin_plane(plane)
+        } else {
+            let wp = p
+                .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                    base: PlaneRef::Origin(plane),
+                    distance: d,
+                })))
+                .unwrap();
+            SketchPlacement {
+                plane: PlaneRef::Work(wp),
+                ..Default::default()
+            }
+        };
+        let i = p.create_sketch(placement, &o).unwrap();
+        p.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
+            .unwrap();
+        let r = p.sketches[i].sketch.regions();
+        let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+        p.add_sheet_face(i, prof, false).unwrap();
+    };
+    face(&mut p, OriginPlane::XY, 0.0, (0.0, 0.0), (100.0, 50.0));
+    face(&mut p, OriginPlane::YZ, 120.0, (0.0, 10.0), (50.0, 60.0));
+    face(&mut p, OriginPlane::XY, 20.0, (-80.0, 0.0), (-20.0, 50.0));
+    let (body, edge1) = p.sheet_edge_at(Point3::new(100.0, 25.0, 2.0)).unwrap();
+    let (other, edge2) = p.sheet_edge_at(Point3::new(120.0, 25.0, 10.0)).unwrap();
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::Bend {
+        body,
+        edge1,
+        other,
+        edge2,
+        double: Default::default(),
+        flip_fixed: false,
+        radius: None,
+    }))
+    .unwrap();
+    p
+}
+
 /// Revision 43: hem types — a 100 × 60 Face with a Double hem on its right
 /// edge and a Teardrop hem on its left edge.
 fn hems_r43() -> PartDocument {
@@ -2505,6 +2560,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("SurfacesR37");
             project.add_document("Part1", DocumentData::Part(surfaces_r37()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r45/bend_r45.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("BendR45");
+            project.add_document("Part1", DocumentData::Part(bend_r45()));
             project.save(&f).unwrap();
         }
         let f = root().join("r43/hems_r43.3dcadcraft");

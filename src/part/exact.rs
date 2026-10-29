@@ -3997,6 +3997,51 @@ pub(super) fn sheet_op(
                 ksm::corner_cuts(&state.model, body, &op.id, &cuts).map_err(User)?;
             Ok(replace(k, solid, model, body))
         }
+        SheetOp::Bend {
+            body,
+            edge1,
+            other,
+            edge2,
+            double,
+            flip_fixed,
+            radius,
+        } => {
+            use super::sheet_metal::DoubleBendType;
+            if body == other {
+                return Err(User(
+                    "not yet: a bend between two faces of one sheet (pick a face of another sheet)"
+                        .into(),
+                ));
+            }
+            let (k, state) = sheet_of(body, solids, metal)?;
+            let (k2, state2) = sheet_of(other, solids, metal)?;
+            let p1 = ksm::edge_point(&state.model, &edge1.name, Point3::from(edge1.hint))
+                .ok_or_else(|| User(format!("the edge {} no longer exists", edge1.name)))?;
+            let p2 = ksm::edge_point(&state2.model, &edge2.name, Point3::from(edge2.hint))
+                .ok_or_else(|| User(format!("the edge {} no longer exists", edge2.name)))?;
+            let kind = match double {
+                DoubleBendType::FixEdges => ksm::DoubleBend::FixEdges,
+                DoubleBendType::Deg45 => ksm::DoubleBend::Deg45,
+                DoubleBendType::Deg90 => ksm::DoubleBend::Deg90,
+                DoubleBendType::FullRadius => ksm::DoubleBend::FullRadius,
+            };
+            let (solid, model) = ksm::bend(
+                &state.model,
+                &state2.model,
+                body,
+                &op.id,
+                p1,
+                p2,
+                radius.unwrap_or(rv.bend_radius),
+                kind,
+                !flip_fixed,
+            )
+            .map_err(User)?;
+            let (mut next, st) = replace(k, solid, model, body);
+            // The second sheet is now part of the first.
+            next.remove(k2);
+            Ok((next, st))
+        }
         SheetOp::CornerChamfer {
             body,
             corners,

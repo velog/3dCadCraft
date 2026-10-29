@@ -224,7 +224,8 @@ impl SmDraft {
                 SheetOp::Unfold { .. }
                 | SheetOp::Refold { .. }
                 | SheetOp::CornerRound { .. }
-                | SheetOp::CornerChamfer { .. } => Vec::new(),
+                | SheetOp::CornerChamfer { .. }
+                | SheetOp::Bend { .. } => Vec::new(),
             },
             _ => Vec::new(),
         };
@@ -1427,7 +1428,9 @@ impl CadCraftApp {
                         });
                     }
                     // Their sections are the planned panel's.
-                    SheetOp::CornerRound { .. } | SheetOp::CornerChamfer { .. } => {}
+                    SheetOp::CornerRound { .. }
+                    | SheetOp::CornerChamfer { .. }
+                    | SheetOp::Bend { .. } => {}
                     SheetOp::CornerSeam {
                         body,
                         a,
@@ -2134,12 +2137,22 @@ impl CadCraftApp {
                             .is_some_and(|pl| pl.kind == PlannedKind::CornerChamfer)
                             && sel.key == "edge"
                     });
+                    let sheet_edge = self.sm.draft.as_ref().is_some_and(|d| {
+                        d.planned
+                            .as_ref()
+                            .is_some_and(|pl| pl.kind == PlannedKind::Bend)
+                    });
                     if let Some(e) = self.edge_under(p, rect)
                         && (!corners || self.sm_corner_edge(e))
                         && let Ok(pts) = part.body.sample_edge(e, &opts)
                     {
                         let name = if corners {
                             self.sm_corner_id(e)
+                        } else if sheet_edge {
+                            // Bend: the sheet and its own name of the edge.
+                            crate::part::select::polyline_middle(&pts)
+                                .and_then(|m| part.sheet_edge_at(m))
+                                .map(|(body, se)| format!("{body}|{}", se.name))
                         } else if rim {
                             // The angle is measured from the rim face along the edge.
                             self.sm_edge_faces(e)
@@ -3050,6 +3063,7 @@ pub(super) fn feature_title(f: &Feature) -> &'static str {
             SheetOp::CornerSeam { .. } => "Corner Seam",
             SheetOp::CornerRound { .. } => "Corner Round",
             SheetOp::CornerChamfer { .. } => "Corner Chamfer",
+            SheetOp::Bend { .. } => "Bend",
             SheetOp::Unfold { .. } => "Unfold",
             SheetOp::Refold { .. } => "Refold",
         },

@@ -339,6 +339,61 @@ pub fn hem_shape(
     Ok((s, SheetModel(Arc::new(next))))
 }
 
+/// How a Bend joins parallel faces (Inventor's Double Bend).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DoubleBend {
+    /// Both edges stay; two opposite bends and a panel tangent to both (a Z).
+    FixEdges,
+    /// Two opposite 45° bends (a Z).
+    Deg45,
+    /// Two 90° bends and a wall (a U).
+    Deg90,
+    /// One 180° bend of half the gap between the inner faces (a U).
+    FullRadius,
+}
+
+/// Bend: sheet `other` (one face, its cut-outs kept) joined to `m` between
+/// the edge at `e1` (on `m`) and the edge at `e2` (on `other`); `radius` the
+/// inner bend radius; `first_fixed`: the second edge moves (parallel faces).
+/// The new bends are tagged `<tag>.1`, `<tag>-2.1`, ….
+#[allow(clippy::too_many_arguments)]
+pub fn bend(
+    m: &SheetModel,
+    other: &SheetModel,
+    prefix: &str,
+    tag: &str,
+    e1: Point3,
+    e2: Point3,
+    radius: Real,
+    double: DoubleBend,
+    first_fixed: bool,
+) -> Result<(ExactSolid, SheetModel), String> {
+    let mut next = (*m.0).clone();
+    let kind = match double {
+        DoubleBend::FixEdges => sd::DoubleBend::FixEdges,
+        DoubleBend::Deg45 => sd::DoubleBend::Deg45,
+        DoubleBend::Deg90 => sd::DoubleBend::Deg90,
+        DoubleBend::FullRadius => sd::DoubleBend::FullRadius,
+    };
+    guarded_sheet("Bend", || {
+        let made = next
+            .join_bend(&other.0, v3(&e1), v3(&e2), radius, kind, first_fixed)
+            .map_err(|e| e.to_string())?;
+        for (k, i) in made.into_iter().enumerate() {
+            if let Some(f) = next.flanges.get_mut(i) {
+                f.tag = if k == 0 {
+                    format!("{tag}.1")
+                } else {
+                    format!("{tag}-{}.1", k + 1)
+                };
+            }
+        }
+        Ok(())
+    })?;
+    let s = named_solid(&next, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(next))))
+}
+
 /// Where a fold's line lies in its bend zone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FoldLine {

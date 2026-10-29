@@ -143,7 +143,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   Double, radius, angle) (2026-10-29).
 /// - 44: cross-part references (`PlaneRef::Context`,
 ///   `PartDocument::context`) (2026-10-29).
-pub const FORMAT_REVISION: u32 = 44;
+/// - 45: sheet metal Bend (`SheetOp::Bend`) (2026-10-29).
+pub const FORMAT_REVISION: u32 = 45;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

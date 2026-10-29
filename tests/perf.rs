@@ -2753,6 +2753,72 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Bend (docs/spec/5.6 §6.1d): a 100 x 50 Face, a parallel Face 20 above
+    // it, joined by a Fix Edges double bend, then the flat pattern's DXF.
+    {
+        use cadcraft3d::part::sheet_metal::{SheetOp, SheetOpFeature};
+        use cadcraft3d::part::{
+            OriginPlane, PlaneRef, ProfileRef, WorkDef, WorkFeature, WorkPlaneDef,
+        };
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let wp = base
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: 20.0,
+            })))
+            .unwrap();
+        for (placement, a, b) in [
+            (
+                SketchPlacement::on_origin_plane(OriginPlane::XY),
+                (0.0, 0.0),
+                (100.0, 50.0),
+            ),
+            (
+                SketchPlacement {
+                    plane: PlaneRef::Work(wp),
+                    ..Default::default()
+                },
+                (120.0, 0.0),
+                (200.0, 50.0),
+            ),
+        ] {
+            let i = base.create_sketch(placement, &o).unwrap();
+            base.sketches[i]
+                .sketch
+                .add_rectangle_two_point(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
+                .unwrap();
+            let r = base.sketches[i].sketch.regions();
+            base.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+                .unwrap();
+        }
+        let (body, edge1) = base.sheet_edge_at(Point3::new(100.0, 25.0, 2.0)).unwrap();
+        let (other, edge2) = base.sheet_edge_at(Point3::new(120.0, 25.0, 20.0)).unwrap();
+        let op = SheetOp::Bend {
+            body: body.clone(),
+            edge1,
+            other,
+            edge2,
+            double: Default::default(),
+            flip_fixed: false,
+            radius: None,
+        };
+        rows.push((
+            "sheet metal: Bend of two faces (Fix Edges) + DXF",
+            300.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_op(SheetOpFeature::new(op.clone())).unwrap();
+                assert!(p.flat_pattern_dxf(&body).unwrap().contains("BEND"));
+            }),
+        ));
+    }
     // Bill of Materials (docs/spec/3.6): 2000 occurrences of 50 parts,
     // merged by part number, as the window computes them every frame.
     {

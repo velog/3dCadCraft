@@ -1070,6 +1070,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   before them (SolidCraft's `add_hem`: gap = inner radius, rolled round the edge) and must keep that geometry; typed
   hems trim the edge's panel by the first bend's outer radius (Inventor: the outer face stays at the edge) and fold
   over the picked face. Inventor's flat lengths and heights are the expectations of `tests/sheet_hem_types.rs`.
+  Bend (`SheetOp::Bend`, revision 45; vendor `join_bend`): the second face's sheet becomes flanges of the first (its
+  face the last flange's `shape` panel, mapped by `region_to_flat`); regeneration drops its solid and `metal` entry
+  (`part/mod.rs`). Only a one-face second sheet for now. Planned-panel items of its edges are `<body>|<sheet edge>`.
   Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry
   of old files without such a field). Corner reliefs (Round / Square) are cut-outs in `SheetBody::holes` about the crossing of the bends' centre

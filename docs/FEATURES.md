@@ -1129,7 +1129,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 | Flange | a flange along an edge, with angle, height, position; height arrow and angle arc in the view; **Further Bends** — a chain of up to 16 more bends (each on the far edge of the one before, Default / Flipped) in the same feature, each with its own fields and handles (2026-10-28) |
 | Hem | a hem: Single, Double, Teardrop, Rolled (2026-10-29: all four, matching Inventor's flat lengths; the outer face stays at the edge; width extents ⬜) |
 | Fold | a fold along a sketch line |
-| Bend | a bend between two plates |
+| Bend | a bend between two plates (2026-10-29: faces at an angle, Double Bend Fix Edges / 45 / 90 / Full Radius, as Inventor builds them; Width Extents ⬜) |
 | Corner Seam / Round / Chamfer | corner treatment |
 | Cut | a cut, also wrapped across bends |
 | Punch Tool | standard punch forms (louvres, ribs, holes) from a library |
