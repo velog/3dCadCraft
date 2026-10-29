@@ -926,6 +926,8 @@ Finds the overlapping volumes between components, shows them in red and gives th
 
 ## 3.10 Top-down design — ⬜ · L
 
+**Specification:** [spec/3.10-top-down.md](spec/3.10-top-down.md) (plan of work T0–T10)
+
 - **Create in place:** creating a part directly in the assembly, with a sketch on a face of another component.
 - **Adaptivity:** a part's size driven by the assembly.
 - **Derive:** a part derived from another, e.g. a casting mould from a model.
