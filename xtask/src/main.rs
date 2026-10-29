@@ -98,8 +98,8 @@ const MEDIUM: &[&str] = &[
     "freecad_cases",
     "freecad_patterns",
     "split_surface",
-    // Loft between two whole surfaces (the owner's spline surfaces) and its solid.
-    "surface_tools",
+    // Loft between surfaces and Stitch on the owner's spline surfaces.
+    "surface_bridges",
 ];
 
 /// Integration tests with time budgets or long runs, each run alone (last).

@@ -1252,6 +1252,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   reversed"). Loft bridges: a face whose boundary edges stray from its surface is not meshed at all (0 triangles,
   a hole in the view): bridge rows run through 256 points of each edge (64 was not enough on a trimmed wavy edge), so
   the surfaces' own edges can bound them and Stitch / Output Solid close without gaps.
+- **Stitch matches edges by geometry** (vendor `stitch`): the same ends and the middle of one on the other curve (two
+  curves along one edge are parametrised differently — the parameter middles of a loft bridge's spline and a trim edge
+  were millimetres apart), and an edge carrying another edge's vertex within the tolerance is cut there first
+  (`t_junction_pieces`). Without both, surfaces split at different places never closed.
 - **Free edges of surface bodies** (`exact.rs::add_solid`): an edge listed with one face used to be taken for a seam
   (both senses, broken loops, not drawn — surfaces showed no outline). In a surface body it is a free edge when the
   face's triangles run it one way only; in solids the old rule stays (a seam listed once). `s.is_open()` walks every

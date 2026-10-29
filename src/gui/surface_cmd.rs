@@ -547,52 +547,66 @@ impl CadCraftApp {
         if button != "Find Remaining Free Edges" {
             return None;
         }
-        // The picked surfaces' edges that no other picked face shares (within the
-        // tolerance): what Stitch leaves open.
+        // The picked surfaces' free edges (one face) and, for each, how far the nearest free
+        // edge of another picked surface runs from its middle: within the tolerance Stitch
+        // joins them (it cuts an edge where another one's end lies on it), beyond it a gap stays.
         let names = self.surfaces_of(d.items_of("surfaces"));
         let tol = d.num(0, "Maximum Tolerance").unwrap_or(0.00025).max(1e-6);
         let body = &self.part().body;
         let opts = crate::kernel::TessellationOptions::default();
-        let mut mids: Vec<(usize, Point3)> = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut free: Vec<(usize, Point3, Vec<Point3>)> = Vec::new();
         for (k, n) in names.iter().enumerate() {
-            let prefix = format!("{n}:");
-            for (_, f) in body
-                .faces()
-                .filter(|(_, f)| f.name.as_deref().is_some_and(|x| x.starts_with(&prefix)))
-            {
-                for lp in std::iter::once(&f.outer).chain(&f.inner) {
+            for f in crate::part::select::faces_of_body(body, n) {
+                let Some(face) = body.face(f) else {
+                    continue;
+                };
+                for lp in std::iter::once(&face.outer).chain(&face.inner) {
                     for ce in &lp.coedges {
-                        if !seen.insert(ce.edge) {
+                        if body.edge_faces(ce.edge).len() != 1 {
                             continue;
                         }
                         if let Ok(pts) = body.sample_edge(ce.edge, &opts)
-                            && let (Some(a), Some(b)) = (pts.first(), pts.last())
+                            && let Some(m) = crate::part::select::polyline_middle(&pts)
                         {
-                            let m = pts.get(pts.len() / 2).copied().unwrap_or(*a);
-                            let m = if pts.len() == 2 {
-                                nalgebra::center(a, b)
-                            } else {
-                                m
-                            };
-                            mids.push((k, m));
+                            free.push((k, m, pts));
                         }
                     }
                 }
             }
         }
-        let free = mids
+        let gap = |k: usize, m: &Point3| -> Real {
+            free.iter()
+                .filter(|(j, ..)| *j != k)
+                .flat_map(|(_, _, pts)| pts.windows(2))
+                .map(|w| {
+                    let ab = w[1] - w[0];
+                    let t = ((m - w[0]).dot(&ab) / ab.norm_squared().max(1e-24)).clamp(0.0, 1.0);
+                    (w[0] + ab * t - m).norm()
+                })
+                .fold(Real::MAX, Real::min)
+        };
+        let gaps: Vec<Real> = free.iter().map(|(k, m, _)| gap(*k, m)).collect();
+        // Nothing within 1 mm: an opening (a hole, an end), not a gap between surfaces.
+        let openings = gaps.iter().filter(|g| **g > 1.0).count();
+        let open: Vec<Real> = gaps
             .iter()
-            .filter(|(k, m)| {
-                !mids
-                    .iter()
-                    .any(|(j, q)| j != k && (q - m).norm() <= tol.max(1e-4))
-            })
-            .count();
-        Some(match (names.len(), free) {
-            (0, _) => "Select the surfaces first".into(),
-            (_, 0) => "No free edges: Stitch closes a solid".into(),
-            (_, n) => format!("{n} free edge(s) remain open"),
+            .copied()
+            .filter(|g| *g > tol && *g <= 1.0)
+            .collect();
+        let widest = open.iter().copied().fold(0.0, Real::max);
+        Some(match (names.len(), open.len(), openings) {
+            (0, ..) => "Select the surfaces first".into(),
+            (_, 0, 0) => "No free edges: Stitch closes a solid".into(),
+            (_, 0, o) => format!("{o} free edge(s) with nothing near them (an opening: patch it)"),
+            (_, n, o) => {
+                let mut t = format!(
+                    "{n} free edge(s) stay apart; the widest gap is {widest:.4} mm (a Maximum Tolerance above it joins them)"
+                );
+                if o > 0 {
+                    t.push_str(&format!("; {o} with nothing near (an opening)"));
+                }
+                t
+            }
         })
     }
 
