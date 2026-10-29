@@ -47,6 +47,8 @@ pub enum DrwCmd {
     Detail,
     /// Place Views › Break.
     Break,
+    /// Place Views › Break Out.
+    BreakOut,
     /// Place Views › Auxiliary.
     Auxiliary,
     /// Annotate › Center Mark.
@@ -159,6 +161,10 @@ pub(super) enum DrwTool {
     Detail(super::drawing_section::DetailDraft),
     /// Break: the view, then the two break lines.
     Break(super::drawing_break::BreakDraft),
+    /// Break Out: a click on the view (its profile sketch opens).
+    BreakOutView,
+    /// Break Out: the profile drawn, the depth being set.
+    BreakOut(super::drawing_breakout::BoDraft),
     /// Auxiliary View: an edge, then the place.
     Auxiliary(super::drawing_section::AuxDraft),
     /// Parts List: the source view (dialog), then the place.
@@ -508,6 +514,10 @@ impl CadCraftApp {
                 ));
                 self.drw.sel = view;
             }
+            DrwCmd::BreakOut => match self.drw.sel {
+                Some(view) => self.open_break_out_sketch(view),
+                None => self.start_annotation(DrwTool::BreakOutView),
+            },
             DrwCmd::Auxiliary => self.start_annotation(DrwTool::Auxiliary(Default::default())),
             DrwCmd::CenterMark => self.start_annotation(DrwTool::CenterMark),
             DrwCmd::Centerline => self.start_annotation(DrwTool::Centerline(None)),
@@ -787,6 +797,10 @@ impl CadCraftApp {
             Some(DrwTool::Section(d)) => d.prompt().into(),
             Some(DrwTool::Detail(d)) => d.prompt().into(),
             Some(DrwTool::Break(d)) => d.prompt().into(),
+            Some(DrwTool::BreakOutView) => {
+                "Break Out: click the view (a sketch opens for the profile)".into()
+            }
+            Some(DrwTool::BreakOut(d)) => d.prompt().into(),
             Some(DrwTool::Auxiliary(d)) => d.prompt().into(),
             Some(DrwTool::BendNote) => {
                 "Bend Notes: click bend lines of a flat pattern view (Esc ends)".into()
@@ -1246,6 +1260,16 @@ impl CadCraftApp {
                 self.child_view_tool(&ctx, &painter, rect, &response, &views)
             }
             Some(DrwTool::Break(_)) => self.break_tool(&ctx, &painter, rect, &response, &views),
+            Some(DrwTool::BreakOutView) => {
+                if response.clicked()
+                    && let Some(id) = self.drw.hover
+                {
+                    self.open_break_out_sketch(id);
+                }
+            }
+            Some(DrwTool::BreakOut(_)) => {
+                self.break_out_tool(&ctx, &painter, rect, &response, &views)
+            }
             Some(DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon) => {
                 self.bom_tool(&painter, rect, &response, &views)
             }
@@ -1628,6 +1652,18 @@ impl CadCraftApp {
                 }
                 if ui.button("Break (BRK)").clicked() {
                     self.drw_apply(DrwCmd::Break);
+                    ui.close();
+                }
+                if ui.button("Break Out (BO)").clicked() {
+                    self.drw_apply(DrwCmd::BreakOut);
+                    ui.close();
+                }
+                let outs = self
+                    .drawing()
+                    .and_then(|d| d.sheet()?.view(id))
+                    .map_or(0, |v| v.break_outs.len());
+                if outs > 0 && ui.button("Delete Break Out").clicked() {
+                    self.delete_break_out(id, outs - 1);
                     ui.close();
                 }
                 if let Some((v, k)) = menu_break.filter(|(v, _)| *v == id) {

@@ -57,6 +57,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [4.8-sheet-metal-drawings.md](4.8-sheet-metal-drawings.md) | Sheet metal in drawings: flat pattern views (Bend Centerline / Bend Extent layers), Bend Notes; bend tables next |
 | [4.9-format-text.md](4.9-format-text.md) | Format Text for notes: runs (font, size, colour, styles), justification, spacing, rotation, border / fill, symbol palette, live fields (stage D-S2) |
 | [4.10-break-view.md](4.10-break-view.md) | Break view: Rectangular / Structural breaks, gap, display, symbols, true dimensions across a break (stage D-S6) |
+| [4.11-break-out.md](4.11-break-out.md) | Break Out: a local section inside a closed view sketch profile to a depth (From Point, To Sketch, To Hole, Through Part), hatched cut face (stage D-S6) |
 | [4.6-drawing-styles.md](4.6-drawing-styles.md) | Drawing styles: the Style and Standard Editor of drawings (dimension, text, leader, centre mark, hatch, view annotation styles, layers, Object Defaults) |
 | [4.7-drawing-commands.md](4.7-drawing-commands.md) | The whole Inventor drawing command set (Place Views, Annotate, Manage): each command's dialog first, logic later (parts list / BOM source, balloons, dimension sets, tolerances, symbols, welding, hole tables, revisions, model reference) |
 | [6.1-frame-generator.md](6.1-frame-generator.md) | Frames (Frame Generator): Insert Frame, End Cap, Change, Miter, Corner Joint, Trim/Extend, Notch, Lengthen/Shorten, Reuse, Frame Member Info, Refresh, naming, cut lists — stages F0–F5 |

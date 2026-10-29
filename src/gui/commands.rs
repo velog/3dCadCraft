@@ -2227,7 +2227,9 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["BRK"])
         .at(&[D_MODIFY])
         .tip("Click the view, then the two break lines: the part between them is left out"),
-    dp("drw.break_out", "Break Out", "Локален разрез", Icon::BreakOut, Dp::BreakOut)
+    d("drw.break_out", "Break Out", "Локален разрез", Icon::BreakOut)
+        .run(Action::Drawing(DrwCmd::BreakOut))
+        .spec("4.11-break-out.md")
         .alias(&["BO"])
         .at(&[D_MODIFY])
         .tip("Cut away material inside a closed profile to a depth"),

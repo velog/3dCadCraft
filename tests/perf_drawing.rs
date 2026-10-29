@@ -194,6 +194,54 @@ fn drawing_views_of_large_models() {
             over.push("complex part");
         }
     }
+    // Break Out: the 2 500-hole plate seen from the top with a round
+    // profile (48 sides) over a quarter of it, cut 2 mm deep.
+    {
+        use cadcraft3d::drawing::hlr::{Aligned, OutCut};
+        let model = part_model(&holes_plate(50));
+        let frame = ViewOrientation::Top.frame();
+        let whole = view_lines_simplified(&model, &frame, None, Simplify::default());
+        let c = [
+            (whole.min[0] + whole.max[0]) * 0.5,
+            (whole.min[1] + whole.max[1]) * 0.5,
+        ];
+        let r = (whole.max[0] - whole.min[0]) * 0.28;
+        let ring: Vec<[f64; 2]> = (0..48)
+            .map(|k| {
+                let t = std::f64::consts::TAU * f64::from(k) / 48.0;
+                [c[0] + r * t.cos(), c[1] + r * t.sin()]
+            })
+            .collect();
+        let top = model
+            .edges
+            .iter()
+            .flat_map(|e| e.pts.iter())
+            .map(|p| frame.depth(p))
+            .fold(f64::MIN, f64::max);
+        let aligned = Aligned {
+            parent: frame,
+            line: [0.0, 0.0],
+            cut: None,
+            poly: Vec::new(),
+            unfold: false,
+            depth: None,
+            outs: vec![OutCut::new(vec![ring], top - 2.0)],
+        };
+        let t = Instant::now();
+        let l = view_lines_simplified(&model, &frame, Some(&aligned), Simplify::default());
+        let total = ms(t);
+        assert!(!l.section.is_empty());
+        let budget = 3000.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms ({} cut pieces){flag}",
+            "break out: 2 500-hole plate, round profile",
+            l.section.len()
+        );
+        if total > budget {
+            over.push("break out");
+        }
+    }
     // A sheet full of toleranced dimensions: 2 000 labels with ISO fits
     // (Edit Dimension), laid out and placed every frame.
     {

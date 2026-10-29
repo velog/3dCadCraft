@@ -2595,3 +2595,112 @@ fn breaks_check_clip_and_save() {
     assert!(d.remove_break(v, 0));
     assert!(d.sheet().unwrap().view(v).unwrap().breaks.is_empty());
 }
+
+/// Break Out (spec 4.11): a 60 × 40 × 10 plate with a Ø10 hole, seen from
+/// the top, a 20 × 20 profile round the hole. From Point on the top face
+/// with depth 4 cuts at z = 6: the cut face inside the profile is hatched
+/// (400 − 25π mm²), the hole shows through it, the profile is drawn and the
+/// plate outside it stays. Through Part leaves nothing inside the profile.
+#[test]
+fn break_out_cuts_inside_the_profile() {
+    use super::{BreakOut, BreakOutDepth};
+    let part = plate_with_hole_at([15.0, 0.0]);
+    let mut d = DrawingDocument::default();
+    let v = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let lines_now = |d: &DrawingDocument| {
+        let sheet = d.sheet().unwrap().clone();
+        let LinesJob::Model { frame, aligned, .. } = d.lines_job(&sheet, v).unwrap() else {
+            panic!("a model job");
+        };
+        super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_deref())
+    };
+    let whole = lines_now(&d);
+    let (c, r) = whole
+        .edges
+        .iter()
+        .find_map(|e| e.circle)
+        .expect("the hole seen face-on");
+    close(r, 5.0, 1e-6, "hole radius");
+    let rect = vec![
+        [c[0] - 10.0, c[1] - 10.0],
+        [c[0] + 10.0, c[1] - 10.0],
+        [c[0] + 10.0, c[1] + 10.0],
+        [c[0] - 10.0, c[1] + 10.0],
+    ];
+    let top = [15.0, 0.0, 10.0];
+    let out = BreakOut {
+        profile: vec![rect.clone()],
+        depth: BreakOutDepth::FromPoint {
+            point: top,
+            depth: 4.0,
+        },
+        section_all: false,
+    };
+    assert_eq!(d.add_break_out(v, out.clone()), Some(0));
+    let cut = lines_now(&d);
+    // The hatched area, sampled on a 0.25 mm grid (even-odd over the loops).
+    let hatched = |l: &super::hlr::ViewLines| {
+        let mut n = 0usize;
+        let s = 0.25;
+        let (x0, y0) = (c[0] - 10.0, c[1] - 10.0);
+        for i in 0..80 {
+            for j in 0..80 {
+                let q = [x0 + (i as f64 + 0.5) * s, y0 + (j as f64 + 0.5) * s];
+                let k = l
+                    .section
+                    .iter()
+                    .filter(|lp| super::hlr::inside_loop(lp, q))
+                    .count();
+                n += k % 2;
+            }
+        }
+        n as f64 * s * s
+    };
+    let a = hatched(&cut);
+    close(
+        a,
+        400.0 - 25.0 * std::f64::consts::PI,
+        3.0,
+        "cut face round the hole",
+    );
+    let near = |l: &super::hlr::ViewLines, p: [f64; 2]| {
+        l.visible
+            .iter()
+            .flatten()
+            .any(|q| (q[0] - p[0]).hypot(q[1] - p[1]) < 0.3)
+    };
+    assert!(near(&cut, [c[0] + 5.0, c[1]]), "the hole's rim at the cut");
+    assert!(near(&cut, rect[2]), "the profile drawn");
+    assert!(
+        near(&cut, [whole.min[0], whole.min[1]]),
+        "the plate outside"
+    );
+    // Through Part: nothing inside the profile but its own lines.
+    let through = BreakOut {
+        depth: BreakOutDepth::ThroughPart,
+        ..out.clone()
+    };
+    assert!(d.set_break_out(v, 0, through));
+    let gone = lines_now(&d);
+    assert_eq!(hatched(&gone), 0.0, "no material left to cut");
+    assert!(
+        !near(&gone, [c[0] + 5.0, c[1]]),
+        "the hole is gone with the rest"
+    );
+    assert!(near(&gone, rect[0]));
+    // Saved with the view; deleting it makes the view whole.
+    let text = serde_json::to_string(&d).unwrap();
+    let back: DrawingDocument = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.sheet().unwrap().view(v).unwrap().break_outs.len(), 1);
+    assert!(d.remove_break_out(v, 0));
+    assert!(!serde_json::to_string(&d).unwrap().contains("break_outs"));
+    assert_eq!(lines_now(&d), whole);
+}

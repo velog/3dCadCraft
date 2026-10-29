@@ -104,6 +104,8 @@ numbers run `cargo test --no-default-features --test perf -- --test-threads=1 --
   (the open two-mode item below), *36 countersunk holes* and *primitives* were over budget; none of them touches
   sheet metal code.
 
+- 2026-10-29: **Break Out** (`tests/perf_drawing.rs`): the 2 500-hole plate from the top with a round 48-sided profile
+  1.1 s (budget 3 s; 6.4 s before boxes skipped what lies away from the profile).
 - 2026-10-29: **Break views** (`tests/perf_drawing.rs`): three breaks over a view of 2 000 polylines (100 000 points)
   and 500 cut-face loops clip in 4.4 ms (release, budget 50 ms); the GUI caches the result per view.
 - 2026-10-27: **Chamfer notes** (`tests/perf_drawing.rs`): 1 000 notes on a view of 4 000 straight edges resolve in

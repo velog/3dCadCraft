@@ -50,7 +50,6 @@ pub enum Planned {
     // Place Views
     Overlay,
     DraftView,
-    BreakOut,
     Slice,
     Crop,
     AlignHorizontal,
@@ -105,10 +104,9 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 35] = [
+    pub const ALL: [Planned; 34] = [
         Self::Overlay,
         Self::DraftView,
-        Self::BreakOut,
         Self::Slice,
         Self::Crop,
         Self::AlignHorizontal,
@@ -148,7 +146,6 @@ impl Planned {
         match self {
             Self::Overlay => "Overlay View",
             Self::DraftView => "Draft View",
-            Self::BreakOut => "Break Out",
             Self::Slice => "Slice",
             Self::Crop => "Crop",
             Self::AlignHorizontal => "Horizontally Align View",
@@ -225,34 +222,6 @@ impl Planned {
                     Note("A view holding only a 2D sketch (no model)"),
                 ],
             )],
-            Self::BreakOut => &[
-                Page(
-                    "Shape",
-                    &[
-                        Sel("view", "View", "select the view"),
-                        Sel(
-                            "profile",
-                            "Boundary Profile",
-                            "select a closed sketch profile drawn on the view",
-                        ),
-                        Head("Depth"),
-                        Combo(
-                            "Depth Type",
-                            &["From Point", "To Sketch", "To Hole", "Through Part"],
-                            0,
-                        ),
-                        Sel(
-                            "depth",
-                            "Depth Point",
-                            "click the point or hole the depth is measured from",
-                        ),
-                        Num("Depth", 5.0, " mm"),
-                        Check("Show Hidden Edges", false),
-                        Check("Section All Parts", false),
-                    ],
-                ),
-                Page("Display", &[Combo("Hatch", &["By Material", "ANSI31"], 0)]),
-            ],
             Self::Slice => &[Page(
                 "Slice",
                 &[
@@ -724,7 +693,6 @@ impl Planned {
                 "Positional representations of an assembly drawn over a view in phantom lines"
             }
             Self::DraftView => "A view with only a 2D sketch",
-            Self::BreakOut => "Removes material inside a closed sketch profile to a depth",
             Self::Slice => "A zero-depth section of a view along a sketch line",
             Self::Crop => "Clips a view to a rectangle or a closed sketch",
             Self::AlignHorizontal | Self::AlignVertical | Self::AlignInPosition => {
@@ -1048,10 +1016,10 @@ mod tests {
     /// same pick again removes it.
     #[test]
     fn selectors_advance() {
-        let mut d = PlannedDialog::new(Planned::BreakOut);
+        let mut d = PlannedDialog::new(Planned::Slice);
         assert_eq!(d.active, Some("view"));
         d.pick("View 1".into());
-        assert_eq!(d.active, Some("profile"));
+        assert_eq!(d.active, Some("line"));
         d.active = Some("view");
         d.pick("View 1".into());
         assert!(d.picks.get("view").is_none_or(Vec::is_empty));

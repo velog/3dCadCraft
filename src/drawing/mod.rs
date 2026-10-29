@@ -694,6 +694,53 @@ pub struct DrawingView {
     /// Break operations (spec 4.10; old builds draw the view whole).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub breaks: Vec<brk::ViewBreak>,
+    /// Break Out operations (spec 4.11; old builds draw the view whole).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub break_outs: Vec<BreakOut>,
+}
+
+/// A Break Out of a view (spec 4.11): inside a closed profile drawn on the
+/// view, the material between the viewer and the depth is cut away.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BreakOut {
+    /// The profile's closed loops (the view plane, model mm; loops inside
+    /// others are holes).
+    pub profile: Vec<Vec<[f64; 2]>>,
+    /// How deep it cuts.
+    pub depth: BreakOutDepth,
+    /// Section All Parts (assemblies).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub section_all: bool,
+}
+
+/// Break Out › Depth.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum BreakOutDepth {
+    /// From Point: the cut lies `depth` behind `point` (a model point,
+    /// picked in any view of the model), square to the view.
+    FromPoint {
+        /// The picked point (model mm; its component along the view's
+        /// direction is what counts).
+        point: [f64; 3],
+        /// How far behind it (mm).
+        depth: f64,
+    },
+    /// Through Part: everything inside the profile is cut away.
+    ThroughPart,
+}
+
+impl BreakOut {
+    /// The removed region in a view seen in `frame`.
+    pub fn cut(&self, frame: &ViewFrame) -> hlr::OutCut {
+        let depth = match self.depth {
+            BreakOutDepth::FromPoint { point, depth } => {
+                frame.depth(&crate::kernel::Point3::new(point[0], point[1], point[2])) - depth
+            }
+            BreakOutDepth::ThroughPart => -1e12,
+        };
+        hlr::OutCut::new(self.profile.clone(), depth)
+    }
 }
 
 /// What a view of a sheet metal part shows (Drawing View › Sheet Metal
@@ -991,6 +1038,7 @@ impl DrawingDocument {
             recovery: RecoveryOptions::default(),
             sheet_metal: SheetView::Folded,
             breaks: Vec::new(),
+            break_outs: Vec::new(),
         });
         Some(id)
     }
@@ -1017,6 +1065,7 @@ impl DrawingDocument {
             recovery: RecoveryOptions::default(),
             sheet_metal: SheetView::Folded,
             breaks: Vec::new(),
+            break_outs: Vec::new(),
         };
         align(&mut v.position, p.position, dir);
         self.sheet_mut()?.views.push(v);
@@ -1085,6 +1134,32 @@ impl DrawingDocument {
 
     /// What view `id`'s lines are computed from.
     pub fn lines_job(&self, sheet: &Sheet, id: u32) -> Option<LinesJob> {
+        let mut job = self.lines_job_whole(sheet, id)?;
+        let v = sheet.view(id)?;
+        if !v.break_outs.is_empty()
+            && let LinesJob::Model { frame, aligned, .. } = &mut job
+        {
+            let outs: Vec<hlr::OutCut> = v.break_outs.iter().map(|b| b.cut(frame)).collect();
+            match aligned {
+                Some(a) => a.outs = outs,
+                None => {
+                    *aligned = Some(Box::new(hlr::Aligned {
+                        parent: *frame,
+                        line: [0.0, 0.0],
+                        cut: None,
+                        poly: Vec::new(),
+                        unfold: false,
+                        depth: None,
+                        outs,
+                    }))
+                }
+            }
+        }
+        Some(job)
+    }
+
+    /// [`Self::lines_job`] without the view's break outs.
+    fn lines_job_whole(&self, sheet: &Sheet, id: u32) -> Option<LinesJob> {
         let v = sheet.view(id)?;
         let model = self.model_of(sheet, id)?;
         let flat = self.flat_of(sheet, id);
@@ -1117,6 +1192,7 @@ impl DrawingDocument {
                         poly: if poly.len() > 2 { poly } else { Vec::new() },
                         unfold,
                         depth,
+                        outs: Vec::new(),
                     })),
                     flat,
                 }
@@ -1188,6 +1264,7 @@ impl DrawingDocument {
             recovery: RecoveryOptions::default(),
             sheet_metal: SheetView::Folded,
             breaks: Vec::new(),
+            break_outs: Vec::new(),
         };
         self.sheet_mut()?.views.push(v);
         // Positions are kept to 0.1 mm (readable in Properties).
@@ -1331,6 +1408,39 @@ impl DrawingDocument {
         brk::check(&b, &v.breaks, Some(k))?;
         v.breaks[k] = b;
         Ok(())
+    }
+
+    /// Adds break out `b` to view `id` (active sheet); its index. A profile
+    /// without a closed loop of three points is refused.
+    pub fn add_break_out(&mut self, id: u32, b: BreakOut) -> Option<usize> {
+        if !b.profile.iter().any(|l| l.len() >= 3) {
+            return None;
+        }
+        let v = self.sheet_mut()?.view_mut(id)?;
+        v.break_outs.push(b);
+        Some(v.break_outs.len() - 1)
+    }
+
+    /// Replaces break out `k` of view `id` (Edit Break Out).
+    pub fn set_break_out(&mut self, id: u32, k: usize, b: BreakOut) -> bool {
+        match self.sheet_mut().and_then(|s| s.view_mut(id)) {
+            Some(v) if k < v.break_outs.len() && b.profile.iter().any(|l| l.len() >= 3) => {
+                v.break_outs[k] = b;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Deletes break out `k` of view `id`.
+    pub fn remove_break_out(&mut self, id: u32, k: usize) -> bool {
+        match self.sheet_mut().and_then(|s| s.view_mut(id)) {
+            Some(v) if k < v.break_outs.len() => {
+                v.break_outs.remove(k);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Deletes break `k` of view `id`: the view is whole there again.

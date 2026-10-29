@@ -623,6 +623,9 @@ pub struct Aligned {
     /// Section Depth Distance: what lies farther than this behind the
     /// first segment's plane is left out (model mm); `None`: Full.
     pub depth: Option<f64>,
+    /// Break outs of the view (spec 4.11), in this view's plane. A view
+    /// with only break outs has no parent line (`line` zero, no anchor).
+    pub outs: Vec<OutCut>,
 }
 
 /// The visible and hidden lines of `model` seen in `frame`.
@@ -658,6 +661,7 @@ pub fn view_lines_simplified(
             poly: Vec::new(),
             unfold: false,
             depth: a.depth,
+            outs: a.outs.clone(),
         };
         return view_lines_simplified(&unfolded, frame, Some(&straight), simplify);
     }
@@ -713,18 +717,29 @@ pub fn view_lines_simplified(
     let cut = if cells.is_some() { None } else { cut };
     let cut_depth = cut.map(|p| dp(&p));
     let side = |q: &Point3| cut_depth.map_or(-1.0, |c| dp(q) - c);
+    // Break outs: the profile's prism in front of each cut is removed.
+    let outs: &[OutCut] = aligned.map_or(&[], |a| a.outs.as_slice());
+    let out_cells: Vec<Vec<Cell>> = outs.iter().map(OutCut::cells).collect();
+    let mut out_cross: Vec<Vec<([f64; 2], [f64; 2])>> = vec![Vec::new(); outs.len()];
     // The kept parts of a curve (model edges, silhouettes).
     let clip_curve = |pts: &[Point3]| -> Vec<Vec<Point3>> {
-        let kept = match &cells {
+        let mut kept = match &cells {
             Some((c, pf)) => clip_curve_cells(pts, c, pf),
             None => clip_polyline(pts, &side),
         };
-        if far_depth.is_none() {
-            return kept;
+        if far_depth.is_some() {
+            kept = kept
+                .iter()
+                .flat_map(|k| clip_polyline(k, &beyond))
+                .collect();
         }
-        kept.iter()
-            .flat_map(|k| clip_polyline(k, &beyond))
-            .collect()
+        if !outs.is_empty() {
+            kept = kept
+                .iter()
+                .flat_map(|k| clip_outs(k, outs, frame))
+                .collect();
+        }
+        kept
     };
     // Where the far plane cuts the faces: the outline of what is left
     // there (drawn, never hatched).
@@ -777,6 +792,11 @@ pub fn view_lines_simplified(
                     .collect()
             } else {
                 polys
+            };
+            let polys = if outs.is_empty() {
+                polys
+            } else {
+                cut_outs(polys, outs, &out_cells, frame, &mut out_cross)
             };
             if nrm.dot(&t) <= 1e-12 * nrm.norm().max(1e-30) {
                 continue;
@@ -832,8 +852,61 @@ pub fn view_lines_simplified(
                 .fold(f64::MAX, f64::min)
         })
         .collect();
+    // Break outs' cut faces: the section of the faces by each plane,
+    // clipped to the profile (hatched pieces, one per profile triangle) and
+    // their outlines inside the profile.
+    type Caps = (
+        f64,
+        Vec<Vec<[f64; 2]>>,
+        Vec<([f64; 2], [f64; 2])>,
+        ([f64; 2], [f64; 2]),
+    );
+    let mut out_caps: Vec<Caps> = Vec::new();
+    let mut out_edges: Vec<(f64, Vec<[f64; 2]>)> = Vec::new();
+    for (o, segs) in outs.iter().zip(&out_cross) {
+        let loops: Vec<Vec<[f64; 2]>> = chain_loops(segs, diag * 1e-7)
+            .into_iter()
+            .filter(|l| l.len() > 3 && l.first() == l.last())
+            .collect();
+        let mut caps = Vec::new();
+        let loop_boxes: Vec<_> = loops.iter().map(box_of).collect();
+        for tri in &o.tris {
+            let tb = box_of(tri);
+            for (l, lb) in loops.iter().zip(&loop_boxes) {
+                if !boxes_meet(tb, *lb) {
+                    continue;
+                }
+                let c = clip_to_triangle(l, tri);
+                if c.len() >= 4 {
+                    caps.push(c);
+                }
+            }
+        }
+        for l in &loops {
+            for piece in inside_profile(l, o) {
+                out_edges.push((o.depth, piece));
+            }
+        }
+        let boxes = caps.iter().map(box_of).collect();
+        out_caps.push((o.depth, caps, boxes, o.bounds()));
+    }
     // Behind the plane and inside a cut face: hidden by the cut face.
     let behind_cap = |q: [f64; 2], d: f64| {
+        let at = (q, q);
+        let under_out = out_caps.iter().any(|(cd, caps, boxes, all)| {
+            d < cd - eps
+                && boxes_meet(at, *all)
+                && caps
+                    .iter()
+                    .zip(boxes)
+                    .filter(|(c, b)| boxes_meet(at, **b) && inside(c, q))
+                    .count()
+                    % 2
+                    == 1
+        });
+        if under_out {
+            return true;
+        }
         if cells.is_some() {
             return closed
                 .iter()
@@ -878,6 +951,11 @@ pub fn view_lines_simplified(
         for l in chain_loops(&far_crossings, diag * 1e-7) {
             curves.push((l.iter().map(lift).collect(), None));
         }
+    }
+    for (d, l) in &out_edges {
+        let lift =
+            |q: &[f64; 2]| Point3::from(frame.right * q[0] + frame.up * q[1] + frame.toward * *d);
+        curves.push((l.iter().map(lift).collect(), None));
     }
     if cells.is_some() {
         // Each vertex at its own plane's depth.
@@ -1018,10 +1096,24 @@ pub fn view_lines_simplified(
         })
         .collect();
     out.section = closed.into_iter().cloned().collect();
+    // Break outs: the cut faces hatched, the profiles drawn.
+    for (_, caps, _, _) in out_caps {
+        out.section.extend(caps);
+    }
+    for o in outs {
+        for l in &o.loops {
+            for q in l {
+                out.min = [out.min[0].min(q[0]), out.min[1].min(q[1])];
+                out.max = [out.max[0].max(q[0]), out.max[1].max(q[1])];
+            }
+            out.visible.push(l.clone());
+            out.visible_src.push(None);
+        }
+    }
     mark_full_circles(&mut out.edges);
     // Aligned with the parent: the coordinate along the line is the
     // parent's (its middle), the one across it the view's own.
-    if let Some(al) = aligned {
+    if let Some(al) = aligned.filter(|a| a.line != [0.0, 0.0]) {
         let (mut plo, mut phi) = ([f64::MAX; 2], [f64::MIN; 2]);
         for e in &model.edges {
             for p in &e.pts {
@@ -1086,6 +1178,317 @@ fn mark_full_circles(edges: &mut [ViewEdge]) {
                 .is_some_and(|a| *a > std::f64::consts::TAU - 0.01);
         }
     }
+}
+/// A break out of a view (spec 4.11): inside `loops` (closed, the view
+/// plane), the material in front of the plane at frame depth `depth`
+/// (towards the viewer) is cut away.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutCut {
+    /// The profile's closed loops (view plane; even-odd inside).
+    pub loops: Vec<Vec<[f64; 2]>>,
+    /// The cut plane's depth (`ViewFrame::depth`): what is nearer the
+    /// viewer is removed inside the profile.
+    pub depth: f64,
+    /// The profile in counter-clockwise triangles (convex pieces).
+    tris: Vec<[[f64; 2]; 3]>,
+    /// The profile's box: lower left, upper right.
+    lo: [f64; 2],
+    hi: [f64; 2],
+}
+
+/// The box of view-plane points: lower left, upper right.
+fn box_of<'a>(pts: impl IntoIterator<Item = &'a [f64; 2]>) -> ([f64; 2], [f64; 2]) {
+    let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+    for q in pts {
+        lo = [lo[0].min(q[0]), lo[1].min(q[1])];
+        hi = [hi[0].max(q[0]), hi[1].max(q[1])];
+    }
+    (lo, hi)
+}
+
+/// Whether two boxes meet.
+fn boxes_meet(a: ([f64; 2], [f64; 2]), b: ([f64; 2], [f64; 2])) -> bool {
+    a.0[0] <= b.1[0] && b.0[0] <= a.1[0] && a.0[1] <= b.1[1] && b.0[1] <= a.1[1]
+}
+
+impl OutCut {
+    /// A break out of `loops` (each closed or not; holes are loops inside
+    /// others) cut at `depth`.
+    pub fn new(loops: Vec<Vec<[f64; 2]>>, depth: f64) -> Self {
+        let loops: Vec<Vec<[f64; 2]>> = loops
+            .into_iter()
+            .filter(|l| l.len() >= 3)
+            .map(|mut l| {
+                if l.first() != l.last()
+                    && let Some(f) = l.first().copied()
+                {
+                    l.push(f);
+                }
+                l
+            })
+            .collect();
+        let pt = |q: &[f64; 2]| nalgebra::Point2::new(q[0], q[1]);
+        let mut tris = Vec::new();
+        // Outer loops with the loops inside them as holes.
+        for (k, l) in loops.iter().enumerate() {
+            let probe = l[0];
+            let depth_in = loops
+                .iter()
+                .enumerate()
+                .filter(|(j, o)| *j != k && inside(o, probe))
+                .count();
+            if depth_in % 2 == 1 {
+                continue; // a hole
+            }
+            let outer: Vec<_> = l[..l.len() - 1].iter().map(pt).collect();
+            let holes: Vec<Vec<_>> = loops
+                .iter()
+                .enumerate()
+                .filter(|(j, o)| *j != k && inside(l, o[0]))
+                .map(|(_, o)| o[..o.len() - 1].iter().map(pt).collect())
+                .collect();
+            let (pts, ts) = crate::kernel::triangulate_with_holes(&outer, &holes);
+            for t in ts {
+                let [a, b, c] = t.map(|i| [pts[i].x, pts[i].y]);
+                let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+                if area.abs() < 1e-12 {
+                    continue;
+                }
+                tris.push(if area > 0.0 { [a, b, c] } else { [a, c, b] });
+            }
+        }
+        let (lo, hi) = box_of(loops.iter().flatten());
+        Self {
+            loops,
+            depth,
+            tris,
+            lo,
+            hi,
+        }
+    }
+
+    /// Whether view-plane point `q` lies inside the profile.
+    pub fn contains(&self, q: [f64; 2]) -> bool {
+        q[0] >= self.lo[0]
+            && q[0] <= self.hi[0]
+            && q[1] >= self.lo[1]
+            && q[1] <= self.hi[1]
+            && self.loops.iter().filter(|l| inside(l, q)).count() % 2 == 1
+    }
+
+    /// Its box (view plane).
+    fn bounds(&self) -> ([f64; 2], [f64; 2]) {
+        (self.lo, self.hi)
+    }
+
+    /// The profile's triangles as cells (the removed prism, seen along the
+    /// view).
+    fn cells(&self) -> Vec<Cell> {
+        self.tris
+            .iter()
+            .map(|t| Cell {
+                edges: (0..3)
+                    .map(|i| {
+                        let (a, b) = (t[i], t[(i + 1) % 3]);
+                        (a, [b[1] - a[1], a[0] - b[0]], false)
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+}
+
+/// Sutherland–Hodgman: the part of loop `lp` (closed or not) inside the
+/// counter-clockwise triangle `t`, closed.
+fn clip_to_triangle(lp: &[[f64; 2]], t: &[[f64; 2]; 3]) -> Vec<[f64; 2]> {
+    let mut poly: Vec<[f64; 2]> = lp.to_vec();
+    if poly.len() > 1 && poly.first() == poly.last() {
+        poly.pop();
+    }
+    for i in 0..3 {
+        let (a, b) = (t[i], t[(i + 1) % 3]);
+        let side = |q: [f64; 2]| (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0]);
+        let mut next = Vec::new();
+        for k in 0..poly.len() {
+            let (p, q) = (poly[k], poly[(k + 1) % poly.len()]);
+            let (sp, sq) = (side(p), side(q));
+            if sp >= 0.0 {
+                next.push(p);
+            }
+            if (sp >= 0.0) != (sq >= 0.0) {
+                let s = sp / (sp - sq);
+                next.push([p[0] + (q[0] - p[0]) * s, p[1] + (q[1] - p[1]) * s]);
+            }
+        }
+        poly = next;
+        if poly.len() < 3 {
+            return Vec::new();
+        }
+    }
+    if let Some(f) = poly.first().copied() {
+        poly.push(f);
+    }
+    poly
+}
+
+/// The parts of view-plane polyline `pl` inside break out `o`.
+fn inside_profile(pl: &[[f64; 2]], o: &OutCut) -> Vec<Vec<[f64; 2]>> {
+    let mut out = Vec::new();
+    let mut cur: Vec<[f64; 2]> = Vec::new();
+    for w in pl.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let mut ts = vec![0.0, 1.0];
+        for l in &o.loops {
+            for e in l.windows(2) {
+                if let Some(t) = seg_cross(a, b, e[0], e[1]) {
+                    ts.push(t);
+                }
+            }
+        }
+        ts.sort_by(f64::total_cmp);
+        ts.dedup_by(|x, y| (*x - *y).abs() < 1e-12);
+        let at = |t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        for t in ts.windows(2) {
+            if o.contains(at((t[0] + t[1]) * 0.5)) {
+                if cur.is_empty() {
+                    cur.push(at(t[0]));
+                }
+                cur.push(at(t[1]));
+            } else if cur.len() >= 2 {
+                out.push(std::mem::take(&mut cur));
+            } else {
+                cur.clear();
+            }
+        }
+    }
+    if cur.len() >= 2 {
+        out.push(cur);
+    }
+    out
+}
+
+/// Where segment `a`–`b` crosses segment `c`–`d`: the parameter on `a`–`b`.
+fn seg_cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> Option<f64> {
+    let r = [b[0] - a[0], b[1] - a[1]];
+    let s = [d[0] - c[0], d[1] - c[1]];
+    let den = r[0] * s[1] - r[1] * s[0];
+    if den.abs() < 1e-15 {
+        return None;
+    }
+    let ca = [c[0] - a[0], c[1] - a[1]];
+    let t = (ca[0] * s[1] - ca[1] * s[0]) / den;
+    let u = (ca[0] * r[1] - ca[1] * r[0]) / den;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some(t)
+}
+
+/// The parts of a 3D curve outside every break out's removed region.
+fn clip_outs(pts: &[Point3], outs: &[OutCut], frame: &ViewFrame) -> Vec<Vec<Point3>> {
+    let removed = |q: &Point3| {
+        let d = frame.depth(q);
+        let v = frame.project(q);
+        outs.iter().any(|o| d > o.depth && o.contains(v))
+    };
+    let mut out: Vec<Vec<Point3>> = Vec::new();
+    let mut cur: Vec<Point3> = Vec::new();
+    for w in pts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (va, vb) = (frame.project(&a), frame.project(&b));
+        let (da, db) = (frame.depth(&a), frame.depth(&b));
+        let mut ts = vec![0.0, 1.0];
+        let seg_box = box_of([&va, &vb]);
+        for o in outs {
+            if (da - o.depth) * (db - o.depth) < 0.0 {
+                ts.push((o.depth - da) / (db - da));
+            }
+            if !boxes_meet(seg_box, o.bounds()) {
+                continue;
+            }
+            for l in &o.loops {
+                for e in l.windows(2) {
+                    if let Some(t) = seg_cross(va, vb, e[0], e[1]) {
+                        ts.push(t);
+                    }
+                }
+            }
+        }
+        ts.sort_by(f64::total_cmp);
+        ts.dedup_by(|x, y| (*x - *y).abs() < 1e-12);
+        for t in ts.windows(2) {
+            let mid = a + (b - a) * ((t[0] + t[1]) * 0.5);
+            if removed(&mid) {
+                if cur.len() >= 2 {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur.clear();
+                continue;
+            }
+            let p = a + (b - a) * t[0];
+            let q = a + (b - a) * t[1];
+            if cur.last().is_none_or(|l| (l - p).norm() > 1e-12) {
+                if cur.len() >= 2 {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur.clear();
+                cur.push(p);
+            }
+            cur.push(q);
+        }
+    }
+    if cur.len() >= 2 {
+        out.push(cur);
+    }
+    out
+}
+
+/// Break outs on the occluders: each polygon behind a break out's plane is
+/// kept, the part in front of it loses the profile's prism; where the
+/// polygons cross the plane is collected per break out (the cut faces).
+fn cut_outs(
+    polys: Vec<Vec<Point3>>,
+    outs: &[OutCut],
+    cells: &[Vec<Cell>],
+    frame: &ViewFrame,
+    cross: &mut [Vec<([f64; 2], [f64; 2])>],
+) -> Vec<Vec<Point3>> {
+    let mut cur = polys;
+    let mut scratch = Vec::new();
+    for (i, o) in outs.iter().enumerate() {
+        let mut next = Vec::new();
+        for p in cur.into_iter().filter(|p| p.len() >= 3) {
+            let (back, c) = clip_polygon(&p, &|q: &Point3| frame.depth(q) - o.depth);
+            if let Some((x, y)) = c
+                && let Some(list) = cross.get_mut(i)
+            {
+                list.push((frame.project(&x), frame.project(&y)));
+            }
+            if back.len() >= 3 {
+                next.push(back);
+            }
+            let (front, _) = clip_polygon(&p, &|q: &Point3| o.depth - frame.depth(q));
+            if front.len() < 3 {
+                continue;
+            }
+            let flat: Vec<[f64; 2]> = front.iter().map(|q| frame.project(q)).collect();
+            if !boxes_meet(box_of(&flat), o.bounds()) {
+                next.push(front);
+                continue;
+            }
+            let mut pieces = vec![front];
+            for cell in cells.get(i).map_or(&[][..], |c| c.as_slice()) {
+                let mut left = Vec::new();
+                for piece in pieces {
+                    left.extend(subtract_cell(piece, cell, frame, &mut scratch));
+                }
+                pieces = left;
+                if pieces.is_empty() {
+                    break;
+                }
+            }
+            next.extend(pieces);
+        }
+        cur = next;
+    }
+    cur
 }
 
 /// Clips a convex polygon to `side(p) <= 0`; also returns the segment where
@@ -1698,6 +2101,12 @@ fn clip_curve_cells(pts: &[Point3], cells: &[Cell], parent: &ViewFrame) -> Vec<V
 }
 
 /// Even-odd point in polygon.
+/// Whether `q` lies inside closed loop `poly` (crossing count; for tests
+/// and callers outside the module).
+pub fn inside_loop(poly: &[[f64; 2]], q: [f64; 2]) -> bool {
+    inside(poly, q)
+}
+
 fn inside(poly: &[[f64; 2]], q: [f64; 2]) -> bool {
     let mut c = false;
     for w in poly.windows(2) {

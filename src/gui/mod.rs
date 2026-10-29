@@ -55,6 +55,7 @@ mod drawing_arrange;
 mod drawing_bend;
 mod drawing_bom;
 mod drawing_break;
+mod drawing_breakout;
 mod drawing_chamfer;
 mod drawing_dim;
 mod drawing_dimset;
