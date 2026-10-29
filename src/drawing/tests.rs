@@ -1011,6 +1011,76 @@ fn offset_section_cuts_each_segment_on_its_own_plane() {
     assert_eq!(cells.len(), 5);
 }
 
+/// Section Depth Distance (Inventor's behaviour): a Ø16 boss stands
+/// 12 mm behind the cut; at 5 mm it is left out, at 16 mm the far plane
+/// (4 mm from its axis) cuts it, whose outline there is drawn
+/// (±√(8² − 4²) = ±6.93 mm), and Full shows it whole (±8).
+#[test]
+fn section_depth_distance_leaves_out_what_lies_farther() {
+    let mut part = plate_with_hole_at([20.0, -10.0]);
+    crate::part::primitive::add_primitive(
+        &mut part,
+        PrimitiveKind::Cylinder,
+        SketchPlacement::on_origin_plane(OriginPlane::XY),
+        &[Point2::new(0.0, 5.0), Point2::new(8.0, 5.0)],
+        crate::part::PrimitiveFeature::Extrude(crate::part::ExtrudeFeature::new(Vec::new(), 20.0)),
+    )
+    .unwrap();
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let s = d
+        .add_section_view(b, [-40.0, -15.0], [40.0, -15.0], [150.0, 240.0])
+        .unwrap();
+    let mut seen = |depth: Option<f64>| {
+        if let Some(v) = d.sheet_mut().and_then(|sh| sh.view_mut(s))
+            && let ViewKind::Section { depth: dd, .. } = &mut v.kind
+        {
+            *dd = depth;
+        }
+        let sheet = d.sheet().unwrap().clone();
+        let LinesJob::Model { frame, aligned, .. } = d.lines_job(&sheet, s).unwrap() else {
+            panic!("a model job");
+        };
+        assert_eq!(aligned.as_ref().and_then(|a| a.depth), depth);
+        let lines = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_deref());
+        let pts: Vec<[f64; 2]> = lines.visible.iter().flatten().copied().collect();
+        let lo = pts.iter().map(|p| p[1]).fold(f64::MAX, f64::min);
+        let hi = pts.iter().map(|p| p[1]).fold(f64::MIN, f64::max);
+        let boss: Vec<f64> = pts
+            .iter()
+            .filter(|p| p[1] > lo + 10.5)
+            .map(|p| p[0])
+            .collect();
+        let width = boss.iter().copied().fold(f64::MIN, f64::max)
+            - boss.iter().copied().fold(f64::MAX, f64::min);
+        (hi - lo, if boss.is_empty() { 0.0 } else { width }, lines)
+    };
+    let (h, w, full) = seen(None);
+    close(h, 20.0, 1e-3, "full: the boss's height");
+    close(w, 16.0, 0.05, "full: the boss whole");
+    let (h, w, near) = seen(Some(5.0));
+    close(h, 10.0, 1e-3, "5 mm: only the plate");
+    assert_eq!(w, 0.0);
+    let (h, w, _) = seen(Some(16.0));
+    close(h, 20.0, 1e-3, "16 mm: the boss's height");
+    close(
+        w,
+        2.0 * 48f64.sqrt(),
+        0.05,
+        "16 mm: the boss cut by the far plane",
+    );
+    // The cut face is hatched as before; the far plane adds no hatching.
+    assert_eq!(near.section.len(), full.section.len());
+}
+
 /// An aligned section: x = 0 up to the hole's centre, then 45° out to the
 /// corner. Aligned turns the inclined segment into the first one's plane,
 /// so its cut face keeps its true length (from the hole's rim, r = 5, to the

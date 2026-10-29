@@ -433,7 +433,8 @@ pub enum ViewKind {
         /// Where it lies from the parent.
         dir: ProjectDir,
     },
-    /// Section View: the parent cut along a line (full depth).
+    /// Section View: the parent cut along a line (full depth or to a
+    /// distance).
     Section {
         /// The parent view's id.
         parent: u32,
@@ -460,6 +461,10 @@ pub enum ViewKind {
         /// `None`: a free point. Old builds keep the points where they are.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         anchors: Vec<Option<LineAnchor>>,
+        /// Section Depth Distance (model mm behind the cut: what lies
+        /// farther is left out); `None`: Full. Old builds draw it Full.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        depth: Option<f64>,
     },
     /// Auxiliary View: square to a line (an edge) of the parent.
     Auxiliary {
@@ -1023,6 +1028,10 @@ impl DrawingDocument {
             },
             ViewKind::Section { parent, a, b, .. } | ViewKind::Auxiliary { parent, a, b, .. } => {
                 let unfold = matches!(v.kind, ViewKind::Section { aligned: true, .. });
+                let depth = match v.kind {
+                    ViewKind::Section { depth, .. } => depth.filter(|d| *d > 0.0),
+                    _ => None,
+                };
                 let fp = self.frame_of(sheet, parent)?;
                 let frame = self.frame_of(sheet, id)?;
                 let poly = v.kind.section_line().unwrap_or_else(|| vec![a, b]);
@@ -1040,6 +1049,7 @@ impl DrawingDocument {
                         cut,
                         poly: if poly.len() > 2 { poly } else { Vec::new() },
                         unfold,
+                        depth,
                     })),
                     flat,
                 }
@@ -1142,6 +1152,7 @@ impl DrawingDocument {
                 mid: Vec::new(),
                 aligned: false,
                 anchors: Vec::new(),
+                depth: None,
             },
             at,
             None,
@@ -1297,6 +1308,7 @@ impl DrawingDocument {
                 mid: pts[1..pts.len() - 1].to_vec(),
                 aligned: false,
                 anchors: Vec::new(),
+                depth: None,
             },
             at,
             None,

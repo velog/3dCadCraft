@@ -26,6 +26,10 @@ use crate::drawing::{
     RecoveryOptions, SheetSize, ViewFrame, ViewKind, ViewOrientation, ViewStyle,
 };
 
+/// The distance a section's Depth starts with when it is turned to Distance
+/// (model mm).
+const DEFAULT_SECTION_DEPTH: f64 = 10.0;
+
 /// Drawing commands of the ribbon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DrwCmd {
@@ -2140,6 +2144,29 @@ impl CadCraftApp {
                 super::panels::plabel(ui, "Model");
                 ui.label(model);
                 ui.end_row();
+                if let ViewKind::Section { depth, .. } = &mut nv.kind {
+                    super::panels::plabel(ui, "Section Depth");
+                    let mut distance = depth.is_some();
+                    egui::ComboBox::from_id_salt("drw_section_depth")
+                        .selected_text(if distance { "Distance" } else { "Full" })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut distance, false, "Full");
+                            ui.selectable_value(&mut distance, true, "Distance");
+                        })
+                        .response
+                        .on_hover_text(
+                            "Full: the whole model behind the cut; Distance: only what lies within the distance behind it",
+                        );
+                    if distance != depth.is_some() {
+                        *depth = distance.then_some(DEFAULT_SECTION_DEPTH);
+                    }
+                    ui.end_row();
+                    if let Some(d) = depth {
+                        super::panels::plabel(ui, "Distance");
+                        ui.add(ExprValue::new(d).suffix(" mm").range(0.001..=1.0e6));
+                        ui.end_row();
+                    }
+                }
                 if let ViewKind::Section { mid, aligned, .. } = &mut nv.kind {
                     // Aligned needs a line of several segments.
                     let bent = !mid.is_empty();

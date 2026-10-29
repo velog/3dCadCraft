@@ -578,6 +578,9 @@ pub struct Aligned {
     /// about its bends into the first segment's plane (true lengths of
     /// inclined segments) instead of being projected.
     pub unfold: bool,
+    /// Section Depth Distance: what lies farther than this behind the
+    /// first segment's plane is left out (model mm); `None`: Full.
+    pub depth: Option<f64>,
 }
 
 /// The visible and hidden lines of `model` seen in `frame`.
@@ -612,6 +615,7 @@ pub fn view_lines_simplified(
             cut: Some(start),
             poly: Vec::new(),
             unfold: false,
+            depth: a.depth,
         };
         return view_lines_simplified(&unfolded, frame, Some(&straight), simplify);
     }
@@ -658,16 +662,31 @@ pub fn view_lines_simplified(
             let far = 20.0 * (diag + (hi3 - lo3).norm()) + 1.0;
             (section_cells(&a.poly, &a.parent, frame, far), a.parent)
         });
+    // Depth Distance: a second plane, parallel to the view, `depth` behind
+    // the first segment's; the material beyond it is left out.
+    let far_depth = cut
+        .zip(aligned.and_then(|a| a.depth))
+        .map(|(p, d)| dp(&p) - d);
+    let beyond = |q: &Point3| far_depth.map_or(-1.0, |f| f - dp(q));
     let cut = if cells.is_some() { None } else { cut };
     let cut_depth = cut.map(|p| dp(&p));
     let side = |q: &Point3| cut_depth.map_or(-1.0, |c| dp(q) - c);
     // The kept parts of a curve (model edges, silhouettes).
     let clip_curve = |pts: &[Point3]| -> Vec<Vec<Point3>> {
-        match &cells {
+        let kept = match &cells {
             Some((c, pf)) => clip_curve_cells(pts, c, pf),
             None => clip_polyline(pts, &side),
+        };
+        if far_depth.is_none() {
+            return kept;
         }
+        kept.iter()
+            .flat_map(|k| clip_polyline(k, &beyond))
+            .collect()
     };
+    // Where the far plane cuts the faces: the outline of what is left
+    // there (drawn, never hatched).
+    let mut far_crossings: Vec<([f64; 2], [f64; 2])> = Vec::new();
     let mut chords3: Vec<(Point3, Point3)> = Vec::new();
 
     // Front-facing triangles occlude (the solids are closed); a section
@@ -701,6 +720,21 @@ pub fn view_lines_simplified(
                 vec![kept]
             } else {
                 vec![vec![a, b, c]]
+            };
+            let polys: Vec<Vec<Point3>> = if far_depth.is_some() {
+                polys
+                    .into_iter()
+                    .filter(|p| p.len() >= 3)
+                    .map(|p| {
+                        let (kept, cross) = clip_polygon(&p, &beyond);
+                        if let Some((x, y)) = cross {
+                            far_crossings.push((p2(&x), p2(&y)));
+                        }
+                        kept
+                    })
+                    .collect()
+            } else {
+                polys
             };
             if nrm.dot(&t) <= 1e-12 * nrm.norm().max(1e-30) {
                 continue;
@@ -793,6 +827,13 @@ pub fn view_lines_simplified(
         let lift =
             |q: &[f64; 2]| Point3::from(frame.right * q[0] + frame.up * q[1] + frame.toward * c);
         for l in &section {
+            curves.push((l.iter().map(lift).collect(), None));
+        }
+    }
+    if let Some(f) = far_depth {
+        let lift =
+            |q: &[f64; 2]| Point3::from(frame.right * q[0] + frame.up * q[1] + frame.toward * f);
+        for l in chain_loops(&far_crossings, diag * 1e-7) {
             curves.push((l.iter().map(lift).collect(), None));
         }
     }
