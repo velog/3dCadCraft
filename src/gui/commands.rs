@@ -2219,10 +2219,12 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["DFV"])
         .at(&[D_CREATE])
         .tip("A view holding only a 2D sketch"),
-    dp("drw.break", "Break", "Прекъсване", Icon::BreakView, Dp::Break)
+    d("drw.break", "Break", "Прекъсване", Icon::BreakView)
+        .run(Action::Drawing(DrwCmd::Break))
+        .spec("4.10-break-view.md")
         .alias(&["BRK"])
         .at(&[D_MODIFY])
-        .tip("Shorten a long part between two break lines"),
+        .tip("Click the view, then the two break lines: the part between them is left out"),
     dp("drw.break_out", "Break Out", "Локален разрез", Icon::BreakOut, Dp::BreakOut)
         .alias(&["BO"])
         .at(&[D_MODIFY])

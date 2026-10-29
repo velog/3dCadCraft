@@ -297,6 +297,7 @@ mod tests {
     fn tags_sit_on_each_bend() {
         let bt = BendTable::new(1, [400.0, 280.0]);
         let pl = Placement {
+            breaks: Default::default(),
             position: [100.0, 100.0],
             scale: 1.0,
             center: [20.0, 25.0],
@@ -323,6 +324,7 @@ mod tests {
             ..Default::default()
         };
         let pl = Placement {
+            breaks: Default::default(),
             position: [100.0, 100.0],
             scale: 1.0,
             center: [0.0, 25.0],

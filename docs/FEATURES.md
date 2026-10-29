@@ -976,7 +976,7 @@ Out, Slice, Crop, Overlay, Draft views are listed greyed. The base view's previe
 | **Section** | a section along a line, with hatching; full, half, offset, aligned |
 | **Detail** | an enlarged circle or rectangle from another view |
 | **Auxiliary** | perpendicular to an inclined edge |
-| **Break** | a shortened long part |
+| **Break** | a shortened long part — 🟡 [spec/4.10](spec/4.10-break-view.md): Rectangular / Structural, Horizontal / Vertical, gap, true dimensions, Edit / drag / Delete |
 | **Break-out** | a local section inside a contour |
 | **Slice** | a thin section without the geometry behind the cut |
 | **Crop** | cropping a view |

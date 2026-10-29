@@ -50,7 +50,6 @@ pub enum Planned {
     // Place Views
     Overlay,
     DraftView,
-    Break,
     BreakOut,
     Slice,
     Crop,
@@ -106,10 +105,9 @@ const DATUM_TARGET_PAGES: &[Page] = &[Page(
 
 impl Planned {
     #[cfg(test)]
-    pub const ALL: [Planned; 36] = [
+    pub const ALL: [Planned; 35] = [
         Self::Overlay,
         Self::DraftView,
-        Self::Break,
         Self::BreakOut,
         Self::Slice,
         Self::Crop,
@@ -150,7 +148,6 @@ impl Planned {
         match self {
             Self::Overlay => "Overlay View",
             Self::DraftView => "Draft View",
-            Self::Break => "Break",
             Self::BreakOut => "Break Out",
             Self::Slice => "Slice",
             Self::Crop => "Crop",
@@ -226,34 +223,6 @@ impl Planned {
                         "click on the sheet: a sketch opens in the new view",
                     ),
                     Note("A view holding only a 2D sketch (no model)"),
-                ],
-            )],
-            Self::Break => &[Page(
-                "Break",
-                &[
-                    Sel("view", "View", "select the view to break"),
-                    Radio("Style", &["Rectangular", "Structural"], 0),
-                    Radio(
-                        "Orientation",
-                        &["Horizontal", "Vertical", "Aligned to geometry"],
-                        0,
-                    ),
-                    Sel(
-                        "align",
-                        "Align To",
-                        "select an edge the break lines are square to",
-                    ),
-                    Num("Display (Min - Max, % of the gap)", 50.0, ""),
-                    Num("Gap", 10.0, " mm"),
-                    Num("Symbols (Structural)", 1.0, ""),
-                    Check("Propagate to parent view", false),
-                    Sel(
-                        "first",
-                        "First Break Line",
-                        "click the first break line in the view",
-                    ),
-                    Sel("second", "Second Break Line", "click the second break line"),
-                    Note("One break per dialog; the orientation cannot be changed later"),
                 ],
             )],
             Self::BreakOut => &[
@@ -755,9 +724,6 @@ impl Planned {
                 "Positional representations of an assembly drawn over a view in phantom lines"
             }
             Self::DraftView => "A view with only a 2D sketch",
-            Self::Break => {
-                "Shortens a long part between two break lines; dimensions across it keep the true length"
-            }
             Self::BreakOut => "Removes material inside a closed sketch profile to a depth",
             Self::Slice => "A zero-depth section of a view along a sketch line",
             Self::Crop => "Clips a view to a rectangle or a closed sketch",
@@ -1082,10 +1048,10 @@ mod tests {
     /// same pick again removes it.
     #[test]
     fn selectors_advance() {
-        let mut d = PlannedDialog::new(Planned::Break);
+        let mut d = PlannedDialog::new(Planned::BreakOut);
         assert_eq!(d.active, Some("view"));
         d.pick("View 1".into());
-        assert_eq!(d.active, Some("align"));
+        assert_eq!(d.active, Some("profile"));
         d.active = Some("view");
         d.pick("View 1".into());
         assert!(d.picks.get("view").is_none_or(Vec::is_empty));

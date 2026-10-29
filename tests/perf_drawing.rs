@@ -292,6 +292,7 @@ fn drawing_views_of_large_models() {
             ..Default::default()
         };
         let pl = Placement {
+            breaks: Default::default(),
             position: [200.0, 150.0],
             scale: 0.5,
             center: lines.center(),
@@ -363,6 +364,7 @@ fn drawing_views_of_large_models() {
             ..Default::default()
         };
         let pl = Placement {
+            breaks: Default::default(),
             position: [200.0, 150.0],
             scale: 0.5,
             center: lines.center(),
@@ -412,6 +414,7 @@ fn drawing_views_of_large_models() {
             .filter_map(|e| e.name.clone())
             .collect();
         let pl = Placement {
+            breaks: Default::default(),
             position: [200.0, 150.0],
             scale: 1.0,
             center: lines.center(),
@@ -457,6 +460,58 @@ fn drawing_views_of_large_models() {
         );
         if total > budget {
             over.push("arrange dimensions");
+        }
+    }
+    // Three breaks in a view of 2 000 polylines of 50 points (100 000
+    // points, a dense flat pattern or assembly view) and 500 cut-face loops.
+    {
+        use cadcraft3d::drawing::brk::{self, BreakOrientation, ViewBreak};
+        use cadcraft3d::drawing::hlr::ViewLines;
+        let visible: Vec<Vec<[f64; 2]>> = (0..2000)
+            .map(|k| {
+                let y = k as f64 * 0.1;
+                (0..50)
+                    .map(|i| [i as f64 * 20.0, y + (i % 2) as f64])
+                    .collect()
+            })
+            .collect();
+        let section: Vec<Vec<[f64; 2]>> = (0..500)
+            .map(|k| {
+                let y = k as f64 * 0.4;
+                vec![
+                    [0.0, y],
+                    [1000.0, y],
+                    [1000.0, y + 0.3],
+                    [0.0, y + 0.3],
+                    [0.0, y],
+                ]
+            })
+            .collect();
+        let lines = ViewLines {
+            visible_src: vec![None; visible.len()],
+            visible,
+            section,
+            min: [0.0, 0.0],
+            max: [1000.0, 201.0],
+            ..Default::default()
+        };
+        let breaks = [
+            ViewBreak::new(BreakOrientation::Horizontal, 100.0, 300.0),
+            ViewBreak::new(BreakOrientation::Horizontal, 500.0, 700.0),
+            ViewBreak::new(BreakOrientation::Vertical, 50.0, 120.0),
+        ];
+        let t = Instant::now();
+        let broken = brk::apply(&lines, &breaks, 0.5);
+        let total = ms(t);
+        let budget = 50.0;
+        let flag = if total > budget { "  OVER" } else { "" };
+        println!(
+            "{:<56} {budget:>7.0} ms {total:>9.1} ms ({} pieces){flag}",
+            "break view: 3 breaks over 100 000 points",
+            broken.visible.len()
+        );
+        if total > budget {
+            over.push("break view");
         }
     }
     if std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_none() {

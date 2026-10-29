@@ -157,10 +157,10 @@ impl AuxDraft {
 fn to_view(v: &ShownView, p: [f64; 2]) -> Option<[f64; 2]> {
     let l = v.lines.as_deref()?;
     let c = l.center();
-    Some([
+    Some(l.breaks.lengthen([
         c[0] + (p[0] - v.position[0]) / v.scale,
         c[1] + (p[1] - v.position[1]) / v.scale,
-    ])
+    ]))
 }
 
 /// The default detail scale: the next preset at least twice the parent's.
@@ -349,6 +349,7 @@ impl CadCraftApp {
                             position: v.position,
                             scale: v.scale,
                             center: l.center(),
+                            breaks: l.breaks,
                         };
                         painter.line_segment(
                             [to(pl.to_sheet(a)), to(pl.to_sheet(b))],
@@ -463,7 +464,9 @@ impl CadCraftApp {
 
 /// A view-plane point of `v` on the sheet.
 fn from_view(v: &ShownView, q: [f64; 2]) -> Option<[f64; 2]> {
-    let c = v.lines.as_deref()?.center();
+    let l = v.lines.as_deref()?;
+    let c = l.center();
+    let q = l.breaks.shorten(q);
     Some([
         v.position[0] + (q[0] - c[0]) * v.scale,
         v.position[1] + (q[1] - c[1]) * v.scale,
@@ -855,6 +858,7 @@ impl CadCraftApp {
                     position: pv.position,
                     scale: pv.scale,
                     center: pv.lines.as_deref()?.center(),
+                    breaks: pv.lines.as_deref()?.breaks,
                 };
                 Some((v.id, f, pl))
             })
@@ -888,10 +892,7 @@ impl CadCraftApp {
                 if g.which == 0 {
                     f.center = [f.center[0] + v[0], f.center[1] + v[1]];
                 } else {
-                    let p = [
-                        pl.center[0] + (q[0] - pl.position[0]) / pl.scale,
-                        pl.center[1] + (q[1] - pl.position[1]) / pl.scale,
-                    ];
+                    let p = pl.to_view(q);
                     let (dx, dy) = (p[0] - f.center[0], p[1] - f.center[1]);
                     match f.half {
                         Some(_) => f.half = Some([dx.abs().max(0.1), dy.abs().max(0.1)]),
@@ -923,10 +924,7 @@ impl CadCraftApp {
                     return Some((*id, *f, *pl, Some(k)));
                 }
                 // On the outline: its grips show.
-                let p = [
-                    pl.center[0] + (q[0] - pl.position[0]) / pl.scale,
-                    pl.center[1] + (q[1] - pl.position[1]) / pl.scale,
-                ];
+                let p = pl.to_view(q);
                 (f.side(p).abs() * pl.scale < near).then_some((*id, *f, *pl, None))
             })
         });

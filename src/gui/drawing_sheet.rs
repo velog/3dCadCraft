@@ -30,6 +30,7 @@ impl CadCraftApp {
                 position: v.position,
                 scale: v.scale,
                 center: l.center(),
+                breaks: l.breaks,
             };
             for b in &l.bends {
                 let (a, c) = (pl.to_sheet(b.centre[0]), pl.to_sheet(b.centre[1]));

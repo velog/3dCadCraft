@@ -45,6 +45,8 @@ pub enum DrwCmd {
     Section,
     /// Place Views › Detail.
     Detail,
+    /// Place Views › Break.
+    Break,
     /// Place Views › Auxiliary.
     Auxiliary,
     /// Annotate › Center Mark.
@@ -155,6 +157,8 @@ pub(super) enum DrwTool {
     Section(super::drawing_section::SectionDraft),
     /// Detail View: parent, centre, radius, place.
     Detail(super::drawing_section::DetailDraft),
+    /// Break: the view, then the two break lines.
+    Break(super::drawing_break::BreakDraft),
     /// Auxiliary View: an edge, then the place.
     Auxiliary(super::drawing_section::AuxDraft),
     /// Parts List: the source view (dialog), then the place.
@@ -250,6 +254,14 @@ struct LinesKey {
     flat: bool,
 }
 
+/// A broken view's lines and what they were made from.
+struct BrokenLines {
+    from: Arc<ViewLines>,
+    breaks: Vec<crate::drawing::brk::ViewBreak>,
+    scale: f64,
+    lines: Arc<ViewLines>,
+}
+
 /// Drawing UI state of the app.
 #[derive(Default)]
 pub(super) struct DrwUi {
@@ -284,6 +296,15 @@ pub(super) struct DrwUi {
     pub sketch: Option<Box<super::drawing_sketch::DrwSketch>>,
     /// A detail fence being dragged on its parent.
     pub fence_drag: Option<super::drawing_section::FenceGrip>,
+    /// Broken views' lines: the computed lines, the breaks and the scale
+    /// they were made from, and the result.
+    broken: HashMap<u32, BrokenLines>,
+    /// A break's lines being dragged.
+    pub break_drag: Option<super::drawing_break::BreakGrip>,
+    /// Edit Break is open.
+    pub break_edit: Option<super::drawing_break::BreakEdit>,
+    /// The break under the pointer at the last right click (view, break).
+    menu_break: Option<(u32, usize)>,
     /// The Text window.
     pub text_dialog: Option<super::drawing_annot::TextDialog>,
     /// The PDF options window (kept until the file is written).
@@ -478,6 +499,14 @@ impl CadCraftApp {
                         super::drawing_section::DetailDraft::with_parent(p),
                     ));
                 }
+            }
+            DrwCmd::Break => {
+                let view = self.drw.sel;
+                self.start_annotation(DrwTool::Break(
+                    view.map(super::drawing_break::BreakDraft::with_view)
+                        .unwrap_or_default(),
+                ));
+                self.drw.sel = view;
             }
             DrwCmd::Auxiliary => self.start_annotation(DrwTool::Auxiliary(Default::default())),
             DrwCmd::CenterMark => self.start_annotation(DrwTool::CenterMark),
@@ -757,6 +786,7 @@ impl CadCraftApp {
             Some(DrwTool::HoleNote(Some(_))) => "Hole and Thread: click where the note goes (Esc ends)".into(),
             Some(DrwTool::Section(d)) => d.prompt().into(),
             Some(DrwTool::Detail(d)) => d.prompt().into(),
+            Some(DrwTool::Break(d)) => d.prompt().into(),
             Some(DrwTool::Auxiliary(d)) => d.prompt().into(),
             Some(DrwTool::BendNote) => {
                 "Bend Notes: click bend lines of a flat pattern view (Esc ends)".into()
@@ -926,6 +956,38 @@ impl CadCraftApp {
             }
             jobs = left;
         }
+        // Break views: the removed stretches clipped out (after the jobs,
+        // so children are made from the whole view).
+        for v in &sheet.views {
+            if v.breaks.is_empty() {
+                continue;
+            }
+            let Some(l) = out.get(&v.id).cloned() else {
+                continue;
+            };
+            let scale = doc.effective(sheet, v.id).map_or(v.scale, |(s, _)| s);
+            let hit =
+                self.drw.broken.get(&v.id).filter(|b| {
+                    Arc::ptr_eq(&b.from, &l) && b.breaks == v.breaks && b.scale == scale
+                });
+            let lines = match hit {
+                Some(b) => b.lines.clone(),
+                None => {
+                    let lines = Arc::new(crate::drawing::brk::apply(&l, &v.breaks, scale));
+                    self.drw.broken.insert(
+                        v.id,
+                        BrokenLines {
+                            from: l,
+                            breaks: v.breaks.clone(),
+                            scale,
+                            lines: lines.clone(),
+                        },
+                    );
+                    lines
+                }
+            };
+            out.insert(v.id, lines);
+        }
         out
     }
 
@@ -957,6 +1019,7 @@ impl CadCraftApp {
                         position: v.position,
                         scale,
                         center: l.center(),
+                        breaks: l.breaks,
                     };
                     let (a, b) = (pl.to_sheet(l.min), pl.to_sheet(l.max));
                     ([a[0] - m, a[1] - m], [b[0] + m, b[1] + m])
@@ -1112,6 +1175,7 @@ impl CadCraftApp {
                                 position: v.position,
                                 scale: v.scale,
                                 center: l.center(),
+                                breaks: l.breaks,
                             },
                             l,
                         ),
@@ -1166,6 +1230,7 @@ impl CadCraftApp {
             }
         }
         // A view sketch takes the sheet view while it is open.
+        self.break_edit_ui(&ctx);
         let sketching = self.drw.sketch.is_some();
         if sketching {
             self.view_sketch_ui(&painter, rect, &response, &views);
@@ -1180,6 +1245,7 @@ impl CadCraftApp {
             Some(DrwTool::Section(_) | DrwTool::Detail(_) | DrwTool::Auxiliary(_)) => {
                 self.child_view_tool(&ctx, &painter, rect, &response, &views)
             }
+            Some(DrwTool::Break(_)) => self.break_tool(&ctx, &painter, rect, &response, &views),
             Some(DrwTool::PartsList | DrwTool::Balloon(_) | DrwTool::AutoBalloon) => {
                 self.bom_tool(&painter, rect, &response, &views)
             }
@@ -1205,7 +1271,8 @@ impl CadCraftApp {
             // Edit View of a base view: its preview and ViewCube.
             None if self.orient_active() => self.orient_tool(&ctx, &painter, rect, &response),
             None => {
-                if !self.detail_fence_grips(&painter, rect, &response, &views)
+                if !self.break_grips(&painter, rect, &response, &views)
+                    && !self.detail_fence_grips(&painter, rect, &response, &views)
                     && !self.section_line_grips(&painter, rect, &response, &views)
                     && !self.annotation_select(rect, &response, &anns, &views)
                 {
@@ -1535,8 +1602,12 @@ impl CadCraftApp {
         }
         if response.secondary_clicked() {
             self.drw.sel = self.drw.hover;
+            self.drw.menu_break = at
+                .and_then(|q| self.break_near(views, q))
+                .map(|(v, k, _)| (v, k));
         }
         let target = self.drw.sel;
+        let menu_break = self.drw.menu_break;
         response.context_menu(|ui| {
             if let Some(id) = target {
                 if ui.button("Edit View...").clicked() {
@@ -1554,6 +1625,20 @@ impl CadCraftApp {
                 if section && ui.button("Edit Section Line").clicked() {
                     self.edit_section_line(id);
                     ui.close();
+                }
+                if ui.button("Break (BRK)").clicked() {
+                    self.drw_apply(DrwCmd::Break);
+                    ui.close();
+                }
+                if let Some((v, k)) = menu_break.filter(|(v, _)| *v == id) {
+                    if ui.button("Edit Break").clicked() {
+                        self.open_break_edit(v, k);
+                        ui.close();
+                    }
+                    if ui.button("Delete Break").clicked() {
+                        self.delete_break(v, k);
+                        ui.close();
+                    }
                 }
                 if ui.button("Delete").clicked() {
                     self.delete_drawing_view(id);
@@ -2939,16 +3024,13 @@ fn paint_view(
     let Some(lines) = &v.lines else {
         return;
     };
-    let c = lines.center();
-    let map = |q: &[f64; 2]| {
-        cam.to_screen(
-            rect,
-            [
-                v.position[0] + (q[0] - c[0]) * v.scale,
-                v.position[1] + (q[1] - c[1]) * v.scale,
-            ],
-        )
+    let pl = crate::drawing::annot::Placement {
+        position: v.position,
+        scale: v.scale,
+        center: lines.center(),
+        breaks: lines.breaks,
     };
+    let map = |q: &[f64; 2]| cam.to_screen(rect, pl.to_sheet(*q));
     let w = ((weights[0] * cam.zoom) as f32).clamp(1.0, 4.0);
     let hw = ((weights[1] * cam.zoom) as f32).clamp(0.8, 3.0);
     if v.style == ViewStyle::HiddenShown

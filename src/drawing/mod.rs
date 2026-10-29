@@ -15,6 +15,7 @@
 pub mod annot;
 pub mod arrange;
 pub mod bend_table;
+pub mod brk;
 pub mod chamfer_note;
 pub mod dimset;
 pub mod dimtext;
@@ -690,6 +691,9 @@ pub struct DrawingView {
     /// follow their base).
     #[serde(default, skip_serializing_if = "SheetView::is_folded")]
     pub sheet_metal: SheetView,
+    /// Break operations (spec 4.10; old builds draw the view whole).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub breaks: Vec<brk::ViewBreak>,
 }
 
 /// What a view of a sheet metal part shows (Drawing View › Sheet Metal
@@ -986,6 +990,7 @@ impl DrawingDocument {
             display: DisplayOptions::default(),
             recovery: RecoveryOptions::default(),
             sheet_metal: SheetView::Folded,
+            breaks: Vec::new(),
         });
         Some(id)
     }
@@ -1011,6 +1016,7 @@ impl DrawingDocument {
             display: p.display,
             recovery: RecoveryOptions::default(),
             sheet_metal: SheetView::Folded,
+            breaks: Vec::new(),
         };
         align(&mut v.position, p.position, dir);
         self.sheet_mut()?.views.push(v);
@@ -1181,6 +1187,7 @@ impl DrawingDocument {
             display: p.display,
             recovery: RecoveryOptions::default(),
             sheet_metal: SheetView::Folded,
+            breaks: Vec::new(),
         };
         self.sheet_mut()?.views.push(v);
         // Positions are kept to 0.1 mm (readable in Properties).
@@ -1295,6 +1302,46 @@ impl DrawingDocument {
             at,
             Some(scale),
         )
+    }
+
+    /// Adds break `b` to view `id` (active sheet); its index in the
+    /// view's breaks.
+    pub fn add_break(&mut self, id: u32, b: brk::ViewBreak) -> Result<usize, brk::BreakError> {
+        let v = self
+            .sheet_mut()
+            .and_then(|s| s.view_mut(id))
+            .ok_or(brk::BreakError::Empty)?;
+        brk::check(&b, &v.breaks, None)?;
+        v.breaks.push(b);
+        Ok(v.breaks.len() - 1)
+    }
+
+    /// Replaces break `k` of view `id` (Edit Break, a drag).
+    pub fn set_break(
+        &mut self,
+        id: u32,
+        k: usize,
+        b: brk::ViewBreak,
+    ) -> Result<(), brk::BreakError> {
+        let v = self
+            .sheet_mut()
+            .and_then(|s| s.view_mut(id))
+            .filter(|v| k < v.breaks.len())
+            .ok_or(brk::BreakError::Empty)?;
+        brk::check(&b, &v.breaks, Some(k))?;
+        v.breaks[k] = b;
+        Ok(())
+    }
+
+    /// Deletes break `k` of view `id`: the view is whole there again.
+    pub fn remove_break(&mut self, id: u32, k: usize) -> bool {
+        match self.sheet_mut().and_then(|s| s.view_mut(id)) {
+            Some(v) if k < v.breaks.len() => {
+                v.breaks.remove(k);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Moves detail view `id`'s fence (active sheet): centre and size in the

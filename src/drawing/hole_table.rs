@@ -493,6 +493,7 @@ mod tests {
             ]),
         );
         let pl = Placement {
+            breaks: Default::default(),
             position: [150.0, 150.0],
             scale: 1.0,
             center: [50.0, 30.0],

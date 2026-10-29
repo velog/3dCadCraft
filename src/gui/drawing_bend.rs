@@ -139,6 +139,7 @@ impl CadCraftApp {
             position: v.position,
             scale: v.scale,
             center: lines.center(),
+            breaks: lines.breaks,
         };
         let prims = bend_table::prims(&bt, lines, pl, &self.drw.look);
         paint_prims(painter, &cam, rect, &prims, PREVIEW);

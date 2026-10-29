@@ -39,6 +39,7 @@ pub fn placements(
                     position: v.position,
                     scale,
                     center: l.center(),
+                    breaks: l.breaks,
                 },
                 style,
                 l,
@@ -142,6 +143,36 @@ pub fn view_extras<'a>(
         let Some((pl, l)) = view(v.id) else {
             continue;
         };
+        // Break lines at both ends of each removed stretch (visible layer).
+        if !l.breaks.is_empty()
+            && let Some(p) = st.pen(&st.defaults.visible_layer)
+        {
+            let w = st.layer(&st.defaults.visible_layer).weight;
+            out.push(p);
+            for c in l.breaks.cuts() {
+                let Some(b) = v.breaks.get(c.index) else {
+                    continue;
+                };
+                let end = |at: f64| -> ([f64; 2], [f64; 2]) {
+                    let [lo, hi] = super::brk::span_at(l, c.axis, at)
+                        .unwrap_or([l.min[1 - c.axis], l.max[1 - c.axis]]);
+                    let mut q0 = [0.0; 2];
+                    let mut q1 = [0.0; 2];
+                    q0[c.axis] = at;
+                    q1[c.axis] = at;
+                    q0[1 - c.axis] = lo;
+                    q1[1 - c.axis] = hi;
+                    (pl.to_sheet(q0), pl.to_sheet(q1))
+                };
+                for pts in super::brk::break_lines(b, [end(c.from), end(c.to)]) {
+                    out.push(Prim::Path {
+                        pts,
+                        width: w,
+                        dashed: false,
+                    });
+                }
+            }
+        }
         // Flat patterns: bend centre lines and bend extents.
         for b in &l.bends {
             if let Some(p) = pen(&bend_c)

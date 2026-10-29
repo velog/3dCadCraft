@@ -228,17 +228,31 @@ pub struct Placement {
     pub position: [f64; 2],
     /// Its scale.
     pub scale: f64,
-    /// The view-plane point placed at `position` (`ViewLines::center`).
+    /// The view-plane point placed at `position` (`ViewLines::center`; in
+    /// a broken view a point of the shortened view).
     pub center: [f64; 2],
+    /// The view's breaks (`ViewLines::breaks`): true points are pulled
+    /// together across the removed stretches.
+    pub breaks: super::brk::BreakMap,
 }
 
 impl Placement {
-    /// A view-plane point on the sheet.
+    /// A view-plane point (true coordinates) on the sheet.
     pub fn to_sheet(&self, q: [f64; 2]) -> [f64; 2] {
+        let q = self.breaks.shorten(q);
         [
             self.position[0] + (q[0] - self.center[0]) * self.scale,
             self.position[1] + (q[1] - self.center[1]) * self.scale,
         ]
+    }
+
+    /// A sheet point in the view plane (true coordinates; a point in a
+    /// break's gap goes to the nearer end of its removed stretch).
+    pub fn to_view(&self, p: [f64; 2]) -> [f64; 2] {
+        self.breaks.lengthen([
+            self.center[0] + (p[0] - self.position[0]) / self.scale,
+            self.center[1] + (p[1] - self.position[1]) / self.scale,
+        ])
     }
 }
 
@@ -259,6 +273,9 @@ pub enum Orphan {
     /// The view has no edge of that name (or not a circle where one is
     /// needed): the annotation is orphaned.
     Missing(String),
+    /// What it is attached to lies in a removed stretch of a break view:
+    /// hidden until the break leaves it.
+    Broken,
 }
 
 /// The geometry of annotation `a` in the default (ISO) styles; `view` gives
@@ -1190,10 +1207,14 @@ pub fn set_members<'a>(
 }
 
 fn circle(lines: &ViewLines, edge: &str) -> Result<([f64; 2], f64), Orphan> {
-    lines
+    let c = lines
         .edge(edge)
         .and_then(|e| e.circle)
-        .ok_or_else(|| Orphan::Missing(edge.to_string()))
+        .ok_or_else(|| Orphan::Missing(edge.to_string()))?;
+    if lines.breaks.removed(c.0) {
+        return Err(Orphan::Broken);
+    }
+    Ok(c)
 }
 
 /// A point of an edge in view-plane mm.
@@ -1214,6 +1235,9 @@ fn point<'a>(
         .edge(&r.edge)
         .ok_or_else(|| Orphan::Missing(r.edge.clone()))?;
     let q = point_of(e, r.role).ok_or_else(|| Orphan::Missing(r.edge.clone()))?;
+    if lines.breaks.removed(q) {
+        return Err(Orphan::Broken);
+    }
     Ok((q, pl.to_sheet(q), pl))
 }
 

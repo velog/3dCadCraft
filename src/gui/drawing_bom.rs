@@ -652,10 +652,10 @@ impl CadCraftApp {
             return 0.5;
         };
         let c = l.center();
-        let q = [
+        let q = l.breaks.lengthen([
             c[0] + (at[0] - v.position[0]) / v.scale,
             c[1] + (at[1] - v.position[1]) / v.scale,
-        ];
+        ]);
         parts::edge_along(e, q)
     }
 
@@ -667,6 +667,7 @@ impl CadCraftApp {
             position: v.position,
             scale: v.scale,
             center: l.center(),
+            breaks: l.breaks,
         };
         Some(pl.to_sheet(parts::edge_point(l.edge(edge)?, along)))
     }
@@ -685,6 +686,7 @@ impl CadCraftApp {
                     position: v.position,
                     scale: v.scale,
                     center: l.center(),
+                    breaks: l.breaks,
                 },
                 l,
             ))
@@ -734,6 +736,7 @@ impl CadCraftApp {
             position: v.position,
             scale: v.scale,
             center: l.center(),
+            breaks: l.breaks,
         };
         // Each occurrence's leader starts on the middle of one of its visible
         // pieces: long pieces on the side the balloons go to win, so leaders
@@ -808,10 +811,10 @@ impl CadCraftApp {
                     - if along_edge { 500.0 } else { 0.0 };
                 if best.get(&occ).is_none_or(|b| score > b.0) {
                     let c = l.center();
-                    let q = [
+                    let q = l.breaks.lengthen([
                         c[0] + (tip[0] - v.position[0]) / v.scale,
                         c[1] + (tip[1] - v.position[1]) / v.scale,
-                    ];
+                    ]);
                     best.insert(occ, (score, name.clone(), tip, parts::edge_along(e, q)));
                 }
             }
