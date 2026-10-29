@@ -177,7 +177,7 @@ impl SmDraft {
                     ..sel(
                         "bends",
                         "Bends",
-                        "click the sharp edges that become bends (none: the round bends of an imported sheet are found)",
+                        "only for a solid with sharp edges: click the edges that become bends (none: the round bends are found)",
                         &[PickKind::Edge][..],
                         false,
                         c.bends.len(),
@@ -246,6 +246,8 @@ pub(super) struct SmPreview {
     /// A Flange's corners between two of its flanges: (edge index a, edge
     /// index b, the corner) — the rows of its Corner Overrides.
     corners: Vec<(usize, usize, Point3)>,
+    /// Convert of an imported sheet: the bends found and the thickness.
+    found: Option<(usize, f64)>,
 }
 
 type SmResult = Result<SmPreview, String>;
@@ -397,6 +399,19 @@ fn face_sigs(part: &PartDocument) -> std::collections::HashMap<String, Option<Fa
         .collect()
 }
 
+/// A Convert that recognised an imported sheet: its bends and thickness.
+fn convert_found(part: &PartDocument, feature: &Feature) -> Option<(usize, f64)> {
+    use crate::kernel::exact::sheet_metal as ksm;
+    let Feature::SheetConvert(c) = feature else {
+        return None;
+    };
+    if !c.recognize {
+        return None;
+    }
+    let st = part.sheet_models.get(&c.body)?;
+    Some((ksm::bends(&st.model).len(), ksm::thickness(&st.model)))
+}
+
 /// The faces of `part` that are new or changed against `before` (by name
 /// and shape) or carry `id`: their triangles and edges.
 fn new_faces(
@@ -493,6 +508,27 @@ impl CadCraftApp {
                 | Action::SmContour
                 | Action::SmPlanned(PlannedKind::ContourRoll | PlannedKind::LoftedFlange)
         );
+        // The first sheet still in its open Convert / Face panel (owner's journal:
+        // Flat Pattern pressed before OK): a ready panel is taken as OK first.
+        if needs_sheet
+            && self.part().sheet_models.is_empty()
+            && let Some(d) = &self.sm.draft
+            && matches!(d.feature, Feature::SheetConvert(_) | Feature::SheetFace(_))
+        {
+            let title = d.title();
+            if d.flow().ready() {
+                self.sm_commit(false);
+            }
+            if self.part().sheet_models.is_empty() {
+                if self.file_status.is_none() {
+                    self.file_status = Some(Err(format!(
+                        "{}: finish {title} first (OK)",
+                        super::command_label(a)
+                    )));
+                }
+                return;
+            }
+        }
         if needs_sheet && self.part().sheet_models.is_empty() {
             self.file_status = Some(Err(format!(
                 "{}: make a Face (or Convert a solid) first",
@@ -932,6 +968,16 @@ impl CadCraftApp {
         } else {
             "".into()
         };
+        // Convert of an imported sheet: say what was found.
+        if let (Feature::SheetConvert(c), Some((n, t))) = (&d.feature, self.sm_found())
+            && c.bends.is_empty()
+            && flow.ready()
+        {
+            return Some(format!(
+                "{}: {n} bend(s) found, thickness {t:.3} mm{ok}",
+                d.title()
+            ));
+        }
         Some(format!(
             "{}: {}{ok}",
             d.title(),
@@ -1153,9 +1199,14 @@ impl CadCraftApp {
                 }
                 Feature::SheetConvert(c) => {
                     let found = c.bends.is_empty();
+                    let got = self.sm_found();
                     psection(ui, "sm_convert", "Behavior", |ui| {
                         plabel(ui, "Thickness");
-                        if found {
+                        if let (true, Some((_, t))) = (found, got) {
+                            ui.label(format!("{t:.3} mm (found)")).on_hover_text(
+                                "The distance from the base face to the sheet's other side",
+                            );
+                        } else if found {
                             ui.label("found from the body").on_hover_text(
                                 "The distance from the base face to the sheet's other side",
                             );
@@ -1167,9 +1218,15 @@ impl CadCraftApp {
                         ui.end_row();
                         plabel(ui, "Bends");
                         if found {
-                            ui.weak("the body's round bends (an imported sheet)").on_hover_text(
-                                "No edges picked: every round bend reached from the base face is found,                                  with its own radius and angle; the body must be a sheet of one thickness",
-                            );
+                            let text = match got {
+                                Some((n, _)) => format!("{n} round bend(s) found"),
+                                None => "the body's round bends (an imported sheet)".to_owned(),
+                            };
+                            ui.weak(text).on_hover_text(concat!(
+                                "No edges picked: every round bend reached from the base face is found, ",
+                                "with its own radius and angle; the body must be a sheet of one thickness. ",
+                                "Pick edges only for a solid with sharp edges."
+                            ));
                         } else {
                             ui.weak("the picked edges; other edges cut open (rips)");
                         }
@@ -1633,7 +1690,8 @@ impl CadCraftApp {
                 (
                     "bends",
                     if c.bends.is_empty() {
-                        String::new()
+                        // Picked only for a solid with sharp edges.
+                        "Select (optional)".to_owned()
                     } else {
                         format!("{} edge(s)", c.bends.len())
                     },
@@ -1716,8 +1774,12 @@ impl CadCraftApp {
             .stack_size(64 << 20)
             .spawn(move || {
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    build(&mut trial, feature, edit, sketch)
-                        .map(|id| new_faces(&trial, &before, &id))
+                    build(&mut trial, feature.clone(), edit, sketch)
+                        .map(|id| {
+                            let mut pv = new_faces(&trial, &before, &id);
+                            pv.found = convert_found(&trial, &feature);
+                            pv
+                        })
                         .map_err(|e| e.to_string())
                 }))
                 .unwrap_or_else(|_| Err("internal error while computing the preview".into()));
@@ -1728,6 +1790,16 @@ impl CadCraftApp {
         }
         *self.sm.job.borrow_mut() = Some((key, rx));
         Some(Err(super::PREVIEW_PENDING.into()))
+    }
+
+    /// What the last finished Convert preview found: (bends, thickness).
+    fn sm_found(&self) -> Option<(usize, f64)> {
+        let d = self.sm.draft.as_ref()?;
+        let key = format!("{:?}|{:?}|{:?}", d.edit, d.sketch, d.feature);
+        match &*self.sm.ready.borrow() {
+            Some((k, Ok(pv))) if *k == key => pv.found,
+            _ => None,
+        }
     }
 
     // ---- the view ----------------------------------------------------------
@@ -3373,6 +3445,69 @@ mod tests {
             "a Face previews"
         );
         p
+    }
+
+    /// Convert of an imported sheet through the panel's path: the base face
+    /// alone is enough, and the preview reports the bends and the thickness
+    /// it found (the owner saw no sign of them before OK).
+    #[test]
+    fn convert_of_an_imported_sheet_reports_what_it_found() {
+        use crate::part::import::ImportOp;
+        use crate::part::{BodyOp, BodyOpFeature};
+        let mut src = plate();
+        let (body, edge) = src.sheet_edge_at(Point3::new(50.0, 0.0, 2.0)).unwrap();
+        src.add_sheet_flange(SheetFlangeFeature::new(&body, vec![edge], 20.0))
+            .unwrap();
+        let text = crate::kernel::exact::step_text(&src.exact_bodies.0, "Sheet").unwrap();
+        let mut p = PartDocument::default();
+        p.make_sheet_metal(None);
+        p.add_body_op(BodyOpFeature::new(BodyOp::Import(ImportOp::new(
+            "sheet.step",
+            text.as_str(),
+        ))))
+        .unwrap();
+        let body = p.exact_bodies.0[0].name.clone().unwrap();
+        // The bottom face (z = 0) under the plate's middle.
+        let hit = Point3::new(50.0, 30.0, 0.0);
+        let face = p
+            .body
+            .faces()
+            .find_map(|(_, f)| {
+                let Some(crate::kernel::Surface::Plane(pl)) = p.body.surface(f.surface) else {
+                    return None;
+                };
+                ((hit - pl.origin).dot(&pl.normal).abs() < 1e-6 && pl.normal.z < -0.5)
+                    .then(|| f.name.clone())
+                    .flatten()
+            })
+            .unwrap();
+        let mut d = SmDraft::new(
+            Feature::SheetConvert(SheetConvertFeature {
+                id: String::new(),
+                name: String::new(),
+                body,
+                face: crate::part::shell::FaceRef {
+                    face: String::new(),
+                    hint: [0.0; 3],
+                },
+                bends: Vec::new(),
+                recognize: false,
+            }),
+            "face",
+        );
+        if let Feature::SheetConvert(c) = &mut d.feature {
+            c.face = crate::part::shell::FaceRef {
+                face,
+                hint: [hit.x, hit.y, hit.z],
+            };
+            c.recognize = c.bends.is_empty();
+        }
+        assert!(d.flow().ready(), "the base face alone is enough");
+        let id = build(&mut p, d.feature.clone(), None, None).unwrap();
+        assert!(!id.is_empty());
+        let (n, t) = convert_found(&p, &d.feature).expect("found");
+        assert_eq!(n, 1, "one bend");
+        assert!((t - 2.0).abs() < 1e-6, "thickness {t}");
     }
 
     fn names(p: &PartDocument) -> std::collections::HashMap<String, Option<FaceSig>> {
