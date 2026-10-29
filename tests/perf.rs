@@ -2521,6 +2521,9 @@ fn speed_budgets() {
                 length: 8.0,
                 gap: None,
                 flip: false,
+                hem_type: Some(cadcraft3d::part::sheet_metal::HemType::Single),
+                radius: None,
+                angle: None,
             },
             SheetOp::Cut {
                 extent: Default::default(),
@@ -2545,6 +2548,66 @@ fn speed_budgets() {
         rows.push((
             "sheet metal: Hem, Cut of 20 holes, Fold, Unfold, Refold + DXF",
             1500.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                for op in ops.clone() {
+                    p.add_sheet_op(SheetOpFeature::new(op)).unwrap();
+                }
+                assert!(p.flat_pattern_dxf(&body).unwrap().contains("BEND"));
+            }),
+        ));
+    }
+    // Hem types (docs/spec/5.6 §6.1c): a 200 x 120 Face, a Double hem on its
+    // right edge and a Teardrop hem on its left one (four bends), then the
+    // flat pattern's DXF.
+    {
+        use cadcraft3d::part::sheet_metal::{HemType, SheetOp, SheetOpFeature};
+        use cadcraft3d::part::{OriginPlane, ProfileRef};
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        base.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(200.0, 120.0))
+            .unwrap();
+        let r = base.sketches[i].sketch.regions();
+        base.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+            .unwrap();
+        let (body, right) = base.sheet_edge_at(Point3::new(200.0, 60.0, 2.0)).unwrap();
+        let (_, left) = base.sheet_edge_at(Point3::new(0.0, 60.0, 2.0)).unwrap();
+        let ops = vec![
+            SheetOp::Hem {
+                body: body.clone(),
+                edges: vec![right],
+                length: 12.0,
+                gap: Some(1.0),
+                flip: false,
+                hem_type: Some(HemType::Double),
+                radius: None,
+                angle: None,
+            },
+            SheetOp::Hem {
+                body: body.clone(),
+                edges: vec![left],
+                length: 0.0,
+                gap: None,
+                flip: false,
+                hem_type: Some(HemType::Teardrop),
+                radius: None,
+                angle: Some(250f64.to_radians()),
+            },
+        ];
+        rows.push((
+            "sheet metal: Double + Teardrop hems + DXF",
+            500.0,
             median_ms(3, || {
                 let mut p = base.clone();
                 p.build_cache = Default::default();

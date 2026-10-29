@@ -3736,7 +3736,7 @@ pub(super) fn sheet_op(
     rule: &super::sheet_metal::SheetMetalDefaults,
     sketches: &[super::PartSketch],
 ) -> Result<SheetStep, Fail> {
-    use super::sheet_metal::{ContourDirection, SheetOp, SheetState};
+    use super::sheet_metal::{ContourDirection, HemType, SheetOp, SheetState};
     use crate::kernel::exact::sheet_metal as ksm;
     let sketch_of = |id: &str| {
         sketches
@@ -3758,6 +3758,9 @@ pub(super) fn sheet_op(
             length,
             gap,
             flip,
+            hem_type,
+            radius,
+            angle,
         } => {
             let (k, state) = sheet_of(body, solids, metal)?;
             if edges.is_empty() {
@@ -3771,8 +3774,29 @@ pub(super) fn sheet_op(
                 );
             }
             let gap = gap.unwrap_or(rv.thickness * 0.5);
+            let radius = radius.unwrap_or(rv.thickness);
+            let angle = angle.unwrap_or(super::sheet_metal::HEM_ANGLE);
+            let shape = match hem_type {
+                // Saved before revision 43: its gap was the bend's inner radius.
+                None => {
+                    let (solid, model) =
+                        ksm::hem(&state.model, body, &op.id, &pts, *length, gap, *flip)
+                            .map_err(User)?;
+                    return Ok(replace(k, solid, model, body));
+                }
+                Some(HemType::Single) => ksm::HemShape::Single {
+                    gap,
+                    length: *length,
+                },
+                Some(HemType::Double) => ksm::HemShape::Double {
+                    gap,
+                    length: *length,
+                },
+                Some(HemType::Teardrop) => ksm::HemShape::Teardrop { radius, angle },
+                Some(HemType::Rolled) => ksm::HemShape::Rolled { radius, angle },
+            };
             let (solid, model) =
-                ksm::hem(&state.model, body, &op.id, &pts, *length, gap, *flip).map_err(User)?;
+                ksm::hem_shape(&state.model, body, &op.id, &pts, shape, *flip).map_err(User)?;
             Ok(replace(k, solid, model, body))
         }
         SheetOp::Fold {

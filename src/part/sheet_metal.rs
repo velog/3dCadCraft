@@ -813,6 +813,43 @@ pub const ROUND_FIELDS: [&str; 9] = [
     "radius9",
 ];
 
+/// Inventor's hem types (spec 5.6, Hem; format revision 43).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HemType {
+    /// One 180° bend: Gap between the inner faces, Length.
+    #[default]
+    Single,
+    /// A bend past 180° (Radius, Angle) and a run back towards the face.
+    Teardrop,
+    /// A bend (Radius, Angle) without a straight run.
+    Rolled,
+    /// Folded twice, three layers: Gap, Length.
+    Double,
+}
+
+impl HemType {
+    /// Every type in Inventor's order.
+    pub const ALL: [HemType; 4] = [Self::Single, Self::Teardrop, Self::Rolled, Self::Double];
+
+    /// The name in the panel.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Single => "Single",
+            Self::Teardrop => "Teardrop",
+            Self::Rolled => "Rolled",
+            Self::Double => "Double",
+        }
+    }
+
+    /// Whether it is given by Radius and Angle (else Gap and Length).
+    pub fn by_radius(self) -> bool {
+        matches!(self, Self::Teardrop | Self::Rolled)
+    }
+}
+
+/// A Teardrop / Rolled hem's angle when none is given: 270°.
+pub const HEM_ANGLE: Real = 1.5 * std::f64::consts::PI;
+
 /// A corner between two flanges of a sheet (Corner Seam picks).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SheetCorner {
@@ -833,7 +870,7 @@ pub struct SheetCorner {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum SheetOp {
-    /// Hem: a 180° bend folded back at each edge.
+    /// Hem: folded back at each edge, of one of Inventor's types.
     Hem {
         /// The sheet body.
         body: String,
@@ -841,12 +878,24 @@ pub enum SheetOp {
         edges: Vec<SheetEdge>,
         /// Length to the hem's outer face (mm).
         length: Real,
-        /// Gap between the hem and the sheet; `None`: half the thickness.
+        /// Gap between the hem's inner faces (Single, Double); `None`: half
+        /// the thickness. In a hem without `hem_type` (saved before format
+        /// revision 43) it is the bend's inner radius, as it was built then.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         gap: Option<Real>,
         /// Folded to the other face.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         flip: bool,
+        /// The type; `None`: a Single hem saved before revision 43 (its gap
+        /// was the inner radius — old files keep their geometry).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hem_type: Option<HemType>,
+        /// Inner bend radius (Teardrop, Rolled); `None`: the thickness.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<Real>,
+        /// Turn (radians; Teardrop, Rolled); `None`: [`HEM_ANGLE`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        angle: Option<Real>,
     },
     /// Fold: bends the sheet along a sketch line on one of its faces.
     Fold {
@@ -1032,7 +1081,19 @@ impl SheetOpFeature {
     pub fn fields(&self) -> Vec<(&'static str, super::expr::Unit)> {
         use super::expr::Unit;
         match &self.op {
-            SheetOp::Hem { gap, .. } => {
+            SheetOp::Hem {
+                gap,
+                hem_type,
+                radius,
+                ..
+            } => {
+                if hem_type.is_some_and(HemType::by_radius) {
+                    let mut v = vec![("angle", Unit::Deg)];
+                    if radius.is_some() {
+                        v.insert(0, ("radius", Unit::Mm));
+                    }
+                    return v;
+                }
                 let mut v = vec![("length", Unit::Mm)];
                 if gap.is_some() {
                     v.push(("gap", Unit::Mm));
@@ -1080,6 +1141,8 @@ impl SheetOpFeature {
         match (&self.op, field) {
             (SheetOp::Hem { length, .. }, "length") => Some(*length),
             (SheetOp::Hem { gap, .. }, "gap") => *gap,
+            (SheetOp::Hem { radius, .. }, "radius") => *radius,
+            (SheetOp::Hem { angle, .. }, "angle") => Some(angle.unwrap_or(HEM_ANGLE)),
             (SheetOp::Fold { angle, .. }, "angle") => Some(*angle),
             (SheetOp::Contour { width, .. }, "width") => Some(*width),
             (SheetOp::Contour { width2, .. }, "width2") => Some(*width2),
@@ -1101,6 +1164,8 @@ impl SheetOpFeature {
         match (&mut self.op, field) {
             (SheetOp::Hem { length, .. }, "length") => *length = v,
             (SheetOp::Hem { gap, .. }, "gap") => *gap = Some(v),
+            (SheetOp::Hem { radius, .. }, "radius") => *radius = Some(v),
+            (SheetOp::Hem { angle, .. }, "angle") => *angle = Some(v),
             (SheetOp::Fold { angle, .. }, "angle") => *angle = v,
             (SheetOp::Contour { width, .. }, "width") => *width = v,
             (SheetOp::Contour { width2, .. }, "width2") => *width2 = v,
@@ -1125,8 +1190,30 @@ impl SheetOpFeature {
     /// One line for the browser's hover / Properties.
     pub fn describe(&self) -> String {
         match &self.op {
-            SheetOp::Hem { edges, length, .. } => {
-                format!("Hem on {} edge(s), {length:.2} mm", edges.len())
+            SheetOp::Hem {
+                edges,
+                length,
+                hem_type,
+                radius,
+                angle,
+                ..
+            } => {
+                let t = hem_type.unwrap_or_default();
+                if t.by_radius() {
+                    let r = radius.map_or("R = Thickness".into(), |r| format!("R {r:.2} mm"));
+                    format!(
+                        "{} Hem on {} edge(s), {r}, {:.1}°",
+                        t.label(),
+                        edges.len(),
+                        angle.unwrap_or(HEM_ANGLE).to_degrees()
+                    )
+                } else {
+                    format!(
+                        "{} Hem on {} edge(s), {length:.2} mm",
+                        t.label(),
+                        edges.len()
+                    )
+                }
             }
             SheetOp::Fold { angle, line, .. } => {
                 format!("Fold along {line}, {:.1}°", angle.to_degrees())

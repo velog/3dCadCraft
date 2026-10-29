@@ -411,6 +411,80 @@ impl Document {
     }
 }
 
+/// Inventor's hem types (3DCadCraft addition, [`SheetBody::add_hem_shape`]). `gap` is the
+/// distance between the inner faces, so a 180° bend's inner radius is half of it; `length` runs
+/// from the hem's outer face (the edge folded round) to its far end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum HemShape {
+    /// One 180° bend and a straight run back over the face.
+    Single { gap: f64, length: f64 },
+    /// Folded twice: 90°, a wall T + gap high, 90° back over the face `length − gap − 2T`,
+    /// 180° and as far forward again between the first layer and the face (three layers).
+    Double { gap: f64, length: f64 },
+    /// One bend of `angle` (between 180° and 360°, inner `radius`) and a straight run that ends
+    /// a quarter of the thickness off the face it turns back to.
+    Teardrop { radius: f64, angle: f64 },
+    /// One bend of `angle` (inner `radius`), no straight run.
+    Rolled { radius: f64, angle: f64 },
+}
+
+impl HemShape {
+    /// The bends, first to last: (turn, inner radius, flat run past the bend).
+    pub fn bends(self, t: f64) -> Result<Vec<(f64, f64, f64)>> {
+        use std::f64::consts::PI;
+        let bad = |m: &str| Err(DocError::Invalid(m.into()));
+        match self {
+            HemShape::Single { gap, length } => {
+                let r = gap / 2.0;
+                if !(gap > 1e-6) {
+                    return bad("the hem's gap must be more than 0");
+                }
+                let leg = length - (r + t);
+                if leg < 0.0 {
+                    return bad("the hem is shorter than its bend");
+                }
+                Ok(vec![(PI, r, leg)])
+            }
+            HemShape::Double { gap, length } => {
+                let r = gap / 2.0;
+                if !(gap > 1e-6) {
+                    return bad("the hem's gap must be more than 0");
+                }
+                let leg = length - 2.0 * (r + t);
+                if !(leg > 1e-6) {
+                    return bad("the double hem is shorter than its two bends");
+                }
+                Ok(vec![(PI / 2.0, r, t + gap), (PI / 2.0, r, leg), (PI, r, leg)])
+            }
+            HemShape::Teardrop { radius, angle } => {
+                if !(radius > 1e-6) {
+                    return bad("the hem's radius must be more than 0");
+                }
+                if !(angle > PI + 1e-6 && angle < 2.0 * PI - 1e-6) {
+                    return bad("a teardrop hem turns more than 180° and less than 360°");
+                }
+                // Heights above the face it turns back to, after the bend: the inner and outer
+                // faces' ends at R − ρ·cos θ; the run (direction sin θ < 0) stops T/4 off it.
+                let low = (radius - radius * angle.cos()).min(radius - (radius + t) * angle.cos());
+                let leg = (low - t / 4.0) / -angle.sin();
+                if leg < 0.0 {
+                    return bad("the teardrop hem's bend runs into the sheet: give it a smaller angle or a larger radius");
+                }
+                Ok(vec![(angle, radius, leg)])
+            }
+            HemShape::Rolled { radius, angle } => {
+                if !(radius > 1e-6) {
+                    return bad("the hem's radius must be more than 0");
+                }
+                if !(angle > 1e-6 && angle < 2.0 * PI - 1e-6) {
+                    return bad("a rolled hem turns more than 0° and less than 360°");
+                }
+                Ok(vec![(angle, radius, 0.0)])
+            }
+        }
+    }
+}
+
 /// A flange: a bend along a panel edge and the flat panel past it (flat coordinates).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SheetFlange {
@@ -3125,6 +3199,89 @@ impl SheetBody {
             tag: String::new(),
         });
         Ok(self.flanges.len() - 1)
+    }
+
+    /// A hem of one of Inventor's types at the panel edge nearest `pick` (3DCadCraft): its
+    /// bends, each a flange on the far edge of the one before, all turning the same way.
+    /// Returns the new flanges' indices, first bend first.
+    pub fn add_hem_shape(&mut self, pick: Vec3, shape: HemShape, flip: bool) -> Result<Vec<usize>> {
+        let (panel, a, b, top, dist) = self.edge_at(pick).ok_or_else(|| DocError::Invalid("no sheet edge there".into()))?;
+        if dist > self.t * 2.0 + 1e-3 {
+            return Err(DocError::Invalid("pick an edge of the sheet".into()));
+        }
+        let d = (b - a).normalized().ok_or_else(|| DocError::Invalid("edge".into()))?;
+        let outward = Vec2::new(d.y, -d.x);
+        let bends = shape.bends(self.t)?;
+        // As Inventor: the hem's outer face stays where the edge was, so the panel gives up the
+        // first bend's outer radius.
+        let setback = bends.first().map_or(0.0, |b| b.1 + self.t);
+        self.trim(panel, a, b, setback, (false, false))?;
+        let (start, len) = self.edge_on_line(panel, a, b, d, a - outward * setback)?;
+        // As Inventor: over the face whose edge was picked (the other one when flipped).
+        let sign = if top != flip { 1.0 } else { -1.0 };
+        let mut made = Vec::new();
+        let (mut parent, mut p) = (panel, snap(start));
+        for (angle, radius, leg) in bends {
+            let f = SheetFlange {
+                parent,
+                p,
+                d,
+                len,
+                n: outward,
+                angle: sign * angle,
+                radius,
+                leg,
+                ext: (0.0, 0.0),
+                slope: (0.0, 0.0),
+                tear: (false, false),
+                mitre: (Vec::new(), Vec::new()),
+                shape: None,
+                tag: String::new(),
+            };
+            p = p + outward * (self.allowance(&f) + leg);
+            self.flanges.push(f);
+            parent = Some(self.flanges.len() - 1);
+            made.push(self.flanges.len() - 1);
+        }
+        Ok(made)
+    }
+
+    /// After [`SheetBody::trim`]: where the trimmed edge a→b (direction `d`) of `panel` now
+    /// starts on the moved line through `line_o`, and how long it is.
+    fn edge_on_line(&self, panel: Option<usize>, a: Vec2, b: Vec2, d: Vec2, line_o: Vec2) -> Result<(Vec2, f64)> {
+        let outward = Vec2::new(d.y, -d.x);
+        match panel {
+            None => {
+                let pts = self.base.outer.ccw().polyline(1e-3);
+                let m = pts.len();
+                let on_line: Vec<(Vec2, f64)> = (0..m)
+                    .filter_map(|k| {
+                        let (p0, p1) = (*pts.get(k)?, *pts.get((k + 1) % m)?);
+                        let e = p1 - p0;
+                        let on = (p0 - line_o).dot(outward).abs() < 1e-6 && (p1 - line_o).dot(outward).abs() < 1e-6;
+                        (on && e.dot(d) > 0.0).then_some((p0, e.len()))
+                    })
+                    .collect();
+                let (ua, ub) = (a.dot(d), b.dot(d));
+                on_line
+                    .iter()
+                    .find(|(p0, len)| (p0.dot(d) + len).min(ub) - p0.dot(d).max(ua) > 1e-9)
+                    .or_else(|| on_line.first())
+                    .copied()
+                    .ok_or_else(|| DocError::Invalid("the hem's edge was trimmed away".into()))
+            }
+            Some(i) => {
+                let f = self.flanges.get(i).ok_or_else(|| DocError::Invalid("flange".into()))?;
+                let tip = f.p + f.n * (self.allowance(f) + f.leg);
+                let (lo, hi) = self.far_edge(f);
+                if f.shape.is_some() || !(hi - lo > 1e-9) || (tip - line_o).dot(outward).abs() > 1e-6 {
+                    return Err(DocError::Invalid("a hem stands on a flange's far edge or on the base's edges".into()));
+                }
+                // The edge runs along `d`, which may be against the flange's own direction.
+                let start = if d.dot(f.d) > 0.0 { tip + f.d * lo } else { tip + f.d * hi };
+                Ok((start, hi - lo))
+            }
+        }
     }
 
     /// Fold a panel (the base or a flange's) along a line on its top or bottom face (world

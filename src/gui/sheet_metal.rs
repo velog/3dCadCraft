@@ -27,8 +27,8 @@ use crate::command::flow::{Flow, PickKind, Selector};
 use crate::kernel::{Point3, Vector3};
 use crate::part::sheet_metal::{
     ContourDirection, CornerOverride, CornerRelief, CutExtent, FlangePosition, FlangeWidth,
-    FoldLocation, ReliefPlacement, SeamType, SheetConvertFeature, SheetEdge, SheetFaceFeature,
-    SheetFlangeFeature, SheetMetalDefaults, SheetOp, SheetOpFeature, rule_of,
+    FoldLocation, HemType, ReliefPlacement, SeamType, SheetConvertFeature, SheetEdge,
+    SheetFaceFeature, SheetFlangeFeature, SheetMetalDefaults, SheetOp, SheetOpFeature, rule_of,
 };
 use crate::part::{Feature, PartDocument, PartError, ProfileRef};
 
@@ -578,6 +578,9 @@ impl CadCraftApp {
                         length: rule.thickness * 4.0,
                         gap: None,
                         flip: false,
+                        hem_type: Some(HemType::Single),
+                        radius: None,
+                        angle: None,
                     })),
                     "edges",
                 ));
@@ -1160,44 +1163,84 @@ impl CadCraftApp {
                     });
                 }
                 Feature::SheetOp(o) => match &mut o.op {
-                    SheetOp::Hem { gap, flip, .. } => {
+                    SheetOp::Hem {
+                        gap,
+                        flip,
+                        hem_type,
+                        radius,
+                        ..
+                    } => {
                         psection(ui, "sm_hem", "Shape", |ui| {
                             plabel(ui, "Type");
-                            ui.horizontal(|ui| {
-                                let _ = ui
-                                    .selectable_label(true, "Single")
-                                    .on_hover_text("Folded back flat: Gap and Length");
-                                for (t, tip) in [
-                                    ("Teardrop", "A rounded fold closing in: Radius and Angle"),
-                                    ("Rolled", "Rolled round: Radius and Angle"),
-                                    ("Double", "Folded back twice: Gap and Length"),
-                                ] {
-                                    ui.add_enabled(false, egui::Button::new(t))
-                                        .on_disabled_hover_text(format!(
-                                            "{tip}: not yet (docs/spec/5.6-sheet-metal.md, Hem)"
-                                        ));
-                                }
-                            });
+                            let now = hem_type.unwrap_or_default();
+                            egui::ComboBox::from_id_salt("sm_hem_type")
+                                .selected_text(now.label())
+                                .show_ui(ui, |ui| {
+                                    for (t, tip) in [
+                                        (HemType::Single, "Folded back flat once: Gap and Length"),
+                                        (
+                                            HemType::Teardrop,
+                                            "A rounded fold past 180° closing in towards the sheet: Radius and Angle",
+                                        ),
+                                        (HemType::Rolled, "Rolled round: Radius and Angle"),
+                                        (
+                                            HemType::Double,
+                                            "Folded back twice, three layers: Gap and Length",
+                                        ),
+                                    ] {
+                                        if ui
+                                            .selectable_label(now == t, t.label())
+                                            .on_hover_text(tip)
+                                            .clicked()
+                                        {
+                                            *hem_type = Some(t);
+                                        }
+                                    }
+                                });
                             ui.end_row();
-                            plabel(ui, "Gap");
-                            ui.horizontal(|ui| {
-                                let mut own = gap.is_some();
-                                if ui
-                                    .checkbox(&mut own, "")
-                                    .on_hover_text("Off: Thickness × 0.5")
-                                    .changed()
-                                {
-                                    *gap = own.then_some(rule.thickness * 0.5);
+                            if hem_type.unwrap_or_default().by_radius() {
+                                plabel(ui, "Radius");
+                                ui.horizontal(|ui| {
+                                    let mut own = radius.is_some();
+                                    if ui
+                                        .checkbox(&mut own, "")
+                                        .on_hover_text("Off: the thickness")
+                                        .changed()
+                                    {
+                                        *radius = own.then_some(rule.thickness);
+                                    }
+                                    if radius.is_none() {
+                                        ui.weak(format!("{:.3} mm", rule.thickness));
+                                    }
+                                });
+                                ui.end_row();
+                                if radius.is_some() {
+                                    field_row(ui, &mut fx, "Radius value", &snapshot, "radius");
                                 }
-                                if gap.is_none() {
-                                    ui.weak(format!("{:.3} mm", rule.thickness * 0.5));
+                                field_row(ui, &mut fx, "Angle", &snapshot, "angle");
+                            } else {
+                                plabel(ui, "Gap");
+                                ui.horizontal(|ui| {
+                                    let mut own = gap.is_some();
+                                    if ui
+                                        .checkbox(&mut own, "")
+                                        .on_hover_text(
+                                            "Between the hem's inner faces. Off: Thickness × 0.5",
+                                        )
+                                        .changed()
+                                    {
+                                        *gap = own.then_some(rule.thickness * 0.5);
+                                    }
+                                    if gap.is_none() {
+                                        ui.weak(format!("{:.3} mm", rule.thickness * 0.5));
+                                    }
+                                });
+                                ui.end_row();
+                                if gap.is_some() {
+                                    field_row(ui, &mut fx, "Gap value", &snapshot, "gap");
                                 }
-                            });
-                            ui.end_row();
-                            if gap.is_some() {
-                                field_row(ui, &mut fx, "Gap value", &snapshot, "gap");
+                                field_row(ui, &mut fx, "Length", &snapshot, "length");
                             }
-                            field_row(ui, &mut fx, "Length", &snapshot, "length");
                             plabel(ui, "Direction");
                             direction_row(ui, flip, "Fold the hem to the other face");
                             ui.end_row();
@@ -2631,6 +2674,9 @@ impl CadCraftApp {
                     length,
                     gap,
                     flip,
+                    hem_type,
+                    radius,
+                    angle,
                 } => {
                     let Some(e) = edges.first() else {
                         return Vec::new();
@@ -2638,13 +2684,39 @@ impl CadCraftApp {
                     let Some((a, b, n, out)) = part.sheet_edge_frame(body, e) else {
                         return Vec::new();
                     };
-                    // The hem folds back over the sheet on the other face.
-                    let g = gap.unwrap_or(rule.thickness * 0.5);
-                    let back = if *flip { n } else { -n };
-                    let mid = Point3::from((a.coords + b.coords) * 0.5)
-                        + out * (g + rule.thickness)
-                        + back * (g + rule.thickness);
-                    vec![arrow("length", mid, -out, *length)]
+                    let t = rule.thickness;
+                    let g = gap.unwrap_or(t * 0.5);
+                    let mid = Point3::from((a.coords + b.coords) * 0.5);
+                    match hem_type {
+                        // Saved before the hem types: it rolls round the edge and
+                        // back over the other face.
+                        None => {
+                            let back = if *flip { n } else { -n };
+                            let mid = mid + out * (g + t) + back * (g + t);
+                            vec![arrow("length", mid, -out, *length)]
+                        }
+                        Some(ty) => {
+                            // Over the picked face; the outer face stays at the edge.
+                            let side = if *flip { -n } else { n };
+                            if ty.by_radius() {
+                                let r = radius.unwrap_or(t);
+                                // The bend's centre: in from the edge, over the face.
+                                let o = mid - out * (r + t) + side * r;
+                                let a = angle.unwrap_or(crate::part::sheet_metal::HEM_ANGLE);
+                                vec![flange_angle_handle(
+                                    "angle",
+                                    o,
+                                    -side,
+                                    out,
+                                    a,
+                                    4.0 * (r + t),
+                                )]
+                            } else {
+                                let mid = mid + side * (g + t);
+                                vec![arrow("length", mid, -out, *length)]
+                            }
+                        }
+                    }
                 }
                 SheetOp::Contour {
                     sketch,
@@ -3385,6 +3457,9 @@ mod tests {
             length: 8.0,
             gap: None,
             flip: false,
+            hem_type: Some(HemType::Single),
+            radius: None,
+            angle: None,
         };
         let mut p = base.clone();
         let before = names(&p);

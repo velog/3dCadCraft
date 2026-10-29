@@ -254,6 +254,91 @@ pub fn hem(
     finish(next, n0, prefix, tag)
 }
 
+/// Inventor's hem types: `gap` between the inner faces (a 180° bend's inner
+/// radius is half of it), `length` from the hem's outer face to its end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum HemShape {
+    /// One 180° bend and a straight run back over the face.
+    Single {
+        /// Between the inner faces.
+        gap: Real,
+        /// From the outer face to the end.
+        length: Real,
+    },
+    /// Folded twice (three layers): 90°, a wall T + gap, 90°, 180°.
+    Double {
+        /// Between each pair of layers.
+        gap: Real,
+        /// From the outer face to the far bend's outside.
+        length: Real,
+    },
+    /// One bend of more than 180° and a run ending T/4 off the face.
+    Teardrop {
+        /// Inner bend radius.
+        radius: Real,
+        /// Turn (radians).
+        angle: Real,
+    },
+    /// One bend, no straight run.
+    Rolled {
+        /// Inner bend radius.
+        radius: Real,
+        /// Turn (radians).
+        angle: Real,
+    },
+}
+
+/// The bends of a hem: (turn, inner radius, flat run past it), first to last.
+pub fn hem_bends(shape: HemShape, thickness: Real) -> Result<Vec<(Real, Real, Real)>, String> {
+    sd_hem(shape).bends(thickness).map_err(|e| e.to_string())
+}
+
+fn sd_hem(shape: HemShape) -> sd::HemShape {
+    match shape {
+        HemShape::Single { gap, length } => sd::HemShape::Single { gap, length },
+        HemShape::Double { gap, length } => sd::HemShape::Double { gap, length },
+        HemShape::Teardrop { radius, angle } => sd::HemShape::Teardrop { radius, angle },
+        HemShape::Rolled { radius, angle } => sd::HemShape::Rolled { radius, angle },
+    }
+}
+
+/// Hem of one of Inventor's types at each edge (a point on it): the edge's
+/// panel gives up the first bend's outer radius, so the hem's outer face lies
+/// where the edge was. The bends of the hem on edge `n` (from 1) are tagged
+/// `<tag>.<n>`, `<tag>-2.<n>`, `<tag>-3.<n>` (as a Flange's further bends).
+pub fn hem_shape(
+    m: &SheetModel,
+    prefix: &str,
+    tag: &str,
+    edges: &[Point3],
+    shape: HemShape,
+    flip: bool,
+) -> Result<(ExactSolid, SheetModel), String> {
+    let mut next = (*m.0).clone();
+    if next.flat {
+        return Err("refold the sheet before adding hems".into());
+    }
+    guarded_sheet("Hem", || {
+        for (n, e) in edges.iter().enumerate() {
+            let made = next
+                .add_hem_shape(v3(e), sd_hem(shape), flip)
+                .map_err(|e| e.to_string())?;
+            for (k, i) in made.into_iter().enumerate() {
+                if let Some(f) = next.flanges.get_mut(i) {
+                    f.tag = if k == 0 {
+                        format!("{tag}.{}", n + 1)
+                    } else {
+                        format!("{tag}-{}.{}", k + 1, n + 1)
+                    };
+                }
+            }
+        }
+        Ok(())
+    })?;
+    let s = named_solid(&next, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(next))))
+}
+
 /// Where a fold's line lies in its bend zone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FoldLine {

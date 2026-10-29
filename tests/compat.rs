@@ -617,6 +617,55 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 43: hem types — a 100 × 60 Face with a Double hem on its right
+/// edge and a Teardrop hem on its left edge.
+fn hems_r43() -> PartDocument {
+    use cadcraft3d::part::sheet_metal::{HemType, SheetOp, SheetOpFeature};
+    use cadcraft3d::part::{OriginPlane, ProfileRef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 60.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let prof = vec![ProfileRef::of(&r[0], r[0].interior_point())];
+    p.add_sheet_face(i, prof, false).unwrap();
+    let (body, edge) = p.sheet_edge_at(Point3::new(100.0, 30.0, 2.0)).unwrap();
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::Hem {
+        body: body.clone(),
+        edges: vec![edge],
+        length: 12.0,
+        gap: Some(1.0),
+        flip: false,
+        hem_type: Some(HemType::Double),
+        radius: None,
+        angle: None,
+    }))
+    .unwrap();
+    let (body, edge) = p.sheet_edge_at(Point3::new(0.0, 30.0, 2.0)).unwrap();
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::Hem {
+        body,
+        edges: vec![edge],
+        length: 0.0,
+        gap: None,
+        flip: false,
+        hem_type: Some(HemType::Teardrop),
+        radius: Some(1.5),
+        angle: Some(250f64.to_radians()),
+    }))
+    .unwrap();
+    p
+}
+
 /// Revision 41: two parallel surface walls and a Loft (Output Surface) bridging their top edges.
 fn loft_edges_r41() -> PartDocument {
     use cadcraft3d::part::surface_op::SurfEdge;
@@ -939,6 +988,9 @@ fn sheet_r21() -> PartDocument {
         length: 8.0,
         gap: None,
         flip: false,
+        hem_type: None,
+        radius: None,
+        angle: None,
     }))
     .unwrap();
     let j = p
@@ -2410,6 +2462,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("SurfacesR37");
             project.add_document("Part1", DocumentData::Part(surfaces_r37()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r43/hems_r43.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("HemsR43");
+            project.add_document("Part1", DocumentData::Part(hems_r43()));
             project.save(&f).unwrap();
         }
         let f = root().join("r41/loft_edges_r41.3dcadcraft");

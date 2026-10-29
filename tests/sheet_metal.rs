@@ -636,6 +636,9 @@ fn hem_on_an_edge() {
             length: 10.0,
             gap: None,
             flip: false,
+            hem_type: None,
+            radius: None,
+            angle: None,
         },
     );
     check(&p);

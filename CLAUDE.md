@@ -1065,6 +1065,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   a closed corner stops a bend short of its parent's end, so walking existing levels uses `near_far_end`, not
   the exact `on_far_end`. The Flange / Hem hover offers only edges `ksm::can_flange` accepts (a 2D trial on a model
   copy, cached per edge in `SheetUi::free`).
+  Hem types (`SheetOp::Hem::hem_type`, revision 43; `ksm::hem_shape`, vendor `add_hem_shape`): `None` = a hem saved
+  before them (SolidCraft's `add_hem`: gap = inner radius, rolled round the edge) and must keep that geometry; typed
+  hems trim the edge's panel by the first bend's outer radius (Inventor: the outer face stays at the edge) and fold
+  over the picked face. Inventor's flat lengths and heights are the expectations of `tests/sheet_hem_types.rs`.
   Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry
   of old files without such a field). Corner reliefs (Round / Square) are cut-outs in `SheetBody::holes` about the crossing of the bends' centre
