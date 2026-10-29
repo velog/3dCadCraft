@@ -1,14 +1,17 @@
 # 3DCadCraft built-in frame member sections (spec 6.1, library 6.3 L3).
-# One size per line. A user file with the same columns in the settings folder
-# (profiles/profiles.csv) overrides sizes by family + size and adds new ones.
+# One size per line. CSV files with the same columns in the user's profile
+# folder (%APPDATA%/3dcadcraft/profiles) override sizes by family + size and
+# add new ones (spec 6.1 3.11).
 # Dimensions in mm, typed from the dimension tables of the standards named in
 # the family column (nominal values; hollow sections use the standard's
 # calculation radii: outer 2t / inner t up to t = 6 mm, 2.5t / 1.5t above).
-# shape: shs | rhs | chs | angle | ibeam | flat | bar
+# shape: shs | rhs | chs | angle | ibeam | channel | tee | flat | bar
 #   shs / rhs: h b t r1 (outer radius) r2 (inner radius)
 #   chs: h (outside diameter) t
 #   angle: h b t r1 (root radius) r2 (toe radius)
 #   ibeam: h b tw tf r1 (root radius)
+#   channel: h b tw tf r1 (root radius) r2 (toe radius); parallel flanges
+#   tee: h b t (flange and stem) r1 (root radius) r2 (toe radius)
 #   flat: b (width) t
 #   bar: h (diameter)
 family,standard,shape,size,h,b,t,tw,tf,r1,r2
@@ -75,3 +78,26 @@ Round bar (EN 10060),EN,bar,D16,16,,,,,,
 Round bar (EN 10060),EN,bar,D20,20,,,,,,
 Round bar (EN 10060),EN,bar,D25,25,,,,,,
 Round bar (EN 10060),EN,bar,D30,30,,,,,,
+HEM beam (EN 10365),EN,ibeam,HEM 100,120,106,,12,20,12,
+HEM beam (EN 10365),EN,ibeam,HEM 120,140,126,,12.5,21,12,
+HEM beam (EN 10365),EN,ibeam,HEM 140,160,146,,13,22,12,
+HEM beam (EN 10365),EN,ibeam,HEM 160,180,166,,14,23,15,
+HEM beam (EN 10365),EN,ibeam,HEM 180,200,186,,14.5,24,15,
+HEM beam (EN 10365),EN,ibeam,HEM 200,220,206,,15,25,18,
+UPE channel (EN 10365),EN,channel,UPE 80,80,50,,4,7,10,
+UPE channel (EN 10365),EN,channel,UPE 100,100,55,,4.5,7.5,10,
+UPE channel (EN 10365),EN,channel,UPE 120,120,60,,5,8,12,
+UPE channel (EN 10365),EN,channel,UPE 140,140,65,,5,9,12,
+UPE channel (EN 10365),EN,channel,UPE 160,160,70,,5.5,9.5,12,
+UPE channel (EN 10365),EN,channel,UPE 180,180,75,,5.5,10.5,12,
+UPE channel (EN 10365),EN,channel,UPE 200,200,80,,6,11,13,
+Unequal angle (EN 10056-1),EN,angle,L 40x20x4,40,20,4,,,4,2
+Unequal angle (EN 10056-1),EN,angle,L 60x40x5,60,40,5,,,6,3
+Unequal angle (EN 10056-1),EN,angle,L 60x40x6,60,40,6,,,6,3
+Unequal angle (EN 10056-1),EN,angle,L 80x40x6,80,40,6,,,7,3.5
+Unequal angle (EN 10056-1),EN,angle,L 100x50x8,100,50,8,,,9,4.5
+T section (EN 10055),EN,tee,T 30,30,30,4,,,4,2
+T section (EN 10055),EN,tee,T 40,40,40,5,,,5,2.5
+T section (EN 10055),EN,tee,T 50,50,50,6,,,6,3
+T section (EN 10055),EN,tee,T 60,60,60,7,,,7,3.5
+T section (EN 10055),EN,tee,T 80,80,80,9,,,9,4.5

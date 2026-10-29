@@ -1490,6 +1490,11 @@ pub static COMMANDS: &[Command] = &[
     pp("manage.make_components", "Make Components", "Компоненти от тела", Icon::MakeComponents, Pp::MakeComponents)
         .alias(&["MKC"])
         .at(&[G_LAYOUT]),
+    pp("manage.author_frame_profile", "Author Frame Profile", "Собствен профил за рамки", Icon::AuthorFrameProfile, Pp::AuthorFrameProfile)
+        .alias(&["AFP"])
+        .spec("6.1-frame-generator.md")
+        .tip("Author Frame Profile: a closed sketch region becomes your own frame member section")
+        .at(&[G_AUTHOR]),
     c("manage.insert_object", "Insert Object", "Вмъкване на обект", Icon::InsertObject)
         .alias(&["INO"])
         .at(&[G_INSERT])

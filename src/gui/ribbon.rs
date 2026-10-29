@@ -1209,7 +1209,11 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     styles,
                     panel(
                         "Author",
-                        vec![c("manage.extract_ifeature"), c("manage.create_ipart")],
+                        vec![
+                            c("manage.extract_ifeature"),
+                            c("manage.create_ipart"),
+                            c("manage.author_frame_profile"),
+                        ],
                     ),
                     panel(
                         "Insert",

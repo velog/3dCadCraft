@@ -390,6 +390,7 @@ pub enum Icon {
     MakePart,
     /// Make Components (bodies into an assembly).
     MakeComponents,
+    AuthorFrameProfile,
     /// Insert Object (a document).
     InsertObject,
     /// Customize (a ribbon with a pencil).
@@ -2168,6 +2169,28 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.block([1.5, 8.0, 5.5, 5.0, 2.5], ink, tint(ink, 40));
             p.block([9.5, 4.0, 5.0, 4.5, 2.5], acc, soft);
             p.line(&[(7.5, 10.0), (10.0, 8.5)], acc);
+        }
+        AuthorFrameProfile => {
+            // An I section with a pencil: the user's own profile.
+            p.closed(
+                &[
+                    (2.0, 3.0),
+                    (10.0, 3.0),
+                    (10.0, 5.0),
+                    (7.0, 5.0),
+                    (7.0, 11.0),
+                    (10.0, 11.0),
+                    (10.0, 13.0),
+                    (2.0, 13.0),
+                    (2.0, 11.0),
+                    (5.0, 11.0),
+                    (5.0, 5.0),
+                    (2.0, 5.0),
+                ],
+                ink,
+            );
+            p.line(&[(9.0, 10.0), (14.5, 4.5)], acc);
+            p.line(&[(9.0, 10.0), (8.5, 11.5), (10.0, 11.0)], acc);
         }
         MakeComponents => {
             p.block([1.5, 9.0, 4.0, 4.0, 2.0], ink, tint(ink, 40));

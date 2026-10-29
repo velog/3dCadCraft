@@ -307,6 +307,9 @@ pub struct SectionData {
     pub standard: String,
     /// h, b, t, tw, tf, r1, r2.
     pub dims: [Real; 7],
+    /// A custom section's outline (copied in, rule 8).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loops: Vec<crate::part::frame::Loop>,
 }
 
 impl SectionData {
@@ -315,6 +318,7 @@ impl SectionData {
             shape: shape_name(s).into(),
             standard: s.standard.clone(),
             dims: [s.h, s.b, s.t, s.tw, s.tf, s.r1, s.r2],
+            loops: s.custom.clone(),
         }
     }
 }
@@ -329,6 +333,9 @@ fn shape_name(s: &Section) -> &'static str {
         IBeam => "ibeam",
         Flat => "flat",
         Bar => "bar",
+        Channel => "channel",
+        Tee => "tee",
+        Custom => "custom",
     }
 }
 
@@ -350,7 +357,9 @@ impl FrameMember {
             d[5],
             d[6]
         );
-        Library::parse(&line).0.sections.into_iter().next()
+        let mut s = Library::parse(&line).0.sections.into_iter().next()?;
+        s.custom = self.section.loops.clone();
+        Some(s)
     }
 }
 
@@ -2169,6 +2178,35 @@ mod tests {
             None,
         )
         .unwrap();
+        p.save(std::path::Path::new(&path)).unwrap();
+    }
+
+    /// The box skeleton plus a part `Profile` whose sketch is a D outline
+    /// with a hole (Author Frame Profile's GUI check), saved to
+    /// `CADCRAFT_PROFILE_DEMO` (run with `--ignored`).
+    #[test]
+    #[ignore]
+    fn write_profile_demo() {
+        let Ok(path) = std::env::var("CADCRAFT_PROFILE_DEMO") else {
+            return;
+        };
+        let (mut p, _, _) = project();
+        let mut part = PartDocument::default();
+        let i = part
+            .create_sketch(
+                crate::part::SketchPlacement::on_origin_plane(crate::part::OriginPlane::XY),
+                &crate::part::SketchOptions::default(),
+            )
+            .unwrap();
+        let sk = &mut part.sketches[i].sketch;
+        let a = sk.add_point(crate::sketch::Point2::new(0.0, 0.0));
+        let b = sk.add_point(crate::sketch::Point2::new(60.0, 0.0));
+        let c = sk.add_point(crate::sketch::Point2::new(30.0, 0.0));
+        sk.add_line_between(a, b).unwrap();
+        sk.add_arc(c, b, a).unwrap();
+        sk.add_circle(crate::sketch::Point2::new(30.0, 12.0), 6.0)
+            .unwrap();
+        p.add_document("Profile", DocumentData::Part(part));
         p.save(std::path::Path::new(&path)).unwrap();
     }
 

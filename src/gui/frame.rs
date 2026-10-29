@@ -35,7 +35,7 @@ pub(super) fn frame_combo(d: &PartDialog, ti: usize, label: &str) -> Option<Vec<
     if !is_frame(d) {
         return None;
     }
-    let lib = Library::builtin();
+    let lib = Library::current();
     let own = |v: Vec<&str>| v.into_iter().map(str::to_owned).collect::<Vec<_>>();
     match label {
         "Standard" => Some(own(lib.standards())),
@@ -67,6 +67,21 @@ fn orientation(d: &PartDialog) -> Orientation {
         mirror: d.check(0, "Mirror"),
         flip: d.check(0, "Flip Direction"),
     }
+}
+
+/// Refresh Categories: reads the user's profile folder again; the line the
+/// panel shows under the button.
+pub(super) fn refresh_categories() -> String {
+    let (lib, bad) = Library::reload();
+    let mut s = format!(
+        "{} sizes in {} standards",
+        lib.sections.len(),
+        lib.standards().len()
+    );
+    if let Some(b) = bad.first() {
+        s.push_str(&format!("; {} line(s) not read, first: {b}", bad.len()));
+    }
+    s
 }
 
 /// The panel's section, material and orientation (Insert Frame, Change).
@@ -117,7 +132,7 @@ impl CadCraftApp {
             self.part_id,
             &edges,
             &o,
-            Library::builtin(),
+            &Library::current(),
             None,
         ) {
             Ok((_, occs)) => {

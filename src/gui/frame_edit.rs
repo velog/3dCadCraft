@@ -362,7 +362,7 @@ impl CadCraftApp {
         }) else {
             return;
         };
-        let lib = Library::builtin();
+        let lib = Library::current();
         if let Some(s) = lib.find(&m.family, &m.size) {
             let std_list = lib.standards();
             if let Some(k) = std_list.iter().position(|x| *x == s.standard) {
@@ -406,7 +406,7 @@ impl CadCraftApp {
             self.part_id,
             &members,
             &o,
-            Library::builtin(),
+            &Library::current(),
         ) {
             Ok(_) => {
                 self.frame_commit("Change", trial);
@@ -416,6 +416,74 @@ impl CadCraftApp {
                 self.file_status = Some(Err(format!("Change: {e}")));
                 false
             }
+        }
+    }
+}
+
+impl CadCraftApp {
+    /// OK of Author Frame Profile (spec 6.1 §3.11): the picked sketch's
+    /// closed region under the click (or its only one) becomes a section of
+    /// the user's library.
+    pub(super) fn author_profile_ok(&mut self, d: &PartDialog) -> bool {
+        let fail = |app: &mut Self, e: &str| {
+            app.file_status = Some(Err(format!("Author Frame Profile: {e}")));
+            false
+        };
+        let Some((super::select::SelItem::Sketch(k), at)) = d.items_of("section").first().cloned()
+        else {
+            return fail(self, "select the sketch of the section");
+        };
+        let Some(ps) = self.part().sketches.get(k) else {
+            return fail(self, "the sketch no longer exists");
+        };
+        let regions = ps.sketch.regions();
+        let here = at.map(|p| {
+            ps.sketch
+                .plane
+                .project(&crate::kernel::Point3::new(p[0], p[1], p[2]))
+        });
+        // The region under the click, else the largest (a click on a
+        // curve of the outline).
+        let area = |r: &&crate::sketch::Region| r.area().abs();
+        let region = here
+            .and_then(|q| {
+                regions
+                    .iter()
+                    .filter(|r| r.contains(q))
+                    .min_by(|a, b| area(a).total_cmp(&area(b)))
+            })
+            .or_else(|| regions.iter().max_by(|a, b| area(a).total_cmp(&area(b))));
+        let Some(region) = region.cloned() else {
+            return fail(self, "the sketch has no closed region");
+        };
+        let section = match crate::part::frame::Section::custom(
+            &d.text(0, "Standard"),
+            &d.text(0, "Family"),
+            &d.text(0, "Size"),
+            &region,
+        ) {
+            Ok(s) => s,
+            Err(e) => return fail(self, &e),
+        };
+        let Some(dir) = crate::part::frame::user_dir() else {
+            return fail(self, "no user folder to save into");
+        };
+        match Library::save_custom(&dir, &section) {
+            Ok(path) => {
+                Library::reload();
+                let p = section.properties();
+                self.file_status = Some(Ok(format!(
+                    "Author Frame Profile: {} {} saved (A = {:.1} mm²) as {}",
+                    section.family,
+                    section.size,
+                    p.area,
+                    path.file_name()
+                        .map(|n| n.to_string_lossy())
+                        .unwrap_or_default()
+                )));
+                true
+            }
+            Err(e) => fail(self, &e.to_string()),
         }
     }
 }

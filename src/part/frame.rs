@@ -18,6 +18,9 @@ use crate::part::{
     SketchPlacement,
 };
 use crate::sketch::{Point2, Sketch, Vector2};
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 /// The built-in table.
 const BUILTIN: &str = include_str!("../../data/profiles/profiles.csv");
@@ -42,6 +45,12 @@ pub enum Shape {
     Flat,
     /// Round bar.
     Bar,
+    /// Channel (U) with parallel flanges: web on the left, root and toe radii.
+    Channel,
+    /// T section, flange on top, stem down.
+    Tee,
+    /// The user's own outline (`Section::custom`, spec 6.1 §3.11).
+    Custom,
 }
 
 impl Shape {
@@ -54,6 +63,9 @@ impl Shape {
             "ibeam" => Shape::IBeam,
             "flat" => Shape::Flat,
             "bar" => Shape::Bar,
+            "channel" => Shape::Channel,
+            "tee" => Shape::Tee,
+            "custom" => Shape::Custom,
             _ => return None,
         })
     }
@@ -84,17 +96,23 @@ pub struct Section {
     pub r1: Real,
     /// Inner radius (hollow) / toe radius (angle).
     pub r2: Real,
+    /// The outline of a [`Shape::Custom`] section (bounding box centred on
+    /// the origin); empty for the templates.
+    pub custom: Vec<Loop>,
 }
 
 /// A closed loop of the outline: corners with their fillet radius (0 =
 /// sharp), counter-clockwise for the outside, clockwise for a hole; or a
-/// circle.
-#[derive(Clone, Debug, PartialEq)]
+/// circle; or a path of lines and arcs (a user's outline).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Loop {
     /// Corners and fillet radii.
     Corners(Vec<(Point2, Real)>),
     /// A whole circle (centre, radius); `hole` = a hole.
     Circle(Point2, Real, bool),
+    /// Vertices in loop order; each runs to the next by a line, or by an
+    /// arc about the given centre (`true` = counter-clockwise).
+    Path(Vec<(Point2, Option<(Point2, bool)>)>),
 }
 
 /// Section properties (mm units): area, centroid, second moments about
@@ -137,7 +155,7 @@ impl Section {
             Shape::Chs => "CHS ",
             Shape::Flat => "FL ",
             Shape::Bar => "RD ",
-            Shape::Angle | Shape::IBeam => "",
+            Shape::Angle | Shape::IBeam | Shape::Channel | Shape::Tee | Shape::Custom => "",
         };
         format!("{prefix}{}", self.size)
     }
@@ -194,6 +212,34 @@ impl Section {
                     (p(x0, y1), 0.0),
                 ])]
             }
+            Shape::Channel => {
+                let (tw, tf) = (self.tw, self.tf);
+                vec![Loop::Corners(vec![
+                    (p(x0, y0), 0.0),
+                    (p(x1, y0), 0.0),
+                    (p(x1, y0 + tf), self.r2),
+                    (p(x0 + tw, y0 + tf), self.r1),
+                    (p(x0 + tw, y1 - tf), self.r1),
+                    (p(x1, y1 - tf), self.r2),
+                    (p(x1, y1), 0.0),
+                    (p(x0, y1), 0.0),
+                ])]
+            }
+            Shape::Tee => {
+                let tw = self.tee_web() / 2.0;
+                let tf = self.tee_flange();
+                vec![Loop::Corners(vec![
+                    (p(-tw, y0), 0.0),
+                    (p(tw, y0), 0.0),
+                    (p(tw, y1 - tf), self.r1),
+                    (p(x1, y1 - tf), self.r2),
+                    (p(x1, y1), 0.0),
+                    (p(x0, y1), 0.0),
+                    (p(x0, y1 - tf), self.r2),
+                    (p(-tw, y1 - tf), self.r1),
+                ])]
+            }
+            Shape::Custom => self.custom.clone(),
             Shape::IBeam => {
                 let (tw, tf, r) = (self.tw / 2.0, self.tf, self.r1);
                 vec![Loop::Corners(vec![
@@ -231,7 +277,121 @@ impl Section {
             Shape::Angle => Point2::new(-w / 2.0 + self.t / 2.0, 0.0),
             Shape::IBeam => Point2::new(0.0, 0.0),
             Shape::Flat | Shape::Bar => Point2::origin(),
+            Shape::Channel => Point2::new(-w / 2.0 + self.tw / 2.0, 0.0),
+            Shape::Tee => Point2::new(0.0, self.extent().1 / 2.0 - self.tee_flange() / 2.0),
+            Shape::Custom => self.inside_point().unwrap_or_else(Point2::origin),
         }
+    }
+
+    /// A T section's stem thickness (EN 10055 gives one `t` for both).
+    fn tee_web(&self) -> Real {
+        if self.tw > 0.0 { self.tw } else { self.t }
+    }
+
+    /// A T section's flange thickness.
+    fn tee_flange(&self) -> Real {
+        if self.tf > 0.0 { self.tf } else { self.t }
+    }
+
+    /// A point inside a custom outline's material (outside its holes): the
+    /// first of a fine grid over the bounding box.
+    fn inside_point(&self) -> Option<Point2> {
+        let polys: Vec<Vec<Point2>> = self.custom.iter().map(|l| polygon(l, 360)).collect();
+        let (w, h) = self.extent();
+        let n = 64;
+        for j in 0..n {
+            for i in 0..n {
+                let q = Point2::new(
+                    -w / 2.0 + w * (i as Real + 0.5) / n as Real,
+                    -h / 2.0 + h * (j as Real + 0.5) / n as Real,
+                );
+                // Inside an odd number of loops = in the material.
+                let inside = polys.iter().filter(|p| contains(p, q)).count() % 2 == 1;
+                let clear = polys.iter().all(|p| edge_distance(p, q) > 1e-3 * (w + h));
+                if inside && clear {
+                    return Some(q);
+                }
+            }
+        }
+        None
+    }
+
+    /// A section of the user's own outline (spec 6.1 §3.11): a closed
+    /// region of a sketch (lines, arcs, circles; holes allowed), moved so
+    /// its bounding box is centred on the origin.
+    pub fn custom(
+        standard: &str,
+        family: &str,
+        size: &str,
+        region: &crate::sketch::Region,
+    ) -> Result<Section, String> {
+        use crate::sketch::ProfileCurve;
+        let to_loop = |l: &crate::sketch::ProfileLoop, hole: bool| -> Result<Loop, String> {
+            if let [e] = l.edges.as_slice()
+                && let ProfileCurve::Arc { c, r, .. } = e.curve
+            {
+                return Ok(Loop::Circle(c, r, hole));
+            }
+            l.edges
+                .iter()
+                .map(|e| match &e.curve {
+                    ProfileCurve::Line { a, .. } => Ok((*a, None)),
+                    ProfileCurve::Arc { c, sweep, .. } => {
+                        Ok((e.curve.point(0.0), Some((*c, *sweep > 0.0))))
+                    }
+                    ProfileCurve::Spline { .. } => {
+                        Err("splines cannot be part of a frame profile yet".to_owned())
+                    }
+                })
+                .collect::<Result<Vec<_>, String>>()
+                .map(Loop::Path)
+        };
+        if family.trim().is_empty() || size.trim().is_empty() {
+            return Err("give the profile a family and a size".into());
+        }
+        let mut loops = vec![to_loop(&region.outer, false)?];
+        for h in &region.holes {
+            loops.push(to_loop(h, true)?);
+        }
+        let pts = polygon(&loops[0], 360);
+        let mut lo = Point2::new(Real::MAX, Real::MAX);
+        let mut hi = Point2::new(Real::MIN, Real::MIN);
+        for q in &pts {
+            lo = Point2::new(lo.x.min(q.x), lo.y.min(q.y));
+            hi = Point2::new(hi.x.max(q.x), hi.y.max(q.y));
+        }
+        let (b, h) = (hi.x - lo.x, hi.y - lo.y);
+        if !(b > 1e-6 && h > 1e-6) {
+            return Err("the region has no size".into());
+        }
+        let shift = Vector2::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0);
+        let mv = |q: Point2| q - shift;
+        let loops = loops
+            .into_iter()
+            .map(|l| match l {
+                Loop::Circle(c, r, hole) => Loop::Circle(mv(c), r, hole),
+                Loop::Corners(v) => Loop::Corners(v.into_iter().map(|(q, r)| (mv(q), r)).collect()),
+                Loop::Path(v) => Loop::Path(
+                    v.into_iter()
+                        .map(|(q, a)| (mv(q), a.map(|(c, ccw)| (mv(c), ccw))))
+                        .collect(),
+                ),
+            })
+            .collect();
+        Ok(Section {
+            family: family.trim().to_owned(),
+            standard: standard.trim().to_owned(),
+            shape: Shape::Custom,
+            size: size.trim().to_owned(),
+            h,
+            b,
+            t: 0.0,
+            tw: 0.0,
+            tf: 0.0,
+            r1: 0.0,
+            r2: 0.0,
+            custom: loops,
+        })
     }
 
     /// The section properties, from the outline (arcs integrated exactly
@@ -278,6 +438,26 @@ impl Section {
             match l {
                 Loop::Circle(c, r, _) => {
                     let _ = sk.add_circle(c, r).map_err(err)?;
+                }
+                Loop::Path(v) => {
+                    let ids: Vec<_> = v.iter().map(|(q, _)| sk.add_point(*q)).collect();
+                    let n = v.len();
+                    for i in 0..n {
+                        let (a, b) = (ids[i], ids[(i + 1) % n]);
+                        match v[i].1 {
+                            Some((c, ccw)) => {
+                                let c = sk.add_point(c);
+                                if ccw {
+                                    sk.add_arc(c, a, b).map_err(err)?;
+                                } else {
+                                    sk.add_arc(c, b, a).map_err(err)?;
+                                }
+                            }
+                            None => {
+                                sk.add_line_between(a, b).map_err(err)?;
+                            }
+                        }
+                    }
                 }
                 Loop::Corners(corners) => {
                     // Each corner: where it starts and ends (tangent points),
@@ -501,8 +681,91 @@ fn polygon(l: &Loop, per_turn: usize) -> Vec<Point2> {
             }
             out
         }
+        Loop::Path(v) => {
+            let n = v.len();
+            let mut out = Vec::new();
+            for i in 0..n {
+                let (a, arc) = v[i];
+                out.push(a);
+                if let Some((c, ccw)) = arc {
+                    let b = v[(i + 1) % n].0;
+                    let rad = (a - c).norm();
+                    let a0 = (a.y - c.y).atan2(a.x - c.x);
+                    let a1 = (b.y - c.y).atan2(b.x - c.x);
+                    let mut sweep = a1 - a0;
+                    if ccw && sweep <= 0.0 {
+                        sweep += TAU;
+                    }
+                    if !ccw && sweep >= 0.0 {
+                        sweep -= TAU;
+                    }
+                    let steps = ((sweep.abs() / TAU) * per_turn as Real).ceil().max(2.0) as usize;
+                    for k in 1..steps {
+                        let t = a0 + sweep * k as Real / steps as Real;
+                        out.push(c + Vector2::new(t.cos(), t.sin()) * rad);
+                    }
+                }
+            }
+            out
+        }
     }
 }
+
+/// Is `q` inside the closed polygon `p` (even-odd)?
+fn contains(p: &[Point2], q: Point2) -> bool {
+    let mut inside = false;
+    let n = p.len();
+    for i in 0..n {
+        let (a, b) = (p[i], p[(i + 1) % n]);
+        if (a.y > q.y) != (b.y > q.y) && q.x < a.x + (q.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// Distance from `q` to the nearest edge of the closed polygon `p`.
+fn edge_distance(p: &[Point2], q: Point2) -> Real {
+    let n = p.len();
+    (0..n)
+        .map(|i| {
+            let (a, b) = (p[i], p[(i + 1) % n]);
+            let d = b - a;
+            let t = ((q - a).dot(&d) / d.norm_squared().max(1e-300)).clamp(0.0, 1.0);
+            (a + d * t - q).norm()
+        })
+        .fold(Real::MAX, Real::min)
+}
+
+/// The user's profile folder (`%APPDATA%\3dcadcraft\profiles`; tests and
+/// scripted runs move it with `CADCRAFT3D_PROFILES_DIR`).
+pub fn user_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("CADCRAFT3D_PROFILES_DIR") {
+        return Some(PathBuf::from(d));
+    }
+    crate::materials::user_dir().and_then(|d| d.parent().map(|p| p.join("profiles")))
+}
+
+/// One family of the user's own outlines, as stored in its JSON file.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct UserFamily {
+    standard: String,
+    family: String,
+    sizes: Vec<UserSize>,
+}
+
+/// One size of a [`UserFamily`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct UserSize {
+    size: String,
+    width: Real,
+    height: Real,
+    loops: Vec<Loop>,
+}
+
+/// The library the commands use: built in + the user's folder, read once
+/// and again on [`Library::reload`].
+static CURRENT: RwLock<Option<Arc<Library>>> = RwLock::new(None);
 
 /// The section table: built in, then a user file's sizes over it.
 #[derive(Clone, Debug, Default)]
@@ -512,6 +775,121 @@ pub struct Library {
 }
 
 impl Library {
+    /// The built-in table with the user's folder over it (spec 6.1
+    /// §3.11): what Insert Frame and Change list.
+    pub fn current() -> Arc<Library> {
+        if let Ok(g) = CURRENT.read()
+            && let Some(l) = g.as_ref()
+        {
+            return l.clone();
+        }
+        Library::reload().0
+    }
+
+    /// Reads the user's folder again (Refresh Categories); returns the new
+    /// library and what could not be read.
+    pub fn reload() -> (Arc<Library>, Vec<String>) {
+        let (lib, bad) = match user_dir() {
+            Some(d) => Library::with_user(&d),
+            None => (Library::builtin().clone(), Vec::new()),
+        };
+        let lib = Arc::new(lib);
+        if let Ok(mut g) = CURRENT.write() {
+            *g = Some(lib.clone());
+        }
+        (lib, bad)
+    }
+
+    /// The built-in table, then every `*.csv` (the built-in columns) and
+    /// `*.json` (outlines saved by Author Frame Profile) of folder `dir`;
+    /// the same family + size replaces a size. Returns what could not be
+    /// read (`file: line`).
+    pub fn with_user(dir: &Path) -> (Library, Vec<String>) {
+        let mut lib = Library::builtin().clone();
+        let mut bad = Vec::new();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+            .map(|r| r.filter_map(|e| e.ok().map(|e| e.path())).collect())
+            .unwrap_or_default();
+        files.sort();
+        for f in files {
+            let name = f
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let Ok(text) = std::fs::read_to_string(&f) else {
+                continue;
+            };
+            match f.extension().and_then(|e| e.to_str()) {
+                Some("csv") => {
+                    let (l, b) = Library::parse(&text);
+                    for s in l.sections.into_iter().filter(|s| s.shape != Shape::Custom) {
+                        lib.add(s);
+                    }
+                    bad.extend(b.into_iter().map(|line| format!("{name}: {line}")));
+                }
+                Some("json") => match serde_json::from_str::<UserFamily>(&text) {
+                    Ok(u) => {
+                        for z in u.sizes {
+                            lib.add(Section {
+                                family: u.family.clone(),
+                                standard: u.standard.clone(),
+                                shape: Shape::Custom,
+                                size: z.size,
+                                h: z.height,
+                                b: z.width,
+                                t: 0.0,
+                                tw: 0.0,
+                                tf: 0.0,
+                                r1: 0.0,
+                                r2: 0.0,
+                                custom: z.loops,
+                            });
+                        }
+                    }
+                    Err(e) => bad.push(format!("{name}: {e}")),
+                },
+                _ => {}
+            }
+        }
+        (lib, bad)
+    }
+
+    /// Saves custom section `s` into its family's JSON file in `dir` (the
+    /// same size replaced); returns the file.
+    pub fn save_custom(dir: &Path, s: &Section) -> std::io::Result<PathBuf> {
+        let safe: String = s
+            .family
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join(format!("{safe}.json"));
+        let mut fam = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<UserFamily>(&t).ok())
+            .unwrap_or_default();
+        fam.standard = s.standard.clone();
+        fam.family = s.family.clone();
+        fam.sizes.retain(|z| z.size != s.size);
+        fam.sizes.push(UserSize {
+            size: s.size.clone(),
+            width: s.b,
+            height: s.h,
+            loops: s.custom.clone(),
+        });
+        let text = serde_json::to_string_pretty(&fam).map_err(std::io::Error::other)?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, text)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(path)
+    }
+
     /// The built-in table.
     pub fn builtin() -> &'static Library {
         static LIB: std::sync::OnceLock<Library> = std::sync::OnceLock::new();
@@ -550,6 +928,7 @@ impl Library {
                 tf: num(f.get(8).copied()),
                 r1: num(f.get(9).copied()),
                 r2: num(f.get(10).copied()),
+                custom: Vec::new(),
             });
         }
         (lib, bad)
@@ -667,6 +1046,9 @@ mod tests {
             ("Equal angle (EN 10056-1)", "L 50x50x5"),
             ("Circular hollow section (EN 10219)", "48.3x3.2"),
             ("Round bar (EN 10060)", "D20"),
+            ("UPE channel (EN 10365)", "UPE 120"),
+            ("T section (EN 10055)", "T 50"),
+            ("Unequal angle (EN 10056-1)", "L 60x40x5"),
         ] {
             let sec = sec(f, s);
             let part = sec.member_part(500.0, Some("Steel S235")).unwrap();
@@ -722,5 +1104,74 @@ mod tests {
     fn a_member_without_length_is_refused() {
         let s = sec("Flat bar (EN 10058)", "40x5");
         assert!(s.member_part(0.0, None).is_err());
+    }
+
+    /// The added families against the standards' tables (areas, cm²).
+    #[test]
+    fn channels_tees_and_unequal_angles_match_their_tables() {
+        for (f, s, a) in [
+            ("UPE channel (EN 10365)", "UPE 200", 2900.0),
+            ("HEM beam (EN 10365)", "HEM 200", 13130.0),
+            ("T section (EN 10055)", "T 50", 566.0),
+            ("Unequal angle (EN 10056-1)", "L 60x40x5", 479.0),
+        ] {
+            close(sec(f, s).properties().area, a, 0.02, s);
+        }
+        // An unequal angle's centroid lies towards the long leg's side.
+        let p = sec("Unequal angle (EN 10056-1)", "L 60x40x5").properties();
+        assert!(p.centroid.x < 0.0 && p.centroid.y < 0.0);
+    }
+
+    /// A D-shaped outline (a 40 mm line closed by a half circle) with a
+    /// Ø10 hole as the user's profile: area, member volume, save / load.
+    #[test]
+    fn a_profile_from_a_sketch_region() {
+        use crate::sketch::Sketch;
+        let mut sk = Sketch::new(crate::kernel::Plane::xy());
+        let a = sk.add_point(Point2::new(100.0, 0.0));
+        let b = sk.add_point(Point2::new(140.0, 0.0));
+        let c = sk.add_point(Point2::new(120.0, 0.0));
+        sk.add_line_between(a, b).unwrap();
+        sk.add_arc(c, b, a).unwrap();
+        sk.add_circle(Point2::new(120.0, 8.0), 5.0).unwrap();
+        let regions = sk.regions();
+        let r = regions
+            .iter()
+            .find(|r| r.contains(Point2::new(120.0, 2.0)))
+            .unwrap();
+        let s = Section::custom("Own", "D profile", "D40", r).unwrap();
+        assert_eq!(s.shape, Shape::Custom);
+        assert!((s.b - 40.0).abs() < 1e-6 && (s.h - 20.0).abs() < 1e-6);
+        let want = std::f64::consts::PI * (400.0 / 2.0 - 25.0);
+        close(s.properties().area, want, 0.002, "D40");
+        let part = s.member_part(100.0, None).unwrap();
+        let v: Real = part
+            .exact_bodies
+            .0
+            .iter()
+            .filter_map(|b| b.volume_at(1e-3))
+            .sum();
+        close(v, want * 100.0, 0.005, "D40 volume");
+        // Saved into the user folder and read back with the built-in table.
+        let dir = std::env::temp_dir().join(format!("cc3d-profiles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        Library::save_custom(&dir, &s).unwrap();
+        std::fs::write(
+            dir.join("mine.csv"),
+            "family,standard,shape,size,h,b,t,tw,tf,r1,r2
+Flat bar (EN 10058),EN,flat,45x7,,45,7,,,,
+",
+        )
+        .unwrap();
+        let (lib, bad) = Library::with_user(&dir);
+        assert!(bad.is_empty(), "{bad:?}");
+        assert!(lib.standards().contains(&"Own"));
+        let back = lib.find("D profile", "D40").unwrap();
+        assert_eq!(back, &s);
+        assert!(lib.find("Flat bar (EN 10058)", "45x7").is_some());
+        assert!(lib.find("IPE beam (EN 10365)", "IPE 200").is_some());
+        // A profile without a family is refused.
+        assert!(Section::custom("Own", "", "x", r).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

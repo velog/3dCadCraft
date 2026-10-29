@@ -355,7 +355,7 @@ Surface **RUS**, Replace Face **RF**, Repair Bodies **RB**, Fit Mesh Face **FMF*
 **RST**, Snap Fit **SNF**, Rule Fillet **RUF**, Lip **LIP**, Freeform Box / Plane / Cylinder / Sphere / Torus /
 Quadball / Face / Convert **FFB FFP FFY FFS FFT FFQ FFF FFC**, Zebra **ZEB**, Draft Analysis **DFA**, Curvature
 **CUR**, Surface Analysis **SAN**, Section Analysis **SEA**, Extract iFeature **XIF**, Create iPart **CIP**, Insert
-iFeature **IIF**, Insert Object **INO**, Make Part **MKP**, Make Components **MKC**, Customize **CUS**, Studio
+iFeature **IIF**, Insert Object **INO**, Make Part **MKP**, Make Components **MKC**, Author Frame Profile **AFP**, Customize **CUS**, Studio
 **STU**, Stress Analysis **STA**, Shape Generator **SHG**, 3D Print **3DP**, BIM Content **BIM**, Center of Gravity
 **COG**, Analysis Visibility **ANV**, Shadows **SHD**, Reflections **RFL**, Ground Plane **GRP**, Ray Tracing **RTR**.
 Emboss, Extend and Extract iFeature do not start with E (E must start Extrude at once).

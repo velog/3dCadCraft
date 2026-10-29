@@ -140,12 +140,13 @@ pub enum PartPlanned {
     CreateIPart,
     MakePart,
     MakeComponents,
+    AuthorFrameProfile,
 }
 
 impl PartPlanned {
     /// Every planned command, in ribbon order.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const ALL: [PartPlanned; 41] = [
+    pub const ALL: [PartPlanned; 42] = [
         PartPlanned::Emboss,
         PartPlanned::Decal,
         PartPlanned::Mark,
@@ -187,6 +188,7 @@ impl PartPlanned {
         PartPlanned::CreateIPart,
         PartPlanned::MakePart,
         PartPlanned::MakeComponents,
+        PartPlanned::AuthorFrameProfile,
     ];
 
     /// The panel's title (Inventor's command name).
@@ -234,6 +236,7 @@ impl PartPlanned {
             CreateIPart => "Create iPart",
             MakePart => "Make Part",
             MakeComponents => "Make Components",
+            AuthorFrameProfile => "Author Frame Profile",
         }
     }
 
@@ -282,6 +285,7 @@ impl PartPlanned {
             CreateIPart => Icon::CreateIPart,
             MakePart => Icon::MakePart,
             MakeComponents => Icon::MakeComponents,
+            AuthorFrameProfile => Icon::AuthorFrameProfile,
         }
     }
 
@@ -303,6 +307,7 @@ impl PartPlanned {
             Zebra | DraftAnalysis | Curvature | SurfaceAnalysis | SectionAnalysis => "0.10",
             InsertIFeature | ExtractIFeature | CreateIPart => "5.7",
             MakePart | MakeComponents => "3.10",
+            AuthorFrameProfile => "6.1",
         }
     }
 
@@ -353,6 +358,9 @@ impl PartPlanned {
             CreateIPart => "A family table: parameters, properties and suppression per member.",
             MakePart => "A new part derived from chosen bodies of this one.",
             MakeComponents => "Each chosen body becomes a part in an assembly.",
+            AuthorFrameProfile => {
+                "Saves a closed sketch region as your own frame member profile (Insert Frame lists it)."
+            }
         }
     }
 
@@ -1255,6 +1263,26 @@ impl PartPlanned {
                     Check("Place part in target assembly", false),
                 ],
             )],
+            AuthorFrameProfile => &[Page(
+                "Author Frame Profile",
+                &[
+                    Sel(
+                        "section",
+                        "Profile",
+                        "select the sketch of the section (its largest closed region, holes allowed)",
+                        PROFILE,
+                    ),
+                    Text("Standard", "Own"),
+                    Text("Family", ""),
+                    Text("Size", ""),
+                    Note(
+                        "The sketch origin does not matter: the profile's bounding box is centred on the member's skeleton line (Center anchor).",
+                    ),
+                    Note(
+                        "Saved in the user's profile folder (one file per family); Insert Frame and Change list it.",
+                    ),
+                ],
+            )],
             MakeComponents => &[
                 Page(
                     "Bodies",
@@ -1334,6 +1362,7 @@ impl Planned {
                     | PartPlanned::Sculpt
                     | PartPlanned::CopyObject
                     | PartPlanned::Import
+                    | PartPlanned::AuthorFrameProfile
             )
         )
     }
@@ -1515,7 +1544,11 @@ pub(super) enum Chain {
 }
 
 /// Buttons that run something (the rest stay disabled).
-const LIVE_BUTTONS: &[&str] = &["Find Remaining Free Edges", "Browse..."];
+const LIVE_BUTTONS: &[&str] = &[
+    "Find Remaining Free Edges",
+    "Browse...",
+    "Refresh Categories",
+];
 
 /// Buttons that switch an option on and off (kept like a check box).
 const TOGGLE_BUTTONS: &[&str] = &["Alternate All Faces", "Flip Direction", "Flip Members"];
@@ -2356,6 +2389,8 @@ impl CadCraftApp {
                 self.replace_browse();
             } else if d.kind.is_import() {
                 self.open_dialog(super::files::DialogPurpose::ImportCad);
+            } else if b == "Refresh Categories" {
+                d.note = Some(super::frame::refresh_categories());
             } else {
                 d.note = self.surface_button(&d, b);
             }
@@ -2409,6 +2444,11 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::Miter) => {
                 if self.miter_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Part(PartPlanned::AuthorFrameProfile) => {
+                if self.author_profile_ok(&d) {
                     self.part_planned = None;
                 }
             }
