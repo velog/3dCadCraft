@@ -931,7 +931,11 @@ fn layers_drive_the_display_list() {
 }
 
 fn plate_with_hole() -> PartDocument {
-    // 60 × 40 × 10 centred on the origin, a Ø10 hole through the middle.
+    plate_with_hole_at([0.0, 0.0])
+}
+
+fn plate_with_hole_at(c: [f64; 2]) -> PartDocument {
+    // 60 × 40 × 10 centred on the origin, a Ø10 hole through `c`.
     let mut part = primitive(
         PrimitiveKind::Box,
         Point2::new(0.0, 0.0),
@@ -944,7 +948,7 @@ fn plate_with_hole() -> PartDocument {
         &mut part,
         PrimitiveKind::Cylinder,
         SketchPlacement::on_origin_plane(OriginPlane::XY),
-        &[Point2::new(0.0, 0.0), Point2::new(5.0, 0.0)],
+        &[Point2::new(c[0], c[1]), Point2::new(c[0] + 5.0, c[1])],
         crate::part::PrimitiveFeature::Extrude(e),
     )
     .unwrap();
@@ -1054,6 +1058,56 @@ fn aligned_section_turns_inclined_segments_into_the_view() {
         2.0,
         "projected cut area",
     );
+}
+
+/// A section line's point snapped to the hole's centre is tied to it: when
+/// the hole moves, the point follows (the free end stays); the tie is
+/// saved with the drawing.
+#[test]
+fn section_line_points_follow_the_model() {
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let frame = ViewOrientation::Top.frame();
+    let before = std::sync::Arc::new(super::hlr::view_lines(
+        &part_model(&plate_with_hole()),
+        &frame,
+    ));
+    let line = [[0.0, -25.0], [0.0, 0.0]];
+    let s = d.add_section_view_line(b, &line, [250.0, 160.0]).unwrap();
+    assert!(d.set_section_line(s, &line, Some(&before)));
+    let kind = |d: &DrawingDocument| d.sheet().unwrap().view(s).unwrap().kind.clone();
+    let ViewKind::Section { anchors, .. } = kind(&d) else {
+        panic!("a section");
+    };
+    assert!(anchors[0].is_none(), "the free end is not tied");
+    assert_eq!(
+        anchors[1].as_ref().map(|a| a.at),
+        Some(super::AnchorAt::Center)
+    );
+    // Unchanged model: nothing moves.
+    assert!(!d.follow_section_lines(0, &|_| Some(before.clone())));
+    let after = std::sync::Arc::new(super::hlr::view_lines(
+        &part_model(&plate_with_hole_at([10.0, 5.0])),
+        &frame,
+    ));
+    assert!(d.follow_section_lines(0, &|_| Some(after.clone())));
+    let ViewKind::Section { a, b: end, .. } = kind(&d) else {
+        panic!("a section");
+    };
+    assert_eq!(a, [0.0, -25.0]);
+    close(end[0], 10.0, 1e-6, "followed x");
+    close(end[1], 5.0, 1e-6, "followed y");
+    let text = serde_json::to_string(&d).unwrap();
+    let back: DrawingDocument = serde_json::from_str(&text).unwrap();
+    assert_eq!(kind(&back), kind(&d));
 }
 
 /// Section A-A through the hole of a plate seen from the top: two cut faces

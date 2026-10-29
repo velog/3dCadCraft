@@ -455,6 +455,11 @@ pub enum ViewKind {
         /// Projected.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         aligned: bool,
+        /// The model geometry each point of the line (`a`, `mid`, `b`) was
+        /// snapped to, so the line follows the model when it changes;
+        /// `None`: a free point. Old builds keep the points where they are.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        anchors: Vec<Option<LineAnchor>>,
     },
     /// Auxiliary View: square to a line (an edge) of the parent.
     Auxiliary {
@@ -684,6 +689,74 @@ fn first_segment_end(k: &ViewKind) -> Option<[f64; 2]> {
     match k {
         ViewKind::Section { mid, .. } => mid.first().copied(),
         _ => None,
+    }
+}
+
+/// A point of a section line tied to an edge of its parent view.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LineAnchor {
+    /// The edge's persistent name.
+    pub edge: String,
+    /// Which point of it.
+    pub at: AnchorAt,
+}
+
+/// The point of an edge a section line's point sits on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnchorAt {
+    /// Its start.
+    Start,
+    /// Its end.
+    End,
+    /// The centre of its circle.
+    Center,
+    /// The middle of a straight edge.
+    Middle,
+}
+
+impl LineAnchor {
+    /// The edge point of `lines` that `q` (view plane) lies on: centres
+    /// first, then ends, then middles of straight edges.
+    pub fn find(lines: &hlr::ViewLines, q: [f64; 2]) -> Option<LineAnchor> {
+        let tol = 1e-4 * (1.0 + q[0].abs().max(q[1].abs()));
+        let near = |p: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < tol;
+        let named = || {
+            lines
+                .edges
+                .iter()
+                .filter_map(|e| Some((e.name.clone()?, e)))
+        };
+        let pick = |at: AnchorAt| {
+            named().find_map(|(name, e)| {
+                LineAnchor::point_of(e, at)
+                    .filter(|p| near(*p))
+                    .map(|_| LineAnchor { edge: name, at })
+            })
+        };
+        pick(AnchorAt::Center)
+            .or_else(|| pick(AnchorAt::Start))
+            .or_else(|| pick(AnchorAt::End))
+            .or_else(|| pick(AnchorAt::Middle))
+    }
+
+    fn point_of(e: &hlr::ViewEdge, at: AnchorAt) -> Option<[f64; 2]> {
+        match at {
+            AnchorAt::Start => Some(e.a),
+            AnchorAt::End => Some(e.b),
+            AnchorAt::Center => e.circle.map(|(c, _)| c),
+            AnchorAt::Middle => e
+                .straight
+                .then(|| [(e.a[0] + e.b[0]) * 0.5, (e.a[1] + e.b[1]) * 0.5]),
+        }
+    }
+
+    /// Where the anchor is in `lines` now; `None` when its edge is gone.
+    pub fn resolve(&self, lines: &hlr::ViewLines) -> Option<[f64; 2]> {
+        lines
+            .edges
+            .iter()
+            .filter(|e| e.name.as_deref() == Some(self.edge.as_str()))
+            .find_map(|e| LineAnchor::point_of(e, self.at))
     }
 }
 
@@ -1068,6 +1141,7 @@ impl DrawingDocument {
                 side,
                 mid: Vec::new(),
                 aligned: false,
+                anchors: Vec::new(),
             },
             at,
             None,
@@ -1113,6 +1187,93 @@ impl DrawingDocument {
 
     /// Which side of line `a`–`b` (parent's view plane) the sheet point `at`
     /// lies on, seen from the parent's position.
+    /// Moves section view `id`'s line (active sheet) to `pts` (its parent's
+    /// view plane); each point snapped to an edge of `parent_lines` is tied
+    /// to it. False when `id` is no section view or `pts` has fewer than two
+    /// points.
+    pub fn set_section_line(
+        &mut self,
+        id: u32,
+        pts: &[[f64; 2]],
+        parent_lines: Option<&hlr::ViewLines>,
+    ) -> bool {
+        if pts.len() < 2 {
+            return false;
+        }
+        let tied: Vec<Option<LineAnchor>> = pts
+            .iter()
+            .map(|q| parent_lines.and_then(|l| LineAnchor::find(l, *q)))
+            .collect();
+        let Some(v) = self.sheet_mut().and_then(|s| s.view_mut(id)) else {
+            return false;
+        };
+        let ViewKind::Section {
+            a, b, mid, anchors, ..
+        } = &mut v.kind
+        else {
+            return false;
+        };
+        *a = pts[0];
+        *b = pts[pts.len() - 1];
+        *mid = pts[1..pts.len() - 1].to_vec();
+        *anchors = if tied.iter().any(Option::is_some) {
+            tied
+        } else {
+            Vec::new()
+        };
+        true
+    }
+
+    /// Section lines on sheet `sheet` follow the edges their points are tied
+    /// to (`lines`: the views' current lines). Returns whether a line moved.
+    pub fn follow_section_lines(
+        &mut self,
+        sheet: usize,
+        lines: &dyn Fn(u32) -> Option<std::sync::Arc<hlr::ViewLines>>,
+    ) -> bool {
+        let Some(s) = self.sheets.get_mut(sheet) else {
+            return false;
+        };
+        let mut moved = false;
+        for v in &mut s.views {
+            let ViewKind::Section {
+                parent,
+                a,
+                b,
+                mid,
+                anchors,
+                ..
+            } = &mut v.kind
+            else {
+                continue;
+            };
+            if anchors.is_empty() {
+                continue;
+            }
+            let Some(pl) = lines(*parent) else {
+                continue;
+            };
+            let n = mid.len() + 2;
+            for (k, anchor) in anchors.iter().enumerate().take(n) {
+                let Some(q) = anchor.as_ref().and_then(|x| x.resolve(&pl)) else {
+                    continue;
+                };
+                let p = if k == 0 {
+                    &mut *a
+                } else if k == n - 1 {
+                    &mut *b
+                } else {
+                    &mut mid[k - 1]
+                };
+                if (p[0] - q[0]).hypot(p[1] - q[1]) > 1e-6 {
+                    *p = q;
+                    moved = true;
+                }
+            }
+        }
+        moved
+    }
+
     /// Adds a section view of `parent` whose line runs through `pts` (its
     /// parent's view plane, two or more points), placed near `at`.
     pub fn add_section_view_line(
@@ -1135,6 +1296,7 @@ impl DrawingDocument {
                 side,
                 mid: pts[1..pts.len() - 1].to_vec(),
                 aligned: false,
+                anchors: Vec::new(),
             },
             at,
             None,

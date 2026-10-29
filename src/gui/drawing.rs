@@ -923,6 +923,13 @@ impl CadCraftApp {
         };
         let i = d.active_sheet;
         let lines = self.sheet_lines(Some(ctx), &d, i);
+        // Section lines follow the model edges their points are tied to
+        // (derived from the model, like a sketch's projected geometry).
+        if let Some(dm) = self.drawing_mut()
+            && dm.follow_section_lines(i, &|id| lines.get(&id).cloned())
+        {
+            ctx.request_repaint();
+        }
         let Some(sheet) = d.sheet() else {
             return Vec::new();
         };

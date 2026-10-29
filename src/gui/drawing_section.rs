@@ -184,8 +184,12 @@ impl CadCraftApp {
                 let (Some(line), Some(q)) = (line, at) else {
                     return;
                 };
+                // Points snapped to the parent's edges stay on them.
+                let pl = pv.lines.clone();
                 self.child_preview(ctx, painter, rect, response, "Section View", |doc| {
-                    doc.add_section_view_line(parent, &line, q)
+                    let id = doc.add_section_view_line(parent, &line, q)?;
+                    doc.set_section_line(id, &line, pl.as_deref());
+                    Some(id)
                 });
             }
             DrwTool::Detail(mut d) => {
@@ -567,14 +571,9 @@ impl CadCraftApp {
         if line.len() < 2 {
             return;
         }
+        let pl = pv.lines.clone();
         self.edit_drawing("Edit Section Line", move |d| {
-            if let Some(v) = d.sheet_mut().and_then(|s| s.view_mut(id))
-                && let ViewKind::Section { a, b, mid, .. } = &mut v.kind
-            {
-                *a = line[0];
-                *b = line[line.len() - 1];
-                *mid = line[1..line.len() - 1].to_vec();
-            }
+            d.set_section_line(id, &line, pl.as_deref());
         });
         self.history.break_coalescing();
     }
