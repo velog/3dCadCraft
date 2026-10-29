@@ -920,7 +920,7 @@ impl CadCraftApp {
         }
         self.project = project;
         self.part_id = id;
-        self.asm = Default::default();
+        self.reset_asm_ui();
         self.cons = Default::default();
         self.file_path.clear();
         self.history.clear();

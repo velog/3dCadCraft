@@ -81,7 +81,7 @@ impl CadCraftApp {
     fn load_tab(&mut self, t: DocTab) {
         self.project = t.project;
         self.part_id = t.part_id;
-        self.asm = Default::default();
+        self.reset_asm_ui();
         self.cons = Default::default();
         self.history = t.history;
         self.file_path = t.file_path;

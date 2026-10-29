@@ -3782,7 +3782,7 @@ impl CadCraftApp {
                         }
                         self.project = project;
                         self.part_id = id;
-                        self.asm = Default::default();
+                        self.reset_asm_ui();
                         self.cons = Default::default();
                         self.history.clear();
                         self.editing = None;
@@ -7740,6 +7740,11 @@ impl eframe::App for CadCraftApp {
         // The work of this frame (the status bar shows it next frame; the
         // time between frames grows while nothing happens).
         let work = frame_start.elapsed().as_secs_f32() * 1000.0;
+        // A pause the user feels (a tab switch rebuilt every linked part
+        // for 0.8 s) leaves a trace in the session log.
+        if work > 250.0 {
+            log::info!("slow frame: {work:.0} ms");
+        }
         ctx.memory_mut(|m| {
             let v: &mut f32 = m.data.get_temp_mut_or(egui::Id::new("frame_ms"), work);
             *v = *v * 0.8 + work * 0.2;

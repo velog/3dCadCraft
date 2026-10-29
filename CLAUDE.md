@@ -1096,7 +1096,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (`resolve_with` passes empty tables: parts lists / balloons come out as `NoView`). An assembly view's model
   is `ModelJob` (copies of the components for the worker); its cache key is `assembly_signature`. A linked
   assembly's own links are relative to *its* file (`AsmSrc::File`), not to the drawing.
-- **`AsmUi` is reset on every file open / tab switch** (`self.asm = Default::default()` in five places): an
+- **`AsmUi` is reset on every file open / tab switch** (`reset_asm_ui()` in five places; it keeps only `libs`, the
+  linked part files — dropping them rebuilt every linked part on each switch to an assembly tab, 0.8 s): an
   application setting kept there is lost and the next settings save writes the default back (the browser's
   Assembly / Modeling View did). Settings live on `CadCraftApp` (`asm_browser`, `select`). Subassemblies
   (`assembly::tree`, spec 3.1a): BOM levels come from `ComponentInfo::assembly` (`bom::rows_in`), Interference

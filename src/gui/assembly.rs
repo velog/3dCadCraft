@@ -129,6 +129,19 @@ pub(super) struct AsmUi {
 }
 
 impl CadCraftApp {
+    /// Forgets the assembly UI state of the document being left (selection,
+    /// open command, picking meshes by `DocRef`), but keeps the linked part
+    /// files: they are cached by path and file time, and dropping them made
+    /// every switch to an assembly tab load and rebuild each linked part
+    /// again inside one frame (the pause on changing tabs).
+    pub(super) fn reset_asm_ui(&mut self) {
+        let libs = std::mem::take(&mut self.asm.libs);
+        self.asm = AsmUi {
+            libs,
+            ..Default::default()
+        };
+    }
+
     /// Whether the active document is an assembly.
     pub(super) fn is_assembly(&self) -> bool {
         self.assembly().is_some()
@@ -264,7 +277,7 @@ impl CadCraftApp {
         }
         self.project = project;
         self.part_id = id;
-        self.asm = Default::default();
+        self.reset_asm_ui();
         self.cons = Default::default();
         self.file_path.clear();
         self.history.clear();
