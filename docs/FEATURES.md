@@ -335,7 +335,7 @@ Every tool follows **Inventor's click sequence**. What a click means depends on 
 | **Control Vertex Spline** | ✅ | control points; Enter or double click finishes | the ends can be shared with other elements |
 | Point | ✅ | click | Coincident if on a point or curve |
 | **Interpolation Spline** | ✅ | points it passes through; handles at every point, Close Curve, Insert/Delete Point, Convert ↔ CV, Display Curvature ([spec](spec/1.2a-splines.md)) | the ends can be shared with other elements |
-| Ellipse | ⬜ | centre, axis, second axis | |
+| Ellipse | ⬜ | centre, axis, second axis ([spec](spec/1.2b-ellipse.md)) | |
 | **Fillet** (Create → Fillet) | ✅ | radius in Properties; two lines (the clicked sides stay) or a click on a corner | Tangent ×2; the first fillet in the command gets an R dimension, the following ones — Equal to it |
 | **Chamfer** (Create → Fillet → Chamfer) | ✅ | equal distances / two distances / distance and angle; two lines or a corner | virtual corner (construction) + dimensions to it |
 | Text | ⬜ | | |

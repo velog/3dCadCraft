@@ -70,6 +70,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [1.1-sketch.md](1.1-sketch.md) | 2D sketch: creation, editing, coordinate system, projections, settings |
 | [1.2-sketch-geometry.md](1.2-sketch-geometry.md) | Drawing tools, Fillet and Chamfer, Format |
 | [1.2a-splines.md](1.2a-splines.md) | Splines: Interpolation, Control Vertex, Equation, Bridge; handles, methods, curvature |
+| [1.2b-ellipse.md](1.2b-ellipse.md) | Ellipse and elliptical arcs: creation, dimensions, constraints, Trim / Offset, exact faces |
 | [1.3-constraints.md](1.3-constraints.md) | Geometric constraints, degrees of freedom, colours, Relax Mode, solver |
 | [1.4-dimensions.md](1.4-dimensions.md) | Dimensions: General Dimension, Edit Dimension, driven, display, tolerances |
 | [1.5-inference.md](1.5-inference.md) | Snapping and automatic constraints |
