@@ -1,7 +1,8 @@
 //! Adaptivity (spec 3.10 §3.4, stage B): a part whose occurrence is
 //! *adaptive* takes its size from the assembly's relationships. Its
 //! adaptive sketches' free degrees of freedom (points not fixed by the
-//! sketch's own constraints and dimensions) and its adaptive features'
+//! sketch's own constraints and dimensions, circles of free radius) and its
+//! adaptive features'
 //! distances are unknowns next to the components' placements: when the
 //! rigid solve cannot meet the relationships, those unknowns change until
 //! it can (the smallest change that does, Levenberg on the residuals of the
@@ -15,7 +16,7 @@ use super::solve::{self, Solved};
 use crate::document::AssemblyDocument;
 use crate::kernel::{Real, Transform3, Vector3};
 use crate::part::{Feature, PartDocument, params};
-use crate::sketch::{PointFreedom, PointId, Vector2};
+use crate::sketch::{Entity, EntityId, PointFreedom, PointId, Vector2};
 
 /// One unknown of an adaptive part.
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +30,13 @@ pub enum Unknown {
         point: PointId,
         /// Unit direction of the slide.
         dir: Vector2,
+    },
+    /// The radius of a circle whose radius is free, as an offset.
+    Radius {
+        /// Index of the sketch in `PartDocument::sketches`.
+        sketch: usize,
+        /// The circle.
+        circle: EntityId,
     },
     /// The distance of a feature (Extrude), as an offset from its value.
     Distance {
@@ -93,6 +101,14 @@ pub fn unknowns(part: &PartDocument) -> Vec<Unknown> {
                 _ => {}
             }
         }
+        for &c in &dof.free_radius {
+            if matches!(sk.sketch.entity(c), Some(Entity::Circle { .. })) {
+                out.push(Unknown::Radius {
+                    sketch: i,
+                    circle: c,
+                });
+            }
+        }
     }
     out.truncate(MAX_UNKNOWNS);
     out
@@ -105,6 +121,7 @@ pub fn apply(base: &PartDocument, u: &[Unknown], x: &[Real]) -> Result<PartDocum
     // Each point's offset is the sum of its unknowns' (x, y of a free one),
     // from the base's position (x is absolute).
     let mut offsets: Vec<(usize, PointId, Vector2)> = Vec::new();
+    let mut touched: Vec<usize> = Vec::new();
     for (k, v) in u.iter().zip(x) {
         match k {
             Unknown::Point { sketch, point, dir } => {
@@ -114,6 +131,24 @@ pub fn apply(base: &PartDocument, u: &[Unknown], x: &[Real]) -> Result<PartDocum
                 {
                     Some(o) => o.2 += dir * *v,
                     None => offsets.push((*sketch, *point, dir * *v)),
+                }
+            }
+            Unknown::Radius { sketch, circle } => {
+                let Some(Entity::Circle { radius, .. }) =
+                    base.sketches[*sketch].sketch.entity(*circle)
+                else {
+                    return Err("a circle no longer exists".into());
+                };
+                let r = radius + v;
+                if r < MIN_DISTANCE {
+                    return Err("the circle would vanish".into());
+                }
+                part.sketches[*sketch]
+                    .sketch
+                    .set_circle_radius(*circle, r)
+                    .map_err(|e| e.to_string())?;
+                if !touched.contains(sketch) {
+                    touched.push(*sketch);
                 }
             }
             Unknown::Distance { feature } => {
@@ -127,7 +162,6 @@ pub fn apply(base: &PartDocument, u: &[Unknown], x: &[Real]) -> Result<PartDocum
             }
         }
     }
-    let mut touched: Vec<usize> = Vec::new();
     for (sketch, point, off) in offsets {
         let from = base.sketches[sketch]
             .sketch

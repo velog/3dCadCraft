@@ -564,3 +564,71 @@ fn a_plate_fits_between_walls_standing_at_an_angle() {
     let (lo, hi) = extent(c.part(p), 0);
     assert!(((hi - lo) - 117.5).abs() < 1e-4, "length {}", hi - lo);
 }
+
+#[test]
+fn a_roller_takes_its_diameter_from_the_gap_it_runs_in() {
+    // A floor (z 0..10) and a ceiling (z 40..50), grounded; a roller — a
+    // Ø20 circle of free radius on XZ extruded 50 along Y — tangent to both:
+    // it becomes Ø30.
+    let mut c = Case::new();
+    let slab = || PartDocument::with_box("Box1", [100.0, 100.0, 10.0]).unwrap();
+    let floor = c.place(slab(), "Floor", Transform3::identity(), true);
+    let ceiling = c.place(
+        slab(),
+        "Ceiling",
+        Transform3::translation(0.0, 0.0, 40.0),
+        true,
+    );
+    let mut roller = PartDocument::default();
+    let i = roller
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts())
+        .unwrap();
+    let sk = &mut roller.sketches[i].sketch;
+    let centre = sk.add_point(Point2::new(0.0, 0.0));
+    sk.set_fixed(centre, true).unwrap();
+    sk.add_circle_at(centre, 10.0).unwrap();
+    let rg = sk.regions();
+    let id = roller.sketches[i].id.clone();
+    let f = roller
+        .add_extrude(
+            i,
+            ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 50.0),
+        )
+        .unwrap();
+    roller.set_adaptive(&id, true);
+    let u = adapt::unknowns(&roller);
+    assert!(
+        u.iter().any(|x| matches!(x, Unknown::Radius { .. })),
+        "{u:?}"
+    );
+    let wall = round(&roller, 0, &f);
+    let r = c.place(
+        roller,
+        "Roller",
+        Transform3::translation(50.0, 70.0, 20.0),
+        false,
+    );
+    let re = |g: GeomRef| match g {
+        GeomRef::Face { name, hint, .. } => GeomRef::Face {
+            occurrence: r,
+            sub: Vec::new(),
+            name,
+            hint,
+        },
+        g => g,
+    };
+    let slab_part = c.part(floor).clone();
+    c.asm.add_constraint(Constraint::new(
+        ConstraintKind::Tangent,
+        re(wall.clone()),
+        face(&slab_part, floor, 2, 10.0),
+    ));
+    c.asm.add_constraint(Constraint::new(
+        ConstraintKind::Tangent,
+        re(wall),
+        face(&slab_part, ceiling, 2, 0.0),
+    ));
+    c.adapt(r).unwrap().expect("adapted");
+    let (lo, hi) = extent(c.part(r), 2);
+    assert!(((hi - lo) - 30.0).abs() < 1e-3, "diameter {}", hi - lo);
+}
