@@ -252,6 +252,10 @@ pub struct AppOptions {
     pub new_documents_separate: bool,
     /// The assembly browser's view and filters (spec 3.0 §3.9).
     pub asm_browser: super::asm_browser::AsmBrowserOpts,
+    /// Application Options › Display: a drawing's view sketch shows its
+    /// floating toolbar over the sheet (off: the tools are in its
+    /// right-click menu).
+    pub drawing_sketch_toolbar: bool,
 }
 
 /// Where the preview picture saved with a project comes from
@@ -293,6 +297,7 @@ impl Default for AppOptions {
             thumbnail: ThumbnailSource::Iso,
             new_documents_separate: false,
             asm_browser: Default::default(),
+            drawing_sketch_toolbar: true,
         }
     }
 }
@@ -900,6 +905,7 @@ impl CadCraftApp {
             thumbnail: self.thumbnail_source,
             new_documents_separate: self.docs.separate,
             asm_browser: self.asm_browser,
+            drawing_sketch_toolbar: self.sketch_toolbar,
         }
     }
 
@@ -934,6 +940,7 @@ impl CadCraftApp {
         self.thumbnail_source = o.thumbnail;
         self.docs.separate = o.new_documents_separate;
         self.asm_browser = o.asm_browser;
+        self.sketch_toolbar = o.drawing_sketch_toolbar;
     }
 
     /// Start of a frame: Ctrl+0, F11 (outside a sketch, where F11 is Relax

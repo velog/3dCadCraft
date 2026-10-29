@@ -5042,6 +5042,10 @@ impl CadCraftApp {
                 {
                     self.scene_dirty = true;
                 }
+                ui.checkbox(&mut self.sketch_toolbar, "Floating toolbar in drawing sketches")
+                    .on_hover_text(
+                        "A drawing's view sketch (a section line) shows its tools in a bar over the sheet; off: they are in its right-click menu",
+                    );
                 ui.checkbox(&mut self.internal_names, "Internal names in hover text")
                     .on_hover_text(
                         "Name faces and edges under the cursor by their persistent names (Extrusion1:End), as used in files and journals; off: kind, feature and body",

@@ -439,7 +439,9 @@ impl CadCraftApp {
         // The toolbar (the sketch tab of the view sketch).
         let mut finish = false;
         let mut cancel = false;
-        self.view_sketch_toolbar(&response.ctx, rect, &mut s, &mut finish, &mut cancel);
+        if self.sketch_toolbar {
+            self.view_sketch_toolbar(&response.ctx, rect, &mut s, &mut finish, &mut cancel);
+        }
 
         // Select: a press on a point drags it.
         let press = response
@@ -541,7 +543,8 @@ impl CadCraftApp {
             s.tools.set_tool(Tool::Line);
         }
 
-        // The right-click menu.
+        // The right-click menu (with the toolbar off, every tool of it).
+        let mut toolbar = self.sketch_toolbar;
         response.context_menu(|ui| {
             if ui.button("Finish Sketch").clicked() {
                 finish = true;
@@ -555,17 +558,45 @@ impl CadCraftApp {
                 s.tools.set_tool(Tool::Dimension);
                 ui.close();
             }
+            if !toolbar {
+                ui.menu_button("Tools", |ui| {
+                    for t in TOOLBAR {
+                        if ui
+                            .selectable_label(!s.project && s.tools.tool == t, t.label())
+                            .clicked()
+                        {
+                            s.project = false;
+                            s.tools.escape();
+                            s.tools.set_tool(t);
+                            ui.close();
+                        }
+                    }
+                });
+                if ui.selectable_label(s.project, "Project Geometry").clicked() {
+                    s.project = !s.project;
+                    s.tools.escape();
+                    ui.close();
+                }
+                if ui.button("Delete (Delete)").clicked() {
+                    s.delete_selected();
+                    ui.close();
+                }
+            }
             if ui.button("Restart chain").clicked() {
                 s.tools.escape();
                 s.tools.set_tool(Tool::Line);
                 ui.close();
             }
             ui.separator();
+            if ui.checkbox(&mut toolbar, "Floating Toolbar").clicked() {
+                ui.close();
+            }
             if ui.button("Cancel").clicked() {
                 cancel = true;
                 ui.close();
             }
         });
+        self.sketch_toolbar = toolbar;
 
         // The value of a new dimension, over its text.
         if let Some((c, mut value)) = s.dim {

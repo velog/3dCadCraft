@@ -661,6 +661,9 @@ struct CadCraftApp {
     /// The assembly browser's view and filters (an application setting:
     /// kept outside `AsmUi`, which opening a file resets).
     asm_browser: asm_browser::AsmBrowserOpts,
+    /// Application Options › Display: the floating toolbar of a drawing's
+    /// view sketch.
+    sketch_toolbar: bool,
     /// Application Options › Save: the preview picture.
     thumbnail_source: layout::ThumbnailSource,
     /// The iProperties window (`iprops.rs`).
@@ -980,6 +983,7 @@ impl CadCraftApp {
             cons: Default::default(),
             constrain_current_offset: false,
             asm_browser: Default::default(),
+            sketch_toolbar: true,
             thumbnail_source: Default::default(),
             iprops: None,
             bom: None,
