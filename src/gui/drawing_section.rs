@@ -63,7 +63,11 @@ pub(super) struct SectionDraft {
 pub(super) struct DetailDraft {
     parent: Option<u32>,
     center: Option<[f64; 2]>,
-    radius: Option<f64>,
+    /// The fence's half sizes (a circle: its radius twice).
+    size: Option<[f64; 2]>,
+    /// The dialog's options (Fence Shape, Cutout Shape, boundary,
+    /// connection line); a rectangle's size is set by the clicks.
+    look: crate::drawing::DetailLook,
 }
 
 /// Auxiliary View in progress: the parent and the edge's ends (parent's
@@ -124,12 +128,18 @@ impl DetailDraft {
 
     /// Status-bar prompt.
     pub(super) fn prompt(&self) -> &'static str {
-        match (self.parent, self.center, self.radius) {
+        match (self.parent, self.center, self.size) {
             (None, _, _) => "Detail View: click the parent view",
             (_, None, _) => "Detail View: click the centre of the detail",
+            (_, _, None) if self.rectangular() => "Detail View: click a corner of the rectangle",
             (_, _, None) => "Detail View: click to set the circle's size",
             _ => "Detail View: click where the enlarged view goes",
         }
+    }
+
+    /// Fence Shape Rectangular.
+    fn rectangular(&self) -> bool {
+        self.look.rect.is_some()
     }
 }
 
@@ -270,7 +280,23 @@ impl CadCraftApp {
                 let Some(pv) = views.iter().find(|v| v.id == parent) else {
                     return;
                 };
-                match (d.center, d.radius) {
+                // The dialog's options, over the sheet.
+                let before = d.look;
+                detail_options(ctx, rect, &mut d.look);
+                if d.look != before {
+                    self.drw.tool = Some(DrwTool::Detail(d.clone()));
+                }
+                let fence_at = |c: [f64; 2], h: [f64; 2], color: Color32| {
+                    let f = crate::drawing::hlr::Fence {
+                        center: c,
+                        radius: h[0],
+                        half: d.rectangular().then_some(h),
+                        jagged: false,
+                    };
+                    let pts: Vec<egui::Pos2> = f.outline().into_iter().map(&to).collect();
+                    painter.add(egui::Shape::line(pts, Stroke::new(1.5, color)));
+                };
+                match (d.center, d.size) {
                     (None, _) => {
                         if let Some(q) = snapped {
                             painter.circle_filled(to(q), 4.0, PREVIEW);
@@ -282,31 +308,32 @@ impl CadCraftApp {
                     }
                     (Some(c), None) => {
                         if let Some(q) = at {
-                            let r = (q[0] - c[0]).hypot(q[1] - c[1]);
-                            painter.circle_stroke(
-                                to(c),
-                                (r * cam.zoom) as f32,
-                                Stroke::new(1.5, PREVIEW),
-                            );
-                            if response.clicked() && r > 0.5 {
-                                d.radius = Some(r);
+                            let h = if d.rectangular() {
+                                [(q[0] - c[0]).abs(), (q[1] - c[1]).abs()]
+                            } else {
+                                let r = (q[0] - c[0]).hypot(q[1] - c[1]);
+                                [r, r]
+                            };
+                            fence_at(c, h, PREVIEW);
+                            if response.clicked() && h[0].min(h[1]) > 0.5 {
+                                d.size = Some(h);
                                 self.drw.tool = Some(DrwTool::Detail(d));
                             }
                         }
                     }
-                    (Some(c), Some(r)) => {
-                        painter.circle_stroke(
-                            to(c),
-                            (r * cam.zoom) as f32,
-                            Stroke::new(1.5, PICKED),
-                        );
+                    (Some(c), Some(h)) => {
+                        fence_at(c, h, PICKED);
                         let (Some(rc), Some(q)) = (to_view(pv, c), at) else {
                             return;
                         };
-                        let model_r = r / pv.scale;
+                        let model = [h[0] / pv.scale, h[1] / pv.scale];
+                        let look = crate::drawing::DetailLook {
+                            rect: d.rectangular().then_some(model),
+                            ..d.look
+                        };
                         let scale = detail_scale(pv.scale);
                         self.child_preview(ctx, painter, rect, response, "Detail View", |doc| {
-                            doc.add_detail_view(parent, rc, model_r, q, scale)
+                            doc.add_detail_view_with(parent, rc, model[0], look, q, scale)
                         });
                     }
                 }
@@ -399,12 +426,22 @@ impl CadCraftApp {
                 PREVIEW,
                 self.drw.weights,
             );
-            if let ViewKind::Detail { radius, .. } = v.kind {
-                painter.circle_stroke(
-                    self.drw.cam.to_screen(rect, v.position),
-                    (radius * scale * self.drw.cam.zoom) as f32,
-                    Stroke::new(1.0, PREVIEW),
-                );
+            if let Some(f) = v.kind.fence() {
+                let cam = self.drw.cam;
+                let pts: Vec<egui::Pos2> = f
+                    .outline()
+                    .iter()
+                    .map(|q| {
+                        cam.to_screen(
+                            rect,
+                            [
+                                v.position[0] + (q[0] - f.center[0]) * scale,
+                                v.position[1] + (q[1] - f.center[1]) * scale,
+                            ],
+                        )
+                    })
+                    .collect();
+                painter.add(egui::Shape::line(pts, Stroke::new(1.0, PREVIEW)));
             }
         }
         if response.clicked() {
@@ -733,5 +770,193 @@ fn hv(q: &mut [f64; 2], other: [f64; 2]) {
         } else {
             q[0] = other[0];
         }
+    }
+}
+
+/// The Detail View dialog's options (Inventor's Fence Shape and Cutout
+/// Shape groups): Display Full Detail Boundary needs Smooth, Display
+/// Connection Line the full boundary.
+fn detail_options(ctx: &egui::Context, rect: Rect, look: &mut crate::drawing::DetailLook) {
+    egui::Area::new(egui::Id::new("drw_detail_options"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(rect.left_top() + egui::vec2(10.0, 10.0))
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                detail_look_ui(ui, look);
+            });
+        });
+}
+
+/// The rows of a detail view's look (the command's options and its
+/// Properties).
+pub(super) fn detail_look_ui(ui: &mut egui::Ui, look: &mut crate::drawing::DetailLook) {
+    ui.label(egui::RichText::new("Fence Shape").strong());
+    ui.horizontal(|ui| {
+        let mut rect = look.rect.is_some();
+        ui.radio_value(&mut rect, false, "Circular");
+        ui.radio_value(&mut rect, true, "Rectangular");
+        if rect != look.rect.is_some() {
+            look.rect = rect.then_some([1.0, 1.0]);
+        }
+    });
+    ui.label(egui::RichText::new("Cutout Shape").strong());
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut look.jagged, true, "Jagged");
+        ui.radio_value(&mut look.jagged, false, "Smooth");
+    });
+    ui.add_enabled(
+        !look.jagged,
+        egui::Checkbox::new(&mut look.full_boundary, "Display Full Detail Boundary"),
+    )
+    .on_disabled_hover_text("Needs the Smooth cutout");
+    ui.add_enabled(
+        !look.jagged && look.full_boundary,
+        egui::Checkbox::new(&mut look.connection, "Display Connection Line"),
+    )
+    .on_disabled_hover_text("Needs the full detail boundary");
+}
+
+/// A detail fence being dragged on its parent: the detail view, the grip
+/// (0: the centre, 1: the size), the fence when the drag began and where
+/// the pointer pressed (sheet mm).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FenceGrip {
+    view: u32,
+    which: usize,
+    fence: crate::drawing::hlr::Fence,
+    from: [f64; 2],
+}
+
+impl CadCraftApp {
+    /// Detail fences on their parents: hovering one shows its grips (the
+    /// centre, and the circle's right point / the rectangle's corner);
+    /// dragging the centre moves the fence, the other grip sizes it; the
+    /// detail follows when the drag ends (one Undo step). Returns whether
+    /// it took the pointer.
+    pub(super) fn detail_fence_grips(
+        &mut self,
+        painter: &egui::Painter,
+        rect: Rect,
+        response: &egui::Response,
+        views: &[ShownView],
+    ) -> bool {
+        let cam = self.drw.cam;
+        let Some(sheet) = self.drawing().and_then(|d| d.sheet()) else {
+            return false;
+        };
+        // Every fence on the sheet: (detail id, fence, parent placement).
+        let fences: Vec<(u32, crate::drawing::hlr::Fence, Placement)> = sheet
+            .views
+            .iter()
+            .filter_map(|v| {
+                let f = v.kind.fence()?;
+                let pv = views.iter().find(|x| Some(x.id) == v.parent())?;
+                let pl = Placement {
+                    position: pv.position,
+                    scale: pv.scale,
+                    center: pv.lines.as_deref()?.center(),
+                };
+                Some((v.id, f, pl))
+            })
+            .collect();
+        let to = |q: [f64; 2]| cam.to_screen(rect, q);
+        let grips = |f: &crate::drawing::hlr::Fence, pl: &Placement| {
+            let h = f.half_size();
+            let size = match f.half {
+                Some(_) => [f.center[0] + h[0], f.center[1] + h[1]],
+                None => [f.center[0] + f.radius, f.center[1]],
+            };
+            [pl.to_sheet(f.center), pl.to_sheet(size)]
+        };
+        let pointer = response.hover_pos();
+        let at = pointer.map(|p| cam.to_sheet(rect, p));
+        let press = response
+            .drag_started_by(egui::PointerButton::Primary)
+            .then(|| response.ctx.input(|i| i.pointer.press_origin()))
+            .flatten()
+            .map(|p| cam.to_sheet(rect, p));
+        let near = 7.0 / cam.zoom;
+        let d = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+        if let Some(g) = self.drw.fence_drag.clone() {
+            let Some((_, _, pl)) = fences.iter().find(|(id, ..)| *id == g.view) else {
+                self.drw.fence_drag = None;
+                return false;
+            };
+            let mut f = g.fence;
+            if let Some(q) = at {
+                let v = [(q[0] - g.from[0]) / pl.scale, (q[1] - g.from[1]) / pl.scale];
+                if g.which == 0 {
+                    f.center = [f.center[0] + v[0], f.center[1] + v[1]];
+                } else {
+                    let p = [
+                        pl.center[0] + (q[0] - pl.position[0]) / pl.scale,
+                        pl.center[1] + (q[1] - pl.position[1]) / pl.scale,
+                    ];
+                    let (dx, dy) = (p[0] - f.center[0], p[1] - f.center[1]);
+                    match f.half {
+                        Some(_) => f.half = Some([dx.abs().max(0.1), dy.abs().max(0.1)]),
+                        None => f.radius = dx.hypot(dy).max(0.1),
+                    }
+                }
+            }
+            let pts: Vec<egui::Pos2> = f.outline().iter().map(|q| to(pl.to_sheet(*q))).collect();
+            painter.add(egui::Shape::line(pts, Stroke::new(2.0, PREVIEW)));
+            if response.drag_stopped() {
+                self.drw.fence_drag = None;
+                let id = g.view;
+                let ok = self
+                    .edit_drawing("Edit Detail Fence", |doc| {
+                        doc.set_detail_fence(id, f.center, f.radius, f.half)
+                    })
+                    .unwrap_or(false);
+                if !ok {
+                    self.history.cancel();
+                }
+                self.history.break_coalescing();
+            }
+            return true;
+        }
+        let hit = press.or(at).and_then(|q| {
+            fences.iter().find_map(|(id, f, pl)| {
+                let g = grips(f, pl);
+                if let Some(k) = (0..2).find(|k| d(g[*k], q) < near) {
+                    return Some((*id, *f, *pl, Some(k)));
+                }
+                // On the outline: its grips show.
+                let p = [
+                    pl.center[0] + (q[0] - pl.position[0]) / pl.scale,
+                    pl.center[1] + (q[1] - pl.position[1]) / pl.scale,
+                ];
+                (f.side(p).abs() * pl.scale < near).then_some((*id, *f, *pl, None))
+            })
+        });
+        let Some((id, f, pl, which)) = hit else {
+            return false;
+        };
+        for (k, p) in grips(&f, &pl).into_iter().enumerate() {
+            let on = which == Some(k);
+            let r = if on { 9.0 } else { 7.0 };
+            painter.rect_stroke(
+                Rect::from_center_size(to(p), egui::vec2(r, r)),
+                0.0,
+                Stroke::new(1.5, if on { PICKED } else { PREVIEW }),
+                egui::StrokeKind::Middle,
+            );
+        }
+        if let (Some(q), Some(k)) = (press, which) {
+            self.drw.fence_drag = Some(FenceGrip {
+                view: id,
+                which: k,
+                fence: f,
+                from: q,
+            });
+            return true;
+        }
+        if response.clicked() && which.is_some() {
+            self.drw.sel = Some(id);
+            self.drw.sel_ann = None;
+            return true;
+        }
+        false
     }
 }

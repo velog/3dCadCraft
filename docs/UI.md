@@ -377,7 +377,7 @@ Center Mark, **CL** = Centerline (two circles), **T** = Text (click, type, OK / 
 ends a tool (in a dimension it first drops the picks). Drag a dimension or a note to move its text, Delete
 removes the selected one, double-click edits a note. A red **?** marks an annotation whose edge is gone.
 **SV** = Section View (the parent; its sketch opens with the Line tool — **L** Line, **D** Dimension, Esc ends the chain / the tool / the sketch, **Enter** or right-click › Finish Sketch; then the side; a section line's right-click › Edit Section Line or a double-click on it opens its sketch again), **DV** = Detail View (the
-parent, centre, size, place), **AV** = Auxiliary View (a straight edge, then the place); **HN** = Hole and
+parent, centre, size — a corner for a rectangular fence —, place; Fence Shape / Cutout Shape / boundary / connection line in the options over the sheet and in Properties; drag the fence's centre grip on the parent to move it, its edge grip to size it), **AV** = Auxiliary View (a straight edge, then the place); **HN** = Hole and
 Thread note (a hole's circle, then the place), **LE** = Leader Text (the arrow's tip, the text's place).
 **File › Export › PDF...** (or **PDF** in the command search): the PDF Drawing Options, then the file.
 **Manage › Styles Editor** in a drawing: the Style and Standard Editor of the drawing (left: Standard and the

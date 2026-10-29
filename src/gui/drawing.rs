@@ -282,6 +282,8 @@ pub(super) struct DrwUi {
     pub section_track: Vec<[f64; 2]>,
     /// The view sketch being edited (a section line).
     pub sketch: Option<Box<super::drawing_sketch::DrwSketch>>,
+    /// A detail fence being dragged on its parent.
+    pub fence_drag: Option<super::drawing_section::FenceGrip>,
     /// The Text window.
     pub text_dialog: Option<super::drawing_annot::TextDialog>,
     /// The PDF options window (kept until the file is written).
@@ -885,13 +887,9 @@ impl CadCraftApp {
                 aligned,
                 flat,
             } => self.view_lines(ctx, *model, frame, aligned.clone(), *flat),
-            LinesJob::Detail {
-                parent,
-                center,
-                radius,
-            } => done
+            LinesJob::Detail { parent, fence } => done
                 .get(parent)
-                .map(|l| Arc::new(hlr::clip_circle(l, *center, *radius))),
+                .map(|l| Arc::new(hlr::clip_fence(l, fence))),
         }
     }
 
@@ -1207,7 +1205,8 @@ impl CadCraftApp {
             // Edit View of a base view: its preview and ViewCube.
             None if self.orient_active() => self.orient_tool(&ctx, &painter, rect, &response),
             None => {
-                if !self.section_line_grips(&painter, rect, &response, &views)
+                if !self.detail_fence_grips(&painter, rect, &response, &views)
+                    && !self.section_line_grips(&painter, rect, &response, &views)
                     && !self.annotation_select(rect, &response, &anns, &views)
                 {
                     self.sheet_select(rect, &response, at_sheet, &views);
@@ -2169,6 +2168,74 @@ impl CadCraftApp {
                 super::panels::plabel(ui, "Model");
                 ui.label(model);
                 ui.end_row();
+                if let ViewKind::Detail {
+                    radius,
+                    rect,
+                    jagged,
+                    full_boundary,
+                    connection,
+                    ..
+                } = &mut nv.kind
+                {
+                    super::panels::plabel(ui, "Fence Shape");
+                    let mut rectangular = rect.is_some();
+                    egui::ComboBox::from_id_salt("drw_detail_fence")
+                        .selected_text(if rectangular { "Rectangular" } else { "Circular" })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut rectangular, false, "Circular");
+                            ui.selectable_value(&mut rectangular, true, "Rectangular");
+                        });
+                    if rectangular != rect.is_some() {
+                        // The same size: the circle's box, or the
+                        // rectangle's larger side.
+                        *rect = rectangular.then_some([*radius, *radius]);
+                    }
+                    ui.end_row();
+                    match rect {
+                        Some(h) => {
+                            let mut w = h[0] * 2.0;
+                            let mut t = h[1] * 2.0;
+                            super::panels::plabel(ui, "Width");
+                            ui.add(ExprValue::new(&mut w).suffix(" mm").range(0.01..=1.0e6));
+                            ui.end_row();
+                            super::panels::plabel(ui, "Height");
+                            ui.add(ExprValue::new(&mut t).suffix(" mm").range(0.01..=1.0e6));
+                            ui.end_row();
+                            *h = [w * 0.5, t * 0.5];
+                            *radius = h[0].max(h[1]);
+                        }
+                        None => {
+                            super::panels::plabel(ui, "Radius");
+                            ui.add(ExprValue::new(radius).suffix(" mm").range(0.01..=1.0e6));
+                            ui.end_row();
+                        }
+                    }
+                    super::panels::plabel(ui, "Cutout Shape");
+                    egui::ComboBox::from_id_salt("drw_detail_cutout")
+                        .selected_text(if *jagged { "Jagged" } else { "Smooth" })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(jagged, true, "Jagged");
+                            ui.selectable_value(jagged, false, "Smooth");
+                        });
+                    ui.end_row();
+                    super::panels::plabel(ui, "Full Detail Boundary");
+                    ui.add_enabled(!*jagged, egui::Checkbox::new(full_boundary, ""))
+                        .on_disabled_hover_text("Needs the Smooth cutout");
+                    ui.end_row();
+                    super::panels::plabel(ui, "Connection Line");
+                    ui.add_enabled(
+                        !*jagged && *full_boundary,
+                        egui::Checkbox::new(connection, ""),
+                    )
+                    .on_disabled_hover_text("Needs the full detail boundary");
+                    ui.end_row();
+                    if *jagged {
+                        *full_boundary = false;
+                    }
+                    if !*full_boundary {
+                        *connection = false;
+                    }
+                }
                 if let ViewKind::Section { depth, .. } = &mut nv.kind {
                     super::panels::plabel(ui, "Section Depth");
                     let mut distance = depth.is_some();

@@ -2205,3 +2205,118 @@ fn section_sketch_follows_the_line() {
     );
     assert_eq!(kind(&d).section_line().unwrap(), moved.to_vec());
 }
+
+/// Detail fences (Inventor's Fence Shape / Cutout Shape): a rectangle cuts
+/// lines at its sides, bend lines are cut too (a bend missing the fence is
+/// left out), a jagged cut stays within its wander and is the same every
+/// time.
+#[test]
+fn detail_fences_cut_lines_and_bends() {
+    use super::hlr::{Fence, JAG, ViewBend, ViewLines, clip_fence};
+    let bend = |y: f64| ViewBend {
+        centre: [[-50.0, y], [50.0, y]],
+        zone: [
+            [[-50.0, y - 1.0], [50.0, y - 1.0]],
+            [[-50.0, y + 1.0], [50.0, y + 1.0]],
+        ],
+        up: true,
+        angle: 90.0,
+        radius: 2.0,
+        kfactor: 0.44,
+    };
+    let lines = ViewLines {
+        visible: vec![vec![[-50.0, 0.0], [50.0, 0.0]]],
+        visible_src: vec![None],
+        bends: vec![bend(2.0), bend(30.0)],
+        ..Default::default()
+    };
+    let rect = Fence {
+        center: [0.0, 0.0],
+        radius: 10.0,
+        half: Some([10.0, 5.0]),
+        jagged: false,
+    };
+    let c = clip_fence(&lines, &rect);
+    let l = &c.visible[0];
+    close(l[0][0], -10.0, 1e-6, "enters at the left side");
+    close(l[l.len() - 1][0], 10.0, 1e-6, "leaves at the right side");
+    assert_eq!(c.bends.len(), 1, "the bend at y = 30 misses the fence");
+    close(c.bends[0].centre[0][0], -10.0, 1e-6, "bend line cut");
+    close(c.bends[0].centre[1][0], 10.0, 1e-6, "bend line cut");
+    close(c.bends[0].zone[1][1][0], 10.0, 1e-6, "bend extent cut");
+    assert_eq!((c.min, c.max), ([-10.0, -5.0], [10.0, 5.0]));
+    // Jagged: within the wander, not at the smooth side, the same twice.
+    let jag = Fence {
+        jagged: true,
+        ..rect
+    };
+    let j = clip_fence(&lines, &jag);
+    let end = j.visible[0][j.visible[0].len() - 1][0];
+    assert!(end > 10.0 * (1.0 - JAG) - 1e-6 && end < 10.0 * (1.0 + JAG) + 1e-6);
+    assert!((end - 10.0).abs() > 1e-3, "a jagged cut wanders");
+    assert_eq!(clip_fence(&lines, &jag), j);
+}
+
+/// A detail view made with the command's options keeps them; moving its
+/// fence moves the detail's centre; a detail saved before the options read
+/// back as before (smooth, full boundary).
+#[test]
+fn detail_view_options_and_fence_edit() {
+    use super::DetailLook;
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let look = DetailLook {
+        rect: Some([8.0, 4.0]),
+        ..DetailLook::default()
+    };
+    let det = d
+        .add_detail_view_with(b, [5.0, 0.0], 0.0, look, [300.0, 100.0], 4.0)
+        .unwrap();
+    let kind = |d: &DrawingDocument| d.sheet().unwrap().view(det).unwrap().kind.clone();
+    let ViewKind::Detail {
+        rect,
+        jagged,
+        full_boundary,
+        radius,
+        ..
+    } = kind(&d)
+    else {
+        panic!("a detail");
+    };
+    assert_eq!(
+        (rect, jagged, full_boundary, radius),
+        (Some([8.0, 4.0]), true, false, 8.0)
+    );
+    assert!(d.set_detail_fence(det, [20.0, 3.0], 0.0, Some([6.0, 6.0])));
+    let f = kind(&d).fence().unwrap();
+    assert_eq!((f.center, f.half), ([20.0, 3.0], Some([6.0, 6.0])));
+    assert!(
+        !d.set_detail_fence(det, [0.0, 0.0], 0.0, Some([0.0, 6.0])),
+        "no size"
+    );
+    // The old form: centre and radius only.
+    let old: ViewKind =
+        serde_json::from_str(r#"{"kind":"Detail","parent":1,"center":[0,0],"radius":5}"#).unwrap();
+    let ViewKind::Detail {
+        rect,
+        jagged,
+        full_boundary,
+        connection,
+        ..
+    } = old
+    else {
+        panic!("a detail");
+    };
+    assert_eq!(
+        (rect, jagged, full_boundary, connection),
+        (None, false, true, false)
+    );
+}

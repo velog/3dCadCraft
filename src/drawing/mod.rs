@@ -483,15 +483,58 @@ pub enum ViewKind {
         /// The side of the line the view lies on.
         side: i8,
     },
-    /// Detail View: an enlarged circle of the parent.
+    /// Detail View: an enlarged circle or rectangle of the parent.
     Detail {
         /// The parent view's id.
         parent: u32,
         /// Fence centre in the parent's view plane.
         center: [f64; 2],
-        /// Fence radius (model mm).
+        /// Fence radius (model mm); a rectangle's half diagonal's larger
+        /// side, so old builds draw a circle round it.
         radius: f64,
+        /// Fence Shape Rectangular: half its width and height (model mm);
+        /// `None`: Circular.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rect: Option<[f64; 2]>,
+        /// Cutout Shape Jagged (false: Smooth; views before it were smooth).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        jagged: bool,
+        /// Display Full Detail Boundary (Smooth only).
+        #[serde(default = "yes", skip_serializing_if = "is_true")]
+        full_boundary: bool,
+        /// Display Connection Line (with the full boundary).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        connection: bool,
     },
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+/// How a new detail view looks (the Detail View command's options).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DetailLook {
+    /// Fence Shape Rectangular: half width and height (`None`: Circular).
+    pub rect: Option<[f64; 2]>,
+    /// Cutout Shape Jagged.
+    pub jagged: bool,
+    /// Display Full Detail Boundary.
+    pub full_boundary: bool,
+    /// Display Connection Line.
+    pub connection: bool,
+}
+
+impl Default for DetailLook {
+    /// Inventor's defaults: circular, jagged, no boundary, no connection.
+    fn default() -> Self {
+        Self {
+            rect: None,
+            jagged: true,
+            full_boundary: false,
+            connection: false,
+        }
+    }
 }
 
 /// What a view's lines are computed from.
@@ -513,10 +556,8 @@ pub enum LinesJob {
     Detail {
         /// The parent view.
         parent: u32,
-        /// Fence centre (view plane).
-        center: [f64; 2],
-        /// Fence radius.
-        radius: f64,
+        /// The fence (parent's view plane).
+        fence: hlr::Fence,
     },
 }
 
@@ -772,6 +813,25 @@ impl LineAnchor {
 }
 
 impl ViewKind {
+    /// A detail view's fence in its parent's view plane.
+    pub fn fence(&self) -> Option<hlr::Fence> {
+        match *self {
+            ViewKind::Detail {
+                center,
+                radius,
+                rect,
+                jagged,
+                ..
+            } => Some(hlr::Fence {
+                center,
+                radius,
+                half: rect,
+                jagged,
+            }),
+            _ => None,
+        }
+    }
+
     /// A section view's line in its parent's view plane: `a`, the points
     /// between, `b`.
     pub fn section_line(&self) -> Option<Vec<[f64; 2]>> {
@@ -1023,14 +1083,9 @@ impl DrawingDocument {
         let model = self.model_of(sheet, id)?;
         let flat = self.flat_of(sheet, id);
         Some(match v.kind {
-            ViewKind::Detail {
+            ViewKind::Detail { parent, .. } => LinesJob::Detail {
                 parent,
-                center,
-                radius,
-            } => LinesJob::Detail {
-                parent,
-                center,
-                radius,
+                fence: v.kind.fence()?,
             },
             ViewKind::Section { parent, a, b, .. } | ViewKind::Auxiliary { parent, a, b, .. } => {
                 let unfold = matches!(v.kind, ViewKind::Section { aligned: true, .. });
@@ -1197,10 +1252,82 @@ impl DrawingDocument {
                 parent,
                 center,
                 radius,
+                rect: None,
+                jagged: false,
+                full_boundary: true,
+                connection: false,
             },
             at,
             Some(scale),
         )
+    }
+
+    /// Detail View of `parent` with the command's options `look`: a circle
+    /// of `radius`, or the rectangle of `look.rect`, about `center`.
+    pub fn add_detail_view_with(
+        &mut self,
+        parent: u32,
+        center: [f64; 2],
+        radius: f64,
+        look: DetailLook,
+        at: [f64; 2],
+        scale: f64,
+    ) -> Option<u32> {
+        let radius = match look.rect {
+            Some([w, h]) if w > 1e-9 && h > 1e-9 => w.max(h),
+            Some(_) => return None,
+            None => radius,
+        };
+        if radius <= 1e-9 {
+            return None;
+        }
+        self.add_child(
+            parent,
+            ViewKind::Detail {
+                parent,
+                center,
+                radius,
+                rect: look.rect,
+                jagged: look.jagged,
+                full_boundary: look.full_boundary && !look.jagged,
+                connection: look.connection && look.full_boundary && !look.jagged,
+            },
+            at,
+            Some(scale),
+        )
+    }
+
+    /// Moves detail view `id`'s fence (active sheet): centre and size in the
+    /// parent's view plane (`rect`: a rectangle's half sizes, else the
+    /// circle's `radius`). False when `id` is no detail view or the size is
+    /// zero.
+    pub fn set_detail_fence(
+        &mut self,
+        id: u32,
+        center: [f64; 2],
+        radius: f64,
+        rect: Option<[f64; 2]>,
+    ) -> bool {
+        let Some(v) = self.sheet_mut().and_then(|s| s.view_mut(id)) else {
+            return false;
+        };
+        let ViewKind::Detail {
+            center: c,
+            radius: r,
+            rect: rr,
+            ..
+        } = &mut v.kind
+        else {
+            return false;
+        };
+        let size = rect.map_or(radius, |[w, h]| w.min(h));
+        if size <= 1e-9 {
+            return false;
+        }
+        *c = center;
+        *rr = rect;
+        *r = rect.map_or(radius, |[w, h]| w.max(h));
+        true
     }
 
     /// Which side of line `a`–`b` (parent's view plane) the sheet point `at`

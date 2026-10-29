@@ -193,12 +193,22 @@ pub fn view_extras<'a>(
                 }
             }
         }
-        // The detail view's boundary.
-        if let ViewKind::Detail { radius, .. } = v.kind
+        // The detail view's boundary: Smooth with Display Full Detail
+        // Boundary (a jagged cut shows only the torn ends of the lines).
+        if let ViewKind::Detail {
+            jagged: false,
+            full_boundary: true,
+            ..
+        } = v.kind
+            && let Some(f) = v.kind.fence()
             && let Some(p) = detail_pen.clone()
         {
             out.push(p);
-            out.push(circle(v.position, radius * pl.scale));
+            out.push(Prim::Path {
+                pts: f.outline().iter().map(|q| pl.to_sheet(*q)).collect(),
+                width: 0.25,
+                dashed: false,
+            });
         }
         // Definitions drawn on the parent.
         if v.display.definition_in_base
@@ -218,12 +228,22 @@ pub fn view_extras<'a>(
                         va.identifier_height,
                     );
                 }
-                ViewKind::Detail { center, radius, .. } if detail_pen.is_some() => {
+                ViewKind::Detail {
+                    center, connection, ..
+                } if detail_pen.is_some() => {
                     out.extend(detail_pen.clone());
+                    let Some(f) = v.kind.fence() else {
+                        continue;
+                    };
                     let c = ppl.to_sheet(center);
-                    let r = radius * ppl.scale;
-                    out.push(circle(c, r));
+                    out.push(Prim::Path {
+                        pts: f.outline().iter().map(|q| ppl.to_sheet(*q)).collect(),
+                        width: 0.25,
+                        dashed: false,
+                    });
+                    // The identifier beyond the fence's upper right.
                     let k = std::f64::consts::FRAC_1_SQRT_2;
+                    let r = f.reach([k, k]) * ppl.scale;
                     out.push(Prim::Text {
                         at: [c[0] + (r + 2.0) * k, c[1] + (r + 2.0) * k],
                         height: va.identifier_height,
@@ -231,6 +251,26 @@ pub fn view_extras<'a>(
                         anchor: Anchor::Left,
                         angle: 0.0,
                     });
+                    // Display Connection Line: from the fence to the
+                    // detail's boundary, along the line joining them.
+                    let to = v.position;
+                    let (dx, dy) = (to[0] - c[0], to[1] - c[1]);
+                    let len = dx.hypot(dy);
+                    if connection && len > 1e-9 {
+                        let u = [dx / len, dy / len];
+                        let a = f.reach(u) * ppl.scale;
+                        let b = len - f.reach(u) * pl.scale;
+                        if b > a {
+                            out.push(Prim::Path {
+                                pts: vec![
+                                    [c[0] + u[0] * a, c[1] + u[1] * a],
+                                    [c[0] + u[0] * b, c[1] + u[1] * b],
+                                ],
+                                width: 0.25,
+                                dashed: false,
+                            });
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -242,7 +282,15 @@ pub fn view_extras<'a>(
             out.push(p);
             let (_, h) = l.size();
             let below = match v.kind {
-                ViewKind::Detail { radius, .. } => v.position[1] - radius * pl.scale,
+                ViewKind::Detail { .. } => {
+                    let h = v.kind.fence().map_or(0.0, |f| f.half_size()[1]);
+                    let jag = if matches!(v.kind, ViewKind::Detail { jagged: true, .. }) {
+                        1.0 + super::hlr::JAG
+                    } else {
+                        1.0
+                    };
+                    v.position[1] - h * jag * pl.scale
+                }
                 _ => {
                     let c = l.center();
                     pl.to_sheet([c[0], l.min[1]])[1]
@@ -262,21 +310,6 @@ pub fn view_extras<'a>(
         }
     }
     out
-}
-
-/// A thin circle as a polyline.
-fn circle(c: [f64; 2], r: f64) -> Prim {
-    let n = 96;
-    Prim::Path {
-        pts: (0..=n)
-            .map(|k| {
-                let a = std::f64::consts::TAU * k as f64 / n as f64;
-                [c[0] + r * a.cos(), c[1] + r * a.sin()]
-            })
-            .collect(),
-        width: 0.25,
-        dashed: false,
-    }
 }
 
 /// The section line on the parent: a thin chain line, thick ends, arrows in

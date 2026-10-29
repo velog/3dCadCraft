@@ -1670,15 +1670,125 @@ fn inside(poly: &[[f64; 2]], q: [f64; 2]) -> bool {
     c
 }
 
-/// The lines of a view clipped to a circle (Detail View): `center` and
-/// `radius` in the view plane; the result is centred on the fence.
+/// A detail view's fence in its parent's view plane: a circle or a
+/// rectangle about `center`, cut smooth or jagged (Inventor's Cutout
+/// Shape).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fence {
+    /// Centre (view plane).
+    pub center: [f64; 2],
+    /// Circle radius (a rectangle's size is `half`).
+    pub radius: f64,
+    /// A rectangle: half its width and height (`None`: a circle).
+    pub half: Option<[f64; 2]>,
+    /// Jagged cut: the boundary wanders in and out by [`JAG`] of the
+    /// fence's size, so the cut ends look torn.
+    pub jagged: bool,
+}
+
+/// How far a jagged cut wanders (share of the fence's size).
+pub const JAG: f64 = 0.06;
+
+impl Fence {
+    /// A smooth circle.
+    pub fn circle(center: [f64; 2], radius: f64) -> Self {
+        Self {
+            center,
+            radius,
+            half: None,
+            jagged: false,
+        }
+    }
+
+    /// The jag at angle `t` about the centre: in [-1, 1], the same every
+    /// time (a sum of a few waves).
+    fn jag(&self, t: f64) -> f64 {
+        if !self.jagged {
+            return 0.0;
+        }
+        0.5 * (7.0 * t + 0.3).sin() + 0.3 * (13.0 * t + 1.1).sin() + 0.2 * (23.0 * t + 2.0).sin()
+    }
+
+    /// Negative inside, positive outside (clipping uses its sign).
+    pub fn side(&self, p: [f64; 2]) -> f64 {
+        let (dx, dy) = (p[0] - self.center[0], p[1] - self.center[1]);
+        match self.half {
+            None => {
+                let t = dy.atan2(dx);
+                dx.hypot(dy) - self.radius * (1.0 + JAG * self.jag(t))
+            }
+            Some([w, h]) => {
+                let (w, h) = (w.max(1e-9), h.max(1e-9));
+                let t = (dy / h).atan2(dx / w);
+                ((dx / w).abs().max((dy / h).abs()) - (1.0 + JAG * self.jag(t))) * w.min(h)
+            }
+        }
+    }
+
+    /// Half the box round its smooth outline.
+    pub fn half_size(&self) -> [f64; 2] {
+        self.half.unwrap_or([self.radius, self.radius])
+    }
+
+    /// Its smooth outline, closed (view plane).
+    pub fn outline(&self) -> Vec<[f64; 2]> {
+        let c = self.center;
+        match self.half {
+            None => (0..=96)
+                .map(|k| {
+                    let t = std::f64::consts::TAU * k as f64 / 96.0;
+                    [c[0] + self.radius * t.cos(), c[1] + self.radius * t.sin()]
+                })
+                .collect(),
+            Some([w, h]) => vec![
+                [c[0] - w, c[1] - h],
+                [c[0] + w, c[1] - h],
+                [c[0] + w, c[1] + h],
+                [c[0] - w, c[1] + h],
+                [c[0] - w, c[1] - h],
+            ],
+        }
+    }
+
+    /// How far the ray from the centre along unit `u` runs to the smooth
+    /// outline.
+    pub fn reach(&self, u: [f64; 2]) -> f64 {
+        match self.half {
+            None => self.radius,
+            Some([w, h]) => {
+                let tx = if u[0].abs() > 1e-12 {
+                    w / u[0].abs()
+                } else {
+                    f64::MAX
+                };
+                let ty = if u[1].abs() > 1e-12 {
+                    h / u[1].abs()
+                } else {
+                    f64::MAX
+                };
+                tx.min(ty)
+            }
+        }
+    }
+}
+
+/// [`clip_fence`] with a smooth circle.
 pub fn clip_circle(lines: &ViewLines, center: [f64; 2], radius: f64) -> ViewLines {
+    clip_fence(lines, &Fence::circle(center, radius))
+}
+
+/// A detail view's lines: the parent's inside `fence` (curves, cut faces
+/// and bend lines cut where they leave it).
+pub fn clip_fence(lines: &ViewLines, fence: &Fence) -> ViewLines {
+    let half = fence.half_size();
+    let size = half[0].min(half[1]);
+    let d = |p: [f64; 2]| fence.side(p);
     let clip = |polys: &[Vec<[f64; 2]>], srcs: &[Option<u32>]| {
         let mut out = Vec::new();
         let mut out_src = Vec::new();
-        // Pieces finer than the fence, so a segment passing through the
-        // circle with both ends outside is cut too.
-        let step = (radius / 16.0).max(1e-6);
+        // Pieces finer than the fence (and its jags), so a segment passing
+        // through it with both ends outside is cut too.
+        let step = (size / if fence.jagged { 64.0 } else { 16.0 }).max(1e-6);
         let dense: Vec<Vec<[f64; 2]>> = polys
             .iter()
             .map(|pl| {
@@ -1700,7 +1810,6 @@ pub fn clip_circle(lines: &ViewLines, center: [f64; 2], radius: f64) -> ViewLine
             .collect();
         for (k, pl) in dense.iter().enumerate() {
             let src = srcs.get(k).copied().flatten();
-            let d = |p: [f64; 2]| (p[0] - center[0]).hypot(p[1] - center[1]) - radius;
             let mut cur: Vec<[f64; 2]> = Vec::new();
             for (i, p) in pl.iter().enumerate() {
                 let dpv = d(*p);
@@ -1708,7 +1817,7 @@ pub fn clip_circle(lines: &ViewLines, center: [f64; 2], radius: f64) -> ViewLine
                     let a = pl[i - 1];
                     let da = d(a);
                     if (da <= 0.0) != (dpv <= 0.0) {
-                        // Bisection for the crossing (the circle is not a line).
+                        // Bisection for the crossing (the fence is no line).
                         let (mut lo, mut hi) = (0.0, 1.0);
                         for _ in 0..40 {
                             let m = (lo + hi) * 0.5;
@@ -1744,6 +1853,32 @@ pub fn clip_circle(lines: &ViewLines, center: [f64; 2], radius: f64) -> ViewLine
     let (visible, visible_src) = clip(&lines.visible, &lines.visible_src);
     let (hidden, hidden_src) = clip(&lines.hidden, &lines.hidden_src);
     let (section, _) = clip(&lines.section, &[]);
+    // A straight line's part inside the fence (its longest piece).
+    let inside = |seg: [[f64; 2]; 2]| -> Option<[[f64; 2]; 2]> {
+        let len = |s: &[[f64; 2]; 2]| (s[1][0] - s[0][0]).hypot(s[1][1] - s[0][1]);
+        let (pieces, _) = clip(&[seg.to_vec()], &[]);
+        pieces
+            .into_iter()
+            .filter_map(|p| Some([*p.first()?, *p.last()?]))
+            .max_by(|a, b| len(a).total_cmp(&len(b)))
+    };
+    // Bend lines: centre line and extents cut by the fence too (a bend
+    // whose centre line misses it is left out).
+    let bends = lines
+        .bends
+        .iter()
+        .filter_map(|b| {
+            let centre = inside(b.centre)?;
+            let zone = b.zone.map(|z| inside(z).unwrap_or([centre[0], centre[0]]));
+            Some(ViewBend {
+                centre,
+                zone,
+                ..b.clone()
+            })
+        })
+        .collect();
+    let reach = 1.0 + if fence.jagged { JAG } else { 0.0 };
+    let c = fence.center;
     ViewLines {
         visible,
         visible_src,
@@ -1754,18 +1889,10 @@ pub fn clip_circle(lines: &ViewLines, center: [f64; 2], radius: f64) -> ViewLine
             .into_iter()
             .filter(|l| l.first() == l.last())
             .collect(),
-        min: [center[0] - radius, center[1] - radius],
-        max: [center[0] + radius, center[1] + radius],
+        min: [c[0] - half[0] * reach, c[1] - half[1] * reach],
+        max: [c[0] + half[0] * reach, c[1] + half[1] * reach],
         anchor: None,
-        bends: lines
-            .bends
-            .iter()
-            .filter(|b| {
-                let m = b.middle();
-                (m[0] - center[0]).hypot(m[1] - center[1]) <= radius
-            })
-            .cloned()
-            .collect(),
+        bends,
     }
 }
 

@@ -86,14 +86,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     }
-    if let Some(LinesJob::Detail {
-        parent,
-        center,
-        radius,
-    }) = d.lines_job(&sheet, det)
+    if let Some(LinesJob::Detail { parent, fence }) = d.lines_job(&sheet, det)
         && let Some(p) = lines.get(&parent).cloned()
     {
-        lines.insert(det, Arc::new(hlr::clip_circle(&p, center, radius)));
+        lines.insert(det, Arc::new(hlr::clip_fence(&p, &fence)));
     }
     let top_lines = lines.get(&top).ok_or("top lines")?.clone();
     let circles: Vec<(String, [f64; 2], f64, bool)> = top_lines
