@@ -558,21 +558,42 @@ pub(super) fn trim(
                 .find(|s| &s.id == sid)
                 .ok_or_else(|| User(format!("sketch {sid} is missing")))?;
             let sk = &ps.sketch;
-            // Every curve of the sketch (not construction, not projected), one chain each.
-            let chains: Vec<Vec<crate::kernel::ProfileSegment>> = sk
-                .entities()
-                .filter(|(e, _)| {
-                    !ps.is_reference(*e) && sk.style(*e) == crate::sketch::Style::Normal
-                })
-                .filter_map(|(e, _)| {
-                    let op = super::OpenProfile {
-                        curves: vec![e],
-                        flip: false,
-                        match_shape: false,
-                    };
-                    super::extrude::open_chain(&op, sk).ok().map(|c| c.0)
-                })
-                .collect();
+            // The sketch's curves (not construction, not projected) as connected chains: a
+            // rectangle is one closed tool (its inside goes), not four lines.
+            let own = |e: crate::sketch::EntityId| {
+                !ps.is_reference(e) && sk.style(e) == crate::sketch::Style::Normal
+            };
+            let mut seen = std::collections::HashSet::new();
+            let mut chains: Vec<Vec<crate::kernel::ProfileSegment>> = Vec::new();
+            for (e, _) in sk.entities() {
+                if !own(e) || seen.contains(&e) {
+                    continue;
+                }
+                let curves: Vec<crate::sketch::EntityId> = sk
+                    .chain(e)
+                    .0
+                    .into_iter()
+                    .map(|(x, _)| x)
+                    .filter(|x| own(*x))
+                    .collect();
+                seen.extend(curves.iter().copied());
+                let op = super::OpenProfile {
+                    curves,
+                    flip: false,
+                    match_shape: false,
+                };
+                if let Ok(c) = super::extrude::open_chain(&op, sk) {
+                    chains.push(c.0);
+                }
+            }
+            // A closed chain (a rectangle) is not an open profile: cutting a hole by one is not
+            // supported yet (spec 5.4a T2).
+            if chains.is_empty() && sk.entities().any(|(e, _)| own(e)) {
+                return Err(User(
+                    "a closed sketch loop as the cutting tool is not supported yet (spec 5.4a T2)"
+                        .into(),
+                ));
+            }
             if chains.is_empty() {
                 return Err(User("the sketch has no curve to cut with".into()));
             }
@@ -608,6 +629,23 @@ pub(super) fn trim(
             let t = sheet_named(sheets, name)?;
             if t == i {
                 return Err(User("a surface cannot trim itself".into()));
+            }
+            // The kernel cuts by one face's surface (extended): a tool of several different
+            // faces (a rectangle's four walls) would cut along one wall's plane only. (Pieces of
+            // one surface, a cylinder in halves, share a name.)
+            let mut names: Vec<&str> = sheets[t]
+                .face_names
+                .iter()
+                .flatten()
+                .map(String::as_str)
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            if names.len() > 1 {
+                return Err(User(format!(
+                    "a cutting surface of {} faces is not supported yet: trim by each face, or by                      a sketch curve (spec 5.4a T2)",
+                    names.len()
+                )));
             }
             let side = exact::SheetSide::new(sheets[t].triangles().map_err(Kernel)?);
             let d = side.signed(&remove);

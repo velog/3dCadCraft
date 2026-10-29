@@ -32,6 +32,9 @@ pub(super) enum SelItem {
     Sketch(usize),
 }
 
+/// How many hidden-line tests one drawn polyline gets at most.
+const HIDDEN_TESTS: usize = 24;
+
 impl CadCraftApp {
     /// Whether category `c` may be picked this frame (the active selector's
     /// kinds ∩ the user filter, see `update_pick_filter`).
@@ -875,7 +878,9 @@ impl CadCraftApp {
     }
 
     /// Draws a model polyline on top of the view, its hidden pieces left
-    /// out (each segment judged by its middle).
+    /// out (judged by the middles of at most [`HIDDEN_TESTS`] runs of segments: each test casts
+    /// a ray at every triangle, and a spline edge has hundreds of segments — testing each one
+    /// made a selected surface's outline take most of a frame).
     pub(super) fn draw_visible_polyline(
         &self,
         painter: &egui::Painter,
@@ -883,8 +888,17 @@ impl CadCraftApp {
         pts: &[crate::kernel::Point3],
         stroke: egui::Stroke,
     ) {
-        for w in pts.windows(2) {
-            if self.point_hidden(&(w[0] + (w[1] - w[0]) * 0.5), rect) {
+        let n = pts.len().saturating_sub(1);
+        let run = n.div_ceil(HIDDEN_TESTS).max(1);
+        let mut hidden = false;
+        for (i, w) in pts.windows(2).enumerate() {
+            if i % run == 0 {
+                // The middle of this run of segments.
+                let k = (i + run / 2).min(n.saturating_sub(1));
+                let (a, b) = (pts[k], pts[k + 1]);
+                hidden = self.point_hidden(&(a + (b - a) * 0.5), rect);
+            }
+            if hidden {
                 continue;
             }
             if let (Some(a), Some(b)) = (
