@@ -962,15 +962,28 @@ pub enum SheetOp {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         centered: bool,
     },
-    /// Unfold: the whole sheet flat; features after it work on the flat pattern.
+    /// Unfold: the whole sheet flat, or only the chosen bends; features after
+    /// it work on the unfolded sheet.
     Unfold {
         /// The sheet body.
         body: String,
+        /// The bends to unfold (their flanges' tags, `Flange1.2`); empty: the
+        /// whole sheet (format revision 48 for chosen ones).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bends: Vec<String>,
+        /// The Stationary Reference: the panel that keeps its place (`base`
+        /// or a flange's tag); `None`: the base.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stationary: Option<String>,
     },
-    /// Refold: back to the folded sheet (with what was cut while flat).
+    /// Refold: back to the folded sheet (with what was cut while flat), or
+    /// only the chosen unfolded bends.
     Refold {
         /// The sheet body.
         body: String,
+        /// The unfolded bends to fold again; empty: all of them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bends: Vec<String>,
     },
     /// Corner Seam: the corner between two flanges (by their tags) closed again.
     CornerSeam {
@@ -1065,6 +1078,25 @@ pub enum SheetOp {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         aligned: bool,
     },
+}
+
+impl SheetOp {
+    /// Unfold of the whole sheet `body`.
+    pub fn unfold(body: impl Into<String>) -> Self {
+        SheetOp::Unfold {
+            body: body.into(),
+            bends: Vec::new(),
+            stationary: None,
+        }
+    }
+
+    /// Refold of the whole sheet `body`.
+    pub fn refold(body: impl Into<String>) -> Self {
+        SheetOp::Refold {
+            body: body.into(),
+            bends: Vec::new(),
+        }
+    }
 }
 
 /// Bend between parallel faces (Inventor's Double Bend).
@@ -1310,8 +1342,12 @@ impl SheetOpFeature {
             SheetOp::Contour { sketch, width, .. } => {
                 format!("Contour Flange of {sketch}, {width:.2} mm wide")
             }
-            SheetOp::Unfold { body } => format!("Unfold {body}"),
-            SheetOp::Refold { body } => format!("Refold {body}"),
+            SheetOp::Unfold { body, bends, .. } if bends.is_empty() => format!("Unfold {body}"),
+            SheetOp::Unfold { body, bends, .. } => {
+                format!("Unfold {} bend(s) of {body}", bends.len())
+            }
+            SheetOp::Refold { body, bends } if bends.is_empty() => format!("Refold {body}"),
+            SheetOp::Refold { body, bends } => format!("Refold {} bend(s) of {body}", bends.len()),
             SheetOp::Cut { sketch, .. } => format!("Cut of {sketch} through the sheet"),
             SheetOp::CornerSeam { a, b, seam, .. } => {
                 format!("Corner Seam {a} / {b}: {}", seam.label())
@@ -1701,6 +1737,35 @@ impl super::PartDocument {
         (def.id, def.name) = (id.clone(), id.clone());
         self.insert_feature_checked(super::Feature::SheetFlange(def))?;
         Ok(id)
+    }
+
+    /// The folded bend under `at` (on any sheet): its sheet and its flange's
+    /// tag (Unfold of chosen bends).
+    pub fn sheet_bend_at(&self, at: crate::kernel::Point3) -> Option<(String, String)> {
+        self.sheet_models
+            .iter()
+            .find_map(|(body, st)| Some((body.clone(), ksm::bend_tag_at(&st.model, at)?)))
+    }
+
+    /// The panel whose flat face holds `at`: its sheet and its name (`base`
+    /// or a flange's tag) — Unfold's Stationary Reference.
+    pub fn sheet_panel_at(&self, at: crate::kernel::Point3) -> Option<(String, String)> {
+        self.sheet_models
+            .iter()
+            .find_map(|(body, st)| Some((body.clone(), ksm::panel_at(&st.model, at)?)))
+    }
+
+    /// The bends of sheet `body` unfolded on their own (their tags), and its
+    /// folded ones.
+    pub fn sheet_bend_states(&self, body: &str) -> (Vec<String>, Vec<String>) {
+        self.sheet_models
+            .get(body)
+            .map_or_else(Default::default, |st| {
+                (
+                    ksm::open_bend_tags(&st.model),
+                    ksm::closed_bend_tags(&st.model),
+                )
+            })
     }
 
     /// The sheet edge nearest `at` (part coordinates): (sheet body, edge

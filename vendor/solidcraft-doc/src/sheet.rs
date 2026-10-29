@@ -613,6 +613,13 @@ pub struct SheetBody {
     /// flat coordinates): the fill of an inside corner that Corner Round / Corner Chamfer rounds.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub adds: Vec<(Option<usize>, Region2)>,
+    /// 3DCadCraft: flanges whose bends are unfolded on their own (Unfold of chosen bends):
+    /// the bend zone lies flat in its parent's plane and the panels past it follow.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub open: Vec<usize>,
+    /// 3DCadCraft: the panel that stays where it is while bends are open (`None` = the base).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stay: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -916,6 +923,11 @@ impl SheetBody {
 
     /// Fold transform of flange `i`'s panel (flat 3D coordinates → folded, in the flat frame).
     pub fn fold(&self, i: usize) -> Mat {
+        self.fold_with(i, true)
+    }
+
+    /// [`SheetBody::fold`], the open bends (`open`) left flat when `honour_open`.
+    fn fold_with(&self, i: usize, honour_open: bool) -> Mat {
         let mut chain = Vec::new();
         let mut cur = Some(i);
         for _ in 0..1000 {
@@ -925,6 +937,9 @@ impl SheetBody {
         }
         let mut m = IDENTITY;
         for c in chain.into_iter().rev() {
+            if honour_open && self.open.contains(&c) {
+                continue;
+            }
             if let Some(f) = self.flanges.get(c) {
                 m = mat_mul(&m, &self.bend_motion(f));
             }
@@ -1087,7 +1102,18 @@ impl SheetBody {
             Some(i) if !self.flat => self.fold(i),
             _ => IDENTITY,
         };
-        mat_mul(&self.frame_mat(), &f)
+        if self.flat || self.open.is_empty() {
+            return mat_mul(&self.frame_mat(), &f);
+        }
+        // Open bends: the stationary panel keeps its folded place, the rest moves with it.
+        let keep = match self.stay {
+            Some(s) => {
+                let shut = self.fold_with(s, false);
+                mat_inverse(&self.fold_with(s, true)).map_or(IDENTITY, |inv| mat_mul(&shut, &inv))
+            }
+            None => IDENTITY,
+        };
+        mat_mul(&self.frame_mat(), &mat_mul(&keep, &f))
     }
 
     /// Where a flat point of a piece lands (folded), at height `z` in the sheet.
@@ -1213,7 +1239,9 @@ impl SheetBody {
         }
         let mut pieces: Vec<(Piece, Region2)> = self.panels().into_iter().map(|(pi, r)| (Piece::Panel(pi), r)).collect();
         for (i, f) in self.flanges.iter().enumerate() {
-            pieces.push((Piece::Zone(i), self.zone(f)));
+            // An open bend's zone lies flat: a strip of its parent's panel.
+            let piece = if self.open.contains(&i) { Piece::Panel(f.parent) } else { Piece::Zone(i) };
+            pieces.push((piece, self.zone(f)));
         }
         // The folded solid is sewn from lines and arcs: free-form outlines and cut-outs follow
         // their fitted arcs there (the flat pattern keeps them exact).
@@ -4199,6 +4227,45 @@ impl SheetBody {
         best.map(|(_, q)| q)
     }
 
+    /// The flange whose (folded, not open) bend holds the world point `p`, within `tol` of its
+    /// material.
+    pub fn bend_at(&self, p: Vec3, tol: f64) -> Option<usize> {
+        if self.flat {
+            return None;
+        }
+        self.flanges.iter().enumerate().find_map(|(i, f)| {
+            if self.open.contains(&i) {
+                return None;
+            }
+            let q = apply_point(&mat_inverse(&self.world(f.parent))?, p);
+            let (o, k, turn) = self.bend_axis(f);
+            let w = q - o;
+            let radial = w - k * w.dot(k);
+            let r = radial.len();
+            if r < f.radius - tol || r > f.radius + self.t + tol {
+                return None;
+            }
+            let u = (Vec2::new(q.x, q.y) - f.p).dot(f.d);
+            if u < -f.ext.0 - tol || u > f.len + f.ext.1 + tol {
+                return None;
+            }
+            // From the axis to where the bend starts, then turned with the bend.
+            let v0 = if turn >= 0.0 { Vec3::Z * -1.0 } else { Vec3::Z };
+            let ang = k.dot(v0.cross(radial)).atan2(v0.dot(radial));
+            let phi = ang * turn.signum();
+            (phi > -1e-3 && phi < turn.abs() + 1e-3).then_some(i)
+        })
+    }
+
+    /// The panel named `name` ([`SheetBody::panel_name`]): `None` = the base; `Err` when no
+    /// panel has the name.
+    pub fn panel_named(&self, name: &str) -> std::result::Result<Option<usize>, ()> {
+        if name == "base" {
+            return Ok(None);
+        }
+        (0..self.flanges.len()).find(|&i| self.panel_name(Some(i)) == name).map(Some).ok_or(())
+    }
+
     /// The persistent name of a panel: `base`, a flange's tag, or `#<index>` for an untagged
     /// flange; `flat` for the whole sheet while it is unfolded.
     fn panel_name(&self, pi: Option<usize>) -> String {
@@ -4869,6 +4936,8 @@ pub fn base_flange(body: &str, rule: &str, rv: &RuleValues, plane: Plane, region
         base_curves: Vec::new(),
         corner_faces: Vec::new(),
         adds: Vec::new(),
+        open: Vec::new(),
+        stay: None,
     }
 }
 
@@ -4979,6 +5048,8 @@ pub fn contour_flange_span(body: &str, rule: &str, rv: &RuleValues, plane: &Plan
         base_curves: Vec::new(),
         corner_faces: Vec::new(),
         adds: Vec::new(),
+        open: Vec::new(),
+        stay: None,
     };
     let (y0, y1) = if ysign > 0.0 { (span.0, span.1) } else { (-span.1, -span.0) };
     // First segment: the base panel.

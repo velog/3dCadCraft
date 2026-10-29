@@ -759,7 +759,7 @@ fn unfold_cut_refold() {
     flange(&mut p, &[Point3::new(50.0, 0.0, 2.0)], 25.0, |_| {});
     let body = p.sheet_models.keys().next().unwrap().clone();
     let v0 = volume(&p);
-    op(&mut p, SheetOp::Unfold { body: body.clone() });
+    op(&mut p, SheetOp::unfold(body.clone()));
     check(&p);
     assert!(p.sheet_is_flat(&body));
     let (lo, hi) = bbox(&p);
@@ -784,7 +784,7 @@ fn unfold_cut_refold() {
         },
     );
     check(&p);
-    op(&mut p, SheetOp::Refold { body: body.clone() });
+    op(&mut p, SheetOp::refold(body.clone()));
     check(&p);
     assert!(!p.sheet_is_flat(&body));
     let v1 = volume(&p);
@@ -1037,7 +1037,7 @@ fn sheet_features_can_be_edited() {
     assert!((hi.z - lo.z - 30.0).abs() < 0.5, "{lo} {hi}");
     // A Hem cannot replace a Flange.
     let body = p.sheet_models.keys().next().unwrap().clone();
-    let hem = Feature::SheetOp(SheetOpFeature::new(SheetOp::Unfold { body }));
+    let hem = Feature::SheetOp(SheetOpFeature::new(SheetOp::unfold(body)));
     assert!(p.replace_feature(k, hem).is_err());
 }
 
@@ -2242,4 +2242,104 @@ fn a_cut_after_a_fillet_and_a_hole_cuts_the_solid() {
         v0 - v1,
         area * t
     );
+}
+
+/// Unfold of chosen bends (spec 5.6 §6.1f): a plate with flanges on its
+/// right and left edges, a return on the right one. Unfolding the right bend
+/// lays that flange (and its return, still bent) flat in the plate's plane;
+/// the left one stays up, the volume stays. Refold of that bend gives the part
+/// back. With the right flange as the Stationary Reference the plate moves
+/// instead and the right flange keeps its place.
+#[test]
+fn unfold_and_refold_chosen_bends() {
+    use cadcraft3d::part::sheet_metal::SheetOp;
+    let mut p = rect(100.0, 60.0);
+    flange(
+        &mut p,
+        &[Point3::new(100.0, 30.0, 2.0), Point3::new(0.0, 30.0, 2.0)],
+        30.0,
+        |_| {},
+    );
+    let (b0, b1) = bbox(&p);
+    let v0 = volume(&p);
+    let body = p.exact_bodies.0[0].name.clone().unwrap();
+    let (open, shut) = p.sheet_bend_states(&body);
+    assert!(open.is_empty() && shut.len() == 2, "{shut:?}");
+    // The right flange's bend: a point on its outer surface half way round.
+    let (sb, right) = p
+        .sheet_bend_states(&body)
+        .1
+        .iter()
+        .find_map(|t| {
+            p.sheet_bend_at(Point3::new(99.0, 30.0, 3.0))
+                .filter(|(_, tag)| tag == t)
+        })
+        .expect("the right bend under a point on it");
+    assert_eq!(sb, body);
+    op(
+        &mut p,
+        SheetOp::Unfold {
+            body: body.clone(),
+            bends: vec![right.clone()],
+            stationary: None,
+        },
+    );
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    let (u0, u1) = bbox(&p);
+    // The bend became a flat strip BA long: the volume changes by the bend's
+    // material less BA · T over its 60 mm (K 0.44: −22.6 mm³).
+    let (t, r, k) = (2.0, 2.0, 0.44);
+    let ba = std::f64::consts::FRAC_PI_2 * (r + k * t);
+    let bend = std::f64::consts::FRAC_PI_4 * ((r + t) * (r + t) - r * r) * 60.0;
+    let want = v0 - bend + ba * t * 60.0;
+    assert!((volume(&p) - want).abs() < 1e-3, "{} vs {want}", volume(&p));
+    // Flat to the right now (past x = 100 by about the flange), still up on the left.
+    assert!(u1.x > b1.x + 20.0, "{u1:?}");
+    assert!(
+        (u1.z - b1.z).abs() < 1e-6 && (u0.x - b0.x).abs() < 1e-6,
+        "{u0:?} {u1:?}"
+    );
+    let (open, shut) = p.sheet_bend_states(&body);
+    assert_eq!((open, shut.len()), (vec![right.clone()], 1));
+    // The flat pattern does not change.
+    assert_eq!(p.flat_patterns()[0].bends.len(), 2);
+    op(
+        &mut p,
+        SheetOp::Refold {
+            body: body.clone(),
+            bends: vec![right.clone()],
+        },
+    );
+    let (r0, r1) = bbox(&p);
+    assert!(
+        (r0 - b0).norm() < 1e-6 && (r1 - b1).norm() < 1e-6,
+        "{r0:?} {r1:?}"
+    );
+    // The right flange as the Stationary Reference: it keeps its place.
+    let mut q = rect(100.0, 60.0);
+    flange(
+        &mut q,
+        &[Point3::new(100.0, 30.0, 2.0), Point3::new(0.0, 30.0, 2.0)],
+        30.0,
+        |_| {},
+    );
+    let panel = q.sheet_panel_at(Point3::new(100.0, 30.0, 20.0)).unwrap().1;
+    assert_eq!(panel, right);
+    op(
+        &mut q,
+        SheetOp::Unfold {
+            body: body.clone(),
+            bends: vec![right.clone()],
+            stationary: Some(panel),
+        },
+    );
+    let (s0, s1) = bbox(&q);
+    assert!(q.feature_health.is_empty(), "{:?}", q.feature_health);
+    // The plate hangs down now in the right flange's plane (x 98..100), the
+    // flange where it was.
+    assert!(
+        s0.z < b0.z - 50.0 && (s1.z - b1.z).abs() < 1e-6,
+        "{s0:?} {s1:?}"
+    );
+    assert!((s1.x - b1.x).abs() < 1e-6, "{s0:?} {s1:?}");
 }

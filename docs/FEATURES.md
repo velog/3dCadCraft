@@ -1138,7 +1138,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 | Punch Tool | standard punch forms (louvres, ribs, holes) from a library |
 | Contour Roll | a rolled profile |
 | Lofted Flange | a transition between two sections (hopper, funnel) |
-| Unfold / Refold | temporary unfolding for features in the unfolded state |
+| Unfold / Refold | temporary unfolding for features in the unfolded state — the whole sheet, or chosen bends about a Stationary Reference (2026-10-29) |
 | **Flat Pattern** | the flat pattern with bend lines, DXF export; in drawings: flat pattern views with bend centre lines / extents and Bend Notes ([spec/4.8](spec/4.8-sheet-metal-drawings.md)) |
 
 **How it works.** The part keeps the **bend topology**. Each bend is a cylindrical segment with thickness t and radius r. The developed length of a bend through angle θ is `L = θ·(r + K·t)`. Unfolding "straightens" the cylinders into planes in the order of the bend tree.

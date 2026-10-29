@@ -934,5 +934,29 @@
     "Extrusion1:Side:1v1:0",
     "Extrusion1:Side:1v1:0",
     "Extrusion1:Start"
+  ],
+  "r48/unfold_r48.3dcadcraft": [
+    "Face1:Bend:1",
+    "Face1:Bend:2",
+    "Face1:Bend:3",
+    "Face1:Bend:4",
+    "Face1:Bend:5",
+    "Face1:Flange1.1:bottom",
+    "Face1:Flange1.1:rim.bend1",
+    "Face1:Flange1.1:rim.far",
+    "Face1:Flange1.1:rim.side0",
+    "Face1:Flange1.1:rim.side1",
+    "Face1:Flange1.1:top",
+    "Face1:Flange1.2:bottom",
+    "Face1:Flange1.2:rim.bend0",
+    "Face1:Flange1.2:rim.bend1",
+    "Face1:Flange1.2:rim.far",
+    "Face1:Flange1.2:rim.side0",
+    "Face1:Flange1.2:rim.side1",
+    "Face1:Flange1.2:top",
+    "Face1:base:bottom",
+    "Face1:base:rim.1v1",
+    "Face1:base:rim.3v1",
+    "Face1:base:top"
   ]
 }

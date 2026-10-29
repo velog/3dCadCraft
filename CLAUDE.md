@@ -1079,6 +1079,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `kernel/exact/sheet_metal/recognize.rs`): panels walked across round bends on the base face's skin, each next
   panel a flange `shape` through `region_to_flat`; the refolded volume must match the body's (else refused).
   The Convert panel sets `recognize` whenever no bend edge is picked.
+  Unfold of chosen bends (revision 48): vendor `SheetBody::open` (flange indices) lays a bend's zone flat as a strip of
+  its parent panel (`cells`: `Piece::Panel(parent)`) and skips its motion in `fold`; `stay` keeps a panel's folded
+  place (`world`). Bends are named by flange tag (`ksm::bend_tag_at`). Face naming goes through
+  `panel_faces_at` (one flat computation for all faces: per face it took 4 s on an unfolded box). Rays given to
+  `face_hit` must be unit vectors when the hit point is used (`o + dir * t`).
   Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry
   of old files without such a field). Corner reliefs (Round / Square) are cut-outs in `SheetBody::holes` about the crossing of the bends' centre

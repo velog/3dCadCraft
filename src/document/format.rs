@@ -148,7 +148,9 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (`SheetConvertFeature::recognize`) (2026-10-29).
 /// - 47: edges of other components projected into sketches
 ///   (`ContextGeom::Curve`, `LinkSource::Context`) (2026-10-29).
-pub const FORMAT_REVISION: u32 = 47;
+/// - 48: Unfold / Refold of chosen bends (`SheetOp::Unfold::bends`,
+///   `stationary`, `SheetOp::Refold::bends`) (2026-10-29).
+pub const FORMAT_REVISION: u32 = 48;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

@@ -542,6 +542,107 @@ pub fn set_flat(
     Ok((s, SheetModel(Arc::new(next))))
 }
 
+/// Unfold of chosen bends (by their flanges' tags): each lies flat in its
+/// parent's plane and the panels past it follow; the panel named `stay`
+/// (`None` or `base`: the base) keeps its place.
+pub fn open_bends(
+    m: &SheetModel,
+    prefix: &str,
+    tags: &[String],
+    stay: Option<&str>,
+) -> Result<(ExactSolid, SheetModel), String> {
+    let mut next = (*m.0).clone();
+    if next.flat {
+        return Err("the sheet is unfolded already".into());
+    }
+    for t in tags {
+        let i = next
+            .flanges
+            .iter()
+            .position(|f| &f.tag == t)
+            .ok_or_else(|| format!("the bend {t} no longer exists"))?;
+        if next.open.contains(&i) {
+            return Err(format!("the bend {t} is unfolded already"));
+        }
+        next.open.push(i);
+    }
+    if let Some(s) = stay {
+        next.stay = next
+            .panel_named(s)
+            .map_err(|_| format!("the stationary face's panel {s} no longer exists"))?;
+    }
+    let s = named_solid(&next, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(next))))
+}
+
+/// Refold of chosen bends (tags; empty: every unfolded bend, and the whole
+/// sheet when it is unfolded).
+pub fn shut_bends(
+    m: &SheetModel,
+    prefix: &str,
+    tags: &[String],
+) -> Result<(ExactSolid, SheetModel), String> {
+    let mut next = (*m.0).clone();
+    if tags.is_empty() {
+        if !next.flat && next.open.is_empty() {
+            return Err("the sheet is not unfolded".into());
+        }
+        next.flat = false;
+        next.open.clear();
+    } else {
+        for t in tags {
+            let i = next.flanges.iter().position(|f| &f.tag == t);
+            let at = i.and_then(|i| next.open.iter().position(|&o| o == i));
+            let Some(at) = at else {
+                return Err(format!("the bend {t} is not unfolded"));
+            };
+            next.open.remove(at);
+        }
+    }
+    if next.open.is_empty() {
+        next.stay = None;
+    }
+    let s = named_solid(&next, prefix, false)?;
+    Ok((s, SheetModel(Arc::new(next))))
+}
+
+/// The tag of the bend (folded, not unfolded) under the world point `at`.
+pub fn bend_tag_at(m: &SheetModel, at: Point3) -> Option<String> {
+    let i = m.0.bend_at(v3(&at), m.0.t * 0.05)?;
+    m.0.flanges
+        .get(i)
+        .map(|f| f.tag.clone())
+        .filter(|t| !t.is_empty())
+}
+
+/// The tags of the bends that are unfolded on their own.
+pub fn open_bend_tags(m: &SheetModel) -> Vec<String> {
+    m.0.open
+        .iter()
+        .filter_map(|&i| m.0.flanges.get(i).map(|f| f.tag.clone()))
+        .collect()
+}
+
+/// The tags of every folded bend (not unfolded).
+pub fn closed_bend_tags(m: &SheetModel) -> Vec<String> {
+    if m.0.flat {
+        return Vec::new();
+    }
+    m.0.flanges
+        .iter()
+        .enumerate()
+        .filter(|(i, f)| !m.0.open.contains(i) && !f.tag.is_empty() && f.angle.abs() > 1e-9)
+        .map(|(_, f)| f.tag.clone())
+        .collect()
+}
+
+/// The panel (its name: `base` or a flange's tag) whose flat face holds `at`.
+pub fn panel_at(m: &SheetModel, at: Point3) -> Option<String> {
+    let (name, _) = m.0.panel_face_at(v3(&at), m.0.t * 0.2)?;
+    let panel = name.rsplit_once(':').map_or(name.as_str(), |(p, _)| p);
+    (m.0.panel_named(panel).is_ok()).then(|| panel.to_owned())
+}
+
 /// Whether the sheet is unfolded.
 pub fn is_flat(m: &SheetModel) -> bool {
     m.0.flat

@@ -2929,8 +2929,8 @@ fn speed_budgets() {
                 flip: false,
                 flip_side: false,
             },
-            SheetOp::Unfold { body: body.clone() },
-            SheetOp::Refold { body: body.clone() },
+            SheetOp::unfold(body.clone()),
+            SheetOp::refold(body.clone()),
         ];
         rows.push((
             "sheet metal: Hem, Cut of 20 holes, Fold, Unfold, Refold + DXF",
@@ -2985,7 +2985,7 @@ fn speed_budgets() {
             median_ms(3, || {
                 let mut p = base.clone();
                 p.build_cache = Default::default();
-                p.add_sheet_op(SheetOpFeature::new(SheetOp::Unfold { body: body.clone() }))
+                p.add_sheet_op(SheetOpFeature::new(SheetOp::unfold(body.clone())))
                     .unwrap();
                 assert!(p.feature_health.is_empty() && p.body.faces().count() != faces);
             }),

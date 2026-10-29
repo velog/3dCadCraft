@@ -77,9 +77,7 @@ impl SmDraft {
     fn planned(p: Planned) -> Self {
         let active = p.selectors().first().map_or("", |s| s.key);
         let mut d = Self::new(
-            Feature::SheetOp(SheetOpFeature::new(SheetOp::Unfold {
-                body: String::new(),
-            })),
+            Feature::SheetOp(SheetOpFeature::new(SheetOp::unfold(String::new()))),
             active,
         );
         d.planned = Some(p);
@@ -225,6 +223,33 @@ impl SmDraft {
                     true,
                     usize::from(!a.is_empty()),
                 )],
+                // Neither is required: no bend = the whole sheet, no face = the base.
+                SheetOp::Unfold {
+                    bends, stationary, ..
+                } if self.planned.is_none() => vec![
+                    Selector {
+                        required: false,
+                        ..sel(
+                            "stationary",
+                            "Stationary Reference",
+                            "click a flat face of the sheet that stays where it is (none: the base)",
+                            &[PickKind::PlanarFace][..],
+                            true,
+                            usize::from(stationary.is_some()),
+                        )
+                    },
+                    Selector {
+                        required: false,
+                        ..sel(
+                            "bends",
+                            "Bends",
+                            "click the bends to unfold (none: the whole sheet; a second click removes one)",
+                            &[PickKind::Face][..],
+                            false,
+                            bends.len(),
+                        )
+                    },
+                ],
                 // Their selectors are the planned panel's (`flow` returns early).
                 SheetOp::Unfold { .. }
                 | SheetOp::Refold { .. }
@@ -281,6 +306,8 @@ enum Pick {
     Corner(crate::part::sheet_metal::SheetCorner),
     Face(String, Point3),
     Bend(crate::part::EdgeRef),
+    /// A folded bend of a sheet (Unfold): the sheet and its flange's tag.
+    SheetBend(String, String),
     /// A planned command's pick: its name and highlight.
     Item(String, Vec<Vec<Point3>>),
     /// Several at once (Corner Round by Feature: the feature's corners).
@@ -711,11 +738,17 @@ impl CadCraftApp {
             }
             Action::SmUnfold | Action::SmRefold => {
                 let unfold = matches!(a, Action::SmUnfold);
-                let Some(body) = self
-                    .sm_sheets()
-                    .into_iter()
-                    .find(|b| self.part().sheet_is_flat(b) != unfold)
-                else {
+                // Unfold: a sheet not unfolded whole; Refold: one unfolded
+                // whole or with bends unfolded on their own.
+                let Some(body) = self.sm_sheets().into_iter().find(|b| {
+                    let part = self.part();
+                    let flat = part.sheet_is_flat(b);
+                    if unfold {
+                        !flat
+                    } else {
+                        flat || !part.sheet_bend_states(b).0.is_empty()
+                    }
+                }) else {
                     self.file_status = Some(Err(if unfold {
                         "Unfold: every sheet is unfolded already".into()
                     } else {
@@ -723,12 +756,15 @@ impl CadCraftApp {
                     }));
                     return;
                 };
-                let op = if unfold {
-                    SheetOp::Unfold { body }
+                let (op, active) = if unfold {
+                    (SheetOp::unfold(body), "stationary")
                 } else {
-                    SheetOp::Refold { body }
+                    (SheetOp::refold(body), "")
                 };
-                self.sm_open(SmDraft::new(Feature::SheetOp(SheetOpFeature::new(op)), ""));
+                self.sm_open(SmDraft::new(
+                    Feature::SheetOp(SheetOpFeature::new(op)),
+                    active,
+                ));
             }
             Action::SmExportFlat => {
                 let Some(body) = self.sm_sheets().into_iter().next() else {
@@ -1013,6 +1049,14 @@ impl CadCraftApp {
         let snapshot = d.feature.clone();
         let rule = rule_of(self.part()).values();
         let texts = self.sm_selector_texts(&d);
+        // Refold: the sheet's bends unfolded on their own.
+        let open_bends = match &d.feature {
+            Feature::SheetOp(o) => match &o.op {
+                SheetOp::Refold { body, .. } => self.part().sheet_bend_states(body).0,
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
         let first_edge = match &d.feature {
             Feature::SheetFlange(f) => self.sm_first_edge_length(&f.body, &f.edges),
             _ => 20.0,
@@ -1579,14 +1623,77 @@ impl CadCraftApp {
                             }
                         });
                     }
-                    SheetOp::Unfold { body } | SheetOp::Refold { body } => {
+                    SheetOp::Unfold {
+                        body,
+                        bends,
+                        stationary,
+                    } => {
+                        psection(ui, "sm_unfold", "Sheet", |ui| {
+                            plabel(ui, "Solid");
+                            ui.label(body.as_str());
+                            ui.end_row();
+                            plabel(ui, "Stationary");
+                            ui.label(stationary.as_deref().unwrap_or("base (default)"));
+                            ui.end_row();
+                            plabel(ui, "Bends");
+                            ui.horizontal(|ui| {
+                                if bends.is_empty() {
+                                    ui.label("All bends (the whole sheet)");
+                                } else {
+                                    ui.label(format!("{} bend(s)", bends.len()))
+                                        .on_hover_text(bends.join(", "));
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !bends.is_empty(),
+                                        egui::Button::new("Add All Bends"),
+                                    )
+                                    .on_hover_text(
+                                        "Unfold the whole sheet (clears the chosen bends)",
+                                    )
+                                    .clicked()
+                                {
+                                    bends.clear();
+                                    *stationary = None;
+                                }
+                            });
+                            ui.end_row();
+                        });
+                    }
+                    SheetOp::Refold { body, bends } => {
                         psection(ui, "sm_unfold", "Sheet", |ui| {
                             plabel(ui, "Solid");
                             ui.label(body.as_str());
                             ui.end_row();
                             plabel(ui, "Bends");
-                            ui.label("All bends")
-                                .on_hover_text("The whole sheet; choosing single bends is planned");
+                            ui.vertical(|ui| {
+                                if open_bends.is_empty() {
+                                    ui.label("All bends (the whole sheet)");
+                                }
+                                for t in &open_bends {
+                                    let mut on = bends.is_empty() || bends.contains(t);
+                                    if ui
+                                        .checkbox(&mut on, t.as_str())
+                                        .on_hover_text("Fold this bend again")
+                                        .changed()
+                                    {
+                                        if bends.is_empty() {
+                                            *bends = open_bends.clone();
+                                        }
+                                        if on {
+                                            if !bends.contains(t) {
+                                                bends.push(t.clone());
+                                            }
+                                        } else {
+                                            bends.retain(|b| b != t);
+                                        }
+                                        // Every one again = all of them.
+                                        if bends.len() == open_bends.len() {
+                                            bends.clear();
+                                        }
+                                    }
+                                }
+                            });
                             ui.end_row();
                         });
                     }
@@ -2069,6 +2176,22 @@ impl CadCraftApp {
         }
         let part = self.part();
         let (o, dir) = self.camera.ray(p, rect)?;
+        if sel.key == "bends"
+            && matches!(&d.feature, Feature::SheetOp(o) if matches!(o.op, SheetOp::Unfold { .. }))
+        {
+            // A bend's round face: the bend it belongs to (a unit ray, so
+            // the hit's parameter is in mm).
+            let dir = dir.try_normalize(1e-12)?;
+            let (f, t) = self.face_hit(&o, &dir)?;
+            let hit = o + dir * t;
+            let (body, tag) = part.sheet_bend_at(hit)?;
+            let opts = crate::kernel::TessellationOptions::default();
+            let lines = crate::part::select::edges_of_face(&part.body, f)
+                .into_iter()
+                .filter_map(|e| part.body.sample_edge(e, &opts).ok())
+                .collect();
+            return Some((Pick::SheetBend(body, tag), lines));
+        }
         if sel.takes(PickKind::Region) {
             let cut =
                 matches!(&d.feature, Feature::SheetOp(o) if matches!(o.op, SheetOp::Cut { .. }));
@@ -2131,9 +2254,10 @@ impl CadCraftApp {
             return None;
         }
         if sel.takes(PickKind::PlanarFace) {
+            let dir = dir.try_normalize(1e-12)?;
             let (f, t) = self.face_hit(&o, &dir)?;
             let name = part.body.face(f)?.name.clone()?;
-            let hit = o + dir.normalize() * t;
+            let hit = o + dir * t;
             let opts = crate::kernel::TessellationOptions::default();
             let lines = crate::part::select::edges_of_face(&part.body, f)
                 .into_iter()
@@ -2555,6 +2679,11 @@ impl CadCraftApp {
                 }),
             _ => None,
         };
+        // Unfold's Stationary Reference: the panel under the face pick.
+        let panel = match &pick {
+            Pick::Face(_, hit) => self.part().sheet_panel_at(*hit),
+            _ => None,
+        };
         let sid = match &pick {
             Pick::Region(i, _) | Pick::Line(i, _) => {
                 self.part().sketches.get(*i).map(|p| p.id.clone())
@@ -2599,6 +2728,29 @@ impl CadCraftApp {
                 c.recognize = c.bends.is_empty();
             }
             (Feature::SheetOp(o), pick) => match (&mut o.op, pick) {
+                (
+                    SheetOp::Unfold {
+                        body, stationary, ..
+                    },
+                    Pick::Face(..),
+                ) => match panel {
+                    Some((b, name)) if *body == b => *stationary = Some(name),
+                    _ => {
+                        status = Some(
+                            "Unfold: the stationary face must be a flat face of the sheet"
+                                .to_owned(),
+                        );
+                    }
+                },
+                (SheetOp::Unfold { body, bends, .. }, Pick::SheetBend(b, tag)) => {
+                    if *body != b {
+                        status = Some("Unfold: the bend is on another sheet".to_owned());
+                    } else if let Some(k) = bends.iter().position(|t| *t == tag) {
+                        bends.remove(k);
+                    } else if !remove {
+                        bends.push(tag);
+                    }
+                }
                 (SheetOp::Hem { body, edges, .. }, Pick::SheetEdge(b, e)) => {
                     toggle_edge(body, edges, b, e, other, remove, &mut status);
                 }
@@ -3638,7 +3790,7 @@ mod tests {
         let mut p = base.clone();
         let id = build(
             &mut p,
-            Feature::SheetOp(SheetOpFeature::new(SheetOp::Unfold { body: body.clone() })),
+            Feature::SheetOp(SheetOpFeature::new(SheetOp::unfold(body.clone()))),
             None,
             None,
         )
@@ -3646,7 +3798,7 @@ mod tests {
         assert!(p.sheet_is_flat(&body), "{id}");
         build(
             &mut p,
-            Feature::SheetOp(SheetOpFeature::new(SheetOp::Refold { body: body.clone() })),
+            Feature::SheetOp(SheetOpFeature::new(SheetOp::refold(body.clone()))),
             None,
             None,
         )
@@ -3685,17 +3837,16 @@ mod tests {
         assert!(matches!(&d.feature, Feature::SheetConvert(c) if c.face.face.is_empty()));
     }
 
-    /// A command without inputs (Unfold) is ready at once; Apply clears the
-    /// inputs of the next one.
+    /// A command whose inputs are all optional (Unfold: Stationary Reference,
+    /// Bends) is ready at once; Apply clears the inputs of the next one.
     #[test]
     fn unfold_is_ready_and_apply_clears_inputs() {
         let d = SmDraft::new(
-            Feature::SheetOp(SheetOpFeature::new(SheetOp::Unfold {
-                body: "Face1".into(),
-            })),
-            "",
+            Feature::SheetOp(SheetOpFeature::new(SheetOp::unfold("Face1"))),
+            "stationary",
         );
-        assert!(d.flow().ready() && d.flow().selectors.is_empty());
+        let flow = d.flow();
+        assert!(flow.ready() && flow.selectors.iter().all(|s| !s.required));
         let mut f = Feature::SheetOp(SheetOpFeature::new(SheetOp::Cut {
             sketch: "Sketch2".into(),
             extent: Default::default(),

@@ -3878,10 +3878,23 @@ pub(super) fn sheet_op(
             next.push(solid);
             Ok((next, Some((op.id.clone(), SheetState::new(model, faces)))))
         }
-        SheetOp::Unfold { body } | SheetOp::Refold { body } => {
+        SheetOp::Unfold {
+            body,
+            bends,
+            stationary,
+        } => {
             let (k, state) = sheet_of(body, solids, metal)?;
-            let flat = matches!(op.op, SheetOp::Unfold { .. });
-            let (solid, model) = ksm::set_flat(&state.model, body, flat).map_err(User)?;
+            let (solid, model) = if bends.is_empty() {
+                ksm::set_flat(&state.model, body, true)
+            } else {
+                ksm::open_bends(&state.model, body, bends, stationary.as_deref())
+            }
+            .map_err(User)?;
+            Ok(replace(k, solid, model, body))
+        }
+        SheetOp::Refold { body, bends } => {
+            let (k, state) = sheet_of(body, solids, metal)?;
+            let (solid, model) = ksm::shut_bends(&state.model, body, bends).map_err(User)?;
             Ok(replace(k, solid, model, body))
         }
         SheetOp::CornerSeam {

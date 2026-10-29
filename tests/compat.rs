@@ -617,6 +617,47 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 48: Unfold of a chosen bend — a 100 × 60 Face with flanges on
+/// its right and left edges, the right one's bend unfolded (the base stays).
+fn unfold_r48() -> PartDocument {
+    use cadcraft3d::part::sheet_metal::{SheetFlangeFeature, SheetOp, SheetOpFeature};
+    use cadcraft3d::part::{OriginPlane, ProfileRef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 60.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    p.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+        .unwrap();
+    let mut edges = Vec::new();
+    let mut body = String::new();
+    for x in [100.0, 0.0] {
+        let (b, e) = p.sheet_edge_at(Point3::new(x, 30.0, 2.0)).unwrap();
+        body = b;
+        edges.push(e);
+    }
+    p.add_sheet_flange(SheetFlangeFeature::new(&body, edges, 30.0))
+        .unwrap();
+    let (_, tag) = p.sheet_bend_at(Point3::new(99.0, 30.0, 3.0)).unwrap();
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::Unfold {
+        body,
+        bends: vec![tag],
+        stationary: None,
+    }))
+    .unwrap();
+    p
+}
+
 /// Revision 46: Convert to Sheet Metal of an imported sheet — a 100 × 60 Face
 /// with a flange, written to STEP, imported into an empty part and converted
 /// with its round bend found (`recognize`).
@@ -2685,6 +2726,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("ContextCurveR47");
             project.add_document("Part1", DocumentData::Part(context_curve_r47()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r48/unfold_r48.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("UnfoldR48");
+            project.add_document("Part1", DocumentData::Part(unfold_r48()));
             project.save(&f).unwrap();
         }
         let f = root().join("r46/recognize_r46.3dcadcraft");
