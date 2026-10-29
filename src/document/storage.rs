@@ -396,6 +396,15 @@ pub fn separate_all(
     owner_path: &Path,
     keep: DocumentId,
 ) -> ProjectResult<Vec<PathBuf>> {
+    separate_all_but(project, owner_path, &[keep])
+}
+
+/// [`separate_all`] keeping every document of `keep` in the file.
+fn separate_all_but(
+    project: &mut Project,
+    owner_path: &Path,
+    keep: &[DocumentId],
+) -> ProjectResult<Vec<PathBuf>> {
     let folder = folder_of(owner_path)?;
     let mut written = Vec::new();
     loop {
@@ -403,7 +412,7 @@ pub fn separate_all(
             .documents
             .iter()
             .map(|d| d.id)
-            .filter(|&d| d != keep)
+            .filter(|d| !keep.contains(d))
             .collect();
         if left.is_empty() {
             return Ok(written);
@@ -413,7 +422,7 @@ pub fn separate_all(
                 x.data
                     .references()
                     .iter()
-                    .all(|r| r.library.is_some() || r.document == keep)
+                    .all(|r| r.library.is_some() || keep.contains(&r.document))
             })
         };
         // A leaf first; with none (a loop) any of them.
@@ -428,6 +437,71 @@ pub fn separate_all(
         extract(project, owner_path, id, &target, false)?;
         written.push(target);
     }
+}
+
+/// `keep` and the assemblies of this file it reaches (its subassemblies at
+/// any depth): they stay in the saved file until subassemblies of linked
+/// files exist (spec 3.1a).
+fn with_subassemblies(project: &Project, keep: DocumentId) -> Vec<DocumentId> {
+    let mut out = vec![keep];
+    let mut k = 0;
+    while k < out.len() {
+        let id = out[k];
+        k += 1;
+        let Some(d) = project.document(id) else {
+            continue;
+        };
+        for r in d.data.references() {
+            let sub = r.library.is_none()
+                && !out.contains(&r.document)
+                && project
+                    .document(r.document)
+                    .is_some_and(|x| matches!(x.data, super::DocumentData::Assembly(_)));
+            if sub && matches!(d.data, super::DocumentData::Assembly(_)) {
+                out.push(r.document);
+            }
+        }
+    }
+    out
+}
+
+/// **Save As** to a single-document file (`docs/spec/0.6a-file-types-projects.md`
+/// §3.1, H2): `path`'s type must be `keep`'s kind (`.ccpart` for a part…);
+/// every other document of `project` goes to a file of its own next to it
+/// first (Separate All), so the saved file holds `keep` alone and links the
+/// others — Inventor's one file per document. Subassemblies `keep` places
+/// stay in the file for now (their parts go out). A package path
+/// (`.3dcadcraft`) saves everything as before. Returns the other files
+/// written. On an error before anything was written, `project` is unchanged.
+pub fn save_as_kind(
+    project: &mut Project,
+    path: &Path,
+    keep: DocumentId,
+) -> ProjectResult<Vec<PathBuf>> {
+    let kind = project
+        .document(keep)
+        .map(|d| d.data.kind())
+        .ok_or(ProjectError::UnknownDocument(keep))?;
+    match FileType::from_path(path) {
+        None | Some(FileType::Package) => {
+            project.save(path)?;
+            return Ok(Vec::new());
+        }
+        Some(t) if t.kind() != Some(kind) => {
+            return Err(ProjectError::Refused(format!(
+                "a {} file holds one {}; this document is a {}",
+                t.filter(),
+                t.name().to_lowercase(),
+                FileType::for_kind(kind).name().to_lowercase()
+            )));
+        }
+        Some(_) => {}
+    }
+    // The file must exist before the others can link back to it.
+    project.save(path)?;
+    let written = separate_all_but(project, path, &with_subassemblies(project, keep))?;
+    project.save(path)?;
+    Ok(written)
 }
 
 /// `path`, or `name (2).ext`, `name (3).ext`… when it exists.
@@ -602,6 +676,55 @@ mod tests {
         assert_eq!(refs(&p, again[1]), vec![DocRef::local(again[0]); 2]);
         assert_eq!(src.documents().len(), 2);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn save_as_an_assembly_file_moves_its_parts_out() {
+        let d = tmp("save_as_kind");
+        let (mut p, _, part, a) = design(&d);
+        // The wrong kind is refused and nothing is written.
+        let wrong = d.join("Top.ccpart");
+        assert!(save_as_kind(&mut p, &wrong, a).is_err());
+        assert!(!wrong.exists() && p.documents.len() == 2);
+        let path = d.join("Top.ccasm");
+        let written = save_as_kind(&mut p, &path, a).unwrap();
+        assert_eq!(written, vec![d.join("Part1.ccpart")]);
+        assert_eq!(p.documents.len(), 1);
+        // The assembly links the part file; both open on their own.
+        let again = Project::load(&path).unwrap();
+        assert_eq!(again.documents.len(), 1);
+        assert!(
+            refs(&again, a)
+                .iter()
+                .all(|r| r.library.is_some() && r.document == part)
+        );
+        let file = Project::load(&written[0]).unwrap();
+        assert!(matches!(file.documents[0].data, DocumentData::Part(_)));
+        let mut res = Resolver::new();
+        assert!(res.resolve(&path, &again, refs(&again, a)[0]).is_ok());
+    }
+
+    #[test]
+    fn subassemblies_stay_in_the_saved_file_their_parts_go_out() {
+        let d = tmp("save_as_sub");
+        let (mut p, _, _, a) = design(&d);
+        let mut top = AssemblyDocument::default();
+        top.occurrences.push(Occurrence::new(
+            "Assembly1:1".to_owned(),
+            DocRef::local(a),
+            Transform3::identity(),
+        ));
+        let t = p.add_new_document("Top", DocumentData::Assembly(top));
+        let path = d.join("Top1.ccasm");
+        let written = save_as_kind(&mut p, &path, t).unwrap();
+        assert_eq!(written, vec![d.join("Part1.ccpart")]);
+        let mut ids: Vec<DocumentId> = p.documents.iter().map(|x| x.id).collect();
+        ids.sort_unstable();
+        let mut want = vec![a, t];
+        want.sort_unstable();
+        assert_eq!(ids, want);
+        assert!(refs(&p, a).iter().all(|r| r.library.is_some()));
+        assert_eq!(refs(&p, t), vec![DocRef::local(a)]);
     }
 
     #[test]

@@ -3777,6 +3777,59 @@ impl CadCraftApp {
         }
     }
 
+    /// Save As to `path`: a single-document type (`.ccpart`, `.ccasm`,
+    /// `.ccdrw`) moves the file's other documents to files of their own next
+    /// to it first (`storage::save_as_kind`, spec 0.6a H2); a package saves
+    /// everything.
+    pub(super) fn save_as_to(&mut self, path: &std::path::Path) {
+        use crate::document::FileType;
+        let single = FileType::from_path(path).is_some_and(|t| t.kind().is_some());
+        if !single || self.project.documents().len() <= 1 {
+            if let Some(t) = FileType::from_path(path).filter(|_| single)
+                && self.project.document(self.part_id).map(|d| d.data.kind()) != t.kind()
+            {
+                self.file_status = Some(Err(format!(
+                    "Save As: a {} file holds another kind of document",
+                    t.filter()
+                )));
+                self.after_save = None;
+                self.close_ok = false;
+                return;
+            }
+            self.file_path = path.display().to_string();
+            self.save_project(false);
+            return;
+        }
+        self.project.thumbnail = self.thumbnail_png();
+        self.project.preview = self.project.thumbnail.as_ref().map(|_| self.part_id);
+        let before = self.project.clone();
+        match crate::document::storage::save_as_kind(&mut self.project, path, self.part_id) {
+            Ok(written) => {
+                // The parts now come from their files (`LibCache`).
+                self.file_path = path.display().to_string();
+                self.history.clear();
+                self.saved_ok();
+                self.scene_dirty = true;
+                let names: Vec<String> = written
+                    .iter()
+                    .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .collect();
+                self.file_status = Some(Ok(format!(
+                    "Saved {}; {} other document(s) saved to their own files: {}",
+                    path.display(),
+                    names.len(),
+                    names.join(", ")
+                )));
+            }
+            Err(e) => {
+                self.project = before;
+                self.file_status = Some(Err(format!("Save As: {e}")));
+                self.after_save = None;
+                self.close_ok = false;
+            }
+        }
+    }
+
     fn open_project(&mut self) {
         let path = std::path::PathBuf::from(self.file_path.trim());
         self.file_status = Some(match Project::load(&path) {

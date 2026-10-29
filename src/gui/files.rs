@@ -71,7 +71,8 @@ impl DialogPurpose {
             DialogPurpose::Open | DialogPurpose::LinkFile | DialogPurpose::InsertDocument => {
                 MODEL_EXTS
             }
-            DialogPurpose::SaveAs => &[FILE_EXTENSION],
+            // The active document's kind (`.ccpart`…) or the package.
+            DialogPurpose::SaveAs => MODEL_EXTS,
             DialogPurpose::Extract(_, crate::document::DocumentKind::Part) => &["ccpart"],
             DialogPurpose::Extract(_, crate::document::DocumentKind::Assembly) => &["ccasm"],
             DialogPurpose::Extract(_, crate::document::DocumentKind::Drawing) => &["ccdrw"],
@@ -95,7 +96,7 @@ impl DialogPurpose {
             DialogPurpose::Open | DialogPurpose::LinkFile | DialogPurpose::InsertDocument => {
                 "3DCadCraft files"
             }
-            DialogPurpose::SaveAs => "3DCadCraft project",
+            DialogPurpose::SaveAs => "Part, Assembly, Drawing (one document) or Package (all)",
             DialogPurpose::Extract(_, k) => crate::document::FileType::for_kind(k).name(),
             DialogPurpose::SaveFolder => return "3DCadCraft project folder".into(),
             DialogPurpose::Export(ExportFormat::Stl) => "STL",
@@ -846,7 +847,26 @@ impl CadCraftApp {
             .unwrap_or_else(|| self.project.name.clone());
         let name = match purpose {
             DialogPurpose::Open => String::new(),
-            DialogPurpose::SaveAs => format!("{stem}.{FILE_EXTENSION}"),
+            // Inventor's model: one file per document, named after it; a
+            // package keeps its own name.
+            DialogPurpose::SaveAs => {
+                let doc = self.project.document(self.part_id);
+                let package =
+                    crate::document::FileType::from_path(Path::new(self.file_path.trim()))
+                        == Some(crate::document::FileType::Package);
+                match doc {
+                    Some(d) if !package || self.project.documents().len() > 1 => format!(
+                        "{}.{}",
+                        if package {
+                            d.name.clone()
+                        } else {
+                            stem.clone()
+                        },
+                        crate::document::FileType::for_kind(d.data.kind()).ext()
+                    ),
+                    _ => format!("{stem}.{FILE_EXTENSION}"),
+                }
+            }
             DialogPurpose::SaveFolder => format!("{stem}.{FILE_EXTENSION}"),
             DialogPurpose::Export(f) => format!("{stem}.{}", f.extension()),
             DialogPurpose::Diagnostics => format!(
@@ -1334,10 +1354,7 @@ impl CadCraftApp {
         };
         match d.purpose {
             DialogPurpose::Open => self.open_path(&path),
-            DialogPurpose::SaveAs => {
-                self.file_path = path.display().to_string();
-                self.save_project(false);
-            }
+            DialogPurpose::SaveAs => self.save_as_to(&path),
             DialogPurpose::SaveFolder => {
                 self.file_path = path.display().to_string();
                 self.save_project(true);
