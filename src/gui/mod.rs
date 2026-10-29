@@ -2060,7 +2060,16 @@ impl CadCraftApp {
         let Some((owner, slot)) = self.target_pick.take() else {
             return;
         };
-        let Some(t) = self.target_under(pos, rect) else {
+        // A face of another component (edited in place): a cross-part
+        // reference, added as its own Undo step (the preview needs it).
+        let context = self.context_target_under(pos, rect).map(|(c, _)| {
+            self.checkpoint("Reference Another Component");
+            PlaneRef::Context(self.part_mut().add_context(c))
+        });
+        let Some(t) = context
+            .map(crate::part::TargetRef::Plane)
+            .or_else(|| self.target_under(pos, rect))
+        else {
             self.file_status = Some(Err("Pick a face or a vertex of the model".into()));
             self.target_pick = Some((owner, slot));
             return;
@@ -6841,6 +6850,14 @@ impl CadCraftApp {
             {
                 overlay::draw_face_highlight(&painter, &self.camera, rect, &mesh);
             }
+        }
+        // Extent To: another component's face under the cursor.
+        if self.target_pick.is_some()
+            && let Some(p) = pointer
+            && let Some((_, hover)) = self.context_target_under(p, rect)
+            && let Some(mesh) = self.context_mesh(hover)
+        {
+            overlay::draw_face_highlight(&painter, &self.camera, rect, &mesh);
         }
         // Split's tool selector: the origin planes are shown while it takes
         // planes (Inventor shows them for the pick), the hovered one lit;

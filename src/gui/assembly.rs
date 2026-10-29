@@ -847,7 +847,13 @@ impl CadCraftApp {
     /// [`Self::sketch_plane_under`]) as triangles in the edited part's
     /// coordinates.
     pub(super) fn context_hover_mesh(&self) -> Option<crate::kernel::TriangleMesh> {
-        let (comp, f, t) = self.asm.context_hover?;
+        self.context_mesh(self.asm.context_hover?)
+    }
+
+    /// The face of another component `hover` as triangles in the edited
+    /// part's coordinates.
+    pub(super) fn context_mesh(&self, hover: ContextHover) -> Option<crate::kernel::TriangleMesh> {
+        let (comp, f, t) = hover;
         let mut mesh = self
             .with_part(comp, |p| {
                 p.body
@@ -862,6 +868,21 @@ impl CadCraftApp {
             *n = t * *n;
         }
         Some(mesh)
+    }
+
+    /// A face of another component in front of the part's own faces under
+    /// the cursor, for an extent (Extrude / Revolve *To*, spec 3.10 §3.3).
+    pub(super) fn context_target_under(
+        &self,
+        pos: Pos2,
+        rect: Rect,
+    ) -> Option<(crate::part::context::ContextRef, ContextHover)> {
+        let (t, c, hover) = self.context_face_under(pos, rect)?;
+        let own = self.camera.ray(pos, rect).and_then(|(o, d)| {
+            let d = d.normalize();
+            self.face_hit(&o, &d).map(|(_, t)| t)
+        });
+        own.is_none_or(|o| t < o).then_some((c, hover))
     }
 
     /// `plane` with a pending cross-part reference added to the active part

@@ -334,3 +334,58 @@ fn the_part_opened_alone_builds_from_its_copies() {
     assert!((volume(&alone) - v).abs() < 1e-6);
     assert_eq!(alone.context.len(), top.len());
 }
+
+#[test]
+fn a_post_extruded_to_a_cover_follows_it_up() {
+    use cadcraft3d::part::{PlaneRef, TargetRef};
+    // A 100 × 100 × 10 cover at z 50..60 and a Ø10 post standing at the
+    // origin, extruded To the cover's underside.
+    let cover = PartDocument::with_box("Box1", [100.0, 100.0, 10.0]).unwrap();
+    let (mut p, aid, s, t) = design(
+        cover,
+        Transform3::translation(-50.0, -50.0, 50.0),
+        Transform3::identity(),
+    );
+    let a = asm(&p, aid);
+    let source = ContextSource {
+        assembly: aid,
+        target: vec![2],
+        path: vec![1],
+        face: "Box1:Bottom".into(),
+        edge: None,
+        hint: [50.0, 50.0, 0.0],
+        label: "Source:1 face".into(),
+    };
+    let geom = current(&p, &Linked::new(), &a, &source).unwrap();
+    let tp = part_mut(&mut p, t);
+    let id = tp.add_context(ContextRef {
+        id: String::new(),
+        source,
+        geom,
+    });
+    let i = tp
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    tp.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), 5.0)
+        .unwrap();
+    let rg = tp.sketches[i].sketch.regions();
+    let mut ex = ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 1.0);
+    ex.extent = Extent::To(TargetRef::Plane(PlaneRef::Context(id)));
+    tp.add_extrude(i, ex).unwrap();
+    let (lo, hi) = bbox(part(&p, t));
+    assert!(
+        (lo.z).abs() < 1e-6 && (hi.z - 50.0).abs() < 1e-6,
+        "{lo:?} {hi:?}"
+    );
+    // The cover goes up 20: the post grows to 70 after Update.
+    if let Some(DocumentData::Assembly(a)) = p.document_mut(aid).map(|x| &mut x.data) {
+        a.find_mut(1).unwrap().transform = Transform3::translation(-50.0, -50.0, 70.0);
+    }
+    let r = context::update(&mut p, &Linked::new(), aid);
+    assert_eq!(r.changed, vec![t], "{r:?}");
+    let (_, hi) = bbox(part(&p, t));
+    assert!((hi.z - 70.0).abs() < 1e-6, "{hi:?}");
+    let _ = s;
+}
