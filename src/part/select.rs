@@ -233,6 +233,71 @@ pub fn loop_edges(body: &BRep, f: FaceId, near: Point3) -> Vec<EdgeId> {
         .unwrap_or_default()
 }
 
+/// Whether edge `e` is a free edge: it bounds one face only (a surface's rim, an opening).
+pub fn is_free_edge(body: &BRep, e: EdgeId) -> bool {
+    body.edge_faces(e).len() == 1
+}
+
+/// The free edges joined end to end with free edge `e` (`e` first): the whole boundary loop
+/// of a surface or an opening, across the faces it runs along; with `tangent`, only the run
+/// that goes on smoothly (at most 10° at each joint) — Select Loop and Tangent Chain on a
+/// surface's rim. Empty when `e` is not a free edge.
+pub fn free_chain(body: &BRep, e: EdgeId, tangent: bool) -> Vec<EdgeId> {
+    if !is_free_edge(body, e) {
+        return Vec::new();
+    }
+    let opts = TessellationOptions::default();
+    let free: Vec<EdgeId> = body
+        .edges()
+        .map(|(x, _)| x)
+        .filter(|&x| is_free_edge(body, x))
+        .collect();
+    // The direction an edge leaves vertex `v` in (from its samples).
+    let leaving = |x: EdgeId, v: crate::kernel::VertexId| -> Option<Vector3> {
+        let ed = body.edge(x)?;
+        let pts = body.sample_edge(x, &opts).ok()?;
+        let n = pts.len();
+        if n < 2 {
+            return None;
+        }
+        let d = if ed.start == v {
+            pts[1] - pts[0]
+        } else {
+            pts[n - 2] - pts[n - 1]
+        };
+        d.try_normalize(1e-12)
+    };
+    let smooth =
+        |x: EdgeId, y: EdgeId, v: crate::kernel::VertexId| match (leaving(x, v), leaving(y, v)) {
+            (Some(a), Some(b)) => a.dot(&b) < -(10.0 as Real).to_radians().cos(),
+            _ => false,
+        };
+    let mut out = vec![e];
+    let mut seen: HashSet<EdgeId> = HashSet::from([e]);
+    let mut queue = VecDeque::from([e]);
+    while let Some(x) = queue.pop_front() {
+        let Some(ex) = body.edge(x) else {
+            continue;
+        };
+        for v in [ex.start, ex.end] {
+            for &y in &free {
+                if seen.contains(&y) {
+                    continue;
+                }
+                let Some(ey) = body.edge(y) else {
+                    continue;
+                };
+                if (ey.start == v || ey.end == v) && (!tangent || smooth(x, y, v)) {
+                    seen.insert(y);
+                    out.push(y);
+                    queue.push_back(y);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Feature selection (Select Mode **Feature**): edges where a face of
 /// feature `id` meets a face of another feature.
 pub fn feature_edges(body: &BRep, id: &str) -> Vec<EdgeId> {

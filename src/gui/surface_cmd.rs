@@ -182,52 +182,33 @@ impl CadCraftApp {
         let body = &self.part().body;
         let opts = crate::kernel::TessellationOptions::default();
         let mut out = self.surf_edges(picks);
-        // Every free edge of the model, by the vertices at its ends.
-        let free: Vec<crate::kernel::EdgeId> = body
-            .edges()
-            .filter(|(e, _)| body.edge_faces(*e).len() == 1)
-            .map(|(e, _)| e)
-            .collect();
-        let ends = |e: crate::kernel::EdgeId| body.edge(e).map(|x| (x.start, x.end));
         let mut taken: std::collections::HashSet<crate::kernel::EdgeId> =
             std::collections::HashSet::new();
         for (item, _) in picks {
             let SelItem::Edge(e) = item else {
                 continue;
             };
-            if !free.contains(e) || !taken.insert(*e) {
+            if taken.contains(e) {
                 continue;
             }
-            // Walk from both ends along free edges sharing a vertex.
-            let mut stack = vec![*e];
-            while let Some(x) = stack.pop() {
-                let Some((a, b)) = ends(x) else {
+            let chain = crate::part::select::free_chain(body, *e, false);
+            for (k, y) in chain.into_iter().enumerate() {
+                // The first is the picked edge itself (already in `out`).
+                if !taken.insert(y) || k == 0 {
                     continue;
-                };
-                for &y in &free {
-                    if taken.contains(&y) {
-                        continue;
-                    }
-                    let Some((c, d)) = ends(y) else {
-                        continue;
-                    };
-                    if c == a || c == b || d == a || d == b {
-                        taken.insert(y);
-                        stack.push(y);
-                        let face = body
-                            .edge_faces(y)
-                            .first()
-                            .and_then(|f| body.face(*f))
-                            .and_then(|f| f.name.clone());
-                        if let (Some(face), Ok(pts)) = (face, body.sample_edge(y, &opts))
-                            && let Some(m) = crate::part::select::polyline_middle(&pts)
-                        {
-                            out.push(SurfEdge {
-                                face,
-                                hint: [m.x, m.y, m.z],
-                            });
-                        }
-                    }
+                }
+                let face = body
+                    .edge_faces(y)
+                    .first()
+                    .and_then(|f| body.face(*f))
+                    .and_then(|f| f.name.clone());
+                if let (Some(face), Ok(pts)) = (face, body.sample_edge(y, &opts))
+                    && let Some(m) = crate::part::select::polyline_middle(&pts)
+                {
+                    out.push(SurfEdge {
+                        face,
+                        hint: [m.x, m.y, m.z],
+                    });
                 }
             }
         }

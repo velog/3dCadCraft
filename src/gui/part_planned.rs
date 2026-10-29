@@ -21,6 +21,7 @@ use super::panels::plabel;
 use super::select::SelItem;
 use super::valuefield::ExprValue;
 use crate::command::flow::{Flow, PickKind, Selector, colors};
+use crate::part::select as psel;
 
 /// One option of a panel.
 #[derive(Clone, Copy, Debug)]
@@ -1473,6 +1474,17 @@ pub(super) struct PartDialog {
     pub skeletons: Vec<crate::assembly::frame::Skeleton>,
 }
 
+/// A chain of edges the right-click menu of an open command adds ([`CadCraftApp::chain_edges`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Chain {
+    /// Select Loop: the boundary loop through the edge.
+    Loop,
+    /// Select Tangent Chain: the edges going on smoothly from it.
+    Tangent,
+    /// Select Face Boundary: the outer loop of the face under the cursor.
+    Boundary,
+}
+
 /// Buttons that run something (the rest stay disabled).
 const LIVE_BUTTONS: &[&str] = &["Find Remaining Free Edges", "Browse..."];
 
@@ -1684,6 +1696,30 @@ impl PartDialog {
                 items.push((item, at));
                 self.picks.entry(key).or_default().push(what);
             }
+        }
+    }
+
+    /// Adds part items to the active selector (a chain, a box): those picked already stay
+    /// (none is dropped as a second click would); a selector of one input takes the first.
+    pub(super) fn add_items(&mut self, list: Vec<(String, SelItem, Option<[f64; 3]>)>) {
+        let Some(key) = self.active else {
+            return;
+        };
+        if SINGLE_KEYS.contains(&key) {
+            if let Some((what, item, at)) = list.into_iter().next() {
+                self.pick_item(what, item, at);
+            }
+            return;
+        }
+        let n = self.picks.get(key).map_or(0, Vec::len);
+        let items = self.items.entry(key).or_default();
+        items.truncate(n);
+        for (what, item, at) in list {
+            if items.iter().any(|(x, _)| *x == item) {
+                continue;
+            }
+            items.push((item, at));
+            self.picks.entry(key).or_default().push(what);
         }
     }
 
@@ -2147,6 +2183,76 @@ impl CadCraftApp {
         if let Some(d) = self.part_planned.as_mut() {
             d.pick_item(what, item, at);
         }
+    }
+
+    /// Adds `items` to the planned panel's active selector (those it takes), each with a point
+    /// on it (a chain from the right-click menu, a box).
+    pub(super) fn part_planned_add(&mut self, items: Vec<SelItem>) {
+        let Some(kinds) = self
+            .part_planned
+            .as_ref()
+            .and_then(|d| d.flow().current().map(|s| s.accepts))
+        else {
+            return;
+        };
+        let list: Vec<_> = items
+            .into_iter()
+            .filter(|i| takes(kinds, i))
+            .map(|i| {
+                let what = self.item_label(&i);
+                let at = self.item_point(&i).map(|q| [q.x, q.y, q.z]);
+                (what, i, at)
+            })
+            .collect();
+        if let Some(d) = self.part_planned.as_mut() {
+            d.add_items(list);
+        }
+    }
+
+    /// Whether a drag from empty space is a box for the planned panel: a command with logic
+    /// whose active selector takes faces or edges.
+    pub(super) fn part_planned_box_wanted(&self) -> bool {
+        self.part_planned.as_ref().is_some_and(|d| {
+            d.kind.has_logic()
+                && d.flow().current().is_some_and(|s| {
+                    s.accepts
+                        .iter()
+                        .any(|k| matches!(k, PickKind::Face | PickKind::Edge))
+                })
+        })
+    }
+
+    /// The edges a chain entry of the right-click menu adds, from the edge under the cursor
+    /// when the menu opened (`context_edge`) or the face there: Loop — a free edge's whole
+    /// boundary (across the faces it runs along), else the loop of the face there; Tangent
+    /// Chain — the edges going on smoothly; Face Boundary — the face's outer loop.
+    pub(super) fn chain_edges(&self, chain: Chain) -> Vec<SelItem> {
+        let body = &self.part().body;
+        let face = self.context_face.as_deref().and_then(|n| body.find_face(n));
+        let edges = match (chain, self.context_edge) {
+            (Chain::Loop, Some(e)) if psel::is_free_edge(body, e) => {
+                psel::free_chain(body, e, false)
+            }
+            (Chain::Tangent, Some(e)) if psel::is_free_edge(body, e) => {
+                psel::free_chain(body, e, true)
+            }
+            (Chain::Tangent, Some(e)) => psel::tangent_edges(body, e),
+            (Chain::Loop, Some(e)) => {
+                let faces = self.picker().faces_of(e);
+                let f = face
+                    .filter(|f| faces.contains(f))
+                    .or_else(|| faces.first().copied());
+                match (f, self.item_point(&SelItem::Edge(e))) {
+                    (Some(f), Some(near)) => psel::loop_edges(body, f, near),
+                    _ => Vec::new(),
+                }
+            }
+            (Chain::Boundary, _) => face
+                .map(|f| psel::outer_loop_edges(body, f))
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        edges.into_iter().map(SelItem::Edge).collect()
     }
 
     /// What a click at `p` would give the active selector of the planned panel (also the

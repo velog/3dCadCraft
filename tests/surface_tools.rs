@@ -1108,3 +1108,68 @@ fn trim_removes_several_picked_areas() {
         close(sheet_area(&p), want, 1e-6);
     }
 }
+
+/// The free edge of `p`'s body nearest `at`.
+fn free_edge_near(p: &PartDocument, at: [Real; 3]) -> cadcraft3d::kernel::EdgeId {
+    let opts = cadcraft3d::kernel::TessellationOptions::default();
+    let q = cadcraft3d::kernel::Point3::from(at);
+    let dist = |e| {
+        p.body
+            .sample_edge(e, &opts)
+            .map(|pts| {
+                pts.windows(2)
+                    .map(|w| {
+                        let d = w[1] - w[0];
+                        let t = ((q - w[0]).dot(&d) / d.norm_squared()).clamp(0.0, 1.0);
+                        (w[0] + d * t - q).norm()
+                    })
+                    .fold(Real::MAX, Real::min)
+            })
+            .unwrap_or(Real::MAX)
+    };
+    p.body
+        .edges()
+        .map(|(e, _)| e)
+        .filter(|&e| cadcraft3d::part::select::is_free_edge(&p.body, e))
+        .min_by(|a, b| dist(*a).total_cmp(&dist(*b)))
+        .unwrap()
+}
+
+#[test]
+fn loop_and_tangent_chain_of_a_surface_rim() {
+    // Three walls: the second goes on from the first at under 3°, the third turns square.
+    let mut p = PartDocument::default();
+    wall(
+        &mut p,
+        &[(0.0, 0.0), (10.0, 0.0), (20.0, 0.5), (20.0, 10.0)],
+        5.0,
+    );
+    let free = p
+        .body
+        .edges()
+        .filter(|(e, _)| cadcraft3d::part::select::is_free_edge(&p.body, *e))
+        .count();
+    assert_eq!(
+        free, 8,
+        "3 edges at the bottom, 3 at the top, 2 upright ends"
+    );
+    let e = free_edge_near(&p, [5.0, 0.0, 0.0]);
+    let lp = cadcraft3d::part::select::free_chain(&p.body, e, false);
+    assert_eq!(lp.len(), 8, "Loop: the whole rim");
+    assert_eq!(lp[0], e, "the picked edge first");
+    let tc = cadcraft3d::part::select::free_chain(&p.body, e, true);
+    assert_eq!(
+        tc.len(),
+        2,
+        "Tangent Chain: the bottom of the first two walls"
+    );
+    // An edge between two faces is no free edge: no chain.
+    let opts = cadcraft3d::kernel::TessellationOptions::default();
+    let inner = p
+        .body
+        .edges()
+        .map(|(x, _)| x)
+        .find(|&x| p.body.edge_faces(x).len() == 2 && p.body.sample_edge(x, &opts).is_ok())
+        .unwrap();
+    assert!(cadcraft3d::part::select::free_chain(&p.body, inner, false).is_empty());
+}

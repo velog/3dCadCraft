@@ -10,7 +10,7 @@
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke};
 
 use super::CadCraftApp;
-use crate::command::flow::{EnterAction, Flow, MenuItem, Selector};
+use crate::command::flow::{EnterAction, Flow, MenuItem, PickKind, Selector};
 
 /// Appended to the prompt when every required input is there.
 pub(super) const OR_OK: &str = ", or OK (Enter)";
@@ -416,6 +416,44 @@ impl CadCraftApp {
             Cmd::Sheet => self.sm_menu_options(),
             Cmd::Planned | Cmd::Thicken | Cmd::DeleteFace | Cmd::MoveBodies => Vec::new(),
         };
+        // A surface command's selector of edges: chains from the edge (or face) under the
+        // cursor (Creo's loop / tangent chain / boundary selection).
+        if cmd == Cmd::Planned
+            && self.part_planned.as_ref().is_some_and(|d| {
+                d.kind.has_logic()
+                    && d.flow()
+                        .current()
+                        .is_some_and(|s| s.accepts.contains(&PickKind::Edge))
+            })
+        {
+            use super::part_planned::Chain;
+            let on_face = self.context_face.is_some();
+            let entries = [
+                (Chain::Loop, "Select Loop", self.context_edge.is_some()),
+                (
+                    Chain::Tangent,
+                    "Select Tangent Chain",
+                    self.context_edge.is_some(),
+                ),
+                (Chain::Boundary, "Select Face Boundary", on_face),
+            ];
+            let mut any = false;
+            for (c, label, on) in entries {
+                if !on {
+                    continue;
+                }
+                any = true;
+                if ui.button(label).clicked() {
+                    let items = self.chain_edges(c);
+                    self.part_planned_add(items);
+                    ui.close();
+                    return true;
+                }
+            }
+            if any {
+                ui.separator();
+            }
+        }
         let Some(choice) = command_menu(ui, &flow, !editing, repeat, &options) else {
             return true;
         };

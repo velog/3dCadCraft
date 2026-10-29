@@ -638,6 +638,12 @@ struct CadCraftApp {
     preview_part: std::sync::Arc<std::sync::Mutex<Option<(String, u64, PartDocument)>>>,
     /// Plane under the cursor when the viewport context menu opened.
     context_target: Option<PlaneRef>,
+    /// Edge under the cursor when the viewport context menu opened (an open command's chain
+    /// entries start from it).
+    context_edge: Option<crate::kernel::EdgeId>,
+    /// Face under the cursor then, whatever the pick filter takes (Select Face Boundary of a
+    /// selector of edges).
+    context_face: Option<String>,
 
     file_path: String,
     /// The open file dialog (Open / Save As / Export).
@@ -978,6 +984,8 @@ impl CadCraftApp {
             preview_job: Default::default(),
             preview_part: Default::default(),
             context_target: None,
+            context_edge: None,
+            context_face: None,
             file_path: String::new(),
             file_dialog: None,
             saved_sig: 0,
@@ -5967,6 +5975,12 @@ impl CadCraftApp {
             && let Some(p) = pointer
         {
             self.context_target = self.plane_under(p, rect, false);
+            self.context_edge = self.edge_under(p, rect);
+            self.context_face = self.camera.ray(p, rect).and_then(|(o, d)| {
+                let d = d.try_normalize(1e-12)?;
+                let (f, _) = self.picker().pick(&o, &d)?;
+                self.part().body.face(f).and_then(|x| x.name.clone())
+            });
             self.context_point = self.editing.and_then(|i| {
                 let plane = &self.part().sketches[i].sketch.plane;
                 self.camera
@@ -6427,6 +6441,27 @@ impl CadCraftApp {
                 self.edge_sel = None;
                 self.sel_box(items, add, toggle);
             }
+        }
+        // A planned panel with logic (the surface commands): a box from empty space adds what
+        // the active selector takes (window / crossing, like the idle view).
+        if response.drag_started_by(PointerButton::Primary)
+            && self.manip_drag.is_none()
+            && on_cube.is_none()
+            && self.mouse == MousePreset::Inventor
+            && self.part_planned_box_wanted()
+            && !ui.input(|i| i.key_down(Key::F2) || i.key_down(Key::F3) || i.key_down(Key::F4))
+            && let Some(press) = ui.input(|i| i.pointer.press_origin())
+            && self.part_planned_item_at(press, rect).is_none()
+        {
+            self.box_select = Some(press);
+        }
+        if response.drag_stopped()
+            && self.part_planned.is_some()
+            && let (Some(a), Some(b)) = (self.box_select.take(), pointer)
+            && a.distance(b) > 3.0
+        {
+            let items = self.box_items(rect, a, b);
+            self.part_planned_add(items);
         }
         // Extrude / Revolve: a box from empty space picks profiles (Inventor:
         // window select of several closed profiles).
