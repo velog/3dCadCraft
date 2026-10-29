@@ -174,12 +174,25 @@ pub struct WorkGeom {
     pub points: std::collections::HashMap<String, Point3>,
     /// The planes of the cross-part references (their copies).
     pub context: std::collections::HashMap<String, Plane>,
+    /// The curves of the cross-part references (edges of other components
+    /// projected into sketches).
+    pub context_curves: std::collections::HashMap<String, super::link::Shape3>,
 }
 
 impl WorkGeom {
     /// Nothing computed yet.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The copy `g` of cross-part reference `id`, usable by sketches.
+    pub fn add_context(&mut self, id: &str, g: &super::context::ContextGeom) {
+        if let Some(p) = g.plane() {
+            self.context.insert(id.to_owned(), p.clone());
+        }
+        if let Some(c) = g.curve() {
+            self.context_curves.insert(id.to_owned(), c.shape());
+        }
     }
 }
 

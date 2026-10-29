@@ -862,6 +862,57 @@ fn import_r42() -> PartDocument {
 /// Revision 44: a cross-part reference (a face of another component 10 mm
 /// up, copied into the part) and a Ø8 × 5 cylinder extruded from a sketch on
 /// it.
+/// Revision 47: a sketch projecting another component's circular edge (a
+/// cross-part reference copy, Ø12 at the origin), extruded 4.
+fn context_curve_r47() -> PartDocument {
+    use cadcraft3d::document::DocumentId;
+    use cadcraft3d::kernel::Vector3;
+    use cadcraft3d::part::context::{ContextCurve, ContextGeom, ContextRef, ContextSource};
+    use cadcraft3d::part::{EdgeRef, OriginPlane};
+    let mut p = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.project_context_edge(
+        i,
+        ContextRef {
+            id: String::new(),
+            source: ContextSource {
+                assembly: DocumentId::new_random(),
+                target: vec![2],
+                path: vec![1],
+                face: "Extrusion1:End".into(),
+                edge: Some(EdgeRef {
+                    faces: ["Extrusion1:End".into(), "Extrusion1:Side:1v1:0".into()],
+                    hint: [6.0, 0.0, 40.0],
+                }),
+                hint: [6.0, 0.0, 40.0],
+                label: "Tube:1 edge".into(),
+            },
+            geom: ContextGeom::Curve {
+                curve: ContextCurve::Circle {
+                    center: Point3::origin(),
+                    normal: Vector3::z(),
+                    radius: 6.0,
+                },
+            },
+        },
+        false,
+    )
+    .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    p.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 4.0),
+    )
+    .unwrap();
+    p
+}
+
 fn context_r44() -> PartDocument {
     use cadcraft3d::document::DocumentId;
     use cadcraft3d::kernel::{Plane, Vector3};
@@ -875,6 +926,7 @@ fn context_r44() -> PartDocument {
             target: vec![2],
             path: vec![1],
             face: "Box1:Top".into(),
+            edge: None,
             hint: [5.0, 5.0, 10.0],
             label: "Base:1 face".into(),
         },
@@ -2626,6 +2678,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("SurfacesR37");
             project.add_document("Part1", DocumentData::Part(surfaces_r37()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r47/context_curve_r47.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ContextCurveR47");
+            project.add_document("Part1", DocumentData::Part(context_curve_r47()));
             project.save(&f).unwrap();
         }
         let f = root().join("r46/recognize_r46.3dcadcraft");

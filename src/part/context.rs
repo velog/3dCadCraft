@@ -1,6 +1,7 @@
 //! Cross-part references (spec 3.10 §3.3, T3): geometry of another component
 //! of an assembly that a part was built against while edited in place — a
-//! sketch on another part's face, for now.
+//! sketch on another part's face, and another part's edges projected into a
+//! sketch (format revision 47).
 //!
 //! A reference keeps its source (the assembly, the occurrence paths, the
 //! face's persistent name) **and a copy of the geometry in this part's
@@ -12,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::document::DocumentId;
-use crate::kernel::{Plane, Tolerance};
+use crate::kernel::{Plane, Point3, Tolerance, Transform3, UnitVector3, Vector3};
 
 /// One cross-part reference of a part.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -35,8 +36,12 @@ pub struct ContextSource {
     pub target: Vec<u32>,
     /// Occurrence path of the component the geometry lies on.
     pub path: Vec<u32>,
-    /// The face's persistent name in that component's part.
+    /// The face's persistent name in that component's part (for an edge:
+    /// its first face).
     pub face: String,
+    /// The edge, when the reference is an edge projected into a sketch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<super::EdgeRef>,
     /// A point on the face (the part's coordinates of the source).
     pub hint: [f64; 3],
     /// Shown name, `Base:1 face`.
@@ -52,23 +57,205 @@ pub enum ContextGeom {
         /// The plane.
         plane: Plane,
     },
+    /// An edge (format revision 47), projected into a sketch through
+    /// `LinkSource::Context`.
+    Curve {
+        /// The curve.
+        curve: ContextCurve,
+    },
+}
+
+/// An edge of another component in this part's coordinates.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "curve")]
+pub enum ContextCurve {
+    /// A straight edge from `a` to `b`.
+    Line {
+        /// First end.
+        a: Point3,
+        /// Second end.
+        b: Point3,
+    },
+    /// A whole circle.
+    Circle {
+        /// Centre.
+        center: Point3,
+        /// Axis (unit).
+        normal: Vector3,
+        /// Radius.
+        radius: f64,
+    },
+    /// An arc counter-clockwise about `normal` from `start` to `end`.
+    Arc {
+        /// Centre.
+        center: Point3,
+        /// Axis (unit).
+        normal: Vector3,
+        /// First end.
+        start: Point3,
+        /// Second end.
+        end: Point3,
+    },
+}
+
+impl ContextCurve {
+    /// From a model edge's shape: lines, circles and arcs (other curves are
+    /// refused for now).
+    pub fn of(shape: &super::link::Shape3) -> Result<Self, String> {
+        use super::link::Shape3;
+        Ok(match shape {
+            Shape3::Line(a, b) => ContextCurve::Line { a: *a, b: *b },
+            Shape3::Circle {
+                center,
+                normal,
+                radius,
+            } => ContextCurve::Circle {
+                center: *center,
+                normal: normal.into_inner(),
+                radius: *radius,
+            },
+            Shape3::Arc {
+                center,
+                normal,
+                start,
+                end,
+            } => ContextCurve::Arc {
+                center: *center,
+                normal: normal.into_inner(),
+                start: *start,
+                end: *end,
+            },
+            Shape3::Point(_) | Shape3::Spline { .. } => {
+                return Err(
+                    "only straight and circular edges of other components can be projected for now"
+                        .into(),
+                );
+            }
+        })
+    }
+
+    /// The shape a sketch link projects.
+    pub fn shape(&self) -> super::link::Shape3 {
+        use super::link::Shape3;
+        let unit = |n: &Vector3| UnitVector3::new_normalize(*n);
+        match self {
+            ContextCurve::Line { a, b } => Shape3::Line(*a, *b),
+            ContextCurve::Circle {
+                center,
+                normal,
+                radius,
+            } => Shape3::Circle {
+                center: *center,
+                normal: unit(normal),
+                radius: *radius,
+            },
+            ContextCurve::Arc {
+                center,
+                normal,
+                start,
+                end,
+            } => Shape3::Arc {
+                center: *center,
+                normal: unit(normal),
+                start: *start,
+                end: *end,
+            },
+        }
+    }
+
+    /// The curve moved by `m` (rigid).
+    pub fn moved(&self, m: &Transform3) -> Self {
+        match self {
+            ContextCurve::Line { a, b } => ContextCurve::Line { a: m * a, b: m * b },
+            ContextCurve::Circle {
+                center,
+                normal,
+                radius,
+            } => ContextCurve::Circle {
+                center: m * center,
+                normal: m * normal,
+                radius: *radius,
+            },
+            ContextCurve::Arc {
+                center,
+                normal,
+                start,
+                end,
+            } => ContextCurve::Arc {
+                center: m * center,
+                normal: m * normal,
+                start: m * start,
+                end: m * end,
+            },
+        }
+    }
+
+    fn same_as(&self, other: &ContextCurve) -> bool {
+        let tol = Tolerance::default();
+        let p = |a: &Point3, b: &Point3| tol.points_coincide(a, b);
+        let v = |a: &Vector3, b: &Vector3| (a - b).norm() < tol.angular;
+        match (self, other) {
+            (ContextCurve::Line { a, b }, ContextCurve::Line { a: c, b: d }) => p(a, c) && p(b, d),
+            (
+                ContextCurve::Circle {
+                    center,
+                    normal,
+                    radius,
+                },
+                ContextCurve::Circle {
+                    center: c,
+                    normal: n,
+                    radius: r,
+                },
+            ) => p(center, c) && v(normal, n) && (radius - r).abs() < tol.linear,
+            (
+                ContextCurve::Arc {
+                    center,
+                    normal,
+                    start,
+                    end,
+                },
+                ContextCurve::Arc {
+                    center: c,
+                    normal: n,
+                    start: s,
+                    end: e,
+                },
+            ) => p(center, c) && v(normal, n) && p(start, s) && p(end, e),
+            _ => false,
+        }
+    }
 }
 
 impl ContextGeom {
     /// The plane, for a sketch placed on it.
-    pub fn plane(&self) -> &Plane {
+    pub fn plane(&self) -> Option<&Plane> {
         match self {
-            ContextGeom::Plane { plane } => plane,
+            ContextGeom::Plane { plane } => Some(plane),
+            ContextGeom::Curve { .. } => None,
+        }
+    }
+
+    /// The curve, for a sketch projecting it.
+    pub fn curve(&self) -> Option<&ContextCurve> {
+        match self {
+            ContextGeom::Curve { curve } => Some(curve),
+            ContextGeom::Plane { .. } => None,
         }
     }
 
     /// Whether `other` is the same geometry (Update writes only changes).
     pub fn same_as(&self, other: &ContextGeom) -> bool {
         let tol = Tolerance::default();
-        let (a, b) = (self.plane(), other.plane());
-        tol.points_coincide(&a.origin, &b.origin)
-            && (a.normal.into_inner() - b.normal.into_inner()).norm() < tol.angular
-            && (a.x_axis.into_inner() - b.x_axis.into_inner()).norm() < tol.angular
+        match (self, other) {
+            (ContextGeom::Plane { plane: a }, ContextGeom::Plane { plane: b }) => {
+                tol.points_coincide(&a.origin, &b.origin)
+                    && (a.normal.into_inner() - b.normal.into_inner()).norm() < tol.angular
+                    && (a.x_axis.into_inner() - b.x_axis.into_inner()).norm() < tol.angular
+            }
+            (ContextGeom::Curve { curve: a }, ContextGeom::Curve { curve: b }) => a.same_as(b),
+            _ => false,
+        }
     }
 }
 
@@ -120,9 +307,33 @@ impl super::PartDocument {
             c.id = self.next_context_id();
         }
         let id = c.id.clone();
-        self.work.context.insert(id.clone(), c.geom.plane().clone());
+        self.work.add_context(&id, &c.geom);
         self.context.push(c);
         id
+    }
+
+    /// Project Geometry of another component's edge into sketch `index`
+    /// (spec 3.10 §3.3): the reference `c` (a `ContextGeom::Curve`) is
+    /// added and a link to it made; returns the link's index. Nothing
+    /// changes on failure.
+    pub fn project_context_edge(
+        &mut self,
+        index: usize,
+        c: ContextRef,
+        construction: bool,
+    ) -> Result<usize, super::PartError> {
+        if c.geom.curve().is_none() {
+            return Err(super::PartError::Feature(
+                "Project Geometry: the reference is not an edge".into(),
+            ));
+        }
+        let before = (self.context.clone(), self.work.context_curves.clone());
+        let id = self.add_context(c);
+        let r = self.add_link(index, super::link::LinkSource::Context { id }, construction);
+        if r.is_err() {
+            (self.context, self.work.context_curves) = before;
+        }
+        r
     }
 
     /// Writes new copies (`id`, geometry); `true` when one changed (the
@@ -175,6 +386,7 @@ mod tests {
                 target: vec![2],
                 path: vec![1],
                 face: "Box1:Top".into(),
+                edge: None,
                 hint: [5.0, 5.0, 10.0],
                 label: "Base:1 face".into(),
             },

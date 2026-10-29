@@ -684,12 +684,15 @@ impl PartSketch {
                     .next()
                     .unwrap_or_default()
                     .to_owned(),
-                LinkSource::Work { id } => id.clone(),
+                LinkSource::Work { id } | LinkSource::Context { id } => id.clone(),
             };
             let what = match &l.source {
                 LinkSource::Sketch { .. } => kind.to_owned(),
                 LinkSource::Edge { .. } => format!("edge ({})", kind.to_lowercase()),
                 LinkSource::Work { .. } => format!("work feature ({})", kind.to_lowercase()),
+                LinkSource::Context { .. } => {
+                    format!("edge of another component ({})", kind.to_lowercase())
+                }
             };
             rows.push(Reference {
                 target: match l.curve {
@@ -702,6 +705,7 @@ impl PartSketch {
                         format!("Edge {} / {} ({kind})", edge.faces[0], edge.faces[1])
                     }
                     LinkSource::Work { id } => format!("{id} ({kind})"),
+                    LinkSource::Context { id } => format!("{id} ({kind})"),
                 },
                 ok: l.status.is_none(),
                 points: l.points.clone(),
@@ -1098,11 +1102,9 @@ impl PartDocument {
         use crate::kernel::exact::{ExactSolid, to_brep};
         self.feature_health.clear();
         let mut works = placement::WorkGeom::new();
-        works.context = self
-            .context
-            .iter()
-            .map(|c| (c.id.clone(), c.geom.plane().clone()))
-            .collect();
+        for c in &self.context {
+            works.add_context(&c.id, &c.geom);
+        }
         let mut body = BRep::new();
         // The exact solids so far (exact build only).
         let mut solids: Vec<ExactSolid> = Vec::new();

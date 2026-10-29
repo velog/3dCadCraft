@@ -146,7 +146,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 45: sheet metal Bend (`SheetOp::Bend`) (2026-10-29).
 /// - 46: Convert to Sheet Metal finding an imported sheet's round bends
 ///   (`SheetConvertFeature::recognize`) (2026-10-29).
-pub const FORMAT_REVISION: u32 = 46;
+/// - 47: edges of other components projected into sketches
+///   (`ContextGeom::Curve`, `LinkSource::Context`) (2026-10-29).
+pub const FORMAT_REVISION: u32 = 47;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

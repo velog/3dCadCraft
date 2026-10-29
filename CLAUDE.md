@@ -1204,6 +1204,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (`solve::residuals_at`); nesting the rigid solve inside does not work — it tilts the part to shrink a gap it cannot
   close and the outer step sees no slope. `apply` sums the offsets of one point's x and y unknowns (setting them one
   by one dropped the x). The result is written into the part (rule 8).
+- **Cross-part edges** (revision 47): `ContextGeom::Curve` copies reach sketches through `WorkGeom::context_curves`
+  (`WorkGeom::add_context` fills planes and curves; use it, never insert into `context` by hand) and
+  `LinkSource::Context`. `assembly::context::edge_shape` gives straight edges too (`link::edge_shape` refuses them).
 - **`git stash` is shared by every worktree**: in a worktree with only new (untracked) files, `git stash` saves
   nothing and `stash pop` applies *another session's* stash. Never stash in a shared repo; commit or use a
   scratch branch.

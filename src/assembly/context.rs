@@ -7,7 +7,7 @@ use super::relation::{self, Geom, GeomRef};
 use super::tree::{self, Linked};
 use crate::document::{AssemblyDocument, DocumentData, DocumentId, Project};
 use crate::kernel::{Plane, Point3, Transform3, Vector3};
-use crate::part::context::{ContextGeom, ContextSource};
+use crate::part::context::{ContextCurve, ContextGeom, ContextSource};
 
 /// What an Update changed.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -50,6 +50,14 @@ pub fn current(
     let (src, ts) = placed(project, linked, asm, &source.path)?;
     let part = tree::part_of(project, linked, src.component)
         .ok_or_else(|| format!("{} shows no part", src.name))?;
+    if let Some(edge) = &source.edge {
+        let (_, tt) = placed(project, linked, asm, &source.target)?;
+        let m = tt.inverse() * ts;
+        let curve = ContextCurve::of(&edge_shape(&part.body, edge)?)?;
+        return Ok(ContextGeom::Curve {
+            curve: curve.moved(&m),
+        });
+    }
     let face = GeomRef::Face {
         occurrence: 0,
         sub: Vec::new(),
@@ -158,6 +166,30 @@ pub fn settle(
     Err(total)
 }
 
+/// A model edge as a shape in its part's coordinates: a straight edge as
+/// the segment between its vertices, a circle or arc as itself.
+pub fn edge_shape(
+    body: &crate::kernel::BRep,
+    edge: &crate::part::EdgeRef,
+) -> Result<crate::part::link::Shape3, String> {
+    let e = crate::part::draft::edge_of(body, edge).ok_or_else(|| {
+        format!(
+            "the edge between {} and {} no longer exists",
+            edge.faces[0], edge.faces[1]
+        )
+    })?;
+    if body.edge_direction(e).is_some() {
+        let x = body.edge(e).ok_or("the edge no longer exists")?;
+        let at = |v| {
+            body.vertex(v)
+                .map(|v| v.point)
+                .ok_or("the edge has no ends")
+        };
+        return Ok(crate::part::link::Shape3::Line(at(x.start)?, at(x.end)?));
+    }
+    crate::part::link::edge_shape(body, edge)
+}
+
 /// Update of assembly `asm_id` of `project`: the parts of this design file
 /// placed in it get the current copies of the references made in it.
 pub fn update(project: &mut Project, linked: &Linked, asm_id: DocumentId) -> Report {
@@ -206,6 +238,7 @@ mod tests {
             target: vec![2],
             path: vec![1],
             face: "Box1:Top".into(),
+            edge: None,
             hint: [50.0, 50.0, 10.0],
             label: "Base:1 face".into(),
         };

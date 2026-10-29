@@ -67,6 +67,12 @@ pub enum LinkSource {
         /// The work feature id.
         id: String,
     },
+    /// An edge of another component (format revision 47): the copy of a
+    /// cross-part reference (`PartDocument::context`, spec 3.10 §3.3).
+    Context {
+        /// The reference id (`Context1`…).
+        id: String,
+    },
 }
 
 impl LinkSource {
@@ -74,7 +80,7 @@ impl LinkSource {
     pub fn sketch(&self) -> Option<&str> {
         match self {
             LinkSource::Sketch { sketch, .. } => Some(sketch),
-            LinkSource::Edge { .. } | LinkSource::Work { .. } => None,
+            LinkSource::Edge { .. } | LinkSource::Work { .. } | LinkSource::Context { .. } => None,
         }
     }
 }
@@ -452,6 +458,11 @@ pub fn resolve(
             let plane = sketches.get(i).map(|s| &s.sketch.plane);
             edge_shape_on(body, edge, plane)
         }
+        LinkSource::Context { id } => {
+            works.context_curves.get(id).cloned().ok_or_else(|| {
+                format!("the reference '{id}' to another component no longer exists")
+            })
+        }
     }
 }
 
@@ -744,6 +755,6 @@ pub fn describe_source(source: &LinkSource) -> String {
     match source {
         LinkSource::Sketch { sketch, .. } => sketch.clone(),
         LinkSource::Edge { edge } => format!("Edge {} / {}", edge.faces[0], edge.faces[1]),
-        LinkSource::Work { id } => id.clone(),
+        LinkSource::Work { id } | LinkSource::Context { id } => id.clone(),
     }
 }

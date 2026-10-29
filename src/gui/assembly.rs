@@ -692,6 +692,7 @@ impl CadCraftApp {
             target: edited,
             path,
             face,
+            edge: None,
             hint: [q.x, q.y, q.z],
             label: format!("{label} face"),
         };
@@ -704,6 +705,112 @@ impl CadCraftApp {
                 geom,
             },
             hover,
+        ))
+    }
+
+    /// An edge of another component under the cursor while a part of this
+    /// design file is edited in place (Project Geometry, spec 3.10 §3.3):
+    /// the cross-part reference projecting it makes, and the edge's points
+    /// in the edited part's coordinates. Edges behind a face (the part's
+    /// own or another component's) are skipped; only straight and circular
+    /// edges.
+    pub(super) fn context_edge_under(
+        &self,
+        pos: Pos2,
+        rect: Rect,
+    ) -> Option<(crate::part::context::ContextRef, Vec<Point3>)> {
+        use crate::part::context::{ContextRef, ContextSource};
+        let ip = self.in_place_now().filter(|ip| ip.linked.is_none())?;
+        let (o, d) = self.camera.ray(pos, rect)?;
+        let d = d.try_normalize(1e-12)?;
+        let linked = self.linked();
+        let asm = DocRef::local(ip.assembly);
+        let a = crate::assembly::tree::assembly_of(&self.project, &linked, asm)?;
+        let mut edited = vec![ip.top];
+        edited.extend(&ip.sub);
+        let inv = ip.place.inverse();
+        let leaves: Vec<_> = crate::assembly::tree::leaves(&self.project, &linked, asm, a)
+            .into_iter()
+            .filter(|l| l.path != edited && l.occurrence.pickable())
+            .collect();
+        // The nearest face along the ray: the part's own or another's.
+        let mut front = self.picker().pick(&o, &d).map(|(_, t)| t);
+        for l in &leaves {
+            let to_leaf = (inv * l.world).inverse();
+            if let Some((_, t)) = self
+                .asm_mesh(l.component)
+                .and_then(|m| m.hit(&(to_leaf * o), &(to_leaf * d)))
+                && front.is_none_or(|f| t < f)
+            {
+                front = Some(t);
+            }
+        }
+        let opts = crate::kernel::TessellationOptions::default();
+        // (screen distance, path, edge ref, points in the part's frame)
+        let mut best: Option<(f32, Vec<u32>, crate::part::EdgeRef, Vec<Point3>)> = None;
+        for l in &leaves {
+            let t = inv * l.world;
+            let found = self.with_part(l.component, |p| {
+                let mut mine: Option<(f32, crate::part::EdgeRef, Vec<Point3>)> = None;
+                for e in p.body.visible_edges() {
+                    let Ok(pts) = p.body.sample_edge(e, &opts) else {
+                        continue;
+                    };
+                    let pts: Vec<Point3> = pts.iter().map(|q| t * q).collect();
+                    for w in pts.windows(2) {
+                        let (Some(sa), Some(sb)) = (
+                            self.camera.project(&w[0], rect),
+                            self.camera.project(&w[1], rect),
+                        ) else {
+                            continue;
+                        };
+                        let ab = sb - sa;
+                        let k = ((pos - sa).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+                        let dist = (sa + ab * k).distance(pos);
+                        if dist > super::overlay::EDGE_PICK_PX
+                            || mine.as_ref().is_some_and(|m| m.0 <= dist)
+                        {
+                            continue;
+                        }
+                        let q = super::closest_on_segment(&w[0], &w[1], &o, &d);
+                        let te = (q - o).dot(&d);
+                        if front.is_some_and(|f| f < te - 0.02 * te.abs().max(1.0)) {
+                            continue;
+                        }
+                        if let Some(r) = crate::part::blend::edge_ref(&p.body, e) {
+                            mine = Some((dist, r, pts.clone()));
+                        }
+                    }
+                }
+                mine
+            });
+            if let Some(Some((dist, r, pts))) = found
+                && best.as_ref().is_none_or(|b| dist < b.0)
+            {
+                best = Some((dist, l.path.clone(), r, pts));
+            }
+        }
+        let (_, path, edge, pts) = best?;
+        let (&top, sub) = path.split_first()?;
+        let label = crate::assembly::tree::nested(&self.project, &linked, a, top, sub)
+            .map_or_else(|_| "?".to_owned(), |n| n.name);
+        let source = ContextSource {
+            assembly: ip.assembly,
+            target: edited,
+            path,
+            face: edge.faces[0].clone(),
+            hint: edge.hint,
+            edge: Some(edge),
+            label: format!("{label} edge"),
+        };
+        let geom = crate::assembly::context::current(&self.project, &linked, a, &source).ok()?;
+        Some((
+            ContextRef {
+                id: String::new(),
+                source,
+                geom,
+            },
+            pts,
         ))
     }
 

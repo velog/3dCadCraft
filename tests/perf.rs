@@ -2055,6 +2055,7 @@ fn speed_budgets() {
                 target: vec![k as u32 + 2],
                 path: vec![1],
                 face: "Box1:Top".into(),
+                edge: None,
                 hint: [100.0, 100.0, 10.0],
                 label: "Base:1 face".into(),
             };
@@ -2095,6 +2096,125 @@ fn speed_budgets() {
                 }
                 let r = update(&mut project, &Linked::new(), aid);
                 assert_eq!(r.changed.len(), 20);
+            }),
+        ));
+    }
+
+    // Cross-part edges (spec 3.10 §3.3, revision 47): a gasket whose sketch
+    // projects a 200 mm flange's outline and its 16 bolt-hole rims; the
+    // flange moves and Update re-reads every edge, projects and rebuilds.
+    {
+        use cadcraft3d::assembly::context::{current, update};
+        use cadcraft3d::assembly::tree::Linked;
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentData, Project};
+        use cadcraft3d::kernel::{TessellationOptions, Transform3};
+        use cadcraft3d::part::context::{ContextRef, ContextSource};
+        use cadcraft3d::part::{Extent, OriginPlane, ProfileRef};
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let mut flange = PartDocument::with_box("Box1", [200.0, 200.0, 10.0]).unwrap();
+        let j = flange
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &o)
+            .unwrap();
+        let plane = flange.sketches[j].sketch.plane.clone();
+        for k in 0..16 {
+            let (x, y) = (
+                20.0 + 160.0 * (k % 4) as Real / 3.0,
+                20.0 + 160.0 * (k / 4) as Real / 3.0,
+            );
+            let c = plane.project(&Point3::new(x, y, 10.0));
+            flange.sketches[j].sketch.add_circle(c, 5.0).unwrap();
+        }
+        let rg = flange.sketches[j].sketch.regions();
+        let holes: Vec<ProfileRef> = rg
+            .iter()
+            .filter(|r| r.area() < 100.0)
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let mut cut = ExtrudeFeature::new(holes, 1.0);
+        cut.operation = Operation::Cut;
+        cut.extent = Extent::ThroughAll;
+        cut.direction = ExtentDirection::Flipped;
+        flange.add_extrude(j, cut).unwrap();
+        let opts = TessellationOptions::default();
+        let ids: Vec<_> = flange.body.edges().map(|(e, _)| e).collect();
+        let edges: Vec<_> = ids
+            .into_iter()
+            .filter(|e| {
+                flange
+                    .body
+                    .sample_edge(*e, &opts)
+                    .is_ok_and(|s| s.iter().all(|q| (q.z - 10.0).abs() < 1e-6))
+            })
+            .filter_map(|e| edge_ref(&flange.body, e))
+            .collect();
+        let mut project = Project::new("Gasket");
+        let f = project.add_document("Flange", DocumentData::Part(flange));
+        let g = project.add_document("Gasket", DocumentData::Part(PartDocument::default()));
+        let mut asm = AssemblyDocument::default();
+        asm.place(DocRef::local(f), "Flange", Transform3::identity(), true);
+        asm.place(
+            DocRef::local(g),
+            "Gasket",
+            Transform3::translation(0.0, 0.0, 10.0),
+            false,
+        );
+        let aid = project.add_document("Top", DocumentData::Assembly(asm.clone()));
+        let refs: Vec<ContextRef> = edges
+            .iter()
+            .map(|e| {
+                let source = ContextSource {
+                    assembly: aid,
+                    target: vec![2],
+                    path: vec![1],
+                    face: e.faces[0].clone(),
+                    edge: Some(e.clone()),
+                    hint: e.hint,
+                    label: "Flange:1 edge".into(),
+                };
+                let geom = current(&project, &Linked::new(), &asm, &source).unwrap();
+                ContextRef {
+                    id: String::new(),
+                    source,
+                    geom,
+                }
+            })
+            .collect();
+        let n = refs.len();
+        if let Some(DocumentData::Part(p)) = project.document_mut(g).map(|x| &mut x.data) {
+            let i = p
+                .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+                .unwrap();
+            for c in refs {
+                p.project_context_edge(i, c, false).unwrap();
+            }
+            let rg = p.sketches[i].sketch.regions();
+            let r = rg
+                .iter()
+                .max_by(|a, b| a.area().total_cmp(&b.area()))
+                .unwrap();
+            p.add_extrude(
+                i,
+                ExtrudeFeature::new(vec![ProfileRef::of(r, r.interior_point())], 2.0),
+            )
+            .unwrap();
+        }
+        let mut x = 0.0;
+        rows.push((
+            "assembly: Update of a gasket projecting a flange's outline and 16 hole rims (cross-part edges)",
+            300.0,
+            median_ms(3, || {
+                x += 1.0;
+                if let Some(DocumentData::Assembly(a)) =
+                    project.document_mut(aid).map(|y| &mut y.data)
+                {
+                    a.find_mut(1).unwrap().transform = Transform3::translation(x, 0.0, 0.0);
+                }
+                let r = update(&mut project, &Linked::new(), aid);
+                assert_eq!(r.changed.len(), 1, "{n} edges: {r:?}");
             }),
         ));
     }

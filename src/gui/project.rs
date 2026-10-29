@@ -46,6 +46,13 @@ pub(super) enum ProjPick {
     Face(String),
     /// A work point / axis / plane (by id).
     Work(String),
+    /// An edge of another component while the part is edited in place: the
+    /// cross-part reference it makes and the edge in this part's
+    /// coordinates (spec 3.10 §3.3).
+    Context(
+        Box<crate::part::context::ContextRef>,
+        Vec<crate::kernel::Point3>,
+    ),
 }
 
 impl CadCraftApp {
@@ -110,6 +117,10 @@ impl CadCraftApp {
         if let Some(e) = self.edge_under(p, rect) {
             return Some(ProjPick::Edge(e));
         }
+        // An edge of another component in front of the part's own faces.
+        if let Some((c, pts)) = self.context_edge_under(p, rect) {
+            return Some(ProjPick::Context(Box::new(c), pts));
+        }
         if let Some((o, d)) = self.camera.ray(p, rect)
             && let Some(d) = d.try_normalize(1e-12)
             && let Some((f, _)) = self.face_hit(&o, &d)
@@ -139,7 +150,7 @@ impl CadCraftApp {
                     ProjPick::Edge(e) => crate::part::blend::edge_ref(&self.part().body, e)
                         .map(|edge| LinkSource::Edge { edge }),
                     ProjPick::Work(id) => Some(LinkSource::Work { id }),
-                    ProjPick::Vertex(_) | ProjPick::Face(_) => None,
+                    ProjPick::Vertex(_) | ProjPick::Face(_) | ProjPick::Context(..) => None,
                 };
                 let Some(source) = source else {
                     self.file_status = Some(Err(
@@ -186,6 +197,10 @@ impl CadCraftApp {
                 .project_face(i, &f, construction)
                 .map(|_| ()),
             ProjPick::Work(id) => self.part_mut().project_work(i, &id).map(|_| ()),
+            ProjPick::Context(c, _) => self
+                .part_mut()
+                .project_context_edge(i, *c, construction)
+                .map(|_| ()),
         };
         match r {
             Ok(()) => {
@@ -287,6 +302,13 @@ impl CadCraftApp {
                         painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
                     }
                 }
+            }
+            Some(ProjPick::Context(_, pts)) => {
+                let pts: Vec<Pos2> = pts
+                    .iter()
+                    .filter_map(|q| self.camera.project(q, rect))
+                    .collect();
+                painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
             }
             Some(ProjPick::Edge(e)) => {
                 let opts = crate::kernel::TessellationOptions::default();
