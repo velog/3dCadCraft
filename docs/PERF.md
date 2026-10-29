@@ -26,6 +26,7 @@ Target times for interactive work:
 | Copy Object of every face of the rounded box into one solid (`add_body_op`) | 800 ms | 299 ms (2026-10-29, machine 54 % busy) |
 | Copy Object of every face of the rounded box into surfaces (contiguous sets, `add_body_op`) | 800 ms | 559 ms (2026-10-29, machine 32 % busy; one copy's shared edges give the sets) |
 | Loft between edges: the owner's two trimmed surfaces bridged (`add_loft`, earlier steps cached) | 500 ms | 308 ms (2026-10-29, machine 24 % busy) |
+| Loft between two whole surfaces, Output Solid (4 bridges + sewing, `add_loft`) | 5000 ms | 3352 ms (2026-10-29, machine 67 % busy, others 55 %) |
 | Delete Face with Heal of the 36 hole walls of a plate (`add_body_op`, the step alone) | 300 ms | 39 ms (2026-10-27; 9 s before `faces_named_many` made the mesh once for all references) |
 | Project Cut Edges of a plate with 36 holes (outline + 36 circles) | 60 ms | 1.2 ms (2026-10-27; 7 s through the kernel's split and `to_brep` before the section came from the face triangles + exact surfaces) |
 | Project Geometry of a face with 36 holes (every loop, linked) | 60 ms | 6.5 ms (2026-10-27) |

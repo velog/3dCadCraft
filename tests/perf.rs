@@ -1274,6 +1274,63 @@ fn speed_budgets() {
         ));
     }
 
+    // Loft between two whole surfaces (the owner's Surface_test_3 before its hole) with Output
+    // Solid: one bridge per pair of sides, sewn with the two surfaces into a solid.
+    {
+        use cadcraft3d::document::{DocumentData, Project};
+        use cadcraft3d::part::surface_op::SurfEdge;
+        use cadcraft3d::part::{LoftFeature, LoftSection, Output};
+        let pr = Project::load(std::path::Path::new(
+            "tests/data/surface_test3_owner.3dcadcraft",
+        ))
+        .unwrap();
+        let mut two = pr
+            .documents()
+            .iter()
+            .find_map(|d| match &d.data {
+                DocumentData::Part(p) => Some(p.clone()),
+                _ => None,
+            })
+            .unwrap();
+        two.features.truncate(5);
+        two.eop = None;
+        two.regenerate().unwrap();
+        let opts = cadcraft3d::kernel::TessellationOptions::default();
+        let boundary = |name: &str| {
+            let mut out = Vec::new();
+            for f in cadcraft3d::part::select::faces_of_body(&two.body, name) {
+                let face = two.body.face(f).unwrap();
+                for lp in std::iter::once(&face.outer).chain(&face.inner) {
+                    for ce in &lp.coedges {
+                        if two.body.edge_faces(ce.edge).len() == 1 {
+                            let pts = two.body.sample_edge(ce.edge, &opts).unwrap();
+                            let m = cadcraft3d::part::select::polyline_middle(&pts).unwrap();
+                            out.push(SurfEdge {
+                                face: face.name.clone().unwrap(),
+                                hint: [m.x, m.y, m.z],
+                            });
+                        }
+                    }
+                }
+            }
+            out
+        };
+        let mut def = LoftFeature::new(vec![
+            LoftSection::Edges(boundary("Extrusion2")),
+            LoftSection::Edges(boundary("Extrusion4")),
+        ]);
+        def.output = Output::Solid;
+        rows.push((
+            "loft between two whole surfaces, Output Solid (add_loft)",
+            5000.0,
+            median_ms(3, || {
+                let mut p = two.clone();
+                p.build_cache = two.build_cache.detached();
+                p.add_loft(def.clone()).unwrap();
+            }),
+        ));
+    }
+
     // Face Draft of a box's sides and vertical rounds (one tangent chain
     // from the front), fixed plane XY.
     let mut vertical_rounds = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();

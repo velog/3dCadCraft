@@ -576,18 +576,12 @@ fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge]) -> Result<
         // is the sides' own edges, so the bridge meets both surfaces exactly.
         let (qa, qb) = (side_points(&sa[k])?, side_points(&pb[k])?);
         let surface = ruled_facing(&qa, &qb)?;
-        // Each side gets an edge of its own on the bridge's surface: the B-spline through the
-        // side's points between its corners (the surfaces' own edges are not exactly on the
-        // ruled surface, and a face along a trimmed wavy edge could not be meshed at all).
-        let own = |side: &[mt::Edge], q: &[Vec3]| -> Result<Vec<mt::Edge>> {
-            let (Some(f), Some(l)) = (side.first(), side.last()) else {
-                return Err(KernelError::Invalid("an empty side".into()));
-            };
-            Ok(vec![mt::Edge::new(f.front(), l.back(), mt::Curve::BSplineCurve(interpolated(q)?))])
-        };
-        let mut wire: Vec<mt::Edge> = own(&sa[k], &qa)?;
+        // The bridge's boundary is the surfaces' own edges (its rows run through 256 points of
+        // each, close enough for the mesher), so it shares them exactly: Stitch joins the three
+        // without any gap, and a solid closes.
+        let mut wire: Vec<mt::Edge> = sa[k].clone();
         wire.push(lines[j].clone());
-        wire.extend(own(&pb[k], &qb)?.iter().rev().map(mt::Edge::inverse));
+        wire.extend(pb[k].iter().rev().map(mt::Edge::inverse));
         wire.push(lines[k].inverse());
         let face = mt::Face::try_new(vec![wire.into()], mt::Surface::BSplineSurface(surface))
             .map_err(|e| KernelError::Failed(format!("bridge: {e}")))?;
@@ -637,9 +631,13 @@ fn ruled_facing(qa: &[Vec3], qb: &[Vec3]) -> Result<mt::BSplineSurface<mt::Point
     Ok(mt::BSplineSurface::homotopy(ra, rb))
 }
 
+/// Points per edge a bridge's rows are interpolated through: dense enough that the surfaces' own
+/// edges lie on the bridge within the mesher's tolerance.
+const BRIDGE_POINTS: usize = 256;
+
 /// Points along a side (its chain of edges) whose ends are exactly its end vertices.
 fn side_points(side: &[mt::Edge]) -> Result<Vec<Vec3>> {
-    let mut p = chain_points(side)?;
+    let mut p = chain_points_n(side, BRIDGE_POINTS)?;
     if let (Some(f), Some(l)) = (side.first(), side.last())
         && let Some(k) = p.len().checked_sub(1)
     {
@@ -651,17 +649,21 @@ fn side_points(side: &[mt::Edge]) -> Result<Vec<Vec3>> {
 
 /// Points along a chain of edges (64 per edge, the joints once), in the chain's direction.
 fn chain_points(chain: &[mt::Edge]) -> Result<Vec<Vec3>> {
-    const PER_EDGE: usize = 64;
+    chain_points_n(chain, 64)
+}
+
+/// [`chain_points`] with `per_edge` points per edge.
+fn chain_points_n(chain: &[mt::Edge], per_edge: usize) -> Result<Vec<Vec3>> {
     let mut pts: Vec<Vec3> = Vec::new();
     for e in chain {
         let mut s = crate::plane_fit::EdgeSampler::new(e)
             .ok_or_else(|| KernelError::Invalid("an edge has no parameter range".into()))?;
-        for k in 0..=PER_EDGE {
+        for k in 0..=per_edge {
             if k == 0 && !pts.is_empty() {
                 continue;
             }
             let q = s
-                .at(k as f64 / PER_EDGE as f64)
+                .at(k as f64 / per_edge as f64)
                 .ok_or_else(|| KernelError::Invalid("a point of an edge could not be found".into()))?;
             pts.push(q);
         }

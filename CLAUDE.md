@@ -1242,8 +1242,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Coedge senses in `to_brep`** come from each face's display triangles along the edge's samples. A face meshed with
   its own points on an edge it borrows has none there: it runs the edge the other way from the face that does, else its
   geometry decides (it silently got `Reversed`, and closed shells failed validation "edge … used 0× forward, 2×
-  reversed"). Loft bridges: a face whose boundary edges are not exactly on its surface is not meshed at all (0
-  triangles, a hole in the view) — give a bridge its own edges on its surface, or a surface through the edges' curves.
+  reversed"). Loft bridges: a face whose boundary edges stray from its surface is not meshed at all (0 triangles,
+  a hole in the view): bridge rows run through 256 points of each edge (64 was not enough on a trimmed wavy edge), so
+  the surfaces' own edges can bound them and Stitch / Output Solid close without gaps.
 - **Free edges of surface bodies** (`exact.rs::add_solid`): an edge listed with one face used to be taken for a seam
   (both senses, broken loops, not drawn — surfaces showed no outline). In a surface body it is a free edge when the
   face's triangles run it one way only; in solids the old rule stays (a seam listed once). `s.is_open()` walks every

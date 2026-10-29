@@ -1142,7 +1142,8 @@ fn loft_bridges_the_owners_trimmed_surfaces() {
 
 /// The whole free boundaries of two surfaces as loft sections (the owner's Surface_test_3 before
 /// its hole): one bridge per pair of sides (split at the corners), all of them meshed (the one
-/// along the trimmed wavy edges once had no triangles). Output Solid: not yet (spec 5.4a L3).
+/// along the trimmed wavy edges once had no triangles); they share the surfaces' edges, so Stitch
+/// closes a solid, and Output Solid makes it in one feature.
 #[test]
 fn loft_between_two_whole_surfaces() {
     use cadcraft3d::document::{DocumentData, Project};
@@ -1212,11 +1213,49 @@ fn loft_between_two_whole_surfaces() {
         tris.iter().all(|&n| n > 0),
         "a bridge was not meshed: {tris:?}"
     );
-    // Output Solid is refused for now, with the reason, and nothing changes.
-    let n = p.features.len();
+    // Stitch closes the two surfaces and the bridges into a solid.
+    op(
+        &mut q,
+        BodyOp::Stitch(StitchOp {
+            surfaces: vec!["Extrusion2".into(), "Extrusion4".into(), "Loft1".into()],
+            tolerance: 0.001,
+            keep_surface: false,
+        }),
+    );
+    let stitched = solid_volume(&q);
+    // Output Solid: the same solid in one feature; the two surfaces are used up.
     let mut def = LoftFeature::new(sections);
     def.output = Output::Solid;
-    let e = p.add_loft(def).unwrap_err().to_string();
-    assert!(e.contains("Output Surface"), "{e}");
-    assert_eq!(p.features.len(), n);
+    p.add_loft(def).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    let v = solid_volume(&p);
+    // Between the surfaces: about 35 mm high over about 28 000 mm².
+    assert!(v > 850_000.0 && v < 1_000_000.0, "{v}");
+    close(stitched, v, 1e-6);
+    assert!(
+        p.exact_bodies
+            .0
+            .iter()
+            .all(|s| !matches!(s.name.as_deref(), Some("Extrusion2" | "Extrusion4"))),
+        "the sewn surfaces stay"
+    );
+    // Every face of the solid is meshed and faces out.
+    let solid = p.exact_bodies.0.iter().find(|s| !s.is_open()).unwrap();
+    let b = cadcraft3d::kernel::exact::to_brep(std::slice::from_ref(solid)).unwrap();
+    assert!(
+        b.faces()
+            .all(|(_, f)| f.mesh.as_ref().is_some_and(|m| !m.triangles.is_empty())),
+        "a face of the solid has no triangles"
+    );
+    let inside = |q| cadcraft3d::kernel::exact::contains(solid, q);
+    let tris = solid.triangles().unwrap();
+    for [a, b, c] in tris.iter().step_by(tris.len() / 30 + 1) {
+        if let Some(n) = (b - a).cross(&(c - a)).try_normalize(1e-18) {
+            let m = cadcraft3d::kernel::Point3::from((a.coords + b.coords + c.coords) / 3.0);
+            assert!(
+                !(inside(m + n * 1e-2) && !inside(m - n * 1e-2)),
+                "a face faces in at {m:?}"
+            );
+        }
+    }
 }
