@@ -175,7 +175,17 @@ impl CadCraftApp {
 
     /// Solves the active assembly and moves its components (no Undo step:
     /// call it after the change's checkpoint). `heavy` is being dragged.
+    /// Outside a drag, what other parts build on the moved components
+    /// follows them (cross-part references, [`Self::context_follow`]).
     pub(super) fn asm_solve(&mut self, drag: Option<&asm::Drag>) {
+        self.asm_solve_once(drag);
+        if drag.is_none() {
+            self.context_follow();
+        }
+    }
+
+    /// One solve of the active assembly's constraints and patterns.
+    pub(super) fn asm_solve_once(&mut self, drag: Option<&asm::Drag>) {
         let Some(a) = self.assembly() else {
             return;
         };
@@ -245,6 +255,7 @@ impl CadCraftApp {
         }
         self.cons.last = s;
         self.scene_dirty = true;
+        self.context_follow();
         Ok(())
     }
 

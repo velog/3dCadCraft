@@ -1190,7 +1190,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (filled from the copies at the start of `build_features`; `add_context` fills it at once). Only
   `assembly::context::update` writes copies (on Return from Edit and Manage › Update) — never look a source up while the part
   regenerates. A sketch-plane click on another component is `PlaneRef::Context("")` + `AsmUi::pending_context` until
-  `take_context_plane` adds it after the Undo checkpoint.
+  `take_context_plane` adds it after the Undo checkpoint. `asm_solve` (outside a drag) and `asm_try` end in
+  `context_follow` (Update + solve, ≤ 8 rounds); inside it solve with `asm_solve_once`, never `asm_solve` (recursion).
 - **`git stash` is shared by every worktree**: in a worktree with only new (untracked) files, `git stash` saves
   nothing and `stash pop` applies *another session's* stash. Never stash in a shared repo; commit or use a
   scratch branch.

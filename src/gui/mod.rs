@@ -5189,6 +5189,7 @@ impl CadCraftApp {
                 self.rebuild_all();
             }
             self.import_update_button(ui);
+            self.context_update_button(ui);
             ui.separator();
             // A drawing has no model selection priorities, materials or
             // appearances (Inventor's drawing toolbar shows none of them).
@@ -6832,6 +6833,11 @@ impl CadCraftApp {
                 {
                     overlay::draw_face_highlight(&painter, &self.camera, rect, &mesh);
                 }
+            }
+            if let Some(PlaneRef::Context(_)) = &plane_hover
+                && let Some(mesh) = self.context_hover_mesh()
+            {
+                overlay::draw_face_highlight(&painter, &self.camera, rect, &mesh);
             }
         }
         // Split's tool selector: the origin planes are shown while it takes

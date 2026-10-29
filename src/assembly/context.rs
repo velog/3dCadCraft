@@ -68,22 +68,24 @@ pub fn current(
     Ok(ContextGeom::Plane { plane })
 }
 
-/// Update of assembly `asm_id` of `project`: the parts of this design file
-/// placed in it get the current copies of the references made in it.
-pub fn update(project: &mut Project, linked: &Linked, asm_id: DocumentId) -> Report {
-    let mut report = Report::default();
+/// New copies per part: (part, [(reference id, geometry)]).
+type Writes = Vec<(DocumentId, Vec<(String, ContextGeom)>)>;
+
+/// The current copies of the references made in assembly `asm_id`, part
+/// by part (only those that differ from the stored ones when `changed`),
+/// and the sources that could not be read.
+fn copies(
+    project: &Project,
+    linked: &Linked,
+    asm_id: DocumentId,
+    changed: bool,
+) -> (Writes, Vec<String>) {
+    let mut sick = Vec::new();
     let Some(DocumentData::Assembly(asm)) = project.document(asm_id).map(|d| &d.data) else {
-        return report;
+        return (Vec::new(), sick);
     };
-    let asm = asm.clone();
-    // (part, its new copies), read first, written after.
-    let mut writes: Vec<(DocumentId, Vec<(String, ContextGeom)>)> = Vec::new();
-    for leaf in tree::leaves(
-        project,
-        linked,
-        crate::document::DocRef::local(asm_id),
-        &asm,
-    ) {
+    let mut writes = Vec::new();
+    for leaf in tree::leaves(project, linked, crate::document::DocRef::local(asm_id), asm) {
         if leaf.component.library.is_some() {
             continue;
         }
@@ -96,15 +98,74 @@ pub fn update(project: &mut Project, linked: &Linked, asm_id: DocumentId) -> Rep
             .iter()
             .filter(|c| c.source.assembly == asm_id && c.source.target == leaf.path)
         {
-            match current(project, linked, &asm, &c.source) {
+            match current(project, linked, asm, &c.source) {
+                Ok(g) if changed && g.same_as(&c.geom) => {}
                 Ok(g) => copies.push((c.id.clone(), g)),
-                Err(e) => report.sick.push(format!("{}: {e}", c.source.label)),
+                Err(e) => sick.push(format!("{}: {e}", c.source.label)),
             }
         }
         if !copies.is_empty() {
             writes.push((leaf.component.document, copies));
         }
     }
+    (writes, sick)
+}
+
+/// The references made in assembly `asm_id` whose source moved or changed
+/// since their copies were taken (the Update button's out-of-date state):
+/// their labels.
+pub fn out_of_date(project: &Project, linked: &Linked, asm_id: DocumentId) -> Vec<String> {
+    let (writes, _) = copies(project, linked, asm_id, true);
+    let mut labels = Vec::new();
+    for (doc, cs) in writes {
+        if let Some(DocumentData::Part(p)) = project.document(doc).map(|d| &d.data) {
+            labels.extend(
+                cs.iter()
+                    .filter_map(|(id, _)| p.context_ref(id).map(|c| c.source.label.clone())),
+            );
+        }
+    }
+    labels
+}
+
+/// Most rounds of [`settle`]: a reference whose part moves its own source
+/// (through the constraints) never settles.
+pub const SETTLE_ROUNDS: usize = 8;
+
+/// Update, then `solve` (the assembly's constraints, which may move the
+/// parts just rebuilt), until nothing changes — at most [`SETTLE_ROUNDS`]
+/// rounds. `Err` with the parts still changing when it does not settle.
+pub fn settle(
+    project: &mut Project,
+    linked: &Linked,
+    asm_id: DocumentId,
+    mut solve: impl FnMut(&mut Project),
+) -> Result<Report, Report> {
+    let mut total = Report::default();
+    for _ in 0..SETTLE_ROUNDS {
+        let r = update(project, linked, asm_id);
+        total.sick = r.sick;
+        if r.changed.is_empty() {
+            return Ok(total);
+        }
+        for d in r.changed {
+            if !total.changed.contains(&d) {
+                total.changed.push(d);
+            }
+        }
+        solve(project);
+    }
+    Err(total)
+}
+
+/// Update of assembly `asm_id` of `project`: the parts of this design file
+/// placed in it get the current copies of the references made in it.
+pub fn update(project: &mut Project, linked: &Linked, asm_id: DocumentId) -> Report {
+    let (writes, sick) = copies(project, linked, asm_id, false);
+    let mut report = Report {
+        sick,
+        ..Report::default()
+    };
     for (doc, copies) in writes {
         if let Some(DocumentData::Part(p)) = project.document_mut(doc).map(|d| &mut d.data)
             && p.set_context(&copies)
@@ -185,6 +246,39 @@ mod tests {
         let r = update(&mut p, &Linked::new(), aid);
         assert_eq!(r.changed, vec![n]);
         assert!((sketch_z(&p, n) + 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_moved_source_is_out_of_date_until_update() {
+        let (mut p, aid, _) = design();
+        assert!(out_of_date(&p, &Linked::new(), aid).is_empty());
+        if let Some(DocumentData::Assembly(a)) = p.document_mut(aid).map(|d| &mut d.data) {
+            a.find_mut(1).unwrap().transform = Transform3::translation(0.0, 0.0, 5.0);
+        }
+        assert_eq!(out_of_date(&p, &Linked::new(), aid), vec!["Base:1 face"]);
+        update(&mut p, &Linked::new(), aid);
+        assert!(out_of_date(&p, &Linked::new(), aid).is_empty());
+    }
+
+    #[test]
+    fn settle_stops_when_nothing_changes_and_gives_up_on_a_loop() {
+        let (mut p, aid, n) = design();
+        let lift = |p: &mut Project, dz: f64| {
+            if let Some(DocumentData::Assembly(a)) = p.document_mut(aid).map(|d| &mut d.data) {
+                let o = a.find_mut(1).unwrap();
+                o.transform = Transform3::translation(0.0, 0.0, dz) * o.transform;
+            }
+        };
+        // One move: one round changes the part, the next finds it settled.
+        lift(&mut p, 5.0);
+        let mut solves = 0;
+        let r = settle(&mut p, &Linked::new(), aid, |_| solves += 1).unwrap();
+        assert_eq!((r.changed, solves), (vec![n], 1));
+        assert!((sketch_z(&p, n) + 15.0).abs() < 1e-9);
+        // A "solve" that moves the source every time never settles.
+        lift(&mut p, 1.0);
+        let r = settle(&mut p, &Linked::new(), aid, |p| lift(p, 1.0));
+        assert!(r.is_err());
     }
 
     #[test]

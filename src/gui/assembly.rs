@@ -117,6 +117,16 @@ pub(super) struct AsmUi {
     /// The cross-part reference a sketch-plane click on another component
     /// makes (taken by `plane_picked` after its Undo checkpoint).
     pub pending_context: Option<crate::part::context::ContextRef>,
+    /// The other component's face under the cursor while a sketch plane is
+    /// picked (prehighlight): its component, face and placement in the
+    /// edited part's coordinates.
+    pub context_hover: Option<ContextHover>,
+    /// Why the last Update of cross-part references failed (sick sources,
+    /// an assembly that does not settle); `None` when it went through.
+    pub context_error: Option<String>,
+    /// The references whose source changed since their copies were taken
+    /// (the Quick Access Update button), and when that was last looked at.
+    pub context_stale: (f64, Vec<String>),
     /// Copied occurrences (Ctrl+C): component, placement, name.
     clipboard: Vec<(DocRef, Transform3, String)>,
     /// Isolate: only these occurrences are drawn and picked until Undo
@@ -169,6 +179,10 @@ pub(super) struct LinkedEdit {
 /// The other components while a part is edited in place: grey, see-through.
 const CONTEXT_GREY: [f32; 3] = [0.62, 0.63, 0.66];
 const CONTEXT_ALPHA: f32 = 0.22;
+
+/// The other component's face under the cursor: component, face and its
+/// placement in the edited part's coordinates.
+type ContextHover = (DocRef, crate::kernel::FaceId, Transform3);
 
 impl CadCraftApp {
     /// Forgets the assembly UI state of the document being left (selection,
@@ -478,11 +492,8 @@ impl CadCraftApp {
             // What was built on other components follows them.
             if self.is_assembly() {
                 self.checkpoint("Update");
-                let r = self.context_update();
-                if r.changed.is_empty() && r.sick.is_empty() {
+                if !self.context_follow() {
                     self.history.cancel();
-                } else if !r.sick.is_empty() {
-                    self.file_status = Some(Err(format!("Update: {}", r.sick.join("; "))));
                 }
             }
         }
@@ -626,7 +637,7 @@ impl CadCraftApp {
         &self,
         pos: Pos2,
         rect: Rect,
-    ) -> Option<(f64, crate::part::context::ContextRef)> {
+    ) -> Option<(f64, crate::part::context::ContextRef, ContextHover)> {
         use crate::part::context::{ContextRef, ContextSource};
         let ip = self.in_place_now().filter(|ip| ip.linked.is_none())?;
         let (o, d) = self.camera.ray(pos, rect)?;
@@ -637,7 +648,7 @@ impl CadCraftApp {
         let mut edited = vec![ip.top];
         edited.extend(&ip.sub);
         let inv = ip.place.inverse();
-        let mut best: Option<(f64, Vec<u32>, String, Point3)> = None;
+        let mut best: Option<(f64, Vec<u32>, String, Point3, ContextHover)> = None;
         for l in crate::assembly::tree::leaves(&self.project, &linked, asm, a) {
             if l.path == edited || !l.occurrence.pickable() {
                 continue;
@@ -658,10 +669,11 @@ impl CadCraftApp {
                 })
                 .flatten();
             if let Some(name) = name {
-                best = Some((t, l.path.clone(), name, lo + ld * t));
+                let hover = (l.component, f, inv * l.world);
+                best = Some((t, l.path.clone(), name, lo + ld * t, hover));
             }
         }
-        let (t, path, face, q) = best?;
+        let (t, path, face, q, hover) = best?;
         let (&top, sub) = path.split_first()?;
         let label = crate::assembly::tree::nested(&self.project, &linked, a, top, sub)
             .map_or_else(|_| "?".to_owned(), |n| n.name);
@@ -681,6 +693,7 @@ impl CadCraftApp {
                 source,
                 geom,
             },
+            hover,
         ))
     }
 
@@ -700,8 +713,10 @@ impl CadCraftApp {
             let d = d.normalize();
             self.face_hit(&o, &d).map(|(_, t)| t)
         });
+        self.asm.context_hover = None;
         match ctx {
-            Some((t, c)) if own.is_none() || own_t.is_some_and(|o| t < o) => {
+            Some((t, c, hover)) if own.is_none() || own_t.is_some_and(|o| t < o) => {
+                self.asm.context_hover = Some(hover);
                 if click {
                     self.asm.pending_context = Some(c);
                 }
@@ -709,6 +724,27 @@ impl CadCraftApp {
             }
             _ => own,
         }
+    }
+
+    /// The prehighlighted face of another component (see
+    /// [`Self::sketch_plane_under`]) as triangles in the edited part's
+    /// coordinates.
+    pub(super) fn context_hover_mesh(&self) -> Option<crate::kernel::TriangleMesh> {
+        let (comp, f, t) = self.asm.context_hover?;
+        let mut mesh = self
+            .with_part(comp, |p| {
+                p.body
+                    .face_mesh(f, &crate::kernel::TessellationOptions::default())
+                    .ok()
+            })
+            .flatten()?;
+        for q in &mut mesh.positions {
+            *q = t * *q;
+        }
+        for n in &mut mesh.normals {
+            *n = t * *n;
+        }
+        Some(mesh)
     }
 
     /// `plane` with a pending cross-part reference added to the active part
@@ -723,14 +759,81 @@ impl CadCraftApp {
     }
 
     /// Update of the cross-part references made in the active assembly
-    /// (spec 3.10 §3.3): changed copies are written, their parts rebuilt.
-    pub(super) fn context_update(&mut self) -> crate::assembly::context::Report {
-        let linked = self.linked();
-        let r = crate::assembly::context::update(&mut self.project, &linked, self.part_id);
-        if !r.changed.is_empty() {
-            self.scene_dirty = true;
+    /// (spec 3.10 §3.3): changed copies are written, their parts rebuilt
+    /// and the constraints solved again, until nothing changes (at most
+    /// `SETTLE_ROUNDS`, as `assembly::context::settle`). No Undo step (call
+    /// it after the change's checkpoint); `true` when a part changed.
+    /// Failures go to `context_error` and the status bar.
+    pub(super) fn context_follow(&mut self) -> bool {
+        use crate::assembly::context;
+        if !self.is_assembly() {
+            return false;
         }
-        r
+        let linked = self.linked();
+        let mut changed = false;
+        self.asm.context_error = None;
+        self.asm.context_stale.0 = f64::NEG_INFINITY;
+        for _ in 0..context::SETTLE_ROUNDS {
+            let r = context::update(&mut self.project, &linked, self.part_id);
+            if !r.sick.is_empty() {
+                self.asm.context_error = Some(format!("Update: {}", r.sick.join("; ")));
+            }
+            if r.changed.is_empty() {
+                if let Some(e) = &self.asm.context_error {
+                    self.file_status = Some(Err(e.clone()));
+                }
+                return changed;
+            }
+            changed = true;
+            self.scene_dirty = true;
+            self.asm_solve_once(None);
+        }
+        let still = context::out_of_date(&self.project, &linked, self.part_id);
+        let e = format!(
+            "Update: the assembly does not settle ({})",
+            still.join(", ")
+        );
+        self.file_status = Some(Err(e.clone()));
+        self.asm.context_error = Some(e);
+        changed
+    }
+
+    /// The Quick Access toolbar's Update button of an assembly: shown while
+    /// a cross-part reference is out of date (its source changed, e.g. in
+    /// its own tab), checked once a second. Click: Update.
+    pub(super) fn context_update_button(&mut self, ui: &mut egui::Ui) {
+        if !self.is_assembly() {
+            return;
+        }
+        let now = ui.input(|i| i.time);
+        if now - self.asm.context_stale.0 > 1.0 || now < self.asm.context_stale.0 {
+            let linked = self.linked();
+            self.asm.context_stale = (
+                now,
+                crate::assembly::context::out_of_date(&self.project, &linked, self.part_id),
+            );
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(1));
+        }
+        let stale = &self.asm.context_stale.1;
+        if stale.is_empty() {
+            return;
+        }
+        let tip = format!(
+            "Out of date: {} changed since it was referenced. Update rebuilds the parts built on it",
+            stale.join(", ")
+        );
+        if ui
+            .button(
+                egui::RichText::new("Update")
+                    .color(ui.visuals().warn_fg_color)
+                    .strong(),
+            )
+            .on_hover_text(tip)
+            .clicked()
+        {
+            self.update_assembly();
+        }
     }
 
     /// The other components around a part edited in place: see-through and
@@ -938,10 +1041,9 @@ impl CadCraftApp {
         }
         self.checkpoint("Update");
         self.asm_solve(None);
-        let ctx = self.context_update();
         self.scene_dirty = true;
-        if !ctx.sick.is_empty() {
-            self.file_status = Some(Err(format!("Update: {}", ctx.sick.join("; "))));
+        if let Some(e) = self.asm.context_error.clone() {
+            self.file_status = Some(Err(e));
             return;
         }
         let sick = self.cons.last.sick.len();
