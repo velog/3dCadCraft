@@ -5,6 +5,7 @@ this project's `MIT OR Apache-2.0`.
 
 | What | Source | Licence | How it is used |
 |---|---|---|---|
+| `.claude/skills/nielsen-heuristics-audit`, `.claude/skills/cognitive-walkthrough` | mastepanoski/claude-skills, https://github.com/mastepanoski/claude-skills (commit `1284e72c97e6e8b1ec4bde3bc959370585fb8d8a`) | MIT (`.claude/skills/LICENSE-mastepanoski.txt`) | agent skills copied unchanged; applied to our UI by `.claude/skills/cad-ux-review` |
 | `solidcraft-kernel`, `solidcraft-geom` | SolidCraft, https://github.com/bherbruck/solidcraft (commit `4687e3b0734e41d761be0d0a2611e5402f088348`) | MIT OR Apache-2.0 | dependency: exact B-rep operations (extrude, revolve, Booleans, fillet, chamfer, …), behind `kernel::exact` |
 | `vendor/solidcraft-kernel` | SolidCraft `crates/kernel` (same commit), copied whole with our speed fixes for large patterns, a curved-seam fix in `curveblend.rs` and two loft entry points of ours on its smooth loft (`loft_matched`, `loft_matched_ring` in `build.rs`), and a fix keeping the history of faceted Booleans (all listed in `vendor/README.md`) | MIT OR Apache-2.0 (licence files in the folder) | replaces the git dependency through `[patch]` in `Cargo.toml` |
 | `src/part/measure.rs` (closest pair, edge densify, triangle projection) | SolidCraft `crates/engine/src/cmd/measure_sel.rs` (same commit) | MIT OR Apache-2.0 | adapted to our B-rep, with analytic values and box pruning added |
