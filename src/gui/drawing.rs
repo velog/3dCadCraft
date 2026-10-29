@@ -276,6 +276,10 @@ pub(super) struct DrwUi {
     pub ann_part: super::drawing_annot::DragPart,
     /// A section line's grip being dragged.
     pub section_drag: Option<super::drawing_section::SectionGrip>,
+    /// Points the pointer rested on while drawing or dragging a section
+    /// line (sheet mm, newest last): the cursor then snaps to the
+    /// horizontal / vertical through them (point tracking).
+    pub section_track: Vec<[f64; 2]>,
     /// The Text window.
     pub text_dialog: Option<super::drawing_annot::TextDialog>,
     /// The PDF options window (kept until the file is written).

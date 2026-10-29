@@ -13,6 +13,39 @@ use crate::drawing::{SCALES, ViewKind};
 
 const PREVIEW: Color32 = Color32::from_rgb(60, 140, 90);
 const PICKED: Color32 = Color32::from_rgb(40, 120, 230);
+/// A tracking guide: from a tracked point to the snapped pointer (sheet
+/// mm).
+type Guide = ([f64; 2], [f64; 2]);
+
+/// Tracked points of a section line (the newest are kept).
+const TRACKED: usize = 3;
+/// Screen distance at which the pointer snaps to a tracked point's
+/// horizontal / vertical (pixels).
+const TRACK_PX: f64 = 8.0;
+
+/// Draws the tracking guides (dotted, from the tracked point) and marks
+/// the tracked points.
+fn paint_tracking(
+    painter: &egui::Painter,
+    to: impl Fn([f64; 2]) -> egui::Pos2,
+    track: &[[f64; 2]],
+    guides: &[Guide],
+) {
+    for t in track {
+        let c = to(*t);
+        let s = Stroke::new(1.0, PREVIEW);
+        painter.line_segment([c + egui::vec2(-4.0, 0.0), c + egui::vec2(4.0, 0.0)], s);
+        painter.line_segment([c + egui::vec2(0.0, -4.0), c + egui::vec2(0.0, 4.0)], s);
+    }
+    for (a, b) in guides {
+        painter.extend(egui::Shape::dotted_line(
+            &[to(*a), to(*b)],
+            PREVIEW,
+            6.0,
+            1.0,
+        ));
+    }
+}
 
 /// Section View in progress: the line's points so far (sheet mm) and
 /// whether the line is finished.
@@ -133,6 +166,9 @@ impl CadCraftApp {
         // A point snapped as a sketch point: end points, centres, the middle
         // of a straight edge.
         let snapped = pointer.map(|p| self.section_snap(views, rect, p));
+        if !matches!(tool, DrwTool::Section(_)) {
+            self.drw.section_track.clear();
+        }
         match tool {
             DrwTool::Section(mut d) => {
                 let Some(parent) = d.parent else {
@@ -152,16 +188,17 @@ impl CadCraftApp {
                     for w in d.pts.windows(2) {
                         painter.line_segment([to(w[0]), to(w[1])], Stroke::new(2.0, PICKED));
                     }
-                    if let Some(mut q) = snapped {
-                        match d.pts.last().copied() {
-                            None => {
-                                painter.circle_filled(to(q), 4.0, PREVIEW);
-                            }
-                            Some(last) => {
-                                hv(&mut q, last);
-                                painter.line_segment([to(last), to(q)], Stroke::new(2.0, PREVIEW));
-                            }
+                    if let Some(p) = pointer {
+                        let last = d.pts.last().copied();
+                        let (q, on_geometry, guides) = self.section_point(views, rect, p, last);
+                        paint_tracking(painter, to, &self.drw.section_track, &guides);
+                        if let Some(last) = last {
+                            painter.line_segment([to(last), to(q)], Stroke::new(2.0, PREVIEW));
                         }
+                        if on_geometry {
+                            painter.circle_stroke(to(q), 6.0, Stroke::new(1.5, PICKED));
+                        }
+                        painter.circle_filled(to(q), 3.0, PREVIEW);
                         let enter = response.hovered()
                             && painter.ctx().input(|i| i.key_pressed(egui::Key::Enter));
                         if response.double_clicked() || enter {
@@ -390,9 +427,20 @@ impl CadCraftApp {
         rect: Rect,
         pointer: egui::Pos2,
     ) -> [f64; 2] {
+        self.section_snap_at(views, rect, pointer).0
+    }
+
+    /// [`Self::section_snap`] and whether the point is a point of the view
+    /// geometry (an end point, a centre, a middle).
+    fn section_snap_at(
+        &self,
+        views: &[ShownView],
+        rect: Rect,
+        pointer: egui::Pos2,
+    ) -> ([f64; 2], bool) {
         let cam = self.drw.cam;
         if let Some(q) = self.point_under(views, rect, pointer) {
-            return q;
+            return (q, true);
         }
         let at = cam.to_sheet(rect, pointer);
         if let Some((vid, a, b)) = self.straight_edge_under(views, rect, pointer)
@@ -400,9 +448,69 @@ impl CadCraftApp {
             && let Some(m) = from_view(v, [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5])
             && (m[0] - at[0]).hypot(m[1] - at[1]) * cam.zoom < 10.0
         {
-            return m;
+            return (m, true);
         }
-        at
+        (at, false)
+    }
+
+    /// A section line's next point under the pointer, as the sketch's Line
+    /// tool places it: a point of the view geometry is taken as it is (and
+    /// remembered for tracking); elsewhere the pointer snaps to the vertical
+    /// and horizontal through the remembered points and through `last`
+    /// (the line's previous point; within 4° of horizontal / vertical as
+    /// well). Returns the point, whether it is a geometry point, and the
+    /// guide lines to draw (from a tracked point to the result).
+    pub(super) fn section_point(
+        &mut self,
+        views: &[ShownView],
+        rect: Rect,
+        pointer: egui::Pos2,
+        last: Option<[f64; 2]>,
+    ) -> ([f64; 2], bool, Vec<Guide>) {
+        let (mut q, on_geometry) = self.section_snap_at(views, rect, pointer);
+        let track = &mut self.drw.section_track;
+        if on_geometry {
+            if !track
+                .iter()
+                .any(|t| (t[0] - q[0]).hypot(t[1] - q[1]) < 1e-6)
+            {
+                track.push(q);
+                if track.len() > TRACKED {
+                    track.remove(0);
+                }
+            }
+            return (q, true, Vec::new());
+        }
+        let tol = TRACK_PX / self.drw.cam.zoom;
+        let sources: Vec<[f64; 2]> = track.iter().rev().copied().chain(last).collect();
+        let mut guides = Vec::new();
+        let mut axis_from: [Option<[f64; 2]>; 2] = [None, None];
+        for i in 0..2 {
+            let best = sources
+                .iter()
+                .filter(|s| (s[i] - q[i]).abs() < tol)
+                .min_by(|a, b| (a[i] - q[i]).abs().total_cmp(&(b[i] - q[i]).abs()));
+            if let Some(s) = best {
+                q[i] = s[i];
+                axis_from[i] = Some(*s);
+            }
+        }
+        // The previous point: within 4° of horizontal / vertical.
+        if let Some(l) = last
+            && axis_from.iter().all(Option::is_none)
+        {
+            let before = q;
+            hv(&mut q, l);
+            for i in 0..2 {
+                if q[i] != before[i] {
+                    axis_from[i] = Some(l);
+                }
+            }
+        }
+        for s in axis_from.into_iter().flatten() {
+            guides.push((s, q));
+        }
+        (q, false, guides)
     }
 
     /// Section lines on their parents: hovering a line shows its grips (its
@@ -474,13 +582,16 @@ impl CadCraftApp {
             let n = pts.len();
             if let (Some(p), Some(q)) = (pointer, at) {
                 if g.which < n {
-                    let mut s = self.section_snap(views, rect, p);
                     let other = if g.which > 0 {
                         pts[g.which - 1]
                     } else {
                         pts[1]
                     };
-                    hv(&mut s, other);
+                    let (s, on_geometry, guides) = self.section_point(views, rect, p, Some(other));
+                    paint_tracking(painter, to, &self.drw.section_track, &guides);
+                    if on_geometry {
+                        painter.circle_stroke(to(s), 6.0, Stroke::new(1.5, PICKED));
+                    }
                     pts[g.which] = s;
                 } else {
                     let k = g.which - n;
@@ -502,6 +613,7 @@ impl CadCraftApp {
             }
             if response.drag_stopped() {
                 self.drw.section_drag = None;
+                self.drw.section_track.clear();
                 let ok = pts
                     .windows(2)
                     .all(|w| (w[0][0] - w[1][0]).hypot(w[0][1] - w[1][1]) > 1.0);
