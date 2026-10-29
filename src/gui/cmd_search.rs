@@ -98,7 +98,12 @@ impl CadCraftApp {
             }
         }
         let env = self.search_env();
-        let hits = commands::search(&self.cmd_search.text, env, &self.recent_commands);
+        let hits = commands::search_in(
+            &self.cmd_search.text,
+            env,
+            &self.recent_commands,
+            &self.keymap,
+        );
         let hits: Vec<_> = hits.into_iter().take(ROWS).collect();
         if hits.is_empty() {
             if !self.cmd_search.text.trim().is_empty() {
@@ -174,7 +179,7 @@ impl CadCraftApp {
                                         .frame(k == current)
                                         .min_size(egui::vec2(200.0, 0.0)),
                                 );
-                                if let Some(key) = h.cmd.shown_key() {
+                                if let Some(key) = self.keymap.shown_key(h.cmd) {
                                     ui.label(RichText::new(key).monospace().weak());
                                 }
                                 ui.label(RichText::new(h.cmd.path()).small().weak());

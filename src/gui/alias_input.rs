@@ -272,10 +272,11 @@ impl CadCraftApp {
         } else {
             commands::Env::Part
         };
-        let hits: Vec<_> = commands::search(&self.alias.text, env, &self.recent_commands)
-            .into_iter()
-            .take(ROWS)
-            .collect();
+        let hits: Vec<_> =
+            commands::search_in(&self.alias.text, env, &self.recent_commands, &self.keymap)
+                .into_iter()
+                .take(ROWS)
+                .collect();
         let n = hits.len().max(1);
         if down {
             self.alias.row = (self.alias.row + 1) % n;
@@ -338,7 +339,7 @@ impl CadCraftApp {
                                 t = t.color(Color32::GRAY);
                             }
                             let b = ui.add(egui::Button::new(t).frame(k == current));
-                            if let Some(key) = h.cmd.shown_key() {
+                            if let Some(key) = self.keymap.shown_key(h.cmd) {
                                 ui.label(RichText::new(key).monospace().weak());
                             }
                             ui.label(RichText::new(h.cmd.path()).small().weak());

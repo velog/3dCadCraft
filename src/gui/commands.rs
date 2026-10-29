@@ -2626,11 +2626,16 @@ fn index() -> &'static [Folded] {
 
 /// A command's texts for the matcher.
 fn fold_command(c: &Command) -> Folded {
+    fold_with(c, c.aliases, c.key)
+}
+
+/// [`fold_command`] with other aliases and key (the user's, Customize).
+fn fold_with(c: &Command, aliases: &[&str], key: Option<&str>) -> Folded {
     let mut names = vec![c.name, c.bg];
     names.extend(c.inventor);
     names.extend(c.label);
-    let mut aliases = c.aliases.to_vec();
-    aliases.extend(c.key);
+    let mut aliases = aliases.to_vec();
+    aliases.extend(key);
     Folded::new(&Fields {
         aliases: &aliases,
         names: &names,
@@ -2689,12 +2694,33 @@ pub fn alias_match_in(buf: &str, env: Env, keymap: &super::keymap::Keymap) -> Al
 }
 
 pub fn search(query: &str, env: Env, recent: &[String]) -> Vec<Hit> {
+    search_in(query, env, recent, &super::keymap::Keymap::default())
+}
+
+/// [`search`] by the user's aliases and keys (`keymap`) as well as the
+/// names: a command the user changed is matched by its current aliases.
+pub fn search_in(
+    query: &str,
+    env: Env,
+    recent: &[String],
+    keymap: &super::keymap::Keymap,
+) -> Vec<Hit> {
     let q = Query::new(query);
     let mut hits: Vec<Hit> = COMMANDS
         .iter()
         .zip(index())
         .filter_map(|(cmd, folded)| {
             let r = recent.iter().position(|id| id == cmd.id);
+            let own;
+            let folded = if keymap.changed(cmd.id) {
+                let aliases = keymap.aliases_of(cmd);
+                let aliases: Vec<&str> = aliases.iter().map(String::as_str).collect();
+                let key = keymap.key_of(cmd);
+                own = fold_with(cmd, &aliases, key.as_deref());
+                &own
+            } else {
+                folded
+            };
             let (tier, score) = matcher::rank(&q, folded, r)?;
             Some(Hit {
                 cmd,

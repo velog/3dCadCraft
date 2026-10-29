@@ -68,6 +68,20 @@ impl Keymap {
         }
     }
 
+    /// [`Command::shown_key`] with the user's keys: the shortcut, else the
+    /// first alias.
+    pub fn shown_key(&self, c: &Command) -> Option<String> {
+        if !self.changed(c.id) {
+            return c.shown_key().map(str::to_owned);
+        }
+        (c.bound || c.ready())
+            .then(|| {
+                self.key_of(c)
+                    .or_else(|| self.aliases_of(c).into_iter().next())
+            })
+            .flatten()
+    }
+
     /// Whether the user changed anything of `c`.
     pub fn changed(&self, id: &str) -> bool {
         self.aliases.contains_key(id) || self.keys.contains_key(id)
@@ -520,7 +534,11 @@ impl CadCraftApp {
                         .keymap
                         .aliases_of(c)
                         .iter()
-                        .any(|a| a.to_lowercase() == q)
+                        .any(|a| a.to_lowercase().starts_with(&q))
+                    || self
+                        .keymap
+                        .key_of(c)
+                        .is_some_and(|k| k.to_lowercase().contains(&q))
             })
             .collect();
         egui::ScrollArea::vertical()
@@ -782,5 +800,24 @@ mod tests {
         // Serde keeps only what changed.
         let json = serde_json::to_string(&k).unwrap_or_default();
         assert_eq!(json, r#"{"keys":{"part.fillet":"Ctrl+Shift+F"}}"#);
+    }
+    /// The alias field and Alt+S find a command by the user's alias and by
+    /// its whole name alike.
+    #[test]
+    fn search_takes_user_aliases_and_names() {
+        let mut k = Keymap::default();
+        let shell = cmd("part.shell");
+        k.set_aliases(shell, "Q");
+        let first = |q: &str, k: &Keymap| {
+            commands::search_in(q, Env::Part, &[], k)
+                .first()
+                .map(|h| h.cmd.id)
+        };
+        assert_eq!(first("q", &k), Some("part.shell"));
+        assert_eq!(first("shell", &k), Some("part.shell"));
+        assert_eq!(first("sh", &Keymap::default()), Some("part.shell"));
+        // Without the default alias the old one no longer finds it first.
+        assert_ne!(first("sh", &k), Some("part.shell"));
+        assert_eq!(first("fillet", &k), Some("part.fillet"));
     }
 }
