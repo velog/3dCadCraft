@@ -317,7 +317,7 @@ impl PartPlanned {
             Derive => {
                 "Inserts another part or assembly as a linked base (bodies, sketches, parameters)."
             }
-            Import => "Brings STEP, IGES, SAT, STL or OBJ data in as bodies.",
+            Import => "Brings a STEP file's solids and surfaces in as one base feature.",
             Unwrap => "Flattens a group of faces into a flat surface.",
             Direct => "Moves, resizes, scales, rotates or deletes faces without history.",
             CopyObject => "Copies or moves faces or bodies into a surface, composite or solid.",
@@ -456,28 +456,38 @@ impl PartPlanned {
             ],
             Import => &[
                 Page(
-                    "Import",
+                    "Options",
                     &[
                         Button("Browse..."),
                         Text("File", ""),
-                        Radio("Mode", &["Reference Model", "Convert Model"], 1),
-                        Combo("Units", &["From the file", "mm", "in"], 0),
+                        Radio("Import Type", &["Reference Model", "Convert Model"], 1),
+                        Head("Object Filters"),
+                        Check("Solids", true),
+                        Check("Surfaces", true),
+                        Check("Meshes", false),
+                        Check("Graphical PMI", false),
+                        Check("Wires", false),
+                        Check("Work Features", false),
+                        Check("Points", false),
+                        Check("UCS", false),
+                        Combo("Length Units", &["mm", "cm", "m", "in", "ft"], 0),
+                        Head("Assembly"),
+                        Radio(
+                            "Import as",
+                            &["Assembly", "Multi-body part", "Composite Part"],
+                            1,
+                        ),
+                        Head("Part"),
+                        Radio("Surfaces as", &["Composite", "Individual"], 1),
+                        Check("Stitch", false),
                         Radio("Placement", &["At the origin", "Pick a point"], 0),
                     ],
                 ),
                 Page(
-                    "Objects",
-                    &[
-                        Check("Solids", true),
-                        Check("Surfaces", true),
-                        Check("Wires", false),
-                        Check("Work Planes", false),
-                        Check("Work Axes", false),
-                        Check("Work Points", false),
-                        Check("Points", false),
-                        Radio("Surfaces as", &["One composite", "Individual surfaces"], 0),
-                        Check("Check imported data", true),
-                    ],
+                    "Select",
+                    &[Note(
+                        "Every body of the file is imported (selective import: spec 7.7a 3.8)",
+                    )],
                 ),
             ],
             Unwrap => &[Page(
@@ -1314,6 +1324,7 @@ impl Planned {
                     | PartPlanned::ReplaceFace
                     | PartPlanned::Sculpt
                     | PartPlanned::CopyObject
+                    | PartPlanned::Import
             )
         )
     }
@@ -1330,6 +1341,30 @@ impl Planned {
                     "Only when editing a part in an assembly (spec 2.13 Copy Object); ",
                     "in a part a copy always follows its source"
                 ))
+            }
+            (Planned::Part(PartPlanned::Import), "Import Type", Some("Reference Model")) => {
+                Some("Comes with Update of a changed file (spec 7.7a 3.2, stage I3)")
+            }
+            (
+                Planned::Part(PartPlanned::Import),
+                "Meshes" | "Graphical PMI" | "Wires" | "Work Features" | "Points" | "UCS",
+                None,
+            ) => Some("The STEP reader skips these yet (spec 7.7a 3.4)"),
+            (Planned::Part(PartPlanned::Import), "Length Units", None) => Some(concat!(
+                "The geometry is converted from the file's units to mm ",
+                "(document units: spec 7.7a 3.5)"
+            )),
+            (
+                Planned::Part(PartPlanned::Import),
+                "Import as",
+                Some("Assembly" | "Composite Part"),
+            ) => Some("In a part every body comes in as a body of it (spec 7.7a 3.6, stage I2)"),
+            (Planned::Part(PartPlanned::Import), "Surfaces as", Some("Composite"))
+            | (Planned::Part(PartPlanned::Import), "Stitch", None) => {
+                Some("Each open shell is one surface body (spec 7.7a 3.7)")
+            }
+            (Planned::Part(PartPlanned::Import), "Placement", Some("Pick a point")) => {
+                Some("Bodies come in at the file's origin (spec 7.7a 3.13)")
             }
             _ => None,
         }
@@ -1408,6 +1443,8 @@ pub(super) struct PartDialog {
     pub pressed: Option<&'static str>,
     /// A result line the command shows in its panel (free edges found…).
     pub note: Option<String>,
+    /// Import: the STEP text Browse... read (Edit Feature without it keeps the embedded one).
+    pub file_text: Option<std::sync::Arc<str>>,
 }
 
 /// Buttons that run something (the rest stay disabled).
@@ -1486,6 +1523,7 @@ impl PartDialog {
             feature: None,
             pressed: None,
             note: None,
+            file_text: None,
         }
     }
 
@@ -1529,6 +1567,9 @@ impl PartDialog {
         let t = self.kind.title();
         match self.flow().current() {
             Some(s) => format!("{t}: {}", super::i18n::tr(s.prompt)),
+            None if self.kind == Planned::Part(PartPlanned::Import) => {
+                format!("{t}: choose a STEP file (Browse...), set the options, then OK")
+            }
             None => format!("{t}: set the options (the command itself comes later)"),
         }
     }
@@ -1927,14 +1968,20 @@ impl PartDialog {
             }
             Combo(label, opts, def) => {
                 plabel(ui, label);
+                let off = self.kind.option_off(label, None);
                 let v = self.indices.entry(at).or_insert(def);
-                egui::ComboBox::from_id_salt(("part_planned_combo", self.kind.title(), at))
-                    .selected_text(opts.get(*v).copied().unwrap_or(""))
-                    .show_ui(ui, |ui| {
-                        for (i, o) in opts.iter().enumerate() {
-                            ui.selectable_value(v, i, *o);
-                        }
-                    });
+                let r = ui.add_enabled_ui(off.is_none(), |ui| {
+                    egui::ComboBox::from_id_salt(("part_planned_combo", self.kind.title(), at))
+                        .selected_text(opts.get(*v).copied().unwrap_or(""))
+                        .show_ui(ui, |ui| {
+                            for (i, o) in opts.iter().enumerate() {
+                                ui.selectable_value(v, i, *o);
+                            }
+                        });
+                });
+                if let Some(t) = off {
+                    r.response.on_disabled_hover_text(t);
+                }
                 ui.end_row();
             }
             Num(label, def, unit) => {
@@ -2085,6 +2132,8 @@ impl CadCraftApp {
         if let Some(b) = d.pressed.take() {
             if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::Replace) {
                 self.replace_browse();
+            } else if d.kind == Planned::Part(PartPlanned::Import) {
+                self.open_dialog(super::files::DialogPurpose::ImportCad);
             } else {
                 d.note = self.surface_button(&d, b);
             }

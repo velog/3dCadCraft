@@ -946,6 +946,69 @@ pub fn step_volumes(text: &str) -> Result<Vec<Real>, String> {
         .collect()
 }
 
+/// A body read from a STEP file by [`step_bodies`].
+#[derive(Clone, Debug)]
+pub struct StepBody {
+    /// The body: named `<prefix>` (then `<prefix>#2` …), faces `<body>:F<entity>`.
+    pub solid: ExactSolid,
+    /// The file's label of the solid, else its product's name.
+    pub label: String,
+    /// Products from the root to the part holding it.
+    pub path: Vec<String>,
+    /// Surface colour from the file (RGB 0..1).
+    pub color: Option<[f32; 3]>,
+    /// A closed solid (false: a surface body).
+    pub closed: bool,
+}
+
+/// What [`step_bodies`] read.
+#[derive(Clone, Debug, Default)]
+pub struct StepRead {
+    /// The bodies, in the file's order.
+    pub bodies: Vec<StepBody>,
+    /// What the reader could not read.
+    pub warnings: Vec<String>,
+    /// The file's originating system.
+    pub system: String,
+}
+
+/// The bodies of STEP `text` (mm, placed by the file's assembly structure), named after
+/// `prefix`. A face is named by its STEP face entity (`<body>:F123`): fixed for one text, so
+/// the names survive every rebuild; pieces of a face the kernel splits share it.
+pub fn step_bodies(text: &str, prefix: &str) -> Result<StepRead, String> {
+    let imp = guarded("STEP import", || sk::step_import_shared(text))?;
+    let mut out = StepRead {
+        warnings: imp.warnings.clone(),
+        system: imp.system.clone(),
+        ..Default::default()
+    };
+    for (k, b) in imp.bodies.iter().enumerate() {
+        let name = if k == 0 {
+            prefix.to_owned()
+        } else {
+            format!("{prefix}#{}", k + 1)
+        };
+        let n = b.body.face_count();
+        let face_names = (0..n)
+            .map(|i| b.face_origin.get(i).map(|e| format!("{name}:F{e}")))
+            .collect();
+        out.bodies.push(StepBody {
+            solid: ExactSolid {
+                sheet: !b.closed,
+                name: Some(name),
+                body: b.body.clone(),
+                face_names,
+                profiles: Vec::new(),
+            },
+            label: b.name.clone(),
+            path: b.path.clone(),
+            color: b.color,
+            closed: b.closed,
+        });
+    }
+    Ok(out)
+}
+
 /// Chamfer of the edges nearest `points`: `d1` on the first face and `d2`
 /// (or an angle) on the second.
 pub fn chamfer(

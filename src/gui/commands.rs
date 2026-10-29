@@ -601,6 +601,8 @@ pub static COMMANDS: &[Command] = &[
         .at(&[M_CREATE]),
     pp("part.import", "Import", "Импорт на модел", Icon::Import, Pp::Import)
         .alias(&["IMP"])
+        .spec("7.7a-import.md")
+        .tip("Brings a STEP file's bodies into the part as a base feature (File → Open reads STEP too)")
         .at(&[M_CREATE]),
     pp("part.decal", "Decal", "Стикер (Decal)", Icon::Decal, Pp::Decal)
         .alias(&["DCL"])

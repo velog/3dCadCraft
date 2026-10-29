@@ -47,7 +47,7 @@ solidcraft-geom = { git = "https://github.com/bherbruck/solidcraft", rev = "4687
 solidcraft-doc = { git = "https://github.com/bherbruck/solidcraft", rev = "4687e3b0734e41d761be0d0a2611e5402f088348" }
 
 # --- Serialization (file format + JSON-RPC/MCP payloads) -------------------
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 # Exact f64 round-trips: a CAD file must reload bit-identical coordinates.
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 # Project container (.3dcadcraft = ZIP). Deflate only, backed by pure-Rust zlib-rs.

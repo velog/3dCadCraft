@@ -76,6 +76,7 @@ mod home;
 mod i18n;
 mod icons;
 mod if_builder;
+mod import;
 mod interference;
 mod iprops;
 mod keymap;
@@ -569,6 +570,8 @@ struct CadCraftApp {
     customize: keymap::CustomizeUi,
     /// The ribbon's tooltip keys must be rebuilt from `keymap`.
     keymap_tips_dirty: bool,
+    /// A STEP file being read on a worker thread (`gui/import.rs`).
+    import_job: Option<import::ImportJob>,
     /// View → Object Visibility (persisted with the Application Options).
     obj_vis: layout::ObjectVisibility,
 
@@ -938,6 +941,7 @@ impl CadCraftApp {
             keymap: Default::default(),
             customize: Default::default(),
             keymap_tips_dirty: true,
+            import_job: None,
             obj_vis: Default::default(),
             camera: OrbitCamera::default(),
             renderer: cc.wgpu_render_state.as_ref().map(ViewportRenderer::new),
@@ -7849,6 +7853,7 @@ impl eframe::App for CadCraftApp {
         self.home_follow_documents();
         self.shortcuts(&ctx);
         self.files_ui(&ctx);
+        self.import_ui(&ctx);
         self.confirm_delete_window(&ctx);
 
         egui::Panel::top("quick_access").show(ui, |ui| self.quick_access(ui));

@@ -37,6 +37,7 @@ pub mod expr;
 pub mod extrude;
 pub mod history;
 pub mod hole;
+pub mod import;
 pub mod link;
 #[cfg(test)]
 mod link_tests;

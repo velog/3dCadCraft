@@ -192,6 +192,9 @@ impl CadCraftApp {
             return Err("not a part command".into());
         };
         let t = 0;
+        if kind == PartPlanned::Import {
+            return self.import_op_from(d, old);
+        }
         Ok(match kind {
             PartPlanned::Stitch => {
                 let mut surfaces = self.surfaces_of(d.items_of("surfaces"));
@@ -506,6 +509,7 @@ impl CadCraftApp {
                 return false;
             }
         };
+        let fit = matches!(op, BodyOp::Import(_));
         let cmd = if old.is_some() { "Edit Feature" } else { title };
         self.checkpoint(cmd);
         let r = match (d.feature, old) {
@@ -524,6 +528,10 @@ impl CadCraftApp {
             Ok(()) => {
                 self.file_status = None;
                 self.scene_dirty = true;
+                if fit {
+                    // A new file is anywhere and any size.
+                    self.fit_view();
+                }
                 true
             }
             Err(e) => {
@@ -603,6 +611,7 @@ impl CadCraftApp {
             BodyOp::ReplaceFace(_) => PartPlanned::ReplaceFace,
             BodyOp::Sculpt(_) => PartPlanned::Sculpt,
             BodyOp::CopyObject(_) => PartPlanned::CopyObject,
+            BodyOp::Import(_) => PartPlanned::Import,
             _ => return,
         };
         self.start_part_planned(kind);
@@ -635,6 +644,11 @@ impl CadCraftApp {
                 );
             }
             BodyOp::Trim(o) => d.set_check(0, "Invert Selection", o.invert),
+            BodyOp::Import(o) => {
+                d.set_text(0, "File", &o.file);
+                d.set_check(0, "Solids", o.solids);
+                d.set_check(0, "Surfaces", o.surfaces);
+            }
             BodyOp::CopyObject(o) => {
                 d.set_index(0, "Select", usize::from(o.select == CopySelect::Body));
                 d.set_index(
@@ -662,6 +676,13 @@ impl CadCraftApp {
                 );
             }
             _ => {}
+        }
+        if kind == PartPlanned::Import {
+            self.file_status = Some(Ok(format!(
+                "{}: Browse... replaces the embedded file",
+                b.describe()
+            )));
+            return;
         }
         self.file_status = Some(Ok(format!(
             "{}: {} (selectors left empty keep the feature's own picks)",

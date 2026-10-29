@@ -1228,6 +1228,33 @@ fn speed_budgets() {
         ));
     }
 
+    // Import: the rounded box written to STEP and read back as a base feature. Each run's text
+    // differs by trailing blank lines, so the reader's cache of recent files never answers.
+    {
+        use cadcraft3d::part::import::ImportOp;
+        use cadcraft3d::part::{BodyOp, BodyOpFeature};
+        let text = cadcraft3d::kernel::exact::step_text(&rb.exact_bodies.0, "Box").unwrap();
+        let mut k = 0;
+        rows.push((
+            "import: the rounded box from STEP (add_body_op)",
+            150.0,
+            median_ms(3, || {
+                k += 1;
+                let t = format!(
+                    "{text}{}",
+                    "
+"
+                    .repeat(k)
+                );
+                let mut p = cadcraft3d::part::PartDocument::default();
+                p.add_body_op(BodyOpFeature::new(BodyOp::Import(ImportOp::new(
+                    "b.step", t,
+                ))))
+                .unwrap();
+            }),
+        ));
+    }
+
     // Loft between edges: the owner's two trimmed spline surfaces bridged by a ruled surface.
     {
         use cadcraft3d::document::{DocumentData, Project};

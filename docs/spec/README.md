@@ -108,5 +108,6 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [2.15-materials.md](2.15-materials.md) | Materials, appearances, overrides, libraries, Styles Editor |
 | [2.16-browser.md](2.16-browser.md) | Model browser: order, nested sketches, bodies, End of Part, reordering, Suppress, Delete, Rename |
 | [7.7-export.md](7.7-export.md) | Export: STL, STEP, GLB |
+| [7.7a-import.md](7.7a-import.md) | Import: STEP (AnyCAD Convert / Reference Model) |
 
 Test matrix of the main features: [TESTING.md](TESTING.md).

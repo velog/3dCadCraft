@@ -40,10 +40,22 @@ pub(super) enum DialogPurpose {
     InsertDocument,
     /// Save to Separate File: where document `.0` (of kind `.1`) goes.
     Extract(crate::document::DocumentId, crate::document::DocumentKind),
+    /// 3D Model › Import: the STEP file (spec 7.7a).
+    ImportCad,
 }
 
 /// The files that hold documents (Open, Link File, Insert Document).
 const MODEL_EXTS: &[&str] = &[FILE_EXTENSION, "ccpart", "ccasm", "ccdrw"];
+
+/// What File → Open lists: our files and the formats it imports (spec 7.7a).
+const OPEN_EXTS: &[&str] = &[FILE_EXTENSION, "ccpart", "ccasm", "ccdrw", "step", "stp"];
+
+/// Files File → Open imports instead of opening (STEP).
+pub(super) fn is_import_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("step") || e.eq_ignore_ascii_case("stp"))
+}
 
 impl DialogPurpose {
     fn title(self) -> String {
@@ -61,6 +73,7 @@ impl DialogPurpose {
             DialogPurpose::TableSource => "Table Source".into(),
             DialogPurpose::LinkFile => "Link File".into(),
             DialogPurpose::InsertDocument => "Insert Document".into(),
+            DialogPurpose::ImportCad => "Import".into(),
             DialogPurpose::Extract(..) => "Save to Separate File".into(),
         }
     }
@@ -68,9 +81,9 @@ impl DialogPurpose {
     /// Extensions listed and given to a typed name.
     fn extensions(self) -> &'static [&'static str] {
         match self {
-            DialogPurpose::Open | DialogPurpose::LinkFile | DialogPurpose::InsertDocument => {
-                MODEL_EXTS
-            }
+            DialogPurpose::Open => OPEN_EXTS,
+            DialogPurpose::LinkFile | DialogPurpose::InsertDocument => MODEL_EXTS,
+            DialogPurpose::ImportCad => &["step", "stp"],
             // The active document's kind (`.ccpart`…) or the package.
             DialogPurpose::SaveAs => MODEL_EXTS,
             DialogPurpose::Extract(_, crate::document::DocumentKind::Part) => &["ccpart"],
@@ -93,9 +106,9 @@ impl DialogPurpose {
     /// The "Files of type" line.
     fn type_text(self) -> String {
         let kind = match self {
-            DialogPurpose::Open | DialogPurpose::LinkFile | DialogPurpose::InsertDocument => {
-                "3DCadCraft files"
-            }
+            DialogPurpose::Open => "3DCadCraft and STEP files",
+            DialogPurpose::LinkFile | DialogPurpose::InsertDocument => "3DCadCraft files",
+            DialogPurpose::ImportCad => "STEP",
             DialogPurpose::SaveAs => "Part, Assembly, Drawing (one document) or Package (all)",
             DialogPurpose::Extract(_, k) => crate::document::FileType::for_kind(k).name(),
             DialogPurpose::SaveFolder => return "3DCadCraft project folder".into(),
@@ -122,6 +135,7 @@ impl DialogPurpose {
                 | DialogPurpose::TableSource
                 | DialogPurpose::LinkFile
                 | DialogPurpose::InsertDocument
+                | DialogPurpose::ImportCad
         )
     }
 }
@@ -880,7 +894,8 @@ impl CadCraftApp {
             DialogPurpose::ImportParams
             | DialogPurpose::TableSource
             | DialogPurpose::LinkFile
-            | DialogPurpose::InsertDocument => String::new(),
+            | DialogPurpose::InsertDocument
+            | DialogPurpose::ImportCad => String::new(),
             DialogPurpose::Extract(id, _) => self
                 .project
                 .document(id)
@@ -955,6 +970,10 @@ impl CadCraftApp {
     /// Opens `path` (from the dialog, the recent list or a drop) in a tab of
     /// its own; a file already open comes forward.
     pub(super) fn open_path(&mut self, path: &Path) {
+        if is_import_file(path) {
+            self.open_step(path);
+            return;
+        }
         if let Some(k) = self.tab_of_path(path) {
             self.switch_tab(k);
             self.file_status = Some(Ok(format!("'{}' is already open", self.document_title())));
@@ -1033,7 +1052,10 @@ impl CadCraftApp {
                 .dropped_files
                 .iter()
                 .map(|f| f.path().to_path_buf())
-                .find(|p| crate::document::FileType::from_path(p).is_some_and(|t| t.is_model()))
+                .find(|p| {
+                    is_import_file(p)
+                        || crate::document::FileType::from_path(p).is_some_and(|t| t.is_model())
+                })
         });
         if let Some(p) = dropped {
             // A tab of its own: nothing to save first.
@@ -1364,6 +1386,7 @@ impl CadCraftApp {
             DialogPurpose::TableSource => self.table_source_picked(&path),
             DialogPurpose::LinkFile => self.docs_link_file(&path),
             DialogPurpose::InsertDocument => self.docs_insert_file(&path),
+            DialogPurpose::ImportCad => self.import_file_picked(&path),
             DialogPurpose::Extract(id, _) => self.docs_extract_to(id, &path),
             DialogPurpose::ExportDxf => {
                 let text = self.sm.dxf.take().unwrap_or_default();

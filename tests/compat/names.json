@@ -831,5 +831,14 @@
     "Extrusion1:Side:1v1:0",
     "Extrusion2:Side:1v1:0",
     "Loft1:Bridge"
+  ],
+  "r42/import_r42.3dcadcraft": [
+    "Fillet1:Round[Import1:F121|Import1:F70]",
+    "Import1:F101",
+    "Import1:F112",
+    "Import1:F121",
+    "Import1:F51",
+    "Import1:F70",
+    "Import1:F86"
   ]
 }

@@ -666,6 +666,30 @@ fn loft_edges_r41() -> PartDocument {
     p
 }
 
+/// Revision 42: a 40 × 30 × 20 box written to STEP and imported into an empty part (Import),
+/// then a 3 mm fillet on an imported edge.
+fn import_r42() -> PartDocument {
+    use cadcraft3d::part::blend::{BlendFeature, edge_ref};
+    use cadcraft3d::part::import::ImportOp;
+    use cadcraft3d::part::{BodyOp, BodyOpFeature};
+    let mut src = PartDocument::with_box("Box1", [40.0, 30.0, 20.0]).unwrap();
+    src.regenerate().unwrap();
+    let text = cadcraft3d::kernel::exact::step_text(&src.exact_bodies.0, "Box").unwrap();
+    let mut p = PartDocument::default();
+    p.add_body_op(BodyOpFeature::new(BodyOp::Import(ImportOp::new(
+        "box.step",
+        text.as_str(),
+    ))))
+    .unwrap();
+    let edge = p
+        .body
+        .edges()
+        .find_map(|(e, _)| edge_ref(&p.body, e))
+        .unwrap();
+    p.add_blend(BlendFeature::fillet(vec![edge], 3.0)).unwrap();
+    p
+}
+
 /// Revision 40: a 40 × 30 × 20 box and a 10 mm block beside it; Copy Object of the box's top
 /// face (Surface) and of the block (Multiple Solids).
 fn copy_object_r40() -> PartDocument {
@@ -2393,6 +2417,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("LoftEdgesR41");
             project.add_document("Part1", DocumentData::Part(loft_edges_r41()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r42/import_r42.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ImportR42");
+            project.add_document("Part1", DocumentData::Part(import_r42()));
             project.save(&f).unwrap();
         }
         let f = root().join("r40/copy_object_r40.3dcadcraft");

@@ -191,6 +191,8 @@ pub enum BodyOp {
     Sculpt(super::surface_op::SculptOp),
     /// Copy Object (format revision 40).
     CopyObject(super::copy_object::CopyObjectOp),
+    /// Import of a STEP file (format revision 42).
+    Import(super::import::ImportOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -436,6 +438,7 @@ impl BodyOpFeature {
             BodyOp::ReplaceFace(_) => "ReplaceFace",
             BodyOp::Sculpt(_) => "Sculpt",
             BodyOp::CopyObject(_) => "CopyObject",
+            BodyOp::Import(_) => "Import",
         }
     }
 
@@ -462,6 +465,7 @@ impl BodyOpFeature {
             BodyOp::ReplaceFace(o) => o.validate(),
             BodyOp::Sculpt(o) => o.validate(),
             BodyOp::CopyObject(o) => o.validate(),
+            BodyOp::Import(o) => o.validate(),
         }
     }
 
@@ -471,7 +475,11 @@ impl BodyOpFeature {
             BodyOp::Thicken(t) => {
                 t.output == ThickenOutput::Surface || t.operation == Operation::NewSolid
             }
-            BodyOp::Patch(_) | BodyOp::Ruled(_) | BodyOp::Stitch(_) | BodyOp::CopyObject(_) => true,
+            BodyOp::Patch(_)
+            | BodyOp::Ruled(_)
+            | BodyOp::Stitch(_)
+            | BodyOp::CopyObject(_)
+            | BodyOp::Import(_) => true,
             BodyOp::Sculpt(s) => s.operation == super::surface_op::SculptOperation::NewSolid,
             BodyOp::DeleteFace(_)
             | BodyOp::MoveBodies(_)
@@ -492,7 +500,8 @@ impl BodyOpFeature {
             | BodyOp::Trim(_)
             | BodyOp::ReplaceFace(_)
             | BodyOp::Sculpt(_)
-            | BodyOp::CopyObject(_) => Vec::new(),
+            | BodyOp::CopyObject(_)
+            | BodyOp::Import(_) => Vec::new(),
             BodyOp::MoveBodies(m) => m
                 .steps
                 .iter()
@@ -574,6 +583,7 @@ impl BodyOpFeature {
                 o.surfaces.len()
             ),
             BodyOp::CopyObject(o) => o.describe(),
+            BodyOp::Import(o) => o.describe(),
         }
     }
 }

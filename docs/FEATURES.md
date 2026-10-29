@@ -1307,7 +1307,7 @@ Inventor 2027 introduces *Autodesk Assistant* with similar capabilities.
 
 ## 7.7 Data exchange — 🟡 · XL
 
-**Specification:** [spec/7.7-export.md](spec/7.7-export.md). Done: export to **STL** (binary, closed), **STEP** AP242 (exact surfaces) and **GLB** from File → Export and from the command line (`examples/export.rs`). To do: STEP import, 3MF, settings.
+**Specification:** [spec/7.7-export.md](spec/7.7-export.md), [spec/7.7a-import.md](spec/7.7a-import.md). Done: export to **STL** (binary, closed), **STEP** AP242 (exact surfaces) and **GLB** from File → Export and from the command line (`examples/export.rs`). **STEP import** 🟡 (2026-10-29, stage I1): 3D Model → Import (`IMP`) and File → Open of `.step` / `.stp` bring the file's solids and surface bodies in as one base feature (`Import1`, the file embedded, faces named by their STEP entity); `examples/step_info.rs` reports what a file gives. To do: STEP assemblies (I2), Reference Model with Update (I3), meshes (I4), 3MF, settings.
 
 The table of formats is in [FILE_FORMAT.md, section 8](FILE_FORMAT.md#8-exchange-with-other-programs-not-the-native-format). **STEP AP242** has the highest priority, because exchange with every other CAD system goes through it.
 
