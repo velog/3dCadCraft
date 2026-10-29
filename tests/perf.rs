@@ -1255,6 +1255,67 @@ fn speed_budgets() {
         ));
     }
 
+    // Frames: a member on each of the 12 edges of a box skeleton (each a part of the design file,
+    // the section extruded by its length), then a solve that has nothing to change.
+    {
+        use cadcraft3d::assembly::GeomRef;
+        use cadcraft3d::assembly::frame::{InsertOptions, insert, solve};
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentData, Project};
+        use cadcraft3d::kernel::{TessellationOptions, Transform3};
+        let mut base = Project::new("Frame");
+        let sk = PartDocument::with_box("Box1", [400.0, 300.0, 200.0]).unwrap();
+        let edges: Vec<GeomRef> = sk
+            .body
+            .edges()
+            .filter_map(|(id, _)| {
+                let pts = sk
+                    .body
+                    .sample_edge(id, &TessellationOptions::default())
+                    .ok()?;
+                let f = sk.body.edge_faces(id);
+                let name = |k: usize| sk.body.face(f[k]).and_then(|x| x.name.clone());
+                let m = cadcraft3d::kernel::Point3::from(
+                    (pts[0].coords + pts[pts.len() - 1].coords) / 2.0,
+                );
+                Some(GeomRef::Edge {
+                    occurrence: 1,
+                    sub: Vec::new(),
+                    edge: EdgeRef {
+                        faces: [name(0)?, name(1)?],
+                        hint: [m.x, m.y, m.z],
+                    },
+                })
+            })
+            .collect();
+        assert_eq!(edges.len(), 12);
+        let skd = base.add_document("Skeleton", DocumentData::Part(sk));
+        let mut a = AssemblyDocument::default();
+        a.place(
+            DocRef::local(skd),
+            "Skeleton:1",
+            Transform3::identity(),
+            true,
+        );
+        let aid = base.add_document("Frame", DocumentData::Assembly(a));
+        let o = InsertOptions {
+            family: "Square hollow section (EN 10219)".into(),
+            size: "40x40x3".into(),
+            material: Some("Steel S235".into()),
+            orientation: Default::default(),
+        };
+        let lib = cadcraft3d::part::frame::Library::builtin();
+        rows.push((
+            "frame: 12 SHS 40x40x3 members on a box skeleton + solve",
+            400.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                let (_, occs) = insert(&mut p, aid, &edges, &o, lib, None).unwrap();
+                assert_eq!(occs.len(), 12);
+                assert_eq!(solve(&mut p, aid).unwrap().moved, 0);
+            }),
+        ));
+    }
+
     // Loft between edges: the owner's two trimmed spline surfaces bridged by a ruled surface.
     {
         use cadcraft3d::document::{DocumentData, Project};

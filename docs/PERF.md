@@ -30,6 +30,7 @@ Target times for interactive work:
 | Delete Face with Heal of the 36 hole walls of a plate (`add_body_op`, the step alone) | 300 ms | 39 ms (2026-10-27; 9 s before `faces_named_many` made the mesh once for all references) |
 | Project Cut Edges of a plate with 36 holes (outline + 36 circles) | 60 ms | 1.2 ms (2026-10-27; 7 s through the kernel's split and `to_brep` before the section came from the face triangles + exact surfaces) |
 | Project Geometry of a face with 36 holes (every loop, linked) | 60 ms | 6.5 ms (2026-10-27) |
+| Frames: a SHS 40×40×3 member on each of the 12 edges of a box skeleton (12 member parts) + a solve | 400 ms | 217 ms (2026-10-29, machine 96 % busy, others 84 %) |
 | Offset of the same face into a surface (`add_body_op`) | 400 ms | 133 ms (2026-10-27) |
 | Face Draft 3° Symmetric about z = 10 (split, draft of both halves, merge) | 700 ms | 350 ms (2026-10-19, under load) |
 | Shell 2 Outside with Rounded Corners on a box without its top face | 400 ms | 190 ms (2026-10-19, under load) |

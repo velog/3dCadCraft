@@ -1180,6 +1180,9 @@ Inventor 2027 improved working with point clouds: sections, point size, coordina
 
 **Specification:** [spec/6.1-frame-generator.md](spec/6.1-frame-generator.md) — every command and option, stages F0–F5.
 
+**Status (2026-10-29):** F0 done (every command's panel, waiting for the owner's check); F1 started: EN section table,
+Insert Frame on straight model edges (orientation, member parts, the members follow the skeleton).
+
 **What it does.** Places **standard profiles** on a skeleton (lines in a 3D sketch, or edges): I/H beams, channels, angles, tubes.
 
 **End treatment:**

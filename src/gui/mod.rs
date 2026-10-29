@@ -70,6 +70,7 @@ mod drive;
 mod feature_cmd;
 mod files;
 mod format_text;
+mod frame;
 mod hole;
 mod hole_dims;
 mod hole_panel;
@@ -3889,6 +3890,7 @@ impl CadCraftApp {
                         self.after_restore();
                         self.asm_refresh_status();
                         self.follow_patterns();
+                        self.follow_frames();
                         self.fit_view();
                         Ok(msg)
                     }

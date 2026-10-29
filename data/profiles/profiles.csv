@@ -1,0 +1,77 @@
+# 3DCadCraft built-in frame member sections (spec 6.1, library 6.3 L3).
+# One size per line. A user file with the same columns in the settings folder
+# (profiles/profiles.csv) overrides sizes by family + size and adds new ones.
+# Dimensions in mm, typed from the dimension tables of the standards named in
+# the family column (nominal values; hollow sections use the standard's
+# calculation radii: outer 2t / inner t up to t = 6 mm, 2.5t / 1.5t above).
+# shape: shs | rhs | chs | angle | ibeam | flat | bar
+#   shs / rhs: h b t r1 (outer radius) r2 (inner radius)
+#   chs: h (outside diameter) t
+#   angle: h b t r1 (root radius) r2 (toe radius)
+#   ibeam: h b tw tf r1 (root radius)
+#   flat: b (width) t
+#   bar: h (diameter)
+family,standard,shape,size,h,b,t,tw,tf,r1,r2
+Square hollow section (EN 10219),EN,shs,20x20x2,20,20,2,,,4,2
+Square hollow section (EN 10219),EN,shs,30x30x3,30,30,3,,,6,3
+Square hollow section (EN 10219),EN,shs,40x40x3,40,40,3,,,6,3
+Square hollow section (EN 10219),EN,shs,40x40x4,40,40,4,,,8,4
+Square hollow section (EN 10219),EN,shs,50x50x4,50,50,4,,,8,4
+Square hollow section (EN 10219),EN,shs,60x60x5,60,60,5,,,10,5
+Square hollow section (EN 10219),EN,shs,80x80x5,80,80,5,,,10,5
+Square hollow section (EN 10219),EN,shs,100x100x6,100,100,6,,,12,6
+Square hollow section (EN 10219),EN,shs,120x120x8,120,120,8,,,20,12
+Rectangular hollow section (EN 10219),EN,rhs,40x20x2,40,20,2,,,4,2
+Rectangular hollow section (EN 10219),EN,rhs,50x30x3,50,30,3,,,6,3
+Rectangular hollow section (EN 10219),EN,rhs,60x40x3,60,40,3,,,6,3
+Rectangular hollow section (EN 10219),EN,rhs,80x40x4,80,40,4,,,8,4
+Rectangular hollow section (EN 10219),EN,rhs,100x50x4,100,50,4,,,8,4
+Rectangular hollow section (EN 10219),EN,rhs,120x60x5,120,60,5,,,10,5
+Circular hollow section (EN 10219),EN,chs,21.3x2.0,21.3,,2.0,,,,
+Circular hollow section (EN 10219),EN,chs,26.9x2.3,26.9,,2.3,,,,
+Circular hollow section (EN 10219),EN,chs,33.7x2.6,33.7,,2.6,,,,
+Circular hollow section (EN 10219),EN,chs,42.4x3.2,42.4,,3.2,,,,
+Circular hollow section (EN 10219),EN,chs,48.3x3.2,48.3,,3.2,,,,
+Circular hollow section (EN 10219),EN,chs,60.3x3.2,60.3,,3.2,,,,
+Circular hollow section (EN 10219),EN,chs,76.1x3.2,76.1,,3.2,,,,
+Circular hollow section (EN 10219),EN,chs,88.9x4.0,88.9,,4.0,,,,
+Equal angle (EN 10056-1),EN,angle,L 20x20x3,20,20,3,,,3.5,2
+Equal angle (EN 10056-1),EN,angle,L 25x25x3,25,25,3,,,3.5,2
+Equal angle (EN 10056-1),EN,angle,L 30x30x3,30,30,3,,,5,2.5
+Equal angle (EN 10056-1),EN,angle,L 40x40x4,40,40,4,,,6,3
+Equal angle (EN 10056-1),EN,angle,L 50x50x5,50,50,5,,,7,3.5
+Equal angle (EN 10056-1),EN,angle,L 60x60x6,60,60,6,,,8,4
+Equal angle (EN 10056-1),EN,angle,L 70x70x7,70,70,7,,,9,4.5
+Equal angle (EN 10056-1),EN,angle,L 80x80x8,80,80,8,,,10,5
+IPE beam (EN 10365),EN,ibeam,IPE 80,80,46,,3.8,5.2,5,
+IPE beam (EN 10365),EN,ibeam,IPE 100,100,55,,4.1,5.7,7,
+IPE beam (EN 10365),EN,ibeam,IPE 120,120,64,,4.4,6.3,7,
+IPE beam (EN 10365),EN,ibeam,IPE 140,140,73,,4.7,6.9,7,
+IPE beam (EN 10365),EN,ibeam,IPE 160,160,82,,5.0,7.4,9,
+IPE beam (EN 10365),EN,ibeam,IPE 180,180,91,,5.3,8.0,9,
+IPE beam (EN 10365),EN,ibeam,IPE 200,200,100,,5.6,8.5,12,
+IPE beam (EN 10365),EN,ibeam,IPE 220,220,110,,5.9,9.2,12,
+IPE beam (EN 10365),EN,ibeam,IPE 240,240,120,,6.2,9.8,15,
+HEA beam (EN 10365),EN,ibeam,HEA 100,96,100,,5.0,8.0,12,
+HEA beam (EN 10365),EN,ibeam,HEA 120,114,120,,5.0,8.0,12,
+HEA beam (EN 10365),EN,ibeam,HEA 140,133,140,,5.5,8.5,12,
+HEA beam (EN 10365),EN,ibeam,HEA 160,152,160,,6.0,9.0,15,
+HEA beam (EN 10365),EN,ibeam,HEA 200,190,200,,6.5,10.0,18,
+HEB beam (EN 10365),EN,ibeam,HEB 100,100,100,,6.0,10.0,12,
+HEB beam (EN 10365),EN,ibeam,HEB 120,120,120,,6.5,11.0,12,
+HEB beam (EN 10365),EN,ibeam,HEB 140,140,140,,7.0,12.0,12,
+HEB beam (EN 10365),EN,ibeam,HEB 160,160,160,,8.0,13.0,15,
+HEB beam (EN 10365),EN,ibeam,HEB 200,200,200,,9.0,15.0,18,
+Flat bar (EN 10058),EN,flat,20x3,,20,3,,,,
+Flat bar (EN 10058),EN,flat,20x5,,20,5,,,,
+Flat bar (EN 10058),EN,flat,30x5,,30,5,,,,
+Flat bar (EN 10058),EN,flat,40x5,,40,5,,,,
+Flat bar (EN 10058),EN,flat,40x8,,40,8,,,,
+Flat bar (EN 10058),EN,flat,50x10,,50,10,,,,
+Flat bar (EN 10058),EN,flat,60x10,,60,10,,,,
+Round bar (EN 10060),EN,bar,D10,10,,,,,,
+Round bar (EN 10060),EN,bar,D12,12,,,,,,
+Round bar (EN 10060),EN,bar,D16,16,,,,,,
+Round bar (EN 10060),EN,bar,D20,20,,,,,,
+Round bar (EN 10060),EN,bar,D25,25,,,,,,
+Round bar (EN 10060),EN,bar,D30,30,,,,,,

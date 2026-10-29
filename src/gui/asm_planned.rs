@@ -954,35 +954,17 @@ impl AsmPlanned {
                     Head("Frame Member"),
                     Combo("Category", &["Structural Shapes"], 0),
                     Button("Refresh Categories"),
-                    Combo("Standard", &["EN", "ISO", "DIN", "ANSI"], 0),
-                    Combo(
-                        "Family",
-                        &[
-                            "Angle (EN 10056-1)",
-                            "Channel UPN (EN 10279)",
-                            "IPE beam (EN 10365)",
-                            "HEA beam (EN 10365)",
-                            "HEB beam (EN 10365)",
-                            "Square hollow section (EN 10219)",
-                            "Rectangular hollow section (EN 10219)",
-                            "Circular hollow section (EN 10219)",
-                            "Flat bar (EN 10058)",
-                            "Round bar (EN 10060)",
-                        ],
-                        5,
-                    ),
-                    Combo(
-                        "Size",
-                        &["30x30x3", "40x40x3", "40x40x4", "50x50x4", "60x60x5"],
-                        1,
-                    ),
+                    // The section table's lists replace these (gui/frame.rs).
+                    Combo("Standard", &["EN"], 0),
+                    Combo("Family", &["Square hollow section (EN 10219)"], 0),
+                    Combo("Size", &["20x20x2", "30x30x3", "40x40x3"], 2),
                     Combo(
                         "Material",
                         &[
                             "Steel S235",
                             "Steel S355",
-                            "Stainless steel 1.4301",
-                            "Aluminium 6060",
+                            "Stainless Steel 304",
+                            "Aluminium 6061-T6",
                         ],
                         0,
                     ),
@@ -1045,35 +1027,17 @@ impl AsmPlanned {
                     Head("Frame Member"),
                     Combo("Category", &["Structural Shapes"], 0),
                     Button("Refresh Categories"),
-                    Combo("Standard", &["EN", "ISO", "DIN", "ANSI"], 0),
-                    Combo(
-                        "Family",
-                        &[
-                            "Angle (EN 10056-1)",
-                            "Channel UPN (EN 10279)",
-                            "IPE beam (EN 10365)",
-                            "HEA beam (EN 10365)",
-                            "HEB beam (EN 10365)",
-                            "Square hollow section (EN 10219)",
-                            "Rectangular hollow section (EN 10219)",
-                            "Circular hollow section (EN 10219)",
-                            "Flat bar (EN 10058)",
-                            "Round bar (EN 10060)",
-                        ],
-                        5,
-                    ),
-                    Combo(
-                        "Size",
-                        &["30x30x3", "40x40x3", "40x40x4", "50x50x4", "60x60x5"],
-                        1,
-                    ),
+                    // The section table's lists replace these (gui/frame.rs).
+                    Combo("Standard", &["EN"], 0),
+                    Combo("Family", &["Square hollow section (EN 10219)"], 0),
+                    Combo("Size", &["20x20x2", "30x30x3", "40x40x3"], 2),
                     Combo(
                         "Material",
                         &[
                             "Steel S235",
                             "Steel S355",
-                            "Stainless steel 1.4301",
-                            "Aluminium 6060",
+                            "Stainless Steel 304",
+                            "Aluminium 6061-T6",
                         ],
                         0,
                     ),
@@ -1147,8 +1111,8 @@ impl AsmPlanned {
                         &[
                             "Steel S235",
                             "Steel S355",
-                            "Stainless steel 1.4301",
-                            "Aluminium 6060",
+                            "Stainless Steel 304",
+                            "Aluminium 6061-T6",
                         ],
                         0,
                     ),
@@ -1391,8 +1355,8 @@ impl AsmPlanned {
                             &[
                                 "Steel S235",
                                 "Steel S355",
-                                "Stainless steel 1.4301",
-                                "Aluminium 6060",
+                                "Stainless Steel 304",
+                                "Aluminium 6061-T6",
                             ],
                             0,
                         ),
@@ -1817,6 +1781,18 @@ impl CadCraftApp {
             && matches!(d.active, Some("column" | "row" | "axis" | "feature"));
         d.pick_ref(label, g, single);
     }
+}
+
+/// The text of the chosen entry of drop-down or radio row `label` on tab
+/// `ti` of a planned panel (its default until changed).
+pub(super) fn choice(d: &PartDialog, ti: usize, label: &str) -> Option<&'static str> {
+    let page = d.kind.pages().get(ti)?;
+    page.1.iter().find_map(|r| match *r {
+        Combo(l, opts, _) | Radio(l, opts, _) if l == label => {
+            opts.get(d.index(ti, label)).copied()
+        }
+        _ => None,
+    })
 }
 
 #[cfg(test)]

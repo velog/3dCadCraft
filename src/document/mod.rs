@@ -361,6 +361,11 @@ pub struct AssemblyDocument {
     /// user's library.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub appearances: Vec<crate::materials::Appearance>,
+    /// Frames (`assembly::frame`, spec 6.1): what each frame member was
+    /// made from, so it follows its skeleton. The members are ordinary
+    /// occurrences, so older builds show them where they were saved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<crate::assembly::frame::Frame>,
 }
 
 /// The payload of a document.
@@ -660,6 +665,7 @@ mod tests {
             constraints: Vec::new(),
             patterns: Vec::new(),
             appearances: Vec::new(),
+            frames: Vec::new(),
         })
     }
 

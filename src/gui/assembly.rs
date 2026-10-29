@@ -366,6 +366,7 @@ impl CadCraftApp {
         self.after_restore();
         self.asm_refresh_status();
         self.follow_patterns();
+        self.follow_frames();
         self.scene_dirty = true;
         self.fit_view();
     }

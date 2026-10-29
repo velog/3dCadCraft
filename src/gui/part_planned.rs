@@ -1315,6 +1315,7 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::Replace
                     | super::asm_planned::AsmPlanned::Copy
                     | super::asm_planned::AsmPlanned::Mirror
+                    | super::asm_planned::AsmPlanned::InsertFrame
             ) | Planned::Part(
                 PartPlanned::Stitch
                     | PartPlanned::Patch
@@ -1366,6 +1367,16 @@ impl Planned {
             (Planned::Part(PartPlanned::Import), "Placement", Some("Pick a point")) => {
                 Some("Bodies come in at the file's origin (spec 7.7a 3.13)")
             }
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame),
+                "Placement",
+                Some("Between Points"),
+            ) => Some("Comes with stage F2 (spec 6.1 Insert Frame)"),
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame),
+                "Merge Frame Members" | "Apply Appearance to Part",
+                None,
+            ) => Some("Comes with stage F3 (spec 6.1 Insert Frame)"),
             _ => None,
         }
     }
@@ -1451,7 +1462,7 @@ pub(super) struct PartDialog {
 const LIVE_BUTTONS: &[&str] = &["Find Remaining Free Edges", "Browse..."];
 
 /// Buttons that switch an option on and off (kept like a check box).
-const TOGGLE_BUTTONS: &[&str] = &["Alternate All Faces"];
+const TOGGLE_BUTTONS: &[&str] = &["Alternate All Faces", "Flip Direction"];
 
 /// The selector rows of `kind`, in order; a key on several tabs (Pattern
 /// Component's Components) is one selector.
@@ -1495,6 +1506,10 @@ pub(super) type PickedItem = (SelItem, Option<[f64; 3]>);
 
 /// Selectors that take one input: a new pick replaces the old one.
 const SINGLE_KEYS: &[&str] = &["tool", "remove", "vector", "to", "new"];
+
+/// Selectors that keep taking component edges / faces: a pick never moves
+/// on to the next selector.
+const MANY_KEYS: &[&str] = &["edges"];
 
 /// Selector colours by position (the dots of the rows).
 const COLORS: [[u8; 3]; 5] = [
@@ -1672,7 +1687,10 @@ impl PartDialog {
             refs.push(g);
             list.push(what);
         }
-        self.advance(key);
+        // Insert Frame keeps taking edges until Enter (Inventor).
+        if !MANY_KEYS.contains(&key) {
+            self.advance(key);
+        }
     }
 
     /// After a pick in selector `key`: on to the next empty selector.
@@ -1969,13 +1987,17 @@ impl PartDialog {
             Combo(label, opts, def) => {
                 plabel(ui, label);
                 let off = self.kind.option_off(label, None);
+                // Frame panels: the section table's lists (gui/frame.rs).
+                let list: Vec<String> = super::frame::frame_combo(self, at.0, label)
+                    .unwrap_or_else(|| opts.iter().map(|o| (*o).to_owned()).collect());
                 let v = self.indices.entry(at).or_insert(def);
+                *v = (*v).min(list.len().saturating_sub(1));
                 let r = ui.add_enabled_ui(off.is_none(), |ui| {
                     egui::ComboBox::from_id_salt(("part_planned_combo", self.kind.title(), at))
-                        .selected_text(opts.get(*v).copied().unwrap_or(""))
+                        .selected_text(list.get(*v).map_or("", String::as_str))
                         .show_ui(ui, |ui| {
-                            for (i, o) in opts.iter().enumerate() {
-                                ui.selectable_value(v, i, *o);
+                            for (i, o) in list.iter().enumerate() {
+                                ui.selectable_value(v, i, o.as_str());
                             }
                         });
                 });
@@ -2177,6 +2199,11 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::Mirror) => {
                 if self.mirror_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) => {
+                if self.frame_ok(&d) {
                     self.part_planned = None;
                 }
             }
