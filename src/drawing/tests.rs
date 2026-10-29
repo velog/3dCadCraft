@@ -2643,8 +2643,13 @@ fn break_out_cuts_inside_the_profile() {
             depth: 4.0,
         },
         section_all: false,
+        sketch: Some(Box::new(super::view_sketch::ViewSketch::from_line(&rect))),
     };
     assert_eq!(d.add_break_out(v, out.clone()), Some(0));
+    // The break out under a point of its profile (the right-click menu).
+    let outs = &d.sheet().unwrap().view(v).unwrap().break_outs;
+    assert_eq!(BreakOut::under(outs, c), Some(0));
+    assert_eq!(BreakOut::under(outs, [c[0] + 30.0, c[1]]), None);
     let cut = lines_now(&d);
     // The hatched area, sampled on a 0.25 mm grid (even-odd over the loops).
     let hatched = |l: &super::hlr::ViewLines| {
@@ -2699,7 +2704,11 @@ fn break_out_cuts_inside_the_profile() {
     // Saved with the view; deleting it makes the view whole.
     let text = serde_json::to_string(&d).unwrap();
     let back: DrawingDocument = serde_json::from_str(&text).unwrap();
-    assert_eq!(back.sheet().unwrap().view(v).unwrap().break_outs.len(), 1);
+    assert_eq!(
+        back.sheet().unwrap().view(v).unwrap().break_outs,
+        d.sheet().unwrap().view(v).unwrap().break_outs,
+        "profile, depth and sketch saved"
+    );
     assert!(d.remove_break_out(v, 0));
     assert!(!serde_json::to_string(&d).unwrap().contains("break_outs"));
     assert_eq!(lines_now(&d), whole);

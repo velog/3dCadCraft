@@ -711,6 +711,19 @@ pub struct BreakOut {
     /// Section All Parts (assemblies).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub section_all: bool,
+    /// The view sketch the profile was drawn in (Edit Break Out Sketch
+    /// opens it again; the profile is what draws).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sketch: Option<Box<view_sketch::ViewSketch>>,
+}
+
+impl BreakOut {
+    /// The break out of `view` under view-plane point `q`: the last one
+    /// whose profile holds it.
+    pub fn under(outs: &[BreakOut], q: [f64; 2]) -> Option<usize> {
+        outs.iter()
+            .rposition(|b| b.profile.iter().filter(|l| hlr::inside_loop(l, q)).count() % 2 == 1)
+    }
 }
 
 /// Break Out › Depth.

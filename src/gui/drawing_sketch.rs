@@ -33,6 +33,8 @@ pub(super) enum SketchFor {
     Section(u32),
     /// The profile of a new break out of the sketch's view.
     BreakOut,
+    /// The profile of break out `k` of the sketch's view.
+    BreakOutEdit(usize),
 }
 
 /// A view sketch being edited.
@@ -232,6 +234,7 @@ impl DrwSketch {
             SketchFor::NewSection => "Section line",
             SketchFor::Section(_) => "Edit Section Line",
             SketchFor::BreakOut => "Break Out profile",
+            SketchFor::BreakOutEdit(_) => "Edit Break Out Sketch",
         };
         format!("{what}: {} (Enter: Finish Sketch)", self.tools.prompt())
     }
@@ -312,17 +315,31 @@ impl CadCraftApp {
             return false;
         };
         let sketch = ViewSketch(s.ps.sketch.clone());
-        if s.owner == SketchFor::BreakOut {
+        if matches!(s.owner, SketchFor::BreakOut | SketchFor::BreakOutEdit(_)) {
             let loops = super::drawing_breakout::profile_loops(&sketch.0);
             if loops.is_empty() {
                 self.file_status = Some(Err("Break Out: the sketch has no closed profile".into()));
                 self.drw.sketch = Some(s);
                 return false;
             }
-            self.drw.tool = Some(DrwTool::BreakOut(super::drawing_breakout::BoDraft::new(
-                s.view, loops,
-            )));
-            self.drw.sel = Some(s.view);
+            let view = s.view;
+            self.drw.sel = Some(view);
+            if let SketchFor::BreakOutEdit(k) = s.owner {
+                let ok = self.edit_drawing("Edit Break Out Sketch", |d| {
+                    let mut b = d.sheet()?.view(view)?.break_outs.get(k).cloned()?;
+                    b.profile = loops;
+                    b.sketch = Some(Box::new(sketch));
+                    d.set_break_out(view, k, b).then_some(())
+                });
+                if ok.flatten().is_none() {
+                    self.history.cancel();
+                }
+                self.history.break_coalescing();
+                return true;
+            }
+            let mut draft = super::drawing_breakout::BoDraft::new(view, loops);
+            draft.sketch = Some(Box::new(sketch));
+            self.drw.tool = Some(DrwTool::BreakOut(draft));
             return true;
         }
         let line = match sketch.line() {
@@ -349,7 +366,7 @@ impl CadCraftApp {
                 let pts = line.iter().map(|q| pl.to_sheet(*q)).collect();
                 self.drw.tool = Some(DrwTool::Section(SectionDraft::placing(s.view, pts, sketch)));
             }
-            SketchFor::BreakOut => {}
+            SketchFor::BreakOut | SketchFor::BreakOutEdit(_) => {}
             SketchFor::Section(id) => {
                 let pl = views
                     .iter()

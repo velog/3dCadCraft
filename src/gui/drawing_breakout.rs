@@ -28,8 +28,12 @@ pub(super) struct BoDraft {
     /// From Point: the depth value (mm).
     pub value: f64,
     /// From Point: the picked point (model mm) and the view it was picked
-    /// in.
-    pub point: Option<([f64; 3], u32)>,
+    /// in (`None` for an edited break out's point).
+    pub point: Option<([f64; 3], Option<u32>)>,
+    /// The sketch the profile was drawn in.
+    pub sketch: Option<Box<crate::drawing::view_sketch::ViewSketch>>,
+    /// Edit Break Out: the break out's index in the view.
+    pub edit: Option<usize>,
 }
 
 impl BoDraft {
@@ -41,6 +45,27 @@ impl BoDraft {
             kind: DepthKind::FromPoint,
             value: 5.0,
             point: None,
+            sketch: None,
+            edit: None,
+        }
+    }
+
+    /// Edit Break Out of break out `k` of `view`.
+    pub fn editing(view: u32, k: usize, b: &BreakOut) -> Self {
+        let (kind, value, point) = match b.depth {
+            BreakOutDepth::FromPoint { point, depth } => {
+                (DepthKind::FromPoint, depth, Some((point, None)))
+            }
+            BreakOutDepth::ThroughPart => (DepthKind::ThroughPart, 5.0, None),
+        };
+        Self {
+            view,
+            profile: b.profile.clone(),
+            kind,
+            value,
+            point,
+            sketch: b.sketch.clone(),
+            edit: Some(k),
         }
     }
 
@@ -57,6 +82,7 @@ impl BoDraft {
             profile: self.profile.clone(),
             depth,
             section_all: false,
+            sketch: self.sketch.clone(),
         })
     }
 
@@ -138,7 +164,7 @@ impl CadCraftApp {
                 ));
             }
         }
-        if let Some((_, pv)) = d.point
+        if let Some((_, Some(pv))) = d.point
             && let Some(v) = views.iter().find(|v| v.id == pv)
         {
             painter.rect_stroke(
@@ -156,7 +182,14 @@ impl CadCraftApp {
             .fixed_pos(rect.right_top() + egui::vec2(-10.0, 10.0))
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.label(egui::RichText::new("Break Out").strong());
+                    ui.label(
+                        egui::RichText::new(if d.edit.is_some() {
+                            "Edit Break Out"
+                        } else {
+                            "Break Out"
+                        })
+                        .strong(),
+                    );
                     ui.label(format!(
                         "Boundary Profile: ✔ {} loop{}",
                         d.profile.len(),
@@ -215,7 +248,7 @@ impl CadCraftApp {
             && let Some(p) = response.hover_pos()
         {
             match self.break_out_point(views, rect, p, d.view) {
-                Ok(pt) => d.point = Some(pt),
+                Ok((pt, v)) => d.point = Some((pt, Some(v))),
                 Err(e) => self.file_status = Some(Err(format!("Break Out: {e}"))),
             }
         }
@@ -225,7 +258,13 @@ impl CadCraftApp {
         }
         if ok && let Some(b) = d.break_out() {
             let view = d.view;
-            match self.edit_drawing("Break Out", move |doc| doc.add_break_out(view, b)) {
+            let r = match d.edit {
+                Some(k) => self.edit_drawing("Edit Break Out", move |doc| {
+                    doc.set_break_out(view, k, b).then_some(k)
+                }),
+                None => self.edit_drawing("Break Out", move |doc| doc.add_break_out(view, b)),
+            };
+            match r {
                 Some(Some(_)) => {
                     self.drw.tool = None;
                     self.drw.sel = Some(view);
@@ -277,7 +316,52 @@ impl CadCraftApp {
         Ok(([m.x, m.y, m.z], g.view))
     }
 
-    /// Delete Break Out: the last break out of view `view` (one Undo step).
+    /// Edit Break Out of break out `k` of view `view`: the dialog again.
+    pub(super) fn open_break_out_edit(&mut self, view: u32, k: usize) {
+        let b = self
+            .drawing()
+            .and_then(|d| d.sheet()?.view(view)?.break_outs.get(k).cloned());
+        if let Some(b) = b {
+            self.drw.sel = Some(view);
+            self.drw.tool = Some(DrwTool::BreakOut(BoDraft::editing(view, k, &b)));
+        }
+    }
+
+    /// Edit Break Out Sketch of break out `k` of view `view`: its sketch
+    /// opens (one drawn from the profile when it has none); Finish Sketch
+    /// sets the new profile.
+    pub(super) fn open_break_out_sketch_edit(&mut self, view: u32, k: usize) {
+        let b = self
+            .drawing()
+            .and_then(|d| d.sheet()?.view(view)?.break_outs.get(k).cloned());
+        let Some(b) = b else {
+            return;
+        };
+        let sketch = b.sketch.as_deref().cloned().unwrap_or_else(|| {
+            let mut s = crate::drawing::view_sketch::ViewSketch::default();
+            for l in &b.profile {
+                let mut pts = l.clone();
+                if pts.len() > 1 && pts.first() == pts.last() {
+                    pts.pop();
+                }
+                let ids: Vec<_> = pts
+                    .iter()
+                    .map(|p| s.0.add_point(crate::sketch::Point2::new(p[0], p[1])))
+                    .collect();
+                for (i, a) in ids.iter().enumerate() {
+                    let _ = s.0.add_line_between(*a, ids[(i + 1) % ids.len()]);
+                }
+            }
+            s
+        });
+        self.open_view_sketch(
+            view,
+            super::drawing_sketch::SketchFor::BreakOutEdit(k),
+            sketch,
+        );
+    }
+
+    /// Delete Break Out: break out `k` of view `view` (one Undo step).
     pub(super) fn delete_break_out(&mut self, view: u32, k: usize) {
         if self.edit_drawing("Delete Break Out", move |d| d.remove_break_out(view, k)) != Some(true)
         {

@@ -311,6 +311,8 @@ pub(super) struct DrwUi {
     pub break_edit: Option<super::drawing_break::BreakEdit>,
     /// The break under the pointer at the last right click (view, break).
     menu_break: Option<(u32, usize)>,
+    /// The break out under the pointer at the last right click.
+    menu_break_out: Option<(u32, usize)>,
     /// The Text window.
     pub text_dialog: Option<super::drawing_annot::TextDialog>,
     /// The PDF options window (kept until the file is written).
@@ -1629,9 +1631,23 @@ impl CadCraftApp {
             self.drw.menu_break = at
                 .and_then(|q| self.break_near(views, q))
                 .map(|(v, k, _)| (v, k));
+            // The break out under the pointer, else the view's last one.
+            self.drw.menu_break_out = self.drw.hover.and_then(|id| {
+                let outs = &self.drawing()?.sheet()?.view(id)?.break_outs;
+                let pl = views
+                    .iter()
+                    .find(|v| v.id == id)
+                    .and_then(super::drawing_break::placement);
+                let k = at
+                    .zip(pl)
+                    .and_then(|(q, pl)| crate::drawing::BreakOut::under(outs, pl.to_view(q)))
+                    .or_else(|| outs.len().checked_sub(1))?;
+                Some((id, k))
+            });
         }
         let target = self.drw.sel;
         let menu_break = self.drw.menu_break;
+        let menu_out = self.drw.menu_break_out;
         response.context_menu(|ui| {
             if let Some(id) = target {
                 if ui.button("Edit View...").clicked() {
@@ -1658,13 +1674,19 @@ impl CadCraftApp {
                     self.drw_apply(DrwCmd::BreakOut);
                     ui.close();
                 }
-                let outs = self
-                    .drawing()
-                    .and_then(|d| d.sheet()?.view(id))
-                    .map_or(0, |v| v.break_outs.len());
-                if outs > 0 && ui.button("Delete Break Out").clicked() {
-                    self.delete_break_out(id, outs - 1);
-                    ui.close();
+                if let Some((v, k)) = menu_out.filter(|(v, _)| *v == id) {
+                    if ui.button("Edit Break Out").clicked() {
+                        self.open_break_out_edit(v, k);
+                        ui.close();
+                    }
+                    if ui.button("Edit Break Out Sketch").clicked() {
+                        self.open_break_out_sketch_edit(v, k);
+                        ui.close();
+                    }
+                    if ui.button("Delete Break Out").clicked() {
+                        self.delete_break_out(v, k);
+                        ui.close();
+                    }
                 }
                 if let Some((v, k)) = menu_break.filter(|(v, _)| *v == id) {
                     if ui.button("Edit Break").clicked() {
