@@ -1319,6 +1319,9 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::InsertFrame
                     | super::asm_planned::AsmPlanned::Miter
                     | super::asm_planned::AsmPlanned::RemoveEndTreatments
+                    | super::asm_planned::AsmPlanned::CornerJoint
+                    | super::asm_planned::AsmPlanned::TrimExtend
+                    | super::asm_planned::AsmPlanned::LengthenShorten
                     | super::asm_planned::AsmPlanned::PlaceImported
             ) | Planned::Part(
                 PartPlanned::Stitch
@@ -1388,6 +1391,13 @@ impl Planned {
                 "Miter Type",
                 Some("Bisect Miter Cut"),
             ) => Some("Comes with stage F2 (spec 6.1 Miter: to confirm against the help)"),
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::TrimExtend),
+                "Trim Selected Part",
+                None,
+            ) => {
+                Some("Comes with stage F2 (spec 6.1 Trim/Extend: the kept side follows the member)")
+            }
             _ => None,
         }
     }
@@ -1479,6 +1489,9 @@ pub(super) struct PartDialog {
     /// Insert Frame: the skeleton lines picked (edges and sketch lines), in
     /// the order of `picks["edges"]`.
     pub skeletons: Vec<crate::assembly::frame::Skeleton>,
+    /// Where each component pick was clicked (its label, assembly
+    /// coordinates): Lengthen/Shorten takes the end nearer the click.
+    pub clicks: Vec<(String, [f64; 3])>,
 }
 
 /// A chain of edges the right-click menu of an open command adds ([`CadCraftApp::chain_edges`]).
@@ -1496,7 +1509,7 @@ pub(super) enum Chain {
 const LIVE_BUTTONS: &[&str] = &["Find Remaining Free Edges", "Browse..."];
 
 /// Buttons that switch an option on and off (kept like a check box).
-const TOGGLE_BUTTONS: &[&str] = &["Alternate All Faces", "Flip Direction"];
+const TOGGLE_BUTTONS: &[&str] = &["Alternate All Faces", "Flip Direction", "Flip Members"];
 
 /// The selector rows of `kind`, in order; a key on several tabs (Pattern
 /// Component's Components) is one selector.
@@ -1575,6 +1588,7 @@ impl PartDialog {
             note: None,
             file_text: None,
             skeletons: Vec::new(),
+            clicks: Vec::new(),
         }
     }
 
@@ -2390,6 +2404,15 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::RemoveEndTreatments) => {
                 if self.remove_treatments_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(
+                k @ (super::asm_planned::AsmPlanned::CornerJoint
+                | super::asm_planned::AsmPlanned::TrimExtend
+                | super::asm_planned::AsmPlanned::LengthenShorten),
+            ) => {
+                if self.treatment_ok(k, &d) {
                     self.part_planned = None;
                 }
             }

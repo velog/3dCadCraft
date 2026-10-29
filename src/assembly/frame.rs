@@ -244,13 +244,55 @@ pub enum Treatment {
         #[serde(default)]
         offset: MiterOffset,
     },
+    /// Corner Joint: `a` (the first pick) runs on to the far side of `b`;
+    /// `b` stops at `a`'s near side. `offsets` pull each end back.
+    CornerJoint {
+        /// The member that runs through.
+        a: u32,
+        /// The member that stops at it.
+        b: u32,
+        /// Offset1 (of `a`), Offset2 (of `b`).
+        #[serde(default)]
+        offsets: [Real; 2],
+    },
+    /// Trim/Extend To Face: the member's end nearer the face's plane is cut
+    /// on that plane (trimmed or extended to it), `offset` short of it.
+    TrimToFace {
+        /// The member.
+        member: u32,
+        /// The planar face (a component's, in the assembly's references).
+        face: GeomRef,
+        /// Distance kept from the face.
+        #[serde(default)]
+        offset: Real,
+    },
+    /// Lengthen/Shorten: the ends move along the member by these amounts
+    /// (start, end; positive = longer), after every other treatment.
+    Lengthen {
+        /// The member.
+        member: u32,
+        /// Start and end offsets.
+        offsets: [Real; 2],
+    },
 }
 
 impl Treatment {
     /// The members it treats.
-    pub fn members(&self) -> [u32; 2] {
+    pub fn members(&self) -> Vec<u32> {
         match self {
-            Treatment::Miter { a, b, .. } => [*a, *b],
+            Treatment::Miter { a, b, .. } | Treatment::CornerJoint { a, b, .. } => vec![*a, *b],
+            Treatment::TrimToFace { member, .. } | Treatment::Lengthen { member, .. } => {
+                vec![*member]
+            }
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Treatment::Miter { .. } => "Miter",
+            Treatment::CornerJoint { .. } => "Corner Joint",
+            Treatment::TrimToFace { .. } => "Trim/Extend",
+            Treatment::Lengthen { .. } => "Lengthen/Shorten",
         }
     }
 }
@@ -582,15 +624,102 @@ fn joint(a: (Point3, Point3), b: (Point3, Point3), reach: Real) -> Option<(Point
 }
 
 /// The cut planes Miter `t` gives its two members (assembly coordinates).
-fn miter_cuts(
-    t: &Treatment,
-    live: &[Live],
-) -> Result<[(usize, usize, Point3, Vector3); 2], String> {
-    let Treatment::Miter { a, b, gap, offset } = t;
+/// A cut a treatment gives: member index, end (0 start / 1 end), plane
+/// point, normal towards the removed side.
+type Cut = (usize, usize, Point3, Vector3);
+
+/// Away from end `e` of `m` along it (unit).
+fn away(m: &Live, e: usize) -> Vector3 {
+    let (from, to) = if e == 0 {
+        (m.start, m.end)
+    } else {
+        (m.end, m.start)
+    };
+    (to - from).normalize()
+}
+
+/// How far `m`'s section reaches from its axis in direction `u` (square to
+/// the axis).
+fn reach(m: &Live, u: &Vector3) -> Real {
+    let d = (m.end - m.start).normalize();
+    m.section
+        .outline()
+        .iter()
+        .map(|q| {
+            let v = m.place.transform_point(&Point3::new(q.x, q.y, 0.0)) - m.start;
+            let v = v - d * v.dot(&d);
+            u.dot(&v)
+        })
+        .fold(Real::MIN, Real::max)
+}
+
+/// Resolves a component face to its plane (point, normal; assembly
+/// coordinates).
+type FacePlane<'a> = dyn Fn(&GeomRef) -> Result<(Point3, Vector3), String> + 'a;
+
+/// The cuts treatment `t` gives (assembly coordinates). `face` resolves a
+/// component face to its plane (assembly coordinates).
+fn treatment_cuts(t: &Treatment, live: &[Live], face: &FacePlane) -> Result<Vec<Cut>, String> {
     let find = |o: u32| {
         live.iter()
             .position(|m| m.occ == o)
-            .ok_or_else(|| "Miter: one of its members no longer exists".to_string())
+            .ok_or_else(|| "one of its members no longer exists".to_string())
+    };
+    match t {
+        Treatment::Miter { .. } => miter_cuts(t, live, &find).map(|c| c.to_vec()),
+        Treatment::CornerJoint { a, b, offsets } => {
+            let (ia, ib) = (find(*a)?, find(*b)?);
+            let (ma, mb) = (&live[ia], &live[ib]);
+            let size = {
+                let (w, h) = ma.section.extent();
+                let (w2, h2) = mb.section.extent();
+                2.0 * (w + h + w2 + h2)
+            };
+            let (c, ea, eb) = joint((ma.start, ma.end), (mb.start, mb.end), size)
+                .ok_or("the members do not meet")?;
+            let (da, db) = (away(ma, ea), away(mb, eb));
+            // Square to the other member, towards each one's own body.
+            let ua = (da - db * da.dot(&db))
+                .try_normalize(1e-9)
+                .ok_or("the members are parallel")?;
+            let ub = (db - da * db.dot(&da))
+                .try_normalize(1e-9)
+                .ok_or("the members are parallel")?;
+            // A ends at b's far side, b at a's near side.
+            let pa = c - ua * reach(mb, &(-ua)) + ua * offsets[0];
+            let pb = c + ub * (reach(ma, &ub) + offsets[1]);
+            Ok(vec![(ia, ea, pa, -ua), (ib, eb, pb, -ub)])
+        }
+        Treatment::TrimToFace {
+            member,
+            face: f,
+            offset,
+        } => {
+            let i = find(*member)?;
+            let m = &live[i];
+            let (p, n) = face(f)?;
+            let d = (m.end - m.start).normalize();
+            if n.dot(&d).abs() < 0.05 {
+                return Err("the face runs along the member".into());
+            }
+            // The end nearer the plane; the other end stays.
+            let dist = |q: &Point3| (q - p).dot(&n);
+            let e = usize::from(dist(&m.end).abs() < dist(&m.start).abs());
+            let keep = if e == 0 { m.end } else { m.start };
+            let n = if dist(&keep) > 0.0 { -n } else { n };
+            Ok(vec![(i, e, p - n * *offset, n)])
+        }
+        Treatment::Lengthen { .. } => Ok(Vec::new()),
+    }
+}
+
+fn miter_cuts(
+    t: &Treatment,
+    live: &[Live],
+    find: &dyn Fn(u32) -> Result<usize, String>,
+) -> Result<[Cut; 2], String> {
+    let Treatment::Miter { a, b, gap, offset } = t else {
+        return Err("not a mitre".into());
     };
     let (ia, ib) = (find(*a)?, find(*b)?);
     let (ma, mb) = (&live[ia], &live[ib]);
@@ -599,21 +728,12 @@ fn miter_cuts(
         let (w2, h2) = mb.section.extent();
         2.0 * (w + h + w2 + h2)
     };
-    let (c, ea, eb) = joint((ma.start, ma.end), (mb.start, mb.end), reach)
-        .ok_or("Miter: the members do not meet")?;
-    // Away from the joint along each member.
-    let away = |m: &Live, e: usize| {
-        let (from, to) = if e == 0 {
-            (m.start, m.end)
-        } else {
-            (m.end, m.start)
-        };
-        (to - from).normalize()
-    };
+    let (c, ea, eb) =
+        joint((ma.start, ma.end), (mb.start, mb.end), reach).ok_or("the members do not meet")?;
     let (da, db) = (away(ma, ea), away(mb, eb));
     let n = (da - db)
         .try_normalize(1e-9)
-        .ok_or("Miter: the members run the same way")?;
+        .ok_or("the members run the same way")?;
     let (ga, gb) = match offset {
         MiterOffset::Default => (*gap, 0.0),
         MiterOffset::Flipped => (0.0, *gap),
@@ -705,9 +825,18 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
     let mut jobs: Vec<(u32, DocumentId, Section, Shape, Option<String>)> = Vec::new();
     let mut places: Vec<(u32, Transform3)> = Vec::new();
     let mut shapes: Vec<(u32, Shape)> = Vec::new();
+    let face = |g: &GeomRef| -> Result<(Point3, Vector3), String> {
+        let top = a
+            .find(g.occurrence())
+            .ok_or("its face's component no longer exists")?;
+        match super::relation::resolve_with(project, linked, a, g)?.moved(&top.transform) {
+            super::relation::Geom::Plane { p, n } => Ok((p, n)),
+            _ => Err("only planar faces trim members yet".into()),
+        }
+    };
     for (mut live, treatments) in frames {
         for t in &treatments {
-            match miter_cuts(t, &live) {
+            match treatment_cuts(t, &live, &face) {
                 Ok(cuts) => {
                     for (i, end, p, n) in cuts {
                         live[i].cuts[end] = Some((p, n));
@@ -715,9 +844,30 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                 }
                 Err(e) => {
                     for m in t.members() {
-                        out.sick.push((m, e.clone()));
+                        out.sick.push((m, format!("{}: {e}", t.label())));
                     }
                 }
+            }
+        }
+        // Lengthen/Shorten last: a cut end moves along the member, a plain
+        // end gets a square cut there.
+        for t in &treatments {
+            let Treatment::Lengthen { member, offsets } = t else {
+                continue;
+            };
+            let Some(i) = live.iter().position(|m| m.occ == *member) else {
+                continue;
+            };
+            for (e, &by) in offsets.iter().enumerate() {
+                if by.abs() < 1e-12 {
+                    continue;
+                }
+                let out_dir = -away(&live[i], e);
+                let end = if e == 0 { live[i].start } else { live[i].end };
+                live[i].cuts[e] = Some(match live[i].cuts[e] {
+                    Some((p, n)) => (p + out_dir * by, n),
+                    None => (end + out_dir * by, out_dir),
+                });
             }
         }
         for m in &live {
@@ -862,7 +1012,7 @@ pub fn add_miter(
                 .ok_or("both members must belong to one frame")?;
             f.treatments.retain(|t| {
                 let m = t.members();
-                !(m.contains(&x) && m.contains(&y))
+                !(matches!(t, Treatment::Miter { .. }) && m.contains(&x) && m.contains(&y))
             });
             f.treatments.push(Treatment::Miter {
                 a: x,
@@ -882,6 +1032,66 @@ pub fn add_miter(
         *project = before;
     }
     result
+}
+
+/// Adds end treatments `ts` to the frame(s) of their members (an earlier one
+/// of the same kind on the same members is replaced), then solves. A member
+/// a new treatment leaves sick refuses the whole step (rule 5).
+pub fn add_treatments(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    ts: Vec<Treatment>,
+) -> Result<Solved, String> {
+    if ts.is_empty() {
+        return Err("select the frame members".into());
+    }
+    let before = project.clone();
+    let result = (|| {
+        let a = asm_mut(project, asm)?;
+        let mut touched = Vec::new();
+        for t in ts {
+            let ms = t.members();
+            let f = a
+                .frames
+                .iter_mut()
+                .find(|f| {
+                    ms.iter()
+                        .all(|o| f.members.iter().any(|m| m.occurrence == *o))
+                })
+                .ok_or("the members must belong to one frame")?;
+            f.treatments.retain(|x| {
+                !(std::mem::discriminant(x) == std::mem::discriminant(&t) && x.members() == ms)
+            });
+            touched.extend(ms);
+            f.treatments.push(t);
+        }
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(o, _)| touched.contains(o)) {
+            return Err(why.clone());
+        }
+        Ok(s)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+/// A member's run in assembly coordinates (start, end; Flip applied).
+pub fn member_run(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+    occ: u32,
+) -> Option<(Point3, Point3)> {
+    let m = asm
+        .frames
+        .iter()
+        .flat_map(|f| &f.members)
+        .find(|m| m.occurrence == occ)?;
+    let (p, q) = skeleton_line(project, linked, asm, &m.skeleton).ok()?;
+    Some(if m.orientation.flip { (q, p) } else { (p, q) })
 }
 
 /// Remove End Treatments: the members return to their inserted state.
@@ -1384,6 +1594,97 @@ mod tests {
         assert!(a.frames[0].treatments.is_empty());
         let m = part(&p, a, occs[0]);
         assert!((outer_length(&m).unwrap() - 400.0).abs() < 1e-6);
+    }
+
+    /// Corner Joint of two flats at the top front corner: the first runs on
+    /// to the far side of the second, which stops at the first's near side.
+    #[test]
+    fn corner_joint_butts_one_member_against_the_other() {
+        let (mut p, aid, _) = project();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let mut o = opts();
+        o.family = "Flat bar (EN 10058)".into();
+        o.size = "40x5".into();
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[x, y],
+            &o,
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let t = Treatment::CornerJoint {
+            a: occs[0],
+            b: occs[1],
+            offsets: [0.0, 0.0],
+        };
+        add_treatments(&mut p, &Linked::new(), aid, vec![t]).unwrap();
+        let a = asm(&p, aid);
+        // The flats lie with 40 mm across horizontally: a is 20 mm longer,
+        // b 20 mm shorter, both square-cut.
+        let la = outer_length(&part(&p, a, occs[0])).unwrap();
+        let lb = outer_length(&part(&p, a, occs[1])).unwrap();
+        assert!((la - 420.0).abs() < 1e-3, "{la}");
+        assert!((lb - 280.0).abs() < 1e-3, "{lb}");
+        let vb: Real = part(&p, a, occs[1])
+            .exact_bodies
+            .0
+            .iter()
+            .filter_map(|b| b.volume_at(1e-3))
+            .sum();
+        assert!((vb - 200.0 * 280.0).abs() < 0.002 * 200.0 * 280.0, "{vb}");
+    }
+
+    /// Trim/Extend to the skeleton box's top face (offset 10): the vertical
+    /// member at a corner ends 10 mm below it; Lengthen/Shorten then adds 25.
+    #[test]
+    fn trim_to_face_and_lengthen() {
+        let (mut p, aid, _) = project();
+        let e = find_edge(&p, aid, Point3::new(0.0, 0.0, 100.0));
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[e],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let top = GeomRef::Face {
+            occurrence: 1,
+            sub: Vec::new(),
+            name: "Box1:Top".into(),
+            hint: [200.0, 150.0, 200.0],
+        };
+        let t = Treatment::TrimToFace {
+            member: occs[0],
+            face: top,
+            offset: 10.0,
+        };
+        add_treatments(&mut p, &Linked::new(), aid, vec![t]).unwrap();
+        let l = outer_length(&part(&p, asm(&p, aid), occs[0])).unwrap();
+        assert!((l - 190.0).abs() < 1e-3, "{l}");
+        let t = Treatment::Lengthen {
+            member: occs[0],
+            offsets: [0.0, 25.0],
+        };
+        add_treatments(&mut p, &Linked::new(), aid, vec![t]).unwrap();
+        let l = outer_length(&part(&p, asm(&p, aid), occs[0])).unwrap();
+        assert!((l - 215.0).abs() < 1e-3, "{l}");
+        // Shorten the start by 30 as well.
+        let t = Treatment::Lengthen {
+            member: occs[0],
+            offsets: [-30.0, 25.0],
+        };
+        add_treatments(&mut p, &Linked::new(), aid, vec![t]).unwrap();
+        let a = asm(&p, aid);
+        assert_eq!(a.frames[0].treatments.len(), 2);
+        let l = outer_length(&part(&p, a, occs[0])).unwrap();
+        assert!((l - 185.0).abs() < 1e-3, "{l}");
     }
 
     /// Members that do not meet are refused and nothing changes.

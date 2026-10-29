@@ -1701,10 +1701,12 @@ impl CadCraftApp {
             return;
         };
         if kinds.contains(&PickKind::Body) {
-            let what = self
-                .asm_pick_pub(p, rect)
-                .and_then(|(h, _)| self.occurrence_label(h.occurrence));
+            let hit = self.asm_pick_pub(p, rect);
+            let what = hit.and_then(|(h, _)| self.occurrence_label(h.occurrence));
             if let (Some(w), Some(d)) = (what, self.part_planned.as_mut()) {
+                if let Some((_, at)) = hit {
+                    d.clicks.push((w.clone(), [at.x, at.y, at.z]));
+                }
                 d.pick(w);
             }
             return;

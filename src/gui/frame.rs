@@ -348,6 +348,129 @@ impl CadCraftApp {
         }
     }
 
+    /// OK of Corner Joint, Trim/Extend To Face and Lengthen/Shorten.
+    pub(super) fn treatment_ok(&mut self, kind: AsmPlanned, d: &PartDialog) -> bool {
+        use frame::Treatment;
+        let title = kind.title();
+        let fail = |app: &mut Self, e: &str| {
+            let msg = if e.starts_with(title) {
+                e.to_owned()
+            } else {
+                format!("{title}: {e}")
+            };
+            app.file_status = Some(Err(msg));
+            false
+        };
+        let num = |l: &str| d.num(0, l).unwrap_or(0.0);
+        let ts: Vec<Treatment> = match kind {
+            AsmPlanned::CornerJoint => {
+                let (first, second) = (
+                    self.picked_members(d, "first"),
+                    self.picked_members(d, "second"),
+                );
+                // Two members selected before the command both land in the
+                // first selector: they are the pair.
+                let pair = match (first.as_slice(), second.as_slice()) {
+                    ([a, ..], [b, ..]) => Some((*a, *b)),
+                    ([a, b, ..], []) => Some((*a, *b)),
+                    _ => None,
+                };
+                let Some((a, b)) = pair else {
+                    return fail(self, "select the first and the second frame member");
+                };
+                let (a, b) = if d.check(0, "Flip Members") {
+                    (b, a)
+                } else {
+                    (a, b)
+                };
+                vec![Treatment::CornerJoint {
+                    a,
+                    b,
+                    offsets: [num("Offset1"), num("Offset2")],
+                }]
+            }
+            AsmPlanned::TrimExtend => {
+                let Some(face) = d.refs.get("face").and_then(|v| v.first()).cloned() else {
+                    return fail(self, "select the face to trim or extend to");
+                };
+                let members = self.picked_members(d, "members");
+                if members.is_empty() {
+                    return fail(self, "select the frame members");
+                }
+                members
+                    .into_iter()
+                    .map(|member| Treatment::TrimToFace {
+                        member,
+                        face: face.clone(),
+                        offset: num("Offset"),
+                    })
+                    .collect()
+            }
+            _ => {
+                let members = self.picked_members(d, "members");
+                if members.is_empty() {
+                    return fail(self, "select the frame members");
+                }
+                let (o1, o2) = (num("Offset"), num("Offset 2"));
+                let kind = d.index(0, "Offset Type");
+                let linked = self.linked();
+                let Some(a) = self.assembly() else {
+                    return false;
+                };
+                let names: Vec<String> = d.picks_of("members").to_vec();
+                members
+                    .into_iter()
+                    .map(|member| {
+                        // The end nearer the click (Inventor picks a point
+                        // near the end to change); the run's end otherwise.
+                        let name = a.find(member).map(|o| o.name.clone()).unwrap_or_default();
+                        let click = names
+                            .iter()
+                            .filter(|w| w.split(" · ").next() == Some(name.as_str()))
+                            .find_map(|w| d.clicks.iter().rev().find(|(l, _)| l == w))
+                            .map(|(_, p)| crate::kernel::Point3::new(p[0], p[1], p[2]));
+                        let near =
+                            match (click, frame::member_run(&self.project, &linked, a, member)) {
+                                (Some(c), Some((s, e))) => {
+                                    usize::from((c - e).norm() < (c - s).norm())
+                                }
+                                _ => 1,
+                            };
+                        let far = 1 - near;
+                        let mut offsets = [0.0; 2];
+                        match kind {
+                            // Flipped: the other end.
+                            1 => offsets[far] = o1,
+                            // Symmetric: both ends.
+                            2 => offsets = [o1, o1],
+                            // Asymmetric: Offset at the picked end, Offset 2 at the other.
+                            3 => {
+                                offsets[near] = o1;
+                                offsets[far] = o2;
+                            }
+                            _ => offsets[near] = o1,
+                        }
+                        Treatment::Lengthen { member, offsets }
+                    })
+                    .collect()
+            }
+        };
+        let linked = self.linked();
+        let mut trial = self.project.clone();
+        match frame::add_treatments(&mut trial, &linked, self.part_id, ts) {
+            Ok(_) => {
+                self.history.break_coalescing();
+                self.checkpoint(title);
+                self.project = trial;
+                self.history.break_coalescing();
+                self.scene_dirty = true;
+                self.file_status = Some(Ok(format!("{title}: done")));
+                true
+            }
+            Err(e) => fail(self, &e),
+        }
+    }
+
     /// OK of Remove End Treatments.
     pub(super) fn remove_treatments_ok(&mut self, d: &PartDialog) -> bool {
         let members = self.picked_members(d, "members");

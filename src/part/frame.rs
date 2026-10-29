@@ -214,6 +214,14 @@ impl Section {
         }
     }
 
+    /// The outer outline as points (arcs sampled), section coordinates.
+    pub fn outline(&self) -> Vec<Point2> {
+        self.loops()
+            .first()
+            .map(|l| polygon(l, 96))
+            .unwrap_or_default()
+    }
+
     /// A point inside the material (to choose the profile region).
     pub fn material_point(&self) -> Point2 {
         let (w, _) = self.extent();
