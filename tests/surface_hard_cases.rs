@@ -199,6 +199,7 @@ fn trim_tube(plane: OriginPlane, remove: [Real; 3]) {
             surface: w,
             tool: TrimTool::Plane(PlaneRef::Origin(plane)),
             remove,
+            more: Vec::new(),
             invert: false,
         }),
     );
@@ -252,6 +253,7 @@ fn trim_a_strip_by_a_tube() {
             surface: s,
             tool: TrimTool::Surface(t),
             remove: [0.0, 0.0, 5.0],
+            more: Vec::new(),
             invert: false,
         }),
     );

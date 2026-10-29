@@ -428,6 +428,7 @@ fn trim_a_surface_by_a_plane_and_by_a_surface() {
             surface: s.clone(),
             tool: TrimTool::Plane(PlaneRef::Origin(OriginPlane::YZ)),
             remove: [5.0, 0.0, 5.0],
+            more: Vec::new(),
             invert: false,
         }),
     );
@@ -440,6 +441,7 @@ fn trim_a_surface_by_a_plane_and_by_a_surface() {
             surface: s,
             tool: TrimTool::Surface(t),
             remove: [-8.0, 0.0, 5.0],
+            more: Vec::new(),
             invert: false,
         }),
     );
@@ -746,6 +748,7 @@ fn every_surface_command_survives_save_and_load() {
             surface: "A".into(),
             tool: TrimTool::Plane(PlaneRef::Origin(OriginPlane::YZ)),
             remove: [1.0, 0.0, 0.0],
+            more: Vec::new(),
             invert: true,
         }),
         BodyOp::Extend(ExtendOp {
@@ -802,6 +805,7 @@ fn trim_a_surface_by_a_sketch_line() {
             surface: s,
             tool: TrimTool::Sketch(sid),
             remove: [8.0, 0.0, 5.0],
+            more: Vec::new(),
             invert: false,
         }),
     );
@@ -962,6 +966,7 @@ fn trim_a_cylinder_wall_along_its_seams() {
                 surface: s.clone(),
                 tool: TrimTool::Plane(PlaneRef::Origin(plane)),
                 remove: at,
+                more: Vec::new(),
                 invert: false,
             }),
         );
@@ -1070,4 +1075,36 @@ fn loft_bridges_edges_at_different_heights() {
     assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
     // A plane strip from z = 10 down to z = 4 over 10: width 20 × slant length √(100 + 36).
     close(sheet_area(&p) - before, 20.0 * (136.0 as Real).sqrt(), 1e-3);
+}
+
+/// Trim with several areas (spec 5.4a T3): a zigzag wall crossing the XZ plane four times is cut
+/// into five pieces; removing two of them (one on each side of the plane) leaves the other three,
+/// which a one-area trim (one whole side) cannot do. Invert Selection keeps the two instead.
+#[test]
+fn trim_removes_several_picked_areas() {
+    let zigzag = [
+        (0.0, -5.0),
+        (10.0, 5.0),
+        (20.0, -5.0),
+        (30.0, 5.0),
+        (40.0, -5.0),
+    ];
+    let seg = (200.0 as Real).sqrt(); // each 10 × 10 diagonal
+    let total = 4.0 * seg * 10.0;
+    let piece = seg * 10.0; // the pieces between crossings at x = 5, 15, 25, 35
+    for (invert, want) in [(false, total - 2.0 * piece), (true, 2.0 * piece)] {
+        let mut p = PartDocument::default();
+        let w = wall(&mut p, &zigzag, 10.0);
+        op(
+            &mut p,
+            BodyOp::Trim(TrimOp {
+                surface: w,
+                tool: TrimTool::Plane(PlaneRef::Origin(OriginPlane::XZ)),
+                remove: [8.0, 3.0, 5.0],
+                more: vec![[22.0, -3.0, 5.0]],
+                invert,
+            }),
+        );
+        close(sheet_area(&p), want, 1e-6);
+    }
 }

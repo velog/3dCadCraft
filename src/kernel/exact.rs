@@ -4745,7 +4745,8 @@ pub use loft::{
 };
 mod sheet;
 pub use sheet::{
-    SheetSide, extrude_sheet, revolve_sheet, sheet_nearest, split_by_sheet, sweep_sheet_along,
+    SheetSide, closest_on_triangle, extrude_sheet, revolve_sheet, sheet_nearest, split_by_sheet,
+    sweep_sheet_along,
 };
 pub mod surface_ops;
 

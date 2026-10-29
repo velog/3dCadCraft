@@ -234,7 +234,7 @@ impl SheetSide {
 
 /// The point of triangle `abc` nearest `p` (Ericson, *Real-Time Collision
 /// Detection*, 5.1.5).
-pub(super) fn closest_on_triangle(p: &Point3, a: &Point3, b: &Point3, c: &Point3) -> Point3 {
+pub fn closest_on_triangle(p: &Point3, a: &Point3, b: &Point3, c: &Point3) -> Point3 {
     let (ab, ac, ap) = (b - a, c - a, p - a);
     let (d1, d2) = (ab.dot(&ap), ac.dot(&ap));
     if d1 <= 0.0 && d2 <= 0.0 {

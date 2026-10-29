@@ -1505,7 +1505,8 @@ fn tab_keys(kind: Planned, ti: usize) -> Vec<&'static str> {
 pub(super) type PickedItem = (SelItem, Option<[f64; 3]>);
 
 /// Selectors that take one input: a new pick replaces the old one.
-const SINGLE_KEYS: &[&str] = &["tool", "remove", "vector", "to", "new"];
+// (Trim's Remove takes several areas, as Inventor's does.)
+const SINGLE_KEYS: &[&str] = &["tool", "vector", "to", "new"];
 
 /// Selectors that keep taking component edges / faces: a pick never moves
 /// on to the next selector.
@@ -1631,15 +1632,43 @@ impl PartDialog {
             self.advance(key);
             return;
         }
-        let same = self.picks.get(key).is_some_and(|l| l.contains(&what));
-        if !same {
-            let n = self.picks.get(key).map_or(0, Vec::len);
-            let items = self.items.entry(key).or_default();
-            items.truncate(n);
-            items.push((item, at));
+        // The same pick again drops it. Picks are told apart by the item itself, not by their
+        // label (labels may be just "Face" when internal names are hidden); Trim's Remove takes
+        // areas, so there the same face picked elsewhere (another piece of it) is a new pick.
+        let n = self.picks.get(key).map_or(0, Vec::len);
+        let items = self.items.entry(key).or_default();
+        items.truncate(n);
+        let same = items.iter().position(|(x, p)| {
+            *x == item
+                && (key != "remove"
+                    || match (p, at) {
+                        (Some(a), Some(b)) => {
+                            (crate::kernel::Point3::from(*a) - crate::kernel::Point3::from(b))
+                                .norm()
+                                < 1e-3
+                        }
+                        _ => true,
+                    })
+        });
+        match same {
+            Some(i) => {
+                items.remove(i);
+                if let Some(l) = self.picks.get_mut(key)
+                    && i < l.len()
+                {
+                    l.remove(i);
+                }
+                if let Some(r) = self.refs.get_mut(key)
+                    && i < r.len()
+                {
+                    r.remove(i);
+                }
+            }
+            None => {
+                items.push((item, at));
+                self.picks.entry(key).or_default().push(what);
+            }
         }
-        // A selector of many inputs (edges, faces) stays active for the next one.
-        self.pick_then(what, false);
     }
 
     /// The items picked for selector `key`.

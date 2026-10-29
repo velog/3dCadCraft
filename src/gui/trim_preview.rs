@@ -83,6 +83,51 @@ fn clip_triangle(
     }
 }
 
+fn centre(t: &[Point3; 3]) -> Point3 {
+    Point3::from((t[0].coords + t[1].coords + t[2].coords) / 3.0)
+}
+
+/// Pieces of a triangle soup: triangles on the same side (`side`) sharing a corner belong to one
+/// piece. Returns each triangle's piece number.
+fn pieces(tris: &[[Point3; 3]], side: impl Fn(&[Point3; 3]) -> bool) -> Vec<usize> {
+    let key = |p: &Point3| {
+        (
+            (p.x * 1e4).round() as i64,
+            (p.y * 1e4).round() as i64,
+            (p.z * 1e4).round() as i64,
+        )
+    };
+    let sides: Vec<bool> = tris.iter().map(&side).collect();
+    let mut by_corner: std::collections::HashMap<(i64, i64, i64), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (k, t) in tris.iter().enumerate() {
+        for p in t {
+            by_corner.entry(key(p)).or_default().push(k);
+        }
+    }
+    let mut label = vec![usize::MAX; tris.len()];
+    let mut next = 0;
+    for s in 0..tris.len() {
+        if label[s] != usize::MAX {
+            continue;
+        }
+        label[s] = next;
+        let mut stack = vec![s];
+        while let Some(k) = stack.pop() {
+            for p in &tris[k] {
+                for &j in by_corner.get(&key(p)).into_iter().flatten() {
+                    if label[j] == usize::MAX && sides[j] == sides[k] {
+                        label[j] = next;
+                        stack.push(j);
+                    }
+                }
+            }
+        }
+        next += 1;
+    }
+    label
+}
+
 impl CadCraftApp {
     /// The cutting tool picked in the Trim panel, as a side test.
     fn trim_tool_side(&self) -> Option<Side> {
@@ -163,6 +208,18 @@ impl CadCraftApp {
         let Some(side) = self.trim_side.as_ref().map(|(_, s)| s.clone()) else {
             return;
         };
+        // Several areas picked: only the pieces under them (Inventor's Remove of many areas).
+        if let Some((key, surface, picks, invert)) = self.trim_pieces_key()
+            && self.trim_preview.as_ref().map(|(k, _)| k) != Some(&key)
+        {
+            let tris = self.trim_pieces_preview(&surface, &picks, invert, &side);
+            self.trim_preview = Some((key, tris));
+            self.scene_dirty = true;
+            return;
+        }
+        if self.trim_pieces_key().is_some() {
+            return;
+        }
         let want = self.trim_preview_key(hover, &side);
         if self.trim_preview.as_ref().map(|(k, _)| k) == want.as_ref().map(|(k, ..)| k) {
             return;
@@ -183,6 +240,66 @@ impl CadCraftApp {
             (key, tris)
         });
         self.scene_dirty = true;
+    }
+
+    /// With two areas or more picked: (key, surface, the points, invert).
+    fn trim_pieces_key(&self) -> Option<(String, String, Vec<Point3>, bool)> {
+        let d = self.part_planned.as_ref()?;
+        let picks = d.items_of("remove");
+        if picks.len() < 2 {
+            return None;
+        }
+        let (first, at0) = picks.first()?;
+        let surface = match first {
+            SelItem::Face(f) => self.body_of_face(f, *at0)?,
+            SelItem::Body(b) => b.clone(),
+            _ => return None,
+        };
+        let pts: Vec<Point3> = picks
+            .iter()
+            .filter_map(|(_, at)| at.map(Point3::from))
+            .collect();
+        let invert = d.check(0, "Invert Selection");
+        Some((format!("{surface}|{pts:?}|{invert}"), surface, pts, invert))
+    }
+
+    /// The triangles of the pieces under `picks` (cut at the tool; every other piece with
+    /// `invert`).
+    fn trim_pieces_preview(
+        &self,
+        surface: &str,
+        picks: &[Point3],
+        invert: bool,
+        side: &Side,
+    ) -> Vec<[Point3; 3]> {
+        let body = &self.part().body;
+        let opts = crate::kernel::TessellationOptions::default();
+        // The surface's triangles cut at the tool, both sides.
+        let mut tris = Vec::new();
+        for f in crate::part::select::faces_of_body(body, surface) {
+            let Ok(m) = body.face_mesh(f, &opts) else {
+                continue;
+            };
+            for t in &m.triangles {
+                let corners = t.map(|i| m.positions[i as usize]);
+                clip_triangle(corners, |q| side.of(q), true, &mut tris);
+                clip_triangle(corners, |q| side.of(q), false, &mut tris);
+            }
+        }
+        let label = pieces(&tris, |t| side.of(&centre(t)) > 0.0);
+        let nearest = |q: &Point3| {
+            tris.iter()
+                .enumerate()
+                .map(|(k, t)| (k, (centre(t) - q).norm()))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(k, _)| label[k])
+        };
+        let chosen: Vec<usize> = picks.iter().filter_map(nearest).collect();
+        tris.iter()
+            .zip(&label)
+            .filter(|(_, l)| chosen.contains(l) != invert)
+            .map(|(t, _)| *t)
+            .collect()
     }
 
     /// What the preview shows: (key, surface, the removed side: `true` = positive).

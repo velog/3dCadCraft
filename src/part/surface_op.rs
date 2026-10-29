@@ -89,6 +89,10 @@ pub struct TrimOp {
     pub tool: TrimTool,
     /// A point on the piece to remove (model coordinates).
     pub remove: [Real; 3],
+    /// Further pieces to remove (Inventor's Remove takes several areas): with any, the surface
+    /// is divided where the tool meets it and the picked pieces go (Invert Selection: they stay).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub more: Vec<[Real; 3]>,
     /// Invert Selection: keep that piece and remove the rest.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub invert: bool,
@@ -584,6 +588,9 @@ pub(super) fn trim(
 ) -> Result<Vec<ExactSolid>, Fail> {
     op.validate().map_err(User)?;
     let i = sheet_named(sheets, &op.surface)?;
+    if !op.more.is_empty() {
+        return trim_pieces(op, body, works, sketches, cur, sheets, i);
+    }
     let remove = p(&op.remove);
     // The kernel keeps a side: the other side of the tool from the removed piece.
     let (trimmed, kept) = match &op.tool {
@@ -757,6 +764,186 @@ pub(super) fn trim(
             exact::delete_faces(s, &gone, false).map_err(|_| fail())?
         }
     };
+    let mut out: Vec<ExactSolid> = cur.to_vec();
+    for (k, s) in sheets.iter().enumerate() {
+        out.push(if k == i { trimmed.clone() } else { s.clone() });
+    }
+    Ok(out)
+}
+
+/// Trim with several areas: surface `i` divided where the tool meets it (Split Face), then the
+/// pieces under the picked points removed (Invert Selection: every other piece removed).
+fn trim_pieces(
+    op: &TrimOp,
+    body: &BRep,
+    works: &WorkGeom,
+    sketches: &[super::PartSketch],
+    cur: &[ExactSolid],
+    sheets: &[ExactSolid],
+    i: usize,
+) -> Result<Vec<ExactSolid>, Fail> {
+    let tool = match &op.tool {
+        TrimTool::Plane(r) => exact::SplitBy::Plane(
+            super::placement::plane_of(r, body, works).map_err(|e| User(e.to_string()))?,
+        ),
+        TrimTool::Surface(name) => {
+            let t = sheet_named(sheets, name)?;
+            if t == i {
+                return Err(User("a surface cannot trim itself".into()));
+            }
+            exact::SplitBy::Sheet(sheets[t].clone())
+        }
+        TrimTool::Sketch(sid) => {
+            let ps = sketches
+                .iter()
+                .find(|s| &s.id == sid)
+                .ok_or_else(|| User(format!("sketch {sid} is missing")))?;
+            let sk = &ps.sketch;
+            let curves: Vec<Vec<crate::kernel::Segment2>> = sk
+                .entities()
+                .filter(|(e, _)| {
+                    !ps.is_reference(*e) && sk.style(*e) == crate::sketch::Style::Normal
+                })
+                .filter_map(|(e, _)| {
+                    let op = super::OpenProfile {
+                        curves: vec![e],
+                        flip: false,
+                        match_shape: false,
+                    };
+                    super::extrude::open_chain(&op, sk)
+                        .ok()
+                        .map(|c| c.0.into_iter().map(|s| s.geometry).collect())
+                })
+                .collect();
+            if curves.is_empty() {
+                return Err(User("the sketch has no curve to cut with".into()));
+            }
+            exact::SplitBy::Curves {
+                plane: sk.plane.clone(),
+                curves,
+            }
+        }
+    };
+    let s = &sheets[i];
+    let all: Vec<usize> = (0..surface_ops::face_count(s)).collect();
+    let split = exact::split_faces_lenient(s, &all, &tool, "trim", None)
+        .map_err(|e| User(format!("the tool does not cut the surface ({e})")))?
+        .ok_or_else(|| User("the tool does not cut the surface".into()))?;
+    // The piece under each picked point: the face whose display triangles pass nearest it.
+    let b = exact::to_brep(std::slice::from_ref(&split)).map_err(Kernel)?;
+    let faces: Vec<&crate::kernel::Face> = b.faces().map(|(_, f)| f).collect();
+    if faces.len() != surface_ops::face_count(&split) {
+        return Err(User(
+            "the divided surface could not be matched to its pieces".into(),
+        ));
+    }
+    let nearest = |q: &Point3| -> Option<usize> {
+        faces
+            .iter()
+            .enumerate()
+            .filter_map(|(k, f)| {
+                let m = f.mesh.as_ref()?;
+                let d = m
+                    .triangles
+                    .iter()
+                    .map(|t| {
+                        let [a, b, c] = t.map(|j| m.positions[j as usize]);
+                        (exact::closest_on_triangle(q, &a, &b, &c) - q).norm()
+                    })
+                    .fold(Real::MAX, Real::min);
+                Some((k, d))
+            })
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+            .map(|(k, _)| k)
+    };
+    // Faces form pieces: neighbours across an edge on the same side of the tool (a piece between
+    // two crossings of a zigzag spans two faces).
+    let sign = |q: &Point3| -> bool {
+        match &tool {
+            exact::SplitBy::Plane(pl) => (q - pl.origin).dot(&pl.normal.into_inner()) > 0.0,
+            exact::SplitBy::Sheet(t) => t
+                .triangles()
+                .map(|tr| exact::SheetSide::new(tr).signed(q) > 0.0)
+                .unwrap_or(true),
+            exact::SplitBy::Curves { plane, curves } => {
+                let q2 = plane.project(q);
+                let mut best: Option<(Real, Real)> = None;
+                for c in curves {
+                    for g in c {
+                        for k in 0..16 {
+                            let (a, b) =
+                                (g.point(k as Real / 16.0), g.point((k + 1) as Real / 16.0));
+                            let ab = b - a;
+                            let t =
+                                ((q2 - a).dot(&ab) / ab.norm_squared().max(1e-24)).clamp(0.0, 1.0);
+                            let d = (a + ab * t - q2).norm();
+                            if best.is_none_or(|(x, _)| d < x) {
+                                best = Some((d, ab.x * (q2.y - a.y) - ab.y * (q2.x - a.x)));
+                            }
+                        }
+                    }
+                }
+                best.is_some_and(|(_, s)| s > 0.0)
+            }
+        }
+    };
+    let ids: Vec<crate::kernel::FaceId> = b.faces().map(|(f, _)| f).collect();
+    let centre = |f: &crate::kernel::Face| -> Option<Point3> {
+        let m = f.mesh.as_ref()?;
+        let t = m.triangles.first()?;
+        let [a, b2, c] = t.map(|j| m.positions[j as usize]);
+        Some(Point3::from((a.coords + b2.coords + c.coords) / 3.0))
+    };
+    let sides: Vec<bool> = faces
+        .iter()
+        .map(|f| centre(f).is_some_and(|c| sign(&c)))
+        .collect();
+    let mut piece = vec![usize::MAX; faces.len()];
+    let mut next = 0;
+    for s0 in 0..faces.len() {
+        if piece[s0] != usize::MAX {
+            continue;
+        }
+        piece[s0] = next;
+        let mut stack = vec![s0];
+        while let Some(k) = stack.pop() {
+            let f = faces[k];
+            for lp in std::iter::once(&f.outer).chain(&f.inner) {
+                for ce in &lp.coedges {
+                    for g in b.edge_faces(ce.edge) {
+                        if let Some(j) = ids.iter().position(|x| *x == g)
+                            && piece[j] == usize::MAX
+                            && sides[j] == sides[k]
+                        {
+                            piece[j] = next;
+                            stack.push(j);
+                        }
+                    }
+                }
+            }
+        }
+        next += 1;
+    }
+    let chosen: Vec<usize> = std::iter::once(&op.remove)
+        .chain(&op.more)
+        .filter_map(|h| nearest(&p(h)))
+        .map(|k| piece[k])
+        .collect();
+    let picked: Vec<usize> = (0..faces.len())
+        .filter(|k| chosen.contains(&piece[*k]))
+        .collect();
+    let gone: Vec<usize> = if op.invert {
+        (0..faces.len()).filter(|k| !picked.contains(k)).collect()
+    } else {
+        picked
+    };
+    if gone.is_empty() || gone.len() == faces.len() {
+        return Err(User(
+            "the picked areas would leave the surface whole or empty".into(),
+        ));
+    }
+    let trimmed = exact::delete_faces(&split, &gone, false)
+        .map_err(|e| User(format!("the pieces cannot be removed ({e})")))?;
     let mut out: Vec<ExactSolid> = cur.to_vec();
     for (k, s) in sheets.iter().enumerate() {
         out.push(if k == i { trimmed.clone() } else { s.clone() });

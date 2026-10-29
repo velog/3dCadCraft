@@ -359,10 +359,29 @@ impl CadCraftApp {
                         .map(|o| (o.surface.clone(), o.remove))
                         .ok_or_else(|| "select the piece to remove".to_owned())?,
                 };
+                // Further areas: picks on the same surface after the first.
+                let more: Vec<[Real; 3]> = if d.items_of("remove").is_empty() {
+                    prev.map(|o| o.more.clone()).unwrap_or_default()
+                } else {
+                    d.items_of("remove")
+                        .iter()
+                        .skip(1)
+                        .filter(|(item, at)| {
+                            let name = match item {
+                                SelItem::Face(f) => self.body_of_face(f, *at),
+                                SelItem::Body(b) => Some(b.clone()),
+                                _ => None,
+                            };
+                            name.as_deref() == Some(surface.as_str())
+                        })
+                        .filter_map(|(_, at)| *at)
+                        .collect()
+                };
                 BodyOp::Trim(TrimOp {
                     surface,
                     tool,
                     remove,
+                    more,
                     invert: d.check(t, "Invert Selection"),
                 })
             }
