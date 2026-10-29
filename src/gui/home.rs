@@ -750,8 +750,9 @@ impl CadCraftApp {
                     remove.extend(self.home.selected.iter().cloned());
                 }
             }
+            let unpinned = self.home.recent().iter().any(|r| !r.pinned);
             if ui
-                .button("Remove Unpinned")
+                .add_enabled(unpinned, egui::Button::new("Remove Unpinned"))
                 .on_hover_text("Clear the list except pinned files (the files stay on disk)")
                 .clicked()
             {
@@ -781,14 +782,15 @@ impl CadCraftApp {
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new("No recent documents").heading().weak());
                 ui.label("Make a new file or open one from disk.");
-                ui.horizontal(|ui| {
-                    if ui.button("New").clicked() {
-                        *ask = Some(Ask::NewDialog);
-                    }
-                    if ui.button("Open").clicked() {
-                        *ask = Some(Ask::OpenDialog);
-                    }
-                });
+                // A `horizontal` row here starts at the left edge, far from
+                // the centred text: one centred button per line instead.
+                ui.add_space(6.0);
+                if ui.button("New").clicked() {
+                    *ask = Some(Ask::NewDialog);
+                }
+                if ui.button("Open").clicked() {
+                    *ask = Some(Ask::OpenDialog);
+                }
             });
         } else if list.is_empty() {
             ui.label(RichText::new("No file matches the search or filter.").weak());

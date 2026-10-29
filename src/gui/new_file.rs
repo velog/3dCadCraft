@@ -41,13 +41,25 @@ impl CadCraftApp {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     let tile = |ui: &mut egui::Ui, icon, label, tip: &str, enabled| {
-                        ui.vertical(|ui| {
-                            ui.set_width(96.0);
-                            let r =
-                                icon_button(ui, icon, label, Size::Large, enabled, false, false);
-                            ui.label(RichText::new(tip).small().weak());
-                            r.clicked() && enabled
-                        })
+                        // Icon, name and note centred on one column each.
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(110.0, 90.0),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                ui.set_width(110.0);
+                                let r = icon_button(
+                                    ui,
+                                    icon,
+                                    label,
+                                    Size::Large,
+                                    enabled,
+                                    false,
+                                    false,
+                                );
+                                ui.label(RichText::new(tip).small().weak());
+                                r.clicked() && enabled
+                            },
+                        )
                         .inner
                     };
                     if tile(ui, Icon::Part, "Part", "a solid part", true) {

@@ -1253,7 +1253,9 @@ impl CadCraftApp {
 
     fn body_properties(&mut self, ui: &mut egui::Ui) {
         let has_box = !self.part().features.is_empty();
-        ui.heading(if has_box { "Box" } else { "Solid" });
+        // The part's own name (it said "Box" for any part with a feature).
+        let name = self.doc_name(self.part_id);
+        ui.heading(if name.is_empty() { "Part" } else { &name });
         if has_box
             && let Some(k) = self
                 .part()

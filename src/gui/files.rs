@@ -807,7 +807,12 @@ impl CadCraftApp {
     /// Whether the project changed since it was last saved or opened
     /// (recomputed at most once a second; `force` recomputes now).
     pub(super) fn is_dirty(&mut self, now: f64, force: bool) -> bool {
-        if force || now - self.dirty_cache.0 > 1.0 {
+        // Edit Feature shows the body rolled back to before the feature,
+        // and that body is serialized too: the file looked changed (`*`)
+        // the moment a feature was opened. Keep the last answer meanwhile.
+        let rolled_back =
+            !self.is_assembly() && !self.is_drawing() && self.part().rollback.is_some();
+        if !rolled_back && (force || now - self.dirty_cache.0 > 1.0) {
             let d = self.project_signature() != self.saved_sig;
             self.dirty_cache = (now, d);
         }

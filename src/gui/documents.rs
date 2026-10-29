@@ -432,7 +432,7 @@ impl CadCraftApp {
     }
 
     /// The name of document `id` (empty when it is gone).
-    fn doc_name(&self, id: DocumentId) -> String {
+    pub(super) fn doc_name(&self, id: DocumentId) -> String {
         self.project
             .document(id)
             .map(|d| d.name.clone())

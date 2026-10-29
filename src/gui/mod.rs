@@ -5059,14 +5059,18 @@ impl CadCraftApp {
                 self.rebuild_all();
             }
             ui.separator();
-            if self.is_assembly() {
-                self.asm_select_menu(ui);
-            } else {
-                self.select_menu(ui);
+            // A drawing has no model selection priorities, materials or
+            // appearances (Inventor's drawing toolbar shows none of them).
+            if !self.is_drawing() {
+                if self.is_assembly() {
+                    self.asm_select_menu(ui);
+                } else {
+                    self.select_menu(ui);
+                }
+                ui.separator();
+                self.material_qat(ui);
+                ui.separator();
             }
-            ui.separator();
-            self.material_qat(ui);
-            ui.separator();
             let dirty = self.dirty_cache.1;
             ui.label(
                 RichText::new(format!(

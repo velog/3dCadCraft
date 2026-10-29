@@ -1158,7 +1158,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Ribbon panels collapse** (`ribbon::collapsed_panels`): when the open panels' spans (measured each frame they
   are drawn open, egui temp data per tab) exceed the width, `COLLAPSE_FIRST` panels collapse first, then others
   from the right, `COLLAPSE_LAST` (Sketch, Create, Modify, Constrain, Exit) last — one button each that drops the
-  panel down. A span includes its separator and spacing (12 px per gap was 100 px short). Keep everyday panels in
+  panel down; then folded panels that fit beside the rest open again (a wide one folded last left 200 px empty). A span includes its separator and spacing (12 px per gap was 100 px short). Keep everyday panels in
   `COLLAPSE_LAST`; still check a new panel at 1400 px.
 - **Planned part commands** (`gui/part_planned.rs`): a new one is a `PartPlanned` variant + `pages` + `icon` /
   `section` / `about`, a `pp(..)` entry in `commands.rs` (alias, own icon) and a ribbon place; a selector's kinds
@@ -1190,7 +1190,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   extruded out of the face) is `exact::face_slab_join`: the face thickened into a slab (Union = gluing, 30 ms) and the
   profile's holes cut back out. The plain tool's Union found no result after a minute and the part went faceted. A
   plane's section of a round is an exact arc (`vendor` `splitface.rs::fit_on`); a spline section 0.01 mm off broke it.
-- **GPU errors are logged** (`ViewportRenderer::new`: `on_uncaptured_error`, `set_device_lost_callback`): a surface
+- **GPU errors are logged** (`ViewportRenderer::new`: `on_uncaptured_error`, `set_device_lost_callback`); buffers over
+  `max_buffer_size` are left out and the view texture is clamped to `max_texture_dimension_2d` (a validation error
+  makes egui-wgpu's next upload panic): a surface
   "Validation" status then egui-wgpu's "Failed to create staging buffer" panic (owner's crash 2026-10-27, Extrude after
   Project Cut Edges) left no cause in the log. Text boxes that open for typing use `valuefield::focus_all` (text selected).
 - **Free-form faces in sectors** (a revolved or swept spline): the exact kernel's B-spline faces carry a

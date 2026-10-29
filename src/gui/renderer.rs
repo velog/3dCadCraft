@@ -546,7 +546,18 @@ impl ViewportRenderer {
 
     /// Replaces the displayed geometry.
     pub fn upload(&mut self, rs: &RenderState, g: &SceneGeometry) {
+        // A buffer over the device's limit is a validation error, and a
+        // device in error makes egui-wgpu's own next upload panic (owner's
+        // crash 2026-10-27): such geometry is left out and logged instead.
+        let max = rs.device.limits().max_buffer_size;
         let buffer = |label, bytes: &[u8], usage| {
+            if bytes.len() as u64 > max {
+                log::warn!(
+                    "viewport: {label} need {} bytes, over the GPU's {max}",
+                    bytes.len()
+                );
+                return None;
+            }
             (!bytes.is_empty()).then(|| {
                 rs.device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -619,7 +630,9 @@ impl ViewportRenderer {
         cut: Cut,
         style: ViewStyle,
     ) -> egui::TextureId {
-        let size = [size[0].max(1), size[1].max(1)];
+        // Over the texture limit is a validation error (see `upload`).
+        let most = rs.device.limits().max_texture_dimension_2d;
+        let size = [size[0].clamp(1, most), size[1].clamp(1, most)];
         self.ensure_target(rs, size);
         let Some(target) = self.target.as_ref() else {
             return egui::TextureId::default();

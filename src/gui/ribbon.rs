@@ -1499,8 +1499,9 @@ const COLLAPSE_LAST: &[&str] = &["Sketch", "Create", "Modify", "Constrain", "Exi
 
 /// Which panels are shown collapsed so that the row fits `avail`: the rarely
 /// used ones first, then the others from the right, the everyday ones last;
-/// never the first panel. `widths` are the spans of the open panels (with
-/// their separators); a panel not measured yet (0) counts as open.
+/// then reopens what fits again; never the first panel. `widths` are the
+/// spans of the open panels (with their separators); a panel not measured
+/// yet (0) counts as open.
 fn collapsed_panels(widths: &[f32], titles: &[&str], avail: f32) -> Vec<bool> {
     let mut out = vec![false; widths.len()];
     let mut total: f32 = widths.iter().sum();
@@ -1513,11 +1514,26 @@ fn collapsed_panels(widths: &[f32], titles: &[&str], avail: f32) -> Vec<bool> {
     for pass in passes {
         for k in (1..widths.len()).rev() {
             if total <= avail {
-                return out;
+                break;
             }
             if !out[k] && widths[k] > COLLAPSED_W && pass(title(k)) {
                 out[k] = true;
                 total -= widths[k] - COLLAPSED_W;
+            }
+        }
+        if total <= avail {
+            break;
+        }
+    }
+    // A wide panel collapsed last can leave room for narrower ones folded
+    // before it: open them again, the everyday ones first, then from the
+    // left (Pattern and Constrain stood folded beside 200 px of free space).
+    for pass in passes.iter().rev() {
+        for k in 1..widths.len() {
+            let grow = widths[k] - COLLAPSED_W;
+            if out[k] && pass(title(k)) && total + grow <= avail {
+                out[k] = false;
+                total += grow;
             }
         }
     }
@@ -1815,13 +1831,23 @@ mod collapse_tests {
             "Convert",
         ];
         // Surface and Primitives first, then Pattern and Work Features
-        // from the right.
+        // from the right; Work Features made room for the others again.
         let c = super::collapsed_panels(&w, &t, 1390.0);
-        assert_eq!(c, vec![false, false, false, true, true, true, true, false]);
+        assert_eq!(
+            c,
+            vec![false, false, false, true, false, false, false, false]
+        );
+        // Narrower still: Modify has to fold, and then the others fit.
+        let c = super::collapsed_panels(&w, &t, 1230.0);
+        assert_eq!(
+            c,
+            vec![false, false, true, false, false, false, false, false]
+        );
+        // Surface folded; Primitives (9 px wider open) fits again.
         let c = super::collapsed_panels(&w, &t, 1500.0);
         assert_eq!(
             c,
-            vec![false, false, false, false, false, true, true, false]
+            vec![false, false, false, false, false, true, false, false]
         );
         let c = super::collapsed_panels(&w, &t, 1700.0);
         assert!(c.iter().all(|x| !x));
