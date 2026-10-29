@@ -1965,6 +1965,8 @@ pub static COMMANDS: &[Command] = &[
     ap("asm.place_imported", "Place Imported CAD Files", "Поставяне на чужд CAD файл", Icon::PlaceImported, Ap::PlaceImported)
         .short("Imported CAD")
         .alias(&["PIF"])
+        .spec("7.7a-import.md")
+        .tip("Places a STEP file as a component: its assembly structure, or one multi-body part")
         .at(&[A_COMPONENT]),
     ap("asm.create", "Create", "Създаване на компонент", Icon::AsmCreate, Ap::Create)
         .inv("Create In-Place Component")

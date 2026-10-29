@@ -61,6 +61,85 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         }
+        if let Ok(r) = cadcraft3d::kernel::exact::step_bodies(&text, "Import1") {
+            for b in &r.bodies {
+                println!(
+                    "  body {:?} item {} label {} closed {}",
+                    b.solid.name, b.item, b.label, b.closed
+                );
+            }
+            println!("tree:");
+            for n in &r.tree {
+                print_tree(n, 1);
+            }
+            if cadcraft3d::assembly::import::is_assembly(&r) {
+                let t = Instant::now();
+                let name = f
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let mut p = Project::new("Imported");
+                match cadcraft3d::assembly::import::step_project(&r, &text, &name, &mut p) {
+                    Ok(out) => {
+                        println!(
+                            "assembly: {:.2} s, {} parts, {} assemblies, {} occurrences",
+                            t.elapsed().as_secs_f64(),
+                            out.parts,
+                            out.assemblies,
+                            out.occurrences
+                        );
+                        for w in &out.warnings {
+                            println!("  warning: {w}");
+                        }
+                        for d in p.documents() {
+                            if let DocumentData::Part(part) = &d.data {
+                                let v: f64 = part
+                                    .exact_bodies
+                                    .0
+                                    .iter()
+                                    .filter_map(|s| s.volume_at(1e-3))
+                                    .sum();
+                                println!(
+                                    "  part {:<14} volume {v:.1}  health {:?}",
+                                    d.name, part.feature_health
+                                );
+                            }
+                        }
+                        // Placement check: each top-level occurrence's centre of mass against its body's in
+                        // the file.
+                        if let (Some(top), [root]) = (out.top, r.tree.as_slice())
+                            && let Some(DocumentData::Assembly(a)) =
+                                p.document(top).map(|d| &d.data)
+                        {
+                            for (o, c) in a.occurrences.iter().zip(&root.children) {
+                                let Some(&bi) = c.bodies.first() else {
+                                    continue;
+                                };
+                                let want = r.bodies[bi].solid.measure_full().map(|m| m.centroid);
+                                let got = match p.document(o.component.document).map(|d| &d.data) {
+                                    Some(DocumentData::Part(part)) => part
+                                        .exact_bodies
+                                        .0
+                                        .first()
+                                        .and_then(|s| s.measure_full().ok())
+                                        .map(|m| o.transform * m.centroid),
+                                    _ => None,
+                                };
+                                if let (Ok(w), Some(g)) = (want, got) {
+                                    println!("  {:<14} off by {:.4} mm", o.name, (w - g).norm());
+                                }
+                            }
+                        }
+                        if let Some(out_path) = &save {
+                            let asm = out_path.with_extension("asm.3dcadcraft");
+                            p.save(&asm)?;
+                            println!("saved {}", asm.display());
+                        }
+                    }
+                    Err(e) => println!("assembly: error {e}"),
+                }
+            }
+        }
         let t = Instant::now();
         let mut part = PartDocument::default();
         match part.add_body_op(BodyOpFeature::new(BodyOp::Import(op))) {
@@ -79,4 +158,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+fn print_tree(n: &cadcraft3d::kernel::exact::StepProduct, depth: usize) {
+    let t = n.transform;
+    println!(
+        "{}{}  bodies {:?}  at ({:.1}, {:.1}, {:.1})",
+        "  ".repeat(depth),
+        n.name,
+        n.bodies,
+        t[(0, 3)],
+        t[(1, 3)],
+        t[(2, 3)]
+    );
+    for c in &n.children {
+        print_tree(c, depth + 1);
+    }
 }

@@ -1316,6 +1316,7 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::Copy
                     | super::asm_planned::AsmPlanned::Mirror
                     | super::asm_planned::AsmPlanned::InsertFrame
+                    | super::asm_planned::AsmPlanned::PlaceImported
             ) | Planned::Part(
                 PartPlanned::Stitch
                     | PartPlanned::Patch
@@ -1343,15 +1344,15 @@ impl Planned {
                     "in a part a copy always follows its source"
                 ))
             }
-            (Planned::Part(PartPlanned::Import), "Import Type", Some("Reference Model")) => {
+            (k, "Import Type", Some("Reference Model")) if k.is_import() => {
                 Some("Comes with Update of a changed file (spec 7.7a 3.2, stage I3)")
             }
             (
-                Planned::Part(PartPlanned::Import),
+                k,
                 "Meshes" | "Graphical PMI" | "Wires" | "Work Features" | "Points" | "UCS",
                 None,
-            ) => Some("The STEP reader skips these yet (spec 7.7a 3.4)"),
-            (Planned::Part(PartPlanned::Import), "Length Units", None) => Some(concat!(
+            ) if k.is_import() => Some("The STEP reader skips these yet (spec 7.7a 3.4)"),
+            (k, "Length Units", None) if k.is_import() => Some(concat!(
                 "The geometry is converted from the file's units to mm ",
                 "(document units: spec 7.7a 3.5)"
             )),
@@ -1359,12 +1360,14 @@ impl Planned {
                 Planned::Part(PartPlanned::Import),
                 "Import as",
                 Some("Assembly" | "Composite Part"),
-            ) => Some("In a part every body comes in as a body of it (spec 7.7a 3.6, stage I2)"),
-            (Planned::Part(PartPlanned::Import), "Surfaces as", Some("Composite"))
-            | (Planned::Part(PartPlanned::Import), "Stitch", None) => {
+            ) => Some("In a part every body comes in as a body of it (spec 7.7a 3.6)"),
+            (k, "Import as", Some("Composite Part")) if k.is_import() => {
+                Some("Composite features are not available yet (spec 7.7a 3.6)")
+            }
+            (k, "Surfaces as", Some("Composite")) | (k, "Stitch", None) if k.is_import() => {
                 Some("Each open shell is one surface body (spec 7.7a 3.7)")
             }
-            (Planned::Part(PartPlanned::Import), "Placement", Some("Pick a point")) => {
+            (k, "Placement", Some("Pick a point")) if k.is_import() => {
                 Some("Bodies come in at the file's origin (spec 7.7a 3.13)")
             }
             (
@@ -1379,6 +1382,15 @@ impl Planned {
             ) => Some("Comes with stage F3 (spec 6.1 Insert Frame)"),
             _ => None,
         }
+    }
+
+    /// Import (part) or Place Imported CAD Files (assembly).
+    pub fn is_import(self) -> bool {
+        matches!(
+            self,
+            Planned::Part(PartPlanned::Import)
+                | Planned::Asm(super::asm_planned::AsmPlanned::PlaceImported)
+        )
     }
 
     pub fn title(self) -> &'static str {
@@ -1583,7 +1595,7 @@ impl PartDialog {
         let t = self.kind.title();
         match self.flow().current() {
             Some(s) => format!("{t}: {}", super::i18n::tr(s.prompt)),
-            None if self.kind == Planned::Part(PartPlanned::Import) => {
+            None if self.kind.is_import() => {
                 format!("{t}: choose a STEP file (Browse...), set the options, then OK")
             }
             None => format!("{t}: set the options (the command itself comes later)"),
@@ -2183,7 +2195,7 @@ impl CadCraftApp {
         if let Some(b) = d.pressed.take() {
             if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::Replace) {
                 self.replace_browse();
-            } else if d.kind == Planned::Part(PartPlanned::Import) {
+            } else if d.kind.is_import() {
                 self.open_dialog(super::files::DialogPurpose::ImportCad);
             } else {
                 d.note = self.surface_button(&d, b);
@@ -2233,6 +2245,11 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) => {
                 if self.frame_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::PlaceImported) => {
+                if self.place_imported_ok(&d) {
                     self.part_planned = None;
                 }
             }

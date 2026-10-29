@@ -271,7 +271,7 @@ Before each step: verify its rows against the Inventor 2027 help (spec §7).
 
 ## Phase 4 — Advanced modeling and exchange
 
-- STEP **import** (7.7): 🟡 stage I1 (a part's bodies, spec 7.7a, 2026-10-29); next I2 assemblies, I3 Reference Model + Update.
+- STEP **import** (7.7): 🟡 stages I1 (a part's bodies) and I2 (assemblies, Place Imported CAD), spec 7.7a, 2026-10-29; next I3 Reference Model + Update.
 - Sweep 🟡 and Loft 🟡 (2026-10-19: path from a sketch or edges, Guide Rail, Parallel, Taper, Twist; sections from sketches, faces and a point, holes; [spec](spec/5.1-sweep.md), [spec](spec/5.2-loft.md); Guide Surface, Solid Sweep to do; 2026-10-20: Loft with Rails, Center Line, Area Loft, Direction / Tangent conditions, Map Point and Closed Loop 🟡 — Smooth (G2), rounded apex, Surface to do), Coil 🟡 (2026-10-20: three methods, Taper, closed ends, Surface, Booleans through a faceted zone, thread with Cut; [spec](spec/5.3-coil.md)) (5.1–5.3).
 - Materials and appearance 🟡 (2026-10-19: CSV libraries, overrides Face > Feature > Body > Part > Material, QAT lists, browsers, Adjust, Clear, Styles Editor, transparency, colours in GLB/STEP; [spec](spec/2.15-materials.md)) and Physical Properties 🟡 (mass, centre of gravity, inertia; [spec](spec/0.10-physical.md)) (2.15, 0.10).
 - Shell 🟡 (2026-10-19: Inside/Outside/Center, Sharp/Rounded Corners, Remove Faces, closed cavity; [spec](spec/2.6-shell.md)), Face Draft 🟡 (2026-10-19: Fixed Edge, Fixed Plane, Parting Line, Symmetric/Asymmetric, Move Parting Line, Automatic Blending; [spec](spec/2.8-draft.md)), Rib / Web 🟡 (2026-10-20: Normal/Parallel, To Next/Finite, Extend Profile, Draft, bosses, webs; [spec](spec/2.7-rib.md)) (2.6–2.8).

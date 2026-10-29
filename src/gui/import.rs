@@ -13,7 +13,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use eframe::egui;
 
 use super::CadCraftApp;
-use super::part_planned::{PartDialog, PartPlanned, Planned};
+use super::part_planned::PartDialog;
 use crate::part::import::ImportOp;
 use crate::part::{BodyOp, BodyOpFeature};
 
@@ -24,8 +24,18 @@ fn read_step(path: &Path) -> Result<Arc<str>, String> {
     Ok(String::from_utf8_lossy(&bytes).into())
 }
 
-/// What the worker found: the bodies kept and the reader's warnings.
-type ReadResult = Result<(usize, Vec<String>), String>;
+/// What the worker found.
+enum Read {
+    /// Bodies for one part: how many the filters keep, and the reader's warnings.
+    Part(usize, Vec<String>),
+    /// File → Open of an assembly file: the design file made from it.
+    Assembly(
+        Box<crate::document::Project>,
+        crate::assembly::import::AssemblyImport,
+    ),
+}
+
+type ReadResult = Result<Read, String>;
 
 /// A STEP file being read on a worker thread.
 pub(super) struct ImportJob {
@@ -37,18 +47,39 @@ pub(super) struct ImportJob {
     rx: Receiver<ReadResult>,
 }
 
+/// The worker's job: an assembly file opened becomes a design file of documents; anything else
+/// is read as the bodies of one part.
+fn read_in_worker(text: &Arc<str>, open: bool, file: &str, stem: &str) -> ReadResult {
+    if open {
+        let r = crate::kernel::exact::step_bodies(text, "Import1")?;
+        if crate::assembly::import::is_assembly(&r) {
+            let mut p = crate::document::Project::new(stem);
+            let out = crate::assembly::import::step_project(&r, text, file, &mut p)?;
+            return Ok(Read::Assembly(Box::new(p), out));
+        }
+    }
+    ImportOp::new("", text.clone())
+        .read("Import1")
+        .map(|(b, w)| Read::Part(b.len(), w))
+}
+
 impl ImportJob {
     fn start(path: &Path, open: bool) -> Result<Self, String> {
         let text = read_step(path)?;
         let (tx, rx) = std::sync::mpsc::channel();
         let t = text.clone();
+        let file = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Imported".into());
         std::thread::Builder::new()
             .name("step-import".into())
             .spawn(move || {
-                let r = ImportOp::new("", t)
-                    .read("Import1")
-                    .map(|(b, w)| (b.len(), w));
-                let _ = tx.send(r);
+                let _ = tx.send(read_in_worker(&t, open, &file, &stem));
             })
             .map_err(|e| format!("cannot start the reader ({e})"))?;
         Ok(Self {
@@ -146,13 +177,21 @@ impl CadCraftApp {
         };
         let name = job.file_name();
         log::info!(
-            "read {} in {:.2} s: {:?}",
+            "read {} in {:.2} s: {}",
             job.path.display(),
             job.started.elapsed().as_secs_f64(),
-            res.as_ref().map(|(n, w)| (n, w.len()))
+            match &res {
+                Ok(Read::Part(n, w)) => format!("{n} bodies, {} warnings", w.len()),
+                Ok(Read::Assembly(_, o)) => format!("{o:?}"),
+                Err(e) => e.clone(),
+            }
         );
         let (bodies, warnings) = match res {
-            Ok(r) => r,
+            Ok(Read::Part(n, w)) => (n, w),
+            Ok(Read::Assembly(p, out)) => {
+                self.open_imported_assembly(*p, out, &name);
+                return;
+            }
             Err(e) => {
                 self.file_status = Some(Err(format!("Import: {name}: {e}")));
                 if let Some(d) = self.part_planned.as_mut() {
@@ -166,17 +205,43 @@ impl CadCraftApp {
             self.import_into_new_part(&job, &name, &line);
             return;
         }
-        let Some(d) = self
-            .part_planned
-            .as_mut()
-            .filter(|d| d.kind == Planned::Part(PartPlanned::Import))
-        else {
+        let Some(d) = self.part_planned.as_mut().filter(|d| d.kind.is_import()) else {
             return;
         };
         d.set_text(0, "File", &job.path.display().to_string());
         d.file_text = Some(job.text);
         d.note = Some(line.clone());
         self.file_status = Some(Ok(format!("Import: {line}; OK brings it in")));
+    }
+
+    /// File → Open of an assembly file: its design file in a new tab, the top assembly active.
+    fn open_imported_assembly(
+        &mut self,
+        project: crate::document::Project,
+        out: crate::assembly::import::AssemblyImport,
+        name: &str,
+    ) {
+        let Some(top) = out.top else {
+            return;
+        };
+        self.add_blank_tab();
+        self.new_project();
+        self.project = project;
+        self.part_id = top;
+        self.reset_asm_ui();
+        self.history.clear();
+        self.after_restore();
+        self.scene_dirty = true;
+        self.fit_view();
+        self.mark_saved();
+        let mut line = format!(
+            "Imported {name}: {} part(s), {} assembly(ies), {} occurrence(s)",
+            out.parts, out.assemblies, out.occurrences
+        );
+        if let Some(w) = out.warnings.first() {
+            line += &format!("; {} warning(s), first: {w}", out.warnings.len());
+        }
+        self.file_status = Some(Ok(line));
     }
 
     fn import_into_new_part(&mut self, job: &ImportJob, name: &str, line: &str) {
@@ -206,6 +271,103 @@ impl CadCraftApp {
             }
             Err(e) => self.file_status = Some(Err(format!("Import: {name}: {e}"))),
         }
+    }
+
+    /// Place Imported CAD Files' OK: the file's assembly (a subassembly of new documents) or one
+    /// multi-body part, placed at the active assembly's origin as one Undo step. Returns whether
+    /// the panel closes.
+    pub(super) fn place_imported_ok(&mut self, d: &PartDialog) -> bool {
+        const TITLE: &str = "Place Imported CAD Files";
+        match self.place_imported(d) {
+            Ok(line) => {
+                self.file_status = Some(Ok(format!("{TITLE}: {line}")));
+                true
+            }
+            Err(e) => {
+                self.file_status = Some(Err(format!("{TITLE}: {e}")));
+                false
+            }
+        }
+    }
+
+    fn place_imported(&mut self, d: &PartDialog) -> Result<String, String> {
+        if !self.is_assembly() {
+            return Err("no assembly is active".into());
+        }
+        if self.import_job.is_some() {
+            return Err("the file is still being read".into());
+        }
+        let file = d.text(0, "File").trim().to_owned();
+        let text = match &d.file_text {
+            Some(t) => t.clone(),
+            None if file.is_empty() => return Err("choose a STEP file (Browse...)".into()),
+            None => read_step(Path::new(&file))?,
+        };
+        let path = Path::new(&file);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Imported".into());
+        let stem = path
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Imported".into());
+        let r = crate::kernel::exact::step_bodies(&text, "Import1")?;
+        let multi = d.index(0, "Import as") == 1;
+        // On a copy: nothing changes unless all of it works (rule 5).
+        let mut p = self.project.clone();
+        let (comp, line) = if !multi && crate::assembly::import::is_assembly(&r) {
+            let out = crate::assembly::import::step_project(&r, &text, &name, &mut p)?;
+            let top = out.top.ok_or("no component of the file could be read")?;
+            let mut line = format!(
+                "{name} placed: {} part(s), {} assembly(ies)",
+                out.parts, out.assemblies
+            );
+            if let Some(w) = out.warnings.first() {
+                line += &format!("; {} warning(s), first: {w}", out.warnings.len());
+            }
+            (top, line)
+        } else {
+            let op = ImportOp {
+                solids: d.check(0, "Solids"),
+                surfaces: d.check(0, "Surfaces"),
+                ..ImportOp::new(file.clone(), text.clone())
+            };
+            let mut part = crate::part::PartDocument::default();
+            part.add_body_op(BodyOpFeature::new(BodyOp::Import(op)))
+                .map_err(|e| e.to_string())?;
+            let n = part.exact_bodies.0.len();
+            let taken = |s: &str| p.documents().iter().any(|d| d.name == s);
+            let mut doc = stem.clone();
+            let mut k = 1;
+            while taken(&doc) {
+                k += 1;
+                doc = format!("{stem}_{k}");
+            }
+            let id = p.add_document(doc, crate::document::DocumentData::Part(part));
+            (id, format!("{name} placed as one part ({n} body(ies))"))
+        };
+        let Some(crate::document::DocumentData::Assembly(a)) =
+            p.document_mut(self.part_id).map(|x| &mut x.data)
+        else {
+            return Err("no assembly is active".into());
+        };
+        let first = a.occurrences.is_empty();
+        let occ = a.place(
+            crate::document::DocRef::local(comp),
+            &stem,
+            crate::kernel::Transform3::identity(),
+            first,
+        );
+        self.history.break_coalescing();
+        self.checkpoint("Place Imported CAD Files");
+        self.project = p;
+        self.history.break_coalescing();
+        self.asm_solve(None);
+        self.asm.sel = vec![occ];
+        self.asm.sub.clear();
+        self.scene_dirty = true;
+        Ok(line)
     }
 
     /// The Import panel's definition: the file Browse... read, else the embedded one of the

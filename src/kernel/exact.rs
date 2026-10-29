@@ -959,6 +959,34 @@ pub struct StepBody {
     pub color: Option<[f32; 3]>,
     /// A closed solid (false: a surface body).
     pub closed: bool,
+    /// The file's solid entity (instances of one product share it).
+    pub item: u64,
+}
+
+/// One product occurrence of a STEP file's assembly tree.
+#[derive(Clone, Debug)]
+pub struct StepProduct {
+    /// The product's name.
+    pub name: String,
+    /// Placement in the parent product (mm).
+    pub transform: nalgebra::Matrix4<Real>,
+    /// Indices into [`StepRead::bodies`] of this occurrence's own bodies (placed in the file's
+    /// world coordinates).
+    pub bodies: Vec<usize>,
+    /// Its components.
+    pub children: Vec<StepProduct>,
+}
+
+fn step_product(n: &sk::StepNode) -> StepProduct {
+    let t = &n.transform;
+    // Column-major: t[col][row].
+    let transform = nalgebra::Matrix4::from_fn(|row, col| t[col][row]);
+    StepProduct {
+        name: n.name.clone(),
+        transform,
+        bodies: n.bodies.clone(),
+        children: n.children.iter().map(step_product).collect(),
+    }
 }
 
 /// What [`step_bodies`] read.
@@ -970,6 +998,8 @@ pub struct StepRead {
     pub warnings: Vec<String>,
     /// The file's originating system.
     pub system: String,
+    /// The root products (a plain part is one root without children).
+    pub tree: Vec<StepProduct>,
 }
 
 /// The bodies of STEP `text` (mm, placed by the file's assembly structure), named after
@@ -980,6 +1010,7 @@ pub fn step_bodies(text: &str, prefix: &str) -> Result<StepRead, String> {
     let mut out = StepRead {
         warnings: imp.warnings.clone(),
         system: imp.system.clone(),
+        tree: imp.tree.iter().map(step_product).collect(),
         ..Default::default()
     };
     for (k, b) in imp.bodies.iter().enumerate() {
@@ -1004,6 +1035,7 @@ pub fn step_bodies(text: &str, prefix: &str) -> Result<StepRead, String> {
             path: b.path.clone(),
             color: b.color,
             closed: b.closed,
+            item: b.source_item,
         });
     }
     Ok(out)

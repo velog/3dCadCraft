@@ -327,7 +327,9 @@ impl AsmPlanned {
             PlaceContentCenter => {
                 "Places a standard part (bolt, nut, washer, profile) from the library."
             }
-            PlaceImported => "Places a STEP, IGES, SAT or Parasolid file as a component.",
+            PlaceImported => {
+                "Places a STEP file as a component: its assembly, or one multi-body part."
+            }
             Create => {
                 "A new part or subassembly made in place, its first sketch on a face or plane."
             }
@@ -423,26 +425,31 @@ impl AsmPlanned {
                 ],
             )],
             PlaceImported => &[Page(
-                "Import",
+                "Options",
                 &[
-                    Text("File", ""),
                     Button("Browse..."),
+                    Text("File", ""),
                     Radio("Import Type", &["Reference Model", "Convert Model"], 1),
                     Head("Object Filters"),
                     Check("Solids", true),
                     Check("Surfaces", true),
-                    Check("Wires", true),
-                    Check("Work Planes", true),
-                    Check("Work Axes", true),
-                    Check("Work Points", true),
-                    Check("Points", true),
-                    Combo("Units", &["From source", "mm", "in"], 0),
-                    Combo(
-                        "Structure",
-                        &["Assembly", "Multi-body part", "Composite"],
+                    Check("Meshes", false),
+                    Check("Graphical PMI", false),
+                    Check("Wires", false),
+                    Check("Work Features", false),
+                    Check("Points", false),
+                    Check("UCS", false),
+                    Combo("Length Units", &["mm", "cm", "m", "in", "ft"], 0),
+                    Head("Assembly"),
+                    Radio(
+                        "Import as",
+                        &["Assembly", "Multi-body part", "Composite Part"],
                         0,
                     ),
-                    Check("Check imported data", true),
+                    Head("Part"),
+                    Radio("Surfaces as", &["Composite", "Individual"], 1),
+                    Check("Stitch", false),
+                    Radio("Placement", &["At the origin", "Pick a point"], 0),
                 ],
             )],
             Create => &[Page(
