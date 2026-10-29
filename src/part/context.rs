@@ -336,6 +336,94 @@ impl super::PartDocument {
         r
     }
 
+    /// Whether anything of the part uses reference `id`: a sketch plane, a
+    /// projection or a feature (an extent To it).
+    pub fn context_used(&self, id: &str) -> bool {
+        use super::link::LinkSource;
+        let quoted = format!("\"{id}\"");
+        self.sketches.iter().any(|ps| {
+            ps.placement.plane == super::PlaneRef::Context(id.to_owned())
+                || ps
+                    .links
+                    .iter()
+                    .any(|l| matches!(&l.source, LinkSource::Context { id: x } if x == id))
+        }) || self
+            .features
+            .iter()
+            .any(|f| serde_json::to_string(f).is_ok_and(|t| t.contains(&quoted)))
+    }
+
+    /// Whether feature `k` uses another component (an extent To its face).
+    pub fn feature_uses_context(&self, k: usize) -> bool {
+        self.features.get(k).is_some_and(|f| {
+            serde_json::to_string(f).is_ok_and(|t| {
+                self.context
+                    .iter()
+                    .any(|c| t.contains(&format!("\"{}\"", c.id)))
+            })
+        })
+    }
+
+    /// Whether sketch `i` uses other components (its plane or projections).
+    pub fn sketch_uses_context(&self, i: usize) -> bool {
+        self.sketches.get(i).is_some_and(|ps| {
+            matches!(ps.placement.plane, super::PlaneRef::Context(_))
+                || ps
+                    .links
+                    .iter()
+                    .any(|l| matches!(l.source, super::link::LinkSource::Context { .. }))
+        })
+    }
+
+    /// **Break Link** of sketch `i` (spec 3.10 §3.3): a plane on another
+    /// component stays where it is (`PlaneRef::Fixed`), its projections of
+    /// other components become plain geometry, and references nothing
+    /// uses any more are removed. Returns how many links were broken.
+    pub fn break_sketch_context(&mut self, i: usize) -> Result<usize, super::PartError> {
+        use super::RefTarget;
+        use super::link::LinkSource;
+        let ps = self
+            .sketches
+            .get_mut(i)
+            .ok_or(super::PartError::NoSketch(i))?;
+        let mut n = 0;
+        if matches!(ps.placement.plane, super::PlaneRef::Context(_)) {
+            ps.placement.plane = super::PlaneRef::Fixed;
+            n += 1;
+        }
+        let targets: Vec<RefTarget> = ps
+            .links
+            .iter()
+            .filter(|l| matches!(l.source, LinkSource::Context { .. }))
+            .map(|l| match l.curve {
+                Some(c) => RefTarget::Curve(c),
+                None => RefTarget::Point(l.points[0]),
+            })
+            .collect();
+        for t in targets {
+            ps.break_link(t)
+                .map_err(|e| super::PartError::Feature(format!("Break Link: {e}")))?;
+            n += 1;
+        }
+        self.prune_context();
+        Ok(n)
+    }
+
+    /// Removes the references nothing uses any more.
+    pub fn prune_context(&mut self) {
+        let unused: Vec<String> = self
+            .context
+            .iter()
+            .filter(|c| !self.context_used(&c.id))
+            .map(|c| c.id.clone())
+            .collect();
+        for id in unused {
+            self.context.retain(|c| c.id != id);
+            self.work.context.remove(&id);
+            self.work.context_curves.remove(&id);
+        }
+    }
+
     /// Writes new copies (`id`, geometry); `true` when one changed (the
     /// part then needs a regeneration).
     pub fn set_context(&mut self, copies: &[(String, ContextGeom)]) -> bool {

@@ -46,6 +46,8 @@ enum BrowserCmd {
     Suppress(usize, bool),
     /// Adaptive on / off for a sketch or feature id (spec 3.10 §3.4).
     Adaptive(String, bool),
+    /// Break Link of a sketch's references to other components.
+    BreakContext(usize),
     /// Suppress if... (the condition window for feature k).
     SuppressIf(usize),
     /// Move the End of Part so that this many features are built.
@@ -430,6 +432,21 @@ impl CadCraftApp {
                 }
             }
             BrowserCmd::Suppress(k, on) => self.set_suppressed(k, on),
+            BrowserCmd::BreakContext(i) => {
+                self.checkpoint("Break Link");
+                match self.part_mut().break_sketch_context(i) {
+                    Ok(_) => {
+                        if let Err(e) = self.part_mut().regenerate() {
+                            self.file_status = Some(Err(e.to_string()));
+                        }
+                        self.scene_dirty = true;
+                    }
+                    Err(e) => {
+                        self.history.cancel();
+                        self.file_status = Some(Err(e.to_string()));
+                    }
+                }
+            }
             BrowserCmd::Adaptive(id, on) => {
                 self.checkpoint("Adaptive");
                 self.part_mut().set_adaptive(&id, on);
@@ -775,6 +792,11 @@ impl CadCraftApp {
         } else {
             label
         };
+        let label = if part.feature_uses_context(k) {
+            format!("{label}  (linked)")
+        } else {
+            label
+        };
         let mut text = RichText::new(label);
         if sick.is_some() {
             text = text.color(WARNING);
@@ -1050,6 +1072,8 @@ impl CadCraftApp {
         let part = self.part();
         let ps = &part.sketches[i];
         let part_adaptive = part.is_adaptive(&ps.id);
+        // Built on other components of an assembly (spec 3.10 §3.3).
+        let linked = part.sketch_uses_context(i);
         let editing = self.editing == Some(i);
         let consumers = part.consumers(&ps.id).len();
         let rolled = part.sketch_rolled_back(i);
@@ -1077,6 +1101,9 @@ impl CadCraftApp {
             }
             if part_adaptive {
                 label.push_str("  (adaptive)");
+            }
+            if linked {
+                label.push_str("  (linked)");
             }
             if editing {
                 label.push_str("  (editing)");
@@ -1130,6 +1157,9 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     item("Unshare", BrowserCmd::Share(i, false));
                 }
                 item("Redefine", BrowserCmd::Redefine(i));
+                if linked {
+                    item("Break Link", BrowserCmd::BreakContext(i));
+                }
                 // A check mark while on (see ADAPTIVE_SKETCH_TIP).
                 item(
                     if part_adaptive {

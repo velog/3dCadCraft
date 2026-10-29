@@ -389,3 +389,68 @@ fn a_post_extruded_to_a_cover_follows_it_up() {
     assert!((hi.z - 70.0).abs() < 1e-6, "{hi:?}");
     let _ = s;
 }
+
+#[test]
+fn break_link_makes_the_gasket_its_own() {
+    let (mut p, aid, s, t) = design(
+        flange(100.0),
+        Transform3::identity(),
+        Transform3::translation(0.0, 0.0, 10.0),
+    );
+    let top = edges_at(part(&p, s), 10.0);
+    project_and_extrude(&mut p, aid, t, &top, 2.0);
+    let v = volume(part(&p, t));
+    let tp = part_mut(&mut p, t);
+    assert!(tp.sketch_uses_context(0));
+    let n = tp.break_sketch_context(0).unwrap();
+    assert_eq!(n, top.len());
+    assert!(tp.context.is_empty() && !tp.sketch_uses_context(0));
+    tp.regenerate().unwrap();
+    assert!(tp.feature_health.is_empty(), "{:?}", tp.feature_health);
+    assert!((volume(part(&p, t)) - v).abs() < 1e-6);
+    // The flange grows: the gasket no longer follows.
+    grow(part_mut(&mut p, s), 120.0);
+    let r = context::update(&mut p, &Linked::new(), aid);
+    assert!(r.changed.is_empty() && r.sick.is_empty(), "{r:?}");
+    let (lo, hi) = bbox(part(&p, t));
+    assert!(((hi.x - lo.x) - 100.0).abs() < 1e-6);
+}
+
+#[test]
+fn break_link_of_a_sketch_on_another_face_keeps_its_place() {
+    use cadcraft3d::part::PlaneRef;
+    let (mut p, aid, _, t) = design(
+        PartDocument::with_box("Box1", [100.0, 100.0, 10.0]).unwrap(),
+        Transform3::identity(),
+        Transform3::translation(0.0, 0.0, 30.0),
+    );
+    let a = asm(&p, aid);
+    let source = ContextSource {
+        assembly: aid,
+        target: vec![2],
+        path: vec![1],
+        face: "Box1:Top".into(),
+        edge: None,
+        hint: [50.0, 50.0, 10.0],
+        label: "Source:1 face".into(),
+    };
+    let geom = current(&p, &Linked::new(), &a, &source).unwrap();
+    let tp = part_mut(&mut p, t);
+    let id = tp.add_context(ContextRef {
+        id: String::new(),
+        source,
+        geom,
+    });
+    let placement = SketchPlacement {
+        plane: PlaneRef::Context(id),
+        ..Default::default()
+    };
+    let i = tp.create_sketch(placement, &opts()).unwrap();
+    let z = tp.sketches[i].sketch.plane.origin.z;
+    assert!((z + 20.0).abs() < 1e-9);
+    assert_eq!(tp.break_sketch_context(i).unwrap(), 1);
+    assert_eq!(tp.sketches[i].placement.plane, PlaneRef::Fixed);
+    assert!(tp.context.is_empty());
+    tp.regenerate().unwrap();
+    assert!((tp.sketches[i].sketch.plane.origin.z - z).abs() < 1e-9);
+}
