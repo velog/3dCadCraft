@@ -1344,7 +1344,7 @@ impl Planned {
                     "in a part a copy always follows its source"
                 ))
             }
-            (k, "Import Type", Some("Reference Model")) if k.is_import() => {
+            (Planned::Asm(_), "Import Type", Some("Reference Model")) => {
                 Some("Comes with Update of a changed file (spec 7.7a 3.2, stage I3)")
             }
             (

@@ -742,6 +742,7 @@ impl CadCraftApp {
             }
             BodyOp::Trim(o) => d.set_check(0, "Invert Selection", o.invert),
             BodyOp::Import(o) => {
+                d.set_index(0, "Import Type", usize::from(o.link.is_none()));
                 d.set_text(0, "File", &o.file);
                 d.set_check(0, "Solids", o.solids);
                 d.set_check(0, "Surfaces", o.surfaces);

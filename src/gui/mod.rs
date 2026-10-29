@@ -575,6 +575,8 @@ struct CadCraftApp {
     keymap_tips_dirty: bool,
     /// A STEP file being read on a worker thread (`gui/import.rs`).
     import_job: Option<import::ImportJob>,
+    /// Reference Model imports whose file changed (`gui/import.rs`).
+    import_stale: import::Stale,
     /// View → Object Visibility (persisted with the Application Options).
     obj_vis: layout::ObjectVisibility,
 
@@ -945,6 +947,7 @@ impl CadCraftApp {
             customize: Default::default(),
             keymap_tips_dirty: true,
             import_job: None,
+            import_stale: Default::default(),
             obj_vis: Default::default(),
             camera: OrbitCamera::default(),
             renderer: cc.wgpu_render_state.as_ref().map(ViewportRenderer::new),
@@ -5177,6 +5180,7 @@ impl CadCraftApp {
             {
                 self.rebuild_all();
             }
+            self.import_update_button(ui);
             ui.separator();
             // A drawing has no model selection priorities, materials or
             // appearances (Inventor's drawing toolbar shows none of them).

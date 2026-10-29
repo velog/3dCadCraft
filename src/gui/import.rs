@@ -256,7 +256,12 @@ impl CadCraftApp {
         if let Some(doc) = self.project.document_mut(self.part_id) {
             doc.name = stem;
         }
-        let op = ImportOp::new(job.path.display().to_string(), job.text.clone());
+        // File → Open follows the file (Reference Model): Update brings its changes.
+        let path = job.path.display().to_string();
+        let op = ImportOp {
+            link: Some(crate::part::import::SourceLink::now(&path)),
+            ..ImportOp::new(path, job.text.clone())
+        };
         match self
             .part_mut()
             .add_body_op(BodyOpFeature::new(BodyOp::Import(op)))
@@ -396,12 +401,129 @@ impl CadCraftApp {
         } else {
             file
         };
+        // Reference Model follows the file; an update keeps its matched names (`keep`).
+        let link =
+            (d.index(0, "Import Type") == 0).then(|| crate::part::import::SourceLink::now(&file));
+        let keep = prev
+            .filter(|o| Arc::ptr_eq(&o.text, &text))
+            .map(|o| o.keep.clone())
+            .unwrap_or_default();
         let op = ImportOp {
             solids: d.check(0, "Solids"),
             surfaces: d.check(0, "Surfaces"),
+            link,
+            keep,
             ..ImportOp::new(file, text)
         };
         op.validate()?;
         Ok(BodyOp::Import(op))
+    }
+}
+
+/// The Reference Model imports of the active part whose file changed, checked every 2 s.
+#[derive(Default)]
+pub(super) struct Stale {
+    /// When the files were last looked at (egui time).
+    checked: f64,
+    /// Feature indices of the changed imports.
+    pub features: Vec<usize>,
+}
+
+impl CadCraftApp {
+    /// The Quick Access toolbar's Update button: shown while a referenced file changed (Inventor's
+    /// Update icon). Click: every changed import of the part reads its file again.
+    pub(super) fn import_update_button(&mut self, ui: &mut egui::Ui) {
+        let now = ui.input(|i| i.time);
+        if now - self.import_stale.checked > 2.0 || now < self.import_stale.checked {
+            self.import_stale.checked = now;
+            self.import_stale.features = if self.is_assembly() || self.is_drawing() {
+                Vec::new()
+            } else {
+                self.part()
+                    .features
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(k, f)| match f {
+                        crate::part::Feature::BodyOp(b) => match &b.op {
+                            BodyOp::Import(o) if o.link.as_ref().is_some_and(|l| l.changed()) => {
+                                Some(k)
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect()
+            };
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(2));
+        }
+        if self.import_stale.features.is_empty() {
+            return;
+        }
+        let tip = "A referenced file changed: read it again (faces that stay keep their names)";
+        if ui
+            .button(
+                egui::RichText::new("Update")
+                    .color(ui.visuals().warn_fg_color)
+                    .strong(),
+            )
+            .on_hover_text(tip)
+            .clicked()
+        {
+            self.update_imports();
+        }
+    }
+
+    /// Update: each changed import reads its file again, as one Undo step.
+    fn update_imports(&mut self) {
+        let ks = std::mem::take(&mut self.import_stale.features);
+        let mut lines = Vec::new();
+        let mut failed = Vec::new();
+        self.history.break_coalescing();
+        self.checkpoint("Update");
+        let mut changed = false;
+        for k in ks {
+            let Some(crate::part::Feature::BodyOp(b)) = self.part().features.get(k).cloned() else {
+                continue;
+            };
+            let BodyOp::Import(op) = &b.op else { continue };
+            let Some(link) = &op.link else { continue };
+            let r = read_step(Path::new(&link.path))
+                .and_then(|t| op.updated(&b.id, t))
+                .and_then(|(next, report)| {
+                    let mut nb = b.clone();
+                    nb.op = BodyOp::Import(next);
+                    self.part_mut()
+                        .replace_feature(k, crate::part::Feature::BodyOp(nb))
+                        .map(|_| report)
+                        .map_err(|e| e.to_string())
+                });
+            match r {
+                Ok(rep) => {
+                    changed = true;
+                    lines.push(format!(
+                        "{}: {} face(s) kept, {} new, {} gone",
+                        b.name, rep.matched, rep.new, rep.lost
+                    ));
+                }
+                Err(e) => failed.push(format!("{}: {e}", b.name)),
+            }
+        }
+        if changed {
+            self.history.break_coalescing();
+            self.scene_dirty = true;
+        } else {
+            self.history.cancel();
+        }
+        let sick = self.part().feature_health.len();
+        self.file_status = Some(if failed.is_empty() {
+            let mut s = format!("Update: {}", lines.join("; "));
+            if sick > 0 {
+                s += &format!(" ({sick} feature(s) lost a reference: see the browser)");
+            }
+            Ok(s)
+        } else {
+            Err(format!("Update: {}", failed.join("; ")))
+        });
     }
 }

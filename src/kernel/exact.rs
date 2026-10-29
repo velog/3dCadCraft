@@ -185,6 +185,41 @@ impl ExactSolid {
     pub fn names(&self) -> &[Option<String>] {
         &self.face_names
     }
+
+    /// Renames the faces (same order and count; for a matched re-import).
+    pub fn set_names(&mut self, names: Vec<Option<String>>) {
+        if names.len() == self.face_names.len() {
+            self.face_names = names;
+        }
+    }
+
+    /// Each face's area, centre of area and normal (planes only), in face order, from the
+    /// display mesh at chord tolerance `tol`: what a face is matched by when its file changes.
+    pub fn face_signatures(&self, tol: Real) -> Result<Vec<FaceSignature>, String> {
+        let fs = guarded("faces", || self.body.faces(tol))?;
+        let mut out = vec![FaceSignature::default(); self.face_names.len()];
+        for f in fs {
+            if let Some(o) = out.get_mut(f.index) {
+                *o = FaceSignature {
+                    area: f.area,
+                    centroid: p3(f.centroid),
+                    normal: f.plane_normal.map(|n| Vector3::new(n.x, n.y, n.z)),
+                };
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// What a face is recognised by after its file changed ([`ExactSolid::face_signatures`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FaceSignature {
+    /// Area (mm²).
+    pub area: Real,
+    /// Centre of area.
+    pub centroid: Point3,
+    /// Unit normal of a planar face.
+    pub normal: Option<Vector3>,
 }
 
 /// Names of a result's faces from the history (or, without one, from the
