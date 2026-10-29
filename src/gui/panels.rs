@@ -44,6 +44,8 @@ enum BrowserCmd {
     BodyVisible(String, bool),
     /// Suppress (true) / Unsuppress Features.
     Suppress(usize, bool),
+    /// Adaptive on / off for a sketch or feature id (spec 3.10 §3.4).
+    Adaptive(String, bool),
     /// Suppress if... (the condition window for feature k).
     SuppressIf(usize),
     /// Move the End of Part so that this many features are built.
@@ -428,6 +430,10 @@ impl CadCraftApp {
                 }
             }
             BrowserCmd::Suppress(k, on) => self.set_suppressed(k, on),
+            BrowserCmd::Adaptive(id, on) => {
+                self.checkpoint("Adaptive");
+                self.part_mut().set_adaptive(&id, on);
+            }
             BrowserCmd::SuppressIf(k) => {
                 let id = self.part().features.get(k).map(|f| f.id().to_owned());
                 let text = id
@@ -764,6 +770,11 @@ impl CadCraftApp {
         } else {
             label
         };
+        let label = if part.is_adaptive(id) {
+            format!("{label}  (adaptive)")
+        } else {
+            label
+        };
         let mut text = RichText::new(label);
         if sick.is_some() {
             text = text.color(WARNING);
@@ -900,6 +911,17 @@ impl CadCraftApp {
             cmds.push(BrowserCmd::Suppress(k, !sup));
             ui.close();
         }
+        if matches!(f, Feature::Extrude(_)) || f.sketch().is_some() {
+            let mut on = part.is_adaptive(f.id());
+            if ui
+                .checkbox(&mut on, "Adaptive")
+                .on_hover_text(ADAPTIVE_FEATURE_TIP)
+                .clicked()
+            {
+                cmds.push(BrowserCmd::Adaptive(f.id().to_owned(), on));
+                ui.close();
+            }
+        }
         let cond = part.suppress_if.contains_key(f.id());
         if ui
             .button(if cond {
@@ -1027,6 +1049,7 @@ impl CadCraftApp {
     fn sketch_row(&self, ui: &mut egui::Ui, i: usize, cmds: &mut Vec<BrowserCmd>) {
         let part = self.part();
         let ps = &part.sketches[i];
+        let part_adaptive = part.is_adaptive(&ps.id);
         let editing = self.editing == Some(i);
         let consumers = part.consumers(&ps.id).len();
         let rolled = part.sketch_rolled_back(i);
@@ -1052,6 +1075,9 @@ impl CadCraftApp {
             if ps.shared {
                 label.push_str("  (shared)");
             }
+            if part_adaptive {
+                label.push_str("  (adaptive)");
+            }
             if editing {
                 label.push_str("  (editing)");
             }
@@ -1069,6 +1095,12 @@ impl CadCraftApp {
             };
             if rolled {
                 hover.push_str("\nBelow the End of Part (rolled back)");
+            }
+            if part_adaptive {
+                hover.push_str(&format!(
+                    "
+Adaptive: {ADAPTIVE_SKETCH_TIP}"
+                ));
             }
             let selected = self.selection == Selection::Sketch(i);
             let r = ui.selectable_label(selected, text).on_hover_text(hover);
@@ -1098,6 +1130,15 @@ impl CadCraftApp {
                     item("Unshare", BrowserCmd::Share(i, false));
                 }
                 item("Redefine", BrowserCmd::Redefine(i));
+                // A check mark while on (see ADAPTIVE_SKETCH_TIP).
+                item(
+                    if part_adaptive {
+                        "✔ Adaptive"
+                    } else {
+                        "Adaptive"
+                    },
+                    BrowserCmd::Adaptive(ps.id.clone(), !part_adaptive),
+                );
                 item("Look At", BrowserCmd::LookAt(i));
                 item(
                     if ps.visible { "Hide" } else { "Show" },
@@ -6700,3 +6741,11 @@ pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
         Feature::Split(sp) => (Icon::SplitBody, sp.method.label().to_owned()),
     }
 }
+
+/// Tooltip of a feature's Adaptive switch (spec 3.10 §3.4).
+const ADAPTIVE_FEATURE_TIP: &str = "In an assembly where this part is Adaptive, the feature's free sizes follow the \
+relationships: its sketch's free points and, for an Extrude with a Distance, the distance";
+
+/// Tooltip of a sketch's Adaptive switch.
+const ADAPTIVE_SKETCH_TIP: &str = "In an assembly where this part is Adaptive, the sketch's free points (not fixed by \
+its dimensions and constraints) follow the relationships";

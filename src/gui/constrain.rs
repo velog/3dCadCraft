@@ -180,7 +180,37 @@ impl CadCraftApp {
     pub(super) fn asm_solve(&mut self, drag: Option<&asm::Drag>) {
         self.asm_solve_once(drag);
         if drag.is_none() {
+            self.adapt_follow();
             self.context_follow();
+        }
+    }
+
+    /// When the rigid solve does not hold, an adaptive part takes the size
+    /// the relationships need (spec 3.10 §3.4); no Undo step (after the
+    /// change's checkpoint). A size that cannot be found leaves everything
+    /// as the rigid solve did and says why.
+    pub(super) fn adapt_follow(&mut self) {
+        if self.cons.last.converged {
+            return;
+        }
+        let Some(mut a) = self.assembly().cloned() else {
+            return;
+        };
+        if !a.occurrences.iter().any(|o| o.adaptive) {
+            return;
+        }
+        match self.adapt_copy(&a) {
+            Ok(Some(r)) => {
+                self.adapt_write(&mut a, r);
+                if let Err(e) = self.place_patterns(&mut a) {
+                    log::warn!("{e}");
+                }
+                if let Some(cur) = self.assembly_mut() {
+                    *cur = a;
+                }
+            }
+            Ok(None) => {}
+            Err(e) => self.file_status = Some(Err(format!("Adaptive: {e}"))),
         }
     }
 
@@ -236,10 +266,30 @@ impl CadCraftApp {
         let mut a = self.assembly().ok_or("no assembly")?.clone();
         f(&mut a);
         let s = self.solve_copy(&a, None);
-        if !s.converged && !a.constraints.iter().all(|c| c.suppressed) {
+        // An adaptive part may take the size the new relationship needs.
+        let mut adapted = None;
+        if !s.converged
+            && a.occurrences.iter().any(|o| o.adaptive)
+            && let Ok(Some(r)) = self.adapt_copy(&a)
+        {
+            adapted = Some(r);
+        }
+        if !s.converged && adapted.is_none() && !a.constraints.iter().all(|c| c.suppressed) {
             return Err(
                 "it conflicts with the existing relationships (nothing was changed)".into(),
             );
+        }
+        if let Some(r) = adapted {
+            self.checkpoint(label);
+            self.adapt_write(&mut a, r);
+            if let Err(e) = self.place_patterns(&mut a) {
+                log::warn!("{e}");
+            }
+            if let Some(cur) = self.assembly_mut() {
+                *cur = a;
+            }
+            self.context_follow();
+            return Ok(());
         }
         for (id, t) in &s.transforms {
             if let Some(o) = a.find_mut(*id) {

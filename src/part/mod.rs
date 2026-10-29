@@ -930,6 +930,11 @@ pub struct PartDocument {
     /// components copied into this part's coordinates (format revision 44).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context: Vec<context::ContextRef>,
+    /// Adaptive sketches and features (spec 3.10 §3.4), by id: their free
+    /// sizes may be changed by an assembly in which the part is adaptive
+    /// (`assembly::adapt`). A plain list: old builds ignore it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adaptive: Vec<String>,
     /// Whether the last regeneration used the exact kernel (`false`: the
     /// faceted one, see [`PartDocument::regenerate`]).
     #[serde(skip)]

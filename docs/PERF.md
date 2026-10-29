@@ -78,6 +78,7 @@ Target times for interactive work:
 | Selection: filter + priority + order of 10 000 candidates under the cursor, ×10 (`command::selection::filter_candidates`) | 20 ms | 3.8 ms (2026-10-20, under load) |
 | Command search: one keystroke over 300 commands (`command_search_per_keystroke`, a separate test) | 1 ms | 0.23 ms (2026-10-20) |
 | Assembly Update of cross-part references: 20 parts, each a cylinder sketched on a moved base (`assembly::context::update`, spec 3.10 T3) | 300 ms | 92 ms (2026-10-29, under load) |
+| Adaptivity: a plate free in length mated to two walls 100 mm apart, size and place solved together (`assembly::adapt`, spec 3.10 T4) | 50 ms | 1.8 ms release (2026-10-29, under load) |
 
 ## Resource log
 

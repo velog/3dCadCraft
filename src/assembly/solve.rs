@@ -42,6 +42,9 @@ pub struct Solved {
     pub converged: bool,
     /// The largest remaining residual.
     pub residual: Real,
+    /// Every residual of the active relationships at the result, in their
+    /// order (Adaptivity minimises them over the part's free sizes).
+    pub residuals: Vec<Real>,
     /// Free degrees of freedom of each component that is not grounded
     /// (the others held where they are).
     pub dof: HashMap<u32, usize>,
@@ -414,14 +417,14 @@ fn graph_order(cons: &[Con], free: &HashSet<u32>, blocks: &[u32], first: Option<
     order
 }
 
-/// Solves the constraints of `asm`. `local` gives a reference's geometry in
-/// its part's coordinates; `drag` pulls a point of one component.
-pub fn solve(
+/// The active relationships with their geometry; the ones whose geometry
+/// cannot be found go to `sick`.
+fn gather(
     asm: &AssemblyDocument,
     local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
     drag: Option<&Drag>,
-) -> Solved {
-    let mut out = Solved::default();
+    sick: &mut Vec<(u32, String)>,
+) -> Vec<Con> {
     let mut cons: Vec<Con> = Vec::new();
     // A suppressed component's relationships rest (not sick).
     let off =
@@ -432,7 +435,7 @@ pub fn solve(
             Some(r) => match local(r) {
                 Ok(g) => Some((r.occurrence(), g)),
                 Err(e) => {
-                    out.sick.push((c.id, e));
+                    sick.push((c.id, e));
                     continue;
                 }
             },
@@ -452,9 +455,70 @@ pub fn solve(
                 };
                 cons.push(Con { c, a, b, s: plane });
             }
-            (Err(e), _) | (_, Err(e)) => out.sick.push((c.id, e)),
+            (Err(e), _) | (_, Err(e)) => sick.push((c.id, e)),
         }
     }
+    cons
+}
+
+/// Every residual of the active relationships at the components' current
+/// placements (no solve), and how many are sick. Adaptivity
+/// (`assembly::adapt`) solves placements and part sizes together on them.
+pub fn residuals_at(
+    asm: &AssemblyDocument,
+    local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
+) -> (Vec<Real>, usize) {
+    let mut sick = Vec::new();
+    let cons = gather(asm, local, None, &mut sick);
+    let mut place: Place = asm
+        .occurrences
+        .iter()
+        .map(|o| (o.id, o.transform))
+        .collect();
+    place.insert(relation::ASSEMBLY, Transform3::identity());
+    let mut r = Vec::new();
+    for k in &cons {
+        k.res(&place, &mut r);
+    }
+    (r, sick.len())
+}
+
+/// The components that are not grounded joined to `start` through active
+/// relationships between such components (`start` first).
+pub fn free_group(asm: &AssemblyDocument, start: u32) -> Vec<u32> {
+    let free =
+        |id: u32| asm.find(id).is_some_and(|o| !o.grounded && !o.suppressed) && !asm.is_element(id);
+    let mut out = Vec::new();
+    let mut queue = VecDeque::from([start]);
+    while let Some(id) = queue.pop_front() {
+        if out.contains(&id) || !free(id) {
+            continue;
+        }
+        out.push(id);
+        for c in asm
+            .constraints
+            .iter()
+            .filter(|c| !c.suppressed && c.uses(id))
+        {
+            for y in [c.a.occurrence(), c.b.occurrence()] {
+                if !out.contains(&y) {
+                    queue.push_back(y);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Solves the constraints of `asm`. `local` gives a reference's geometry in
+/// its part's coordinates; `drag` pulls a point of one component.
+pub fn solve(
+    asm: &AssemblyDocument,
+    local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
+    drag: Option<&Drag>,
+) -> Solved {
+    let mut out = Solved::default();
+    let mut cons = gather(asm, local, drag, &mut out.sick);
     // Free components: used by a constraint, not grounded.
     let mut blocks: Vec<u32> = Vec::new();
     for k in &cons {
@@ -548,6 +612,9 @@ pub fn solve(
         if !o.grounded && !out.dof.contains_key(&o.id) {
             out.dof.insert(o.id, 6);
         }
+    }
+    for k in &cons {
+        k.res(&place, &mut out.residuals);
     }
     out.transforms = blocks.iter().map(|id| (*id, at(&place, *id))).collect();
     out

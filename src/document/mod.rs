@@ -244,6 +244,11 @@ pub struct Occurrence {
     /// written into the part — rule 8).
     #[serde(default, skip_serializing_if = "OccurrenceLooks::is_empty")]
     pub looks: OccurrenceLooks,
+    /// Adaptive (spec 3.10 §3.4): the part's adaptive sketches and features
+    /// take their free sizes from this occurrence's relationships
+    /// (`assembly::adapt`); at most one occurrence of a part.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adaptive: bool,
 }
 
 /// Appearance overrides an assembly gives one occurrence, by appearance
@@ -327,6 +332,7 @@ impl Occurrence {
             enabled: true,
             transparent: false,
             looks: OccurrenceLooks::default(),
+            adaptive: false,
         }
     }
 

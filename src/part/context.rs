@@ -78,6 +78,30 @@ impl super::PartDocument {
         self.context.iter().find(|c| c.id == id)
     }
 
+    /// Whether the sketch or feature `id` is adaptive (spec 3.10 §3.4).
+    pub fn is_adaptive(&self, id: &str) -> bool {
+        self.adaptive.iter().any(|a| a == id)
+    }
+
+    /// Makes the sketch or feature `id` adaptive or not; `true` when that
+    /// changed it.
+    pub fn set_adaptive(&mut self, id: &str, on: bool) -> bool {
+        if self.is_adaptive(id) == on {
+            return false;
+        }
+        if on {
+            self.adaptive.push(id.to_owned());
+        } else {
+            self.adaptive.retain(|a| a != id);
+        }
+        true
+    }
+
+    /// Index of the sketch with id `id`.
+    pub fn sketch_index(&self, id: &str) -> Option<usize> {
+        self.sketches.iter().position(|s| s.id == id)
+    }
+
     /// A free id for a new reference (`Context1`, `Context2`…).
     pub fn next_context_id(&self) -> String {
         (1..)

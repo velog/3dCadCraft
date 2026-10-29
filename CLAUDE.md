@@ -1198,6 +1198,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   regenerates. A sketch-plane click on another component is `PlaneRef::Context("")` + `AsmUi::pending_context` until
   `take_context_plane` adds it after the Undo checkpoint. `asm_solve` (outside a drag) and `asm_try` end in
   `context_follow` (Update + solve, ≤ 8 rounds); inside it solve with `asm_solve_once`, never `asm_solve` (recursion).
+- **Adaptivity** (`assembly::adapt`, spec 3.10 §3.4): `PartDocument::adaptive` (sketch / feature ids) +
+  `Occurrence::adaptive`. When the rigid solve does not hold (`adapt_follow` in `asm_solve`, and `asm_try` before it
+  refuses), the part's free sizes and the joined free components' placements are solved *together*
+  (`solve::residuals_at`); nesting the rigid solve inside does not work — it tilts the part to shrink a gap it cannot
+  close and the outer step sees no slope. `apply` sums the offsets of one point's x and y unknowns (setting them one
+  by one dropped the x). The result is written into the part (rule 8).
 - **`git stash` is shared by every worktree**: in a worktree with only new (untracked) files, `git stash` saves
   nothing and `stash pop` applies *another session's* stash. Never stash in a shared repo; commit or use a
   scratch branch.

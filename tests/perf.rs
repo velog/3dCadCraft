@@ -2098,6 +2098,103 @@ fn speed_budgets() {
         ));
     }
 
+    // Adaptivity (spec 3.10 §3.4): a plate whose length is free in its
+    // adaptive sketch, mated to two walls 100 mm apart while it is 80 long —
+    // the joint solve of its size and place (a regeneration per unknown and
+    // step), then the rigid solve with the new part.
+    {
+        use cadcraft3d::assembly::adapt;
+        use cadcraft3d::assembly::relation::{self, Constraint, ConstraintKind, GeomRef};
+        use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+        use cadcraft3d::kernel::Transform3;
+        use cadcraft3d::part::OriginPlane;
+        use cadcraft3d::sketch::{Constraint as SkCon, Point2};
+        let mut plate = PartDocument::default();
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = plate
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts)
+            .unwrap();
+        let sk = &mut plate.sketches[i].sketch;
+        let sh = sk
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(80.0, 30.0))
+            .unwrap();
+        sk.set_fixed(sh.points[0], true).unwrap();
+        sk.add_constraint(SkCon::VerticalDistance {
+            a: sh.points[1],
+            b: sh.points[2],
+            value: 30.0,
+        })
+        .unwrap();
+        let rg = sk.regions();
+        plate
+            .add_extrude(
+                i,
+                ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 5.0),
+            )
+            .unwrap();
+        let sid = plate.sketches[i].id.clone();
+        plate.set_adaptive(&sid, true);
+        let wall = PartDocument::with_box("Box1", [10.0, 50.0, 50.0]).unwrap();
+        let face_at = |part: &PartDocument, o: u32, x: Real| {
+            let (name, hint) = part
+                .body
+                .faces()
+                .find_map(|(_, f)| {
+                    let m = f.mesh.as_ref()?;
+                    let q = *m.positions.first()?;
+                    m.positions
+                        .iter()
+                        .all(|p| (p.x - x).abs() < 1e-6)
+                        .then(|| (f.name.clone().unwrap_or_default(), [q.x, q.y, q.z]))
+                })
+                .unwrap();
+            GeomRef::Face {
+                occurrence: o,
+                sub: Vec::new(),
+                name,
+                hint,
+            }
+        };
+        let mut asm = AssemblyDocument::default();
+        let ids = [(); 3].map(|_| DocumentId::new_random());
+        let a = asm.place(DocRef::local(ids[0]), "WallA", Transform3::identity(), true);
+        let b = asm.place(
+            DocRef::local(ids[1]),
+            "WallB",
+            Transform3::translation(110.0, 0.0, 0.0),
+            true,
+        );
+        let p = asm.place(
+            DocRef::local(ids[2]),
+            "Plate",
+            Transform3::translation(20.0, 5.0, 10.0),
+            false,
+        );
+        asm.add_constraint(Constraint::new(
+            ConstraintKind::Mate,
+            face_at(&plate, p, 0.0),
+            face_at(&wall, a, 10.0),
+        ));
+        asm.add_constraint(Constraint::new(
+            ConstraintKind::Mate,
+            face_at(&plate, p, 80.0),
+            face_at(&wall, b, 0.0),
+        ));
+        let local = |r: &GeomRef| relation::resolve_in(&wall, r);
+        rows.push((
+            "assembly: adaptive plate stretched between two walls (joint solve of size and place)",
+            50.0,
+            median_ms(3, || {
+                let r = adapt::adapt(&asm, p, &plate, &local).unwrap().unwrap();
+                assert!(r.solved.converged);
+            }),
+        ));
+    }
+
     // Assembly picking (docs/spec/3.1, A1): the occurrence under the cursor
     // every frame — 100 occurrences of the 36-hole plate, the ray taken into
     // each occurrence's frame against the part's cached triangles.

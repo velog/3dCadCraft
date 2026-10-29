@@ -182,6 +182,14 @@ pub(super) struct LinkedEdit {
 const CONTEXT_GREY: [f32; 3] = [0.62, 0.63, 0.66];
 const CONTEXT_ALPHA: f32 = 0.22;
 
+/// An adaptation of a part of this design file: its document and result.
+pub(super) type AdaptedIn = (DocumentId, crate::assembly::adapt::Adapted);
+
+/// The tooltip of the Adaptive switch.
+const ADAPTIVE_TIP: &str = "The part's adaptive sketches and features take their free sizes from this \
+occurrence's relationships (right-click a sketch or feature of the part: Adaptive). One occurrence of a part \
+can be adaptive";
+
 /// The other component's face under the cursor: component, face and its
 /// placement in the edited part's coordinates.
 type ContextHover = (DocRef, crate::kernel::FaceId, Transform3);
@@ -1083,6 +1091,78 @@ impl CadCraftApp {
 
     /// Turns the flag `field` of the occurrences `ids` off when it is on
     /// for all of them, else on for all (one Undo step `label`).
+    /// Adaptive on / off for occurrence `id` (spec 3.10 §3.4): on makes the
+    /// other occurrences of its part plain (one adaptive occurrence per
+    /// part), and the assembly is solved again so the part adapts.
+    pub(super) fn toggle_adaptive(&mut self, id: u32) {
+        let Some(o) = self.assembly().and_then(|a| a.find(id)).cloned() else {
+            return;
+        };
+        if !o.adaptive && o.component.library.is_some() {
+            self.file_status = Some(Err(
+                "Adaptive: parts of linked files cannot adapt yet (only parts of this design file)"
+                    .into(),
+            ));
+            return;
+        }
+        self.edit_assembly("Adaptive", |a| {
+            for x in &mut a.occurrences {
+                if x.id == id {
+                    x.adaptive = !o.adaptive;
+                } else if x.component == o.component {
+                    x.adaptive = false;
+                }
+            }
+        });
+        if !o.adaptive {
+            self.asm_solve(None);
+        }
+    }
+
+    /// Adaptivity on a copy `a` of the active assembly whose rigid solve
+    /// does not hold: the first adaptive occurrence of a part of this
+    /// design file whose sizes can meet the relationships, with the part's
+    /// new state and the solve. `Err`: why none could.
+    pub(super) fn adapt_copy(
+        &self,
+        a: &crate::document::AssemblyDocument,
+    ) -> Result<Option<AdaptedIn>, String> {
+        let mut why = None;
+        for o in a.occurrences.iter().filter(|o| o.adaptive && !o.suppressed) {
+            if o.component.library.is_some() {
+                continue;
+            }
+            let Some(DocumentData::Part(base)) =
+                self.project.document(o.component.document).map(|d| &d.data)
+            else {
+                continue;
+            };
+            let local = |r: &crate::assembly::GeomRef| self.asm_local_in(a, r);
+            match crate::assembly::adapt::adapt(a, o.id, base, &local) {
+                Ok(Some(r)) => return Ok(Some((o.component.document, r))),
+                Ok(None) => {}
+                Err(e) => why = Some(format!("{}: {e}", o.name)),
+            }
+        }
+        why.map_or(Ok(None), Err)
+    }
+
+    /// Writes an adaptation found by [`Self::adapt_copy`] (after the
+    /// caller's checkpoint): the part's new state and the placements.
+    pub(super) fn adapt_write(&mut self, a: &mut crate::document::AssemblyDocument, r: AdaptedIn) {
+        let (doc, ad) = r;
+        if let Some(DocumentData::Part(p)) = self.project.document_mut(doc).map(|d| &mut d.data) {
+            *p = ad.part;
+        }
+        for (id, t) in &ad.solved.transforms {
+            if let Some(o) = a.find_mut(*id) {
+                o.transform = *t;
+            }
+        }
+        self.cons.last = ad.solved;
+        self.scene_dirty = true;
+    }
+
     pub(super) fn toggle_flag(
         &mut self,
         ids: &[u32],
@@ -1877,6 +1957,7 @@ impl CadCraftApp {
         let transparent = all(|o| o.transparent);
         let suppressed = all(|o| o.suppressed);
         let enabled = all(|o| o.enabled);
+        let adaptive = all(|o| o.adaptive);
         let isolated = self.asm.isolated.is_some();
         // Inventor's first group: relate the component to another one.
         if ui.button("Constrain...").clicked() {
@@ -1906,6 +1987,16 @@ impl CadCraftApp {
         let mut g = grounded;
         if ui.checkbox(&mut g, "Grounded").clicked() {
             self.toggle_ground(ids);
+            ui.close();
+        }
+        let mut ad = adaptive;
+        if ids.len() == 1
+            && ui
+                .checkbox(&mut ad, "Adaptive")
+                .on_hover_text(ADAPTIVE_TIP)
+                .clicked()
+        {
+            self.toggle_adaptive(ids[0]);
             ui.close();
         }
         let mut v = visible;
@@ -2025,6 +2116,16 @@ impl CadCraftApp {
                 super::panels::plabel(ui, "Visibility");
                 if ui.checkbox(&mut v, "").changed() {
                     self.toggle_visible(&[o.id]);
+                }
+                ui.end_row();
+                let mut ad = o.adaptive;
+                super::panels::plabel(ui, "Adaptive");
+                if ui
+                    .checkbox(&mut ad, "")
+                    .on_hover_text(ADAPTIVE_TIP)
+                    .changed()
+                {
+                    self.toggle_adaptive(o.id);
                 }
                 ui.end_row();
                 if self

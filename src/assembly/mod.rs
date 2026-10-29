@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+pub mod adapt;
 pub mod bom;
 pub mod context;
 pub mod copy;
