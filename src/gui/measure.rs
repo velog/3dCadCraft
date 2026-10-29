@@ -125,18 +125,18 @@ impl CadCraftApp {
     /// The measurement of the faces / edges picked in an assembly, each in
     /// its part and moved by its occurrence (cached by picks and places).
     fn asm_measurement(&self) -> Option<Result<Measurement, String>> {
-        let a = self.assembly()?;
+        self.assembly()?;
         let picks = &self.measure.asm_picks;
         if picks.is_empty() {
             return None;
         }
         let mut key = format!("asm|{picks:?}");
         for g in picks {
-            let Some(occ) = a.find(g.occurrence()) else {
+            let Some((component, t)) = self.geom_part(g) else {
                 return Some(Err("the component is gone".into()));
             };
-            let sig = self.with_part(occ.component, |p| p.body_signature())?;
-            key.push_str(&format!("|{sig}|{:?}", occ.transform));
+            let sig = self.with_part(component, |p| p.body_signature())?;
+            key.push_str(&format!("|{sig}|{t:?}"));
         }
         if let Some((k, r)) = &*self.measure.cache.borrow()
             && *k == key
@@ -145,8 +145,8 @@ impl CadCraftApp {
         }
         let mut placed: Vec<(BRep, Target, Transform3)> = Vec::new();
         for g in picks {
-            let occ = a.find(g.occurrence())?;
-            let item = self.with_part(occ.component, |p| {
+            let (component, at) = self.geom_part(g)?;
+            let item = self.with_part(component, |p| {
                 let t = match g {
                     GeomRef::Face { name, .. } => Target::Face(name.clone()),
                     GeomRef::Edge { edge, .. } => Target::Edge(edge_by_ref(&p.body, edge)?),
@@ -157,7 +157,7 @@ impl CadCraftApp {
             let Some((body, t)) = item else {
                 return Some(Err("this item can't be measured".into()));
             };
-            placed.push((body, t, occ.transform));
+            placed.push((body, t, at));
         }
         let refs: Vec<measure::Placed> =
             placed.iter().map(|(b, t, m)| (b, t.clone(), *m)).collect();

@@ -1,8 +1,9 @@
 //! Selection priorities and appearance overrides in an assembly
 //! (`docs/spec/3.0-assembly-commands.md` §3.7, roadmap AU3): Component /
-//! Part priority select occurrences (`AsmUi::sel`), Feature priority and
-//! Select Faces and Edges select a feature, face or edge of one
-//! (`AsmUi::sub`). The Appearance list of the Quick Access Toolbar gives the
+//! Part priority select occurrences (`AsmUi::sel`; Part priority selects a
+//! part inside a subassembly as `AsmSub::Part`, spec 3.1a), Feature
+//! priority and Select Faces and Edges select a feature, face or edge of
+//! one (`AsmUi::sub`, also of a part inside a subassembly). The Appearance list of the Quick Access Toolbar gives the
 //! selection an override that belongs to the assembly (`Occurrence::looks`).
 
 use std::collections::HashMap;
@@ -21,39 +22,58 @@ use crate::materials::Appearance;
 /// or Select Faces and Edges.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum AsmSub {
-    /// A feature of the occurrence's part (its id).
-    Feature { occurrence: u32, id: String },
+    /// A feature of the occurrence's part (its id); `sub` is the path to a
+    /// part inside a subassembly (empty: the occurrence's own part).
+    Feature {
+        occurrence: u32,
+        id: String,
+        sub: Vec<u32>,
+    },
     /// A face or an edge (`GeomRef::Face` / `GeomRef::Edge`).
     Geom(GeomRef),
+    /// A part inside subassembly `occurrence` (Part Priority), by its path.
+    Part { occurrence: u32, sub: Vec<u32> },
 }
 
 impl AsmSub {
     /// The occurrence it lies on.
     pub fn occurrence(&self) -> u32 {
         match self {
-            AsmSub::Feature { occurrence, .. } => *occurrence,
+            AsmSub::Feature { occurrence, .. } | AsmSub::Part { occurrence, .. } => *occurrence,
             AsmSub::Geom(g) => g.occurrence(),
         }
     }
 
-    /// Whether face `name` of occurrence `occ` belongs to it (edges have
-    /// no faces: they are drawn as lines).
-    fn covers(&self, occ: u32, name: &str) -> bool {
+    /// The path below the occurrence to the part it lies on.
+    fn sub(&self) -> &[u32] {
         match self {
-            AsmSub::Feature { occurrence, id } => *occurrence == occ && feature_of_face(name) == id,
-            AsmSub::Geom(GeomRef::Face {
-                occurrence,
-                name: n,
-                ..
-            }) => *occurrence == occ && n == name,
+            AsmSub::Feature { sub, .. } | AsmSub::Part { sub, .. } => sub,
+            AsmSub::Geom(g) => g.sub(),
+        }
+    }
+
+    /// Whether face `name` of the part at `path` below occurrence `occ`
+    /// belongs to it (edges have no faces: they are drawn as lines).
+    fn covers(&self, occ: u32, path: &[u32], name: &str) -> bool {
+        if self.occurrence() != occ || self.sub() != path {
+            return false;
+        }
+        match self {
+            AsmSub::Feature { id, .. } => feature_of_face(name) == id,
+            AsmSub::Geom(GeomRef::Face { name: n, .. }) => n == name,
+            AsmSub::Part { .. } => true,
             AsmSub::Geom(_) => false,
         }
     }
 
-    /// The appearance override target (edges have none).
+    /// The appearance override target (edges have none; parts inside a
+    /// subassembly not yet: their overrides belong to the subassembly).
     fn look_target(&self) -> Option<AsmLookTarget> {
+        if !self.sub().is_empty() {
+            return None;
+        }
         match self {
-            AsmSub::Feature { occurrence, id } => Some(AsmLookTarget::Feature {
+            AsmSub::Feature { occurrence, id, .. } => Some(AsmLookTarget::Feature {
                 occurrence: *occurrence,
                 id: id.clone(),
             }),
@@ -63,7 +83,7 @@ impl AsmSub {
                 occurrence: *occurrence,
                 name: name.clone(),
             }),
-            AsmSub::Geom(_) => None,
+            AsmSub::Geom(_) | AsmSub::Part { .. } => None,
         }
     }
 }
@@ -93,14 +113,23 @@ impl CadCraftApp {
     pub(super) fn asm_sub_under(&self, pos: Pos2, rect: Rect) -> Option<AsmSub> {
         match self.asm_priority() {
             AsmPriority::Feature => {
-                let (h, _) = self.asm_pick_pub(pos, rect)?;
-                let occ = self.assembly()?.find(h.occurrence)?;
-                let name = self.with_part(occ.component, |p| {
-                    p.body.face(h.face).and_then(|f| f.name.clone())
+                let (part, f, _) = self.part_hit(pos, rect)?;
+                let name = self.with_part(part.component, |p| {
+                    p.body.face(f).and_then(|x| x.name.clone())
                 })??;
                 Some(AsmSub::Feature {
-                    occurrence: occ.id,
+                    occurrence: part.top,
                     id: feature_of_face(&name).to_owned(),
+                    sub: part.sub,
+                })
+            }
+            // A part inside a subassembly (a first-level part is a
+            // component: `AsmUi::sel`).
+            AsmPriority::Part => {
+                let (part, _, _) = self.part_hit(pos, rect)?;
+                (!part.sub.is_empty()).then_some(AsmSub::Part {
+                    occurrence: part.top,
+                    sub: part.sub,
                 })
             }
             AsmPriority::FacesEdges => match self.geom_under_pub(pos, rect)? {
@@ -172,18 +201,21 @@ impl CadCraftApp {
             .as_ref()
             .or(self.asm.tree_hover.as_ref())
             .filter(|s| s.occurrence() == o.id);
-        let over = |name: Option<&str>| FaceOver {
-            look: o.looks.face_look(name).and_then(|n| looks.get(n).cloned()),
-            tint: whole.or_else(|| {
+        let tint = |path: &[u32], name: Option<&str>| {
+            whole.or_else(|| {
                 let n = name?;
-                if subs.iter().any(|s| s.covers(o.id, n)) {
+                if subs.iter().any(|s| s.covers(o.id, path, n)) {
                     Some(SEL)
-                } else if hover.is_some_and(|s| s.covers(o.id, n)) {
+                } else if hover.is_some_and(|s| s.covers(o.id, path, n)) {
                     Some(HOVER)
                 } else {
                     None
                 }
-            }),
+            })
+        };
+        let over = |name: Option<&str>| FaceOver {
+            look: o.looks.face_look(name).and_then(|n| looks.get(n).cloned()),
+            tint: tint(&[], name),
         };
         // A subassembly (spec 3.1a): its parts where its own solve put
         // them; its appearance override covers them all, else theirs apply.
@@ -201,7 +233,7 @@ impl CadCraftApp {
                             .face_look(name)
                             .and_then(|n| sub.appearance(n, &self.mat.lib))
                     }),
-                    tint: whole,
+                    tint: tint(&l.path, name),
                 };
                 let at = place * l.world;
                 self.with_part(l.occurrence.component, |part| {

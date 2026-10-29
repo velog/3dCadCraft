@@ -141,6 +141,7 @@ mod tests {
             sources: vec![2],
             layout: Layout::Rectangular {
                 column: crate::assembly::relation::GeomRef::Origin {
+                    sub: Vec::new(),
                     occurrence: crate::assembly::relation::ASSEMBLY,
                     item: crate::assembly::relation::OriginItem::XAxis,
                 },

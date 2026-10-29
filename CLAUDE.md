@@ -1113,6 +1113,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `pattern::Lookup::feature` (`feature_instances` = `PatternFeature::placements` as rigid motions); `follow_patterns`
   re-places them when an assembly is opened or shown again (a part's count may have changed). Planned assembly panels keep the geometry of
   their face / edge picks in `PartDialog::refs` (aligned with `picks`), so a command's logic never re-parses labels.
+- **References into subassemblies** (spec 3.1a S3): a `GeomRef`'s `sub` is the path below its occurrence; resolve it only
+  through `asm_local_in` / `relation::resolve` (geometry in the *top* occurrence's coordinates) and find its part and world
+  placement with `geom_part` — never `a.find(g.occurrence())` + `with_part(o.component)` (that is the subassembly, no part).
+  Faces / edges are picked over `pick_parts()` (every part at any depth), not over first-level occurrences.
 - **Edge picking in an assembly** (`constrain.rs::geom_under`): the occlusion test takes the edge's point nearest
   the eye ray and a depth margin of 2 % of the distance — with the screen parameter and a 0.1 mm margin no plate
   edge could be picked (the face it bounds, hit a pixel away, was always "in front").

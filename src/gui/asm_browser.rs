@@ -305,6 +305,7 @@ impl CadCraftApp {
                             .unwrap_or_default();
                         for (wid, wname) in works {
                             let g = GeomRef::Work {
+                                sub: Vec::new(),
                                 occurrence: id,
                                 id: wid,
                             };
@@ -342,6 +343,7 @@ impl CadCraftApp {
                     let sub = super::asm_select::AsmSub::Feature {
                         occurrence,
                         id: fid,
+                        sub: Vec::new(),
                     };
                     self.asm_sub_click(Some(sub), add);
                 }
@@ -397,7 +399,11 @@ impl CadCraftApp {
                     OriginItem::Center => Icon::WorkPoint,
                     _ => Icon::WorkPlane,
                 };
-                let g = GeomRef::Origin { occurrence, item };
+                let g = GeomRef::Origin {
+                    sub: Vec::new(),
+                    occurrence,
+                    item,
+                };
                 self.geom_row(ui, icon, item.label(), g, cmds);
             }
         });
@@ -501,6 +507,7 @@ impl CadCraftApp {
         let sub = super::asm_select::AsmSub::Feature {
             occurrence,
             id: f.id.clone(),
+            sub: Vec::new(),
         };
         let selected = self.asm.sub.contains(&sub);
         let mut header = |ui: &mut egui::Ui| {
@@ -587,8 +594,9 @@ impl CadCraftApp {
             if r.occurrence() == ASSEMBLY {
                 "Assembly".to_owned()
             } else {
-                a.find(r.occurrence())
-                    .map_or("?".to_owned(), |o| o.name.clone())
+                // A part inside a subassembly: `Bracket:1/Post:2`.
+                crate::assembly::tree::nested(&self.project, a, r.occurrence(), r.sub())
+                    .map_or("?".to_owned(), |(_, _, name)| name)
             }
         };
         let label = format!("{} ({}, {})", c.name, between(&c.a), between(&c.b));

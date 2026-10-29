@@ -1887,6 +1887,7 @@ fn speed_budgets() {
             }
         };
         let axis = |item| GeomRef::Origin {
+            sub: Vec::new(),
             occurrence: ASSEMBLY,
             item,
         };
@@ -1939,6 +1940,7 @@ fn speed_budgets() {
             Ok(Geom::Plane { p, n })
         };
         let face = |o: u32, n: &str| GeomRef::Face {
+            sub: Vec::new(),
             occurrence: o,
             name: n.into(),
             hint: [0.0; 3],
@@ -2037,6 +2039,7 @@ fn speed_budgets() {
             Ok(Geom::Plane { p, n })
         };
         let face = |o: u32, n: &str| GeomRef::Face {
+            sub: Vec::new(),
             occurrence: o,
             name: n.into(),
             hint: [0.0; 3],

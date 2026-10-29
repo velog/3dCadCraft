@@ -43,6 +43,7 @@ fn cube_geom(r: &GeomRef) -> Result<Geom, String> {
 
 fn face(o: u32, name: &str) -> GeomRef {
     GeomRef::Face {
+        sub: Vec::new(),
         occurrence: o,
         name: name.into(),
         hint: [0.0; 3],

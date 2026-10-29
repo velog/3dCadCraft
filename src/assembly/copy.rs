@@ -295,6 +295,7 @@ mod tests {
         use crate::assembly::relation::{ConstraintKind, GeomRef};
         let (mut p, _, aid) = project();
         let face = |o, n: &str| GeomRef::Face {
+            sub: Vec::new(),
             occurrence: o,
             name: format!("Box1:{n}"),
             hint: [0.0; 3],

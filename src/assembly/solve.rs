@@ -624,6 +624,7 @@ mod tests {
 
     fn face(o: u32, name: &str) -> GeomRef {
         GeomRef::Face {
+            sub: Vec::new(),
             occurrence: o,
             name: name.into(),
             hint: [0.0; 3],
@@ -632,6 +633,7 @@ mod tests {
 
     fn rim(o: u32) -> GeomRef {
         GeomRef::Edge {
+            sub: Vec::new(),
             occurrence: o,
             edge: crate::part::EdgeRef {
                 faces: ["Top".into(), "Hole".into()],
@@ -845,7 +847,11 @@ mod tests {
     fn origin_planes_flush_with_the_assembly_origin() {
         use crate::assembly::relation::{ASSEMBLY, OriginItem};
         let mut a = two_cubes();
-        let o = |occurrence, item| GeomRef::Origin { occurrence, item };
+        let o = |occurrence, item| GeomRef::Origin {
+            sub: Vec::new(),
+            occurrence,
+            item,
+        };
         for item in [
             OriginItem::XyPlane,
             OriginItem::XzPlane,
@@ -985,6 +991,7 @@ mod tests {
             0.0,
         );
         c.plane = Some(GeomRef::Origin {
+            sub: Vec::new(),
             occurrence: ASSEMBLY,
             item: OriginItem::YzPlane,
         });

@@ -138,55 +138,38 @@ pub(super) struct ConstrainUi {
     hover: Option<GeomRef>,
     /// Origin / work geometry under the cursor in the browser.
     pub browser_hover: Option<GeomRef>,
-    /// Joint: the face held by Shift (occurrence, face) — only its snaps
-    /// are offered while Shift is down.
-    locked: Option<(u32, crate::kernel::FaceId)>,
+    /// Joint: the face held by Shift (its part, face) — only its snaps are
+    /// offered while Shift is down.
+    locked: Option<(PickPart, crate::kernel::FaceId)>,
     /// Joint: the snap points of the face under the cursor (screen).
     snap_dots: Vec<Pos2>,
 }
 
 const PICK_PX: f32 = 7.0;
 
+/// A part the eye can pick faces and edges on: a top-level occurrence and
+/// the path to a part inside it (spec 3.1a; empty for a part placed
+/// directly), with the part's placement in the assembly.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PickPart {
+    pub top: u32,
+    pub sub: Vec<u32>,
+    pub component: DocRef,
+    pub place: Transform3,
+}
+
 impl CadCraftApp {
-    /// A reference's geometry in its part's coordinates (parts of this
-    /// file or linked part files).
+    /// A reference's geometry in its occurrence's coordinates (parts of
+    /// this file or linked part files, parts inside subassemblies).
     pub(super) fn asm_local_geom(&self, r: &GeomRef) -> Result<Geom, String> {
-        if let GeomRef::Origin {
-            occurrence: relation::ASSEMBLY,
-            item,
-        } = r
-        {
-            return Ok(item.geom());
-        }
         let a = self.assembly().ok_or("no assembly")?;
-        let o = a
-            .find(r.occurrence())
-            .ok_or("the component no longer exists")?;
-        let name = o.name.clone();
-        self.with_part(o.component, |p| relation::resolve_in(p, r))
-            .ok_or_else(|| format!("{name}: its part file was not found"))?
-            .map_err(|e| format!("{name}: {e}"))
+        self.asm_local_in(a, r)
     }
 
     /// Solves `a` as the active assembly would be (its references resolved
     /// in this document's components).
     fn solve_copy(&self, a: &AssemblyDocument, drag: Option<&asm::Drag>) -> Solved {
-        let local = |r: &GeomRef| -> Result<Geom, String> {
-            if let GeomRef::Origin {
-                occurrence: relation::ASSEMBLY,
-                item,
-            } = r
-            {
-                return Ok(item.geom());
-            }
-            let o = a
-                .find(r.occurrence())
-                .ok_or("the component no longer exists")?;
-            let name = o.name.clone();
-            self.with_part(o.component, |p| relation::resolve_in(p, r))
-                .ok_or_else(|| format!("{name}: its part file was not found"))?
-                .map_err(|e| format!("{name}: {e}"))
-        };
+        let local = |r: &GeomRef| self.asm_local_in(a, r);
         asm::solve(a, &local, drag)
     }
 
@@ -395,18 +378,18 @@ impl CadCraftApp {
     /// The face or edge of a component under the cursor (an edge within a
     /// few pixels wins over the face behind it).
     fn geom_under(&self, pos: Pos2, rect: Rect) -> Option<GeomRef> {
-        let a = self.assembly()?;
-        let face = self.asm_pick_pub(pos, rect);
+        let parts = self.pick_parts();
+        let face = self.part_hit_in(&parts, pos, rect);
         let (o, dir) = self.camera.ray(pos, rect)?;
         let dir = dir.try_normalize(1e-12)?;
         let mut best: Option<(f32, GeomRef)> = None;
-        for occ in a.occurrences.iter().filter(|o| o.pickable()) {
-            let Some(edges) = self.asm_edges(occ.component) else {
+        for part in &parts {
+            let Some(edges) = self.asm_edges(part.component) else {
                 continue;
             };
             for (r, pts) in edges.iter() {
                 for w in pts.windows(2) {
-                    let (p, q) = (occ.transform * w[0], occ.transform * w[1]);
+                    let (p, q) = (part.place * w[0], part.place * w[1]);
                     let (Some(sp), Some(sq)) =
                         (self.camera.project(&p, rect), self.camera.project(&q, rect))
                     else {
@@ -425,13 +408,14 @@ impl CadCraftApp {
                     let t_edge = (at - o).dot(&dir);
                     let size = (q - p).norm().max(1.0);
                     let margin = (1e-3 * size.max(10.0)).max(0.02 * t_edge.abs());
-                    if face.is_some_and(|(h, _)| h.t + margin < t_edge) {
+                    if face.as_ref().is_some_and(|h| h.2 + margin < t_edge) {
                         continue;
                     }
                     best = Some((
                         d,
                         GeomRef::Edge {
-                            occurrence: occ.id,
+                            sub: part.sub.clone(),
+                            occurrence: part.top,
                             edge: r.clone(),
                         },
                     ));
@@ -441,17 +425,86 @@ impl CadCraftApp {
         if let Some((_, g)) = best {
             return Some(g);
         }
-        let (h, world) = face?;
-        let occ = a.find(h.occurrence)?;
-        let name = self.with_part(occ.component, |p| {
-            p.body.face(h.face).and_then(|f| f.name.clone())
-        })??;
-        let local = occ.transform.inverse() * world;
+        let (part, f, t) = face?;
+        let name = self.face_name(&part, f)?;
+        let local = part.place.inverse() * (o + dir * t);
         Some(GeomRef::Face {
-            occurrence: occ.id,
+            sub: part.sub,
+            occurrence: part.top,
             name,
             hint: [local.x, local.y, local.z],
         })
+    }
+
+    /// Every part faces and edges can be picked on: the shown, pickable
+    /// first-level parts and the parts inside subassemblies.
+    pub(super) fn pick_parts(&self) -> Vec<PickPart> {
+        let Some(a) = self.assembly() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for occ in a
+            .occurrences
+            .iter()
+            .filter(|o| o.pickable() && self.asm_isolated(o.id))
+        {
+            match crate::assembly::tree::assembly_of(&self.project, occ.component) {
+                Some(sub) => {
+                    let doc = occ.component.document;
+                    for l in crate::assembly::tree::leaves(&self.project, doc, sub) {
+                        if l.occurrence.pickable() {
+                            out.push(PickPart {
+                                top: occ.id,
+                                sub: l.path.clone(),
+                                component: l.occurrence.component,
+                                place: occ.transform * l.world,
+                            });
+                        }
+                    }
+                }
+                None => out.push(PickPart {
+                    top: occ.id,
+                    sub: Vec::new(),
+                    component: occ.component,
+                    place: occ.transform,
+                }),
+            }
+        }
+        out
+    }
+
+    /// The nearest part face under the screen point: the part, the face and
+    /// the distance along the (unit) eye ray.
+    pub(super) fn part_hit(
+        &self,
+        pos: Pos2,
+        rect: Rect,
+    ) -> Option<(PickPart, crate::kernel::FaceId, Real)> {
+        self.part_hit_in(&self.pick_parts(), pos, rect)
+    }
+
+    fn part_hit_in(
+        &self,
+        parts: &[PickPart],
+        pos: Pos2,
+        rect: Rect,
+    ) -> Option<(PickPart, crate::kernel::FaceId, Real)> {
+        let (o, d) = self.camera.ray(pos, rect)?;
+        let d = d.try_normalize(1e-12)?;
+        let mut best: Option<(&PickPart, crate::kernel::FaceId, Real)> = None;
+        for part in parts {
+            let Some(mesh) = self.asm_mesh(part.component) else {
+                continue;
+            };
+            let inv = part.place.inverse();
+            // Rigid placements: the ray parameter stays a distance.
+            if let Some((f, t)) = mesh.hit(&(inv * o), &(inv * d))
+                && best.as_ref().is_none_or(|b| t < b.2)
+            {
+                best = Some((part, f, t));
+            }
+        }
+        best.map(|(p, f, t)| (p.clone(), f, t))
     }
 
     /// A click on `g` fills the active selection (both on different
@@ -600,11 +653,12 @@ impl CadCraftApp {
             None => None,
         };
         // The face held by Shift, and the snaps offered on it.
-        if let Some((occ, f)) = self.cons.locked
-            && let Some(name) = self.face_name(occ, f)
+        if let Some((part, f)) = self.cons.locked.clone()
+            && let Some(name) = self.face_name(&part, f)
         {
             let g = GeomRef::Face {
-                occurrence: occ,
+                sub: part.sub,
+                occurrence: part.top,
                 name,
                 hint: [0.0; 3],
             };
@@ -636,28 +690,30 @@ impl CadCraftApp {
         clicked
     }
 
-    /// The persistent name of face `f` of occurrence `occ`'s part.
-    fn face_name(&self, occ: u32, f: crate::kernel::FaceId) -> Option<String> {
-        let o = self.assembly()?.find(occ)?;
-        self.with_part(o.component, |p| p.body.face(f).and_then(|x| x.name.clone()))?
+    /// The persistent name of face `f` of a part.
+    fn face_name(&self, part: &PickPart, f: crate::kernel::FaceId) -> Option<String> {
+        self.with_part(part.component, |p| {
+            p.body.face(f).and_then(|x| x.name.clone())
+        })?
     }
 
-    /// The snap points of planar face `f` of occurrence `occ` (part
-    /// coordinates): its centre, the middles and ends of its straight edges,
-    /// the centres of its round edges.
+    /// The snap points of planar face `f` of a part (part coordinates): its
+    /// centre, the middles and ends of its straight edges, the centres of
+    /// its round edges.
     fn face_snaps(
         &self,
-        occ: u32,
+        part: &PickPart,
         f: crate::kernel::FaceId,
     ) -> Option<(String, Vec<(relation::FaceSnap, Point3)>)> {
         use relation::FaceSnap;
-        let o = self.assembly()?.find(occ)?;
-        self.with_part(o.component, |p| {
+        let occ = part.top;
+        self.with_part(part.component, |p| {
             let body = &p.body;
             let name = body.face(f)?.name.clone()?;
             let centre = relation::resolve_local(
                 body,
                 &GeomRef::Face {
+                    sub: Vec::new(),
                     occurrence: occ,
                     name: name.clone(),
                     hint: [0.0; 3],
@@ -718,26 +774,26 @@ impl CadCraftApp {
     }
 
     fn joint_snap_under(&mut self, pos: Pos2, rect: Rect, shift: bool) -> Option<GeomRef> {
-        let hit = self.asm_pick_pub(pos, rect);
+        let hit = self.part_hit(pos, rect);
         if !shift {
             self.cons.locked = None;
         }
-        let face = match (self.cons.locked, hit) {
+        let face = match (self.cons.locked.clone(), hit) {
             (Some(l), _) => Some(l),
-            (None, Some((h, _))) => Some((h.occurrence, h.face)),
+            (None, Some((part, f, _))) => Some((part, f)),
             (None, None) => None,
         };
-        let Some((occ, f)) = face else {
+        let Some((part, f)) = face else {
             return self.geom_under(pos, rect);
         };
-        let Some((name, snaps)) = self.face_snaps(occ, f) else {
+        let Some((name, snaps)) = self.face_snaps(&part, f) else {
             // Not planar (a cylinder): its axis, or the edge under the cursor.
             return self.geom_under(pos, rect);
         };
         if shift && self.cons.locked.is_none() {
-            self.cons.locked = Some((occ, f));
+            self.cons.locked = Some((part.clone(), f));
         }
-        let t = self.assembly()?.find(occ)?.transform;
+        let t = part.place;
         let mut best: Option<(f32, relation::FaceSnap, Point3)> = None;
         for (s, q) in &snaps {
             let Some(sp) = self.camera.project(&(t * q), rect) else {
@@ -754,19 +810,34 @@ impl CadCraftApp {
             None => (relation::FaceSnap::Center, snaps[0].1),
         };
         Some(GeomRef::FacePoint {
-            occurrence: occ,
+            sub: part.sub,
+            occurrence: part.top,
             face: name,
             hint: [q.x, q.y, q.z],
             at,
         })
     }
 
+    /// The part `g` lies on (inside a subassembly too) and its placement in
+    /// the assembly — where a preview shows its top-level component while
+    /// Constrain is open.
+    pub(super) fn geom_part(&self, g: &GeomRef) -> Option<(DocRef, Transform3)> {
+        let a = self.assembly()?;
+        let (o, at, _) =
+            crate::assembly::tree::nested(&self.project, a, g.occurrence(), g.sub()).ok()?;
+        let top = a.find(g.occurrence())?;
+        let t = self
+            .cons
+            .preview
+            .as_ref()
+            .and_then(|p| p.get(&top.id).copied())
+            .unwrap_or(top.transform);
+        Some((o.component, t * at))
+    }
+
     /// Outlines a picked face (its triangles), edge (its polyline), or an
     /// origin / work plane (a square), axis (a line) or point (a ring).
     pub(super) fn draw_geom(&self, painter: &egui::Painter, rect: Rect, g: &GeomRef, col: Color32) {
-        let Some(a) = self.assembly() else {
-            return;
-        };
         if matches!(
             g,
             GeomRef::Origin { .. } | GeomRef::Work { .. } | GeomRef::FacePoint { .. }
@@ -774,18 +845,12 @@ impl CadCraftApp {
             self.draw_reference(painter, rect, g, col);
             return;
         }
-        let Some(occ) = a.find(g.occurrence()) else {
+        let Some((component, t)) = self.geom_part(g) else {
             return;
         };
-        let t = self
-            .cons
-            .preview
-            .as_ref()
-            .and_then(|p| p.get(&occ.id).copied())
-            .unwrap_or(occ.transform);
         match g {
             GeomRef::Edge { edge, .. } => {
-                let Some(edges) = self.asm_edges(occ.component) else {
+                let Some(edges) = self.asm_edges(component) else {
                     return;
                 };
                 if let Some((_, pts)) = edges.iter().find(|(r, _)| r == edge) {
@@ -797,11 +862,11 @@ impl CadCraftApp {
                 }
             }
             GeomRef::Face { name, .. } => {
-                let Some(mesh) = self.asm_mesh(occ.component) else {
+                let Some(mesh) = self.asm_mesh(component) else {
                     return;
                 };
                 let ids: Vec<crate::kernel::FaceId> = self
-                    .with_part(occ.component, |p| {
+                    .with_part(component, |p| {
                         p.body
                             .faces()
                             .filter(|(_, f)| f.name.as_deref() == Some(name.as_str()))
@@ -1165,8 +1230,10 @@ impl CadCraftApp {
             "Assembly".to_owned()
         } else {
             self.assembly()
-                .and_then(|a| a.find(g.occurrence()))
-                .map_or("?".to_owned(), |o| o.name.clone())
+                .and_then(|a| {
+                    crate::assembly::tree::nested(&self.project, a, g.occurrence(), g.sub()).ok()
+                })
+                .map_or("?".to_owned(), |(_, _, name)| name)
         };
         match g {
             GeomRef::Face { .. } => format!("{occ} face"),

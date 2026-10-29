@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::document::{AssemblyDocument, Occurrence, Project};
+use crate::document::{AssemblyDocument, Project};
 use crate::kernel::{BRep, Curve, Point3, Real, Sense, Surface, Transform3, Vector3};
 use crate::part::EdgeRef;
 
@@ -18,6 +18,10 @@ pub enum GeomRef {
     Face {
         /// The occurrence's id.
         occurrence: u32,
+        /// Occurrence ids below `occurrence` down to the part, when it lies
+        /// inside a subassembly (spec 3.1a; empty: the occurrence itself).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sub: Vec<u32>,
         /// Persistent face name (`Box1:Top`).
         name: String,
         /// A point on it when it was picked (part coordinates).
@@ -27,6 +31,10 @@ pub enum GeomRef {
     Edge {
         /// The occurrence's id.
         occurrence: u32,
+        /// Occurrence ids below `occurrence` down to the part, when it lies
+        /// inside a subassembly (spec 3.1a; empty: the occurrence itself).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sub: Vec<u32>,
         /// The edge.
         edge: EdgeRef,
     },
@@ -35,6 +43,10 @@ pub enum GeomRef {
     Origin {
         /// The occurrence's id, or [`ASSEMBLY`].
         occurrence: u32,
+        /// Occurrence ids below `occurrence` down to the part, when it lies
+        /// inside a subassembly (spec 3.1a; empty: the occurrence itself).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sub: Vec<u32>,
         /// Which one.
         item: OriginItem,
     },
@@ -43,6 +55,10 @@ pub enum GeomRef {
     Work {
         /// The occurrence's id.
         occurrence: u32,
+        /// Occurrence ids below `occurrence` down to the part, when it lies
+        /// inside a subassembly (spec 3.1a; empty: the occurrence itself).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sub: Vec<u32>,
         /// The work feature's id.
         id: String,
     },
@@ -52,6 +68,10 @@ pub enum GeomRef {
     FacePoint {
         /// The occurrence's id.
         occurrence: u32,
+        /// Occurrence ids below `occurrence` down to the part, when it lies
+        /// inside a subassembly (spec 3.1a; empty: the occurrence itself).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        sub: Vec<u32>,
         /// The face's persistent name.
         face: String,
         /// A point on the face when it was picked (part coordinates).
@@ -188,6 +208,29 @@ impl GeomRef {
             | GeomRef::Origin { occurrence, .. }
             | GeomRef::Work { occurrence, .. }
             | GeomRef::FacePoint { occurrence, .. } => *occurrence,
+        }
+    }
+
+    /// The path below [`Self::occurrence`] to the part it lies on (empty:
+    /// that occurrence's own part).
+    pub fn sub(&self) -> &[u32] {
+        match self {
+            GeomRef::Face { sub, .. }
+            | GeomRef::Edge { sub, .. }
+            | GeomRef::Origin { sub, .. }
+            | GeomRef::Work { sub, .. }
+            | GeomRef::FacePoint { sub, .. } => sub,
+        }
+    }
+
+    /// The path below the occurrence, to set.
+    pub fn sub_mut(&mut self) -> &mut Vec<u32> {
+        match self {
+            GeomRef::Face { sub, .. }
+            | GeomRef::Edge { sub, .. }
+            | GeomRef::Origin { sub, .. }
+            | GeomRef::Work { sub, .. }
+            | GeomRef::FacePoint { sub, .. } => sub,
         }
     }
 
@@ -547,6 +590,7 @@ fn face_point(
     let plane = resolve_local(
         body,
         &GeomRef::Face {
+            sub: Vec::new(),
             occurrence,
             name: face.to_owned(),
             hint,
@@ -586,6 +630,7 @@ fn face_point(
         FaceSnap::CircleCenter { edge } => match resolve_local(
             body,
             &GeomRef::Edge {
+                sub: Vec::new(),
                 occurrence,
                 edge: edge.clone(),
             },
@@ -643,6 +688,7 @@ pub fn resolve_local(body: &BRep, r: &GeomRef) -> Result<Geom, String> {
         GeomRef::Origin { item, .. } => Ok(item.geom()),
         GeomRef::Work { id, .. } => Err(format!("the work feature {id} needs its part")),
         GeomRef::FacePoint {
+            sub: _,
             occurrence,
             face,
             hint,
@@ -726,15 +772,16 @@ pub fn resolve_local(body: &BRep, r: &GeomRef) -> Result<Geom, String> {
     }
 }
 
-/// The local geometry of `r` in the assembly `asm` of `project` (parts of
-/// the same project only; the GUI also reaches linked part files).
+/// The local geometry of `r` in the assembly `asm` of `project`, in its
+/// occurrence's coordinates (a part inside a subassembly is moved by its
+/// place there; parts of the same project only, the GUI also reaches linked
+/// part files).
 pub fn resolve(project: &Project, asm: &AssemblyDocument, r: &GeomRef) -> Result<Geom, String> {
-    let o: &Occurrence = asm
-        .find(r.occurrence())
-        .ok_or("the component no longer exists")?;
+    let (o, at, name) = super::tree::nested(project, asm, r.occurrence(), r.sub())?;
     let part =
-        super::part_of(project, o.component).ok_or_else(|| format!("{} shows no part", o.name))?;
-    resolve_in(part, r).map_err(|e| format!("{}: {e}", o.name))
+        super::part_of(project, o.component).ok_or_else(|| format!("{name} shows no part"))?;
+    let g = resolve_in(part, r).map_err(|e| format!("{name}: {e}"))?;
+    Ok(if r.sub().is_empty() { g } else { g.moved(&at) })
 }
 
 /// The residuals of constraint `c` for its two world geometries: zero when
@@ -1074,6 +1121,7 @@ mod tests {
         def.centers = ids.into_iter().map(HoleCenter::Point).collect();
         p.add_hole(def).unwrap();
         let top = GeomRef::Face {
+            sub: Vec::new(),
             occurrence: 1,
             name: "Box1:Top".into(),
             hint: [5.0, 5.0, 20.0],
@@ -1083,6 +1131,7 @@ mod tests {
         };
         assert!((n - Vector3::z()).norm() < 1e-9 && (q.z - 20.0).abs() < 1e-9);
         let bottom = GeomRef::Face {
+            sub: Vec::new(),
             occurrence: 1,
             name: "Box1:Bottom".into(),
             hint: [5.0, 5.0, 0.0],
@@ -1103,6 +1152,7 @@ mod tests {
             })
             .expect("a rim edge");
         let rim = GeomRef::Edge {
+            sub: Vec::new(),
             occurrence: 1,
             edge: e.clone(),
         };
@@ -1112,6 +1162,7 @@ mod tests {
         assert!((c - Point3::new(20.0, 15.0, 20.0)).norm() < 1e-6, "{c}");
         assert!((n - Vector3::z()).norm() < 1e-9 && (r - 3.0).abs() < 1e-6);
         let bore = GeomRef::Face {
+            sub: Vec::new(),
             occurrence: 1,
             name: "Hole1:Bore:1".into(),
             hint: [23.0, 15.0, 10.0],
@@ -1134,6 +1185,7 @@ mod tests {
             })
             .expect("the front top edge");
         let at = |snap| GeomRef::FacePoint {
+            sub: Vec::new(),
             occurrence: 1,
             face: "Box1:Top".into(),
             hint: [5.0, 5.0, 20.0],
@@ -1172,6 +1224,7 @@ mod tests {
         };
         assert!((c - Point3::new(20.0, 15.0, 20.0)).norm() < 1e-6, "{c}");
         let gone = GeomRef::Face {
+            sub: Vec::new(),
             occurrence: 1,
             name: "Box1:Nowhere".into(),
             hint: [0.0; 3],

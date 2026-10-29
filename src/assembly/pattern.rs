@@ -517,6 +517,7 @@ mod tests {
 
     fn axis(item: OriginItem) -> GeomRef {
         GeomRef::Origin {
+            sub: Vec::new(),
             occurrence: ASSEMBLY,
             item,
         }

@@ -798,9 +798,23 @@ impl CadCraftApp {
             _ => None,
         };
         // Feature priority / Select Faces and Edges take a feature, face or
-        // edge of the component under the cursor (`gui/asm_select.rs`).
-        let sub_mode = !self.asm_priority().takes_components();
+        // edge of the component under the cursor (`gui/asm_select.rs`);
+        // Part priority a part inside a subassembly (spec 3.1a).
+        let part_priority = self.asm_priority() == crate::command::selection::AsmPriority::Part;
+        let nested = match (pointer, hit) {
+            (Some(p), Some((h, _))) if part_priority && self.asm.tool.is_none() => self
+                .assembly()
+                .and_then(|a| a.find(h.occurrence))
+                .is_some_and(|o| {
+                    crate::assembly::tree::assembly_of(&self.project, o.component).is_some()
+                })
+                .then(|| self.asm_sub_under(p, rect))
+                .flatten(),
+            _ => None,
+        };
+        let sub_mode = !self.asm_priority().takes_components() || nested.is_some();
         let sub_hit = match (pointer, hit) {
+            _ if nested.is_some() => nested,
             (Some(p), Some(_)) if sub_mode && self.asm.tool.is_none() => {
                 self.asm_sub_under(p, rect)
             }
@@ -862,10 +876,12 @@ impl CadCraftApp {
                     }
                     Some((h, _)) => {
                         self.asm.sel = vec![h.occurrence];
+                        self.asm.sub.clear();
                         self.cons.selected = None;
                     }
                     None if !ctrl => {
                         self.asm.sel.clear();
+                        self.asm.sub.clear();
                         self.cons.selected = None;
                     }
                     None => {}
@@ -1228,6 +1244,7 @@ impl CadCraftApp {
             Some(AsmTool::FreeRotate(Some(_))) => "Free Rotate: drag inside the circle to turn freely, on its rim to turn in the screen plane; click another component to switch; Esc ends".into(),
             None => match self.assembly().map(|a| a.occurrences.len()) {
                 Some(0) => "The assembly is empty. Assemble > Place (P) puts a part of the project in it".into(),
+                _ if self.asm_priority() == crate::command::selection::AsmPriority::Part => "Part Priority: click a part, also one inside a subassembly, to select it (Ctrl adds); right-click for its commands".into(),
                 _ if self.asm_priority() == crate::command::selection::AsmPriority::Feature => "Feature Priority: click a feature of a component to select it (Ctrl adds); right-click for Appearance, Constrain, Measure".into(),
                 _ if self.asm_priority() == crate::command::selection::AsmPriority::FacesEdges => "Select Faces and Edges: click a face or an edge of a component (Ctrl adds); right-click for Appearance, Constrain, Measure".into(),
                 _ => "Click a component to select it (Ctrl adds), drag one that is not grounded to move it; double-click opens its part".into(),

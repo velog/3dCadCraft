@@ -168,6 +168,7 @@ mod tests {
 
     fn face(o: u32, n: &str) -> GeomRef {
         GeomRef::Face {
+            sub: Vec::new(),
             occurrence: o,
             name: n.into(),
             hint: [0.0; 3],

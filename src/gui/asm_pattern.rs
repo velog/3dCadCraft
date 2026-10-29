@@ -30,22 +30,25 @@ pub(super) enum PatternCmd {
 }
 
 impl CadCraftApp {
-    /// A reference's geometry in its part, looked up in assembly `a`.
+    /// A reference's geometry in its occurrence's coordinates, looked up in
+    /// assembly `a` (a part inside a subassembly is moved by its place
+    /// there, spec 3.1a; parts of this file or linked part files).
     pub(super) fn asm_local_in(&self, a: &AssemblyDocument, r: &GeomRef) -> Result<Geom, String> {
         if let GeomRef::Origin {
             occurrence: relation::ASSEMBLY,
             item,
+            ..
         } = r
         {
             return Ok(item.geom());
         }
-        let o = a
-            .find(r.occurrence())
-            .ok_or("the component no longer exists")?;
-        let name = o.name.clone();
-        self.with_part(o.component, |p| relation::resolve_in(p, r))
+        let (o, at, name) =
+            crate::assembly::tree::nested(&self.project, a, r.occurrence(), r.sub())?;
+        let g = self
+            .with_part(o.component, |p| relation::resolve_in(p, r))
             .ok_or_else(|| format!("{name}: its part file was not found"))?
-            .map_err(|e| format!("{name}: {e}"))
+            .map_err(|e| format!("{name}: {e}"))?;
+        Ok(if r.sub().is_empty() { g } else { g.moved(&at) })
     }
 
     /// The feature pattern `id` of occurrence `occ`'s part (Associative).
@@ -127,7 +130,11 @@ impl CadCraftApp {
                     Some(GeomRef::Face {
                         occurrence, name, ..
                     }) => (occurrence, vec![name]),
-                    Some(GeomRef::Edge { occurrence, edge }) => (occurrence, edge.faces.to_vec()),
+                    Some(GeomRef::Edge {
+                        sub: _,
+                        occurrence,
+                        edge,
+                    }) => (occurrence, edge.faces.to_vec()),
                     _ => return Err("select a face of a feature pattern of a part".into()),
                 };
                 let o = a.find(occurrence).ok_or("the component no longer exists")?;
@@ -376,6 +383,7 @@ impl CadCraftApp {
                     });
                 if let Some(name) = face {
                     let g = GeomRef::Face {
+                        sub: Vec::new(),
                         occurrence: *occurrence,
                         name,
                         hint: [0.0; 3],

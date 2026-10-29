@@ -85,6 +85,10 @@ const TABLE: &[(&str, &str)] = &[
         "Сглобяването е празно. Assemble > Place (P) поставя детайл от проекта",
     ),
     (
+        "Part Priority: click a part, also one inside a subassembly, to select it (Ctrl adds); right-click for its commands",
+        "Part Priority: щракнете детайл, също и вътре в подсглобка, за да го изберете (Ctrl добавя); десен бутон за командите му",
+    ),
+    (
         "Feature Priority: click a feature of a component to select it (Ctrl adds); right-click for Appearance, Constrain, Measure",
         "Feature Priority: щракнете елемент на компонент, за да го изберете (Ctrl добавя); десен бутон за Appearance, Constrain, Measure",
     ),

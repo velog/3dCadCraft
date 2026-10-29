@@ -43,6 +43,31 @@ pub fn would_loop(project: &Project, outer: DocumentId, inner: DocumentId) -> bo
     contains(project, inner, outer, 0)
 }
 
+/// The component a reference into occurrence `top` of `asm` lies on: the
+/// part (or subassembly) at the end of `sub`, its placement in `top`'s own
+/// coordinates and its name (`Bracket:1/Post:2`). A path that no longer
+/// exists is an error (the relationship becomes sick, rule 8).
+pub fn nested<'a>(
+    project: &'a Project,
+    asm: &'a AssemblyDocument,
+    top: u32,
+    sub: &[u32],
+) -> Result<(&'a Occurrence, Transform3, String), String> {
+    let mut o = asm.find(top).ok_or("the component no longer exists")?;
+    let mut name = o.name.clone();
+    let mut at = Transform3::identity();
+    for &id in sub {
+        let inner = assembly_of(project, o.component)
+            .ok_or_else(|| format!("{name} is no longer a subassembly"))?;
+        o = inner
+            .find(id)
+            .ok_or_else(|| format!("{name}: the component inside no longer exists"))?;
+        at *= o.transform;
+        name = format!("{name}/{}", o.name);
+    }
+    Ok((o, at, name))
+}
+
 /// One part placed somewhere in the tree.
 #[derive(Clone, Debug)]
 pub struct Leaf<'a> {
@@ -152,6 +177,59 @@ mod tests {
         let want =
             top(&p, tid).find(2).unwrap().transform * Transform3::translation(20.0, 0.0, 0.0);
         assert!((l[3].world.translation.vector - want.translation.vector).norm() < 1e-12);
+    }
+
+    #[test]
+    fn nested_references_reach_parts_inside() {
+        let (p, bolt, _, tid) = project();
+        let a = top(&p, tid);
+        let (o, at, name) = nested(&p, a, 2, &[2]).unwrap();
+        assert_eq!(
+            (o.component, name.as_str()),
+            (DocRef::local(bolt), "Sub:2/Bolt:2")
+        );
+        assert!((at.translation.vector - Vector3::new(20.0, 0.0, 0.0)).norm() < 1e-12);
+        assert_eq!(nested(&p, a, 3, &[]).unwrap().2, "Bolt:1");
+        assert!(nested(&p, a, 2, &[7]).is_err());
+        // A part has nothing inside.
+        assert!(nested(&p, a, 3, &[1]).is_err());
+    }
+
+    #[test]
+    fn relationships_reach_parts_inside_subassemblies() {
+        use crate::assembly::relation::{self, Constraint, ConstraintKind, GeomRef};
+        let (mut p, _, _, tid) = project();
+        let face = |occurrence, sub: Vec<u32>, name: &str| GeomRef::Face {
+            occurrence,
+            sub,
+            name: format!("Box1:{name}"),
+            hint: [5.0, 5.0, 5.0],
+        };
+        // The free Bolt:1 on top of the second bolt inside the grounded Sub:1.
+        let c = Constraint::new(
+            ConstraintKind::Mate,
+            face(3, Vec::new(), "Bottom"),
+            face(1, vec![2], "Top"),
+        );
+        if let Some(DocumentData::Assembly(a)) = p.document_mut(tid).map(|d| &mut d.data) {
+            a.add_constraint(c);
+        }
+        let a = top(&p, tid);
+        // In Sub:1's coordinates: the top of the bolt moved 20 along x.
+        match relation::resolve(&p, a, &face(1, vec![2], "Top")) {
+            Ok(relation::Geom::Plane { p: at, n }) => {
+                assert!((at.x - 25.0).abs() < 1e-9 && (at.z - 10.0).abs() < 1e-9);
+                assert!((n - Vector3::z()).norm() < 1e-9);
+            }
+            other => panic!("{other:?}"),
+        }
+        let solved = crate::assembly::solve(a, &|r| relation::resolve(&p, a, r), None);
+        assert!(solved.converged && solved.sick.is_empty(), "{solved:?}");
+        let t = solved.transforms.iter().find(|(id, _)| *id == 3).unwrap().1;
+        assert!((t.translation.vector.z - 10.0).abs() < 1e-6, "{t:?}");
+        // A path that no longer exists makes it sick (rule 8).
+        let gone = face(1, vec![9], "Top");
+        assert!(relation::resolve(&p, a, &gone).is_err());
     }
 
     #[test]

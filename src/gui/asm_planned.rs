@@ -1250,10 +1250,9 @@ impl CadCraftApp {
                 _ => Vec::new(),
             };
             let found = self
-                .assembly()
-                .and_then(|a| a.find(g.occurrence()))
-                .and_then(|o| {
-                    self.with_part(o.component, |p| {
+                .geom_part(&g)
+                .and_then(|(component, _)| {
+                    self.with_part(component, |p| {
                         names
                             .iter()
                             .find_map(|n| crate::assembly::pattern::pattern_of_face(p, n))
@@ -1339,6 +1338,7 @@ mod tests {
         assert_eq!(d.num(1, "Column Count"), Some(5.0));
         assert!(d.check(2, "Flip") && !d.check(1, "Flip row"));
         let axis = |item| GeomRef::Origin {
+            sub: Vec::new(),
             occurrence: ASSEMBLY,
             item,
         };
