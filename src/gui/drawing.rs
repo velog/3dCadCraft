@@ -280,6 +280,8 @@ pub(super) struct DrwUi {
     /// line (sheet mm, newest last): the cursor then snaps to the
     /// horizontal / vertical through them (point tracking).
     pub section_track: Vec<[f64; 2]>,
+    /// The view sketch being edited (a section line).
+    pub sketch: Option<Box<super::drawing_sketch::DrwSketch>>,
     /// The Text window.
     pub text_dialog: Option<super::drawing_annot::TextDialog>,
     /// The PDF options window (kept until the file is written).
@@ -676,6 +678,7 @@ impl CadCraftApp {
         }
         if self.drw_open() {
             self.drw.tool = None;
+            self.drw.sketch = None;
             self.drw.dialog = None;
             self.drw.sheet_dialog = None;
             self.drw.text_dialog = None;
@@ -696,6 +699,7 @@ impl CadCraftApp {
     /// A drawing command or dialog is open.
     pub(super) fn drw_open(&self) -> bool {
         self.drw.tool.is_some()
+            || self.drw.sketch.is_some()
             || self.drw.dialog.is_some()
             || self.drw.sheet_dialog.is_some()
             || self.drw.text_dialog.is_some()
@@ -711,6 +715,9 @@ impl CadCraftApp {
 
     /// Status-bar prompt.
     pub(super) fn drw_prompt(&self) -> String {
+        if let Some(s) = &self.drw.sketch {
+            return s.prompt();
+        }
         if let Some(p) = &self.drw.planned {
             return p.prompt();
         }
@@ -1160,8 +1167,14 @@ impl CadCraftApp {
                 dlg.pick(what);
             }
         }
+        // A view sketch takes the sheet view while it is open.
+        let sketching = self.drw.sketch.is_some();
+        if sketching {
+            self.view_sketch_ui(&painter, rect, &response, &views);
+        }
         // The running command.
         match self.drw.tool.clone() {
+            _ if sketching => {}
             Some(DrwTool::Base) => self.orient_tool(&ctx, &painter, rect, &response),
             Some(DrwTool::Projected(parent)) => {
                 self.projected_place(&ctx, &painter, rect, &response, at_sheet, parent, &views)
@@ -1260,8 +1273,8 @@ impl CadCraftApp {
                 }
             }
         }
-        // Keys over the sheet.
-        if response.hovered() || response.has_focus() {
+        // Keys over the sheet (a view sketch reads its own).
+        if !sketching && (response.hovered() || response.has_focus()) {
             let (del, esc) = ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::Delete),
@@ -1533,6 +1546,14 @@ impl CadCraftApp {
                 }
                 if ui.button("Projected View (PV)").clicked() {
                     self.drw.tool = Some(DrwTool::Projected(Some(id)));
+                    ui.close();
+                }
+                let section = self
+                    .drawing()
+                    .and_then(|d| d.sheet()?.view(id))
+                    .is_some_and(|v| matches!(v.kind, ViewKind::Section { .. }));
+                if section && ui.button("Edit Section Line").clicked() {
+                    self.edit_section_line(id);
                     ui.close();
                 }
                 if ui.button("Delete").clicked() {

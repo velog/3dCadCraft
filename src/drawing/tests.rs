@@ -2147,3 +2147,61 @@ fn chamfer_notes_measure_from_the_reference() {
         Err(super::annot::Orphan::Missing(_))
     ));
 }
+
+/// A view sketch's lines end to end are the section line; construction
+/// lines are left out; two pieces or a closed loop are refused.
+#[test]
+fn view_sketch_line_is_its_chain() {
+    use super::view_sketch::{LineError, ViewSketch};
+    use crate::sketch::Style;
+    let pts = [[0.0, 30.0], [0.0, -10.0], [20.0, -10.0], [20.0, -30.0]];
+    let mut s = ViewSketch::from_line(&pts);
+    assert_eq!(s.line().unwrap(), pts.to_vec());
+    let c = s.0.add_line(Point2::new(50.0, 0.0), Point2::new(60.0, 0.0));
+    s.0.set_style(c, Style::Construction).unwrap();
+    assert_eq!(s.line().unwrap().len(), 4, "construction left out");
+    s.0.set_style(c, Style::Normal).unwrap();
+    assert_eq!(s.line(), Err(LineError::NotOneChain));
+    assert_eq!(ViewSketch::default().line(), Err(LineError::Empty));
+    // Saved and read back the same.
+    let json = serde_json::to_string(&s).unwrap();
+    let back: ViewSketch = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, s);
+}
+
+/// A section line set from its sketch keeps the sketch; moving the line
+/// (grips, model ties) moves the sketch's points with it.
+#[test]
+fn section_sketch_follows_the_line() {
+    use super::view_sketch::ViewSketch;
+    let mut d = DrawingDocument::default();
+    let b = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let s = d
+        .add_section_view(b, [-40.0, 0.0], [40.0, 0.0], [150.0, 60.0])
+        .unwrap();
+    let pts = [[0.0, 30.0], [0.0, -10.0], [20.0, -10.0]];
+    d.set_section_sketch(s, ViewSketch::from_line(&pts), None)
+        .unwrap();
+    let kind = |d: &DrawingDocument| d.sheet().unwrap().view(s).unwrap().kind.clone();
+    assert_eq!(kind(&d).section_line().unwrap(), pts.to_vec());
+    let moved = [[5.0, 30.0], [5.0, -10.0], [20.0, -10.0]];
+    d.set_section_line(s, &moved, None);
+    let ViewKind::Section { sketch, .. } = kind(&d) else {
+        panic!("a section");
+    };
+    assert_eq!(sketch.unwrap().line().unwrap(), moved.to_vec());
+    // An empty sketch is refused and changes nothing.
+    assert!(
+        d.set_section_sketch(s, ViewSketch::default(), None)
+            .is_err()
+    );
+    assert_eq!(kind(&d).section_line().unwrap(), moved.to_vec());
+}

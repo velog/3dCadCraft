@@ -63,6 +63,7 @@ mod drawing_planned;
 mod drawing_revision;
 mod drawing_section;
 mod drawing_sheet;
+mod drawing_sketch;
 mod drawing_styles;
 mod drive;
 mod feature_cmd;
@@ -4821,6 +4822,10 @@ impl CadCraftApp {
         self.search_shortcut(ctx);
         if ctx.egui_wants_keyboard_input() || self.file_window_open() {
             return; // typing into a text field
+        }
+        // A view sketch of a drawing takes the keys (its tools' letters).
+        if self.is_drawing() && self.view_sketch_keys(ctx) {
+            return;
         }
         // Alt+V: Visibility of the selected bodies (Inventor's shortcut).
         if !self.is_drawing()

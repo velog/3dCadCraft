@@ -29,6 +29,7 @@ pub mod rich;
 pub mod sheet;
 pub mod style;
 pub mod table;
+pub mod view_sketch;
 
 use serde::{Deserialize, Serialize};
 
@@ -465,6 +466,11 @@ pub enum ViewKind {
         /// farther is left out); `None`: Full. Old builds draw it Full.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         depth: Option<f64>,
+        /// The line's sketch in the parent's view plane (its lines end to
+        /// end are `a`, `mid`, `b`); `None`: drawn before sketches (made
+        /// from the points when edited). Old builds keep the points.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sketch: Option<Box<view_sketch::ViewSketch>>,
     },
     /// Auxiliary View: square to a line (an edge) of the parent.
     Auxiliary {
@@ -1153,6 +1159,7 @@ impl DrawingDocument {
                 aligned: false,
                 anchors: Vec::new(),
                 depth: None,
+                sketch: None,
             },
             at,
             None,
@@ -1219,7 +1226,12 @@ impl DrawingDocument {
             return false;
         };
         let ViewKind::Section {
-            a, b, mid, anchors, ..
+            a,
+            b,
+            mid,
+            anchors,
+            sketch,
+            ..
         } = &mut v.kind
         else {
             return false;
@@ -1227,12 +1239,41 @@ impl DrawingDocument {
         *a = pts[0];
         *b = pts[pts.len() - 1];
         *mid = pts[1..pts.len() - 1].to_vec();
+        if let Some(sk) = sketch {
+            sk.follow(pts);
+        }
         *anchors = if tied.iter().any(Option::is_some) {
             tied
         } else {
             Vec::new()
         };
         true
+    }
+
+    /// Section view `id`'s line drawn by `sketch` (its lines end to end);
+    /// points on the parent's geometry are tied to it (as
+    /// [`Self::set_section_line`]). The drawing is unchanged on an error.
+    pub fn set_section_sketch(
+        &mut self,
+        id: u32,
+        sketch: view_sketch::ViewSketch,
+        parent_lines: Option<&hlr::ViewLines>,
+    ) -> Result<(), view_sketch::LineError> {
+        let pts = sketch.line()?;
+        if pts.len() < 2 {
+            return Err(view_sketch::LineError::Empty);
+        }
+        if let Some(ViewKind::Section { sketch: s, .. }) = self
+            .sheet_mut()
+            .and_then(|sh| sh.view_mut(id))
+            .map(|v| &mut v.kind)
+        {
+            *s = Some(Box::new(sketch));
+        } else {
+            return Err(view_sketch::LineError::Empty);
+        }
+        self.set_section_line(id, &pts, parent_lines);
+        Ok(())
     }
 
     /// Section lines on sheet `sheet` follow the edges their points are tied
@@ -1253,6 +1294,7 @@ impl DrawingDocument {
                 b,
                 mid,
                 anchors,
+                sketch,
                 ..
             } = &mut v.kind
             else {
@@ -1261,6 +1303,7 @@ impl DrawingDocument {
             if anchors.is_empty() {
                 continue;
             }
+            let mut this = false;
             let Some(pl) = lines(*parent) else {
                 continue;
             };
@@ -1278,7 +1321,16 @@ impl DrawingDocument {
                 };
                 if (p[0] - q[0]).hypot(p[1] - q[1]) > 1e-6 {
                     *p = q;
-                    moved = true;
+                    this = true;
+                }
+            }
+            if this {
+                moved = true;
+                if let Some(sk) = sketch {
+                    let mut pts = vec![*a];
+                    pts.extend(mid.iter().copied());
+                    pts.push(*b);
+                    sk.follow(&pts);
                 }
             }
         }
@@ -1309,6 +1361,7 @@ impl DrawingDocument {
                 aligned: false,
                 anchors: Vec::new(),
                 depth: None,
+                sketch: None,
             },
             at,
             None,

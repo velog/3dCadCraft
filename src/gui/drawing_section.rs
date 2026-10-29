@@ -25,7 +25,7 @@ const TRACK_PX: f64 = 8.0;
 
 /// Draws the tracking guides (dotted, from the tracked point) and marks
 /// the tracked points.
-fn paint_tracking(
+pub(super) fn paint_guides(
     painter: &egui::Painter,
     to: impl Fn([f64; 2]) -> egui::Pos2,
     track: &[[f64; 2]],
@@ -54,6 +54,8 @@ pub(super) struct SectionDraft {
     parent: Option<u32>,
     pts: Vec<[f64; 2]>,
     done: bool,
+    /// The line's sketch (Finish Sketch of the line's view sketch).
+    sketch: Option<Box<crate::drawing::view_sketch::ViewSketch>>,
 }
 
 /// Detail View in progress (sheet mm).
@@ -72,6 +74,20 @@ pub(super) struct AuxDraft {
 }
 
 impl SectionDraft {
+    /// The view of a finished line is placed next: `pts` on the sheet.
+    pub(super) fn placing(
+        parent: u32,
+        pts: Vec<[f64; 2]>,
+        sketch: crate::drawing::view_sketch::ViewSketch,
+    ) -> Self {
+        Self {
+            parent: Some(parent),
+            pts,
+            done: true,
+            sketch: Some(Box::new(sketch)),
+        }
+    }
+
     /// Status-bar prompt.
     pub(super) fn prompt(&self) -> &'static str {
         match (self.parent, self.pts.len(), self.done) {
@@ -172,12 +188,15 @@ impl CadCraftApp {
         match tool {
             DrwTool::Section(mut d) => {
                 let Some(parent) = d.parent else {
+                    // The parent picked: its sketch opens with the Line tool.
                     if response.clicked()
                         && let Some(id) = self.drw.hover
                     {
-                        d.parent = Some(id);
-                        self.drw.sel = Some(id);
-                        self.drw.tool = Some(DrwTool::Section(d));
+                        self.open_view_sketch(
+                            id,
+                            super::drawing_sketch::SketchFor::NewSection,
+                            Default::default(),
+                        );
                     }
                     return;
                 };
@@ -191,7 +210,7 @@ impl CadCraftApp {
                     if let Some(p) = pointer {
                         let last = d.pts.last().copied();
                         let (q, on_geometry, guides) = self.section_point(views, rect, p, last);
-                        paint_tracking(painter, to, &self.drw.section_track, &guides);
+                        paint_guides(painter, to, &self.drw.section_track, &guides);
                         if let Some(last) = last {
                             painter.line_segment([to(last), to(q)], Stroke::new(2.0, PREVIEW));
                         }
@@ -223,9 +242,17 @@ impl CadCraftApp {
                 };
                 // Points snapped to the parent's edges stay on them.
                 let pl = pv.lines.clone();
+                let sketch = d.sketch.clone();
                 self.child_preview(ctx, painter, rect, response, "Section View", |doc| {
                     let id = doc.add_section_view_line(parent, &line, q)?;
-                    doc.set_section_line(id, &line, pl.as_deref());
+                    match &sketch {
+                        Some(sk) => doc
+                            .set_section_sketch(id, (**sk).clone(), pl.as_deref())
+                            .ok()?,
+                        None => {
+                            doc.set_section_line(id, &line, pl.as_deref());
+                        }
+                    }
                     Some(id)
                 });
             }
@@ -588,7 +615,7 @@ impl CadCraftApp {
                         pts[1]
                     };
                     let (s, on_geometry, guides) = self.section_point(views, rect, p, Some(other));
-                    paint_tracking(painter, to, &self.drw.section_track, &guides);
+                    paint_guides(painter, to, &self.drw.section_track, &guides);
                     if on_geometry {
                         painter.circle_stroke(to(s), 6.0, Stroke::new(1.5, PICKED));
                     }
@@ -643,6 +670,10 @@ impl CadCraftApp {
             );
         }
         let _ = n;
+        if response.double_clicked() {
+            self.edit_section_line(id);
+            return true;
+        }
         if let Some(q) = press {
             self.drw.section_drag = Some(SectionGrip {
                 view: id,

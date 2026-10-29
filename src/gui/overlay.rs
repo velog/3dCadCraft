@@ -47,8 +47,22 @@ pub struct SketchStyle {
     pub selected_points: Vec<PointId>,
 }
 
+/// What maps a sketch's world points onto the screen: the 3D view's
+/// camera, or a drawing view on the sheet (a drawing sketch's plane is the
+/// view's plane).
+pub trait Projector {
+    /// The screen position of world point `p` in the view `rect`.
+    fn project(&self, p: &Point3, rect: Rect) -> Option<Pos2>;
+}
+
+impl Projector for OrbitCamera {
+    fn project(&self, p: &Point3, rect: Rect) -> Option<Pos2> {
+        OrbitCamera::project(self, p, rect)
+    }
+}
+
 /// Projects a sketch-plane point to the screen.
-fn screen(cam: &OrbitCamera, rect: Rect, sketch: &Sketch, p: Point2) -> Option<Pos2> {
+fn screen(cam: &dyn Projector, rect: Rect, sketch: &Sketch, p: Point2) -> Option<Pos2> {
     cam.project(&sketch.to_world(&p), rect)
 }
 
@@ -124,7 +138,7 @@ fn entity_anchor(sketch: &Sketch, id: crate::sketch::EntityId) -> Option<Point2>
 /// with the geometry they constrain).
 pub fn draw_sketch(
     painter: &Painter,
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     ps: &PartSketch,
     style: &SketchStyle,
@@ -301,7 +315,7 @@ pub fn draw_sketch(
 pub const DIMENSION: Color32 = Color32::from_rgb(40, 70, 150);
 
 /// Sketch units per screen pixel around `at`.
-fn sketch_per_px(cam: &OrbitCamera, rect: Rect, sketch: &Sketch, at: Point2) -> Real {
+fn sketch_per_px(cam: &dyn Projector, rect: Rect, sketch: &Sketch, at: Point2) -> Real {
     match (
         screen(cam, rect, sketch, at),
         screen(cam, rect, sketch, at + Vector2::new(1.0, 0.0)),
@@ -314,7 +328,7 @@ fn sketch_per_px(cam: &OrbitCamera, rect: Rect, sketch: &Sketch, at: Point2) -> 
 /// Where the text of dimension `id` is drawn: its stored position, or a
 /// default a little off the geometry (`None` for non-dimensions).
 pub fn dimension_label(
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     id: crate::sketch::ConstraintId,
@@ -358,7 +372,7 @@ pub fn dimension_label(
 /// leader or arc, and arrowheads (the text is drawn with the labels).
 pub fn draw_dimension(
     painter: &Painter,
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     id: crate::sketch::ConstraintId,
@@ -543,7 +557,7 @@ pub struct LabelHit {
 /// Positions of all constraint labels of a sketch.
 pub fn label_layout(
     painter: &Painter,
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     mode: crate::sketch::DimDisplay,
@@ -643,7 +657,7 @@ pub fn constraint_refs(c: &Constraint) -> (Vec<PointId>, Vec<EntityId>) {
 /// on circles with a free radius.
 fn draw_dof(
     painter: &Painter,
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     ps: &PartSketch,
     dof: &crate::sketch::DofAnalysis,
@@ -800,7 +814,7 @@ pub const PROFILE_CHOSEN: Color32 = Color32::from_rgba_premultiplied(30, 110, 30
 /// Shades the closed regions (profiles) of a sketch, as Inventor does.
 pub fn draw_regions(
     painter: &Painter,
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     regions: &[crate::sketch::Region],
@@ -836,7 +850,7 @@ pub const CURVE_SNAP_PX: f32 = 8.0;
 /// The sketch point nearest to `cursor` within `radius` screen points.
 /// Any sketch point (including fixed and projected ones) near `cursor`.
 pub fn pick_any_point(
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     cursor: Pos2,
@@ -853,7 +867,7 @@ pub fn pick_any_point(
 /// Like [`pick_any_point`], but ignoring the points for which `skip` is true
 /// (e.g. the point being dragged and its curve's other end).
 pub fn pick_other_point(
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     cursor: Pos2,
@@ -870,7 +884,7 @@ pub fn pick_other_point(
 }
 
 pub fn pick_point(
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     cursor: Pos2,
@@ -1051,7 +1065,7 @@ pub fn draw_face_fill(
 /// The sketch entity nearest to `cursor` within `radius` screen points,
 /// with the closest point on it (sketch coordinates).
 pub fn pick_entity(
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     cursor: Pos2,
@@ -1063,7 +1077,7 @@ pub fn pick_entity(
 /// The line whose midpoint is nearest to `cursor` within `radius` screen
 /// points, with that midpoint (sketch coordinates).
 pub fn pick_midpoint(
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     cursor: Pos2,
@@ -1084,7 +1098,7 @@ pub fn pick_midpoint(
 
 /// Like [`pick_entity`], but ignoring the entities for which `skip` is true.
 pub fn pick_other_entity(
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     cursor: Pos2,
@@ -1114,7 +1128,7 @@ pub fn pick_other_entity(
 /// Draws a tool preview (rubber band) in sketch coordinates.
 pub fn draw_preview(
     painter: &Painter,
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     lines: &[super::sketch_tools::PreviewLine],
@@ -1143,7 +1157,7 @@ pub fn draw_preview(
 /// that will be created).
 pub fn draw_snap(
     painter: &Painter,
-    cam: &OrbitCamera,
+    cam: &dyn Projector,
     rect: Rect,
     sketch: &Sketch,
     pick: &super::sketch_tools::Pick,
