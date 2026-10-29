@@ -39,6 +39,28 @@ struct LibEntry {
 #[derive(Default)]
 pub(super) struct LibCache {
     files: RefCell<HashMap<PathBuf, LibEntry>>,
+    /// Where the library links of the loaded files lead (a linked
+    /// assembly's own links, relative to its file), by id.
+    links: RefCell<HashMap<LibraryId, PathBuf>>,
+    /// The linked files the active file reaches at any depth, for the tree
+    /// walk: (file path, its library ids, the projects). Built again when
+    /// either changes or a file is (re)loaded.
+    linked: RefCell<Option<LinkedKey>>,
+}
+
+/// The cached linked files: (file path, its library ids, the projects).
+type LinkedKey = (String, Vec<LibraryId>, Rc<asm::tree::Linked>);
+
+/// Where `link` of the file at `owner` leads (by its relative path, or by
+/// its name in the owner's folder).
+fn link_path(owner: &Path, link: &crate::document::LibraryLink) -> Option<PathBuf> {
+    let dir = owner.parent()?;
+    let stored = dir.join(&link.path);
+    if stored.exists() {
+        return Some(stored);
+    }
+    let flat = dir.join(Path::new(&link.path).file_name()?);
+    flat.exists().then_some(flat)
 }
 
 /// The open Place Component window.
@@ -142,18 +164,85 @@ fn base_name(path: &Path, parts: &[(DocumentId, String)], doc: DocumentId) -> St
 }
 
 impl CadCraftApp {
-    /// Where the part file of library link `lib` is (next to the assembly
-    /// by its relative path, or by its name in the assembly's folder).
+    /// Where the file of library link `lib` is (next to the assembly by its
+    /// relative path, or by its name in the assembly's folder); a link of a
+    /// loaded linked file (a subassembly's parts) is found next to that file.
     pub(super) fn library_path(&self, lib: LibraryId) -> Option<PathBuf> {
-        let link = self.project.library(lib)?;
-        let owner = Path::new(self.file_path.trim());
-        let dir = owner.parent()?;
-        let stored = dir.join(&link.path);
-        if stored.exists() {
-            return Some(stored);
+        match self.project.library(lib) {
+            Some(link) => link_path(Path::new(self.file_path.trim()), link),
+            None => self.asm.libs.links.borrow().get(&lib).cloned(),
         }
-        let flat = dir.join(Path::new(&link.path).file_name()?);
-        flat.exists().then_some(flat)
+    }
+
+    /// The linked files library links `ids` reach at any depth (loaded).
+    fn linked_from(&self, ids: Vec<LibraryId>) -> asm::tree::Linked {
+        let mut out = asm::tree::Linked::new();
+        let mut queue = ids;
+        while let Some(id) = queue.pop() {
+            if out.contains(id) {
+                continue;
+            }
+            let Some(p) = self
+                .library_path(id)
+                .and_then(|path| self.part_file(&path).ok())
+            else {
+                continue;
+            };
+            queue.extend(p.libraries().iter().map(|l| l.id));
+            out.insert(id, p);
+        }
+        out
+    }
+
+    /// What Place offers of file `p`: its parts, and in an assembly its
+    /// assemblies too (a subassembly of a linked file, spec 3.1a) unless one
+    /// contains the active assembly; a drawing's Base View takes both.
+    fn file_models(&self, p: &Project) -> Vec<(DocumentId, String)> {
+        if self.is_drawing() {
+            return models_of(p);
+        }
+        if self.asm.place_for_replace {
+            return parts_of(p);
+        }
+        let linked = self.linked_from(p.libraries().iter().map(|l| l.id).collect());
+        models_of(p)
+            .into_iter()
+            .filter(|(id, _)| {
+                asm::tree::assembly_of(p, &linked, DocRef::local(*id)).is_none()
+                    || !asm::tree::would_loop(p, &linked, self.part_id, DocRef::local(*id))
+            })
+            .collect()
+    }
+
+    /// A file assembly's parts as one picking mesh (the Place preview).
+    fn file_assembly_mesh(&self, p: &Project, doc: DocumentId) -> Option<Arc<PickMesh>> {
+        let linked = self.linked_from(p.libraries().iter().map(|l| l.id).collect());
+        let a = asm::tree::assembly_of(p, &linked, DocRef::local(doc))?;
+        let parts: Vec<(PickMesh, Transform3)> =
+            asm::tree::leaves(p, &linked, DocRef::local(doc), a)
+                .iter()
+                .filter_map(|l| {
+                    asm::tree::part_of(p, &linked, l.component).map(|x| (PickMesh::of(x), l.world))
+                })
+                .collect();
+        Some(Arc::new(PickMesh::merged(
+            parts.iter().map(|(m, t)| (m, *t)),
+        )))
+    }
+
+    /// The projects of every linked file the active file reaches (linked
+    /// subassemblies and their parts), for `assembly::tree` (cached).
+    pub(super) fn linked(&self) -> Rc<asm::tree::Linked> {
+        let ids: Vec<LibraryId> = self.project.libraries().iter().map(|l| l.id).collect();
+        if let Some((f, i, l)) = &*self.asm.libs.linked.borrow()
+            && *f == self.file_path
+            && *i == ids
+        {
+            return l.clone();
+        }
+        let out = Rc::new(self.linked_from(ids.clone()));
+        *self.asm.libs.linked.borrow_mut() = Some((self.file_path.clone(), ids, out.clone()));
+        out
     }
 
     /// Writes the iProperties of document `doc` of the part file `path`:
@@ -225,6 +314,17 @@ impl CadCraftApp {
         }
         let project = Rc::new(load_regenerated(&key)?);
         let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
+        {
+            // Shown and stored paths never carry canonicalize's verbatim prefix.
+            let owner = crate::document::library::without_verbatim(key.clone());
+            let mut links = self.asm.libs.links.borrow_mut();
+            for l in project.libraries() {
+                if let Some(p) = link_path(&owner, l) {
+                    links.entry(l.id).or_insert(p);
+                }
+            }
+        }
+        *self.asm.libs.linked.borrow_mut() = None;
         self.asm.libs.files.borrow_mut().insert(
             key,
             LibEntry {
@@ -254,6 +354,9 @@ impl CadCraftApp {
                 e.modified = now;
                 changed = true;
             }
+        }
+        if changed {
+            *self.asm.libs.linked.borrow_mut() = None;
         }
         changed
     }
@@ -332,7 +435,12 @@ impl CadCraftApp {
         if self.is_assembly() {
             for d in self.project.documents() {
                 if matches!(d.data, DocumentData::Assembly(_))
-                    && !crate::assembly::tree::would_loop(&self.project, self.part_id, d.id)
+                    && !crate::assembly::tree::would_loop(
+                        &self.project,
+                        &self.linked(),
+                        self.part_id,
+                        DocRef::local(d.id),
+                    )
                 {
                     v.push((DocRef::local(d.id), format!("{} (assembly)", d.name)));
                 }
@@ -406,7 +514,10 @@ impl CadCraftApp {
     /// part.
     fn place_select(&mut self, path: PathBuf) {
         let loaded = self.part_file(&path);
-        let drawing = self.is_drawing();
+        let models = loaded
+            .as_ref()
+            .map(|p| self.file_models(p))
+            .unwrap_or_default();
         let Some(d) = self.asm.place.as_mut() else {
             return;
         };
@@ -414,10 +525,13 @@ impl CadCraftApp {
         d.local_pick = None;
         d.preview = None;
         match loaded {
-            Ok(p) => {
-                d.parts = if drawing { models_of(&p) } else { parts_of(&p) };
+            Ok(_) => {
+                d.parts = models;
                 d.part = d.parts.first().map(|x| x.0);
-                d.error = d.parts.is_empty().then(|| "this file has no part".into());
+                d.error = d
+                    .parts
+                    .is_empty()
+                    .then(|| "this file has no part or assembly to place".into());
             }
             Err(e) => {
                 d.parts.clear();
@@ -459,6 +573,7 @@ impl CadCraftApp {
                 .ok()
                 .and_then(|p| match p.document(doc).map(|x| &x.data) {
                     Some(DocumentData::Part(part)) => Some(Arc::new(PickMesh::of(part))),
+                    Some(DocumentData::Assembly(_)) => self.file_assembly_mesh(&p, doc),
                     _ => None,
                 });
         if let Some(d) = self.asm.place.as_mut() {
@@ -470,13 +585,7 @@ impl CadCraftApp {
     fn place_chosen(&mut self, path: PathBuf, doc: DocumentId) {
         let parts = self
             .part_file(&path)
-            .map(|p| {
-                if self.is_drawing() {
-                    models_of(&p)
-                } else {
-                    parts_of(&p)
-                }
-            })
+            .map(|p| self.file_models(&p))
             .unwrap_or_default();
         let owner = PathBuf::from(self.file_path.trim());
         self.checkpoint(if self.asm.place_for_replace {
@@ -682,7 +791,7 @@ impl CadCraftApp {
                                 painter.text(
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
-                                    "Select a part file",
+                                    "Select a part or assembly file",
                                     egui::FontId::proportional(14.0),
                                     Color32::GRAY,
                                 );
@@ -721,7 +830,7 @@ impl CadCraftApp {
                         }
                         if d.local_pick.is_none() {
                             ui.weak(
-                                "The part is linked: it stays its own file; save it and the \
+                                "The component is linked: it stays its own file; save it and the \
                                  assembly shows the change.",
                             );
                         }

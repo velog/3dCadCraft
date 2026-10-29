@@ -773,15 +773,29 @@ pub fn resolve_local(body: &BRep, r: &GeomRef) -> Result<Geom, String> {
 }
 
 /// The local geometry of `r` in the assembly `asm` of `project`, in its
-/// occurrence's coordinates (a part inside a subassembly is moved by its
-/// place there; parts of the same project only, the GUI also reaches linked
-/// part files).
+/// place there; parts of the same project only: [`resolve_with`] reaches
+/// linked files).
 pub fn resolve(project: &Project, asm: &AssemblyDocument, r: &GeomRef) -> Result<Geom, String> {
-    let (o, at, name) = super::tree::nested(project, asm, r.occurrence(), r.sub())?;
-    let part =
-        super::part_of(project, o.component).ok_or_else(|| format!("{name} shows no part"))?;
-    let g = resolve_in(part, r).map_err(|e| format!("{name}: {e}"))?;
-    Ok(if r.sub().is_empty() { g } else { g.moved(&at) })
+    resolve_with(project, &super::tree::Linked::new(), asm, r)
+}
+
+/// [`resolve`] with the projects of linked files (their parts and
+/// subassemblies).
+pub fn resolve_with(
+    project: &Project,
+    linked: &super::tree::Linked,
+    asm: &AssemblyDocument,
+    r: &GeomRef,
+) -> Result<Geom, String> {
+    let n = super::tree::nested(project, linked, asm, r.occurrence(), r.sub())?;
+    let part = super::tree::part_of(project, linked, n.component)
+        .ok_or_else(|| format!("{} shows no part", n.name))?;
+    let g = resolve_in(part, r).map_err(|e| format!("{}: {e}", n.name))?;
+    Ok(if r.sub().is_empty() {
+        g
+    } else {
+        g.moved(&n.at)
+    })
 }
 
 /// The residuals of constraint `c` for its two world geometries: zero when

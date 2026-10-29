@@ -1,71 +1,179 @@
 //! Subassemblies (`docs/spec/3.1a-subassemblies.md`): an occurrence whose
-//! component is an assembly of the same design file. This module walks the
-//! tree — every part at any depth with its path and world placement — with a
-//! guard against an assembly that contains itself.
+//! component is an assembly — of the same design file or of a linked file
+//! (`.ccasm`). This module walks the tree — every part at any depth with its
+//! path and world placement — with a guard against an assembly that contains
+//! itself.
+//!
+//! A linked assembly's own component references are written in *its* file's
+//! terms (a local document there, or one of its library links). The walk
+//! rebases them onto the top file's terms ([`rebase`]): a local document of
+//! the linked file becomes `DocRef { library: <the link that reached the
+//! file>, .. }`, a link of the linked file keeps its id, and [`Linked`] holds
+//! every linked file's project by any library id leading to it (ids are
+//! random, so links of different files do not collide).
 
-use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Occurrence, Project};
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use crate::document::{
+    AssemblyDocument, DocRef, DocumentData, DocumentId, LibraryId, Occurrence, Project,
+};
 use crate::kernel::Transform3;
+use crate::part::PartDocument;
 
 /// Deepest nesting walked (deeper levels are left out, as a loop would be).
 pub const MAX_DEPTH: usize = 32;
 
-/// The assembly `r` shows, when it is one of this design file (subassemblies
-/// of linked files come later).
-pub fn assembly_of(project: &Project, r: DocRef) -> Option<&AssemblyDocument> {
-    if r.library.is_some() {
-        return None;
+/// The projects of linked files, by the library ids that lead to them (from
+/// the top file or from another linked file). Empty: only this design file.
+#[derive(Clone, Debug, Default)]
+pub struct Linked {
+    files: HashMap<LibraryId, Rc<Project>>,
+}
+
+impl Linked {
+    /// No linked files.
+    pub fn new() -> Self {
+        Self::default()
     }
-    match project.document(r.document).map(|d| &d.data) {
+
+    /// Records the project library `id` leads to.
+    pub fn insert(&mut self, id: LibraryId, project: Rc<Project>) {
+        self.files.insert(id, project);
+    }
+
+    /// The project library `id` leads to, when it is loaded.
+    pub fn get(&self, id: LibraryId) -> Option<&Project> {
+        self.files.get(&id).map(|p| &**p)
+    }
+
+    /// Whether library `id` is known.
+    pub fn contains(&self, id: LibraryId) -> bool {
+        self.files.contains_key(&id)
+    }
+}
+
+/// Component reference `r`, written in a document reached through library
+/// `from` (`None`: the top file), in the top file's terms.
+pub fn rebase(r: DocRef, from: Option<LibraryId>) -> DocRef {
+    match r.library {
+        None => DocRef {
+            library: from,
+            document: r.document,
+        },
+        Some(_) => r,
+    }
+}
+
+/// A copy of assembly `a`, reached through library `from`, with its
+/// components in the top file's terms (for walks that read occurrences
+/// themselves, like the BOM).
+pub fn rebased(a: &AssemblyDocument, from: Option<LibraryId>) -> AssemblyDocument {
+    let mut a = a.clone();
+    for o in &mut a.occurrences {
+        o.component = rebase(o.component, from);
+    }
+    a
+}
+
+/// The document `r` (in the top file's terms) refers to.
+fn document_of<'a>(
+    project: &'a Project,
+    linked: &'a Linked,
+    r: DocRef,
+) -> Option<&'a DocumentData> {
+    let p = match r.library {
+        None => project,
+        Some(lib) => linked.get(lib)?,
+    };
+    p.document(r.document).map(|d| &d.data)
+}
+
+/// The assembly `r` shows: one of this design file or of a linked file.
+pub fn assembly_of<'a>(
+    project: &'a Project,
+    linked: &'a Linked,
+    r: DocRef,
+) -> Option<&'a AssemblyDocument> {
+    match document_of(project, linked, r) {
         Some(DocumentData::Assembly(a)) => Some(a),
         _ => None,
     }
 }
 
+/// The part `r` shows: one of this design file or of a linked file.
+pub fn part_of<'a>(
+    project: &'a Project,
+    linked: &'a Linked,
+    r: DocRef,
+) -> Option<&'a PartDocument> {
+    match document_of(project, linked, r) {
+        Some(DocumentData::Part(p)) => Some(p),
+        _ => None,
+    }
+}
+
 /// Whether placing assembly `inner` into assembly `outer` would make a loop:
-/// `inner` is `outer` or contains it at some depth.
-pub fn would_loop(project: &Project, outer: DocumentId, inner: DocumentId) -> bool {
-    fn contains(p: &Project, a: DocumentId, target: DocumentId, depth: usize) -> bool {
-        if a == target {
+/// `inner` is `outer` or contains it at some depth (linked files included).
+pub fn would_loop(project: &Project, linked: &Linked, outer: DocumentId, inner: DocRef) -> bool {
+    fn contains(p: &Project, l: &Linked, a: DocRef, target: DocumentId, depth: usize) -> bool {
+        if a.document == target || depth > MAX_DEPTH {
             return true;
         }
-        if depth > MAX_DEPTH {
-            return true;
-        }
-        let Some(asm) = assembly_of(p, DocRef::local(a)) else {
+        let Some(asm) = assembly_of(p, l, a) else {
             return false;
         };
         asm.occurrences.iter().any(|o| {
-            o.component.library.is_none()
-                && assembly_of(p, o.component).is_some()
-                && contains(p, o.component.document, target, depth + 1)
+            let c = rebase(o.component, a.library);
+            assembly_of(p, l, c).is_some() && contains(p, l, c, target, depth + 1)
         })
     }
-    contains(project, inner, outer, 0)
+    contains(project, linked, inner, outer, 0)
+}
+
+/// Where a reference into the tree lands ([`nested`]).
+#[derive(Clone, Debug)]
+pub struct Nested<'a> {
+    /// The occurrence at the end of the path (in the innermost assembly).
+    pub occurrence: &'a Occurrence,
+    /// Its component in the top file's terms (use it, never
+    /// `occurrence.component`, which is in its own file's terms).
+    pub component: DocRef,
+    /// Its placement in the top occurrence's own coordinates.
+    pub at: Transform3,
+    /// Its name with the path, `Bracket:1/Post:2`.
+    pub name: String,
 }
 
 /// The component a reference into occurrence `top` of `asm` lies on: the
-/// part (or subassembly) at the end of `sub`, its placement in `top`'s own
-/// coordinates and its name (`Bracket:1/Post:2`). A path that no longer
-/// exists is an error (the relationship becomes sick, rule 8).
+/// part (or subassembly) at the end of `sub`. A path that no longer exists is
+/// an error (the relationship becomes sick, rule 8).
 pub fn nested<'a>(
     project: &'a Project,
+    linked: &'a Linked,
     asm: &'a AssemblyDocument,
     top: u32,
     sub: &[u32],
-) -> Result<(&'a Occurrence, Transform3, String), String> {
-    let mut o = asm.find(top).ok_or("the component no longer exists")?;
-    let mut name = o.name.clone();
-    let mut at = Transform3::identity();
+) -> Result<Nested<'a>, String> {
+    let o = asm.find(top).ok_or("the component no longer exists")?;
+    let mut n = Nested {
+        occurrence: o,
+        component: o.component,
+        at: Transform3::identity(),
+        name: o.name.clone(),
+    };
     for &id in sub {
-        let inner = assembly_of(project, o.component)
-            .ok_or_else(|| format!("{name} is no longer a subassembly"))?;
-        o = inner
+        let inner = assembly_of(project, linked, n.component)
+            .ok_or_else(|| format!("{} is no longer a subassembly", n.name))?;
+        let o = inner
             .find(id)
-            .ok_or_else(|| format!("{name}: the component inside no longer exists"))?;
-        at *= o.transform;
-        name = format!("{name}/{}", o.name);
+            .ok_or_else(|| format!("{}: the component inside no longer exists", n.name))?;
+        n.component = rebase(o.component, n.component.library);
+        n.occurrence = o;
+        n.at *= o.transform;
+        n.name = format!("{}/{}", n.name, o.name);
     }
-    Ok((o, at, name))
+    Ok(n)
 }
 
 /// One part placed somewhere in the tree.
@@ -75,58 +183,68 @@ pub struct Leaf<'a> {
     pub path: Vec<u32>,
     /// The part's occurrence (in the innermost assembly).
     pub occurrence: &'a Occurrence,
+    /// Its component in the top file's terms (use it, never
+    /// `occurrence.component`).
+    pub component: DocRef,
     /// Its placement in the top assembly's coordinates.
     pub world: Transform3,
 }
 
 /// Every shown part of `asm` at any depth (hidden or suppressed occurrences
 /// and their subtrees left out); subassemblies are walked, not listed.
-/// `top` is the document of `asm` (the loop guard starts there).
+/// `top` is the document of `asm` in the top file's terms (the loop guard
+/// starts there; its library rebases the references inside).
 pub fn leaves<'a>(
     project: &'a Project,
-    top: DocumentId,
+    linked: &'a Linked,
+    top: DocRef,
     asm: &'a AssemblyDocument,
 ) -> Vec<Leaf<'a>> {
     let mut out = Vec::new();
-    let mut stack = vec![top];
-    walk(
+    let mut stack = vec![top.document];
+    let mut w = Walk {
         project,
-        asm,
-        Transform3::identity(),
-        &mut Vec::new(),
-        &mut stack,
-        &mut out,
-    );
+        linked,
+        path: Vec::new(),
+        stack: &mut stack,
+        out: &mut out,
+    };
+    w.walk(asm, top.library, Transform3::identity());
     out
 }
 
-fn walk<'a>(
+struct Walk<'a, 'w> {
     project: &'a Project,
-    asm: &'a AssemblyDocument,
-    at: Transform3,
-    path: &mut Vec<u32>,
-    stack: &mut Vec<DocumentId>,
-    out: &mut Vec<Leaf<'a>>,
-) {
-    for o in asm.occurrences.iter().filter(|o| o.shown()) {
-        let world = at * o.transform;
-        path.push(o.id);
-        match assembly_of(project, o.component) {
-            Some(sub) => {
-                let d = o.component.document;
-                if !stack.contains(&d) && stack.len() <= MAX_DEPTH {
-                    stack.push(d);
-                    walk(project, sub, world, path, stack, out);
-                    stack.pop();
+    linked: &'a Linked,
+    path: Vec<u32>,
+    stack: &'w mut Vec<DocumentId>,
+    out: &'w mut Vec<Leaf<'a>>,
+}
+
+impl<'a> Walk<'a, '_> {
+    fn walk(&mut self, asm: &'a AssemblyDocument, from: Option<LibraryId>, at: Transform3) {
+        for o in asm.occurrences.iter().filter(|o| o.shown()) {
+            let world = at * o.transform;
+            let component = rebase(o.component, from);
+            self.path.push(o.id);
+            match assembly_of(self.project, self.linked, component) {
+                Some(sub) => {
+                    let d = component.document;
+                    if !self.stack.contains(&d) && self.stack.len() <= MAX_DEPTH {
+                        self.stack.push(d);
+                        self.walk(sub, component.library, world);
+                        self.stack.pop();
+                    }
                 }
+                None => self.out.push(Leaf {
+                    path: self.path.clone(),
+                    occurrence: o,
+                    component,
+                    world,
+                }),
             }
-            None => out.push(Leaf {
-                path: path.clone(),
-                occurrence: o,
-                world,
-            }),
+            self.path.pop();
         }
-        path.pop();
     }
 }
 
@@ -160,14 +278,19 @@ mod tests {
         (p, bolt, sid, tid)
     }
 
+    /// No linked files (leaked: the walks borrow it for the test's length).
+    fn none() -> &'static Linked {
+        Box::leak(Box::new(Linked::new()))
+    }
+
     fn top(p: &Project, id: DocumentId) -> &AssemblyDocument {
-        assembly_of(p, DocRef::local(id)).unwrap()
+        assembly_of(p, none(), DocRef::local(id)).unwrap()
     }
 
     #[test]
     fn leaves_walk_every_level_with_world_placements() {
         let (p, _, _, tid) = project();
-        let l = leaves(&p, tid, top(&p, tid));
+        let l = leaves(&p, none(), DocRef::local(tid), top(&p, tid));
         let paths: Vec<Vec<u32>> = l.iter().map(|x| x.path.clone()).collect();
         assert_eq!(
             paths,
@@ -183,16 +306,16 @@ mod tests {
     fn nested_references_reach_parts_inside() {
         let (p, bolt, _, tid) = project();
         let a = top(&p, tid);
-        let (o, at, name) = nested(&p, a, 2, &[2]).unwrap();
+        let n = nested(&p, none(), a, 2, &[2]).unwrap();
         assert_eq!(
-            (o.component, name.as_str()),
+            (n.component, n.name.as_str()),
             (DocRef::local(bolt), "Sub:2/Bolt:2")
         );
-        assert!((at.translation.vector - Vector3::new(20.0, 0.0, 0.0)).norm() < 1e-12);
-        assert_eq!(nested(&p, a, 3, &[]).unwrap().2, "Bolt:1");
-        assert!(nested(&p, a, 2, &[7]).is_err());
+        assert!((n.at.translation.vector - Vector3::new(20.0, 0.0, 0.0)).norm() < 1e-12);
+        assert_eq!(nested(&p, none(), a, 3, &[]).unwrap().name, "Bolt:1");
+        assert!(nested(&p, none(), a, 2, &[7]).is_err());
         // A part has nothing inside.
-        assert!(nested(&p, a, 3, &[1]).is_err());
+        assert!(nested(&p, none(), a, 3, &[1]).is_err());
     }
 
     #[test]
@@ -233,26 +356,66 @@ mod tests {
     }
 
     #[test]
+    fn subassemblies_of_linked_files_are_walked() {
+        // "Sub" (2 bolts, local to its file) lives in a linked file; the
+        // top file places it twice through library link `lib`.
+        let (lp, bolt, sid, _) = project();
+        let lib = LibraryId::new_random();
+        let mut linked = Linked::new();
+        linked.insert(lib, Rc::new(lp));
+        let mut p = Project::new("Top");
+        let mut a = AssemblyDocument::default();
+        let s = DocRef {
+            library: Some(lib),
+            document: sid,
+        };
+        a.place(s, "Sub", Transform3::identity(), true);
+        a.place(s, "Sub", Transform3::translation(0.0, 0.0, 50.0), false);
+        let tid = p.add_document("Top", DocumentData::Assembly(a));
+        let a = assembly_of(&p, &linked, DocRef::local(tid)).unwrap();
+        let l = leaves(&p, &linked, DocRef::local(tid), a);
+        assert_eq!(l.len(), 4);
+        // The bolts are the linked file's local part, reached through `lib`.
+        let want = DocRef {
+            library: Some(lib),
+            document: bolt,
+        };
+        assert!(l.iter().all(|x| x.component == want));
+        assert!(part_of(&p, &linked, want).is_some());
+        assert!((l[3].world.translation.vector - Vector3::new(20.0, 0.0, 50.0)).norm() < 1e-12);
+        let n = nested(&p, &linked, a, 2, &[2]).unwrap();
+        assert_eq!((n.component, n.name.as_str()), (want, "Sub:2/Bolt:2"));
+        // Without the file loaded each Sub is one missing component.
+        let missing = leaves(&p, none(), DocRef::local(tid), a);
+        assert!(missing.len() == 2 && missing.iter().all(|x| x.component == s));
+        // The linked file's Sub cannot take the top file's assembly.
+        assert!(!would_loop(&p, &linked, tid, s));
+    }
+
+    #[test]
     fn hidden_subassemblies_are_left_out() {
         let (mut p, _, _, tid) = project();
         if let Some(DocumentData::Assembly(a)) = p.document_mut(tid).map(|d| &mut d.data) {
             a.find_mut(1).unwrap().visible = false;
         }
-        assert_eq!(leaves(&p, tid, top(&p, tid)).len(), 3);
+        assert_eq!(
+            leaves(&p, none(), DocRef::local(tid), top(&p, tid)).len(),
+            3
+        );
     }
 
     #[test]
     fn loops_are_found_and_never_walked() {
         let (mut p, _, sid, tid) = project();
         // Placing Top in Sub would loop; Sub in Top again would not.
-        assert!(would_loop(&p, sid, tid));
-        assert!(would_loop(&p, tid, tid));
-        assert!(!would_loop(&p, tid, sid));
+        assert!(would_loop(&p, none(), sid, DocRef::local(tid)));
+        assert!(would_loop(&p, none(), tid, DocRef::local(tid)));
+        assert!(!would_loop(&p, none(), tid, DocRef::local(sid)));
         // A loop already in a file: the walk stops instead of recursing.
         if let Some(DocumentData::Assembly(a)) = p.document_mut(sid).map(|d| &mut d.data) {
             a.place(DocRef::local(tid), "Top", Transform3::identity(), false);
         }
-        let n = leaves(&p, tid, top(&p, tid)).len();
+        let n = leaves(&p, none(), DocRef::local(tid), top(&p, tid)).len();
         assert_eq!(n, 5);
     }
 }

@@ -62,7 +62,8 @@ impl CadCraftApp {
                     material,
                     missing: false,
                     flat,
-                    assembly: crate::assembly::tree::assembly_of(&self.project, r).cloned(),
+                    assembly: crate::assembly::tree::assembly_of(&self.project, &self.linked(), r)
+                        .cloned(),
                 },
                 None => ComponentInfo {
                     file_name: "?".into(),
@@ -88,7 +89,9 @@ impl CadCraftApp {
                     props: props.unwrap_or_default(),
                     material,
                     flat,
-                    assembly: None,
+                    // A linked subassembly: its rows in this file's terms.
+                    assembly: crate::assembly::tree::assembly_of(&self.project, &self.linked(), r)
+                        .map(|a| crate::assembly::tree::rebased(a, r.library)),
                 }
             }
         }

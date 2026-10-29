@@ -442,21 +442,23 @@ impl CadCraftApp {
         let Some(a) = self.assembly() else {
             return Vec::new();
         };
+        let linked = self.linked();
         let mut out = Vec::new();
         for occ in a
             .occurrences
             .iter()
             .filter(|o| o.pickable() && self.asm_isolated(o.id))
         {
-            match crate::assembly::tree::assembly_of(&self.project, occ.component) {
+            match crate::assembly::tree::assembly_of(&self.project, &linked, occ.component) {
                 Some(sub) => {
-                    let doc = occ.component.document;
-                    for l in crate::assembly::tree::leaves(&self.project, doc, sub) {
+                    for l in
+                        crate::assembly::tree::leaves(&self.project, &linked, occ.component, sub)
+                    {
                         if l.occurrence.pickable() {
                             out.push(PickPart {
                                 top: occ.id,
                                 sub: l.path.clone(),
-                                component: l.occurrence.component,
+                                component: l.component,
                                 place: occ.transform * l.world,
                             });
                         }
@@ -822,9 +824,10 @@ impl CadCraftApp {
     /// the assembly — where a preview shows its top-level component while
     /// Constrain is open.
     pub(super) fn geom_part(&self, g: &GeomRef) -> Option<(DocRef, Transform3)> {
+        let linked = self.linked();
         let a = self.assembly()?;
-        let (o, at, _) =
-            crate::assembly::tree::nested(&self.project, a, g.occurrence(), g.sub()).ok()?;
+        let n = crate::assembly::tree::nested(&self.project, &linked, a, g.occurrence(), g.sub())
+            .ok()?;
         let top = a.find(g.occurrence())?;
         let t = self
             .cons
@@ -832,7 +835,7 @@ impl CadCraftApp {
             .as_ref()
             .and_then(|p| p.get(&top.id).copied())
             .unwrap_or(top.transform);
-        Some((o.component, t * at))
+        Some((n.component, t * n.at))
     }
 
     /// Outlines a picked face (its triangles), edge (its polyline), or an
@@ -1229,11 +1232,20 @@ impl CadCraftApp {
         let occ = if g.occurrence() == relation::ASSEMBLY {
             "Assembly".to_owned()
         } else {
+            let linked = self.linked();
             self.assembly()
                 .and_then(|a| {
-                    crate::assembly::tree::nested(&self.project, a, g.occurrence(), g.sub()).ok()
+                    crate::assembly::tree::nested(
+                        &self.project,
+                        &linked,
+                        a,
+                        g.occurrence(),
+                        g.sub(),
+                    )
+                    .ok()
+                    .map(|n| n.name)
                 })
-                .map_or("?".to_owned(), |(_, _, name)| name)
+                .unwrap_or_else(|| "?".to_owned())
         };
         match g {
             GeomRef::Face { .. } => format!("{occ} face"),

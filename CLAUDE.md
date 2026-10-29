@@ -1159,8 +1159,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `Fail::User` (health), never a faceted rebuild. A thickened face flush with the body's sides merges into them
   (the sides keep their names; walls are named only where they stand apart).
 - **Save As to `.ccpart` / `.ccasm` / `.ccdrw`** (`storage::save_as_kind`, spec 0.6a H2): the other documents go to their
-  own files first (Separate All), then the file is saved again; local subassemblies stay in the file (`tree::assembly_of`
-  cannot reach a linked assembly yet — moving one out would break its parent). Undo history is cleared after it.
+  own files first (Separate All, subassemblies too), then the file is saved again. Undo history is cleared after it.
+- **Subassemblies of linked files** (`assembly::tree::Linked`, `CadCraftApp::linked`): every tree function takes the linked
+  projects; a nested occurrence's `component` is in *its own file's* terms — use `Leaf::component` / `Nested::component`
+  (rebased onto the top file) or `tree::rebased` for a copy of the assembly. `library_path` also finds the links of loaded
+  linked files (`LibCache::links`).
 - **`git stash` is shared by every worktree**: in a worktree with only new (untracked) files, `git stash` saves
   nothing and `stash pop` applies *another session's* stash. Never stash in a shared repo; commit or use a
   scratch branch.

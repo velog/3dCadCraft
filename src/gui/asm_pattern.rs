@@ -42,13 +42,18 @@ impl CadCraftApp {
         {
             return Ok(item.geom());
         }
-        let (o, at, name) =
-            crate::assembly::tree::nested(&self.project, a, r.occurrence(), r.sub())?;
+        let linked = self.linked();
+        let n = crate::assembly::tree::nested(&self.project, &linked, a, r.occurrence(), r.sub())?;
+        let name = &n.name;
         let g = self
-            .with_part(o.component, |p| relation::resolve_in(p, r))
+            .with_part(n.component, |p| relation::resolve_in(p, r))
             .ok_or_else(|| format!("{name}: its part file was not found"))?
             .map_err(|e| format!("{name}: {e}"))?;
-        Ok(if r.sub().is_empty() { g } else { g.moved(&at) })
+        Ok(if r.sub().is_empty() {
+            g
+        } else {
+            g.moved(&n.at)
+        })
     }
 
     /// The feature pattern `id` of occurrence `occ`'s part (Associative).

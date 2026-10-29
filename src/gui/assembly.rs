@@ -198,7 +198,7 @@ impl CadCraftApp {
 
     /// The picking triangles of a component (cached by body signature).
     pub(super) fn asm_mesh(&self, r: DocRef) -> Option<Arc<PickMesh>> {
-        if crate::assembly::tree::assembly_of(&self.project, r).is_some() {
+        if crate::assembly::tree::assembly_of(&self.project, &self.linked(), r).is_some() {
             return self.subassembly_mesh(r);
         }
         let sig = self.with_part(r, |p| p.body_signature())?;
@@ -216,12 +216,13 @@ impl CadCraftApp {
     /// (spec 3.1a: it is picked and moved as a whole), cached by its
     /// content and its parts' bodies.
     fn subassembly_mesh(&self, r: DocRef) -> Option<Arc<PickMesh>> {
-        let sub = crate::assembly::tree::assembly_of(&self.project, r)?;
-        let leaves = crate::assembly::tree::leaves(&self.project, r.document, sub);
+        let linked = self.linked();
+        let sub = crate::assembly::tree::assembly_of(&self.project, &linked, r)?;
+        let leaves = crate::assembly::tree::leaves(&self.project, &linked, r, sub);
         let mut sig = serde_json::to_string(sub).unwrap_or_default();
         let mut parts = Vec::new();
         for l in &leaves {
-            let c = l.occurrence.component;
+            let c = l.component;
             sig.push_str(
                 &self
                     .with_part(c, |p| p.body_signature())
@@ -243,7 +244,7 @@ impl CadCraftApp {
 
     /// A part's picking mesh (never a subassembly's: no recursion here).
     fn part_mesh(&self, r: DocRef) -> Option<Arc<PickMesh>> {
-        if crate::assembly::tree::assembly_of(&self.project, r).is_some() {
+        if crate::assembly::tree::assembly_of(&self.project, &self.linked(), r).is_some() {
             return None;
         }
         self.asm_mesh(r)
@@ -445,17 +446,20 @@ impl CadCraftApp {
     /// them comes later).
     pub(super) fn edit_in_place(&mut self, top: u32, sub: Vec<u32>) {
         let asm_id = self.part_id;
+        let linked = self.linked();
         let Some(a) = self.assembly() else {
             return;
         };
-        let Ok((o, at, name)) = crate::assembly::tree::nested(&self.project, a, top, &sub) else {
+        let Ok(n) = crate::assembly::tree::nested(&self.project, &linked, a, top, &sub) else {
             return;
         };
-        let r = o.component;
-        let Some(place) = a.find(top).map(|t| t.transform * at) else {
+        let (r, name) = (n.component, n.name);
+        let Some(place) = a.find(top).map(|t| t.transform * n.at) else {
             return;
         };
-        if r.library.is_some() || crate::assembly::tree::assembly_of(&self.project, r).is_some() {
+        if r.library.is_some()
+            || crate::assembly::tree::assembly_of(&self.project, &linked, r).is_some()
+        {
             self.open_doc(r);
             return;
         }
@@ -488,7 +492,9 @@ impl CadCraftApp {
         let Some(ip) = self.in_place_now() else {
             return;
         };
-        let Some(a) = crate::assembly::tree::assembly_of(&self.project, DocRef::local(ip.assembly))
+        let linked = self.linked();
+        let Some(a) =
+            crate::assembly::tree::assembly_of(&self.project, &linked, DocRef::local(ip.assembly))
         else {
             return;
         };
@@ -499,12 +505,14 @@ impl CadCraftApp {
             look: None,
             tint: Some(CONTEXT_GREY),
         };
-        for l in crate::assembly::tree::leaves(&self.project, ip.assembly, a) {
+        for l in
+            crate::assembly::tree::leaves(&self.project, &linked, DocRef::local(ip.assembly), a)
+        {
             if l.path == edited {
                 continue;
             }
             let t = inv * l.world;
-            self.with_part(l.occurrence.component, |p| {
+            self.with_part(l.component, |p| {
                 super::material::add_part_meshes_with(g, p, Some(&t), Some(CONTEXT_ALPHA), &grey)
             });
         }
@@ -919,7 +927,8 @@ impl CadCraftApp {
                 .assembly()
                 .and_then(|a| a.find(h.occurrence))
                 .is_some_and(|o| {
-                    crate::assembly::tree::assembly_of(&self.project, o.component).is_some()
+                    crate::assembly::tree::assembly_of(&self.project, &self.linked(), o.component)
+                        .is_some()
                 })
                 .then(|| self.asm_sub_under(p, rect))
                 .flatten(),

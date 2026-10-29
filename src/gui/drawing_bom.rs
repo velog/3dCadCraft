@@ -259,7 +259,14 @@ impl CadCraftApp {
             props: props.unwrap_or_default(),
             material,
             flat,
-            assembly: crate::assembly::tree::assembly_of(project, r).cloned(),
+            // Subassemblies of this file (a linked file's are not walked
+            // from a drawing yet).
+            assembly: crate::assembly::tree::assembly_of(
+                project,
+                &crate::assembly::tree::Linked::new(),
+                r,
+            )
+            .cloned(),
         }
     }
 

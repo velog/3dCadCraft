@@ -396,15 +396,7 @@ pub fn separate_all(
     owner_path: &Path,
     keep: DocumentId,
 ) -> ProjectResult<Vec<PathBuf>> {
-    separate_all_but(project, owner_path, &[keep])
-}
-
-/// [`separate_all`] keeping every document of `keep` in the file.
-fn separate_all_but(
-    project: &mut Project,
-    owner_path: &Path,
-    keep: &[DocumentId],
-) -> ProjectResult<Vec<PathBuf>> {
+    let keep = [keep];
     let folder = folder_of(owner_path)?;
     let mut written = Vec::new();
     loop {
@@ -439,38 +431,12 @@ fn separate_all_but(
     }
 }
 
-/// `keep` and the assemblies of this file it reaches (its subassemblies at
-/// any depth): they stay in the saved file until subassemblies of linked
-/// files exist (spec 3.1a).
-fn with_subassemblies(project: &Project, keep: DocumentId) -> Vec<DocumentId> {
-    let mut out = vec![keep];
-    let mut k = 0;
-    while k < out.len() {
-        let id = out[k];
-        k += 1;
-        let Some(d) = project.document(id) else {
-            continue;
-        };
-        for r in d.data.references() {
-            let sub = r.library.is_none()
-                && !out.contains(&r.document)
-                && project
-                    .document(r.document)
-                    .is_some_and(|x| matches!(x.data, super::DocumentData::Assembly(_)));
-            if sub && matches!(d.data, super::DocumentData::Assembly(_)) {
-                out.push(r.document);
-            }
-        }
-    }
-    out
-}
-
 /// **Save As** to a single-document file (`docs/spec/0.6a-file-types-projects.md`
 /// §3.1, H2): `path`'s type must be `keep`'s kind (`.ccpart` for a part…);
 /// every other document of `project` goes to a file of its own next to it
 /// first (Separate All), so the saved file holds `keep` alone and links the
-/// others — Inventor's one file per document. Subassemblies `keep` places
-/// stay in the file for now (their parts go out). A package path
+/// others — Inventor's one file per document (subassemblies too: their
+/// parts are linked from their own files). A package path
 /// (`.3dcadcraft`) saves everything as before. Returns the other files
 /// written. On an error before anything was written, `project` is unchanged.
 pub fn save_as_kind(
@@ -499,7 +465,7 @@ pub fn save_as_kind(
     }
     // The file must exist before the others can link back to it.
     project.save(path)?;
-    let written = separate_all_but(project, path, &with_subassemblies(project, keep))?;
+    let written = separate_all(project, path, keep)?;
     project.save(path)?;
     Ok(written)
 }
@@ -705,9 +671,9 @@ mod tests {
     }
 
     #[test]
-    fn subassemblies_stay_in_the_saved_file_their_parts_go_out() {
+    fn subassemblies_go_to_files_of_their_own_too() {
         let d = tmp("save_as_sub");
-        let (mut p, _, _, a) = design(&d);
+        let (mut p, _, part, a) = design(&d);
         let mut top = AssemblyDocument::default();
         top.occurrences.push(Occurrence::new(
             "Assembly1:1".to_owned(),
@@ -717,14 +683,21 @@ mod tests {
         let t = p.add_new_document("Top", DocumentData::Assembly(top));
         let path = d.join("Top1.ccasm");
         let written = save_as_kind(&mut p, &path, t).unwrap();
-        assert_eq!(written, vec![d.join("Part1.ccpart")]);
-        let mut ids: Vec<DocumentId> = p.documents.iter().map(|x| x.id).collect();
-        ids.sort_unstable();
-        let mut want = vec![a, t];
-        want.sort_unstable();
-        assert_eq!(ids, want);
-        assert!(refs(&p, a).iter().all(|r| r.library.is_some()));
-        assert_eq!(refs(&p, t), vec![DocRef::local(a)]);
+        assert_eq!(written.len(), 2, "{written:?}");
+        let ids: Vec<DocumentId> = p.documents.iter().map(|x| x.id).collect();
+        assert_eq!(ids, vec![t]);
+        // Top links the subassembly's file, which links the part's file.
+        let sub = refs(&p, t);
+        assert!(sub.len() == 1 && sub[0].library.is_some() && sub[0].document == a);
+        let mut res = crate::document::Resolver::new();
+        let link = p.library(sub[0].library.unwrap()).unwrap().clone();
+        let (sub_path, sub_file) = res.load_library(&path, &link).unwrap();
+        assert_eq!(sub_file.documents().len(), 1);
+        let inner = refs(&sub_file, a);
+        assert!(!inner.is_empty() && inner.iter().all(|r| r.library.is_some()));
+        let part_link = sub_file.library(inner[0].library.unwrap()).unwrap().clone();
+        let (_, part_file) = res.load_library(&sub_path, &part_link).unwrap();
+        assert!(part_file.document(part).is_some());
     }
 
     #[test]

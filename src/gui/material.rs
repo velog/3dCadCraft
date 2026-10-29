@@ -670,13 +670,15 @@ impl CadCraftApp {
         acc: Accuracy,
         stack: &mut Vec<crate::document::DocumentId>,
     ) -> Option<Result<Physical, String>> {
-        let Some(sub) = crate::assembly::tree::assembly_of(&self.project, r) else {
+        let linked = self.linked();
+        let Some(sub) = crate::assembly::tree::assembly_of(&self.project, &linked, r) else {
             return self.with_part(r, |p| physical_properties(p, acc));
         };
         if stack.contains(&r.document) || stack.len() > crate::assembly::tree::MAX_DEPTH {
             return Some(Err("the assembly contains itself".into()));
         }
-        let sub = sub.clone();
+        // A linked subassembly's components in this file's terms.
+        let sub = crate::assembly::tree::rebased(sub, r.library);
         stack.push(r.document);
         let p = crate::assembly::physical::assembly_physical(&sub, &mut |c| {
             self.component_physical(c, acc, stack)
@@ -692,15 +694,18 @@ impl CadCraftApp {
         if let Some(a) = self.assembly() {
             // Placements, suppression and every component's body.
             serde_json::to_vec(a).unwrap_or_default().hash(&mut h);
+            let linked = self.linked();
             for o in &a.occurrences {
                 self.with_part(o.component, |p| p.body_signature())
                     .hash(&mut h);
                 // A subassembly: its content and its parts' bodies.
-                if let Some(sub) = crate::assembly::tree::assembly_of(&self.project, o.component) {
+                if let Some(sub) =
+                    crate::assembly::tree::assembly_of(&self.project, &linked, o.component)
+                {
                     serde_json::to_vec(sub).unwrap_or_default().hash(&mut h);
-                    for l in crate::assembly::tree::leaves(&self.project, o.component.document, sub)
+                    for l in crate::assembly::tree::leaves(&self.project, &linked, o.component, sub)
                     {
-                        self.with_part(l.occurrence.component, |p| p.body_signature())
+                        self.with_part(l.component, |p| p.body_signature())
                             .hash(&mut h);
                     }
                 }

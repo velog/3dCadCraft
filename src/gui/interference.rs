@@ -99,8 +99,10 @@ impl CadCraftApp {
         // Item ids of each top-level occurrence.
         let mut items: HashMap<u32, Vec<u32>> = HashMap::new();
         let mut next = a.occurrences.iter().map(|o| o.id).max().unwrap_or(0) + 1;
+        let linked = self.linked();
         for o in &occs {
-            let Some(sub) = crate::assembly::tree::assembly_of(&self.project, o.component) else {
+            let Some(sub) = crate::assembly::tree::assembly_of(&self.project, &linked, o.component)
+            else {
                 names.insert(o.id, o.name.clone());
                 items.insert(o.id, vec![o.id]);
                 if let Some(b) = Body::of(o, &tris_of(o.component)) {
@@ -108,13 +110,14 @@ impl CadCraftApp {
                 }
                 continue;
             };
-            let leaves = crate::assembly::tree::leaves(&self.project, o.component.document, sub);
+            let leaves = crate::assembly::tree::leaves(&self.project, &linked, o.component, sub);
             let world = |t: &crate::kernel::Transform3| o.transform * t;
             // Merged overlaps are listed by the subassembly's own name.
             names.insert(o.id, o.name.clone());
             let mut ids = Vec::new();
             for l in &leaves {
                 let mut leaf = l.occurrence.clone();
+                leaf.component = l.component;
                 leaf.id = next;
                 leaf.transform = world(&l.world);
                 next += 1;

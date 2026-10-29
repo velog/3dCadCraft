@@ -109,6 +109,7 @@ enum TreeCmd {
 impl CadCraftApp {
     /// The active assembly's tree in the browser.
     pub(super) fn assembly_tree(&mut self, ui: &mut egui::Ui, name: &str) {
+        let linked = self.linked();
         let Some(a) = self.assembly() else {
             return;
         };
@@ -229,7 +230,8 @@ impl CadCraftApp {
                 if find == Some(id) {
                     cmds.push(TreeCmd::Select(id, false));
                 }
-                let sub = crate::assembly::tree::assembly_of(&self.project, component).is_some();
+                let sub =
+                    crate::assembly::tree::assembly_of(&self.project, &linked, component).is_some();
                 let header = fold(ui, ("asm_occ", id), false, |ui| {
                     if visibility_button(ui, visible) {
                         cmds.push(TreeCmd::ToggleVisible(id));
@@ -422,7 +424,8 @@ impl CadCraftApp {
             ui.label(RichText::new("(the assembly contains itself)").weak());
             return;
         }
-        let Some(a) = tree::assembly_of(&self.project, doc).cloned() else {
+        let linked = self.linked();
+        let Some(a) = tree::assembly_of(&self.project, &linked, doc).cloned() else {
             return;
         };
         stack.push(doc.document);
@@ -450,7 +453,10 @@ impl CadCraftApp {
         for o in &a.occurrences {
             let mut p = path.to_vec();
             p.push(o.id);
-            let inner = tree::assembly_of(&self.project, o.component).is_some();
+            // The component in the top file's terms (a linked file's own
+            // references are relative to it).
+            let component = tree::rebase(o.component, doc.library);
+            let inner = tree::assembly_of(&self.project, &linked, component).is_some();
             let me = super::asm_select::AsmSub::Part {
                 occurrence: top,
                 sub: p.clone(),
@@ -484,7 +490,7 @@ impl CadCraftApp {
                         ui.close();
                     }
                     if ui.button("Open").clicked() {
-                        cmds.push(TreeCmd::OpenDoc(o.component));
+                        cmds.push(TreeCmd::OpenDoc(component));
                         ui.close();
                     }
                 });
@@ -493,7 +499,7 @@ impl CadCraftApp {
                 fold(ui, ("asm_sub_occ", top, p.clone()), false, |ui| {
                     row(ui, self)
                 })
-                .body(|ui| self.nested_rows(ui, top, o.component, &p, stack, cmds));
+                .body(|ui| self.nested_rows(ui, top, component, &p, stack, cmds));
             } else {
                 ui.horizontal(|ui| {
                     ui.add_space(18.0);
@@ -702,6 +708,7 @@ impl CadCraftApp {
 
     /// One constraint (red when sick, grey when suppressed).
     fn constraint_row(&mut self, ui: &mut egui::Ui, id: u32, cmds: &mut Vec<TreeCmd>) {
+        let linked = self.linked();
         let Some(a) = self.assembly() else {
             return;
         };
@@ -713,8 +720,8 @@ impl CadCraftApp {
                 "Assembly".to_owned()
             } else {
                 // A part inside a subassembly: `Bracket:1/Post:2`.
-                crate::assembly::tree::nested(&self.project, a, r.occurrence(), r.sub())
-                    .map_or("?".to_owned(), |(_, _, name)| name)
+                crate::assembly::tree::nested(&self.project, &linked, a, r.occurrence(), r.sub())
+                    .map_or("?".to_owned(), |n| n.name)
             }
         };
         let label = format!("{} ({}, {})", c.name, between(&c.a), between(&c.b));
