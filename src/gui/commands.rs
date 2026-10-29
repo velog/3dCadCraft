@@ -2810,7 +2810,7 @@ mod tests {
     /// Rule 18: a panel without logic is grey, one with logic is not.
     #[test]
     fn interface_only_commands_are_the_ones_without_logic() {
-        assert!(interface_only(Action::AsmPlanned(Ap::Miter)));
+        assert!(interface_only(Action::AsmPlanned(Ap::Notch)));
         assert!(!interface_only(Action::AsmPlanned(Ap::InsertFrame)));
         assert!(!interface_only(Action::AsmPlanned(Ap::Pattern)));
         assert!(interface_only(Action::SmPlanned(PlannedKind::ContourRoll)));

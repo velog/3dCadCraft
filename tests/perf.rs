@@ -1305,6 +1305,38 @@ fn speed_budgets() {
             orientation: Default::default(),
         };
         let lib = cadcraft3d::part::frame::Library::builtin();
+        // Miter of the four top edges' members: 8 end cuts (Trim Solid each), rebuilt in parallel.
+        let top: Vec<Skeleton> = edges
+            .iter()
+            .filter(|e| matches!(e, Skeleton::Edge(GeomRef::Edge { edge, .. }) if (edge.hint[2] - 200.0).abs() < 1e-6))
+            .cloned()
+            .collect();
+        assert_eq!(top.len(), 4);
+        rows.push((
+            "frame: miter the 4 SHS 40x40x3 members of a rectangle (8 cuts)",
+            3000.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                let (_, occs) = insert(&mut p, &Linked::new(), aid, &top, &o, lib, None).unwrap();
+                let a = match p.document(aid).map(|d| &d.data) {
+                    Some(DocumentData::Assembly(a)) => a.clone(),
+                    _ => panic!("no assembly"),
+                };
+                let pairs =
+                    cadcraft3d::assembly::frame::meeting_pairs(&p, &Linked::new(), &a, &occs);
+                assert_eq!(pairs.len(), 4);
+                let s = cadcraft3d::assembly::frame::add_miter(
+                    &mut p,
+                    &Linked::new(),
+                    aid,
+                    &pairs,
+                    0.0,
+                    Default::default(),
+                )
+                .unwrap();
+                assert!(s.sick.is_empty(), "{:?}", s.sick);
+            }),
+        ));
         rows.push((
             "frame: 12 SHS 40x40x3 members on a box skeleton + solve",
             400.0,

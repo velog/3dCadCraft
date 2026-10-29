@@ -9,7 +9,10 @@
 //! into its sketch, so it regenerates the same without the library.
 
 use crate::document::iprops::{CustomProperty, IProperties, PropValue};
-use crate::kernel::Real;
+use crate::kernel::{Point3, Real, Vector3};
+use crate::part::PlaneRef;
+use crate::part::split::{SplitFeature, SplitMethod, SplitToolRef};
+use crate::part::work::{UcsDef, WorkDef, WorkFeature};
 use crate::part::{
     ExtrudeFeature, OriginPlane, PartDocument, PartError, ProfileRef, SketchOptions,
     SketchPlacement,
@@ -321,6 +324,21 @@ impl Section {
         length: Real,
         material: Option<&str>,
     ) -> Result<PartDocument, PartError> {
+        self.member_part_cut(length, [0.0, 0.0], &[], material)
+    }
+
+    /// A member part with end treatments: the section extruded from
+    /// `-ext[0]` to `length + ext[1]` along +Z (past the skeleton's ends,
+    /// so a cut has material to take), then each plane of `cuts` trims what
+    /// lies on its normal's side (a work plane + Trim Solid per cut, so the
+    /// part keeps its cuts without the frame — rule 8).
+    pub fn member_part_cut(
+        &self,
+        length: Real,
+        ext: [Real; 2],
+        cuts: &[EndCut],
+        material: Option<&str>,
+    ) -> Result<PartDocument, PartError> {
         if !(length.is_finite() && length > 1e-6) {
             return Err(PartError::Feature("the member has no length".into()));
         }
@@ -338,8 +356,30 @@ impl Section {
             .iter()
             .find(|r| r.contains(seed))
             .ok_or_else(|| PartError::Feature("the section has no closed profile".into()))?;
-        let e = ExtrudeFeature::new(vec![ProfileRef::of(r, seed)], length);
+        let mut e = ExtrudeFeature::new(vec![ProfileRef::of(r, seed)], length + ext[1]);
+        if ext[0] > 1e-9 {
+            e.direction = crate::part::ExtentDirection::Asymmetric;
+            e.distance_b = ext[0];
+        }
         part.add_extrude(i, e)?;
+        for c in cuts {
+            let n = c
+                .normal
+                .try_normalize(1e-12)
+                .ok_or_else(|| PartError::Feature("an end cut has no direction".into()))?;
+            // A UCS whose XY plane is the cut (its Z = the normal: Ry·Rx·ẑ).
+            let w = part.add_work(WorkFeature::new(WorkDef::Ucs(UcsDef::Offsets {
+                x: c.point.x,
+                y: c.point.y,
+                z: c.point.z,
+                rx: (-n.y).clamp(-1.0, 1.0).asin(),
+                ry: n.x.atan2(n.z),
+                rz: 0.0,
+            })))?;
+            let mut sp = SplitFeature::new(SplitMethod::TrimSolid);
+            sp.tool = Some(SplitToolRef::Plane(PlaneRef::Work(format!("{w}:XY"))));
+            part.add_split(sp)?;
+        }
         if let Some(m) = material {
             let _ = part.set_material(Some(m), crate::materials::builtin());
         }
@@ -357,6 +397,16 @@ impl Section {
         });
         p
     }
+}
+
+/// A planar end cut of a member, in its part's coordinates: the material
+/// on the side `normal` points to is removed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EndCut {
+    /// A point of the plane.
+    pub point: Point3,
+    /// Towards the removed side.
+    pub normal: Vector3,
 }
 
 /// A corner of an outline after filleting.
@@ -626,6 +676,38 @@ mod tests {
             close(v, sec.properties().area * 500.0, 0.003, s);
             assert_eq!(part.material.as_deref(), Some("Steel S235"));
         }
+    }
+
+    /// A 45° cut at each end of a flat bar (a mitred piece of a square
+    /// frame corner): the part is the trapezoid between the cut planes.
+    #[test]
+    fn end_cuts_trim_the_member() {
+        let s = sec("Flat bar (EN 10058)", "40x5");
+        // Section x across 40 mm; cuts in the x-z plane at 45°: the
+        // outer edge (x = +20) is 500 + 2·20 long, the inner one 500 − 2·20.
+        let r = std::f64::consts::FRAC_1_SQRT_2;
+        let cuts = [
+            EndCut {
+                point: Point3::new(0.0, 0.0, 0.0),
+                normal: Vector3::new(r, 0.0, -r),
+            },
+            EndCut {
+                point: Point3::new(0.0, 0.0, 500.0),
+                normal: Vector3::new(r, 0.0, r),
+            },
+        ];
+        let part = s.member_part_cut(500.0, [30.0, 30.0], &cuts, None).unwrap();
+        assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+        let v: Real = part
+            .exact_bodies
+            .0
+            .iter()
+            .filter_map(|b| b.volume_at(1e-3))
+            .sum();
+        // Mean length 500 (the trapezoid's mid-line) × 40 × 5.
+        close(v, 500.0 * 200.0, 0.002, "mitred flat");
+        let (lo, hi) = part.body.bounding_box().unwrap();
+        close(hi.z - lo.z, 540.0, 1e-3, "outer length");
     }
 
     #[test]

@@ -288,6 +288,93 @@ impl CadCraftApp {
     }
 }
 
+impl CadCraftApp {
+    /// The frame members picked in selector `key` (occurrence ids).
+    fn picked_members(&self, d: &PartDialog, key: &str) -> Vec<u32> {
+        let Some(a) = self.assembly() else {
+            return Vec::new();
+        };
+        d.picks_of(key)
+            .iter()
+            .filter_map(|w| {
+                let name = w.split(" · ").next().unwrap_or(w);
+                a.occurrences.iter().find(|o| o.name == name).map(|o| o.id)
+            })
+            .filter(|o| {
+                a.frames
+                    .iter()
+                    .any(|f| f.members.iter().any(|m| m.occurrence == *o))
+            })
+            .collect()
+    }
+
+    /// OK of Miter: a Full Miter Cut between the two picked members, or
+    /// between every pair of the picked ones that meet.
+    pub(super) fn miter_ok(&mut self, d: &PartDialog) -> bool {
+        let fail = |app: &mut Self, e: &str| {
+            app.file_status = Some(Err(format!("Miter: {e}")));
+            false
+        };
+        let members = self.picked_members(d, "members");
+        if members.len() < 2 {
+            return fail(self, "select two frame members that meet");
+        }
+        let linked = self.linked();
+        let pairs = match members.as_slice() {
+            [a, b] => vec![(*a, *b)],
+            _ => match self.assembly() {
+                Some(a) => frame::meeting_pairs(&self.project, &linked, a, &members),
+                None => Vec::new(),
+            },
+        };
+        let offset = match d.index(0, "Offset") {
+            1 => frame::MiterOffset::Flipped,
+            2 => frame::MiterOffset::Symmetric,
+            _ => frame::MiterOffset::Default,
+        };
+        let gap = d.num(0, "Distance").unwrap_or(0.0);
+        let mut trial = self.project.clone();
+        match frame::add_miter(&mut trial, &linked, self.part_id, &pairs, gap, offset) {
+            Ok(_) => {
+                self.history.break_coalescing();
+                self.checkpoint("Miter");
+                self.project = trial;
+                self.history.break_coalescing();
+                self.scene_dirty = true;
+                self.file_status = Some(Ok(format!("Miter: {} joint(s) cut", pairs.len())));
+                true
+            }
+            Err(e) => fail(self, &e),
+        }
+    }
+
+    /// OK of Remove End Treatments.
+    pub(super) fn remove_treatments_ok(&mut self, d: &PartDialog) -> bool {
+        let members = self.picked_members(d, "members");
+        if members.is_empty() {
+            self.file_status = Some(Err("Remove End Treatments: select frame members".into()));
+            return false;
+        }
+        let linked = self.linked();
+        let mut trial = self.project.clone();
+        match frame::remove_treatments(&mut trial, &linked, self.part_id, &members) {
+            Ok(_) => {
+                self.history.break_coalescing();
+                self.checkpoint("Remove End Treatments");
+                self.project = trial;
+                self.history.break_coalescing();
+                self.scene_dirty = true;
+                self.file_status = Some(Ok("Remove End Treatments: done".into()));
+                true
+            }
+            Err(e) => {
+                self.file_status = Some(Err(format!("Remove End Treatments: {e}")));
+                false
+            }
+        }
+    }
+}
+
 /// Screen distance from `p` to the segment `a`–`b`.
 fn segment_distance(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     let ab = b - a;

@@ -16,7 +16,7 @@ use super::tree::Linked;
 use crate::assembly::relation::GeomRef;
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Project};
 use crate::kernel::{Point3, Real, Transform3, Vector3};
-use crate::part::frame::{LENGTH_PROPERTY, Library, Section};
+use crate::part::frame::{EndCut, LENGTH_PROPERTY, Library, Section};
 use crate::part::{Feature, PartDocument};
 
 /// Which point of the section's box lies on the skeleton line.
@@ -169,6 +169,90 @@ pub struct FrameMember {
     /// Placement on the line.
     #[serde(default)]
     pub orientation: Orientation,
+    /// What its part was last built as (length, extensions, cuts), so
+    /// [`solve`] rebuilds only members whose shape changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub built: Option<Shape>,
+}
+
+/// The shape of a member part: skeleton length, extensions past the start
+/// and the end, end cuts (part coordinates: point, normal to the removed
+/// side).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Shape {
+    /// Skeleton length.
+    pub length: Real,
+    /// Extrusion past the start and past the end.
+    #[serde(default)]
+    pub ext: [Real; 2],
+    /// End cuts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cuts: Vec<[[Real; 3]; 2]>,
+}
+
+impl Shape {
+    fn same(&self, o: &Shape) -> bool {
+        let near = |a: Real, b: Real| (a - b).abs() < 1e-7;
+        near(self.length, o.length)
+            && near(self.ext[0], o.ext[0])
+            && near(self.ext[1], o.ext[1])
+            && self.cuts.len() == o.cuts.len()
+            && self
+                .cuts
+                .iter()
+                .zip(&o.cuts)
+                .all(|(a, b)| (0..2).all(|i| (0..3).all(|k| near(a[i][k], b[i][k]))))
+    }
+
+    fn end_cuts(&self) -> Vec<EndCut> {
+        self.cuts
+            .iter()
+            .map(|c| EndCut {
+                point: Point3::new(c[0][0], c[0][1], c[0][2]),
+                normal: Vector3::new(c[1][0], c[1][1], c[1][2]),
+            })
+            .collect()
+    }
+}
+
+/// Where Miter puts the gap between the two cut faces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MiterOffset {
+    /// The first member is shortened by the whole gap.
+    #[default]
+    Default,
+    /// The second member is.
+    Flipped,
+    /// Half each.
+    Symmetric,
+}
+
+/// An end treatment between members (by occurrence id).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Treatment {
+    /// Full Miter Cut where `a` and `b` meet: both cut on the bisector
+    /// plane, `gap` between the cut faces.
+    Miter {
+        /// First member.
+        a: u32,
+        /// Second member.
+        b: u32,
+        /// Distance between the cut faces.
+        #[serde(default)]
+        gap: Real,
+        /// Which member gives the gap.
+        #[serde(default)]
+        offset: MiterOffset,
+    },
+}
+
+impl Treatment {
+    /// The members it treats.
+    pub fn members(&self) -> [u32; 2] {
+        match self {
+            Treatment::Miter { a, b, .. } => [*a, *b],
+        }
+    }
 }
 
 /// The numbers of a [`Section`] as stored data.
@@ -236,6 +320,9 @@ pub struct Frame {
     pub name: String,
     /// The members.
     pub members: Vec<FrameMember>,
+    /// End treatments between them, in creation order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub treatments: Vec<Treatment>,
 }
 
 /// Insert Frame's choices.
@@ -404,6 +491,10 @@ pub fn insert(
                 size: section.size.clone(),
                 section: SectionData::of(&section),
                 orientation: o.orientation,
+                built: Some(Shape {
+                    length,
+                    ..Default::default()
+                }),
             });
         }
         let a = asm_mut(project, asm)?;
@@ -423,6 +514,7 @@ pub fn insert(
                     id,
                     name,
                     members: made,
+                    treatments: Vec::new(),
                 });
                 id
             }
@@ -445,64 +537,405 @@ pub struct Solved {
     pub sick: Vec<(u32, String)>,
 }
 
-/// Follows the skeleton: every member of assembly `asm` gets the place and
-/// length of its skeleton edge now. A member whose edge is gone keeps its
-/// last state and is reported.
-pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<Solved, String> {
-    let a = asm_of(project, asm)?;
-    let mut todo: Vec<(u32, Transform3, Real, DocumentId)> = Vec::new();
-    let mut out = Solved::default();
-    for m in a.frames.iter().flat_map(|f| &f.members) {
-        let Some(occ) = a.find(m.occurrence) else {
+/// One member's state during [`solve`].
+struct Live {
+    occ: u32,
+    doc: DocumentId,
+    section: Section,
+    /// The member's run in assembly coordinates (Flip applied).
+    start: Point3,
+    end: Point3,
+    place: Transform3,
+    /// Cut planes in assembly coordinates per end (start, end): point and
+    /// normal towards the removed side.
+    cuts: [Option<(Point3, Vector3)>; 2],
+    built: Option<Shape>,
+    material: Option<String>,
+}
+
+/// Where two members' axes meet: the point and, for each, which end
+/// (0 = start, 1 = end) lies at it. `None` when the axes do not meet near
+/// an end of each.
+fn joint(a: (Point3, Point3), b: (Point3, Point3), reach: Real) -> Option<(Point3, usize, usize)> {
+    let (da, db) = (a.1 - a.0, b.1 - b.0);
+    let w = a.0 - b.0;
+    let (aa, bb, ab) = (da.dot(&da), db.dot(&db), da.dot(&db));
+    let den = aa * bb - ab * ab;
+    // Parallel axes: only end to end (a butt joint).
+    let (ta, tb) = if den.abs() < 1e-12 * aa * bb {
+        return None;
+    } else {
+        let (dw, ew) = (da.dot(&w), db.dot(&w));
+        ((ab * ew - bb * dw) / den, (aa * ew - ab * dw) / den)
+    };
+    let (pa, pb) = (a.0 + da * ta, b.0 + db * tb);
+    if (pa - pb).norm() > 1e-3 {
+        return None;
+    }
+    let (la, lb) = (aa.sqrt(), bb.sqrt());
+    let end_a = usize::from(ta > 0.5);
+    let end_b = usize::from(tb > 0.5);
+    // The meeting point near the chosen end of each (within `reach`).
+    let off_a = (ta - end_a as Real).abs() * la;
+    let off_b = (tb - end_b as Real).abs() * lb;
+    (off_a <= reach && off_b <= reach).then_some(((pa + pb.coords) / 2.0, end_a, end_b))
+}
+
+/// The cut planes Miter `t` gives its two members (assembly coordinates).
+fn miter_cuts(
+    t: &Treatment,
+    live: &[Live],
+) -> Result<[(usize, usize, Point3, Vector3); 2], String> {
+    let Treatment::Miter { a, b, gap, offset } = t;
+    let find = |o: u32| {
+        live.iter()
+            .position(|m| m.occ == o)
+            .ok_or_else(|| "Miter: one of its members no longer exists".to_string())
+    };
+    let (ia, ib) = (find(*a)?, find(*b)?);
+    let (ma, mb) = (&live[ia], &live[ib]);
+    let reach = {
+        let (w, h) = ma.section.extent();
+        let (w2, h2) = mb.section.extent();
+        2.0 * (w + h + w2 + h2)
+    };
+    let (c, ea, eb) = joint((ma.start, ma.end), (mb.start, mb.end), reach)
+        .ok_or("Miter: the members do not meet")?;
+    // Away from the joint along each member.
+    let away = |m: &Live, e: usize| {
+        let (from, to) = if e == 0 {
+            (m.start, m.end)
+        } else {
+            (m.end, m.start)
+        };
+        (to - from).normalize()
+    };
+    let (da, db) = (away(ma, ea), away(mb, eb));
+    let n = (da - db)
+        .try_normalize(1e-9)
+        .ok_or("Miter: the members run the same way")?;
+    let (ga, gb) = match offset {
+        MiterOffset::Default => (*gap, 0.0),
+        MiterOffset::Flipped => (0.0, *gap),
+        MiterOffset::Symmetric => (gap / 2.0, gap / 2.0),
+    };
+    // A keeps the side n points to, B the other one.
+    Ok([(ia, ea, c + n * ga, -n), (ib, eb, c - n * gb, n)])
+}
+
+/// The shape a live member's cuts give it (part coordinates), or why not.
+fn shape_of(m: &Live) -> Result<Shape, String> {
+    let length = (m.end - m.start).norm();
+    let inv = m.place.inverse();
+    let (w, h) = m.section.extent();
+    let mut ext = [0.0, 0.0];
+    let mut cuts = Vec::new();
+    for (k, c) in m.cuts.iter().enumerate() {
+        let Some((p, n)) = c else {
             continue;
         };
-        if occ.component.library.is_some() {
-            continue;
+        let (p, n) = (inv.transform_point(p), inv.transform_vector(n));
+        if n.z.abs() < 0.05 {
+            return Err("the cut runs along the member".into());
         }
-        let doc = occ.component.document;
-        let line = skeleton_line(project, linked, a, &m.skeleton);
-        let sec = m.section();
-        match (line, sec) {
-            (Ok((p, q)), Some(s)) => match placement(&s, p, q, &m.orientation) {
-                Some(t) => todo.push((m.occurrence, t, (q - p).norm(), doc)),
-                None => out
-                    .sick
-                    .push((m.occurrence, "its skeleton edge has no length".into())),
-            },
-            (Err(e), _) => out.sick.push((m.occurrence, e)),
-            (_, None) => out
-                .sick
-                .push((m.occurrence, "its section data is unreadable".into())),
+        // How far the plane reaches past the end over the section's box.
+        let mut far: Real = 0.0;
+        for (x, y) in [(-w, -h), (w, -h), (w, h), (-w, h)] {
+            let z = p.z - (n.x * (x - p.x) + n.y * (y - p.y)) / n.z;
+            far = far.max(if k == 0 { -z } else { z - length });
         }
+        ext[k] = far.max(0.0) + 1.0;
+        cuts.push([[p.x, p.y, p.z], [n.x, n.y, n.z]]);
     }
-    for (occ, t, length, doc) in todo {
-        let mut changed = false;
-        if let Some(DocumentData::Part(part)) = project.document_mut(doc).map(|d| &mut d.data)
-            && set_length(part, length)
-        {
-            changed = true;
-            if let Some(d) = project.document_mut(doc) {
-                for c in &mut d.properties.custom {
-                    if c.name == LENGTH_PROPERTY {
-                        c.value = crate::document::iprops::PropValue::Number(length);
+    Ok(Shape { length, ext, cuts })
+}
+
+/// Follows the skeleton: every member of assembly `asm` gets the place and
+/// length of its skeleton line now, and its end treatments again; member
+/// parts whose shape changed are rebuilt (in parallel). A member that cannot
+/// follow keeps its last state and is reported (health, rule 5).
+pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<Solved, String> {
+    let a = asm_of(project, asm)?;
+    let mut out = Solved::default();
+    let mut frames: Vec<(Vec<Live>, Vec<Treatment>)> = Vec::new();
+    for f in &a.frames {
+        let mut live = Vec::new();
+        for m in &f.members {
+            let Some(occ) = a.find(m.occurrence) else {
+                continue;
+            };
+            if occ.component.library.is_some() {
+                continue;
+            }
+            let doc = occ.component.document;
+            let sec = m.section();
+            match (skeleton_line(project, linked, a, &m.skeleton), sec) {
+                (Ok((p, q)), Some(s)) => match placement(&s, p, q, &m.orientation) {
+                    Some(t) => {
+                        let (start, end) = if m.orientation.flip { (q, p) } else { (p, q) };
+                        let material = match project.document(doc).map(|d| &d.data) {
+                            Some(DocumentData::Part(x)) => x.material.clone(),
+                            _ => None,
+                        };
+                        live.push(Live {
+                            occ: m.occurrence,
+                            doc,
+                            section: s,
+                            start,
+                            end,
+                            place: t,
+                            cuts: [None, None],
+                            built: m.built.clone(),
+                            material,
+                        });
+                    }
+                    None => out
+                        .sick
+                        .push((m.occurrence, "its skeleton edge has no length".into())),
+                },
+                (Err(e), _) => out.sick.push((m.occurrence, e)),
+                (_, None) => out
+                    .sick
+                    .push((m.occurrence, "its section data is unreadable".into())),
+            }
+        }
+        frames.push((live, f.treatments.clone()));
+    }
+    // End treatments, in creation order (a later one at the same end wins).
+    let mut jobs: Vec<(u32, DocumentId, Section, Shape, Option<String>)> = Vec::new();
+    let mut places: Vec<(u32, Transform3)> = Vec::new();
+    let mut shapes: Vec<(u32, Shape)> = Vec::new();
+    for (mut live, treatments) in frames {
+        for t in &treatments {
+            match miter_cuts(t, &live) {
+                Ok(cuts) => {
+                    for (i, end, p, n) in cuts {
+                        live[i].cuts[end] = Some((p, n));
+                    }
+                }
+                Err(e) => {
+                    for m in t.members() {
+                        out.sick.push((m, e.clone()));
                     }
                 }
             }
         }
-        let a = asm_mut(project, asm)?;
+        for m in &live {
+            places.push((m.occ, m.place));
+            match shape_of(m) {
+                Ok(sh) => {
+                    let old = m.built.clone().unwrap_or_else(|| Shape {
+                        length: part_length(project, m.doc).unwrap_or(0.0),
+                        ..Default::default()
+                    });
+                    if !old.same(&sh) {
+                        jobs.push((
+                            m.occ,
+                            m.doc,
+                            m.section.clone(),
+                            sh.clone(),
+                            m.material.clone(),
+                        ));
+                    }
+                    shapes.push((m.occ, sh));
+                }
+                Err(e) => out.sick.push((m.occ, e)),
+            }
+        }
+    }
+    // Rebuild the changed members on all cores.
+    let built: Vec<(u32, DocumentId, Shape, Result<PartDocument, String>)> =
+        std::thread::scope(|sc| {
+            let hs: Vec<_> = jobs
+                .into_iter()
+                .map(|(occ, doc, sec, sh, mat)| {
+                    sc.spawn(move || {
+                        let r = sec
+                            .member_part_cut(sh.length, sh.ext, &sh.end_cuts(), mat.as_deref())
+                            .map_err(|e| e.to_string())
+                            .and_then(|p| {
+                                if p.feature_health.is_empty() {
+                                    Ok(p)
+                                } else {
+                                    Err(p
+                                        .feature_health
+                                        .values()
+                                        .next()
+                                        .cloned()
+                                        .unwrap_or_default())
+                                }
+                            });
+                        (occ, doc, sh, r)
+                    })
+                })
+                .collect();
+            hs.into_iter().filter_map(|h| h.join().ok()).collect()
+        });
+    let mut changed: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    let mut failed: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    for (occ, doc, sh, r) in built {
+        match r {
+            Ok(part) => {
+                let outer = outer_length(&part).unwrap_or(sh.length);
+                if let Some(d) = project.document_mut(doc) {
+                    d.data = DocumentData::Part(part);
+                    for c in &mut d.properties.custom {
+                        if c.name == LENGTH_PROPERTY {
+                            c.value = crate::document::iprops::PropValue::Number(outer);
+                        }
+                    }
+                }
+                changed.insert(occ);
+            }
+            Err(e) => {
+                failed.insert(occ);
+                out.sick.push((occ, e));
+            }
+        }
+    }
+    let a = asm_mut(project, asm)?;
+    for (occ, t) in places {
         if let Some(o) = a.occurrences.iter_mut().find(|o| o.id == occ) {
             let d = (o.transform.translation.vector - t.translation.vector).norm()
                 + o.transform.rotation.angle_to(&t.rotation);
             if d > 1e-9 {
                 o.transform = t;
-                changed = true;
+                changed.insert(occ);
             }
         }
-        if changed {
-            out.moved += 1;
+    }
+    for f in &mut a.frames {
+        for m in &mut f.members {
+            if let Some((_, sh)) = shapes.iter().find(|(o, _)| *o == m.occurrence)
+                && !failed.contains(&m.occurrence)
+            {
+                m.built = Some(sh.clone());
+            }
         }
     }
+    out.moved = changed.len();
     Ok(out)
+}
+
+/// The member part's length along its axis (the body's extent in Z):
+/// the outer length of a mitred member, its `G_L`.
+pub fn outer_length(part: &PartDocument) -> Option<Real> {
+    let (lo, hi) = part.body.bounding_box()?;
+    Some(hi.z - lo.z)
+}
+
+fn part_length(project: &Project, doc: DocumentId) -> Option<Real> {
+    match project.document(doc).map(|d| &d.data) {
+        Some(DocumentData::Part(p)) => length_of(p),
+        _ => None,
+    }
+}
+
+/// Miter: adds a Full Miter Cut between members `a` and `b` of one frame of
+/// assembly `asm` (replacing their earlier treatments at that joint when
+/// `replace`), then solves. On an error nothing is changed (rule 5).
+pub fn add_miter(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    pairs: &[(u32, u32)],
+    gap: Real,
+    offset: MiterOffset,
+) -> Result<Solved, String> {
+    if pairs.is_empty() {
+        return Err("select two frame members that meet".into());
+    }
+    if !(gap.is_finite() && gap >= 0.0) {
+        return Err("the distance must be zero or more".into());
+    }
+    let before = project.clone();
+    let result = (|| {
+        let a = asm_mut(project, asm)?;
+        for &(x, y) in pairs {
+            let f = a
+                .frames
+                .iter_mut()
+                .find(|f| {
+                    f.members.iter().any(|m| m.occurrence == x)
+                        && f.members.iter().any(|m| m.occurrence == y)
+                })
+                .ok_or("both members must belong to one frame")?;
+            f.treatments.retain(|t| {
+                let m = t.members();
+                !(m.contains(&x) && m.contains(&y))
+            });
+            f.treatments.push(Treatment::Miter {
+                a: x,
+                b: y,
+                gap,
+                offset,
+            });
+        }
+        let s = solve(project, linked, asm)?;
+        let pick: Vec<u32> = pairs.iter().flat_map(|&(x, y)| [x, y]).collect();
+        if let Some((_, why)) = s.sick.iter().find(|(o, _)| pick.contains(o)) {
+            return Err(why.trim_start_matches("Miter: ").to_owned());
+        }
+        Ok(s)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+/// Remove End Treatments: the members return to their inserted state.
+pub fn remove_treatments(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    members: &[u32],
+) -> Result<Solved, String> {
+    let a = asm_mut(project, asm)?;
+    let mut n = 0;
+    for f in &mut a.frames {
+        let before = f.treatments.len();
+        f.treatments
+            .retain(|t| !t.members().iter().any(|m| members.contains(m)));
+        n += before - f.treatments.len();
+    }
+    if n == 0 {
+        return Err("the members have no end treatments".into());
+    }
+    solve(project, linked, asm)
+}
+
+/// The pairs of `members` (occurrence ids) whose axes meet near their ends,
+/// for Miter with more than two members picked.
+pub fn meeting_pairs(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+    members: &[u32],
+) -> Vec<(u32, u32)> {
+    let lines: Vec<(u32, (Point3, Point3), Real)> = members
+        .iter()
+        .filter_map(|&o| {
+            let m = asm
+                .frames
+                .iter()
+                .flat_map(|f| &f.members)
+                .find(|m| m.occurrence == o)?;
+            let l = skeleton_line(project, linked, asm, &m.skeleton).ok()?;
+            let (w, h) = m.section()?.extent();
+            Some((o, l, w + h))
+        })
+        .collect();
+    let mut out = Vec::new();
+    for i in 0..lines.len() {
+        for j in i + 1..lines.len() {
+            let reach = 2.0 * (lines[i].2 + lines[j].2);
+            if joint(lines[i].1, lines[j].1, reach).is_some() {
+                out.push((lines[i].0, lines[j].0));
+            }
+        }
+    }
+    out
 }
 
 /// The member's length now (its extrusion's distance).
@@ -511,30 +944,6 @@ pub fn length_of(part: &PartDocument) -> Option<Real> {
         Feature::Extrude(e) => Some(e.distance),
         _ => None,
     })
-}
-
-/// Sets the member part's length; true when it changed (the part is
-/// regenerated; a failure keeps the old length — rule 5).
-fn set_length(part: &mut PartDocument, length: Real) -> bool {
-    let Some(old) = length_of(part) else {
-        return false;
-    };
-    if (old - length).abs() < 1e-9 {
-        return false;
-    }
-    let before = part.clone();
-    for f in &mut part.features {
-        if let Feature::Extrude(e) = f {
-            e.distance = length;
-            e.distance_b = length;
-            break;
-        }
-    }
-    if part.regenerate().is_err() || !part.feature_health.is_empty() {
-        *part = before;
-        return false;
-    }
-    true
 }
 
 #[cfg(test)]
@@ -893,6 +1302,144 @@ mod tests {
         }
         assert_eq!(solve(&mut p, &Linked::new(), aid).unwrap().moved, 1);
         assert!((length_of(&part(&p, asm(&p, aid), occs[0])).unwrap() - 900.0).abs() < 1e-9);
+    }
+
+    /// Two members on the top edges of the box that meet at a corner:
+    /// Miter cuts both on the bisector plane (45°), each keeps its outer
+    /// length, and the volume is that of a mitred tube (mean length × A).
+    #[test]
+    fn miter_cuts_both_members_at_the_corner() {
+        let (mut p, aid, _) = project();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let mut o = opts();
+        o.family = "Flat bar (EN 10058)".into();
+        o.size = "40x5".into();
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[x, y],
+            &o,
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let s = add_miter(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[(occs[0], occs[1])],
+            0.0,
+            MiterOffset::Default,
+        )
+        .unwrap();
+        assert!(s.sick.is_empty(), "{:?}", s.sick);
+        assert_eq!(s.moved, 2);
+        let a = asm(&p, aid);
+        // The flat lies with its 40 mm across in the horizontal plane: one
+        // side 20 mm longer, the other 20 mm shorter at the mitred end.
+        for (occ, len) in [(occs[0], 400.0), (occs[1], 300.0)] {
+            let m = part(&p, a, occ);
+            assert!(m.feature_health.is_empty(), "{:?}", m.feature_health);
+            let v: Real = m
+                .exact_bodies
+                .0
+                .iter()
+                .filter_map(|b| b.volume_at(1e-3))
+                .sum();
+            assert!((v - 200.0 * len).abs() < 0.003 * 200.0 * len, "{occ}: {v}");
+            let outer = outer_length(&m).unwrap();
+            assert!((outer - (len + 20.0)).abs() < 1e-3, "{occ}: {outer}");
+        }
+        // Solving again changes nothing (no rebuild).
+        assert_eq!(solve(&mut p, &Linked::new(), aid).unwrap().moved, 0);
+        // A gap of 2 (Symmetric): each loses 1 mm along the bisector.
+        add_miter(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[(occs[0], occs[1])],
+            2.0,
+            MiterOffset::Symmetric,
+        )
+        .unwrap();
+        let a = asm(&p, aid);
+        assert_eq!(a.frames[0].treatments.len(), 1);
+        let m = part(&p, a, occs[0]);
+        let v: Real = m
+            .exact_bodies
+            .0
+            .iter()
+            .filter_map(|b| b.volume_at(1e-3))
+            .sum();
+        let lost = 200.0 * std::f64::consts::SQRT_2; // 1 mm along the bisector = √2 along the axis
+        assert!(
+            (v - (200.0 * 400.0 - lost)).abs() < 0.003 * 200.0 * 400.0,
+            "{v}"
+        );
+        // Remove End Treatments: back to the plain members.
+        remove_treatments(&mut p, &Linked::new(), aid, &[occs[0]]).unwrap();
+        let a = asm(&p, aid);
+        assert!(a.frames[0].treatments.is_empty());
+        let m = part(&p, a, occs[0]);
+        assert!((outer_length(&m).unwrap() - 400.0).abs() < 1e-6);
+    }
+
+    /// Members that do not meet are refused and nothing changes.
+    #[test]
+    fn miter_of_members_apart_is_refused() {
+        let (mut p, aid, _) = project();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 0.0));
+        let y = find_edge(&p, aid, Point3::new(200.0, 300.0, 200.0));
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[x, y],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let e = add_miter(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[(occs[0], occs[1])],
+            0.0,
+            MiterOffset::Default,
+        )
+        .unwrap_err();
+        assert!(e.contains("do not meet"), "{e}");
+        assert!(asm(&p, aid).frames[0].treatments.is_empty());
+    }
+
+    /// The four top edges of the box: every pair that meets.
+    #[test]
+    fn meeting_pairs_of_a_rectangle() {
+        let (mut p, aid, _) = project();
+        let e: Vec<Skeleton> = [
+            [200.0, 0.0, 200.0],
+            [400.0, 150.0, 200.0],
+            [200.0, 300.0, 200.0],
+            [0.0, 150.0, 200.0],
+        ]
+        .iter()
+        .map(|m| find_edge(&p, aid, Point3::new(m[0], m[1], m[2])))
+        .collect();
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &e,
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let pairs = meeting_pairs(&p, &Linked::new(), asm(&p, aid), &occs);
+        assert_eq!(pairs.len(), 4, "{pairs:?}");
     }
 
     /// The skeleton edge through `at` (its two face names and the point).

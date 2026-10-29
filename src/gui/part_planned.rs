@@ -1317,6 +1317,8 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::Copy
                     | super::asm_planned::AsmPlanned::Mirror
                     | super::asm_planned::AsmPlanned::InsertFrame
+                    | super::asm_planned::AsmPlanned::Miter
+                    | super::asm_planned::AsmPlanned::RemoveEndTreatments
                     | super::asm_planned::AsmPlanned::PlaceImported
             ) | Planned::Part(
                 PartPlanned::Stitch
@@ -1381,6 +1383,11 @@ impl Planned {
                 "Merge Frame Members" | "Apply Appearance to Part",
                 None,
             ) => Some("Comes with stage F3 (spec 6.1 Insert Frame)"),
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::Miter),
+                "Miter Type",
+                Some("Bisect Miter Cut"),
+            ) => Some("Comes with stage F2 (spec 6.1 Miter: to confirm against the help)"),
             _ => None,
         }
     }
@@ -2373,6 +2380,16 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame) => {
                 if self.frame_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::Miter) => {
+                if self.miter_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Asm(super::asm_planned::AsmPlanned::RemoveEndTreatments) => {
+                if self.remove_treatments_ok(&d) {
                     self.part_planned = None;
                 }
             }
