@@ -981,6 +981,18 @@ impl AsmPlanned {
                         0,
                     ),
                     Check("Merge Frame Members", false),
+                    Head("Corners"),
+                    Combo(
+                        "Corner Type",
+                        &[
+                            "None",
+                            "Miter",
+                            "Butt - first through",
+                            "Butt - second through",
+                        ],
+                        0,
+                    ),
+                    Num("Corner Gap", 0.0, " mm"),
                     Head("Orientation"),
                     Combo(
                         "Anchor",

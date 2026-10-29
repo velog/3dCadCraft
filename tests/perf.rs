@@ -1303,6 +1303,7 @@ fn speed_budgets() {
             size: "40x40x3".into(),
             material: Some("Steel S235".into()),
             orientation: Default::default(),
+            corners: Default::default(),
         };
         let lib = cadcraft3d::part::frame::Library::builtin();
         // Miter of the four top edges' members: 8 end cuts (Trim Solid each), rebuilt in parallel.

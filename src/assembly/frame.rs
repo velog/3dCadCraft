@@ -379,6 +379,57 @@ pub struct InsertOptions {
     pub material: Option<String>,
     /// Orientation of every new member.
     pub orientation: Orientation,
+    /// What the corners between the new members get (spec 6.1 §3.10).
+    pub corners: Corners,
+}
+
+/// How Insert Frame finishes the corners where two new members meet at
+/// their ends (our addition, like Solid Edge's end conditions; Inventor
+/// leaves them uncut).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CornerType {
+    /// Uncut (Inventor's behaviour).
+    #[default]
+    None,
+    /// Full Miter Cut, the gap split between both members.
+    Miter,
+    /// Corner Joint: the member picked first runs through.
+    ButtFirst,
+    /// Corner Joint: the member picked second runs through.
+    ButtSecond,
+}
+
+/// The corner choice of Insert Frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Corners {
+    /// Which treatment each corner gets.
+    pub kind: CornerType,
+    /// The gap at the corner (Miter distance / Corner Joint offset of the
+    /// member that stops).
+    pub gap: Real,
+}
+
+impl Corners {
+    /// The treatment of the corner between `first` and `second` (picked
+    /// in this order).
+    fn treatment(&self, first: u32, second: u32) -> Option<Treatment> {
+        let joint = |a, b| Treatment::CornerJoint {
+            a,
+            b,
+            offsets: [0.0, self.gap],
+        };
+        match self.kind {
+            CornerType::None => None,
+            CornerType::Miter => Some(Treatment::Miter {
+                a: first,
+                b: second,
+                gap: self.gap,
+                offset: MiterOffset::Symmetric,
+            }),
+            CornerType::ButtFirst => Some(joint(first, second)),
+            CornerType::ButtSecond => Some(joint(second, first)),
+        }
+    }
 }
 
 /// A skeleton line in assembly coordinates: its start and end. `linked`
@@ -540,6 +591,9 @@ pub fn insert(
                 }),
             });
         }
+        if !(o.corners.gap.is_finite() && o.corners.gap >= 0.0) {
+            return Err("the corner gap must be zero or more".into());
+        }
         let a = asm_mut(project, asm)?;
         let occs: Vec<u32> = made.iter().map(|m| m.occurrence).collect();
         let id = match into.and_then(|id| a.frames.iter_mut().find(|f| f.id == id)) {
@@ -562,6 +616,26 @@ pub fn insert(
                 id
             }
         };
+        // Corners between the new members (in pick order: the earlier
+        // member is the first).
+        if o.corners.kind != CornerType::None {
+            let a = asm_of(project, asm)?;
+            let pairs = meeting_pairs(project, linked, a, &occs);
+            let ts: Vec<Treatment> = pairs
+                .iter()
+                .filter_map(|&(x, y)| o.corners.treatment(x, y))
+                .collect();
+            if !ts.is_empty() {
+                let a = asm_mut(project, asm)?;
+                if let Some(f) = a.frames.iter_mut().find(|f| f.id == id) {
+                    f.treatments.extend(ts);
+                }
+                let s = solve(project, linked, asm)?;
+                if let Some((_, why)) = s.sick.iter().find(|(m, _)| occs.contains(m)) {
+                    return Err(format!("corners: {why}"));
+                }
+            }
+        }
         Ok((id, occs))
     })();
     if result.is_err() {
@@ -1175,6 +1249,46 @@ pub fn take_treatment(a: &mut AssemblyDocument, frame: u32, index: usize) -> Opt
     (index < f.treatments.len()).then(|| f.treatments.remove(index))
 }
 
+/// Changes corner `index` of frame `frame` (a Miter or a Corner Joint) to
+/// `kind`, keeping its members (in their first / second order) and gap; on
+/// an error nothing changes.
+pub fn retype_corner(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    frame: u32,
+    index: usize,
+    kind: CornerType,
+) -> Result<Solved, String> {
+    let before = project.clone();
+    let result = (|| {
+        let f = asm_mut(project, asm)?
+            .frames
+            .iter_mut()
+            .find(|f| f.id == frame)
+            .ok_or("no such frame")?;
+        let t = f.treatments.get_mut(index).ok_or("no such end treatment")?;
+        let (a, b, gap) = match t {
+            Treatment::Miter { a, b, gap, .. } => (*a, *b, *gap),
+            // The member that stops is the second; it carries the gap.
+            Treatment::CornerJoint { a, b, offsets } => (*a, *b, offsets[1]),
+            _ => return Err("only a Miter or a Corner Joint is a corner".into()),
+        };
+        *t = Corners { kind, gap }
+            .treatment(a, b)
+            .ok_or("a corner cannot become uncut here: Delete it")?;
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(o, _)| *o == a || *o == b) {
+            return Err(why.clone());
+        }
+        Ok(s)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
 /// Deletes end treatment `index` of frame `frame`; its members are rebuilt.
 pub fn delete_treatment(
     project: &mut Project,
@@ -1348,6 +1462,7 @@ mod tests {
             size: "40x40x3".into(),
             material: Some("Steel S235".into()),
             orientation: Orientation::default(),
+            corners: Corners::default(),
         }
     }
 
@@ -1789,6 +1904,65 @@ mod tests {
             .filter_map(|b| b.volume_at(1e-3))
             .sum();
         assert!((vb - 200.0 * 280.0).abs() < 0.002 * 200.0 * 280.0, "{vb}");
+    }
+
+    /// Insert Frame with Corners: the four top edges come out with a
+    /// treatment at each of their four corners.
+    #[test]
+    fn insert_finishes_the_corners() {
+        let lk = Linked::new();
+        let top = [
+            (200.0, 0.0, 200.0),
+            (400.0, 150.0, 200.0),
+            (200.0, 300.0, 200.0),
+            (0.0, 150.0, 200.0),
+        ];
+        for (kind, label) in [
+            (CornerType::Miter, "Miter"),
+            (CornerType::ButtFirst, "Corner Joint"),
+        ] {
+            let (mut p, aid, _) = project();
+            let edges: Vec<Skeleton> = top
+                .iter()
+                .map(|&(x, y, z)| find_edge(&p, aid, Point3::new(x, y, z)))
+                .collect();
+            let mut o = opts();
+            o.corners = Corners { kind, gap: 0.0 };
+            let (_, occs) = insert(&mut p, &lk, aid, &edges, &o, Library::builtin(), None).unwrap();
+            let a = asm(&p, aid);
+            let ts = &a.frames[0].treatments;
+            assert_eq!(ts.len(), 4, "{label}");
+            assert!(ts.iter().all(|t| t.label() == label));
+            if kind == CornerType::ButtFirst {
+                // One corner back to a mitre: one Miter, three joints.
+                let (fid, before) = (a.frames[0].id, ts.len());
+                retype_corner(&mut p, &lk, aid, fid, 0, CornerType::Miter).unwrap();
+                let ts = &asm(&p, aid).frames[0].treatments;
+                assert_eq!(ts.len(), before);
+                assert_eq!(ts.iter().filter(|t| t.label() == "Miter").count(), 1);
+                assert!(retype_corner(&mut p, &lk, aid, fid, 9, CornerType::Miter).is_err());
+                continue;
+            }
+            if kind == CornerType::Miter {
+                // Mitred both ends: outer length = edge + 2 × 20 (half the 40 tube).
+                let l = outer_length(&part(&p, a, occs[0])).unwrap();
+                assert!((l - 440.0).abs() < 1e-3, "{l}");
+            } else {
+                // The first member runs through both its corners; the second
+                // stops at the first (and runs through at the third).
+                let l0 = outer_length(&part(&p, a, occs[0])).unwrap();
+                let l1 = outer_length(&part(&p, a, occs[1])).unwrap();
+                assert!((l0 - 440.0).abs() < 1e-3, "{l0}");
+                assert!((l1 - 300.0).abs() < 1e-3, "{l1}");
+            }
+        }
+        // A negative gap is refused and nothing changes.
+        let (mut p, aid, _) = project();
+        let e = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let mut o = opts();
+        o.corners.gap = -1.0;
+        assert!(insert(&mut p, &lk, aid, &[e], &o, Library::builtin(), None).is_err());
+        assert!(asm(&p, aid).frames.is_empty());
     }
 
     /// Change keeps the corner joint and solves it with the new section;

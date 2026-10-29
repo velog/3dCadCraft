@@ -19,6 +19,7 @@ pub(super) enum FrameCmd {
     EditTreatment(u32, usize),
     DeleteTreatment(u32, usize),
     DeleteMembers(Vec<u32>),
+    Retype(u32, usize, frame::CornerType),
 }
 
 /// A frame's browser node: id, name, members (occurrence, name).
@@ -145,6 +146,26 @@ impl CadCraftApp {
                                     cmds.push(FrameCmd::DeleteTreatment(*f, *i));
                                     ui.close();
                                 }
+                                // A corner can change its kind (spec 6.1 §3.10).
+                                if name.starts_with("Miter") || name.starts_with("Corner") {
+                                    ui.separator();
+                                    for (label, k) in [
+                                        ("Corner: Miter", frame::CornerType::Miter),
+                                        (
+                                            "Corner: Butt - first through",
+                                            frame::CornerType::ButtFirst,
+                                        ),
+                                        (
+                                            "Corner: Butt - second through",
+                                            frame::CornerType::ButtSecond,
+                                        ),
+                                    ] {
+                                        if ui.button(label).clicked() {
+                                            cmds.push(FrameCmd::Retype(*f, *i, k));
+                                            ui.close();
+                                        }
+                                    }
+                                }
                             });
                         });
                     }
@@ -184,6 +205,14 @@ impl CadCraftApp {
                 }
             }
             FrameCmd::DeleteMembers(ids) => self.frame_delete_members(&ids),
+            FrameCmd::Retype(f, i, k) => {
+                let linked = self.linked();
+                let mut trial = self.project.clone();
+                match frame::retype_corner(&mut trial, &linked, self.part_id, f, i, k) {
+                    Ok(_) => self.frame_commit("Change Corner", trial),
+                    Err(e) => self.file_status = Some(Err(format!("Change Corner: {e}"))),
+                }
+            }
         }
     }
 

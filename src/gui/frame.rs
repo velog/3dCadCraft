@@ -76,6 +76,15 @@ pub(super) fn insert_options(d: &PartDialog) -> Option<InsertOptions> {
         size: frame_choice(d, 0, "Size")?,
         material: super::asm_planned::choice(d, 0, "Material").map(str::to_owned),
         orientation: orientation(d),
+        corners: frame::Corners {
+            kind: match d.index(0, "Corner Type") {
+                1 => frame::CornerType::Miter,
+                2 => frame::CornerType::ButtFirst,
+                3 => frame::CornerType::ButtSecond,
+                _ => frame::CornerType::None,
+            },
+            gap: d.num(0, "Corner Gap").unwrap_or(0.0),
+        },
     })
 }
 
