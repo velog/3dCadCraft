@@ -42,6 +42,7 @@ Apache-2.0), which SolidCraft itself is moving to. A new kernel is a new impleme
 | Sweeps, lofts | `sweep`, `check_bend`, `path_points`, `loft`, `loft_frames`, `loft_to_point`, `loft_guided`, `loft_stations`, `profile_outline`, `profile_area` | faces `Side:<segment of the first section>`, `Start`, `End` |
 | Coils | `coil`, `coil_mesh`, `coil_boolean` | |
 | Surface bodies | `extrude_sheet`, `revolve_sheet` | `ExactSolid::sheet` |
+| Surface tools | `surface_ops::{stitch, patch_edges, patch_region, trim, extend, bridge_edges}`, `face_sheet` (copy faces), `delete_faces` | new surface bodies named after the feature; carried faces keep their names; `bridge_edges(a, edge points, b, edge points, name)`: open chains → one ruled face `<name>:Bridge` (G0 to both, ends joined by straight lines); whole closed boundaries → one face per pair of sides (cut at corners > 10°, paired nearest), all `<name>:Bridge`, sharing their corner lines, each side an own spline edge on the bridge (one connected surface body) |
 | Our B-rep, export | `to_brep`, `to_brep_with` (lenient), `step_text`, `step_text_painted`, `step_volumes` | `to_brep`: named topology, analytic surfaces where the kernel knows them, its display triangles per face |
 
 ## 3. How a new kernel is proven
@@ -76,3 +77,5 @@ differences in volume, faces and names.
 | Pre-checks before the kernel (`check_bend`, `check_folds`) | `exact/sweep.rs`, `exact/loft.rs` | the kernel accepts self-intersecting sweeps / lofts |
 | Exact first, faceted rebuild of the whole part on a kernel failure | `part/exact.rs` | the faceted CSG cannot work on a converted exact body |
 | Vendor patches | `vendor/solidcraft-kernel` (`vendor/README.md`) | speed of patterns of thousands, history of faceted Booleans |
+| Loft between edges as our own ruled B-spline (`bridge_edges`, vendor) | `vendor/.../surfaces.rs` | truck lofts only planar sections; a fill of the loop missed its tolerance on curved trim edges. A new kernel's loft through edge sections (with G1 / G2 to the surfaces) replaces it |
+| Free edges of surface bodies recovered from the display mesh | `exact.rs` `add_solid` | our B-rep is rebuilt from the kernel's mesh; an edge of one face was taken for a seam |

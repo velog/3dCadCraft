@@ -1139,3 +1139,84 @@ fn loft_bridges_the_owners_trimmed_surfaces() {
     let added = sheet_area(&p) - before.1;
     assert!(added > 1000.0, "bridge area {added}");
 }
+
+/// The whole free boundaries of two surfaces as loft sections (the owner's Surface_test_3 before
+/// its hole): one bridge per pair of sides (split at the corners), all of them meshed (the one
+/// along the trimmed wavy edges once had no triangles). Output Solid: not yet (spec 5.4a L3).
+#[test]
+fn loft_between_two_whole_surfaces() {
+    use cadcraft3d::document::{DocumentData, Project};
+    use cadcraft3d::kernel::TessellationOptions;
+    use cadcraft3d::part::{LoftFeature, LoftSection};
+    let pr = Project::load(std::path::Path::new(
+        "tests/data/surface_test3_owner.3dcadcraft",
+    ))
+    .unwrap();
+    let mut p = pr
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    // Up to the second trim (before the hole and the owner's lofts).
+    p.features.truncate(5);
+    p.eop = None;
+    p.regenerate().unwrap();
+    let opts = TessellationOptions::default();
+    let boundary = |p: &PartDocument, body: &str| -> Vec<SurfEdge> {
+        let mut out = Vec::new();
+        for f in cadcraft3d::part::select::faces_of_body(&p.body, body) {
+            let face = p.body.face(f).unwrap();
+            for lp in std::iter::once(&face.outer).chain(&face.inner) {
+                for ce in &lp.coedges {
+                    if p.body.edge_faces(ce.edge).len() != 1 {
+                        continue;
+                    }
+                    let pts = p.body.sample_edge(ce.edge, &opts).unwrap();
+                    let m = cadcraft3d::part::select::polyline_middle(&pts).unwrap();
+                    out.push(SurfEdge {
+                        face: face.name.clone().unwrap(),
+                        hint: [m.x, m.y, m.z],
+                    });
+                }
+            }
+        }
+        out
+    };
+    let sections = vec![
+        LoftSection::Edges(boundary(&p, "Extrusion2")),
+        LoftSection::Edges(boundary(&p, "Extrusion4")),
+    ];
+    // Output Surface: one body of four bridges (one per pair of sides), every one meshed.
+    let mut q = p.clone();
+    let mut def = LoftFeature::new(sections.clone());
+    def.output = Output::Surface;
+    q.add_loft(def).unwrap();
+    assert!(q.feature_health.is_empty(), "{:?}", q.feature_health);
+    let bridges = q
+        .exact_bodies
+        .0
+        .iter()
+        .find(|s| s.name.as_deref() == Some("Loft1"))
+        .unwrap();
+    assert!(bridges.is_open(), "the bridges are a surface body");
+    let b = cadcraft3d::kernel::exact::to_brep(std::slice::from_ref(bridges)).unwrap();
+    let tris: Vec<usize> = b
+        .faces()
+        .map(|(_, f)| f.mesh.as_ref().map_or(0, |m| m.triangles.len()))
+        .collect();
+    assert_eq!(tris.len(), 4, "{tris:?}");
+    assert!(
+        tris.iter().all(|&n| n > 0),
+        "a bridge was not meshed: {tris:?}"
+    );
+    // Output Solid is refused for now, with the reason, and nothing changes.
+    let n = p.features.len();
+    let mut def = LoftFeature::new(sections);
+    def.output = Output::Solid;
+    let e = p.add_loft(def).unwrap_err().to_string();
+    assert!(e.contains("Output Surface"), "{e}");
+    assert_eq!(p.features.len(), n);
+}

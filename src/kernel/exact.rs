@@ -3426,6 +3426,38 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
             by_face[g].push((edges.len() - 1, sg_));
             continue;
         }
+        // Two faces of which one does not run along this edge's samples (it was meshed with
+        // its own points on an edge it borrows — a bridge between surfaces): it runs the edge
+        // the other way from the face that does.
+        let known = |f: usize| {
+            if directed[f].contains(&(k0, k1)) {
+                Some(Sense::Same)
+            } else if directed[f].contains(&(k1, k0)) {
+                Some(Sense::Reversed)
+            } else {
+                None
+            }
+        };
+        let other = |s: Sense| match s {
+            Sense::Same => Sense::Reversed,
+            Sense::Reversed => Sense::Same,
+        };
+        if let [f, g] = distinct[..]
+            && faces.len() == 2
+            && f < nf
+            && g < nf
+        {
+            let pair = match (known(f), known(g)) {
+                (Some(a), None) => Some((a, other(a))),
+                (None, Some(b)) => Some((other(b), b)),
+                _ => None,
+            };
+            if let Some((a, b)) = pair {
+                by_face[f].push((edges.len() - 1, a));
+                by_face[g].push((edges.len() - 1, b));
+                continue;
+            }
+        }
         for &f in &distinct {
             if f >= nf {
                 continue;
@@ -3443,8 +3475,13 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
             }
             let sense = if directed[f].contains(&(k0, k1)) {
                 Sense::Same
-            } else {
+            } else if directed[f].contains(&(k1, k0)) {
                 Sense::Reversed
+            } else {
+                // The face's triangles do not run along this edge's samples (a face meshed
+                // with its own points on a borrowed edge, a bridge between surfaces): its
+                // geometry decides.
+                sense_by_geometry(&meshes[f], &pts, &inside, eps).unwrap_or(Sense::Reversed)
             };
             by_face[f].push((edges.len() - 1, sense));
         }

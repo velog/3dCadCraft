@@ -364,15 +364,36 @@ impl LoftFeature {
         Ok(vec![s])
     }
 
-    /// Two edge sections bridged by one surface (G0 to both): Output Surface, no rails, centre
-    /// line or conditions yet.
+    /// The surface bodies a Loft with Output Solid sews into its solid (edge sections of whole
+    /// boundaries): they leave the part, as Stitch's inputs do.
+    pub(super) fn sewn_surfaces(&self, sheets: &[ExactSolid]) -> Vec<String> {
+        if self.output != Output::Solid {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for s in &self.sections {
+            let LoftSection::Edges(chain) = s else {
+                return Vec::new();
+            };
+            let Some(e) = chain.first() else {
+                continue;
+            };
+            if let Some(Some((i, _))) =
+                kx::faces_in_solids(sheets, &[(e.face.as_str(), Point3::from(e.hint))]).pop()
+                && let Some(n) = sheets[i].name.clone()
+            {
+                out.push(n);
+            }
+        }
+        out
+    }
+
+    /// Two edge sections bridged (G0 to both): open chains by one surface (Output Surface);
+    /// whole boundaries of two surfaces by one face per pair of sides — with Output Solid the two
+    /// surfaces and the bridges become one solid. No rails, centre line or conditions yet.
     fn bridge(&self, bodies: &[ExactSolid]) -> Result<ExactSolid, Fail> {
         use Fail::User;
-        if self.output != Output::Surface {
-            return Err(User(
-                "edge sections make a surface: set Output to Surface".into(),
-            ));
-        }
+        let solid = self.output == Output::Solid;
         let chains: Vec<&Vec<super::surface_op::SurfEdge>> = self
             .sections
             .iter()
@@ -422,8 +443,62 @@ impl LoftFeature {
         };
         let (ia, pa) = side(a, 1)?;
         let (ib, pb) = side(b, 2)?;
-        kx::surface_ops::bridge_edges(&bodies[ia], &pa, &bodies[ib], &pb, &self.id)
-            .map_err(|e| User(format!("the geometry kernel cannot bridge the edges ({e})")))
+        let bridge = kx::surface_ops::bridge_edges(&bodies[ia], &pa, &bodies[ib], &pb, &self.id)
+            .map_err(|e| User(format!("the geometry kernel cannot bridge the edges ({e})")))?;
+        if !solid {
+            return Ok(bridge);
+        }
+        // Output Solid: the two surfaces and the bridges sewn into one body, every face facing
+        // out — a surface made the other way round is turned over first (B, A, then both).
+        let (sa, sb) = (&bodies[ia], &bodies[ib]);
+        let (ta, tb) = (
+            kx::surface_ops::reversed(sa).ok(),
+            kx::surface_ops::reversed(sb).ok(),
+        );
+        let mut tries: Vec<(&ExactSolid, &ExactSolid)> = vec![(sa, sb)];
+        if let Some(t) = &tb {
+            tries.push((sa, t));
+        }
+        if let Some(t) = &ta {
+            tries.push((t, sb));
+        }
+        if let (Some(x), Some(y)) = (&ta, &tb) {
+            tries.push((x, y));
+        }
+        let mut last = String::from("no try");
+        let mut found = None;
+        for (a, b) in tries {
+            match kx::surface_ops::stitch(&[a, b, &bridge], BRIDGE_STITCH, false, &self.id) {
+                Ok(r) if !r.is_open() && faces_out(&r) => {
+                    found = Some(r);
+                    break;
+                }
+                Ok(r) if r.is_open() => {
+                    last = concat!(
+                        "the bridges' edges do not match the surfaces' (sewing them into a solid ",
+                        "is not supported yet: use Output Surface, spec 5.4a L3)"
+                    )
+                    .into()
+                }
+                Ok(_) => last = "the faces do not all face out".into(),
+                Err(e) => last = e,
+            }
+        }
+        let r = found.ok_or_else(|| {
+            User(format!(
+                "the surfaces and the bridges cannot be sewn ({last})"
+            ))
+        })?;
+        if r.is_open() {
+            return Err(User(
+                concat!(
+                    "the bridges and the two surfaces do not close a volume ",
+                    "(pick whole boundaries, or set Output to Surface)"
+                )
+                .into(),
+            ));
+        }
+        Ok(r)
     }
 
     /// Refuses conditions that do not fit their section or are not built yet.
@@ -679,6 +754,37 @@ impl LoftFeature {
             None => Err("the section no longer exists".into()),
         }
     }
+}
+
+/// How far a bridge's own edges may be from the surfaces' edges when they are sewn (mm): the
+/// bridge's edges are cubic splines through points on the surfaces' edges.
+const BRIDGE_STITCH: Real = 0.01;
+
+/// Whether a closed body's faces face out: of its display triangles (some spread over the body)
+/// none has the body in front and the outside behind.
+fn faces_out(s: &ExactSolid) -> bool {
+    let Ok(tris) = s.triangles() else {
+        return false;
+    };
+    let eps = (s.size() * 1e-4).max(1e-4);
+    let step = (tris.len() / 60).max(1);
+    let mut checked = 0;
+    for [a, b, c] in tris.iter().step_by(step) {
+        let Some(n) = (b - a).cross(&(c - a)).try_normalize(1e-18) else {
+            continue;
+        };
+        let m = Point3::from((a.coords + b.coords + c.coords) / 3.0);
+        // Clearly inward: inside in front of the triangle and outside behind it (a triangle
+        // sagging under a curved face can have the body on both sides).
+        let (front, back) = (kx::contains(s, m + n * eps), kx::contains(s, m - n * eps));
+        if front && !back {
+            return false;
+        }
+        if front != back {
+            checked += 1;
+        }
+    }
+    checked > 0
 }
 
 /// Tangent condition of a face-loop section: at points along the face's

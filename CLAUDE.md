@@ -1239,6 +1239,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `gui/drawing_sketch.rs` maps it through the view's `Placement` and the `SheetCam`. A new overlay sketch function
   must take a `Projector` too, or drawing sketches cannot use it. A view sketch takes the keys in `shortcuts`
   (`view_sketch_keys`) before the drawing's letters.
+- **Coedge senses in `to_brep`** come from each face's display triangles along the edge's samples. A face meshed with
+  its own points on an edge it borrows has none there: it runs the edge the other way from the face that does, else its
+  geometry decides (it silently got `Reversed`, and closed shells failed validation "edge … used 0× forward, 2×
+  reversed"). Loft bridges: a face whose boundary edges are not exactly on its surface is not meshed at all (0
+  triangles, a hole in the view) — give a bridge its own edges on its surface, or a surface through the edges' curves.
 - **Free edges of surface bodies** (`exact.rs::add_solid`): an edge listed with one face used to be taken for a seam
   (both senses, broken loops, not drawn — surfaces showed no outline). In a surface body it is a free edge when the
   face's triangles run it one way only; in solids the old rule stays (a seam listed once). `s.is_open()` walks every

@@ -428,6 +428,7 @@ const SECTIONS: &[PickKind] = &[
     PickKind::PlanarFace,
     PickKind::SketchPoint,
     PickKind::Edge,
+    PickKind::Surface,
 ];
 const GUIDE_CURVES: &[PickKind] = &[PickKind::SketchCurve, PickKind::Edge];
 const SECTION_POINTS: &[PickKind] = &[PickKind::SectionPoint];

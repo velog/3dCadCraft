@@ -434,7 +434,59 @@ pub(super) fn stitch(
             )));
         }
     }
-    let sewn = surface_ops::stitch(&parts, op.tolerance, op.keep_surface, id).map_err(|e| {
+    // A closed result must be a valid solid: surfaces made separately face either way, and
+    // sewn the wrong way round an edge is run twice in one direction ("not manifold").
+    let consistent = |r: &Result<ExactSolid, String>| -> Result<(), String> {
+        let Ok(s) = r else {
+            return Ok(());
+        };
+        if !s.closes() {
+            return Ok(());
+        }
+        let b = exact::to_brep(std::slice::from_ref(s))?;
+        for (sid, _) in b.solids() {
+            b.validate_solid(sid).map_err(|e| format!("{e:?}"))?;
+        }
+        Ok(())
+    };
+    let mut sewn = surface_ops::stitch(&parts, op.tolerance, op.keep_surface, id);
+    if let Err(e) = consistent(&sewn) {
+        sewn = Err(e);
+    }
+    // Then some of them are turned over (the first one stays), trying the combinations of the
+    // others (up to 6 of them).
+    if let Err(e) = &sewn
+        && e.contains("not manifold")
+        && (2..=7).contains(&parts.len())
+    {
+        let turned: Vec<Option<ExactSolid>> = parts
+            .iter()
+            .map(|p| surface_ops::reversed(p).ok())
+            .collect();
+        for mask in 1u32..(1 << (parts.len() - 1)) {
+            let mut trial: Vec<&ExactSolid> = Vec::with_capacity(parts.len());
+            let mut ok = true;
+            for (k, p) in parts.iter().enumerate() {
+                if k > 0 && mask & (1 << (k - 1)) != 0 {
+                    match &turned[k] {
+                        Some(t) => trial.push(t),
+                        None => ok = false,
+                    }
+                } else {
+                    trial.push(p);
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let r = surface_ops::stitch(&trial, op.tolerance, op.keep_surface, id);
+            if r.is_ok() && consistent(&r).is_ok() {
+                sewn = r;
+                break;
+            }
+        }
+    }
+    let sewn = sewn.map_err(|e| {
         User(format!(
             "the surfaces do not meet within the tolerance ({e})"
         ))
@@ -643,7 +695,7 @@ pub(super) fn trim(
             names.dedup();
             if names.len() > 1 {
                 return Err(User(format!(
-                    "a cutting surface of {} faces is not supported yet: trim by each face, or by                      a sketch curve (spec 5.4a T2)",
+                    "a cutting surface of {} faces is not supported yet: trim by each face, or by a sketch curve (spec 5.4a T2)",
                     names.len()
                 )));
             }

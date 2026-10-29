@@ -1634,10 +1634,20 @@ impl PartDocument {
             // The surface bodies go back (after the solids); a body operation
             // returns them itself (Delete Face may change one).
             let returns_sheets = matches!(f, Feature::BodyOp(_));
+            // A Loft that sews two surfaces into a solid uses them up (as Stitch does).
+            let sewn: Vec<String> = match f {
+                Feature::Loft(lo) => lo.sewn_surfaces(&sheets),
+                _ => Vec::new(),
+            };
             let step = step.map(|o| {
                 o.map(|mut next| {
                     if !returns_sheets {
-                        next.extend(sheets.iter().cloned());
+                        next.extend(
+                            sheets
+                                .iter()
+                                .filter(|s| s.name.as_ref().is_none_or(|n| !sewn.contains(n)))
+                                .cloned(),
+                        );
                     }
                     next
                 })

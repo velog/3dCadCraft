@@ -367,6 +367,20 @@ impl CadCraftApp {
                     vec![pts],
                 ));
             }
+            // Loft: a face of a surface body is its whole free boundary (Loft between two
+            // surfaces: one bridge per pair of sides).
+            if loft_takes(PickKind::Surface)
+                && let Some((o, dir)) = self.camera.ray(p, rect)
+                && let Some(dir) = dir.try_normalize(1e-12)
+                && let Some((f, _)) = self.picker().pick(&o, &dir)
+                && let Some(name) = crate::part::select::body_of_face(&part.body, f)
+                && crate::part::select::body_is_surface(&part.body, &name)
+            {
+                let (edges, pts) = surface_boundary(&part.body, &name);
+                if !edges.is_empty() {
+                    return Some((Pick::Boundary(edges), pts));
+                }
+            }
             // Loft: a planar face is a face-loop section.
             if loft_takes(PickKind::PlanarFace)
                 && let Some((o, dir)) = self.camera.ray(p, rect)
@@ -485,6 +499,7 @@ impl CadCraftApp {
                     self.loft_pick_edge(e);
                     return;
                 }
+                Pick::Boundary(edges) => LoftSection::Edges(edges),
                 Pick::Path(_) | Pick::Edge(_) | Pick::MapPoint(_) => return,
             };
             let Some(d) = self.loft_draft.as_mut() else {
@@ -975,6 +990,8 @@ enum Pick {
     Face(crate::part::FaceRef),
     /// An edge of the model for a loft's edge section (a face along it + the point picked).
     SurfEdge(crate::part::surface_op::SurfEdge),
+    /// The free edges of a surface body (a whole boundary as one loft section).
+    Boundary(Vec<crate::part::surface_op::SurfEdge>),
     /// A point on a loft section's outline (model space).
     MapPoint([crate::kernel::Real; 3]),
 }
@@ -1016,6 +1033,47 @@ impl CadCraftApp {
             _ => d.def.sections.push(LoftSection::Edges(vec![e])),
         }
     }
+}
+
+/// The free edges of surface body `name` (edges of one face) as references, and their points.
+fn surface_boundary(
+    body: &crate::kernel::BRep,
+    name: &str,
+) -> (Vec<crate::part::surface_op::SurfEdge>, Vec<Vec<Point3>>) {
+    let opts = crate::kernel::TessellationOptions::default();
+    let (mut edges, mut pts) = (Vec::new(), Vec::new());
+    let mut seen = std::collections::HashSet::new();
+    for f in crate::part::select::faces_of_body(body, name) {
+        let Some(face) = body.face(f) else {
+            continue;
+        };
+        let Some(fname) = face.name.clone() else {
+            continue;
+        };
+        for lp in std::iter::once(&face.outer).chain(&face.inner) {
+            for ce in &lp.coedges {
+                if !seen.insert(ce.edge) || body.edge_faces(ce.edge).len() != 1 {
+                    continue;
+                }
+                let Ok(p) = body.sample_edge(ce.edge, &opts) else {
+                    continue;
+                };
+                let m = select_middle(&p);
+                edges.push(crate::part::surface_op::SurfEdge {
+                    face: fname.clone(),
+                    hint: [m.x, m.y, m.z],
+                });
+                pts.push(p);
+            }
+        }
+    }
+    (edges, pts)
+}
+
+/// The point half way along a polyline.
+fn select_middle(p: &[Point3]) -> Point3 {
+    crate::part::select::polyline_middle(p)
+        .unwrap_or_else(|| p.first().copied().unwrap_or_else(Point3::origin))
 }
 
 /// The display points of the model edge `e` names: of the edges of faces named `e.face`, the one

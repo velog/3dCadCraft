@@ -50,6 +50,8 @@ pub fn stitch(
 /// **Loft between edges**: a surface bridging an open chain of `a`'s edges and one of `b`'s
 /// (each edge picked by a point on it), G0 to both: a new surface body `name` (one face
 /// `<name>:Bridge`).
+/// Whole closed boundaries of the two surfaces: one face per pair of sides, all sharing their
+/// corner lines (one surface body).
 pub fn bridge_edges(
     a: &ExactSolid,
     at_a: &[Point3],

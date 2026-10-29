@@ -424,6 +424,10 @@ pub fn bridge_edges(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3]) -> Result<
         return Err(KernelError::Invalid("pick the edges of both sections".into()));
     }
     guard("bridge", || {
+        // Whole boundaries (closed loops): one bridge per pair of sides.
+        if let (Some(la), Some(lb)) = (longest_loop(a, at_a)?, longest_loop(b, at_b)?) {
+            return bridge_loops(a, &la, b, &lb);
+        }
         let pa = chain_points(&picked_chain(a, at_a)?)?;
         let mut pb = chain_points(&picked_chain(b, at_b)?)?;
         let (Some(&a0), Some(&a1), Some(&b0), Some(&b1)) = (pa.first(), pa.last(), pb.first(), pb.last()) else {
@@ -453,6 +457,196 @@ pub fn bridge_edges(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3]) -> Result<
         rec.made(&face, Vec::new());
         Ok(rebuilt_body(surface_body(vec![face]), &[&a.solid, &b.solid], &rec))
     })
+}
+
+/// The picked edges chained into closed loops, the longest of them; `None` when they do not all
+/// close (an open chain).
+fn longest_loop(body: &Body, at: &[Vec3]) -> Result<Option<Vec<mt::Edge>>> {
+    let mut pool: Vec<mt::Edge> = Vec::new();
+    for p in at {
+        let e = edge_near(body, *p).ok_or_else(|| KernelError::Invalid(format!("no edge at {p:?}")))?;
+        if !pool.iter().any(|x| x.id() == e.id()) {
+            pool.push(e);
+        }
+    }
+    let mut loops: Vec<Vec<mt::Edge>> = Vec::new();
+    while let Some(first) = pool.pop() {
+        let start = first.front().id();
+        let mut at_v = first.back().clone();
+        let mut chain = vec![first];
+        while at_v.id() != start {
+            let Some(k) = pool.iter().position(|e| e.front().id() == at_v.id() || e.back().id() == at_v.id()) else {
+                return Ok(None);
+            };
+            let e = pool.remove(k);
+            let e = if e.front().id() == at_v.id() { e } else { e.inverse() };
+            at_v = e.back().clone();
+            chain.push(e);
+        }
+        loops.push(chain);
+    }
+    let len = |c: &Vec<mt::Edge>| chain_points(c).map(|p| p.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>()).unwrap_or(0.0);
+    Ok(loops.into_iter().max_by(|x, y| len(x).total_cmp(&len(y))))
+}
+
+/// The direction an edge runs at its start (`end`: at its end), from two close points.
+fn edge_direction(e: &mt::Edge, end: bool) -> Option<Vec3> {
+    let mut s = crate::plane_fit::EdgeSampler::new(e)?;
+    let (p, q) = if end { (s.at(1.0 - 1e-3)?, s.at(1.0)?) } else { (s.at(0.0)?, s.at(1e-3)?) };
+    (q - p).normalized()
+}
+
+/// A closed loop of edges cut into sides where it turns sharply (more than 10°; smooth joints of
+/// split edges turn about 1°); the first side
+/// starts at a corner. None for a loop without corners (a circle).
+fn loop_sides(lp: &[mt::Edge]) -> Option<Vec<Vec<mt::Edge>>> {
+    let n = lp.len();
+    let corner = |k: usize| -> bool {
+        // Between edge k - 1 and edge k.
+        let prev = &lp[(k + n - 1) % n];
+        match (edge_direction(prev, true), edge_direction(&lp[k], false)) {
+            (Some(a), Some(b)) => a.dot(b) < (10f64).to_radians().cos(),
+            _ => true,
+        }
+    };
+    let first = (0..n).find(|&k| corner(k))?;
+    let mut sides: Vec<Vec<mt::Edge>> = Vec::new();
+    for i in 0..n {
+        let k = (first + i) % n;
+        if i == 0 || corner(k) {
+            sides.push(Vec::new());
+        }
+        if let Some(last) = sides.last_mut() {
+            last.push(lp[k].clone());
+        }
+    }
+    Some(sides)
+}
+
+/// One bridge per pair of sides of two closed boundaries (each cut at its corners, B run and
+/// turned the way that pairs the corners nearest A's): the faces share their corner lines, so
+/// they come out as one surface body.
+fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge]) -> Result<Body> {
+    let none = || KernelError::Invalid("not supported yet: a smooth closed boundary (no corners) as a loft section".into());
+    let sa = loop_sides(la).ok_or_else(none)?;
+    let sb = loop_sides(lb).ok_or_else(none)?;
+    let n = sa.len();
+    if sb.len() != n {
+        return Err(KernelError::Invalid(format!(
+            "the boundaries have {n} and {} sides (corners): they must have as many to be bridged",
+            sb.len()
+        )));
+    }
+    // B run either way: its sides in reverse order, each turned round.
+    let turned: Vec<Vec<mt::Edge>> = sb.iter().rev().map(|side| side.iter().rev().map(mt::Edge::inverse).collect()).collect();
+    let start = |side: &[mt::Edge]| side.first().map(|e| from_p3(e.front().point()));
+    let mut best: Option<(f64, Vec<Vec<mt::Edge>>)> = None;
+    for list in [&sb, &turned] {
+        for r in 0..n {
+            let cand: Vec<Vec<mt::Edge>> = (0..n).map(|k| list[(k + r) % n].clone()).collect();
+            let cost: f64 = (0..n)
+                .map(|k| match (start(&sa[k]), start(&cand[k])) {
+                    (Some(p), Some(q)) => p.dist(q),
+                    _ => f64::MAX,
+                })
+                .sum();
+            if best.as_ref().is_none_or(|(c, _)| cost < *c) {
+                best = Some((cost, cand));
+            }
+        }
+    }
+    let pb = best.map(|(_, c)| c).ok_or_else(|| KernelError::Invalid("no pairing of the sides".into()))?;
+    let tol = solidcraft_geom::LINEAR_TOL;
+    for k in 0..n {
+        if let (Some(p), Some(q)) = (start(&sa[k]), start(&pb[k]))
+            && p.dist(q) <= tol
+        {
+            return Err(KernelError::Invalid("the boundaries touch at a corner: use Boundary Patch".into()));
+        }
+    }
+    // The corner lines, shared by the faces on either side of them.
+    let corner = |side: &[mt::Edge]| -> Result<mt::Vertex> {
+        side.first().map(|e| e.front().clone()).ok_or_else(|| KernelError::Invalid("an empty side".into()))
+    };
+    let lines: Vec<mt::Edge> = (0..n).map(|k| Ok(mt::builder::line(&corner(&sa[k])?, &corner(&pb[k])?))).collect::<Result<_>>()?;
+    let mut faces = Vec::with_capacity(n);
+    for k in 0..n {
+        let j = (k + 1) % n;
+        // The surface between the sides (interpolated through points on them); its boundary
+        // is the sides' own edges, so the bridge meets both surfaces exactly.
+        let (qa, qb) = (side_points(&sa[k])?, side_points(&pb[k])?);
+        let surface = ruled_facing(&qa, &qb)?;
+        // Each side gets an edge of its own on the bridge's surface: the B-spline through the
+        // side's points between its corners (the surfaces' own edges are not exactly on the
+        // ruled surface, and a face along a trimmed wavy edge could not be meshed at all).
+        let own = |side: &[mt::Edge], q: &[Vec3]| -> Result<Vec<mt::Edge>> {
+            let (Some(f), Some(l)) = (side.first(), side.last()) else {
+                return Err(KernelError::Invalid("an empty side".into()));
+            };
+            Ok(vec![mt::Edge::new(f.front(), l.back(), mt::Curve::BSplineCurve(interpolated(q)?))])
+        };
+        let mut wire: Vec<mt::Edge> = own(&sa[k], &qa)?;
+        wire.push(lines[j].clone());
+        wire.extend(own(&pb[k], &qb)?.iter().rev().map(mt::Edge::inverse));
+        wire.push(lines[k].inverse());
+        let face = mt::Face::try_new(vec![wire.into()], mt::Surface::BSplineSurface(surface))
+            .map_err(|e| KernelError::Failed(format!("bridge: {e}")))?;
+        faces.push(face);
+    }
+    // The bridges run A's edges the other way from A's own faces, so stitched together they
+    // close a consistently oriented shell.
+    if let Some(e0) = sa.first().and_then(|side| side.first()) {
+        let same_way = a.solid.face_iter().any(|f| {
+            f.boundaries()
+                .iter()
+                .flat_map(|w| w.edge_iter())
+                .any(|e| e.id() == e0.id() && e.front().id() == e0.front().id())
+        });
+        if same_way {
+            faces = faces.iter().map(mt::Face::inverse).collect();
+        }
+    }
+    let mut rec = Rebuild::default();
+    for f in &faces {
+        rec.made(f, Vec::new());
+    }
+    Ok(rebuilt_body(surface_body(faces), &[&a.solid, &b.solid], &rec))
+}
+
+/// The ruled surface between point rows `qa` (v = 0) and `qb` (v = 1) whose normal agrees with
+/// the loop "along A, across, back along B": the face's triangles must face the way its wire
+/// runs (a bridge whose surface faced the other way showed inside out).
+fn ruled_facing(qa: &[Vec3], qb: &[Vec3]) -> Result<mt::BSplineSurface<mt::Point3>> {
+    let (ca, cb) = (interpolated(qa)?, interpolated(qb)?);
+    // The loop's own normal (Newell), in wire order: A forward, B backward.
+    let ring: Vec<Vec3> = qa.iter().chain(qb.iter().rev()).copied().collect();
+    let mut nl = Vec3::new(0.0, 0.0, 0.0);
+    for i in 0..ring.len() {
+        let (p, q) = (ring[i], ring[(i + 1) % ring.len()]);
+        nl = nl + Vec3::new((p.y - q.y) * (p.z + q.z), (p.z - q.z) * (p.x + q.x), (p.x - q.x) * (p.y + q.y));
+    }
+    let surface = mt::BSplineSurface::homotopy(ca.clone(), cb.clone());
+    let n = surface.normal(0.5, 0.5);
+    if nl.dot(Vec3::new(n.x, n.y, n.z)) >= 0.0 {
+        return Ok(surface);
+    }
+    // The other way: the same rows with u reversed, the wire then runs with the normal.
+    let (mut ra, mut rb) = (ca, cb);
+    ra.invert();
+    rb.invert();
+    Ok(mt::BSplineSurface::homotopy(ra, rb))
+}
+
+/// Points along a side (its chain of edges) whose ends are exactly its end vertices.
+fn side_points(side: &[mt::Edge]) -> Result<Vec<Vec3>> {
+    let mut p = chain_points(side)?;
+    if let (Some(f), Some(l)) = (side.first(), side.last())
+        && let Some(k) = p.len().checked_sub(1)
+    {
+        p[0] = from_p3(f.front().point());
+        p[k] = from_p3(l.back().point());
+    }
+    Ok(p)
 }
 
 /// Points along a chain of edges (64 per edge, the joints once), in the chain's direction.
