@@ -221,6 +221,9 @@ pub struct AppOptions {
     pub show_labels: bool,
     /// Cosmetic threads drawn as a texture on their faces.
     pub thread_texture: bool,
+    /// The hover text names faces and edges by their persistent names
+    /// (`Extrusion1:End`), for debugging; off: kind, feature and body.
+    pub internal_names: bool,
     /// Show command alias input dialog (spec 0.15 §5.1, G6).
     pub alias_input: bool,
     /// Parameters table: text size (1 = normal) and the widths of the
@@ -275,6 +278,7 @@ impl Default for AppOptions {
             inference: InferenceSettings::default(),
             show_labels: true,
             thread_texture: true,
+            internal_names: false,
             alias_input: false,
             param_font: 1.0,
             param_cols: [80.0, 150.0, 120.0],
@@ -880,6 +884,7 @@ impl CadCraftApp {
             inference: self.tools.inference,
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
+            internal_names: self.internal_names,
             alias_input: self.alias_input,
             param_font: self.param_font,
             param_cols: self.param_cols,
@@ -909,6 +914,7 @@ impl CadCraftApp {
             self.thread_texture = o.thread_texture;
             self.scene_dirty = true;
         }
+        self.internal_names = o.internal_names;
         self.alias_input = o.alias_input;
         self.param_font = o.param_font.clamp(0.7, 2.5);
         self.param_cols = o.param_cols.map(|w| w.clamp(40.0, 600.0));

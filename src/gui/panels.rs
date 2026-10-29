@@ -4262,32 +4262,36 @@ impl CadCraftApp {
             PointRef::Vertex(n) => n.clone(),
             other => other.describe(),
         };
-        egui::Grid::new("csys").num_columns(2).show(ui, |ui| {
-            ui.label("Origin");
-            egui::ComboBox::from_id_salt("csys_origin")
-                .selected_text(origin_text(&origin))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut origin,
-                        PointRef::PartOrigin,
-                        origin_text(&PointRef::PartOrigin),
-                    );
-                    for v in &vertices {
-                        ui.selectable_value(&mut origin, PointRef::Vertex(v.clone()), v);
-                    }
-                });
-            ui.end_row();
-            ui.label("Axis edge");
-            egui::ComboBox::from_id_salt("csys_axis")
-                .selected_text(axis.clone().unwrap_or_else(|| "Default".into()))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut axis, None, "Default");
-                    for e in &edges {
-                        ui.selectable_value(&mut axis, Some(e.clone()), e);
-                    }
-                });
-            ui.end_row();
-        });
+        // The shared label column (a plain grid cut "Axis edge" to "Axis …").
+        egui::Grid::new("csys")
+            .num_columns(2)
+            .min_col_width(label_width(ui.ctx()))
+            .show(ui, |ui| {
+                plabel(ui, "Origin");
+                egui::ComboBox::from_id_salt("csys_origin")
+                    .selected_text(origin_text(&origin))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut origin,
+                            PointRef::PartOrigin,
+                            origin_text(&PointRef::PartOrigin),
+                        );
+                        for v in &vertices {
+                            ui.selectable_value(&mut origin, PointRef::Vertex(v.clone()), v);
+                        }
+                    });
+                ui.end_row();
+                plabel(ui, "Axis edge");
+                egui::ComboBox::from_id_salt("csys_axis")
+                    .selected_text(axis.clone().unwrap_or_else(|| "Default".into()))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut axis, None, "Default");
+                        for e in &edges {
+                            ui.selectable_value(&mut axis, Some(e.clone()), e);
+                        }
+                    });
+                ui.end_row();
+            });
         ui.add_enabled_ui(axis.is_some(), |ui| {
             let mut is_y = !axis_is_x;
             ui.checkbox(&mut is_y, "Edge defines the Y axis");
@@ -5038,6 +5042,10 @@ impl CadCraftApp {
                 {
                     self.scene_dirty = true;
                 }
+                ui.checkbox(&mut self.internal_names, "Internal names in hover text")
+                    .on_hover_text(
+                        "Name faces and edges under the cursor by their persistent names (Extrusion1:End), as used in files and journals; off: kind, feature and body",
+                    );
                 ui.separator();
                 ui.label(RichText::new("Prompted Interaction").strong());
                 ui.checkbox(&mut self.alias_input, "Show command alias input dialog")

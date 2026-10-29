@@ -1497,41 +1497,30 @@ const COLLAPSE_FIRST: &[&str] = &[
 ];
 const COLLAPSE_LAST: &[&str] = &["Sketch", "Create", "Modify", "Constrain", "Exit"];
 
-/// Which panels are shown collapsed so that the row fits `avail`: the rarely
-/// used ones first, then the others from the right, the everyday ones last;
-/// then reopens what fits again; never the first panel. `widths` are the
-/// spans of the open panels (with their separators); a panel not measured
-/// yet (0) counts as open.
+/// Which panels are shown collapsed so that the row fits `avail`: starting
+/// from everything folded, panels open by importance — the everyday ones
+/// (`COLLAPSE_LAST`) first, then the others, the rarely used ones
+/// (`COLLAPSE_FIRST`) last, each group from the left — while they fit.
+/// Never the first panel, never one narrower than its folded button.
+/// `widths` are the spans of the open panels (with their separators); a
+/// panel not measured yet (0) counts as open.
 fn collapsed_panels(widths: &[f32], titles: &[&str], avail: f32) -> Vec<bool> {
-    let mut out = vec![false; widths.len()];
-    let mut total: f32 = widths.iter().sum();
+    let n = widths.len();
     let title = |k: usize| titles.get(k).copied().unwrap_or("");
-    let passes: [&dyn Fn(&str) -> bool; 3] = [
+    let foldable = |k: usize| k > 0 && widths[k] > COLLAPSED_W;
+    let mut out: Vec<bool> = (0..n).map(foldable).collect();
+    let mut total: f32 = (0..n)
+        .map(|k| if out[k] { COLLAPSED_W } else { widths[k] })
+        .sum();
+    let groups: [&dyn Fn(&str) -> bool; 3] = [
+        &|t| COLLAPSE_LAST.contains(&t),
+        &|t| !COLLAPSE_LAST.contains(&t) && !COLLAPSE_FIRST.contains(&t),
         &|t| COLLAPSE_FIRST.contains(&t),
-        &|t| !COLLAPSE_LAST.contains(&t),
-        &|_| true,
     ];
-    for pass in passes {
-        for k in (1..widths.len()).rev() {
-            if total <= avail {
-                break;
-            }
-            if !out[k] && widths[k] > COLLAPSED_W && pass(title(k)) {
-                out[k] = true;
-                total -= widths[k] - COLLAPSED_W;
-            }
-        }
-        if total <= avail {
-            break;
-        }
-    }
-    // A wide panel collapsed last can leave room for narrower ones folded
-    // before it: open them again, the everyday ones first, then from the
-    // left (Pattern and Constrain stood folded beside 200 px of free space).
-    for pass in passes.iter().rev() {
-        for k in 1..widths.len() {
+    for group in groups {
+        for k in 0..n {
             let grow = widths[k] - COLLAPSED_W;
-            if out[k] && pass(title(k)) && total + grow <= avail {
+            if out[k] && group(title(k)) && total + grow <= avail {
                 out[k] = false;
                 total += grow;
             }
@@ -1856,5 +1845,25 @@ mod collapse_tests {
                 .iter()
                 .all(|x| !x)
         );
+    }
+
+    /// A sketch-like row: Constrain (everyday) opens before Pattern and the
+    /// rarely used Format and Demo to its right, which fold instead (Insert
+    /// is only 24 px wider open and still fits).
+    #[test]
+    fn everyday_panels_open_before_rare_ones() {
+        let w = [380.0, 100.0, 240.0, 140.0, 300.0, 110.0, 90.0, 70.0];
+        let t = [
+            "Create",
+            "Insert",
+            "Modify",
+            "Pattern",
+            "Constrain",
+            "Format",
+            "Demo",
+            "Exit",
+        ];
+        let c = super::collapsed_panels(&w, &t, 1320.0);
+        assert_eq!(c, vec![false, false, false, true, false, true, true, false]);
     }
 }

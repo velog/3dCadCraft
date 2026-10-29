@@ -553,6 +553,8 @@ struct CadCraftApp {
     show_labels: bool,
     /// Application Options → Display → Thread texture (cosmetic threads).
     thread_texture: bool,
+    /// Application Options → Display → Internal names in hover text.
+    internal_names: bool,
     /// Application Options → Show command alias input dialog (G6).
     alias_input: bool,
     /// The open alias field (`alias_input`).
@@ -918,6 +920,7 @@ impl CadCraftApp {
             sketch_opts: SketchOptions::default(),
             show_labels: true,
             thread_texture: true,
+            internal_names: false,
             alias_input: false,
             alias: Default::default(),
             alias_buf: Default::default(),
@@ -2671,7 +2674,9 @@ impl CadCraftApp {
         accept
     }
 
-    /// "Edge Extrusion1:… · L 40.00 mm" (unnamed edges: by their faces).
+    /// "Edge · Extrusion1 · L 40.00 mm"; with Application Options →
+    /// Internal names "Edge Extrusion1:… · L 40.00 mm" (unnamed edges: by
+    /// their faces).
     fn edge_description(&self, e: crate::kernel::EdgeId) -> String {
         let body = &self.part().body;
         let len: f64 = self
@@ -2692,6 +2697,13 @@ impl CadCraftApp {
                     .collect::<Vec<_>>()
                     .join(" | ")
             });
+        if !self.internal_names {
+            let feature = self
+                .edge_feature(e)
+                .map(|k| format!("  ·  {}", self.part().features[k].name()))
+                .unwrap_or_default();
+            return format!("Edge{feature}  ·  L {len:.2} mm");
+        }
         format!("Edge {name}  ·  L {len:.2} mm")
     }
 
@@ -2770,7 +2782,11 @@ impl CadCraftApp {
     /// "Face Extrusion1:End · Extrusion1 · Solid2" for the tooltip.
     fn face_description(&self, name: &str) -> String {
         let part = self.part();
-        let mut text = format!("Face {name}");
+        let mut text = if self.internal_names {
+            format!("Face {name}")
+        } else {
+            "Face".to_owned()
+        };
         if let Some(k) = self.face_feature(name) {
             text.push_str(&format!("  ·  {}", part.features[k].name()));
         }
@@ -5610,7 +5626,20 @@ impl CadCraftApp {
                         self.select_other = None;
                     }
                 }
-                (None, _) => {}
+                (None, _) => {
+                    // A window opened over the view (Open, a dialog): the
+                    // control stayed on top of it. Its own popup (a
+                    // foreground area) keeps it.
+                    let ctx = ui.ctx();
+                    let covered = ctx
+                        .pointer_latest_pos()
+                        .and_then(|q| ctx.layer_id_at(q))
+                        .is_some_and(|l| l.order == egui::Order::Middle);
+                    if covered {
+                        self.select_other = None;
+                        self.rest = None;
+                    }
+                }
             }
             if self.select_other.is_none()
                 && self.sel_menu.is_none()

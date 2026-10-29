@@ -27,7 +27,7 @@ assembly, drawing, Home, the owner's `Кутия` + `Assembly1`). Inventor 2027 
 | New file | New → template per kind and standard (Standard.ipt, ISO / ANSI / DIN …; units, styles, title block come from it); project file `.ipj` with search paths | Create New File: Part / Assembly / Drawing, no template or standard choice; design projects (spec 0.6a: 4 🟡, 24 ⬜) | templates per standard; project search paths; Pack and Go |
 | Bringing old work | open / import STEP, IGES, SAT, DWG, Inventor files of other versions; AnyCAD references | export STL / STEP AP242 / GLB / flat DXF; **no import of any format** | **STEP import is the migration blocker** (an Inventor user cannot bring existing parts) |
 | Sketch | 2D + 3D sketch, Ellipse, Text, Insert Image / Points (Excel), sketch blocks | 2D complete and the most mature area; Ellipse and Text are disabled in the ribbon; 3D sketch ⬜ (1.10); blocks / images ⬜ (1.11) | 3D sketch (also needed by sweeps along 3D paths, Frame Generator, Tube & Pipe); Ellipse; Text (Emboss depends on it) |
-| Feature commands in the view | mini-toolbar next to the cursor (OK / Apply / Cancel, the main option, the value box); radial marking menu on right click; double-click a dimension in the view | value boxes and manipulators in the view, Show Dimensions (`gui/show_dims.rs`), list context menus (rule 17), Repeat | **no mini-toolbar, no marking menu**: every command sends the eye to the Properties panel; an Inventor user expects to stay in the view |
+| Feature commands in the view | mini-toolbar next to the cursor (OK / Apply / Cancel, the main option, the value box); radial marking menu on right click; double-click a dimension in the view | value boxes and manipulators in the view, Show Dimensions (`gui/show_dims.rs`), list context menus (rule 17), Repeat, a small toolbar next to a selected face / edge (New Sketch, Fillet, Chamfer, Edit Feature, Look At) | **no mini-toolbar inside a running command, no marking menu**: OK / Apply / Cancel and the options are only in Properties; an Inventor user expects to stay in the view |
 | Part modelling | Extrude … Thread, Emboss / Decal, Derive, iFeatures, iParts / iAssemblies, model states, Freeform, Direct Edit, plastic part | the core features and surfaces exist (🟡); Emboss / Decal ⬜ (2.17), Derive / iParts / iFeatures ⬜ (5.7), Freeform / Direct ⬜ (5.5), Plastic ⬜ (5.8) | Emboss (needs sketch Text), Derive (part into part — also the base of top-down), model states |
 | Assemblies | Place / Constrain / Joint, drag with Contact Solver, Drive, Content Center fasteners, Bolted Connection, representations (view / positional / LOD), model states, top-down (in-place, adaptive), Frame Generator | Place, Constrain, Joints, Drive (`gui/drive.rs`), Replace / Copy / Mirror, patterns, BOM, interference, subassemblies; Content Center 6 %, Design tab 24 commands panel-only, top-down 8 %, representations ⬜ (3.9), contact ⬜ (3.4) | **standard parts (screws, nuts, washers) are daily use** — Content Center + Bolted Connection; representations; contact dragging |
 | Drawings | template with styles / title block; Base / Projected / Section / Detail; Retrieve Dimensions; hole / revision / parts tables; Update; DWG/PDF | views, sections, details, dimensions, tables, balloons, PDF; styles 1 % ✅, `4-drawings` 42 ⬜; Define Border / Title Block / Symbol, Update All, Replace Model are panels only | the drawing **template** (own title block, styles saved as a standard) and DWG / DXF of a sheet |
@@ -42,14 +42,14 @@ assembly tab froze the app ~0.8 s each time (every linked part was rebuilt).
 
 Still open:
 
-1. **Hover text shows internal names** (`Edge E[Extrusion1:End|Extrusion2:Side:1v1:0] · L 36.00 mm`):
-   useful to us, noise to a user; Inventor shows no such text. Make it a debug option, keep the length.
-2. **A view tooltip is drawn over modal windows** (Select Other's "1 / 2 Face …" over the Open dialog
-   when the cursor rested on the model).
-3. **Constrain is folded at 1400 px in the sketch** — the panel a sketch user needs most. The Demo panel
-   (developer content) takes ~90 px of that row; hide it outside a debug build or move it to Help.
-4. Truncated labels at the default width: `Axis ...` in the sketch's Coordinate System, the status-bar
-   navigation hint (`Shift+Middle / F4: or…`).
+1. ✅ (later the same day) Hover text and Select Other show *kind · feature · body*; the persistent names
+   (`Edge E[Extrusion1:End|…]`) only with Application Options → Display → *Internal names in hover text*.
+2. ✅ Select Other closes when a window opens over the view (it stayed on top of the Open dialog).
+3. **Constrain is folded at 1400 px in the sketch**: open it is ~250 px and does not fit even with every
+   other panel folded (panels now open by importance, so it is the first to open on a wider window).
+   Narrower: Dimension as a small button, or the constraint glyphs in two rows instead of three.
+4. ✅ `Axis edge` in the sketch's Coordinate System (the grid uses the shared label column). Still cut:
+   the status-bar navigation hint (`Shift+Middle / F4: or…`).
 5. Saving while Edit Feature is open writes the rolled-back body into the file (it is rebuilt on open,
    so nothing is lost, but the file is not what the user sees after OK).
 6. In an assembly the frame cost shown right after opening was 55 ms; not reproduced as slow frames in
