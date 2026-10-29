@@ -160,6 +160,8 @@ pub enum AppCmd {
     ZoomAll,
     /// Inspect → Measure (M): the Measure window.
     Measure,
+    /// Tools → Customize: the user's keys (Keyboard tab).
+    Customize,
 }
 
 /// One command of the registry.
@@ -322,7 +324,10 @@ impl Command {
                 && (self.id.starts_with("view.")
                     || self.id.starts_with("help.")
                     || (self.id.starts_with("file.") && !self.id.starts_with("file.export"))
-                    || matches!(self.id, "tools.undo" | "tools.redo" | "tools.options")))
+                    || matches!(
+                        self.id,
+                        "tools.undo" | "tools.redo" | "tools.options" | "tools.customize"
+                    )))
     }
 
     /// Why it cannot run in `env` (for grey items and red alias text), or
@@ -1489,9 +1494,11 @@ pub static COMMANDS: &[Command] = &[
         .env(PART)
         .todo("0.6"),
     c("tools.customize", "Customize", "Персонализиране", Icon::Customize)
+        .run(Action::App(AppCmd::Customize))
         .alias(&["CUS"])
         .at(&[T_OPTIONS])
-        .todo("0.11"),
+        .tip("Your own aliases and shortcuts for every command (Keyboard)")
+        .spec("0.15-context-menus-shortcuts.md"),
     c("env.studio", "Inventor Studio", "Рендиране (Studio)", Icon::Studio)
         .short("Studio")
         .alias(&["STU"])
@@ -2652,6 +2659,12 @@ pub struct AliasMatch {
 /// Matches the alias buffer `buf` (case-insensitive) against the runnable
 /// commands of `env`.
 pub fn alias_match(buf: &str, env: Env) -> AliasMatch {
+    alias_match_in(buf, env, &super::keymap::Keymap::default())
+}
+
+/// [`alias_match`] with the user's aliases (`keymap`) in place of the
+/// defaults of the commands they change.
+pub fn alias_match_in(buf: &str, env: Env, keymap: &super::keymap::Keymap) -> AliasMatch {
     let b = buf.to_ascii_uppercase();
     let mut m = AliasMatch::default();
     for c in COMMANDS
@@ -2659,7 +2672,7 @@ pub fn alias_match(buf: &str, env: Env) -> AliasMatch {
         .filter(|c| c.ready() && !c.held && c.valid_in(env))
     {
         let mut longer = false;
-        for a in c.aliases {
+        for a in keymap.aliases_of(c) {
             let a = a.to_ascii_uppercase();
             if a == b {
                 m.exact.get_or_insert(c);

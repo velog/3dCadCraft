@@ -393,7 +393,6 @@ pub(super) enum Size {
 /// command registry (`commands.rs`); this module only lays them out.
 struct Cmd {
     /// Registry id (empty for a split button's header).
-    #[cfg_attr(not(test), allow(dead_code))]
     id: &'static str,
     label: &'static str,
     icon: Icon,
@@ -405,7 +404,6 @@ struct Cmd {
 
 /// A variant of a split button.
 struct Item {
-    #[cfg_attr(not(test), allow(dead_code))]
     id: &'static str,
     label: &'static str,
     icon: Icon,
@@ -1717,7 +1715,13 @@ pub(super) fn icon_button(
 
 fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
     let active = st.tool;
-    let key = cmd.key.map(|k| format!(" ({k})")).unwrap_or_default();
+    // The user's key (Customize) replaces the default one in the tooltip.
+    let key = match super::keymap::tip_keys(ui.ctx(), cmd.id) {
+        Some(user) => user,
+        None => cmd.key.map(str::to_owned),
+    }
+    .map(|k| format!(" ({k})"))
+    .unwrap_or_default();
     // Mini buttons carry their name in the tooltip.
     let name = |rest: &str| {
         if cmd.size == Size::Mini {
@@ -1746,6 +1750,8 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
             };
             let r = icon_button(ui, cmd.icon, cmd.label, cmd.size, true, selected, false)
                 .on_hover_text(name(&format!("{help}{key}")));
+            // Right click: Assign Shortcut and the other key items.
+            super::keymap::button_menu(&r, cmd.id);
             r.clicked().then_some(*action)
         }
         Kind::Menu(items) => {
@@ -1762,10 +1768,10 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
             let mut picked = None;
             egui::Popup::menu(&r).show(|ui| {
                 for Item {
+                    id,
                     label,
                     icon,
                     action,
-                    ..
                 } in items
                 {
                     // User Interface toggles show as pressed while visible.
@@ -1777,7 +1783,9 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                         Action::Ui(UiCmd::ObjVis(k)) => st.obj_vis.get(*k),
                         _ => false,
                     };
-                    if icon_button(ui, *icon, label, Size::Small, true, on, false).clicked() {
+                    let b = icon_button(ui, *icon, label, Size::Small, true, on, false);
+                    super::keymap::button_menu(&b, id);
+                    if b.clicked() {
                         picked = Some(*action);
                         ui.close();
                     }

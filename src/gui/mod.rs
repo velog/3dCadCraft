@@ -78,6 +78,7 @@ mod icons;
 mod if_builder;
 mod interference;
 mod iprops;
+mod keymap;
 mod keys;
 mod layout;
 mod loft;
@@ -562,6 +563,12 @@ struct CadCraftApp {
     alias: alias_input::AliasInput,
     /// Letters of a multi-letter alias typed with the field off.
     alias_buf: alias_input::AliasBuffer,
+    /// The user's aliases and keys (Tools → Customize → Keyboard).
+    keymap: keymap::Keymap,
+    /// The Customize window.
+    customize: keymap::CustomizeUi,
+    /// The ribbon's tooltip keys must be rebuilt from `keymap`.
+    keymap_tips_dirty: bool,
     /// View → Object Visibility (persisted with the Application Options).
     obj_vis: layout::ObjectVisibility,
 
@@ -925,6 +932,9 @@ impl CadCraftApp {
             alias_input: false,
             alias: Default::default(),
             alias_buf: Default::default(),
+            keymap: Default::default(),
+            customize: Default::default(),
+            keymap_tips_dirty: true,
             obj_vis: Default::default(),
             camera: OrbitCamera::default(),
             renderer: cc.wgpu_render_state.as_ref().map(ViewportRenderer::new),
@@ -4176,6 +4186,7 @@ impl CadCraftApp {
             }
             AppCmd::ZoomAll => self.fit_view(),
             AppCmd::Measure => self.toggle_measure(),
+            AppCmd::Customize => self.customize.open = true,
         }
     }
 
@@ -4818,10 +4829,18 @@ impl CadCraftApp {
             self.measure_pick = None;
             return;
         }
+        // Customize waits for a key: it takes it (`customize_window`).
+        if self.customize.capturing() {
+            return;
+        }
         // Alt+S: the command search, also from a text field or a command.
         self.search_shortcut(ctx);
         if ctx.egui_wants_keyboard_input() || self.file_window_open() {
             return; // typing into a text field
+        }
+        // The user's own key combinations come before the built-in keys.
+        if !self.home.shown && self.user_key_shortcuts(ctx) {
+            return;
         }
         // A view sketch of a drawing takes the keys (its tools' letters).
         if self.is_drawing() && self.view_sketch_keys(ctx) {
@@ -7804,6 +7823,8 @@ impl eframe::App for CadCraftApp {
             self.pattern_preview_poll();
         }
         self.offset_window(&ctx);
+        self.keymap_frame(&ctx);
+        self.customize_window(&ctx);
         self.dimension_windows(&ctx);
         self.layout_end(&ctx);
         self.diag_frame(&ctx);

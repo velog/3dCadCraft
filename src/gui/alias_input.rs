@@ -48,7 +48,7 @@ const ALIAS_CLEAR: f64 = 2.0;
 
 impl CadCraftApp {
     /// The command environment for aliases.
-    fn alias_env(&self) -> commands::Env {
+    pub(super) fn alias_env(&self) -> commands::Env {
         if self.is_drawing() {
             commands::Env::Drawing
         } else if self.is_assembly() {
@@ -74,7 +74,7 @@ impl CadCraftApp {
         let now = ctx.input(|i| i.time);
         if !self.alias_buf.text.is_empty() {
             let idle = now - self.alias_buf.last;
-            let m = commands::alias_match(&self.alias_buf.text, env);
+            let m = commands::alias_match_in(&self.alias_buf.text, env, &self.keymap);
             if idle > ALIAS_WAIT
                 && let Some(c) = m.exact
             {
@@ -102,9 +102,30 @@ impl CadCraftApp {
             .flatten();
         if let Some(t) = typed {
             let cand = format!("{}{t}", self.alias_buf.text);
-            let m = commands::alias_match(&cand, env);
+            let m = commands::alias_match_in(&cand, env, &self.keymap);
             if self.alias_buf.text.is_empty() && m.longer == 0 {
-                return false; // a single-letter shortcut, as before
+                // A single letter the user gave a command (Customize) starts
+                // it; one they took away from its default command does
+                // nothing; the others are the built-in single-letter keys.
+                let user = m.exact.filter(|c| self.keymap.aliases.contains_key(c.id));
+                let removed = m.exact.is_none()
+                    && commands::alias_match(&cand, env)
+                        .exact
+                        .is_some_and(|c| self.keymap.aliases.contains_key(c.id));
+                if user.is_none() && !removed {
+                    return false; // a single-letter shortcut, as before
+                }
+                ctx.input_mut(|i| {
+                    i.events.retain(|e| {
+                        !matches!(e, egui::Event::Text(_))
+                            && !matches!(e, egui::Event::Key { key, pressed: true, .. }
+                                if key.name().len() == 1 && key.name().chars().all(|c| c.is_ascii_alphabetic()))
+                    })
+                });
+                if let Some(c) = user {
+                    self.start_command(c);
+                }
+                return true;
             }
             // The letters belong to the buffer, not to the single-letter keys.
             ctx.input_mut(|i| {
@@ -148,7 +169,7 @@ impl CadCraftApp {
             return true;
         }
         if enter {
-            let m = commands::alias_match(&self.alias_buf.text, env);
+            let m = commands::alias_match_in(&self.alias_buf.text, env, &self.keymap);
             self.alias_buf = AliasBuffer::default();
             if let Some(c) = m.exact.or(m.first_longer) {
                 self.start_command(c);
@@ -163,7 +184,7 @@ impl CadCraftApp {
         if self.alias_buf.text.is_empty() {
             return;
         }
-        let m = commands::alias_match(&self.alias_buf.text, self.alias_env());
+        let m = commands::alias_match_in(&self.alias_buf.text, self.alias_env(), &self.keymap);
         let bg = super::i18n::bulgarian();
         let name = |c: &Command| if bg { c.bg } else { c.name };
         match m.exact.or(m.first_longer) {

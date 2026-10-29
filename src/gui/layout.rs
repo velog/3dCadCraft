@@ -221,6 +221,8 @@ pub struct AppOptions {
     pub show_labels: bool,
     /// Cosmetic threads drawn as a texture on their faces.
     pub thread_texture: bool,
+    /// The user's aliases and keys (Tools → Customize → Keyboard).
+    pub keymap: super::keymap::Keymap,
     /// The hover text names faces and edges by their persistent names
     /// (`Extrusion1:End`), for debugging; off: kind, feature and body.
     pub internal_names: bool,
@@ -279,6 +281,7 @@ impl Default for AppOptions {
             show_labels: true,
             thread_texture: true,
             internal_names: false,
+            keymap: Default::default(),
             alias_input: false,
             param_font: 1.0,
             param_cols: [80.0, 150.0, 120.0],
@@ -885,6 +888,7 @@ impl CadCraftApp {
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
             internal_names: self.internal_names,
+            keymap: self.keymap.clone(),
             alias_input: self.alias_input,
             param_font: self.param_font,
             param_cols: self.param_cols,
@@ -915,6 +919,10 @@ impl CadCraftApp {
             self.scene_dirty = true;
         }
         self.internal_names = o.internal_names;
+        if self.keymap != o.keymap {
+            self.keymap = o.keymap;
+            self.keymap_tips_dirty = true;
+        }
         self.alias_input = o.alias_input;
         self.param_font = o.param_font.clamp(0.7, 2.5);
         self.param_cols = o.param_cols.map(|w| w.clamp(40.0, 600.0));

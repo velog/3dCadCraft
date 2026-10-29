@@ -84,7 +84,7 @@ There are selectable **mouse profiles** (**Tools → Application Options → Nav
 
 ## 3. Keyboard shortcuts
 
-By default they are **as in Inventor**. Today they are **hard-coded**; remapping and a key file (`keymap.toml`) ⬜. The full table (with the contexts) is in [REFERENCE.md §5](REFERENCE.md#5-keyboard-shortcuts). Each key has its status in 3DCadCraft:
+By default they are **as in Inventor**. Your own keys: **Tools → Customize → Keyboard** (every command with its aliases and shortcut; click a shortcut and press the keys, type aliases separated by commas; Reset / Reset All; Copy to Clipboard / Import as JSON), or **right-click any ribbon button** → *Assign Shortcut…*, *Change Alias…*, *Remove Shortcut*, *Remove Alias*, *Reset to Default* (as in Blender). They are kept in `settings.json` → `options.keymap` (only what you changed) and win over the built-in keys. The full table (with the contexts) is in [REFERENCE.md §5](REFERENCE.md#5-keyboard-shortcuts). Each key has its status in 3DCadCraft:
 
 | Key | Action | Status |
 |---|---|---|
