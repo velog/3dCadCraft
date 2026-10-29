@@ -2051,6 +2051,45 @@ pub static COMMANDS: &[Command] = &[
     ap("design.insert_frame", "Insert Frame", "Вмъкване на рамка", Icon::InsertFrame, Ap::InsertFrame)
         .alias(&["IFR"])
         .at(&[X_FRAME]),
+    ap("design.frame_change", "Change", "Промяна на профил", Icon::FrameChange, Ap::FrameChange)
+        .alias(&["FCH"])
+        .at(&[X_FRAME]),
+    ap("design.end_cap", "Insert End Cap", "Тапа на профил", Icon::EndCap, Ap::EndCap)
+        .alias(&["FEC"])
+        .at(&[X_FRAME]),
+    ap("design.miter", "Miter", "Срязване под ъгъл", Icon::Miter, Ap::Miter)
+        .alias(&["FMI"])
+        .at(&[X_FRAME]),
+    ap("design.corner_joint", "Corner Joint", "Ъглова връзка", Icon::CornerJoint, Ap::CornerJoint)
+        .alias(&["FCJ"])
+        .at(&[X_FRAME]),
+    ap("design.trim_extend", "Trim/Extend", "Подрязване/удължаване до лице", Icon::TrimExtend, Ap::TrimExtend)
+        .alias(&["FTE"])
+        .at(&[X_FRAME]),
+    ap("design.notch", "Notch", "Изрязване по профил", Icon::Notch, Ap::Notch)
+        .alias(&["FNO"])
+        .at(&[X_FRAME]),
+    ap("design.lengthen_shorten", "Lengthen/Shorten", "Удължаване/скъсяване", Icon::LengthenShorten, Ap::LengthenShorten)
+        .alias(&["FLS"])
+        .at(&[X_FRAME]),
+    ap("design.remove_end_treatments", "Remove End Treatments", "Премахване на обработки на краищата", Icon::RemoveEndTreatments, Ap::RemoveEndTreatments)
+        .alias(&["FRE"])
+        .at(&[X_FRAME]),
+    ap("design.frame_reuse", "Reuse", "Повторно използване", Icon::FrameReuse, Ap::Reuse)
+        .alias(&["FRU"])
+        .at(&[X_FRAME]),
+    ap("design.change_reuse", "Change Reuse", "Промяна на повторно използване", Icon::ChangeReuse, Ap::ChangeReuse)
+        .alias(&["FCR"])
+        .at(&[X_FRAME]),
+    ap("design.frame_info", "Frame Member Info", "Данни за профила", Icon::FrameInfo, Ap::FrameMemberInfo)
+        .alias(&["FMN"])
+        .at(&[X_FRAME]),
+    ap("design.frame_refresh", "Refresh", "Обновяване на профилите", Icon::FrameRefresh, Ap::FrameRefresh)
+        .alias(&["FRF"])
+        .at(&[X_FRAME]),
+    ap("design.beam_column", "Beam and Column Calculator", "Изчисление на греда и колона", Icon::BeamColumn, Ap::BeamColumn)
+        .alias(&["BCC"])
+        .at(&[X_FRAME]),
     ap("design.shaft", "Shaft", "Вал", Icon::Shaft, Ap::Shaft)
         .alias(&["SHF"])
         .at(&[X_POWER]),

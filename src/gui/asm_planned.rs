@@ -31,6 +31,26 @@ const CYLINDER: &[PickKind] = &[PickKind::Face];
 /// A face or edge of a feature (its feature pattern).
 const FEATURE_FACE: &[PickKind] = &[PickKind::Face, PickKind::Edge];
 const POINT: &[PickKind] = &[PickKind::Point];
+/// A frame member (a component of the frame).
+const MEMBERS: &[PickKind] = &[PickKind::Body];
+/// Skeleton geometry: model edges and sketch curves.
+const SKELETON: &[PickKind] = &[
+    PickKind::Edge,
+    PickKind::StraightEdge,
+    PickKind::SketchCurve,
+];
+/// What a member's orientation can follow.
+const ALIGN: &[PickKind] = &[
+    PickKind::StraightEdge,
+    PickKind::PlanarFace,
+    PickKind::Axis,
+    PickKind::Plane,
+    PickKind::SketchCurve,
+];
+/// The end face of a member.
+const END_FACE: &[PickKind] = &[PickKind::PlanarFace];
+/// A face trimming members (planar or curved).
+const TOOL_FACE: &[PickKind] = &[PickKind::Face, PickKind::PlanarFace];
 const GEOMETRY: &[PickKind] = &[
     PickKind::Face,
     PickKind::PlanarFace,
@@ -72,6 +92,19 @@ pub enum AsmPlanned {
     RadialPin,
     // Design › Frame
     InsertFrame,
+    FrameChange,
+    EndCap,
+    Miter,
+    CornerJoint,
+    TrimExtend,
+    Notch,
+    LengthenShorten,
+    RemoveEndTreatments,
+    Reuse,
+    ChangeReuse,
+    FrameMemberInfo,
+    FrameRefresh,
+    BeamColumn,
     // Design › Power Transmission
     Shaft,
     SpurGear,
@@ -97,7 +130,7 @@ pub enum AsmPlanned {
 
 impl AsmPlanned {
     #[cfg(test)]
-    pub const ALL: [AsmPlanned; 37] = {
+    pub const ALL: [AsmPlanned; 50] = {
         use AsmPlanned::*;
         [
             PlaceContentCenter,
@@ -118,6 +151,19 @@ impl AsmPlanned {
             SecurePin,
             RadialPin,
             InsertFrame,
+            FrameChange,
+            EndCap,
+            Miter,
+            CornerJoint,
+            TrimExtend,
+            Notch,
+            LengthenShorten,
+            RemoveEndTreatments,
+            Reuse,
+            ChangeReuse,
+            FrameMemberInfo,
+            FrameRefresh,
+            BeamColumn,
             Shaft,
             SpurGear,
             WormGear,
@@ -162,6 +208,19 @@ impl AsmPlanned {
             SecurePin => "Secure Pin",
             RadialPin => "Radial Pin",
             InsertFrame => "Insert Frame",
+            FrameChange => "Change",
+            EndCap => "Insert End Cap",
+            Miter => "Miter",
+            CornerJoint => "Corner Joint",
+            TrimExtend => "Trim/Extend To Face",
+            Notch => "Notch",
+            LengthenShorten => "Lengthen/Shorten Frame Member",
+            RemoveEndTreatments => "Remove End Treatments",
+            Reuse => "Reuse",
+            ChangeReuse => "Change Reuse",
+            FrameMemberInfo => "Frame Member Info",
+            FrameRefresh => "Refresh",
+            BeamColumn => "Beam and Column Calculator",
             Shaft => "Shaft",
             SpurGear => "Spur Gears",
             WormGear => "Worm Gear",
@@ -206,6 +265,19 @@ impl AsmPlanned {
             SecurePin => Icon::SecurePin,
             RadialPin => Icon::RadialPin,
             InsertFrame => Icon::InsertFrame,
+            FrameChange => Icon::FrameChange,
+            EndCap => Icon::EndCap,
+            Miter => Icon::Miter,
+            CornerJoint => Icon::CornerJoint,
+            TrimExtend => Icon::TrimExtend,
+            Notch => Icon::Notch,
+            LengthenShorten => Icon::LengthenShorten,
+            RemoveEndTreatments => Icon::RemoveEndTreatments,
+            Reuse => Icon::FrameReuse,
+            ChangeReuse => Icon::ChangeReuse,
+            FrameMemberInfo => Icon::FrameInfo,
+            FrameRefresh => Icon::FrameRefresh,
+            BeamColumn => Icon::BeamColumn,
             Shaft => Icon::Shaft,
             SpurGear => Icon::SpurGear,
             WormGear => Icon::WormGear,
@@ -241,7 +313,9 @@ impl AsmPlanned {
             Assemble => "3.2",
             Interference => "3.5",
             CreateIAssembly => "5.7",
-            InsertFrame => "6.1",
+            InsertFrame | FrameChange | EndCap | Miter | CornerJoint | TrimExtend | Notch
+            | LengthenShorten | RemoveEndTreatments | Reuse | ChangeReuse | FrameMemberInfo
+            | FrameRefresh => "6.1",
             _ => "6.2",
         }
     }
@@ -278,6 +352,23 @@ impl AsmPlanned {
             BoltedConnection => "A bolt, washers and a nut through holes drilled in the plates.",
             ClevisPin | SecurePin | RadialPin => "A pin from the library with its hole.",
             InsertFrame => "Frame members along sketch lines or edges of a skeleton.",
+            FrameChange => {
+                "Changes the section, size, material or orientation of placed frame members."
+            }
+            EndCap => "A cap plate closing the end of a tube or beam member.",
+            Miter => "Mitre cuts where two frame members meet.",
+            CornerJoint => "Trims or extends two members to each other at a corner.",
+            TrimExtend => "Trims or extends frame members to a model face.",
+            Notch => "Cuts a member to the shape of the member it meets.",
+            LengthenShorten => "Makes frame members longer or shorter at one or both ends.",
+            RemoveEndTreatments => "Returns frame members to their inserted state without cuts.",
+            Reuse => "Places the same member part on further skeleton lines of the same length.",
+            ChangeReuse => "Changes the lines or placement of reused frame members.",
+            FrameMemberInfo => "Section and physical properties of a frame member.",
+            FrameRefresh => "Updates frame members after their library family changed.",
+            BeamColumn => {
+                "Checks a frame member as a beam (bending, deflection) or a column (buckling)."
+            }
             Shaft => "A shaft from sections with chamfers, fillets, grooves, keyways and threads.",
             SpurGear | WormGear | BevelGear => {
                 "A gear pair from module, number of teeth and pressure angle."
@@ -840,28 +931,73 @@ impl AsmPlanned {
             InsertFrame => &[Page(
                 "Insert",
                 &[
-                    Head("Frame Member Selection"),
-                    Combo("Standard", &["ISO", "DIN", "ANSI"], 0),
+                    Head("Input Geometry"),
+                    Radio(
+                        "Placement",
+                        &["Insert Members on Edges", "Between Points"],
+                        0,
+                    ),
+                    Sel(
+                        "edges",
+                        "Edges / Lines",
+                        "select skeleton edges or sketch lines (a window selects many)",
+                        SKELETON,
+                    ),
+                    Sel(
+                        "points",
+                        "Start / End Point",
+                        "select the start point and the end point (Between Points)",
+                        POINT,
+                    ),
+                    Button("Flip Direction"),
+                    Button("Copy Properties"),
+                    Head("Frame Member"),
+                    Combo("Category", &["Structural Shapes"], 0),
+                    Button("Refresh Categories"),
+                    Combo("Standard", &["EN", "ISO", "DIN", "ANSI"], 0),
                     Combo(
                         "Family",
                         &[
-                            "ISO 657/1 Angle",
-                            "ISO 4019 Square tube",
-                            "DIN 1026 U-profile",
+                            "Angle (EN 10056-1)",
+                            "Channel UPN (EN 10279)",
+                            "IPE beam (EN 10365)",
+                            "HEA beam (EN 10365)",
+                            "HEB beam (EN 10365)",
+                            "Square hollow section (EN 10219)",
+                            "Rectangular hollow section (EN 10219)",
+                            "Circular hollow section (EN 10219)",
+                            "Flat bar (EN 10058)",
+                            "Round bar (EN 10060)",
+                        ],
+                        5,
+                    ),
+                    Combo(
+                        "Size",
+                        &["30x30x3", "40x40x3", "40x40x4", "50x50x4", "60x60x5"],
+                        1,
+                    ),
+                    Combo(
+                        "Material",
+                        &[
+                            "Steel S235",
+                            "Steel S355",
+                            "Stainless steel 1.4301",
+                            "Aluminium 6060",
                         ],
                         0,
                     ),
-                    Combo("Size", &["20x20x3", "30x30x3", "40x40x4"], 0),
-                    Combo("Material", &["Steel", "Aluminium 6061"], 0),
-                    Combo("Appearance", &["As Material"], 0),
+                    Combo(
+                        "Appearance",
+                        &["As Material", "Steel - galvanised", "Paint - red"],
+                        0,
+                    ),
+                    Check("Merge Frame Members", false),
                     Head("Orientation"),
-                    Num("Horizontal Offset", 0.0, " mm"),
-                    Num("Vertical Offset", 0.0, " mm"),
-                    Num("Rotation", 0.0, "°"),
                     Combo(
                         "Anchor",
                         &[
-                            "Centre",
+                            "Center",
+                            "Centroid",
                             "Top Left",
                             "Top",
                             "Top Right",
@@ -873,17 +1009,421 @@ impl AsmPlanned {
                         ],
                         0,
                     ),
-                    Head("Placement"),
-                    Radio("Method", &["Map Geometry", "Two Points"], 0),
+                    Num("Horizontal Offset", 0.0, " mm"),
+                    Num("Vertical Offset", 0.0, " mm"),
+                    Num("Rotation Angle", 0.0, "°"),
+                    Check("Rotate Around Selected Point", false),
+                    Check("Mirror", false),
+                    Sel(
+                        "align",
+                        "Align",
+                        "select an edge, face, axis, plane or sketch line the member follows (optional)",
+                        ALIGN,
+                    ),
+                    Head("View"),
+                    Button("Look At Manipulator"),
+                    Button("Zoom to Manipulator"),
+                    Button("Initial View"),
+                    Head("Advanced Settings"),
+                    Check("Apply Appearance to Part", false),
+                    Note(
+                        "The first Apply asks for the frame's file names (Create New Frame) and each member's (Frame Member Naming).",
+                    ),
+                ],
+            )],
+            FrameChange => &[Page(
+                "Change",
+                &[
+                    Sel(
+                        "members",
+                        "Frame Members",
+                        "select the frame members to change",
+                        MEMBERS,
+                    ),
+                    Button("Flip Direction"),
+                    Button("Copy Properties"),
+                    Head("Frame Member"),
+                    Combo("Category", &["Structural Shapes"], 0),
+                    Button("Refresh Categories"),
+                    Combo("Standard", &["EN", "ISO", "DIN", "ANSI"], 0),
+                    Combo(
+                        "Family",
+                        &[
+                            "Angle (EN 10056-1)",
+                            "Channel UPN (EN 10279)",
+                            "IPE beam (EN 10365)",
+                            "HEA beam (EN 10365)",
+                            "HEB beam (EN 10365)",
+                            "Square hollow section (EN 10219)",
+                            "Rectangular hollow section (EN 10219)",
+                            "Circular hollow section (EN 10219)",
+                            "Flat bar (EN 10058)",
+                            "Round bar (EN 10060)",
+                        ],
+                        5,
+                    ),
+                    Combo(
+                        "Size",
+                        &["30x30x3", "40x40x3", "40x40x4", "50x50x4", "60x60x5"],
+                        1,
+                    ),
+                    Combo(
+                        "Material",
+                        &[
+                            "Steel S235",
+                            "Steel S355",
+                            "Stainless steel 1.4301",
+                            "Aluminium 6060",
+                        ],
+                        0,
+                    ),
+                    Combo(
+                        "Appearance",
+                        &["As Material", "Steel - galvanised", "Paint - red"],
+                        0,
+                    ),
+                    Head("Orientation"),
+                    Combo(
+                        "Anchor",
+                        &[
+                            "Center",
+                            "Centroid",
+                            "Top Left",
+                            "Top",
+                            "Top Right",
+                            "Left",
+                            "Right",
+                            "Bottom Left",
+                            "Bottom",
+                            "Bottom Right",
+                        ],
+                        0,
+                    ),
+                    Num("Horizontal Offset", 0.0, " mm"),
+                    Num("Vertical Offset", 0.0, " mm"),
+                    Num("Rotation Angle", 0.0, "°"),
+                    Check("Rotate Around Selected Point", false),
+                    Check("Mirror", false),
+                    Sel(
+                        "align",
+                        "Align",
+                        "select an edge, face, axis, plane or sketch line the member follows (optional)",
+                        ALIGN,
+                    ),
+                    Head("View"),
+                    Button("Look At Manipulator"),
+                    Button("Zoom to Manipulator"),
+                    Button("Initial View"),
+                    Head("Advanced Settings"),
+                    Check("Apply Appearance to Part", false),
+                    Note("End treatments of the changed members are kept and solved again."),
+                ],
+            )],
+            EndCap => &[Page(
+                "End Cap",
+                &[
+                    Sel(
+                        "faces",
+                        "Member End Faces",
+                        "select the end faces of the frame members to cap",
+                        END_FACE,
+                    ),
+                    Head("Behavior"),
+                    Radio("Placement", &["Internal", "External"], 1),
+                    Radio(
+                        "Profile",
+                        &["Filleted Corners", "Chamfered Corners", "Sharp Corners"],
+                        0,
+                    ),
+                    Num("Thickness", 3.0, " mm"),
+                    Radio("Offset Type", &["Distance", "Ratio"], 0),
+                    Num("Edge Offset", 0.0, " mm"),
+                    Head("Orientation"),
+                    Num("Rotate", 0.0, "°"),
+                    Num("Offset", 0.0, " mm"),
+                    Head("Part Properties"),
+                    Combo(
+                        "Material",
+                        &[
+                            "Steel S235",
+                            "Steel S355",
+                            "Stainless steel 1.4301",
+                            "Aluminium 6060",
+                        ],
+                        0,
+                    ),
+                    Combo(
+                        "Appearance",
+                        &["As Material", "Steel - galvanised", "Paint - red"],
+                        0,
+                    ),
+                    Head("View"),
+                    Button("Look At Manipulator"),
+                    Button("Zoom to Manipulator"),
+                    Button("Initial View"),
+                ],
+            )],
+            Miter => &[Page(
+                "Miter",
+                &[
+                    Sel(
+                        "members",
+                        "Frame Members",
+                        "select the two members to mitre (or several, a cut at each meeting)",
+                        MEMBERS,
+                    ),
+                    Radio("Miter Type", &["Full Miter Cut", "Bisect Miter Cut"], 0),
+                    Num("Distance", 0.0, " mm"),
+                    Radio("Offset", &["Default", "Flipped", "Symmetric"], 0),
+                    Head("Advanced Settings"),
+                    Check("Delete existing end treatments", true),
+                ],
+            )],
+            CornerJoint => &[Page(
+                "Corner Joint",
+                &[
+                    Sel(
+                        "first",
+                        "First Member",
+                        "select the first member (yellow)",
+                        MEMBERS,
+                    ),
+                    Sel(
+                        "second",
+                        "Second Member",
+                        "select the member trimmed or extended to it (blue)",
+                        MEMBERS,
+                    ),
+                    Button("Flip Members"),
+                    Num("Offset1", 0.0, " mm"),
+                    Num("Offset2", 0.0, " mm"),
+                    Head("Advanced Settings"),
+                    Check("Delete existing end treatments", true),
+                ],
+            )],
+            TrimExtend => &[Page(
+                "Trim/Extend",
+                &[
+                    Sel(
+                        "face",
+                        "Face",
+                        "select the model face to trim or extend to (planar or curved)",
+                        TOOL_FACE,
+                    ),
+                    Sel(
+                        "members",
+                        "Frame Members",
+                        "select the members to trim or extend",
+                        MEMBERS,
+                    ),
+                    Button("Flip Face Normal"),
+                    Num("Offset", 0.0, " mm"),
+                    Check("Trim Selected Part", false),
+                    Head("Advanced Settings"),
+                    Check("Delete existing end treatments", true),
+                    Note(
+                        "The cut angles go into the member's custom properties CUTDETAIL1, CUTDETAIL2...",
+                    ),
+                ],
+            )],
+            Notch => &[Page(
+                "Notch",
+                &[
+                    Sel(
+                        "notched",
+                        "Notched Members",
+                        "select the members to notch",
+                        MEMBERS,
+                    ),
+                    Sel(
+                        "tools",
+                        "Notching Members",
+                        "select the members whose shape cuts the notch",
+                        MEMBERS,
+                    ),
+                    Radio(
+                        "Profile",
+                        &[
+                            "Basic Profile",
+                            "Custom I Template",
+                            "Custom C Template",
+                            "Custom T Template",
+                            "Custom Profile",
+                        ],
+                        0,
+                    ),
+                    Num("Offset", 0.0, " mm"),
+                    Num("Flange Offset", 0.0, " mm"),
+                    Num("Web Offset", 0.0, " mm"),
+                    Check("Extend Notch Profile", false),
+                    Check("Perpendicular Cut", false),
+                    Head("Advanced Settings"),
+                    Check("Delete existing end treatments", true),
+                ],
+            )],
+            LengthenShorten => &[Page(
+                "Lengthen/Shorten",
+                &[
+                    Sel(
+                        "members",
+                        "Frame Members",
+                        "select the members near the end to lengthen or shorten",
+                        MEMBERS,
+                    ),
+                    Radio(
+                        "Offset Type",
+                        &["Default", "Flipped", "Symmetric", "Asymmetric"],
+                        0,
+                    ),
+                    Num("Offset", 0.0, " mm"),
+                    Num("Offset 2", 0.0, " mm"),
+                    Note("A positive offset lengthens the member, a negative one shortens it."),
+                    Head("Advanced Settings"),
+                    Check("Delete existing end treatments", true),
+                ],
+            )],
+            RemoveEndTreatments => &[Page(
+                "Remove End Treatments",
+                &[
+                    Sel(
+                        "members",
+                        "Frame Members",
+                        "select the members to return to their inserted state",
+                        MEMBERS,
+                    ),
+                    Note(
+                        "Every mitre, corner joint, notch, trim and length change of the members is removed.",
+                    ),
+                ],
+            )],
+            Reuse => &[Page(
+                "Reuse",
+                &[
+                    Sel(
+                        "source",
+                        "Source Member",
+                        "select the member to reuse (a reused one finds its source)",
+                        MEMBERS,
+                    ),
                     Sel(
                         "edges",
                         "Edges / Lines",
-                        "select skeleton edges or sketch lines",
-                        EDGE,
+                        "select skeleton lines of the same length (a window selects many)",
+                        SKELETON,
                     ),
-                    Check("Merge", false),
+                    Button("Flip Direction"),
+                    Head("Advanced Settings"),
+                    Check("Apply Appearance to Part", false),
+                    Note(
+                        "Straight members only; end treatments of reused members are changed on the source.",
+                    ),
                 ],
             )],
+            ChangeReuse => &[Page(
+                "Change Reuse",
+                &[
+                    Sel(
+                        "members",
+                        "Reused Members",
+                        "select the reused members to change",
+                        MEMBERS,
+                    ),
+                    Sel(
+                        "edges",
+                        "Edges / Lines",
+                        "select the skeleton lines they move to",
+                        SKELETON,
+                    ),
+                    Button("Flip Direction"),
+                    Head("Advanced Settings"),
+                    Check("Apply Appearance to Part", false),
+                    Note("Straight members only."),
+                ],
+            )],
+            FrameMemberInfo => &[Page(
+                "Frame Member Info",
+                &[
+                    Sel("member", "Frame Member", "select a frame member", MEMBERS),
+                    Head("Member"),
+                    Text("Family", ""),
+                    Text("Size", ""),
+                    Text("Material", ""),
+                    Text("Length", ""),
+                    Text("Mass", ""),
+                    Head("Section"),
+                    Text("Area", ""),
+                    Text("Moment of Inertia Ix", ""),
+                    Text("Moment of Inertia Iy", ""),
+                    Text("Section Modulus Wx", ""),
+                    Text("Section Modulus Wy", ""),
+                    Text("Radius of Gyration rx", ""),
+                    Text("Radius of Gyration ry", ""),
+                    Text("Centroid", ""),
+                ],
+            )],
+            FrameRefresh => &[Page(
+                "Refresh",
+                &[
+                    Sel(
+                        "members",
+                        "Frame Members",
+                        "select the members to update (none = every member of the frame)",
+                        MEMBERS,
+                    ),
+                    Note(
+                        "Members whose family table or template changed in the library are rebuilt; a size no longer in the library keeps its data.",
+                    ),
+                ],
+            )],
+            BeamColumn => &[
+                Page(
+                    "Model",
+                    &[
+                        Sel(
+                            "member",
+                            "Frame Member",
+                            "select the member to check",
+                            MEMBERS,
+                        ),
+                        Num("Beam Length", 1000.0, " mm"),
+                        Combo(
+                            "Material",
+                            &[
+                                "Steel S235",
+                                "Steel S355",
+                                "Stainless steel 1.4301",
+                                "Aluminium 6060",
+                            ],
+                            0,
+                        ),
+                        Head("Supports"),
+                        Combo("Support A", &["Fixed", "Pinned", "Free"], 1),
+                        Combo("Support B", &["Fixed", "Pinned", "Free"], 1),
+                    ],
+                ),
+                Page(
+                    "Loads",
+                    &[
+                        Combo(
+                            "Load",
+                            &["Force", "Continuous Load", "Bending Moment", "Axial Force"],
+                            0,
+                        ),
+                        Num("Force", 1000.0, " N"),
+                        Num("Position", 500.0, " mm"),
+                        Num("Angle", 270.0, "°"),
+                    ],
+                ),
+                Page(
+                    "Calculation",
+                    &[
+                        Radio("Calculation", &["Beam", "Column", "Beam and Column"], 0),
+                        Num("Safety Factor", 1.5, ""),
+                        Check("Include Own Weight", true),
+                        Button("Calculate"),
+                    ],
+                ),
+            ],
             Shaft => &[
                 Page(
                     "Design",

@@ -775,7 +775,30 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                     c("design.radial_pin"),
                 ],
             ),
-            panel("Frame", vec![c("design.insert_frame").large()]),
+            panel(
+                "Frame",
+                vec![
+                    c("design.insert_frame").large(),
+                    c("design.end_cap"),
+                    c("design.frame_change"),
+                    c("design.frame_info"),
+                    c("design.miter"),
+                    c("design.notch"),
+                    c("design.corner_joint"),
+                    c("design.trim_extend"),
+                    c("design.lengthen_shorten"),
+                    split(
+                        "Reuse",
+                        items(&[
+                            "design.frame_reuse",
+                            "design.change_reuse",
+                            "design.remove_end_treatments",
+                            "design.frame_refresh",
+                        ]),
+                    ),
+                    c("design.beam_column").large(),
+                ],
+            ),
             panel(
                 "Power Transmission",
                 vec![
@@ -1787,8 +1810,19 @@ fn command_button(ui: &mut egui::Ui, cmd: &Cmd, st: &State) -> Option<Action> {
                 Some(i) if cmd.size != Size::Large => format!("{}: {}", cmd.label, i.label),
                 _ => cmd.label.to_owned(),
             };
-            let r = icon_button(ui, icon, &title, cmd.size, true, current.is_some(), true)
-                .on_hover_text(name("Click for the variants"));
+            // Grey when none of its variants has logic yet (rule 18).
+            let grey = items.iter().all(|i| commands::interface_only(i.action));
+            let r = icon_button_in(
+                ui,
+                icon,
+                &title,
+                cmd.size,
+                true,
+                grey,
+                current.is_some(),
+                true,
+            )
+            .on_hover_text(name("Click for the variants"));
             let mut picked = None;
             egui::Popup::menu(&r).show(|ui| {
                 for Item {
