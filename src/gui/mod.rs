@@ -4032,6 +4032,10 @@ impl CadCraftApp {
     }
 
     fn apply(&mut self, action: Action) {
+        // A drawing's view sketch takes the Sketch tab's commands.
+        if self.is_drawing() && self.drw.sketch.is_some() && self.view_sketch_action(action) {
+            return;
+        }
         // In a drawing only its own and the application's commands run.
         if self.is_drawing()
             && let Some(c) = commands::by_action(action)

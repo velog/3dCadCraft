@@ -51,6 +51,9 @@ pub(super) struct DrwSketch {
     pub project: bool,
     /// The point being dragged (Select tool).
     pub drag: Option<PointId>,
+    /// Finish Sketch was asked for outside the sheet view (the ribbon):
+    /// the next frame of the view finishes it.
+    pub finish: bool,
 }
 
 /// The tools of a view sketch's toolbar, in Inventor's Sketch tab order.
@@ -87,6 +90,7 @@ impl DrwSketch {
             dim: None,
             project: false,
             drag: None,
+            finish: false,
         }
     }
 
@@ -95,31 +99,77 @@ impl DrwSketch {
     /// fixed centre and radius (both construction, so a section line never
     /// takes them), an end point or centre as a fixed point. Positions are
     /// the view plane's.
-    pub(super) fn project_edge(&mut self, e: &crate::drawing::hlr::ViewEdge) -> Result<(), String> {
+    /// An arc goes the way its drawn piece `piece` runs (its points as the
+    /// view shows them); any other curve becomes fixed construction lines
+    /// through that piece.
+    pub(super) fn project_edge(
+        &mut self,
+        e: &crate::drawing::hlr::ViewEdge,
+        piece: Option<&[[f64; 2]]>,
+    ) -> Result<(), String> {
         let sk = &mut self.ps.sketch;
         let p = |q: [f64; 2]| Point2::new(q[0], q[1]);
-        if let Some((c, r)) = e.circle {
-            if !e.full_circle && (e.a[0] - e.b[0]).hypot(e.a[1] - e.b[1]) > 1e-9 {
-                return Err("Project Geometry: arcs of a view are not projected yet".into());
-            }
-            let center = sk.add_fixed_point(p(c));
-            let circle = sk.add_circle_at(center, r).map_err(|x| x.to_string())?;
-            sk.set_radius_fixed(circle, true)
-                .map_err(|x| x.to_string())?;
+        let construction = |sk: &mut crate::sketch::Sketch, refs: &mut Vec<_>, id| {
             // Construction: a reference, never part of a section line.
-            let _ = sk.set_style(circle, crate::sketch::Style::Construction);
-            self.ps.reference_lines.push(circle);
+            let _ = sk.set_style(id, crate::sketch::Style::Construction);
+            refs.push(id);
+        };
+        if let Some((c, r)) = e.circle {
+            let whole = e.full_circle || (e.a[0] - e.b[0]).hypot(e.a[1] - e.b[1]) <= 1e-9;
+            if whole {
+                let center = sk.add_fixed_point(p(c));
+                let circle = sk.add_circle_at(center, r).map_err(|x| x.to_string())?;
+                sk.set_radius_fixed(circle, true)
+                    .map_err(|x| x.to_string())?;
+                construction(sk, &mut self.ps.reference_lines, circle);
+                return Ok(());
+            }
+            // An arc: counter-clockwise from start to end through a point
+            // of its drawn piece, else the other way round.
+            let mid = piece
+                .and_then(|pl| pl.get(pl.len() / 2).copied())
+                .ok_or("Project Geometry: the arc is not drawn in this view")?;
+            let ang = |q: [f64; 2]| (q[1] - c[1]).atan2(q[0] - c[0]);
+            let tau = std::f64::consts::TAU;
+            let ccw = |from: f64, to: f64| (to - from).rem_euclid(tau);
+            let (a0, b0, m0) = (ang(e.a), ang(e.b), ang(mid));
+            let (s, t) = if ccw(a0, m0) < ccw(a0, b0) {
+                (e.a, e.b)
+            } else {
+                (e.b, e.a)
+            };
+            let center = sk.add_fixed_point(p(c));
+            let start = sk.add_fixed_point(p(s));
+            let end = sk.add_fixed_point(p(t));
+            let arc = sk.add_arc(center, start, end).map_err(|x| x.to_string())?;
+            construction(sk, &mut self.ps.reference_lines, arc);
             return Ok(());
         }
         if e.straight {
             let a = sk.add_fixed_point(p(e.a));
             let b = sk.add_fixed_point(p(e.b));
             let line = sk.add_line_between(a, b).map_err(|x| x.to_string())?;
-            let _ = sk.set_style(line, crate::sketch::Style::Construction);
-            self.ps.reference_lines.push(line);
+            construction(sk, &mut self.ps.reference_lines, line);
             return Ok(());
         }
-        Err("Project Geometry: only straight edges and whole circles are projected yet".into())
+        // Another curve (an ellipse, a spline): fixed lines through at most
+        // 24 of its drawn points, end to end.
+        let pts = piece
+            .filter(|pl| pl.len() >= 2)
+            .ok_or("Project Geometry: the curve is not drawn in this view")?;
+        let step = pts.len().div_ceil(24).max(1);
+        let mut keep: Vec<[f64; 2]> = pts.iter().step_by(step).copied().collect();
+        if let Some(l) = pts.last()
+            && keep.last() != Some(l)
+        {
+            keep.push(*l);
+        }
+        let ids: Vec<_> = keep.iter().map(|q| sk.add_fixed_point(p(*q))).collect();
+        for w in ids.windows(2) {
+            let line = sk.add_line_between(w[0], w[1]).map_err(|x| x.to_string())?;
+            construction(sk, &mut self.ps.reference_lines, line);
+        }
+        Ok(())
     }
 
     /// Projects a point of the view (fixed).
@@ -219,6 +269,10 @@ impl CadCraftApp {
         self.drw.sel_ann = None;
         self.drw.section_track.clear();
         self.drw.sketch = Some(Box::new(DrwSketch::new(view, owner, sketch)));
+        // Without the floating toolbar the ribbon's Sketch tab has the tools.
+        if !self.sketch_toolbar {
+            self.tab = super::ribbon::Tab::Sketch;
+        }
     }
 
     /// Edit Section Line of section view `id`: its sketch (made from its
@@ -436,7 +490,7 @@ impl CadCraftApp {
         }
 
         // The toolbar (the sketch tab of the view sketch).
-        let mut finish = false;
+        let mut finish = std::mem::take(&mut s.finish);
         let mut cancel = false;
         if self.sketch_toolbar {
             self.view_sketch_toolbar(&response.ctx, rect, &mut s, &mut finish, &mut cancel);
@@ -473,12 +527,11 @@ impl CadCraftApp {
                     s.project_point(to_view(g.at));
                 }
                 Some(g) if g.view == s.view => {
-                    let edge = pv
-                        .and_then(|v| v.lines.as_deref())
-                        .and_then(|l| l.edge(&g.edge))
-                        .cloned();
+                    let lines = pv.and_then(|v| v.lines.as_deref());
+                    let edge = lines.and_then(|l| l.edge(&g.edge)).cloned();
+                    let piece = lines.and_then(|l| l.edge_piece(&g.edge));
                     if let Some(e) = edge
-                        && let Err(msg) = s.project_edge(&e)
+                        && let Err(msg) = s.project_edge(&e, piece)
                     {
                         self.file_status = Some(Err(msg));
                     }
@@ -747,6 +800,68 @@ impl CadCraftApp {
     }
 }
 
+/// Whether a view sketch takes `a` (the ribbon's Sketch tab in a drawing):
+/// its toolbar's tools, Project Geometry, Construction, Delete, Finish
+/// Sketch.
+pub(super) fn view_sketch_takes(a: super::Action) -> bool {
+    use super::Action;
+    match a {
+        Action::Tool(t) => TOOLBAR.contains(&t),
+        Action::ProjectGeometry
+        | Action::Format(crate::sketch::Style::Construction)
+        | Action::App(super::commands::AppCmd::Delete)
+        | Action::FinishSketch => true,
+        _ => false,
+    }
+}
+
+impl CadCraftApp {
+    /// A command of the ribbon's Sketch tab (or its alias) while a view
+    /// sketch is open: the toolbar's tools, Project Geometry, Construction,
+    /// Delete and Finish Sketch drive the view sketch; the other sketch
+    /// commands say they are not there yet. False: not a sketch command
+    /// (the drawing's own and the application's commands run as usual).
+    pub(super) fn view_sketch_action(&mut self, action: super::Action) -> bool {
+        use super::Action;
+        let Some(s) = self.drw.sketch.as_mut() else {
+            return false;
+        };
+        match action {
+            _ if !view_sketch_takes(action) => {
+                let sketch_only = super::commands::by_action(action).is_some_and(|c| {
+                    c.valid_in(super::commands::Env::Sketch)
+                        && !c.valid_in(super::commands::Env::Drawing)
+                });
+                if !sketch_only {
+                    return false;
+                }
+                let name = super::commands::by_action(action).map_or("This command", |c| c.name);
+                self.file_status = Some(Err(format!(
+                    "{name}: not available in a drawing sketch yet"
+                )));
+            }
+            Action::Tool(t) => {
+                s.project = false;
+                s.tools.escape();
+                s.tools.set_tool(t);
+            }
+            Action::ProjectGeometry => {
+                s.project = !s.project;
+                s.tools.escape();
+            }
+            Action::Format(crate::sketch::Style::Construction) => {
+                s.tools.construction = !s.tools.construction;
+            }
+            Action::App(super::commands::AppCmd::Delete) => {
+                s.delete_selected();
+            }
+            Action::FinishSketch => s.finish = true,
+            _ => return false,
+        }
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -758,6 +873,69 @@ mod tests {
             infer: None,
             align: Align::default(),
         }
+    }
+
+    /// Project Geometry of an arc follows its drawn piece: the quarter from
+    /// (10, 0) to (0, 10) drawn through 45° is that quarter, drawn through
+    /// 225° the other three; a curve that is no circle becomes fixed
+    /// construction lines through its points.
+    #[test]
+    fn projected_arcs_keep_their_side() {
+        use crate::drawing::hlr::ViewEdge;
+        use crate::sketch::Entity;
+        let edge = |circle, straight| ViewEdge {
+            name: Some("Box1:E2".into()),
+            a: [10.0, 0.0],
+            b: [0.0, 10.0],
+            circle,
+            full_circle: false,
+            straight,
+            visible: true,
+            note: None,
+            hole: None,
+        };
+        let arc_ends = |mid: [f64; 2]| {
+            let mut s = DrwSketch::new(1, SketchFor::NewSection, ViewSketch::default());
+            let arc = edge(Some(([0.0, 0.0], 10.0)), false);
+            s.project_edge(&arc, Some(&[arc.a, mid, arc.b])).unwrap();
+            let sk = &s.ps.sketch;
+            let (_, e) = sk
+                .entities()
+                .find(|(_, e)| matches!(e, Entity::Arc { .. }))
+                .expect("an arc");
+            let Entity::Arc { start, end, .. } = e else {
+                panic!("an arc");
+            };
+            let q = |id| {
+                let p = sk.point(id).unwrap().position;
+                [p.x.round(), p.y.round()]
+            };
+            (q(*start), q(*end), s.ps.reference_lines.len())
+        };
+        let r = 10.0 / 2f64.sqrt();
+        assert_eq!(
+            arc_ends([r, r]),
+            ([10.0, 0.0], [0.0, 10.0], 1),
+            "the quarter"
+        );
+        assert_eq!(
+            arc_ends([-r, -r]),
+            ([0.0, 10.0], [10.0, 0.0], 1),
+            "three quarters"
+        );
+        let mut s = DrwSketch::new(1, SketchFor::NewSection, ViewSketch::default());
+        let pts: Vec<[f64; 2]> = (0..=60)
+            .map(|k| {
+                let t = std::f64::consts::FRAC_PI_2 * f64::from(k) / 60.0;
+                [10.0 * t.cos(), 5.0 * t.sin()]
+            })
+            .collect();
+        s.project_edge(&edge(None, false), Some(&pts)).unwrap();
+        let n = s.ps.reference_lines.len();
+        assert!((20..=25).contains(&n), "{n} lines");
+        assert!(s.ps.sketch.points().all(|(_, p)| p.fixed));
+        let mut empty = DrwSketch::new(1, SketchFor::NewSection, ViewSketch::default());
+        assert!(empty.project_edge(&edge(None, false), None).is_err());
     }
 
     /// Projected view geometry is fixed construction: a line drawn to its
@@ -778,7 +956,7 @@ mod tests {
             note: None,
             hole: None,
         };
-        s.project_edge(&edge).unwrap();
+        s.project_edge(&edge, None).unwrap();
         let end =
             s.ps.sketch
                 .points()

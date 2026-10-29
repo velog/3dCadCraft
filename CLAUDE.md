@@ -1263,7 +1263,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (world point → screen), not the `OrbitCamera`; a drawing sketch's plane is `Plane::xy()` = the view plane, and
   `gui/drawing_sketch.rs` maps it through the view's `Placement` and the `SheetCam`. A new overlay sketch function
   must take a `Projector` too, or drawing sketches cannot use it. A view sketch takes the keys in `shortcuts`
-  (`view_sketch_keys`) before the drawing's letters.
+  (`view_sketch_keys`) before the drawing's letters, and the Sketch tab's commands at the top of `apply`
+  (`view_sketch_action`; `ribbon::for_env` greys what `view_sketch_takes` refuses, `State::drawing_sketch` shows the tab).
 - **Coedge senses in `to_brep`** come from each face's display triangles along the edge's samples. A face meshed with
   its own points on an edge it borrows has none there: it runs the edge the other way from the face that does, else its
   geometry decides (it silently got `Reversed`, and closed shells failed validation "edge … used 0× forward, 2×

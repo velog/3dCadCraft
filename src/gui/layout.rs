@@ -1134,26 +1134,29 @@ impl CadCraftApp {
             egui::Panel::top(self.layout.panel_id("ribbon")).show(ui, |ui| self.home_ribbon(ui));
         } else if ribbon {
             let mut action = None;
+            // A drawing's view sketch drives the Sketch tab like a part sketch.
+            let vsk = self.drw.sketch.as_deref().filter(|_| self.is_drawing());
             let state = super::ribbon::State {
                 labels_shown: self.show_labels,
-                editing: self.editing.is_some(),
+                editing: self.editing.is_some() || vsk.is_some(),
                 picking: matches!(self.mode, super::Mode::PickPlane(_)),
-                tool: self.tools.tool,
-                construction: self.tools.construction,
+                tool: vsk.map_or(self.tools.tool, |s| s.tools.tool),
+                construction: vsk.map_or(self.tools.construction, |s| s.tools.construction),
                 show_dof: self.show_dof,
                 relax: self.relax,
                 ui_shown: Element::ALL.map(|e| self.layout.visible(e)),
                 obj_vis: self.obj_vis,
                 clean: self.layout.clean,
                 full_screen: self.layout.full_screen,
-                project: self.project_geometry,
+                project: vsk.map_or(self.project_geometry, |s| s.project),
                 center_point: self.tools.center_point,
                 assembly: self.is_assembly(),
                 drawing: self.is_drawing(),
+                drawing_sketch: vsk.is_some(),
                 asm_tool: self.asm_tool_action(),
                 flat: self.sm.flat,
             };
-            if !self.tab.shown(state.assembly, state.drawing) {
+            if !self.tab.shown_in(&state) {
                 self.tab = if state.drawing {
                     super::ribbon::Tab::PlaceViews
                 } else if state.assembly {

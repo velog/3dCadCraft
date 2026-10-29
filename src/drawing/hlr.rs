@@ -102,6 +102,28 @@ impl ViewLines {
     pub fn edge(&self, name: &str) -> Option<&ViewEdge> {
         self.edges.iter().find(|e| e.name.as_deref() == Some(name))
     }
+
+    /// The longest drawn piece (visible or hidden) of the edge named
+    /// `name`: its points as the view shows them.
+    pub fn edge_piece(&self, name: &str) -> Option<&[[f64; 2]]> {
+        let k = self
+            .edges
+            .iter()
+            .position(|e| e.name.as_deref() == Some(name))?;
+        let k = u32::try_from(k).ok()?;
+        let len = |pl: &[[f64; 2]]| -> f64 {
+            pl.windows(2)
+                .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+                .sum()
+        };
+        self.visible
+            .iter()
+            .zip(&self.visible_src)
+            .chain(self.hidden.iter().zip(&self.hidden_src))
+            .filter(|(_, s)| **s == Some(k))
+            .map(|(pl, _)| pl.as_slice())
+            .max_by(|a, b| len(a).total_cmp(&len(b)))
+    }
 }
 
 /// A model edge seen in a view (view-plane mm, not scaled).

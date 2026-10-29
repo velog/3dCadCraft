@@ -205,7 +205,13 @@ pub struct Fold {
 impl Tab {
     /// Shown in this environment and not turned off by the user.
     pub fn visible(self, st: &State, hidden: &[String]) -> bool {
-        self.shown(st.assembly, st.drawing) && !hidden.iter().any(|h| h == self.label())
+        self.shown_in(st) && !hidden.iter().any(|h| h == self.label())
+    }
+
+    /// Shown in this environment: [`Tab::shown`], and the Sketch tab while
+    /// a drawing's view sketch is open (Inventor's drawing sketches).
+    pub fn shown_in(self, st: &State) -> bool {
+        self.shown(st.assembly, st.drawing) || (self == Tab::Sketch && st.drawing_sketch)
     }
 
     /// The first visible tab (the active one when the active tab is hidden).
@@ -217,10 +223,7 @@ impl Tab {
 /// The tab strip's right-click menu (Inventor: Show Tabs, Minimize).
 fn tabs_menu(ui: &mut egui::Ui, st: &State, fold: &mut Fold) {
     ui.menu_button("Show Tabs", |ui| {
-        let tabs: Vec<Tab> = Tab::ALL
-            .into_iter()
-            .filter(|t| t.shown(st.assembly, st.drawing))
-            .collect();
+        let tabs: Vec<Tab> = Tab::ALL.into_iter().filter(|t| t.shown_in(st)).collect();
         let on = tabs.iter().filter(|t| t.visible(st, &fold.hidden)).count();
         for t in tabs {
             let mut show = t.visible(st, &fold.hidden);
@@ -286,6 +289,8 @@ pub struct State {
     pub assembly: bool,
     /// The active document is a drawing.
     pub drawing: bool,
+    /// A drawing's view sketch is open: the Sketch tab is shown.
+    pub drawing_sketch: bool,
     /// The view shows the flat pattern.
     pub flat: bool,
     /// The assembly command that is open (shown pressed).
@@ -1366,6 +1371,7 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
                 full_screen: false,
                 project: false,
                 center_point: false,
+                drawing_sketch: false,
                 assembly,
                 drawing,
                 asm_tool: None,
@@ -1392,8 +1398,21 @@ pub(super) fn all_buttons() -> Vec<(&'static str, &'static str, &'static str)> {
 }
 
 /// In an assembly or a drawing, the part's commands of the shared tabs
-/// (Inspect, Tools…) are greyed with the reason.
-fn for_env(mut panels: Vec<PanelDef>, st: &State) -> Vec<PanelDef> {
+/// (Inspect, Tools…) are greyed with the reason; a drawing's Sketch tab
+/// keeps what its view sketch takes.
+fn for_env(mut panels: Vec<PanelDef>, st: &State, tab: Tab) -> Vec<PanelDef> {
+    if st.drawing && tab == Tab::Sketch {
+        for p in &mut panels {
+            for cmd in &mut p.cmds {
+                if let Kind::Ready(a, _) = cmd.kind
+                    && !super::drawing_sketch::view_sketch_takes(a)
+                {
+                    cmd.kind = Kind::Unavailable("Not available in a drawing sketch yet");
+                }
+            }
+        }
+        return panels;
+    }
     let (env, why) = if st.drawing {
         (commands::Env::Drawing, "Not available in a drawing")
     } else if st.assembly {
@@ -1457,7 +1476,7 @@ pub fn show(ui: &mut egui::Ui, tab: &mut Tab, st: &State, fold: &mut Fold) -> Op
     ui.separator();
 
     let mut clicked = None;
-    let panels = for_env(panels(*tab, st), st);
+    let panels = for_env(panels(*tab, st), st, *tab);
     // Inventor collapses the rightmost panels into one button each when
     // the window is too narrow (the panel's commands drop down from it).
     // Widths are those measured when a panel was last drawn open.
