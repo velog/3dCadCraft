@@ -401,8 +401,10 @@ pub fn patch_edges(body: &Body, at: &[Vec3]) -> Result<Body> {
     guard("patch", || {
         let chain = picked_loop(body, at)?;
         let Some(face) = crate::plane_fit::planar_face(&chain, crate::fill::planarity_tolerance(body))? else {
-            // Not certainly planar: a fitted surface.
-            return crate::fill::fill_loop(body, &chain);
+            // Not certainly planar: a fitted surface; where the fit refuses the loop (a hole cut
+            // out of a wave folds over its best-fit plane), a four-sided loop is filled from its
+            // four sides (3DCadCraft addition).
+            return crate::fill::fill_loop(body, &chain).or_else(|e| four_sided_patch(body, &chain).map_err(|_| e));
         };
         // A new face on the body's own edges.
         let mut rec = Rebuild::default();
@@ -730,6 +732,95 @@ fn picked_chain(body: &Body, at: &[Vec3]) -> Result<Vec<mt::Edge>> {
         return Err(KernelError::Invalid("a section's edges do not form one chain".into()));
     }
     Ok(chain)
+}
+
+/// A closed loop of four sides (four edges, or four runs between corners) filled by the Coons
+/// patch of its sides, on edges of its own (its boundary curves, between the loop's vertices).
+/// Its history is over `[body]`.
+fn four_sided_patch(body: &Body, chain: &[mt::Edge]) -> Result<Body> {
+    let sides: Vec<Vec<mt::Edge>> = if chain.len() == 4 {
+        chain.iter().map(|e| vec![e.clone()]).collect()
+    } else {
+        loop_sides(chain).ok_or_else(|| KernelError::Invalid("the loop has no corners".into()))?
+    };
+    if sides.len() != 4 {
+        return Err(KernelError::Invalid(format!("a loop of {} sides is not filled from its sides", sides.len())));
+    }
+    // The Coons patch of the four sides (each side a spline through 48 of its points), sampled on
+    // a grid and interpolated row by row, then column by column (a cubic tensor B-spline). Its
+    // edges are the surface's own boundary curves, so they lie on it exactly (truck's
+    // `by_boundary` only averages control points: a circle in four arcs collapsed to nothing).
+    let rows: Vec<Vec<Vec3>> = sides
+        .iter()
+        .map(|s| {
+            let mut p = chain_points_n(s, (48 / s.len()).max(8))?;
+            if let (Some(f), Some(l), Some(k)) = (s.first(), s.last(), p.len().checked_sub(1)) {
+                p[0] = from_p3(f.front().point());
+                p[k] = from_p3(l.back().point());
+            }
+            Ok(p)
+        })
+        .collect::<Result<_>>()?;
+    let c: Vec<mt::BSplineCurve<mt::Point3>> = rows.iter().map(|r| interpolated(r)).collect::<Result<_>>()?;
+    let at = |k: usize, t: f64| -> Vec3 { let p = c[k].subs(t.clamp(0.0, 1.0)); Vec3::new(p.x, p.y, p.z) };
+    let (p00, p10, p11, p01) = (at(0, 0.0), at(1, 0.0), at(2, 0.0), at(3, 0.0));
+    let coons = |u: f64, v: f64| -> Vec3 {
+        let (b, t) = (at(0, u), at(2, 1.0 - u));
+        let (l, r) = (at(3, 1.0 - v), at(1, v));
+        b * (1.0 - v) + t * v + l * (1.0 - u) + r * u
+            - (p00 * ((1.0 - u) * (1.0 - v)) + p10 * (u * (1.0 - v)) + p11 * (u * v) + p01 * ((1.0 - u) * v))
+    };
+    const N: usize = 24;
+    let params: Vec<f64> = (0..=N).map(|k| k as f64 / N as f64).collect();
+    let interp = |pts: &[[f64; 3]]| {
+        solidcraft_geom::bspline::CurveN::<3>::interpolate(&params, pts, 3)
+            .map_err(|e| KernelError::Invalid(format!("the patch cannot be fitted: {e:?}")))
+    };
+    // Rows along u (one per v), then the control points column by column along v.
+    let mut row_ctrl: Vec<Vec<[f64; 3]>> = Vec::with_capacity(N + 1);
+    let mut uknots = Vec::new();
+    for &v in &params {
+        let pts: Vec<[f64; 3]> = params.iter().map(|&u| { let q = coons(u, v); [q.x, q.y, q.z] }).collect();
+        let cv = interp(&pts)?;
+        uknots = cv.knots.clone();
+        row_ctrl.push(cv.ctrl);
+    }
+    let nu = row_ctrl.first().map_or(0, Vec::len);
+    let mut grid: Vec<Vec<mt::Point3>> = vec![Vec::with_capacity(N + 1); nu];
+    let mut vknots = Vec::new();
+    for (i, col) in grid.iter_mut().enumerate() {
+        let pts: Vec<[f64; 3]> = row_ctrl.iter().map(|r| r[i]).collect();
+        let cv = interp(&pts)?;
+        vknots = cv.knots.clone();
+        *col = cv.ctrl.iter().map(|q| mt::Point3::new(q[0], q[1], q[2])).collect();
+    }
+    let surface = mt::BSplineSurface::try_new((mt::KnotVec::from(uknots.clone()), mt::KnotVec::from(vknots.clone())), grid.clone())
+        .map_err(|e| KernelError::Invalid(format!("the patch surface: {e}")))?;
+    // Its four boundary curves: v = 0, u = 1, v = 1, u = 0.
+    let curve = |knots: &[f64], pts: Vec<mt::Point3>| {
+        mt::BSplineCurve::try_new(mt::KnotVec::from(knots.to_vec()), pts)
+            .map_err(|e| KernelError::Invalid(format!("a patch edge: {e}")))
+    };
+    let m = grid.first().map_or(0, Vec::len);
+    let bottom = curve(&uknots, grid.iter().map(|col| col[0]).collect())?;
+    let right = curve(&vknots, grid[nu - 1].clone())?;
+    let top = curve(&uknots, grid.iter().map(|col| col[m - 1]).collect())?;
+    let left = curve(&vknots, grid[0].clone())?;
+    let corner = |k: usize| sides[k].first().map(|e| e.front().clone()).ok_or_else(|| KernelError::Invalid("an empty side".into()));
+    let (v00, v10, v11, v01) = (corner(0)?, corner(1)?, corner(2)?, corner(3)?);
+    // Counter-clockwise in (u, v): the face's normal (Su × Sv) and its wire agree.
+    let wire: mt::Wire = vec![
+        mt::Edge::new(&v00, &v10, mt::Curve::BSplineCurve(bottom)),
+        mt::Edge::new(&v10, &v11, mt::Curve::BSplineCurve(right)),
+        mt::Edge::new(&v01, &v11, mt::Curve::BSplineCurve(top)).inverse(),
+        mt::Edge::new(&v00, &v01, mt::Curve::BSplineCurve(left)).inverse(),
+    ]
+    .into();
+    let face = mt::Face::try_new(vec![wire], mt::Surface::BSplineSurface(surface))
+        .map_err(|e| KernelError::Failed(format!("patch: {e}")))?;
+    let mut rec = Rebuild::default();
+    rec.made(&face, Vec::new());
+    Ok(rebuilt_body(surface_body(vec![face]), &[&body.solid], &rec))
 }
 
 /// The edges of `body` picked by points on them, chained into one closed loop (each turned to

@@ -289,3 +289,78 @@ fn stitch_closes_the_owners_eight_lofts() {
     // way, between other pieces): the same solid within 0.1 %.
     assert!(v > 930_000.0 && v < 938_000.0, "{v}");
 }
+
+/// Boundary Patch of the circular hole the owner cut out of a spline surface (Surface_test_3,
+/// TrimSurface3): the kernel's fit of the loop folds over its best-fit plane on the wave, so the
+/// four-sided loop is filled from its four arcs instead; the patch is meshed and about the area
+/// of the hole (a disc of r ≈ 42 on a slope).
+#[test]
+fn patch_of_a_hole_in_a_wavy_surface() {
+    use cadcraft3d::document::{DocumentData, Project};
+    use cadcraft3d::kernel::TessellationOptions;
+    use cadcraft3d::part::surface_op::PatchOp;
+    let pr = Project::load(std::path::Path::new(
+        "tests/data/surface_test3_owner.3dcadcraft",
+    ))
+    .unwrap();
+    let mut p = pr
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    // Up to the hole (TrimSurface3), before the owner's lofts.
+    p.features.truncate(7);
+    p.eop = None;
+    p.regenerate().unwrap();
+    let before = sheet_area(&p);
+    // The hole's edges: the free edges of Extrusion2 away from its outer rim.
+    let opts = TessellationOptions::default();
+    let mut hole = Vec::new();
+    for (e, _) in p.body.edges() {
+        let faces = p.body.edge_faces(e);
+        let [f] = faces[..] else { continue };
+        let name = p
+            .body
+            .face(f)
+            .and_then(|x| x.name.clone())
+            .unwrap_or_default();
+        if !name.starts_with("Extrusion2:") {
+            continue;
+        }
+        let pts = p.body.sample_edge(e, &opts).unwrap();
+        let m = cadcraft3d::part::select::polyline_middle(&pts).unwrap();
+        if (m.x + 25.0).hypot(m.y) < 46.0 && m.y.abs() < 99.0 && m.x > -90.0 && m.x < 60.0 {
+            hole.push(SurfEdge {
+                face: name,
+                hint: [m.x, m.y, m.z],
+            });
+        }
+    }
+    assert_eq!(hole.len(), 4, "the hole's arcs");
+    op(
+        &mut p,
+        BodyOp::Patch(PatchOp {
+            edges: hole,
+            sketch: None,
+            profile: None,
+            solid: false,
+        }),
+    );
+    let patch = p
+        .exact_bodies
+        .0
+        .iter()
+        .find(|s| s.name.as_deref() == Some("BoundaryPatch1"))
+        .unwrap();
+    let b = cadcraft3d::kernel::exact::to_brep(std::slice::from_ref(patch)).unwrap();
+    assert!(
+        b.faces()
+            .all(|(_, f)| f.mesh.as_ref().is_some_and(|m| !m.triangles.is_empty())),
+        "the patch has no triangles"
+    );
+    let added = sheet_area(&p) - before;
+    assert!(added > 4_000.0 && added < 9_000.0, "patch area {added}");
+}

@@ -175,6 +175,65 @@ impl CadCraftApp {
             .collect()
     }
 
+    /// [`Self::surf_edges`] where each picked free edge (one face) brings the free edges joined to
+    /// it end to end — the whole loop (a hole's rim in arcs from one click, even where the rim
+    /// crosses several faces of the surface: Patch's Automatic Edge Chain).
+    fn surf_edges_chained(&self, picks: Picks) -> Vec<SurfEdge> {
+        let body = &self.part().body;
+        let opts = crate::kernel::TessellationOptions::default();
+        let mut out = self.surf_edges(picks);
+        // Every free edge of the model, by the vertices at its ends.
+        let free: Vec<crate::kernel::EdgeId> = body
+            .edges()
+            .filter(|(e, _)| body.edge_faces(*e).len() == 1)
+            .map(|(e, _)| e)
+            .collect();
+        let ends = |e: crate::kernel::EdgeId| body.edge(e).map(|x| (x.start, x.end));
+        let mut taken: std::collections::HashSet<crate::kernel::EdgeId> =
+            std::collections::HashSet::new();
+        for (item, _) in picks {
+            let SelItem::Edge(e) = item else {
+                continue;
+            };
+            if !free.contains(e) || !taken.insert(*e) {
+                continue;
+            }
+            // Walk from both ends along free edges sharing a vertex.
+            let mut stack = vec![*e];
+            while let Some(x) = stack.pop() {
+                let Some((a, b)) = ends(x) else {
+                    continue;
+                };
+                for &y in &free {
+                    if taken.contains(&y) {
+                        continue;
+                    }
+                    let Some((c, d)) = ends(y) else {
+                        continue;
+                    };
+                    if c == a || c == b || d == a || d == b {
+                        taken.insert(y);
+                        stack.push(y);
+                        let face = body
+                            .edge_faces(y)
+                            .first()
+                            .and_then(|f| body.face(*f))
+                            .and_then(|f| f.name.clone());
+                        if let (Some(face), Ok(pts)) = (face, body.sample_edge(y, &opts))
+                            && let Some(m) = crate::part::select::polyline_middle(&pts)
+                        {
+                            out.push(SurfEdge {
+                                face,
+                                hint: [m.x, m.y, m.z],
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// A plane from a pick: a planar face, a work plane.
     fn plane_of_pick(&self, item: &SelItem) -> Option<PlaneRef> {
         match item {
@@ -235,7 +294,12 @@ impl CadCraftApp {
                         solid,
                     })
                 } else {
-                    let mut edges = self.surf_edges(picks);
+                    // Automatic Edge Chain: a picked free edge brings the rest of its loop.
+                    let mut edges = if d.check(t, "Automatic Edge Chain") {
+                        self.surf_edges_chained(picks)
+                    } else {
+                        self.surf_edges(picks)
+                    };
                     if edges.is_empty()
                         && let Some(BodyOp::Patch(o)) = old
                     {
