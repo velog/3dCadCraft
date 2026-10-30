@@ -454,3 +454,259 @@ fn break_link_of_a_sketch_on_another_face_keeps_its_place() {
     tp.regenerate().unwrap();
     assert!((tp.sketches[i].sketch.plane.origin.z - z).abs() < 1e-9);
 }
+
+// Project Geometry of a whole face of another component: every loop of the
+// face at once (a cover taking a housing's whole rim, holes included).
+
+/// The name of the planar face of `p` lying at height `z` and a point on it.
+fn face_at(p: &PartDocument, z: Real) -> (String, [Real; 3]) {
+    let o = TessellationOptions::default();
+    for (f, face) in p.body.faces() {
+        let Ok(m) = p.body.face_mesh(f, &o) else {
+            continue;
+        };
+        if !m.positions.is_empty() && m.positions.iter().all(|q| (q.z - z).abs() < 1e-6) {
+            let q = m.positions[0];
+            return (face.name.clone().unwrap(), [q.x, q.y, q.z]);
+        }
+    }
+    panic!("no face at z {z}");
+}
+
+/// In the target part, a sketch on XY projecting the whole face `face` of
+/// the source (occurrence 1), then the region whose area is nearest `area`
+/// extruded `h`. Returns the number of edges projected.
+fn project_face_and_extrude(
+    p: &mut Project,
+    aid: DocumentId,
+    t: DocumentId,
+    face: (String, [Real; 3]),
+    area: Real,
+    h: Real,
+) -> usize {
+    let a = asm(p, aid);
+    let source = ContextSource {
+        assembly: aid,
+        target: vec![2],
+        path: vec![1],
+        face: face.0,
+        edge: None,
+        hint: face.1,
+        label: "Source:1 face".into(),
+    };
+    let edges = context::face_outline(p, &Linked::new(), &a, &source).unwrap();
+    assert!(edges.iter().all(|c| c.source.label == "Source:1 edge"));
+    let n = edges.len();
+    let tp = part_mut(p, t);
+    let i = tp
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    assert_eq!(tp.project_context_edges(i, edges, false).unwrap().len(), n);
+    assert_eq!(tp.context.len(), n);
+    let rg = tp.sketches[i].sketch.regions();
+    let r = rg
+        .iter()
+        .min_by(|x, y| (x.area() - area).abs().total_cmp(&(y.area() - area).abs()))
+        .unwrap();
+    assert!((r.area() - area).abs() < 0.01 * area, "region {}", r.area());
+    let profiles = vec![ProfileRef::of(r, r.interior_point())];
+    tp.add_extrude(i, ExtrudeFeature::new(profiles, h)).unwrap();
+    n
+}
+
+#[test]
+fn a_gasket_takes_the_whole_top_face_of_its_flange() {
+    let (mut p, aid, s, t) = design(
+        flange(100.0),
+        Transform3::identity(),
+        Transform3::translation(0.0, 0.0, 10.0),
+    );
+    let hole = std::f64::consts::PI * 25.0;
+    let face = face_at(part(&p, s), 10.0);
+    let n = project_face_and_extrude(&mut p, aid, t, face, 10000.0 - 4.0 * hole, 2.0);
+    // 4 sides + 4 rims (in pieces).
+    assert!(n >= 8, "{n} edges");
+    let v = volume(part(&p, t));
+    let expect = (10000.0 - 4.0 * hole) * 2.0;
+    assert!((v - expect).abs() < 0.01 * expect, "volume {v} vs {expect}");
+    grow(part_mut(&mut p, s), 120.0);
+    let r = context::update(&mut p, &Linked::new(), aid);
+    assert_eq!(r.changed, vec![t]);
+    assert!(r.sick.is_empty(), "{:?}", r.sick);
+    let v = volume(part(&p, t));
+    let expect = (14400.0 - 4.0 * hole) * 2.0;
+    assert!((v - expect).abs() < 0.01 * expect, "volume {v} vs {expect}");
+    assert!(part(&p, t).feature_health.is_empty());
+}
+
+/// A pipe Ø`d` with a Ø`d_in` bore, 40 long.
+fn pipe(d: Real, d_in: Real) -> PartDocument {
+    let mut p = PartDocument::default();
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    sk.add_circle(Point2::new(0.0, 0.0), d / 2.0).unwrap();
+    sk.add_circle(Point2::new(0.0, 0.0), d_in / 2.0).unwrap();
+    let rg = sk.regions();
+    let ring = rg
+        .iter()
+        .min_by(|a, b| a.area().total_cmp(&b.area()))
+        .unwrap();
+    let ring = ProfileRef::of(ring, ring.interior_point());
+    p.add_extrude(i, ExtrudeFeature::new(vec![ring], 40.0))
+        .unwrap();
+    p
+}
+
+#[test]
+fn a_washer_takes_the_end_face_of_a_pipe() {
+    // A seal ring on a Ø40 / Ø30 pipe end: both rims come with the face.
+    let (mut p, aid, s, t) = design(
+        pipe(40.0, 30.0),
+        Transform3::translation(60.0, 40.0, 0.0),
+        Transform3::translation(60.0, 40.0, 40.0),
+    );
+    let pi = std::f64::consts::PI;
+    let ring = pi * (400.0 - 225.0);
+    let face = face_at(part(&p, s), 40.0);
+    project_face_and_extrude(&mut p, aid, t, face, ring, 1.5);
+    let v = volume(part(&p, t));
+    assert!((v - ring * 1.5).abs() < 0.01 * v, "volume {v}");
+    let (lo, hi) = bbox(part(&p, t));
+    assert!(((hi.x - lo.x) - 40.0).abs() < 1e-3, "{lo:?} {hi:?}");
+}
+
+#[test]
+fn a_cover_takes_the_rounded_rim_of_its_housing() {
+    // A slot-shaped housing (two straight sides, two half rounds): the
+    // cover's outline is lines and arcs, tangent where they meet.
+    let mut h = PartDocument::default();
+    let i = h
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    let sk = &mut h.sketches[i].sketch;
+    sk.add_slot_center_to_center(Point2::new(0.0, 0.0), Point2::new(50.0, 0.0), 30.0)
+        .unwrap();
+    let rg = sk.regions();
+    h.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 25.0),
+    )
+    .unwrap();
+    let (mut p, aid, s, t) = design(
+        h,
+        Transform3::identity(),
+        Transform3::translation(0.0, 0.0, 25.0),
+    );
+    let area = 50.0 * 30.0 + std::f64::consts::PI * 225.0;
+    let face = face_at(part(&p, s), 25.0);
+    let n = project_face_and_extrude(&mut p, aid, t, face, area, 3.0);
+    assert!(n >= 4, "{n} edges");
+    let v = volume(part(&p, t));
+    assert!((v - area * 3.0).abs() < 0.01 * v, "volume {v}");
+    let (lo, hi) = bbox(part(&p, t));
+    assert!(
+        (lo.x + 15.0).abs() < 1e-3 && (hi.x - 65.0).abs() < 1e-3,
+        "{lo:?} {hi:?}"
+    );
+}
+
+#[test]
+fn a_turned_flange_face_is_projected_where_it_lies() {
+    // The flange stands turned 30° about Z and shifted; the gasket part is
+    // not turned: its outline must cover the turned flange.
+    let turn = Transform3::new(
+        Vector3::new(200.0, 50.0, 0.0),
+        Vector3::z() * 30f64.to_radians(),
+    );
+    let (mut p, aid, s, t) = design(flange(100.0), turn, Transform3::translation(0.0, 0.0, 10.0));
+    let hole = std::f64::consts::PI * 25.0;
+    let face = face_at(part(&p, s), 10.0);
+    project_face_and_extrude(&mut p, aid, t, face, 10000.0 - 4.0 * hole, 2.0);
+    let back = turn.inverse() * Transform3::translation(0.0, 0.0, 10.0);
+    for (_, v) in part(&p, t).body.vertices() {
+        let q = back * v.point;
+        assert!(
+            (-1e-6..=100.0 + 1e-6).contains(&q.x) && (-1e-6..=100.0 + 1e-6).contains(&q.y),
+            "{q:?}"
+        );
+    }
+    let v = volume(part(&p, t));
+    let expect = (10000.0 - 4.0 * hole) * 2.0;
+    assert!((v - expect).abs() < 0.01 * expect, "volume {v} vs {expect}");
+}
+
+#[test]
+fn a_face_with_a_free_form_edge_is_refused_and_nothing_changes() {
+    // A cam plate: a straight side and a spline. Spline edges cannot be
+    // projected from other components yet, so the face is refused whole.
+    let mut cam = PartDocument::default();
+    let i = cam
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    let sk = &mut cam.sketches[i].sketch;
+    let a = sk.add_point(Point2::new(0.0, 0.0));
+    let b = sk.add_point(Point2::new(60.0, 0.0));
+    let m = sk.add_point(Point2::new(35.0, 30.0));
+    let n = sk.add_point(Point2::new(10.0, 25.0));
+    sk.add_line_between(a, b).unwrap();
+    sk.add_interp_spline(vec![b, m, n, a]).unwrap();
+    let rg = sk.regions();
+    assert_eq!(rg.len(), 1);
+    cam.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 6.0),
+    )
+    .unwrap();
+    let (mut p, aid, s, t) = design(cam, Transform3::identity(), Transform3::identity());
+    let a = asm(&p, aid);
+    let (name, hint) = face_at(part(&p, s), 6.0);
+    let source = ContextSource {
+        assembly: aid,
+        target: vec![2],
+        path: vec![1],
+        face: name,
+        edge: None,
+        hint,
+        label: "Source:1 face".into(),
+    };
+    let e = context::face_outline(&p, &Linked::new(), &a, &source).unwrap_err();
+    assert!(e.contains("straight and circular"), "{e}");
+    // All or nothing: a good edge followed by a reference that is no edge.
+    let good = edges_at(part(&p, s), 6.0)
+        .into_iter()
+        .find_map(|edge| {
+            let src = ContextSource {
+                face: edge.faces[0].clone(),
+                hint: edge.hint,
+                edge: Some(edge),
+                ..source.clone()
+            };
+            current(&p, &Linked::new(), &a, &src)
+                .ok()
+                .map(|geom| ContextRef {
+                    id: String::new(),
+                    source: src,
+                    geom,
+                })
+        })
+        .unwrap();
+    let plane = ContextRef {
+        id: String::new(),
+        geom: current(&p, &Linked::new(), &a, &source).unwrap(),
+        source,
+    };
+    let tp = part_mut(&mut p, t);
+    let j = tp
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    let before = serde_json::to_string(&tp.sketches[j]).unwrap();
+    assert!(
+        tp.project_context_edges(j, vec![good, plane], false)
+            .is_err()
+    );
+    assert!(tp.context.is_empty());
+    assert!(tp.work.context_curves.is_empty());
+    assert_eq!(serde_json::to_string(&tp.sketches[j]).unwrap(), before);
+}

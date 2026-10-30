@@ -336,6 +336,43 @@ impl super::PartDocument {
         r
     }
 
+    /// Project Geometry of another component's whole face into sketch
+    /// `index` (spec 3.10 §3.3): every edge of its loops, `edges` (one
+    /// `ContextGeom::Curve` reference each, from
+    /// `assembly::context::face_outline`), at once — all or nothing.
+    /// Returns the links' indices.
+    pub fn project_context_edges(
+        &mut self,
+        index: usize,
+        edges: Vec<ContextRef>,
+        construction: bool,
+    ) -> Result<Vec<usize>, super::PartError> {
+        if index >= self.sketches.len() {
+            return Err(super::PartError::NoSketch(index));
+        }
+        if edges.is_empty() {
+            return Err(super::PartError::Feature(
+                "Project Geometry: the face has no edges".into(),
+            ));
+        }
+        let before = (
+            self.context.clone(),
+            self.work.context_curves.clone(),
+            self.sketches[index].clone(),
+        );
+        let mut out = Vec::new();
+        for c in edges {
+            match self.project_context_edge(index, c, construction) {
+                Ok(k) => out.push(k),
+                Err(e) => {
+                    (self.context, self.work.context_curves, self.sketches[index]) = before;
+                    return Err(e);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Whether anything of the part uses reference `id`: a sketch plane, a
     /// projection or a feature (an extent To it).
     pub fn context_used(&self, id: &str) -> bool {

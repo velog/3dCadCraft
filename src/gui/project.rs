@@ -53,6 +53,13 @@ pub(super) enum ProjPick {
         Box<crate::part::context::ContextRef>,
         Vec<crate::kernel::Point3>,
     ),
+    /// A whole planar face of another component (every edge of its loops):
+    /// the face's reference (its source names the face) and the face as
+    /// highlighted.
+    ContextFace(
+        Box<crate::part::context::ContextRef>,
+        super::assembly::ContextHover,
+    ),
 }
 
 impl CadCraftApp {
@@ -121,6 +128,9 @@ impl CadCraftApp {
         if let Some((c, pts)) = self.context_edge_under(p, rect) {
             return Some(ProjPick::Context(Box::new(c), pts));
         }
+        if let Some((c, hover)) = self.context_target_under(p, rect) {
+            return Some(ProjPick::ContextFace(Box::new(c), hover));
+        }
         if let Some((o, d)) = self.camera.ray(p, rect)
             && let Some(d) = d.try_normalize(1e-12)
             && let Some((f, _)) = self.face_hit(&o, &d)
@@ -150,7 +160,10 @@ impl CadCraftApp {
                     ProjPick::Edge(e) => crate::part::blend::edge_ref(&self.part().body, e)
                         .map(|edge| LinkSource::Edge { edge }),
                     ProjPick::Work(id) => Some(LinkSource::Work { id }),
-                    ProjPick::Vertex(_) | ProjPick::Face(_) | ProjPick::Context(..) => None,
+                    ProjPick::Vertex(_)
+                    | ProjPick::Face(_)
+                    | ProjPick::Context(..)
+                    | ProjPick::ContextFace(..) => None,
                 };
                 let Some(source) = source else {
                     self.file_status = Some(Err(
@@ -201,6 +214,15 @@ impl CadCraftApp {
                 .part_mut()
                 .project_context_edge(i, *c, construction)
                 .map(|_| ()),
+            ProjPick::ContextFace(c, _) => match self.context_face_outline(&c.source) {
+                Ok(edges) => self
+                    .part_mut()
+                    .project_context_edges(i, edges, construction)
+                    .map(|_| ()),
+                Err(e) => Err(crate::part::PartError::Feature(format!(
+                    "Project Geometry: {e}"
+                ))),
+            },
         };
         match r {
             Ok(()) => {
@@ -301,6 +323,15 @@ impl CadCraftApp {
                             .collect();
                         painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
                     }
+                }
+            }
+            Some(ProjPick::ContextFace(_, hover)) => {
+                for pts in self.context_face_edges(hover) {
+                    let pts: Vec<Pos2> = pts
+                        .iter()
+                        .filter_map(|q| self.camera.project(q, rect))
+                        .collect();
+                    painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
                 }
             }
             Some(ProjPick::Context(_, pts)) => {

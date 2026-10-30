@@ -2271,6 +2271,39 @@ fn speed_budgets() {
             )
             .unwrap();
         }
+        // The same outline as one click: Project Geometry of the flange's
+        // whole top face (every edge of its 17 loops, one reference each).
+        let top = ContextSource {
+            assembly: aid,
+            target: vec![2],
+            path: vec![1],
+            face: "Box1:Top".into(),
+            edge: None,
+            hint: [100.0, 100.0, 10.0],
+            label: "Flange:1 face".into(),
+        };
+        let gasket = match project.document(g).map(|x| &x.data) {
+            Some(DocumentData::Part(p)) => p.clone(),
+            _ => PartDocument::default(),
+        };
+        rows.push((
+            "assembly: Project Geometry of a flange's whole face with 16 holes (cross-part)",
+            100.0,
+            median_ms(3, || {
+                let edges = cadcraft3d::assembly::context::face_outline(
+                    &project,
+                    &Linked::new(),
+                    &asm,
+                    &top,
+                )
+                .unwrap();
+                let mut p = gasket.clone();
+                let i = p
+                    .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+                    .unwrap();
+                assert_eq!(p.project_context_edges(i, edges, false).unwrap().len(), n);
+            }),
+        ));
         let mut x = 0.0;
         rows.push((
             "assembly: Update of a gasket projecting a flange's outline and 16 hole rims (cross-part edges)",

@@ -166,6 +166,49 @@ pub fn settle(
     Err(total)
 }
 
+/// The edges of the face `face` names (a face reference: its `face` and
+/// `hint` in the source part's coordinates) as one edge reference each,
+/// every loop of the face (Project Geometry of a whole face of another
+/// component, spec 3.10 §3.3). `Err` when the face is gone or one of its
+/// edges cannot be projected (only straight and circular edges).
+pub fn face_outline(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+    face: &ContextSource,
+) -> Result<Vec<crate::part::context::ContextRef>, String> {
+    let (src, _) = placed(project, linked, asm, &face.path)?;
+    let part = tree::part_of(project, linked, src.component)
+        .ok_or_else(|| format!("{} shows no part", src.name))?;
+    let f = crate::part::appearance::nearest_face(&part.body, &face.face, &face.hint)
+        .ok_or_else(|| format!("the face {} no longer exists", face.face))?;
+    let who = face.label.strip_suffix(" face").unwrap_or(&face.label);
+    let mut out = Vec::new();
+    let mut seen = Vec::new();
+    for e in crate::part::select::edges_of_face(&part.body, f) {
+        if seen.contains(&e) {
+            continue;
+        }
+        seen.push(e);
+        let edge = crate::part::blend::edge_ref(&part.body, e)
+            .ok_or_else(|| format!("an edge of {} has no name", face.face))?;
+        let source = ContextSource {
+            face: edge.faces[0].clone(),
+            hint: edge.hint,
+            edge: Some(edge),
+            label: format!("{who} edge"),
+            ..face.clone()
+        };
+        let geom = current(project, linked, asm, &source)?;
+        out.push(crate::part::context::ContextRef {
+            id: String::new(),
+            source,
+            geom,
+        });
+    }
+    Ok(out)
+}
+
 /// A model edge as a shape in its part's coordinates: a straight edge as
 /// the segment between its vertices, a circle or arc as itself.
 pub fn edge_shape(

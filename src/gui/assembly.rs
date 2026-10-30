@@ -192,7 +192,7 @@ can be adaptive";
 
 /// The other component's face under the cursor: component, face and its
 /// placement in the edited part's coordinates.
-type ContextHover = (DocRef, crate::kernel::FaceId, Transform3);
+pub(super) type ContextHover = (DocRef, crate::kernel::FaceId, Transform3);
 
 impl CadCraftApp {
     /// Forgets the assembly UI state of the document being left (selection,
@@ -883,6 +883,38 @@ impl CadCraftApp {
             self.face_hit(&o, &d).map(|(_, t)| t)
         });
         own.is_none_or(|o| t < o).then_some((c, hover))
+    }
+
+    /// The edges of the face of another component `hover`, sampled, in the
+    /// edited part's coordinates (Project Geometry's highlight).
+    pub(super) fn context_face_edges(&self, hover: ContextHover) -> Vec<Vec<Point3>> {
+        let (doc, f, t) = hover;
+        let opts = crate::kernel::TessellationOptions::default();
+        self.with_part(doc, |p| {
+            crate::part::select::edges_of_face(&p.body, f)
+                .into_iter()
+                .filter_map(|e| p.body.sample_edge(e, &opts).ok())
+                .map(|pts| pts.iter().map(|q| t * q).collect())
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// Every edge of the face `face` names as a cross-part reference of its
+    /// own, in the assembly edited in place (Project Geometry of a whole
+    /// face, `assembly::context::face_outline`).
+    pub(super) fn context_face_outline(
+        &self,
+        face: &crate::part::context::ContextSource,
+    ) -> Result<Vec<crate::part::context::ContextRef>, String> {
+        let linked = self.linked();
+        let a = crate::assembly::tree::assembly_of(
+            &self.project,
+            &linked,
+            DocRef::local(face.assembly),
+        )
+        .ok_or("the assembly is not open")?;
+        crate::assembly::context::face_outline(&self.project, &linked, a, face)
     }
 
     /// `plane` with a pending cross-part reference added to the active part
