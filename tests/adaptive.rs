@@ -1,8 +1,9 @@
 //! Adaptivity (spec 3.10 §3.4, stage B) on cases from real assemblies: a
 //! plate cut to fit between two walls, a spacer filling the gap between two
 //! plates (and following it when the gap shrinks), a shelf taking both its
-//! length and thickness from its frame, and the refusals — a size fixed by a
-//! dimension, a part that is not adaptive.
+//! length and thickness from its frame, a sector cover taking its angle from
+//! a wall, a partner dragged (the part stretches with it), and the refusals —
+//! a size fixed by a dimension, a part that is not adaptive.
 
 use cadcraft3d::assembly::adapt::{self, Unknown};
 use cadcraft3d::assembly::relation::{self, Constraint, ConstraintKind, Geom, GeomRef};
@@ -860,4 +861,119 @@ fn lifting_the_ceiling_grows_the_roller() {
     .expect("grown");
     let (lo, hi) = extent(c.part(r), 2);
     assert!(((hi - lo) - 40.0).abs() < 1e-2, "diameter {}", hi - lo);
+}
+
+/// A grounded 45° sector of R50 (adaptive sketch; `fixed_end`: its free
+/// side's end fixed too) with its free side mated to a grounded wall whose
+/// face runs through the centre at `wall_deg` (outward normal turned so the
+/// sector's side can lie on it). Returns the case, the sector and the
+/// adaptation's result.
+fn sector_case(wall_deg: Real, fixed_end: bool) -> (Case, u32, Result<Option<Vec<Real>>, String>) {
+    let mut sector = PartDocument::default();
+    let i = sector
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    let sk = &mut sector.sketches[i].sketch;
+    let o = sk.add_point(Point2::new(0.0, 0.0));
+    let a = sk.add_point(Point2::new(50.0, 0.0));
+    let s45 = 50.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let b = sk.add_point(Point2::new(s45, s45));
+    sk.set_fixed(o, true).unwrap();
+    sk.set_fixed(a, true).unwrap();
+    if fixed_end {
+        sk.set_fixed(b, true).unwrap();
+    }
+    sk.add_line_between(o, a).unwrap();
+    sk.add_arc(o, a, b).unwrap();
+    sk.add_line_between(b, o).unwrap();
+    let rg = sk.regions();
+    assert_eq!(rg.len(), 1);
+    let id = sector.sketches[i].id.clone();
+    sector
+        .add_extrude(
+            i,
+            ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 10.0),
+        )
+        .unwrap();
+    sector.set_adaptive(&id, true);
+    assert_eq!(
+        adapt::unknowns(&sector)
+            .iter()
+            .any(|u| matches!(u, Unknown::Point { point, .. } if *point == b)),
+        !fixed_end
+    );
+    // The free side's wall: its points lie on y = x.
+    let (name, hint) = sector
+        .body
+        .faces()
+        .find_map(|(_, f)| {
+            let m = f.mesh.as_ref()?;
+            let on =
+                !m.positions.is_empty() && m.positions.iter().all(|q| (q.y - q.x).abs() < 1e-6);
+            let q = m.positions.first()?;
+            on.then(|| (f.name.clone().unwrap(), [q.x, q.y, q.z]))
+        })
+        .unwrap();
+    let mut c = Case::new();
+    let wall = PartDocument::with_box("Box1", [10.0, 100.0, 20.0]).unwrap();
+    // The wall's face x = 10 turned to the line at `wall_deg` through the
+    // origin, its normal (sin, −cos) of that angle.
+    let rot = Transform3::new(
+        cadcraft3d::kernel::Vector3::zeros(),
+        cadcraft3d::kernel::Vector3::z() * (wall_deg - 90.0).to_radians(),
+    );
+    let t = -(rot * Point3::new(10.0, 50.0, 0.0)).coords;
+    let w = c.place(
+        wall.clone(),
+        "Wall",
+        Transform3::translation(t.x, t.y, t.z) * rot,
+        true,
+    );
+    let s = c.place(sector, "Sector", Transform3::identity(), true);
+    c.asm.add_constraint(mate(
+        GeomRef::Face {
+            occurrence: s,
+            sub: Vec::new(),
+            name,
+            hint,
+        },
+        face(&wall, w, 0, 10.0),
+    ));
+    let r = c.adapt(s);
+    (c, s, r)
+}
+
+#[test]
+fn a_sector_plate_opens_to_the_wall_it_meets() {
+    // A fan-shaped cover whose free side meets a wall square to its fixed
+    // side becomes a quarter: the end of its arc slides round the circle
+    // (an arc's free angle adapts).
+    let (mut c, s, r) = sector_case(90.0, false);
+    r.unwrap().expect("adapted");
+    let (lo, _) = extent(c.part(s), 0);
+    let (_, hi) = extent(c.part(s), 1);
+    assert!(
+        lo.abs() < 1e-3 && (hi - 50.0).abs() < 1e-3,
+        "x from {lo}, y to {hi}"
+    );
+    assert!(c.adapt(s).unwrap().is_none());
+}
+
+#[test]
+fn a_sector_plate_closes_to_a_stop_at_thirty_degrees() {
+    let (c, s, r) = sector_case(30.0, false);
+    r.unwrap().expect("adapted");
+    let (_, hi) = extent(c.part(s), 1);
+    assert!((hi - 25.0).abs() < 1e-3, "y to {hi}");
+    let mut alone = c.part(s).clone();
+    alone.regenerate().unwrap();
+    assert!((extent(&alone, 1).1 - 25.0).abs() < 1e-3);
+}
+
+#[test]
+fn a_sector_with_a_fixed_end_does_not_adapt() {
+    let (c, s, r) = sector_case(90.0, true);
+    assert!(r.unwrap().is_none());
+    let (_, hi) = extent(c.part(s), 1);
+    assert!((hi - 50.0 * std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-3);
 }
