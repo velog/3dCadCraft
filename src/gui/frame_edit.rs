@@ -75,6 +75,10 @@ impl CadCraftApp {
                     cmds.push(FrameCmd::Select(all.clone(), false));
                 }
                 r.context_menu(|ui| {
+                    if ui.button("Edit Frame...").clicked() {
+                        cmds.push(FrameCmd::Start(AsmPlanned::EditFrame, all.clone()));
+                        ui.close();
+                    }
                     if ui.button("Change").clicked() {
                         cmds.push(FrameCmd::Start(AsmPlanned::FrameChange, all.clone()));
                         ui.close();

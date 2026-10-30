@@ -593,21 +593,84 @@ impl Section {
             auto_reference_edges: false,
             ..Default::default()
         };
-        let i = part.create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts)?;
-        self.draw(&mut part.sketches[i].sketch)?;
-        let seed = self.material_point();
+        // Cuts square to the member are its extrusion's ends (no Trim Solid:
+        // each was ~0.4 s in the kernel for a rounded tube).
+        let (mut z0, mut z1) = (-ext[0], length + ext[1]);
+        let mut slanted = Vec::new();
+        for c in cuts {
+            let n = c.normal.try_normalize(1e-12);
+            match n {
+                Some(n) if n.x.abs() < 1e-9 && n.y.abs() < 1e-9 => {
+                    if n.z > 0.0 {
+                        z1 = z1.min(c.point.z);
+                    } else {
+                        z0 = z0.max(c.point.z);
+                    }
+                }
+                _ => slanted.push(*c),
+            }
+        }
+        if z1 - z0 < 1e-6 {
+            return Err(PartError::Feature(
+                "the cuts leave nothing of the member".into(),
+            ));
+        }
+        let start_inside = z0 > 1e-9 || z1 < 1e-9;
+        let (i, seed) = if start_inside {
+            // The section on a plane at z0 (points mapped through 3D, so the
+            // part's coordinates stay the section's).
+            let w = part.add_work(WorkFeature::new(WorkDef::Ucs(UcsDef::Offsets {
+                x: 0.0,
+                y: 0.0,
+                z: z0,
+                rx: 0.0,
+                ry: 0.0,
+                rz: 0.0,
+            })))?;
+            let placement = SketchPlacement {
+                plane: PlaneRef::Work(format!("{w}:XY")),
+                ..Default::default()
+            };
+            let i = part.create_sketch(placement, &opts)?;
+            let pl = part.sketches[i].sketch.plane.clone();
+            for l in self.loops() {
+                let t = NotchTool {
+                    origin: [0.0, 0.0, z0],
+                    x: [1.0, 0.0, 0.0],
+                    y: [0.0, 1.0, 0.0],
+                    length: 0.0,
+                    outline: l,
+                };
+                draw_loop(&mut part.sketches[i].sketch, t.outline_in(&pl))?;
+            }
+            let m = self.material_point();
+            let q = pl.project(&Point3::new(m.x, m.y, z0));
+            (i, Point2::new(q.x, q.y))
+        } else {
+            let i = part.create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts)?;
+            self.draw(&mut part.sketches[i].sketch)?;
+            (i, self.material_point())
+        };
         let regions = part.sketches[i].sketch.regions();
         let r = regions
             .iter()
             .find(|r| r.contains(seed))
             .ok_or_else(|| PartError::Feature("the section has no closed profile".into()))?;
-        let mut e = ExtrudeFeature::new(vec![ProfileRef::of(r, seed)], length + ext[1]);
-        if ext[0] > 1e-9 {
+        let (dist, back) = if start_inside {
+            (z1 - z0, 0.0)
+        } else {
+            (z1, -z0)
+        };
+        let mut e = ExtrudeFeature::new(vec![ProfileRef::of(r, seed)], dist);
+        if start_inside && part.sketches[i].sketch.plane.normal.z < 0.0 {
+            e.direction = crate::part::ExtentDirection::Flipped;
+        }
+        if back > 1e-9 {
             e.direction = crate::part::ExtentDirection::Asymmetric;
-            e.distance_b = ext[0];
+            e.distance_b = back;
         }
         part.add_extrude(i, e)?;
-        for c in cuts {
+        for c in &slanted {
             let n = c
                 .normal
                 .try_normalize(1e-12)

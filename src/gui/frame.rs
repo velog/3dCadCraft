@@ -69,6 +69,22 @@ fn orientation(d: &PartDialog) -> Orientation {
     }
 }
 
+/// The panel's Position and Level.
+pub(super) fn layout(d: &PartDialog) -> frame::Layout {
+    frame::Layout {
+        side: match d.index(0, "Position") {
+            1 => frame::Side::Inside,
+            2 => frame::Side::Outside,
+            _ => frame::Side::Center,
+        },
+        level: match d.index(0, "Level") {
+            1 => frame::Level::Top,
+            2 => frame::Level::Bottom,
+            _ => frame::Level::Auto,
+        },
+    }
+}
+
 /// Refresh Categories: reads the user's profile folder again; the line the
 /// panel shows under the button.
 pub(super) fn refresh_categories() -> String {
@@ -96,10 +112,14 @@ pub(super) fn insert_options(d: &PartDialog) -> Option<InsertOptions> {
                 1 => frame::CornerType::Miter,
                 2 => frame::CornerType::ButtFirst,
                 3 => frame::CornerType::ButtSecond,
+                4 => frame::CornerType::ButtLonger,
+                5 => frame::CornerType::ButtShorter,
                 _ => frame::CornerType::None,
             },
             gap: d.num(0, "Corner Gap").unwrap_or(0.0),
+            tees: d.index(0, "T Joints") == 1,
         },
+        layout: layout(d),
     })
 }
 
@@ -368,6 +388,72 @@ impl CadCraftApp {
                 self.history.break_coalescing();
                 self.scene_dirty = true;
                 self.file_status = Some(Ok(format!("Miter: {} joint(s) cut", pairs.len())));
+                true
+            }
+            Err(e) => fail(self, &e),
+        }
+    }
+
+    /// OK of Edit Frame: the frame of the picked member gets the panel's
+    /// Position / Level and corners (Keep leaves them).
+    pub(super) fn edit_frame_ok(&mut self, d: &PartDialog) -> bool {
+        let fail = |app: &mut Self, e: &str| {
+            app.file_status = Some(Err(format!("Edit Frame: {e}")));
+            false
+        };
+        let members = self.picked_members(d, "members");
+        let Some(&m) = members.first() else {
+            return fail(self, "select a member of the frame");
+        };
+        let Some(fid) = self.assembly().and_then(|a| {
+            a.frames
+                .iter()
+                .find(|f| f.members.iter().any(|x| x.occurrence == m))
+                .map(|f| f.id)
+        }) else {
+            return fail(self, "the member belongs to no frame");
+        };
+        let layout = match d.index(0, "Position") {
+            0 if d.index(0, "Level") == 0 => None,
+            k => Some(frame::Layout {
+                side: match k {
+                    2 => frame::Side::Inside,
+                    3 => frame::Side::Outside,
+                    _ => frame::Side::Center,
+                },
+                level: layout(d).level,
+            }),
+        };
+        let kind = match d.index(0, "Corner Type") {
+            0 => None,
+            1 => Some(frame::CornerType::None),
+            2 => Some(frame::CornerType::Miter),
+            3 => Some(frame::CornerType::ButtFirst),
+            4 => Some(frame::CornerType::ButtSecond),
+            5 => Some(frame::CornerType::ButtLonger),
+            _ => Some(frame::CornerType::ButtShorter),
+        };
+        let corners = kind.map(|kind| frame::Corners {
+            kind,
+            gap: d.num(0, "Corner Gap").unwrap_or(0.0),
+            tees: d.index(0, "T Joints") == 1,
+        });
+        if layout.is_none() && corners.is_none() {
+            return fail(
+                self,
+                "nothing to change (Position and Corner Type are Keep)",
+            );
+        }
+        let mut trial = self.project.clone();
+        let linked = self.linked();
+        match frame::edit_frame(&mut trial, &linked, self.part_id, fid, layout, corners) {
+            Ok(_) => {
+                self.history.break_coalescing();
+                self.checkpoint("Edit Frame");
+                self.project = trial;
+                self.history.break_coalescing();
+                self.scene_dirty = true;
+                self.file_status = Some(Ok("Edit Frame: done".into()));
                 true
             }
             Err(e) => fail(self, &e),

@@ -34,6 +34,15 @@ const POINT: &[PickKind] = &[PickKind::Point];
 /// A frame member (a component of the frame).
 const MEMBERS: &[PickKind] = &[PickKind::Body];
 /// Skeleton geometry: model edges and sketch curves.
+/// Insert Frame's edges: also faces, for Face Edges / Body Edges.
+const SKELETON_OR_SOLID: &[PickKind] = &[
+    PickKind::Edge,
+    PickKind::StraightEdge,
+    PickKind::SketchCurve,
+    PickKind::Face,
+    PickKind::PlanarFace,
+];
+
 const SKELETON: &[PickKind] = &[
     PickKind::Edge,
     PickKind::StraightEdge,
@@ -104,6 +113,7 @@ pub enum AsmPlanned {
     ChangeReuse,
     FrameMemberInfo,
     FrameRefresh,
+    EditFrame,
     BeamColumn,
     // Design › Power Transmission
     Shaft,
@@ -130,7 +140,7 @@ pub enum AsmPlanned {
 
 impl AsmPlanned {
     #[cfg(test)]
-    pub const ALL: [AsmPlanned; 50] = {
+    pub const ALL: [AsmPlanned; 51] = {
         use AsmPlanned::*;
         [
             PlaceContentCenter,
@@ -163,6 +173,7 @@ impl AsmPlanned {
             ChangeReuse,
             FrameMemberInfo,
             FrameRefresh,
+            EditFrame,
             BeamColumn,
             Shaft,
             SpurGear,
@@ -220,6 +231,7 @@ impl AsmPlanned {
             ChangeReuse => "Change Reuse",
             FrameMemberInfo => "Frame Member Info",
             FrameRefresh => "Refresh",
+            EditFrame => "Edit Frame",
             BeamColumn => "Beam and Column Calculator",
             Shaft => "Shaft",
             SpurGear => "Spur Gears",
@@ -277,6 +289,7 @@ impl AsmPlanned {
             ChangeReuse => Icon::ChangeReuse,
             FrameMemberInfo => Icon::FrameInfo,
             FrameRefresh => Icon::FrameRefresh,
+            EditFrame => Icon::EditFrame,
             BeamColumn => Icon::BeamColumn,
             Shaft => Icon::Shaft,
             SpurGear => Icon::SpurGear,
@@ -315,7 +328,7 @@ impl AsmPlanned {
             CreateIAssembly => "5.7",
             InsertFrame | FrameChange | EndCap | Miter | CornerJoint | TrimExtend | Notch
             | LengthenShorten | RemoveEndTreatments | Reuse | ChangeReuse | FrameMemberInfo
-            | FrameRefresh => "6.1",
+            | FrameRefresh | EditFrame => "6.1",
             _ => "6.2",
         }
     }
@@ -368,6 +381,7 @@ impl AsmPlanned {
             ChangeReuse => "Changes the lines or placement of reused frame members.",
             FrameMemberInfo => "Section and physical properties of a frame member.",
             FrameRefresh => "Updates frame members after their library family changed.",
+            EditFrame => "Places all members of a frame again and finishes its corners again.",
             BeamColumn => {
                 "Checks a frame member as a beam (bending, deflection) or a column (buckling)."
             }
@@ -944,11 +958,12 @@ impl AsmPlanned {
                         &["Insert Members on Edges", "Between Points"],
                         0,
                     ),
+                    Combo("Select", &["Edge", "Face Edges", "Body Edges"], 0),
                     Sel(
                         "edges",
                         "Edges / Lines",
-                        "select skeleton edges or sketch lines (a window selects many)",
-                        SKELETON,
+                        "select skeleton edges or sketch lines (Face Edges / Body Edges: click a face)",
+                        SKELETON_OR_SOLID,
                     ),
                     Sel(
                         "points",
@@ -989,11 +1004,19 @@ impl AsmPlanned {
                             "Miter",
                             "Butt - first through",
                             "Butt - second through",
+                            "Butt - longer through",
+                            "Butt - shorter through",
                         ],
                         0,
                     ),
                     Num("Corner Gap", 0.0, " mm"),
+                    Combo("T Joints", &["None", "Notch"], 1),
+                    Note(
+                        "Corners of three or more members: the column runs through, the others stop at it.",
+                    ),
                     Head("Orientation"),
+                    Combo("Position", &["Center", "Inside", "Outside"], 0),
+                    Combo("Level", &["Auto", "Top", "Bottom"], 0),
                     Combo(
                         "Anchor",
                         &[
@@ -1342,6 +1365,39 @@ impl AsmPlanned {
                     Text("Radius of Gyration rx", ""),
                     Text("Radius of Gyration ry", ""),
                     Text("Centroid", ""),
+                ],
+            )],
+            EditFrame => &[Page(
+                "Edit Frame",
+                &[
+                    Sel(
+                        "members",
+                        "Frame",
+                        "select a member of the frame to edit",
+                        MEMBERS,
+                    ),
+                    Head("Position"),
+                    Combo("Position", &["Keep", "Center", "Inside", "Outside"], 0),
+                    Combo("Level", &["Auto", "Top", "Bottom"], 0),
+                    Head("Corners"),
+                    Combo(
+                        "Corner Type",
+                        &[
+                            "Keep",
+                            "None",
+                            "Miter",
+                            "Butt - first through",
+                            "Butt - second through",
+                            "Butt - longer through",
+                            "Butt - shorter through",
+                        ],
+                        0,
+                    ),
+                    Num("Corner Gap", 0.0, " mm"),
+                    Combo("T Joints", &["None", "Notch"], 1),
+                    Note(
+                        "A Corner Type other than Keep replaces the frame's Miter, Corner Joint and Notch treatments; Trim/Extend and Lengthen/Shorten stay.",
+                    ),
                 ],
             )],
             FrameRefresh => &[Page(
@@ -1804,13 +1860,75 @@ impl CadCraftApp {
                 }
             }
         }
+        let mode = match &self.part_planned {
+            Some(d)
+                if d.kind == Planned::Asm(AsmPlanned::InsertFrame) && d.active == Some("edges") =>
+            {
+                Some(d.index(0, "Select"))
+            }
+            Some(_) => None,
+            None => return,
+        };
+        if let Some(mode) = mode {
+            let face = match &g {
+                GeomRef::Face { name, .. } => Some(name.clone()),
+                _ => None,
+            };
+            if mode == 0 {
+                if face.is_some() {
+                    self.file_status = Some(Err(
+                        "Insert Frame: pick an edge, or set Select to Face Edges / Body Edges"
+                            .into(),
+                    ));
+                } else if let Some(d) = self.part_planned.as_mut() {
+                    d.pick_skeleton(label, crate::assembly::frame::Skeleton::Edge(g));
+                }
+                return;
+            }
+            // Face Edges: the clicked face's straight edges (an edge click:
+            // that edge); Body Edges: every straight edge of the body.
+            let only = if mode == 1 { face.clone() } else { None };
+            if mode == 1 && only.is_none() {
+                if let Some(d) = self.part_planned.as_mut() {
+                    d.pick_skeleton(label, crate::assembly::frame::Skeleton::Edge(g));
+                }
+                return;
+            }
+            let (occurrence, sub) = (g.occurrence(), g.sub().to_vec());
+            let edges = self
+                .geom_part(&g)
+                .and_then(|(c, _)| {
+                    self.with_part(c, |p| {
+                        crate::assembly::frame::straight_edges(p, only.as_deref())
+                    })
+                })
+                .unwrap_or_default();
+            let refs: Vec<GeomRef> = edges
+                .into_iter()
+                .map(|edge| GeomRef::Edge {
+                    occurrence,
+                    sub: sub.clone(),
+                    edge,
+                })
+                .collect();
+            let labels: Vec<String> = refs.iter().map(|r| self.geom_label(r)).collect();
+            let Some(d) = self.part_planned.as_mut() else {
+                return;
+            };
+            let mut added = 0;
+            for (r, w) in refs.into_iter().zip(labels) {
+                let s = crate::assembly::frame::Skeleton::Edge(r);
+                if !d.skeletons.contains(&s) {
+                    d.pick_skeleton(w, s);
+                    added += 1;
+                }
+            }
+            self.file_status = Some(Ok(format!("Insert Frame: {added} edge(s) added")));
+            return;
+        }
         let Some(d) = self.part_planned.as_mut() else {
             return;
         };
-        if d.kind == Planned::Asm(AsmPlanned::InsertFrame) && d.active == Some("edges") {
-            d.pick_skeleton(label, crate::assembly::frame::Skeleton::Edge(g));
-            return;
-        }
         // Pattern Component's directions and axis take one pick each.
         let single = d.kind == Planned::Asm(AsmPlanned::Pattern)
             && matches!(d.active, Some("column" | "row" | "axis" | "feature"));

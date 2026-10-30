@@ -1304,6 +1304,7 @@ fn speed_budgets() {
             material: Some("Steel S235".into()),
             orientation: Default::default(),
             corners: Default::default(),
+            layout: Default::default(),
         };
         let lib = cadcraft3d::part::frame::Library::builtin();
         // Miter of the four top edges' members: 8 end cuts (Trim Solid each), rebuilt in parallel.
@@ -1370,6 +1371,22 @@ fn speed_budgets() {
                 assert_eq!(ts.len(), 4);
                 let s = add_treatments(&mut p, &Linked::new(), aid, ts).unwrap();
                 assert!(s.sick.is_empty(), "{:?}", s.sick);
+            }),
+        ));
+        // A frame from the solid: all 12 edges Inside, corners of three (column through, 16 Corner Joints).
+        rows.push((
+            "frame: box frame from the solid, Inside, 16 corner joints",
+            3000.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                let mut o = o.clone();
+                o.layout = cadcraft3d::assembly::frame::Layout {
+                    side: cadcraft3d::assembly::frame::Side::Inside,
+                    level: Default::default(),
+                };
+                o.corners.kind = cadcraft3d::assembly::frame::CornerType::Miter;
+                let (_, occs) = insert(&mut p, &Linked::new(), aid, &edges, &o, lib, None).unwrap();
+                assert_eq!(occs.len(), 12);
             }),
         ));
         rows.push((

@@ -39,7 +39,8 @@ pub(super) fn member_colour(d: &PartDialog, key: &str) -> Option<[f32; 3]> {
         (Notch, "tools") => Some(YELLOW),
         (Notch, "notched") => Some(BLUE),
         (
-            FrameChange | Miter | TrimExtend | LengthenShorten | RemoveEndTreatments | ChangeReuse,
+            FrameChange | Miter | TrimExtend | LengthenShorten | RemoveEndTreatments | ChangeReuse
+            | EditFrame,
             "members",
         )
         | (FrameMemberInfo, "member")

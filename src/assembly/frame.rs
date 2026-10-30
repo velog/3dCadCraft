@@ -408,6 +408,102 @@ pub struct InsertOptions {
     pub orientation: Orientation,
     /// What the corners between the new members get (spec 6.1 §3.10).
     pub corners: Corners,
+    /// Where the sections lie relative to the frame's centre (§3.12).
+    pub layout: Layout,
+}
+
+/// Where a member's section lies across its line, relative to the centre of
+/// the frame's lines (spec 6.1 §3.12).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Side {
+    /// The Orientation group's Anchor.
+    #[default]
+    Center,
+    /// Towards the centre in both section axes (flush with a box's faces).
+    Inside,
+    /// Away from the centre.
+    Outside,
+}
+
+/// Above or below the line, for members whose section's vertical axis is
+/// near the world Z.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Level {
+    /// As [`Side`].
+    #[default]
+    Auto,
+    /// Above the line.
+    Top,
+    /// Below the line.
+    Bottom,
+}
+
+/// Position and Level of Insert Frame / Edit Frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Layout {
+    /// Across the line.
+    pub side: Side,
+    /// Up or down.
+    pub level: Level,
+}
+
+impl Layout {
+    /// The orientation `o` with its anchor chosen for line `p`–`q` of a
+    /// frame whose lines' centre is `centre` (unchanged for Center + Auto).
+    pub fn orient(&self, o: &Orientation, p: Point3, q: Point3, centre: Point3) -> Orientation {
+        if *self == Layout::default() {
+            return *o;
+        }
+        let Some((_, u, v)) = section_axes(p, q, o) else {
+            return *o;
+        };
+        let w = centre - p;
+        let sign = |a: Real| {
+            if a > 1e-6 {
+                1
+            } else if a < -1e-6 {
+                -1
+            } else {
+                0
+            }
+        };
+        // Which way the section reaches from the line, in its own axes.
+        let (mut sx, mut sy) = match self.side {
+            Side::Center => (0, 0),
+            Side::Inside => (sign(w.dot(&u)), sign(w.dot(&v))),
+            Side::Outside => (-sign(w.dot(&u)), -sign(w.dot(&v))),
+        };
+        let up = v.dot(&Vector3::z());
+        if up.abs() > 0.5 {
+            let s = if up > 0.0 { 1 } else { -1 };
+            match self.level {
+                Level::Top => sy = s,
+                Level::Bottom => sy = -s,
+                Level::Auto => {}
+            }
+        }
+        if o.mirror {
+            sx = -sx;
+        }
+        let (side, level) = (self.side, self.level);
+        if side == Side::Center && sx == 0 && sy == 0 && level == Level::Auto {
+            return *o;
+        }
+        // The anchor is the section's edge on the line: reaching to +x puts
+        // its left edge there.
+        let anchor = match (sx, sy) {
+            (1, 1) => Anchor::BottomLeft,
+            (0, 1) => Anchor::Bottom,
+            (-1, 1) => Anchor::BottomRight,
+            (1, 0) => Anchor::Left,
+            (-1, 0) => Anchor::Right,
+            (1, -1) => Anchor::TopLeft,
+            (0, -1) => Anchor::Top,
+            (-1, -1) => Anchor::TopRight,
+            _ => Anchor::Center,
+        };
+        Orientation { anchor, ..*o }
+    }
 }
 
 /// How Insert Frame finishes the corners where two new members meet at
@@ -424,6 +520,10 @@ pub enum CornerType {
     ButtFirst,
     /// Corner Joint: the member picked second runs through.
     ButtSecond,
+    /// Corner Joint: the longer member runs through (Solid Edge's Butt 2).
+    ButtLonger,
+    /// Corner Joint: the shorter member runs through (Solid Edge's Butt 1).
+    ButtShorter,
 }
 
 /// The corner choice of Insert Frame.
@@ -434,12 +534,14 @@ pub struct Corners {
     /// The gap at the corner (Miter distance / Corner Joint offset of the
     /// member that stops).
     pub gap: Real,
+    /// A new member ending on the middle of another is notched by it.
+    pub tees: bool,
 }
 
 impl Corners {
     /// The treatment of the corner between `first` and `second` (picked
-    /// in this order).
-    fn treatment(&self, first: u32, second: u32) -> Option<Treatment> {
+    /// in this order, of these lengths).
+    fn treatment(&self, first: u32, second: u32, lengths: [Real; 2]) -> Option<Treatment> {
         let joint = |a, b| Treatment::CornerJoint {
             a,
             b,
@@ -455,6 +557,10 @@ impl Corners {
             }),
             CornerType::ButtFirst => Some(joint(first, second)),
             CornerType::ButtSecond => Some(joint(second, first)),
+            CornerType::ButtLonger if lengths[1] > lengths[0] + 1e-6 => Some(joint(second, first)),
+            CornerType::ButtLonger => Some(joint(first, second)),
+            CornerType::ButtShorter if lengths[1] < lengths[0] - 1e-6 => Some(joint(second, first)),
+            CornerType::ButtShorter => Some(joint(first, second)),
         }
     }
 }
@@ -512,11 +618,9 @@ pub fn skeleton_line(
     Ok((m.transform_point(&a), m.transform_point(&b)))
 }
 
-/// The occurrence placement of a member of section `s` along `a → b`:
-/// part Z along the line, part X / Y the section's horizontal / vertical
-/// axes (vertical = the assembly's Z projected square to the line, or its X
-/// for a vertical line), the anchor on the line, then offsets and rotation.
-pub fn placement(s: &Section, a: Point3, b: Point3, o: &Orientation) -> Option<Transform3> {
+/// A member's run direction and its section's axes (horizontal, vertical;
+/// turned by the rotation angle) on line `a`–`b`.
+fn section_axes(a: Point3, b: Point3, o: &Orientation) -> Option<(Vector3, Vector3, Vector3)> {
     let (a, b) = if o.flip { (b, a) } else { (a, b) };
     let d = (b - a).try_normalize(1e-9)?;
     let up = if d.z.abs() > 0.999 {
@@ -526,9 +630,21 @@ pub fn placement(s: &Section, a: Point3, b: Point3, o: &Orientation) -> Option<T
     };
     let v = (up - d * d.dot(&up)).normalize();
     let u = v.cross(&d);
-    // The section's axes turned about the line.
     let (c, sn) = (o.angle.cos(), o.angle.sin());
-    let (ur, vr) = (u * c + v * sn, v * c - u * sn);
+    Some((d, u * c + v * sn, v * c - u * sn))
+}
+
+/// The occurrence placement of a member of section `s` along `a → b`:
+/// part Z along the line, part X / Y the section's horizontal / vertical
+/// axes (vertical = the assembly's Z projected square to the line, or its X
+/// for a vertical line), the anchor on the line, then offsets and rotation.
+pub fn placement(s: &Section, a: Point3, b: Point3, o: &Orientation) -> Option<Transform3> {
+    let (d, ur, vr) = section_axes(a, b, o)?;
+    let (u, v) = {
+        let (c, sn) = (o.angle.cos(), o.angle.sin());
+        (ur * c - vr * sn, vr * c + ur * sn)
+    };
+    let (a, b) = if o.flip { (b, a) } else { (a, b) };
     let (ax, ay) = o.anchor.point(s);
     // Section point (x, y) → a + R·(x − anchor + offset) (rotated about the
     // line) or a + offset + R·(x − anchor) (about the anchor).
@@ -589,12 +705,19 @@ pub fn insert(
     let before = project.clone();
     let result = (|| {
         let mut made = Vec::new();
-        for e in edges {
+        let lines = {
             let a = asm_of(project, asm)?;
-            let (p, q) = skeleton_line(project, linked, a, e)?;
+            edges
+                .iter()
+                .map(|e| skeleton_line(project, linked, a, e))
+                .collect::<Result<Vec<_>, String>>()?
+        };
+        let centre = centre_of(&lines);
+        for (e, &(p, q)) in edges.iter().zip(&lines) {
             let length = (q - p).norm();
-            let place = placement(&section, p, q, &o.orientation)
-                .ok_or("the skeleton edge has no length")?;
+            let orientation = o.layout.orient(&o.orientation, p, q, centre);
+            let place =
+                placement(&section, p, q, &orientation).ok_or("the skeleton edge has no length")?;
             let part = section
                 .member_part(length, o.material.as_deref())
                 .map_err(|e| e.to_string())?;
@@ -611,7 +734,7 @@ pub fn insert(
                 family: section.family.clone(),
                 size: section.size.clone(),
                 section: SectionData::of(&section),
-                orientation: o.orientation,
+                orientation,
                 built: Some(Shape {
                     length,
                     ..Default::default()
@@ -645,13 +768,9 @@ pub fn insert(
         };
         // Corners between the new members (in pick order: the earlier
         // member is the first).
-        if o.corners.kind != CornerType::None {
+        {
             let a = asm_of(project, asm)?;
-            let pairs = meeting_pairs(project, linked, a, &occs);
-            let ts: Vec<Treatment> = pairs
-                .iter()
-                .filter_map(|&(x, y)| o.corners.treatment(x, y))
-                .collect();
+            let ts = corner_treatments(project, linked, a, &occs, &o.corners);
             if !ts.is_empty() {
                 let a = asm_mut(project, asm)?;
                 if let Some(f) = a.frames.iter_mut().find(|f| f.id == id) {
@@ -1458,16 +1577,26 @@ pub fn retype_corner(
             .iter_mut()
             .find(|f| f.id == frame)
             .ok_or("no such frame")?;
-        let t = f.treatments.get_mut(index).ok_or("no such end treatment")?;
+        let t = f.treatments.get(index).ok_or("no such end treatment")?;
         let (a, b, gap) = match t {
             Treatment::Miter { a, b, gap, .. } => (*a, *b, *gap),
             // The member that stops is the second; it carries the gap.
             Treatment::CornerJoint { a, b, offsets } => (*a, *b, offsets[1]),
             _ => return Err("only a Miter or a Corner Joint is a corner".into()),
         };
-        *t = Corners { kind, gap }
-            .treatment(a, b)
-            .ok_or("a corner cannot become uncut here: Delete it")?;
+        let len = |o: u32| {
+            let m = f.members.iter().find(|m| m.occurrence == o)?;
+            m.built.as_ref().map(|s| s.length)
+        };
+        let lengths = [len(a).unwrap_or(0.0), len(b).unwrap_or(0.0)];
+        let t = f.treatments.get_mut(index).ok_or("no such end treatment")?;
+        *t = Corners {
+            kind,
+            gap,
+            tees: false,
+        }
+        .treatment(a, b, lengths)
+        .ok_or("a corner cannot become uncut here: Delete it")?;
         let s = solve(project, linked, asm)?;
         if let Some((_, why)) = s.sick.iter().find(|(o, _)| *o == a || *o == b) {
             return Err(why.clone());
@@ -1606,6 +1735,247 @@ pub fn meeting_pairs(
     out
 }
 
+/// The middle of the lines' middles (the centre Position works from).
+fn centre_of(lines: &[(Point3, Point3)]) -> Point3 {
+    let n = lines.len().max(1) as Real;
+    let sum = lines.iter().fold(Vector3::zeros(), |s, (p, q)| {
+        s + (p.coords + q.coords) / 2.0
+    });
+    Point3::from(sum / n)
+}
+
+/// The corner treatments Insert Frame / Edit Frame give `members` (spec 6.1
+/// §3.10, §3.12): at a corner of two, `corners.kind`; at a corner of three
+/// or more, the most vertical member (else the longest) runs through and
+/// every other one stops at it; with `tees`, a member ending on the middle
+/// of another is notched by it.
+pub fn corner_treatments(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+    members: &[u32],
+    corners: &Corners,
+) -> Vec<Treatment> {
+    let lines: Vec<(u32, (Point3, Point3), Real)> = members
+        .iter()
+        .filter_map(|&o| {
+            let m = asm
+                .frames
+                .iter()
+                .flat_map(|f| &f.members)
+                .find(|m| m.occurrence == o)?;
+            let l = skeleton_line(project, linked, asm, &m.skeleton).ok()?;
+            let (w, h) = m.section()?.extent();
+            Some((o, l, w + h))
+        })
+        .collect();
+    let mut out = Vec::new();
+    if corners.kind != CornerType::None {
+        // Corners: the meeting point and the members (index into `lines`).
+        let mut vertices: Vec<(Point3, Vec<usize>)> = Vec::new();
+        for i in 0..lines.len() {
+            for j in i + 1..lines.len() {
+                let reach = 2.0 * (lines[i].2 + lines[j].2);
+                if let Some((c, _, _)) = joint(lines[i].1, lines[j].1, reach) {
+                    match vertices.iter_mut().find(|(p, _)| (p - c).norm() < 1e-3) {
+                        Some((_, v)) => {
+                            for k in [i, j] {
+                                if !v.contains(&k) {
+                                    v.push(k);
+                                }
+                            }
+                        }
+                        None => vertices.push((c, vec![i, j])),
+                    }
+                }
+            }
+        }
+        let len = |k: usize| (lines[k].1.1 - lines[k].1.0).norm();
+        for (_, v) in &vertices {
+            if let [i, j] = v[..] {
+                if let Some(t) = corners.treatment(lines[i].0, lines[j].0, [len(i), len(j)]) {
+                    out.push(t);
+                }
+                continue;
+            }
+            let upright = |k: usize| {
+                let (p, q) = lines[k].1;
+                ((q - p).normalize().z.abs(), len(k))
+            };
+            let Some(&through) = v.iter().max_by(|&&x, &&y| {
+                let (a, b) = (upright(x), upright(y));
+                (a.0 > 0.9)
+                    .cmp(&(b.0 > 0.9))
+                    .then(a.1.total_cmp(&b.1))
+                    .then(y.cmp(&x))
+            }) else {
+                continue;
+            };
+            for &k in v {
+                if k != through {
+                    out.push(Treatment::CornerJoint {
+                        a: lines[through].0,
+                        b: lines[k].0,
+                        offsets: [0.0, corners.gap],
+                    });
+                }
+            }
+        }
+    }
+    if corners.tees {
+        for (i, (oi, (p, q), _)) in lines.iter().enumerate() {
+            for (j, (oj, (a, b), _)) in lines.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                let d = b - a;
+                let l2 = d.norm_squared();
+                let on_middle = |e: &Point3| {
+                    let t = (e - a).dot(&d) / l2;
+                    let margin = 1e-3 / l2.sqrt();
+                    t > margin && t < 1.0 - margin && (a + d * t - e).norm() < 1e-3
+                };
+                if on_middle(p) || on_middle(q) {
+                    out.push(Treatment::Notch {
+                        notched: *oi,
+                        by: *oj,
+                        offset: corners.gap,
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Edit Frame (spec 6.1 §3.12): every member of frame `frame` gets
+/// `layout` (when given), and with `corners` the frame's Miter / Corner
+/// Joint / Notch treatments are replaced by new ones; then the frame is
+/// solved. Failure changes nothing.
+pub fn edit_frame(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    frame: u32,
+    layout: Option<Layout>,
+    corners: Option<Corners>,
+) -> Result<Solved, String> {
+    let before = project.clone();
+    let result = (|| {
+        let a = asm_of(project, asm)?;
+        let f = a
+            .frames
+            .iter()
+            .find(|f| f.id == frame)
+            .ok_or("no such frame")?;
+        let occs: Vec<u32> = f.members.iter().map(|m| m.occurrence).collect();
+        let mut orient = Vec::new();
+        if let Some(l) = layout {
+            let lines: Vec<(Point3, Point3)> = f
+                .members
+                .iter()
+                .map(|m| skeleton_line(project, linked, a, &m.skeleton))
+                .collect::<Result<_, _>>()?;
+            let centre = centre_of(&lines);
+            for (m, &(p, q)) in f.members.iter().zip(&lines) {
+                let base = Orientation {
+                    anchor: Anchor::Center,
+                    ..m.orientation
+                };
+                let o = if l == Layout::default() {
+                    base
+                } else {
+                    l.orient(&base, p, q, centre)
+                };
+                orient.push((m.occurrence, o));
+            }
+        }
+        let fresh = corners
+            .as_ref()
+            .map(|c| corner_treatments(project, linked, a, &occs, c));
+        let a = asm_mut(project, asm)?;
+        let f = a
+            .frames
+            .iter_mut()
+            .find(|f| f.id == frame)
+            .ok_or("no such frame")?;
+        for (occ, o) in orient {
+            if let Some(m) = f.members.iter_mut().find(|m| m.occurrence == occ) {
+                m.orientation = o;
+            }
+        }
+        if let Some(ts) = fresh {
+            f.treatments.retain(|t| {
+                !matches!(
+                    t,
+                    Treatment::Miter { .. }
+                        | Treatment::CornerJoint { .. }
+                        | Treatment::Notch { .. }
+                )
+            });
+            f.treatments.extend(ts);
+        }
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(o, _)| occs.contains(o)) {
+            return Err(why.clone());
+        }
+        Ok(s)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
+}
+
+/// The straight edges of `part`'s body (Insert Frame's Body Edges), or of
+/// its face `face` only (Face Edges), as edge references (part
+/// coordinates): two face names and the edge's middle.
+pub fn straight_edges(part: &PartDocument, face: Option<&str>) -> Vec<crate::part::EdgeRef> {
+    let body = &part.body;
+    let opts = crate::kernel::TessellationOptions::default();
+    let mut out: Vec<crate::part::EdgeRef> = Vec::new();
+    for (id, _) in body.edges() {
+        let faces = body.edge_faces(id);
+        let [f0, f1] = faces[..] else {
+            continue;
+        };
+        let name = |f| body.face(f).and_then(|f| f.name.clone());
+        let (Some(n0), Some(n1)) = (name(f0), name(f1)) else {
+            continue;
+        };
+        if face.is_some_and(|w| w != n0 && w != n1) {
+            continue;
+        }
+        let Ok(pts) = body.sample_edge(id, &opts) else {
+            continue;
+        };
+        let (Some(s), Some(e)) = (pts.first(), pts.last()) else {
+            continue;
+        };
+        let d = e - s;
+        if d.norm() < 1e-6
+            || pts
+                .iter()
+                .any(|p| (p - s).cross(&d).norm() > 1e-6 * d.norm_squared())
+        {
+            continue;
+        }
+        let m = s + d / 2.0;
+        // A split edge or a seam listed twice: keep one.
+        if out
+            .iter()
+            .any(|r| (Point3::new(r.hint[0], r.hint[1], r.hint[2]) - m).norm() < 1e-6)
+        {
+            continue;
+        }
+        out.push(crate::part::EdgeRef {
+            faces: [n0, n1],
+            hint: [m.x, m.y, m.z],
+        });
+    }
+    out
+}
+
 /// The member's length now (its extrusion's distance).
 pub fn length_of(part: &PartDocument) -> Option<Real> {
     part.features.iter().find_map(|f| match f {
@@ -1654,6 +2024,7 @@ mod tests {
             material: Some("Steel S235".into()),
             orientation: Orientation::default(),
             corners: Corners::default(),
+            layout: Layout::default(),
         }
     }
 
@@ -2118,7 +2489,11 @@ mod tests {
                 .map(|&(x, y, z)| find_edge(&p, aid, Point3::new(x, y, z)))
                 .collect();
             let mut o = opts();
-            o.corners = Corners { kind, gap: 0.0 };
+            o.corners = Corners {
+                kind,
+                gap: 0.0,
+                tees: false,
+            };
             let (_, occs) = insert(&mut p, &lk, aid, &edges, &o, Library::builtin(), None).unwrap();
             let a = asm(&p, aid);
             let ts = &a.frames[0].treatments;
@@ -2348,6 +2723,170 @@ mod tests {
         assert_eq!(asm(&p, aid).frames[0].treatments.len(), 1);
     }
 
+    /// Body Edges / Face Edges: the box skeleton has 12 straight edges, its
+    /// top face 4.
+    #[test]
+    fn straight_edges_of_a_body_and_of_a_face() {
+        let (p, aid, _) = project();
+        let a = asm(&p, aid);
+        let sk = part(&p, a, 1);
+        let all = straight_edges(&sk, None);
+        assert_eq!(all.len(), 12);
+        let top = straight_edges(&sk, Some("Box1:Top"));
+        assert_eq!(top.len(), 4);
+        assert!(top.iter().all(|e| (e.hint[2] - 200.0).abs() < 1e-9));
+    }
+
+    /// The world box of a member's body.
+    fn member_box(p: &Project, aid: DocumentId, occ: u32) -> (Point3, Point3) {
+        let a = asm(p, aid);
+        let t = a.find(occ).unwrap().transform;
+        let (lo, hi) = part(p, a, occ).body.bounding_box().unwrap();
+        let mut b = (
+            Point3::new(Real::MAX, Real::MAX, Real::MAX),
+            Point3::new(Real::MIN, Real::MIN, Real::MIN),
+        );
+        for x in [lo.x, hi.x] {
+            for y in [lo.y, hi.y] {
+                for z in [lo.z, hi.z] {
+                    let q = t.transform_point(&Point3::new(x, y, z));
+                    b.0 = b.0.inf(&q);
+                    b.1 = b.1.sup(&q);
+                }
+            }
+        }
+        b
+    }
+
+    /// A frame from the whole box (its 12 edges) placed Inside with corners:
+    /// every member lies inside the 400 × 300 × 200 volume, flush with its
+    /// faces; at each corner of three the column runs through (200) and the
+    /// others stop at it (400 − 2·40 = 320, 300 − 80 = 220). Edit Frame then
+    /// puts them Outside: the column at the origin corner lies at x, y < 0.
+    #[test]
+    fn a_box_frame_inside_then_outside() {
+        let (mut p, aid, _) = project();
+        let sk = part(&p, asm(&p, aid), 1);
+        let edges: Vec<Skeleton> = straight_edges(&sk, None)
+            .into_iter()
+            .map(|edge| {
+                Skeleton::Edge(GeomRef::Edge {
+                    occurrence: 1,
+                    sub: Vec::new(),
+                    edge,
+                })
+            })
+            .collect();
+        let mut o = opts();
+        o.layout = Layout {
+            side: Side::Inside,
+            level: Level::Auto,
+        };
+        o.corners.kind = CornerType::Miter;
+        let (fid, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &edges,
+            &o,
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(occs.len(), 12);
+        // 8 corners × 2 joints against the column.
+        assert_eq!(asm(&p, aid).frames[0].treatments.len(), 16);
+        let mut lengths: Vec<i64> = Vec::new();
+        for &m in &occs {
+            let (lo, hi) = member_box(&p, aid, m);
+            assert!(lo.x > -1e-6 && lo.y > -1e-6 && lo.z > -1e-6, "{lo}");
+            assert!(
+                hi.x < 400.0 + 1e-6 && hi.y < 300.0 + 1e-6 && hi.z < 200.0 + 1e-6,
+                "{hi}"
+            );
+            let d = hi - lo;
+            lengths.push(d.x.max(d.y).max(d.z).round() as i64);
+        }
+        lengths.sort();
+        assert_eq!(
+            lengths,
+            [200, 200, 200, 200, 220, 220, 220, 220, 320, 320, 320, 320]
+        );
+        let out = Layout {
+            side: Side::Outside,
+            level: Level::Auto,
+        };
+        edit_frame(&mut p, &Linked::new(), aid, fid, Some(out), None).unwrap();
+        let column = occs
+            .iter()
+            .copied()
+            .find(|&m| {
+                let (lo, hi) = member_box(&p, aid, m);
+                hi.z - lo.z > 150.0 && hi.x < 1.0 && hi.y < 1.0
+            })
+            .expect("a column outside the origin corner");
+        let (lo, _) = member_box(&p, aid, column);
+        assert!(
+            (lo.x + 40.0).abs() < 1e-6 && (lo.y + 40.0).abs() < 1e-6,
+            "{lo}"
+        );
+        // Corners again: the treatments are replaced, not added.
+        let c = Corners {
+            kind: CornerType::Miter,
+            gap: 0.0,
+            tees: false,
+        };
+        edit_frame(&mut p, &Linked::new(), aid, fid, None, Some(c)).unwrap();
+        assert_eq!(asm(&p, aid).frames[0].treatments.len(), 16);
+    }
+
+    /// Butt by length (Solid Edge's Butt 1 / Butt 2): of the 400 and 300
+    /// top edges, the longer or the shorter runs through whatever the pick
+    /// order; T Joints notch a member ending on the middle of another.
+    #[test]
+    fn butt_by_length_and_tee_joints() {
+        let (mut p, aid, _) = project();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let mut o = opts();
+        o.family = "Flat bar (EN 10058)".into();
+        o.size = "40x5".into();
+        o.corners.kind = CornerType::ButtShorter;
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[x, y],
+            &o,
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        // The 300 one runs through: 300 + 20, the 400 one 400 − 20.
+        let a = asm(&p, aid);
+        assert!((outer_length(&part(&p, a, occs[1])).unwrap() - 320.0).abs() < 1e-3);
+        assert!((outer_length(&part(&p, a, occs[0])).unwrap() - 380.0).abs() < 1e-3);
+        let (mut p, aid, bar, rhs) = tee_frame();
+        let a = asm(&p, aid);
+        let c = Corners {
+            kind: CornerType::None,
+            gap: 0.0,
+            tees: true,
+        };
+        let ts = corner_treatments(&p, &Linked::new(), a, &[bar, rhs], &c);
+        assert_eq!(
+            ts,
+            [Treatment::Notch {
+                notched: bar,
+                by: rhs,
+                offset: 0.0
+            }]
+        );
+        let fid = asm(&p, aid).frames[0].id;
+        edit_frame(&mut p, &Linked::new(), aid, fid, None, Some(c)).unwrap();
+        assert_eq!(asm(&p, aid).frames[0].treatments.len(), 1);
+    }
+
     /// Two SHS 40x40x3 in a T: the notching member's top and bottom walls
     /// lie in the planes of the upright's; the notch still cuts the upright
     /// 20 short of the axis.
@@ -2512,6 +3051,17 @@ mod tests {
         )
         .unwrap();
         p.save(std::path::Path::new(&path)).unwrap();
+    }
+
+    /// The 400 × 300 × 200 box skeleton alone (a frame from a solid, GUI
+    /// check), saved to `CADCRAFT_BOX_DEMO` (run with `--ignored`).
+    #[test]
+    #[ignore]
+    fn write_box_demo() {
+        let Ok(path) = std::env::var("CADCRAFT_BOX_DEMO") else {
+            return;
+        };
+        project().0.save(std::path::Path::new(&path)).unwrap();
     }
 
     /// A T of an SHS 40x40x3 upright and an RHS 100x50x4 across (Notch's GUI

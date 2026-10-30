@@ -466,6 +466,7 @@ pub enum Icon {
     ChangeReuse,
     FrameInfo,
     FrameRefresh,
+    EditFrame,
     BeamColumn,
     /// Shaft (stepped sections).
     Shaft,
@@ -2613,6 +2614,13 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.circle(11.5, 8.0, 3.5, ink);
             p.line(&[(11.5, 7.0), (11.5, 10.0)], hot);
             p.disc(11.5, 5.8, 0.5, hot);
+        }
+        EditFrame => {
+            // A box frame with a pencil: every member placed again.
+            p.closed(&[(1.5, 5.0), (10.5, 5.0), (10.5, 14.0), (1.5, 14.0)], ink);
+            p.closed(&[(3.5, 7.0), (8.5, 7.0), (8.5, 12.0), (3.5, 12.0)], ink);
+            p.line(&[(9.0, 9.0), (15.0, 3.0)], acc);
+            p.line(&[(9.0, 9.0), (8.4, 10.6), (10.0, 10.0)], acc);
         }
         FrameRefresh => {
             p.rect(3.0, 5.0, 13.0, 11.0, acc);

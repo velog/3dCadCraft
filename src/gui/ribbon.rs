@@ -799,6 +799,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                             "design.change_reuse",
                             "design.remove_end_treatments",
                             "design.frame_refresh",
+                            "design.edit_frame",
                         ]),
                     ),
                     c("design.beam_column").large(),

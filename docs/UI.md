@@ -255,7 +255,7 @@ Mirror **MIC**, Copy **CPC**; Productivity: Make Layout **MKL**, Create Derived 
 **SIM**), **Design** (Bolted Connection **BC**, Clevis / Secure / Radial Pin **CVP SCP RDP**, Insert Frame **IFR**,
 Insert End Cap **FEC**, Change **FCH**, Frame Member Info **FMN**, Miter **FMI**, Notch **FNO**, Corner Joint **FCJ**,
 Trim/Extend **FTE**, Lengthen/Shorten **FLS**, Reuse / Change Reuse **FRU FCR**, Remove End Treatments **FRE**, Refresh
-**FRF**, Beam and Column Calculator **BCC**,
+**FRF**, Edit Frame **FED**, Beam and Column Calculator **BCC**,
 Shaft **SHF**, Spur / Worm / Bevel Gear **SPG WGR BVG**, Bearing **BRG**, Key **KEY**, V-Belts **VBT**, Synchronous
 Belts **SBT**, Roller Chains **RCH**, Disc / Linear / Cylindrical Cam **DCM LCM CCM**, Involute / Parallel Splines
 **ISP PSP**, O-Ring **ORG**, Compression / Extension / Torsion / Belleville Spring **CSP ESP TSP BSP**), Inspect ›

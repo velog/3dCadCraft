@@ -1192,6 +1192,7 @@ Insert Frame on straight model edges (orientation, member parts, the members fol
 **End treatment:**
 - **Miter**;
 - **Notch** (cut to the profile) — Basic Profile with Offset done 2026-10-30, templates to do;
+- a frame from a solid (all its edges in one click), group Position Inside / Outside, corners by vertex kind, Edit Frame (2026-10-30);
 - **Trim/Extend** to a face;
 - **Lengthen/Shorten.**
 

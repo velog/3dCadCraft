@@ -2521,6 +2521,7 @@ fn notch_r49_project() -> (Project, u32) {
         material: Some("Steel S235".into()),
         orientation: Default::default(),
         corners: Default::default(),
+        layout: Default::default(),
     };
     let linked = Linked::new();
     let (fid, bar) = insert(

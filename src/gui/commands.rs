@@ -2094,6 +2094,10 @@ pub static COMMANDS: &[Command] = &[
     ap("design.frame_refresh", "Refresh", "Обновяване на профилите", Icon::FrameRefresh, Ap::FrameRefresh)
         .alias(&["FRF"])
         .at(&[X_FRAME]),
+    ap("design.edit_frame", "Edit Frame", "Редакция на рамата", Icon::EditFrame, Ap::EditFrame)
+        .alias(&["FED"])
+        .tip("Edit Frame: Position, Level and corners of every member of a frame at once")
+        .at(&[X_FRAME]),
     ap("design.beam_column", "Beam and Column Calculator", "Изчисление на греда и колона", Icon::BeamColumn, Ap::BeamColumn)
         .alias(&["BCC"])
         .at(&[X_FRAME]),
