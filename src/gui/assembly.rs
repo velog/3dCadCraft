@@ -147,21 +147,44 @@ pub(super) struct AsmUi {
     pub menu_at: Option<(Pos2, Rect)>,
 }
 
-/// A part edited in place (spec 3.10 §3.2).
+/// A part or subassembly edited in place (spec 3.10 §3.2).
 #[derive(Clone, Debug)]
 pub(super) struct InPlace {
-    /// The assembly it was opened from.
+    /// The top assembly it is edited in (the context drawn around it, the
+    /// assembly cross-part references are made in).
     pub assembly: DocumentId,
     /// Its occurrence there and the path inside a subassembly.
     pub top: u32,
     pub sub: Vec<u32>,
-    /// The edited part.
+    /// The edited part or subassembly.
     pub document: DocumentId,
-    /// Its placement in the assembly.
+    /// Its placement in the top assembly.
     pub place: Transform3,
     /// A part of a linked file: edited in its file's tab, away from the
     /// assembly.
     pub linked: Option<LinkedEdit>,
+    /// The document Return goes back to: the top assembly, or the
+    /// subassembly being edited in place that this was opened from.
+    pub parent: DocumentId,
+    /// That subassembly's own edit, restored on Return.
+    pub outer: Option<Box<InPlace>>,
+}
+
+/// The path and placement in the top assembly of what sits at `top`/`sub`
+/// (placed `local`) inside the subassembly at `o_top`/`o_sub` (placed
+/// `o_place` in the top assembly).
+fn nest_in(
+    o_top: u32,
+    o_sub: &[u32],
+    o_place: Transform3,
+    top: u32,
+    sub: &[u32],
+    local: Transform3,
+) -> (u32, Vec<u32>, Transform3) {
+    let mut path = o_sub.to_vec();
+    path.push(top);
+    path.extend(sub);
+    (o_top, path, o_place * local)
 }
 
 /// Edit in place of a linked part file (spec 3.10 §3.2): the part's file is
@@ -480,8 +503,25 @@ impl CadCraftApp {
         }
     }
 
+    /// The camera `view` seen in coordinates moved by `m` (rigid): the same
+    /// picture of the same things, so Edit in place and Return do not jump
+    /// (Inventor keeps the assembly's view).
+    fn keep_view(&mut self, view: super::camera::OrbitCamera, m: Transform3) {
+        self.camera = view.moved(&m);
+    }
+
     /// Back to the assembly a component was opened from.
     pub(super) fn return_to_assembly(&mut self) {
+        // "Edit: … in place" no longer holds.
+        if self
+            .file_status
+            .as_ref()
+            .is_some_and(|s| s.as_ref().is_ok_and(|t| t.starts_with("Edit: ")))
+        {
+            self.file_status = None;
+        }
+        let view = self.camera.clone();
+        let place = self.in_place_now().map(|ip| ip.place);
         if let Some(le) = self.in_place_now().and_then(|ip| ip.linked.as_ref()) {
             let (back, part) = (le.assembly_path.clone(), le.part_path.clone());
             // The assembly shows the part as edited, saved or not.
@@ -493,12 +533,30 @@ impl CadCraftApp {
                 Some(k) => self.switch_tab(k),
                 None => self.open_path(std::path::Path::new(&back)),
             }
+            if let Some(m) = place {
+                self.keep_view(view, m);
+            }
+            self.scene_dirty = true;
+            return;
+        }
+        // Back into a subassembly edited in place: its own edit again.
+        if let Some(ip) = self.in_place_now().cloned()
+            && let Some(outer) = ip.outer
+        {
+            self.asm.came_from = Some(ip.parent);
+            self.activate_document(ip.parent);
+            self.keep_view(view, outer.place.inverse() * ip.place);
+            self.asm.came_from = Some(outer.parent);
+            self.asm.in_place = Some(*outer);
             self.scene_dirty = true;
             return;
         }
         self.asm.in_place = None;
         if let Some(a) = self.asm.came_from.take() {
             self.activate_document(a);
+            if let Some(m) = place {
+                self.keep_view(view, m);
+            }
             // What was built on other components follows them.
             if self.is_assembly() {
                 self.checkpoint("Update");
@@ -524,27 +582,53 @@ impl CadCraftApp {
             return;
         };
         let (r, name) = (n.component, n.name);
-        let Some(place) = a.find(top).map(|t| t.transform * n.at) else {
+        let Some(local) = a.find(top).map(|t| t.transform * n.at) else {
             return;
         };
-        if crate::assembly::tree::assembly_of(&self.project, &linked, r).is_some() {
+        let is_sub = crate::assembly::tree::assembly_of(&self.project, &linked, r).is_some();
+        // A subassembly edited in place: what is opened inside it is placed
+        // in the top assembly through it.
+        let outer = self
+            .in_place_now()
+            .filter(|ip| ip.linked.is_none() && ip.document == asm_id)
+            .cloned();
+        let (assembly, top, sub, place) = match &outer {
+            Some(o) => {
+                let (top, sub, place) = nest_in(o.top, &o.sub, o.place, top, &sub, local);
+                (o.assembly, top, sub, place)
+            }
+            None => (asm_id, top, sub, local),
+        };
+        if r.library.is_some() && is_sub {
+            // A linked subassembly opens in its own tab (in place later).
             self.open_doc(r);
             return;
         }
         if let Some(lib) = r.library {
+            if outer.is_some() {
+                self.file_status = Some(Err(
+                    "Edit: a linked part inside a subassembly edited in place opens with Open for now"
+                        .into(),
+                ));
+                return;
+            }
             self.edit_linked_in_place(lib, r.document, top, sub, place, name);
             return;
         }
+        let view = self.camera.clone();
         self.asm.came_from = Some(asm_id);
         self.activate_document(r.document);
+        self.keep_view(view, local.inverse());
         self.asm.came_from = Some(asm_id);
         self.asm.in_place = Some(InPlace {
-            assembly: asm_id,
+            assembly,
             top,
             sub,
             document: r.document,
             place,
             linked: None,
+            parent: asm_id,
+            outer: outer.map(Box::new),
         });
         self.scene_dirty = true;
         self.file_status = Some(Ok(format!("Edit: {name} in place (Return goes back)")));
@@ -599,6 +683,7 @@ impl CadCraftApp {
             context,
         };
         let asm_id = self.part_id;
+        let view = self.camera.clone();
         self.open_path(&part_path);
         if self.file_path.trim() != part_path.display().to_string()
             || self.project.document(doc).is_none()
@@ -608,6 +693,7 @@ impl CadCraftApp {
         if self.part_id != doc {
             self.activate_document(doc);
         }
+        self.keep_view(view, place.inverse());
         self.asm.in_place = Some(InPlace {
             assembly: asm_id,
             top,
@@ -615,6 +701,8 @@ impl CadCraftApp {
             document: doc,
             place,
             linked: Some(le),
+            parent: asm_id,
+            outer: None,
         });
         self.scene_dirty = true;
         self.file_status = Some(Ok(format!(
@@ -636,7 +724,7 @@ impl CadCraftApp {
         self.asm
             .in_place
             .as_ref()
-            .filter(|ip| ip.document == self.part_id && self.asm.came_from == Some(ip.assembly))
+            .filter(|ip| ip.document == self.part_id && self.asm.came_from == Some(ip.parent))
     }
 
     /// A planar face of another component under the cursor while a part of
@@ -1052,7 +1140,8 @@ impl CadCraftApp {
         for l in
             crate::assembly::tree::leaves(&self.project, &linked, DocRef::local(ip.assembly), a)
         {
-            if l.path == edited {
+            // The edited part, or every part of the edited subassembly.
+            if l.path.starts_with(&edited) {
                 continue;
             }
             let t = inv * l.world;
@@ -1489,6 +1578,8 @@ impl CadCraftApp {
             };
             self.add_occurrence_mesh(g, o, &place, alpha, &looks);
         }
+        // A subassembly edited in place: the rest of the top assembly.
+        self.in_place_scene(g);
         self.interference_scene(g);
         self.pattern_preview_scene(g);
     }
@@ -2411,5 +2502,62 @@ impl CadCraftApp {
             });
             self.asm_solve(None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::{AssemblyDocument, DocumentData, Project};
+    use crate::kernel::Vector3;
+    use crate::part::PartDocument;
+
+    /// A part edited inside a subassembly edited in place is found at the
+    /// path and placement the top assembly's tree gives it (Bracket:2,
+    /// turned 90°, and its second Post).
+    #[test]
+    fn a_part_inside_a_subassembly_in_place_is_placed_through_it() {
+        let mut project = Project::new("T");
+        let post = project.add_document(
+            "Post",
+            DocumentData::Part(PartDocument::with_box("Box1", [8.0, 8.0, 20.0]).unwrap()),
+        );
+        let mut bracket = AssemblyDocument::default();
+        bracket.place(
+            DocRef::local(post),
+            "Post",
+            Transform3::translation(4.0, 11.0, 5.0),
+            false,
+        );
+        let p2 = bracket.place(
+            DocRef::local(post),
+            "Post",
+            Transform3::translation(28.0, 11.0, 5.0),
+            false,
+        );
+        let post_local = bracket.find(p2).unwrap().transform;
+        let b = project.add_document("Bracket", DocumentData::Assembly(bracket));
+        let mut top = AssemblyDocument::default();
+        top.place(
+            DocRef::local(b),
+            "Bracket",
+            Transform3::translation(10.0, 10.0, 6.0),
+            false,
+        );
+        let turned = Transform3::new(
+            Vector3::new(100.0, 20.0, 6.0),
+            Vector3::z() * std::f64::consts::FRAC_PI_2,
+        );
+        let b2 = top.place(DocRef::local(b), "Bracket", turned, false);
+        let top_id = project.add_document("Top", DocumentData::Assembly(top.clone()));
+        let (t, sub, place) = nest_in(b2, &[], turned, p2, &[], post_local);
+        let linked = crate::assembly::tree::Linked::new();
+        let leaf = crate::assembly::tree::leaves(&project, &linked, DocRef::local(top_id), &top)
+            .into_iter()
+            .find(|l| l.path == [t, sub[0]])
+            .expect("the leaf");
+        let q = Point3::new(1.0, 2.0, 3.0);
+        assert!((leaf.world * q - place * q).norm() < 1e-9);
+        assert_eq!(sub, vec![p2]);
     }
 }

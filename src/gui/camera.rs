@@ -144,6 +144,17 @@ impl OrbitCamera {
         (back, up)
     }
 
+    /// This view in coordinates moved by the rigid motion `m`: a point `q`
+    /// shows where `m · q` shows in the result (Edit in place keeps the
+    /// assembly's picture in the part's coordinates).
+    pub fn moved(&self, m: &crate::kernel::Transform3) -> Self {
+        let (back, up) = self.frame();
+        let mut out = self.clone();
+        out.target = m * self.target;
+        out.set_frame(m * back, m * up);
+        out
+    }
+
     /// Sets yaw, pitch and roll so the camera looks from direction `d`
     /// (target → eye) with `up` pointing up on screen. Of the two (yaw,
     /// pitch) pairs giving the same eye it takes the one whose own up is
@@ -468,6 +479,37 @@ fn aspect(rect: Rect) -> Real {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_moved_view_shows_moved_points_in_the_same_place() {
+        use crate::kernel::Transform3;
+        let rect = Rect::from_min_size(Pos2::new(0.0, 0.0), eframe::egui::vec2(800.0, 600.0));
+        let mut cam = OrbitCamera {
+            target: Point3::new(40.0, -10.0, 5.0),
+            distance: 300.0,
+            yaw: 0.7,
+            pitch: 0.4,
+            roll: 0.2,
+            ..Default::default()
+        };
+        for projection in [cam.projection, Projection::Orthographic] {
+            cam.projection = projection;
+            let m = Transform3::new(
+                Vector3::new(120.0, 30.0, -8.0),
+                Vector3::new(0.3, -0.5, 1.1),
+            );
+            let moved = cam.moved(&m.inverse());
+            for q in [
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(50.0, 20.0, 10.0),
+                Point3::new(-30.0, 60.0, 25.0),
+            ] {
+                let a = cam.project(&q, rect).unwrap();
+                let b = moved.project(&(m.inverse() * q), rect).unwrap();
+                assert!(a.distance(b) < 1e-3, "{a:?} vs {b:?}");
+            }
+        }
+    }
+
     use super::*;
     use crate::kernel::BRep;
 
