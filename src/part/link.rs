@@ -459,10 +459,87 @@ pub fn resolve(
             edge_shape_on(body, edge, plane)
         }
         LinkSource::Context { id } => {
-            works.context_curves.get(id).cloned().ok_or_else(|| {
+            let shape = works.context_curves.get(id).cloned().ok_or_else(|| {
                 format!("the reference '{id}' to another component no longer exists")
+            })?;
+            // A circle or arc of another component seen on a sketch plane
+            // not parallel to it is an ellipse there: a spline through it,
+            // as the part's own edges (`edge_shape_on`).
+            let plane = sketches.get(i).map(|s| &s.sketch.plane);
+            Ok(match (&shape, plane) {
+                (Shape3::Circle { normal, .. } | Shape3::Arc { normal, .. }, Some(pl))
+                    if !Tolerance::default().are_parallel(normal, &pl.normal) =>
+                {
+                    round_as_spline(&shape)
+                }
+                _ => shape,
             })
         }
+    }
+}
+
+/// A circle or arc as an interpolation spline through points on it
+/// (`CURVE_POINTS`, twice for a whole circle), like `curve_shape` does for a
+/// sampled edge.
+fn round_as_spline(shape: &Shape3) -> Shape3 {
+    let (center, normal, start, sweep, closed) = match shape {
+        Shape3::Circle {
+            center,
+            normal,
+            radius,
+        } => {
+            let x = crate::part::placement::default_face_x(&normal.into_inner());
+            (
+                *center,
+                *normal,
+                center + x * *radius,
+                std::f64::consts::TAU,
+                true,
+            )
+        }
+        Shape3::Arc {
+            center,
+            normal,
+            start,
+            end,
+        } => {
+            let (u, v) = (start - center, end - center);
+            let mut a = normal.dot(&u.cross(&v)).atan2(u.dot(&v));
+            if a <= 0.0 {
+                a += std::f64::consts::TAU;
+            }
+            (*center, *normal, *start, a, false)
+        }
+        other => return other.clone(),
+    };
+    let r = start - center;
+    let w = normal.cross(&r);
+    let k = if closed {
+        2 * CURVE_POINTS
+    } else {
+        CURVE_POINTS
+    };
+    let steps = if closed { k } else { k - 1 };
+    let points: Vec<Point3> = (0..k)
+        .map(|j| {
+            let t = sweep * j as Real / steps as Real;
+            center + r * t.cos() + w * t.sin()
+        })
+        .collect();
+    let mut order: Vec<usize> = (0..k).collect();
+    if closed {
+        order.push(0);
+    }
+    let fit = SplineFit {
+        start: None,
+        end: None,
+        inner: Vec::new(),
+        closed,
+    };
+    Shape3::Spline {
+        points,
+        order,
+        fit: Some((fit, Vector3::x(), Vector3::y())),
     }
 }
 

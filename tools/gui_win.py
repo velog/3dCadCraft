@@ -22,6 +22,7 @@ DPI aware, so at 150 % scaling they are physical pixels, not egui points).
   drag X1 Y1 X2 Y2 [BTN]   press, move in 15 steps, release
   down X Y [BTN] / up [BTN] press / release (compose curved drags with `move`)
   wheel X Y CLICKS         mouse wheel (positive = away from the user)
+  kdown KEY / kup KEY      hold / let go a key (Ctrl while hovering or clicking)
   key NAME [+MOD ...]      e.g. `key z +Control_L`, `key F6`, `key s`, `key Return`
   type TEXT                types a string (keys of the current layout, else Unicode)
   sleep SECONDS
@@ -377,6 +378,17 @@ def drive(h, args):
 
     if args and args[0] not in ('shot', 'info'):
         focus(h)
+    held = []
+    try:
+        run(h, args, move, press, release, held)
+    finally:
+        # A key held by `kdown` is never left down (a stopped script held
+        # Ctrl for the whole desktop).
+        for vk in held:
+            send(key_input(vk, True))
+
+
+def run(h, args, move, press, release, held):
     while args:
         c = args.pop(0)
         if c not in ('shot', 'info', 'sleep') and user32.GetForegroundWindow() != h:
@@ -425,6 +437,17 @@ def drive(h, args):
             while args and args[0].startswith('+'):
                 mods.append(args.pop(0)[1:])
             key(name, mods)
+        elif c == 'kdown':
+            vk = vk_of(args.pop(0))
+            held.append(vk)
+            send(key_input(vk))
+            time.sleep(0.1)
+        elif c == 'kup':
+            vk = vk_of(args.pop(0))
+            if vk in held:
+                held.remove(vk)
+            send(key_input(vk, True))
+            time.sleep(0.1)
         elif c == 'type':
             for ch in args.pop(0):
                 type_char(ch)

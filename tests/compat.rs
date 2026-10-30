@@ -1052,6 +1052,61 @@ fn context_curve_r47() -> PartDocument {
     p
 }
 
+/// Revision 51: a sketch projecting another component's free-form edge (a
+/// closed spline through 8 points, the cross-part copy), extruded 3.
+fn context_spline_r51() -> PartDocument {
+    use cadcraft3d::document::DocumentId;
+    use cadcraft3d::part::context::{ContextCurve, ContextGeom, ContextRef, ContextSource};
+    use cadcraft3d::part::{EdgeRef, OriginPlane};
+    let mut p = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    let points = (0..8)
+        .map(|k| {
+            let a = std::f64::consts::TAU * k as f64 / 8.0;
+            Point3::new(30.0 * a.cos(), 18.0 * a.sin(), 0.0)
+        })
+        .collect();
+    p.project_context_edge(
+        i,
+        ContextRef {
+            id: String::new(),
+            source: ContextSource {
+                assembly: DocumentId::new_random(),
+                target: vec![2],
+                path: vec![1],
+                face: "Extrusion1:End".into(),
+                edge: Some(EdgeRef {
+                    faces: ["Extrusion1:End".into(), "Extrusion1:Side:1".into()],
+                    hint: [30.0, 0.0, 10.0],
+                }),
+                hint: [30.0, 0.0, 10.0],
+                label: "Cam:1 edge".into(),
+            },
+            geom: ContextGeom::Curve {
+                curve: ContextCurve::Spline {
+                    points,
+                    closed: true,
+                },
+            },
+        },
+        false,
+    )
+    .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    p.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 3.0),
+    )
+    .unwrap();
+    p
+}
+
 fn context_r44() -> PartDocument {
     use cadcraft3d::document::DocumentId;
     use cadcraft3d::kernel::{Plane, Vector3};
@@ -2945,6 +3000,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("ContextCurveR47");
             project.add_document("Part1", DocumentData::Part(context_curve_r47()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r51/context_spline_r51.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ContextSplineR51");
+            project.add_document("Part1", DocumentData::Part(context_spline_r51()));
             project.save(&f).unwrap();
         }
         let f = root().join("r50/rip_r50.3dcadcraft");

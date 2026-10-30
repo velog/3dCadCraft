@@ -101,8 +101,8 @@ const TABLE: &[(&str, &str)] = &[
         "Щракнете компонент, за да го изберете (Ctrl добавя), влачете нефиксиран, за да го преместите; двойно щракване отваря детайла му",
     ),
     (
-        "Project Geometry: click points or curves of earlier sketches, or model edges, to project them (Shift: as construction; Esc or right-click > Done ends)",
-        "Project Geometry: щракнете точки или криви от по-ранни скици или ръбове на модела, за да ги проектирате (Shift: като construction; Esc или десен клик > Done спира)",
+        "Project Geometry: click points or curves of earlier sketches, or model edges and faces, to project them (Shift: as construction; Ctrl: an edge's whole loop; Esc or right-click > Done ends)",
+        "Project Geometry: щракнете точки или криви от по-ранни скици или ръбове и лица на модела, за да ги проектирате (Shift: като construction; Ctrl: целият контур на ръба; Esc или десен клик > Done спира)",
     ),
     (
         "Replace Reference: click the new source (a point, curve or edge of the same kind; Esc cancels)",

@@ -153,7 +153,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 49: frame Notch (`assembly::frame::Treatment::Notch`, member shapes'
 ///   `NotchTool`s) (2026-10-30).
 /// - 50: sheet metal Rip (`SheetOp::Rip`) (2026-10-30).
-pub const FORMAT_REVISION: u32 = 50;
+/// - 51: free-form (spline) edges of other components projected
+///   (`ContextCurve::Spline`) (2026-10-30).
+pub const FORMAT_REVISION: u32 = 51;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

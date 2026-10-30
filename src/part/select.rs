@@ -213,11 +213,17 @@ pub fn loop_edges(body: &BRep, f: FaceId, near: Point3) -> Vec<EdgeId> {
     let Some(face) = body.face(f) else {
         return Vec::new();
     };
+    // To the edge's segments: a straight edge samples as its two ends only.
     let dist = |e: EdgeId| {
         body.sample_edge(e, &opts)
             .map(|pts| {
-                pts.iter()
-                    .map(|p| (p - near).norm())
+                pts.windows(2)
+                    .map(|w| {
+                        let d = w[1] - w[0];
+                        let t =
+                            ((near - w[0]).dot(&d) / d.norm_squared().max(1e-300)).clamp(0.0, 1.0);
+                        (w[0] + d * t - near).norm()
+                    })
                     .fold(Real::MAX, Real::min)
             })
             .unwrap_or(Real::MAX)
@@ -526,6 +532,44 @@ mod tests {
         assert!(!face_on_surface(body, top));
         let solid = body_of_face(body, top).unwrap();
         assert!(!body_is_surface(body, &solid));
+    }
+
+    /// Loop selection near the middle of a long straight edge takes that
+    /// edge's loop, not a hole whose rim is nearer than the edge's ends (a
+    /// straight edge samples as its two ends only).
+    #[test]
+    fn loop_near_the_middle_of_a_long_edge() {
+        use crate::part::{
+            Extent, ExtentDirection, ExtrudeFeature, Operation, ProfileRef, SketchOptions,
+            SketchPlacement,
+        };
+        let mut p = PartDocument::with_box("Box1", [100.0, 100.0, 10.0]).unwrap();
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let j = p
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &o)
+            .unwrap();
+        let plane = p.sketches[j].sketch.plane.clone();
+        let c = plane.project(&Point3::new(30.0, 12.0, 10.0));
+        p.sketches[j].sketch.add_circle(c, 5.0).unwrap();
+        let rg = p.sketches[j].sketch.regions();
+        let hole: Vec<ProfileRef> = rg
+            .iter()
+            .filter(|r| r.area() < 100.0)
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let mut cut = ExtrudeFeature::new(hole, 1.0);
+        cut.operation = Operation::Cut;
+        cut.extent = Extent::ThroughAll;
+        cut.direction = ExtentDirection::Flipped;
+        p.add_extrude(j, cut).unwrap();
+        let top = p.body.find_face("Box1:Top").unwrap();
+        let edges = loop_edges(&p.body, top, Point3::new(50.0, 0.0, 10.0));
+        assert_eq!(edges.len(), 4);
+        assert!(edges.iter().all(|&e| p.body.edge_direction(e).is_some()));
     }
 
     /// A 40 mm box with its 4 vertical edges rounded: the side walls and

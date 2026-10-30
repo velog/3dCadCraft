@@ -999,5 +999,6 @@
     "Convert1:base:rim.E4",
     "Convert1:base:top"
   ],
-  "r49/notch_r49.3dcadcraft": []
+  "r49/notch_r49.3dcadcraft": [],
+  "r51/context_spline_r51.3dcadcraft": ["Extrusion1:End", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Start"]
 }

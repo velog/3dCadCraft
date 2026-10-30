@@ -1211,6 +1211,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   regenerates. A sketch-plane click on another component is `PlaneRef::Context("")` + `AsmUi::pending_context` until
   `take_context_plane` adds it after the Undo checkpoint. `asm_solve` (outside a drag) and `asm_try` end in
   `context_follow` (Update + solve, ≤ 8 rounds); inside it solve with `asm_solve_once`, never `asm_solve` (recursion).
+  Edges are one reference each (`ContextCurve`: line, circle, arc, spline — revision 51); a face or a loop is many
+  (`face_outline`, `edge_loop`), added all or nothing by `project_context_edges`. Find an edge's loop by the edge itself,
+  never by "nearest loop to its hint" over sampled points (a straight edge samples as its ends).
 - **Adaptivity** (`assembly::adapt`, spec 3.10 §3.4): `PartDocument::adaptive` (sketch / feature ids) +
   `Occurrence::adaptive`. When the rigid solve does not hold (`adapt_follow` in `asm_solve`, and `asm_try` before it
   refuses), the part's free sizes and the joined free components' placements are solved *together*

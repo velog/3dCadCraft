@@ -4810,7 +4810,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                                 super::i18n::tr(if self.relink.is_some() {
                                     "Replace Reference: click the new source (a point, curve or edge of the same kind; Esc cancels)"
                                 } else {
-                                    "Project Geometry: click points or curves of earlier sketches, or model edges, to project them (Shift: as construction; Esc or right-click > Done ends)"
+                                    "Project Geometry: click points or curves of earlier sketches, or model edges and faces, to project them (Shift: as construction; Ctrl: an edge's whole loop; Esc or right-click > Done ends)"
                                 }),
                             );
                         }

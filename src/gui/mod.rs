@@ -6227,7 +6227,8 @@ impl CadCraftApp {
             (Some(i), Some(p))
                 if self.project_geometry && response.clicked_by(PointerButton::Primary) =>
             {
-                self.project_click(i, p, rect, shift_held)
+                let ctrl = ui.input(|i| i.modifiers.command);
+                self.project_click(i, p, rect, shift_held, ctrl)
             }
             _ => false,
         };

@@ -917,6 +917,24 @@ impl CadCraftApp {
         crate::assembly::context::face_outline(&self.project, &linked, a, face)
     }
 
+    /// The loop of another component's face through edge `edge` (an edge
+    /// reference), one cross-part reference per edge
+    /// (`assembly::context::edge_loop`); `normal` is the sketch's.
+    pub(super) fn context_edge_loop(
+        &self,
+        edge: &crate::part::context::ContextSource,
+        normal: crate::kernel::Vector3,
+    ) -> Result<Vec<crate::part::context::ContextRef>, String> {
+        let linked = self.linked();
+        let a = crate::assembly::tree::assembly_of(
+            &self.project,
+            &linked,
+            DocRef::local(edge.assembly),
+        )
+        .ok_or("the assembly is not open")?;
+        crate::assembly::context::edge_loop(&self.project, &linked, a, edge, Some(normal))
+    }
+
     /// `plane` with a pending cross-part reference added to the active part
     /// (after the caller's Undo checkpoint).
     pub(super) fn take_context_plane(&mut self, plane: PlaneRef) -> PlaneRef {

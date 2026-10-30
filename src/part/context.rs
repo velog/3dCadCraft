@@ -96,11 +96,20 @@ pub enum ContextCurve {
         /// Second end.
         end: Point3,
     },
+    /// Any other curve (format revision 51): an interpolation spline
+    /// through `points` (a closed one does not repeat its first point).
+    Spline {
+        /// The fit points in order.
+        points: Vec<Point3>,
+        /// Whether the curve closes on itself.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        closed: bool,
+    },
 }
 
 impl ContextCurve {
-    /// From a model edge's shape: lines, circles and arcs (other curves are
-    /// refused for now).
+    /// From a model edge's shape: lines, circles, arcs and other curves (as
+    /// the interpolation splines model edges are projected as).
     pub fn of(shape: &super::link::Shape3) -> Result<Self, String> {
         use super::link::Shape3;
         Ok(match shape {
@@ -125,12 +134,28 @@ impl ContextCurve {
                 start: *start,
                 end: *end,
             },
-            Shape3::Point(_) | Shape3::Spline { .. } => {
-                return Err(
-                    "only straight and circular edges of other components can be projected for now"
-                        .into(),
-                );
+            Shape3::Spline { points, order, fit } => {
+                let closed = fit.as_ref().is_some_and(|f| f.0.closed);
+                // Handles would need their frame carried along: none on
+                // projected model edges.
+                if fit.as_ref().is_some_and(|f| {
+                    f.0.start.is_some()
+                        || f.0.end.is_some()
+                        || f.0.inner.iter().any(Option::is_some)
+                }) {
+                    return Err("a spline edge with tangent handles cannot be projected".into());
+                }
+                let n = if closed {
+                    order.len().saturating_sub(1)
+                } else {
+                    order.len()
+                };
+                ContextCurve::Spline {
+                    points: order[..n].iter().map(|&k| points[k]).collect(),
+                    closed,
+                }
             }
+            Shape3::Point(_) => return Err("a point is no edge".into()),
         })
     }
 
@@ -160,6 +185,68 @@ impl ContextCurve {
                 start: *start,
                 end: *end,
             },
+            ContextCurve::Spline { points, closed } => {
+                let mut order: Vec<usize> = (0..points.len()).collect();
+                if *closed {
+                    order.push(0);
+                }
+                let fit = crate::sketch::SplineFit {
+                    start: None,
+                    end: None,
+                    inner: Vec::new(),
+                    closed: *closed,
+                };
+                Shape3::Spline {
+                    points: points.clone(),
+                    order,
+                    fit: Some((fit, Vector3::x(), Vector3::y())),
+                }
+            }
+        }
+    }
+
+    /// Points along the curve (for highlights): a line's ends, 48 steps of
+    /// a circle, a spline's fit points.
+    pub fn polyline(&self) -> Vec<Point3> {
+        let round = |center: &Point3, normal: &Vector3, r: Vector3, sweep: f64, n: usize| {
+            let w = UnitVector3::new_normalize(*normal).cross(&r);
+            (0..=n)
+                .map(|k| {
+                    let t = sweep * k as f64 / n as f64;
+                    center + r * t.cos() + w * t.sin()
+                })
+                .collect::<Vec<_>>()
+        };
+        match self {
+            ContextCurve::Line { a, b } => vec![*a, *b],
+            ContextCurve::Circle {
+                center,
+                normal,
+                radius,
+            } => {
+                let x = crate::part::placement::default_face_x(normal);
+                round(center, normal, x * *radius, std::f64::consts::TAU, 48)
+            }
+            ContextCurve::Arc {
+                center,
+                normal,
+                start,
+                end,
+            } => {
+                let (u, v) = (start - center, end - center);
+                let mut a = normal.normalize().dot(&u.cross(&v)).atan2(u.dot(&v));
+                if a <= 0.0 {
+                    a += std::f64::consts::TAU;
+                }
+                round(center, normal, u, a, 24)
+            }
+            ContextCurve::Spline { points, closed } => {
+                let mut p = points.clone();
+                if *closed && let Some(f) = points.first() {
+                    p.push(*f);
+                }
+                p
+            }
         }
     }
 
@@ -186,6 +273,10 @@ impl ContextCurve {
                 normal: m * normal,
                 start: m * start,
                 end: m * end,
+            },
+            ContextCurve::Spline { points, closed } => ContextCurve::Spline {
+                points: points.iter().map(|q| m * q).collect(),
+                closed: *closed,
             },
         }
     }
@@ -222,6 +313,15 @@ impl ContextCurve {
                     end: e,
                 },
             ) => p(center, c) && v(normal, n) && p(start, s) && p(end, e),
+            (
+                ContextCurve::Spline { points, closed },
+                ContextCurve::Spline {
+                    points: q,
+                    closed: k,
+                },
+            ) => {
+                closed == k && points.len() == q.len() && points.iter().zip(q).all(|(a, b)| p(a, b))
+            }
             _ => false,
         }
     }

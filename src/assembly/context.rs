@@ -182,22 +182,91 @@ pub fn face_outline(
         .ok_or_else(|| format!("{} shows no part", src.name))?;
     let f = crate::part::appearance::nearest_face(&part.body, &face.face, &face.hint)
         .ok_or_else(|| format!("the face {} no longer exists", face.face))?;
-    let who = face.label.strip_suffix(" face").unwrap_or(&face.label);
+    let edges = crate::part::select::edges_of_face(&part.body, f);
+    edge_refs(project, linked, asm, face, &part.body, edges)
+}
+
+/// The loop of another component's face that edge `edge` (an edge
+/// reference: its `edge` set) lies on, one edge reference per edge
+/// (Project Geometry of one loop — an outline without its holes, or one
+/// hole). Of the edge's two faces the planar one parallel to `normal` (the
+/// sketch's, in the target part's coordinates) is taken, else a planar one.
+pub fn edge_loop(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+    edge: &ContextSource,
+    normal: Option<Vector3>,
+) -> Result<Vec<crate::part::context::ContextRef>, String> {
+    let e = edge.edge.as_ref().ok_or("the reference is not an edge")?;
+    let (src, ts) = placed(project, linked, asm, &edge.path)?;
+    let (_, tt) = placed(project, linked, asm, &edge.target)?;
+    let part = tree::part_of(project, linked, src.component)
+        .ok_or_else(|| format!("{} shows no part", src.name))?;
+    let body = &part.body;
+    let m = tt.inverse() * ts;
+    let faces: Vec<_> = e
+        .faces
+        .iter()
+        .filter_map(|n| crate::part::appearance::nearest_face(body, n, &e.hint))
+        .filter(|f| body.face_plane(*f).is_some())
+        .collect();
+    let square = |f: &crate::kernel::FaceId| {
+        let (Some(n), Some(pl)) = (normal, body.face_plane(*f)) else {
+            return false;
+        };
+        (m * pl.normal.into_inner()).cross(&n).norm() < 1e-6
+    };
+    let f = faces
+        .iter()
+        .find(|f| square(f))
+        .or(faces.first())
+        .copied()
+        .ok_or("neither face of the edge is planar")?;
+    // The loop holding the edge itself (else the one nearest its hint).
+    let own = crate::part::draft::edge_of(body, e);
+    let edges = body
+        .face(f)
+        .and_then(|face| {
+            std::iter::once(&face.outer)
+                .chain(&face.inner)
+                .map(|l| l.coedges.iter().map(|c| c.edge).collect::<Vec<_>>())
+                .find(|l| own.is_some_and(|x| l.contains(&x)))
+        })
+        .unwrap_or_else(|| crate::part::select::loop_edges(body, f, Point3::from(e.hint)));
+    edge_refs(project, linked, asm, edge, body, edges)
+}
+
+/// One edge reference per edge of `edges` of the source part's `body`,
+/// with `like`'s assembly, paths and label.
+fn edge_refs(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+    like: &ContextSource,
+    body: &crate::kernel::BRep,
+    edges: Vec<crate::kernel::EdgeId>,
+) -> Result<Vec<crate::part::context::ContextRef>, String> {
+    let who = like
+        .label
+        .strip_suffix(" face")
+        .or_else(|| like.label.strip_suffix(" edge"))
+        .unwrap_or(&like.label);
     let mut out = Vec::new();
     let mut seen = Vec::new();
-    for e in crate::part::select::edges_of_face(&part.body, f) {
+    for e in edges {
         if seen.contains(&e) {
             continue;
         }
         seen.push(e);
-        let edge = crate::part::blend::edge_ref(&part.body, e)
-            .ok_or_else(|| format!("an edge of {} has no name", face.face))?;
+        let edge = crate::part::blend::edge_ref(body, e)
+            .ok_or_else(|| format!("an edge of {} has no name", like.face))?;
         let source = ContextSource {
             face: edge.faces[0].clone(),
             hint: edge.hint,
             edge: Some(edge),
             label: format!("{who} edge"),
-            ..face.clone()
+            ..like.clone()
         };
         let geom = current(project, linked, asm, &source)?;
         out.push(crate::part::context::ContextRef {

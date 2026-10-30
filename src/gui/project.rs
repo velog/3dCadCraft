@@ -60,6 +60,11 @@ pub(super) enum ProjPick {
         Box<crate::part::context::ContextRef>,
         super::assembly::ContextHover,
     ),
+    /// One loop of a face of the part (Ctrl + an edge of it).
+    Loop(Vec<EdgeId>),
+    /// One loop of another component's face (Ctrl + an edge of it): one
+    /// cross-part reference per edge.
+    ContextLoop(Vec<crate::part::context::ContextRef>),
 }
 
 impl CadCraftApp {
@@ -72,8 +77,15 @@ impl CadCraftApp {
             .collect()
     }
 
-    /// The geometry a Project Geometry click at `p` would take.
-    pub(super) fn project_pick(&self, i: usize, p: Pos2, rect: Rect) -> Option<ProjPick> {
+    /// The geometry a Project Geometry click at `p` would take; with
+    /// `whole_loop` (Ctrl) an edge of another component stands for its loop.
+    pub(super) fn project_pick(
+        &self,
+        i: usize,
+        p: Pos2,
+        rect: Rect,
+        whole_loop: bool,
+    ) -> Option<ProjPick> {
         let part = self.part();
         let sources = self.project_sources(i);
         let mut best: Option<(f32, ProjPick)> = None;
@@ -122,10 +134,23 @@ impl CadCraftApp {
             return Some(ProjPick::Vertex(v));
         }
         if let Some(e) = self.edge_under(p, rect) {
+            if whole_loop {
+                let normal = self.part().sketches[i].sketch.plane.normal;
+                let edges = edge_loop_on(&self.part().body, e, &normal);
+                if edges.len() > 1 {
+                    return Some(ProjPick::Loop(edges));
+                }
+            }
             return Some(ProjPick::Edge(e));
         }
         // An edge of another component in front of the part's own faces.
         if let Some((c, pts)) = self.context_edge_under(p, rect) {
+            if whole_loop {
+                let normal = self.part().sketches[i].sketch.plane.normal.into_inner();
+                if let Ok(refs) = self.context_edge_loop(&c.source, normal) {
+                    return Some(ProjPick::ContextLoop(refs));
+                }
+            }
             return Some(ProjPick::Context(Box::new(c), pts));
         }
         if let Some((c, hover)) = self.context_target_under(p, rect) {
@@ -146,8 +171,15 @@ impl CadCraftApp {
     /// Project Geometry: a click at `p` projects what is under it into
     /// sketch `i` (one Undo step), or replaces the source of the armed
     /// Replace Reference. Returns whether the click was taken.
-    pub(super) fn project_click(&mut self, i: usize, p: Pos2, rect: Rect, shift: bool) -> bool {
-        let Some(pick) = self.project_pick(i, p, rect) else {
+    pub(super) fn project_click(
+        &mut self,
+        i: usize,
+        p: Pos2,
+        rect: Rect,
+        shift: bool,
+        ctrl: bool,
+    ) -> bool {
+        let Some(pick) = self.project_pick(i, p, rect, ctrl) else {
             return false;
         };
         if let Some((si, k)) = self.relink {
@@ -162,8 +194,10 @@ impl CadCraftApp {
                     ProjPick::Work(id) => Some(LinkSource::Work { id }),
                     ProjPick::Vertex(_)
                     | ProjPick::Face(_)
+                    | ProjPick::Loop(_)
                     | ProjPick::Context(..)
-                    | ProjPick::ContextFace(..) => None,
+                    | ProjPick::ContextFace(..)
+                    | ProjPick::ContextLoop(_) => None,
                 };
                 let Some(source) = source else {
                     self.file_status = Some(Err(
@@ -213,6 +247,25 @@ impl CadCraftApp {
             ProjPick::Context(c, _) => self
                 .part_mut()
                 .project_context_edge(i, *c, construction)
+                .map(|_| ()),
+            ProjPick::Loop(edges) => {
+                // All or nothing.
+                let before = self.part().sketches[i].clone();
+                let mut r = Ok(());
+                for e in edges {
+                    if let Err(err) = self.part_mut().project_model_edge(i, e, construction) {
+                        r = Err(err);
+                        break;
+                    }
+                }
+                if r.is_err() {
+                    self.part_mut().sketches[i] = before;
+                }
+                r
+            }
+            ProjPick::ContextLoop(edges) => self
+                .part_mut()
+                .project_context_edges(i, edges, construction)
                 .map(|_| ()),
             ProjPick::ContextFace(c, _) => match self.context_face_outline(&c.source) {
                 Ok(edges) => self
@@ -304,7 +357,8 @@ impl CadCraftApp {
             return;
         }
         let col = overlay::HIGHLIGHT;
-        match self.project_pick(i, p, rect) {
+        let ctrl = painter.ctx().input(|i| i.modifiers.command);
+        match self.project_pick(i, p, rect, ctrl) {
             Some(ProjPick::Sketch { sketch, geo }) => {
                 let sk = &self.part().sketches[sketch].sketch;
                 match geo {
@@ -323,6 +377,31 @@ impl CadCraftApp {
                             .collect();
                         painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
                     }
+                }
+            }
+            Some(ProjPick::Loop(edges)) => {
+                let opts = crate::kernel::TessellationOptions::default();
+                for e in edges {
+                    if let Ok(pts) = self.part().body.sample_edge(e, &opts) {
+                        let pts: Vec<Pos2> = pts
+                            .iter()
+                            .filter_map(|q| self.camera.project(q, rect))
+                            .collect();
+                        painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
+                    }
+                }
+            }
+            Some(ProjPick::ContextLoop(edges)) => {
+                for c in &edges {
+                    let Some(curve) = c.geom.curve() else {
+                        continue;
+                    };
+                    let pts: Vec<Pos2> = curve
+                        .polyline()
+                        .iter()
+                        .filter_map(|q| self.camera.project(q, rect))
+                        .collect();
+                    painter.add(egui::Shape::line(pts, Stroke::new(3.5, col)));
                 }
             }
             Some(ProjPick::ContextFace(_, hover)) => {
@@ -541,4 +620,34 @@ impl CadCraftApp {
             }
         }
     }
+}
+
+/// The loop through edge `e` of the face beside it that is parallel to the
+/// sketch (`normal`), else of a planar one beside it (Project Geometry with
+/// Ctrl).
+fn edge_loop_on(
+    body: &crate::kernel::BRep,
+    e: EdgeId,
+    normal: &crate::kernel::UnitVector3,
+) -> Vec<EdgeId> {
+    let faces: Vec<_> = body
+        .edge_faces(e)
+        .into_iter()
+        .filter(|f| body.face_plane(*f).is_some())
+        .collect();
+    let square = |f: &crate::kernel::FaceId| {
+        body.face_plane(*f)
+            .is_some_and(|pl| pl.normal.cross(normal).norm() < 1e-6)
+    };
+    let Some(f) = faces.iter().find(|f| square(f)).or(faces.first()).copied() else {
+        return Vec::new();
+    };
+    body.face(f)
+        .and_then(|face| {
+            std::iter::once(&face.outer)
+                .chain(&face.inner)
+                .map(|l| l.coedges.iter().map(|c| c.edge).collect::<Vec<_>>())
+                .find(|l| l.contains(&e))
+        })
+        .unwrap_or_default()
 }

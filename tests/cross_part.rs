@@ -637,10 +637,9 @@ fn a_turned_flange_face_is_projected_where_it_lies() {
     assert!((v - expect).abs() < 0.01 * expect, "volume {v} vs {expect}");
 }
 
-#[test]
-fn a_face_with_a_free_form_edge_is_refused_and_nothing_changes() {
-    // A cam plate: a straight side and a spline. Spline edges cannot be
-    // projected from other components yet, so the face is refused whole.
+/// A cam plate 6 thick: a straight side from (0, 0) to (60, 0) and an
+/// interpolation spline back through (35, `top`) and (10, 25).
+fn cam(top: Real) -> PartDocument {
     let mut cam = PartDocument::default();
     let i = cam
         .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
@@ -648,8 +647,11 @@ fn a_face_with_a_free_form_edge_is_refused_and_nothing_changes() {
     let sk = &mut cam.sketches[i].sketch;
     let a = sk.add_point(Point2::new(0.0, 0.0));
     let b = sk.add_point(Point2::new(60.0, 0.0));
-    let m = sk.add_point(Point2::new(35.0, 30.0));
+    let m = sk.add_point(Point2::new(35.0, top));
     let n = sk.add_point(Point2::new(10.0, 25.0));
+    for q in [a, b, m, n] {
+        sk.set_fixed(q, true).unwrap();
+    }
     sk.add_line_between(a, b).unwrap();
     sk.add_interp_spline(vec![b, m, n, a]).unwrap();
     let rg = sk.regions();
@@ -659,54 +661,313 @@ fn a_face_with_a_free_form_edge_is_refused_and_nothing_changes() {
         ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 6.0),
     )
     .unwrap();
-    let (mut p, aid, s, t) = design(cam, Transform3::identity(), Transform3::identity());
-    let a = asm(&p, aid);
-    let (name, hint) = face_at(part(&p, s), 6.0);
+    cam
+}
+
+/// The cam's outline area (its sketch region).
+fn cam_area(p: &PartDocument) -> Real {
+    p.sketches[0].sketch.regions()[0].area()
+}
+
+#[test]
+fn a_follower_plate_takes_a_cam_face_with_a_spline_edge() {
+    // A cover plate copying a cam's whole face: its straight side and its
+    // free-form side (revision 51). The cam is reshaped: Update follows.
+    let (mut p, aid, s, t) = design(
+        cam(30.0),
+        Transform3::identity(),
+        Transform3::translation(0.0, 0.0, 6.0),
+    );
+    let area = cam_area(part(&p, s));
+    let face = face_at(part(&p, s), 6.0);
+    project_face_and_extrude(&mut p, aid, t, face, area, 2.0);
+    let v = volume(part(&p, t));
+    assert!(
+        (v - area * 2.0).abs() < 0.01 * v,
+        "volume {v} vs {}",
+        area * 2.0
+    );
+    // The cam's high point raised 30 → 40.
+    *part_mut(&mut p, s) = cam(40.0);
+    let area = cam_area(part(&p, s));
+    let r = context::update(&mut p, &Linked::new(), aid);
+    assert_eq!(r.changed, vec![t], "{r:?}");
+    assert!(r.sick.is_empty(), "{:?}", r.sick);
+    let v = volume(part(&p, t));
+    assert!(
+        (v - area * 2.0).abs() < 0.01 * v,
+        "volume {v} vs {}",
+        area * 2.0
+    );
+    assert!(part(&p, t).feature_health.is_empty());
+}
+
+#[test]
+fn a_spline_edge_projected_alone_survives_save_and_reload() {
+    let (mut p, aid, s, t) = design(cam(30.0), Transform3::identity(), Transform3::identity());
+    let spline = edges_at(part(&p, s), 6.0)
+        .into_iter()
+        .find(|e| {
+            let a = asm(&p, aid);
+            let src = ContextSource {
+                assembly: aid,
+                target: vec![2],
+                path: vec![1],
+                face: e.faces[0].clone(),
+                edge: Some(e.clone()),
+                hint: e.hint,
+                label: "Source:1 edge".into(),
+            };
+            matches!(
+                current(&p, &Linked::new(), &a, &src),
+                Ok(cadcraft3d::part::context::ContextGeom::Curve {
+                    curve: cadcraft3d::part::context::ContextCurve::Spline { .. }
+                })
+            )
+        })
+        .expect("a spline edge");
+    project_and_extrude_open(&mut p, aid, t, &spline);
+    let tp = part(&p, t);
+    let text = serde_json::to_string(tp).unwrap();
+    let mut back: PartDocument = serde_json::from_str(&text).unwrap();
+    back.regenerate().unwrap();
+    assert_eq!(back.context.len(), 1);
+    assert!(back.sketches[0].links[0].status.is_none());
+    assert_eq!(
+        back.sketches[0].sketch.entities().count(),
+        tp.sketches[0].sketch.entities().count()
+    );
+}
+
+/// A sketch on the target's XY projecting `edge` of the source alone.
+fn project_and_extrude_open(p: &mut Project, aid: DocumentId, t: DocumentId, edge: &EdgeRef) {
+    let a = asm(p, aid);
     let source = ContextSource {
         assembly: aid,
         target: vec![2],
         path: vec![1],
-        face: name,
+        face: edge.faces[0].clone(),
+        edge: Some(edge.clone()),
+        hint: edge.hint,
+        label: "Source:1 edge".into(),
+    };
+    let geom = current(p, &Linked::new(), &a, &source).unwrap();
+    let tp = part_mut(p, t);
+    let i = tp
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    tp.project_context_edge(
+        i,
+        ContextRef {
+            id: String::new(),
+            source,
+            geom,
+        },
+        false,
+    )
+    .unwrap();
+}
+
+#[test]
+fn projecting_a_face_is_all_or_nothing() {
+    // A good edge followed by a reference that is no edge: nothing stays.
+    let (mut p, aid, s, t) = design(
+        flange(100.0),
+        Transform3::identity(),
+        Transform3::identity(),
+    );
+    let a = asm(&p, aid);
+    let source = ContextSource {
+        assembly: aid,
+        target: vec![2],
+        path: vec![1],
+        face: "Box1:Top".into(),
         edge: None,
-        hint,
+        hint: [50.0, 50.0, 10.0],
         label: "Source:1 face".into(),
     };
-    let e = context::face_outline(&p, &Linked::new(), &a, &source).unwrap_err();
-    assert!(e.contains("straight and circular"), "{e}");
-    // All or nothing: a good edge followed by a reference that is no edge.
-    let good = edges_at(part(&p, s), 6.0)
-        .into_iter()
-        .find_map(|edge| {
-            let src = ContextSource {
-                face: edge.faces[0].clone(),
-                hint: edge.hint,
-                edge: Some(edge),
-                ..source.clone()
-            };
-            current(&p, &Linked::new(), &a, &src)
-                .ok()
-                .map(|geom| ContextRef {
-                    id: String::new(),
-                    source: src,
-                    geom,
-                })
-        })
-        .unwrap();
+    let mut edges = context::face_outline(&p, &Linked::new(), &a, &source).unwrap();
     let plane = ContextRef {
         id: String::new(),
         geom: current(&p, &Linked::new(), &a, &source).unwrap(),
         source,
     };
+    edges.push(plane);
+    let _ = s;
     let tp = part_mut(&mut p, t);
     let j = tp
         .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
         .unwrap();
     let before = serde_json::to_string(&tp.sketches[j]).unwrap();
-    assert!(
-        tp.project_context_edges(j, vec![good, plane], false)
-            .is_err()
-    );
+    assert!(tp.project_context_edges(j, edges, false).is_err());
     assert!(tp.context.is_empty());
     assert!(tp.work.context_curves.is_empty());
     assert_eq!(serde_json::to_string(&tp.sketches[j]).unwrap(), before);
+}
+
+#[test]
+fn a_pipe_rim_projected_onto_an_inclined_sketch_is_an_ellipse() {
+    // A mitred cut planned on a plane tilted 30° across a Ø40 pipe: the rim
+    // seen on it is an ellipse 40 × 40·cos 30° (a spline through it).
+    let (mut p, aid, s, t) = design(tube(40.0), Transform3::identity(), Transform3::identity());
+    let rim = edges_at(part(&p, s), 40.0);
+    let a = asm(&p, aid);
+    let refs: Vec<ContextRef> = rim
+        .iter()
+        .map(|e| {
+            let source = ContextSource {
+                assembly: aid,
+                target: vec![2],
+                path: vec![1],
+                face: e.faces[0].clone(),
+                edge: Some(e.clone()),
+                hint: e.hint,
+                label: "Source:1 edge".into(),
+            };
+            let geom = current(&p, &Linked::new(), &a, &source).unwrap();
+            ContextRef {
+                id: String::new(),
+                source,
+                geom,
+            }
+        })
+        .collect();
+    let tp = part_mut(&mut p, t);
+    let i = tp
+        .create_sketch(SketchPlacement::default(), &opts())
+        .unwrap();
+    let n = Vector3::new(0.0, -30f64.to_radians().sin(), 30f64.to_radians().cos());
+    tp.sketches[i].sketch.plane =
+        cadcraft3d::kernel::Plane::new(Point3::new(0.0, 0.0, 10.0), n, Vector3::x()).unwrap();
+    tp.project_context_edges(i, refs, false).unwrap();
+    let rg = tp.sketches[i].sketch.regions();
+    let area = rg.iter().map(|r| r.area()).fold(0.0, Real::max);
+    let expect = std::f64::consts::PI * 400.0 * 30f64.to_radians().cos();
+    assert!(
+        (area - expect).abs() < 0.01 * expect,
+        "area {area} vs {expect}"
+    );
+}
+
+// Project Geometry of one loop of another component's face (Ctrl+click
+// on one of its edges): an outline without its holes, or one hole.
+
+/// The loop through the edge of `p`'s source at height `z` that `pick`
+/// chooses (by its hint), projected into a new sketch of the target on XY
+/// (`normal` the sketch's, for the face choice); the regions' areas.
+fn project_loop(
+    p: &mut Project,
+    aid: DocumentId,
+    s: DocumentId,
+    t: DocumentId,
+    z: Real,
+    pick: impl Fn(&[Real; 3]) -> bool,
+    normal: Vector3,
+) -> (usize, Vec<Real>) {
+    let edge = edges_at(part(p, s), z)
+        .into_iter()
+        .find(|e| pick(&e.hint))
+        .expect("an edge");
+    let a = asm(p, aid);
+    let source = ContextSource {
+        assembly: aid,
+        target: vec![2],
+        path: vec![1],
+        face: edge.faces[0].clone(),
+        hint: edge.hint,
+        edge: Some(edge),
+        label: "Source:1 edge".into(),
+    };
+    let refs = context::edge_loop(p, &Linked::new(), &a, &source, Some(normal)).unwrap();
+    let n = refs.len();
+    let tp = part_mut(p, t);
+    let i = tp
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    tp.project_context_edges(i, refs, false).unwrap();
+    let areas = tp.sketches[i]
+        .sketch
+        .regions()
+        .iter()
+        .map(|r| r.area())
+        .collect();
+    (n, areas)
+}
+
+#[test]
+fn a_cover_takes_only_the_outline_of_a_flange_not_its_holes() {
+    let (mut p, aid, s, t) = design(
+        flange(100.0),
+        Transform3::identity(),
+        Transform3::identity(),
+    );
+    let front = |h: &[Real; 3]| h[1].abs() < 1e-6 && (h[0] - 50.0).abs() < 1.0;
+    let (n, areas) = project_loop(&mut p, aid, s, t, 10.0, front, Vector3::z());
+    assert_eq!(n, 4);
+    assert_eq!(areas.len(), 1);
+    assert!((areas[0] - 10000.0).abs() < 1e-6, "{areas:?}");
+}
+
+#[test]
+fn a_dowel_takes_one_bolt_hole_of_the_flange() {
+    let (mut p, aid, s, t) = design(
+        flange(100.0),
+        Transform3::identity(),
+        Transform3::identity(),
+    );
+    let near = |h: &[Real; 3]| ((h[0] - 85.0).hypot(h[1] - 85.0) - 5.0).abs() < 1e-3;
+    let (_, areas) = project_loop(&mut p, aid, s, t, 10.0, near, Vector3::z());
+    assert_eq!(areas.len(), 1, "{areas:?}");
+    let disc = std::f64::consts::PI * 25.0;
+    assert!((areas[0] - disc).abs() < 0.01 * disc, "{areas:?}");
+}
+
+#[test]
+fn a_cap_takes_the_outer_rim_of_a_pipe_and_a_plug_the_inner() {
+    let pi = std::f64::consts::PI;
+    for (r, area) in [(20.0, pi * 400.0), (15.0, pi * 225.0)] {
+        let (mut p, aid, s, t) = design(
+            pipe(40.0, 30.0),
+            Transform3::identity(),
+            Transform3::identity(),
+        );
+        let on = |h: &[Real; 3]| (h[0].hypot(h[1]) - r).abs() < 1e-3;
+        let (_, areas) = project_loop(&mut p, aid, s, t, 40.0, on, Vector3::z());
+        assert_eq!(areas.len(), 1, "r {r}: {areas:?}");
+        assert!((areas[0] - area).abs() < 0.01 * area, "r {r}: {areas:?}");
+    }
+}
+
+#[test]
+fn the_loop_is_taken_on_the_face_parallel_to_the_sketch() {
+    // The flange's front top edge bounds the top (4 edges, 4 holes inside)
+    // and the front side (100 × 10). A sketch facing −Y takes the side's loop.
+    let (mut p, aid, s, _) = design(
+        flange(100.0),
+        Transform3::identity(),
+        Transform3::identity(),
+    );
+    let edge = edges_at(part(&p, s), 10.0)
+        .into_iter()
+        .find(|h| h.hint[1].abs() < 1e-6 && (h.hint[0] - 50.0).abs() < 1.0)
+        .unwrap();
+    let a = asm(&p, aid);
+    let source = ContextSource {
+        assembly: aid,
+        target: vec![2],
+        path: vec![1],
+        face: edge.faces[0].clone(),
+        hint: edge.hint,
+        edge: Some(edge),
+        label: "Source:1 edge".into(),
+    };
+    let side = context::edge_loop(&p, &Linked::new(), &a, &source, Some(-Vector3::y())).unwrap();
+    assert_eq!(side.len(), 4);
+    let lowest = side
+        .iter()
+        .flat_map(|c| c.geom.curve().unwrap().polyline())
+        .map(|q| q.z)
+        .fold(Real::MAX, Real::min);
+    assert!(lowest.abs() < 1e-6, "the side reaches z 0: {lowest}");
+    let _ = &mut p;
 }
