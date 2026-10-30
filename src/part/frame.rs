@@ -49,6 +49,10 @@ pub enum Shape {
     Channel,
     /// T section, flange on top, stem down.
     Tee,
+    /// Channel with tapered flanges (UPN, 8 % slope): web on the left.
+    ChannelTapered,
+    /// I beam with tapered flanges (IPN, 14 % slope).
+    IBeamTapered,
     /// The user's own outline (`Section::custom`, spec 6.1 §3.11).
     Custom,
 }
@@ -65,6 +69,8 @@ impl Shape {
             "bar" => Shape::Bar,
             "channel" => Shape::Channel,
             "tee" => Shape::Tee,
+            "upn" => Shape::ChannelTapered,
+            "ipn" => Shape::IBeamTapered,
             "custom" => Shape::Custom,
             _ => return None,
         })
@@ -155,7 +161,13 @@ impl Section {
             Shape::Chs => "CHS ",
             Shape::Flat => "FL ",
             Shape::Bar => "RD ",
-            Shape::Angle | Shape::IBeam | Shape::Channel | Shape::Tee | Shape::Custom => "",
+            Shape::Angle
+            | Shape::IBeam
+            | Shape::Channel
+            | Shape::Tee
+            | Shape::Custom
+            | Shape::ChannelTapered
+            | Shape::IBeamTapered => "",
         };
         format!("{prefix}{}", self.size)
     }
@@ -240,6 +252,45 @@ impl Section {
                 ])]
             }
             Shape::Custom => self.custom.clone(),
+            Shape::ChannelTapered => {
+                // Flange thickness tf at the middle of the free flange, 8 %
+                // thicker towards the web (EN 10365 / DIN 1026-1).
+                let (tw, k) = (self.tw, 0.08);
+                let free = self.b - tw;
+                let t = |u: Real| self.tf + k * (u - free / 2.0);
+                vec![Loop::Corners(vec![
+                    (p(x0, y0), 0.0),
+                    (p(x1, y0), 0.0),
+                    (p(x1, y0 + t(0.0)), self.r2),
+                    (p(x0 + tw, y0 + t(free)), self.r1),
+                    (p(x0 + tw, y1 - t(free)), self.r1),
+                    (p(x1, y1 - t(0.0)), self.r2),
+                    (p(x1, y1), 0.0),
+                    (p(x0, y1), 0.0),
+                ])]
+            }
+            Shape::IBeamTapered => {
+                // Flange thickness tf at b/4 from the flange's edge, 14 %
+                // thicker towards the web (EN 10365 / DIN 1025-1).
+                let (tw, k) = (self.tw / 2.0, 0.14);
+                let free = self.b / 2.0 - tw;
+                let t = |u: Real| self.tf + k * (u - self.b / 4.0);
+                let (r1, r2) = (self.r1, self.r2);
+                vec![Loop::Corners(vec![
+                    (p(x0, y0), 0.0),
+                    (p(x1, y0), 0.0),
+                    (p(x1, y0 + t(0.0)), r2),
+                    (p(tw, y0 + t(free)), r1),
+                    (p(tw, y1 - t(free)), r1),
+                    (p(x1, y1 - t(0.0)), r2),
+                    (p(x1, y1), 0.0),
+                    (p(x0, y1), 0.0),
+                    (p(x0, y1 - t(0.0)), r2),
+                    (p(-tw, y1 - t(free)), r1),
+                    (p(-tw, y0 + t(free)), r1),
+                    (p(x0, y0 + t(0.0)), r2),
+                ])]
+            }
             Shape::IBeam => {
                 let (tw, tf, r) = (self.tw / 2.0, self.tf, self.r1);
                 vec![Loop::Corners(vec![
@@ -277,7 +328,8 @@ impl Section {
             Shape::Angle => Point2::new(-w / 2.0 + self.t / 2.0, 0.0),
             Shape::IBeam => Point2::new(0.0, 0.0),
             Shape::Flat | Shape::Bar => Point2::origin(),
-            Shape::Channel => Point2::new(-w / 2.0 + self.tw / 2.0, 0.0),
+            Shape::Channel | Shape::ChannelTapered => Point2::new(-w / 2.0 + self.tw / 2.0, 0.0),
+            Shape::IBeamTapered => Point2::new(0.0, 0.0),
             Shape::Tee => Point2::new(0.0, self.extent().1 / 2.0 - self.tee_flange() / 2.0),
             Shape::Custom => self.inside_point().unwrap_or_else(Point2::origin),
         }
@@ -1336,6 +1388,30 @@ mod tests {
         // An unequal angle's centroid lies towards the long leg's side.
         let p = sec("Unequal angle (EN 10056-1)", "L 60x40x5").properties();
         assert!(p.centroid.x < 0.0 && p.centroid.y < 0.0);
+    }
+
+    /// Tapered flanges (UPN 8 %, IPN 14 %): areas and Ix of the EN 10365
+    /// tables within 2 % / 3 %, and a member of each builds whole.
+    #[test]
+    fn upn_and_ipn_match_their_tables() {
+        for (f, s, a, ix) in [
+            ("UPN channel (EN 10365)", "UPN 100", 1350.0, 206e4),
+            ("UPN channel (EN 10365)", "UPN 200", 3220.0, 1910e4),
+            ("IPN beam (EN 10365)", "IPN 100", 1060.0, 171e4),
+            ("IPN beam (EN 10365)", "IPN 200", 3340.0, 2140e4),
+        ] {
+            let p = sec(f, s).properties();
+            close(p.area, a, 0.02, s);
+            close(p.ix, ix, 0.03, s);
+            let part = sec(f, s).member_part(500.0, None).unwrap();
+            let v: Real = part
+                .exact_bodies
+                .0
+                .iter()
+                .filter_map(|b| b.volume_at(1e-3))
+                .sum();
+            close(v, p.area * 500.0, 0.002, s);
+        }
     }
 
     /// A D-shaped outline (a 40 mm line closed by a half circle) with a

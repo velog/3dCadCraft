@@ -353,6 +353,8 @@ fn shape_name(s: &Section) -> &'static str {
         Bar => "bar",
         Channel => "channel",
         Tee => "tee",
+        ChannelTapered => "upn",
+        IBeamTapered => "ipn",
         Custom => "custom",
     }
 }
@@ -3284,6 +3286,30 @@ mod tests {
             return;
         };
         let (mut p, aid, _) = project();
+        if let Ok(f) = std::env::var("CADCRAFT_BOX_SECTIONS") {
+            // Two top edges with the sections named `family|size;family|size`.
+            for (k, spec) in f.split(';').enumerate() {
+                let (fam, size) = spec.split_once('|').unwrap();
+                let at = [
+                    Point3::new(200.0, 0.0, 200.0),
+                    Point3::new(0.0, 150.0, 200.0),
+                ][k];
+                let e = find_edge(&p, aid, at);
+                let mut o = opts();
+                o.family = fam.into();
+                o.size = size.into();
+                insert(
+                    &mut p,
+                    &Linked::new(),
+                    aid,
+                    &[e],
+                    &o,
+                    Library::builtin(),
+                    None,
+                )
+                .unwrap();
+            }
+        }
         if std::env::var_os("CADCRAFT_BOX_FRAMED").is_some() {
             let sk = part(&p, asm(&p, aid), 1);
             let edges: Vec<Skeleton> = straight_edges(&sk, None)

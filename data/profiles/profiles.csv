@@ -5,12 +5,14 @@
 # Dimensions in mm, typed from the dimension tables of the standards named in
 # the family column (nominal values; hollow sections use the standard's
 # calculation radii: outer 2t / inner t up to t = 6 mm, 2.5t / 1.5t above).
-# shape: shs | rhs | chs | angle | ibeam | channel | tee | flat | bar
+# shape: shs | rhs | chs | angle | ibeam | ipn | channel | upn | tee | flat | bar
 #   shs / rhs: h b t r1 (outer radius) r2 (inner radius)
 #   chs: h (outside diameter) t
 #   angle: h b t r1 (root radius) r2 (toe radius)
 #   ibeam: h b tw tf r1 (root radius)
 #   channel: h b tw tf r1 (root radius) r2 (toe radius); parallel flanges
+#   upn: as channel, flanges tapered 8 %, tf at the middle of the free flange
+#   ipn: h b tw tf r1 r2, flanges tapered 14 %, tf at b/4 from the edge
 #   tee: h b t (flange and stem) r1 (root radius) r2 (toe radius)
 #   flat: b (width) t
 #   bar: h (diameter)
@@ -101,3 +103,17 @@ T section (EN 10055),EN,tee,T 40,40,40,5,,,5,2.5
 T section (EN 10055),EN,tee,T 50,50,50,6,,,6,3
 T section (EN 10055),EN,tee,T 60,60,60,7,,,7,3.5
 T section (EN 10055),EN,tee,T 80,80,80,9,,,9,4.5
+UPN channel (EN 10365),EN,upn,UPN 80,80,45,,6,8,8,4
+UPN channel (EN 10365),EN,upn,UPN 100,100,50,,6,8.5,8.5,4.5
+UPN channel (EN 10365),EN,upn,UPN 120,120,55,,7,9,9,4.5
+UPN channel (EN 10365),EN,upn,UPN 140,140,60,,7,10,10,5
+UPN channel (EN 10365),EN,upn,UPN 160,160,65,,7.5,10.5,10.5,5.5
+UPN channel (EN 10365),EN,upn,UPN 180,180,70,,8,11,11,5.5
+UPN channel (EN 10365),EN,upn,UPN 200,200,75,,8.5,11.5,11.5,6
+IPN beam (EN 10365),EN,ipn,IPN 80,80,42,,3.9,5.9,3.9,2.3
+IPN beam (EN 10365),EN,ipn,IPN 100,100,50,,4.5,6.8,4.5,2.7
+IPN beam (EN 10365),EN,ipn,IPN 120,120,58,,5.1,7.7,5.1,3.1
+IPN beam (EN 10365),EN,ipn,IPN 140,140,66,,5.7,8.6,5.7,3.4
+IPN beam (EN 10365),EN,ipn,IPN 160,160,74,,6.3,9.5,6.3,3.8
+IPN beam (EN 10365),EN,ipn,IPN 180,180,82,,6.9,10.4,6.9,4.1
+IPN beam (EN 10365),EN,ipn,IPN 200,200,90,,7.5,11.3,7.5,4.5
