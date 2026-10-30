@@ -3075,6 +3075,8 @@ fn speed_budgets() {
                 extent: Default::default(),
                 depth: 0.0,
                 across: false,
+                direction: None,
+                to: None,
                 sketch: sid.clone(),
                 profiles: holes,
             },
@@ -3451,6 +3453,90 @@ fn speed_budgets() {
                 p.build_cache = Default::default();
                 p.add_sheet_op(op.clone()).unwrap();
                 assert_eq!(p.flat_patterns()[0].bends.len(), 4);
+            }),
+        ));
+    }
+    // Cut To Next (docs/spec/5.6 §6.1h): a U channel cut from a work plane
+    // between its walls through the farther wall, 20 rectangles.
+    {
+        use cadcraft3d::part::sheet_metal::{
+            CutDirection, CutExtent, SheetFlangeFeature, SheetOp, SheetOpFeature,
+        };
+        use cadcraft3d::part::{
+            OriginPlane, PlaneRef, ProfileRef, WorkDef, WorkFeature, WorkPlaneDef,
+        };
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        base.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(200.0, 60.0))
+            .unwrap();
+        let r = base.sketches[i].sketch.regions();
+        base.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+            .unwrap();
+        let mut edges = Vec::new();
+        let mut body = String::new();
+        for y in [0.0, 60.0] {
+            let (b, e) = base.sheet_edge_at(Point3::new(100.0, y, 2.0)).unwrap();
+            body = b;
+            edges.push(e);
+        }
+        base.add_sheet_flange(SheetFlangeFeature::new(&body, edges, 40.0))
+            .unwrap();
+        let wp = base
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XZ),
+                distance: -25.0,
+            })))
+            .unwrap();
+        let i = base
+            .create_sketch(
+                SketchPlacement {
+                    plane: PlaneRef::Work(wp),
+                    ..Default::default()
+                },
+                &o,
+            )
+            .unwrap();
+        for k in 0..20 {
+            let x = 5.0 + 9.5 * k as Real;
+            base.sketches[i]
+                .sketch
+                .add_rectangle_two_point(Point2::new(x, 15.0), Point2::new(x + 6.0, 25.0))
+                .unwrap();
+        }
+        let sid = base.sketches[i].id.clone();
+        let profiles: Vec<ProfileRef> = base.sketches[i]
+            .sketch
+            .regions()
+            .iter()
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        assert_eq!(profiles.len(), 20);
+        let op = SheetOpFeature::new(SheetOp::Cut {
+            sketch: sid,
+            profiles,
+            extent: CutExtent::ToNext,
+            depth: 0.0,
+            across: false,
+            direction: Some(CutDirection::Flipped),
+            to: None,
+        });
+        rows.push((
+            "sheet metal: Cut To Next of 20 rectangles from a plane inside a channel",
+            300.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_op(op.clone()).unwrap();
             }),
         ));
     }

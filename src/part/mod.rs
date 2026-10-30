@@ -1457,7 +1457,10 @@ impl PartDocument {
                     }
                 }
                 BuildStep::SheetOp(op) if use_exact => {
-                    match exact::sheet_op(op, &solids, &metal, &rule, &self.sketches) {
+                    let plane_of = |r: &placement::PlaneRef| {
+                        placement::plane_of(r, &body, &works).map_err(|e| e.to_string())
+                    };
+                    match exact::sheet_op(op, &solids, &metal, &rule, &self.sketches, &plane_of) {
                         Ok((next, state)) => {
                             let kept = state.as_ref().map(|(b, _)| b.clone());
                             if let Some((body, state)) = state {

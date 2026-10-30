@@ -155,7 +155,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 50: sheet metal Rip (`SheetOp::Rip`) (2026-10-30).
 /// - 51: free-form (spline) edges of other components projected
 ///   (`ContextCurve::Spline`) (2026-10-30).
-pub const FORMAT_REVISION: u32 = 51;
+/// - 52: sheet metal Cut To / To Next and Direction (`CutExtent::To`,
+///   `ToNext`, `SheetOp::Cut::direction`, `to`) (2026-10-30).
+pub const FORMAT_REVISION: u32 = 52;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

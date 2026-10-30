@@ -3738,6 +3738,7 @@ pub(super) fn sheet_op(
     metal: &std::collections::HashMap<String, super::sheet_metal::SheetState>,
     rule: &super::sheet_metal::SheetMetalDefaults,
     sketches: &[super::PartSketch],
+    plane_of: &dyn Fn(&super::PlaneRef) -> Result<crate::kernel::Plane, String>,
 ) -> Result<SheetStep, Fail> {
     use super::sheet_metal::{ContourDirection, HemType, SheetOp, SheetState};
     use crate::kernel::exact::sheet_metal as ksm;
@@ -3992,15 +3993,73 @@ pub(super) fn sheet_op(
             extent,
             depth,
             across,
+            direction,
+            to,
         } => {
-            use super::sheet_metal::CutExtent;
-            let mode = match (extent, across) {
-                (_, true) => ksm::CutMode::AcrossBends,
-                (CutExtent::Thickness, false) => ksm::CutMode::Face,
-                (CutExtent::Distance, false) => ksm::CutMode::Depth(*depth),
-                (CutExtent::ThroughAll, false) => ksm::CutMode::ThroughAll,
-            };
+            use super::sheet_metal::{CutDirection, CutExtent};
             let ps = sketch_of(sketch)?;
+            let plane = &ps.sketch.plane;
+            let n = plane.normal.into_inner();
+            // To: the target's signed distance from the sketch plane.
+            let reach = match (extent, to) {
+                (CutExtent::To, Some(r)) => {
+                    let target = plane_of(r).map_err(User)?;
+                    if n.cross(&target.normal.into_inner()).norm() > 1e-6 {
+                        return Err(User(
+                            "not yet: a To plane that is not parallel to the sketch".into(),
+                        ));
+                    }
+                    Some((target.origin - plane.origin).dot(&n))
+                }
+                (CutExtent::To, None) => {
+                    return Err(User("select the face or plane the cut goes to".into()));
+                }
+                _ => None,
+            };
+            if *extent == CutExtent::Distance && (depth.is_nan() || *depth <= 0.0) {
+                return Err(User("the distance must be positive".into()));
+            }
+            // The mode for one sheet: its Default direction goes into its material.
+            let mode_for = |model: &ksm::SheetModel| -> Result<ksm::CutMode, Fail> {
+                use ksm::CutMode as M;
+                const FAR: Real = 1e6;
+                if *across {
+                    return Ok(M::AcrossBends);
+                }
+                let dir = match (direction, extent) {
+                    // Saved before Direction existed: as it was built then.
+                    (None, CutExtent::Thickness) => return Ok(M::Face),
+                    (None, CutExtent::Distance) => return Ok(M::Depth(*depth)),
+                    (None, CutExtent::ThroughAll) => return Ok(M::ThroughAll),
+                    (d, _) => d.unwrap_or_default(),
+                };
+                let s = ksm::cut_side(model, plane).map_err(User)?;
+                let span = |len: Real| match dir {
+                    CutDirection::Default => M::Span(0.0, s * len),
+                    CutDirection::Flipped => M::Span(0.0, -s * len),
+                    CutDirection::Symmetric => M::Span(-len * 0.5, len * 0.5),
+                };
+                Ok(match extent {
+                    CutExtent::Thickness => M::Face,
+                    CutExtent::Distance => span(*depth),
+                    CutExtent::ThroughAll => span(2.0 * FAR),
+                    CutExtent::To => M::Span(0.0, reach.unwrap_or(0.0)),
+                    CutExtent::ToNext => match dir {
+                        CutDirection::Default => M::Next {
+                            ahead: s > 0.0,
+                            behind: s < 0.0,
+                        },
+                        CutDirection::Flipped => M::Next {
+                            ahead: s < 0.0,
+                            behind: s > 0.0,
+                        },
+                        CutDirection::Symmetric => M::Next {
+                            ahead: true,
+                            behind: true,
+                        },
+                    },
+                })
+            };
             let regions = ps.own_regions();
             let mut profs = Vec::new();
             for pr in profiles {
@@ -4023,6 +4082,7 @@ pub(super) fn sheet_op(
                     continue;
                 };
                 modelled = true;
+                let mode = mode_for(&state.model)?;
                 match ksm::cut(&state.model, body, &ps.sketch.plane, &profs, mode) {
                     Ok((solid, model)) => return Ok(replace(k, solid, model, body)),
                     Err(e) => why = e,
@@ -4035,10 +4095,11 @@ pub(super) fn sheet_op(
             // in the sheet model: cut it as a solid, square to the sketch, as
             // deep as asked on both sides of the plane (the sketch lies on a
             // face, so one side is air). The flat pattern does not see it.
-            let d = match mode {
-                ksm::CutMode::Depth(d) => d,
-                ksm::CutMode::ThroughAll => 1e4,
-                _ => rv.thickness,
+            let d = match extent {
+                CutExtent::Distance => *depth,
+                CutExtent::Thickness => rv.thickness,
+                CutExtent::To => reach.map_or(rv.thickness, Real::abs),
+                CutExtent::ThroughAll | CutExtent::ToNext => 1e4,
             };
             let mut next = solids.to_vec();
             let mut cut_any = false;

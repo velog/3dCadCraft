@@ -1000,5 +1000,33 @@
     "Convert1:base:top"
   ],
   "r49/notch_r49.3dcadcraft": [],
-  "r51/context_spline_r51.3dcadcraft": ["Extrusion1:End", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Start"]
+  "r51/context_spline_r51.3dcadcraft": ["Extrusion1:End", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Side:1v1:0", "Extrusion1:Start"],
+  "r52/cut_to_next_r52.3dcadcraft": [
+    "Face1:Bend:1",
+    "Face1:Bend:2",
+    "Face1:Bend:3",
+    "Face1:Bend:4",
+    "Face1:Bend:5",
+    "Face1:Bend:6",
+    "Face1:Bend:7",
+    "Face1:Bend:8",
+    "Face1:Flange1.1:bottom",
+    "Face1:Flange1.1:rim.bend0",
+    "Face1:Flange1.1:rim.bend1",
+    "Face1:Flange1.1:rim.far",
+    "Face1:Flange1.1:rim.side0",
+    "Face1:Flange1.1:rim.side1",
+    "Face1:Flange1.1:top",
+    "Face1:Flange1.2:bottom",
+    "Face1:Flange1.2:rim.bend0",
+    "Face1:Flange1.2:rim.bend1",
+    "Face1:Flange1.2:rim.far",
+    "Face1:Flange1.2:rim.side0",
+    "Face1:Flange1.2:rim.side1",
+    "Face1:Flange1.2:top",
+    "Face1:base:bottom",
+    "Face1:base:rim.2v1",
+    "Face1:base:rim.4v1",
+    "Face1:base:top"
+  ]
 }

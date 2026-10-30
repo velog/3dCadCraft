@@ -1090,7 +1090,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   Rip (revision 50): a converted closed shape keeps its body and `SheetState::closed` (`ClosedSheet`: the body, the
   base point, the rips); `sheet_of` refuses it and the flat is `None`. Each Rip walks the converted body again
   (`ksm::recognize` with every rip): gap strips split the planar faces into pieces, each piece a panel of its own;
-  Face Extents leaves its bend out. On an open sheet a rip is a Cut (`ksm::rip_open`). Model vertex picking tests
+  Face Extents leaves its bend out. On an open sheet a rip is a Cut (`ksm::rip_open`).
+  Cut extents (revision 52): `SheetOp::Cut::direction` `None` = a Cut saved before (keep its old modes); with a
+  direction every extent is vendor `CutMode::Span` (signed distances along the sketch normal: whole walls cut out,
+  partial ones pocketed) or `Next`; Default = `ksm::cut_side` (towards the nearest parallel wall). `sheet_op`
+  resolves Cut To's `PlaneRef` through the `plane_of` closure given by the regeneration loop (body + work planes). Model vertex picking tests
   visibility along the ray through the point's own pixel (`vertex_under`; the cursor's ray hid edge midpoints).
   Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry

@@ -1134,7 +1134,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 | Fold | a fold along a sketch line |
 | Bend | a bend between two plates (2026-10-29: faces at an angle, Double Bend Fix Edges / 45 / 90 / Full Radius, as Inventor builds them; Width Extents ⬜) |
 | Corner Seam / Round / Chamfer | corner treatment |
-| Cut | a cut, also wrapped across bends |
+| Cut | a cut, also wrapped across bends; extents Thickness / Distance / Through All / To / To Next with Direction Default / Flipped / Symmetric (2026-10-30) |
 | Punch Tool | standard punch forms (louvres, ribs, holes) from a library |
 | Contour Roll | a rolled profile |
 | Lofted Flange | a transition between two sections (hopper, funnel) |

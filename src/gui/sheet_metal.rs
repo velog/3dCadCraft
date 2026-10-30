@@ -26,8 +26,8 @@ use super::valuefield::ExprValue;
 use crate::command::flow::{Flow, PickKind, Selector};
 use crate::kernel::{Point3, Vector3};
 use crate::part::sheet_metal::{
-    ContourDirection, CornerOverride, CornerRelief, CutExtent, FlangePosition, FlangeWidth,
-    FoldLocation, HemType, ReliefPlacement, SeamType, SheetConvertFeature, SheetEdge,
+    ContourDirection, CornerOverride, CornerRelief, CutDirection, CutExtent, FlangePosition,
+    FlangeWidth, FoldLocation, HemType, ReliefPlacement, SeamType, SheetConvertFeature, SheetEdge,
     SheetFaceFeature, SheetFlangeFeature, SheetMetalDefaults, SheetOp, SheetOpFeature, rule_of,
 };
 use crate::part::{Feature, PartDocument, PartError, ProfileRef};
@@ -207,14 +207,33 @@ impl SmDraft {
                     true,
                     usize::from(!sketch.is_empty()),
                 )],
-                SheetOp::Cut { profiles, .. } => vec![sel(
-                    "profiles",
-                    "Profiles",
-                    "click the closed profiles to cut (a second click removes one)",
-                    &[PickKind::Region][..],
-                    false,
-                    profiles.len(),
-                )],
+                SheetOp::Cut {
+                    profiles,
+                    extent,
+                    to,
+                    across,
+                    ..
+                } => {
+                    let mut v = vec![sel(
+                        "profiles",
+                        "Profiles",
+                        "click the closed profiles to cut (a second click removes one)",
+                        &[PickKind::Region][..],
+                        false,
+                        profiles.len(),
+                    )];
+                    if *extent == CutExtent::To && !*across {
+                        v.push(sel(
+                            "to",
+                            "To",
+                            "click the face or work plane the cut ends at (parallel to the sketch)",
+                            &[PickKind::PlanarFace, PickKind::Plane][..],
+                            true,
+                            usize::from(to.is_some()),
+                        ));
+                    }
+                    v
+                }
                 SheetOp::CornerSeam { a, .. } => vec![sel(
                     "corner",
                     "Corner",
@@ -313,6 +332,8 @@ enum Pick {
     Item(String, Vec<Vec<Point3>>),
     /// Several at once (Corner Round by Feature: the feature's corners).
     Items(Vec<(String, Vec<Vec<Point3>>)>),
+    /// A face or work / origin plane (Cut To).
+    Plane(crate::part::PlaneRef),
 }
 
 /// Builds the draft's feature into `part` (a new one, or Edit Feature).
@@ -702,6 +723,8 @@ impl CadCraftApp {
                         extent: Default::default(),
                         depth: 0.0,
                         across: false,
+                        direction: Some(Default::default()),
+                        to: None,
                     })),
                     "profiles",
                 );
@@ -1514,7 +1537,12 @@ impl CadCraftApp {
                             ui.end_row();
                         });
                     }
-                    SheetOp::Cut { extent, across, .. } => {
+                    SheetOp::Cut {
+                        extent,
+                        across,
+                        direction,
+                        ..
+                    } => {
                         psection(ui, "sm_cut", "Behavior", |ui| {
                             // The label column is narrow: the option's name
                             // goes with its check box.
@@ -1539,7 +1567,15 @@ impl CadCraftApp {
                                             ),
                                             (
                                                 CutExtent::ThroughAll,
-                                                "Through every wall along the sketch normal",
+                                                "Through every wall in the direction",
+                                            ),
+                                            (
+                                                CutExtent::To,
+                                                "Up to a face or work plane parallel to the sketch",
+                                            ),
+                                            (
+                                                CutExtent::ToNext,
+                                                "Through the next wall in the direction",
                                             ),
                                         ] {
                                             ui.selectable_value(extent, x, x.label())
@@ -1549,6 +1585,38 @@ impl CadCraftApp {
                                 ui.end_row();
                                 if *extent == CutExtent::Distance {
                                     field_row(ui, &mut fx, "Distance", &snapshot, "depth");
+                                }
+                                if extent.has_direction() {
+                                    plabel(ui, "Direction");
+                                    let mut now = direction.unwrap_or_default();
+                                    ui.horizontal(|ui| {
+                                        for (x, tip) in [
+                                            (
+                                                CutDirection::Default,
+                                                "Into the material: towards the nearest wall parallel to the sketch",
+                                            ),
+                                            (CutDirection::Flipped, "The other way"),
+                                            (
+                                                CutDirection::Symmetric,
+                                                "Both ways (a Distance half on each side)",
+                                            ),
+                                        ] {
+                                            // Short names: the value column is narrow.
+                                            let name = match x {
+                                                CutDirection::Default => "Default",
+                                                CutDirection::Flipped => "Flip",
+                                                CutDirection::Symmetric => "Both",
+                                            };
+                                            ui.selectable_value(&mut now, x, name)
+                                                .on_hover_text(format!("{}: {tip}", x.label()));
+                                        }
+                                    });
+                                    if Some(now) != *direction
+                                        && (direction.is_some() || now != CutDirection::Default)
+                                    {
+                                        *direction = Some(now);
+                                    }
+                                    ui.end_row();
                                 }
                             }
                         });
@@ -2266,6 +2334,25 @@ impl CadCraftApp {
             }
             return None;
         }
+        if sel.key == "to" {
+            // Cut To: a planar face or a work / origin plane.
+            let r = self.plane_under_pub(p, rect)?;
+            let opts = crate::kernel::TessellationOptions::default();
+            let lines = match &r {
+                crate::part::PlaneRef::Face(name) => part
+                    .body
+                    .find_face(name)
+                    .map(|f| {
+                        crate::part::select::edges_of_face(&part.body, f)
+                            .into_iter()
+                            .filter_map(|e| part.body.sample_edge(e, &opts).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            return Some((Pick::Plane(r), lines));
+        }
         if sel.takes(PickKind::PlanarFace) {
             let dir = dir.try_normalize(1e-12)?;
             let (f, t) = self.face_hit(&o, &dir)?;
@@ -2831,6 +2918,7 @@ impl CadCraftApp {
                     }
                     d.sketch = Some(i);
                 }
+                (SheetOp::Cut { to, .. }, Pick::Plane(r)) => *to = Some(r),
                 (SheetOp::CornerSeam { body, a, b, .. }, Pick::Corner(c)) => {
                     *body = c.body;
                     *a = c.a;
@@ -3890,6 +3978,8 @@ mod tests {
             extent: Default::default(),
             depth: 0.0,
             across: false,
+            direction: None,
+            to: None,
             profiles: vec![ProfileRef {
                 sources: Vec::new(),
                 seed: Point2::new(0.0, 0.0),
@@ -3929,6 +4019,8 @@ mod journal_tests {
                 extent: Default::default(),
                 depth: 0.0,
                 across: false,
+                direction: None,
+                to: None,
             }));
             if let Ok(id) = build(&mut trial, f, None, Some(i)) {
                 assert!(!new_faces(&trial, &before, &id).tris.is_empty());

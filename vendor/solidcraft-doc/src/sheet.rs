@@ -236,6 +236,39 @@ pub(crate) fn material_union(regions: Vec<Region2>, work: &mut FlatWork) -> Resu
     }
     Ok(groups.pop().unwrap_or_default())
 }
+/// The spans along the plane's normal a Span or Next cut takes (3DCadCraft addition); `None`
+/// for the other modes. To Next runs from the plane through the nearest panel ahead (behind).
+fn cut_spans(mode: CutMode, near: &[(Option<usize>, Region2, f64, f64)]) -> Option<Vec<(f64, f64)>> {
+    match mode {
+        CutMode::Span(a, b) => Some(vec![(a.min(b), a.max(b))]),
+        CutMode::Next { ahead, behind } => {
+            let mut v = Vec::new();
+            if ahead {
+                let far = near
+                    .iter()
+                    .map(|(_, _, lo, hi)| (lo.min(*hi), lo.max(*hi)))
+                    .filter(|(_, ph)| *ph > 1e-9)
+                    .min_by(|a, b| a.0.max(0.0).total_cmp(&b.0.max(0.0)).then(a.1.total_cmp(&b.1)));
+                if let Some((_, ph)) = far {
+                    v.push((0.0, ph));
+                }
+            }
+            if behind {
+                let far = near
+                    .iter()
+                    .map(|(_, _, lo, hi)| (lo.min(*hi), lo.max(*hi)))
+                    .filter(|(pl, _)| *pl < -1e-9)
+                    .min_by(|a, b| (-a.1.min(0.0)).total_cmp(&(-b.1.min(0.0))).then(b.0.total_cmp(&a.0)));
+                if let Some((pl, _)) = far {
+                    v.push((pl, 0.0));
+                }
+            }
+            Some(v)
+        }
+        _ => None,
+    }
+}
+
 /// A sheet metal rule. Values are expressions; `Thickness` inside them is the rule's thickness.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SheetRule {
@@ -819,6 +852,13 @@ pub enum CutMode {
     All,
     /// Wrapped across the bends past the sketch's panel.
     AcrossBends,
+    /// 3DCadCraft addition: the material between two signed distances along the plane's normal
+    /// (Cut Distance / Through All / To with a direction): a panel crossed through its whole
+    /// thickness gets a cut-out, one crossed in part a pocket.
+    Span(f64, f64),
+    /// 3DCadCraft addition (Cut To Next): from the plane through the nearest panel ahead along
+    /// its normal and / or the nearest behind it.
+    Next { ahead: bool, behind: bool },
 }
 
 /// How a corner between two flanges is closed (3DCadCraft addition: Corner Seam).
@@ -4086,30 +4126,45 @@ impl SheetBody {
     /// error when the regions meet no such material.
     pub fn cut_through(&mut self, plane: &Plane, regions: &[Region2], mode: CutMode) -> Result<usize> {
         let mut work = FlatWork::new();
-        let n = plane.normal();
-        let candidates: Vec<(Option<usize>, Region2)> = if self.flat {
-            if self.frame.normal().cross(n).len() > 1e-6 {
-                Vec::new()
-            } else {
-                self.flat_regions()?.into_iter().map(|r| (None, r)).collect()
-            }
-        } else {
-            self.material_panels(Some(plane), &mut work)?
-        };
         let reach = self.t + 1e-6;
-        // (panel, its material, distance of its bottom and top face from the plane)
-        let mut near: Vec<(Option<usize>, Region2, f64, f64)> = Vec::new();
-        for (pi, panel) in candidates {
-            let w = if self.flat { self.world(None) } else { self.world(pi) };
-            let lo = (apply_point(&w, Vec3::ZERO) - plane.origin).dot(n);
-            let hi = (apply_point(&w, Vec3::new(0.0, 0.0, self.t)) - plane.origin).dot(n);
-            let touches = !(lo.abs().min(hi.abs()) > reach && lo.signum() == hi.signum());
-            if touches || mode == CutMode::All {
-                near.push((pi, panel, lo, hi));
-            }
-        }
+        let every = matches!(mode, CutMode::All | CutMode::Span(..) | CutMode::Next { .. });
+        let mut near: Vec<(Option<usize>, Region2, f64, f64)> = self
+            .parallel_panels_at(plane, &mut work)?
+            .into_iter()
+            .filter(|(_, _, lo, hi)| every || !(lo.abs().min(hi.abs()) > reach && lo.signum() == hi.signum()))
+            .collect();
         let mut added = 0;
-        if mode == CutMode::AcrossBends {
+        if let Some(spans) = cut_spans(mode, &near) {
+            for (pi, panel, lo, hi) in &near {
+                let (pl, ph) = (lo.min(*hi), lo.max(*hi));
+                for &(a, b) in &spans {
+                    let (a, b) = (a.max(pl), b.min(ph));
+                    if b - a <= 1e-9 {
+                        continue;
+                    }
+                    // The span in the panel's own thickness (z from its bottom face).
+                    let to_z = |d: f64| ((d - lo) * self.t / (hi - lo)).clamp(0.0, self.t);
+                    let (za, zb) = (to_z(a), to_z(b));
+                    let (z0, z1) = (za.min(zb), za.max(zb));
+                    let through = z0 <= 1e-9 && z1 >= self.t - 1e-9;
+                    for r in regions {
+                        let flat = self.region_to_flat(*pi, plane, r)?;
+                        let met = material_boolean(std::slice::from_ref(panel), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
+                        for region in met {
+                            if through {
+                                if !self.holes.contains(&region) {
+                                    self.holes.push(region);
+                                    added += 1;
+                                }
+                            } else {
+                                self.record_pocket(region, z0, z1, &mut work)?;
+                                added += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        } else if mode == CutMode::AcrossBends {
             // The panel the sketch lies on: the nearest one the regions meet.
             near.sort_by(|a, b| a.2.abs().min(a.3.abs()).total_cmp(&b.2.abs().min(b.3.abs())));
             for (pi, panel, _, _) in &near {
@@ -4167,6 +4222,42 @@ impl SheetBody {
             return Err(DocError::Invalid("the cut meets no material of the sheet on its sketch's face".into()));
         }
         Ok(added)
+    }
+
+    /// The panels parallel to `plane` with the signed distances of their bottom and top faces
+    /// from it along its normal (3DCadCraft addition: shared by the sheet metal Cut's extents).
+    fn parallel_panels_at(&self, plane: &Plane, work: &mut FlatWork) -> Result<Vec<(Option<usize>, Region2, f64, f64)>> {
+        let n = plane.normal();
+        let candidates: Vec<(Option<usize>, Region2)> = if self.flat {
+            if self.frame.normal().cross(n).len() > 1e-6 {
+                Vec::new()
+            } else {
+                self.flat_regions()?.into_iter().map(|r| (None, r)).collect()
+            }
+        } else {
+            self.material_panels(Some(plane), work)?
+        };
+        Ok(candidates
+            .into_iter()
+            .map(|(pi, panel)| {
+                let w = if self.flat { self.world(None) } else { self.world(pi) };
+                let lo = (apply_point(&w, Vec3::ZERO) - plane.origin).dot(n);
+                let hi = (apply_point(&w, Vec3::new(0.0, 0.0, self.t)) - plane.origin).dot(n);
+                (pi, panel, lo, hi)
+            })
+            .collect())
+    }
+
+    /// Which way along `plane`'s normal a cut goes into the material (3DCadCraft addition: the
+    /// Cut's Default direction): towards the nearest parallel panel (the one the plane lies on or
+    /// touches), along the normal (+1) when there is none.
+    pub fn cut_side(&self, plane: &Plane) -> Result<f64> {
+        let mut work = FlatWork::new();
+        Ok(self
+            .parallel_panels_at(plane, &mut work)?
+            .into_iter()
+            .min_by(|a, b| a.2.abs().min(a.3.abs()).total_cmp(&b.2.abs().min(b.3.abs())))
+            .map_or(1.0, |(_, _, lo, hi)| if lo + hi < 0.0 { -1.0 } else { 1.0 }))
     }
 
     /// The ends (world) of the sheet edge nearest `pick`, in the order the flange offsets

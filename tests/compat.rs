@@ -617,6 +617,75 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 52: sheet metal Cut To Next, Flipped — a U channel (base
+/// 100 × 60, walls 40 high on its long edges) cut from a work plane between
+/// the walls through the farther wall.
+fn cut_to_next_r52() -> PartDocument {
+    use cadcraft3d::part::sheet_metal::{
+        CutDirection, CutExtent, SheetFlangeFeature, SheetOp, SheetOpFeature,
+    };
+    use cadcraft3d::part::{OriginPlane, PlaneRef, ProfileRef, WorkDef, WorkFeature, WorkPlaneDef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 60.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    p.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+        .unwrap();
+    let mut edges = Vec::new();
+    let mut body = String::new();
+    for y in [0.0, 60.0] {
+        let (b, e) = p.sheet_edge_at(Point3::new(50.0, y, 2.0)).unwrap();
+        body = b;
+        edges.push(e);
+    }
+    p.add_sheet_flange(SheetFlangeFeature::new(&body, edges, 40.0))
+        .unwrap();
+    // The XZ plane's normal is -Y: the plane y = 25.
+    let wp = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XZ),
+            distance: -25.0,
+        })))
+        .unwrap();
+    let i = p
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(wp),
+                ..Default::default()
+            },
+            &o,
+        )
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(40.0, 15.0), Point2::new(60.0, 25.0))
+        .unwrap();
+    let sid = p.sketches[i].id.clone();
+    let r = p.sketches[i].sketch.regions();
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::Cut {
+        sketch: sid,
+        profiles: vec![ProfileRef::of(&r[0], r[0].interior_point())],
+        extent: CutExtent::ToNext,
+        depth: 0.0,
+        across: false,
+        direction: Some(CutDirection::Flipped),
+        to: None,
+    }))
+    .unwrap();
+    p
+}
+
 /// Revision 50: Rip — a closed rounded tube (100 × 60, corner radius 5,
 /// wall 2, height 80) converted to sheet metal and ripped across its front
 /// face from the middle of its top edge, so it unfolds.
@@ -1422,6 +1491,8 @@ fn sheet_r21() -> PartDocument {
         extent: Default::default(),
         depth: 0.0,
         across: false,
+        direction: None,
+        to: None,
         sketch: sid.clone(),
         profiles: vec![ProfileRef::of(circle, circle.interior_point())],
     }))
@@ -3007,6 +3078,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("ContextSplineR51");
             project.add_document("Part1", DocumentData::Part(context_spline_r51()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r52/cut_to_next_r52.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("CutToNextR52");
+            project.add_document("Part1", DocumentData::Part(cut_to_next_r52()));
             project.save(&f).unwrap();
         }
         let f = root().join("r50/rip_r50.3dcadcraft");

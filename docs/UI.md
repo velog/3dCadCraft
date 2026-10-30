@@ -306,7 +306,8 @@ become bends (blue dots; again removes), OK. Defaults has the **Corner Relief Sh
 Trim to Bend). **Hem**: click sheet edges, Length, Gap, Flip. **Fold**: choose the sketch and its line (on
 a face of the sheet), Angle, Bend Radius, Fold Location, Flip Side / Flip Direction. **Contour Flange**: a
 sketch with an open chain of lines, Distance (width), Flip. **Cut**: a sketch with closed profiles on a face of
-the sheet. **Unfold** / **Refold**: the whole sheet flat and back (a Cut between them crosses bends).
+the sheet or on a work plane; Extents Thickness / Distance / Through All / To (click the face or work plane it
+ends at) / To Next, Direction Default / Flip / Both. **Unfold** / **Refold**: the whole sheet flat and back (a Cut between them crosses bends).
 **Export** (Flat Pattern panel): the flat pattern as DXF (layers OUTER, BEND_UP, BEND_DOWN; lines, arcs and circles as LINE / ARC / CIRCLE). **Flat Pattern**: the view shows the part unfolded with its bend lines (dashed centre lines: up green, down red, each with a note `k UP 90° R2`; bend zones grey) and Flat Pattern Extents Length / Width / Area in Properties (also BOM columns),
 Properties its extents and bends; again goes back. **Rip** (Create): click the face, then the rip point
 (an edge midpoint or vertex on one of its edges) or the start and end; Face Extents takes a bend's round face.

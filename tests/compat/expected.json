@@ -264,5 +264,6 @@
   "r48/unfold_r48.3dcadcraft": {"volume": 18387.841849186236, "faces": 22, "features": 3, "sketches": 1, "exact": true},
   "r50/rip_r50.3dcadcraft": {"volume": 48494.740325485, "faces": 38, "features": 3, "sketches": 1, "exact": true},
   "r49/notch_r49.3dcadcraft": {"volume": -0.0, "faces": 0, "features": 0, "sketches": 1, "exact": true},
-  "r51/context_spline_r51.3dcadcraft": {"volume": 5097.552059217969, "faces": 10, "features": 1, "sketches": 1, "exact": true}
+  "r51/context_spline_r51.3dcadcraft": {"volume": 5097.552059217969, "faces": 10, "features": 1, "sketches": 1, "exact": true},
+  "r52/cut_to_next_r52.3dcadcraft": {"volume": 26283.24879548658, "faces": 26, "features": 4, "sketches": 2, "exact": true}
 }

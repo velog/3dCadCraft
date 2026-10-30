@@ -669,6 +669,8 @@ pub fn cut(
             CutMode::Depth(d) => sd::CutMode::Depth(d),
             CutMode::ThroughAll => sd::CutMode::All,
             CutMode::AcrossBends => sd::CutMode::AcrossBends,
+            CutMode::Span(a, b) => sd::CutMode::Span(a, b),
+            CutMode::Next { ahead, behind } => sd::CutMode::Next { ahead, behind },
         };
         next.cut_through(&pl, &regions, mode)
             .map(|_| ())
@@ -689,6 +691,26 @@ pub enum CutMode {
     ThroughAll,
     /// Wrapped across the bends past the sketch's face.
     AcrossBends,
+    /// The material between two signed distances from the sketch plane along
+    /// its normal: walls crossed whole are cut out, walls crossed in part get
+    /// a pocket (Distance / Through All / To with a direction).
+    Span(Real, Real),
+    /// To Next: through the nearest wall ahead along the normal and / or the
+    /// nearest behind.
+    Next {
+        /// Along the normal.
+        ahead: bool,
+        /// Against it.
+        behind: bool,
+    },
+}
+
+/// Which way along `plane`'s normal a Cut goes into the material by default
+/// (+1 or -1): towards the nearest wall parallel to the sketch (the one it
+/// lies on), along the normal when there is none.
+pub fn cut_side(m: &SheetModel, plane: &Plane) -> Result<Real, String> {
+    let pl = plane_of(plane)?;
+    m.0.cut_side(&pl).map_err(|e| e.to_string())
 }
 
 /// A flange feature's own corner settings (Inventor's Corner section):

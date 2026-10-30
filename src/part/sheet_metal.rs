@@ -262,14 +262,20 @@ pub enum CutExtent {
     Distance,
     /// Through every wall along the sketch normal.
     ThroughAll,
+    /// Up to a plane or planar face parallel to the sketch (format revision 52).
+    To,
+    /// Through the next wall along the direction (format revision 52).
+    ToNext,
 }
 
 impl CutExtent {
     /// Every extent, in menu order.
-    pub const ALL: [CutExtent; 3] = [
+    pub const ALL: [CutExtent; 5] = [
         CutExtent::Thickness,
         CutExtent::Distance,
         CutExtent::ThroughAll,
+        CutExtent::To,
+        CutExtent::ToNext,
     ];
 
     /// Label (panel).
@@ -278,11 +284,48 @@ impl CutExtent {
             CutExtent::Thickness => "Thickness",
             CutExtent::Distance => "Distance",
             CutExtent::ThroughAll => "Through All",
+            CutExtent::To => "To",
+            CutExtent::ToNext => "To Next",
         }
     }
 
     fn is_default(&self) -> bool {
         *self == CutExtent::Thickness
+    }
+
+    /// Whether the extent takes a Direction (Distance, Through All, To Next).
+    pub fn has_direction(self) -> bool {
+        matches!(
+            self,
+            CutExtent::Distance | CutExtent::ThroughAll | CutExtent::ToNext
+        )
+    }
+}
+
+/// Which way a sheet metal Cut goes from its sketch (Inventor's Direction).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CutDirection {
+    /// Into the material: towards the nearest wall parallel to the sketch
+    /// (the one it lies on).
+    #[default]
+    Default,
+    /// The other way.
+    Flipped,
+    /// Both ways (Distance: half on each side).
+    Symmetric,
+}
+
+impl CutDirection {
+    /// Every direction, in panel order.
+    pub const ALL: [CutDirection; 3] = [Self::Default, Self::Flipped, Self::Symmetric];
+
+    /// Label (panel).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::Flipped => "Flipped",
+            Self::Symmetric => "Symmetric",
+        }
     }
 }
 
@@ -1019,6 +1062,14 @@ pub enum SheetOp {
         /// Cut Across Bend: the profile wraps across the bends past its face.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         across: bool,
+        /// The Direction (format revision 52); `None`: a Cut saved before it
+        /// (Distance from the face the sketch lies on, Through All every wall
+        /// on both sides — old files keep their geometry).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction: Option<CutDirection>,
+        /// To: the plane or planar face the cut ends at.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<super::PlaneRef>,
     },
     /// Corner Round: corners through the thickness rounded, set by set.
     CornerRound {
@@ -1411,7 +1462,27 @@ impl SheetOpFeature {
             }
             SheetOp::Refold { body, bends } if bends.is_empty() => format!("Refold {body}"),
             SheetOp::Refold { body, bends } => format!("Refold {} bend(s) of {body}", bends.len()),
-            SheetOp::Cut { sketch, .. } => format!("Cut of {sketch} through the sheet"),
+            SheetOp::Cut {
+                sketch,
+                extent,
+                depth,
+                across,
+                direction,
+                ..
+            } => {
+                let how = match (across, extent) {
+                    (true, _) => "across bends".to_owned(),
+                    (false, CutExtent::Thickness) => "through the sheet".to_owned(),
+                    (false, CutExtent::Distance) => format!("{depth:.2} mm deep"),
+                    (false, x) => x.label().to_owned(),
+                };
+                match direction {
+                    Some(d) if extent.has_direction() && *d != CutDirection::Default && !across => {
+                        format!("Cut of {sketch}, {how}, {}", d.label())
+                    }
+                    _ => format!("Cut of {sketch}, {how}"),
+                }
+            }
             SheetOp::CornerSeam { a, b, seam, .. } => {
                 format!("Corner Seam {a} / {b}: {}", seam.label())
             }
