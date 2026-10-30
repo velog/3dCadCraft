@@ -4,7 +4,11 @@
 //!
 //! ```sh
 //! cargo run --release --example step_info -- model.step [more.stp ...] [--save out.3dcadcraft]
+//! cargo run --release --example step_info -- model.step --each [--dump DIR]
 //! ```
+//!
+//! `--each` reads every solid of the file on its own and times its reading and its display mesh
+//! (`to_brep`) apart, finding the one that is slow; `--dump DIR` also writes each one's text.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -17,11 +21,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut files = Vec::new();
     let mut save: Option<PathBuf> = None;
     let mut each = false;
+    let mut dump: Option<PathBuf> = None;
     let mut args = std::env::args_os().skip(1);
     // `--each`: every solid of the file read on its own (finding the one that hangs).
     while let Some(a) = args.next() {
         if a == "--each" {
             each = true;
+        } else if a == "--dump" {
+            // With `--each`: every solid's text written to DIR/<entity>.stp.
+            dump = args.next().map(PathBuf::from);
         } else if a == "--save" {
             save = args.next().map(PathBuf::from);
         } else {
@@ -29,30 +37,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if files.is_empty() {
-        return Err("usage: step_info <file.step>... [--save out.3dcadcraft]".into());
+        return Err(
+            "usage: step_info <file.step>... [--save out.3dcadcraft] [--each [--dump DIR]]".into(),
+        );
     }
     for f in files {
         println!("== {}", f.display());
         let text = String::from_utf8_lossy(&std::fs::read(&f)?).into_owned();
         if each {
-            // Every solid on its own, 20 s each (a solid that does not finish is reported and
+            // Every solid on its own, 60 s each (a solid that does not finish is reported and
             // left running).
             for (id, t) in cadcraft3d::assembly::import::solid_texts(&text) {
                 let faces = t.matches("ADVANCED_FACE").count();
+                if let Some(dir) = &dump {
+                    std::fs::create_dir_all(dir)?;
+                    std::fs::write(dir.join(format!("{id}.stp")), &t)?;
+                }
                 let (tx, rx) = std::sync::mpsc::channel();
                 let start = Instant::now();
                 std::thread::spawn(move || {
-                    let _ = tx.send(
-                        cadcraft3d::kernel::exact::step_bodies(&t, "S").map(|r| r.bodies.len()),
-                    );
+                    // Read, then the display mesh (`to_brep`) timed apart.
+                    let r = cadcraft3d::kernel::exact::step_bodies(&t, "S").map(|r| {
+                        let solids: Vec<_> = r.bodies.into_iter().map(|b| b.solid).collect();
+                        let read = start.elapsed().as_secs_f64();
+                        let b = Instant::now();
+                        let ok = cadcraft3d::kernel::exact::to_brep(&solids).is_ok();
+                        (solids.len(), read, b.elapsed().as_secs_f64(), ok)
+                    });
+                    let _ = tx.send(r);
                 });
-                match rx.recv_timeout(std::time::Duration::from_secs(20)) {
+                match rx.recv_timeout(std::time::Duration::from_secs(60)) {
                     Ok(r) => println!(
                         "solid #{id}: {faces} faces, {:.2} s, {:?}",
                         start.elapsed().as_secs_f64(),
                         r
                     ),
-                    Err(_) => println!("solid #{id}: {faces} faces, NOT DONE after 20 s"),
+                    Err(_) => println!("solid #{id}: {faces} faces, NOT DONE after 60 s"),
                 }
             }
             continue;

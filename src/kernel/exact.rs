@@ -3389,12 +3389,12 @@ fn circle_through(pts: &[Point3]) -> Option<Circle> {
 /// The sense in which face `m` runs an edge through `pts`: the face lies to
 /// the left of the edge seen from outside (normal × direction points into
 /// it). Taken at the edge's middle segment, against the face's triangle
-/// nearest to it.
+/// nearest to it; `flipped(c, n)`: whether the face's triangle at `c` with
+/// normal `n` came out inside-out (the body decides).
 fn sense_by_geometry(
     m: &TriangleMesh,
     pts: &[Point3],
-    inside: &dyn Fn(Point3) -> bool,
-    eps: Real,
+    flipped: &dyn Fn(Point3, Vector3) -> bool,
 ) -> Option<Sense> {
     let i = pts.len() / 2;
     let (a, b) = (pts[i.saturating_sub(1)], pts[i.max(1)]);
@@ -3422,7 +3422,7 @@ fn sense_by_geometry(
     // A face whose triangles (and normals) came out inside-out: the body
     // decides which side is outside.
     let n = match n.try_normalize(1e-30) {
-        Some(u) if inside(c + u * eps) && !inside(c - u * eps) => -u,
+        Some(u) if flipped(c, u) => -u,
         Some(u) => u,
         None => return None,
     };
@@ -3473,12 +3473,27 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
         }
     }
 
-    // Inside test for the orientation fallback below. A surface body has no inside: asking
-    // the kernel cast rays at its B-spline faces (seconds for a patch stitched into a holed
-    // surface) for an answer that means nothing there.
+    // Whether a face's triangles came out inside-out, asked once per face (ROADMAP K9: the
+    // kernel's rays at the B-spline faces of a 78-face supplier part took 0.12 s a point, and
+    // asking at every edge made it 17 s). A surface body has no inside: asking the kernel cast
+    // rays at its B-spline faces (seconds for a patch stitched into a holed surface) for an
+    // answer that means nothing there.
     let eps = body.size().max(1e-9) * 1e-5;
-    let inside = |p: Point3| {
-        !open && crate::diagnostics::crash::guard(|| body.contains(v3(&p))).unwrap_or(false)
+    let flips: std::cell::RefCell<Vec<Option<bool>>> = std::cell::RefCell::new(vec![None; nf]);
+    let flipped = |f: usize, c: Point3, u: Vector3| -> bool {
+        if open {
+            return false;
+        }
+        if let Some(Some(known)) = flips.borrow().get(f) {
+            return *known;
+        }
+        let inside =
+            |p: Point3| crate::diagnostics::crash::guard(|| body.contains(v3(&p))).unwrap_or(false);
+        let r = inside(c + u * eps) && !inside(c - u * eps);
+        if let Some(slot) = flips.borrow_mut().get_mut(f) {
+            *slot = Some(r);
+        }
+        r
     };
     // Vertices: edge polyline ends, welded.
     let mut vid: HashMap<Key, VertexId> = HashMap::new();
@@ -3554,8 +3569,8 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
             && g < nf
             && directed[f].contains(&(k0, k1)) == directed[g].contains(&(k0, k1))
             && let (Some(sf), Some(sg_)) = (
-                sense_by_geometry(&meshes[f], &pts, &inside, eps),
-                sense_by_geometry(&meshes[g], &pts, &inside, eps),
+                sense_by_geometry(&meshes[f], &pts, &|c, u| flipped(f, c, u)),
+                sense_by_geometry(&meshes[g], &pts, &|c, u| flipped(g, c, u)),
             )
             && sf != sg_
         {
@@ -3618,7 +3633,8 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
                 // The face's triangles do not run along this edge's samples (a face meshed
                 // with its own points on a borrowed edge, a bridge between surfaces): its
                 // geometry decides.
-                sense_by_geometry(&meshes[f], &pts, &inside, eps).unwrap_or(Sense::Reversed)
+                sense_by_geometry(&meshes[f], &pts, &|c, u| flipped(f, c, u))
+                    .unwrap_or(Sense::Reversed)
             };
             by_face[f].push((edges.len() - 1, sense));
         }

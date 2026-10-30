@@ -1312,7 +1312,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Coedge senses in `to_brep`** come from each face's display triangles along the edge's samples. A face meshed with
   its own points on an edge it borrows has none there: it runs the edge the other way from the face that does, else its
   geometry decides (it silently got `Reversed`, and closed shells failed validation "edge … used 0× forward, 2×
-  reversed"). Loft bridges: a face whose boundary edges stray from its surface is not meshed at all (0 triangles,
+  reversed"). The geometry's "is this face inside-out" asks the kernel's `contains` (rays at
+  B-spline faces, ~0.1 s a point) once per *face* (`flipped` in `add_solid`): per edge it took 17 s on a 78-face supplier
+  part. Parity of rays through the display triangles is not a substitute — it accepted a self-intersecting fillet. Loft bridges: a face whose boundary edges stray from its surface is not meshed at all (0 triangles,
   a hole in the view): bridge rows run through 256 points of each edge (64 was not enough on a trimmed wavy edge), so
   the surfaces' own edges can bound them and Stitch / Output Solid close without gaps.
 - **Stitch matches edges by geometry** (vendor `stitch`): the same ends and the middle of one on the other curve (two
