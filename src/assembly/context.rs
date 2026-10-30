@@ -169,6 +169,56 @@ pub fn out_of_date(project: &Project, linked: &Linked, asm_id: DocumentId) -> Ve
     labels
 }
 
+/// Whether a reference of the part at `target` to the part at `source`
+/// (occurrence paths in assembly `asm_id`) would close a loop: `source`
+/// already builds, directly or through others, on `target` (spec 3.10 §3.3
+/// *Loops* — such parts would never settle). Refused when it is picked.
+pub fn would_loop(
+    project: &Project,
+    linked: &Linked,
+    asm_id: DocumentId,
+    target: &[u32],
+    source: &[u32],
+) -> bool {
+    if target == source {
+        return true;
+    }
+    let Some(DocumentData::Assembly(asm)) = project.document(asm_id).map(|d| &d.data) else {
+        return false;
+    };
+    // Who builds on whom: (part's path, the paths it reads).
+    let mut reads: Vec<(Vec<u32>, Vec<Vec<u32>>)> = Vec::new();
+    for leaf in tree::leaves(project, linked, crate::document::DocRef::local(asm_id), asm) {
+        let Some(part) = part_in(project, linked, leaf.component) else {
+            continue;
+        };
+        let from: Vec<Vec<u32>> = part
+            .context
+            .iter()
+            .filter(|c| c.source.assembly == asm_id && c.source.target == leaf.path)
+            .map(|c| c.source.path.clone())
+            .collect();
+        if !from.is_empty() {
+            reads.push((leaf.path, from));
+        }
+    }
+    let mut seen: Vec<Vec<u32>> = Vec::new();
+    let mut queue = vec![source.to_vec()];
+    while let Some(p) = queue.pop() {
+        if p == target {
+            return true;
+        }
+        if seen.contains(&p) {
+            continue;
+        }
+        if let Some((_, from)) = reads.iter().find(|(q, _)| *q == p) {
+            queue.extend(from.iter().cloned());
+        }
+        seen.push(p);
+    }
+    false
+}
+
 /// Most rounds of [`settle`]: a reference whose part moves its own source
 /// (through the constraints) never settles.
 pub const SETTLE_ROUNDS: usize = 8;

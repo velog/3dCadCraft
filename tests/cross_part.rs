@@ -1108,3 +1108,76 @@ fn an_edit_of_a_linked_file_is_not_saved_into_the_top_file() {
     // Undo snapshots are clones: they carry the edit.
     assert!(top.clone().linked_edits.contains_key(&lib));
 }
+
+#[test]
+fn a_part_cannot_build_on_a_part_that_builds_on_it() {
+    // The gasket (2) projects the flange (1): the flange may not take
+    // geometry from the gasket back, the gasket may take more from it.
+    let (mut p, aid, s, t) = design(
+        flange(100.0),
+        Transform3::identity(),
+        Transform3::translation(0.0, 0.0, 10.0),
+    );
+    let top = edges_at(part(&p, s), 10.0);
+    project_and_extrude(&mut p, aid, t, &top, 2.0);
+    let l = Linked::new();
+    assert!(context::would_loop(&p, &l, aid, &[1], &[2]));
+    assert!(!context::would_loop(&p, &l, aid, &[2], &[1]));
+    // A part on itself is a loop too.
+    assert!(context::would_loop(&p, &l, aid, &[1], &[1]));
+}
+
+#[test]
+fn a_loop_through_a_third_part_is_found() {
+    // Flange (1) ← gasket (2) ← cover (3, a sketch on the gasket's top):
+    // the flange building on the cover closes the ring; a fourth, unrelated
+    // part may build on any of them.
+    let (mut p, aid, s, t) = design(
+        flange(100.0),
+        Transform3::identity(),
+        Transform3::translation(0.0, 0.0, 10.0),
+    );
+    let top = edges_at(part(&p, s), 10.0);
+    project_and_extrude(&mut p, aid, t, &top, 2.0);
+    let c = p.add_document("Cover", DocumentData::Part(PartDocument::default()));
+    let x = p.add_document("Bolt", DocumentData::Part(PartDocument::default()));
+    if let Some(DocumentData::Assembly(a)) = p.document_mut(aid).map(|d| &mut d.data) {
+        a.place(
+            DocRef::local(c),
+            "Cover",
+            Transform3::translation(0.0, 0.0, 12.0),
+            false,
+        );
+        a.place(
+            DocRef::local(x),
+            "Bolt",
+            Transform3::translation(200.0, 0.0, 0.0),
+            false,
+        );
+    }
+    let a = asm(&p, aid);
+    let face = face_at(part(&p, t), 2.0);
+    let source = ContextSource {
+        assembly: aid,
+        target: vec![3],
+        path: vec![2],
+        face: face.0,
+        edge: None,
+        hint: face.1,
+        label: "Target:1 face".into(),
+    };
+    let geom = current(&p, &Linked::new(), &a, &source).unwrap();
+    part_mut(&mut p, c).add_context(ContextRef {
+        id: String::new(),
+        source,
+        geom,
+    });
+    let l = Linked::new();
+    assert!(context::would_loop(&p, &l, aid, &[1], &[3]));
+    assert!(context::would_loop(&p, &l, aid, &[2], &[3]));
+    assert!(!context::would_loop(&p, &l, aid, &[3], &[1]));
+    for k in 1..=3 {
+        assert!(!context::would_loop(&p, &l, aid, &[4], &[k]));
+        assert!(!context::would_loop(&p, &l, aid, &[k], &[4]));
+    }
+}

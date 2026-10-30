@@ -830,6 +830,11 @@ impl CadCraftApp {
             }
         }
         let (t, path, face, q, hover) = best?;
+        // A part that builds on this one already: a loop (never settles).
+        if crate::assembly::context::would_loop(&self.project, &linked, ip.assembly, &edited, &path)
+        {
+            return None;
+        }
         let (&top, sub) = path.split_first()?;
         let label = crate::assembly::tree::nested(&self.project, &linked, a, top, sub)
             .map_or_else(|_| "?".to_owned(), |n| n.name);
@@ -908,6 +913,10 @@ impl CadCraftApp {
             }
         }
         let (_, path, edge, pts) = best?;
+        if crate::assembly::context::would_loop(&self.project, &linked, ip.assembly, &edited, &path)
+        {
+            return None;
+        }
         let (&top, sub) = path.split_first()?;
         let label = crate::assembly::tree::nested(&self.project, &linked, a, top, sub)
             .map_or_else(|_| "?".to_owned(), |n| n.name);
