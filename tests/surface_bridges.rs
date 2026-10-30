@@ -412,5 +412,9 @@ fn patch_of_a_hole_in_a_wavy_surface() {
         "the hole's 4 arcs are no longer free edges"
     );
     // It took 7 s while the conversion asked the kernel whether points lie inside a surface.
-    assert!(took.as_secs_f64() < 5.0, "stitch took {took:?}");
+    // (Skipped like the other budgets on a busy machine: ~1.5 s alone.)
+    assert!(
+        took.as_secs_f64() < 5.0 || std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some(),
+        "stitch took {took:?}"
+    );
 }
