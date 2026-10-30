@@ -420,6 +420,16 @@ pub fn patch_edges(body: &Body, at: &[Vec3]) -> Result<Body> {
 /// interpolation's error of the chains). Its history is over `[a, b]`: the face is new.
 /// (3DCadCraft addition: Loft between surface edges.)
 pub fn bridge_edges(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3]) -> Result<Body> {
+    bridge_edges_tangent(a, at_a, b, at_b, [None, None])
+}
+
+/// [`bridge_edges`] with the Tangent condition at either section: `weights[0]` (A) and
+/// `weights[1]` (B), `Some(w)` = the bridge leaves that section's edges tangent to its surface
+/// (G1), reaching on `w` times a third of the distance between the sections before it turns
+/// (a cubic across: the rows A, A + reach, B + reach, B); `None` = G0 there. The ends across are
+/// then the surface's own boundary curves (a whole boundary's corners share theirs, the
+/// directions of both sides averaged there). (3DCadCraft addition: Loft conditions.)
+pub fn bridge_edges_tangent(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3], weights: [Option<f64>; 2]) -> Result<Body> {
     a.require_brep("bridge")?;
     b.require_brep("bridge")?;
     if at_a.is_empty() || at_b.is_empty() || at_a.len() + at_b.len() > 10_000 {
@@ -428,7 +438,7 @@ pub fn bridge_edges(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3]) -> Result<
     guard("bridge", || {
         // Whole boundaries (closed loops): one bridge per pair of sides.
         if let (Some(la), Some(lb)) = (longest_loop(a, at_a)?, longest_loop(b, at_b)?) {
-            return bridge_loops(a, &la, b, &lb);
+            return bridge_loops(a, &la, b, &lb, weights);
         }
         // Open chains: one bridge on the chains' own edges (as the sides of whole boundaries).
         let ea = picked_chain(a, at_a)?;
@@ -448,18 +458,28 @@ pub fn bridge_edges(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3]) -> Result<
         if a0.dist(b0) <= tol || a1.dist(b1) <= tol {
             return Err(KernelError::Invalid("the sections touch: use Boundary Patch".into()));
         }
-        let surface = ruled_facing(&side_points(&ea)?, &side_points(&eb)?)?;
         let corner = |c: &[mt::Edge], last: bool| -> Result<mt::Vertex> {
             let e = if last { c.last() } else { c.first() };
             e.map(|e| if last { e.back().clone() } else { e.front().clone() })
                 .ok_or_else(|| KernelError::Invalid("a section has no edges".into()))
         };
         let (va0, va1, vb0, vb1) = (corner(&ea, false)?, corner(&ea, true)?, corner(&eb, false)?, corner(&eb, true)?);
+        let (qa, qb) = (side_points(&ea)?, side_points(&eb)?);
+        let (surface, start, end) = if weights.iter().any(Option::is_some) {
+            let reach = Reach::new(a, &ea, &qa, b, &eb, &qb, weights)?;
+            let surface = cubic_facing(&qa, &reach.a, &qb, &reach.b)?;
+            let (la, lb) = (qa.len() - 1, qb.len() - 1);
+            let start = across_edge(&va0, &vb0, reach.a[0], reach.b[0])?;
+            let end = across_edge(&va1, &vb1, reach.a[la], reach.b[lb])?;
+            (surface, start, end)
+        } else {
+            (ruled_facing(&qa, &qb)?, mt::builder::line(&va0, &vb0), mt::builder::line(&va1, &vb1))
+        };
         // Along A, up the end line, back along B, down the start line.
         let mut wire: Vec<mt::Edge> = ea.clone();
-        wire.push(mt::builder::line(&va1, &vb1));
+        wire.push(end);
         wire.extend(eb.iter().rev().map(mt::Edge::inverse));
-        wire.push(mt::builder::line(&vb0, &va0));
+        wire.push(start.inverse());
         let face = mt::Face::try_new(vec![wire.into()], mt::Surface::BSplineSurface(surface))
             .map_err(|e| KernelError::Failed(format!("bridge: {e}")))?;
         let mut rec = Rebuild::default();
@@ -535,7 +555,7 @@ fn loop_sides(lp: &[mt::Edge]) -> Option<Vec<Vec<mt::Edge>>> {
 /// One bridge per pair of sides of two closed boundaries (each cut at its corners, B run and
 /// turned the way that pairs the corners nearest A's): the faces share their corner lines, so
 /// they come out as one surface body.
-fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge]) -> Result<Body> {
+fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge], weights: [Option<f64>; 2]) -> Result<Body> {
     let none = || KernelError::Invalid("not supported yet: a smooth closed boundary (no corners) as a loft section".into());
     let sa = loop_sides(la).ok_or_else(none)?;
     let sb = loop_sides(lb).ok_or_else(none)?;
@@ -577,14 +597,57 @@ fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge]) -> Result<
     let corner = |side: &[mt::Edge]| -> Result<mt::Vertex> {
         side.first().map(|e| e.front().clone()).ok_or_else(|| KernelError::Invalid("an empty side".into()))
     };
-    let lines: Vec<mt::Edge> = (0..n).map(|k| Ok(mt::builder::line(&corner(&sa[k])?, &corner(&pb[k])?))).collect::<Result<_>>()?;
+    let tangent = weights.iter().any(Option::is_some);
+    let rows: Vec<(Vec<Vec3>, Vec<Vec3>)> = (0..n).map(|k| Ok((side_points(&sa[k])?, side_points(&pb[k])?))).collect::<Result<_>>()?;
+    // With a tangent condition: each side's reach, the two sides' reach averaged at the corner
+    // they share, so both faces have the same corner curve.
+    let mut reaches: Vec<(Vec<Vec3>, Vec<Vec3>)> = Vec::new();
+    if tangent {
+        let all_a: Vec<Vec3> = rows.iter().flat_map(|r| r.0.iter().copied()).collect();
+        let all_b: Vec<Vec3> = rows.iter().flat_map(|r| r.1.iter().copied()).collect();
+        let dist = centroid(&all_a).dist(centroid(&all_b));
+        for k in 0..n {
+            let r = Reach::with_distance(a, &sa[k], &rows[k].0, b, &pb[k], &rows[k].1, weights, dist)?;
+            reaches.push((r.a, r.b));
+        }
+        for k in 0..n {
+            let j = (k + 1) % n;
+            // Corner j: the end of side k and the start of side j, on A and on B.
+            let ma = match (reaches[k].0.last(), reaches[j].0.first()) {
+                (Some(p), Some(q)) => (*p + *q) * 0.5,
+                _ => continue,
+            };
+            let mb = match (reaches[k].1.last(), reaches[j].1.first()) {
+                (Some(p), Some(q)) => (*p + *q) * 0.5,
+                _ => continue,
+            };
+            if let Some(x) = reaches[k].0.last_mut() {
+                *x = ma;
+            }
+            if let Some(x) = reaches[j].0.first_mut() {
+                *x = ma;
+            }
+            if let Some(x) = reaches[k].1.last_mut() {
+                *x = mb;
+            }
+            if let Some(x) = reaches[j].1.first_mut() {
+                *x = mb;
+            }
+        }
+    }
+    let lines: Vec<mt::Edge> = (0..n)
+        .map(|k| {
+            let (va, vb) = (corner(&sa[k])?, corner(&pb[k])?);
+            if tangent { across_edge(&va, &vb, reaches[k].0[0], reaches[k].1[0]) } else { Ok(mt::builder::line(&va, &vb)) }
+        })
+        .collect::<Result<_>>()?;
     let mut faces = Vec::with_capacity(n);
     for k in 0..n {
         let j = (k + 1) % n;
         // The surface between the sides (interpolated through points on them); its boundary
         // is the sides' own edges, so the bridge meets both surfaces exactly.
-        let (qa, qb) = (side_points(&sa[k])?, side_points(&pb[k])?);
-        let surface = ruled_facing(&qa, &qb)?;
+        let (qa, qb) = (&rows[k].0, &rows[k].1);
+        let surface = if tangent { cubic_facing(qa, &reaches[k].0, qb, &reaches[k].1)? } else { ruled_facing(qa, qb)? };
         // The bridge's boundary is the surfaces' own edges (its rows run through 256 points of
         // each, close enough for the mesher), so it shares them exactly: Stitch joins the three
         // without any gap, and a solid closes.
@@ -638,6 +701,163 @@ fn ruled_facing(qa: &[Vec3], qb: &[Vec3]) -> Result<mt::BSplineSurface<mt::Point
     ra.invert();
     rb.invert();
     Ok(mt::BSplineSurface::homotopy(ra, rb))
+}
+
+/// The Tangent condition's inner rows of a bridge: for each point of A's and of B's row, the
+/// point the cubic across reaches towards (moved out of its surface past the edge).
+struct Reach {
+    a: Vec<Vec3>,
+    b: Vec<Vec3>,
+}
+
+impl Reach {
+    #[allow(clippy::too_many_arguments)]
+    fn new(a: &Body, ea: &[mt::Edge], qa: &[Vec3], b: &Body, eb: &[mt::Edge], qb: &[Vec3], w: [Option<f64>; 2]) -> Result<Reach> {
+        let dist = centroid(qa).dist(centroid(qb));
+        Reach::with_distance(a, ea, qa, b, eb, qb, w, dist)
+    }
+
+    /// Reach `w · dist / 3` along each row's outward direction; a side without the condition
+    /// (G0) reaches a third of the way straight towards the other row, as the ruled surface.
+    #[allow(clippy::too_many_arguments)]
+    fn with_distance(a: &Body, ea: &[mt::Edge], qa: &[Vec3], b: &Body, eb: &[mt::Edge], qb: &[Vec3], w: [Option<f64>; 2], dist: f64) -> Result<Reach> {
+        if !(dist > solidcraft_geom::LINEAR_TOL) {
+            return Err(KernelError::Invalid("the sections touch: use Boundary Patch".into()));
+        }
+        let row = |body: &Body, chain: &[mt::Edge], q: &[Vec3], other: &[Vec3], w: Option<f64>| -> Result<Vec<Vec3>> {
+            match w {
+                Some(w) => {
+                    let out = outward_row(body, chain, q)?;
+                    Ok(q.iter().zip(out).map(|(p, d)| *p + d * (w * dist / 3.0)).collect())
+                }
+                None => {
+                    // Towards the other row's point at the same share of its points.
+                    let n = other.len().saturating_sub(1);
+                    let m = q.len().saturating_sub(1).max(1);
+                    Ok(q.iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let j = ((i * n + m / 2) / m).min(n);
+                            *p + (other[j] - *p) * (1.0 / 3.0)
+                        })
+                        .collect())
+                }
+            }
+        };
+        Ok(Reach { a: row(a, ea, qa, qb, w[0])?, b: row(b, eb, qb, qa, w[1])? })
+    }
+}
+
+fn centroid(p: &[Vec3]) -> Vec3 {
+    let n = p.len().max(1) as f64;
+    p.iter().fold(Vec3::new(0.0, 0.0, 0.0), |s, q| s + *q) / n
+}
+
+/// Unit directions out of the surface past its edge at each point of a chain's row (`pts`, as
+/// [`side_points`] makes them: BRIDGE_POINTS per edge): the edge's direction as its face's
+/// boundary runs it (the face on its left) crossed with the face's normal.
+fn outward_row(body: &Body, chain: &[mt::Edge], pts: &[Vec3]) -> Result<Vec<Vec3>> {
+    let mut info: Vec<(mt::Surface, bool)> = Vec::new();
+    for e in chain {
+        let found = body.solid.face_iter().find_map(|f| {
+            f.boundaries()
+                .iter()
+                .flat_map(|w| w.edge_iter())
+                .find(|we| we.id() == e.id())
+                .map(|we| (f.oriented_surface(), we.front().id() == e.front().id()))
+        });
+        info.push(found.ok_or_else(|| KernelError::Invalid("a section edge bounds no face".into()))?);
+    }
+    let n = info.len();
+    let last = pts.len().saturating_sub(1);
+    let mut out = Vec::with_capacity(pts.len());
+    for (i, p) in pts.iter().enumerate() {
+        let k = (i / BRIDGE_POINTS).min(n.saturating_sub(1));
+        let (surf, same) = info.get(k).ok_or_else(|| KernelError::Invalid("a section has no edges".into()))?;
+        // The run's direction here from the points either side (one side at the ends).
+        let (i0, i1) = (i.saturating_sub(1), (i + 1).min(last));
+        let t = (pts[i1] - pts[i0]).normalized().ok_or_else(|| KernelError::Invalid("a section edge has no direction".into()))?;
+        let t = if *same { t } else { -t };
+        let (u, v) = surf
+            .search_nearest_parameter(p3(*p), None, 100)
+            .ok_or_else(|| KernelError::Failed("a point of a section edge is not on its surface".into()))?;
+        let nn = surf.normal(u, v);
+        let d = t
+            .cross(Vec3::new(nn.x, nn.y, nn.z))
+            .normalized()
+            .ok_or_else(|| KernelError::Failed("no direction across a section edge".into()))?;
+        out.push(d);
+    }
+    Ok(out)
+}
+
+/// The edge across a tangent bridge at one end: the cubic from A's corner `va` through the two
+/// reach points to B's corner `vb` (the surface's own boundary curve there).
+fn across_edge(va: &mt::Vertex, vb: &mt::Vertex, ra: Vec3, rb: Vec3) -> Result<mt::Edge> {
+    let ctrl = vec![va.point(), p3(ra), p3(rb), vb.point()];
+    let c = mt::BSplineCurve::try_new(mt::KnotVec::bezier_knot(3), ctrl).map_err(|e| KernelError::Failed(format!("bridge end: {e}")))?;
+    Ok(mt::Edge::new(va, vb, mt::Curve::BSplineCurve(c)))
+}
+
+/// The cubic surface across from row `qa` (v = 0) to row `qb` (v = 1) through the reach rows
+/// `ra` (interpolated at `qa`'s parameters) and `rb` (at `qb`'s), facing as [`ruled_facing`].
+fn cubic_facing(qa: &[Vec3], ra: &[Vec3], qb: &[Vec3], rb: &[Vec3]) -> Result<mt::BSplineSurface<mt::Point3>> {
+    let (pa, pb) = (chord_params(qa)?, chord_params(qb)?);
+    let mut rows = [interpolated_at(qa, &pa)?, interpolated_at(ra, &pa)?, interpolated_at(rb, &pb)?, interpolated_at(qb, &pb)?];
+    // One knot vector for all four rows (twice round: each sync can add knots to the first).
+    for _ in 0..2 {
+        let (first, rest) = rows.split_at_mut(1);
+        for r in rest.iter_mut() {
+            first[0].syncro_knots(r);
+        }
+    }
+    let build = |rows: &[mt::BSplineCurve<mt::Point3>; 4]| -> Result<mt::BSplineSurface<mt::Point3>> {
+        let m = rows[0].control_points().len();
+        if rows.iter().any(|r| r.control_points().len() != m) {
+            return Err(KernelError::Failed("the bridge's rows could not share knots".into()));
+        }
+        let cps: Vec<Vec<mt::Point3>> = (0..m).map(|i| rows.iter().map(|r| *r.control_point(i)).collect()).collect();
+        mt::BSplineSurface::try_new((rows[0].knot_vec().clone(), mt::KnotVec::bezier_knot(3)), cps)
+            .map_err(|e| KernelError::Failed(format!("bridge: {e}")))
+    };
+    let surface = build(&rows)?;
+    let ring: Vec<Vec3> = qa.iter().chain(qb.iter().rev()).copied().collect();
+    let mut nl = Vec3::new(0.0, 0.0, 0.0);
+    for i in 0..ring.len() {
+        let (p, q) = (ring[i], ring[(i + 1) % ring.len()]);
+        nl = nl + Vec3::new((p.y - q.y) * (p.z + q.z), (p.z - q.z) * (p.x + q.x), (p.x - q.x) * (p.y + q.y));
+    }
+    let n = surface.normal(0.5, 0.5);
+    if nl.dot(Vec3::new(n.x, n.y, n.z)) >= 0.0 {
+        return Ok(surface);
+    }
+    for r in rows.iter_mut() {
+        r.invert();
+    }
+    build(&rows)
+}
+
+/// Chord-length parameters of a row on [0, 1].
+fn chord_params(pts: &[Vec3]) -> Result<Vec<f64>> {
+    let mut t = vec![0.0];
+    for w in pts.windows(2) {
+        let last = t[t.len() - 1];
+        t.push(last + w[0].dist(w[1]));
+    }
+    let len = t[t.len() - 1];
+    if len <= solidcraft_geom::LINEAR_TOL {
+        return Err(KernelError::Invalid("a section has no length".into()));
+    }
+    Ok(t.iter().map(|x| x / len).collect())
+}
+
+/// A cubic B-spline through `pts` at `params`.
+fn interpolated_at(pts: &[Vec3], params: &[f64]) -> Result<mt::BSplineCurve<mt::Point3>> {
+    let coords: Vec<[f64; 3]> = pts.iter().map(|q| [q.x, q.y, q.z]).collect();
+    let c = solidcraft_geom::bspline::CurveN::<3>::interpolate(params, &coords, 3)
+        .map_err(|e| KernelError::Invalid(format!("a section cannot be interpolated: {e:?}")))?;
+    let ctrl: Vec<mt::Point3> = c.ctrl.iter().map(|p| mt::Point3::new(p[0], p[1], p[2])).collect();
+    mt::BSplineCurve::try_new(mt::KnotVec::from(c.knots), ctrl).map_err(|e| KernelError::Invalid(format!("a section's curve: {e}")))
 }
 
 /// Points per edge a bridge's rows are interpolated through: dense enough that the surfaces' own
@@ -1170,7 +1390,14 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
                 }
             }
         }
-        let out: Vec<mt::Face> = out.into_iter().zip(flip).map(|(f, fl)| if fl == Some(true) { f.inverse() } else { f }).collect();
+        let mut out: Vec<mt::Face> = out.into_iter().zip(flip).map(|(f, fl)| if fl == Some(true) { f.inverse() } else { f }).collect();
+        // A closed result turned to face out here (see `orientation_volume`).
+        let shell = mt::Shell::from(out.clone());
+        if shell.shell_condition() == mt::ShellCondition::Closed
+            && crate::body::orientation_volume(&mt::Solid::new_unchecked(vec![shell])).is_ok_and(|v| v < 0.0)
+        {
+            out = out.iter().map(mt::Face::inverse).collect();
+        }
         let operands: Vec<&mt::Solid> = bodies.iter().map(|b| &*b.solid).collect();
         body_of(out, &operands, &rec)
     })

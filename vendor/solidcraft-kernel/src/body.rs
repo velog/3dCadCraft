@@ -494,6 +494,15 @@ pub(crate) const ORIENT_MESH_FACES: usize = 256;
 /// Deflection the orientation mesh uses: coarse enough for a large solid, fine enough that a
 /// small one still tessellates. `unmeshed_faces` counts at the same value, so the count the
 /// orientation mesh produced is reused instead of meshing the body again.
+/// The volume of a closed solid's mesh at the tolerance [`Body::new`] orients it by (positive:
+/// it faces out there). A builder that can turn its result round cheaply asks this first, so
+/// `Body::new` does not re-mesh 50 times finer to check a negative sign (a stitched solid of
+/// cubic bridges: 10 s). 3DCadCraft.
+pub(crate) fn orientation_volume(solid: &Solid) -> Result<f64> {
+    let tol = orientation_tolerance(span_of(solid));
+    guard("orient", || Ok(mesh_shells(solid, tol).iter().map(|s| s.to_polygon().volume()).sum::<f64>()))
+}
+
 fn orientation_tolerance(span: f64) -> f64 {
     (span * 0.01).clamp(1e-3, 1.0)
 }

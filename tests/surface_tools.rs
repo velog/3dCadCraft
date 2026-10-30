@@ -1302,3 +1302,60 @@ fn trim_by_a_tube_of_walls_cuts_only_inside_it() {
         close(sheet_area(&p) - (before - 10000.0), patch, 1e-4);
     }
 }
+
+/// Loft between edges with the Tangent condition (spec 5.4a F6): the bridge between the top edges
+/// of two upright walls 10 apart leaves each wall going straight up and arches over (a cubic
+/// across with the reach a third of the distance: top 10 + ¾ · 10/3 = 12.5); tangent at one
+/// wall only, it rises to 10 + 4/9 · 10/3 and comes down flat onto the other.
+#[test]
+fn loft_between_edges_tangent_to_the_surfaces() {
+    use cadcraft3d::part::{ConditionKind, LoftCondition, LoftFeature, LoftSection};
+    let tangent = LoftCondition {
+        kind: ConditionKind::Tangent,
+        ..Default::default()
+    };
+    for (conds, top) in [
+        (vec![tangent, tangent], 12.5),
+        (vec![tangent], 10.0 + 4.0 / 9.0 * 10.0 / 3.0),
+        (vec![], 10.0),
+    ] {
+        let mut p = PartDocument::default();
+        wall(&mut p, &[(0.0, 0.0), (20.0, 0.0)], 10.0);
+        wall(&mut p, &[(0.0, 10.0), (20.0, 10.0)], 10.0);
+        let a = edge(&p, [10.0, 0.0, 5.0], [10.0, 0.0, 10.0]);
+        let b = edge(&p, [10.0, 10.0, 5.0], [10.0, 10.0, 10.0]);
+        let mut def = LoftFeature::new(vec![
+            LoftSection::Edges(vec![a]),
+            LoftSection::Edges(vec![b]),
+        ]);
+        def.output = Output::Surface;
+        def.conditions = conds;
+        let id = p.add_loft(def).unwrap();
+        assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+        let bridge = p
+            .exact_bodies
+            .0
+            .iter()
+            .find(|s| s.name.as_deref() == Some(id.as_str()))
+            .unwrap();
+        let tris = bridge.triangles().unwrap();
+        let zmax = tris
+            .iter()
+            .flatten()
+            .map(|q| q.z)
+            .fold(Real::MIN, Real::max);
+        close(zmax, top, 2e-3);
+        // Tangent to the wall at y = 0: the bridge's points just beside its edge stand above it.
+        if top > 12.0 {
+            let near: Vec<_> = tris
+                .iter()
+                .flatten()
+                .filter(|q| q.y > 0.0 && q.y < 0.5)
+                .collect();
+            assert!(
+                !near.is_empty() && near.iter().all(|q| q.z - 10.0 > q.y),
+                "goes up, not across"
+            );
+        }
+    }
+}

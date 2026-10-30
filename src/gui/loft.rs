@@ -415,16 +415,17 @@ impl CadCraftApp {
                     } else {
                         ui.radio_value(&mut c.kind, ConditionKind::Free, "Free");
                         let face = matches!(sec, LoftSection::FaceLoop(_));
-                        ui.add_enabled_ui(face && !guided, |ui| {
+                        let edges = matches!(sec, LoftSection::Edges(_));
+                        ui.add_enabled_ui((face || edges) && !guided, |ui| {
                             ui.radio_value(&mut c.kind, ConditionKind::Tangent, "Tangent")
                         })
                         .response
                         .on_disabled_hover_text(if guided {
                             "Not with rails or a centre line yet"
                         } else {
-                            "For a face loop section: tangent to the faces next to it"
+                            "For a face loop or the edges of a surface: tangent to the faces next to them"
                         });
-                        ui.add_enabled_ui(!face && !guided, |ui| {
+                        ui.add_enabled_ui(!face && !edges && !guided, |ui| {
                             ui.radio_value(&mut c.kind, ConditionKind::Direction, "Direction")
                         })
                         .response

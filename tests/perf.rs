@@ -1571,6 +1571,24 @@ fn speed_budgets() {
                 p.add_loft(def.clone()).unwrap();
             }),
         ));
+        // The same with the Tangent condition at both surfaces: cubic bridges, most of the time
+        // their display mesh (a curved bridge is ~30 000 triangles at 0.01 mm).
+        let mut tangent = def.clone();
+        let t = cadcraft3d::part::LoftCondition {
+            kind: cadcraft3d::part::ConditionKind::Tangent,
+            ..Default::default()
+        };
+        tangent.conditions = vec![t, t];
+        rows.push((
+            "loft between two whole surfaces, Tangent to both, Output Solid (add_loft)",
+            6000.0,
+            median_ms(3, || {
+                let mut p = two.clone();
+                p.build_cache = two.build_cache.detached();
+                p.add_loft(tangent.clone()).unwrap();
+                assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+            }),
+        ));
     }
 
     // Face Draft of a box's sides and vertical rounds (one tangent chain

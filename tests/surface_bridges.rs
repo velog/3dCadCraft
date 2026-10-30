@@ -164,6 +164,7 @@ fn loft_between_two_whole_surfaces() {
         LoftSection::Edges(boundary(&p, "Extrusion2")),
         LoftSection::Edges(boundary(&p, "Extrusion4")),
     ];
+    let base = p.clone();
     // Output Surface: one body of four bridges (one per pair of sides), every one meshed.
     let mut q = p.clone();
     let mut def = LoftFeature::new(sections.clone());
@@ -198,7 +199,7 @@ fn loft_between_two_whole_surfaces() {
     );
     let stitched = solid_volume(&q);
     // Output Solid: the same solid in one feature; the two surfaces are used up.
-    let mut def = LoftFeature::new(sections);
+    let mut def = LoftFeature::new(sections.clone());
     def.output = Output::Solid;
     p.add_loft(def).unwrap();
     assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
@@ -232,6 +233,22 @@ fn loft_between_two_whole_surfaces() {
             );
         }
     }
+    // Tangent to both surfaces (spec 5.4a F6): the bridges leave each surface going on past its
+    // edges (here outwards and down / up) and turn; the corners' curves are shared by the
+    // neighbouring bridges, so the solid still closes, bulging out (more volume than G0).
+    use cadcraft3d::part::{ConditionKind, LoftCondition};
+    let tangent = LoftCondition {
+        kind: ConditionKind::Tangent,
+        ..Default::default()
+    };
+    let mut t = base;
+    let mut def = LoftFeature::new(sections);
+    def.output = Output::Solid;
+    def.conditions = vec![tangent, tangent];
+    t.add_loft(def).unwrap();
+    assert!(t.feature_health.is_empty(), "{:?}", t.feature_health);
+    let vt = solid_volume(&t);
+    assert!(vt > v * 1.01 && vt < v * 1.5, "{vt} vs G0 {v}");
 }
 
 /// The owner's own 8 lofts between pieces of the two surfaces' edges (Surface_test_3, before its

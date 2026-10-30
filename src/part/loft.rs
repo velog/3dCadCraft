@@ -409,9 +409,23 @@ impl LoftFeature {
                 "a loft between edges takes two edge sections for now".into(),
             ));
         };
-        if self.guided() {
+        // Conditions: Free or Tangent at each edge section (the bridge leaves the edges tangent
+        // to their surface); rails, a centre line and the other conditions not yet.
+        let weights = [0, 1].map(|k| {
+            let c = self.condition(k);
+            (c.kind == ConditionKind::Tangent).then_some(c.weight)
+        });
+        let other_condition = self
+            .conditions
+            .iter()
+            .any(|c| !matches!(c.kind, ConditionKind::Free | ConditionKind::Tangent));
+        let plain = Self {
+            conditions: Vec::new(),
+            ..self.clone()
+        };
+        if plain.guided() || other_condition {
             return Err(User(
-                "a loft between edges with rails, a centre line or conditions is not supported yet"
+                "a loft between edges with rails, a centre line or conditions other than Tangent is not supported yet"
                     .into(),
             ));
         }
@@ -443,8 +457,9 @@ impl LoftFeature {
         };
         let (ia, pa) = side(a, 1)?;
         let (ib, pb) = side(b, 2)?;
-        let bridge = kx::surface_ops::bridge_edges(&bodies[ia], &pa, &bodies[ib], &pb, &self.id)
-            .map_err(|e| User(format!("the geometry kernel cannot bridge the edges ({e})")))?;
+        let bridge =
+            kx::surface_ops::bridge_edges(&bodies[ia], &pa, &bodies[ib], &pb, weights, &self.id)
+                .map_err(|e| User(format!("the geometry kernel cannot bridge the edges ({e})")))?;
         if !solid {
             return Ok(bridge);
         }
@@ -760,31 +775,18 @@ impl LoftFeature {
 /// bridge's edges are cubic splines through points on the surfaces' edges.
 const BRIDGE_STITCH: Real = 0.01;
 
-/// Whether a closed body's faces face out: of its display triangles (some spread over the body)
-/// none has the body in front and the outside behind.
+/// Whether a closed body's faces face out: the signed volume of its display triangles is
+/// positive (a sewn shell is oriented one way throughout, so the sign tells). Asking the kernel
+/// whether points lie inside re-meshed the body for every point: 290 s for tangent bridges.
 fn faces_out(s: &ExactSolid) -> bool {
     let Ok(tris) = s.triangles() else {
         return false;
     };
-    let eps = (s.size() * 1e-4).max(1e-4);
-    let step = (tris.len() / 60).max(1);
-    let mut checked = 0;
-    for [a, b, c] in tris.iter().step_by(step) {
-        let Some(n) = (b - a).cross(&(c - a)).try_normalize(1e-18) else {
-            continue;
-        };
-        let m = Point3::from((a.coords + b.coords + c.coords) / 3.0);
-        // Clearly inward: inside in front of the triangle and outside behind it (a triangle
-        // sagging under a curved face can have the body on both sides).
-        let (front, back) = (kx::contains(s, m + n * eps), kx::contains(s, m - n * eps));
-        if front && !back {
-            return false;
-        }
-        if front != back {
-            checked += 1;
-        }
-    }
-    checked > 0
+    let v: Real = tris
+        .iter()
+        .map(|[a, b, c]| a.coords.dot(&b.coords.cross(&c.coords)) / 6.0)
+        .sum();
+    v > 0.0
 }
 
 /// Tangent condition of a face-loop section: at points along the face's

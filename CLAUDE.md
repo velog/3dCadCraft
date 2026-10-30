@@ -1284,6 +1284,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   find the edge again by the distance to its *segments* (a straight edge samples as its two ends — a tie picked
   the wrong edge). A Sculpt / Stitch body closed by a rim patch may come out inside-out: check its volume's sign
   (`surface_ops::reversed`); a revolved dome closed that way still fails the kernel's Boolean.
+- **Closed shells from our builders must face out before `Body::new`**: a negative volume at its coarse mesh makes it
+  re-mesh 50× finer to check (stitched tangent bridges: 10 s); vendor `stitch` turns the shell round first
+  (`orientation_volume`). Never test "faces out" with `exact::contains` per point either — each call re-meshes the
+  body (Loft's Output Solid took 290 s); use the signed volume of the display triangles.
 - **Bounded Trim** (spec 5.4a T2, `part/surface_op.rs::trim_pieces`): a closed sketch loop or a tool of several walls
   divides the surface first (Split Face) and removes pieces; a tube of walls along one direction is cut by its section
   (`exact::walls_section` → `SplitBy::Curves`), since each wall's extended surface would cut across the whole face. A

@@ -497,7 +497,12 @@ fn surface_refusals_leave_the_part_unchanged() {
             "does not split",
         );
     }
-    // Split Face with a surface of two faces: not yet.
+    assert_eq!(part.features.len(), n);
+    healthy(&part);
+    close(total(&part), 24000.0, 1e-9);
+    assert_eq!(volumes(&part).len(), 1);
+    // Split Face with a surface of two walls (an L along Z): the top face is cut along the L
+    // only (spec 5.4a T2), into two pieces — the walls' extended planes would make four.
     let two = surface(&mut part, OriginPlane::XY, 60.0, |sk| {
         let a = sk.add_point(Point2::new(-40.0, 5.0));
         let b = sk.add_point(Point2::new(5.0, 5.0));
@@ -507,16 +512,24 @@ fn surface_refusals_leave_the_part_unchanged() {
             sk.add_line_between(b, c).unwrap(),
         ]
     });
-    let n = n + 1;
+    // (the L surface is one more feature)
     let top = face_where(&part, |p| (p.z - 20.0).abs() < 1e-6);
     let mut sp = split(SplitMethod::SplitFace, SplitToolRef::Surface(two));
     sp.faces.push(face_ref(&part, &top, [0.0, 0.0, 20.0]));
-    refused(part.add_split(sp), "several faces");
+    part.add_split(sp).unwrap();
     let _ = s;
-    assert_eq!(part.features.len(), n);
     healthy(&part);
     close(total(&part), 24000.0, 1e-9);
-    assert_eq!(volumes(&part).len(), 1);
+    let pieces = part
+        .body
+        .faces()
+        .filter(|(_, f)| {
+            f.name
+                .as_deref()
+                .is_some_and(|x| x.starts_with(&format!("{top}~")))
+        })
+        .count();
+    assert_eq!(pieces, 2, "the top face cut along the L");
 }
 
 #[test]

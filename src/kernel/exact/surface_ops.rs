@@ -48,7 +48,8 @@ pub fn stitch(
 }
 
 /// **Loft between edges**: a surface bridging an open chain of `a`'s edges and one of `b`'s
-/// (each edge picked by a point on it), G0 to both: a new surface body `name` (one face
+/// (each edge picked by a point on it), G0 to both, or tangent (G1) to the surface of a section
+/// whose `weights` entry is `Some(weight)`: a new surface body `name` (one face
 /// `<name>:Bridge`).
 /// Whole closed boundaries of the two surfaces: one face per pair of sides, all sharing their
 /// corner lines (one surface body).
@@ -57,11 +58,14 @@ pub fn bridge_edges(
     at_a: &[Point3],
     b: &ExactSolid,
     at_b: &[Point3],
+    weights: [Option<Real>; 2],
     name: &str,
 ) -> Result<ExactSolid, String> {
     let pa: Vec<_> = at_a.iter().map(v3).collect();
     let pb: Vec<_> = at_b.iter().map(v3).collect();
-    let body = guarded("bridge", || sk::bridge_edges(&a.body, &pa, &b.body, &pb))?;
+    let body = guarded("bridge", || {
+        sk::bridge_edges_tangent(&a.body, &pa, &b.body, &pb, weights)
+    })?;
     Ok(named(
         body,
         &[],
