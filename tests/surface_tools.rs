@@ -1359,3 +1359,95 @@ fn loft_between_edges_tangent_to_the_surfaces() {
         }
     }
 }
+
+/// A planar patch of the closed polygon `pts` on a plane `z` above XY.
+fn patch_polygon_at(p: &mut PartDocument, z: Real, pts: &[(Real, Real)]) -> String {
+    let w = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: z,
+        })))
+        .unwrap();
+    let i = p
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(w),
+                ..Default::default()
+            },
+            &opts(),
+        )
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    let ids: Vec<_> = pts
+        .iter()
+        .map(|(x, y)| sk.add_point(Point2::new(*x, *y)))
+        .collect();
+    for k in 0..ids.len() {
+        sk.add_line_between(ids[k], ids[(k + 1) % ids.len()])
+            .unwrap();
+    }
+    let r = p.sketches[i].sketch.regions();
+    let id = p.sketches[i].id.clone();
+    op(
+        p,
+        BodyOp::Patch(PatchOp {
+            edges: Vec::new(),
+            sketch: Some(id),
+            profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
+            solid: false,
+        }),
+    )
+}
+
+/// The whole free boundary of surface body `body` as an edge section.
+fn boundary_of(p: &PartDocument, body: &str) -> Vec<SurfEdge> {
+    let opts = cadcraft3d::kernel::TessellationOptions::default();
+    let mut out = Vec::new();
+    for f in cadcraft3d::part::select::faces_of_body(&p.body, body) {
+        let face = p.body.face(f).unwrap();
+        for ce in &face.outer.coedges {
+            if p.body.edge_faces(ce.edge).len() != 1 {
+                continue;
+            }
+            let pts = p.body.sample_edge(ce.edge, &opts).unwrap();
+            let m = cadcraft3d::part::select::polyline_middle(&pts).unwrap();
+            out.push(SurfEdge {
+                face: face.name.clone().unwrap(),
+                hint: [m.x, m.y, m.z],
+            });
+        }
+    }
+    out
+}
+
+/// Loft between two surfaces whose boundaries have different numbers of sides (spec 5.4a F13):
+/// a 20 × 20 square at z = 0 and a hexagon (radius 12) at z = 10. The hexagon keeps the four
+/// corners nearest the square's and its other two sides are joined into their neighbours; the
+/// bridges close a solid between the two (its volume between the smaller face's prism and the
+/// larger's).
+#[test]
+fn loft_between_surfaces_of_different_side_counts() {
+    use cadcraft3d::part::{LoftFeature, LoftSection};
+    let mut p = PartDocument::default();
+    let sq = patch_rect(&mut p, (-10.0, -10.0), (10.0, 10.0));
+    let hex: Vec<(Real, Real)> = (0..6)
+        .map(|k| {
+            let a = k as Real * PI / 3.0;
+            (12.0 * a.cos(), 12.0 * a.sin())
+        })
+        .collect();
+    let hx = patch_polygon_at(&mut p, 10.0, &hex);
+    for (a, b) in [(&sq, &hx), (&hx, &sq)] {
+        let mut q = p.clone();
+        let mut def = LoftFeature::new(vec![
+            LoftSection::Edges(boundary_of(&q, a)),
+            LoftSection::Edges(boundary_of(&q, b)),
+        ]);
+        def.output = Output::Solid;
+        q.add_loft(def).unwrap();
+        assert!(q.feature_health.is_empty(), "{:?}", q.feature_health);
+        let v = solid_volume(&q);
+        let hex_area = 1.5 * (3.0 as Real).sqrt() * 144.0; // 374.1
+        assert!(v > 400.0 * 10.0 * 0.9 && v < hex_area * 10.0 * 1.1, "{v}");
+    }
+}

@@ -557,12 +557,20 @@ fn loop_sides(lp: &[mt::Edge]) -> Option<Vec<Vec<mt::Edge>>> {
 /// they come out as one surface body.
 fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge], weights: [Option<f64>; 2]) -> Result<Body> {
     let none = || KernelError::Invalid("not supported yet: a smooth closed boundary (no corners) as a loft section".into());
-    let sa = loop_sides(la).ok_or_else(none)?;
-    let sb = loop_sides(lb).ok_or_else(none)?;
+    let mut sa = loop_sides(la).ok_or_else(none)?;
+    let mut sb = loop_sides(lb).ok_or_else(none)?;
+    // Different numbers of sides: the boundary with more keeps the corners nearest the other's
+    // (in order round both) and its other sides are joined; a joined side keeps its corner
+    // inside its bridge (3DCadCraft addition).
+    if sa.len() > sb.len() {
+        sa = merged_sides(&sa, &sb, false);
+    } else if sb.len() > sa.len() {
+        sb = merged_sides(&sb, &sa, true);
+    }
     let n = sa.len();
     if sb.len() != n {
         return Err(KernelError::Invalid(format!(
-            "the boundaries have {n} and {} sides (corners): they must have as many to be bridged",
+            "the boundaries have {n} and {} sides (corners) that could not be paired",
             sb.len()
         )));
     }
@@ -851,13 +859,99 @@ fn chord_params(pts: &[Vec3]) -> Result<Vec<f64>> {
     Ok(t.iter().map(|x| x / len).collect())
 }
 
-/// A cubic B-spline through `pts` at `params`.
+/// A cubic B-spline through `pts` at `params`; where the points turn sharply (a corner inside
+/// a side: more than 20° between neighbouring steps) the runs either side are interpolated on
+/// their own and joined with a triple knot (C0 there), as a smooth spline through a corner
+/// rings past it.
 fn interpolated_at(pts: &[Vec3], params: &[f64]) -> Result<mt::BSplineCurve<mt::Point3>> {
-    let coords: Vec<[f64; 3]> = pts.iter().map(|q| [q.x, q.y, q.z]).collect();
-    let c = solidcraft_geom::bspline::CurveN::<3>::interpolate(params, &coords, 3)
-        .map_err(|e| KernelError::Invalid(format!("a section cannot be interpolated: {e:?}")))?;
-    let ctrl: Vec<mt::Point3> = c.ctrl.iter().map(|p| mt::Point3::new(p[0], p[1], p[2])).collect();
-    mt::BSplineCurve::try_new(mt::KnotVec::from(c.knots), ctrl).map_err(|e| KernelError::Invalid(format!("a section's curve: {e}")))
+    let n = pts.len();
+    let turn = |i: usize| -> bool {
+        match ((pts[i] - pts[i - 1]).normalized(), (pts[i + 1] - pts[i]).normalized()) {
+            (Some(a), Some(b)) => a.dot(b) < (20f64).to_radians().cos(),
+            _ => false,
+        }
+    };
+    let mut cuts: Vec<usize> = vec![0];
+    for i in 1..n.saturating_sub(1) {
+        if turn(i) && i - cuts[cuts.len() - 1] >= 3 && n - 1 - i >= 3 {
+            cuts.push(i);
+        }
+    }
+    cuts.push(n.saturating_sub(1));
+    let piece = |a: usize, b: usize| -> Result<(Vec<f64>, Vec<mt::Point3>)> {
+        let coords: Vec<[f64; 3]> = pts[a..=b].iter().map(|q| [q.x, q.y, q.z]).collect();
+        let c = solidcraft_geom::bspline::CurveN::<3>::interpolate(&params[a..=b], &coords, 3)
+            .map_err(|e| KernelError::Invalid(format!("a section cannot be interpolated: {e:?}")))?;
+        Ok((c.knots, c.ctrl.iter().map(|p| mt::Point3::new(p[0], p[1], p[2])).collect()))
+    };
+    let (mut knots, mut ctrl) = piece(cuts[0], cuts[1])?;
+    for w in cuts.windows(2).skip(1) {
+        // Joined at the corner: one of the four end knots dropped (a triple knot stays), the
+        // shared point once.
+        let (k1, c1) = piece(w[0], w[1])?;
+        knots.pop();
+        knots.extend(k1.into_iter().skip(4));
+        ctrl.extend(c1.into_iter().skip(1));
+    }
+    mt::BSplineCurve::try_new(mt::KnotVec::from(knots), ctrl).map_err(|e| KernelError::Invalid(format!("a section's curve: {e}")))
+}
+
+/// The sides of boundary `many` joined into as many as `few` has: the kept corners (starts of
+/// sides) are the ones nearest `few`'s corners in order round both loops (dynamic programming
+/// over every start and, with `either_way`, both directions of `few`), each kept side running on
+/// over the sides up to the next kept corner.
+fn merged_sides(many: &[Vec<mt::Edge>], few: &[Vec<mt::Edge>], either_way: bool) -> Vec<Vec<mt::Edge>> {
+    let start = |side: &[mt::Edge]| side.first().map(|e| from_p3(e.front().point())).unwrap_or(Vec3::new(0.0, 0.0, 0.0));
+    let m = many.len();
+    let n = few.len();
+    if n == 0 || n >= m {
+        return many.to_vec();
+    }
+    let mc: Vec<Vec3> = many.iter().map(|s| start(s)).collect();
+    let fc: Vec<Vec3> = few.iter().map(|s| start(s)).collect();
+    // `few` turned round: its corners in reverse order (a turned side starts where it ended).
+    let fr: Vec<Vec3> = (0..n).map(|k| fc[(n - k) % n]).collect();
+    let mut best: Option<(f64, Vec<usize>)> = None;
+    for f in if either_way { vec![&fc, &fr] } else { vec![&fc] } {
+        for r in 0..m {
+            // cost[k][j]: corners 0..=k of `few` on kept corners up to j (offset from r) of `many`.
+            let inf = f64::INFINITY;
+            let mut cost = vec![vec![inf; m]; n];
+            let mut from = vec![vec![0usize; m]; n];
+            cost[0][0] = f[0].dist(mc[r]);
+            for k in 1..n {
+                for j in k..m {
+                    let d = f[k].dist(mc[(r + j) % m]);
+                    for i in (k - 1)..j {
+                        if cost[k - 1][i] + d < cost[k][j] {
+                            cost[k][j] = cost[k - 1][i] + d;
+                            from[k][j] = i;
+                        }
+                    }
+                }
+            }
+            let (j, c) = (0..m).map(|j| (j, cost[n - 1][j])).fold((0, inf), |a, b| if b.1 < a.1 { b } else { a });
+            if !c.is_finite() || best.as_ref().is_some_and(|(b, _)| c >= *b) {
+                continue;
+            }
+            let mut keep = vec![0usize; n];
+            let mut at = j;
+            for k in (0..n).rev() {
+                keep[k] = (r + at) % m;
+                at = from[k][at];
+            }
+            best = Some((c, keep));
+        }
+    }
+    let Some((_, keep)) = best else { return many.to_vec() };
+    (0..n)
+        .map(|k| {
+            let (a, b) = (keep[k], keep[(k + 1) % n]);
+            let len = (b + m - a) % m;
+            let len = if len == 0 { m } else { len };
+            (0..len).flat_map(|i| many[(a + i) % m].iter().cloned()).collect()
+        })
+        .collect()
 }
 
 /// Points per edge a bridge's rows are interpolated through: dense enough that the surfaces' own
@@ -902,22 +996,7 @@ fn chain_points_n(chain: &[mt::Edge], per_edge: usize) -> Result<Vec<Vec3>> {
 
 /// A cubic B-spline through `pts` at chord-length parameters on [0, 1].
 fn interpolated(pts: &[Vec3]) -> Result<mt::BSplineCurve<mt::Point3>> {
-    let mut t = vec![0.0];
-    for w in pts.windows(2) {
-        let last = t[t.len() - 1];
-        t.push(last + w[0].dist(w[1]));
-    }
-    let len = t[t.len() - 1];
-    if len <= solidcraft_geom::LINEAR_TOL {
-        return Err(KernelError::Invalid("a section has no length".into()));
-    }
-    let params: Vec<f64> = t.iter().map(|x| x / len).collect();
-    let coords: Vec<[f64; 3]> = pts.iter().map(|q| [q.x, q.y, q.z]).collect();
-    let c = solidcraft_geom::bspline::CurveN::<3>::interpolate(&params, &coords, 3)
-        .map_err(|e| KernelError::Invalid(format!("a section cannot be interpolated: {e:?}")))?;
-    let ctrl: Vec<mt::Point3> = c.ctrl.iter().map(|p| mt::Point3::new(p[0], p[1], p[2])).collect();
-    mt::BSplineCurve::try_new(mt::KnotVec::from(c.knots), ctrl)
-        .map_err(|e| KernelError::Invalid(format!("a section's curve: {e}")))
+    interpolated_at(pts, &chord_params(pts)?)
 }
 
 /// The edges of `body` picked by points on them, chained into one open chain (each turned to
