@@ -619,16 +619,14 @@ impl Section {
         let (i, seed) = if start_inside {
             // The section on a plane at z0 (points mapped through 3D, so the
             // part's coordinates stay the section's).
-            let w = part.add_work(hidden(WorkDef::Ucs(UcsDef::Offsets {
-                x: 0.0,
-                y: 0.0,
-                z: z0,
-                rx: 0.0,
-                ry: 0.0,
-                rz: 0.0,
-            })))?;
+            let w = part.add_work(hidden(WorkDef::Plane(
+                crate::part::work::WorkPlaneDef::Offset {
+                    base: PlaneRef::Origin(OriginPlane::XY),
+                    distance: z0,
+                },
+            )))?;
             let placement = SketchPlacement {
-                plane: PlaneRef::Work(format!("{w}:XY")),
+                plane: PlaneRef::Work(w),
                 ..Default::default()
             };
             let i = part.create_sketch(placement, &opts)?;

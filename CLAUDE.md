@@ -1348,6 +1348,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   0.17 s). A Trim Solid of a rounded SHS by an inclined plane is ~0.4 s in the kernel (an
   Extrude To an inclined work plane was 6 s); `assembly::frame::solve` therefore rebuilds a member only when its `Shape`
   (length, extensions, cuts) changed and runs the rebuilds in parallel. Never re-run every member on each solve.
+- **A face's outer loop is the longest one in space** (`exact.rs::split_outer`): it once compared the edges' *parameter*
+  ranges (a line 0..1, an arc its angle), so a tube cap's hole and outline tied and the hole could become the outer loop.
+  Bodies with the kernel's meshes looked right; a body read from a file (no meshes) was triangulated inside out (frame
+  members sketched on a work plane: a third of their mass, red caps). Check new B-rep code with a save + load.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

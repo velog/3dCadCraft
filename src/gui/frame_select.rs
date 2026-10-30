@@ -183,11 +183,18 @@ impl CadCraftApp {
         }
         let first = d.picks_of(key).is_empty();
         d.pick(w);
-        // Change shows the first picked member's section and orientation.
-        if first && d.kind == Planned::Asm(AsmPlanned::FrameChange) {
+        // Change shows the first picked member's section and orientation,
+        // Frame Member Info the picked member's numbers.
+        let change = first && d.kind == Planned::Asm(AsmPlanned::FrameChange);
+        let info = d.kind == Planned::Asm(AsmPlanned::FrameMemberInfo);
+        if change || info {
             let mut d = self.part_planned.take();
             if let Some(d) = d.as_mut() {
-                self.frame_fill_change(d, occ);
+                if change {
+                    self.frame_fill_change(d, occ);
+                } else {
+                    self.fill_member_info(d, occ);
+                }
             }
             self.part_planned = d;
         }
@@ -223,6 +230,9 @@ impl CadCraftApp {
         }
         if d.kind == Planned::Asm(AsmPlanned::FrameChange) {
             self.frame_fill_change(d, members[0]);
+        }
+        if d.kind == Planned::Asm(AsmPlanned::FrameMemberInfo) {
+            self.fill_member_info(d, members[0]);
         }
         if single(d, first) {
             for (k, w) in keys.iter().zip(names) {

@@ -1353,6 +1353,7 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::LengthenShorten
                     | super::asm_planned::AsmPlanned::Notch
                     | super::asm_planned::AsmPlanned::EditFrame
+                    | super::asm_planned::AsmPlanned::FrameMemberInfo
                     | super::asm_planned::AsmPlanned::PlaceImported
             ) | Planned::Part(
                 PartPlanned::Stitch
@@ -2524,6 +2525,10 @@ impl CadCraftApp {
                 if self.change_ok(&d) {
                     self.part_planned = None;
                 }
+            }
+            // Frame Member Info only shows: OK closes it.
+            Planned::Asm(super::asm_planned::AsmPlanned::FrameMemberInfo) => {
+                self.part_planned = None;
             }
             Planned::Asm(super::asm_planned::AsmPlanned::EditFrame) => {
                 if self.edit_frame_ok(&d) {

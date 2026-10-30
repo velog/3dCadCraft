@@ -3974,11 +3974,19 @@ fn split_outer(out: &BRep, mut loops: Vec<Loop>) -> Option<(Loop, Vec<Loop>)> {
     if loops.is_empty() {
         return None;
     }
+    if loops.len() == 1 {
+        return loops.pop().map(|l| (l, Vec::new()));
+    }
+    // The outer loop is the longest one, measured in space: the edges'
+    // parameter ranges are not lengths (a line runs 0..1, an arc over its
+    // angle), and a tube's hole and outline came out equal — the hole was
+    // taken for the outline of every cap at random.
+    let opts = super::TessellationOptions::default();
     let len = |lp: &Loop| -> Real {
         lp.coedges
             .iter()
-            .filter_map(|ce| out.edge(ce.edge))
-            .map(|e| e.range.length().abs())
+            .filter_map(|ce| out.sample_edge(ce.edge, &opts).ok())
+            .map(|pts| pts.windows(2).map(|w| (w[1] - w[0]).norm()).sum::<Real>())
             .sum()
     };
     let k = (0..loops.len())

@@ -649,6 +649,71 @@ impl CadCraftApp {
         }
     }
 
+    /// Frame Member Info: member `occ`'s family, size, material, length
+    /// (`G_L`), mass and section properties in the panel's fields.
+    pub(super) fn fill_member_info(&self, d: &mut PartDialog, occ: u32) {
+        let Some(a) = self.assembly() else {
+            return;
+        };
+        let Some(m) = a
+            .frames
+            .iter()
+            .flat_map(|f| &f.members)
+            .find(|m| m.occurrence == occ)
+        else {
+            return;
+        };
+        let Some(c) = a.find(occ).map(|o| o.component) else {
+            return;
+        };
+        d.set_text(0, "Family", &m.family);
+        d.set_text(0, "Size", &m.size);
+        let (material, length, mass) = self
+            .with_part(c, |p| {
+                let mass = crate::part::physical::physical_properties(p, Default::default())
+                    .ok()
+                    .map(|ph| ph.total.mass);
+                (p.material.clone(), frame::outer_length(p), mass)
+            })
+            .unwrap_or((None, None, None));
+        d.set_text(0, "Material", material.as_deref().unwrap_or("Generic"));
+        d.set_text(
+            0,
+            "Length",
+            &length.map(|l| format!("{l:.3} mm")).unwrap_or_default(),
+        );
+        d.set_text(
+            0,
+            "Mass",
+            &mass
+                .map(|g| format!("{:.3} kg", g / 1000.0))
+                .unwrap_or_default(),
+        );
+        if let Some(s) = m.section() {
+            let p = s.properties();
+            d.set_text(0, "Area", &format!("{:.1} mm^2", p.area));
+            d.set_text(
+                0,
+                "Moment of Inertia Ix",
+                &format!("{:.4} cm^4", p.ix / 1e4),
+            );
+            d.set_text(
+                0,
+                "Moment of Inertia Iy",
+                &format!("{:.4} cm^4", p.iy / 1e4),
+            );
+            d.set_text(0, "Section Modulus Wx", &format!("{:.4} cm^3", p.wx / 1e3));
+            d.set_text(0, "Section Modulus Wy", &format!("{:.4} cm^3", p.wy / 1e3));
+            d.set_text(0, "Radius of Gyration rx", &format!("{:.2} mm", p.rx()));
+            d.set_text(0, "Radius of Gyration ry", &format!("{:.2} mm", p.ry()));
+            d.set_text(
+                0,
+                "Centroid",
+                &format!("x {:.2} mm, y {:.2} mm", p.centroid.x, p.centroid.y),
+            );
+        }
+    }
+
     /// OK of Change.
     pub(super) fn change_ok(&mut self, d: &PartDialog) -> bool {
         let members = self.picked_members(d, "members");

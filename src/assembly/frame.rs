@@ -2908,6 +2908,40 @@ mod tests {
                 "member {m} display mesh: {signed} vs {}",
                 area * l
             );
+            let ph = crate::part::physical::physical_properties(
+                &part(&p, asm(&p, aid), m),
+                Default::default(),
+            )
+            .unwrap();
+            let want = area * l * 7.85e-3;
+            assert!(
+                (ph.total.mass - want).abs() < 5e-3 * want,
+                "member {m} mass {} vs {want}",
+                ph.total.mass
+            );
+        }
+        // The same after a save and a load.
+        {
+            let dir = std::env::temp_dir().join(format!("cc-boxmass-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let f = dir.join("box.3dcadcraft");
+            p.save(&f).unwrap();
+            let q = Project::load(&f).unwrap();
+            for &m in &occs {
+                let mp = part(&q, asm(&q, aid), m);
+                let ph =
+                    crate::part::physical::physical_properties(&mp, Default::default()).unwrap();
+                let (lo, hi) = member_box(&p, aid, m);
+                let d = hi - lo;
+                let want = area * d.x.max(d.y).max(d.z) * 7.85e-3;
+                assert!(
+                    (ph.total.mass - want).abs() < 5e-3 * want,
+                    "loaded member {m} mass {} vs {want}, warnings {:?}",
+                    ph.total.mass,
+                    ph.warnings
+                );
+            }
+            let _ = std::fs::remove_dir_all(&dir);
         }
         let out = Layout {
             side: Side::Outside,
@@ -2993,6 +3027,39 @@ mod tests {
             .unwrap();
         assert_eq!(m.orientation.anchor, Anchor::TopRight);
         assert_eq!(member_box(&p, aid, occs[1]), kept);
+    }
+
+    /// A member's mass (Frame Member Info): steel S235 at 7.85 g/cm³ over
+    /// the tube's volume.
+    #[test]
+    fn member_mass_is_steel() {
+        let (mut p, aid, _) = project();
+        let e = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[e],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let m = part(&p, asm(&p, aid), occs[0]);
+        let ph = crate::part::physical::physical_properties(&m, Default::default()).unwrap();
+        let area = Library::builtin()
+            .find("Square hollow section (EN 10219)", "40x40x3")
+            .unwrap()
+            .properties()
+            .area;
+        let want = area * 400.0 * 7.85e-3;
+        assert!(ph.warnings.is_empty(), "{:?}", ph.warnings);
+        assert!(
+            (ph.total.mass - want).abs() < 2e-3 * want,
+            "{} vs {want} (volume {})",
+            ph.total.mass,
+            ph.total.volume
+        );
     }
 
     /// Butt by length (Solid Edge's Butt 1 / Butt 2): of the 400 and 300
