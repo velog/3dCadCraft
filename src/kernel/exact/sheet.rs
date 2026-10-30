@@ -12,7 +12,7 @@ use super::{
     ExactOp, ExactSolid, FaceOrigin, Plane, Point3, Real, Vector3, guarded, names_from, p3,
     plane_of, seg2, sg, sk, union_apart,
 };
-use crate::kernel::extrude::ProfileSegment;
+use crate::kernel::extrude::{P2, ProfileSegment, Segment2, V2};
 
 impl ExactSolid {
     /// A surface body (an open sheet; Extrude / Revolve with Output
@@ -483,6 +483,136 @@ pub(super) fn distinct_faces(sheet: &ExactSolid) -> Result<Vec<usize>, String> {
         out.push(face);
     }
     Ok(out)
+}
+
+/// A surface body of walls along one direction (planes and cylinders parallel to it: a
+/// rectangle or a slot extruded as a surface) as its section: the plane square to the walls
+/// through their middle and the walls' chains of lines and arcs in it (a closed tube is one
+/// closed chain). Split Face / Trim by such a body then cut only along its walls — the extended
+/// surface of each wall would cut across the whole face. `None` when the faces are not such
+/// walls.
+pub fn walls_section(sheet: &ExactSolid) -> Option<(Plane, Vec<Vec<Segment2>>)> {
+    use sk::FaceSurface as F;
+    let v = |x: sg::Vec3| Vector3::new(x.x, x.y, x.z);
+    let faces = distinct_faces(sheet).ok()?;
+    let kinds = guarded("face surfaces", || Ok(sk::face_surfaces(&sheet.body))).ok()?;
+    let corners = super::face_corners(sheet).ok()?;
+    let mut walls: Vec<(F, usize)> = Vec::new();
+    for f in 0..sheet.body.face_count() {
+        walls.push((kinds.get(f).copied().flatten()?, f));
+    }
+    if faces.len() < 2 {
+        return None;
+    }
+    // The common direction: a cylinder's axis, or two planes' normals crossed.
+    let mut dir: Option<Vector3> = None;
+    let normals: Vec<Vector3> = walls
+        .iter()
+        .filter_map(|(k, _)| match k {
+            F::Plane { normal, .. } => v(*normal).try_normalize(1e-12),
+            _ => None,
+        })
+        .collect();
+    for (k, _) in &walls {
+        match k {
+            F::Cylinder { axis, .. } => dir = dir.or(v(*axis).try_normalize(1e-12)),
+            F::Plane { .. } => {}
+            _ => return None,
+        }
+    }
+    if dir.is_none() {
+        'outer: for a in &normals {
+            for b in &normals {
+                if let Some(d) = a.cross(b).try_normalize(1e-6) {
+                    dir = Some(d);
+                    break 'outer;
+                }
+            }
+        }
+    }
+    let d = dir?;
+    for (k, _) in &walls {
+        let ok = match k {
+            F::Plane { normal, .. } => v(*normal).normalize().dot(&d).abs() < 1e-7,
+            F::Cylinder { axis, .. } => v(*axis).normalize().cross(&d).norm() < 1e-7,
+            _ => false,
+        };
+        if !ok {
+            return None;
+        }
+    }
+    let all: Vec<Point3> = corners.iter().flatten().copied().collect();
+    let along = |p: &Point3| p.coords.dot(&d);
+    let lo = all.iter().map(along).fold(Real::MAX, Real::min);
+    let hi = all.iter().map(along).fold(Real::MIN, Real::max);
+    let first = *all.first()?;
+    let origin = first + d * ((lo + hi) / 2.0 - along(&first));
+    let t = if d.x.abs() < 0.9 {
+        Vector3::x()
+    } else {
+        Vector3::y()
+    };
+    let plane = Plane::new(origin, d, t - d * t.dot(&d)).ok()?;
+    let size = sheet.body.size().max(1.0);
+    let mut segs: Vec<Segment2> = Vec::new();
+    for (k, f) in &walls {
+        let pts: Vec<P2> = corners.get(*f)?.iter().map(|p| plane.project(p)).collect();
+        if pts.is_empty() {
+            continue;
+        }
+        match k {
+            F::Plane { normal, point } => {
+                let n = plane.project(&(origin + v(*normal))) - plane.project(&origin);
+                let tl = V2::new(-n.y, n.x).try_normalize(1e-12)?;
+                let o = plane.project(&p3_of(*point));
+                let s = |q: &P2| (q - o).dot(&tl);
+                let (a, b) = pts
+                    .iter()
+                    .map(s)
+                    .fold((Real::MAX, Real::MIN), |(a, b), x| (a.min(x), b.max(x)));
+                if b - a > size * 1e-9 {
+                    segs.push(Segment2::Line {
+                        a: o + tl * a,
+                        b: o + tl * b,
+                    });
+                }
+            }
+            F::Cylinder {
+                origin: c, radius, ..
+            } => {
+                let c = plane.project(&p3_of(*c));
+                let mut ang: Vec<Real> = pts.iter().map(|q| (q.y - c.y).atan2(q.x - c.x)).collect();
+                ang.sort_by(Real::total_cmp);
+                // The arc covered: everything but the largest gap between the angles.
+                let n = ang.len();
+                let (mut gap, mut at) = (ang[0] + std::f64::consts::TAU - ang[n - 1], 0);
+                for i in 1..n {
+                    if ang[i] - ang[i - 1] > gap {
+                        gap = ang[i] - ang[i - 1];
+                        at = i;
+                    }
+                }
+                let sweep = std::f64::consts::TAU - gap;
+                if sweep > 1e-9 {
+                    segs.push(Segment2::Arc {
+                        c,
+                        r: *radius,
+                        a0: ang[at],
+                        sweep,
+                    });
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some((
+        plane,
+        crate::kernel::extrude::join_chains(segs, size * 1e-6),
+    ))
+}
+
+fn p3_of(p: sg::Vec3) -> Point3 {
+    Point3::new(p.x, p.y, p.z)
 }
 
 /// Whether two analytic surfaces are the same (whatever their faces' extent).

@@ -1173,3 +1173,120 @@ fn loop_and_tangent_chain_of_a_surface_rim() {
         .unwrap();
     assert!(cadcraft3d::part::select::free_chain(&p.body, inner, false).is_empty());
 }
+
+/// Free edges of the surface bodies (an edge with one face).
+fn free_edges(p: &PartDocument) -> usize {
+    p.body
+        .edges()
+        .filter(|(e, _)| p.body.edge_faces(*e).len() == 1)
+        .count()
+}
+
+#[test]
+fn trim_cuts_a_hole_by_a_closed_sketch_loop() {
+    // A 100 × 100 patch on XY and a 20 × 10 rectangle (or an r 8 circle) sketched on it: only
+    // the inside goes (corners kept sharp), or with Invert only the inside stays.
+    // The rectangle with sharp corners (rounded by the tracing step they lost 0.6 %); the
+    // circle's rim in the display triangles is a polygon (about 1 % of the disc short).
+    let cases = [
+        (false, [0.0, 0.0, 0.0], 200.0, 1e-3),
+        (true, [20.0, 10.0, 0.0], PI * 64.0, 1.5e-2),
+    ];
+    for (circle, inside, hole, rel) in cases {
+        for invert in [false, true] {
+            let mut p = PartDocument::default();
+            let s = patch_rect(&mut p, (-50.0, -50.0), (50.0, 50.0));
+            let i = p
+                .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+                .unwrap();
+            let sk = &mut p.sketches[i].sketch;
+            if circle {
+                sk.add_circle(Point2::new(20.0, 10.0), 8.0).unwrap();
+            } else {
+                sk.add_rectangle_two_point(Point2::new(-10.0, -5.0), Point2::new(10.0, 5.0))
+                    .unwrap();
+            }
+            let sid = p.sketches[i].id.clone();
+            op(
+                &mut p,
+                BodyOp::Trim(TrimOp {
+                    surface: s,
+                    tool: TrimTool::Sketch(sid),
+                    remove: inside,
+                    more: Vec::new(),
+                    invert,
+                }),
+            );
+            assert_eq!(surfaces(&p), 1);
+            let got = sheet_area(&p);
+            let cut = if invert { got } else { 10000.0 - got };
+            close(cut, hole, rel);
+            if !invert {
+                assert!(free_edges(&p) >= 5, "outer rim and the hole's rim");
+            }
+        }
+    }
+}
+
+#[test]
+fn trim_by_a_tube_of_walls_cuts_only_inside_it() {
+    // A rectangle 20 × 10 extruded as a surface (4 walls, z = 0..10) through a 100 × 100 patch
+    // at z = 5: the walls cut out the rectangle and nothing beyond them.
+    for invert in [false, true] {
+        let mut p = PartDocument::default();
+        let tube = wall(
+            &mut p,
+            &[
+                (-10.0, -5.0),
+                (10.0, -5.0),
+                (10.0, 5.0),
+                (-10.0, 5.0),
+                (-10.0, -5.0),
+            ],
+            10.0,
+        );
+        let w = p.add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 5.0,
+        })));
+        let w = w.unwrap();
+        let i = p
+            .create_sketch(
+                SketchPlacement {
+                    plane: PlaneRef::Work(w),
+                    ..Default::default()
+                },
+                &opts(),
+            )
+            .unwrap();
+        p.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(-50.0, -50.0), Point2::new(50.0, 50.0))
+            .unwrap();
+        let r = p.sketches[i].sketch.regions();
+        let id = p.sketches[i].id.clone();
+        let s = op(
+            &mut p,
+            BodyOp::Patch(PatchOp {
+                edges: Vec::new(),
+                sketch: Some(id),
+                profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
+                solid: false,
+            }),
+        );
+        let before = sheet_area(&p);
+        op(
+            &mut p,
+            BodyOp::Trim(TrimOp {
+                surface: s,
+                tool: TrimTool::Surface(tube),
+                remove: [0.0, 0.0, 5.0],
+                more: Vec::new(),
+                invert,
+            }),
+        );
+        // The tube (600) and the patch without (or only) its 200 inside.
+        let patch = if invert { 200.0 } else { 10000.0 - 200.0 };
+        close(sheet_area(&p) - (before - 10000.0), patch, 1e-4);
+    }
+}

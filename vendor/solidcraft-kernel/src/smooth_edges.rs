@@ -151,6 +151,13 @@ fn classify(body: &Body, mesh: &Mesh, mut work: usize) -> (Vec<bool>, Vec<bool>)
             boundaries.push(None);
             continue;
         }
+        // A closed edge (one vertex at both ends: a hole cut by a closed loop) cannot be
+        // mapped (truck refuses an edge between "two same vertices" and panicked): take the
+        // surface itself. 3DCadCraft.
+        if wires.iter().flat_map(|w| w.edge_iter()).any(|e| e.front().id() == e.back().id()) {
+            boundaries.push(ruled(&face.surface(), face.orientation(), &mut work));
+            continue;
+        }
         let mapped = face.try_mapped(|_| Some(()), |_| Some(()), |surface| ruled(surface, face.orientation(), &mut work));
         boundaries.push(mapped.map(|face| face.surface()));
     }

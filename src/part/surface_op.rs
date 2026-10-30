@@ -588,7 +588,19 @@ pub(super) fn trim(
 ) -> Result<Vec<ExactSolid>, Fail> {
     op.validate().map_err(User)?;
     let i = sheet_named(sheets, &op.surface)?;
-    if !op.more.is_empty() {
+    // Several areas, a closed sketch loop (a hole) and a tool of several walls (a tube) divide
+    // the surface only where the tool really meets it, then remove pieces.
+    let bounded = match &op.tool {
+        TrimTool::Sketch(sid) => sketches
+            .iter()
+            .find(|s| &s.id == sid)
+            .is_some_and(|ps| sketch_chains(ps).iter().any(|c| chain_closed(c))),
+        TrimTool::Surface(name) => {
+            sheet_named(sheets, name).is_ok_and(|t| t != i && distinct_names(&sheets[t]) > 1)
+        }
+        TrimTool::Plane(_) => false,
+    };
+    if !op.more.is_empty() || bounded {
         return trim_pieces(op, body, works, sketches, cur, sheets, i);
     }
     let remove = p(&op.remove);
@@ -645,14 +657,6 @@ pub(super) fn trim(
                     chains.push(c.0);
                 }
             }
-            // A closed chain (a rectangle) is not an open profile: cutting a hole by one is not
-            // supported yet (spec 5.4a T2).
-            if chains.is_empty() && sk.entities().any(|(e, _)| own(e)) {
-                return Err(User(
-                    "a closed sketch loop as the cutting tool is not supported yet (spec 5.4a T2)"
-                        .into(),
-                ));
-            }
             if chains.is_empty() {
                 return Err(User("the sketch has no curve to cut with".into()));
             }
@@ -688,23 +692,6 @@ pub(super) fn trim(
             let t = sheet_named(sheets, name)?;
             if t == i {
                 return Err(User("a surface cannot trim itself".into()));
-            }
-            // The kernel cuts by one face's surface (extended): a tool of several different
-            // faces (a rectangle's four walls) would cut along one wall's plane only. (Pieces of
-            // one surface, a cylinder in halves, share a name.)
-            let mut names: Vec<&str> = sheets[t]
-                .face_names
-                .iter()
-                .flatten()
-                .map(String::as_str)
-                .collect();
-            names.sort_unstable();
-            names.dedup();
-            if names.len() > 1 {
-                return Err(User(format!(
-                    "a cutting surface of {} faces is not supported yet: trim by each face, or by a sketch curve (spec 5.4a T2)",
-                    names.len()
-                )));
             }
             let side = exact::SheetSide::new(sheets[t].triangles().map_err(Kernel)?);
             let d = side.signed(&remove);
@@ -771,6 +758,57 @@ pub(super) fn trim(
     Ok(out)
 }
 
+/// The sketch's own curves (not construction, not projected) joined into chains end to end: a
+/// rectangle is one closed chain, an L of lines one open chain extended only at its ends.
+fn sketch_chains(ps: &super::PartSketch) -> Vec<Vec<crate::kernel::Segment2>> {
+    let sk = &ps.sketch;
+    let segs: Vec<crate::kernel::Segment2> = sk
+        .entities()
+        .filter(|(e, _)| !ps.is_reference(*e) && sk.style(*e) == crate::sketch::Style::Normal)
+        .flat_map(|(e, ent)| {
+            // A whole circle: one closed arc (an open profile cannot be one).
+            if let crate::sketch::Entity::Circle { center, radius } = ent {
+                return sk
+                    .point(*center)
+                    .map(|c| crate::kernel::Segment2::Arc {
+                        c: c.position,
+                        r: *radius,
+                        a0: 0.0,
+                        sweep: std::f64::consts::TAU,
+                    })
+                    .into_iter()
+                    .collect::<Vec<_>>();
+            }
+            let op = super::OpenProfile {
+                curves: vec![e],
+                flip: false,
+                match_shape: false,
+            };
+            super::extrude::open_chain(&op, sk)
+                .map(|c| c.0.into_iter().map(|s| s.geometry).collect())
+                .unwrap_or_default()
+        })
+        .collect();
+    crate::kernel::join_chains(segs, 1e-6)
+}
+
+/// Whether a chain ends where it starts (a whole circle is one closed segment).
+fn chain_closed(c: &[crate::kernel::Segment2]) -> bool {
+    match (c.first(), c.last()) {
+        (Some(a), Some(b)) => (b.end() - a.start()).norm() <= 1e-6,
+        _ => false,
+    }
+}
+
+/// How many differently named faces a surface body has (pieces of one surface, a cylinder in
+/// halves, share a name).
+fn distinct_names(s: &ExactSolid) -> usize {
+    let mut names: Vec<&str> = s.face_names.iter().flatten().map(String::as_str).collect();
+    names.sort_unstable();
+    names.dedup();
+    names.len()
+}
+
 /// Trim with several areas: surface `i` divided where the tool meets it (Split Face), then the
 /// pieces under the picked points removed (Invert Selection: every other piece removed).
 fn trim_pieces(
@@ -791,35 +829,30 @@ fn trim_pieces(
             if t == i {
                 return Err(User("a surface cannot trim itself".into()));
             }
-            exact::SplitBy::Sheet(sheets[t].clone())
+            if distinct_names(&sheets[t]) > 1 {
+                // Walls along one direction (a tube): cut along the walls only.
+                let (plane, curves) = exact::walls_section(&sheets[t]).ok_or_else(|| {
+                    User(
+                        "a cutting surface of several faces must be walls along one direction (an extruded outline): trim by each face, or by a sketch (spec 5.4a T2)"
+                            .into(),
+                    )
+                })?;
+                exact::SplitBy::Curves { plane, curves }
+            } else {
+                exact::SplitBy::Sheet(sheets[t].clone())
+            }
         }
         TrimTool::Sketch(sid) => {
             let ps = sketches
                 .iter()
                 .find(|s| &s.id == sid)
                 .ok_or_else(|| User(format!("sketch {sid} is missing")))?;
-            let sk = &ps.sketch;
-            let curves: Vec<Vec<crate::kernel::Segment2>> = sk
-                .entities()
-                .filter(|(e, _)| {
-                    !ps.is_reference(*e) && sk.style(*e) == crate::sketch::Style::Normal
-                })
-                .filter_map(|(e, _)| {
-                    let op = super::OpenProfile {
-                        curves: vec![e],
-                        flip: false,
-                        match_shape: false,
-                    };
-                    super::extrude::open_chain(&op, sk)
-                        .ok()
-                        .map(|c| c.0.into_iter().map(|s| s.geometry).collect())
-                })
-                .collect();
+            let curves = sketch_chains(ps);
             if curves.is_empty() {
                 return Err(User("the sketch has no curve to cut with".into()));
             }
             exact::SplitBy::Curves {
-                plane: sk.plane.clone(),
+                plane: ps.sketch.plane.clone(),
                 curves,
             }
         }
@@ -858,46 +891,55 @@ fn trim_pieces(
     };
     // Faces form pieces: neighbours across an edge on the same side of the tool (a piece between
     // two crossings of a zigzag spans two faces).
-    let sign = |q: &Point3| -> bool {
+    // Signed distance to the tool (its sign = the side).
+    let sheet_side = match &tool {
+        exact::SplitBy::Sheet(t) => Some(exact::SheetSide::new(t.triangles().map_err(Kernel)?)),
+        _ => None,
+    };
+    let field = |q: &Point3| -> Real {
         match &tool {
-            exact::SplitBy::Plane(pl) => (q - pl.origin).dot(&pl.normal.into_inner()) > 0.0,
-            exact::SplitBy::Sheet(t) => t
-                .triangles()
-                .map(|tr| exact::SheetSide::new(tr).signed(q) > 0.0)
-                .unwrap_or(true),
+            exact::SplitBy::Plane(pl) => (q - pl.origin).dot(&pl.normal.into_inner()),
+            exact::SplitBy::Sheet(_) => sheet_side.as_ref().map_or(0.0, |s| s.signed(q)),
             exact::SplitBy::Curves { plane, curves } => {
                 let q2 = plane.project(q);
                 let mut best: Option<(Real, Real)> = None;
                 for c in curves {
                     for g in c {
-                        for k in 0..16 {
+                        for k in 0..64 {
                             let (a, b) =
-                                (g.point(k as Real / 16.0), g.point((k + 1) as Real / 16.0));
+                                (g.point(k as Real / 64.0), g.point((k + 1) as Real / 64.0));
                             let ab = b - a;
                             let t =
                                 ((q2 - a).dot(&ab) / ab.norm_squared().max(1e-24)).clamp(0.0, 1.0);
                             let d = (a + ab * t - q2).norm();
                             if best.is_none_or(|(x, _)| d < x) {
-                                best = Some((d, ab.x * (q2.y - a.y) - ab.y * (q2.x - a.x)));
+                                let s = ab.x * (q2.y - a.y) - ab.y * (q2.x - a.x);
+                                best = Some((d, if s > 0.0 { d } else { -d }));
                             }
                         }
                     }
                 }
-                best.is_some_and(|(_, s)| s > 0.0)
+                best.map_or(0.0, |(_, s)| s)
             }
         }
     };
     let ids: Vec<crate::kernel::FaceId> = b.faces().map(|(f, _)| f).collect();
-    let centre = |f: &crate::kernel::Face| -> Option<Point3> {
-        let m = f.mesh.as_ref()?;
-        let t = m.triangles.first()?;
-        let [a, b2, c] = t.map(|j| m.positions[j as usize]);
-        Some(Point3::from((a.coords + b2.coords + c.coords) / 3.0))
+    // A face's side: at the centre of its triangle farthest from the tool (one by the cut
+    // line can fall on the wrong side of a sampled curve).
+    let side_of = |f: &crate::kernel::Face| -> bool {
+        let Some(m) = f.mesh.as_ref() else {
+            return false;
+        };
+        m.triangles
+            .iter()
+            .map(|t| {
+                let [a, b2, c] = t.map(|j| m.positions[j as usize]);
+                field(&Point3::from((a.coords + b2.coords + c.coords) / 3.0))
+            })
+            .max_by(|x, y| x.abs().total_cmp(&y.abs()))
+            .is_some_and(|x| x > 0.0)
     };
-    let sides: Vec<bool> = faces
-        .iter()
-        .map(|f| centre(f).is_some_and(|c| sign(&c)))
-        .collect();
+    let sides: Vec<bool> = faces.iter().map(|f| side_of(f)).collect();
     let mut piece = vec![usize::MAX; faces.len()];
     let mut next = 0;
     for s0 in 0..faces.len() {

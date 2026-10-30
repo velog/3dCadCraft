@@ -28,8 +28,8 @@ use super::{
 };
 use nalgebra as na;
 
-type P2 = na::Point2<Real>;
-type V2 = na::Vector2<Real>;
+pub(crate) type P2 = na::Point2<Real>;
+pub(crate) type V2 = na::Vector2<Real>;
 
 /// Geometry of a profile segment in plane coordinates.
 #[derive(Clone, Debug, PartialEq)]
@@ -65,8 +65,75 @@ pub enum Segment2 {
     },
 }
 
+/// Segments joined end to start into chains (reversed where needed), within `tol`; a line's
+/// end is moved onto the point it joins, so a closed chain closes exactly.
+pub(crate) fn join_chains(segs: Vec<Segment2>, tol: Real) -> Vec<Vec<Segment2>> {
+    let mut left = segs;
+    let mut out = Vec::new();
+    while let Some(first) = left.pop() {
+        let mut chain = vec![first];
+        // Grow at the end, then at the start.
+        for front in [false, true] {
+            loop {
+                let at = if front {
+                    chain[0].start()
+                } else {
+                    chain[chain.len() - 1].end()
+                };
+                let Some((k, rev)) = left.iter().enumerate().find_map(|(k, g)| {
+                    let (a, b) = (g.start(), g.end());
+                    if (if front { b } else { a } - at).norm() <= tol {
+                        Some((k, false))
+                    } else if (if front { a } else { b } - at).norm() <= tol {
+                        Some((k, true))
+                    } else {
+                        None
+                    }
+                }) else {
+                    break;
+                };
+                let g = left.remove(k);
+                let g = if rev { g.reversed() } else { g };
+                if front {
+                    chain.insert(0, g);
+                } else {
+                    chain.push(g);
+                }
+            }
+        }
+        // Lines take their neighbours' exact ends (an arc's end is where it is).
+        let n = chain.len();
+        let closed = n > 1 && (chain[n - 1].end() - chain[0].start()).norm() <= tol;
+        for i in 0..n {
+            let j = if i + 1 < n {
+                i + 1
+            } else if closed {
+                0
+            } else {
+                break;
+            };
+            let (p, q) = (chain[i].end(), chain[j].start());
+            let to = match (&chain[i], &chain[j]) {
+                (Segment2::Line { .. }, Segment2::Line { .. }) => {
+                    P2::from((p.coords + q.coords) / 2.0)
+                }
+                (Segment2::Line { .. }, _) => q,
+                _ => p,
+            };
+            if let Segment2::Line { b, .. } = &mut chain[i] {
+                *b = to;
+            }
+            if let Segment2::Line { a, .. } = &mut chain[j] {
+                *a = to;
+            }
+        }
+        out.push(chain);
+    }
+    out
+}
+
 impl Segment2 {
-    fn reversed(&self) -> Segment2 {
+    pub(crate) fn reversed(&self) -> Segment2 {
         match self {
             Segment2::Line { a, b } => Segment2::Line { a: *b, b: *a },
             Segment2::Arc { c, r, a0, sweep } => Segment2::Arc {
@@ -87,7 +154,7 @@ impl Segment2 {
         }
     }
 
-    pub(super) fn start(&self) -> P2 {
+    pub(crate) fn start(&self) -> P2 {
         match self {
             Segment2::Line { a, .. } => *a,
             Segment2::Arc { c, r, a0, .. } => c + V2::new(a0.cos(), a0.sin()) * *r,

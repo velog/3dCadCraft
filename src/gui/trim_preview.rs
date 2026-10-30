@@ -20,8 +20,10 @@ pub(super) enum Side {
     Plane(crate::kernel::Plane),
     /// A surface body: the signed distance to its triangles.
     Sheet(crate::kernel::exact::SheetSide),
-    /// Sketch curves (their polylines in the sketch plane): the side of the nearest segment.
-    Curves(crate::kernel::Plane, Vec<[nalgebra::Point2<Real>; 2]>),
+    /// Sketch curves (their polylines in the sketch plane): the side of the nearest segment,
+    /// or for closed loops (`true`) inside (positive) or outside — the curves of a rectangle
+    /// run whichever way they were drawn.
+    Curves(crate::kernel::Plane, Vec<[nalgebra::Point2<Real>; 2]>, bool),
 }
 
 impl Side {
@@ -29,8 +31,21 @@ impl Side {
         match self {
             Side::Plane(pl) => (q - pl.origin).dot(&pl.normal.into_inner()),
             Side::Sheet(s) => s.signed(q),
-            Side::Curves(pl, segs) => {
+            Side::Curves(pl, segs, closed) => {
                 let p = pl.project(q);
+                if *closed {
+                    let mut inside = false;
+                    let mut best = Real::MAX;
+                    for [a, b] in segs {
+                        let ab = b - a;
+                        if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) * ab.x / ab.y {
+                            inside = !inside;
+                        }
+                        let t = ((p - a).dot(&ab) / ab.norm_squared().max(1e-24)).clamp(0.0, 1.0);
+                        best = best.min((a + ab * t - p).norm());
+                    }
+                    return if inside { best } else { -best };
+                }
                 let mut best: Option<(Real, Real)> = None;
                 for [a, b] in segs {
                     let ab = b - a;
@@ -177,7 +192,17 @@ impl CadCraftApp {
                         pts.windows(2).map(|w| [w[0], w[1]]).collect::<Vec<_>>()
                     })
                     .collect();
-                (!segs.is_empty()).then(|| Side::Curves(sk.plane.clone(), segs))
+                // Closed when every end meets exactly one other end.
+                let key = |p: &nalgebra::Point2<Real>| {
+                    ((p.x * 1e5).round() as i64, (p.y * 1e5).round() as i64)
+                };
+                let mut ends: std::collections::HashMap<(i64, i64), usize> = Default::default();
+                for [a, b] in &segs {
+                    *ends.entry(key(a)).or_default() += 1;
+                    *ends.entry(key(b)).or_default() += 1;
+                }
+                let closed = ends.values().all(|n| n % 2 == 0);
+                (!segs.is_empty()).then(|| Side::Curves(sk.plane.clone(), segs, closed))
             }
             _ => None,
         }

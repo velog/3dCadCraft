@@ -2992,7 +2992,8 @@ pub enum SplitBy {
         /// The chains, in sketch coordinates.
         curves: Vec<Vec<Segment2>>,
     },
-    /// A surface body of one face: the face's surface, extended.
+    /// A surface body: one face's surface, extended, or walls along one
+    /// direction (a tube) by their section ([`walls_section`]).
     Sheet(ExactSolid),
 }
 
@@ -3039,13 +3040,16 @@ pub fn split_faces(
         }
         SplitBy::Sheet(sheet) => {
             // One surface (a full revolve's sectors share it): its first face.
-            let [face] = sheet::distinct_faces(sheet)?[..] else {
-                return Err(
-                    "not supported yet: a surface of several faces as the tool of Split Face"
-                        .into(),
-                );
-            };
-            sheet::split_faces_by(&s.body, faces, sheet, face)?
+            // Several walls along one direction (a tube): their section as curves.
+            let distinct = sheet::distinct_faces(sheet)?;
+            if let [face] = distinct[..] {
+                sheet::split_faces_by(&s.body, faces, sheet, face)?
+            } else {
+                let (plane, curves) = sheet::walls_section(sheet).ok_or_else(|| {
+                    "not supported yet: a surface of several faces that are not walls along one direction as the tool of Split Face".to_owned()
+                })?;
+                return split_faces(s, faces, &SplitBy::Curves { plane, curves }, prefix, side);
+            }
         }
     };
     let mut out = ExactSolid {
@@ -4942,7 +4946,7 @@ pub use loft::{
 mod sheet;
 pub use sheet::{
     SheetSide, closest_on_triangle, extrude_sheet, revolve_sheet, sheet_nearest, split_by_sheet,
-    sweep_sheet_along,
+    sweep_sheet_along, walls_section,
 };
 pub mod surface_ops;
 

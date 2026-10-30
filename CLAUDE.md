@@ -1266,6 +1266,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   find the edge again by the distance to its *segments* (a straight edge samples as its two ends — a tie picked
   the wrong edge). A Sculpt / Stitch body closed by a rim patch may come out inside-out: check its volume's sign
   (`surface_ops::reversed`); a revolved dome closed that way still fails the kernel's Boolean.
+- **Bounded Trim** (spec 5.4a T2, `part/surface_op.rs::trim_pieces`): a closed sketch loop or a tool of several walls
+  divides the surface first (Split Face) and removes pieces; a tube of walls along one direction is cut by its section
+  (`exact::walls_section` → `SplitBy::Curves`), since each wall's extended surface would cut across the whole face. A
+  piece's side is taken at its triangle *farthest* from the tool (one beside a circle fell on the wrong side of the
+  sampled curve). Sketch curves join into chains end to end (`kernel::join_chains`); a whole circle is one closed arc.
 - **Drawing layers are pens in the display list** (`Prim::Pen { color, plot }`, `render::sheet_list`): every group
   (border, a view's visible / hidden lines, hatching, section lines, labels, each annotation) starts with its layer's
   pen, and a layer that is off leaves the group out. `paint_prims` (highlight / preview colour) ignores pens,

@@ -43,6 +43,7 @@ mod query;
 mod revolve;
 pub mod smooth;
 
+pub(crate) use extrude::join_chains;
 pub use extrude::{ExtrudeLevel, ProfileSegment, Segment2, offset_loop};
 pub use facet::{BoolOp, FaceTag};
 pub use mesh::{SolidMesh, TessellationOptions, TriangleMesh, triangulate_with_holes};

@@ -71,8 +71,29 @@ impl Field {
             Field::Curve { plane, pts } => {
                 let q = plane.to_local(p);
                 let q = Vec2::new(q.x, q.y);
-                // Signed distance to the polyline, its end segments extended as lines.
+                // Signed distance to the polyline, its end segments extended as lines. A closed
+                // polyline is not extended (the extended ends crossed the outside at its first
+                // corner): the distance to it, positive inside.
                 let n = pts.len();
+                let closed = n > 3 && pts.first().zip(pts.last()).is_some_and(|(a, b)| (*a - *b).len() <= 1e-9 * (1.0 + a.len()));
+                if closed {
+                    let mut best = f64::INFINITY;
+                    let mut wind = false;
+                    for w in pts.windows(2) {
+                        let (a, b) = (w[0], w[1]);
+                        let d = b - a;
+                        let l2 = d.dot(d);
+                        if (a.y > q.y) != (b.y > q.y) && q.x < a.x + (q.y - a.y) * d.x / d.y {
+                            wind = !wind;
+                        }
+                        if !(l2 > 0.0) {
+                            continue;
+                        }
+                        let t = ((q - a).dot(d) / l2).clamp(0.0, 1.0);
+                        best = best.min((q - (a + d * t)).len());
+                    }
+                    return if wind { best } else { -best };
+                }
                 let mut best = (f64::INFINITY, 0.0);
                 for i in 0..n.saturating_sub(1) {
                     let (Some(&a), Some(&b)) = (pts.get(i), pts.get(i + 1)) else { continue };
@@ -420,6 +441,14 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<
             return Ok(e.curve());
         }
     }
+    // Sketch curves splitting a planar face parallel to their plane: the split line is the
+    // tool's own polyline (corners kept), not a spline through the traced points, which
+    // rounded a rectangle's corners by the tracing step (a hole cut by a closed loop). 3DCadCraft.
+    if let (Field::Curve { plane, pts: poly }, mt::Surface::Plane(pl)) = (g, face.surface())
+        && let Some(c) = polyline_on(plane, poly, &pl, pts, scale)
+    {
+        return Ok(c);
+    }
     // A plane through a round (a fillet's or a cylinder's surface, square to
     // the plane): the traced points lie on a circle, and a spline through
     // them (2 % of the body apart) was 0.01 mm off it, so a sketch arc on the
@@ -447,6 +476,95 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<
         }
     }
     fit(pts, scale)
+}
+
+/// The part of a sketch polyline `poly` (in `plane`) between the traced ends of a split line
+/// `traced`, put onto the parallel face plane `face`: the traced ends, the polyline's corners
+/// between them in the traced direction (all of them round a closed polyline). `None` when
+/// the planes are not parallel or the polyline has no corner there.
+fn polyline_on(plane: &Plane, poly: &[Vec2], face: &mt::Plane, traced: &[mt::Point3], scale: f64) -> Option<mt::Curve> {
+    let fnrm = face.normal();
+    let n = Vec3::new(fnrm.x, fnrm.y, fnrm.z);
+    if plane.normal().cross(n).len() > 1e-9 || poly.len() < 3 {
+        return None;
+    }
+    let (a, b) = (*traced.first()?, *traced.last()?);
+    let o = from_p3(face.origin());
+    let onto = |q: Vec2| {
+        let w = plane.to_world(q);
+        p3(w - n * (w - o).dot(n))
+    };
+    let local = |p: mt::Point3| {
+        let q = plane.to_local(from_p3(p));
+        Vec2::new(q.x, q.y)
+    };
+    let m = poly.len() - 1;
+    let closed = (poly[0] - poly[m]).len() <= 1e-9 * (1.0 + poly[0].len());
+    // Position along the polyline: segment index + fraction (the end segments extended when open).
+    let at = |p: mt::Point3| -> f64 {
+        let q = local(p);
+        let mut best = (f64::INFINITY, 0.0);
+        for i in 0..m {
+            let d = poly[i + 1] - poly[i];
+            let l2 = d.dot(d);
+            if !(l2 > 0.0) {
+                continue;
+            }
+            let mut t = (q - poly[i]).dot(d) / l2;
+            if closed || i > 0 {
+                t = t.max(0.0);
+            }
+            if closed || i + 1 < m {
+                t = t.min(1.0);
+            }
+            let dist = (q - (poly[i] + d * t)).len();
+            if dist < best.0 {
+                best = (dist, i as f64 + t);
+            }
+        }
+        best.1
+    };
+    let tol = scale * 1e-7 + 1e-9;
+    let mut out = vec![a];
+    let ring = closed && a.distance(b) <= tol;
+    if ring {
+        // Round the loop from `a` in the traced direction (told by a traced point a little on).
+        let sa = at(a);
+        let probe = traced.get(traced.len() / 4).copied()?;
+        let fwd = (at(probe) - sa).rem_euclid(m as f64) < m as f64 / 2.0;
+        let first = if fwd { sa.floor() as usize + 1 } else { sa.ceil() as usize + m - 1 };
+        for k in 0..m {
+            let i = if fwd { (first + k) % m } else { (first + m - k) % m };
+            let p = onto(poly[i]);
+            if p.distance(a) > tol && out.last().is_none_or(|q: &mt::Point3| q.distance(p) > tol) {
+                out.push(p);
+            }
+        }
+        out.push(a);
+    } else {
+        let (sa, sb) = (at(a), at(b));
+        let corners: Vec<usize> = if sa <= sb {
+            (1..m).filter(|&i| (i as f64) > sa && (i as f64) < sb).collect()
+        } else {
+            (1..m).rev().filter(|&i| (i as f64) < sa && (i as f64) > sb).collect()
+        };
+        for i in corners {
+            let p = onto(poly[i]);
+            if p.distance(*out.last()?) > tol && p.distance(b) > tol {
+                out.push(p);
+            }
+        }
+        out.push(b);
+    }
+    if out.len() < 3 {
+        return None;
+    }
+    // A degree-1 B-spline through the corners.
+    let k = out.len() - 1;
+    let mut knots = vec![0.0, 0.0];
+    knots.extend((1..k).map(|i| i as f64));
+    knots.extend([k as f64, k as f64]);
+    mt::BSplineCurve::try_new(mt::KnotVec::from(knots), out).ok().map(mt::Curve::BSplineCurve)
 }
 
 /// Cut an edge at a parameter (none when the point is already a vertex): the vertex and the
@@ -653,7 +771,7 @@ fn split_one(faces: &mut Vec<mt::Face>, fi: usize, g: &Field, size: f64, new_edg
             if let Some(first) = pts.first().copied() {
                 pts.push(first);
             }
-            let curve = fit(&pts, size)?;
+            let curve = fit_on(g, &face, &pts, size)?;
             let Some(&(p0, uv0)) = ch.pts.first() else { continue };
             let v = mt::Vertex::new(p0);
             let e = mt::Edge::new_unchecked(&v, &v, curve);

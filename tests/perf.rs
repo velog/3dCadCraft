@@ -1396,6 +1396,75 @@ fn speed_budgets() {
         ));
     }
 
+    // Bounded Trim (spec 5.4a T2) on the owner's Surface_test_4: the upper wave holed by the
+    // rectangle tube of four walls, the lower one by the closed rectangle of Sketch4.
+    {
+        use cadcraft3d::document::{DocumentData, Project};
+        use cadcraft3d::part::surface_op::{TrimOp, TrimTool};
+        use cadcraft3d::part::{BodyOp, BodyOpFeature};
+        let pr = Project::load(std::path::Path::new(
+            "tests/data/surface_test4_owner.3dcadcraft",
+        ))
+        .unwrap();
+        let mut owner = pr
+            .documents()
+            .iter()
+            .find_map(|d| match &d.data {
+                DocumentData::Part(p) => Some(p.clone()),
+                _ => None,
+            })
+            .unwrap();
+        owner.regenerate().unwrap();
+        // A point of each surface far from the tube's axis: the outer piece, kept by Invert.
+        let far = |name: &str| -> [f64; 3] {
+            let s = owner
+                .exact_bodies
+                .0
+                .iter()
+                .find(|s| s.name.as_deref() == Some(name))
+                .unwrap();
+            let q = s
+                .triangles()
+                .unwrap()
+                .into_iter()
+                .flatten()
+                .max_by(|a, b| a.coords.xy().norm().total_cmp(&b.coords.xy().norm()))
+                .unwrap();
+            [q.x, q.y, q.z]
+        };
+        let sketch4 = owner
+            .sketches
+            .iter()
+            .find(|s| s.name.starts_with("Sketch4"))
+            .unwrap()
+            .id
+            .clone();
+        let ops = [
+            ("Extrusion2", TrimTool::Surface("Extrusion6".into())),
+            ("Extrusion4", TrimTool::Sketch(sketch4)),
+        ]
+        .map(|(s, tool)| TrimOp {
+            surface: s.into(),
+            tool,
+            remove: far(s),
+            more: Vec::new(),
+            invert: true,
+        });
+        rows.push((
+            "trim: the owner's waves holed by a tube of 4 walls and a sketch rectangle (2 × add_body_op)",
+            1500.0,
+            median_ms(3, || {
+                let mut p = owner.clone();
+                p.build_cache = owner.build_cache.detached();
+                for o in &ops {
+                    p.add_body_op(BodyOpFeature::new(BodyOp::Trim(o.clone())))
+                        .unwrap();
+                }
+                assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+            }),
+        ));
+    }
+
     // Loft between two whole surfaces (the owner's Surface_test_3 before its hole) with Output
     // Solid: one bridge per pair of sides, sewn with the two surfaces into a solid.
     {
