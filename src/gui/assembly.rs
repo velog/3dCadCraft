@@ -190,6 +190,17 @@ fn nest_in(
     (o_top, path, o_place * local)
 }
 
+/// Where a linked part or subassembly edited in place sits: the top
+/// assembly, its path there, its placement in the top assembly and in the
+/// document it was opened from.
+pub(super) struct LinkedAt {
+    pub assembly: DocumentId,
+    pub top: u32,
+    pub sub: Vec<u32>,
+    pub place: Transform3,
+    pub local: Transform3,
+}
+
 /// Edit in place of a linked part file (spec 3.10 §3.2): the part's file is
 /// the active tab, so the assembly around it is kept as copies taken at the
 /// start.
@@ -547,13 +558,22 @@ impl CadCraftApp {
             self.asm
                 .libs
                 .take_open(&part, std::rc::Rc::new(self.project.clone()));
+            let outer = self.in_place_now().and_then(|ip| ip.outer.clone());
+            let ip_place = place;
             self.asm.in_place = None;
             match self.tab_of_path(std::path::Path::new(&back)) {
                 Some(k) => self.switch_tab(k),
                 None => self.open_path(std::path::Path::new(&back)),
             }
-            if let Some(m) = place {
-                self.keep_view(view, m);
+            match (outer, ip_place) {
+                // Back into the subassembly edited in place it was opened from.
+                (Some(o), Some(m)) => {
+                    self.keep_view(view, o.place.inverse() * m);
+                    self.asm.came_from = Some(o.parent);
+                    self.asm.in_place = Some(*o);
+                }
+                (None, Some(m)) => self.keep_view(view, m),
+                _ => {}
             }
             self.scene_dirty = true;
             return;
@@ -604,7 +624,6 @@ impl CadCraftApp {
         let Some(local) = a.find(top).map(|t| t.transform * n.at) else {
             return;
         };
-        let is_sub = crate::assembly::tree::assembly_of(&self.project, &linked, r).is_some();
         // A subassembly edited in place: what is opened inside it is placed
         // in the top assembly through it.
         let outer = self
@@ -618,20 +637,17 @@ impl CadCraftApp {
             }
             None => (asm_id, top, sub, local),
         };
-        if r.library.is_some() && is_sub {
-            // A linked subassembly opens in its own tab (in place later).
-            self.open_doc(r);
-            return;
-        }
+        // A linked part or subassembly: edited in its file's tab, the rest
+        // of the top assembly around it as copies.
         if let Some(lib) = r.library {
-            if outer.is_some() {
-                self.file_status = Some(Err(
-                    "Edit: a linked part inside a subassembly edited in place opens with Open for now"
-                        .into(),
-                ));
-                return;
-            }
-            self.edit_linked_in_place(lib, r.document, top, sub, place, name);
+            let at = LinkedAt {
+                assembly,
+                top,
+                sub,
+                place,
+                local,
+            };
+            self.edit_linked_in_place(lib, r.document, at, outer, name);
             return;
         }
         let view = self.camera.clone();
@@ -659,17 +675,25 @@ impl CadCraftApp {
         &mut self,
         lib: crate::document::LibraryId,
         doc: DocumentId,
-        top: u32,
-        sub: Vec<u32>,
-        place: Transform3,
+        at: LinkedAt,
+        outer: Option<InPlace>,
         name: String,
     ) {
+        let LinkedAt {
+            assembly,
+            top,
+            sub,
+            place,
+            local,
+        } = at;
         let Some(part_path) = self.library_path(lib) else {
-            self.file_status = Some(Err("Edit: the part file was not found".into()));
+            self.file_status = Some(Err("Edit: the file was not found".into()));
             return;
         };
         let linked = self.linked();
-        let Some(a) = self.assembly() else {
+        let Some(a) =
+            crate::assembly::tree::assembly_of(&self.project, &linked, DocRef::local(assembly))
+        else {
             return;
         };
         let mut edited = vec![top];
@@ -679,10 +703,9 @@ impl CadCraftApp {
         let mut meshes: HashMap<DocRef, Arc<PickMesh>> = HashMap::new();
         let mut context = Vec::new();
         let mut leaves = Vec::new();
-        for l in
-            crate::assembly::tree::leaves(&self.project, &linked, DocRef::local(self.part_id), a)
-        {
-            if l.path == edited {
+        for l in crate::assembly::tree::leaves(&self.project, &linked, DocRef::local(assembly), a) {
+            // The edited part, or every part of the edited subassembly.
+            if l.path.starts_with(&edited) {
                 continue;
             }
             let p = match parts.get(&l.component) {
@@ -725,16 +748,16 @@ impl CadCraftApp {
         if self.part_id != doc {
             self.activate_document(doc);
         }
-        self.keep_view(view, place.inverse());
+        self.keep_view(view, local.inverse());
         self.asm.in_place = Some(InPlace {
-            assembly: asm_id,
+            assembly,
             top,
             sub,
             document: doc,
             place,
             linked: Some(le),
             parent: asm_id,
-            outer: None,
+            outer: outer.map(Box::new),
         });
         self.scene_dirty = true;
         self.file_status = Some(Ok(format!(
