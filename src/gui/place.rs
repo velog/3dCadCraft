@@ -183,6 +183,12 @@ impl LibCache {
         *self.linked.borrow_mut() = None;
     }
 
+    /// Drops the cached linked projects (`CadCraftApp::linked`): this
+    /// file's edits of linked files changed.
+    pub(super) fn forget_linked(&self) {
+        *self.linked.borrow_mut() = None;
+    }
+
     /// Forgets file `path` (its tab closed: it is read from disk again).
     pub(super) fn forget(&self, path: &Path) {
         if let Ok(key) = path.canonicalize()
@@ -212,10 +218,16 @@ impl CadCraftApp {
             if out.contains(id) {
                 continue;
             }
-            let Some(p) = self
-                .library_path(id)
-                .and_then(|path| self.part_file(&path).ok())
-            else {
+            // A linked file changed from this one: as edited.
+            let edited = self
+                .project
+                .linked_edits
+                .get(&id)
+                .map(|p| Rc::new((**p).clone()));
+            let Some(p) = edited.or_else(|| {
+                self.library_path(id)
+                    .and_then(|path| self.part_file(&path).ok())
+            }) else {
                 continue;
             };
             queue.extend(p.libraries().iter().map(|l| l.id));
@@ -273,6 +285,102 @@ impl CadCraftApp {
         let out = Rc::new(self.linked_from(ids.clone()));
         *self.asm.libs.linked.borrow_mut() = Some((self.file_path.clone(), ids, out.clone()));
         out
+    }
+
+    /// Part `doc` of the file linked as `lib` becomes `part` in this file's
+    /// edits of linked files (`Project::linked_edits`: not saved until this
+    /// file is, undone with it). No Undo step (the caller's).
+    pub(super) fn edit_linked_part(&mut self, lib: LibraryId, doc: DocumentId, part: PartDocument) {
+        let base = match self.project.linked_edits.get(&lib) {
+            Some(p) => Some((**p).clone()),
+            None => self
+                .library_path(lib)
+                .and_then(|path| self.part_file(&path).ok())
+                .map(|p| (*p).clone()),
+        };
+        let Some(mut project) = base else {
+            return;
+        };
+        if let Some(d) = project.document_mut(doc) {
+            d.data = DocumentData::Part(part);
+        }
+        self.project
+            .linked_edits
+            .insert(lib, std::sync::Arc::new(project));
+        *self.asm.libs.linked.borrow_mut() = None;
+        self.scene_dirty = true;
+    }
+
+    /// Writes this file's edits of linked files into those files (after this
+    /// file is saved): the message, or why one could not be written (it stays
+    /// an edit then).
+    pub(super) fn save_linked_edits(&mut self) -> Result<Vec<String>, String> {
+        let mut saved = Vec::new();
+        let edits = std::mem::take(&mut self.project.linked_edits);
+        let mut failed = None;
+        for (lib, p) in edits {
+            let Some(path) = self.library_path(lib) else {
+                failed = Some("a linked file was not found".to_owned());
+                self.project.linked_edits.insert(lib, p);
+                continue;
+            };
+            // The file open in a tab: that tab shows the saved file after
+            // this — unless it has changes of its own, then nothing is
+            // written (they would be lost either way).
+            let key = path.canonicalize().ok();
+            let same = |f: &str| {
+                key.as_ref().is_some_and(|k| {
+                    std::path::Path::new(f.trim())
+                        .canonicalize()
+                        .is_ok_and(|c| c == *k)
+                })
+            };
+            if self
+                .tabs
+                .iter()
+                .flatten()
+                .any(|t| same(&t.file_path) && t.dirty)
+            {
+                failed = Some(format!(
+                    "{} is open with changes of its own: save or close it there first",
+                    path.display()
+                ));
+                self.project.linked_edits.insert(lib, p);
+                continue;
+            }
+            match p.save(&path) {
+                Ok(()) => {
+                    for t in self.tabs.iter_mut().flatten() {
+                        if same(&t.file_path) {
+                            t.project = (*p).clone();
+                            t.saved_sig = super::files::signature_of(&t.project);
+                            t.history.clear();
+                        }
+                    }
+                    if let Ok(key) = path.canonicalize() {
+                        let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
+                        self.asm.libs.files.borrow_mut().insert(
+                            key,
+                            LibEntry {
+                                project: Rc::new((*p).clone()),
+                                modified,
+                                checked: Instant::now(),
+                            },
+                        );
+                    }
+                    saved.push(path.display().to_string());
+                }
+                Err(e) => {
+                    failed = Some(format!("{}: {e}", path.display()));
+                    self.project.linked_edits.insert(lib, p);
+                }
+            }
+        }
+        *self.asm.libs.linked.borrow_mut() = None;
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(saved),
+        }
     }
 
     /// Writes the iProperties of document `doc` of the part file `path`:
@@ -396,6 +504,16 @@ impl CadCraftApp {
     pub(super) fn with_part<R>(&self, r: DocRef, f: impl FnOnce(&PartDocument) -> R) -> Option<R> {
         match r.library {
             None => asm::part_of(&self.project, r).map(f),
+            // Changed from this file and not saved yet.
+            Some(lib) if self.project.linked_edits.contains_key(&lib) => {
+                match self.project.linked_edits[&lib]
+                    .document(r.document)
+                    .map(|d| &d.data)
+                {
+                    Some(DocumentData::Part(p)) => Some(f(p)),
+                    _ => None,
+                }
+            }
             Some(lib) => {
                 let path = self.library_path(lib)?;
                 let project = self.part_file(&path).ok()?;

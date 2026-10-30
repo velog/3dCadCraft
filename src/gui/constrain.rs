@@ -232,18 +232,21 @@ impl CadCraftApp {
         }
         let mut found = None;
         for o in a.occurrences.iter().filter(|o| o.adaptive && !o.suppressed) {
-            if o.component.library.is_some() || o.id == drag.occurrence {
+            if o.id == drag.occurrence
+                || o.component
+                    .library
+                    .is_some_and(|l| self.project.library(l).is_none())
+            {
                 continue;
             }
-            let Some(DocumentData::Part(base)) =
-                self.project.document(o.component.document).map(|d| &d.data)
-            else {
+            let Some(base) = self.with_part(o.component, Clone::clone) else {
                 continue;
             };
             let local = |r: &GeomRef| self.asm_local_in(&a, r);
-            if let Ok(Some(r)) = crate::assembly::adapt::adapt_dragged(&a, o.id, base, &local, drag)
+            if let Ok(Some(r)) =
+                crate::assembly::adapt::adapt_dragged(&a, o.id, &base, &local, drag)
             {
-                found = Some((o.component.document, r));
+                found = Some((o.component, r));
                 break;
             }
         }
@@ -260,7 +263,7 @@ impl CadCraftApp {
                 if let Ok(Some(r)) =
                     crate::assembly::adapt::adapt_nested(&a, &target, base, &local, Some(drag))
                 {
-                    found = Some((doc, r));
+                    found = Some((DocRef::local(doc), r));
                     break;
                 }
             }

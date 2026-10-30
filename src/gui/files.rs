@@ -805,12 +805,7 @@ impl CadCraftApp {
 
     /// A cheap signature of the whole project (for "unsaved changes").
     fn project_signature(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        serde_json::to_vec(&self.project)
-            .unwrap_or_default()
-            .hash(&mut h);
-        h.finish()
+        signature_of(&self.project)
     }
 
     /// The project as it is now counts as saved.
@@ -1990,6 +1985,20 @@ fn file_list(
         }
     }
     (enter, chosen)
+}
+
+/// A cheap signature of project `p` (for "unsaved changes"): its saved
+/// content and the edits of linked files made from it.
+pub(super) fn signature_of(p: &Project) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_vec(p).unwrap_or_default().hash(&mut h);
+    // Linked files changed from here are unsaved changes too.
+    for (lib, e) in &p.linked_edits {
+        lib.hash(&mut h);
+        serde_json::to_vec(&**e).unwrap_or_default().hash(&mut h);
+    }
+    h.finish()
 }
 
 #[cfg(test)]

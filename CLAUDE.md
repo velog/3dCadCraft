@@ -1221,6 +1221,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   Edges are one reference each (`ContextCurve`: line, circle, arc, spline — revision 51); a face or a loop is many
   (`face_outline`, `edge_loop`), added all or nothing by `project_context_edges`. Find an edge's loop by the edge itself,
   never by "nearest loop to its hint" over sampled points (a straight edge samples as its ends).
+  Changes made from an assembly to a **linked** part file (adaptive size, cross-part copies) go into
+  `Project::linked_edits` (serde skip, `Arc`: Undo snapshots carry them, `files::signature_of` counts them,
+  `save_linked_edits` writes them after the assembly's Save); every reader of a linked part prefers them
+  (`with_part`, `linked_from`, `context::part_in`) — read a linked part any other way and it is stale.
 - **Adaptivity** (`assembly::adapt`, spec 3.10 §3.4): `PartDocument::adaptive` (sketch / feature ids) +
   `Occurrence::adaptive`. When the rigid solve does not hold (`adapt_follow` in `asm_solve`, and `asm_try` before it
   refuses), the part's free sizes and the joined free components' placements are solved *together*

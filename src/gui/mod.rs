@@ -1157,6 +1157,8 @@ impl CadCraftApp {
 
     /// Re-validates UI state after the project was replaced (undo, open).
     fn after_restore(&mut self) {
+        // Undo / Redo may bring other edits of linked files.
+        self.asm.libs.forget_linked();
         // Undo of New Assembly / Place from File: the active document may
         // be gone.
         if self.project.document(self.part_id).is_none()
@@ -3798,12 +3800,28 @@ impl CadCraftApp {
         } else {
             self.project.save(&path)
         };
-        let ok = result.is_ok();
+        let mut ok = result.is_ok();
         self.file_status = Some(
             result
                 .map(|()| format!("Saved {}", path.display()))
                 .map_err(|e| format!("Save: {e}")),
         );
+        // The linked files changed from here go into their own files.
+        if ok && !self.project.linked_edits.is_empty() {
+            match self.save_linked_edits() {
+                Ok(files) => {
+                    self.file_status = Some(Ok(format!(
+                        "Saved {} and the linked file(s) changed from it: {}",
+                        path.display(),
+                        files.join(", ")
+                    )));
+                }
+                Err(e) => {
+                    ok = false;
+                    self.file_status = Some(Err(format!("Save: {e}")));
+                }
+            }
+        }
         if ok {
             self.saved_ok();
         } else {

@@ -486,6 +486,13 @@ pub struct Project {
     /// The document the picture shows (the active one at save).
     #[serde(skip)]
     pub preview: Option<DocumentId>,
+    /// Linked files changed from this one and not saved yet (an adaptive
+    /// part of a linked part file sized by this assembly, its cross-part
+    /// copies updated), by the library link: the file's project as edited.
+    /// Not part of this file: Save writes each into its own file; Undo
+    /// snapshots carry them with the rest.
+    #[serde(skip)]
+    pub linked_edits: std::collections::BTreeMap<LibraryId, std::sync::Arc<Project>>,
 }
 
 impl Project {
@@ -499,6 +506,7 @@ impl Project {
             newer_file: None,
             thumbnail: None,
             preview: None,
+            linked_edits: Default::default(),
         }
     }
 

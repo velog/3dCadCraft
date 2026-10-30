@@ -971,3 +971,140 @@ fn the_loop_is_taken_on_the_face_parallel_to_the_sketch() {
     assert!(lowest.abs() < 1e-6, "the side reaches z 0: {lowest}");
     let _ = &mut p;
 }
+
+// Cross-part references of a part in a linked part file (Inventor's file
+// model: the gasket is its own file placed in the assembly's file).
+
+/// A top file (flange + assembly) saved in a fresh folder, and a gasket
+/// part file linked from it holding a sketch that projects the flange's
+/// whole top face (made while it was edited in place) extruded 2: (top
+/// project, its linked files, assembly id, flange id, library, gasket id).
+fn linked_gasket(
+    tag: &str,
+) -> (
+    Project,
+    Linked,
+    DocumentId,
+    DocumentId,
+    cadcraft3d::document::LibraryId,
+    DocumentId,
+) {
+    use cadcraft3d::document::{Resolver, storage};
+    let dir = std::env::temp_dir().join(format!(
+        "cadcraft-linked-{tag}-{}",
+        DocumentId::new_random()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut gasket_file = Project::new("GasketFile");
+    let g = gasket_file.add_document("Gasket", DocumentData::Part(PartDocument::default()));
+    let gasket_path = dir.join("Gasket.3dcadcraft");
+    gasket_file.save(&gasket_path).unwrap();
+    let mut top = Project::new("Top");
+    let f = top.add_document("Flange", DocumentData::Part(flange(100.0)));
+    let top_path = dir.join("Top.3dcadcraft");
+    let lib = storage::link_file(&mut top, &top_path, &mut Resolver::new(), &gasket_path).unwrap();
+    let mut a = AssemblyDocument::default();
+    a.place(DocRef::local(f), "Flange", Transform3::identity(), true);
+    a.place(
+        DocRef {
+            library: Some(lib),
+            document: g,
+        },
+        "Gasket",
+        Transform3::translation(0.0, 0.0, 10.0),
+        false,
+    );
+    let aid = top.add_document("Top", DocumentData::Assembly(a.clone()));
+    // In place: the flange's top face projected into the gasket's sketch.
+    let source = ContextSource {
+        assembly: aid,
+        target: vec![2],
+        path: vec![1],
+        face: face_at(part(&top, f), 10.0).0,
+        edge: None,
+        hint: face_at(part(&top, f), 10.0).1,
+        label: "Flange:1 face".into(),
+    };
+    let mut linked = Linked::new();
+    linked.insert(lib, std::rc::Rc::new(gasket_file.clone()));
+    let edges = context::face_outline(&top, &linked, &a, &source).unwrap();
+    let gp = match gasket_file.document_mut(g).map(|d| &mut d.data) {
+        Some(DocumentData::Part(p)) => p,
+        _ => panic!("no gasket"),
+    };
+    let i = gp
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    gp.project_context_edges(i, edges, false).unwrap();
+    let rg = gp.sketches[i].sketch.regions();
+    let r = rg
+        .iter()
+        .max_by(|x, y| x.area().total_cmp(&y.area()))
+        .unwrap();
+    let profiles = vec![ProfileRef::of(r, r.interior_point())];
+    gp.add_extrude(i, ExtrudeFeature::new(profiles, 2.0))
+        .unwrap();
+    gasket_file.save(&gasket_path).unwrap();
+    let mut linked = Linked::new();
+    linked.insert(lib, std::rc::Rc::new(gasket_file));
+    (top, linked, aid, f, lib, g)
+}
+
+/// The gasket as the top file sees it: its edit when it has one.
+fn gasket_of<'a>(
+    top: &'a Project,
+    linked: &'a Linked,
+    lib: cadcraft3d::document::LibraryId,
+    g: DocumentId,
+) -> &'a PartDocument {
+    let file = top
+        .linked_edits
+        .get(&lib)
+        .map(|p| &**p)
+        .or_else(|| linked.get(lib))
+        .unwrap();
+    match file.document(g).map(|d| &d.data) {
+        Some(DocumentData::Part(p)) => p,
+        _ => panic!("no gasket"),
+    }
+}
+
+#[test]
+fn a_linked_gasket_follows_its_flange_as_an_edit_of_its_file() {
+    let (mut top, linked, aid, f, lib, g) = linked_gasket("follow");
+    let hole = std::f64::consts::PI * 25.0;
+    let v = volume(gasket_of(&top, &linked, lib, g));
+    assert!((v - (10000.0 - 4.0 * hole) * 2.0).abs() < 0.01 * v, "{v}");
+    // Nothing changed: no Update, no edit.
+    assert!(context::out_of_date(&top, &linked, aid).is_empty());
+    grow(part_mut(&mut top, f), 120.0);
+    assert!(!context::out_of_date(&top, &linked, aid).is_empty());
+    let r = context::update(&mut top, &linked, aid);
+    assert_eq!(r.changed, vec![g], "{r:?}");
+    // The linked file itself is untouched; the change is an edit of it.
+    assert!(top.linked_edits.contains_key(&lib));
+    let v = volume(gasket_of(&top, &linked, lib, g));
+    let expect = (14400.0 - 4.0 * hole) * 2.0;
+    assert!((v - expect).abs() < 0.01 * expect, "{v} vs {expect}");
+    let on_disk = match linked.get(lib).unwrap().document(g).map(|d| &d.data) {
+        Some(DocumentData::Part(p)) => volume(p),
+        _ => panic!(),
+    };
+    assert!((on_disk - (10000.0 - 4.0 * hole) * 2.0).abs() < 0.01 * on_disk);
+    // It settles: a second Update reads the edit, not the file.
+    assert!(context::update(&mut top, &linked, aid).changed.is_empty());
+    assert!(context::out_of_date(&top, &linked, aid).is_empty());
+}
+
+#[test]
+fn an_edit_of_a_linked_file_is_not_saved_into_the_top_file() {
+    let (mut top, linked, aid, f, lib, _) = linked_gasket("unsaved");
+    grow(part_mut(&mut top, f), 120.0);
+    context::update(&mut top, &linked, aid);
+    assert!(top.linked_edits.contains_key(&lib));
+    let text = serde_json::to_string(&top).unwrap();
+    let back: Project = serde_json::from_str(&text).unwrap();
+    assert!(back.linked_edits.is_empty());
+    // Undo snapshots are clones: they carry the edit.
+    assert!(top.clone().linked_edits.contains_key(&lib));
+}

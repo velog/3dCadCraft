@@ -48,14 +48,25 @@ pub fn current(
     source: &ContextSource,
 ) -> Result<ContextGeom, String> {
     let (src, ts) = placed(project, linked, asm, &source.path)?;
-    let part = tree::part_of(project, linked, src.component)
+    let part = part_in(project, linked, src.component)
         .ok_or_else(|| format!("{} shows no part", src.name))?;
+    let (_, tt) = placed(project, linked, asm, &source.target)?;
+    geom_from(part, source, &(tt.inverse() * ts))
+}
+
+/// The geometry of `source` read from its part `part`, moved by `m` (the
+/// source part's coordinates → the target part's): what [`current`]
+/// gives once the parts are placed — also where the assembly is not at hand
+/// (a linked part edited in its own tab with copies of the others).
+pub fn geom_from(
+    part: &crate::part::PartDocument,
+    source: &ContextSource,
+    m: &Transform3,
+) -> Result<ContextGeom, String> {
     if let Some(edge) = &source.edge {
-        let (_, tt) = placed(project, linked, asm, &source.target)?;
-        let m = tt.inverse() * ts;
         let curve = ContextCurve::of(&edge_shape(&part.body, edge)?)?;
         return Ok(ContextGeom::Curve {
-            curve: curve.moved(&m),
+            curve: curve.moved(m),
         });
     }
     let face = GeomRef::Face {
@@ -67,8 +78,6 @@ pub fn current(
     let Geom::Plane { p, n } = relation::resolve_in(part, &face)? else {
         return Err(format!("the face {} is not planar", source.face));
     };
-    let (_, tt) = placed(project, linked, asm, &source.target)?;
-    let m = tt.inverse() * ts;
     let (p, n): (Point3, Vector3) = (m * p, (m * n).normalize());
     let origin = Point3::origin() - n * n.dot(&(Point3::origin() - p));
     let plane = Plane::new(origin, n, crate::part::placement::default_face_x(&n))
@@ -77,7 +86,25 @@ pub fn current(
 }
 
 /// New copies per part: (part, [(reference id, geometry)]).
-type Writes = Vec<(DocumentId, Vec<(String, ContextGeom)>)>;
+type Writes = Vec<(crate::document::DocRef, Vec<(String, ContextGeom)>)>;
+
+/// The part `r` shows: of this file, or of a file linked from it — as this
+/// file has edited it (`Project::linked_edits`) when it has.
+fn part_in<'a>(
+    project: &'a Project,
+    linked: &'a Linked,
+    r: crate::document::DocRef,
+) -> Option<&'a crate::part::PartDocument> {
+    if let Some(lib) = r.library
+        && let Some(p) = project.linked_edits.get(&lib)
+    {
+        return match p.document(r.document).map(|d| &d.data) {
+            Some(DocumentData::Part(x)) => Some(x),
+            _ => None,
+        };
+    }
+    tree::part_of(project, linked, r)
+}
 
 /// The current copies of the references made in assembly `asm_id`, part
 /// by part (only those that differ from the stored ones when `changed`),
@@ -94,10 +121,16 @@ fn copies(
     };
     let mut writes = Vec::new();
     for leaf in tree::leaves(project, linked, crate::document::DocRef::local(asm_id), asm) {
-        if leaf.component.library.is_some() {
+        // Parts of this file and of the part files it links itself (their
+        // copies become edits of those files, saved with this one).
+        if leaf
+            .component
+            .library
+            .is_some_and(|l| project.library(l).is_none())
+        {
             continue;
         }
-        let Some(part) = tree::part_of(project, linked, leaf.component) else {
+        let Some(part) = part_in(project, linked, leaf.component) else {
             continue;
         };
         let mut copies = Vec::new();
@@ -113,7 +146,7 @@ fn copies(
             }
         }
         if !copies.is_empty() {
-            writes.push((leaf.component.document, copies));
+            writes.push((leaf.component, copies));
         }
     }
     (writes, sick)
@@ -126,7 +159,7 @@ pub fn out_of_date(project: &Project, linked: &Linked, asm_id: DocumentId) -> Ve
     let (writes, _) = copies(project, linked, asm_id, true);
     let mut labels = Vec::new();
     for (doc, cs) in writes {
-        if let Some(DocumentData::Part(p)) = project.document(doc).map(|d| &d.data) {
+        if let Some(p) = part_in(project, linked, doc) {
             labels.extend(
                 cs.iter()
                     .filter_map(|(id, _)| p.context_ref(id).map(|c| c.source.label.clone())),
@@ -177,13 +210,24 @@ pub fn face_outline(
     asm: &AssemblyDocument,
     face: &ContextSource,
 ) -> Result<Vec<crate::part::context::ContextRef>, String> {
-    let (src, _) = placed(project, linked, asm, &face.path)?;
-    let part = tree::part_of(project, linked, src.component)
+    let (src, ts) = placed(project, linked, asm, &face.path)?;
+    let (_, tt) = placed(project, linked, asm, &face.target)?;
+    let part = part_in(project, linked, src.component)
         .ok_or_else(|| format!("{} shows no part", src.name))?;
+    face_outline_of(part, face, &(tt.inverse() * ts))
+}
+
+/// [`face_outline`] read from the source part `part`, moved by `m` (see
+/// [`geom_from`]).
+pub fn face_outline_of(
+    part: &crate::part::PartDocument,
+    face: &ContextSource,
+    m: &Transform3,
+) -> Result<Vec<crate::part::context::ContextRef>, String> {
     let f = crate::part::appearance::nearest_face(&part.body, &face.face, &face.hint)
         .ok_or_else(|| format!("the face {} no longer exists", face.face))?;
     let edges = crate::part::select::edges_of_face(&part.body, f);
-    edge_refs(project, linked, asm, face, &part.body, edges)
+    edge_refs(part, face, edges, m)
 }
 
 /// The loop of another component's face that edge `edge` (an edge
@@ -198,13 +242,23 @@ pub fn edge_loop(
     edge: &ContextSource,
     normal: Option<Vector3>,
 ) -> Result<Vec<crate::part::context::ContextRef>, String> {
-    let e = edge.edge.as_ref().ok_or("the reference is not an edge")?;
     let (src, ts) = placed(project, linked, asm, &edge.path)?;
     let (_, tt) = placed(project, linked, asm, &edge.target)?;
-    let part = tree::part_of(project, linked, src.component)
+    let part = part_in(project, linked, src.component)
         .ok_or_else(|| format!("{} shows no part", src.name))?;
+    edge_loop_of(part, edge, normal, &(tt.inverse() * ts))
+}
+
+/// [`edge_loop`] read from the source part `part`, moved by `m` (see
+/// [`geom_from`]).
+pub fn edge_loop_of(
+    part: &crate::part::PartDocument,
+    edge: &ContextSource,
+    normal: Option<Vector3>,
+    m: &Transform3,
+) -> Result<Vec<crate::part::context::ContextRef>, String> {
+    let e = edge.edge.as_ref().ok_or("the reference is not an edge")?;
     let body = &part.body;
-    let m = tt.inverse() * ts;
     let faces: Vec<_> = e
         .faces
         .iter()
@@ -234,19 +288,19 @@ pub fn edge_loop(
                 .find(|l| own.is_some_and(|x| l.contains(&x)))
         })
         .unwrap_or_else(|| crate::part::select::loop_edges(body, f, Point3::from(e.hint)));
-    edge_refs(project, linked, asm, edge, body, edges)
+    edge_refs(part, edge, edges, m)
 }
 
-/// One edge reference per edge of `edges` of the source part's `body`,
+/// One edge reference per edge of `edges` of the source part `part`, moved
+/// by `m`,
 /// with `like`'s assembly, paths and label.
 fn edge_refs(
-    project: &Project,
-    linked: &Linked,
-    asm: &AssemblyDocument,
+    part: &crate::part::PartDocument,
     like: &ContextSource,
-    body: &crate::kernel::BRep,
     edges: Vec<crate::kernel::EdgeId>,
+    m: &Transform3,
 ) -> Result<Vec<crate::part::context::ContextRef>, String> {
+    let body = &part.body;
     let who = like
         .label
         .strip_suffix(" face")
@@ -268,7 +322,7 @@ fn edge_refs(
             label: format!("{who} edge"),
             ..like.clone()
         };
-        let geom = current(project, linked, asm, &source)?;
+        let geom = geom_from(part, &source, m)?;
         out.push(crate::part::context::ContextRef {
             id: String::new(),
             source,
@@ -311,12 +365,32 @@ pub fn update(project: &mut Project, linked: &Linked, asm_id: DocumentId) -> Rep
         ..Report::default()
     };
     for (doc, copies) in writes {
-        if let Some(DocumentData::Part(p)) = project.document_mut(doc).map(|d| &mut d.data)
+        if let Some(lib) = doc.library {
+            // A part of a linked file: an edit of that file.
+            let Some(mut file) = project
+                .linked_edits
+                .get(&lib)
+                .map(|p| (**p).clone())
+                .or_else(|| linked.get(lib).cloned())
+            else {
+                continue;
+            };
+            if let Some(DocumentData::Part(p)) =
+                file.document_mut(doc.document).map(|d| &mut d.data)
+                && p.set_context(&copies)
+            {
+                let _ = p.regenerate();
+                project.linked_edits.insert(lib, std::sync::Arc::new(file));
+                report.changed.push(doc.document);
+            }
+            continue;
+        }
+        if let Some(DocumentData::Part(p)) = project.document_mut(doc.document).map(|d| &mut d.data)
             && p.set_context(&copies)
         {
             // A failing feature is its own health; the part still builds.
             let _ = p.regenerate();
-            report.changed.push(doc);
+            report.changed.push(doc.document);
         }
     }
     report

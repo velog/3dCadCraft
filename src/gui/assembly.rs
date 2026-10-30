@@ -199,6 +199,22 @@ pub(super) struct LinkedEdit {
     pub part_path: std::path::PathBuf,
     /// The other parts in the edited part's coordinates.
     pub context: Vec<(std::rc::Rc<crate::part::PartDocument>, Transform3)>,
+    /// What each of them is in the assembly (aligned with `context`), for
+    /// cross-part references made against them.
+    pub leaves: Vec<LinkedLeaf>,
+}
+
+/// One other part of a linked part's Edit in place (spec 3.10 §3.3).
+#[derive(Clone, Debug)]
+pub(super) struct LinkedLeaf {
+    /// Its occurrence path in the assembly.
+    pub path: Vec<u32>,
+    /// Its component in the assembly file's terms (the hover's key).
+    pub component: DocRef,
+    /// Its occurrence's name.
+    pub name: String,
+    /// Its triangles for picking (part coordinates).
+    pub mesh: Arc<PickMesh>,
 }
 
 /// The other components while a part is edited in place: grey, see-through.
@@ -206,7 +222,7 @@ const CONTEXT_GREY: [f32; 3] = [0.62, 0.63, 0.66];
 const CONTEXT_ALPHA: f32 = 0.22;
 
 /// An adaptation of a part of this design file: its document and result.
-pub(super) type AdaptedIn = (DocumentId, crate::assembly::adapt::Adapted);
+pub(super) type AdaptedIn = (DocRef, crate::assembly::adapt::Adapted);
 
 /// The tooltip of the Adaptive switch.
 const ADAPTIVE_TIP: &str = "The part's adaptive sketches and features take their free sizes from this \
@@ -657,7 +673,9 @@ impl CadCraftApp {
         edited.extend(&sub);
         let inv = place.inverse();
         let mut parts: HashMap<DocRef, std::rc::Rc<crate::part::PartDocument>> = HashMap::new();
+        let mut meshes: HashMap<DocRef, Arc<PickMesh>> = HashMap::new();
         let mut context = Vec::new();
+        let mut leaves = Vec::new();
         for l in
             crate::assembly::tree::leaves(&self.project, &linked, DocRef::local(self.part_id), a)
         {
@@ -674,6 +692,16 @@ impl CadCraftApp {
                     None => continue,
                 },
             };
+            let mesh = meshes
+                .entry(l.component)
+                .or_insert_with(|| Arc::new(PickMesh::of(&p)))
+                .clone();
+            leaves.push(LinkedLeaf {
+                path: l.path.clone(),
+                component: l.component,
+                name: l.occurrence.name.clone(),
+                mesh,
+            });
             context.push((p, inv * l.world));
         }
         let le = LinkedEdit {
@@ -681,6 +709,7 @@ impl CadCraftApp {
             assembly_name: self.document_title(),
             part_path: part_path.clone(),
             context,
+            leaves,
         };
         let asm_id = self.part_id;
         let view = self.camera.clone();
@@ -737,9 +766,12 @@ impl CadCraftApp {
         rect: Rect,
     ) -> Option<(f64, crate::part::context::ContextRef, ContextHover)> {
         use crate::part::context::{ContextRef, ContextSource};
-        let ip = self.in_place_now().filter(|ip| ip.linked.is_none())?;
+        let ip = self.in_place_now()?;
         let (o, d) = self.camera.ray(pos, rect)?;
         let d = d.normalize();
+        if let Some(le) = &ip.linked {
+            return linked_face_under(ip, le, o, d);
+        }
         let linked = self.linked();
         let asm = DocRef::local(ip.assembly);
         let a = crate::assembly::tree::assembly_of(&self.project, &linked, asm)?;
@@ -808,9 +840,12 @@ impl CadCraftApp {
         rect: Rect,
     ) -> Option<(crate::part::context::ContextRef, Vec<Point3>)> {
         use crate::part::context::{ContextRef, ContextSource};
-        let ip = self.in_place_now().filter(|ip| ip.linked.is_none())?;
+        let ip = self.in_place_now()?;
         let (o, d) = self.camera.ray(pos, rect)?;
         let d = d.try_normalize(1e-12)?;
+        if let Some(le) = &ip.linked {
+            return self.linked_edge_under(ip, le, pos, rect, o, d);
+        }
         let linked = self.linked();
         let asm = DocRef::local(ip.assembly);
         let a = crate::assembly::tree::assembly_of(&self.project, &linked, asm)?;
@@ -833,44 +868,12 @@ impl CadCraftApp {
                 front = Some(t);
             }
         }
-        let opts = crate::kernel::TessellationOptions::default();
         // (screen distance, path, edge ref, points in the part's frame)
         let mut best: Option<(f32, Vec<u32>, crate::part::EdgeRef, Vec<Point3>)> = None;
         for l in &leaves {
             let t = inv * l.world;
             let found = self.with_part(l.component, |p| {
-                let mut mine: Option<(f32, crate::part::EdgeRef, Vec<Point3>)> = None;
-                for e in p.body.visible_edges() {
-                    let Ok(pts) = p.body.sample_edge(e, &opts) else {
-                        continue;
-                    };
-                    let pts: Vec<Point3> = pts.iter().map(|q| t * q).collect();
-                    for w in pts.windows(2) {
-                        let (Some(sa), Some(sb)) = (
-                            self.camera.project(&w[0], rect),
-                            self.camera.project(&w[1], rect),
-                        ) else {
-                            continue;
-                        };
-                        let ab = sb - sa;
-                        let k = ((pos - sa).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
-                        let dist = (sa + ab * k).distance(pos);
-                        if dist > super::overlay::EDGE_PICK_PX
-                            || mine.as_ref().is_some_and(|m| m.0 <= dist)
-                        {
-                            continue;
-                        }
-                        let q = super::closest_on_segment(&w[0], &w[1], &o, &d);
-                        let te = (q - o).dot(&d);
-                        if front.is_some_and(|f| f < te - 0.02 * te.abs().max(1.0)) {
-                            continue;
-                        }
-                        if let Some(r) = crate::part::blend::edge_ref(&p.body, e) {
-                            mine = Some((dist, r, pts.clone()));
-                        }
-                    }
-                }
-                mine
+                self.edge_near(p, &t, pos, rect, o, d, front)
             });
             if let Some(Some((dist, r, pts))) = found
                 && best.as_ref().is_none_or(|b| dist < b.0)
@@ -943,7 +946,7 @@ impl CadCraftApp {
     pub(super) fn context_mesh(&self, hover: ContextHover) -> Option<crate::kernel::TriangleMesh> {
         let (comp, f, t) = hover;
         let mut mesh = self
-            .with_part(comp, |p| {
+            .with_context_part(comp, |p| {
                 p.body
                     .face_mesh(f, &crate::kernel::TessellationOptions::default())
                     .ok()
@@ -978,7 +981,7 @@ impl CadCraftApp {
     pub(super) fn context_face_edges(&self, hover: ContextHover) -> Vec<Vec<Point3>> {
         let (doc, f, t) = hover;
         let opts = crate::kernel::TessellationOptions::default();
-        self.with_part(doc, |p| {
+        self.with_context_part(doc, |p| {
             crate::part::select::edges_of_face(&p.body, f)
                 .into_iter()
                 .filter_map(|e| p.body.sample_edge(e, &opts).ok())
@@ -995,6 +998,9 @@ impl CadCraftApp {
         &self,
         face: &crate::part::context::ContextSource,
     ) -> Result<Vec<crate::part::context::ContextRef>, String> {
+        if let Some((p, m)) = self.linked_context_part(&face.path) {
+            return crate::assembly::context::face_outline_of(&p, face, &m);
+        }
         let linked = self.linked();
         let a = crate::assembly::tree::assembly_of(
             &self.project,
@@ -1005,6 +1011,132 @@ impl CadCraftApp {
         crate::assembly::context::face_outline(&self.project, &linked, a, face)
     }
 
+    /// While a linked part is edited in place: the copy of the other part at
+    /// occurrence `path` and its placement in the edited part.
+    fn linked_context_part(
+        &self,
+        path: &[u32],
+    ) -> Option<(std::rc::Rc<crate::part::PartDocument>, Transform3)> {
+        let le = self.in_place_now()?.linked.as_ref()?;
+        let k = le.leaves.iter().position(|l| l.path == path)?;
+        le.context.get(k).cloned()
+    }
+
+    /// [`Self::with_part`] for another component of the edit in place: the
+    /// copy a linked part's edit took, else the part itself.
+    fn with_context_part<R>(
+        &self,
+        doc: DocRef,
+        f: impl FnOnce(&crate::part::PartDocument) -> R,
+    ) -> Option<R> {
+        if let Some(le) = self.in_place_now().and_then(|ip| ip.linked.as_ref()) {
+            let k = le.leaves.iter().position(|l| l.component == doc)?;
+            return le.context.get(k).map(|(p, _)| f(p));
+        }
+        self.with_part(doc, f)
+    }
+
+    /// [`Self::context_edge_under`] while a linked part is edited in its
+    /// tab: the other parts are the copies taken at the start.
+    fn linked_edge_under(
+        &self,
+        ip: &InPlace,
+        le: &LinkedEdit,
+        pos: Pos2,
+        rect: Rect,
+        o: Point3,
+        d: crate::kernel::Vector3,
+    ) -> Option<(crate::part::context::ContextRef, Vec<Point3>)> {
+        use crate::part::context::{ContextRef, ContextSource};
+        let mut front = self.picker().pick(&o, &d).map(|(_, t)| t);
+        for (k, leaf) in le.leaves.iter().enumerate() {
+            let to_leaf = le.context[k].1.inverse();
+            if let Some((_, t)) = leaf.mesh.hit(&(to_leaf * o), &(to_leaf * d))
+                && front.is_none_or(|f| t < f)
+            {
+                front = Some(t);
+            }
+        }
+        let mut best: Option<(f32, usize, crate::part::EdgeRef, Vec<Point3>)> = None;
+        for (k, (p, t)) in le.context.iter().enumerate() {
+            if let Some((dist, r, pts)) = self.edge_near(p, t, pos, rect, o, d, front)
+                && best.as_ref().is_none_or(|b| dist < b.0)
+            {
+                best = Some((dist, k, r, pts));
+            }
+        }
+        let (_, k, edge, pts) = best?;
+        let mut edited = vec![ip.top];
+        edited.extend(&ip.sub);
+        let source = ContextSource {
+            assembly: ip.assembly,
+            target: edited,
+            path: le.leaves[k].path.clone(),
+            face: edge.faces[0].clone(),
+            hint: edge.hint,
+            edge: Some(edge),
+            label: format!("{} edge", le.leaves[k].name),
+        };
+        let geom = crate::assembly::context::geom_from(&le.context[k].0, &source, &le.context[k].1)
+            .ok()?;
+        Some((
+            ContextRef {
+                id: String::new(),
+                source,
+                geom,
+            },
+            pts,
+        ))
+    }
+
+    /// The visible edge of part `p` (placed `t` in the edited part) nearest
+    /// `pos` on screen within the pick radius, not behind `front` along the
+    /// eye ray `o`, `d`: its screen distance, reference and points.
+    #[allow(clippy::too_many_arguments)]
+    fn edge_near(
+        &self,
+        p: &crate::part::PartDocument,
+        t: &Transform3,
+        pos: Pos2,
+        rect: Rect,
+        o: Point3,
+        d: crate::kernel::Vector3,
+        front: Option<f64>,
+    ) -> Option<(f32, crate::part::EdgeRef, Vec<Point3>)> {
+        let opts = crate::kernel::TessellationOptions::default();
+        let mut mine: Option<(f32, crate::part::EdgeRef, Vec<Point3>)> = None;
+        for e in p.body.visible_edges() {
+            let Ok(pts) = p.body.sample_edge(e, &opts) else {
+                continue;
+            };
+            let pts: Vec<Point3> = pts.iter().map(|q| t * q).collect();
+            for w in pts.windows(2) {
+                let (Some(sa), Some(sb)) = (
+                    self.camera.project(&w[0], rect),
+                    self.camera.project(&w[1], rect),
+                ) else {
+                    continue;
+                };
+                let ab = sb - sa;
+                let k = ((pos - sa).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+                let dist = (sa + ab * k).distance(pos);
+                if dist > super::overlay::EDGE_PICK_PX || mine.as_ref().is_some_and(|m| m.0 <= dist)
+                {
+                    continue;
+                }
+                let q = super::closest_on_segment(&w[0], &w[1], &o, &d);
+                let te = (q - o).dot(&d);
+                if front.is_some_and(|f| f < te - 0.02 * te.abs().max(1.0)) {
+                    continue;
+                }
+                if let Some(r) = crate::part::blend::edge_ref(&p.body, e) {
+                    mine = Some((dist, r, pts.clone()));
+                }
+            }
+        }
+        mine
+    }
+
     /// The loop of another component's face through edge `edge` (an edge
     /// reference), one cross-part reference per edge
     /// (`assembly::context::edge_loop`); `normal` is the sketch's.
@@ -1013,6 +1145,9 @@ impl CadCraftApp {
         edge: &crate::part::context::ContextSource,
         normal: crate::kernel::Vector3,
     ) -> Result<Vec<crate::part::context::ContextRef>, String> {
+        if let Some((p, m)) = self.linked_context_part(&edge.path) {
+            return crate::assembly::context::edge_loop_of(&p, edge, Some(normal), &m);
+        }
         let linked = self.linked();
         let a = crate::assembly::tree::assembly_of(
             &self.project,
@@ -1062,6 +1197,8 @@ impl CadCraftApp {
             }
             changed = true;
             self.scene_dirty = true;
+            // A linked part's copies may have changed (`linked_edits`).
+            self.asm.libs.forget_linked();
             self.asm_solve_once(None);
         }
         let still = context::out_of_date(&self.project, &linked, self.part_id);
@@ -1365,13 +1502,6 @@ impl CadCraftApp {
         let Some(o) = self.assembly().and_then(|a| a.find(id)).cloned() else {
             return;
         };
-        if !o.adaptive && o.component.library.is_some() {
-            self.file_status = Some(Err(
-                "Adaptive: parts of linked files cannot adapt yet (only parts of this design file)"
-                    .into(),
-            ));
-            return;
-        }
         self.edit_assembly("Adaptive", |a| {
             for x in &mut a.occurrences {
                 if x.id == id {
@@ -1396,17 +1526,20 @@ impl CadCraftApp {
     ) -> Result<Option<AdaptedIn>, String> {
         let mut why = None;
         for o in a.occurrences.iter().filter(|o| o.adaptive && !o.suppressed) {
-            if o.component.library.is_some() {
+            // A part of this file or of a linked part file (only that file's
+            // own parts: one linked level).
+            if o.component
+                .library
+                .is_some_and(|l| self.project.library(l).is_none())
+            {
                 continue;
             }
-            let Some(DocumentData::Part(base)) =
-                self.project.document(o.component.document).map(|d| &d.data)
-            else {
+            let Some(base) = self.with_part(o.component, Clone::clone) else {
                 continue;
             };
             let local = |r: &crate::assembly::GeomRef| self.asm_local_in(a, r);
-            match crate::assembly::adapt::adapt(a, o.id, base, &local) {
-                Ok(Some(r)) => return Ok(Some((o.component.document, r))),
+            match crate::assembly::adapt::adapt(a, o.id, &base, &local) {
+                Ok(Some(r)) => return Ok(Some((o.component, r))),
                 Ok(None) => {}
                 Err(e) => why = Some(format!("{}: {e}", o.name)),
             }
@@ -1418,7 +1551,7 @@ impl CadCraftApp {
             };
             let local = |r: &crate::assembly::GeomRef| self.asm_local_in(a, r);
             match crate::assembly::adapt::adapt_nested(a, &target, base, &local, None) {
-                Ok(Some(r)) => return Ok(Some((doc, r))),
+                Ok(Some(r)) => return Ok(Some((DocRef::local(doc), r))),
                 Ok(None) => {}
                 Err(e) => why = Some(format!("{name}: {e}")),
             }
@@ -1452,8 +1585,16 @@ impl CadCraftApp {
     /// caller's checkpoint): the part's new state and the placements.
     pub(super) fn adapt_write(&mut self, a: &mut crate::document::AssemblyDocument, r: AdaptedIn) {
         let (doc, ad) = r;
-        if let Some(DocumentData::Part(p)) = self.project.document_mut(doc).map(|d| &mut d.data) {
-            *p = ad.part;
+        match doc.library {
+            // A part of a linked file: an edit of that file, saved with this one.
+            Some(lib) => self.edit_linked_part(lib, doc.document, ad.part),
+            None => {
+                if let Some(DocumentData::Part(p)) =
+                    self.project.document_mut(doc.document).map(|d| &mut d.data)
+                {
+                    *p = ad.part;
+                }
+            }
         }
         for (id, t) in &ad.solved.transforms {
             if let Some(o) = a.find_mut(*id) {
@@ -2537,6 +2678,56 @@ impl CadCraftApp {
             self.asm_solve(None);
         }
     }
+}
+
+/// The planar face of another part under the eye ray `o`, `d` while a
+/// linked part is edited in its tab (the copies taken at the start): its
+/// distance, the reference a sketch on it makes, the hover.
+fn linked_face_under(
+    ip: &InPlace,
+    le: &LinkedEdit,
+    o: Point3,
+    d: crate::kernel::Vector3,
+) -> Option<(f64, crate::part::context::ContextRef, ContextHover)> {
+    use crate::part::context::{ContextRef, ContextSource};
+    let mut best: Option<(f64, usize, String, Point3, crate::kernel::FaceId)> = None;
+    for (k, leaf) in le.leaves.iter().enumerate() {
+        let (p, t) = &le.context[k];
+        let to_leaf = t.inverse();
+        let (lo, ld) = (to_leaf * o, to_leaf * d);
+        let Some((f, at)) = leaf.mesh.hit(&lo, &ld) else {
+            continue;
+        };
+        if best.as_ref().is_some_and(|b| b.0 <= at) || p.body.face_plane(f).is_none() {
+            continue;
+        }
+        if let Some(name) = p.body.face(f).and_then(|x| x.name.clone()) {
+            best = Some((at, k, name, lo + ld * at, f));
+        }
+    }
+    let (at, k, face, q, f) = best?;
+    let mut edited = vec![ip.top];
+    edited.extend(&ip.sub);
+    let source = ContextSource {
+        assembly: ip.assembly,
+        target: edited,
+        path: le.leaves[k].path.clone(),
+        face,
+        edge: None,
+        hint: [q.x, q.y, q.z],
+        label: format!("{} face", le.leaves[k].name),
+    };
+    let (p, t) = &le.context[k];
+    let geom = crate::assembly::context::geom_from(p, &source, t).ok()?;
+    Some((
+        at,
+        ContextRef {
+            id: String::new(),
+            source,
+            geom,
+        },
+        (le.leaves[k].component, f, *t),
+    ))
 }
 
 #[cfg(test)]
