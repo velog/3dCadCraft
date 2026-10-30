@@ -4777,6 +4777,18 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 ui.separator();
                 ui.label("mm");
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    // Every text here is cut with "…": the prompt keeps most
+                    // of the room, the last message the rest (long ones ran
+                    // under each other and under the controls).
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                    let room = ui.available_width();
+                    let prompt_room = if self.file_status.is_some() {
+                        room * 0.6
+                    } else {
+                        room
+                    };
+                    ui.scope(|ui| {
+                    ui.set_max_width(prompt_room);
                     self.alias_buffer_label(ui);
                     match (self.mode, self.editing) {
                         _ if self.home.shown => {
@@ -4977,6 +4989,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                             }
                         },
                     }
+                    });
                     ui.separator();
                     match &self.file_status {
                         Some(Err(e)) => {
