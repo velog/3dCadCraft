@@ -66,7 +66,7 @@ pub struct Drag {
 /// a move of 1 mm.
 const L: Real = 500.0;
 /// Weight of the drag goal against the constraints.
-const GOAL: Real = 1e-2;
+pub(super) const GOAL: Real = 1e-2;
 const TOL: Real = 1e-10;
 
 /// The components a constraint reads (two, or three with a plane).

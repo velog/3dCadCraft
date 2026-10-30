@@ -632,3 +632,232 @@ fn a_roller_takes_its_diameter_from_the_gap_it_runs_in() {
     let (lo, hi) = extent(c.part(r), 2);
     assert!(((hi - lo) - 30.0).abs() < 1e-3, "diameter {}", hi - lo);
 }
+
+// Adaptivity during a drag: a partner of the adaptive part is dragged and
+// the part stretches with it (Inventor's behaviour while dragging).
+
+impl Case {
+    /// Drags point `local` of `o` to `target` with adaptive part `p`; on
+    /// success writes the part and the placements back.
+    fn drag(
+        &mut self,
+        p: u32,
+        o: u32,
+        local: Point3,
+        target: Point3,
+    ) -> Result<Option<Vec<Real>>, String> {
+        let base = self.part(p).clone();
+        let d = cadcraft3d::assembly::Drag {
+            occurrence: o,
+            local,
+            target,
+        };
+        let r = adapt::adapt_dragged(&self.asm, p, &base, &self.local(), &d)?;
+        let Some(a) = r else { return Ok(None) };
+        let doc = self.doc(p);
+        if let Some(DocumentData::Part(q)) = self.project.document_mut(doc).map(|d| &mut d.data) {
+            *q = a.part;
+        }
+        for (id, t) in a.solved.transforms {
+            self.asm.find_mut(id).unwrap().transform = t;
+        }
+        Ok(Some(a.x))
+    }
+
+    fn x_of(&self, o: u32) -> Real {
+        self.asm.find(o).unwrap().transform.translation.vector.x
+    }
+}
+
+/// Wall A grounded, wall B free, a 100 mm plate (`fix_w`: its length
+/// dimensioned) mated between them: (case, wall B, plate).
+fn sliding_wall(fix_w: bool) -> (Case, u32, u32) {
+    let mut c = Case::new();
+    let (a, b) = walls(&mut c);
+    c.asm.find_mut(b).unwrap().grounded = false;
+    let plate = block(100.0, 30.0, 5.0, fix_w, true, false);
+    let left = face(&plate, 0, 0, 0.0);
+    let right = face(&plate, 0, 0, 100.0);
+    let p = c.place(
+        plate,
+        "Plate",
+        Transform3::translation(10.0, 5.0, 10.0),
+        false,
+    );
+    let wa = c.part(a).clone();
+    let wb = c.part(b).clone();
+    let with = |g: GeomRef, o: u32| match g {
+        GeomRef::Face { name, hint, .. } => GeomRef::Face {
+            occurrence: o,
+            sub: Vec::new(),
+            name,
+            hint,
+        },
+        g => g,
+    };
+    c.asm
+        .add_constraint(mate(with(left, p), face(&wa, a, 0, 10.0)));
+    c.asm
+        .add_constraint(mate(with(right, p), face(&wb, b, 0, 0.0)));
+    (c, b, p)
+}
+
+#[test]
+fn dragging_a_wall_out_stretches_the_plate_between() {
+    let (mut c, b, p) = sliding_wall(false);
+    // Wall B's middle (local 5, 25, 25 = world 115, 25, 25) pulled 20 out.
+    let grab = Point3::new(5.0, 25.0, 25.0);
+    let x = c
+        .drag(p, b, grab, Point3::new(135.0, 25.0, 25.0))
+        .unwrap()
+        .expect("stretched");
+    assert!(x.iter().any(|v| (v - 20.0).abs() < 1e-3), "{x:?}");
+    let (lo, hi) = extent(c.part(p), 0);
+    assert!(((hi - lo) - 120.0).abs() < 1e-3, "length {}", hi - lo);
+    assert!((c.x_of(b) - 130.0).abs() < 1e-3, "wall at {}", c.x_of(b));
+    // Dropped there, the rigid solve holds: nothing more to adapt.
+    assert!(c.adapt(p).unwrap().is_none());
+}
+
+#[test]
+fn dragging_the_wall_in_shortens_the_plate() {
+    let (mut c, b, p) = sliding_wall(false);
+    let grab = Point3::new(5.0, 25.0, 25.0);
+    c.drag(p, b, grab, Point3::new(85.0, 25.0, 25.0))
+        .unwrap()
+        .expect("shortened");
+    let (lo, hi) = extent(c.part(p), 0);
+    assert!(((hi - lo) - 70.0).abs() < 1e-3, "length {}", hi - lo);
+    assert!((c.x_of(b) - 80.0).abs() < 1e-3, "wall at {}", c.x_of(b));
+    // The part regenerates the same from its own data.
+    let mut alone = c.part(p).clone();
+    alone.regenerate().unwrap();
+    let (lo, hi) = extent(&alone, 0);
+    assert!(((hi - lo) - 70.0).abs() < 1e-3);
+}
+
+#[test]
+fn a_drag_the_relationships_allow_needs_no_new_size() {
+    // Wall B slid sideways along the plate's end: the mates allow it, the
+    // plate keeps its length.
+    let (c, b, p) = sliding_wall(false);
+    let base = c.part(p).clone();
+    let d = cadcraft3d::assembly::Drag {
+        occurrence: b,
+        local: Point3::new(5.0, 25.0, 25.0),
+        target: Point3::new(115.0, 40.0, 25.0),
+    };
+    let r = adapt::adapt_dragged(&c.asm, p, &base, &c.local(), &d).unwrap();
+    assert!(r.is_none(), "{:?}", r.map(|a| a.x));
+}
+
+#[test]
+fn a_dimensioned_plate_does_not_stretch_and_a_stranger_is_not_joined() {
+    // Its length dimensioned: nothing to adapt, the drag stays rigid.
+    let (mut c, b, p) = sliding_wall(true);
+    let grab = Point3::new(5.0, 25.0, 25.0);
+    assert!(
+        c.drag(p, b, grab, Point3::new(135.0, 25.0, 25.0))
+            .unwrap()
+            .is_none()
+    );
+    let (lo, hi) = extent(c.part(p), 0);
+    assert!(((hi - lo) - 100.0).abs() < 1e-6);
+    // A free box joined to nothing: dragging it never touches the plate.
+    let (mut c, _, p) = sliding_wall(false);
+    let stranger = c.place(
+        PartDocument::with_box("Box1", [5.0, 5.0, 5.0]).unwrap(),
+        "Stranger",
+        Transform3::translation(300.0, 0.0, 0.0),
+        false,
+    );
+    assert!(
+        c.drag(
+            p,
+            stranger,
+            Point3::new(1.0, 1.0, 1.0),
+            Point3::new(400.0, 1.0, 1.0)
+        )
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[test]
+fn lifting_the_ceiling_grows_the_roller() {
+    // A floor (grounded) and a ceiling 30 above it on guide columns (a
+    // press); a roller of free radius tangent to both is Ø30. The ceiling lifted 10 at its contact
+    // line: the roller becomes Ø40.
+    let mut c = Case::new();
+    let slab = || PartDocument::with_box("Box1", [100.0, 100.0, 10.0]).unwrap();
+    let floor = c.place(slab(), "Floor", Transform3::identity(), true);
+    let ceiling = c.place(
+        slab(),
+        "Ceiling",
+        Transform3::translation(0.0, 0.0, 40.0),
+        false,
+    );
+    let mut roller = PartDocument::default();
+    let i = roller
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts())
+        .unwrap();
+    let sk = &mut roller.sketches[i].sketch;
+    let centre = sk.add_point(Point2::new(0.0, 0.0));
+    sk.set_fixed(centre, true).unwrap();
+    sk.add_circle_at(centre, 15.0).unwrap();
+    let rg = sk.regions();
+    let id = roller.sketches[i].id.clone();
+    let f = roller
+        .add_extrude(
+            i,
+            ExtrudeFeature::new(vec![ProfileRef::of(&rg[0], rg[0].interior_point())], 50.0),
+        )
+        .unwrap();
+    roller.set_adaptive(&id, true);
+    let wall = round(&roller, 0, &f);
+    let r = c.place(
+        roller,
+        "Roller",
+        Transform3::translation(50.0, 70.0, 25.0),
+        false,
+    );
+    let re = |g: GeomRef| match g {
+        GeomRef::Face { name, hint, .. } => GeomRef::Face {
+            occurrence: r,
+            sub: Vec::new(),
+            name,
+            hint,
+        },
+        g => g,
+    };
+    let slab_part = c.part(floor).clone();
+    c.asm.add_constraint(Constraint::new(
+        ConstraintKind::Tangent,
+        re(wall.clone()),
+        face(&slab_part, floor, 2, 10.0),
+    ));
+    c.asm.add_constraint(Constraint::new(
+        ConstraintKind::Tangent,
+        re(wall),
+        face(&slab_part, ceiling, 2, 0.0),
+    ));
+    // The ceiling slides up its guide columns: flush with the floor's sides.
+    for k in [0, 1] {
+        c.asm.add_constraint(Constraint::new(
+            ConstraintKind::Flush,
+            face(&slab_part, ceiling, k, 0.0),
+            face(&slab_part, floor, k, 0.0),
+        ));
+    }
+    // Contact line of the ceiling: local (50, y, 0), world z 40.
+    c.drag(
+        r,
+        ceiling,
+        Point3::new(50.0, 45.0, 0.0),
+        Point3::new(50.0, 45.0, 50.0),
+    )
+    .unwrap()
+    .expect("grown");
+    let (lo, hi) = extent(c.part(r), 2);
+    assert!(((hi - lo) - 40.0).abs() < 1e-2, "diameter {}", hi - lo);
+}

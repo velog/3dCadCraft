@@ -932,7 +932,7 @@ Finds the overlapping volumes between components, shows them in red and gives th
   (🟡 2026-10-29: Create In-Place, Edit in place of parts of this file and of linked files, a sketch on another
   component's face that follows it on Update, edges and whole faces of other components projected into sketches).
 - **Adaptivity:** a part's size driven by the assembly (🟡 2026-10-29: Adaptive components, sketches and
-  extrusions; the free sizes are solved with the placements when the relationships need them).
+  extrusions; the free sizes are solved with the placements when the relationships need them, also while a partner is dragged).
 - **Derive:** a part derived from another, e.g. a casting mould from a model.
 - **Skeleton / layout:** one master skeleton drives the whole product.
 

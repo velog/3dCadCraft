@@ -2416,6 +2416,29 @@ fn speed_budgets() {
                 assert!(r.solved.converged);
             }),
         ));
+        // One step of a drag (every mouse move): the plate fitted, wall B
+        // freed and pulled 20 mm out, the plate stretching with it.
+        let fitted = adapt::adapt(&asm, p, &plate, &local).unwrap().unwrap();
+        let mut dragged = asm.clone();
+        for (id, t) in &fitted.solved.transforms {
+            dragged.find_mut(*id).unwrap().transform = *t;
+        }
+        dragged.find_mut(b).unwrap().grounded = false;
+        let drag = cadcraft3d::assembly::Drag {
+            occurrence: b,
+            local: Point3::new(5.0, 25.0, 25.0),
+            target: Point3::new(135.0, 25.0, 25.0),
+        };
+        rows.push((
+            "assembly: adaptive plate stretched while its wall is dragged (one drag step)",
+            30.0,
+            median_ms(3, || {
+                let r = adapt::adapt_dragged(&dragged, p, &fitted.part, &local, &drag)
+                    .unwrap()
+                    .unwrap();
+                assert!(r.solved.converged);
+            }),
+        ));
     }
 
     // Assembly picking (docs/spec/3.1, A1): the occurrence under the cursor

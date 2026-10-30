@@ -1854,6 +1854,7 @@ impl CadCraftApp {
                     };
                     self.checkpoint("Free Move");
                     self.asm_solve(Some(&drag));
+                    self.adapt_drag(&drag);
                 } else {
                     let v = q - grab;
                     let t = Transform3::translation(v.x, v.y, v.z) * d.start;

@@ -1018,7 +1018,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
 - **Assembly constraints (A2)**: data in `AssemblyDocument::constraints` (`assembly::relation`), solved by
   `assembly::solve` (6 unknowns per free component, turn about its own origin scaled by 50 mm, min-norm
   Levenberg, dragged component weighted). GUI changes go through `asm_try` (solve a copy, commit only when
-  it converges — rule 5); drags call `asm_solve(Some(id))` after each move. Plane normals are *outward*
+  it converges — rule 5); drags call `asm_solve(Some(id))` after each move, then `adapt_drag` (an adaptive part stretches
+  with the drag: `adapt::adapt_dragged`, the drag's goal a weak residual of the joint solve). Plane normals are *outward*
   (face sense); a circular edge's normal is the outward normal of its planar face (a hole rim points out
   of the hole), which Insert's Opposed / Aligned rely on. `GeomRef::Origin { occurrence: ASSEMBLY (0) }`
   is the assembly's own origin (identity, never solved); `Work { id }` reads `PartDocument::work`, so

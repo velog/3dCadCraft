@@ -16,7 +16,7 @@ use super::CadCraftApp;
 use super::valuefield::ExprValue;
 use crate::assembly::relation::{self, Constraint, ConstraintKind, Geom, GeomRef};
 use crate::assembly::{self as asm, Solved};
-use crate::document::{AssemblyDocument, DocRef};
+use crate::document::{AssemblyDocument, DocRef, DocumentData};
 use crate::kernel::{Point3, Real, Transform3};
 use crate::part::EdgeRef;
 
@@ -211,6 +211,49 @@ impl CadCraftApp {
             }
             Ok(None) => {}
             Err(e) => self.file_status = Some(Err(format!("Adaptive: {e}"))),
+        }
+    }
+
+    /// During a drag of a component joined to an adaptive part: when the
+    /// rigid solve left the grabbed point short of the cursor, the part
+    /// stretches with the drag (spec 3.10 §3.4, `adapt::adapt_dragged`);
+    /// no Undo step (the drag's own). A drag no size can follow stays as
+    /// the rigid solve left it.
+    pub(super) fn adapt_drag(&mut self, drag: &asm::Drag) {
+        let Some(mut a) = self.assembly().cloned() else {
+            return;
+        };
+        let reached = a
+            .find(drag.occurrence)
+            .is_some_and(|o| (o.transform * drag.local - drag.target).norm() < 1e-3);
+        if reached || !a.occurrences.iter().any(|o| o.adaptive) {
+            return;
+        }
+        let mut found = None;
+        for o in a.occurrences.iter().filter(|o| o.adaptive && !o.suppressed) {
+            if o.component.library.is_some() || o.id == drag.occurrence {
+                continue;
+            }
+            let Some(DocumentData::Part(base)) =
+                self.project.document(o.component.document).map(|d| &d.data)
+            else {
+                continue;
+            };
+            let local = |r: &GeomRef| self.asm_local_in(&a, r);
+            if let Ok(Some(r)) = crate::assembly::adapt::adapt_dragged(&a, o.id, base, &local, drag)
+            {
+                found = Some((o.component.document, r));
+                break;
+            }
+        }
+        if let Some(r) = found {
+            self.adapt_write(&mut a, r);
+            if let Err(e) = self.place_patterns(&mut a) {
+                log::warn!("{e}");
+            }
+            if let Some(cur) = self.assembly_mut() {
+                *cur = a;
+            }
         }
     }
 

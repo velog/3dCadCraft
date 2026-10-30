@@ -9,7 +9,8 @@
 //! solved assembly). The result is written into the part like a user's
 //! edit — moved sketch points, a new distance — so the part still
 //! regenerates from its own data (rule 8) and keeps its last size opened
-//! alone.
+//! alone. While a component joined to it is dragged
+//! ([`adapt_dragged`]), the part stretches with the drag.
 
 use super::relation::{self, Geom, GeomRef};
 use super::solve::{self, Solved};
@@ -241,6 +242,34 @@ pub fn adapt(
     base: &PartDocument,
     local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
 ) -> Result<Option<Adapted>, String> {
+    adapt_with(asm, occurrence, base, local, None)
+}
+
+/// [`adapt`] while `drag` pulls a component joined to the adaptive part
+/// (Inventor stretches an adaptive part as its partner is dragged): the
+/// drag's goal is one more, weak, residual of the joint solve (as in the
+/// rigid drag), so the part takes the size that brings the grabbed point
+/// nearest the cursor while every relationship holds. The rigid solve is
+/// not asked first (with a drag it always "holds": the dragged component
+/// stops where the rigid part lets it). `Ok(None)` when the dragged
+/// component is not joined to the part or the size need not change.
+pub fn adapt_dragged(
+    asm: &AssemblyDocument,
+    occurrence: u32,
+    base: &PartDocument,
+    local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
+    drag: &solve::Drag,
+) -> Result<Option<Adapted>, String> {
+    adapt_with(asm, occurrence, base, local, Some(drag))
+}
+
+fn adapt_with(
+    asm: &AssemblyDocument,
+    occurrence: u32,
+    base: &PartDocument,
+    local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
+    drag: Option<&solve::Drag>,
+) -> Result<Option<Adapted>, String> {
     let comp = asm
         .find(occurrence)
         .ok_or("the adaptive component no longer exists")?
@@ -260,8 +289,7 @@ pub fn adapt(
             local(r)
         }
     };
-    let first = solve::solve(asm, &|r: &GeomRef| look_in(base, r), None);
-    if first.converged {
+    if drag.is_none() && solve::solve(asm, &|r: &GeomRef| look_in(base, r), None).converged {
         return Ok(None);
     }
     let u = unknowns(base);
@@ -272,12 +300,25 @@ pub fn adapt(
     let mut group = solve::free_group(asm, occurrence);
     // A grounded adaptive part still adapts (it only does not move).
     group.retain(|id| asm.find(*id).is_some_and(|o| !o.grounded));
+    // The dragged component's place among the unknowns.
+    let pulled = match drag {
+        Some(d) => match group.iter().position(|id| *id == d.occurrence) {
+            Some(g) => Some((g, d)),
+            None => return Ok(None),
+        },
+        None => None,
+    };
     let n = k + 6 * group.len();
     let (_, sick) = solve::residuals_at(asm, &|r: &GeomRef| look_in(base, r));
     // The residuals with sizes x (a trial part) and moves q.
     let res = |part: &PartDocument, q: &[Real]| -> Option<Vec<Real>> {
         let a = moved(asm, &group, q);
-        let (r, s) = solve::residuals_at(&a, &|r: &GeomRef| look_in(part, r));
+        let (mut r, s) = solve::residuals_at(&a, &|r: &GeomRef| look_in(part, r));
+        if let Some((_, d)) = pulled {
+            let o = a.find(d.occurrence)?;
+            let w = o.transform * d.local - d.target;
+            r.extend([w.x * solve::GOAL, w.y * solve::GOAL, w.z * solve::GOAL]);
+        }
         (s == sick).then_some(r)
     };
     let cost = |r: &[Real]| r.iter().map(|v| v * v).sum::<Real>();
@@ -319,6 +360,7 @@ pub fn adapt(
             break;
         }
         let mut stepped = false;
+        let before = c;
         for _ in 0..12 {
             let mut m = jtj.clone();
             for a in 0..n {
@@ -351,6 +393,15 @@ pub fn adapt(
         if !stepped {
             break;
         }
+        // With a drag the goal is never met exactly: stop when a step
+        // gains (almost) nothing.
+        if pulled.is_some() && before - c < 1e-12 * before.max(1e-30) {
+            break;
+        }
+    }
+    // Sizes below 0.1 µm are the finite differences' noise.
+    if pulled.is_some() && z[..k].iter().all(|v| v.abs() < 1e-4) {
+        return Ok(None);
     }
     // The whole assembly with the new part, from the found placements.
     let start = moved(asm, &group, &z[k..]);
