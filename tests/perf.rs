@@ -3575,6 +3575,56 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Flange Between / Height To (docs/spec/5.6 §6.1i): a 100 × 60 Face, a
+    // flange between two work planes up to a third.
+    {
+        use cadcraft3d::part::sheet_metal::{FlangeRef, FlangeWidth, SheetFlangeFeature};
+        use cadcraft3d::part::{
+            OriginPlane, PlaneRef, ProfileRef, WorkDef, WorkFeature, WorkPlaneDef,
+        };
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        base.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 60.0))
+            .unwrap();
+        let r = base.sketches[i].sketch.regions();
+        base.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+            .unwrap();
+        let plane = |base: &mut PartDocument, b: OriginPlane, d: Real| {
+            base.add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(b),
+                distance: d,
+            })))
+            .unwrap()
+        };
+        let a = plane(&mut base, OriginPlane::YZ, 20.0);
+        let b = plane(&mut base, OriginPlane::YZ, 70.0);
+        let z = plane(&mut base, OriginPlane::XY, 30.0);
+        let (body, e) = base.sheet_edge_at(Point3::new(50.0, 0.0, 2.0)).unwrap();
+        let mut fl = SheetFlangeFeature::new(&body, vec![e], 10.0);
+        fl.extents = FlangeWidth::Between;
+        fl.from = Some(FlangeRef::Plane(PlaneRef::Work(a)));
+        fl.to = Some(FlangeRef::Plane(PlaneRef::Work(b)));
+        fl.height_to = Some(FlangeRef::Plane(PlaneRef::Work(z)));
+        rows.push((
+            "sheet metal: Flange Between two work planes, Height To a third",
+            200.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_flange(fl.clone()).unwrap();
+            }),
+        ));
+    }
     // Bill of Materials (docs/spec/3.6): 2000 occurrences of 50 parts,
     // merged by part number, as the window computes them every frame.
     {

@@ -617,6 +617,51 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 53: Flange Width Extents Between and Height Extents To — a
+/// 100 × 60 Face, a flange on its y = 0 edge between work planes x = 20 and
+/// x = 70, up to a work plane z = 30.
+fn flange_between_r53() -> PartDocument {
+    use cadcraft3d::part::sheet_metal::{FlangeRef, FlangeWidth, SheetFlangeFeature};
+    use cadcraft3d::part::{OriginPlane, PlaneRef, ProfileRef, WorkDef, WorkFeature, WorkPlaneDef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 60.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    p.add_sheet_face(i, vec![ProfileRef::of(&r[0], r[0].interior_point())], false)
+        .unwrap();
+    let mut plane = |base: OriginPlane, d: f64| {
+        p.add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(base),
+            distance: d,
+        })))
+        .unwrap()
+    };
+    let (a, b, z) = (
+        plane(OriginPlane::YZ, 20.0),
+        plane(OriginPlane::YZ, 70.0),
+        plane(OriginPlane::XY, 30.0),
+    );
+    let (body, e) = p.sheet_edge_at(Point3::new(50.0, 0.0, 2.0)).unwrap();
+    let mut fl = SheetFlangeFeature::new(&body, vec![e], 10.0);
+    fl.extents = FlangeWidth::Between;
+    fl.from = Some(FlangeRef::Plane(PlaneRef::Work(a)));
+    fl.to = Some(FlangeRef::Plane(PlaneRef::Work(b)));
+    fl.height_to = Some(FlangeRef::Plane(PlaneRef::Work(z)));
+    p.add_sheet_flange(fl).unwrap();
+    p
+}
+
 /// Revision 52: sheet metal Cut To Next, Flipped — a U channel (base
 /// 100 × 60, walls 40 high on its long edges) cut from a work plane between
 /// the walls through the farther wall.
@@ -3079,6 +3124,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("ContextSplineR51");
             project.add_document("Part1", DocumentData::Part(context_spline_r51()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r53/flange_between_r53.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("FlangeBetweenR53");
+            project.add_document("Part1", DocumentData::Part(flange_between_r53()));
             project.save(&f).unwrap();
         }
         let f = root().join("r52/cut_to_next_r52.3dcadcraft");

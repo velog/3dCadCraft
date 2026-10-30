@@ -1129,7 +1129,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 |---|---|
 | Face | a plate from a profile with the thickness from the rules |
 | Contour Flange | a bent profile from an open line (L, U, Z) |
-| Flange | a flange along an edge, with angle, height, position; height arrow and angle arc in the view; **Further Bends** — a chain of up to 16 more bends (each on the far edge of the one before, Default / Flipped) in the same feature, each with its own fields and handles (2026-10-28) |
+| Flange | a flange along an edge, with angle, height, position; height arrow and angle arc in the view; Edge Loop, Width Extents Between two references and Height Extents To (2026-10-30); **Further Bends** — a chain of up to 16 more bends (each on the far edge of the one before, Default / Flipped) in the same feature, each with its own fields and handles (2026-10-28) |
 | Hem | a hem: Single, Double, Teardrop, Rolled (2026-10-29: all four, matching Inventor's flat lengths; the outer face stays at the edge; width extents ⬜) |
 | Fold | a fold along a sketch line |
 | Bend | a bend between two plates (2026-10-29: faces at an angle, Double Bend Fix Edges / 45 / 90 / Full Radius, as Inventor builds them; Width Extents ⬜) |

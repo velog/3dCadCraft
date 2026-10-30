@@ -1439,7 +1439,15 @@ impl PartDocument {
                     }
                 }
                 BuildStep::SheetFlange(fl) if use_exact => {
-                    match exact::sheet_flange(fl, &solids, &metal, &rule) {
+                    let resolve = |r: &sheet_metal::FlangeRef| match r {
+                        sheet_metal::FlangeRef::Point(p) => placement::point_of(p, &body, &works)
+                            .map(exact::RefAt::Point)
+                            .map_err(|e| e.to_string()),
+                        sheet_metal::FlangeRef::Plane(p) => placement::plane_of(p, &body, &works)
+                            .map(exact::RefAt::Plane)
+                            .map_err(|e| e.to_string()),
+                    };
+                    match exact::sheet_flange(fl, &solids, &metal, &rule, &resolve) {
                         Ok((next, state)) => {
                             metal.insert(fl.body.clone(), state);
                             Ok(Some(next))

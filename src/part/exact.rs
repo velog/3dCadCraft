@@ -4401,12 +4401,22 @@ fn flange_bends(
     Ok(model)
 }
 
+/// Where a Flange's Between / Height To reference lies.
+pub(super) enum RefAt {
+    /// A point.
+    Point(Point3),
+    /// A plane.
+    Plane(crate::kernel::Plane),
+}
+
 pub(super) fn sheet_flange(
     fl: &super::sheet_metal::SheetFlangeFeature,
     solids: &[ExactSolid],
     metal: &std::collections::HashMap<String, super::sheet_metal::SheetState>,
     rule: &super::sheet_metal::SheetMetalDefaults,
+    resolve: &dyn Fn(&super::sheet_metal::FlangeRef) -> Result<RefAt, String>,
 ) -> Result<(Vec<ExactSolid>, super::sheet_metal::SheetState), Fail> {
+    use super::sheet_metal::FlangeWidth;
     use crate::kernel::exact::sheet_metal as ksm;
     let k = solids
         .iter()
@@ -4424,19 +4434,98 @@ pub(super) fn sheet_flange(
     if fl.edges.is_empty() {
         return Err(User("select the edges".into()));
     }
-    if !(fl.height.is_finite() && fl.height > 0.0) {
+    if fl.height_to.is_none() && !(fl.height.is_finite() && fl.height > 0.0) {
         return Err(User("the height must be positive".into()));
     }
+    let t = rule.values().thickness;
+    let at_ref = |r: &Option<super::sheet_metal::FlangeRef>, what: &str| match r {
+        Some(r) => resolve(r).map_err(|e| User(format!("{what}: {e}"))),
+        None => Err(User(format!("select the {what}"))),
+    };
+    let between = if fl.extents == FlangeWidth::Between {
+        Some((
+            at_ref(&fl.from, "From reference")?,
+            at_ref(&fl.to, "To reference")?,
+        ))
+    } else {
+        None
+    };
+    let height_to = match &fl.height_to {
+        Some(_) => Some(at_ref(&fl.height_to, "Height To reference")?),
+        None => None,
+    };
     let mut edges = Vec::with_capacity(fl.edges.len());
     for e in &fl.edges {
         let at = ksm::edge_point(&state.model, &e.name, Point3::from(e.hint))
             .ok_or_else(|| User(format!("the edge {} no longer exists", e.name)))?;
         let (a, b, _) = ksm::edge_ends(&state.model, at)
             .ok_or_else(|| User(format!("the edge {} no longer exists", e.name)))?;
-        let offsets = fl.spans((b - a).norm()).map_err(User)?;
+        let len = (b - a).norm();
+        let offsets = match &between {
+            // Between: each reference projected onto the edge's line.
+            Some((r1, r2)) => {
+                let dir = (b - a) / len.max(1e-12);
+                let along = |r: &RefAt| -> Result<Real, Fail> {
+                    match r {
+                        RefAt::Point(p) => Ok((p - a).dot(&dir)),
+                        RefAt::Plane(pl) => {
+                            let n = pl.normal.into_inner();
+                            let den = dir.dot(&n);
+                            if den.abs() < 1e-9 {
+                                return Err(User(
+                                    "a Between plane runs along the edge: it must cross it".into(),
+                                ));
+                            }
+                            Ok((pl.origin - a).dot(&n) / den)
+                        }
+                    }
+                };
+                let (s1, s2) = (along(r1)?, along(r2)?);
+                let (lo, hi) = (s1.min(s2), s1.max(s2));
+                if lo < -1e-6 || hi > len + 1e-6 || hi - lo < 1e-6 {
+                    return Err(User(format!(
+                        "the Between references must lie along the edge ({len:.3} mm long)"
+                    )));
+                }
+                (lo.max(0.0), (len - hi).max(0.0))
+            }
+            None => fl.spans(len).map_err(User)?,
+        };
+        // Height To: from the virtual sharp (the edge on the face away from
+        // the flange) along the flange to the reference.
+        let height = match &height_to {
+            Some(r) => {
+                let (p, _, n, out) = ksm::edge_frame(&state.model, at)
+                    .ok_or_else(|| User(format!("the edge {} no longer exists", e.name)))?;
+                let up = if fl.flip { -n } else { n };
+                let d = out * fl.angle.cos() + up * fl.angle.sin();
+                let sharp = if fl.flip { p } else { p - n * t };
+                let h = match r {
+                    RefAt::Point(q) => (q - sharp).dot(&d),
+                    RefAt::Plane(pl) => {
+                        let m = pl.normal.into_inner();
+                        let den = d.dot(&m);
+                        if den.abs() < 1e-9 {
+                            return Err(User(
+                                "the Height To plane runs along the flange: it must cross it"
+                                    .into(),
+                            ));
+                        }
+                        (pl.origin - sharp).dot(&m) / den
+                    }
+                };
+                if !(h.is_finite() && h > t) {
+                    return Err(User(format!(
+                        "the Height To reference is behind or too near the edge ({h:.3} mm)"
+                    )));
+                }
+                h
+            }
+            None => fl.height,
+        };
         edges.push(ksm::FlangeEdge {
             at,
-            height: fl.height,
+            height,
             angle: fl.angle,
             offsets,
         });

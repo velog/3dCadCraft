@@ -59,10 +59,15 @@ pub(super) struct SmDraft {
     /// A command whose panel is there and its logic not yet
     /// (`sm_planned`): its panel state; `feature` is then a stand-in.
     pub planned: Option<Planned>,
+    /// Flange: Height Extents To chosen (its reference may still be missing).
+    pub height_to: bool,
+    /// Flange: a face click takes its whole outer loop (Edge Select Mode Loop).
+    pub loop_mode: bool,
 }
 
 impl SmDraft {
     fn new(feature: Feature, active: &'static str) -> Self {
+        let height_to = matches!(&feature, Feature::SheetFlange(f) if f.height_to.is_some());
         Self {
             feature,
             sketch: None,
@@ -70,6 +75,8 @@ impl SmDraft {
             edit: None,
             crumb: Default::default(),
             planned: None,
+            height_to,
+            loop_mode: false,
         }
     }
 
@@ -151,14 +158,50 @@ impl SmDraft {
                 true,
                 f.profiles.len(),
             )],
-            Feature::SheetFlange(f) => vec![sel(
-                "edges",
-                "Edges",
-                "click the sheet edges to bend (again: the other face's edge, Ctrl+click removes)",
-                &[PickKind::Edge][..],
-                false,
-                f.edges.len(),
-            )],
+            Feature::SheetFlange(f) => {
+                let refs = &[PickKind::Point, PickKind::PlanarFace, PickKind::Plane][..];
+                let mut v = vec![sel(
+                    "edges",
+                    "Edges",
+                    if self.loop_mode {
+                        "click a face of the sheet: every free edge of its outline"
+                    } else {
+                        "click the sheet edges to bend (again: the other face's edge, Ctrl+click removes)"
+                    },
+                    &[PickKind::Edge][..],
+                    false,
+                    f.edges.len(),
+                )];
+                if f.extents == FlangeWidth::Between {
+                    v.push(sel(
+                        "between_from",
+                        "From",
+                        "click the vertex, face or work plane the flange starts at",
+                        refs,
+                        true,
+                        usize::from(f.from.is_some()),
+                    ));
+                    v.push(sel(
+                        "between_to",
+                        "To",
+                        "click the vertex, face or work plane the flange ends at",
+                        refs,
+                        true,
+                        usize::from(f.to.is_some()),
+                    ));
+                }
+                if self.height_to {
+                    v.push(sel(
+                        "height_to",
+                        "Height To",
+                        "click the vertex, face or work plane the flange reaches",
+                        refs,
+                        true,
+                        usize::from(f.height_to.is_some()),
+                    ));
+                }
+                v
+            }
             Feature::SheetConvert(c) => vec![
                 sel(
                     "face",
@@ -334,6 +377,10 @@ enum Pick {
     Items(Vec<(String, Vec<Vec<Point3>>)>),
     /// A face or work / origin plane (Cut To).
     Plane(crate::part::PlaneRef),
+    /// A Flange's Between / Height To reference.
+    Ref(crate::part::sheet_metal::FlangeRef),
+    /// Flange Edge Loop: the free edges of a face's outline.
+    SheetEdges(Vec<(String, SheetEdge)>),
 }
 
 /// Builds the draft's feature into `part` (a new one, or Edit Feature).
@@ -1126,11 +1173,17 @@ impl CadCraftApp {
                 Feature::SheetFlange(f) => {
                     psection(ui, "sm_flange_width", "Edge Options", |ui| {
                         plabel(ui, "Width Extents");
-                        ui.horizontal(|ui| {
+                        egui::ComboBox::from_id_salt("sm_flange_extents")
+                            .selected_text(f.extents.label())
+                            .show_ui(ui, |ui| {
                             for (w, tip) in [
                                 (FlangeWidth::Edge, "The whole edge"),
                                 (FlangeWidth::Width, "A width, centred or from an offset"),
                                 (FlangeWidth::Offset, "Offsets from both ends of the edge"),
+                                (
+                                    FlangeWidth::Between,
+                                    "Between two references (a vertex, face or work plane) projected onto the edge",
+                                ),
                             ] {
                                 if ui
                                     .selectable_label(f.extents == w, w.label())
@@ -1144,7 +1197,7 @@ impl CadCraftApp {
                                     }
                                 }
                             }
-                        });
+                            });
                         ui.end_row();
                         match f.extents {
                             FlangeWidth::Edge => {}
@@ -1162,10 +1215,40 @@ impl CadCraftApp {
                                 field_row(ui, &mut fx, "Offset 1", &snapshot, "offset1");
                                 field_row(ui, &mut fx, "Offset 2", &snapshot, "offset2");
                             }
+                            FlangeWidth::Between => {}
                         }
+                        plabel(ui, "Edge Select");
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut d.loop_mode, false, "Edge")
+                                .on_hover_text("Pick edges one by one");
+                            ui.selectable_value(&mut d.loop_mode, true, "Loop")
+                                .on_hover_text("A face click takes every free edge of its outline");
+                        });
+                        ui.end_row();
                     });
                     psection(ui, "sm_flange_height", "Height Extents", |ui| {
-                        field_row(ui, &mut fx, "Distance", &snapshot, "height");
+                        plabel(ui, "Extents");
+                        ui.horizontal(|ui| {
+                            if ui
+                                .selectable_label(!d.height_to, "Distance")
+                                .on_hover_text("A height from the virtual sharp")
+                                .clicked()
+                            {
+                                d.height_to = false;
+                                f.height_to = None;
+                            }
+                            if ui
+                                .selectable_label(d.height_to, "To")
+                                .on_hover_text("Up to a vertex, face or work plane")
+                                .clicked()
+                            {
+                                d.height_to = true;
+                            }
+                        });
+                        ui.end_row();
+                        if !d.height_to {
+                            field_row(ui, &mut fx, "Distance", &snapshot, "height");
+                        }
                         plabel(ui, "Direction");
                         direction_row(ui, &mut f.flip, "The flange to the other side");
                         ui.end_row();
@@ -2334,6 +2417,80 @@ impl CadCraftApp {
             }
             return None;
         }
+        if matches!(sel.key, "between_from" | "between_to" | "height_to") {
+            // A Flange's reference: a vertex / edge midpoint / work point, else a
+            // planar face or a work / origin plane.
+            use crate::part::sheet_metal::FlangeRef;
+            if let Some(r) = self.vertex_under(p, rect)
+                && let Ok(at) = crate::part::placement::point_of(&r, &part.body, &part.work)
+            {
+                let s = self.camera.distance * 0.012;
+                let lines = [Vector3::x(), Vector3::y(), Vector3::z()]
+                    .iter()
+                    .map(|a| vec![at - a * s, at + a * s])
+                    .collect();
+                return Some((Pick::Ref(FlangeRef::Point(r)), lines));
+            }
+            let r = self.plane_under_pub(p, rect)?;
+            let opts = crate::kernel::TessellationOptions::default();
+            let lines = match &r {
+                crate::part::PlaneRef::Face(name) => part
+                    .body
+                    .find_face(name)
+                    .map(|f| {
+                        crate::part::select::edges_of_face(&part.body, f)
+                            .into_iter()
+                            .filter_map(|e| part.body.sample_edge(e, &opts).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            return Some((Pick::Ref(FlangeRef::Plane(r)), lines));
+        }
+        if sel.key == "edges" && d.loop_mode && matches!(d.feature, Feature::SheetFlange(_)) {
+            // Edge Loop: every free sheet edge of the face's outline.
+            // The selector takes edges, so the pick filter leaves faces out:
+            // the face under the ray itself.
+            let u = dir.try_normalize(1e-12)?;
+            let (f, _) = self.picker().pick(&o, &u)?;
+            let opts = crate::kernel::TessellationOptions::default();
+            let mut picks = Vec::new();
+            let mut lines = Vec::new();
+            for e in crate::part::select::edges_of_face(&part.body, f) {
+                let Ok(pts) = part.body.sample_edge(e, &opts) else {
+                    continue;
+                };
+                let Some(mid) = crate::part::select::polyline_middle(&pts) else {
+                    continue;
+                };
+                let Some((body, edge)) = part.sheet_edge_at(mid) else {
+                    continue;
+                };
+                let Some((a, b)) = part.sheet_edge_ends(&body, &edge) else {
+                    continue;
+                };
+                let ab = b - a;
+                let t = rule_of(part).values().thickness;
+                let along = |q: &Point3| {
+                    let u = ((q - a).dot(&ab) / ab.norm_squared()).clamp(0.0, 1.0);
+                    (a + ab * u - q).norm() < 0.05 * t
+                };
+                if pts.iter().all(along)
+                    && self.sm_edge_free(&body, &edge, mid)
+                    && !picks
+                        .iter()
+                        .any(|(_, x): &(String, SheetEdge)| x.name == edge.name)
+                {
+                    lines.push(vec![a, b]);
+                    picks.push((body, edge));
+                }
+            }
+            if picks.is_empty() {
+                return None;
+            }
+            return Some((Pick::SheetEdges(picks), lines));
+        }
         if sel.key == "to" {
             // Cut To: a planar face or a work / origin plane.
             let r = self.plane_under_pub(p, rect)?;
@@ -2818,7 +2975,23 @@ impl CadCraftApp {
             return;
         };
         let mut status = None;
+        let active = d.active;
         match (&mut d.feature, pick) {
+            (Feature::SheetFlange(f), Pick::Ref(r)) => match active {
+                "between_from" => f.from = Some(r),
+                "between_to" => f.to = Some(r),
+                _ => f.height_to = Some(r),
+            },
+            (Feature::SheetFlange(f), Pick::SheetEdges(list)) => {
+                for (body, e) in list {
+                    if f.edges.is_empty() {
+                        f.body = body.clone();
+                    }
+                    if f.body == body && !f.edges.iter().any(|x| x.name == e.name) {
+                        f.edges.push(e);
+                    }
+                }
+            }
             (Feature::SheetFace(f), Pick::Region(i, pr)) => {
                 f.sketch = sid.unwrap_or_default();
                 f.profiles = vec![pr];
@@ -3025,6 +3198,13 @@ impl CadCraftApp {
                     side("offset1", a, dd, o1),
                     side("offset2", b, -dd, o2),
                 ];
+                // Height To / Between: the reference decides, no arrow drags it.
+                if f.height_to.is_some() {
+                    hs.retain(|h| h.field != "height");
+                }
+                if f.extents == FlangeWidth::Between {
+                    hs.retain(|h| h.field != "offset1" && h.field != "offset2");
+                }
                 // Further bends: each starts where the one before ends (its
                 // virtual sharp; thickness and radius are left out — the
                 // handles only need to sit on the bend they drag) and turns
@@ -3713,6 +3893,8 @@ mod tests {
             edit: None,
             crumb: Default::default(),
             planned: None,
+            height_to: false,
+            loop_mode: false,
         };
         assert!(d.flow().ready());
         let before = Default::default();

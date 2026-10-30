@@ -341,11 +341,30 @@ pub enum FlangeWidth {
     Width,
     /// Held back `offset1` from the start and `offset2` from the end.
     Offset,
+    /// Between two references (`from`, `to`: points or planes) projected
+    /// onto the edge (Inventor's From/To; format revision 53).
+    Between,
+}
+
+/// A reference a Flange's extent ends at: a point (vertex, edge midpoint,
+/// work point) or a plane (planar face, work or origin plane) — Width
+/// Extents Between and Height Extents To (format revision 53).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum FlangeRef {
+    /// A point.
+    Point(super::PointRef),
+    /// A plane.
+    Plane(super::PlaneRef),
 }
 
 impl FlangeWidth {
     /// Every kind, in menu order.
-    pub const ALL: [FlangeWidth; 3] = [FlangeWidth::Edge, FlangeWidth::Width, FlangeWidth::Offset];
+    pub const ALL: [FlangeWidth; 4] = [
+        FlangeWidth::Edge,
+        FlangeWidth::Width,
+        FlangeWidth::Offset,
+        FlangeWidth::Between,
+    ];
 
     /// Label (panel).
     pub fn label(self) -> &'static str {
@@ -353,6 +372,7 @@ impl FlangeWidth {
             FlangeWidth::Edge => "Edge",
             FlangeWidth::Width => "Width",
             FlangeWidth::Offset => "Offset",
+            FlangeWidth::Between => "Between",
         }
     }
 
@@ -426,6 +446,17 @@ pub struct SheetFlangeFeature {
     /// Corner Overrides: single corners between two of its flanges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seams: Vec<CornerOverride>,
+    /// Between: where the flange starts along each edge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<FlangeRef>,
+    /// Between: where it ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<FlangeRef>,
+    /// Height Extents To: the flange's outer face reaches this point or
+    /// plane (the height is measured from the virtual sharp along the
+    /// flange); `None`: Distance (`height`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_to: Option<FlangeRef>,
     /// Further bends (SolidCraft's `then`): bend `k + 2` is a flange on the
     /// far edge of every panel of the bend before it, all in this feature.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -505,7 +536,7 @@ impl SheetFlangeFeature {
             v.extend([(*h, Unit::Mm), (*a, Unit::Deg)]);
         }
         match self.extents {
-            FlangeWidth::Edge => {}
+            FlangeWidth::Edge | FlangeWidth::Between => {}
             FlangeWidth::Width => {
                 v.push(("width", Unit::Mm));
                 if !self.centered {
@@ -528,6 +559,9 @@ impl SheetFlangeFeature {
             }
             FlangeWidth::Width => (self.offset1, len - self.offset1 - self.width),
             FlangeWidth::Offset => (self.offset1, self.offset2),
+            FlangeWidth::Between => {
+                return Err("select the two references the flange runs between".into());
+            }
         };
         if self.extents == FlangeWidth::Width
             && self.width.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
@@ -648,6 +682,9 @@ impl SheetFlangeFeature {
             relief_placement: ReliefPlacement::Intersection,
             laser_corners: true,
             seams: Vec::new(),
+            from: None,
+            to: None,
+            height_to: None,
             bends: Vec::new(),
             params: Default::default(),
         }

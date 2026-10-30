@@ -157,7 +157,10 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (`ContextCurve::Spline`) (2026-10-30).
 /// - 52: sheet metal Cut To / To Next and Direction (`CutExtent::To`,
 ///   `ToNext`, `SheetOp::Cut::direction`, `to`) (2026-10-30).
-pub const FORMAT_REVISION: u32 = 52;
+/// - 53: Flange Width Extents Between and Height Extents To
+///   (`FlangeWidth::Between`, `SheetFlangeFeature::from` / `to` /
+///   `height_to`) (2026-10-30).
+pub const FORMAT_REVISION: u32 = 53;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

@@ -1097,7 +1097,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   Cut extents (revision 52): `SheetOp::Cut::direction` `None` = a Cut saved before (keep its old modes); with a
   direction every extent is vendor `CutMode::Span` (signed distances along the sketch normal: whole walls cut out,
   partial ones pocketed) or `Next`; Default = `ksm::cut_side` (towards the nearest parallel wall). `sheet_op`
-  resolves Cut To's `PlaneRef` through the `plane_of` closure given by the regeneration loop (body + work planes). Model vertex picking tests
+  resolves Cut To's `PlaneRef` through the `plane_of` closure given by the regeneration loop (body + work planes).
+  Flange Between / Height To (revision 53): `FlangeRef` (point or plane) resolved by the `resolve` closure of
+  `exact::sheet_flange` into `RefAt`; Between becomes per-edge offsets, Height To the first bend's height from the
+  virtual sharp. Edge Select Loop is GUI only (`SmDraft::loop_mode`; the face comes from `picker()`, the Edges
+  selector's filter leaves faces out). Model vertex picking tests
   visibility along the ray through the point's own pixel (`vertex_under`; the cursor's ray hid edge midpoints).
   Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry

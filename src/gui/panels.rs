@@ -2515,7 +2515,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     ui.end_row();
                     use crate::part::sheet_metal::FlangeWidth;
                     match extents {
-                        FlangeWidth::Edge => {}
+                        FlangeWidth::Edge | FlangeWidth::Between => {}
                         FlangeWidth::Width => {
                             field_row(ui, &mut fx, "Width", &f, "width");
                             ui.end_row();
