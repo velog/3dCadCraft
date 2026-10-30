@@ -13,3 +13,4 @@ Thumbs.db
 # Local, never committed: private working rules and tools
 /CLAUDE.local.md
 /local/
+__pycache__/
