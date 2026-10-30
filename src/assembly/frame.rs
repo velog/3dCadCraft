@@ -1796,6 +1796,34 @@ pub fn meeting_pairs(
     out
 }
 
+/// The corners of `asm`'s frames (Miter and Corner Joint treatments): the
+/// frame, the treatment's index, where the two members' skeleton lines meet
+/// and the members (the glyphs in the view, spec 6.1 §3.10).
+pub fn corner_points(
+    project: &Project,
+    linked: &Linked,
+    asm: &AssemblyDocument,
+) -> Vec<(u32, usize, Point3, [u32; 2])> {
+    let mut out = Vec::new();
+    for f in &asm.frames {
+        let line = |o: u32| {
+            let m = f.members.iter().find(|m| m.occurrence == o)?;
+            skeleton_line(project, linked, asm, &m.skeleton).ok()
+        };
+        for (i, t) in f.treatments.iter().enumerate() {
+            let (Treatment::Miter { a, b, .. } | Treatment::CornerJoint { a, b, .. }) = t else {
+                continue;
+            };
+            if let (Some(la), Some(lb)) = (line(*a), line(*b))
+                && let Some((c, _, _)) = joint(la, lb, Real::MAX)
+            {
+                out.push((f.id, i, c, [*a, *b]));
+            }
+        }
+    }
+    out
+}
+
 /// The middle of the lines' middles (the centre Position works from).
 fn centre_of(lines: &[(Point3, Point3)]) -> Point3 {
     let n = lines.len().max(1) as Real;

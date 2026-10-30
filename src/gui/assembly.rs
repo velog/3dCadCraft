@@ -74,6 +74,9 @@ pub(super) struct AsmDrag {
 pub(super) struct AsmUi {
     /// Selected occurrences (ids).
     pub sel: Vec<u32>,
+    /// The menu of a frame corner's glyph (frame, treatment, where; `true`
+    /// while the click that opened it is still being handled).
+    pub corner_menu: Option<(u32, usize, Pos2, bool)>,
     /// The occurrence under the cursor.
     pub hover: Option<u32>,
     /// The open command.
@@ -1870,7 +1873,11 @@ impl CadCraftApp {
         let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.shift);
 
         // --- clicks ---
-        if primary_click {
+        // A frame corner's glyph opens its menu (spec 6.1 §3.10).
+        let corner_click = primary_click
+            && self.asm.tool.is_none()
+            && pointer.is_some_and(|p| self.frame_corner_click(p, rect));
+        if primary_click && !corner_click {
             match self.asm.tool {
                 Some(AsmTool::Place(doc)) => {
                     if let Some(p) = pointer.and_then(|p| self.place_point(p, rect)) {
@@ -2032,6 +2039,8 @@ impl CadCraftApp {
         self.asm_sub_overlay(&painter, rect);
         self.frame_overlay(&painter, rect, pointer.filter(|_| on_view));
         self.frame_select_overlay(&painter, rect, pointer.filter(|_| on_view));
+        self.frame_corner_overlay(&painter, rect, pointer.filter(|_| on_view));
+        self.frame_corner_menu(&ctx);
         if let Some(g) = self.cons.browser_hover.clone() {
             self.draw_geom(&painter, rect, &g, Color32::from_rgb(110, 220, 120));
         }

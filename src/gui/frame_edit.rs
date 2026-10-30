@@ -743,7 +743,148 @@ impl CadCraftApp {
     }
 }
 
+/// Half the size of a frame corner's glyph in the view, px.
+const CORNER_GLYPH: f32 = 7.0;
+
 impl CadCraftApp {
+    /// The corners shown in the view (no command open): those of frames with
+    /// a selected member, on screen, with the treatment's letter.
+    fn corner_glyphs(&self, rect: egui::Rect) -> Vec<(u32, usize, egui::Pos2, &'static str)> {
+        if self.part_planned.is_some() || self.asm.sel.is_empty() {
+            return Vec::new();
+        }
+        let Some(a) = self.assembly() else {
+            return Vec::new();
+        };
+        let linked = self.linked();
+        let mut out: Vec<(u32, usize, egui::Pos2, &'static str)> = Vec::new();
+        for (f, i, c, ms) in frame::corner_points(&self.project, &linked, a) {
+            if !ms.iter().any(|m| self.asm.sel.contains(m)) {
+                continue;
+            }
+            let Some(mut q) = self.camera.project(&c, rect) else {
+                continue;
+            };
+            let Some(t) = a
+                .frames
+                .iter()
+                .find(|x| x.id == f)
+                .and_then(|x| x.treatments.get(i))
+            else {
+                continue;
+            };
+            let letter = match t {
+                Treatment::Miter { .. } => "M",
+                _ => "B",
+            };
+            // Corners of three members: their joints side by side.
+            while out.iter().any(|(_, _, p, _)| p.distance(q) < CORNER_GLYPH) {
+                q.x += 2.5 * CORNER_GLYPH;
+            }
+            out.push((f, i, q, letter));
+        }
+        out
+    }
+
+    /// The corner glyphs: an M (mitre) or B (butt) square at each corner of
+    /// the selected members' frames; the one under the cursor is green.
+    pub(super) fn frame_corner_overlay(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        pointer: Option<egui::Pos2>,
+    ) {
+        for (f, i, q, letter) in self.corner_glyphs(rect) {
+            let r = egui::Rect::from_center_size(q, egui::vec2(2.0, 2.0) * CORNER_GLYPH);
+            let open = self
+                .asm
+                .corner_menu
+                .is_some_and(|(mf, mi, _, _)| mf == f && mi == i);
+            let hot = open || pointer.is_some_and(|p| r.expand(2.0).contains(p));
+            let fill = if hot {
+                egui::Color32::from_rgb(110, 220, 120)
+            } else {
+                egui::Color32::from_rgb(255, 150, 40)
+            };
+            painter.rect_filled(r, 2.0, fill);
+            painter.rect_stroke(
+                r,
+                2.0,
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+                egui::StrokeKind::Outside,
+            );
+            painter.text(
+                q,
+                egui::Align2::CENTER_CENTER,
+                letter,
+                egui::FontId::proportional(10.0),
+                egui::Color32::BLACK,
+            );
+        }
+    }
+
+    /// A click on a corner glyph opens its menu (`true`: taken).
+    pub(super) fn frame_corner_click(&mut self, p: egui::Pos2, rect: egui::Rect) -> bool {
+        let hit = self.corner_glyphs(rect).into_iter().find(|(_, _, q, _)| {
+            egui::Rect::from_center_size(*q, egui::vec2(2.0, 2.0) * CORNER_GLYPH)
+                .expand(2.0)
+                .contains(p)
+        });
+        match hit {
+            Some((f, i, q, _)) => {
+                self.asm.corner_menu = Some((f, i, q + egui::vec2(10.0, 10.0), true));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The open corner menu: the corner types and Delete; a click anywhere
+    /// else closes it.
+    pub(super) fn frame_corner_menu(&mut self, ctx: &egui::Context) {
+        let Some((f, i, at, fresh)) = self.asm.corner_menu else {
+            return;
+        };
+        let mut cmd = None;
+        let r = egui::Area::new(egui::Id::new("frame_corner_menu"))
+            .fixed_pos(at)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.label(egui::RichText::new("Corner").strong());
+                    for (label, k) in [
+                        ("Miter", frame::CornerType::Miter),
+                        ("Butt - first through", frame::CornerType::ButtFirst),
+                        ("Butt - second through", frame::CornerType::ButtSecond),
+                        ("Butt - longer through", frame::CornerType::ButtLonger),
+                        ("Butt - shorter through", frame::CornerType::ButtShorter),
+                    ] {
+                        if ui.button(label).clicked() {
+                            cmd = Some(FrameCmd::Retype(f, i, k));
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Edit...").clicked() {
+                        cmd = Some(FrameCmd::EditTreatment(f, i));
+                    }
+                    if ui.button("Delete").clicked() {
+                        cmd = Some(FrameCmd::DeleteTreatment(f, i));
+                    }
+                });
+            });
+        if let Some(c) = cmd {
+            self.asm.corner_menu = None;
+            self.frame_cmd(c);
+            return;
+        }
+        let elsewhere = ctx.input(|i| i.pointer.any_click()) && !r.response.hovered();
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) || (elsewhere && !fresh) {
+            self.asm.corner_menu = None;
+        } else if fresh {
+            self.asm.corner_menu = Some((f, i, at, false));
+        }
+    }
+
     /// OK of Author Frame Profile (spec 6.1 §3.11): the picked sketch's
     /// closed region under the click (or its only one) becomes a section of
     /// the user's library.
