@@ -1411,7 +1411,41 @@ impl CadCraftApp {
                 Err(e) => why = Some(format!("{}: {e}", o.name)),
             }
         }
+        // Adaptive parts inside subassemblies (spec 3.10 §3.4).
+        for (target, doc, name) in self.nested_adaptive(a) {
+            let Some(DocumentData::Part(base)) = self.project.document(doc).map(|d| &d.data) else {
+                continue;
+            };
+            let local = |r: &crate::assembly::GeomRef| self.asm_local_in(a, r);
+            match crate::assembly::adapt::adapt_nested(a, &target, base, &local, None) {
+                Ok(Some(r)) => return Ok(Some((doc, r))),
+                Ok(None) => {}
+                Err(e) => why = Some(format!("{name}: {e}")),
+            }
+        }
         why.map_or(Ok(None), Err)
+    }
+
+    /// The adaptive parts of this design file inside the subassemblies of
+    /// `a`: where they are, their document and name.
+    pub(super) fn nested_adaptive(
+        &self,
+        a: &crate::document::AssemblyDocument,
+    ) -> Vec<(crate::assembly::adapt::Target, DocumentId, String)> {
+        let linked = self.linked();
+        crate::assembly::tree::leaves(&self.project, &linked, DocRef::local(self.part_id), a)
+            .into_iter()
+            .filter(|l| l.path.len() > 1 && l.occurrence.adaptive && l.component.library.is_none())
+            .filter_map(|l| {
+                let top = a.find(l.path[0])?;
+                let target = crate::assembly::adapt::Target {
+                    top: l.path[0],
+                    sub: l.path[1..].to_vec(),
+                    at: top.transform.inverse() * l.world,
+                };
+                Some((target, l.component.document, l.occurrence.name.clone()))
+            })
+            .collect()
     }
 
     /// Writes an adaptation found by [`Self::adapt_copy`] (after the

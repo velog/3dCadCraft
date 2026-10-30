@@ -196,7 +196,7 @@ impl CadCraftApp {
         let Some(mut a) = self.assembly().cloned() else {
             return;
         };
-        if !a.occurrences.iter().any(|o| o.adaptive) {
+        if !a.occurrences.iter().any(|o| o.adaptive) && self.nested_adaptive(&a).is_empty() {
             return;
         }
         match self.adapt_copy(&a) {
@@ -226,7 +226,8 @@ impl CadCraftApp {
         let reached = a
             .find(drag.occurrence)
             .is_some_and(|o| (o.transform * drag.local - drag.target).norm() < 1e-3);
-        if reached || !a.occurrences.iter().any(|o| o.adaptive) {
+        let nested = self.nested_adaptive(&a);
+        if reached || (!a.occurrences.iter().any(|o| o.adaptive) && nested.is_empty()) {
             return;
         }
         let mut found = None;
@@ -244,6 +245,24 @@ impl CadCraftApp {
             {
                 found = Some((o.component.document, r));
                 break;
+            }
+        }
+        if found.is_none() {
+            for (target, doc, _) in nested {
+                if target.top == drag.occurrence {
+                    continue;
+                }
+                let Some(DocumentData::Part(base)) = self.project.document(doc).map(|d| &d.data)
+                else {
+                    continue;
+                };
+                let local = |r: &GeomRef| self.asm_local_in(&a, r);
+                if let Ok(Some(r)) =
+                    crate::assembly::adapt::adapt_nested(&a, &target, base, &local, Some(drag))
+                {
+                    found = Some((doc, r));
+                    break;
+                }
             }
         }
         if let Some(r) = found {
@@ -312,7 +331,7 @@ impl CadCraftApp {
         // An adaptive part may take the size the new relationship needs.
         let mut adapted = None;
         if !s.converged
-            && a.occurrences.iter().any(|o| o.adaptive)
+            && (a.occurrences.iter().any(|o| o.adaptive) || !self.nested_adaptive(&a).is_empty())
             && let Ok(Some(r)) = self.adapt_copy(&a)
         {
             adapted = Some(r);
@@ -734,7 +753,15 @@ impl CadCraftApp {
                 a.add_constraint(c);
             }
         }
-        let s = self.solve_copy(&a, None);
+        let mut s = self.solve_copy(&a, None);
+        // An adaptive part will take the size the relationship needs: the
+        // preview places the components as that does (the part's new size
+        // shows after OK), not as the rigid solve's compromise.
+        if !s.converged
+            && let Ok(Some((_, ad))) = self.adapt_copy(&a)
+        {
+            s = ad.solved;
+        }
         self.cons.preview = Some(s.transforms.into_iter().collect());
     }
 

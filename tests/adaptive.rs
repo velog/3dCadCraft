@@ -977,3 +977,213 @@ fn a_sector_with_a_fixed_end_does_not_adapt() {
     let (_, hi) = extent(c.part(s), 1);
     assert!((hi - 50.0 * std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-3);
 }
+
+// An adaptive part inside a subassembly, its relationships in the top
+// assembly (a shelf unit placed as one component between two walls).
+
+/// A "Unit" subassembly holding a shelf plate (80 long, its far end free,
+/// adaptive) at its origin and a 10 mm upright behind it, placed in a top
+/// assembly at `at` (grounded when `fixed`), with two grounded walls 100
+/// apart (x 10..110) and the shelf's ends mated to them.
+struct Nest {
+    project: Project,
+    top: AssemblyDocument,
+    unit: u32,
+    shelf: u32,
+    shelf_doc: DocumentId,
+}
+
+fn shelf_unit(at: Transform3, fixed: bool, adaptive: bool) -> Nest {
+    let mut project = Project::new("T");
+    let plate = if adaptive {
+        block(80.0, 30.0, 5.0, false, true, false)
+    } else {
+        block(80.0, 30.0, 5.0, true, true, false)
+    };
+    let left = face(&plate, 0, 0, 0.0);
+    let right = face(&plate, 0, 0, 80.0);
+    let shelf_doc = project.add_document("Shelf", DocumentData::Part(plate));
+    let upright = project.add_document(
+        "Upright",
+        DocumentData::Part(PartDocument::with_box("Box1", [10.0, 5.0, 40.0]).unwrap()),
+    );
+    let mut unit = AssemblyDocument::default();
+    let shelf = unit.place(
+        DocRef::local(shelf_doc),
+        "Shelf",
+        Transform3::identity(),
+        true,
+    );
+    unit.find_mut(shelf).unwrap().adaptive = adaptive;
+    unit.place(
+        DocRef::local(upright),
+        "Upright",
+        Transform3::translation(0.0, 30.0, 0.0),
+        true,
+    );
+    let unit_doc = project.add_document("Unit", DocumentData::Assembly(unit));
+    let wall = PartDocument::with_box("Box1", [10.0, 50.0, 50.0]).unwrap();
+    let w = project.add_document("Wall", DocumentData::Part(wall.clone()));
+    let mut top = AssemblyDocument::default();
+    let wa = top.place(DocRef::local(w), "Wall", Transform3::identity(), true);
+    let wb = top.place(
+        DocRef::local(w),
+        "Wall",
+        Transform3::translation(110.0, 0.0, 0.0),
+        true,
+    );
+    let u = top.place(DocRef::local(unit_doc), "Unit", at, fixed);
+    let into = |g: GeomRef| match g {
+        GeomRef::Face { name, hint, .. } => GeomRef::Face {
+            occurrence: u,
+            sub: vec![shelf],
+            name,
+            hint,
+        },
+        g => g,
+    };
+    top.add_constraint(mate(into(left), face(&wall, wa, 0, 10.0)));
+    top.add_constraint(mate(into(right), face(&wall, wb, 0, 0.0)));
+    Nest {
+        project,
+        top,
+        unit: u,
+        shelf,
+        shelf_doc,
+    }
+}
+
+impl Nest {
+    fn shelf_part(&self) -> &PartDocument {
+        match self.project.document(self.shelf_doc).map(|d| &d.data) {
+            Some(DocumentData::Part(p)) => p,
+            _ => panic!("no part"),
+        }
+    }
+
+    /// Adapts the shelf through the top assembly; writes the results back.
+    fn adapt(&mut self) -> Result<Option<Vec<Real>>, String> {
+        let linked = cadcraft3d::assembly::tree::Linked::new();
+        let target = adapt::Target {
+            top: self.unit,
+            sub: vec![self.shelf],
+            at: Transform3::identity(),
+        };
+        let base = self.shelf_part().clone();
+        let r = {
+            let (project, top) = (&self.project, &self.top);
+            let local = |r: &GeomRef| -> Result<Geom, String> {
+                let n = cadcraft3d::assembly::tree::nested(
+                    project,
+                    &linked,
+                    top,
+                    r.occurrence(),
+                    r.sub(),
+                )?;
+                let p = cadcraft3d::assembly::tree::part_of(project, &linked, n.component)
+                    .ok_or("no part")?;
+                let g = relation::resolve_in(p, r)?;
+                Ok(if r.sub().is_empty() {
+                    g
+                } else {
+                    g.moved(&n.at)
+                })
+            };
+            adapt::adapt_nested(top, &target, &base, &local, None)?
+        };
+        let Some(a) = r else { return Ok(None) };
+        if let Some(DocumentData::Part(p)) = self
+            .project
+            .document_mut(self.shelf_doc)
+            .map(|d| &mut d.data)
+        {
+            *p = a.part;
+        }
+        for (id, t) in a.solved.transforms {
+            self.top.find_mut(id).unwrap().transform = t;
+        }
+        Ok(Some(a.x))
+    }
+
+    /// The shelf's ends in the top assembly along X.
+    fn shelf_span(&self) -> (Real, Real) {
+        let unit = self.top.find(self.unit).unwrap().transform;
+        let mut lo = Real::INFINITY;
+        let mut hi = Real::NEG_INFINITY;
+        for (_, f) in self.shelf_part().body.faces() {
+            for q in f.mesh.iter().flat_map(|m| &m.positions) {
+                let w = unit * q;
+                lo = lo.min(w.x);
+                hi = hi.max(w.x);
+            }
+        }
+        (lo, hi)
+    }
+}
+
+#[test]
+fn a_shelf_inside_a_unit_stretches_between_the_walls() {
+    let mut n = shelf_unit(Transform3::translation(20.0, 5.0, 10.0), false, true);
+    n.adapt().unwrap().expect("adapted");
+    let (lo, hi) = n.shelf_span();
+    assert!(
+        (lo - 10.0).abs() < 1e-3 && (hi - 110.0).abs() < 1e-3,
+        "{lo} .. {hi}"
+    );
+    // The shelf part itself is 100 long now (it regenerates so alone).
+    let (a, b) = extent(n.shelf_part(), 0);
+    assert!(((b - a) - 100.0).abs() < 1e-3);
+    assert!(n.adapt().unwrap().is_none());
+}
+
+#[test]
+fn a_shelf_in_a_unit_turned_round_still_reaches_both_walls() {
+    // The unit stands turned 180° about Z (its shelf runs −X from the
+    // unit's origin): the mates swap ends.
+    let turned = Transform3::new(
+        cadcraft3d::kernel::Vector3::new(100.0, 40.0, 10.0),
+        cadcraft3d::kernel::Vector3::z() * std::f64::consts::PI,
+    );
+    let mut n = shelf_unit(turned, false, true);
+    // Turned round, the shelf's left face looks +X: mate its *right* face
+    // to wall A instead — rebuild the mates the other way round.
+    let (l, r) = (
+        n.top.constraints[0].a.clone(),
+        n.top.constraints[1].a.clone(),
+    );
+    let (wa, wb) = (
+        n.top.constraints[0].b.clone(),
+        n.top.constraints[1].b.clone(),
+    );
+    n.top.constraints.clear();
+    n.top.add_constraint(mate(r, wa));
+    n.top.add_constraint(mate(l, wb));
+    n.adapt().unwrap().expect("adapted");
+    let (lo, hi) = n.shelf_span();
+    assert!(
+        (lo - 10.0).abs() < 1e-3 && (hi - 110.0).abs() < 1e-3,
+        "{lo} .. {hi}"
+    );
+}
+
+#[test]
+fn a_grounded_unit_only_stretches_its_shelf() {
+    // Grounded with the shelf's start on wall A: only the length changes.
+    let mut n = shelf_unit(Transform3::translation(10.0, 5.0, 10.0), true, true);
+    let before = n.top.find(n.unit).unwrap().transform;
+    n.adapt().unwrap().expect("adapted");
+    assert_eq!(n.top.find(n.unit).unwrap().transform, before);
+    let (lo, hi) = n.shelf_span();
+    assert!(
+        (lo - 10.0).abs() < 1e-3 && (hi - 110.0).abs() < 1e-3,
+        "{lo} .. {hi}"
+    );
+}
+
+#[test]
+fn a_dimensioned_shelf_in_a_unit_does_not_adapt() {
+    let mut n = shelf_unit(Transform3::translation(20.0, 5.0, 10.0), false, false);
+    assert!(n.adapt().unwrap().is_none());
+    let (a, b) = extent(n.shelf_part(), 0);
+    assert!(((b - a) - 80.0).abs() < 1e-6);
+}

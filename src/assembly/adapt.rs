@@ -242,7 +242,46 @@ pub fn adapt(
     base: &PartDocument,
     local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
 ) -> Result<Option<Adapted>, String> {
-    adapt_with(asm, occurrence, base, local, None)
+    adapt_with(asm, &Target::top(occurrence), base, local, None)
+}
+
+/// Where the adaptive part is: an occurrence of the assembly, or a part
+/// inside one of its subassemblies (path `sub` below occurrence `top`,
+/// placed `at` in that occurrence's coordinates).
+#[derive(Clone, Debug)]
+pub struct Target {
+    /// The occurrence of the assembly (the subassembly holding the part).
+    pub top: u32,
+    /// The path below it (empty: `top` is the part itself).
+    pub sub: Vec<u32>,
+    /// The part's placement in `top`'s coordinates.
+    pub at: Transform3,
+}
+
+impl Target {
+    /// The adaptive part is occurrence `occurrence` itself.
+    pub fn top(occurrence: u32) -> Self {
+        Self {
+            top: occurrence,
+            sub: Vec::new(),
+            at: Transform3::identity(),
+        }
+    }
+}
+
+/// [`adapt`] of a part inside a subassembly (spec 3.10 §3.4): the
+/// relationships of this assembly that reach it (by its path) read the trial
+/// part, carried into the subassembly occurrence's coordinates; the free
+/// components joined to the subassembly move with the sizes, the
+/// subassembly itself stays rigid.
+pub fn adapt_nested(
+    asm: &AssemblyDocument,
+    target: &Target,
+    base: &PartDocument,
+    local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
+    drag: Option<&solve::Drag>,
+) -> Result<Option<Adapted>, String> {
+    adapt_with(asm, target, base, local, drag)
 }
 
 /// [`adapt`] while `drag` pulls a component joined to the adaptive part
@@ -260,33 +299,41 @@ pub fn adapt_dragged(
     local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
     drag: &solve::Drag,
 ) -> Result<Option<Adapted>, String> {
-    adapt_with(asm, occurrence, base, local, Some(drag))
+    adapt_with(asm, &Target::top(occurrence), base, local, Some(drag))
 }
 
 fn adapt_with(
     asm: &AssemblyDocument,
-    occurrence: u32,
+    target: &Target,
     base: &PartDocument,
     local: &dyn Fn(&GeomRef) -> Result<Geom, String>,
     drag: Option<&solve::Drag>,
 ) -> Result<Option<Adapted>, String> {
+    let occurrence = target.top;
     let comp = asm
         .find(occurrence)
         .ok_or("the adaptive component no longer exists")?
         .component;
+    let nested = !target.sub.is_empty();
     let mine = |r: &GeomRef| {
+        if matches!(r, GeomRef::Origin { .. }) || r.occurrence() == relation::ASSEMBLY {
+            return false;
+        }
+        if nested {
+            return r.occurrence() == occurrence && r.sub() == target.sub.as_slice();
+        }
         r.sub().is_empty()
-            && r.occurrence() != relation::ASSEMBLY
             && asm
                 .find(r.occurrence())
                 .is_some_and(|o| o.component == comp)
-            && !matches!(r, GeomRef::Origin { .. })
     };
     let look_in = |part: &PartDocument, r: &GeomRef| {
-        if mine(r) {
-            relation::resolve_in(part, r)
-        } else {
+        if !mine(r) {
             local(r)
+        } else if nested {
+            relation::resolve_in(part, r).map(|g| g.moved(&target.at))
+        } else {
+            relation::resolve_in(part, r)
         }
     };
     if drag.is_none() && solve::solve(asm, &|r: &GeomRef| look_in(base, r), None).converged {
