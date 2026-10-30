@@ -1163,6 +1163,18 @@ fn loop_and_tangent_chain_of_a_surface_rim() {
         2,
         "Tangent Chain: the bottom of the first two walls"
     );
+    // From-To: from the first wall's bottom to the third's, the shorter way round the rim
+    // (the three bottom edges, not the five round the top).
+    let third = free_edge_near(&p, [20.0, 5.0, 0.0]);
+    let ft = cadcraft3d::part::select::from_to_chain(&p.body, e, third);
+    assert_eq!(ft.len(), 3, "From-To: the bottom edges");
+    assert_eq!((ft[0], ft[2]), (e, third));
+    let top = free_edge_near(&p, [5.0, 0.0, 5.0]);
+    assert_eq!(
+        cadcraft3d::part::select::from_to_chain(&p.body, e, top).len(),
+        3,
+        "bottom, upright end, top"
+    );
     // An edge between two faces is no free edge: no chain.
     let opts = cadcraft3d::kernel::TessellationOptions::default();
     let inner = p

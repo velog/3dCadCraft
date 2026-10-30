@@ -1555,6 +1555,9 @@ pub(super) enum Chain {
     Tangent,
     /// Select Face Boundary: the outer loop of the face under the cursor.
     Boundary,
+    /// Select From-To: the edges along the boundary from the last picked edge to the one under
+    /// the cursor (Creo's From-To chain).
+    FromTo,
 }
 
 /// Buttons that run something (the rest stay disabled).
@@ -2304,6 +2307,17 @@ impl CadCraftApp {
     /// when the menu opened (`context_edge`) or the face there: Loop — a free edge's whole
     /// boundary (across the faces it runs along), else the loop of the face there; Tangent
     /// Chain — the edges going on smoothly; Face Boundary — the face's outer loop.
+    /// The last edge picked for the planned panel's active selector (where a From-To chain
+    /// starts).
+    pub(super) fn last_planned_edge(&self) -> Option<crate::kernel::EdgeId> {
+        let d = self.part_planned.as_ref()?;
+        let key = d.flow().current()?.key;
+        d.items_of(key).iter().rev().find_map(|(i, _)| match i {
+            SelItem::Edge(e) => Some(*e),
+            _ => None,
+        })
+    }
+
     pub(super) fn chain_edges(&self, chain: Chain) -> Vec<SelItem> {
         let body = &self.part().body;
         let face = self.context_face.as_deref().and_then(|n| body.find_face(n));
@@ -2328,6 +2342,10 @@ impl CadCraftApp {
             (Chain::Boundary, _) => face
                 .map(|f| psel::outer_loop_edges(body, f))
                 .unwrap_or_default(),
+            (Chain::FromTo, Some(e)) => match self.last_planned_edge() {
+                Some(from) => psel::from_to_chain(body, from, e),
+                None => Vec::new(),
+            },
             _ => Vec::new(),
         };
         edges.into_iter().map(SelItem::Edge).collect()

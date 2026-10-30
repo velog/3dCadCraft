@@ -436,6 +436,14 @@ impl CadCraftApp {
                     self.context_edge.is_some(),
                 ),
                 (Chain::Boundary, "Select Face Boundary", on_face),
+                (
+                    Chain::FromTo,
+                    "Select From-To",
+                    self.context_edge.is_some()
+                        && self
+                            .last_planned_edge()
+                            .is_some_and(|e| Some(e) != self.context_edge),
+                ),
             ];
             let mut any = false;
             for (c, label, on) in entries {

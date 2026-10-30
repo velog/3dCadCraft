@@ -298,6 +298,72 @@ pub fn free_chain(body: &BRep, e: EdgeId, tangent: bool) -> Vec<EdgeId> {
     out
 }
 
+/// From-To chain (Creo's From-To): the edges from `from` to `to` along a boundary, both
+/// included — over the free edges when both are free (a surface's rim), else round the loop
+/// of a face both bound; the shorter way (fewer edges). Empty when no such run joins them.
+pub fn from_to_chain(body: &BRep, from: EdgeId, to: EdgeId) -> Vec<EdgeId> {
+    if from == to {
+        return vec![from];
+    }
+    // The edges a run may use.
+    let pool: Vec<EdgeId> = if is_free_edge(body, from) && is_free_edge(body, to) {
+        body.edges()
+            .map(|(x, _)| x)
+            .filter(|&x| is_free_edge(body, x))
+            .collect()
+    } else {
+        let faces = body.edge_faces(from);
+        let common = faces.into_iter().find(|f| body.edge_faces(to).contains(f));
+        let Some(face) = common.and_then(|f| body.face(f)) else {
+            return Vec::new();
+        };
+        std::iter::once(&face.outer)
+            .chain(&face.inner)
+            .find(|lp| {
+                let has = |e: EdgeId| lp.coedges.iter().any(|c| c.edge == e);
+                has(from) && has(to)
+            })
+            .map(|lp| lp.coedges.iter().map(|c| c.edge).collect())
+            .unwrap_or_default()
+    };
+    // Breadth first from `from` through shared vertices: the shortest run.
+    let mut back: std::collections::HashMap<EdgeId, EdgeId> = Default::default();
+    let mut seen: HashSet<EdgeId> = HashSet::from([from]);
+    let mut queue = VecDeque::from([from]);
+    while let Some(x) = queue.pop_front() {
+        if x == to {
+            let mut out = vec![to];
+            let mut at = to;
+            while let Some(&p) = back.get(&at) {
+                out.push(p);
+                at = p;
+            }
+            out.reverse();
+            return out;
+        }
+        let Some(ex) = body.edge(x) else {
+            continue;
+        };
+        for &y in &pool {
+            if seen.contains(&y) {
+                continue;
+            }
+            let Some(ey) = body.edge(y) else {
+                continue;
+            };
+            if [ey.start, ey.end]
+                .iter()
+                .any(|v| *v == ex.start || *v == ex.end)
+            {
+                seen.insert(y);
+                back.insert(y, x);
+                queue.push_back(y);
+            }
+        }
+    }
+    Vec::new()
+}
+
 /// Feature selection (Select Mode **Feature**): edges where a face of
 /// feature `id` meets a face of another feature.
 pub fn feature_edges(body: &BRep, id: &str) -> Vec<EdgeId> {
