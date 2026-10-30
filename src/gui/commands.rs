@@ -1855,7 +1855,7 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::SmPlanned(PlannedKind::Rip))
         .alias(&["SRP"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("Split a closed shape so it unfolds: at a point, between two points or a whole face (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
+        .tip("Split a closed shape so it unfolds: at a point, between two points or a whole bend face").spec("5.6-sheet-metal.md"),
     c("sm.cut", "Cut", "Изрязване", Icon::SmCut)
         .run(Action::SmCut)
         .alias(&["SCT"])

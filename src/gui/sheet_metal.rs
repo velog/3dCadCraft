@@ -255,7 +255,8 @@ impl SmDraft {
                 | SheetOp::Refold { .. }
                 | SheetOp::CornerRound { .. }
                 | SheetOp::CornerChamfer { .. }
-                | SheetOp::Bend { .. } => Vec::new(),
+                | SheetOp::Bend { .. }
+                | SheetOp::Rip { .. } => Vec::new(),
             },
             _ => Vec::new(),
         };
@@ -779,6 +780,17 @@ impl CadCraftApp {
                 }
             }
             Action::SmFlatPattern => {
+                // A closed shape has no flat pattern until a Rip opens it.
+                let closed = self.part().flat_patterns().is_empty().then(|| {
+                    self.part()
+                        .sheet_models
+                        .values()
+                        .find_map(|st| st.closed_note())
+                });
+                if let (false, Some(Some(why))) = (self.sm.flat, closed) {
+                    self.file_status = Some(Err(format!("Flat Pattern: {why}")));
+                    return;
+                }
                 self.sm.flat = !self.sm.flat;
                 self.scene_dirty = true;
             }
@@ -1544,7 +1556,8 @@ impl CadCraftApp {
                     // Their sections are the planned panel's.
                     SheetOp::CornerRound { .. }
                     | SheetOp::CornerChamfer { .. }
-                    | SheetOp::Bend { .. } => {}
+                    | SheetOp::Bend { .. }
+                    | SheetOp::Rip { .. } => {}
                     SheetOp::CornerSeam {
                         body,
                         a,
@@ -2381,9 +2394,33 @@ impl CadCraftApp {
                     }
                 }
                 PickKind::Face | PickKind::PlanarFace => {
-                    if let Some((f, _)) = self.face_hit(&o, &dir)
+                    if let Some((f, t)) = self.face_hit(&o, &dir)
                         && let Some(name) = part.body.face(f).and_then(|x| x.name.clone())
                     {
+                        let rip = self.sm.draft.as_ref().is_some_and(|d| {
+                            d.planned
+                                .as_ref()
+                                .is_some_and(|pl| pl.kind == PlannedKind::Rip)
+                        });
+                        if rip {
+                            // Rip: the sheet, the face and the clicked point on it.
+                            let body = crate::part::select::body_of_face(&part.body, f)?;
+                            // The hit point needs the ray as a unit vector.
+                            let u = dir.try_normalize(1e-12)?;
+                            let hit = self
+                                .face_hit(&o, &u)
+                                .map_or(o + dir * t, |(_, s)| o + u * s);
+                            let mut lines: Vec<Vec<Point3>> = vec![vec![hit, hit]];
+                            lines.extend(
+                                crate::part::select::edges_of_face(&part.body, f)
+                                    .into_iter()
+                                    .filter_map(|e| part.body.sample_edge(e, &opts).ok()),
+                            );
+                            return Some((
+                                Pick::Item(format!("{body}|{name}"), lines.clone()),
+                                lines,
+                            ));
+                        }
                         if sel.key == "feature" {
                             // Corner Round by Feature: every corner of the feature
                             // the face belongs to.
@@ -3303,6 +3340,7 @@ pub(super) fn feature_title(f: &Feature) -> &'static str {
             SheetOp::CornerRound { .. } => "Corner Round",
             SheetOp::CornerChamfer { .. } => "Corner Chamfer",
             SheetOp::Bend { .. } => "Bend",
+            SheetOp::Rip { .. } => "Rip",
             SheetOp::Unfold { .. } => "Unfold",
             SheetOp::Refold { .. } => "Refold",
         },

@@ -150,7 +150,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (`ContextGeom::Curve`, `LinkSource::Context`) (2026-10-29).
 /// - 48: Unfold / Refold of chosen bends (`SheetOp::Unfold::bends`,
 ///   `stationary`, `SheetOp::Refold::bends`) (2026-10-29).
-pub const FORMAT_REVISION: u32 = 48;
+/// - 50: sheet metal Rip (`SheetOp::Rip`) (2026-10-30).
+pub const FORMAT_REVISION: u32 = 50;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

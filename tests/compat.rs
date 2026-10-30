@@ -617,6 +617,104 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 50: Rip — a closed rounded tube (100 × 60, corner radius 5,
+/// wall 2, height 80) converted to sheet metal and ripped across its front
+/// face from the middle of its top edge, so it unfolds.
+fn rip_r50() -> PartDocument {
+    use cadcraft3d::part::ExtrudeFeature;
+    use cadcraft3d::part::sheet_metal::{
+        RipSide, RipType, SheetConvertFeature, SheetOp, SheetOpFeature,
+    };
+    use cadcraft3d::part::shell::FaceRef;
+    use cadcraft3d::part::{OriginPlane, ProfileRef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    for (x0, y0, x1, y1, r) in [(0.0, 0.0, 100.0, 60.0, 5.0), (2.0, 2.0, 98.0, 58.0, 3.0)] {
+        let mut pt = |x: f64, y: f64| sk.add_point(Point2::new(x, y));
+        let q = [
+            pt(x0 + r, y0),
+            pt(x1 - r, y0),
+            pt(x1, y0 + r),
+            pt(x1, y1 - r),
+            pt(x1 - r, y1),
+            pt(x0 + r, y1),
+            pt(x0, y1 - r),
+            pt(x0, y0 + r),
+        ];
+        let c = [
+            pt(x1 - r, y0 + r),
+            pt(x1 - r, y1 - r),
+            pt(x0 + r, y1 - r),
+            pt(x0 + r, y0 + r),
+        ];
+        for k in 0..4 {
+            sk.add_line_between(q[2 * k], q[2 * k + 1]).unwrap();
+            sk.add_arc(c[k], q[2 * k + 1], q[(2 * k + 2) % 8]).unwrap();
+        }
+    }
+    let regions = sk.regions();
+    let ring = regions
+        .iter()
+        .min_by(|a, b| a.area().total_cmp(&b.area()))
+        .unwrap();
+    p.add_extrude(
+        i,
+        ExtrudeFeature::new(vec![ProfileRef::of(ring, ring.interior_point())], 80.0),
+    )
+    .unwrap();
+    let body = p.exact_bodies.0[0].name.clone().unwrap();
+    // The planar faces at y = 60 (the base) and y = 0 (ripped).
+    let face_at = |p: &PartDocument, y: f64| {
+        p.body
+            .faces()
+            .find_map(|(_, f)| match p.body.surface(f.surface) {
+                Some(cadcraft3d::kernel::Surface::Plane(pl))
+                    if pl.normal.y.abs() > 1.0 - 1e-9 && (pl.origin.y - y).abs() < 1e-9 =>
+                {
+                    f.name.clone()
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let base = face_at(&p, 60.0);
+    p.add_sheet_convert(SheetConvertFeature {
+        id: String::new(),
+        name: String::new(),
+        body: body.clone(),
+        face: FaceRef {
+            face: base,
+            hint: [50.0, 60.0, 40.0],
+        },
+        bends: Vec::new(),
+        recognize: true,
+    })
+    .unwrap();
+    let front = face_at(&p, 0.0);
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::Rip {
+        body,
+        face: FaceRef {
+            face: front,
+            hint: [50.0, 0.0, 40.0],
+        },
+        rip_type: RipType::SinglePoint,
+        points: vec![[50.0, 0.0, 80.0]],
+        gap: None,
+        side: RipSide::Default,
+    }))
+    .unwrap();
+    p
+}
+
 /// Revision 48: Unfold of a chosen bend — a 100 × 60 Face with flanges on
 /// its right and left edges, the right one's bend unfolded (the base stays).
 fn unfold_r48() -> PartDocument {
@@ -2726,6 +2824,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("ContextCurveR47");
             project.add_document("Part1", DocumentData::Part(context_curve_r47()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r50/rip_r50.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("RipR50");
+            project.add_document("Part1", DocumentData::Part(rip_r50()));
             project.save(&f).unwrap();
         }
         let f = root().join("r48/unfold_r48.3dcadcraft");

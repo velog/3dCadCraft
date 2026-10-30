@@ -3658,6 +3658,9 @@ fn sheet_of<'a>(
     let state = metal
         .get(body)
         .ok_or_else(|| User(format!("{body} is not a sheet metal body")))?;
+    if let Some(why) = state.closed_note() {
+        return Err(User(why));
+    }
     if solids[k].face_names.len() != state.faces {
         return Err(User(
             "a feature after the sheet changed it (holes and cuts other than the sheet metal Cut are not in the sheet model yet): put this feature before them"
@@ -3752,6 +3755,78 @@ pub(super) fn sheet_op(
     };
     let rv = rule.values();
     match &op.op {
+        SheetOp::Rip {
+            body,
+            face,
+            rip_type,
+            points,
+            gap,
+            side,
+        } => {
+            use super::sheet_metal::{ClosedSheet, RipType};
+            let k = solids
+                .iter()
+                .position(|s| s.name.as_deref() == Some(body.as_str()))
+                .ok_or_else(|| User(format!("the sheet {body} no longer exists")))?;
+            let state = metal
+                .get(body)
+                .ok_or_else(|| User(format!("{body} is not a sheet metal body")))?;
+            if solids[k].face_names.len() != state.faces {
+                return Err(User(
+                    "a feature after the sheet changed it: put the Rip before it".into(),
+                ));
+            }
+            let g = gap.unwrap_or(rv.gap);
+            let (lo, hi) = side.span(g);
+            let point = |i: usize| {
+                points
+                    .get(i)
+                    .map(|p| Point3::from(*p))
+                    .ok_or_else(|| User("select the rip points".into()))
+            };
+            let kind = match rip_type {
+                RipType::SinglePoint => ksm::RipKind::Single {
+                    at: point(0)?,
+                    lo,
+                    hi,
+                },
+                RipType::PointToPoint => ksm::RipKind::Line {
+                    a: point(0)?,
+                    b: point(1)?,
+                    lo,
+                    hi,
+                },
+                RipType::FaceExtents => ksm::RipKind::Face,
+            };
+            let rip = ksm::Rip {
+                face: face.face.clone(),
+                hint: Point3::from(face.hint),
+                kind,
+            };
+            let Some(c) = &state.closed else {
+                let (solid, model) =
+                    ksm::rip_open(&state.model, body, &solids[k], &rip).map_err(User)?;
+                return Ok(replace(k, solid, model, body));
+            };
+            // A closed sheet: found again from the converted body with every rip so far.
+            let mut rips = c.rips.clone();
+            rips.push(rip);
+            match ksm::recognize(&c.solid, &c.prefix, &rv, c.face, &rips).map_err(User)? {
+                ksm::Recognized::Sheet(solid, model) => Ok(replace(k, solid, model, body)),
+                ksm::Recognized::Closed { model, loops } => {
+                    let closed = ClosedSheet {
+                        rips,
+                        loops,
+                        ..(**c).clone()
+                    };
+                    let faces = solids[k].face_names.len();
+                    Ok((
+                        solids.to_vec(),
+                        Some((body.clone(), SheetState::closed(model, faces, closed))),
+                    ))
+                }
+            }
+        }
         SheetOp::Hem {
             body,
             edges,
@@ -4151,12 +4226,27 @@ pub(super) fn sheet_convert(
         .and_then(|&f| exact::face_point(&solids[k], f))
         .ok_or_else(|| User(format!("the face {} no longer exists", sc.face.face)))?;
     if sc.recognize {
-        let (solid, model) =
-            ksm::recognize(&solids[k], &sc.id, &rule.values(), face).map_err(User)?;
-        let faces = solid.face_names.len();
-        let mut next = solids.to_vec();
-        next[k] = solid;
-        return Ok((next, super::sheet_metal::SheetState::new(model, faces)));
+        use super::sheet_metal::{ClosedSheet, SheetState};
+        return match ksm::recognize(&solids[k], &sc.id, &rule.values(), face, &[]).map_err(User)? {
+            ksm::Recognized::Sheet(solid, model) => {
+                let faces = solid.face_names.len();
+                let mut next = solids.to_vec();
+                next[k] = solid;
+                Ok((next, SheetState::new(model, faces)))
+            }
+            // Converted as it is; a Rip opens it (Inventor's flat pattern fails until then).
+            ksm::Recognized::Closed { model, loops } => {
+                let closed = ClosedSheet {
+                    solid: solids[k].clone(),
+                    face,
+                    prefix: sc.id.clone(),
+                    rips: Vec::new(),
+                    loops,
+                };
+                let faces = solids[k].face_names.len();
+                Ok((solids.to_vec(), SheetState::closed(model, faces, closed)))
+            }
+        };
     }
     let body = exact::to_brep(solids).map_err(User)?;
     let index: Vec<crate::kernel::SolidId> = body.solids().map(|(id, _)| id).collect();

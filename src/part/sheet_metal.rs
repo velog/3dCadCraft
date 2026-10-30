@@ -1078,6 +1078,66 @@ pub enum SheetOp {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         aligned: bool,
     },
+    /// Rip (format revision 50): a gap through a face, or a bend's face
+    /// removed, so that a closed shape can unfold.
+    Rip {
+        /// The sheet body.
+        body: String,
+        /// The face ripped.
+        face: super::shell::FaceRef,
+        /// Single Point, Point to Point or Face Extents.
+        #[serde(default)]
+        rip_type: RipType,
+        /// The rip point (Single Point), or the start and end (Point to
+        /// Point), in part coordinates.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        points: Vec<[Real; 3]>,
+        /// The gap; `None`: the rule's (GapSize).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gap: Option<Real>,
+        /// Which side of the line the gap lies on.
+        #[serde(default, skip_serializing_if = "RipSide::is_default")]
+        side: RipSide,
+    },
+}
+
+/// Rip Type.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RipType {
+    /// Across the face from a point on one of its edges, square to the edge.
+    #[default]
+    SinglePoint,
+    /// Along the line from a start to an end point.
+    PointToPoint,
+    /// The whole face (a bend's round face) removed.
+    FaceExtents,
+}
+
+/// The side of a rip's line its gap lies on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RipSide {
+    /// Inventor's default side.
+    #[default]
+    Default,
+    /// Flip Side: the other side.
+    Flipped,
+    /// Both Sides: centred on the line.
+    Both,
+}
+
+impl RipSide {
+    fn is_default(&self) -> bool {
+        *self == Self::Default
+    }
+
+    /// The gap's span along the side direction (`ksm::RipKind`).
+    pub fn span(self, gap: Real) -> (Real, Real) {
+        match self {
+            Self::Default => (0.0, gap),
+            Self::Flipped => (-gap, 0.0),
+            Self::Both => (-gap * 0.5, gap * 0.5),
+        }
+    }
 }
 
 impl SheetOp {
@@ -1175,6 +1235,7 @@ impl SheetOpFeature {
             SheetOp::CornerRound { .. } => "CornerRound",
             SheetOp::CornerChamfer { .. } => "CornerChamfer",
             SheetOp::Bend { .. } => "Bend",
+            SheetOp::Rip { .. } => "Rip",
         }
     }
 
@@ -1227,7 +1288,7 @@ impl SheetOpFeature {
                 across: false,
                 ..
             } => vec![("depth", Unit::Mm)],
-            SheetOp::CornerSeam { gap, .. } => {
+            SheetOp::CornerSeam { gap, .. } | SheetOp::Rip { gap, .. } => {
                 if gap.is_some() {
                     vec![("gap", Unit::Mm)]
                 } else {
@@ -1267,6 +1328,7 @@ impl SheetOpFeature {
             (SheetOp::Contour { width2, .. }, "width2") => Some(*width2),
             (SheetOp::Cut { depth, .. }, "depth") => Some(*depth),
             (SheetOp::CornerSeam { gap, .. }, "gap") => *gap,
+            (SheetOp::Rip { gap, .. }, "gap") => *gap,
             (SheetOp::CornerRound { sets, .. }, f) => {
                 let k = ROUND_FIELDS.iter().position(|x| *x == f)?;
                 sets.get(k).map(|s| s.radius)
@@ -1291,6 +1353,7 @@ impl SheetOpFeature {
             (SheetOp::Contour { width2, .. }, "width2") => *width2 = v,
             (SheetOp::Cut { depth, .. }, "depth") => *depth = v,
             (SheetOp::CornerSeam { gap, .. }, "gap") => *gap = Some(v),
+            (SheetOp::Rip { gap, .. }, "gap") => *gap = Some(v),
             (SheetOp::CornerRound { sets, .. }, f) => {
                 if let Some(s) = ROUND_FIELDS
                     .iter()
@@ -1376,6 +1439,11 @@ impl SheetOpFeature {
                 Some(r) => format!("Bend {} – {}, R{r:.2} mm", edge1.name, edge2.name),
                 None => format!("Bend {} – {}", edge1.name, edge2.name),
             },
+            SheetOp::Rip { face, rip_type, .. } => match rip_type {
+                RipType::SinglePoint => format!("Rip of {} at a point", face.face),
+                RipType::PointToPoint => format!("Rip of {} point to point", face.face),
+                RipType::FaceExtents => format!("Rip: {} removed", face.face),
+            },
         }
     }
 }
@@ -1397,6 +1465,35 @@ pub struct SheetState {
     extents: std::sync::OnceLock<Option<FlatExtents>>,
     /// The flat solid as our B-rep (the view's triangles), built on first use.
     flat_brep: std::sync::OnceLock<Option<crate::kernel::BRep>>,
+    /// A converted shape that closes on itself: no flat pattern until a Rip
+    /// opens it (`model` is then the sheet walked without the closing bends).
+    pub closed: Option<std::sync::Arc<ClosedSheet>>,
+}
+
+/// A converted sheet that closes on itself (spec 5.6 §6.1g): the body stays
+/// as it was converted; a Rip finds the sheet again from it with its cut.
+#[derive(Clone)]
+pub struct ClosedSheet {
+    /// The body as converted.
+    pub solid: crate::kernel::exact::ExactSolid,
+    /// A point on the base face.
+    pub face: crate::kernel::Point3,
+    /// The Convert's id (the panels' tags and face names).
+    pub prefix: String,
+    /// The rips so far.
+    pub rips: Vec<ksm::Rip>,
+    /// Bends that close a loop.
+    pub loops: usize,
+}
+
+impl std::fmt::Debug for ClosedSheet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClosedSheet")
+            .field("prefix", &self.prefix)
+            .field("rips", &self.rips)
+            .field("loops", &self.loops)
+            .finish()
+    }
 }
 
 impl SheetState {
@@ -1408,7 +1505,31 @@ impl SheetState {
             flat: Default::default(),
             extents: Default::default(),
             flat_brep: Default::default(),
+            closed: None,
         }
+    }
+
+    /// A converted sheet that closes on itself (no flat pattern).
+    pub fn closed(model: ksm::SheetModel, faces: usize, closed: ClosedSheet) -> Self {
+        Self {
+            closed: Some(std::sync::Arc::new(closed)),
+            ..Self::new(model, faces)
+        }
+    }
+
+    /// Why this sheet has no flat pattern: it closes on itself.
+    pub fn closed_note(&self) -> Option<String> {
+        self.closed.as_ref().map(|c| {
+            format!(
+                "the sheet closes on itself ({} {} a loop): add a Rip to unfold it",
+                c.loops,
+                if c.loops == 1 {
+                    "bend closes"
+                } else {
+                    "bends close"
+                }
+            )
+        })
     }
 
     /// The flat solid of this sheet body (named `body`) as a B-rep, cached.
@@ -1425,6 +1546,9 @@ impl SheetState {
     fn flat(&self, body: &str) -> Option<&FlatPattern> {
         self.flat
             .get_or_init(|| {
+                if self.closed.is_some() {
+                    return None;
+                }
                 Some(FlatPattern {
                     body: body.to_owned(),
                     size: ksm::flat_size(&self.model).ok()?,
@@ -1438,6 +1562,9 @@ impl SheetState {
     /// The flat's extents, cached.
     fn extents(&self) -> Option<FlatExtents> {
         *self.extents.get_or_init(|| {
+            if self.closed.is_some() {
+                return None;
+            }
             let (a, b) = match self.flat.get() {
                 Some(Some(f)) => f.size,
                 _ => ksm::flat_size(&self.model).ok()?,
@@ -1723,6 +1850,9 @@ impl super::PartDocument {
             .sheet_models
             .get(body)
             .ok_or_else(|| format!("{body} is not a sheet metal body"))?;
+        if let Some(why) = st.closed_note() {
+            return Err(why);
+        }
         let loops = ksm::flat_profile(&st.model)?;
         let bends = ksm::bends(&st.model);
         Ok(dxf(&loops, &bends))

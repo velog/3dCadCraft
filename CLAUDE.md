@@ -1085,6 +1085,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   place (`world`). Bends are named by flange tag (`ksm::bend_tag_at`). Face naming goes through
   `panel_faces_at` (one flat computation for all faces: per face it took 4 s on an unfolded box). Rays given to
   `face_hit` must be unit vectors when the hit point is used (`o + dir * t`).
+  Rip (revision 50): a converted closed shape keeps its body and `SheetState::closed` (`ClosedSheet`: the body, the
+  base point, the rips); `sheet_of` refuses it and the flat is `None`. Each Rip walks the converted body again
+  (`ksm::recognize` with every rip): gap strips split the planar faces into pieces, each piece a panel of its own;
+  Face Extents leaves its bend out. On an open sheet a rip is a Cut (`ksm::rip_open`). Model vertex picking tests
+  visibility along the ray through the point's own pixel (`vertex_under`; the cursor's ray hid edge midpoints).
   Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry
   of old files without such a field). Corner reliefs (Round / Square) are cut-outs in `SheetBody::holes` about the crossing of the bends' centre

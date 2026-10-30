@@ -3319,6 +3319,107 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Rip (docs/spec/5.6 §6.1g): a closed rounded tube converted to sheet
+    // metal, ripped across a face; the sheet is found again with the gap.
+    {
+        use cadcraft3d::part::sheet_metal::{
+            RipSide, RipType, SheetConvertFeature, SheetOp, SheetOpFeature,
+        };
+        use cadcraft3d::part::shell::FaceRef;
+        use cadcraft3d::part::{ExtrudeFeature, OriginPlane, ProfileRef};
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        let sk = &mut base.sketches[i].sketch;
+        for (x0, y0, x1, y1, r) in [(0.0, 0.0, 100.0, 60.0, 5.0), (2.0, 2.0, 98.0, 58.0, 3.0)] {
+            let mut pt = |x: Real, y: Real| sk.add_point(Point2::new(x, y));
+            let q = [
+                pt(x0 + r, y0),
+                pt(x1 - r, y0),
+                pt(x1, y0 + r),
+                pt(x1, y1 - r),
+                pt(x1 - r, y1),
+                pt(x0 + r, y1),
+                pt(x0, y1 - r),
+                pt(x0, y0 + r),
+            ];
+            let c = [
+                pt(x1 - r, y0 + r),
+                pt(x1 - r, y1 - r),
+                pt(x0 + r, y1 - r),
+                pt(x0 + r, y0 + r),
+            ];
+            for k in 0..4 {
+                sk.add_line_between(q[2 * k], q[2 * k + 1]).unwrap();
+                sk.add_arc(c[k], q[2 * k + 1], q[(2 * k + 2) % 8]).unwrap();
+            }
+        }
+        let regions = sk.regions();
+        let ring = regions
+            .iter()
+            .min_by(|a, b| a.area().total_cmp(&b.area()))
+            .unwrap();
+        base.add_extrude(
+            i,
+            ExtrudeFeature::new(vec![ProfileRef::of(ring, ring.interior_point())], 80.0),
+        )
+        .unwrap();
+        let body = base.exact_bodies.0[0].name.clone().unwrap();
+        let face_at = |p: &PartDocument, y: Real| {
+            p.body
+                .faces()
+                .find_map(|(_, f)| match p.body.surface(f.surface) {
+                    Some(cadcraft3d::kernel::Surface::Plane(pl))
+                        if pl.normal.y.abs() > 1.0 - 1e-9 && (pl.origin.y - y).abs() < 1e-9 =>
+                    {
+                        f.name.clone()
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let back = face_at(&base, 60.0);
+        base.add_sheet_convert(SheetConvertFeature {
+            id: String::new(),
+            name: String::new(),
+            body: body.clone(),
+            face: FaceRef {
+                face: back,
+                hint: [50.0, 60.0, 40.0],
+            },
+            bends: Vec::new(),
+            recognize: true,
+        })
+        .unwrap();
+        let op = SheetOpFeature::new(SheetOp::Rip {
+            body,
+            face: FaceRef {
+                face: face_at(&base, 0.0),
+                hint: [50.0, 0.0, 40.0],
+            },
+            rip_type: RipType::SinglePoint,
+            points: vec![[50.0, 0.0, 80.0]],
+            gap: None,
+            side: RipSide::Default,
+        });
+        rows.push((
+            "sheet metal: Rip of a closed tube (4 bends found again) + flat",
+            300.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_op(op.clone()).unwrap();
+                assert_eq!(p.flat_patterns()[0].bends.len(), 4);
+            }),
+        ));
+    }
     // Bill of Materials (docs/spec/3.6): 2000 occurrences of 50 parts,
     // merged by part number, as the window computes them every frame.
     {

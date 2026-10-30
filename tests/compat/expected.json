@@ -261,5 +261,6 @@
   "r45/bend_r45.3dcadcraft": {"volume": 23870.812198854623, "faces": 24, "features": 6, "sketches": 3, "exact": true},
   "r46/recognize_r46.3dcadcraft": {"volume": 15204.974638625556, "faces": 14, "features": 2, "sketches": 0, "exact": true},
   "r47/context_curve_r47.3dcadcraft": {"volume": 451.89384840582784, "faces": 4, "features": 1, "sketches": 1, "exact": true},
-  "r48/unfold_r48.3dcadcraft": {"volume": 18387.841849186236, "faces": 22, "features": 3, "sketches": 1, "exact": true}
+  "r48/unfold_r48.3dcadcraft": {"volume": 18387.841849186236, "faces": 22, "features": 3, "sketches": 1, "exact": true},
+  "r50/rip_r50.3dcadcraft": {"volume": 48494.740325485, "faces": 38, "features": 3, "sketches": 1, "exact": true}
 }

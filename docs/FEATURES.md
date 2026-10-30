@@ -1138,6 +1138,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 | Punch Tool | standard punch forms (louvres, ribs, holes) from a library |
 | Contour Roll | a rolled profile |
 | Lofted Flange | a transition between two sections (hopper, funnel) |
+| Rip | a gap that lets a closed shape unfold: Single Point, Point to Point, Face Extents of a bend; Gap and Gap Side as Inventor (2026-10-30) |
 | Unfold / Refold | temporary unfolding for features in the unfolded state — the whole sheet, or chosen bends about a Stationary Reference (2026-10-29) |
 | **Flat Pattern** | the flat pattern with bend lines, DXF export; in drawings: flat pattern views with bend centre lines / extents and Bend Notes ([spec/4.8](spec/4.8-sheet-metal-drawings.md)) |
 

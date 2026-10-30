@@ -19,8 +19,9 @@ use crate::command::flow::{PickKind, Selector};
 use crate::kernel::Point3;
 use crate::kernel::exact::sheet_metal::RuleValues as SheetRuleValues;
 use crate::part::sheet_metal::{
-    ChamferMethod, CornerEdge, CornerSet, DoubleBendType, SheetEdge, SheetOp,
+    ChamferMethod, CornerEdge, CornerSet, DoubleBendType, RipSide, RipType, SheetEdge, SheetOp,
 };
+use crate::part::shell::FaceRef;
 
 /// Selector dot colours (as the other sheet metal commands).
 const C_INPUT: [u8; 3] = [40, 120, 230];
@@ -44,7 +45,10 @@ impl PlannedKind {
     pub(super) fn has_logic(self) -> bool {
         matches!(
             self,
-            PlannedKind::Bend | PlannedKind::CornerRound | PlannedKind::CornerChamfer
+            PlannedKind::Bend
+                | PlannedKind::CornerRound
+                | PlannedKind::CornerChamfer
+                | PlannedKind::Rip
         )
     }
 
@@ -559,6 +563,65 @@ impl Planned {
                         .flatten(),
                 })
             }
+            PlannedKind::Rip => {
+                // The face item is `<body>|<face>`, its first line the clicked point.
+                let (body, face) = self
+                    .items("face")
+                    .first()
+                    .and_then(|(label, lines)| {
+                        let (b, f) = label.split_once('|')?;
+                        let h = lines.first()?.first()?;
+                        Some((
+                            b.to_owned(),
+                            FaceRef {
+                                face: f.to_owned(),
+                                hint: [h.x, h.y, h.z],
+                            },
+                        ))
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            String::new(),
+                            FaceRef {
+                                face: String::new(),
+                                hint: [0.0; 3],
+                            },
+                        )
+                    });
+                // A point item's first line runs through the point.
+                let point = |key: &str| {
+                    self.items(key).first().and_then(|(_, lines)| {
+                        let l = lines.first()?;
+                        let m = (l.first()?.coords + l.last()?.coords) * 0.5;
+                        Some([m.x, m.y, m.z])
+                    })
+                };
+                let (rip_type, points) = match self.rip_type {
+                    0 => (RipType::SinglePoint, point("point").into_iter().collect()),
+                    1 => (
+                        RipType::PointToPoint,
+                        [point("start"), point("end")]
+                            .into_iter()
+                            .flatten()
+                            .collect(),
+                    ),
+                    _ => (RipType::FaceExtents, Vec::new()),
+                };
+                let face_extents = rip_type == RipType::FaceExtents;
+                Some(SheetOp::Rip {
+                    body,
+                    face,
+                    rip_type,
+                    points,
+                    gap: self.rip_gap.filter(|_| !face_extents),
+                    side: match self.gap_side {
+                        _ if face_extents => RipSide::Default,
+                        Side::Default => RipSide::Default,
+                        Side::Flipped => RipSide::Flipped,
+                        Side::Both => RipSide::Both,
+                    },
+                })
+            }
             _ => None,
         }
     }
@@ -639,6 +702,39 @@ impl Planned {
                 }
                 if let Some(e) = edge {
                     p.add("edge", (e.clone(), Vec::new()));
+                }
+                Some(p)
+            }
+            SheetOp::Rip {
+                body,
+                face,
+                rip_type,
+                points,
+                gap,
+                side,
+            } => {
+                let mut p = Self::new(PlannedKind::Rip, rule);
+                p.rip_type = match rip_type {
+                    RipType::SinglePoint => 0,
+                    RipType::PointToPoint => 1,
+                    RipType::FaceExtents => 2,
+                };
+                p.rip_gap = *gap;
+                p.gap_side = match side {
+                    RipSide::Default => Side::Default,
+                    RipSide::Flipped => Side::Flipped,
+                    RipSide::Both => Side::Both,
+                };
+                let h = Point3::from(face.hint);
+                p.add("face", (format!("{body}|{}", face.face), vec![vec![h, h]]));
+                let keys: &[&str] = match rip_type {
+                    RipType::SinglePoint => &["point"],
+                    RipType::PointToPoint => &["start", "end"],
+                    RipType::FaceExtents => &[],
+                };
+                for (key, q) in keys.iter().zip(points) {
+                    let q = Point3::from(*q);
+                    p.add(key, ("Point".into(), vec![vec![q, q]]));
                 }
                 Some(p)
             }

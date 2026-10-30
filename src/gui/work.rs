@@ -1034,19 +1034,27 @@ impl CadCraftApp {
         if !self.cat_on(crate::command::selection::Category::Vertex) {
             return None;
         }
-        let (origin, dir) = self.camera.ray(pos, rect)?;
-        let dir = dir.try_normalize(1e-12)?;
         let body = &self.part().body;
-        let face_t = self.picker().pick(&origin, &dir).map(|(_, t)| t);
-        let visible = |p: &Point3| {
-            let t = (p - origin).dot(&dir) / dir.norm_squared();
-            !face_t.is_some_and(|ft| ft < t - 0.01 * t.abs().max(1.0))
+        let picker = self.picker();
+        // Seen along the ray through its own pixel: the cursor's ray can hit
+        // a nearer face up to 8 px away (an edge's middle on a wall's rim).
+        let visible = |p: &Point3, s: Pos2| {
+            let Some((origin, dir)) = self.camera.ray(s, rect) else {
+                return false;
+            };
+            let Some(dir) = dir.try_normalize(1e-12) else {
+                return false;
+            };
+            let t = (p - origin).dot(&dir);
+            !picker
+                .pick(&origin, &dir)
+                .is_some_and(|(_, ft)| ft < t - 0.01 * t.abs().max(1.0))
         };
         let mut best: Option<(f32, PointRef)> = None;
         let mut consider = |p: Point3, r: PointRef, bias: f32| {
             if let Some(s) = self.camera.project(&p, rect) {
                 let d = s.distance(pos) + bias;
-                if d <= 8.0 && visible(&p) && best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                if d <= 8.0 && best.as_ref().is_none_or(|(bd, _)| d < *bd) && visible(&p, s) {
                     best = Some((d, r));
                 }
             }
