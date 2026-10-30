@@ -536,8 +536,21 @@ pub struct Corners {
     /// The gap at the corner (Miter distance / Corner Joint offset of the
     /// member that stops).
     pub gap: Real,
-    /// A new member ending on the middle of another is notched by it.
-    pub tees: bool,
+    /// What a new member ending on the middle of another gets.
+    pub tees: TeeJoint,
+}
+
+/// T joints of Insert Frame / Edit Frame (a member ending on the middle of
+/// another one): Solid Edge's *Tee* end condition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TeeJoint {
+    /// Uncut.
+    #[default]
+    None,
+    /// A square cut at the through member's near face (a Corner Joint).
+    Butt,
+    /// Cut to the through member's outline (a Notch; slower).
+    Notch,
 }
 
 impl Corners {
@@ -848,6 +861,26 @@ fn joint(a: (Point3, Point3), b: (Point3, Point3), reach: Real) -> Option<(Point
     (off_a <= reach && off_b <= reach).then_some(((pa + pb.coords) / 2.0, end_a, end_b))
 }
 
+/// Where `b` ends on the middle of `a` (a T joint): the meeting point and
+/// b's end there (0 start / 1 end). `None` when b does not end on a's axis
+/// or a's end is within `near` of the meeting point (a corner).
+fn tee(a: (Point3, Point3), b: (Point3, Point3), near: Real) -> Option<(Point3, usize)> {
+    let d = a.1 - a.0;
+    let l = d.norm();
+    if l < 1e-9 {
+        return None;
+    }
+    let u = d / l;
+    for (k, e) in [b.0, b.1].into_iter().enumerate() {
+        let t = (e - a.0).dot(&u);
+        let off = (a.0 + u * t - e).norm();
+        if off < 1e-3 && t > near && t < l - near {
+            return Some((a.0 + u * t, k));
+        }
+    }
+    None
+}
+
 /// The cut planes Miter `t` gives its two members (assembly coordinates).
 /// A cut a treatment gives: member index, end (0 start / 1 end), plane
 /// point, normal towards the removed side.
@@ -900,6 +933,20 @@ fn treatment_cuts(t: &Treatment, live: &[Live], face: &FacePlane) -> Result<Vec<
                 let (w2, h2) = mb.section.extent();
                 2.0 * (w + h + w2 + h2)
             };
+            // A T joint: b ends on the middle of a, which stays whole; b
+            // stops at a's near side.
+            if let Some((c, eb)) = tee((ma.start, ma.end), (mb.start, mb.end), {
+                let (w2, h2) = mb.section.extent();
+                w2.max(h2)
+            }) {
+                let da = (ma.end - ma.start).normalize();
+                let db = away(mb, eb);
+                let ub = (db - da * db.dot(&da))
+                    .try_normalize(1e-9)
+                    .ok_or("the members are parallel")?;
+                let pb = c + ub * (reach(ma, &ub) + offsets[1]);
+                return Ok(vec![(ib, eb, pb, -ub)]);
+            }
             let (c, ea, eb) = joint((ma.start, ma.end), (mb.start, mb.end), size)
                 .ok_or("the members do not meet")?;
             let (da, db) = (away(ma, ea), away(mb, eb));
@@ -1654,7 +1701,7 @@ pub fn retype_corner(
         *t = Corners {
             kind,
             gap,
-            tees: false,
+            tees: TeeJoint::None,
         }
         .treatment(a, b, lengths)
         .ok_or("a corner cannot become uncut here: Delete it")?;
@@ -1864,7 +1911,9 @@ pub fn corner_treatments(
         let mut vertices: Vec<(Point3, Vec<usize>)> = Vec::new();
         for i in 0..lines.len() {
             for j in i + 1..lines.len() {
-                let reach = 2.0 * (lines[i].2 + lines[j].2);
+                // Near the ends of both (within a section's size): a line
+                // ending on the middle of another is a T joint, not a corner.
+                let reach = lines[i].2.max(lines[j].2);
                 if let Some((c, _, _)) = joint(lines[i].1, lines[j].1, reach) {
                     match vertices.iter_mut().find(|(p, _)| (p - c).norm() < 1e-3) {
                         Some((_, v)) => {
@@ -1911,7 +1960,7 @@ pub fn corner_treatments(
             }
         }
     }
-    if corners.tees {
+    if corners.tees != TeeJoint::None {
         for (i, (oi, (p, q), _)) in lines.iter().enumerate() {
             for (j, (oj, (a, b), _)) in lines.iter().enumerate() {
                 if i == j {
@@ -1925,10 +1974,17 @@ pub fn corner_treatments(
                     t > margin && t < 1.0 - margin && (a + d * t - e).norm() < 1e-3
                 };
                 if on_middle(p) || on_middle(q) {
-                    out.push(Treatment::Notch {
-                        notched: *oi,
-                        by: *oj,
-                        offset: corners.gap,
+                    out.push(match corners.tees {
+                        TeeJoint::Notch => Treatment::Notch {
+                            notched: *oi,
+                            by: *oj,
+                            offset: corners.gap,
+                        },
+                        _ => Treatment::CornerJoint {
+                            a: *oj,
+                            b: *oi,
+                            offsets: [0.0, corners.gap],
+                        },
                     });
                 }
             }
@@ -2581,7 +2637,7 @@ mod tests {
             o.corners = Corners {
                 kind,
                 gap: 0.0,
-                tees: false,
+                tees: TeeJoint::None,
             };
             let (_, occs) = insert(&mut p, &lk, aid, &edges, &o, Library::builtin(), None).unwrap();
             let a = asm(&p, aid);
@@ -2995,7 +3051,7 @@ mod tests {
         let c = Corners {
             kind: CornerType::Miter,
             gap: 0.0,
-            tees: false,
+            tees: TeeJoint::None,
         };
         edit_frame(&mut p, &Linked::new(), aid, fid, None, Some(c)).unwrap();
         assert_eq!(asm(&p, aid).frames[0].treatments.len(), 16);
@@ -3123,7 +3179,7 @@ mod tests {
         let c = Corners {
             kind: CornerType::None,
             gap: 0.0,
-            tees: true,
+            tees: TeeJoint::Notch,
         };
         let ts = corner_treatments(&p, &Linked::new(), a, &[bar, rhs], &c);
         assert_eq!(
@@ -3302,6 +3358,124 @@ mod tests {
             None,
         )
         .unwrap();
+        p.save(std::path::Path::new(&path)).unwrap();
+    }
+
+    /// A 600 × 400 rectangle of sketch lines with a cross bar at x = 300:
+    /// Butt longer through at the corners, the bar butted against the rails
+    /// at both ends (T joints), for every Level.
+    #[test]
+    fn rectangle_with_a_cross_bar() {
+        use crate::part::{OriginPlane, SketchOptions, SketchPlacement};
+        use crate::sketch::Point2;
+        for level in [Level::Auto, Level::Top, Level::Bottom] {
+            let mut sk = PartDocument::default();
+            let o = SketchOptions {
+                auto_project_origin: false,
+                auto_reference_edges: false,
+                ..Default::default()
+            };
+            let i = sk
+                .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+                .unwrap();
+            let s = &mut sk.sketches[i].sketch;
+            let q = |x, y| Point2::new(x, y);
+            let lines: Vec<_> = [
+                (q(0.0, 0.0), q(600.0, 0.0)),
+                (q(600.0, 0.0), q(600.0, 400.0)),
+                (q(600.0, 400.0), q(0.0, 400.0)),
+                (q(0.0, 400.0), q(0.0, 0.0)),
+                (q(300.0, 0.0), q(300.0, 400.0)),
+            ]
+            .into_iter()
+            .map(|(a, b)| s.add_line(a, b))
+            .collect();
+            let sid = sk.sketches[i].id.clone();
+            let mut p = Project::new("Rect");
+            let skd = p.add_document("Skeleton", DocumentData::Part(sk));
+            let mut a = AssemblyDocument::default();
+            a.place(
+                DocRef::local(skd),
+                "Skeleton:1",
+                Transform3::identity(),
+                true,
+            );
+            let aid = p.add_document("Frame", DocumentData::Assembly(a));
+            let edges: Vec<Skeleton> = lines
+                .iter()
+                .map(|&line| Skeleton::SketchLine {
+                    occurrence: 1,
+                    sub: Vec::new(),
+                    sketch: sid.clone(),
+                    line,
+                })
+                .collect();
+            let mut o = opts();
+            o.corners = Corners {
+                kind: CornerType::ButtLonger,
+                gap: 0.0,
+                tees: TeeJoint::Butt,
+            };
+            o.layout.level = level;
+            let r = insert(
+                &mut p,
+                &Linked::new(),
+                aid,
+                &edges,
+                &o,
+                Library::builtin(),
+                None,
+            );
+            let (_, occs) = r.unwrap_or_else(|e| panic!("{level:?}: {e}"));
+            let ts = &asm(&p, aid).frames[0].treatments;
+            assert_eq!(ts.len(), 6, "{level:?}: {ts:?}");
+            // The bar: 400 between the rails' axes, less half a rail at each end.
+            let bar = outer_length(&part(&p, asm(&p, aid), occs[4])).unwrap();
+            assert!((bar - 360.0).abs() < 0.2, "{level:?}: {bar}");
+        }
+    }
+
+    /// A sketch skeleton alone: a 600 × 400 rectangle with a cross bar at
+    /// x = 300 (corners and T joints, GUI check), saved to
+    /// `CADCRAFT_RECT_DEMO` (run with `--ignored`).
+    #[test]
+    #[ignore]
+    fn write_rect_demo() {
+        use crate::part::{OriginPlane, SketchOptions, SketchPlacement};
+        use crate::sketch::Point2;
+        let Ok(path) = std::env::var("CADCRAFT_RECT_DEMO") else {
+            return;
+        };
+        let mut sk = PartDocument::default();
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = sk
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        let s = &mut sk.sketches[i].sketch;
+        let q = |x, y| Point2::new(x, y);
+        for (a, b) in [
+            (q(0.0, 0.0), q(600.0, 0.0)),
+            (q(600.0, 0.0), q(600.0, 400.0)),
+            (q(600.0, 400.0), q(0.0, 400.0)),
+            (q(0.0, 400.0), q(0.0, 0.0)),
+            (q(300.0, 0.0), q(300.0, 400.0)),
+        ] {
+            s.add_line(a, b);
+        }
+        let mut p = Project::new("Rect");
+        let skd = p.add_document("Skeleton", DocumentData::Part(sk));
+        let mut a = AssemblyDocument::default();
+        a.place(
+            DocRef::local(skd),
+            "Skeleton:1",
+            Transform3::identity(),
+            true,
+        );
+        p.add_document("Frame", DocumentData::Assembly(a));
         p.save(std::path::Path::new(&path)).unwrap();
     }
 

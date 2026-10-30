@@ -1317,10 +1317,17 @@ impl CadCraftApp {
     /// The box for Zoom All of the assembly.
     pub(super) fn assembly_box(&self) -> Option<(Point3, Point3)> {
         let a = self.assembly()?;
+        // The components' visible sketch lines too (a frame's skeleton
+        // sketch has no body).
+        let lines = self
+            .sketch_lines()
+            .into_iter()
+            .map(|(_, _, p, q)| (p.inf(&q), p.sup(&q)));
         a.occurrences
             .iter()
             .filter(|o| self.asm_shown(o))
             .filter_map(|o| self.asm_box(o.id))
+            .chain(lines)
             .reduce(|(a, b), (c, d)| (a.inf(&c), b.sup(&d)))
     }
 

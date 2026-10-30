@@ -117,7 +117,11 @@ pub(super) fn insert_options(d: &PartDialog) -> Option<InsertOptions> {
                 _ => frame::CornerType::None,
             },
             gap: d.num(0, "Corner Gap").unwrap_or(0.0),
-            tees: d.index(0, "T Joints") == 1,
+            tees: match d.index(0, "T Joints") {
+                1 => frame::TeeJoint::Butt,
+                2 => frame::TeeJoint::Notch,
+                _ => frame::TeeJoint::None,
+            },
         },
         layout: layout(d),
     })
@@ -207,7 +211,7 @@ impl CadCraftApp {
     /// The straight lines of the visible sketches of the components on show
     /// (first-level occurrences), in assembly coordinates, with what picks
     /// each one.
-    fn sketch_lines(&self) -> Vec<(Skeleton, String, Point3, Point3)> {
+    pub(super) fn sketch_lines(&self) -> Vec<(Skeleton, String, Point3, Point3)> {
         let Some(a) = self.assembly() else {
             return Vec::new();
         };
@@ -439,7 +443,11 @@ impl CadCraftApp {
         let corners = kind.map(|kind| frame::Corners {
             kind,
             gap: d.num(0, "Corner Gap").unwrap_or(0.0),
-            tees: d.index(0, "T Joints") == 1,
+            tees: match d.index(0, "T Joints") {
+                1 => frame::TeeJoint::Butt,
+                2 => frame::TeeJoint::Notch,
+                _ => frame::TeeJoint::None,
+            },
         });
         if layout.is_none() && corners.is_none() {
             return fail(

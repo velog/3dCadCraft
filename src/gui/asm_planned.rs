@@ -1010,7 +1010,7 @@ impl AsmPlanned {
                         0,
                     ),
                     Num("Corner Gap", 0.0, " mm"),
-                    Combo("T Joints", &["None", "Notch"], 1),
+                    Combo("T Joints", &["None", "Butt", "Notch"], 1),
                     Note(
                         "Corners of three or more members: the column runs through, the others stop at it.",
                     ),
@@ -1394,7 +1394,7 @@ impl AsmPlanned {
                         0,
                     ),
                     Num("Corner Gap", 0.0, " mm"),
-                    Combo("T Joints", &["None", "Notch"], 1),
+                    Combo("T Joints", &["None", "Butt", "Notch"], 1),
                     Note(
                         "A Corner Type other than Keep replaces the frame's Miter, Corner Joint and Notch treatments; Trim/Extend and Lengthen/Shorten stay.",
                     ),
