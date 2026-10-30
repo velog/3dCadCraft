@@ -16,7 +16,7 @@ use super::tree::Linked;
 use crate::assembly::relation::GeomRef;
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Project};
 use crate::kernel::{Point3, Real, Transform3, Vector3};
-use crate::part::frame::{EndCut, LENGTH_PROPERTY, Library, Section};
+use crate::part::frame::{EndCut, LENGTH_PROPERTY, Library, NotchTool, Section};
 use crate::part::{Feature, PartDocument};
 
 /// Which point of the section's box lies on the skeleton line.
@@ -188,6 +188,9 @@ pub struct Shape {
     /// End cuts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cuts: Vec<[[Real; 3]; 2]>,
+    /// Notches (Notch).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notches: Vec<NotchTool>,
 }
 
 impl Shape {
@@ -202,6 +205,8 @@ impl Shape {
                 .iter()
                 .zip(&o.cuts)
                 .all(|(a, b)| (0..2).all(|i| (0..3).all(|k| near(a[i][k], b[i][k]))))
+            && self.notches.len() == o.notches.len()
+            && self.notches.iter().zip(&o.notches).all(|(a, b)| a.same(b))
     }
 
     fn end_cuts(&self) -> Vec<EndCut> {
@@ -274,6 +279,17 @@ pub enum Treatment {
         /// Start and end offsets.
         offsets: [Real; 2],
     },
+    /// Notch, Basic Profile: `notched` loses what lies inside the outer
+    /// outline of `by` grown by `offset`, along `by`'s run.
+    Notch {
+        /// The member that is cut.
+        notched: u32,
+        /// The member whose shape cuts it.
+        by: u32,
+        /// Gap round the notching member's outline.
+        #[serde(default)]
+        offset: Real,
+    },
 }
 
 impl Treatment {
@@ -281,6 +297,7 @@ impl Treatment {
     pub fn members(&self) -> Vec<u32> {
         match self {
             Treatment::Miter { a, b, .. } | Treatment::CornerJoint { a, b, .. } => vec![*a, *b],
+            Treatment::Notch { notched, by, .. } => vec![*notched, *by],
             Treatment::TrimToFace { member, .. } | Treatment::Lengthen { member, .. } => {
                 vec![*member]
             }
@@ -294,6 +311,7 @@ impl Treatment {
             Treatment::CornerJoint { .. } => "Corner Joint",
             Treatment::TrimToFace { .. } => "Trim/Extend",
             Treatment::Lengthen { .. } => "Lengthen/Shorten",
+            Treatment::Notch { .. } => "Notch",
         }
     }
 }
@@ -675,6 +693,8 @@ struct Live {
     /// Cut planes in assembly coordinates per end (start, end): point and
     /// normal towards the removed side.
     cuts: [Option<(Point3, Vector3)>; 2],
+    /// Notch prisms in assembly coordinates.
+    notches: Vec<NotchTool>,
     built: Option<Shape>,
     material: Option<String>,
 }
@@ -793,8 +813,127 @@ fn treatment_cuts(t: &Treatment, live: &[Live], face: &FacePlane) -> Result<Vec<
             let n = if dist(&keep) > 0.0 { -n } else { n };
             Ok(vec![(i, e, p - n * *offset, n)])
         }
-        Treatment::Lengthen { .. } => Ok(Vec::new()),
+        Treatment::Lengthen { .. } | Treatment::Notch { .. } => Ok(Vec::new()),
     }
+}
+
+/// How far a notch outline is widened across the notched member: equal
+/// tubes in a T have the notching tube's walls in the planes of the
+/// notched one's and their corner rounds on crossing axes, which took the
+/// kernel's Cut 11-15 s; 0.1 mm apart, about 2 s. Only material next to
+/// the notched member's own sides could change, by at most this much.
+const NOTCH_CLEARANCE: Real = 0.1;
+
+/// `l` with every point moved `by` along `across`, away from the line
+/// through the origin square to it (a circle keeps its size).
+fn widened(
+    l: crate::part::frame::Loop,
+    across: crate::sketch::Vector2,
+    by: Real,
+) -> crate::part::frame::Loop {
+    use crate::part::frame::Loop;
+    let push = |q: crate::sketch::Point2| {
+        let s = q.coords.dot(&across);
+        if s.abs() < 1e-9 {
+            q
+        } else {
+            q + across * (by * s.signum())
+        }
+    };
+    match l {
+        Loop::Corners(cs) => Loop::Corners(cs.into_iter().map(|(q, r)| (push(q), r)).collect()),
+        Loop::Path(ps) => Loop::Path(
+            ps.into_iter()
+                .map(|(q, a)| (push(q), a.map(|(c, ccw)| (push(c), ccw))))
+                .collect(),
+        ),
+        c @ Loop::Circle(..) => c,
+    }
+}
+
+/// The prism Notch `t` cuts out of its notched member (assembly
+/// coordinates): member index and tool.
+fn notch_tool(t: &Treatment, live: &[Live]) -> Result<(usize, NotchTool), String> {
+    let Treatment::Notch {
+        notched,
+        by,
+        offset,
+    } = t
+    else {
+        return Err("not a notch".into());
+    };
+    let find = |o: u32| {
+        live.iter()
+            .position(|m| m.occ == o)
+            .ok_or_else(|| "one of its members no longer exists".to_string())
+    };
+    let (i, k) = (find(*notched)?, find(*by)?);
+    if i == k {
+        return Err("a member cannot notch itself".into());
+    }
+    if *offset < 0.0 {
+        return Err("the offset must not be negative".into());
+    }
+    let (m, b) = (&live[i], &live[k]);
+    // The members must come near each other: the closest points of the two
+    // runs (sampled) within both sections' reach.
+    let reach = {
+        let (w, h) = m.section.extent();
+        let (w2, h2) = b.section.extent();
+        (w.hypot(h) + w2.hypot(h2)) / 2.0 + offset
+    };
+    let n = 64;
+    let at = |s: &Live, j: usize| s.start + (s.end - s.start) * (j as Real / n as Real);
+    let near = (0..=n)
+        .flat_map(|j| (0..=n).map(move |l| (j, l)))
+        .map(|(j, l)| (at(m, j) - at(b, l)).norm())
+        .fold(Real::MAX, Real::min);
+    if near > reach {
+        return Err("the members do not meet".into());
+    }
+    let outline = b
+        .section
+        .notch_outline(*offset)
+        .ok_or("an offset round this profile is not supported yet")?;
+    // The notched member's run in the notching section's axes; the outline
+    // is widened across it (the face its end stops on stays exact).
+    let d = (m.end - m.start).normalize();
+    let (bx, by_) = (
+        b.place.transform_vector(&Vector3::x()),
+        b.place.transform_vector(&Vector3::y()),
+    );
+    let run = crate::sketch::Vector2::new(d.dot(&bx), d.dot(&by_));
+    let across = crate::sketch::Vector2::new(-run.y, run.x)
+        .try_normalize(1e-6)
+        .ok_or("the members are parallel")?;
+    let outline = widened(outline, across, NOTCH_CLEARANCE);
+    // Only the stretch of the notching member the notched one can reach:
+    // a long prism made the kernel's Cut slower.
+    let z = b.place.transform_vector(&Vector3::z());
+    let (w, h) = m.section.extent();
+    let pad = w.hypot(h) / 2.0 + 1.0;
+    let base = b.place.transform_point(&Point3::origin());
+    let along = |q: Point3| (q - base).dot(&z);
+    let (a0, a1) = (along(m.start), along(m.end));
+    let len = (b.end - b.start).norm();
+    let lo = (a0.min(a1) - pad).max(0.0);
+    let hi = (a0.max(a1) + pad).min(len);
+    if hi - lo < 1e-6 {
+        return Err("the members do not meet".into());
+    }
+    let o = base + z * lo;
+    let x = b.place.transform_vector(&Vector3::x());
+    let y = b.place.transform_vector(&Vector3::y());
+    Ok((
+        i,
+        NotchTool {
+            origin: [o.x, o.y, o.z],
+            x: [x.x, x.y, x.z],
+            y: [y.x, y.y, y.z],
+            length: hi - lo,
+            outline,
+        },
+    ))
 }
 
 fn miter_cuts(
@@ -851,7 +990,30 @@ fn shape_of(m: &Live) -> Result<Shape, String> {
         ext[k] = far.max(0.0) + 1.0;
         cuts.push([[p.x, p.y, p.z], [n.x, n.y, n.z]]);
     }
-    Ok(Shape { length, ext, cuts })
+    let v = |a: &[Real; 3]| Vector3::new(a[0], a[1], a[2]);
+    let notches = m
+        .notches
+        .iter()
+        .map(|t| {
+            let o = inv.transform_point(&Point3::from(v(&t.origin)));
+            let (x, y) = (
+                inv.transform_vector(&v(&t.x)),
+                inv.transform_vector(&v(&t.y)),
+            );
+            NotchTool {
+                origin: [o.x, o.y, o.z],
+                x: [x.x, x.y, x.z],
+                y: [y.x, y.y, y.z],
+                ..t.clone()
+            }
+        })
+        .collect();
+    Ok(Shape {
+        length,
+        ext,
+        cuts,
+        notches,
+    })
 }
 
 /// Follows the skeleton: every member of assembly `asm` gets the place and
@@ -889,6 +1051,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                             end,
                             place: t,
                             cuts: [None, None],
+                            notches: Vec::new(),
                             built: m.built.clone(),
                             material,
                         });
@@ -929,6 +1092,19 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                 Err(e) => {
                     for m in t.members() {
                         out.sick.push((m, format!("{}: {e}", t.label())));
+                    }
+                }
+            }
+        }
+        for t in &treatments {
+            if !matches!(t, Treatment::Notch { .. }) {
+                continue;
+            }
+            match notch_tool(t, &live) {
+                Ok((i, tool)) => live[i].notches.push(tool),
+                Err(e) => {
+                    for m in t.members() {
+                        out.sick.push((m, format!("Notch: {e}")));
                     }
                 }
             }
@@ -985,7 +1161,13 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                 .map(|(occ, doc, sec, sh, mat)| {
                     sc.spawn(move || {
                         let r = sec
-                            .member_part_cut(sh.length, sh.ext, &sh.end_cuts(), mat.as_deref())
+                            .member_part_cut(
+                                sh.length,
+                                sh.ext,
+                                &sh.end_cuts(),
+                                &sh.notches,
+                                mat.as_deref(),
+                            )
                             .map_err(|e| e.to_string())
                             .and_then(|p| {
                                 if p.feature_health.is_empty() {
@@ -2038,6 +2220,157 @@ mod tests {
         assert!(change(&mut p, &lk, aid, &[1], &o, Library::builtin()).is_err());
     }
 
+    /// A T joint of sketch lines: a flat bar 40x5 up the Y axis ends on the
+    /// axis of an RHS 100x50x4 along X. The skeleton assembly and the
+    /// members (flat bar, RHS) of one frame.
+    pub(crate) fn tee_frame() -> (Project, DocumentId, u32, u32) {
+        tee_frame_of(
+            ("Flat bar (EN 10058)", "40x5"),
+            ("Rectangular hollow section (EN 10219)", "100x50x4"),
+        )
+    }
+
+    /// [`tee_frame`] with the upright's and the cross member's sections.
+    fn tee_frame_of(up_s: (&str, &str), across_s: (&str, &str)) -> (Project, DocumentId, u32, u32) {
+        use crate::part::{OriginPlane, SketchOptions, SketchPlacement};
+        use crate::sketch::Point2;
+        let mut sk = PartDocument::default();
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = sk
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        let s = &mut sk.sketches[i].sketch;
+        let up = s.add_line(Point2::new(0.0, 0.0), Point2::new(0.0, 400.0));
+        let across = s.add_line(Point2::new(-300.0, 400.0), Point2::new(300.0, 400.0));
+        let sid = sk.sketches[i].id.clone();
+        let mut p = Project::new("T");
+        let skd = p.add_document("Skeleton", DocumentData::Part(sk));
+        let mut a = AssemblyDocument::default();
+        a.place(
+            DocRef::local(skd),
+            "Skeleton:1",
+            Transform3::identity(),
+            true,
+        );
+        let aid = p.add_document("Frame", DocumentData::Assembly(a));
+        let line = |line| Skeleton::SketchLine {
+            occurrence: 1,
+            sub: Vec::new(),
+            sketch: sid.clone(),
+            line,
+        };
+        let mut o = opts();
+        o.family = up_s.0.into();
+        o.size = up_s.1.into();
+        let (fid, a) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[line(up)],
+            &o,
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        o.family = across_s.0.into();
+        o.size = across_s.1.into();
+        let (_, b) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[line(across)],
+            &o,
+            Library::builtin(),
+            Some(fid),
+        )
+        .unwrap();
+        (p, aid, a[0], b[0])
+    }
+
+    fn volume_of(p: &Project, aid: DocumentId, occ: u32) -> Real {
+        part(p, asm(p, aid), occ)
+            .exact_bodies
+            .0
+            .iter()
+            .filter_map(|b| b.volume_at(1e-3))
+            .sum()
+    }
+
+    /// Notch, Basic Profile: the flat bar loses what lies inside the RHS
+    /// (50 wide across the bar's run, so 25 of its 400), 5 more with an
+    /// offset of 5; the RHS keeps its volume; solving again rebuilds
+    /// nothing; the notch survives a save.
+    #[test]
+    fn notch_cuts_a_member_to_the_other_ones_outline() {
+        let (mut p, aid, bar, rhs) = tee_frame();
+        let before = volume_of(&p, aid, rhs);
+        let t = Treatment::Notch {
+            notched: bar,
+            by: rhs,
+            offset: 0.0,
+        };
+        add_treatments(&mut p, &Linked::new(), aid, vec![t]).unwrap();
+        let v = volume_of(&p, aid, bar);
+        assert!((v - 200.0 * 375.0).abs() < 1e-3 * 200.0 * 375.0, "{v}");
+        assert!((volume_of(&p, aid, rhs) - before).abs() < 1e-6 * before);
+        assert_eq!(solve(&mut p, &Linked::new(), aid).unwrap().moved, 0);
+        let t = Treatment::Notch {
+            notched: bar,
+            by: rhs,
+            offset: 5.0,
+        };
+        add_treatments(&mut p, &Linked::new(), aid, vec![t]).unwrap();
+        assert_eq!(asm(&p, aid).frames[0].treatments.len(), 1);
+        let v = volume_of(&p, aid, bar);
+        assert!((v - 200.0 * 370.0).abs() < 1e-3 * 200.0 * 370.0, "{v}");
+        let dir = std::env::temp_dir().join(format!("cc-notch-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("notch.3dcadcraft");
+        p.save(&f).unwrap();
+        let mut q = Project::load(&f).unwrap();
+        assert_eq!(
+            asm(&q, aid).frames[0].treatments,
+            asm(&p, aid).frames[0].treatments
+        );
+        assert_eq!(solve(&mut q, &Linked::new(), aid).unwrap().moved, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+        // A member notching itself is refused, the frame unchanged.
+        let t = Treatment::Notch {
+            notched: rhs,
+            by: rhs,
+            offset: 0.0,
+        };
+        assert!(add_treatments(&mut p, &Linked::new(), aid, vec![t]).is_err());
+        assert_eq!(asm(&p, aid).frames[0].treatments.len(), 1);
+    }
+
+    /// Two SHS 40x40x3 in a T: the notching member's top and bottom walls
+    /// lie in the planes of the upright's; the notch still cuts the upright
+    /// 20 short of the axis.
+    #[test]
+    fn notch_of_equal_tubes() {
+        let shs = ("Square hollow section (EN 10219)", "40x40x3");
+        let (mut p, aid, up, across) = tee_frame_of(shs, shs);
+        let full = volume_of(&p, aid, up);
+        let t = Treatment::Notch {
+            notched: up,
+            by: across,
+            offset: 0.0,
+        };
+        add_treatments(&mut p, &Linked::new(), aid, vec![t]).unwrap();
+        let v = volume_of(&p, aid, up);
+        // 20 of 400 gone, less what the notching tube's corner rounds
+        // (r 6) leave in the upright's top and bottom walls: at most two
+        // corners' (1 - π/4)·6² over the 40 width.
+        let want = full * 380.0 / 400.0;
+        let rounds = 2.0 * (1.0 - std::f64::consts::FRAC_PI_4) * 36.0 * 40.0;
+        assert!(v > want - 1e-4 * want && v < want + rounds, "{v} vs {want}");
+    }
+
     /// Trim/Extend to the skeleton box's top face (offset 10): the vertical
     /// member at a corner ends 10 mm below it; Lengthen/Shorten then adds 25.
     #[test]
@@ -2178,6 +2511,21 @@ mod tests {
             None,
         )
         .unwrap();
+        p.save(std::path::Path::new(&path)).unwrap();
+    }
+
+    /// A T of an SHS 40x40x3 upright and an RHS 100x50x4 across (Notch's GUI
+    /// check), saved to `CADCRAFT_NOTCH_DEMO` (run with `--ignored`).
+    #[test]
+    #[ignore]
+    fn write_notch_demo() {
+        let Ok(path) = std::env::var("CADCRAFT_NOTCH_DEMO") else {
+            return;
+        };
+        let (p, ..) = tee_frame_of(
+            ("Square hollow section (EN 10219)", "40x40x3"),
+            ("Rectangular hollow section (EN 10219)", "100x50x4"),
+        );
         p.save(std::path::Path::new(&path)).unwrap();
     }
 

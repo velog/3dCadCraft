@@ -1351,6 +1351,7 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::CornerJoint
                     | super::asm_planned::AsmPlanned::TrimExtend
                     | super::asm_planned::AsmPlanned::LengthenShorten
+                    | super::asm_planned::AsmPlanned::Notch
                     | super::asm_planned::AsmPlanned::PlaceImported
             ) | Planned::Part(
                 PartPlanned::Stitch
@@ -1433,6 +1434,19 @@ impl Planned {
             ) => {
                 Some("Comes with stage F2 (spec 6.1 Trim/Extend: the kept side follows the member)")
             }
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::Notch),
+                "Profile",
+                Some(
+                    "Custom I Template" | "Custom C Template" | "Custom T Template"
+                    | "Custom Profile",
+                ),
+            ) => Some("Comes with stage F2b (spec 6.1 Notch): Basic Profile only yet"),
+            (
+                Planned::Asm(super::asm_planned::AsmPlanned::Notch),
+                "Extend Notch Profile" | "Perpendicular Cut",
+                None,
+            ) => Some("Comes with stage F2b (spec 6.1 Notch)"),
             _ => None,
         }
     }
@@ -2465,7 +2479,8 @@ impl CadCraftApp {
             Planned::Asm(
                 k @ (super::asm_planned::AsmPlanned::CornerJoint
                 | super::asm_planned::AsmPlanned::TrimExtend
-                | super::asm_planned::AsmPlanned::LengthenShorten),
+                | super::asm_planned::AsmPlanned::LengthenShorten
+                | super::asm_planned::AsmPlanned::Notch),
             ) => {
                 if self.treatment_ok(k, &d) {
                     self.part_planned = None;

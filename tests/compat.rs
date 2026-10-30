@@ -2351,6 +2351,127 @@ fn drawing_r39_project() -> Project {
     project
 }
 
+/// Revision 49: a frame Notch. A flat bar 40x5 up the Y axis ends on the
+/// axis of an RHS 100x50x4 along X and is notched by it (Basic Profile,
+/// offset 5). Returns the project and the bar's occurrence.
+fn notch_r49_project() -> (Project, u32) {
+    use cadcraft3d::assembly::frame::{InsertOptions, Skeleton, Treatment, add_treatments, insert};
+    use cadcraft3d::assembly::tree::Linked;
+    use cadcraft3d::document::{AssemblyDocument, DocRef};
+    use cadcraft3d::kernel::Transform3;
+    use cadcraft3d::part::frame::Library;
+    let mut sk = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let i = sk
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    let s = &mut sk.sketches[i].sketch;
+    let up = s.add_line(Point2::new(0.0, 0.0), Point2::new(0.0, 400.0));
+    let across = s.add_line(Point2::new(-300.0, 400.0), Point2::new(300.0, 400.0));
+    let sid = sk.sketches[i].id.clone();
+    let mut p = Project::new("NotchR49");
+    let skd = p.add_document("Skeleton", DocumentData::Part(sk));
+    let mut a = AssemblyDocument::default();
+    a.place(
+        DocRef::local(skd),
+        "Skeleton:1",
+        Transform3::identity(),
+        true,
+    );
+    let aid = p.add_document("Frame", DocumentData::Assembly(a));
+    let line = |line| Skeleton::SketchLine {
+        occurrence: 1,
+        sub: Vec::new(),
+        sketch: sid.clone(),
+        line,
+    };
+    let mut opts = InsertOptions {
+        family: "Flat bar (EN 10058)".into(),
+        size: "40x5".into(),
+        material: Some("Steel S235".into()),
+        orientation: Default::default(),
+        corners: Default::default(),
+    };
+    let linked = Linked::new();
+    let (fid, bar) = insert(
+        &mut p,
+        &linked,
+        aid,
+        &[line(up)],
+        &opts,
+        Library::builtin(),
+        None,
+    )
+    .unwrap();
+    opts.family = "Rectangular hollow section (EN 10219)".into();
+    opts.size = "100x50x4".into();
+    let (_, rhs) = insert(
+        &mut p,
+        &linked,
+        aid,
+        &[line(across)],
+        &opts,
+        Library::builtin(),
+        Some(fid),
+    )
+    .unwrap();
+    let t = Treatment::Notch {
+        notched: bar[0],
+        by: rhs[0],
+        offset: 5.0,
+    };
+    add_treatments(&mut p, &linked, aid, vec![t]).unwrap();
+    (p, bar[0])
+}
+
+/// The revision 49 frame reads back with its notch, and the bar is 30 mm
+/// short of the RHS axis (25 half width + 5 offset) when solved again.
+#[test]
+fn notch_r49_reads() {
+    use cadcraft3d::assembly::frame::{Treatment, solve};
+    use cadcraft3d::assembly::tree::Linked;
+    let f = root().join("r49/notch_r49.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let mut project = Project::load(&f).unwrap();
+    let (aid, bar, t) = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Assembly(a) => {
+                let t = a.frames.first()?.treatments.first()?.clone();
+                let Treatment::Notch { notched, .. } = t else {
+                    return None;
+                };
+                Some((d.id, notched, t))
+            }
+            _ => None,
+        })
+        .expect("a frame with a notch");
+    assert!(matches!(t, Treatment::Notch { offset, .. } if (offset - 5.0).abs() < 1e-12));
+    // Rebuilding from scratch: the member must be cut again.
+    if let Some(DocumentData::Assembly(a)) = project.document_mut(aid).map(|d| &mut d.data) {
+        for m in &mut a.frames[0].members {
+            m.built = None;
+        }
+    }
+    solve(&mut project, &Linked::new(), aid).unwrap();
+    let doc = match project.document(aid).map(|d| &d.data) {
+        Some(DocumentData::Assembly(a)) => a.find(bar).unwrap().component.document,
+        _ => panic!("no assembly"),
+    };
+    let Some(DocumentData::Part(part)) = project.document(doc).map(|d| &d.data) else {
+        panic!("no bar");
+    };
+    let v = volume(part);
+    assert!((v - 200.0 * 370.0).abs() < 1e-3 * 200.0 * 370.0, "{v}");
+}
+
 /// The revision 39 drawing reads back with its offset section's line.
 #[test]
 fn drawing_r39_reads() {
@@ -2832,6 +2953,11 @@ fn old_files_still_open() {
             let mut project = Project::new("RipR50");
             project.add_document("Part1", DocumentData::Part(rip_r50()));
             project.save(&f).unwrap();
+        }
+        let f = root().join("r49/notch_r49.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            notch_r49_project().0.save(&f).unwrap();
         }
         let f = root().join("r48/unfold_r48.3dcadcraft");
         if !f.exists() {

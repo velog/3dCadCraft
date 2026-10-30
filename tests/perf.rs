@@ -1338,6 +1338,40 @@ fn speed_budgets() {
                 assert!(s.sick.is_empty(), "{:?}", s.sick);
             }),
         ));
+        // Notch: each of the 4 uprights notched by the top member along X at its corner
+        // (4 extruded cuts of the SHS outline, rebuilt in parallel).
+        rows.push((
+            "frame: notch the 4 SHS 40x40x3 uprights of a box frame by its top members",
+            3000.0,
+            median_ms(3, || {
+                use cadcraft3d::assembly::frame::{Treatment, add_treatments};
+                let mut p = base.clone();
+                let (_, occs) = insert(&mut p, &Linked::new(), aid, &edges, &o, lib, None).unwrap();
+                let hint = |k: usize| match &edges[k] {
+                    Skeleton::Edge(GeomRef::Edge { edge, .. }) => edge.hint,
+                    _ => panic!("not an edge"),
+                };
+                let mut ts = Vec::new();
+                for u in (0..edges.len()).filter(|&k| (hint(k)[2] - 100.0).abs() < 1e-6) {
+                    let by = (0..edges.len())
+                        .find(|&k| {
+                            let h = hint(k);
+                            (h[2] - 200.0).abs() < 1e-6
+                                && (h[1] - hint(u)[1]).abs() < 1e-6
+                                && (h[0] - 200.0).abs() < 1e-6
+                        })
+                        .unwrap();
+                    ts.push(Treatment::Notch {
+                        notched: occs[u],
+                        by: occs[by],
+                        offset: 0.0,
+                    });
+                }
+                assert_eq!(ts.len(), 4);
+                let s = add_treatments(&mut p, &Linked::new(), aid, ts).unwrap();
+                assert!(s.sick.is_empty(), "{:?}", s.sick);
+            }),
+        ));
         rows.push((
             "frame: 12 SHS 40x40x3 members on a box skeleton + solve",
             400.0,

@@ -374,7 +374,7 @@ impl CadCraftApp {
         }
     }
 
-    /// OK of Corner Joint, Trim/Extend To Face and Lengthen/Shorten.
+    /// OK of Corner Joint, Trim/Extend To Face, Lengthen/Shorten and Notch.
     pub(super) fn treatment_ok(&mut self, kind: AsmPlanned, d: &PartDialog) -> bool {
         use frame::Treatment;
         let title = kind.title();
@@ -414,6 +414,35 @@ impl CadCraftApp {
                     b,
                     offsets: [num("Offset1"), num("Offset2")],
                 }]
+            }
+            AsmPlanned::Notch => {
+                let (notched, tools) = (
+                    self.picked_members(d, "notched"),
+                    self.picked_members(d, "tools"),
+                );
+                // Two members selected before the command land in the first
+                // selector: the first is notched by the second.
+                let (notched, tools) = match (notched.as_slice(), tools.is_empty()) {
+                    ([a, b], true) => (vec![*a], vec![*b]),
+                    _ => (notched, tools),
+                };
+                if notched.is_empty() || tools.is_empty() {
+                    return fail(self, "select the members to notch and the notching members");
+                }
+                let offset = num("Offset");
+                notched
+                    .iter()
+                    .flat_map(|&n| {
+                        tools
+                            .iter()
+                            .filter(move |&&b| b != n)
+                            .map(move |&by| Treatment::Notch {
+                                notched: n,
+                                by,
+                                offset,
+                            })
+                    })
+                    .collect()
             }
             AsmPlanned::TrimExtend => {
                 let Some(face) = d.refs.get("face").and_then(|v| v.first()).cloned() else {

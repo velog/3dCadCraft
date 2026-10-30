@@ -32,6 +32,7 @@ Target times for interactive work:
 | Project Geometry of a face with 36 holes (every loop, linked) | 60 ms | 6.5 ms (2026-10-27) |
 | Frames: a SHS 40×40×3 member on each of the 12 edges of a box skeleton (12 member parts) + a solve | 400 ms | 217 ms (2026-10-29, machine 96 % busy, others 84 %); 98 ms (machine 44 % busy) |
 | Frames: Miter of the 4 SHS 40×40×3 members of a rectangle (8 end cuts, parts rebuilt in parallel) | 3000 ms | 1215 ms (2026-10-29, 7.8 cores busy, 9.4 s CPU; each Trim Solid of the rounded tube is ~0.4 s in the kernel — a direct exact prism between two planes is the faster way) |
+| Frames: Notch of the 4 SHS 40×40×3 uprights of a box frame by its top members (4 extruded cuts, in parallel) | 3000 ms | 1207 ms (2026-10-30, machine 50 % busy); 20.2 s before the outline was widened 0.1 mm across the notched member (equal tubes: walls in one plane, corner rounds on crossing axes) |
 | Offset of the same face into a surface (`add_body_op`) | 400 ms | 133 ms (2026-10-27) |
 | Face Draft 3° Symmetric about z = 10 (split, draft of both halves, merge) | 700 ms | 350 ms (2026-10-19, under load) |
 | Shell 2 Outside with Rounded Corners on a box without its top face | 400 ms | 190 ms (2026-10-19, under load) |

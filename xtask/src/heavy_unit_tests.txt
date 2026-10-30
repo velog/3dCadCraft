@@ -35,3 +35,4 @@ part::sweep::tests::spline_sweep_then_shell_and_fillet
 part::sweep::tests::taper_makes_a_frustum
 part::sweep::tests::twist_keeps_the_section_area
 part::sweep::tests::twisted_sweep_cut_through_a_block
+assembly::frame::tests::notch_of_equal_tubes

@@ -150,6 +150,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   (`ContextGeom::Curve`, `LinkSource::Context`) (2026-10-29).
 /// - 48: Unfold / Refold of chosen bends (`SheetOp::Unfold::bends`,
 ///   `stationary`, `SheetOp::Refold::bends`) (2026-10-29).
+/// - 49: frame Notch (`assembly::frame::Treatment::Notch`, member shapes'
+///   `NotchTool`s) (2026-10-30).
 /// - 50: sheet metal Rip (`SheetOp::Rip`) (2026-10-30).
 pub const FORMAT_REVISION: u32 = 50;
 

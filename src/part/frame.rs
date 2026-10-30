@@ -433,8 +433,37 @@ impl Section {
     /// coordinates). Corners with a radius become tangent arcs; points are
     /// shared along each loop.
     pub fn draw(&self, sk: &mut Sketch) -> Result<(), PartError> {
-        let err = |e: crate::sketch::SketchError| PartError::Feature(e.to_string());
         for l in self.loops() {
+            draw_loop(sk, l)?;
+        }
+        Ok(())
+    }
+
+    /// The outer loop of the outline grown by `by` (≥ 0) on every side:
+    /// Notch's Basic Profile. `None` for a user's outline with arcs and a
+    /// positive offset (not yet).
+    pub fn notch_outline(&self, by: Real) -> Option<Loop> {
+        let outer = self.loops().into_iter().next()?;
+        if by.abs() < 1e-12 {
+            return Some(outer);
+        }
+        match outer {
+            Loop::Circle(c, r, h) => Some(Loop::Circle(c, r + by, h)),
+            Loop::Corners(cs) => Some(Loop::Corners(grow_corners(&cs, by))),
+            Loop::Path(v) if v.iter().all(|(_, a)| a.is_none()) => {
+                let cs: Vec<(Point2, Real)> = v.iter().map(|(q, _)| (*q, 0.0)).collect();
+                Some(Loop::Corners(grow_corners(&cs, by)))
+            }
+            Loop::Path(_) => None,
+        }
+    }
+}
+
+/// Draws one loop into `sk` (sketch coordinates = the loop's).
+fn draw_loop(sk: &mut Sketch, l: Loop) -> Result<(), PartError> {
+    let err = |e: crate::sketch::SketchError| PartError::Feature(e.to_string());
+    {
+        {
             match l {
                 Loop::Circle(c, r, _) => {
                     let _ = sk.add_circle(c, r).map_err(err)?;
@@ -501,9 +530,36 @@ impl Section {
                 }
             }
         }
-        Ok(())
     }
+    Ok(())
+}
 
+/// A counter-clockwise loop of filleted corners offset outwards by `by`:
+/// every edge moves out, convex corners round by `r + by`, concave ones by
+/// `r - by` (sharp below 0).
+fn grow_corners(cs: &[(Point2, Real)], by: Real) -> Vec<(Point2, Real)> {
+    let n = cs.len();
+    (0..n)
+        .map(|i| {
+            let (prev, (p, r), next) = (cs[(i + n - 1) % n].0, cs[i], cs[(i + 1) % n].0);
+            let (din, dout) = ((p - prev).normalize(), (next - p).normalize());
+            // Outward normals of a CCW loop: to the right of the direction.
+            let (nin, nout) = (Vector2::new(din.y, -din.x), Vector2::new(dout.y, -dout.x));
+            let convex = din.perp(&dout) > 0.0;
+            // The corner of the two moved lines: p + by·(nin + nout)/(1 + cos).
+            let cos = nin.dot(&nout);
+            let q = if cos > -0.999 {
+                p + (nin + nout) * (by / (1.0 + cos))
+            } else {
+                p + nin * by
+            };
+            let r = if convex { r + by } else { (r - by).max(0.0) };
+            (q, r)
+        })
+        .collect()
+}
+
+impl Section {
     /// A member part: this section extruded by `length` along +Z from its
     /// XY plane, with the member's iProperties (Stock Number, Description,
     /// `G_L`) and `material` when the library knows it.
@@ -512,7 +568,7 @@ impl Section {
         length: Real,
         material: Option<&str>,
     ) -> Result<PartDocument, PartError> {
-        self.member_part_cut(length, [0.0, 0.0], &[], material)
+        self.member_part_cut(length, [0.0, 0.0], &[], &[], material)
     }
 
     /// A member part with end treatments: the section extruded from
@@ -525,6 +581,7 @@ impl Section {
         length: Real,
         ext: [Real; 2],
         cuts: &[EndCut],
+        notches: &[NotchTool],
         material: Option<&str>,
     ) -> Result<PartDocument, PartError> {
         if !(length.is_finite() && length > 1e-6) {
@@ -568,6 +625,39 @@ impl Section {
             sp.tool = Some(SplitToolRef::Plane(PlaneRef::Work(format!("{w}:XY"))));
             part.add_split(sp)?;
         }
+        for t in notches {
+            let v = |a: &[Real; 3]| Vector3::new(a[0], a[1], a[2]);
+            let n = v(&t.x)
+                .cross(&v(&t.y))
+                .try_normalize(1e-12)
+                .ok_or_else(|| PartError::Feature("a notch has no direction".into()))?;
+            let w = part.add_work(WorkFeature::new(WorkDef::Ucs(UcsDef::Offsets {
+                x: t.origin[0],
+                y: t.origin[1],
+                z: t.origin[2],
+                rx: (-n.y).clamp(-1.0, 1.0).asin(),
+                ry: n.x.atan2(n.z),
+                rz: 0.0,
+            })))?;
+            let placement = SketchPlacement {
+                plane: PlaneRef::Work(format!("{w}:XY")),
+                ..Default::default()
+            };
+            let k = part.create_sketch(placement, &opts)?;
+            let pl = part.sketches[k].sketch.plane.clone();
+            draw_loop(&mut part.sketches[k].sketch, t.outline_in(&pl))?;
+            let regions = part.sketches[k].sketch.regions();
+            let r = regions
+                .first()
+                .ok_or_else(|| PartError::Feature("the notch outline is not closed".into()))?;
+            let seed = r.interior_point();
+            let mut e = ExtrudeFeature::new(vec![ProfileRef::of(r, seed)], t.length);
+            e.operation = crate::part::Operation::Cut;
+            if n.dot(&pl.normal) < 0.0 {
+                e.direction = crate::part::ExtentDirection::Flipped;
+            }
+            part.add_extrude(k, e)?;
+        }
         if let Some(m) = material {
             let _ = part.set_material(Some(m), crate::materials::builtin());
         }
@@ -595,6 +685,62 @@ pub struct EndCut {
     pub point: Point3,
     /// Towards the removed side.
     pub normal: Vector3,
+}
+
+/// A notch of a member (Notch, Basic Profile), in its part's coordinates:
+/// the prism of `outline` (in the plane through `origin` spanned by `x`,
+/// `y`) along `x × y` over `length` is removed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NotchTool {
+    /// The prism's start point (the notching member's section origin).
+    pub origin: [Real; 3],
+    /// The outline's horizontal axis.
+    pub x: [Real; 3],
+    /// The outline's vertical axis.
+    pub y: [Real; 3],
+    /// Prism length along `x × y`.
+    pub length: Real,
+    /// The notching member's outer outline (offset applied).
+    pub outline: Loop,
+}
+
+impl NotchTool {
+    /// Same prism within 1e-7 mm.
+    pub fn same(&self, o: &NotchTool) -> bool {
+        let near = |a: &[Real; 3], b: &[Real; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-7);
+        near(&self.origin, &o.origin)
+            && near(&self.x, &o.x)
+            && near(&self.y, &o.y)
+            && (self.length - o.length).abs() < 1e-7
+            && self.outline == o.outline
+    }
+
+    /// The outline mapped into the plane `pl` of a sketch through the
+    /// tool's start (points through 3D; a mirrored frame turns the arcs).
+    fn outline_in(&self, pl: &crate::kernel::Plane) -> Loop {
+        let v = |a: &[Real; 3]| Vector3::new(a[0], a[1], a[2]);
+        let (o, x, y) = (Point3::from(v(&self.origin)), v(&self.x), v(&self.y));
+        let map = |q: Point2| {
+            let p = pl.project(&(o + x * q.x + y * q.y));
+            Point2::new(p.x, p.y)
+        };
+        let same_turn = x.cross(&y).dot(&pl.normal) > 0.0;
+        match &self.outline {
+            Loop::Circle(c, r, h) => Loop::Circle(map(*c), *r, *h),
+            Loop::Corners(cs) => {
+                let mut cs: Vec<_> = cs.iter().map(|(q, r)| (map(*q), *r)).collect();
+                if !same_turn {
+                    cs.reverse();
+                }
+                Loop::Corners(cs)
+            }
+            Loop::Path(ps) => Loop::Path(
+                ps.iter()
+                    .map(|(q, a)| (map(*q), a.map(|(c, ccw)| (map(c), ccw == same_turn))))
+                    .collect(),
+            ),
+        }
+    }
 }
 
 /// A corner of an outline after filleting.
@@ -1086,7 +1232,9 @@ mod tests {
                 normal: Vector3::new(r, 0.0, r),
             },
         ];
-        let part = s.member_part_cut(500.0, [30.0, 30.0], &cuts, None).unwrap();
+        let part = s
+            .member_part_cut(500.0, [30.0, 30.0], &cuts, &[], None)
+            .unwrap();
         assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
         let v: Real = part
             .exact_bodies

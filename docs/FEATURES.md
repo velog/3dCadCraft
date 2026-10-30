@@ -1191,7 +1191,7 @@ Insert Frame on straight model edges (orientation, member parts, the members fol
 
 **End treatment:**
 - **Miter**;
-- **Notch** (cut to the profile);
+- **Notch** (cut to the profile) — Basic Profile with Offset done 2026-10-30, templates to do;
 - **Trim/Extend** to a face;
 - **Lengthen/Shorten.**
 

@@ -284,6 +284,7 @@ impl CadCraftApp {
             Treatment::CornerJoint { .. } => AsmPlanned::CornerJoint,
             Treatment::TrimToFace { .. } => AsmPlanned::TrimExtend,
             Treatment::Lengthen { .. } => AsmPlanned::LengthenShorten,
+            Treatment::Notch { .. } => AsmPlanned::Notch,
         };
         let mut d = PartDialog::new(kind);
         match &t {
@@ -303,6 +304,15 @@ impl CadCraftApp {
                 d.picks.insert("second", vec![label(self, *b)]);
                 d.set_num(0, "Offset1", offsets[0]);
                 d.set_num(0, "Offset2", offsets[1]);
+            }
+            Treatment::Notch {
+                notched,
+                by,
+                offset,
+            } => {
+                d.picks.insert("notched", vec![label(self, *notched)]);
+                d.picks.insert("tools", vec![label(self, *by)]);
+                d.set_num(0, "Offset", *offset);
             }
             Treatment::TrimToFace {
                 member,
@@ -496,6 +506,8 @@ fn treatment_icon(name: &str) -> Icon {
         Icon::CornerJoint
     } else if name.starts_with("Trim") {
         Icon::TrimExtend
+    } else if name.starts_with("Notch") {
+        Icon::Notch
     } else {
         Icon::LengthenShorten
     }
