@@ -155,17 +155,38 @@ impl CadCraftApp {
         self.cons.browser_hover = None;
         let asm_doc = self.part_id;
         let mut iprops = false;
+        let mut break_link = false;
+        let link = self.asm_import_link().map(|l| l.path.clone());
         ui.horizontal(|ui| {
             super::panels::tree_icon(ui, Icon::Assembly);
-            ui.label(RichText::new(name).strong()).context_menu(|ui| {
+            let r = ui.label(RichText::new(name).strong());
+            let r = match &link {
+                Some(p) => r.on_hover_text(format!("Follows {p} (Reference Model)")),
+                None => r,
+            };
+            r.context_menu(|ui| {
                 if ui.button("iProperties...").clicked() {
                     iprops = true;
+                    ui.close();
+                }
+                if let Some(p) = &link
+                    && ui
+                        .button("Break Link")
+                        .on_hover_text(format!(
+                            "Stop following {p}: the assembly keeps its components (Convert Model)"
+                        ))
+                        .clicked()
+                {
+                    break_link = true;
                     ui.close();
                 }
             });
         });
         if iprops {
             self.open_iproperties(asm_doc);
+        }
+        if break_link {
+            self.break_assembly_link();
         }
         self.asm_browser_bar(ui);
         ui.indent("asm_tree", |ui| {

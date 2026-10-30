@@ -12,10 +12,12 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Occurrence, Project};
 use crate::kernel::exact::{StepBody, StepProduct, StepRead};
 use crate::kernel::{Real, Transform3};
-use crate::part::import::ImportOp;
+use crate::part::import::{ImportOp, SourceLink};
 use crate::part::{BodyOp, BodyOpFeature, PartDocument};
 
 /// What [`step_project`] made.
@@ -31,6 +33,17 @@ pub struct AssemblyImport {
     pub occurrences: usize,
     /// The reader's warnings and the products left out.
     pub warnings: Vec<String>,
+}
+
+/// What an assembly made from a STEP file remembers of it (spec 7.7a 3a).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct AsmSource {
+    /// The file the top assembly follows (Reference Model; `None`: a subassembly, or Convert).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<SourceLink>,
+    /// Ids of the occurrences that came from the file (Update touches only these).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub occurrences: Vec<u32>,
 }
 
 /// Whether the file read as `r` is an assembly (a product with components).
@@ -152,6 +165,10 @@ impl Builder<'_> {
                 .push(format!("{}: no component could be read; left out", n.name));
             return None;
         }
+        asm.import = Some(AsmSource {
+            link: None,
+            occurrences: asm.occurrences.iter().map(|o| o.id).collect(),
+        });
         let name = self.unique(&n.name);
         let id = self.project.add_document(name, DocumentData::Assembly(asm));
         self.assemblies.insert(key, id);
@@ -254,6 +271,42 @@ impl<'a> P21Index<'a> {
 
     /// A STEP text of just `solids`: each one's representation (the advanced B-rep one first,
     /// for its units) and everything they reach, as loose geometry.
+    /// Representation `rep` rewritten to list, of its solid items, only `solids` (`None`: it holds
+    /// no other solid, or its item list cannot be told).
+    fn only_items(&self, rep: u64, solids: &[u64]) -> Option<String> {
+        const SOLIDS: [&str; 4] = [
+            "MANIFOLD_SOLID_BREP",
+            "BREP_WITH_VOIDS",
+            "SHELL_BASED_SURFACE_MODEL",
+            "FACETED_BREP",
+        ];
+        let e = *self.entities.get(&rep)?;
+        // The items: the first parenthesised list after the name.
+        let open = e.find(",(")? + 1;
+        let close = open + e[open..].find(')')?;
+        let items = refs(&e[open..=close]);
+        let is_solid = |id: &u64| {
+            self.entities
+                .get(id)
+                .and_then(|t| t.split_once('='))
+                .is_some_and(|(_, body)| SOLIDS.iter().any(|k| body.trim_start().starts_with(k)))
+        };
+        let keep: Vec<u64> = items
+            .iter()
+            .copied()
+            .filter(|i| !is_solid(i) || solids.contains(i))
+            .collect();
+        if keep.len() == items.len() {
+            return None;
+        }
+        let list = keep
+            .iter()
+            .map(|i| format!("#{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        Some(format!("{}({list}){}", &e[..open], &e[close + 1..]))
+    }
+
     fn extract(&self, solids: &[u64], name: &str) -> Option<String> {
         let mut todo: Vec<u64> = Vec::new();
         for s in solids {
@@ -270,12 +323,21 @@ impl<'a> P21Index<'a> {
         }
         todo.sort_unstable();
         todo.dedup();
+        // A representation holding other solids too (several bodies of one product) lists only
+        // these: the rest of it would come along.
+        let own: HashMap<u64, String> = todo
+            .iter()
+            .filter_map(|&r| Some((r, self.only_items(r, solids)?)))
+            .collect();
         let mut seen: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
         while let Some(id) = todo.pop() {
             if !seen.insert(id) {
                 continue;
             }
-            let e = self.entities.get(&id)?;
+            let e = own
+                .get(&id)
+                .map(String::as_str)
+                .or(self.entities.get(&id).copied())?;
             let eq = e.find('=')?;
             todo.extend(refs(&e[eq + 1..]).into_iter().filter(|r| !seen.contains(r)));
         }
@@ -283,7 +345,11 @@ impl<'a> P21Index<'a> {
         out += self.header.trim_end();
         out += &format!("\n/* 3DCadCraft: the solids of {name} */\nDATA;\n");
         for id in &seen {
-            out += self.entities.get(id)?.trim();
+            let e = own
+                .get(id)
+                .map(String::as_str)
+                .or(self.entities.get(id).copied())?;
+            out += e.trim();
             out.push('\n');
         }
         out += "ENDSEC;\nEND-ISO-10303-21;\n";
@@ -365,11 +431,363 @@ pub fn step_project(
     Ok(b.out)
 }
 
+/// What [`update_project`] changed.
+#[derive(Clone, Debug, Default)]
+pub struct AsmUpdate {
+    /// Each part document updated: (its name, what its Import's update matched).
+    pub parts: Vec<(String, crate::part::import::UpdateReport)>,
+    /// Occurrences the file added.
+    pub added: usize,
+    /// Occurrences that took a new placement.
+    pub moved: usize,
+    /// Occurrences the file no longer has (removed with their constraints).
+    pub removed: usize,
+    /// Documents made for new products.
+    pub new_documents: usize,
+    /// Imported documents no longer placed anywhere (removed).
+    pub dropped_documents: usize,
+    /// The reader's warnings and what could not be updated.
+    pub warnings: Vec<String>,
+}
+
+/// Whether two placements differ by more than a micrometre or a microradian.
+fn moved(a: &Transform3, b: &Transform3) -> bool {
+    (a.translation.vector - b.translation.vector).norm() > 1e-6
+        || a.rotation.angle_to(&b.rotation) > 1e-6
+}
+
+/// **Update** of the assembly `top` of `project`, made by [`step_project`] from a file that has
+/// changed, read again as `r` / `text` (spec 7.7a 3a). The new file is imported into a scratch
+/// project; its tree and the old one are walked together, occurrences matching by name at each
+/// level (only those that came from the file), and so do the documents behind them. A matched
+/// part's Import is updated ([`ImportOp::updated`]: faces matched by geometry keep their names); a
+/// matched occurrence keeps its id and takes the new placement; new products and occurrences are
+/// added, those the file no longer has removed. On an error `project` may be half done: call it
+/// on a copy.
+pub fn update_project(
+    project: &mut Project,
+    top: DocumentId,
+    r: &StepRead,
+    text: &str,
+    file: &str,
+) -> Result<AsmUpdate, String> {
+    let mut fresh = Project::new("update");
+    let made = step_project(r, text, file, &mut fresh)?;
+    let ftop = made.top.ok_or("no component of the file could be read")?;
+    let mut out = AsmUpdate {
+        warnings: made.warnings,
+        ..Default::default()
+    };
+    let kind = |p: &Project, d: DocumentId| p.document(d).map(|d| d.data.kind());
+    if kind(project, top) != kind(&fresh, ftop) {
+        return Err("the file's top product is no longer an assembly".into());
+    }
+    // 1. The documents that correspond (new -> old), assembly by assembly from the top.
+    let mut map: HashMap<DocumentId, DocumentId> = HashMap::from([(ftop, top)]);
+    let mut pairs = vec![(top, ftop)];
+    let mut i = 0;
+    while let Some(&(od, nd)) = pairs.get(i) {
+        i += 1;
+        let (Some(DocumentData::Assembly(oa)), Some(DocumentData::Assembly(na))) = (
+            project.document(od).map(|d| &d.data),
+            fresh.document(nd).map(|d| &d.data),
+        ) else {
+            continue;
+        };
+        let from_file = oa
+            .import
+            .as_ref()
+            .map(|s| s.occurrences.as_slice())
+            .unwrap_or(&[]);
+        for no in &na.occurrences {
+            let Some(oo) = oa
+                .occurrences
+                .iter()
+                .find(|o| o.name == no.name && from_file.contains(&o.id))
+            else {
+                continue;
+            };
+            let (o, n) = (oo.component.document, no.component.document);
+            if oo.component.library.is_some()
+                || map.contains_key(&n)
+                || map.values().any(|v| *v == o)
+                || kind(project, o) != kind(&fresh, n)
+            {
+                continue;
+            }
+            map.insert(n, o);
+            if matches!(
+                kind(&fresh, n),
+                Some(crate::document::DocumentKind::Assembly)
+            ) {
+                pairs.push((o, n));
+            }
+        }
+    }
+    // 2. Matched parts: their Import reads the new text, faces matched by geometry.
+    for (&n, &o) in &map {
+        let Some(DocumentData::Part(np)) = fresh.document(n).map(|d| &d.data) else {
+            continue;
+        };
+        let Some(new_text) = np.features.iter().find_map(|f| match f {
+            crate::part::Feature::BodyOp(b) => match &b.op {
+                BodyOp::Import(op) => Some(op.text.clone()),
+                _ => None,
+            },
+            _ => None,
+        }) else {
+            continue;
+        };
+        let Some(doc) = project.document_mut(o) else {
+            continue;
+        };
+        let name = doc.name.clone();
+        let DocumentData::Part(op) = &mut doc.data else {
+            continue;
+        };
+        let Some((k, b, imp)) = op.features.iter().enumerate().find_map(|(k, f)| match f {
+            crate::part::Feature::BodyOp(b) => match &b.op {
+                BodyOp::Import(imp) => Some((k, b.clone(), imp.clone())),
+                _ => None,
+            },
+            _ => None,
+        }) else {
+            continue;
+        };
+        if *imp.text == *new_text {
+            continue;
+        }
+        match imp.updated(&b.id, new_text) {
+            Ok((next, report)) => {
+                let mut nb = b;
+                nb.op = BodyOp::Import(next);
+                match op.replace_feature(k, crate::part::Feature::BodyOp(nb)) {
+                    Ok(_) => out.parts.push((name, report)),
+                    Err(e) => out.warnings.push(format!("{name}: {e}")),
+                }
+            }
+            Err(e) => out.warnings.push(format!("{name}: {e}")),
+        }
+    }
+    // 3. New products: their documents move into the project (names kept unique).
+    let mut moved_in = Vec::new();
+    for d in fresh.documents() {
+        if map.contains_key(&d.id) {
+            continue;
+        }
+        let taken = |s: &str| project.documents().iter().any(|x| x.name == s);
+        let mut name = d.name.clone();
+        let mut k = 1;
+        while taken(&name) {
+            k += 1;
+            name = format!("{}_{k}", d.name);
+        }
+        let id = project.add_document(name, d.data.clone());
+        map.insert(d.id, id);
+        moved_in.push(id);
+        out.new_documents += 1;
+    }
+    let local = |r: DocRef| match map.get(&r.document) {
+        Some(&d) if r.library.is_none() => DocRef::local(d),
+        _ => r,
+    };
+    for id in &moved_in {
+        if let Some(DocumentData::Assembly(a)) = project.document_mut(*id).map(|d| &mut d.data) {
+            for o in &mut a.occurrences {
+                o.component = local(o.component);
+            }
+        }
+    }
+    // 4. Matched assemblies: occurrences moved, added, then removed (ids are never reused).
+    let mut dropped: Vec<DocumentId> = Vec::new();
+    for &(od, nd) in &pairs {
+        let Some(DocumentData::Assembly(na)) = fresh.document(nd).map(|d| d.data.clone()) else {
+            continue;
+        };
+        let Some(DocumentData::Assembly(oa)) = project.document_mut(od).map(|d| &mut d.data) else {
+            continue;
+        };
+        let from_file = oa
+            .import
+            .as_ref()
+            .map(|s| s.occurrences.clone())
+            .unwrap_or_default();
+        let mut kept = Vec::new();
+        for no in &na.occurrences {
+            let comp = local(no.component);
+            if let Some(oo) = oa
+                .occurrences
+                .iter_mut()
+                .find(|o| o.name == no.name && from_file.contains(&o.id))
+            {
+                if moved(&oo.transform, &no.transform) {
+                    out.moved += 1;
+                }
+                oo.transform = no.transform;
+                oo.component = comp;
+                kept.push(oo.id);
+            } else {
+                let mut o = no.clone();
+                o.id = oa.next_id();
+                o.component = comp;
+                o.grounded = false;
+                if oa.occurrences.iter().any(|x| x.name == o.name) {
+                    let base = o.name.rsplit_once(':').map_or(o.name.as_str(), |(b, _)| b);
+                    o.name = oa.next_name(base);
+                }
+                kept.push(o.id);
+                oa.occurrences.push(o);
+                out.added += 1;
+            }
+        }
+        for id in from_file.iter().filter(|id| !kept.contains(id)) {
+            if let Some(o) = oa.remove(*id) {
+                dropped.push(o.component.document);
+                out.removed += 1;
+            }
+        }
+        let src = oa.import.get_or_insert_with(Default::default);
+        src.occurrences = kept;
+        if let Some(l) = &mut src.link {
+            *l = SourceLink::now(&l.path);
+        }
+    }
+    // 5. Imported documents nothing places any more (their own components after them).
+    while let Some(d) = dropped.pop() {
+        if d == top || dropped.contains(&d) {
+            continue;
+        }
+        let children: Vec<DocumentId> = match project.document(d).map(|x| &x.data) {
+            Some(DocumentData::Assembly(a)) if a.import.is_some() => {
+                a.occurrences.iter().map(|o| o.component.document).collect()
+            }
+            Some(DocumentData::Part(_)) | Some(DocumentData::Assembly(_)) => Vec::new(),
+            _ => continue,
+        };
+        if project.remove_document(d).is_ok() {
+            out.dropped_documents += 1;
+            dropped.extend(children);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::document::DocumentData;
     use crate::kernel::exact;
+
+    /// Two bodies (a cube of `h` and a small block) written as one STEP text and read back with a
+    /// product tree by hand: `(name, body, x)` leaves under "Top".
+    fn two_body_file(h: Real, leaves: &[(&str, usize, Real)]) -> (String, StepRead) {
+        let a = exact::box_named(
+            crate::kernel::Point3::origin(),
+            crate::kernel::Point3::new(10.0, 10.0, h),
+            "A",
+        )
+        .expect("box");
+        let b = exact::box_named(
+            crate::kernel::Point3::origin(),
+            crate::kernel::Point3::new(4.0, 4.0, 4.0),
+            "B",
+        )
+        .expect("box");
+        let text = exact::step_text(&[a, b], "Two").expect("export");
+        let mut r = exact::step_bodies(&text, "Import1").expect("read");
+        assert_eq!(r.bodies.len(), 2);
+        let shift =
+            |x: Real| nalgebra::Matrix4::new_translation(&nalgebra::Vector3::new(x, 0.0, 0.0));
+        r.tree = vec![StepProduct {
+            name: "Top".into(),
+            transform: nalgebra::Matrix4::identity(),
+            bodies: Vec::new(),
+            children: leaves
+                .iter()
+                .map(|&(name, body, x)| StepProduct {
+                    name: name.into(),
+                    transform: shift(x),
+                    bodies: vec![body],
+                    children: Vec::new(),
+                })
+                .collect(),
+        }];
+        (text, r)
+    }
+
+    fn asm(p: &Project, id: DocumentId) -> &AssemblyDocument {
+        match p.document(id).map(|d| &d.data) {
+            Some(DocumentData::Assembly(a)) => a,
+            _ => panic!("no assembly"),
+        }
+    }
+
+    /// Spec 7.7a 3a.3-3a.6: an updated file moves, adds and removes the occurrences that came from
+    /// it, keeps their ids, updates the parts' faces by geometry and leaves an occurrence the user
+    /// placed alone.
+    #[test]
+    fn an_assembly_follows_its_changed_file() {
+        let (t0, r0) = two_body_file(
+            10.0,
+            &[("Cube", 0, 0.0), ("Cube", 0, 50.0), ("Gone", 1, 200.0)],
+        );
+        let mut p = Project::new("X");
+        let made = step_project(&r0, &t0, "x.step", &mut p).expect("import");
+        let top = made.top.expect("top");
+        let before = asm(&p, top).clone();
+        assert_eq!(before.occurrences.len(), 3);
+        assert_eq!(before.import.as_ref().map(|s| s.occurrences.len()), Some(3));
+        let cube = before.occurrences[0].component;
+        let ids: Vec<u32> = before.occurrences.iter().map(|o| o.id).collect();
+        // The user places another cube by hand.
+        let Some(DocumentData::Assembly(a)) = p.document_mut(top).map(|d| &mut d.data) else {
+            panic!("no assembly");
+        };
+        let mine = a.place(cube, "Mine", Transform3::translation(0.0, 99.0, 0.0), false);
+        let docs = p.documents().len();
+        // The new file: the cube 5 mm taller, the second one at x = 60, "Gone" gone, "Peg" new.
+        let (t1, r1) = two_body_file(
+            15.0,
+            &[("Cube", 0, 0.0), ("Cube", 0, 60.0), ("Peg", 1, 100.0)],
+        );
+        let u = update_project(&mut p, top, &r1, &t1, "x.step").expect("update");
+        assert_eq!((u.added, u.moved, u.removed), (1, 1, 1), "{u:?}");
+        assert_eq!((u.new_documents, u.dropped_documents), (1, 1), "{u:?}");
+        assert_eq!(p.documents().len(), docs, "Peg came, Gone went");
+        // The cube part: the top face moved, the other five kept their names.
+        assert_eq!(u.parts.len(), 1, "{u:?}");
+        let rep = &u.parts[0].1;
+        assert_eq!((rep.matched, rep.new, rep.lost), (5, 1, 1), "{rep:?}");
+        let a = asm(&p, top);
+        let by = |name: &str| a.occurrences.iter().find(|o| o.name == name);
+        let c1 = by("Cube:1").expect("Cube:1");
+        let c2 = by("Cube:2").expect("Cube:2");
+        assert_eq!((c1.id, c2.id), (ids[0], ids[1]), "ids kept");
+        assert!((c2.transform.translation.vector.x - 60.0).abs() < 1e-9);
+        assert!(by("Gone:1").is_none());
+        let peg = by("Peg:1").expect("Peg:1");
+        assert!(!ids.contains(&peg.id), "a new id");
+        // The user's occurrence is untouched and not counted as the file's.
+        let m = a.occurrences.iter().find(|o| o.id == mine).expect("mine");
+        assert!((m.transform.translation.vector.y - 99.0).abs() < 1e-9);
+        let src = a.import.as_ref().expect("source");
+        assert!(!src.occurrences.contains(&mine));
+        assert_eq!(src.occurrences.len(), 3);
+        // The cube part's body is 15 mm high now.
+        let Some(DocumentData::Part(part)) = p.document(c1.component.document).map(|d| &d.data)
+        else {
+            panic!("no part");
+        };
+        let (lo, hi) = part.body.bounding_box().expect("box");
+        assert!(((hi.z - lo.z) - 15.0).abs() < 1e-6, "{lo:?} {hi:?}");
+        // Updating again from the same file changes nothing.
+        let again = update_project(&mut p, top, &r1, &t1, "x.step").expect("again");
+        assert_eq!(
+            (again.added, again.moved, again.removed, again.parts.len()),
+            (0, 0, 0, 0),
+            "{again:?}"
+        );
+    }
 
     #[test]
     fn a_plain_part_is_no_assembly() {

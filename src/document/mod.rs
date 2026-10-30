@@ -372,6 +372,10 @@ pub struct AssemblyDocument {
     /// occurrences, so older builds show them where they were saved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frames: Vec<crate::assembly::frame::Frame>,
+    /// An assembly made from a STEP file (spec 7.7a 3a): the occurrences that came from it and,
+    /// on the top one, the file it follows. Older builds ignore it (a plain assembly).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<crate::assembly::import::AsmSource>,
 }
 
 /// The payload of a document.
@@ -680,6 +684,7 @@ mod tests {
             patterns: Vec::new(),
             appearances: Vec::new(),
             frames: Vec::new(),
+            import: None,
         })
     }
 

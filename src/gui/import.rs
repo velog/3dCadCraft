@@ -189,7 +189,8 @@ impl CadCraftApp {
         let (bodies, warnings) = match res {
             Ok(Read::Part(n, w)) => (n, w),
             Ok(Read::Assembly(p, out)) => {
-                self.open_imported_assembly(*p, out, &name);
+                let path = job.path.display().to_string();
+                self.open_imported_assembly(*p, out, &name, &path);
                 return;
             }
             Err(e) => {
@@ -217,13 +218,21 @@ impl CadCraftApp {
     /// File → Open of an assembly file: its design file in a new tab, the top assembly active.
     fn open_imported_assembly(
         &mut self,
-        project: crate::document::Project,
+        mut project: crate::document::Project,
         out: crate::assembly::import::AssemblyImport,
         name: &str,
+        path: &str,
     ) {
         let Some(top) = out.top else {
             return;
         };
+        // File → Open follows the file (Reference Model, spec 7.7a 3a.1): Update brings its changes.
+        if let Some(crate::document::DocumentData::Assembly(a)) =
+            project.document_mut(top).map(|d| &mut d.data)
+        {
+            a.import.get_or_insert_with(Default::default).link =
+                Some(crate::part::import::SourceLink::now(path));
+        }
         self.add_blank_tab();
         self.new_project();
         self.project = project;
@@ -429,7 +438,15 @@ pub(super) struct Stale {
     pub features: Vec<usize>,
     /// The last Update's report, shown in its window until closed.
     pub report: Option<UpdateWindow>,
+    /// The active assembly follows a file that changed.
+    pub assembly: bool,
+    /// An assembly Update on a worker thread: when it started, and its result (the updated design
+    /// file).
+    job: Option<(std::time::Instant, Receiver<AsmUpdated>)>,
 }
+
+/// An assembly Update's result: the updated copy of the design file and what changed.
+type AsmUpdated = Result<(crate::document::Project, crate::assembly::import::AsmUpdate), String>;
 
 /// What an Update did (our window; Inventor shows nothing for STEP, spec 7.7a 3.2).
 pub(super) struct UpdateWindow {
@@ -437,6 +454,8 @@ pub(super) struct UpdateWindow {
     rows: Vec<(String, usize, usize, Vec<String>)>,
     /// Features that lost a reference: (name, reason).
     sick: Vec<(String, String)>,
+    /// An assembly's occurrences added, moved and removed (one line).
+    summary: Option<String>,
 }
 
 impl CadCraftApp {
@@ -464,8 +483,25 @@ impl CadCraftApp {
                     })
                     .collect()
             };
+            self.import_stale.assembly =
+                self.is_assembly() && self.asm_import_link().is_some_and(|l| l.changed());
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_secs(2));
+        }
+        if self.import_stale.assembly && self.import_stale.job.is_none() {
+            let tip = "The assembly's file changed: read it again (components and faces that stay keep their names, constraints and features)";
+            if ui
+                .button(
+                    egui::RichText::new("Update")
+                        .color(ui.visuals().warn_fg_color)
+                        .strong(),
+                )
+                .on_hover_text(tip)
+                .clicked()
+            {
+                self.start_assembly_update();
+            }
+            return;
         }
         if self.import_stale.features.is_empty() {
             return;
@@ -487,6 +523,7 @@ impl CadCraftApp {
     /// The window of the last Update: per import the faces kept, new and gone, then the features
     /// that lost a reference (to fix with Edit Feature).
     pub(super) fn import_report_ui(&mut self, ctx: &egui::Context) {
+        self.assembly_update_poll(ctx);
         let Some(w) = &self.import_stale.report else {
             return;
         };
@@ -503,27 +540,58 @@ impl CadCraftApp {
         self.layout
             .place("import_update", ctx.content_rect(), true, win)
             .show(ctx, |ui| {
-                for (name, kept, new, gone) in &w.rows {
-                    ui.strong(name);
-                    ui.label(format!(
-                        "{kept} face(s) kept their names, {new} new, {} gone",
-                        gone.len()
-                    ));
-                    if !gone.is_empty() {
-                        egui::CollapsingHeader::new(format!("Faces gone ({})", gone.len()))
-                            .id_salt(("import_gone", name))
-                            .show(ui, |ui| {
-                                egui::ScrollArea::vertical()
-                                    .max_height(160.0)
-                                    .show(ui, |ui| {
-                                        for g in gone {
-                                            ui.monospace(g);
-                                        }
-                                    });
-                            });
-                    }
+                if let Some(line) = &w.summary {
+                    ui.label(line);
                     ui.separator();
                 }
+                // Parts that read again unchanged: one line (a supplier assembly has dozens).
+                let same = w
+                    .rows
+                    .iter()
+                    .filter(|(_, _, new, gone)| *new == 0 && gone.is_empty())
+                    .count();
+                let changed: Vec<_> = w
+                    .rows
+                    .iter()
+                    .filter(|(_, _, new, gone)| *new > 0 || !gone.is_empty())
+                    .collect();
+                if same > 0 && w.rows.len() > 1 {
+                    ui.label(format!(
+                        "{same} part(s) read again: every face kept its name"
+                    ));
+                    ui.separator();
+                }
+                let rows = if w.rows.len() > 1 {
+                    changed
+                } else {
+                    w.rows.iter().collect()
+                };
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        for (name, kept, new, gone) in rows {
+                            ui.strong(name);
+                            ui.label(format!(
+                                "{kept} face(s) kept their names, {new} new, {} gone",
+                                gone.len()
+                            ));
+                            if !gone.is_empty() {
+                                egui::CollapsingHeader::new(format!("Faces gone ({})", gone.len()))
+                                    .id_salt(("import_gone", name))
+                                    .show(ui, |ui| {
+                                        egui::ScrollArea::vertical().max_height(160.0).show(
+                                            ui,
+                                            |ui| {
+                                                for g in gone {
+                                                    ui.monospace(g);
+                                                }
+                                            },
+                                        );
+                                    });
+                            }
+                            ui.separator();
+                        }
+                    });
                 if w.sick.is_empty() {
                     ui.label("Every feature still finds its faces.");
                 } else {
@@ -546,6 +614,127 @@ impl CadCraftApp {
         if !open || close {
             self.import_stale.report = None;
         }
+    }
+
+    /// The file the active assembly follows (an assembly opened from a STEP file).
+    pub(super) fn asm_import_link(&self) -> Option<&crate::part::import::SourceLink> {
+        match self.project.document(self.part_id).map(|d| &d.data) {
+            Some(crate::document::DocumentData::Assembly(a)) => a.import.as_ref()?.link.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Update of the active assembly from its changed file, on a worker thread with a copy of the
+    /// design file (spec 7.7a 3a.9).
+    fn start_assembly_update(&mut self) {
+        let Some(link) = self.asm_import_link().cloned() else {
+            return;
+        };
+        let mut copy = self.project.clone();
+        let top = self.part_id;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let file = Path::new(&link.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        crate::diagnostics::activity(&format!("assembly Update from {}", link.path));
+        let spawned = std::thread::Builder::new()
+            .name("assembly update".into())
+            .stack_size(64 << 20)
+            .spawn(move || {
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let text = read_step(Path::new(&link.path))?;
+                    let r = crate::kernel::exact::step_bodies(&text, "Import1")?;
+                    let u =
+                        crate::assembly::import::update_project(&mut copy, top, &r, &text, &file)?;
+                    Ok((copy, u))
+                }))
+                .unwrap_or_else(|_| Err("internal error while updating".into()));
+                let _ = tx.send(r);
+            });
+        match spawned {
+            Ok(_) => self.import_stale.job = Some((std::time::Instant::now(), rx)),
+            Err(e) => self.file_status = Some(Err(format!("Update: {e}"))),
+        }
+    }
+
+    /// The assembly Update's progress window, and its result taken as one Undo step.
+    fn assembly_update_poll(&mut self, ctx: &egui::Context) {
+        let Some((started, rx)) = &self.import_stale.job else {
+            return;
+        };
+        let res = match rx.try_recv() {
+            Ok(r) => r,
+            Err(TryRecvError::Empty) => {
+                let secs = started.elapsed().as_secs();
+                egui::Window::new("Update")
+                    .id(egui::Id::new("asm_update_progress"))
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .show(ctx, |ui| {
+                        ui.label(format!("Reading the assembly's file again... {secs} s"));
+                    });
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                return;
+            }
+            Err(TryRecvError::Disconnected) => {
+                Err("the update stopped (see the session log)".into())
+            }
+        };
+        self.import_stale.job = None;
+        self.import_stale.assembly = false;
+        match res {
+            Ok((project, u)) => {
+                self.history.break_coalescing();
+                self.checkpoint("Update");
+                self.project = project;
+                self.history.break_coalescing();
+                self.asm_solve(None);
+                self.scene_dirty = true;
+                let summary = format!(
+                    "{} component(s) added, {} moved, {} removed; {} new document(s), {} no longer used",
+                    u.added, u.moved, u.removed, u.new_documents, u.dropped_documents
+                );
+                self.file_status = Some(Ok(format!(
+                    "Update: {} part(s) read again, {} component(s) added, {} moved, {} removed",
+                    u.parts.len(),
+                    u.added,
+                    u.moved,
+                    u.removed
+                )));
+                self.import_stale.report = Some(UpdateWindow {
+                    rows: u
+                        .parts
+                        .into_iter()
+                        .map(|(n, r)| (n, r.matched, r.new, r.gone))
+                        .collect(),
+                    sick: Vec::new(),
+                    summary: Some(summary),
+                });
+            }
+            Err(e) => self.file_status = Some(Err(format!("Update: {e}"))),
+        }
+    }
+
+    /// Break Link of the active assembly's file (spec 7.7a 3a.8): it no longer follows it.
+    pub(super) fn break_assembly_link(&mut self) {
+        if self.asm_import_link().is_none() {
+            return;
+        }
+        self.checkpoint("Break Link");
+        let id = self.part_id;
+        if let Some(crate::document::DocumentData::Assembly(a)) =
+            self.project.document_mut(id).map(|d| &mut d.data)
+            && let Some(src) = &mut a.import
+        {
+            src.link = None;
+        }
+        self.import_stale.assembly = false;
+        self.history.break_coalescing();
+        self.file_status = Some(Ok(
+            "Break Link: the assembly keeps its components and no longer follows its file".into(),
+        ));
     }
 
     /// Break Link of an import (Inventor's Break Link): it stops following its file and becomes a
@@ -627,7 +816,11 @@ impl CadCraftApp {
                 })
                 .collect();
             ill.sort();
-            self.import_stale.report = Some(UpdateWindow { rows, sick: ill });
+            self.import_stale.report = Some(UpdateWindow {
+                rows,
+                sick: ill,
+                summary: None,
+            });
         }
         self.file_status = Some(if failed.is_empty() {
             let mut s = format!("Update: {}", lines.join("; "));
