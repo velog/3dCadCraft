@@ -1545,6 +1545,28 @@ pub(super) struct PartDialog {
     /// The frame end treatment this panel edits (frame id, index): OK
     /// replaces it (`gui/frame_edit.rs`).
     pub frame_edit: Option<(u32, usize)>,
+    /// Insert Frame as the edit of placed members: every member of their
+    /// frame (the Members list), the ones edited, the one shown with its
+    /// anchor points, each member's anchor (index into `Anchor::ALL`) and
+    /// the edited members' skeleton lines when the panel opened.
+    pub members: MemberEditState,
+}
+
+/// Insert Frame's edit of placed members (`PartDialog::members`).
+#[derive(Clone, Debug, Default)]
+pub struct MemberEditState {
+    /// Every member of the frame, in its order (empty: a plain Insert Frame).
+    pub list: Vec<u32>,
+    /// The members OK changes.
+    pub edit: Vec<u32>,
+    /// The member whose anchor points the view shows.
+    pub current: Option<u32>,
+    /// Each member's anchor (index into `Anchor::ALL`).
+    pub anchor: std::collections::BTreeMap<u32, usize>,
+    /// The edited members' skeleton lines when the panel opened.
+    pub skeletons: Vec<crate::assembly::frame::Skeleton>,
+    /// Zoom to this member next frame.
+    pub zoom: Option<u32>,
 }
 
 /// A chain of edges the right-click menu of an open command adds ([`CadCraftApp::chain_edges`]).
@@ -1650,6 +1672,7 @@ impl PartDialog {
             skeletons: Vec::new(),
             clicks: Vec::new(),
             frame_edit: None,
+            members: MemberEditState::default(),
         }
     }
 
@@ -2415,8 +2438,20 @@ impl CadCraftApp {
         let Some(mut d) = self.part_planned.clone() else {
             return;
         };
-        self.panel_header(ui, d.kind.icon(), d.kind.title());
+        let title = if d.members.list.is_empty() {
+            d.kind.title()
+        } else {
+            "Edit Frame Members"
+        };
+        self.panel_header(ui, d.kind.icon(), title);
+        if !d.members.list.is_empty() {
+            self.member_list_ui(ui, &mut d);
+        }
         let (cancel, ok) = d.ui(ui);
+        if let Some(c) = d.members.current {
+            let k = d.index(0, "Anchor");
+            d.members.anchor.insert(c, k);
+        }
         if let Some(b) = d.pressed.take() {
             if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::Replace) {
                 self.replace_browse();

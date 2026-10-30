@@ -619,7 +619,7 @@ impl Section {
         let (i, seed) = if start_inside {
             // The section on a plane at z0 (points mapped through 3D, so the
             // part's coordinates stay the section's).
-            let w = part.add_work(WorkFeature::new(WorkDef::Ucs(UcsDef::Offsets {
+            let w = part.add_work(hidden(WorkDef::Ucs(UcsDef::Offsets {
                 x: 0.0,
                 y: 0.0,
                 z: z0,
@@ -676,7 +676,7 @@ impl Section {
                 .try_normalize(1e-12)
                 .ok_or_else(|| PartError::Feature("an end cut has no direction".into()))?;
             // A UCS whose XY plane is the cut (its Z = the normal: Ry·Rx·ẑ).
-            let w = part.add_work(WorkFeature::new(WorkDef::Ucs(UcsDef::Offsets {
+            let w = part.add_work(hidden(WorkDef::Ucs(UcsDef::Offsets {
                 x: c.point.x,
                 y: c.point.y,
                 z: c.point.z,
@@ -694,7 +694,7 @@ impl Section {
                 .cross(&v(&t.y))
                 .try_normalize(1e-12)
                 .ok_or_else(|| PartError::Feature("a notch has no direction".into()))?;
-            let w = part.add_work(WorkFeature::new(WorkDef::Ucs(UcsDef::Offsets {
+            let w = part.add_work(hidden(WorkDef::Ucs(UcsDef::Offsets {
                 x: t.origin[0],
                 y: t.origin[1],
                 z: t.origin[2],
@@ -738,6 +738,13 @@ impl Section {
         });
         p
     }
+}
+
+/// A work feature of a member part, not shown (the part's construction).
+fn hidden(def: WorkDef) -> WorkFeature {
+    let mut w = WorkFeature::new(def);
+    w.visible = false;
+    w
 }
 
 /// A planar end cut of a member, in its part's coordinates: the material

@@ -1474,21 +1474,62 @@ pub fn change(
     o: &InsertOptions,
     lib: &Library,
 ) -> Result<Solved, String> {
-    if members.is_empty() {
+    let edits: Vec<MemberEdit> = members
+        .iter()
+        .map(|&occurrence| MemberEdit {
+            occurrence,
+            skeleton: None,
+            orientation: o.orientation,
+        })
+        .collect();
+    edit_members(project, linked, asm, &edits, o, lib)
+}
+
+/// One member's new place for [`edit_members`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct MemberEdit {
+    /// The member (occurrence id).
+    pub occurrence: u32,
+    /// A new skeleton line (`None`: keep it).
+    pub skeleton: Option<Skeleton>,
+    /// Its orientation (before `o.layout`, when that is not Center).
+    pub orientation: Orientation,
+}
+
+/// Edit of frame members (Inventor's edit of a member with the Insert
+/// Frame panel): each member of `edits` gets its skeleton line and
+/// orientation, all of them the section and material of `o` (and its
+/// Position / Level about the centre of their frame's lines); treatments are
+/// kept and solved again. On an error nothing changes (rule 5).
+pub fn edit_members(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    edits: &[MemberEdit],
+    o: &InsertOptions,
+    lib: &Library,
+) -> Result<Solved, String> {
+    if edits.is_empty() {
         return Err("select the frame members".into());
     }
     let section = lib
         .find(&o.family, &o.size)
         .ok_or_else(|| format!("{} {} is not in the library", o.family, o.size))?
         .clone();
+    let members: Vec<u32> = edits.iter().map(|e| e.occurrence).collect();
     let before = project.clone();
     let result = (|| {
-        for &occ in members {
+        for e in edits {
+            let occ = e.occurrence;
             let a = asm_of(project, asm)?;
-            let m = a
+            let f = a
                 .frames
                 .iter()
-                .flat_map(|f| &f.members)
+                .find(|f| f.members.iter().any(|m| m.occurrence == occ))
+                .ok_or("only frame members can be changed")?;
+            let m = f
+                .members
+                .iter()
                 .find(|m| m.occurrence == occ)
                 .ok_or("only frame members can be changed")?;
             let doc = a
@@ -1497,7 +1538,24 @@ pub fn change(
                 .filter(|c| c.library.is_none())
                 .ok_or("the member's part is not in this file")?
                 .document;
-            let (p, q) = skeleton_line(project, linked, a, &m.skeleton)?;
+            let skeleton = e.skeleton.clone().unwrap_or_else(|| m.skeleton.clone());
+            let (p, q) = skeleton_line(project, linked, a, &skeleton)?;
+            let orientation = if o.layout == Layout::default() {
+                e.orientation
+            } else {
+                let lines: Vec<(Point3, Point3)> = f
+                    .members
+                    .iter()
+                    .map(|x| {
+                        if x.occurrence == occ {
+                            Ok((p, q))
+                        } else {
+                            skeleton_line(project, linked, a, &x.skeleton)
+                        }
+                    })
+                    .collect::<Result<_, _>>()?;
+                o.layout.orient(&e.orientation, p, q, centre_of(&lines))
+            };
             let length = (q - p).norm();
             let part = section
                 .member_part(length, o.material.as_deref())
@@ -1513,10 +1571,11 @@ pub fn change(
                 .flat_map(|f| &mut f.members)
                 .find(|m| m.occurrence == occ)
             {
+                m.skeleton = skeleton;
                 m.family = section.family.clone();
                 m.size = section.size.clone();
                 m.section = SectionData::of(&section);
-                m.orientation = o.orientation;
+                m.orientation = orientation;
                 // The part is uncut now: solve cuts it again.
                 m.built = Some(Shape {
                     length,
@@ -2812,6 +2871,44 @@ mod tests {
             lengths,
             [200, 200, 200, 200, 220, 220, 220, 220, 320, 320, 320, 320]
         );
+        // Each member a whole tube (the hole kept, outward faces): A × length.
+        let area = Library::builtin()
+            .find("Square hollow section (EN 10219)", "40x40x3")
+            .unwrap()
+            .properties()
+            .area;
+        for &m in &occs {
+            let (lo, hi) = member_box(&p, aid, m);
+            let d = hi - lo;
+            let l = d.x.max(d.y).max(d.z);
+            let v = volume_of(&p, aid, m);
+            assert!(
+                (v - area * l).abs() < 2e-3 * area * l,
+                "member {m}: {v} vs {}",
+                area * l
+            );
+            let body = part(&p, asm(&p, aid), m).body;
+            let opts = crate::kernel::TessellationOptions::default();
+            let signed: Real = body
+                .solids()
+                .map(|(sid, _)| {
+                    let t = body.tessellate_solid(sid, &opts).unwrap();
+                    t.faces
+                        .triangles
+                        .iter()
+                        .map(|tr| {
+                            let [a, b, c] = tr.map(|i| t.faces.positions[i as usize].coords);
+                            a.dot(&b.cross(&c)) / 6.0
+                        })
+                        .sum::<Real>()
+                })
+                .sum();
+            assert!(
+                (signed - area * l).abs() < 5e-3 * area * l,
+                "member {m} display mesh: {signed} vs {}",
+                area * l
+            );
+        }
         let out = Layout {
             side: Side::Outside,
             level: Level::Auto,
@@ -2838,6 +2935,64 @@ mod tests {
         };
         edit_frame(&mut p, &Linked::new(), aid, fid, None, Some(c)).unwrap();
         assert_eq!(asm(&p, aid).frames[0].treatments.len(), 16);
+    }
+
+    /// Edit of a member: it moves to another skeleton edge and takes a new
+    /// anchor; a second member keeps its place.
+    #[test]
+    fn a_member_moves_to_another_edge_with_its_own_anchor() {
+        let (mut p, aid, _) = project();
+        let front = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let left = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let back = find_edge(&p, aid, Point3::new(200.0, 300.0, 200.0));
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[front, left],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let kept = member_box(&p, aid, occs[1]);
+        let e = MemberEdit {
+            occurrence: occs[0],
+            skeleton: Some(back),
+            orientation: Orientation {
+                anchor: Anchor::TopRight,
+                ..Default::default()
+            },
+        };
+        edit_members(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[e],
+            &opts(),
+            Library::builtin(),
+        )
+        .unwrap();
+        let (lo, hi) = member_box(&p, aid, occs[0]);
+        // Along X at y = 300, z = 200, hanging below the edge on one side.
+        assert!((hi.x - lo.x - 400.0).abs() < 1e-6, "{lo} {hi}");
+        assert!(
+            (hi.z - 200.0).abs() < 1e-6 && (lo.z - 160.0).abs() < 1e-6,
+            "{lo} {hi}"
+        );
+        assert!(
+            (hi.y - lo.y - 40.0).abs() < 1e-6
+                && ((lo.y - 300.0).abs() < 1e-6 || (hi.y - 300.0).abs() < 1e-6),
+            "{lo} {hi}"
+        );
+        let a = asm(&p, aid);
+        let m = a.frames[0]
+            .members
+            .iter()
+            .find(|m| m.occurrence == occs[0])
+            .unwrap();
+        assert_eq!(m.orientation.anchor, Anchor::TopRight);
+        assert_eq!(member_box(&p, aid, occs[1]), kept);
     }
 
     /// Butt by length (Solid Edge's Butt 1 / Butt 2): of the 400 and 300
@@ -3061,7 +3216,34 @@ mod tests {
         let Ok(path) = std::env::var("CADCRAFT_BOX_DEMO") else {
             return;
         };
-        project().0.save(std::path::Path::new(&path)).unwrap();
+        let (mut p, aid, _) = project();
+        if std::env::var_os("CADCRAFT_BOX_FRAMED").is_some() {
+            let sk = part(&p, asm(&p, aid), 1);
+            let edges: Vec<Skeleton> = straight_edges(&sk, None)
+                .into_iter()
+                .map(|edge| {
+                    Skeleton::Edge(GeomRef::Edge {
+                        occurrence: 1,
+                        sub: Vec::new(),
+                        edge,
+                    })
+                })
+                .collect();
+            let mut o = opts();
+            o.layout.side = Side::Inside;
+            o.corners.kind = CornerType::Miter;
+            insert(
+                &mut p,
+                &Linked::new(),
+                aid,
+                &edges,
+                &o,
+                Library::builtin(),
+                None,
+            )
+            .unwrap();
+        }
+        p.save(std::path::Path::new(&path)).unwrap();
     }
 
     /// A T of an SHS 40x40x3 upright and an RHS 100x50x4 across (Notch's GUI

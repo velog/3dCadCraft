@@ -17,6 +17,9 @@ use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 pub(super) const YELLOW: [f32; 3] = [0.95, 0.78, 0.1];
 /// The second selection: the members that are cut.
 pub(super) const BLUE: [f32; 3] = [0.2, 0.45, 0.95];
+/// How near (px) a click must come to an anchor point of Edit Frame Members.
+const ANCHOR_PICK_PX: f32 = 9.0;
+
 /// A face or member under the cursor that the active selector takes.
 const HOVER: Color32 = Color32::from_rgb(110, 220, 120);
 
@@ -268,6 +271,97 @@ impl CadCraftApp {
         if d.kind == Planned::Asm(AsmPlanned::LengthenShorten) {
             self.lengthen_dots(d, painter, rect);
         }
+        if let Some(c) = d.members.current {
+            self.anchor_dots(d, c, painter, rect, pointer);
+        }
+    }
+
+    /// The anchor points of member `occ` (the 9 box points and the
+    /// centroid) halfway along it, with its section outline there.
+    fn anchor_points(&self, occ: u32) -> Option<(Vec<Point3>, Vec<Point3>)> {
+        let a = self.assembly()?;
+        let o = a.find(occ)?;
+        let m = a
+            .frames
+            .iter()
+            .flat_map(|f| &f.members)
+            .find(|m| m.occurrence == occ)?;
+        let s = m.section()?;
+        let z = m.built.as_ref().map(|b| b.length).unwrap_or(0.0) / 2.0;
+        let at = |x: f64, y: f64| o.transform.transform_point(&Point3::new(x, y, z));
+        let points = frame::Anchor::ALL
+            .iter()
+            .map(|k| {
+                let (x, y) = k.point(&s);
+                at(x, y)
+            })
+            .collect();
+        let outline = s.outline().iter().map(|q| at(q.x, q.y)).collect();
+        Some((points, outline))
+    }
+
+    /// Edit Frame Members: the current member's anchor points; the one in
+    /// use is orange, the one under the cursor green.
+    fn anchor_dots(
+        &self,
+        d: &PartDialog,
+        occ: u32,
+        painter: &egui::Painter,
+        rect: Rect,
+        pointer: Option<Pos2>,
+    ) {
+        let Some((points, outline)) = self.anchor_points(occ) else {
+            return;
+        };
+        let line: Vec<Pos2> = outline
+            .iter()
+            .filter_map(|p| self.camera.project(p, rect))
+            .collect();
+        if line.len() > 2 {
+            let mut l = line.clone();
+            l.push(line[0]);
+            painter.add(egui::Shape::line(l, Stroke::new(1.5, color(YELLOW))));
+        }
+        let current = d.members.anchor.get(&occ).copied().unwrap_or(0);
+        for (k, p) in points.iter().enumerate() {
+            let Some(q) = self.camera.project(p, rect) else {
+                continue;
+            };
+            let hot = pointer.is_some_and(|c| c.distance(q) < ANCHOR_PICK_PX);
+            let (r, fill) = if k == current {
+                (6.0, Color32::from_rgb(255, 150, 40))
+            } else if hot {
+                (5.0, HOVER)
+            } else {
+                (4.0, Color32::from_rgb(70, 130, 230))
+            };
+            painter.circle(q, r, fill, Stroke::new(1.5, Color32::WHITE));
+        }
+    }
+
+    /// A click on one of the current member's anchor points sets its anchor
+    /// (`true`: the click was taken).
+    pub(super) fn frame_anchor_click(&mut self, p: Pos2, rect: Rect) -> bool {
+        let Some(occ) = self.part_planned.as_ref().and_then(|d| d.members.current) else {
+            return false;
+        };
+        let Some((points, _)) = self.anchor_points(occ) else {
+            return false;
+        };
+        let hit = points
+            .iter()
+            .enumerate()
+            .filter_map(|(k, w)| self.camera.project(w, rect).map(|q| (k, q.distance(p))))
+            .filter(|(_, d)| *d < ANCHOR_PICK_PX)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((k, _)) = hit else {
+            return false;
+        };
+        if let Some(d) = self.part_planned.as_mut() {
+            d.members.anchor.insert(occ, k);
+            d.set_index(0, "Anchor", k);
+        }
+        true
     }
 
     /// A dot at the end of each picked member that Lengthen/Shorten

@@ -127,6 +127,9 @@ impl CadCraftApp {
     /// OK of Insert Frame: a member on every picked edge. False (with the
     /// reason in the status bar) leaves everything as it was.
     pub(super) fn frame_ok(&mut self, d: &PartDialog) -> bool {
+        if !d.members.list.is_empty() {
+            return self.edit_members_ok(d);
+        }
         let fail = |app: &mut Self, e: &str| {
             app.file_status = Some(Err(format!("Insert Frame: {e}")));
             false

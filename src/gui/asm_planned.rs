@@ -1762,6 +1762,10 @@ impl CadCraftApp {
     /// A click in the assembly view while a planned panel is open: a
     /// component, or a face / edge of one, as the active selector takes.
     pub(super) fn asm_planned_click(&mut self, p: egui::Pos2, rect: egui::Rect) {
+        // Edit Frame Members: the current member's anchor points first.
+        if self.frame_anchor_click(p, rect) {
+            return;
+        }
         let Some(kinds) = self
             .part_planned
             .as_ref()

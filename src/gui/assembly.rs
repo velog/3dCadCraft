@@ -325,7 +325,7 @@ impl CadCraftApp {
     }
 
     /// The box of occurrence `id` in assembly coordinates.
-    fn asm_box(&self, id: u32) -> Option<(Point3, Point3)> {
+    pub(super) fn asm_box(&self, id: u32) -> Option<(Point3, Point3)> {
         let o = self.assembly()?.find(id)?;
         let local = self.asm_mesh(o.component)?.bbox?;
         Some(asm::occurrence_box(o, local))

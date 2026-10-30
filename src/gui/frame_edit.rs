@@ -20,7 +20,22 @@ pub(super) enum FrameCmd {
     DeleteTreatment(u32, usize),
     DeleteMembers(Vec<u32>),
     Retype(u32, usize, frame::CornerType),
+    EditMembers(Vec<u32>),
 }
+
+/// The Anchor list's names, in `Anchor::ALL` order.
+const ANCHOR_NAMES: [&str; 10] = [
+    "Center",
+    "Centroid",
+    "Top Left",
+    "Top",
+    "Top Right",
+    "Left",
+    "Right",
+    "Bottom Left",
+    "Bottom",
+    "Bottom Right",
+];
 
 /// A frame's browser node: id, name, members (occurrence, name).
 type FrameNode = (u32, String, Vec<(u32, String)>);
@@ -100,7 +115,7 @@ impl CadCraftApp {
                         }
                         // Inventor: double-click a member = Edit with Frame Generator.
                         if r.double_clicked() {
-                            cmds.push(FrameCmd::Start(AsmPlanned::FrameChange, vec![*id]));
+                            cmds.push(FrameCmd::EditMembers(vec![*id]));
                         }
                         if r.hovered() {
                             self.asm.hover = Some(*id);
@@ -209,6 +224,7 @@ impl CadCraftApp {
                 }
             }
             FrameCmd::DeleteMembers(ids) => self.frame_delete_members(&ids),
+            FrameCmd::EditMembers(ids) => self.edit_members_start(&ids),
             FrameCmd::Retype(f, i, k) => {
                 let linked = self.linked();
                 let mut trial = self.project.clone();
@@ -405,6 +421,234 @@ impl CadCraftApp {
         d.set_check(0, "Flip Direction", o.flip);
     }
 
+    /// Opens Insert Frame as the edit of members `ids` (Inventor: a member's
+    /// *Edit Frame*): their skeleton, section, material and orientation in
+    /// the panel, the frame's members listed above it.
+    pub(super) fn edit_members_start(&mut self, ids: &[u32]) {
+        let Some(a) = self.assembly() else {
+            return;
+        };
+        let Some(f) = a
+            .frames
+            .iter()
+            .find(|f| f.members.iter().any(|m| ids.contains(&m.occurrence)))
+        else {
+            return;
+        };
+        let list: Vec<u32> = f.members.iter().map(|m| m.occurrence).collect();
+        let edit: Vec<u32> = list.iter().copied().filter(|o| ids.contains(o)).collect();
+        let anchor = f
+            .members
+            .iter()
+            .map(|m| {
+                let k = frame::Anchor::ALL
+                    .iter()
+                    .position(|x| *x == m.orientation.anchor)
+                    .unwrap_or(0);
+                (m.occurrence, k)
+            })
+            .collect();
+        let mut d = PartDialog::new(super::part_planned::Planned::Asm(AsmPlanned::InsertFrame));
+        d.members = super::part_planned::MemberEditState {
+            list,
+            edit: edit.clone(),
+            current: edit.first().copied(),
+            anchor,
+            skeletons: Vec::new(),
+            zoom: edit.first().copied(),
+        };
+        self.frame_fill_change(&mut d, edit[0]);
+        self.fill_member_material(&mut d, edit[0]);
+        self.member_skeletons(&mut d);
+        d.active = None;
+        self.asm.tool = None;
+        self.part_planned = Some(d);
+    }
+
+    /// The panel's Material from member `occ`'s part.
+    fn fill_member_material(&self, d: &mut PartDialog, occ: u32) {
+        let Some(c) = self
+            .assembly()
+            .and_then(|a| a.find(occ))
+            .map(|o| o.component)
+        else {
+            return;
+        };
+        let mat = self.with_part(c, |p| p.material.clone()).flatten();
+        let opts = d.kind.pages().first().and_then(|p| {
+            p.1.iter().find_map(|r| match r {
+                super::part_planned::Row::Combo("Material", o, _) => Some(*o),
+                _ => None,
+            })
+        });
+        if let (Some(m), Some(opts)) = (mat, opts)
+            && let Some(k) = opts.iter().position(|x| *x == m)
+        {
+            d.set_index(0, "Material", k);
+        }
+    }
+
+    /// The edges selector shows the edited members' skeleton lines.
+    fn member_skeletons(&self, d: &mut PartDialog) {
+        let Some(a) = self.assembly() else {
+            return;
+        };
+        let mut sk = Vec::new();
+        let mut labels = Vec::new();
+        for &o in &d.members.edit {
+            if let Some(m) = a
+                .frames
+                .iter()
+                .flat_map(|f| &f.members)
+                .find(|m| m.occurrence == o)
+            {
+                sk.push(m.skeleton.clone());
+                let name = a.find(o).map(|x| x.name.clone()).unwrap_or_default();
+                labels.push(format!("{name} · skeleton"));
+            }
+        }
+        d.skeletons = sk.clone();
+        d.members.skeletons = sk;
+        d.picks.insert("edges", labels);
+    }
+
+    /// The Members list of Edit Frame Members: a check box per member (OK
+    /// changes the checked ones), a click shows the member (zoom, anchor
+    /// points in the view) and its anchor in the panel.
+    pub(super) fn member_list_ui(&mut self, ui: &mut egui::Ui, d: &mut PartDialog) {
+        if let Some(z) = d.members.zoom.take()
+            && let Some((lo, hi)) = self.asm_box(z)
+        {
+            let pad = (hi - lo) * 0.6 + crate::kernel::Vector3::repeat(20.0);
+            self.camera.fit(lo - pad, hi + pad);
+        }
+        if let Some(c) = d.members.current
+            && let Some(&k) = d.members.anchor.get(&c)
+        {
+            d.set_index(0, "Anchor", k);
+        }
+        let names: Vec<(u32, String)> = d
+            .members
+            .list
+            .iter()
+            .map(|&o| {
+                let n = self
+                    .assembly()
+                    .and_then(|a| a.find(o))
+                    .map(|x| x.name.clone())
+                    .unwrap_or_default();
+                (o, n)
+            })
+            .collect();
+        let mut toggled = false;
+        egui::CollapsingHeader::new(format!("Members ({})", names.len()))
+            .default_open(true)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("frame_members")
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        for (o, name) in &names {
+                            ui.horizontal(|ui| {
+                                let mut on = d.members.edit.contains(o);
+                                if ui
+                                    .checkbox(&mut on, "")
+                                    .on_hover_text("OK changes the checked members")
+                                    .changed()
+                                {
+                                    if on {
+                                        d.members.edit.push(*o);
+                                    } else if d.members.edit.len() > 1 {
+                                        d.members.edit.retain(|x| x != o);
+                                    }
+                                    toggled = true;
+                                }
+                                let anchor = d
+                                    .members
+                                    .anchor
+                                    .get(o)
+                                    .and_then(|&k| ANCHOR_NAMES.get(k))
+                                    .copied()
+                                    .unwrap_or("Center");
+                                let r = ui.selectable_label(
+                                    d.members.current == Some(*o),
+                                    format!("{name} · {anchor}"),
+                                );
+                                if r.clicked() {
+                                    d.members.current = Some(*o);
+                                    d.members.zoom = Some(*o);
+                                    if let Some(&k) = d.members.anchor.get(o) {
+                                        d.set_index(0, "Anchor", k);
+                                    }
+                                }
+                            });
+                        }
+                    });
+                ui.label(
+                    egui::RichText::new(
+                        "Click a member to zoom to it; click one of its points in the view to set its anchor.",
+                    )
+                    .small()
+                    .weak(),
+                );
+            });
+        if toggled {
+            self.member_skeletons(d);
+        }
+    }
+
+    /// OK of Edit Frame Members: the checked members get the panel's
+    /// section, material and orientation, each its own anchor; one edited
+    /// member with one other edge picked moves to it.
+    pub(super) fn edit_members_ok(&mut self, d: &PartDialog) -> bool {
+        let fail = |app: &mut Self, e: &str| {
+            app.file_status = Some(Err(format!("Edit Frame Members: {e}")));
+            false
+        };
+        let Some(o) = super::frame::insert_options(d) else {
+            return fail(self, "the section table is empty");
+        };
+        let moved = d.skeletons != d.members.skeletons;
+        if moved && !(d.members.edit.len() == 1 && d.skeletons.len() == 1) {
+            return fail(self, "to move a member, edit only it and pick one edge");
+        }
+        let edits: Vec<frame::MemberEdit> = d
+            .members
+            .edit
+            .iter()
+            .map(|&occurrence| frame::MemberEdit {
+                occurrence,
+                skeleton: moved.then(|| d.skeletons[0].clone()),
+                orientation: frame::Orientation {
+                    anchor: d
+                        .members
+                        .anchor
+                        .get(&occurrence)
+                        .and_then(|&k| frame::Anchor::ALL.get(k))
+                        .copied()
+                        .unwrap_or_default(),
+                    ..o.orientation
+                },
+            })
+            .collect();
+        let linked = self.linked();
+        let mut trial = self.project.clone();
+        match frame::edit_members(
+            &mut trial,
+            &linked,
+            self.part_id,
+            &edits,
+            &o,
+            &Library::current(),
+        ) {
+            Ok(_) => {
+                self.frame_commit("Edit Frame Members", trial);
+                true
+            }
+            Err(e) => fail(self, &e),
+        }
+    }
+
     /// OK of Change.
     pub(super) fn change_ok(&mut self, d: &PartDialog) -> bool {
         let members = self.picked_members(d, "members");
@@ -519,6 +763,10 @@ fn treatment_icon(name: &str) -> Icon {
 
 /// The member commands, each started with `ids` as its first input.
 fn member_menu(ui: &mut egui::Ui, ids: &[u32], cmds: &mut Vec<FrameCmd>) {
+    if ui.button("Edit Member...").clicked() {
+        cmds.push(FrameCmd::EditMembers(ids.to_vec()));
+        ui.close();
+    }
     for &k in MEMBER_COMMANDS {
         if ui.button(k.title()).clicked() {
             cmds.push(FrameCmd::Start(k, ids.to_vec()));
