@@ -256,6 +256,33 @@ pub struct AppOptions {
     /// floating toolbar over the sheet (off: the tools are in its
     /// right-click menu).
     pub drawing_sketch_toolbar: bool,
+    /// Application Options › Assembly: modeling in place (spec 3.10).
+    pub in_place: InPlaceOptions,
+}
+
+/// Application Options › Assembly, in-place modeling (spec 3.10 §3.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InPlaceOptions {
+    /// *Cross-part geometry projection*: projections and sketch planes on
+    /// other components follow them (off: they are copies at once).
+    pub associative: bool,
+    /// *Enable associative edge/loop geometry projection during in-place
+    /// modeling*: a sketch on another component's face projects the face's
+    /// loops.
+    pub project_loops: bool,
+    /// *Features are initially adaptive*: features made in place are adaptive.
+    pub features_adaptive: bool,
+}
+
+impl Default for InPlaceOptions {
+    fn default() -> Self {
+        Self {
+            associative: true,
+            project_loops: true,
+            features_adaptive: false,
+        }
+    }
 }
 
 /// Where the preview picture saved with a project comes from
@@ -298,6 +325,7 @@ impl Default for AppOptions {
             new_documents_separate: false,
             asm_browser: Default::default(),
             drawing_sketch_toolbar: true,
+            in_place: InPlaceOptions::default(),
         }
     }
 }
@@ -906,6 +934,7 @@ impl CadCraftApp {
             new_documents_separate: self.docs.separate,
             asm_browser: self.asm_browser,
             drawing_sketch_toolbar: self.sketch_toolbar,
+            in_place: self.in_place_opts,
         }
     }
 
@@ -941,6 +970,7 @@ impl CadCraftApp {
         self.docs.separate = o.new_documents_separate;
         self.asm_browser = o.asm_browser;
         self.sketch_toolbar = o.drawing_sketch_toolbar;
+        self.in_place_opts = o.in_place;
     }
 
     /// Start of a frame: Ctrl+0, F11 (outside a sketch, where F11 is Relax

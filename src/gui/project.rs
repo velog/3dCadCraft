@@ -279,6 +279,10 @@ impl CadCraftApp {
         };
         match r {
             Ok(()) => {
+                // Cross-part geometry projection off: a copy at once.
+                if !self.in_place_opts.associative && self.part().sketch_uses_context(i) {
+                    let _ = self.part_mut().copy_sketch_context(i);
+                }
                 let _ = self.part_mut().sketches[i].sketch.solve();
                 self.file_status = None;
                 self.solve();

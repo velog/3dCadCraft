@@ -680,6 +680,8 @@ struct CadCraftApp {
     /// Application Options › Display: the floating toolbar of a drawing's
     /// view sketch.
     sketch_toolbar: bool,
+    /// Application Options › Assembly, in-place modeling.
+    in_place_opts: layout::InPlaceOptions,
     /// Application Options › Save: the preview picture.
     thumbnail_source: layout::ThumbnailSource,
     /// The iProperties window (`iprops.rs`).
@@ -1004,6 +1006,7 @@ impl CadCraftApp {
             constrain_current_offset: false,
             asm_browser: Default::default(),
             sketch_toolbar: true,
+            in_place_opts: Default::default(),
             thumbnail_source: Default::default(),
             iprops: None,
             bom: None,
@@ -1244,12 +1247,18 @@ impl CadCraftApp {
                 let name = self.part().next_sketch_name();
                 self.checkpoint(&format!("Create {name}"));
                 let plane = self.take_context_plane(plane);
+                let on_other = matches!(&plane, crate::part::PlaneRef::Context(_));
                 let placement = SketchPlacement {
                     plane,
                     ..Default::default()
                 };
                 match self.part_mut().create_sketch(placement, &opts) {
-                    Ok(i) => self.edit_sketch(i),
+                    Ok(i) => {
+                        if on_other {
+                            self.sketch_on_other_component(i);
+                        }
+                        self.edit_sketch(i);
+                    }
                     Err(e) => self.file_status = Some(Err(e.to_string())),
                 }
             }
@@ -7949,6 +7958,7 @@ impl eframe::App for CadCraftApp {
         // Expression fields everywhere evaluate against the part's parameters.
         valuefield::set_frame_table(&ctx, self.part().parameter_table());
         self.layout_begin(&ctx);
+        self.in_place_features_adaptive();
         self.home_follow_documents();
         self.shortcuts(&ctx);
         self.files_ui(&ctx);

@@ -116,6 +116,9 @@ pub(super) struct AsmUi {
     ),
     /// The assembly a component was opened from (browser *Return*).
     pub came_from: Option<DocumentId>,
+    /// The features of the part edited in place seen so far (*Features are
+    /// initially adaptive*).
+    pub in_place_features: Option<(DocumentId, Vec<String>)>,
     /// Edit in place (spec 3.10 §3.2): the part being edited and where it
     /// lies in the assembly it came from (the rest is drawn around it).
     pub in_place: Option<InPlace>,
@@ -1191,6 +1194,66 @@ impl CadCraftApp {
         )
         .ok_or("the assembly is not open")?;
         crate::assembly::context::edge_loop(&self.project, &linked, a, edge, Some(normal))
+    }
+
+    /// A new sketch `i` on another component's face (Application Options ›
+    /// Assembly): its loops projected (*Enable associative edge/loop
+    /// projection*), and everything made a copy when *Cross-part geometry
+    /// projection* is off. No Undo step (the sketch's).
+    pub(super) fn sketch_on_other_component(&mut self, i: usize) {
+        let source = match &self.part().sketches[i].placement.plane {
+            PlaneRef::Context(id) => self.part().context_ref(id).map(|c| c.source.clone()),
+            _ => None,
+        };
+        if self.in_place_opts.project_loops
+            && let Some(face) = source
+            && let Ok(edges) = self.context_face_outline(&face)
+        {
+            let _ = self.part_mut().project_context_edges(i, edges, false);
+        }
+        if !self.in_place_opts.associative {
+            let _ = self.part_mut().copy_sketch_context(i);
+        }
+    }
+
+    /// *Features are initially adaptive* (Application Options › Assembly):
+    /// every feature added while a part is edited in place becomes adaptive.
+    /// Called each frame; the ids seen are kept per edit.
+    pub(super) fn in_place_features_adaptive(&mut self) {
+        let Some(doc) = self.in_place_now().map(|ip| ip.document) else {
+            self.asm.in_place_features = None;
+            return;
+        };
+        if self.is_assembly() || self.is_drawing() {
+            return;
+        }
+        let ids: Vec<String> = self
+            .part()
+            .features
+            .iter()
+            .map(|f| f.id().to_owned())
+            .collect();
+        let known = match &self.asm.in_place_features {
+            Some((d, k)) if *d == doc => k.clone(),
+            _ => {
+                self.asm.in_place_features = Some((doc, ids));
+                return;
+            }
+        };
+        let new: Vec<String> = ids
+            .iter()
+            .filter(|id| !known.contains(id))
+            .cloned()
+            .collect();
+        if new.is_empty() {
+            return;
+        }
+        if self.in_place_opts.features_adaptive {
+            for id in &new {
+                self.part_mut().set_adaptive(id, true);
+            }
+        }
+        self.asm.in_place_features = Some((doc, ids));
     }
 
     /// `plane` with a pending cross-part reference added to the active part

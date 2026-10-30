@@ -1181,3 +1181,32 @@ fn a_loop_through_a_third_part_is_found() {
         assert!(!context::would_loop(&p, &l, aid, &[k], &[4]));
     }
 }
+
+#[test]
+fn a_copy_of_a_flange_face_stays_where_it_was_taken() {
+    // Cross-part geometry projection off: the gasket's outline is a copy,
+    // held fixed, that no longer follows the flange.
+    let (mut p, aid, s, t) = design(
+        flange(100.0),
+        Transform3::identity(),
+        Transform3::translation(0.0, 0.0, 10.0),
+    );
+    let hole = std::f64::consts::PI * 25.0;
+    let face = face_at(part(&p, s), 10.0);
+    project_face_and_extrude(&mut p, aid, t, face, 10000.0 - 4.0 * hole, 2.0);
+    let tp = part_mut(&mut p, t);
+    let i = tp.sketches.len() - 1;
+    assert!(tp.copy_sketch_context(i).unwrap() > 0);
+    assert!(tp.context.is_empty());
+    assert!(tp.sketches[i].links.is_empty());
+    assert_eq!(tp.sketches[i].sketch.solve().unwrap().dof, 0);
+    grow(part_mut(&mut p, s), 120.0);
+    assert!(
+        context::update(&mut p, &Linked::new(), aid)
+            .changed
+            .is_empty()
+    );
+    let v = volume(part(&p, t));
+    let expect = (10000.0 - 4.0 * hole) * 2.0;
+    assert!((v - expect).abs() < 0.01 * expect, "volume {v}");
+}

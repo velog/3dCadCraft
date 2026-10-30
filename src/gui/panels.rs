@@ -5143,6 +5143,22 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         .on_hover_text("Each new document is a new file in a tab of its own");
                 });
                 ui.separator();
+                ui.label(RichText::new("Assembly").strong());
+                ui.checkbox(&mut self.in_place_opts.associative, "Cross-part geometry projection")
+                    .on_hover_text(
+                        "Sketches on other components' faces and their projected edges follow those components (off: copies)",
+                    );
+                ui.checkbox(
+                    &mut self.in_place_opts.project_loops,
+                    "Enable associative edge/loop geometry projection during in-place modeling",
+                )
+                .on_hover_text("A sketch on another component's face projects that face's loops");
+                ui.checkbox(
+                    &mut self.in_place_opts.features_adaptive,
+                    "Features are initially adaptive",
+                )
+                .on_hover_text("Features made while a part is edited in place are adaptive");
+                ui.separator();
                 ui.label(RichText::new("Display").strong());
                 ui.checkbox(&mut self.show_labels, "Show constraint labels");
                 if ui

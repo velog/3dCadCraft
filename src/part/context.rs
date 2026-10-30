@@ -512,6 +512,30 @@ impl super::PartDocument {
         })
     }
 
+    /// Sketch `i`'s geometry from other components made a **copy** where it
+    /// lies (Application Options › Assembly › *Cross-part geometry
+    /// projection* off): Break Link, then the copied points held fixed, as
+    /// Inventor's non-associative projections stay put. Returns what was
+    /// broken.
+    pub fn copy_sketch_context(&mut self, i: usize) -> Result<usize, super::PartError> {
+        use super::link::LinkSource;
+        let points: Vec<crate::sketch::PointId> = self
+            .sketches
+            .get(i)
+            .ok_or(super::PartError::NoSketch(i))?
+            .links
+            .iter()
+            .filter(|l| matches!(l.source, LinkSource::Context { .. }))
+            .flat_map(|l| l.points.iter().copied())
+            .collect();
+        let n = self.break_sketch_context(i)?;
+        let sk = &mut self.sketches[i].sketch;
+        for p in points {
+            let _ = sk.set_fixed(p, true);
+        }
+        Ok(n)
+    }
+
     /// **Break Link** of sketch `i` (spec 3.10 §3.3): a plane on another
     /// component stays where it is (`PlaneRef::Fixed`), its projections of
     /// other components become plain geometry, and references nothing
