@@ -135,6 +135,8 @@ pub struct UpdateReport {
     pub new: usize,
     /// Old faces with no match (what used them becomes sick).
     pub lost: usize,
+    /// Their names (`Import1:F123`).
+    pub gone: Vec<String>,
 }
 
 /// The STEP entity of a face name `<body>:F<entity>`.
@@ -346,7 +348,19 @@ impl ImportOp {
                 }
             }
         }
-        report.lost = used.iter().filter(|u| !**u).count();
+        report.gone = used
+            .iter()
+            .zip(&of)
+            .filter(|(u, _)| !**u)
+            .map(|(_, f)| {
+                let body = old
+                    .get(f.body)
+                    .and_then(|b| b.name.clone())
+                    .unwrap_or_default();
+                format!("{body}:F{}", f.entity)
+            })
+            .collect();
+        report.lost = report.gone.len();
         if let Some(l) = &mut next.link {
             *l = SourceLink::now(&l.path);
         }
@@ -721,6 +735,9 @@ mod tests {
         let r = update(&mut p, &renumbered(&box_step(25.0)));
         // The bottom is the same face; the four sides are the same planes, grown; the top moved.
         assert_eq!((r.matched, r.new, r.lost), (5, 1, 1), "{r:?}");
+        // The gone face is named as the part knew it (the Update window lists it).
+        assert_eq!(r.gone.len(), 1);
+        assert!(r.gone[0].starts_with("Import1:F"), "{:?}", r.gone);
         assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
         let v = solid_volume(&p);
         let want = 40.0 * 30.0 * 25.0 - (1.0 - std::f64::consts::FRAC_PI_4) * 4.0 * 40.0;

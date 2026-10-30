@@ -7935,6 +7935,7 @@ impl eframe::App for CadCraftApp {
         self.shortcuts(&ctx);
         self.files_ui(&ctx);
         self.import_ui(&ctx);
+        self.import_report_ui(&ctx);
         self.confirm_delete_window(&ctx);
 
         egui::Panel::top("quick_access").show(ui, |ui| self.quick_access(ui));

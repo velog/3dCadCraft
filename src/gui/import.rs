@@ -427,6 +427,16 @@ pub(super) struct Stale {
     checked: f64,
     /// Feature indices of the changed imports.
     pub features: Vec<usize>,
+    /// The last Update's report, shown in its window until closed.
+    pub report: Option<UpdateWindow>,
+}
+
+/// What an Update did (our window; Inventor shows nothing for STEP, spec 7.7a 3.2).
+pub(super) struct UpdateWindow {
+    /// Per import: (feature name, faces kept, new faces, the faces gone).
+    rows: Vec<(String, usize, usize, Vec<String>)>,
+    /// Features that lost a reference: (name, reason).
+    sick: Vec<(String, String)>,
 }
 
 impl CadCraftApp {
@@ -474,10 +484,99 @@ impl CadCraftApp {
         }
     }
 
+    /// The window of the last Update: per import the faces kept, new and gone, then the features
+    /// that lost a reference (to fix with Edit Feature).
+    pub(super) fn import_report_ui(&mut self, ctx: &egui::Context) {
+        let Some(w) = &self.import_stale.report else {
+            return;
+        };
+        let mut open = true;
+        let mut close = false;
+        let c = ctx.content_rect().center();
+        let win = egui::Window::new("Update")
+            .id(egui::Id::new("import_update_window"))
+            .open(&mut open)
+            .resizable(true)
+            .pivot(egui::Align2::LEFT_TOP)
+            .default_pos(c - egui::vec2(210.0, 120.0))
+            .default_width(420.0);
+        self.layout
+            .place("import_update", ctx.content_rect(), true, win)
+            .show(ctx, |ui| {
+                for (name, kept, new, gone) in &w.rows {
+                    ui.strong(name);
+                    ui.label(format!(
+                        "{kept} face(s) kept their names, {new} new, {} gone",
+                        gone.len()
+                    ));
+                    if !gone.is_empty() {
+                        egui::CollapsingHeader::new(format!("Faces gone ({})", gone.len()))
+                            .id_salt(("import_gone", name))
+                            .show(ui, |ui| {
+                                egui::ScrollArea::vertical()
+                                    .max_height(160.0)
+                                    .show(ui, |ui| {
+                                        for g in gone {
+                                            ui.monospace(g);
+                                        }
+                                    });
+                            });
+                    }
+                    ui.separator();
+                }
+                if w.sick.is_empty() {
+                    ui.label("Every feature still finds its faces.");
+                } else {
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        format!(
+                            "{} feature(s) lost a reference (Edit Feature picks it again):",
+                            w.sick.len()
+                        ),
+                    );
+                    for (name, why) in &w.sick {
+                        ui.label(format!("{name}: {why}"));
+                    }
+                }
+                ui.add_space(4.0);
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+            });
+        if !open || close {
+            self.import_stale.report = None;
+        }
+    }
+
+    /// Break Link of an import (Inventor's Break Link): it stops following its file and becomes a
+    /// Convert Model import of the text it holds (nothing is rebuilt).
+    pub(super) fn break_import_link(&mut self, k: usize) {
+        let has_link = matches!(
+            self.part().features.get(k),
+            Some(crate::part::Feature::BodyOp(b))
+                if matches!(&b.op, BodyOp::Import(o) if o.link.is_some())
+        );
+        if !has_link {
+            return;
+        }
+        self.checkpoint("Break Link");
+        if let Some(crate::part::Feature::BodyOp(b)) = self.part_mut().features.get_mut(k)
+            && let BodyOp::Import(o) = &mut b.op
+        {
+            o.link = None;
+        }
+        self.import_stale.features.retain(|&i| i != k);
+        self.history.break_coalescing();
+        self.file_status = Some(Ok(
+            "Break Link: the import keeps its geometry and no longer follows its file".into(),
+        ));
+    }
+
     /// Update: each changed import reads its file again, as one Undo step.
     fn update_imports(&mut self) {
         let ks = std::mem::take(&mut self.import_stale.features);
         let mut lines = Vec::new();
+        let mut rows = Vec::new();
         let mut failed = Vec::new();
         self.history.break_coalescing();
         self.checkpoint("Update");
@@ -505,6 +604,7 @@ impl CadCraftApp {
                         "{}: {} face(s) kept, {} new, {} gone",
                         b.name, rep.matched, rep.new, rep.lost
                     ));
+                    rows.push((b.name.clone(), rep.matched, rep.new, rep.gone));
                 }
                 Err(e) => failed.push(format!("{}: {e}", b.name)),
             }
@@ -516,6 +616,19 @@ impl CadCraftApp {
             self.history.cancel();
         }
         let sick = self.part().feature_health.len();
+        if changed {
+            let part = self.part();
+            let mut ill: Vec<(String, String)> = part
+                .features
+                .iter()
+                .filter_map(|f| {
+                    let why = part.feature_health.get(f.id())?;
+                    Some((f.name().to_owned(), why.clone()))
+                })
+                .collect();
+            ill.sort();
+            self.import_stale.report = Some(UpdateWindow { rows, sick: ill });
+        }
         self.file_status = Some(if failed.is_empty() {
             let mut s = format!("Update: {}", lines.join("; "));
             if sick > 0 {

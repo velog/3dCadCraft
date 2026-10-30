@@ -48,6 +48,8 @@ enum BrowserCmd {
     Adaptive(String, bool),
     /// Break Link of a sketch's references to other components.
     BreakContext(usize),
+    /// Break Link of a Reference Model import (it stops following its file).
+    BreakImportLink(usize),
     /// Suppress if... (the condition window for feature k).
     SuppressIf(usize),
     /// Move the End of Part so that this many features are built.
@@ -432,6 +434,7 @@ impl CadCraftApp {
                 }
             }
             BrowserCmd::Suppress(k, on) => self.set_suppressed(k, on),
+            BrowserCmd::BreakImportLink(k) => self.break_import_link(k),
             BrowserCmd::BreakContext(i) => {
                 self.checkpoint("Break Link");
                 match self.part_mut().break_sketch_context(i) {
@@ -871,6 +874,20 @@ impl CadCraftApp {
             && ui.button("Edit Sketch").clicked()
         {
             cmds.push(BrowserCmd::Edit(i));
+            ui.close();
+        }
+        if let Feature::BodyOp(b) = f
+            && let crate::part::BodyOp::Import(o) = &b.op
+            && let Some(l) = &o.link
+            && ui
+                .button("Break Link")
+                .on_hover_text(format!(
+                    "Stop following {}: the import keeps its geometry (Convert Model)",
+                    l.path
+                ))
+                .clicked()
+        {
+            cmds.push(BrowserCmd::BreakImportLink(k));
             ui.close();
         }
         if let Feature::Work(w) = f
