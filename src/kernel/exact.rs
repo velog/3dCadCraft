@@ -1066,7 +1066,13 @@ pub fn step_bodies(text: &str, prefix: &str) -> Result<StepRead, String> {
                 face_names,
                 profiles: Vec::new(),
             },
-            label: b.name.clone(),
+            // "Import" is the reader's stand-in for a file with no products (a part's solids
+            // cut out of an assembly file): no name of the file's.
+            label: if b.name == "Import" {
+                String::new()
+            } else {
+                b.name.clone()
+            },
             path: b.path.clone(),
             color: b.color,
             closed: b.closed,

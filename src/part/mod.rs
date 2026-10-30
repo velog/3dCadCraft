@@ -1891,7 +1891,8 @@ impl PartDocument {
     /// The solid bodies made by the features before index `k`, in order:
     /// (persistent name, display name `SolidN`). Surface bodies are left out,
     /// and so are toolbodies a Combine before `k` consumed (the numbers of
-    /// the others stay). Split Solid makes `<id>#2`.
+    /// the others stay). Split Solid makes `<id>#2`; an Import makes one per
+    /// body of the file, shown by the file's name for it (spec 7.7a 3.9).
     pub fn bodies_before(&self, k: usize) -> Vec<(String, String)> {
         let upto = &self.features[..k.min(self.features.len())];
         let consumed: Vec<&String> = upto
@@ -1904,31 +1905,52 @@ impl PartDocument {
             .collect();
         upto.iter()
             .filter(|f| f.creates_body())
-            .filter_map(|f| match f {
-                Feature::Extrude(e) => (e.output == Output::Solid).then(|| e.id.clone()),
-                Feature::Revolve(r) => (r.output == Output::Solid).then(|| r.id.clone()),
-                Feature::Box(b) => Some(b.id.clone()),
-                Feature::Sweep(s) => (s.output == Output::Solid).then(|| s.id.clone()),
-                Feature::Loft(l) => (l.output == Output::Solid).then(|| l.id.clone()),
-                Feature::Split(sp) => Some(sp.new_body()),
-                Feature::Coil(c) => (c.output == Output::Solid).then(|| c.id.clone()),
-                Feature::SheetFace(f) => Some(f.id.clone()),
-                Feature::SheetFlange(_) | Feature::SheetConvert(_) => None,
-                Feature::SheetOp(f) => f.creates_body().then(|| f.id.clone()),
-                Feature::BodyOp(f) => f.creates_body().then(|| f.id.clone()),
-                Feature::Work(_)
-                | Feature::Blend(_)
-                | Feature::Shell(_)
-                | Feature::Draft(_)
-                | Feature::Pattern(_)
-                | Feature::Combine(_)
-                | Feature::Rib(_) => None,
-                Feature::Hole(_) | Feature::Thread(_) => None,
+            .flat_map(|f| -> Vec<(String, Option<String>)> {
+                if let Feature::BodyOp(b) = f
+                    && let BodyOp::Import(op) = &b.op
+                    && let Some(found) = op.found.get()
+                {
+                    return found
+                        .iter()
+                        .map(|fb| (fb.name.clone(), Some(fb.label.clone())))
+                        .collect();
+                }
+                Self::body_of(f).map(|id| (id, None)).into_iter().collect()
             })
             .enumerate()
-            .filter(|(_, id)| !consumed.contains(&id))
-            .map(|(n, id)| (id, format!("Solid{}", n + 1)))
+            .filter(|(_, (id, _))| !consumed.contains(&id))
+            .map(|(n, (id, label))| {
+                let shown = label
+                    .filter(|l| !l.is_empty())
+                    .unwrap_or_else(|| format!("Solid{}", n + 1));
+                (id, shown)
+            })
             .collect()
+    }
+
+    /// The body a feature that creates one makes (by its own id).
+    fn body_of(f: &Feature) -> Option<String> {
+        match f {
+            Feature::Extrude(e) => (e.output == Output::Solid).then(|| e.id.clone()),
+            Feature::Revolve(r) => (r.output == Output::Solid).then(|| r.id.clone()),
+            Feature::Box(b) => Some(b.id.clone()),
+            Feature::Sweep(s) => (s.output == Output::Solid).then(|| s.id.clone()),
+            Feature::Loft(l) => (l.output == Output::Solid).then(|| l.id.clone()),
+            Feature::Split(sp) => Some(sp.new_body()),
+            Feature::Coil(c) => (c.output == Output::Solid).then(|| c.id.clone()),
+            Feature::SheetFace(f) => Some(f.id.clone()),
+            Feature::SheetFlange(_) | Feature::SheetConvert(_) => None,
+            Feature::SheetOp(f) => f.creates_body().then(|| f.id.clone()),
+            Feature::BodyOp(f) => f.creates_body().then(|| f.id.clone()),
+            Feature::Work(_)
+            | Feature::Blend(_)
+            | Feature::Shell(_)
+            | Feature::Draft(_)
+            | Feature::Pattern(_)
+            | Feature::Combine(_)
+            | Feature::Rib(_) => None,
+            Feature::Hole(_) | Feature::Thread(_) => None,
+        }
     }
 
     /// `"Extrusion<N>"`, N one more than the highest existing number.
@@ -2321,6 +2343,7 @@ impl PartDocument {
         let id = self.next_feature_id(def.kind_name());
         (def.id, def.name) = (id.clone(), id.clone());
         self.insert_feature_checked(Feature::BodyOp(def))?;
+        self.adopt_file_colors(&id);
         Ok(id)
     }
 

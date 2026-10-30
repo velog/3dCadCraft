@@ -49,6 +49,39 @@ pub struct ImportOp {
     /// Face entity of the embedded text -> the entity whose name it keeps (after an update).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keep: BTreeMap<u64, u64>,
+    /// What the last read of the text found per body (names and colours from the file; not
+    /// saved: every regeneration reads it again).
+    #[serde(skip)]
+    pub found: FileBodies,
+}
+
+/// A body as the file describes it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileBody {
+    /// Its persistent name (`Import1`, `Import1#2` …).
+    pub name: String,
+    /// The file's label of the solid, else its product's name (may be empty).
+    pub label: String,
+    /// Its colour in the file (sRGB 0–1).
+    pub color: Option<[f32; 3]>,
+}
+
+/// [`FileBody`]s of an import's last read, shared by the clones of the part (a regeneration of a
+/// copy fills the original's too). Always equal: it is derived from the text.
+#[derive(Clone, Debug, Default)]
+pub struct FileBodies(Arc<std::sync::OnceLock<Vec<FileBody>>>);
+
+impl PartialEq for FileBodies {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl FileBodies {
+    /// The bodies, once the text was read.
+    pub fn get(&self) -> Option<&[FileBody]> {
+        self.0.get().map(Vec::as_slice)
+    }
 }
 
 /// The source file of a Reference Model import, as it was when last read.
@@ -119,6 +152,7 @@ impl ImportOp {
             surfaces: true,
             link: None,
             keep: BTreeMap::new(),
+            found: FileBodies::default(),
         }
     }
 
@@ -153,12 +187,20 @@ impl ImportOp {
         let total = r.bodies.len();
         let warnings = r.warnings;
         let mut kept: Vec<ExactSolid> = Vec::new();
+        let mut found = Vec::new();
         for b in r.bodies {
             if !(if b.closed { self.solids } else { self.surfaces }) {
                 continue;
             }
+            found.push(FileBody {
+                name: b.solid.name.clone().unwrap_or_default(),
+                label: b.label.trim().to_owned(),
+                color: b.color,
+            });
             kept.push(self.renamed(b.solid));
         }
+        // Names and colours for the browser and the import's appearances (the first read).
+        let _ = self.found.0.set(found);
         if kept.is_empty() {
             return Err(match (total, self.solids) {
                 (0, _) => "the file has no bodies the reader could build".into(),
@@ -202,6 +244,7 @@ impl ImportOp {
         let mut next = ImportOp {
             text,
             keep: BTreeMap::new(),
+            found: FileBodies::default(),
             ..self.clone()
         };
         let (new, _) = next.read(id)?;
@@ -313,6 +356,64 @@ impl ImportOp {
 
 /// Import after the solids `cur` and the surface bodies `sheets` built so far: every body after
 /// it.
+impl super::PartDocument {
+    /// The file's name for body `name` of an import (spec 7.7a 3.9), when it has one.
+    pub fn file_label(&self, name: &str) -> Option<&str> {
+        self.features.iter().find_map(|f| match f {
+            super::Feature::BodyOp(b) => match &b.op {
+                super::BodyOp::Import(op) => op
+                    .found
+                    .get()?
+                    .iter()
+                    .find(|fb| fb.name == name && !fb.label.is_empty())
+                    .map(|fb| fb.label.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    /// The colours the file gives the bodies of import `id` as body appearances (document copies
+    /// named `Color RRGGBB`), where the body has none of its own yet; returns how many it set.
+    /// Called when the import is added: after that they are the user's to change.
+    pub fn adopt_file_colors(&mut self, id: &str) -> usize {
+        let found: Vec<FileBody> = self
+            .features
+            .iter()
+            .find(|f| f.id() == id)
+            .and_then(|f| match f {
+                super::Feature::BodyOp(b) => match &b.op {
+                    super::BodyOp::Import(op) => op.found.get().map(<[FileBody]>::to_vec),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .unwrap_or_default();
+        let mut n = 0;
+        for fb in found {
+            let Some(c) = fb.color else { continue };
+            if self
+                .looks
+                .bodies
+                .get(&fb.name)
+                .is_some_and(|s| s.appearance.is_some())
+            {
+                continue;
+            }
+            let rgb = c.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+            let name = format!("Color {:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]);
+            if !self.looks.appearances.iter().any(|a| a.name == name) {
+                self.looks
+                    .appearances
+                    .push(crate::materials::Appearance::custom(name.clone(), rgb, 1.0));
+            }
+            self.looks.bodies.entry(fb.name).or_default().appearance = Some(name);
+            n += 1;
+        }
+        n
+    }
+}
+
 pub(super) fn import(
     op: &ImportOp,
     id: &str,
@@ -383,6 +484,71 @@ mod tests {
                 .count(),
             6
         );
+    }
+
+    /// Spec 7.7a 3.9: bodies are shown by the file's names for them and take its colours as body
+    /// appearances; their persistent names stay `Import1`, `Import1#2`; after a save and a load
+    /// the names come back from the embedded text.
+    #[test]
+    fn bodies_take_the_files_names_and_colours() {
+        let mut a = exact::box_named(
+            crate::kernel::Point3::origin(),
+            crate::kernel::Point3::new(10.0, 10.0, 10.0),
+            "A",
+        )
+        .expect("box");
+        a.name = Some("Bracket".into());
+        let mut b = exact::box_named(
+            crate::kernel::Point3::new(20.0, 0.0, 0.0),
+            crate::kernel::Point3::new(25.0, 5.0, 5.0),
+            "B",
+        )
+        .expect("box");
+        b.name = Some("Pin".into());
+        let red = exact::StepPaint {
+            color: Some([1.0, 0.0, 0.0]),
+            faces: Vec::new(),
+        };
+        let text = exact::step_text_painted(&[a, b], "Asm", &[red]).expect("export");
+        let mut p = PartDocument::default();
+        p.add_body_op(BodyOpFeature::new(BodyOp::Import(ImportOp::new(
+            "two.step",
+            text.as_str(),
+        ))))
+        .expect("import");
+        let shown = p.bodies_before(usize::MAX);
+        assert_eq!(
+            shown,
+            vec![
+                ("Import1".to_owned(), "Bracket".to_owned()),
+                ("Import1#2".to_owned(), "Pin".to_owned())
+            ]
+        );
+        let look = p
+            .looks
+            .bodies
+            .get("Import1")
+            .and_then(|s| s.appearance.clone());
+        assert_eq!(look.as_deref(), Some("Color FF0000"));
+        assert!(p.looks.appearances.iter().any(|a| a.name == "Color FF0000"));
+        let pin = p
+            .looks
+            .bodies
+            .get("Import1#2")
+            .and_then(|s| s.appearance.clone());
+        assert!(
+            pin.is_none() || pin.as_deref() != Some("Color FF0000"),
+            "{pin:?}"
+        );
+        // Saved and loaded: the names come back (the colour is document data).
+        let json = serde_json::to_string(&p.features).expect("save");
+        let mut q = PartDocument {
+            features: serde_json::from_str(&json).expect("load"),
+            looks: p.looks.clone(),
+            ..Default::default()
+        };
+        q.regenerate().expect("regenerate");
+        assert_eq!(q.bodies_before(usize::MAX), shown);
     }
 
     #[test]

@@ -592,11 +592,14 @@ impl CadCraftApp {
                         ui.horizontal(|ui| {
                             tree_icon(ui, Icon::Part);
                             let shown = part.body_visible(&id);
-                            let label = part
-                                .features
-                                .iter()
-                                .find(|f| f.id() == id.split('#').next().unwrap_or(&id))
-                                .map_or_else(|| id.clone(), |f| format!("Srf: {}", f.name()));
+                            let label = match part.file_label(&id) {
+                                Some(l) => format!("Srf: {l}"),
+                                None => part
+                                    .features
+                                    .iter()
+                                    .find(|f| f.id() == id.split('#').next().unwrap_or(&id))
+                                    .map_or_else(|| id.clone(), |f| format!("Srf: {}", f.name())),
+                            };
                             let text = if shown {
                                 RichText::new(label)
                             } else {
