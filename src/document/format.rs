@@ -168,7 +168,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   members without a Trim Solid) (2026-10-31).
 /// - 58: frame members between two points (`Skeleton::Between`: ends of
 ///   edges and sketch lines) (2026-10-31).
-pub const FORMAT_REVISION: u32 = 58;
+/// - 60: drawing Break Out To Sketch (`BreakOutDepth::ToSketch`) (2026-10-31).
+pub const FORMAT_REVISION: u32 = 60;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

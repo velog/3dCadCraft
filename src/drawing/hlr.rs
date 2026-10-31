@@ -855,14 +855,14 @@ pub fn view_lines_simplified(
     // Break outs' cut faces: the section of the faces by each plane,
     // clipped to the profile (hatched pieces, one per profile triangle) and
     // their outlines inside the profile.
-    type Caps = (
-        f64,
+    type Caps<'a> = (
+        &'a OutCut,
         Vec<Vec<[f64; 2]>>,
         Vec<([f64; 2], [f64; 2])>,
         ([f64; 2], [f64; 2]),
     );
     let mut out_caps: Vec<Caps> = Vec::new();
-    let mut out_edges: Vec<(f64, Vec<[f64; 2]>)> = Vec::new();
+    let mut out_edges: Vec<(&OutCut, Vec<[f64; 2]>)> = Vec::new();
     for (o, segs) in outs.iter().zip(&out_cross) {
         let loops: Vec<Vec<[f64; 2]>> = chain_loops(segs, diag * 1e-7)
             .into_iter()
@@ -884,17 +884,17 @@ pub fn view_lines_simplified(
         }
         for l in &loops {
             for piece in inside_profile(l, o) {
-                out_edges.push((o.depth, piece));
+                out_edges.push((o, piece));
             }
         }
         let boxes = caps.iter().map(box_of).collect();
-        out_caps.push((o.depth, caps, boxes, o.bounds()));
+        out_caps.push((o, caps, boxes, o.bounds()));
     }
     // Behind the plane and inside a cut face: hidden by the cut face.
     let behind_cap = |q: [f64; 2], d: f64| {
         let at = (q, q);
-        let under_out = out_caps.iter().any(|(cd, caps, boxes, all)| {
-            d < cd - eps
+        let under_out = out_caps.iter().any(|(o, caps, boxes, all)| {
+            d < o.depth_at(q) - eps
                 && boxes_meet(at, *all)
                 && caps
                     .iter()
@@ -952,9 +952,10 @@ pub fn view_lines_simplified(
             curves.push((l.iter().map(lift).collect(), None));
         }
     }
-    for (d, l) in &out_edges {
-        let lift =
-            |q: &[f64; 2]| Point3::from(frame.right * q[0] + frame.up * q[1] + frame.toward * *d);
+    for (o, l) in &out_edges {
+        let lift = |q: &[f64; 2]| {
+            Point3::from(frame.right * q[0] + frame.up * q[1] + frame.toward * o.depth_at(*q))
+        };
         curves.push((l.iter().map(lift).collect(), None));
     }
     if cells.is_some() {
@@ -1180,8 +1181,9 @@ fn mark_full_circles(edges: &mut [ViewEdge]) {
     }
 }
 /// A break out of a view (spec 4.11): inside `loops` (closed, the view
-/// plane), the material in front of the plane at frame depth `depth`
-/// (towards the viewer) is cut away.
+/// plane), the material in front of the cut plane (towards the viewer) is
+/// cut away. The plane's depth at view-plane point `q` is
+/// `depth + slope · q` (a plane square to the view has slope zero).
 #[derive(Clone, Debug, PartialEq)]
 pub struct OutCut {
     /// The profile's closed loops (view plane; even-odd inside).
@@ -1189,6 +1191,9 @@ pub struct OutCut {
     /// The cut plane's depth (`ViewFrame::depth`): what is nearer the
     /// viewer is removed inside the profile.
     pub depth: f64,
+    /// How the plane's depth changes along the view's x and y (Break Out
+    /// To Sketch with an inclined line).
+    pub slope: [f64; 2],
     /// The profile in counter-clockwise triangles (convex pieces).
     tris: Vec<[[f64; 2]; 3]>,
     /// The profile's box: lower left, upper right.
@@ -1261,10 +1266,29 @@ impl OutCut {
         Self {
             loops,
             depth,
+            slope: [0.0, 0.0],
             tris,
             lo,
             hi,
         }
+    }
+
+    /// The same break out cut by an inclined plane: its depth at `q` is
+    /// `depth + slope · q`.
+    pub fn sloped(mut self, slope: [f64; 2]) -> Self {
+        self.slope = slope;
+        self
+    }
+
+    /// The cut plane's depth at view-plane point `q`.
+    pub fn depth_at(&self, q: [f64; 2]) -> f64 {
+        self.depth + self.slope[0] * q[0] + self.slope[1] * q[1]
+    }
+
+    /// How far model point `p` lies in front of the cut plane (positive:
+    /// on the removed side).
+    fn front(&self, p: &Point3, frame: &ViewFrame) -> f64 {
+        frame.depth(p) - self.depth_at(frame.project(p))
     }
 
     /// Whether view-plane point `q` lies inside the profile.
@@ -1384,21 +1408,21 @@ fn seg_cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> Option<f64> 
 /// The parts of a 3D curve outside every break out's removed region.
 fn clip_outs(pts: &[Point3], outs: &[OutCut], frame: &ViewFrame) -> Vec<Vec<Point3>> {
     let removed = |q: &Point3| {
-        let d = frame.depth(q);
         let v = frame.project(q);
-        outs.iter().any(|o| d > o.depth && o.contains(v))
+        outs.iter()
+            .any(|o| o.front(q, frame) > 0.0 && o.contains(v))
     };
     let mut out: Vec<Vec<Point3>> = Vec::new();
     let mut cur: Vec<Point3> = Vec::new();
     for w in pts.windows(2) {
         let (a, b) = (w[0], w[1]);
         let (va, vb) = (frame.project(&a), frame.project(&b));
-        let (da, db) = (frame.depth(&a), frame.depth(&b));
         let mut ts = vec![0.0, 1.0];
         let seg_box = box_of([&va, &vb]);
         for o in outs {
-            if (da - o.depth) * (db - o.depth) < 0.0 {
-                ts.push((o.depth - da) / (db - da));
+            let (fa, fb) = (o.front(&a, frame), o.front(&b, frame));
+            if fa * fb < 0.0 {
+                ts.push(fa / (fa - fb));
             }
             if !boxes_meet(seg_box, o.bounds()) {
                 continue;
@@ -1455,7 +1479,7 @@ fn cut_outs(
     for (i, o) in outs.iter().enumerate() {
         let mut next = Vec::new();
         for p in cur.into_iter().filter(|p| p.len() >= 3) {
-            let (back, c) = clip_polygon(&p, &|q: &Point3| frame.depth(q) - o.depth);
+            let (back, c) = clip_polygon(&p, &|q: &Point3| o.front(q, frame));
             if let Some((x, y)) = c
                 && let Some(list) = cross.get_mut(i)
             {
@@ -1464,7 +1488,7 @@ fn cut_outs(
             if back.len() >= 3 {
                 next.push(back);
             }
-            let (front, _) = clip_polygon(&p, &|q: &Point3| o.depth - frame.depth(q));
+            let (front, _) = clip_polygon(&p, &|q: &Point3| -o.front(q, frame));
             if front.len() < 3 {
                 continue;
             }

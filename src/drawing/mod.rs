@@ -751,19 +751,68 @@ pub enum BreakOutDepth {
     },
     /// Through Part: everything inside the profile is cut away.
     ThroughPart,
+    /// To Sketch (format revision 60): the cut follows a straight line
+    /// sketched in another view of the model — the plane through it along
+    /// that view's direction (a line inclined in that view cuts this one
+    /// at a slant).
+    ToSketch {
+        /// The view the line is sketched in.
+        view: u32,
+        /// The line's ends in that view's plane (model mm), so the cut
+        /// follows that view's orientation.
+        line: [[f64; 2]; 2],
+        /// The sketch it was drawn in (opened again to change it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sketch: Option<Box<view_sketch::ViewSketch>>,
+    },
 }
 
 impl BreakOut {
-    /// The removed region in a view seen in `frame`.
-    pub fn cut(&self, frame: &ViewFrame) -> hlr::OutCut {
-        let depth = match self.depth {
-            BreakOutDepth::FromPoint { point, depth, .. } => {
-                frame.depth(&crate::kernel::Point3::new(point[0], point[1], point[2])) - depth
+    /// The removed region in a view seen in `frame`; `frame_of` gives the
+    /// frames of other views (To Sketch). `None` when the depth cannot be
+    /// resolved (the sketch's view is gone or sees the line edge-on): the
+    /// view is drawn without it.
+    pub fn cut(
+        &self,
+        frame: &ViewFrame,
+        frame_of: &dyn Fn(u32) -> Option<ViewFrame>,
+    ) -> Option<hlr::OutCut> {
+        let (depth, slope) = match &self.depth {
+            BreakOutDepth::FromPoint { point, depth, .. } => (
+                frame.depth(&crate::kernel::Point3::new(point[0], point[1], point[2])) - depth,
+                [0.0, 0.0],
+            ),
+            BreakOutDepth::ThroughPart => (-1e12, [0.0, 0.0]),
+            BreakOutDepth::ToSketch { view, line, .. } => {
+                break_out_sketch_plane(*line, &frame_of(*view)?, frame).ok()?
             }
-            BreakOutDepth::ThroughPart => -1e12,
         };
-        hlr::OutCut::new(self.profile.clone(), depth)
+        Some(hlr::OutCut::new(self.profile.clone(), depth).sloped(slope))
     }
+}
+
+/// Break Out › To Sketch: the cut plane through `line` (two points in the
+/// plane of the view seen in `other`) along that view's direction, as seen
+/// in `frame`: its depth at the view plane's origin and how the depth
+/// changes along x and y. Refused when the line has no length or `frame`
+/// sees the plane edge-on (the same view, or a line square to it).
+pub fn break_out_sketch_plane(
+    line: [[f64; 2]; 2],
+    other: &ViewFrame,
+    frame: &ViewFrame,
+) -> Result<(f64, [f64; 2]), &'static str> {
+    let at = |q: [f64; 2]| other.right * q[0] + other.up * q[1];
+    let along = at([line[1][0] - line[0][0], line[1][1] - line[0][1]]);
+    let n = along
+        .cross(&other.toward)
+        .try_normalize(1e-12)
+        .ok_or("the sketch line has no length")?;
+    let nt = n.dot(&frame.toward);
+    if nt.abs() < 1e-6 {
+        return Err("the sketch line is seen edge-on from this view (sketch it in another view)");
+    }
+    let c = n.dot(&at(line[0]));
+    Ok((c / nt, [-n.dot(&frame.right) / nt, -n.dot(&frame.up) / nt]))
 }
 
 /// Break Out › To Hole: the point of hole `h` the cut goes through, seen in
@@ -1180,11 +1229,12 @@ impl DrawingDocument {
         if v.break_outs.iter().any(|b| !b.suppressed)
             && let LinesJob::Model { frame, aligned, .. } = &mut job
         {
+            let frame_of = |id: u32| self.frame_of(sheet, id);
             let outs: Vec<hlr::OutCut> = v
                 .break_outs
                 .iter()
                 .filter(|b| !b.suppressed)
-                .map(|b| b.cut(frame))
+                .filter_map(|b| b.cut(frame, &frame_of))
                 .collect();
             match aligned {
                 Some(a) => a.outs = outs,

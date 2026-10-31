@@ -15,7 +15,15 @@ pub(super) enum DepthKind {
     FromPoint,
     ToHole,
     ThroughPart,
+    ToSketch,
 }
+
+/// Break Out › To Sketch: the sketch's view, the line's ends and the sketch.
+pub(super) type ToSketchLine = (
+    u32,
+    [[f64; 2]; 2],
+    Option<Box<crate::drawing::view_sketch::ViewSketch>>,
+);
 
 /// The Break Out command after its profile: the view, the profile, the
 /// depth being set.
@@ -34,6 +42,9 @@ pub(super) struct BoDraft {
     /// To Hole: the hole's key, the point of its axis the cut goes through
     /// (model mm) and the view it was picked in (`None` when edited).
     pub hole: Option<(String, [f64; 3], Option<u32>)>,
+    /// To Sketch: the view the line is sketched in, its ends (that view's
+    /// plane) and the sketch.
+    pub to_sketch: Option<ToSketchLine>,
     /// The sketch the profile was drawn in.
     pub sketch: Option<Box<crate::drawing::view_sketch::ViewSketch>>,
     /// Edit Break Out: the break out's index in the view.
@@ -50,6 +61,7 @@ impl BoDraft {
             value: 5.0,
             point: None,
             hole: None,
+            to_sketch: None,
             sketch: None,
             edit: None,
         }
@@ -57,6 +69,10 @@ impl BoDraft {
 
     /// Edit Break Out of break out `k` of `view`.
     pub fn editing(view: u32, k: usize, b: &BreakOut) -> Self {
+        let to_sketch = match &b.depth {
+            BreakOutDepth::ToSketch { view, line, sketch } => Some((*view, *line, sketch.clone())),
+            _ => None,
+        };
         let (kind, value, point, hole) = match &b.depth {
             BreakOutDepth::FromPoint {
                 point,
@@ -72,6 +88,7 @@ impl BoDraft {
                 (DepthKind::FromPoint, *depth, Some((*point, None)), None)
             }
             BreakOutDepth::ThroughPart => (DepthKind::ThroughPart, 5.0, None, None),
+            BreakOutDepth::ToSketch { .. } => (DepthKind::ToSketch, 5.0, None, None),
         };
         Self {
             view,
@@ -80,6 +97,7 @@ impl BoDraft {
             value,
             point,
             hole,
+            to_sketch,
             sketch: b.sketch.clone(),
             edit: Some(k),
         }
@@ -102,6 +120,10 @@ impl BoDraft {
                 }
             }
             DepthKind::ThroughPart => BreakOutDepth::ThroughPart,
+            DepthKind::ToSketch => {
+                let (view, line, sketch) = self.to_sketch.clone()?;
+                BreakOutDepth::ToSketch { view, line, sketch }
+            }
         };
         Some(BreakOut {
             profile: self.profile.clone(),
@@ -117,6 +139,9 @@ impl BoDraft {
         match (self.kind, self.point, &self.hole) {
             (DepthKind::FromPoint, None, _) => {
                 "Break Out: click the point the depth starts from, in another view of the model"
+            }
+            (DepthKind::ToSketch, ..) if self.to_sketch.is_none() => {
+                "Break Out: click another view of the model to sketch the line the cut follows"
             }
             (DepthKind::ToHole, _, None) => {
                 "Break Out: click a hole of the model (in any view); the cut goes through its axis"
@@ -196,6 +221,7 @@ impl CadCraftApp {
         let picked = match d.kind {
             DepthKind::FromPoint => d.point.and_then(|p| p.1),
             DepthKind::ToHole => d.hole.as_ref().and_then(|h| h.2),
+            DepthKind::ToSketch => d.to_sketch.as_ref().map(|s| s.0),
             DepthKind::ThroughPart => None,
         };
         // To Hole: the hole under the pointer lit, the picked one marked.
@@ -252,9 +278,9 @@ impl CadCraftApp {
                     ui.horizontal(|ui| {
                         ui.radio_value(&mut d.kind, DepthKind::FromPoint, "From Point")
                             .on_hover_text("A point in any view of the model and a depth behind it");
-                        ui.add_enabled(false, egui::RadioButton::new(false, "To Sketch"))
-                            .on_disabled_hover_text(
-                                "Planned: sketched geometry of another view (docs/spec/4.11-break-out.md)",
+                        ui.radio_value(&mut d.kind, DepthKind::ToSketch, "To Sketch")
+                            .on_hover_text(
+                                "The cut follows a straight line sketched in another view of the model",
                             );
                         ui.radio_value(&mut d.kind, DepthKind::ToHole, "To Hole")
                             .on_hover_text(
@@ -278,6 +304,15 @@ impl CadCraftApp {
                                 .on_hover_text("How far behind the point the cut lies");
                         });
                     });
+                    if d.kind == DepthKind::ToSketch {
+                        ui.horizontal(|ui| {
+                            ui.label("Sketch:");
+                            ui.label(match &d.to_sketch {
+                                Some(_) => "✔ a line (click a view to sketch it again)",
+                                None => "click another view to sketch the line in",
+                            });
+                        });
+                    }
                     if d.kind == DepthKind::ToHole {
                         ui.horizontal(|ui| {
                             ui.label("Hole:");
@@ -321,6 +356,39 @@ impl CadCraftApp {
         {
             match self.break_out_hole(views, rect, p, d.view) {
                 Ok((key, pt, v)) => d.hole = Some((key, pt, Some(v))),
+                Err(e) => self.file_status = Some(Err(format!("Break Out: {e}"))),
+            }
+        }
+        // To Sketch: a click on another view of the model opens a sketch
+        // there (the one sketched before, if it is that view).
+        if d.kind == DepthKind::ToSketch
+            && response.clicked()
+            && let Some(p) = response.hover_pos()
+        {
+            let q = cam.to_sheet(rect, p);
+            let target = views
+                .iter()
+                .rev()
+                .find(|v| q[0] >= v.lo[0] && q[0] <= v.hi[0] && q[1] >= v.lo[1] && q[1] <= v.hi[1])
+                .map(|v| v.id);
+            match self.break_out_sketch_view(target, d.view) {
+                Ok(v) => {
+                    let sketch = d
+                        .to_sketch
+                        .as_ref()
+                        .filter(|s| s.0 == v)
+                        .and_then(|s| s.2.as_deref().cloned())
+                        .unwrap_or_default();
+                    self.open_view_sketch(
+                        v,
+                        super::drawing_sketch::SketchFor::BreakOutDepth,
+                        sketch,
+                    );
+                    if let Some(s) = self.drw.sketch.as_mut() {
+                        s.parked = Some(Box::new(d));
+                    }
+                    return;
+                }
                 Err(e) => self.file_status = Some(Err(format!("Break Out: {e}"))),
             }
         }
@@ -416,6 +484,21 @@ impl CadCraftApp {
             .ok_or("holes of assembly views are not supported yet")?;
         let pt = crate::drawing::break_out_hole_point(&h, &frame)?;
         Ok((key, pt, pv))
+    }
+
+    /// To Sketch: the view a depth line can be sketched in — another view
+    /// of the same model.
+    fn break_out_sketch_view(&self, target: Option<u32>, view: u32) -> Result<u32, String> {
+        let v = target.ok_or("click another view of the model")?;
+        if v == view {
+            return Err("sketch the line in another view (it sees the cut edge-on)".into());
+        }
+        let doc = self.drawing().ok_or("no drawing")?;
+        let sheet = doc.sheet().ok_or("no sheet")?;
+        if doc.model_of(sheet, v) != doc.model_of(sheet, view) {
+            return Err("that view shows another model".into());
+        }
+        Ok(v)
     }
 
     /// Edit Break Out of break out `k` of view `view`: the dialog again.

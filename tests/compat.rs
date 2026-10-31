@@ -2756,6 +2756,64 @@ fn between_r58_reads() {
     assert!((len - 500.0).abs() < 1e-6, "{len}");
 }
 
+/// Revision 60: a break out of the base view whose depth follows a line
+/// sketched in the section view (`BreakOutDepth::ToSketch`).
+fn drawing_r60_project() -> Project {
+    use cadcraft3d::drawing::{BreakOut, BreakOutDepth};
+    let mut project = drawing_r39_project();
+    let id = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Drawing(_)))
+        .map(|d| d.id)
+        .unwrap();
+    if let Some(DocumentData::Drawing(d)) = project.document_mut(id).map(|d| &mut d.data) {
+        let (b, other) = (d.sheets[0].views[0].id, d.sheets[0].views[1].id);
+        let out = BreakOut {
+            profile: vec![vec![
+                [-10.0, -10.0],
+                [10.0, -10.0],
+                [10.0, 10.0],
+                [-10.0, 10.0],
+            ]],
+            depth: BreakOutDepth::ToSketch {
+                view: other,
+                line: [[-30.0, 8.0], [30.0, 2.0]],
+                sketch: None,
+            },
+            section_all: false,
+            sketch: None,
+            suppressed: false,
+        };
+        assert_eq!(d.add_break_out(b, out), Some(0));
+    }
+    project
+}
+
+/// The revision 60 drawing reads back with its To Sketch break out.
+#[test]
+fn drawing_r60_reads() {
+    use cadcraft3d::drawing::BreakOutDepth;
+    let f = root().join("r60/drawing_r60.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let d = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Drawing(x) => Some(x.clone()),
+            _ => None,
+        })
+        .expect("a drawing");
+    let b = &d.sheets[0].views[0].break_outs[0];
+    assert!(matches!(
+        b.depth,
+        BreakOutDepth::ToSketch { line, .. } if line == [[-30.0, 8.0], [30.0, 2.0]]
+    ));
+}
+
 /// Revision 57: a frame member mitred at both ends, one `BodyOp::Prism`
 /// (an SHS 40x40x3, 400 long on its axis, ends at 45°).
 fn prism_r57() -> PartDocument {
@@ -3351,6 +3409,11 @@ fn old_files_still_open() {
         if !f.exists() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             drawing_r39_project().save(&f).unwrap();
+        }
+        let f = root().join("r60/drawing_r60.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            drawing_r60_project().save(&f).unwrap();
         }
         let f = root().join("r38/drawing_r38.3dcadcraft");
         if !f.exists() {

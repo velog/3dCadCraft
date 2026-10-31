@@ -2783,7 +2783,11 @@ fn break_out_to_hole_cuts_through_the_axis() {
         sketch: None,
         suppressed: false,
     };
-    assert_eq!(out.cut(&frame).depth, axis, "To Hole cuts at the axis");
+    assert_eq!(
+        out.cut(&frame, &|_| None).unwrap().depth,
+        axis,
+        "To Hole cuts at the axis"
+    );
     d.add_break_out(v, out.clone()).unwrap();
     let sheet = d.sheet().unwrap().clone();
     let LinesJob::Model { frame, aligned, .. } = d.lines_job(&sheet, v).unwrap() else {
@@ -2814,4 +2818,95 @@ fn break_out_to_hole_cuts_through_the_axis() {
     assert!(text.contains("\"hole\""));
     let back: BreakOut = serde_json::from_str(&text).unwrap();
     assert_eq!(back, out);
+}
+
+/// Break Out › To Sketch: a line sketched in the front view, falling from
+/// z = 20 at x = -30 to z = 0 at x = 30, cuts the top view's break out at a
+/// slant: inside a profile over x in -20..10 the plane is inside the 10 mm
+/// plate only where x > 0, so the cut face seen from the top is 10 × 20.
+#[test]
+fn break_out_to_sketch_cuts_along_the_line() {
+    use super::{BreakOut, BreakOutDepth, break_out_sketch_plane};
+    let part = plate_with_hole_at([20.0, 8.0]);
+    let mut d = DrawingDocument::default();
+    let top = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Top,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let front = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [150.0, 250.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let sheet = d.sheet().unwrap().clone();
+    let (ft, ff) = (
+        d.frame_of(&sheet, top).unwrap(),
+        d.frame_of(&sheet, front).unwrap(),
+    );
+    let on_front = |x: f64, z: f64| ff.project(&crate::kernel::Point3::new(x, 0.0, z));
+    let line = [on_front(-30.0, 20.0), on_front(30.0, 0.0)];
+    // The plane seen from the top: z = 10 - x / 3.
+    let (depth, slope) = break_out_sketch_plane(line, &ff, &ft).unwrap();
+    let z_at = |x: f64, y: f64| {
+        let q = ft.project(&crate::kernel::Point3::new(x, y, 0.0));
+        let p = ft.right * q[0]
+            + ft.up * q[1]
+            + ft.toward * (depth + slope[0] * q[0] + slope[1] * q[1]);
+        p.z
+    };
+    close(z_at(-30.0, 0.0), 20.0, 1e-9, "the plane at x = -30");
+    close(z_at(30.0, 5.0), 0.0, 1e-9, "the plane at x = 30");
+    // Seen edge-on from the front view itself: refused.
+    assert!(break_out_sketch_plane(line, &ff, &ff).is_err());
+    let corner = |x: f64, y: f64| ft.project(&crate::kernel::Point3::new(x, y, 0.0));
+    let rect = vec![
+        corner(-20.0, -10.0),
+        corner(10.0, -10.0),
+        corner(10.0, 10.0),
+        corner(-20.0, 10.0),
+    ];
+    let out = BreakOut {
+        profile: vec![rect],
+        depth: BreakOutDepth::ToSketch {
+            view: front,
+            line,
+            sketch: None,
+        },
+        section_all: false,
+        sketch: None,
+        suppressed: false,
+    };
+    d.add_break_out(top, out.clone()).unwrap();
+    let sheet = d.sheet().unwrap().clone();
+    let LinesJob::Model { frame, aligned, .. } = d.lines_job(&sheet, top).unwrap() else {
+        panic!("a model job");
+    };
+    let l = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_deref());
+    let cut: f64 = l.section.iter().map(|lp| area(lp)).sum();
+    close(
+        cut,
+        10.0 * 20.0,
+        2.0,
+        "the slanted cut face seen from the top",
+    );
+    // The sketch's view deleted: the view is drawn whole.
+    let mut gone = d.clone();
+    gone.sheet_mut().unwrap().views.retain(|v| v.id != front);
+    let sheet = gone.sheet().unwrap().clone();
+    let LinesJob::Model { frame, aligned, .. } = gone.lines_job(&sheet, top).unwrap() else {
+        panic!("a model job");
+    };
+    let l = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_deref());
+    assert!(l.section.is_empty());
+    let text = serde_json::to_string(&out).unwrap();
+    assert_eq!(serde_json::from_str::<BreakOut>(&text).unwrap(), out);
 }

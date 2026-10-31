@@ -35,6 +35,9 @@ pub(super) enum SketchFor {
     BreakOut,
     /// The profile of break out `k` of the sketch's view.
     BreakOutEdit(usize),
+    /// Break Out › To Sketch: the line the cut follows (the Break Out
+    /// command waits in `DrwSketch::parked`).
+    BreakOutDepth,
 }
 
 /// A view sketch being edited.
@@ -58,6 +61,9 @@ pub(super) struct DrwSketch {
     /// Finish Sketch was asked for outside the sheet view (the ribbon):
     /// the next frame of the view finishes it.
     pub finish: bool,
+    /// The Break Out command waiting for this sketch (To Sketch); it comes
+    /// back when the sketch ends.
+    pub parked: Option<Box<super::drawing_breakout::BoDraft>>,
 }
 
 /// The tools of a view sketch's toolbar, in Inventor's Sketch tab order.
@@ -95,6 +101,7 @@ impl DrwSketch {
             project: false,
             drag: None,
             finish: false,
+            parked: None,
         }
     }
 
@@ -235,6 +242,7 @@ impl DrwSketch {
             SketchFor::Section(_) => "Edit Section Line",
             SketchFor::BreakOut => "Break Out profile",
             SketchFor::BreakOutEdit(_) => "Edit Break Out Sketch",
+            SketchFor::BreakOutDepth => "Break Out depth: sketch one straight line",
         };
         format!("{what}: {} (Enter: Finish Sketch)", self.tools.prompt())
     }
@@ -277,6 +285,17 @@ impl CadCraftApp {
         }
     }
 
+    /// Ends the open view sketch without Finish: a Break Out waiting for
+    /// its depth sketch comes back.
+    pub(super) fn end_view_sketch(&mut self) {
+        let parked = self.drw.sketch.take().and_then(|s| s.parked);
+        self.drw.section_track.clear();
+        if let Some(d) = parked {
+            self.drw.sel = Some(d.view);
+            self.drw.tool = Some(DrwTool::BreakOut(*d));
+        }
+    }
+
     /// Opens a view sketch (the running drawing command ends).
     pub(super) fn open_view_sketch(&mut self, view: u32, owner: SketchFor, sketch: ViewSketch) {
         self.drw.tool = None;
@@ -315,6 +334,25 @@ impl CadCraftApp {
             return false;
         };
         let sketch = ViewSketch(s.ps.sketch.clone());
+        if s.owner == SketchFor::BreakOutDepth {
+            let mut s = s;
+            let line = match sketch.line() {
+                Ok(l) if l.len() == 2 => [l[0], l[1]],
+                _ => {
+                    self.file_status = Some(Err(
+                        "Break Out: sketch one straight line for the depth".into(),
+                    ));
+                    self.drw.sketch = Some(s);
+                    return false;
+                }
+            };
+            if let Some(mut d) = s.parked.take() {
+                d.to_sketch = Some((s.view, line, Some(Box::new(sketch))));
+                self.drw.sel = Some(d.view);
+                self.drw.tool = Some(DrwTool::BreakOut(*d));
+            }
+            return true;
+        }
         if matches!(s.owner, SketchFor::BreakOut | SketchFor::BreakOutEdit(_)) {
             let loops = super::drawing_breakout::profile_loops(&sketch.0);
             if loops.is_empty() {
@@ -366,7 +404,7 @@ impl CadCraftApp {
                 let pts = line.iter().map(|q| pl.to_sheet(*q)).collect();
                 self.drw.tool = Some(DrwTool::Section(SectionDraft::placing(s.view, pts, sketch)));
             }
-            SketchFor::BreakOut | SketchFor::BreakOutEdit(_) => {}
+            SketchFor::BreakOut | SketchFor::BreakOutEdit(_) | SketchFor::BreakOutDepth => {}
             SketchFor::Section(id) => {
                 let pl = views
                     .iter()
@@ -419,9 +457,8 @@ impl CadCraftApp {
             } else if s.tools.pick_count() > 0 || s.tools.tool != Tool::Select {
                 s.tools.escape();
             } else {
-                self.drw.sketch = None;
-                self.drw.section_track.clear();
-                self.file_status = Some(Ok("Section line: cancelled".into()));
+                self.end_view_sketch();
+                self.file_status = Some(Ok("Sketch: cancelled".into()));
             }
         } else if enter {
             let views = self.shown_views(ctx);
@@ -759,8 +796,7 @@ impl CadCraftApp {
         if finish {
             self.finish_view_sketch(views);
         } else if cancel {
-            self.drw.sketch = None;
-            self.drw.section_track.clear();
+            self.end_view_sketch();
         }
     }
 }
