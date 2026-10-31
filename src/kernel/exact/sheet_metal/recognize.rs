@@ -34,7 +34,7 @@ fn snapped(v: Vec2) -> Vec2 {
 }
 
 /// A planar face's outward normal and a point on it.
-fn plane_of(b: &BRep, f: FaceId) -> Option<(Vec3, Vec3)> {
+pub(super) fn plane_of(b: &BRep, f: FaceId) -> Option<(Vec3, Vec3)> {
     let face = b.face(f)?;
     let Surface::Plane(pl) = b.surface(face.surface)? else {
         return None;
@@ -113,7 +113,7 @@ fn frame_on(n: Vec3, o: Vec3) -> SPlane {
 }
 
 /// The face's region (outer loop and holes) in `pl`.
-fn region_of(b: &BRep, f: FaceId, pl: &SPlane) -> Result<Region2, String> {
+pub(super) fn region_of(b: &BRep, f: FaceId, pl: &SPlane) -> Result<Region2, String> {
     let face = b.face(f).ok_or("face")?;
     let outer = loop2(b, &face.outer, pl)?.ccw();
     let mut holes = Vec::new();

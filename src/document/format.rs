@@ -160,7 +160,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 53: Flange Width Extents Between and Height Extents To
 ///   (`FlangeWidth::Between`, `SheetFlangeFeature::from` / `to` /
 ///   `height_to`) (2026-10-30).
-pub const FORMAT_REVISION: u32 = 53;
+/// - 55: sheet metal Contour Roll (`SheetOp::ContourRoll`) (2026-10-31).
+pub const FORMAT_REVISION: u32 = 55;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

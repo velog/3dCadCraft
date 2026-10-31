@@ -1112,7 +1112,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   Flange Between / Height To (revision 53): `FlangeRef` (point or plane) resolved by the `resolve` closure of
   `exact::sheet_flange` into `RefAt`; Between becomes per-edge offsets, Height To the first bend's height from the
   virtual sharp. Edge Select Loop is GUI only (`SmDraft::loop_mode`; the face comes from `picker()`, the Edges
-  selector's filter leaves faces out). Model vertex picking tests
+  selector's filter leaves faces out).
+  Contour Roll (revision 55, `kernel/exact/sheet_metal/roll.rs`): the section = the faces of a 1 mm Contour Flange
+  in the sketch plane, joined one by one (`planar_regions_boolean` does not join regions within its second set),
+  revolved; the state's model is a Contour Flange as wide as the unrolled length (its flat is the roll's), so
+  `SheetState::rolled` blocks further sheet features (`blocked()`). Planned panels' sketch curve items are
+  `<sketch id>|<entity key>`. Model vertex picking tests
   visibility along the ray through the point's own pixel (`vertex_under`; the cursor's ray hid edge midpoints).
   Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry

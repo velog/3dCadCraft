@@ -3687,6 +3687,53 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Contour Roll (docs/spec/5.6 §6.1j): an L profile rolled 120° + its flat.
+    {
+        use cadcraft3d::part::OriginPlane;
+        use cadcraft3d::part::extrude::entity_key;
+        use cadcraft3d::part::sheet_metal::{RipSide, RollMethod, SheetOp, SheetOpFeature};
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+            .unwrap();
+        let sk = &mut base.sketches[i].sketch;
+        let q: Vec<_> = [(30.0, 0.0), (50.0, 0.0), (50.0, 40.0)]
+            .iter()
+            .map(|&(x, y)| sk.add_point(Point2::new(x, y)))
+            .collect();
+        sk.add_line_between(q[0], q[1]).unwrap();
+        sk.add_line_between(q[1], q[2]).unwrap();
+        let (a, b) = (
+            sk.add_point(Point2::new(0.0, -10.0)),
+            sk.add_point(Point2::new(0.0, 60.0)),
+        );
+        let axis = entity_key(sk.add_line_between(a, b).unwrap());
+        let op = SheetOpFeature::new(SheetOp::ContourRoll {
+            sketch: base.sketches[i].id.clone(),
+            axis,
+            angle: 120f64.to_radians(),
+            side: RipSide::Default,
+            direction: RipSide::Default,
+            unroll: RollMethod::CentroidCylinder,
+            radius: None,
+        });
+        rows.push((
+            "sheet metal: Contour Roll of an L profile, 120° + flat",
+            300.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_op(op.clone()).unwrap();
+                assert_eq!(p.flat_patterns()[0].bends.len(), 1);
+            }),
+        ));
+    }
     // Bill of Materials (docs/spec/3.6): 2000 occurrences of 50 parts,
     // merged by part number, as the window computes them every frame.
     {

@@ -1137,7 +1137,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 | Corner Seam / Round / Chamfer | corner treatment |
 | Cut | a cut, also wrapped across bends; extents Thickness / Distance / Through All / To / To Next with Direction Default / Flipped / Symmetric (2026-10-30) |
 | Punch Tool | standard punch forms (louvres, ribs, holes) from a library |
-| Contour Roll | a rolled profile |
+| Contour Roll | a rolled profile: lines of a sketch rolled about a line of it, its flat the profile developed × the unrolled length (2026-10-31) |
 | Lofted Flange | a transition between two sections (hopper, funnel) |
 | Rip | a gap that lets a closed shape unfold: Single Point, Point to Point, Face Extents of a bend; Gap and Gap Side as Inventor (2026-10-30) |
 | Unfold / Refold | temporary unfolding for features in the unfolded state — the whole sheet, or chosen bends about a Stationary Reference (2026-10-29) |

@@ -302,6 +302,19 @@ pub struct ExactProfile {
     starts: Vec<(String, nalgebra::Point2<Real>)>,
 }
 
+impl ExactProfile {
+    /// A region already in the kernel's form; its segments are named `S1`,
+    /// `S2`… (outer loop first, then holes).
+    pub(crate) fn from_region(region: sg::Region2) -> Self {
+        let n = region.outer.segs.len() + region.holes.iter().map(|h| h.segs.len()).sum::<usize>();
+        Self {
+            region,
+            names: (1..=n).map(|k| format!("S{k}")).collect(),
+            starts: Vec::new(),
+        }
+    }
+}
+
 /// Converts a profile (our segments) to the exact kernel's region.
 pub fn profile(
     outer: &[super::extrude::ProfileSegment],

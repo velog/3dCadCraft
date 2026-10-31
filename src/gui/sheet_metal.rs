@@ -318,7 +318,8 @@ impl SmDraft {
                 | SheetOp::CornerRound { .. }
                 | SheetOp::CornerChamfer { .. }
                 | SheetOp::Bend { .. }
-                | SheetOp::Rip { .. } => Vec::new(),
+                | SheetOp::Rip { .. }
+                | SheetOp::ContourRoll { .. } => Vec::new(),
             },
             _ => Vec::new(),
         };
@@ -1708,7 +1709,8 @@ impl CadCraftApp {
                     SheetOp::CornerRound { .. }
                     | SheetOp::CornerChamfer { .. }
                     | SheetOp::Bend { .. }
-                    | SheetOp::Rip { .. } => {}
+                    | SheetOp::Rip { .. }
+                    | SheetOp::ContourRoll { .. } => {}
                     SheetOp::CornerSeam {
                         body,
                         a,
@@ -2720,7 +2722,8 @@ impl CadCraftApp {
                                 .map(|q| sk.plane.point_at(q.x, q.y))
                                 .collect();
                             let name =
-                                format!("{} {}", ps.name, crate::part::extrude::entity_key(e));
+                                // `<sketch id>|<entity key>`: what the panel's op needs.
+                                format!("{}|{}", ps.id, crate::part::extrude::entity_key(e));
                             return Some((Pick::Item(name, vec![line.clone()]), vec![line]));
                         }
                     }
@@ -3609,6 +3612,7 @@ pub(super) fn feature_title(f: &Feature) -> &'static str {
             SheetOp::CornerChamfer { .. } => "Corner Chamfer",
             SheetOp::Bend { .. } => "Bend",
             SheetOp::Rip { .. } => "Rip",
+            SheetOp::ContourRoll { .. } => "Contour Roll",
             SheetOp::Unfold { .. } => "Unfold",
             SheetOp::Refold { .. } => "Refold",
         },

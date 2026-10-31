@@ -3658,7 +3658,7 @@ fn sheet_of<'a>(
     let state = metal
         .get(body)
         .ok_or_else(|| User(format!("{body} is not a sheet metal body")))?;
-    if let Some(why) = state.closed_note() {
+    if let Some(why) = state.blocked() {
         return Err(User(why));
     }
     if solids[k].face_names.len() != state.faces {
@@ -3671,12 +3671,15 @@ fn sheet_of<'a>(
 }
 
 /// The open chain of a sketch's own straight lines, in order (Contour Flange).
-fn open_chain(ps: &super::PartSketch) -> Result<Vec<[Real; 2]>, String> {
+fn open_chain(ps: &super::PartSketch, skip: &[&str]) -> Result<Vec<[Real; 2]>, String> {
     use crate::sketch::{Entity, Style};
     let sk = &ps.sketch;
     let mut segs: Vec<([Real; 2], [Real; 2])> = Vec::new();
     for (id, e) in sk.entities() {
-        if sk.style(id) != Style::Normal || ps.is_reference(id) {
+        if sk.style(id) != Style::Normal
+            || ps.is_reference(id)
+            || skip.contains(&super::extrude::entity_key(id).as_str())
+        {
             continue;
         }
         match e {
@@ -3723,6 +3726,22 @@ fn open_chain(ps: &super::PartSketch) -> Result<Vec<[Real; 2]>, String> {
     Ok(pts)
 }
 
+/// The ends of the sketch line with this entity key (sketch coordinates).
+fn sketch_line_ends(ps: &super::PartSketch, key: &str) -> Option<([Real; 2], [Real; 2])> {
+    use crate::sketch::Entity;
+    let sk = &ps.sketch;
+    sk.entities().find_map(|(id, e)| {
+        let Entity::Line { start, end } = e else {
+            return None;
+        };
+        if super::extrude::entity_key(id) != key {
+            return None;
+        }
+        let (a, b) = (sk.point(*start)?, sk.point(*end)?);
+        Some(([a.position.x, a.position.y], [b.position.x, b.position.y]))
+    })
+}
+
 /// A sheet operation's solids and, when the sheet model follows it, the
 /// sheet's new state (a Cut of a sheet no longer in the model has none).
 pub(super) type SheetStep = (
@@ -3756,6 +3775,66 @@ pub(super) fn sheet_op(
     };
     let rv = rule.values();
     match &op.op {
+        SheetOp::ContourRoll {
+            sketch,
+            axis,
+            angle,
+            side,
+            direction,
+            unroll,
+            radius,
+        } => {
+            use super::sheet_metal::{RipSide, RollMethod};
+            rule.validate().map_err(User)?;
+            let ps = sketch_of(sketch)?;
+            let line = |key: &str| {
+                sketch_line_ends(ps, key)
+                    .ok_or_else(|| User(format!("the line {key} is not in the sketch")))
+            };
+            let axis_ends = line(axis)?;
+            let mut skip = vec![axis.as_str()];
+            let method = match unroll {
+                RollMethod::CentroidCylinder => ksm::RollUnroll::Centroid,
+                RollMethod::CustomCylinder { line: l } => {
+                    skip.push(l.as_str());
+                    let (p, q) = line(l)?;
+                    ksm::RollUnroll::Custom(p, q)
+                }
+                RollMethod::DevelopedLength { length } => ksm::RollUnroll::Length(*length),
+                RollMethod::NeutralRadius { radius } => ksm::RollUnroll::Radius(*radius),
+                RollMethod::KFactor { k } => ksm::RollUnroll::KFactor(*k),
+            };
+            let pts = open_chain(ps, &skip).map_err(User)?;
+            let mut rv = rv;
+            if let Some(r) = radius {
+                rv.bend_radius = *r;
+            }
+            let start = match direction {
+                RipSide::Default => 0.0,
+                RipSide::Flipped => -angle,
+                RipSide::Both => -angle * 0.5,
+            };
+            let roll = ksm::contour_roll(
+                &op.id,
+                &rv,
+                &ps.sketch.plane,
+                &pts,
+                *side == RipSide::Flipped,
+                *side == RipSide::Both,
+                axis_ends,
+                start,
+                *angle,
+                method,
+            )
+            .map_err(User)?;
+            let faces = roll.solid.face_names.len();
+            let mut next = solids.to_vec();
+            next.push(roll.solid);
+            Ok((
+                next,
+                Some((op.id.clone(), SheetState::rolled(roll.model, faces))),
+            ))
+        }
         SheetOp::Rip {
             body,
             face,
@@ -3772,6 +3851,9 @@ pub(super) fn sheet_op(
             let state = metal
                 .get(body)
                 .ok_or_else(|| User(format!("{body} is not a sheet metal body")))?;
+            if state.rolled {
+                return Err(User(state.blocked().unwrap_or_default()));
+            }
             if solids[k].face_names.len() != state.faces {
                 return Err(User(
                     "a feature after the sheet changed it: put the Rip before it".into(),
@@ -3937,7 +4019,7 @@ pub(super) fn sheet_op(
         } => {
             rule.validate().map_err(User)?;
             let ps = sketch_of(sketch)?;
-            let pts = open_chain(ps).map_err(User)?;
+            let pts = open_chain(ps, &[]).map_err(User)?;
             if !(width.is_finite() && *width > 0.0) {
                 return Err(User("the width must be positive".into()));
             }
@@ -4425,6 +4507,9 @@ pub(super) fn sheet_flange(
     let state = metal
         .get(&fl.body)
         .ok_or_else(|| User(format!("{} is not a sheet metal body", fl.body)))?;
+    if let Some(why) = state.blocked() {
+        return Err(User(why));
+    }
     if solids[k].face_names.len() != state.faces {
         return Err(User(
             "a feature after the sheet changed it (holes and cuts are not in the sheet model yet): put the flanges before them"

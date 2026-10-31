@@ -1845,7 +1845,7 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::SmPlanned(PlannedKind::ContourRoll))
         .alias(&["SCR"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("A rolled sheet from an open profile turned about an axis (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
+        .tip("A rolled sheet from an open profile turned about an axis of its sketch").spec("5.6-sheet-metal.md"),
     c("sm.lofted_flange", "Lofted Flange", "Преходен фланец", Icon::SmLoftedFlange)
         .run(Action::SmPlanned(PlannedKind::LoftedFlange))
         .alias(&["SLF"])
@@ -2824,7 +2824,8 @@ mod tests {
         assert!(!interface_only(Action::AsmPlanned(Ap::Notch)));
         assert!(!interface_only(Action::AsmPlanned(Ap::InsertFrame)));
         assert!(!interface_only(Action::AsmPlanned(Ap::Pattern)));
-        assert!(interface_only(Action::SmPlanned(PlannedKind::ContourRoll)));
+        assert!(interface_only(Action::SmPlanned(PlannedKind::LoftedFlange)));
+        assert!(!interface_only(Action::SmPlanned(PlannedKind::ContourRoll)));
         assert!(!interface_only(Action::SmPlanned(PlannedKind::CornerRound)));
         assert!(!interface_only(Action::PartPlanned(Pp::Stitch)));
         assert!(!interface_only(Action::Revolve));

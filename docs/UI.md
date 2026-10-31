@@ -311,8 +311,9 @@ ends at) / To Next, Direction Default / Flip / Both. **Unfold** / **Refold**: th
 **Export** (Flat Pattern panel): the flat pattern as DXF (layers OUTER, BEND_UP, BEND_DOWN; lines, arcs and circles as LINE / ARC / CIRCLE). **Flat Pattern**: the view shows the part unfolded with its bend lines (dashed centre lines: up green, down red, each with a note `k UP 90° R2`; bend zones grey) and Flat Pattern Extents Length / Width / Area in Properties (also BOM columns),
 Properties its extents and bends; again goes back. **Rip** (Create): click the face, then the rip point
 (an edge midpoint or vertex on one of its edges) or the start and end; Face Extents takes a bend's round face.
-A converted closed shape (a tube) unfolds only after a rip. **Contour Roll**, **Lofted Flange**
-and **Punch Tool** open their whole panel (selectors take picks, every
+A converted closed shape (a tube) unfolds only after a rip. **Contour Roll** (Create): click a line of the
+open profile, then the axis (a line of the same sketch); Rolled Angle, Side, Direction, Unroll Method.
+**Lofted Flange** and **Punch Tool** open their whole panel (selectors take picks, every
 option works in the panel) with OK disabled: the interface comes first, the geometry after the owner's check.
 **Corner Round** and **Corner Chamfer** (Modify) round or cut the sheet's outside corners through the thickness, in
 the folded part and the flat pattern: click corner edges, or drag a box from empty space (left to right: window,

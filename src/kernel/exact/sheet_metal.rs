@@ -958,7 +958,9 @@ pub fn edge_frame(
 }
 
 mod recognize;
+mod roll;
 pub use recognize::{Recognized, Rip, RipKind, recognize, rip_open};
+pub use roll::{Roll, RollUnroll, contour_roll};
 
 /// Convert a solid to a sheet (SolidWorks / Inventor Convert to Sheet
 /// Metal): `face` is a point on the face that stays put, `bends` points on

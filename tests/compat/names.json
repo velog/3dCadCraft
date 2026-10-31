@@ -1052,5 +1052,25 @@
     "Face1:base:rim.3v1",
     "Face1:base:rim.4v1",
     "Face1:base:top"
+  ],
+  "r55/contour_roll_r55.3dcadcraft": [
+    "ContourRoll1:End",
+    "ContourRoll1:Side:S1",
+    "ContourRoll1:Side:S1",
+    "ContourRoll1:Side:S2",
+    "ContourRoll1:Side:S2",
+    "ContourRoll1:Side:S3",
+    "ContourRoll1:Side:S3",
+    "ContourRoll1:Side:S4",
+    "ContourRoll1:Side:S4",
+    "ContourRoll1:Side:S5",
+    "ContourRoll1:Side:S5",
+    "ContourRoll1:Side:S6",
+    "ContourRoll1:Side:S6",
+    "ContourRoll1:Side:S7",
+    "ContourRoll1:Side:S7",
+    "ContourRoll1:Side:S8",
+    "ContourRoll1:Side:S8",
+    "ContourRoll1:Start"
   ]
 }

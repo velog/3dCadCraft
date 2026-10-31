@@ -49,6 +49,7 @@ impl PlannedKind {
                 | PlannedKind::CornerRound
                 | PlannedKind::CornerChamfer
                 | PlannedKind::Rip
+                | PlannedKind::ContourRoll
         )
     }
 
@@ -325,24 +326,37 @@ impl Planned {
                     true,
                 ),
             ],
-            PlannedKind::ContourRoll => vec![
-                sel(
-                    "profile",
-                    "Profile",
-                    "click the open profile (a sketch chain)",
-                    &[PickKind::SketchCurve],
-                    true,
-                    false,
-                ),
-                sel(
-                    "axis",
-                    "Axis",
-                    "click the axis, a line of the same sketch",
-                    &[PickKind::SketchCurve],
-                    true,
-                    true,
-                ),
-            ],
+            PlannedKind::ContourRoll => {
+                let mut v = vec![
+                    sel(
+                        "profile",
+                        "Profile",
+                        "click the open profile (a sketch chain)",
+                        &[PickKind::SketchCurve],
+                        true,
+                        false,
+                    ),
+                    sel(
+                        "axis",
+                        "Axis",
+                        "click the axis, a line of the same sketch",
+                        &[PickKind::SketchCurve],
+                        true,
+                        true,
+                    ),
+                ];
+                if self.unroll == 1 {
+                    v.push(sel(
+                        "neutral",
+                        "Neutral Line",
+                        "click the line of the neutral cylinder (parallel to the axis)",
+                        &[PickKind::SketchCurve],
+                        true,
+                        true,
+                    ));
+                }
+                v
+            }
             PlannedKind::LoftedFlange => vec![
                 sel(
                     "profile1",
@@ -563,6 +577,43 @@ impl Planned {
                         .flatten(),
                 })
             }
+            PlannedKind::ContourRoll => {
+                use crate::part::sheet_metal::{RipSide, RollMethod};
+                // Sketch curve items are `<sketch id>|<entity key>`.
+                let curve = |key: &str| {
+                    self.items(key)
+                        .first()
+                        .and_then(|(label, _)| label.split_once('|'))
+                        .map(|(s, k)| (s.to_owned(), k.to_owned()))
+                };
+                let side = |s: Side| match s {
+                    Side::Default => RipSide::Default,
+                    Side::Flipped => RipSide::Flipped,
+                    Side::Both => RipSide::Both,
+                };
+                let sketch = curve("profile").or_else(|| curve("axis")).map(|c| c.0);
+                Some(SheetOp::ContourRoll {
+                    sketch: sketch.unwrap_or_default(),
+                    axis: curve("axis").map(|c| c.1).unwrap_or_default(),
+                    angle: self.roll_angle.to_radians(),
+                    side: side(self.roll_side),
+                    direction: side(self.roll_dir),
+                    unroll: match self.unroll {
+                        1 => RollMethod::CustomCylinder {
+                            line: curve("neutral").map(|c| c.1).unwrap_or_default(),
+                        },
+                        2 => RollMethod::DevelopedLength {
+                            length: self.developed_length,
+                        },
+                        3 => RollMethod::NeutralRadius {
+                            radius: self.neutral_radius,
+                        },
+                        4 => RollMethod::KFactor { k: self.k_factor },
+                        _ => RollMethod::CentroidCylinder,
+                    },
+                    radius: self.radius,
+                })
+            }
             PlannedKind::Rip => {
                 // The face item is `<body>|<face>`, its first line the clicked point.
                 let (body, face) = self
@@ -703,6 +754,50 @@ impl Planned {
                 if let Some(e) = edge {
                     p.add("edge", (e.clone(), Vec::new()));
                 }
+                Some(p)
+            }
+            SheetOp::ContourRoll {
+                sketch,
+                axis,
+                angle,
+                side,
+                direction,
+                unroll,
+                radius,
+            } => {
+                use crate::part::sheet_metal::RollMethod;
+                let mut p = Self::new(PlannedKind::ContourRoll, rule);
+                let side_of = |s: &RipSide| match s {
+                    RipSide::Default => Side::Default,
+                    RipSide::Flipped => Side::Flipped,
+                    RipSide::Both => Side::Both,
+                };
+                p.roll_angle = angle.to_degrees();
+                p.roll_side = side_of(side);
+                p.roll_dir = side_of(direction);
+                p.radius = *radius;
+                p.unroll = match unroll {
+                    RollMethod::CentroidCylinder => 0,
+                    RollMethod::CustomCylinder { line } => {
+                        p.add("neutral", (format!("{sketch}|{line}"), Vec::new()));
+                        1
+                    }
+                    RollMethod::DevelopedLength { length } => {
+                        p.developed_length = *length;
+                        2
+                    }
+                    RollMethod::NeutralRadius { radius } => {
+                        p.neutral_radius = *radius;
+                        3
+                    }
+                    RollMethod::KFactor { k } => {
+                        p.k_factor = *k;
+                        4
+                    }
+                };
+                // The profile: any of its lines (the chain is the sketch's own lines).
+                p.add("profile", (format!("{sketch}|"), Vec::new()));
+                p.add("axis", (format!("{sketch}|{axis}"), Vec::new()));
                 Some(p)
             }
             SheetOp::Rip {
@@ -932,7 +1027,7 @@ impl Planned {
                 }
                 1 => {
                     plabel(ui, "Neutral Line");
-                    ui.weak("a sketch line (selector comes with the logic)");
+                    ui.weak("the Neutral Line selector (Input Geometry)");
                     ui.end_row();
                 }
                 _ => {}
@@ -941,8 +1036,8 @@ impl Planned {
             ui.weak("Default (rule)");
             ui.end_row();
             plabel(ui, "Result");
-            ui.weak("neutral radius, length: -")
-                .on_hover_text("The neutral radius and the unrolled length, once computed");
+            ui.weak("in the flat pattern's extents")
+                .on_hover_text("The unrolled length is the rolled angle times the neutral radius: the flat pattern's length along the roll");
             ui.end_row();
         });
         self.bend_properties(ui, rule, false);

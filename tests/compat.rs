@@ -617,6 +617,48 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 55: Contour Roll — an L profile (30..50 along X, then 40 up)
+/// rolled 120° about the Z axis drawn in the same sketch.
+fn contour_roll_r55() -> PartDocument {
+    use cadcraft3d::part::OriginPlane;
+    use cadcraft3d::part::extrude::entity_key;
+    use cadcraft3d::part::sheet_metal::{RipSide, RollMethod, SheetOp, SheetOpFeature};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    let q: Vec<_> = [(30.0, 0.0), (50.0, 0.0), (50.0, 40.0)]
+        .iter()
+        .map(|&(x, y)| sk.add_point(Point2::new(x, y)))
+        .collect();
+    sk.add_line_between(q[0], q[1]).unwrap();
+    sk.add_line_between(q[1], q[2]).unwrap();
+    let (a, b) = (
+        sk.add_point(Point2::new(0.0, -10.0)),
+        sk.add_point(Point2::new(0.0, 60.0)),
+    );
+    let axis = entity_key(sk.add_line_between(a, b).unwrap());
+    let sketch = p.sketches[i].id.clone();
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::ContourRoll {
+        sketch,
+        axis,
+        angle: 120f64.to_radians(),
+        side: RipSide::Default,
+        direction: RipSide::Default,
+        unroll: RollMethod::CentroidCylinder,
+        radius: None,
+    }))
+    .unwrap();
+    p
+}
+
 /// Revision 53: Flange Width Extents Between and Height Extents To — a
 /// 100 × 60 Face, a flange on its y = 0 edge between work planes x = 20 and
 /// x = 70, up to a work plane z = 30.
@@ -3124,6 +3166,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("ContextSplineR51");
             project.add_document("Part1", DocumentData::Part(context_spline_r51()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r55/contour_roll_r55.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("ContourRollR55");
+            project.add_document("Part1", DocumentData::Part(contour_roll_r55()));
             project.save(&f).unwrap();
         }
         let f = root().join("r53/flange_between_r53.3dcadcraft");

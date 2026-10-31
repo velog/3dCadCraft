@@ -1187,6 +1187,58 @@ pub enum SheetOp {
         #[serde(default, skip_serializing_if = "RipSide::is_default")]
         side: RipSide,
     },
+    /// Contour Roll (format revision 55): an open chain of sketch lines,
+    /// thickened and bent at its corners, revolved about a line of the same
+    /// sketch; its flat pattern is the chain developed, as long as the angle
+    /// times the neutral radius.
+    ContourRoll {
+        /// The sketch.
+        sketch: String,
+        /// The axis: a line of the sketch (entity key; not part of the profile).
+        axis: String,
+        /// Rolled Angle (radians).
+        angle: Real,
+        /// The thickness: on the profile's default side, the other, or centred.
+        #[serde(default, skip_serializing_if = "RipSide::is_default")]
+        side: RipSide,
+        /// The roll's direction about the axis: Default, Flipped, Both (half each way).
+        #[serde(default, skip_serializing_if = "RipSide::is_default")]
+        direction: RipSide,
+        /// Unroll Method.
+        #[serde(default)]
+        unroll: RollMethod,
+        /// Bend radius at the profile's corners; `None`: the rule's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<Real>,
+    },
+}
+
+/// A Contour Roll's Unroll Method: where its neutral cylinder lies.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum RollMethod {
+    /// Through the section's centroid.
+    #[default]
+    CentroidCylinder,
+    /// A line of the sketch, parallel to the axis (entity key).
+    CustomCylinder {
+        /// The line.
+        line: String,
+    },
+    /// The unrolled length given.
+    DevelopedLength {
+        /// Length (mm).
+        length: Real,
+    },
+    /// The neutral radius given.
+    NeutralRadius {
+        /// Radius (mm).
+        radius: Real,
+    },
+    /// Inner radius + K · thickness (a profile of one line).
+    KFactor {
+        /// The K-factor.
+        k: Real,
+    },
 }
 
 /// Rip Type.
@@ -1324,6 +1376,7 @@ impl SheetOpFeature {
             SheetOp::CornerChamfer { .. } => "CornerChamfer",
             SheetOp::Bend { .. } => "Bend",
             SheetOp::Rip { .. } => "Rip",
+            SheetOp::ContourRoll { .. } => "ContourRoll",
         }
     }
 
@@ -1332,6 +1385,7 @@ impl SheetOpFeature {
         match &self.op {
             SheetOp::Fold { sketch, .. }
             | SheetOp::Contour { sketch, .. }
+            | SheetOp::ContourRoll { sketch, .. }
             | SheetOp::Cut { sketch, .. } => Some(sketch),
             _ => None,
         }
@@ -1339,7 +1393,10 @@ impl SheetOpFeature {
 
     /// The body it creates (Contour Flange).
     pub fn creates_body(&self) -> bool {
-        matches!(self.op, SheetOp::Contour { .. })
+        matches!(
+            self.op,
+            SheetOp::Contour { .. } | SheetOp::ContourRoll { .. }
+        )
     }
 
     /// Its numeric fields (parameters).
@@ -1552,6 +1609,9 @@ impl SheetOpFeature {
                 RipType::PointToPoint => format!("Rip of {} point to point", face.face),
                 RipType::FaceExtents => format!("Rip: {} removed", face.face),
             },
+            SheetOp::ContourRoll { sketch, angle, .. } => {
+                format!("Contour Roll of {sketch}, {:.1}°", angle.to_degrees())
+            }
         }
     }
 }
@@ -1576,6 +1636,9 @@ pub struct SheetState {
     /// A converted shape that closes on itself: no flat pattern until a Rip
     /// opens it (`model` is then the sheet walked without the closing bends).
     pub closed: Option<std::sync::Arc<ClosedSheet>>,
+    /// A Contour Roll: `model` is its flat pattern's (the profile developed),
+    /// not its rolled shape, so no further sheet feature works on it yet.
+    pub rolled: bool,
 }
 
 /// A converted sheet that closes on itself (spec 5.6 §6.1g): the body stays
@@ -1614,7 +1677,26 @@ impl SheetState {
             extents: Default::default(),
             flat_brep: Default::default(),
             closed: None,
+            rolled: false,
         }
+    }
+
+    /// A Contour Roll's state: `model` gives its flat pattern only.
+    pub fn rolled(model: ksm::SheetModel, faces: usize) -> Self {
+        Self {
+            rolled: true,
+            ..Self::new(model, faces)
+        }
+    }
+
+    /// Why no further sheet feature can work on this sheet (closed, rolled).
+    pub fn blocked(&self) -> Option<String> {
+        self.closed_note().or_else(|| {
+            self.rolled.then(|| {
+                "not yet: sheet metal features on a Contour Roll (its flat pattern works)"
+                    .to_owned()
+            })
+        })
     }
 
     /// A converted sheet that closes on itself (no flat pattern).
