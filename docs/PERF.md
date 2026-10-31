@@ -85,6 +85,7 @@ Target times for interactive work:
 | Derive Update: the derived 36-hole plate after its source grew 100 → 120 (text again, faces matched by geometry, `update_derive`) | 400 ms | 59.4 ms release (2026-10-31, under load) |
 | Make Components: a 36-hole plate master made a placed component (`assembly::make::make_components`) | 300 ms | 69.8 ms release (2026-10-31, under load) |
 | Make Components update: the component follows the master that grew (`assembly::make::update_derived`) | 400 ms | 60.8 ms release (2026-10-31, under load) |
+| Assembly features: a cabinet side cut by 32 shelf-pin tools, one occurrence's shown body (`assembly::features::cut`; tools apart joined by `join_apart` — 32 Booleans took 531 ms) | 300 ms | 226.6 ms release (2026-10-31, under load) |
 | Adaptive part during a drag: one drag step of a wall pulling a 100 mm plate 20 mm longer (`assembly::adapt::adapt_dragged`) | 30 ms | 2.6 ms release (2026-10-30) |
 | Project Geometry of another component's whole face: a 200 mm flange's top with 16 holes, every edge of its 17 loops (`assembly::context::face_outline` + `project_context_edges`) | 100 ms | 3.3 ms release (2026-10-30, under load) |
 | Adaptivity: a plate free in length mated to two walls 100 mm apart, size and place solved together (`assembly::adapt`, spec 3.10 T4) | 50 ms | 1.8 ms release (2026-10-29, under load) |

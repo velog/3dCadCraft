@@ -245,6 +245,11 @@ impl CadCraftApp {
             }
             return;
         }
+        // Assembly features cut it (spec 3.10 §3.8): the cut copy.
+        if let Some(cut) = self.asm_cut(&[o.id], o.component, place) {
+            super::material::add_part_meshes_with(g, &cut, Some(place), alpha, &over);
+            return;
+        }
         self.with_part(o.component, |part| {
             super::material::add_part_meshes_with(g, part, Some(place), alpha, &over)
         });

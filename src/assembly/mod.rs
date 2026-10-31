@@ -14,6 +14,7 @@ pub mod bom;
 pub mod context;
 pub mod copy;
 pub mod create;
+pub mod features;
 pub mod frame;
 pub mod import;
 pub mod interference;

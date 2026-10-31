@@ -376,6 +376,10 @@ pub struct AssemblyDocument {
     /// on the top one, the file it follows. Older builds ignore it (a plain assembly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import: Option<crate::assembly::import::AsmSource>,
+    /// Assembly features (spec 3.10 §3.8): the tools part and what each of
+    /// its bodies cuts. Older builds ignore it (no cuts shown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<crate::assembly::features::AsmFeatures>,
 }
 
 /// The payload of a document.
@@ -685,6 +689,7 @@ mod tests {
             appearances: Vec::new(),
             frames: Vec::new(),
             import: None,
+            features: None,
         })
     }
 

@@ -61,6 +61,9 @@ pub enum Action {
     AsmPlace,
     /// Assemble › Free Move.
     AsmFreeMove,
+    /// Assemble › Assembly Features: the tools part edited in place (spec
+    /// 3.10 §3.8).
+    AsmFeatures,
     /// Assemble › Free Rotate.
     AsmFreeRotate,
     /// Assemble › Grounded: toggle on the selected occurrences.
@@ -762,7 +765,11 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             ),
             panel(
                 "Productivity",
-                vec![c("asm.make_layout"), c("asm.substitutes")],
+                vec![
+                    c("asm.make_layout"),
+                    c("asm.substitutes"),
+                    c("asm.features"),
+                ],
             ),
             panel("Simplification", vec![c("asm.simplify").large()]),
             panel(

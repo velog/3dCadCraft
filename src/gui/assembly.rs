@@ -95,6 +95,8 @@ pub(super) struct AsmUi {
     pub derive_source: Option<(DocRef, String)>,
     /// The bodies an edited derived feature leaves out (kept by Edit).
     pub derive_exclude: Vec<String>,
+    /// Occurrences cut by assembly features: their cut copies.
+    pub cuts: super::asm_features::CutCache,
     /// Replace's new component and the name its occurrences get.
     pub replace_with: Option<(DocRef, String)>,
     /// The name the placed occurrences get (`bracket` → `bracket:1`).
@@ -602,11 +604,16 @@ impl CadCraftApp {
             self.scene_dirty = true;
             return;
         }
+        let was_tools = self.in_place_now().map(|ip| ip.document);
         self.asm.in_place = None;
         if let Some(a) = self.asm.came_from.take() {
             self.activate_document(a);
             if let Some(m) = place {
                 self.keep_view(view, m);
+            }
+            // Back from the tools part: its new bodies cut what they reach.
+            if let Some(d) = was_tools {
+                self.asm_features_refresh(d);
             }
             // What was built on other components follows them.
             if self.is_assembly() {

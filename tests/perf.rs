@@ -2660,6 +2660,49 @@ fn speed_budgets() {
         }
     }
 
+    // Assembly features (spec 3.10 §3.8): a cabinet side (18 × 300 × 600)
+    // cut by a tool of 2 rows × 16 shelf-pin cylinders, as one occurrence's
+    // shown body (the GUI caches it per occurrence).
+    {
+        use cadcraft3d::assembly::features;
+        use cadcraft3d::kernel::Transform3;
+        use cadcraft3d::part::OriginPlane;
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let side = PartDocument::with_box("Box1", [18.0, 300.0, 600.0]).unwrap();
+        let mut tp = PartDocument::default();
+        let i = tp
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::YZ), &o)
+            .unwrap();
+        let plane = tp.sketches[i].sketch.plane.clone();
+        for k in 0..32 {
+            let y = if k < 16 { 37.0 } else { 263.0 };
+            let z = 100.0 + 25.0 * (k % 16) as Real;
+            let c = plane.project(&Point3::new(0.0, y, z));
+            tp.sketches[i].sketch.add_circle(c, 2.5).unwrap();
+        }
+        let rg = tp.sketches[i].sketch.regions();
+        let pins: Vec<ProfileRef> = rg
+            .iter()
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let mut e = ExtrudeFeature::new(pins, 1000.0);
+        e.direction = ExtentDirection::Symmetric;
+        tp.add_extrude(i, e).unwrap();
+        let tools = features::tools(&tp);
+        let at = Transform3::translation(418.0, 0.0, 0.0);
+        rows.push((
+            "assembly features: a cabinet side cut by 32 shelf-pin tools (one occurrence)",
+            300.0,
+            median_ms(3, || {
+                assert!(features::cut(&side, &at, &tools).unwrap().is_some());
+            }),
+        ));
+    }
+
     // Assembly picking (docs/spec/3.1, A1): the occurrence under the cursor
     // every frame — 100 occurrences of the 36-hole plate, the ray taken into
     // each occurrence's frame against the part's cached triangles.

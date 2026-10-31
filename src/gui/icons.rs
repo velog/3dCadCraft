@@ -436,6 +436,8 @@ pub enum Icon {
     AsmReplace,
     /// Make Layout (a sketch sheet with blocks).
     MakeLayout,
+    /// Assembly Features: a drilled hole through two plates.
+    AsmFeatures,
     /// Simplify (an assembly into one box).
     Simplify,
     /// Create Derived Substitutes (an assembly to one part).
@@ -2434,6 +2436,13 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.head((9.5, 3.2), (1.0, 0.2), hot);
             p.arc(8.0, 8.0, 5.0, 20.0, 110.0, hot);
             p.head((6.5, 12.8), (-1.0, -0.2), hot);
+        }
+        AsmFeatures => {
+            p.block([1.0, 4.0, 6.0, 9.0, 1.5], ink, tint(ink, 40));
+            p.block([9.0, 4.0, 6.0, 9.0, 1.5], acc, soft);
+            p.dashed((0.5, 8.5), (15.5, 8.5), hot);
+            p.circle(4.0, 8.5, 1.3, hot);
+            p.circle(12.0, 8.5, 1.3, hot);
         }
         MakeLayout => {
             p.rect(1.5, 2.0, 14.5, 14.0, ink);

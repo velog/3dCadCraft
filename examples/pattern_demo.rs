@@ -94,6 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             appearances: Vec::new(),
             frames: Vec::new(),
             import: None,
+            features: None,
         }),
     );
     project.save(std::path::Path::new(&path))?;

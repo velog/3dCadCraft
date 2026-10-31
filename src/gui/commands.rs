@@ -2017,6 +2017,13 @@ pub static COMMANDS: &[Command] = &[
         .env(ASSEMBLY)
         .tip("Hides every relationship glyph")
         .todo("3.2"),
+    c("asm.features", "Assembly Features", "Елементи на сглобката", Icon::AsmFeatures)
+        .run(Action::AsmFeatures)
+        .alias(&["AF"])
+        .at(&[A_PRODUCTIVITY])
+        .env(ASSEMBLY)
+        .tip("Cuts made in the assembly only (holes through several components): sketch and extrude in the tools part edited in place; each body cuts the components it reaches")
+        .spec("3.10-top-down.md"),
     ap("asm.make_layout", "Make Layout", "Създаване на оформление", Icon::MakeLayout, Ap::MakeLayout)
         .alias(&["MKL"])
         .at(&[A_PRODUCTIVITY]),

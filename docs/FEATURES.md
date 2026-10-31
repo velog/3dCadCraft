@@ -936,6 +936,10 @@ Finds the overlapping volumes between components, shows them in red and gives th
 - **Derive:** a part derived from another, e.g. a casting mould from a model (🟡 2026-10-31: Derive Part — bodies of a part of
   this file or a part file, each kept or joined, scaled, mirrored, following the source on Update; Derive Assembly, chains, Edit Feature and Break Link).
 - **Skeleton / layout:** one master skeleton drives the whole product.
+- **Assembly features:** holes and cuts made in the assembly only, through several components (🟡 2026-10-31:
+  Assembly Features — a hidden tools part edited in place, its bodies cut the components they reach,
+  participants removed / added in the browser; shown in the view, picking / analyses / drawings ⬜).
+- **Linked parameters:** a master parameter part or a CSV sheet drives the parts' sizes (✅ 2026-10-31).
 
 ## 3.11 Simplification — ⬜ · M
 
