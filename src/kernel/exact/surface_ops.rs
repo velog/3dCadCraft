@@ -76,10 +76,16 @@ pub fn bridge_edges(
 }
 
 /// **Boundary Patch** of a closed loop of `s`'s edges, each picked by a point on it: a new
-/// surface body `name` (one face `<name>:Patch`, planar when the loop is).
-pub fn patch_edges(s: &ExactSolid, at: &[Point3], name: &str) -> Result<ExactSolid, String> {
+/// surface body `name` (one face `<name>:Patch`, planar when the loop is); `tangent`: G1 to
+/// the faces the loop bounds, with that weight.
+pub fn patch_edges(
+    s: &ExactSolid,
+    at: &[Point3],
+    tangent: Option<Real>,
+    name: &str,
+) -> Result<ExactSolid, String> {
     let pts: Vec<_> = at.iter().map(v3).collect();
-    let body = guarded("patch", || sk::patch_edges(&s.body, &pts))?;
+    let body = guarded("patch", || sk::patch_edges_tangent(&s.body, &pts, tangent))?;
     Ok(named(
         body,
         &[],

@@ -251,6 +251,8 @@ impl CadCraftApp {
             }
             PartPlanned::Patch => {
                 let solid = d.index(t, "Output") == 1;
+                // Condition: Tangent (G1) with weight 1 (Smooth (G2) is disabled).
+                let tangent = (d.index(t, "Condition") == 1).then_some(1.0);
                 let picks = d.items_of("boundary");
                 let sketch = picks.iter().find_map(|(item, at)| match item {
                     SelItem::Sketch(i) => Some((*i, *at)),
@@ -273,6 +275,7 @@ impl CadCraftApp {
                         sketch: Some(ps.id.clone()),
                         profile: Some(crate::part::ProfileRef::of(region, region.interior_point())),
                         solid,
+                        tangent: None,
                     })
                 } else {
                     // Automatic Edge Chain: a picked free edge brings the rest of its loop.
@@ -284,7 +287,12 @@ impl CadCraftApp {
                     if edges.is_empty()
                         && let Some(BodyOp::Patch(o)) = old
                     {
-                        return Ok(BodyOp::Patch(o.clone()));
+                        // The feature's loop with the options as the panel has them now.
+                        return Ok(BodyOp::Patch(PatchOp {
+                            solid,
+                            tangent: if o.sketch.is_some() { None } else { tangent },
+                            ..o.clone()
+                        }));
                     }
                     edges.dedup();
                     BodyOp::Patch(PatchOp {
@@ -292,6 +300,7 @@ impl CadCraftApp {
                         sketch: None,
                         profile: None,
                         solid,
+                        tangent,
                     })
                 }
             }
@@ -727,6 +736,10 @@ impl CadCraftApp {
                         RuledKind::Sweep => 2,
                     },
                 );
+            }
+            BodyOp::Patch(o) => {
+                d.set_index(0, "Output", usize::from(o.solid));
+                d.set_index(0, "Condition", usize::from(o.tangent.is_some()));
             }
             BodyOp::Trim(o) => d.set_check(0, "Invert Selection", o.invert),
             BodyOp::Import(o) => {

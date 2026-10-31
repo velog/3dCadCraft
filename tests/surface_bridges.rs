@@ -357,6 +357,23 @@ fn patch_of_a_hole_in_a_wavy_surface() {
         }
     }
     assert_eq!(hole.len(), 4, "the hole's arcs");
+    // Tangent (G1) on a round hole is refused for now (a four-sided patch bends at its corners
+    // there), and nothing changes.
+    {
+        let mut q = p.clone();
+        let n = q.features.len();
+        assert!(
+            q.add_body_op(BodyOpFeature::new(BodyOp::Patch(PatchOp {
+                edges: hole.clone(),
+                sketch: None,
+                profile: None,
+                solid: false,
+                tangent: Some(1.0),
+            })))
+            .is_err()
+        );
+        assert_eq!(q.features.len(), n);
+    }
     op(
         &mut p,
         BodyOp::Patch(PatchOp {
@@ -364,6 +381,7 @@ fn patch_of_a_hole_in_a_wavy_surface() {
             sketch: None,
             profile: None,
             solid: false,
+            tangent: None,
         }),
     );
     let patch = p

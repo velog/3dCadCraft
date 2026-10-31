@@ -1387,6 +1387,9 @@ impl Planned {
             | (Planned::Part(PartPlanned::MakeComponents), "Include parameters", None) => {
                 Some("Comes later (spec 3.10 §3.6)")
             }
+            (Planned::Part(PartPlanned::Patch), "Condition", Some("Smooth (G2)")) => Some(
+                "Comes later: Contact (G0) and Tangent (G1) are built (spec 5.4 Boundary Patch)",
+            ),
             (Planned::Part(PartPlanned::CopyObject), "Create New", Some("Group")) => Some(
                 "Needs the construction environment, not available yet (spec 2.13 Copy Object)",
             ),

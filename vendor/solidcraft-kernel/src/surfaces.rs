@@ -394,7 +394,25 @@ pub(crate) fn edge_near(body: &Body, p: Vec3) -> Option<mt::Edge> {
 /// B-spline height field over the loop's plane ([`crate::fill`]; loops that do not bound one are
 /// refused). Its history is over `[body]`: the face is new, its edges the body's own.
 pub fn patch_edges(body: &Body, at: &[Vec3]) -> Result<Body> {
+    patch_edges_tangent(body, at, None)
+}
+
+/// [`patch_edges`] with the Tangent condition (`Some(weight)`): the patch leaves every edge of
+/// the loop going on along the face it bounds (G1), from a Coons patch with cubic Hermite blends
+/// whose cross-boundary derivatives are those faces' directions past their edges (`weight` × the
+/// width across). Only a loop of four sides (four edges, or four runs between corners) for now.
+/// (3DCadCraft addition.)
+pub fn patch_edges_tangent(body: &Body, at: &[Vec3], tangent: Option<f64>) -> Result<Body> {
     body.require_brep("patch")?;
+    if let Some(w) = tangent {
+        if at.is_empty() || at.len() > 10_000 {
+            return Err(KernelError::Invalid("pick the edges of a closed loop".into()));
+        }
+        return guard("patch", || {
+            let chain = picked_loop(body, at)?;
+            four_sided_patch_with(body, &chain, Some(w))
+        });
+    }
     if at.is_empty() || at.len() > 10_000 {
         return Err(KernelError::Invalid("pick the edges of a closed loop".into()));
     }
@@ -760,7 +778,7 @@ impl Reach {
         let row = |body: &Body, chain: &[mt::Edge], q: &[Vec3], other: &[Vec3], w: Option<f64>| -> Result<Vec<Vec3>> {
             match w {
                 Some(w) => {
-                    let out = outward_row(body, chain, q)?;
+                    let out = outward_row(body, chain, q, BRIDGE_POINTS)?;
                     Ok(q.iter().zip(out).map(|(p, d)| *p + d * (w * dist / 3.0)).collect())
                 }
                 None => {
@@ -789,7 +807,7 @@ fn centroid(p: &[Vec3]) -> Vec3 {
 /// Unit directions out of the surface past its edge at each point of a chain's row (`pts`, as
 /// [`side_points`] makes them: BRIDGE_POINTS per edge): the edge's direction as its face's
 /// boundary runs it (the face on its left) crossed with the face's normal.
-fn outward_row(body: &Body, chain: &[mt::Edge], pts: &[Vec3]) -> Result<Vec<Vec3>> {
+fn outward_row(body: &Body, chain: &[mt::Edge], pts: &[Vec3], per_edge: usize) -> Result<Vec<Vec3>> {
     let mut info: Vec<(mt::Surface, bool)> = Vec::new();
     for e in chain {
         let found = body.solid.face_iter().find_map(|f| {
@@ -799,28 +817,89 @@ fn outward_row(body: &Body, chain: &[mt::Edge], pts: &[Vec3]) -> Result<Vec<Vec3
                 .find(|we| we.id() == e.id())
                 .map(|we| (f.oriented_surface(), we.front().id() == e.front().id()))
         });
+        // A piece cut from a body edge (a side split where it was needed): the face whose
+        // boundary edge runs through the piece's middle, the same way or not by their directions.
+        let found = found.or_else(|| {
+            let c = e.oriented_curve();
+            let (t0, t1) = c.range_tuple();
+            let tm = 0.5 * (t0 + t1);
+            let (mid, dm) = (c.subs(tm), c.der(tm));
+            body.solid.face_iter().find_map(|f| {
+                f.boundaries().iter().flat_map(|w| w.edge_iter()).find_map(|we| {
+                    let wc = we.oriented_curve();
+                    if !on_curve(&wc, mid, 1e-4) {
+                        return None;
+                    }
+                    let (a, b) = wc.range_tuple();
+                    let t = wc.search_nearest_parameter(mid, Some(0.5 * (a + b)), 100)?;
+                    Some((f.oriented_surface(), wc.der(t).dot(dm) > 0.0))
+                })
+            })
+        });
         info.push(found.ok_or_else(|| KernelError::Invalid("a section edge bounds no face".into()))?);
     }
     let n = info.len();
     let last = pts.len().saturating_sub(1);
-    let mut out = Vec::with_capacity(pts.len());
+    let edge_of = |i: usize| (i / per_edge.max(1)).min(n.saturating_sub(1));
+    let on = |k: usize, uv: (f64, f64), p: &Vec3| -> bool {
+        // A trim edge is a fitted curve, up to a few hundredths off its face.
+        info.get(k).is_some_and(|(s, _)| mt::ParametricSurface::subs(s, uv.0, uv.1).distance(p3(*p)) <= 0.05)
+    };
+    let search = |k: usize, p: &Vec3, hint: Option<(f64, f64)>| -> Option<(f64, f64)> {
+        let s = &info.get(k)?.0;
+        match hint {
+            Some(h) => s.search_nearest_parameter(p3(*p), Some(h), 30),
+            None => s.search_nearest_parameter(p3(*p), None, 100),
+        }
+        .filter(|uv| on(k, *uv, p))
+    };
     // Each search starts from the previous point's parameters (along one edge they move a
-    // little): without a hint the kernel scans the whole surface first (1 s for a loft).
+    // little): without a hint the kernel scans the whole surface first (1 s for a loft), and it
+    // can also land on the wrong part of a wavy surface (the patch of a hole shot out as a spike)
+    // — such a point is searched again from its neighbour's parameters.
+    let mut uvs: Vec<Option<(f64, f64)>> = vec![None; pts.len()];
     let mut hint: Option<(usize, (f64, f64))> = None;
     for (i, p) in pts.iter().enumerate() {
-        let k = (i / BRIDGE_POINTS).min(n.saturating_sub(1));
-        let (surf, same) = info.get(k).ok_or_else(|| KernelError::Invalid("a section has no edges".into()))?;
-        // The run's direction here from the points either side (one side at the ends).
-        let (i0, i1) = (i.saturating_sub(1), (i + 1).min(last));
-        let t = (pts[i1] - pts[i0]).normalized().ok_or_else(|| KernelError::Invalid("a section edge has no direction".into()))?;
-        let t = if *same { t } else { -t };
+        let k = edge_of(i);
         let start = hint.filter(|(e, _)| *e == k).map(|(_, uv)| uv);
-        let found = start
-            .and_then(|uv| surf.search_nearest_parameter(p3(*p), Some(uv), 30))
-            .filter(|uv| mt::ParametricSurface::subs(surf, uv.0, uv.1).distance(p3(*p)) <= 1e-3)
-            .or_else(|| surf.search_nearest_parameter(p3(*p), None, 100));
-        let (u, v) = found.ok_or_else(|| KernelError::Failed("a point of a section edge is not on its surface".into()))?;
-        hint = Some((k, (u, v)));
+        let found = start.and_then(|h| search(k, p, Some(h))).or_else(|| search(k, p, None));
+        if let Some(uv) = found {
+            hint = Some((k, uv));
+        }
+        uvs[i] = found;
+    }
+    for i in (0..pts.len()).rev() {
+        if uvs[i].is_none() && i < last && edge_of(i + 1) == edge_of(i) {
+            uvs[i] = uvs[i + 1].and_then(|h| search(edge_of(i), &pts[i], Some(h)));
+        }
+        if uvs[i].is_none() {
+            // The nearest point whatever its distance (an edge further off its face).
+            uvs[i] = info.get(edge_of(i)).and_then(|(s, _)| s.search_nearest_parameter(p3(pts[i]), None, 100));
+        }
+    }
+    let mut out = Vec::with_capacity(pts.len());
+    for (i, uv) in uvs.iter().enumerate() {
+        let k = edge_of(i);
+        let (surf, same) = info.get(k).ok_or_else(|| KernelError::Invalid("a section has no edges".into()))?;
+        // The edge's own direction here (the points' order lies where a tiny piece of a trimmed
+        // rim runs back), as the chain runs it, then as the face's boundary does.
+        let c = chain[k].oriented_curve();
+        let (t0, t1) = c.range_tuple();
+        let ts = (0..=16)
+            .map(|j| t0 + (t1 - t0) * j as f64 / 16.0)
+            .min_by(|a, b| c.subs(*a).distance(p3(pts[i])).total_cmp(&c.subs(*b).distance(p3(pts[i]))))
+            .unwrap_or(t0);
+        let tp = c.search_nearest_parameter(p3(pts[i]), Some(ts), 50).unwrap_or(ts).clamp(t0.min(t1), t0.max(t1));
+        let dv = c.der(tp);
+        let t = Vec3::new(dv.x, dv.y, dv.z)
+            .normalized()
+            .or_else(|| {
+                let (i0, i1) = (i.saturating_sub(1), (i + 1).min(last));
+                (pts[i1] - pts[i0]).normalized()
+            })
+            .ok_or_else(|| KernelError::Invalid("a section edge has no direction".into()))?;
+        let t = if *same { t } else { -t };
+        let (u, v) = uv.ok_or_else(|| KernelError::Failed("a point of a section edge is not on its surface".into()))?;
         let nn = surf.normal(u, v);
         let d = t
             .cross(Vec3::new(nn.x, nn.y, nn.z))
@@ -933,12 +1012,17 @@ fn interpolated_at(pts: &[Vec3], params: &[f64]) -> Result<mt::BSplineCurve<mt::
 /// cut edge are new edges on its curve (Stitch cuts the surface's own edge there to match).
 /// `None` when a cut fails or two corners fall on one point.
 fn cut_at(lp: &[mt::Edge], other: &[Vec<mt::Edge>]) -> Option<Vec<Vec<mt::Edge>>> {
-    let tol = solidcraft_geom::LINEAR_TOL.max(1e-6);
     let corners: Vec<mt::Point3> = other.iter().filter_map(|side| side.first().map(|e| e.front().point())).collect();
+    cut_at_points(lp, &corners)
+}
+
+/// [`cut_at`] at the loop's points nearest `corners`.
+fn cut_at_points(lp: &[mt::Edge], corners: &[mt::Point3]) -> Option<Vec<Vec<mt::Edge>>> {
+    let tol = solidcraft_geom::LINEAR_TOL.max(1e-6);
     // The nearest point of the loop to each corner: (edge index, parameter on its absolute curve).
     let mut cuts: Vec<Vec<f64>> = vec![Vec::new(); lp.len()];
     let mut at_vertex: Vec<mt::VertexID> = Vec::new();
-    for q in &corners {
+    for q in corners {
         let mut best: Option<(f64, usize, f64)> = None;
         for (k, e) in lp.iter().enumerate() {
             let abs = if e.orientation() { e.clone() } else { e.inverse() };
@@ -1157,22 +1241,69 @@ fn picked_chain(body: &Body, at: &[Vec3]) -> Result<Vec<mt::Edge>> {
 /// patch of its sides, on edges of its own (its boundary curves, between the loop's vertices).
 /// Its history is over `[body]`.
 fn four_sided_patch(body: &Body, chain: &[mt::Edge]) -> Result<Body> {
+    four_sided_patch_with(body, chain, None)
+}
+
+/// [`four_sided_patch`]; `tangent`: G1 to the faces the loop bounds (see
+/// [`patch_edges_tangent`]).
+fn four_sided_patch_with(body: &Body, chain: &[mt::Edge], tangent: Option<f64>) -> Result<Body> {
+    // Tangent of a loop without real corners (a round hole): a four-sided patch must bend at
+    // its corners there (the rim cannot be both its side and its cross direction) and came out
+    // creased or wrinkled — refused until an n-sided G1 fill exists.
+    if tangent.is_some() && smooth_loop(chain) {
+        return Err(KernelError::Invalid(
+            "not supported yet: the Tangent condition on a loop without corners (a round hole); use Contact".into(),
+        ));
+    }
     let sides: Vec<Vec<mt::Edge>> = if chain.len() == 4 {
         chain.iter().map(|e| vec![e.clone()]).collect()
     } else {
         loop_sides(chain).ok_or_else(|| KernelError::Invalid("the loop has no corners".into()))?
     };
     if sides.len() != 4 {
-        return Err(KernelError::Invalid(format!("a loop of {} sides is not filled from its sides", sides.len())));
+        return Err(KernelError::Invalid(format!(
+            "a loop of {} sides is not filled from its sides{}",
+            sides.len(),
+            if tangent.is_some() { " (Tangent needs a loop of four sides yet)" } else { "" }
+        )));
     }
+    four_sided_from(body, sides, tangent)
+}
+
+/// The direction an edge runs over its first (`end`: last) 20 % (a chord): a hook a fitted trim
+/// curve can have right at its end does not count.
+fn span_direction(e: &mt::Edge, end: bool) -> Option<Vec3> {
+    let mut s = crate::plane_fit::EdgeSampler::new(e)?;
+    let (p, q) = if end { (s.at(0.8)?, s.at(1.0)?) } else { (s.at(0.0)?, s.at(0.2)?) };
+    (q - p).normalized()
+}
+
+/// Whether a loop has no real corner: no two edges longer than 5 % of it meet at more than 45°
+/// (chords over a fifth of each, so a hook a fitted trim curve has at its end does not count).
+fn smooth_loop(chain: &[mt::Edge]) -> bool {
+    let len = |e: &mt::Edge| chain_points(std::slice::from_ref(e)).map(|p| p.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>()).unwrap_or(0.0);
+    let lens: Vec<f64> = chain.iter().map(len).collect();
+    let total: f64 = lens.iter().sum();
+    let n = chain.len();
+    !(0..n).any(|k| {
+        let j = (k + 1) % n;
+        lens[k] > 0.05 * total
+            && lens[j] > 0.05 * total
+            && matches!((span_direction(&chain[k], true), span_direction(&chain[j], false)), (Some(x), Some(y)) if x.dot(y) < (45f64).to_radians().cos())
+    })
+}
+
+/// The patch of four sides (see [`four_sided_patch`]).
+fn four_sided_from(body: &Body, sides: Vec<Vec<mt::Edge>>, tangent: Option<f64>) -> Result<Body> {
     // The Coons patch of the four sides (each side a spline through 48 of its points), sampled on
     // a grid and interpolated row by row, then column by column (a cubic tensor B-spline). Its
     // edges are the surface's own boundary curves, so they lie on it exactly (truck's
     // `by_boundary` only averages control points: a circle in four arcs collapsed to nothing).
+    let per_edge = |s: &[mt::Edge]| (48 / s.len()).max(8);
     let rows: Vec<Vec<Vec3>> = sides
         .iter()
         .map(|s| {
-            let mut p = chain_points_n(s, (48 / s.len()).max(8))?;
+            let mut p = chain_points_n(s, per_edge(s))?;
             if let (Some(f), Some(l), Some(k)) = (s.first(), s.last(), p.len().checked_sub(1)) {
                 p[0] = from_p3(f.front().point());
                 p[k] = from_p3(l.back().point());
@@ -1183,11 +1314,87 @@ fn four_sided_patch(body: &Body, chain: &[mt::Edge]) -> Result<Body> {
     let c: Vec<mt::BSplineCurve<mt::Point3>> = rows.iter().map(|r| interpolated(r)).collect::<Result<_>>()?;
     let at = |k: usize, t: f64| -> Vec3 { let p = c[k].subs(t.clamp(0.0, 1.0)); Vec3::new(p.x, p.y, p.z) };
     let (p00, p10, p11, p01) = (at(0, 0.0), at(1, 0.0), at(2, 0.0), at(3, 0.0));
+    // Tangent: the directions out of each bounding face past its side (as rows, interpolated
+    // like the sides themselves), so the patch leaves each side along its neighbour.
+    let outs: Option<Vec<mt::BSplineCurve<mt::Point3>>> = match tangent {
+        None => None,
+        Some(_) => Some(
+            sides
+                .iter()
+                .zip(&rows)
+                .map(|(s, r)| {
+                    let d = outward_row(body, s, r, per_edge(s))?;
+                    // Vectors interpolated as points, at the side's own parameters.
+                    interpolated_at(&d, &chord_params(r)?)
+                })
+                .collect::<Result<_>>()?,
+        ),
+    };
+    let out = |k: usize, t: f64| -> Vec3 {
+        outs.as_ref().map_or(Vec3::new(0.0, 0.0, 0.0), |o| {
+            let p = o[k].subs(t.clamp(0.0, 1.0));
+            Vec3::new(p.x, p.y, p.z)
+        })
+    };
+    let w = tangent.unwrap_or(0.0);
     let coons = |u: f64, v: f64| -> Vec3 {
         let (b, t) = (at(0, u), at(2, 1.0 - u));
         let (l, r) = (at(3, 1.0 - v), at(1, v));
-        b * (1.0 - v) + t * v + l * (1.0 - u) + r * u
-            - (p00 * ((1.0 - u) * (1.0 - v)) + p10 * (u * (1.0 - v)) + p11 * (u * v) + p01 * ((1.0 - u) * v))
+        if tangent.is_none() {
+            return b * (1.0 - v) + t * v + l * (1.0 - u) + r * u
+                - (p00 * ((1.0 - u) * (1.0 - v)) + p10 * (u * (1.0 - v)) + p11 * (u * v) + p01 * ((1.0 - u) * v));
+        }
+        // Cubic Hermite blends: h0 / h1 weight the boundaries, g0 / g1 their cross derivatives.
+        let h = |x: f64| [2.0 * x * x * x - 3.0 * x * x + 1.0, -2.0 * x * x * x + 3.0 * x * x, x * x * x - 2.0 * x * x + x, x * x * x - x * x];
+        // Cross derivatives: into the patch from the bottom (v = 0) and left (u = 0) sides along
+        // their faces' outward directions; at the top and right the patch arrives against them.
+        // Near the corners each is blended to the neighbouring side's own derivative there, as
+        // a bicubic Coons patch needs compatible corners (else the mismatch bends it all over).
+        // Derivatives over 2 % of a side: a trimmed rim can have a tiny piece running back at a
+        // corner, and a finer step there gave twists that shot the patch out as a spike.
+        let e = 0.02;
+        let d = |k: usize, t: f64| -> Vec3 {
+            let (a, b) = ((t - e).max(0.0), (t + e).min(1.0));
+            (at(k, b) - at(k, a)) / (b - a)
+        };
+        // Boundary derivatives in (u, v): B(u) = side 0, R(v) = side 1, T(u) = side 2 backwards,
+        // L(v) = side 3 backwards.
+        let (db, dr) = (|u: f64| d(0, u), |v: f64| d(1, v));
+        let (dt, dl) = (|u: f64| -d(2, 1.0 - u), |v: f64| -d(3, 1.0 - v));
+        let width_u = |v: f64| at(3, 1.0 - v).dist(at(1, v));
+        let width_v = |u: f64| at(0, u).dist(at(2, 1.0 - u));
+        let sv0r = |u: f64| out(0, u) * (w * width_v(u));
+        let sv1r = |u: f64| -out(2, 1.0 - u) * (w * width_v(u));
+        let su0r = |v: f64| out(3, 1.0 - v) * (w * width_u(v));
+        let su1r = |v: f64| -out(1, v) * (w * width_u(v));
+        // Fading away from the corners ((1 − x)⁴: 6 % at the middle), so the sides keep their
+        // faces' directions over most of their length.
+        let fix = |raw: &dyn Fn(f64) -> Vec3, x: f64, at0: Vec3, at1: Vec3| raw(x) + (at0 - raw(0.0)) * (1.0 - x).powi(4) + (at1 - raw(1.0)) * x.powi(4);
+        let sv0 = |u: f64| fix(&sv0r, u, dl(0.0), dr(0.0));
+        let sv1 = |u: f64| fix(&sv1r, u, dl(1.0), dr(1.0));
+        let su0 = |v: f64| fix(&su0r, v, db(0.0), dt(0.0));
+        let su1 = |v: f64| fix(&su1r, v, db(1.0), dt(1.0));
+        // No corner twists: estimated from the blended cross derivatives they were steep
+        // (≈ 150 on a 20 mm patch) and pressed the middle flat.
+        let zero = Vec3::new(0.0, 0.0, 0.0);
+        let (t00, t10, t01, t11) = (zero, zero, zero, zero);
+        let (hu, hv) = (h(u), h(v));
+        let lu = l * hu[0] + r * hu[1] + su0(v) * hu[2] + su1(v) * hu[3];
+        let lv = b * hv[0] + t * hv[1] + sv0(u) * hv[2] + sv1(u) * hv[3];
+        // The corner terms (positions, cross derivatives, twists).
+        let m = [
+            [p00, p01, sv0(0.0), sv1(0.0)],
+            [p10, p11, sv0(1.0), sv1(1.0)],
+            [su0(0.0), su0(1.0), t00, t01],
+            [su1(0.0), su1(1.0), t10, t11],
+        ];
+        let mut tt = Vec3::new(0.0, 0.0, 0.0);
+        for (i, row) in m.iter().enumerate() {
+            for (j, q) in row.iter().enumerate() {
+                tt = tt + *q * (hu[i] * hv[j]);
+            }
+        }
+        lu + lv - tt
     };
     const N: usize = 24;
     let params: Vec<f64> = (0..=N).map(|k| k as f64 / N as f64).collect();

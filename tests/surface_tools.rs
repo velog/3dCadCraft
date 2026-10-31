@@ -288,6 +288,7 @@ fn patch_rect(p: &mut PartDocument, a: (Real, Real), b: (Real, Real)) -> String 
             sketch: Some(id),
             profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
             solid: false,
+            tangent: None,
         }),
     )
 }
@@ -366,6 +367,7 @@ fn walls_and_two_patches_stitch_into_a_solid() {
             sketch: None,
             profile: None,
             solid: false,
+            tangent: None,
         }),
     );
     let e5 = rim(&p, 5.0);
@@ -376,6 +378,7 @@ fn walls_and_two_patches_stitch_into_a_solid() {
             sketch: None,
             profile: None,
             solid: false,
+            tangent: None,
         }),
     );
     assert_eq!(surfaces(&p), 3);
@@ -410,6 +413,7 @@ fn boundary_patch_of_a_sketch_region() {
             sketch: Some(id),
             profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
             solid: false,
+            tangent: None,
         }),
     );
     assert_eq!(surfaces(&p), 1);
@@ -743,6 +747,7 @@ fn every_surface_command_survives_save_and_load() {
             sketch: None,
             profile: None,
             solid: false,
+            tangent: None,
         }),
         BodyOp::Trim(TrimOp {
             surface: "A".into(),
@@ -896,6 +901,7 @@ fn boundary_patch_output_solid_closes_an_open_box() {
             sketch: None,
             profile: None,
             solid: false,
+            tangent: None,
         }),
     );
     op(
@@ -915,6 +921,7 @@ fn boundary_patch_output_solid_closes_an_open_box() {
             sketch: None,
             profile: None,
             solid: true,
+            tangent: None,
         }),
     );
     assert_eq!(surfaces(&p), 0);
@@ -1284,6 +1291,7 @@ fn trim_by_a_tube_of_walls_cuts_only_inside_it() {
                 sketch: Some(id),
                 profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
                 solid: false,
+                tangent: None,
             }),
         );
         let before = sheet_area(&p);
@@ -1395,6 +1403,7 @@ fn patch_polygon_at(p: &mut PartDocument, z: Real, pts: &[(Real, Real)]) -> Stri
             sketch: Some(id),
             profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
             solid: false,
+            tangent: None,
         }),
     )
 }
@@ -1485,6 +1494,7 @@ fn patch_circle_at(p: &mut PartDocument, z: Real, r: Real) -> String {
             sketch: Some(id),
             profile: Some(ProfileRef::of(&rg[0], rg[0].interior_point())),
             solid: false,
+            tangent: None,
         }),
     )
 }
@@ -1567,6 +1577,7 @@ fn holed_patch_at(p: &mut PartDocument, z: Real) -> String {
             sketch: Some(id),
             profile: Some(ProfileRef::of(outer, outer.interior_point())),
             solid: false,
+            tangent: None,
         }),
     )
 }
@@ -1596,4 +1607,104 @@ fn loft_between_surfaces_with_holes() {
         10,
         "2 holed faces, 4 outside, 4 in the hole"
     );
+}
+
+/// Boundary Patch with the Tangent condition (spec 5.4 Boundary Patch): the 10 × 10 hole of a
+/// planar surface is filled flat (leaving each side along the plane: area 100, every point on
+/// it), and with Contact the same.
+#[test]
+fn tangent_patch_of_a_hole_in_a_plane_is_flat() {
+    for tangent in [None, Some(1.0)] {
+        let mut p = PartDocument::default();
+        let s = holed_patch_at(&mut p, 0.0);
+        let hole: Vec<SurfEdge> = boundary_of(&p, &s)
+            .into_iter()
+            .filter(|e| e.hint[0].abs() <= 5.0 + 1e-6 && e.hint[1].abs() <= 5.0 + 1e-6)
+            .collect();
+        assert_eq!(hole.len(), 4);
+        let before = sheet_area(&p);
+        op(
+            &mut p,
+            BodyOp::Patch(PatchOp {
+                edges: hole,
+                sketch: None,
+                profile: None,
+                solid: false,
+                tangent,
+            }),
+        );
+        close(sheet_area(&p) - before, 100.0, 1e-3);
+        let patch = p
+            .exact_bodies
+            .0
+            .iter()
+            .find(|b| b.name.as_deref() == Some("BoundaryPatch2"))
+            .unwrap();
+        let zmax = patch
+            .triangles()
+            .unwrap()
+            .iter()
+            .flatten()
+            .map(|q| q.z.abs())
+            .fold(0.0, Real::max);
+        assert!(zmax < 1e-6, "{tangent:?}: {zmax}");
+    }
+}
+
+/// Boundary Patch with the Tangent condition on the open top of four upright walls (20 × 20,
+/// 10 high): the patch leaves every wall going straight up and closes over as a dome; Contact
+/// gives the flat lid.
+#[test]
+fn tangent_patch_over_four_walls_is_a_dome() {
+    for tangent in [None, Some(1.0)] {
+        let mut p = PartDocument::default();
+        wall(
+            &mut p,
+            &[
+                (0.0, 0.0),
+                (20.0, 0.0),
+                (20.0, 20.0),
+                (0.0, 20.0),
+                (0.0, 0.0),
+            ],
+            10.0,
+        );
+        let rim: Vec<SurfEdge> = [[10.0, 0.0], [20.0, 10.0], [10.0, 20.0], [0.0, 10.0]]
+            .iter()
+            .map(|[x, y]| edge(&p, [*x, *y, 5.0], [*x, *y, 10.0]))
+            .collect();
+        op(
+            &mut p,
+            BodyOp::Patch(PatchOp {
+                edges: rim,
+                sketch: None,
+                profile: None,
+                solid: false,
+                tangent,
+            }),
+        );
+        let patch = p
+            .exact_bodies
+            .0
+            .iter()
+            .find(|b| b.name.as_deref() == Some("BoundaryPatch1"))
+            .unwrap();
+        let pts: Vec<_> = patch.triangles().unwrap().into_iter().flatten().collect();
+        let zmax = pts.iter().map(|q| q.z).fold(Real::MIN, Real::max);
+        if tangent.is_none() {
+            close(zmax, 10.0, 1e-9);
+            continue;
+        }
+        assert!(zmax > 17.0, "a dome: {zmax}");
+        // Next to the middle of a wall the patch rises steeply (tangent to the wall).
+        let near: Vec<_> = pts
+            .iter()
+            .filter(|q| q.y > 0.05 && q.y < 0.6 && (q.x - 10.0).abs() < 3.0)
+            .collect();
+        assert!(!near.is_empty());
+        assert!(
+            near.iter().all(|q| q.z - 10.0 > 2.0 * q.y),
+            "leaves the wall upwards"
+        );
+    }
 }

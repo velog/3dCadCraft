@@ -612,6 +612,7 @@ fn surfaces_r37() -> PartDocument {
         sketch: Some(id),
         profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
         solid: false,
+        tangent: None,
     })))
     .unwrap();
     p

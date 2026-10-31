@@ -52,7 +52,7 @@ pub struct StitchOp {
 }
 
 /// **Boundary Patch**: a surface inside a closed loop of model edges, or a sketch region.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PatchOp {
     /// The loop of model edges (any order).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -67,6 +67,10 @@ pub struct PatchOp {
     /// becomes a solid when that closes it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub solid: bool,
+    /// Condition Tangent (G1) with its weight: the patch leaves each edge of the loop along the
+    /// face it bounds (a loop of edges of four sides); `None` = Contact (G0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tangent: Option<Real>,
 }
 
 /// What trims a surface.
@@ -219,6 +223,10 @@ impl PatchOp {
         match (&self.sketch, self.edges.is_empty()) {
             (None, true) => Err("select a closed loop of edges or a sketch region".into()),
             (Some(_), _) if self.profile.is_none() => Err("select the sketch region".into()),
+            (Some(_), _) if self.tangent.is_some() => Err(
+                "the Tangent condition applies to a loop of model edges (a sketch region is planar)"
+                    .into(),
+            ),
             _ => Ok(()),
         }
     }
@@ -545,7 +553,7 @@ pub(super) fn patch(
         let all: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
         let b = edge_body(&all, &op.edges)?;
         let pts = edge_points(body, &op.edges)?;
-        let patch = surface_ops::patch_edges(&all[b], &pts, id)
+        let patch = surface_ops::patch_edges(&all[b], &pts, op.tangent, id)
             .map_err(|e| User(format!("the edges do not bound a patch ({e})")))?;
         if op.solid {
             // Sewn to the surface it closes: that surface is replaced by the result.
@@ -1510,7 +1518,7 @@ fn close_rims(s: &ExactSolid, id: &str) -> Option<ExactSolid> {
             .iter()
             .filter_map(|e| b.sample_edge(*e, &opts).ok().and_then(|q| middle(&q)))
             .collect();
-        let pr = surface_ops::patch_edges(s, &pts, id);
+        let pr = surface_ops::patch_edges(s, &pts, None, id);
         patches.push(pr.ok()?);
     }
     let mut parts: Vec<&ExactSolid> = vec![s];
