@@ -804,6 +804,9 @@ fn outward_row(body: &Body, chain: &[mt::Edge], pts: &[Vec3]) -> Result<Vec<Vec3
     let n = info.len();
     let last = pts.len().saturating_sub(1);
     let mut out = Vec::with_capacity(pts.len());
+    // Each search starts from the previous point's parameters (along one edge they move a
+    // little): without a hint the kernel scans the whole surface first (1 s for a loft).
+    let mut hint: Option<(usize, (f64, f64))> = None;
     for (i, p) in pts.iter().enumerate() {
         let k = (i / BRIDGE_POINTS).min(n.saturating_sub(1));
         let (surf, same) = info.get(k).ok_or_else(|| KernelError::Invalid("a section has no edges".into()))?;
@@ -811,9 +814,13 @@ fn outward_row(body: &Body, chain: &[mt::Edge], pts: &[Vec3]) -> Result<Vec<Vec3
         let (i0, i1) = (i.saturating_sub(1), (i + 1).min(last));
         let t = (pts[i1] - pts[i0]).normalized().ok_or_else(|| KernelError::Invalid("a section edge has no direction".into()))?;
         let t = if *same { t } else { -t };
-        let (u, v) = surf
-            .search_nearest_parameter(p3(*p), None, 100)
-            .ok_or_else(|| KernelError::Failed("a point of a section edge is not on its surface".into()))?;
+        let start = hint.filter(|(e, _)| *e == k).map(|(_, uv)| uv);
+        let found = start
+            .and_then(|uv| surf.search_nearest_parameter(p3(*p), Some(uv), 30))
+            .filter(|uv| mt::ParametricSurface::subs(surf, uv.0, uv.1).distance(p3(*p)) <= 1e-3)
+            .or_else(|| surf.search_nearest_parameter(p3(*p), None, 100));
+        let (u, v) = found.ok_or_else(|| KernelError::Failed("a point of a section edge is not on its surface".into()))?;
+        hint = Some((k, (u, v)));
         let nn = surf.normal(u, v);
         let d = t
             .cross(Vec3::new(nn.x, nn.y, nn.z))

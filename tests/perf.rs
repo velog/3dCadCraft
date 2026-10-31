@@ -1622,8 +1622,9 @@ fn speed_budgets() {
                 p.add_loft(def.clone()).unwrap();
             }),
         ));
-        // The same with the Tangent condition at both surfaces: cubic bridges, most of the time
-        // their display mesh (a curved bridge is ~30 000 triangles at 0.01 mm).
+        // The same with the Tangent condition at both surfaces: cubic bridges (~1.5 s, most of it
+        // their display mesh; it was 4 s when each point's direction was searched from scratch
+        // and "faces out" re-meshed the solid).
         let mut tangent = def.clone();
         let t = cadcraft3d::part::LoftCondition {
             kind: cadcraft3d::part::ConditionKind::Tangent,
@@ -1632,7 +1633,7 @@ fn speed_budgets() {
         tangent.conditions = vec![t, t];
         rows.push((
             "loft between two whole surfaces, Tangent to both, Output Solid (add_loft)",
-            6000.0,
+            2500.0,
             median_ms(3, || {
                 let mut p = two.clone();
                 p.build_cache = two.build_cache.detached();

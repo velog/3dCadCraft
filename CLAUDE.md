@@ -1316,8 +1316,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (`surface_ops::reversed`); a revolved dome closed that way still fails the kernel's Boolean.
 - **Closed shells from our builders must face out before `Body::new`**: a negative volume at its coarse mesh makes it
   re-mesh 50× finer to check (stitched tangent bridges: 10 s); vendor `stitch` turns the shell round first
-  (`orientation_volume`). Never test "faces out" with `exact::contains` per point either — each call re-meshes the
-  body (Loft's Output Solid took 290 s); use the signed volume of the display triangles.
+  (`orientation_volume`), so its closed result faces out — do not mesh it again to check (Loft's Output Solid spent
+  1–5 s there), and never test "faces out" with `exact::contains` per point (each call re-meshes the body: 290 s).
+  Nearest-parameter searches along an edge start from the previous point's (u, v): without a hint truck scans the
+  whole surface first (tangent bridge directions: 1 s → 60 ms).
 - **Bounded Trim** (spec 5.4a T2, `part/surface_op.rs::trim_pieces`): a closed sketch loop or a tool of several walls
   divides the surface first (Split Face) and removes pieces; a tube of walls along one direction is cut by its section
   (`exact::walls_section` → `SplitBy::Curves`), since each wall's extended surface would cut across the whole face. A

@@ -484,18 +484,18 @@ impl LoftFeature {
         let mut found = None;
         for (a, b) in tries {
             match kx::surface_ops::stitch(&[a, b, &bridge], BRIDGE_STITCH, false, &self.id) {
-                Ok(r) if !r.is_open() && faces_out(&r) => {
+                // Closed: Stitch has turned the shell to face out (vendor `stitch`).
+                Ok(r) if !r.is_open() => {
                     found = Some(r);
                     break;
                 }
-                Ok(r) if r.is_open() => {
+                Ok(_) => {
                     last = concat!(
                         "the bridges' edges do not match the surfaces' (sewing them into a solid ",
                         "is not supported yet: use Output Surface, spec 5.4a L3)"
                     )
                     .into()
                 }
-                Ok(_) => last = "the faces do not all face out".into(),
                 Err(e) => last = e,
             }
         }
@@ -774,20 +774,6 @@ impl LoftFeature {
 /// How far a bridge's own edges may be from the surfaces' edges when they are sewn (mm): the
 /// bridge's edges are cubic splines through points on the surfaces' edges.
 const BRIDGE_STITCH: Real = 0.01;
-
-/// Whether a closed body's faces face out: the signed volume of its display triangles is
-/// positive (a sewn shell is oriented one way throughout, so the sign tells). Asking the kernel
-/// whether points lie inside re-meshed the body for every point: 290 s for tangent bridges.
-fn faces_out(s: &ExactSolid) -> bool {
-    let Ok(tris) = s.triangles() else {
-        return false;
-    };
-    let v: Real = tris
-        .iter()
-        .map(|[a, b, c]| a.coords.dot(&b.coords.cross(&c.coords)) / 6.0)
-        .sum();
-    v > 0.0
-}
 
 /// Tangent condition of a face-loop section: at points along the face's
 /// outline, the direction its neighbouring face runs on in past the edge.
