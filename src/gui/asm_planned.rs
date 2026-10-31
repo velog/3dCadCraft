@@ -1948,18 +1948,6 @@ impl CadCraftApp {
     }
 }
 
-/// The text of the chosen entry of drop-down or radio row `label` on tab
-/// `ti` of a planned panel (its default until changed).
-pub(super) fn choice(d: &PartDialog, ti: usize, label: &str) -> Option<&'static str> {
-    let page = d.kind.pages().get(ti)?;
-    page.1.iter().find_map(|r| match *r {
-        Combo(l, opts, _) | Radio(l, opts, _) if l == label => {
-            opts.get(d.index(ti, label)).copied()
-        }
-        _ => None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

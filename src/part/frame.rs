@@ -53,6 +53,16 @@ pub enum Shape {
     ChannelTapered,
     /// I beam with tapered flanges (IPN, 14 % slope).
     IBeamTapered,
+    /// Square bar (side `h`).
+    SquareBar,
+    /// Hexagon bar (`h` across the flats, flats top and bottom).
+    HexBar,
+    /// Cold-formed Z (`h`, flanges `b` to the web's outer face, wall `t`,
+    /// inner bend radius `r1`): top flange to the right.
+    ZedFormed,
+    /// Cold-formed lipped channel (`h`, `b`, wall `t`, lips `tf`, inner bend
+    /// radius `r1`): web on the left.
+    ChannelFormed,
     /// The user's own outline (`Section::custom`, spec 6.1 §3.11).
     Custom,
 }
@@ -71,6 +81,10 @@ impl Shape {
             "tee" => Shape::Tee,
             "upn" => Shape::ChannelTapered,
             "ipn" => Shape::IBeamTapered,
+            "sqbar" => Shape::SquareBar,
+            "hexbar" => Shape::HexBar,
+            "zcf" => Shape::ZedFormed,
+            "ccf" => Shape::ChannelFormed,
             "custom" => Shape::Custom,
             _ => return None,
         })
@@ -167,7 +181,11 @@ impl Section {
             | Shape::Tee
             | Shape::Custom
             | Shape::ChannelTapered
-            | Shape::IBeamTapered => "",
+            | Shape::IBeamTapered
+            | Shape::ZedFormed
+            | Shape::ChannelFormed => "",
+            Shape::SquareBar => "SQ ",
+            Shape::HexBar => "HEX ",
         };
         format!("{prefix}{}", self.size)
     }
@@ -175,8 +193,10 @@ impl Section {
     /// Width and height of the bounding box (section x, y).
     pub fn extent(&self) -> (Real, Real) {
         match self.shape {
-            Shape::Chs | Shape::Bar => (self.h, self.h),
+            Shape::Chs | Shape::Bar | Shape::SquareBar => (self.h, self.h),
             Shape::Flat => (self.b, self.t),
+            Shape::HexBar => (2.0 * self.h / 3f64.sqrt(), self.h),
+            Shape::ZedFormed => (2.0 * self.b - self.t, self.h),
             _ => (self.b, self.h),
         }
     }
@@ -252,6 +272,65 @@ impl Section {
                 ])]
             }
             Shape::Custom => self.custom.clone(),
+            Shape::SquareBar => vec![rect(x0, y0, x1, y1, 0.0, false)],
+            Shape::HexBar => {
+                let r = self.h / 3f64.sqrt();
+                vec![Loop::Corners(
+                    (0..6)
+                        .map(|k| {
+                            let a = k as Real * std::f64::consts::FRAC_PI_3;
+                            (p(r * a.cos(), r * a.sin()), 0.0)
+                        })
+                        .collect(),
+                )]
+            }
+            Shape::ChannelFormed => {
+                // Constant wall t, inner bends r1, outer r1 + t; lips tf.
+                let (t, c, ri) = (self.t, self.tf, self.r1);
+                let ro = ri + t;
+                let mut cs = vec![(p(x0, y0), ro), (p(x1, y0), if c > t { ro } else { 0.0 })];
+                if c > t {
+                    cs.extend([
+                        (p(x1, y0 + c), 0.0),
+                        (p(x1 - t, y0 + c), 0.0),
+                        (p(x1 - t, y0 + t), ri),
+                    ]);
+                } else {
+                    cs.push((p(x1, y0 + t), 0.0));
+                }
+                cs.push((p(x0 + t, y0 + t), ri));
+                cs.push((p(x0 + t, y1 - t), ri));
+                if c > t {
+                    cs.extend([
+                        (p(x1 - t, y1 - t), ri),
+                        (p(x1 - t, y1 - c), 0.0),
+                        (p(x1, y1 - c), 0.0),
+                        (p(x1, y1), ro),
+                    ]);
+                } else {
+                    cs.extend([(p(x1, y1 - t), 0.0), (p(x1, y1), 0.0)]);
+                }
+                cs.push((p(x0, y1), ro));
+                vec![Loop::Corners(cs)]
+            }
+            Shape::ZedFormed => {
+                // Web x from xw0 to xw0 + t; top flange to the right of the
+                // web's left face, bottom flange to the left of its right face.
+                let (t, ri) = (self.t, self.r1);
+                let ro = ri + t;
+                let xw0 = x0 + self.b - t;
+                let xw1 = xw0 + t;
+                vec![Loop::Corners(vec![
+                    (p(x0, y0), 0.0),
+                    (p(xw1, y0), ro),
+                    (p(xw1, y1 - t), ri),
+                    (p(x1, y1 - t), 0.0),
+                    (p(x1, y1), 0.0),
+                    (p(xw0, y1), ro),
+                    (p(xw0, y0 + t), ri),
+                    (p(x0, y0 + t), 0.0),
+                ])]
+            }
             Shape::ChannelTapered => {
                 // Flange thickness tf at the middle of the free flange, 8 %
                 // thicker towards the web (EN 10365 / DIN 1026-1).
@@ -329,7 +408,9 @@ impl Section {
             Shape::IBeam => Point2::new(0.0, 0.0),
             Shape::Flat | Shape::Bar => Point2::origin(),
             Shape::Channel | Shape::ChannelTapered => Point2::new(-w / 2.0 + self.tw / 2.0, 0.0),
-            Shape::IBeamTapered => Point2::new(0.0, 0.0),
+            Shape::IBeamTapered | Shape::SquareBar | Shape::HexBar => Point2::new(0.0, 0.0),
+            Shape::ChannelFormed => Point2::new(-w / 2.0 + self.t / 2.0, 0.0),
+            Shape::ZedFormed => Point2::new(-w / 2.0 + self.b - self.t / 2.0, 0.0),
             Shape::Tee => Point2::new(0.0, self.extent().1 / 2.0 - self.tee_flange() / 2.0),
             Shape::Custom => self.inside_point().unwrap_or_else(Point2::origin),
         }
@@ -692,7 +773,7 @@ impl Section {
             )))?;
             self.add_notches(&mut part, notches, &opts)?;
             if let Some(m) = material {
-                let _ = part.set_material(Some(m), crate::materials::builtin());
+                let _ = part.set_material(Some(m), crate::materials::with_user());
             }
             return Ok(part);
         }
@@ -769,7 +850,7 @@ impl Section {
         }
         self.add_notches(&mut part, notches, &opts)?;
         if let Some(m) = material {
-            let _ = part.set_material(Some(m), crate::materials::builtin());
+            let _ = part.set_material(Some(m), crate::materials::with_user());
         }
         Ok(part)
     }
@@ -1512,7 +1593,7 @@ mod tests {
         let (lib, bad) = Library::parse(BUILTIN);
         assert!(bad.is_empty(), "{bad:?}");
         assert!(lib.sections.len() > 50);
-        assert_eq!(lib.standards(), vec!["EN"]);
+        assert_eq!(lib.standards(), vec!["EN", "ANSI"]);
         assert!(lib.families("EN").contains(&"IPE beam (EN 10365)"));
         assert!(lib.sizes("IPE beam (EN 10365)").contains(&"IPE 200"));
     }
@@ -1684,6 +1765,49 @@ mod tests {
             );
             eprintln!("{size}: mitred member {ms:.0} ms");
         }
+    }
+
+    /// The bars, cold-formed sections and ANSI families: areas of their
+    /// tables (bars exact, ANSI within 3 %, cold-formed = wall × the centre
+    /// line), and a member of each builds whole.
+    #[test]
+    fn more_families_match_their_tables() {
+        let in2 = 25.4 * 25.4;
+        for (f, s, a, tol) in [
+            ("Square bar (EN 10059)", "20", 400.0, 1e-6),
+            (
+                "Hexagon bar (EN 10061)",
+                "24",
+                3f64.sqrt() / 2.0 * 576.0,
+                1e-6,
+            ),
+            (
+                "Cold-formed lipped channel (EN 10162)",
+                "C100x50x15x2",
+                434.0,
+                0.02,
+            ),
+            ("Cold-formed Z (EN 10162)", "Z100x50x2", 387.0, 0.02),
+            ("W shape (ASTM A6)", "W8x31", 9.13 * in2, 0.03),
+            ("W shape (ASTM A6)", "W14x22", 6.49 * in2, 0.03),
+            ("Pipe Schedule 40 (ASME B36.10)", "NPS 2", 1.07 * in2, 0.02),
+            ("Equal angle (AISC)", "L4x4x1/2", 3.75 * in2, 0.03),
+            ("Square HSS (ASTM A500)", "HSS4x4x1/4", 3.37 * in2, 0.03),
+        ] {
+            let sec = sec(f, s);
+            close(sec.properties().area, a, tol, s);
+            let part = sec.member_part(100.0, None).unwrap();
+            let v: Real = part
+                .exact_bodies
+                .0
+                .iter()
+                .filter_map(|b| b.volume_at(1e-3))
+                .sum();
+            close(v, sec.properties().area * 100.0, 0.003, s);
+        }
+        // The ANSI standard lists its families.
+        let lib = Library::builtin();
+        assert!(lib.standards().contains(&"ANSI"));
     }
 
     /// Tapered flanges (UPN 8 %, IPN 14 %): areas and Ix of the EN 10365

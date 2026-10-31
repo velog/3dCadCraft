@@ -370,6 +370,10 @@ fn shape_name(s: &Section) -> &'static str {
         Tee => "tee",
         ChannelTapered => "upn",
         IBeamTapered => "ipn",
+        SquareBar => "sqbar",
+        HexBar => "hexbar",
+        ZedFormed => "zcf",
+        ChannelFormed => "ccf",
         Custom => "custom",
     }
 }

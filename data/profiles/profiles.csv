@@ -5,7 +5,7 @@
 # Dimensions in mm, typed from the dimension tables of the standards named in
 # the family column (nominal values; hollow sections use the standard's
 # calculation radii: outer 2t / inner t up to t = 6 mm, 2.5t / 1.5t above).
-# shape: shs | rhs | chs | angle | ibeam | ipn | channel | upn | tee | flat | bar
+# shape: shs | rhs | chs | angle | ibeam | ipn | channel | upn | tee | flat | bar | sqbar | hexbar | zcf | ccf
 #   shs / rhs: h b t r1 (outer radius) r2 (inner radius)
 #   chs: h (outside diameter) t
 #   angle: h b t r1 (root radius) r2 (toe radius)
@@ -16,6 +16,9 @@
 #   tee: h b t (flange and stem) r1 (root radius) r2 (toe radius)
 #   flat: b (width) t
 #   bar: h (diameter)
+#   sqbar: h (side); hexbar: h (across the flats)
+#   zcf / ccf (cold-formed, constant wall): h b t, r1 (inner bend radius); ccf: tf (lip)
+# ANSI rows are typed in inches from the AISC / ASME tables and converted to mm.
 family,standard,shape,size,h,b,t,tw,tf,r1,r2
 Square hollow section (EN 10219),EN,shs,20x20x2,20,20,2,,,4,2
 Square hollow section (EN 10219),EN,shs,30x30x3,30,30,3,,,6,3
@@ -117,3 +120,65 @@ IPN beam (EN 10365),EN,ipn,IPN 140,140,66,,5.7,8.6,5.7,3.4
 IPN beam (EN 10365),EN,ipn,IPN 160,160,74,,6.3,9.5,6.3,3.8
 IPN beam (EN 10365),EN,ipn,IPN 180,180,82,,6.9,10.4,6.9,4.1
 IPN beam (EN 10365),EN,ipn,IPN 200,200,90,,7.5,11.3,7.5,4.5
+Square bar (EN 10059),EN,sqbar,10,10,,,,,,
+Square bar (EN 10059),EN,sqbar,12,12,,,,,,
+Square bar (EN 10059),EN,sqbar,16,16,,,,,,
+Square bar (EN 10059),EN,sqbar,20,20,,,,,,
+Square bar (EN 10059),EN,sqbar,25,25,,,,,,
+Square bar (EN 10059),EN,sqbar,30,30,,,,,,
+Square bar (EN 10059),EN,sqbar,40,40,,,,,,
+Square bar (EN 10059),EN,sqbar,50,50,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,10,10,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,13,13,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,17,17,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,19,19,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,22,22,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,24,24,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,27,27,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,30,30,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,36,36,,,,,,
+Hexagon bar (EN 10061),EN,hexbar,41,41,,,,,,
+Cold-formed lipped channel (EN 10162),EN,ccf,C100x50x15x2,100,50,2,,15,2,
+Cold-formed lipped channel (EN 10162),EN,ccf,C120x50x20x2,120,50,2,,20,2,
+Cold-formed lipped channel (EN 10162),EN,ccf,C150x60x20x2.5,150,60,2.5,,20,2.5,
+Cold-formed lipped channel (EN 10162),EN,ccf,C200x70x20x3,200,70,3,,20,3,
+Cold-formed lipped channel (EN 10162),EN,ccf,C250x80x25x3,250,80,3,,25,3,
+Cold-formed Z (EN 10162),EN,zcf,Z100x50x2,100,50,2,,,2,
+Cold-formed Z (EN 10162),EN,zcf,Z150x60x2.5,150,60,2.5,,,2.5,
+Cold-formed Z (EN 10162),EN,zcf,Z200x70x3,200,70,3,,,3,
+Cold-formed Z (EN 10162),EN,zcf,Z250x80x3,250,80,3,,,3,
+W shape (ASTM A6),ANSI,ibeam,W4x13,105.664,103.124,,7.112,8.763,6.35,
+W shape (ASTM A6),ANSI,ibeam,W6x15,152.146,152.146,,5.842,6.604,6.35,
+W shape (ASTM A6),ANSI,ibeam,W8x18,206.756,133.35,,5.842,8.382,7.62,
+W shape (ASTM A6),ANSI,ibeam,W8x31,203.2,203.2,,7.239,11.049,10.16,
+W shape (ASTM A6),ANSI,ibeam,W10x22,259.08,146.05,,6.096,9.144,7.62,
+W shape (ASTM A6),ANSI,ibeam,W10x33,247.142,202.184,,7.366,11.049,10.16,
+W shape (ASTM A6),ANSI,ibeam,W12x26,309.88,164.846,,5.842,9.652,7.62,
+W shape (ASTM A6),ANSI,ibeam,W12x40,302.26,203.454,,7.493,13.081,10.16,
+W shape (ASTM A6),ANSI,ibeam,W14x22,347.98,127,,5.842,8.509,7.62,
+W shape (ASTM A6),ANSI,ibeam,W16x26,398.78,139.7,,6.35,8.763,7.62,
+W shape (ASTM A6),ANSI,ibeam,W18x35,449.58,152.4,,7.62,10.795,8.89,
+W shape (ASTM A6),ANSI,ibeam,W21x44,525.78,165.1,,8.89,11.43,10.16,
+W shape (ASTM A6),ANSI,ibeam,W24x55,599.44,178.054,,10.033,12.827,12.7,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 1/2,21.336,,2.769,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 3/4,26.67,,2.87,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 1,33.401,,3.378,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 1-1/4,42.164,,3.556,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 1-1/2,48.26,,3.683,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 2,60.325,,3.912,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 2-1/2,73.025,,5.156,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 3,88.9,,5.486,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 4,114.3,,6.02,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 5,141.3,,6.553,,,,
+Pipe Schedule 40 (ASME B36.10),ANSI,chs,NPS 6,168.275,,7.112,,,,
+Equal angle (AISC),ANSI,angle,L2x2x1/4,50.8,50.8,6.35,,,6.35,3.175
+Equal angle (AISC),ANSI,angle,L3x3x1/4,76.2,76.2,6.35,,,6.35,3.175
+Equal angle (AISC),ANSI,angle,L3x3x3/8,76.2,76.2,9.525,,,9.525,4.762
+Equal angle (AISC),ANSI,angle,L4x4x3/8,101.6,101.6,9.525,,,9.525,4.762
+Equal angle (AISC),ANSI,angle,L4x4x1/2,101.6,101.6,12.7,,,12.7,6.35
+Equal angle (AISC),ANSI,angle,L6x6x1/2,152.4,152.4,12.7,,,12.7,6.35
+Square HSS (ASTM A500),ANSI,shs,HSS2x2x1/8,50.8,50.8,2.946,,,5.893,2.946
+Square HSS (ASTM A500),ANSI,shs,HSS3x3x3/16,76.2,76.2,4.42,,,8.839,4.42
+Square HSS (ASTM A500),ANSI,shs,HSS4x4x1/4,101.6,101.6,5.918,,,11.836,5.918
+Square HSS (ASTM A500),ANSI,shs,HSS6x6x1/4,152.4,152.4,5.918,,,11.836,5.918
+Square HSS (ASTM A500),ANSI,shs,HSS6x6x3/8,152.4,152.4,8.865,,,17.729,8.865

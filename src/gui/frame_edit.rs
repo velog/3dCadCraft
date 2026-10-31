@@ -481,12 +481,7 @@ impl CadCraftApp {
             return;
         };
         let mat = self.with_part(c, |p| p.material.clone()).flatten();
-        let opts = d.kind.pages().first().and_then(|p| {
-            p.1.iter().find_map(|r| match r {
-                super::part_planned::Row::Combo("Material", o, _) => Some(*o),
-                _ => None,
-            })
-        });
+        let opts = super::frame::frame_combo(d, 0, "Material");
         if let (Some(m), Some(opts)) = (mat, opts)
             && let Some(k) = opts.iter().position(|x| *x == m)
         {

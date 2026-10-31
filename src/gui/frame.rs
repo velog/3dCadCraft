@@ -41,6 +41,24 @@ pub(super) fn frame_combo(d: &PartDialog, ti: usize, label: &str) -> Option<Vec<
         "Standard" => Some(own(lib.standards())),
         "Family" => Some(own(lib.families(&frame_choice(d, ti, "Standard")?))),
         "Size" => Some(own(lib.sizes(&frame_choice(d, ti, "Family")?))),
+        // Every material of the library (built-in and the user's), the usual
+        // ones for sections first (the first is the default).
+        "Material" => {
+            let mut v: Vec<String> = [
+                "Steel S235",
+                "Steel S355",
+                "Stainless Steel 304",
+                "Aluminium 6061-T6",
+            ]
+            .map(str::to_owned)
+            .to_vec();
+            for m in &crate::materials::with_user().materials {
+                if !v.contains(&m.name) {
+                    v.push(m.name.clone());
+                }
+            }
+            Some(v)
+        }
         _ => None,
     }
 }
@@ -163,7 +181,7 @@ pub(super) fn insert_options(d: &PartDialog) -> Option<InsertOptions> {
     Some(InsertOptions {
         family: frame_choice(d, 0, "Family")?,
         size: frame_choice(d, 0, "Size")?,
-        material: super::asm_planned::choice(d, 0, "Material").map(str::to_owned),
+        material: frame_choice(d, 0, "Material"),
         orientation: orientation(d),
         corners: frame::Corners {
             kind: match d.index(0, "Corner Type") {

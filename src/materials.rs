@@ -259,6 +259,13 @@ pub fn builtin() -> &'static Library {
     LIB.get_or_init(Library::builtin)
 }
 
+/// The built-in library with the user's (`user_dir`), read once: what
+/// commands that only name a material (frame members) choose from and set.
+pub fn with_user() -> &'static Library {
+    static LIB: std::sync::OnceLock<Library> = std::sync::OnceLock::new();
+    LIB.get_or_init(|| Library::with_user(user_dir().as_deref()).0)
+}
+
 /// The user's library folder: `%APPDATA%\3dcadcraft\materials` on Windows,
 /// else `~/.config/3dcadcraft/materials` (next to `settings.json`).
 pub fn user_dir() -> Option<PathBuf> {
