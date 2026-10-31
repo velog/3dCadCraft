@@ -1178,6 +1178,11 @@ pub(super) fn body_op(
         super::BodyOp::Sculpt(o) => so::sculpt(o, &f.id, cur, sheets),
         super::BodyOp::CopyObject(o) => super::copy_object::copy_object(o, &f.id, cur, sheets),
         super::BodyOp::Import(o) => super::import::import(o, &f.id, cur, sheets),
+        super::BodyOp::Prism(o) => {
+            let (loops, start, end) = o.sections().map_err(User)?;
+            let made = exact::prism_between(&loops, &start, &end, &f.id).map_err(Kernel)?;
+            Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
+        }
     }
 }
 

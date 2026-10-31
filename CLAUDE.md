@@ -1363,9 +1363,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (both senses, broken loops, not drawn — surfaces showed no outline). In a surface body it is a free edge when the
   face's triangles run it one way only; in solids the old rule stays (a seam listed once). `s.is_open()` walks every
   shell: take it once per body, never per edge (it doubled a 5 s Cut).
-- **Frame member cuts are Booleans** except square ones: a cut square to the member is the extrusion's end (`member_part_cut`;
-  a start inside the member puts the section sketch on a work UCS at that z — a box frame's 16 corner joints went 7.7 s →
-  0.17 s). A Trim Solid of a rounded SHS by an inclined plane is ~0.4 s in the kernel (an
+- **Frame members are never Booleans at their ends**: a cut square to the member is the extrusion's end, a slanted (mitred)
+  end makes the whole member one `BodyOp::Prism` (revision 57: the section pushed along the member onto both end planes —
+  lines stay lines, arcs become exact conics — joined in one kernel call `exact::prism_between`; ~15 ms, a Trim Solid per
+  end was ~0.4 s: the kernel's split traces the section and its spline edges are slow to mesh). Only Notches are Booleans.
+  Earlier: a Trim Solid of a rounded SHS by an inclined plane is ~0.4 s in the kernel (an
   Extrude To an inclined work plane was 6 s); `assembly::frame::solve` therefore rebuilds a member only when its `Shape`
   (length, extensions, cuts) changed and runs the rebuilds in parallel. Never re-run every member on each solve.
 - **A face's outer loop is the longest one in space** (`exact.rs::split_outer`): it once compared the edges' *parameter*

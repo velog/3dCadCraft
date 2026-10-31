@@ -92,6 +92,81 @@ fn plane_of(p: &Plane) -> Result<sg::Plane, String> {
         .ok_or_else(|| "degenerate sketch plane".to_owned())
 }
 
+/// A segment of a prism section in its plane's coordinates
+/// ([`prism_between`]): a line, or a conic arc (rational quadratic: ends,
+/// apex, weight) — the image of a circle arc under the push of a section
+/// along the member onto a slanted plane is exactly one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PrismSeg {
+    /// From `a` to `b`.
+    Line(nalgebra::Point2<Real>, nalgebra::Point2<Real>),
+    /// From `a` to `b` with control point `apex` of weight `w`.
+    Conic(
+        nalgebra::Point2<Real>,
+        nalgebra::Point2<Real>,
+        nalgebra::Point2<Real>,
+        Real,
+    ),
+}
+
+/// A prism between two planes (a frame member cut at both ends, square or
+/// mitred) in one kernel call, no Boolean: each loop (outer first, then the
+/// holes) as its section on `start` and on `end` (segments matched; outer
+/// counter-clockwise, holes clockwise about the direction it runs). Faces:
+/// `<prefix>:Side:<k>` (k counting segments across the loops), `Start`,
+/// `End`.
+pub fn prism_between(
+    loops: &[(Vec<PrismSeg>, Vec<PrismSeg>)],
+    start: &Plane,
+    end: &Plane,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    let seg = |s: &PrismSeg| match *s {
+        PrismSeg::Line(a, b) => sg::Seg2::Line {
+            a: v2(&a),
+            b: v2(&b),
+        },
+        PrismSeg::Conic(a, apex, b, w) => sg::Seg2::Conic {
+            a: v2(&a),
+            apex: v2(&apex),
+            b: v2(&b),
+            w,
+        },
+    };
+    let (p0, p1) = (plane_of(start)?, plane_of(end)?);
+    let input: Vec<[(sg::Plane, sg::Loop2); 2]> = loops
+        .iter()
+        .map(|(a, b)| {
+            [
+                (
+                    p0,
+                    sg::Loop2 {
+                        segs: a.iter().map(seg).collect(),
+                    },
+                ),
+                (
+                    p1,
+                    sg::Loop2 {
+                        segs: b.iter().map(seg).collect(),
+                    },
+                ),
+            ]
+        })
+        .collect();
+    let body = guarded("prism", || sk::prism_between(&input))
+        .map_err(|e| format!("the geometry kernel cannot build the member ({e})"))?;
+    let n: usize = loops.iter().map(|l| l.0.len()).sum();
+    let names: Vec<String> = (0..n).map(|k| k.to_string()).collect();
+    let face_names = names_from(&body, &[], &sweep::side_names(&names, prefix));
+    Ok(ExactSolid {
+        name: Some(prefix.to_owned()),
+        body,
+        face_names,
+        profiles: Vec::new(),
+        sheet: false,
+    })
+}
+
 /// Boolean operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExactOp {

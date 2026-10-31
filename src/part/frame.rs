@@ -670,6 +670,32 @@ impl Section {
                 "the cuts leave nothing of the member".into(),
             ));
         }
+        // Slanted ends (a mitre): the section between its two end planes in
+        // one kernel call, no Trim Solid.
+        let plane = |c: &EndCut| {
+            [
+                [c.point.x, c.point.y, c.point.z],
+                [c.normal.x, c.normal.y, c.normal.z],
+            ]
+        };
+        let (starts, ends): (Vec<&EndCut>, Vec<&EndCut>) =
+            slanted.iter().partition(|c| c.point.z < length / 2.0);
+        if !slanted.is_empty() && starts.len() <= 1 && ends.len() <= 1 {
+            let square = |z: Real| [[0.0, 0.0, z], [0.0, 0.0, 1.0]];
+            let op = PrismOp {
+                loops: self.loops(),
+                start: starts.first().map_or(square(z0), |c| plane(c)),
+                end: ends.first().map_or(square(z1), |c| plane(c)),
+            };
+            part.add_body_op(crate::part::BodyOpFeature::new(crate::part::BodyOp::Prism(
+                op,
+            )))?;
+            self.add_notches(&mut part, notches, &opts)?;
+            if let Some(m) = material {
+                let _ = part.set_material(Some(m), crate::materials::builtin());
+            }
+            return Ok(part);
+        }
         let start_inside = z0 > 1e-9 || z1 < 1e-9;
         let (i, seed) = if start_inside {
             // The section on a plane at z0 (points mapped through 3D, so the
@@ -741,6 +767,21 @@ impl Section {
             sp.tool = Some(SplitToolRef::Plane(PlaneRef::Work(format!("{w}:XY"))));
             part.add_split(sp)?;
         }
+        self.add_notches(&mut part, notches, &opts)?;
+        if let Some(m) = material {
+            let _ = part.set_material(Some(m), crate::materials::builtin());
+        }
+        Ok(part)
+    }
+
+    /// Notch cuts of a member part: each prism a sketch on a work UCS and an
+    /// Extrude Cut.
+    fn add_notches(
+        &self,
+        part: &mut PartDocument,
+        notches: &[NotchTool],
+        opts: &SketchOptions,
+    ) -> Result<(), PartError> {
         for t in notches {
             let v = |a: &[Real; 3]| Vector3::new(a[0], a[1], a[2]);
             let n = v(&t.x)
@@ -759,7 +800,7 @@ impl Section {
                 plane: PlaneRef::Work(format!("{w}:XY")),
                 ..Default::default()
             };
-            let k = part.create_sketch(placement, &opts)?;
+            let k = part.create_sketch(placement, opts)?;
             let pl = part.sketches[k].sketch.plane.clone();
             draw_loop(&mut part.sketches[k].sketch, t.outline_in(&pl))?;
             let regions = part.sketches[k].sketch.regions();
@@ -774,10 +815,7 @@ impl Section {
             }
             part.add_extrude(k, e)?;
         }
-        if let Some(m) = material {
-            let _ = part.set_material(Some(m), crate::materials::builtin());
-        }
-        Ok(part)
+        Ok(())
     }
 
     /// The iProperties a member of this section and `length` carries.
@@ -808,6 +846,203 @@ pub struct EndCut {
     pub point: Point3,
     /// Towards the removed side.
     pub normal: Vector3,
+}
+
+/// A frame member's body (`BodyOp::Prism`, format revision 57): the
+/// section's loops (part XY; outer first, counter-clockwise, then the holes)
+/// pushed along +Z onto a start and an end plane. A mitred member in one
+/// kernel call: an extrusion with a Trim Solid per slanted end took ~0.4 s
+/// an end (the kernel traces the section; meshing its spline edges).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PrismOp {
+    /// The section (copied into the part, rule 8).
+    pub loops: Vec<Loop>,
+    /// Start plane: a point and a normal (either side).
+    pub start: [[Real; 3]; 2],
+    /// End plane.
+    pub end: [[Real; 3]; 2],
+}
+
+/// A segment of a section outline: a line or a circle arc (`sweep`
+/// radians from angle `from`, positive counter-clockwise).
+#[derive(Clone, Copy, Debug)]
+enum Seg {
+    Line(Point2, Point2),
+    Arc {
+        c: Point2,
+        r: Real,
+        from: Real,
+        sweep: Real,
+    },
+}
+
+/// The loop's segments in its own direction, arcs at most a quarter turn.
+fn segments(l: &Loop) -> Vec<Seg> {
+    use std::f64::consts::{FRAC_PI_2, TAU};
+    let mut out = Vec::new();
+    let arc = |c: Point2, r: Real, from: Real, sweep: Real, out: &mut Vec<Seg>| {
+        let k = (sweep.abs() / FRAC_PI_2 - 1e-9).ceil().max(1.0) as usize;
+        for i in 0..k {
+            out.push(Seg::Arc {
+                c,
+                r,
+                from: from + sweep * i as Real / k as Real,
+                sweep: sweep / k as Real,
+            });
+        }
+    };
+    let angle = |c: Point2, p: Point2| (p.y - c.y).atan2(p.x - c.x);
+    let turn = |from: Real, to: Real, ccw: bool| {
+        let mut d = to - from;
+        if ccw {
+            while d <= 0.0 {
+                d += TAU;
+            }
+        } else {
+            while d >= 0.0 {
+                d -= TAU;
+            }
+        }
+        d
+    };
+    match l {
+        Loop::Circle(c, r, hole) => arc(*c, *r, 0.0, if *hole { -TAU } else { TAU }, &mut out),
+        Loop::Path(v) => {
+            let n = v.len();
+            for i in 0..n {
+                let (a, b) = (v[i].0, v[(i + 1) % n].0);
+                match v[i].1 {
+                    Some((c, ccw)) => {
+                        let r = (a - c).norm();
+                        arc(
+                            c,
+                            r,
+                            angle(c, a),
+                            turn(angle(c, a), angle(c, b), ccw),
+                            &mut out,
+                        );
+                    }
+                    None => out.push(Seg::Line(a, b)),
+                }
+            }
+        }
+        Loop::Corners(cs) => {
+            let n = cs.len();
+            let ends: Vec<Corner> = (0..n)
+                .map(|i| fillet(cs[(i + n - 1) % n].0, cs[i].0, cs[(i + 1) % n].0, cs[i].1))
+                .collect();
+            let span = |e: &Corner| match *e {
+                Corner::Sharp(p) => (p, p),
+                Corner::Round { a, b, .. } => (a, b),
+            };
+            for i in 0..n {
+                if let Corner::Round { a, b, c, ccw } = ends[i] {
+                    let r = (a - c).norm();
+                    arc(
+                        c,
+                        r,
+                        angle(c, a),
+                        turn(angle(c, a), angle(c, b), ccw),
+                        &mut out,
+                    );
+                }
+                let from = span(&ends[i]).1;
+                let to = span(&ends[(i + 1) % n]).0;
+                if (to - from).norm() > 1e-12 {
+                    out.push(Seg::Line(from, to));
+                }
+            }
+        }
+    }
+    out
+}
+
+impl PrismOp {
+    /// Refuses a prism that cannot be built.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.loops.is_empty() {
+            return Err("the member has no section".into());
+        }
+        for p in [self.start, self.end] {
+            let n = Vector3::new(p[1][0], p[1][1], p[1][2]);
+            if n.z.abs() < 0.05 * n.norm() {
+                return Err("an end plane runs along the member".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// The plane of `p` with its normal along +Z, its x axis over the
+    /// section's x, and the point of it over section point (x, y).
+    fn plane(p: &[[Real; 3]; 2]) -> Result<(crate::kernel::Plane, Vector3, Point3), String> {
+        let q = Point3::new(p[0][0], p[0][1], p[0][2]);
+        let mut n = Vector3::new(p[1][0], p[1][1], p[1][2]);
+        if n.z < 0.0 {
+            n = -n;
+        }
+        let z0 = q.z + (n.x * q.x + n.y * q.y) / n.z;
+        let o = Point3::new(0.0, 0.0, z0);
+        let x = Vector3::new(n.z, 0.0, -n.x);
+        let pl = crate::kernel::Plane::new(o, n, x).map_err(|e| e.to_string())?;
+        Ok((pl, n, o))
+    }
+
+    /// The sections on both planes in their own coordinates (the loops'
+    /// arcs as conics there), and the two planes (for the kernel's
+    /// `prism_between`).
+    #[allow(clippy::type_complexity)]
+    pub fn sections(
+        &self,
+    ) -> Result<
+        (
+            Vec<(
+                Vec<crate::kernel::exact::PrismSeg>,
+                Vec<crate::kernel::exact::PrismSeg>,
+            )>,
+            crate::kernel::Plane,
+            crate::kernel::Plane,
+        ),
+        String,
+    > {
+        use crate::kernel::exact::PrismSeg;
+        self.validate()?;
+        let (p0, n0, o0) = Self::plane(&self.start)?;
+        let (p1, n1, o1) = Self::plane(&self.end)?;
+        // Section point (x, y) pushed along +Z onto a plane, in its 2D
+        // coordinates (an affine map: lines stay lines, arcs become conics).
+        let on = |pl: &crate::kernel::Plane, n: &Vector3, o: &Point3, q: Point2| {
+            let z = o.z - (n.x * q.x + n.y * q.y) / n.z;
+            let p = pl.project(&Point3::new(q.x, q.y, z));
+            Point2::new(p.x, p.y)
+        };
+        let map = |pl: &crate::kernel::Plane, n: &Vector3, o: &Point3, s: &Seg| match *s {
+            Seg::Line(a, b) => PrismSeg::Line(on(pl, n, o, a), on(pl, n, o, b)),
+            Seg::Arc { c, r, from, sweep } => {
+                let h = sweep / 2.0;
+                let at = |t: Real| Point2::new(c.x + r * t.cos(), c.y + r * t.sin());
+                let m = from + h;
+                let apex = Point2::new(c.x + r / h.cos() * m.cos(), c.y + r / h.cos() * m.sin());
+                PrismSeg::Conic(
+                    on(pl, n, o, at(from)),
+                    on(pl, n, o, apex),
+                    on(pl, n, o, at(from + sweep)),
+                    h.cos(),
+                )
+            }
+        };
+        let loops = self
+            .loops
+            .iter()
+            .map(|l| {
+                let segs = segments(l);
+                (
+                    segs.iter().map(|s| map(&p0, &n0, &o0, s)).collect(),
+                    segs.iter().map(|s| map(&p1, &n1, &o1, s)).collect(),
+                )
+            })
+            .collect();
+        Ok((loops, p0, p1))
+    }
 }
 
 /// A notch of a member (Notch, Basic Profile), in its part's coordinates:
@@ -1391,6 +1626,64 @@ mod tests {
         // An unequal angle's centroid lies towards the long leg's side.
         let p = sec("Unequal angle (EN 10056-1)", "L 60x40x5").properties();
         assert!(p.centroid.x < 0.0 && p.centroid.y < 0.0);
+    }
+
+    /// A member mitred at 45° at both ends is one prism (no Trim Solid):
+    /// volume A × mean length, Start / End caps on the planes, quickly.
+    #[test]
+    fn a_mitred_member_is_one_prism() {
+        for (f, size) in [
+            ("Square hollow section (EN 10219)", "40x40x3"),
+            ("Circular hollow section (EN 10219)", "48.3x3.2"),
+            ("IPN beam (EN 10365)", "IPN 100"),
+        ] {
+            let s = sec(f, size);
+            let (w, _) = s.extent();
+            let n0 = Vector3::new(1.0, 0.0, -1.0).normalize();
+            let n1 = Vector3::new(1.0, 0.0, 1.0).normalize();
+            let cuts = [
+                EndCut {
+                    point: Point3::origin(),
+                    normal: n0,
+                },
+                EndCut {
+                    point: Point3::new(0.0, 0.0, 400.0),
+                    normal: n1,
+                },
+            ];
+            let t0 = std::time::Instant::now();
+            let part = s
+                .member_part_cut(400.0, [w + 1.0, w + 1.0], &cuts, &[], None)
+                .unwrap();
+            let ms = t0.elapsed().as_secs_f64() * 1e3;
+            assert!(
+                part.feature_health.is_empty(),
+                "{size}: {:?}",
+                part.feature_health
+            );
+            assert!(
+                matches!(part.features[0], crate::part::Feature::BodyOp(_)),
+                "{size}: not a prism"
+            );
+            let v: Real = part
+                .exact_bodies
+                .0
+                .iter()
+                .filter_map(|b| b.volume_at(1e-3))
+                .sum();
+            close(v, s.properties().area * 400.0, 0.002, size);
+            let names: Vec<String> = part
+                .body
+                .faces()
+                .filter_map(|(_, f)| f.name.clone())
+                .collect();
+            assert!(
+                names.iter().any(|n| n.ends_with(":Start"))
+                    && names.iter().any(|n| n.ends_with(":End")),
+                "{size}: {names:?}"
+            );
+            eprintln!("{size}: mitred member {ms:.0} ms");
+        }
     }
 
     /// Tapered flanges (UPN 8 %, IPN 14 %): areas and Ix of the EN 10365

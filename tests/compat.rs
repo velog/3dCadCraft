@@ -2605,6 +2605,29 @@ fn drawing_r39_project() -> Project {
     project
 }
 
+/// Revision 57: a frame member mitred at both ends, one `BodyOp::Prism`
+/// (an SHS 40x40x3, 400 long on its axis, ends at 45°).
+fn prism_r57() -> PartDocument {
+    use cadcraft3d::kernel::Vector3;
+    use cadcraft3d::part::frame::{EndCut, Library};
+    let s = Library::builtin()
+        .find("Square hollow section (EN 10219)", "40x40x3")
+        .unwrap()
+        .clone();
+    let cuts = [
+        EndCut {
+            point: Point3::origin(),
+            normal: Vector3::new(1.0, 0.0, -1.0).normalize(),
+        },
+        EndCut {
+            point: Point3::new(0.0, 0.0, 400.0),
+            normal: Vector3::new(1.0, 0.0, 1.0).normalize(),
+        },
+    ];
+    s.member_part_cut(400.0, [41.0, 41.0], &cuts, &[], Some("Steel S235"))
+        .unwrap()
+}
+
 /// Revision 49: a frame Notch. A flat bar 40x5 up the Y axis ends on the
 /// axis of an RHS 100x50x4 along X and is notched by it (Basic Profile,
 /// offset 5). Returns the project and the bar's occurrence.
@@ -3235,6 +3258,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("RipR50");
             project.add_document("Part1", DocumentData::Part(rip_r50()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r57/prism_r57.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("PrismR57");
+            project.add_document("Part1", DocumentData::Part(prism_r57()));
             project.save(&f).unwrap();
         }
         let f = root().join("r49/notch_r49.3dcadcraft");

@@ -1367,7 +1367,7 @@ fn speed_budgets() {
         assert_eq!(top.len(), 4);
         rows.push((
             "frame: miter the 4 SHS 40x40x3 members of a rectangle (8 cuts)",
-            3000.0,
+            300.0,
             median_ms(3, || {
                 let mut p = base.clone();
                 let (_, occs) = insert(&mut p, &Linked::new(), aid, &top, &o, lib, None).unwrap();
@@ -1427,7 +1427,7 @@ fn speed_budgets() {
         // A frame from the solid: all 12 edges Inside, corners of three (column through, 16 Corner Joints).
         rows.push((
             "frame: box frame from the solid, Inside, 16 corner joints",
-            3000.0,
+            400.0,
             median_ms(3, || {
                 let mut p = base.clone();
                 let mut o = o.clone();

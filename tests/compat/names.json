@@ -1075,5 +1075,25 @@
   ],
   "r54/mesh_r54.3dcadcraft": [
     "Import1:Mesh"
+  ],
+  "r57/prism_r57.3dcadcraft": [
+    "Prism1:End",
+    "Prism1:Side:0",
+    "Prism1:Side:1",
+    "Prism1:Side:10",
+    "Prism1:Side:11",
+    "Prism1:Side:12",
+    "Prism1:Side:13",
+    "Prism1:Side:14",
+    "Prism1:Side:15",
+    "Prism1:Side:2",
+    "Prism1:Side:3",
+    "Prism1:Side:4",
+    "Prism1:Side:5",
+    "Prism1:Side:6",
+    "Prism1:Side:7",
+    "Prism1:Side:8",
+    "Prism1:Side:9",
+    "Prism1:Start"
   ]
 }

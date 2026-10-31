@@ -193,6 +193,9 @@ pub enum BodyOp {
     CopyObject(super::copy_object::CopyObjectOp),
     /// Import of a STEP file (format revision 42).
     Import(super::import::ImportOp),
+    /// A frame member's body: its section between two planes (format
+    /// revision 57).
+    Prism(super::frame::PrismOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -439,6 +442,7 @@ impl BodyOpFeature {
             BodyOp::Sculpt(_) => "Sculpt",
             BodyOp::CopyObject(_) => "CopyObject",
             BodyOp::Import(_) => "Import",
+            BodyOp::Prism(_) => "Prism",
         }
     }
 
@@ -466,6 +470,7 @@ impl BodyOpFeature {
             BodyOp::Sculpt(o) => o.validate(),
             BodyOp::CopyObject(o) => o.validate(),
             BodyOp::Import(o) => o.validate(),
+            BodyOp::Prism(o) => o.validate(),
         }
     }
 
@@ -479,7 +484,8 @@ impl BodyOpFeature {
             | BodyOp::Ruled(_)
             | BodyOp::Stitch(_)
             | BodyOp::CopyObject(_)
-            | BodyOp::Import(_) => true,
+            | BodyOp::Import(_)
+            | BodyOp::Prism(_) => true,
             BodyOp::Sculpt(s) => s.operation == super::surface_op::SculptOperation::NewSolid,
             BodyOp::DeleteFace(_)
             | BodyOp::MoveBodies(_)
@@ -501,7 +507,8 @@ impl BodyOpFeature {
             | BodyOp::ReplaceFace(_)
             | BodyOp::Sculpt(_)
             | BodyOp::CopyObject(_)
-            | BodyOp::Import(_) => Vec::new(),
+            | BodyOp::Import(_)
+            | BodyOp::Prism(_) => Vec::new(),
             BodyOp::MoveBodies(m) => m
                 .steps
                 .iter()
@@ -584,6 +591,7 @@ impl BodyOpFeature {
             ),
             BodyOp::CopyObject(o) => o.describe(),
             BodyOp::Import(o) => o.describe(),
+            BodyOp::Prism(_) => "Frame member".into(),
         }
     }
 }

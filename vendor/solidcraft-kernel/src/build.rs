@@ -1074,6 +1074,38 @@ pub fn loft_matched(sections: &[(Plane, Loop2)]) -> Result<Body> {
     })
 }
 
+/// 3DCadCraft change: a prism of a region between two planes — a frame member cut at both ends
+/// (square or mitred) without a Boolean. Each loop (the outer one first, then the holes) is
+/// given as its section on the start plane and on the end plane (`[start, end]`, segments
+/// matched one to one: the same profile pushed along the member onto each plane, lines as
+/// lines, arcs as conics); the outer loop counter-clockwise and the holes clockwise about the
+/// direction the prism runs. Ruled sides between the sections, planar caps with the holes.
+/// Side faces are numbered by segment across the loops (outer first).
+pub fn prism_between(loops: &[[(Plane, Loop2); 2]]) -> Result<Body> {
+    if loops.is_empty() {
+        return Err(KernelError::Invalid("a prism needs a section".into()));
+    }
+    guard("prism", || {
+        let mut sides = Vec::new();
+        let (mut w0, mut w1) = (Vec::new(), Vec::new());
+        let mut base = 0;
+        for [(p0, l0), (p1, l1)] in loops {
+            let n = l0.segs.len();
+            if n == 0 || n > MAX_SEGS || l1.segs.len() != n {
+                return Err(KernelError::Invalid("matched sections need the same segment count".into()));
+            }
+            let a = uniform_wire(p0, l0)?;
+            let b = uniform_wire(p1, l1)?;
+            let src: Vec<Vec<usize>> = (0..n).map(|i| vec![base + i]).collect();
+            sides.extend(ruled_loft_faces(&[a.clone(), b.clone()], &[src.clone(), src])?);
+            w0.push(a);
+            w1.push(b);
+            base += n;
+        }
+        cap_and_close(sides, &w0, &w1, false)
+    })
+}
+
 /// 3DCadCraft change: a closed-loop loft (a ring without caps) through four or more matched
 /// sections (as [`loft_matched`]), the last joined back to the first (not repeated). Built as two smooth
 /// halves that share their end wires, so the side faces close into one shell.

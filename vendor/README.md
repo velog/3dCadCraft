@@ -29,6 +29,12 @@ copy when the pin moves to a commit that has them.
 | `surface_kind.rs` `face_surfaces` | every face's surface in one walk (in parallel) | `face_surface(i)` walked to face i each time |
 | `polybool.rs` `Sources::edge` | an edge between two faces that share several edges (a circle split into arcs), whose chord test finds none or several, gets no origin (`Some(vec![])`) instead of `None` | one such edge dropped the whole result's history: a modeled thread cut in slabs lost every face name (not a speed change) |
 
+An addition for frame members (`docs/spec/6.1-frame-generator.md`):
+
+| File | Change | Effect |
+|---|---|---|
+| `build.rs` `prism_between` (exported in `lib.rs`) | a new function: a region's loops (outer and holes), each as its section on a start and an end plane (matched segments, arcs as conics), joined by ruled sides and closed by planar caps with holes (`uniform_wire`, `ruled_loft_faces`, `cap_and_close`) | a member mitred at both ends in ~15 ms (extrusion + two Trim Solids: ~0.75 s, the split tracing the section and meshing its spline edges) |
+
 An addition for Thicken/Offset's Allow Approximation (`docs/spec/2.14-thicken-offset.md`):
 
 | File | Change | Effect |

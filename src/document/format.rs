@@ -163,7 +163,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 54: Import of a mesh (STL, OBJ) as mesh bodies (`ImportOp` holding OBJ text)
 ///   (2026-10-31).
 /// - 55: sheet metal Contour Roll (`SheetOp::ContourRoll`) (2026-10-31).
-pub const FORMAT_REVISION: u32 = 55;
+/// - 57: frame member bodies between two planes (`BodyOp::Prism`, mitred
+///   members without a Trim Solid) (2026-10-31).
+pub const FORMAT_REVISION: u32 = 57;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";
