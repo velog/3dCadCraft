@@ -360,6 +360,13 @@ pub(super) struct SheetUi {
     corners: RefCell<Vec<(usize, usize, Point3)>>,
     /// Whether a flange can stand on an edge, by (model key, edge).
     free: RefCell<std::collections::HashMap<(String, String), bool>>,
+    /// The sheet metal rules (built in + the user's table) and the problems
+    /// reading them; read when Sheet Metal Defaults opens, again on Reload.
+    pub rules: Option<(crate::sheet_rules::RuleLibrary, Vec<String>)>,
+    /// Sheet Metal Defaults' material filter of the rule list (`None`: all).
+    pub rule_material: Option<String>,
+    /// The last Edit Rules File / Reload message.
+    pub rules_note: Option<String>,
 }
 
 /// A pick in the graphics window.
@@ -3438,8 +3445,15 @@ impl CadCraftApp {
         let Some(mut r) = self.sm.defaults.clone() else {
             return;
         };
+        if self.sm.rules.is_none() {
+            let dir = crate::sheet_rules::user_dir();
+            self.sm.rules = Some(crate::sheet_rules::RuleLibrary::with_user(dir.as_deref()));
+        }
+        let (lib, problems) = self.sm.rules.clone().unwrap_or_default();
         let mut open = true;
         let mut apply = false;
+        let mut reload = false;
+        let mut edit_file = false;
         let win = egui::Window::new("Sheet Metal Defaults")
             .open(&mut open)
             .resizable(false)
@@ -3451,6 +3465,72 @@ impl CadCraftApp {
                     .num_columns(2)
                     .min_col_width(super::panels::label_width(ui.ctx()))
                     .show(ui, |ui| {
+                        // The rule table: a material filter, then its rules.
+                        plabel(ui, "Material");
+                        let shown = self
+                            .sm
+                            .rule_material
+                            .clone()
+                            .unwrap_or_else(|| "All".into());
+                        egui::ComboBox::from_id_salt("sm_rule_material")
+                            .selected_text(shown)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.sm.rule_material, None, "All");
+                                for m in lib.materials() {
+                                    ui.selectable_value(
+                                        &mut self.sm.rule_material,
+                                        Some(m.to_owned()),
+                                        m,
+                                    );
+                                }
+                            })
+                            .response
+                            .on_hover_text("Show the rules of one material");
+                        ui.end_row();
+                        plabel(ui, "Rule");
+                        let current = r.rule.as_deref().and_then(|n| lib.rule(n));
+                        let label = match (&r.rule, current) {
+                            (Some(n), Some(rule)) if rule.matches(&r) => n.clone(),
+                            (Some(n), Some(_)) => format!("{n} (edited)"),
+                            (Some(n), None) => format!("{n} (not in the table)"),
+                            (None, _) => "Own values".into(),
+                        };
+                        let mut picked: Option<crate::sheet_rules::SheetRule> = None;
+                        egui::ComboBox::from_id_salt("sm_rule_name")
+                            .selected_text(label)
+                            .width(220.0)
+                            .show_ui(ui, |ui| {
+                                for rule in lib.rules.iter().filter(|x| {
+                                    self.sm
+                                        .rule_material
+                                        .as_deref()
+                                        .is_none_or(|m| x.material == m)
+                                }) {
+                                    let on = r.rule.as_deref() == Some(rule.name.as_str());
+                                    let tip = format!(
+                                        "{}: {} mm, K {:.2}{}",
+                                        rule.material,
+                                        rule.thickness,
+                                        rule.k_factor,
+                                        if rule.note.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!(" — {}", rule.note)
+                                        }
+                                    );
+                                    if ui.selectable_label(on, &rule.name).on_hover_text(tip).clicked() {
+                                        picked = Some(rule.clone());
+                                    }
+                                }
+                            })
+                            .response
+                            .on_hover_text(
+                                "A rule of the table fills every value below (Edit Rules File changes the table)",
+                            );
+                        if let Some(rule) = picked {
+                            r = rule.defaults();
+                        }
+                        ui.end_row();
                         plabel(ui, "Thickness");
                         ui.add(ExprValue::new(&mut r.thickness).suffix(" mm"));
                         ui.end_row();
@@ -3504,6 +3584,24 @@ impl CadCraftApp {
                     ui.colored_label(Color32::from_rgb(235, 80, 70), e);
                 }
                 ui.horizontal(|ui| {
+                    edit_file = ui
+                        .button("Edit Rules File...")
+                        .on_hover_text(
+                            "Opens the rule table in your spreadsheet program (Excel): one rule per row; save, then Reload",
+                        )
+                        .clicked();
+                    reload = ui
+                        .button("Reload")
+                        .on_hover_text("Reads the rule table again")
+                        .clicked();
+                });
+                for p in &problems {
+                    ui.colored_label(Color32::from_rgb(235, 160, 60), p);
+                }
+                if let Some(n) = &self.sm.rules_note {
+                    ui.weak(n);
+                }
+                ui.horizontal(|ui| {
                     if ui
                         .add_enabled(r.validate().is_ok(), egui::Button::new("OK"))
                         .clicked()
@@ -3515,8 +3613,39 @@ impl CadCraftApp {
                     }
                 });
             });
+        if edit_file {
+            self.sm.rules_note = Some(
+                match crate::sheet_rules::ensure_user_file()
+                    .and_then(|p| crate::sheet_rules::open_in_default_app(&p).map(|()| p))
+                {
+                    Ok(p) => format!("{} (save it, then Reload)", p.display()),
+                    Err(e) => format!("Edit Rules File: {e}"),
+                },
+            );
+        }
+        if reload {
+            let dir = crate::sheet_rules::user_dir();
+            let fresh = crate::sheet_rules::RuleLibrary::with_user(dir.as_deref());
+            self.sm.rules_note = Some(format!("{} rules", fresh.0.rules.len()));
+            self.sm.rules = Some(fresh);
+        }
         if apply {
             self.checkpoint("Sheet Metal Defaults");
+            // The rule's material becomes the part's (Inventor: Material By
+            // Sheet Metal Rule), when the material library has it.
+            if let Some(m) = r
+                .rule
+                .as_deref()
+                .and_then(|n| lib.rule(n))
+                .map(|x| x.material.clone())
+                .filter(|m| self.mat.lib.material(m).is_some())
+                && self.part().material.as_deref().unwrap_or("Generic") != m
+            {
+                let mat_lib = self.mat.lib.clone();
+                if let Err(e) = self.part_mut().set_material(Some(&m), &mat_lib) {
+                    self.file_status = Some(Err(format!("Sheet Metal Defaults: {e}")));
+                }
+            }
             self.part_mut().sheet_metal = Some(r.clone());
             if let Err(e) = self.part_mut().regenerate() {
                 self.file_status = Some(Err(e.to_string()));

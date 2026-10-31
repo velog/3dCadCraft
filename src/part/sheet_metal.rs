@@ -39,6 +39,10 @@ pub struct SheetMetalDefaults {
     /// The relief where two bends meet at a corner.
     #[serde(default, skip_serializing_if = "CornerRelief::is_default")]
     pub corner_shape: CornerRelief,
+    /// The sheet metal rule these values were copied from (`sheet_rules`);
+    /// the part keeps the values, so it builds the same without the table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 /// Corner Relief Shape (Inventor's sheet rule; SolidWorks' Corner Relief
@@ -139,6 +143,7 @@ impl Default for SheetMetalDefaults {
             corner_relief: None,
             gap: None,
             corner_shape: CornerRelief::Round,
+            rule: None,
         }
     }
 }

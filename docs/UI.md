@@ -296,7 +296,9 @@ Symmetric Gap / Overlap / Reverse Overlap, gap, percent overlap. **Cut**: Extent
 / Through All, or Cut Across Bend. The ribbon stays on the tab you chose (Finish Sketch returns to the tab the
 sketch was opened from).
 
-Every part has the Sheet Metal tab (after 3D Model; no separate sheet metal part type): **Face** or 3D Model › Convert › **Convert to Sheet Metal** starts one. The tab also has Start 2D Sketch, Hole, the patterns (Rectangular, Circular, Mirror) and the work features (Plane, Axis, Point, UCS). **Defaults**: thickness,
+Every part has the Sheet Metal tab (after 3D Model; no separate sheet metal part type): **Face** or 3D Model › Convert › **Convert to Sheet Metal** starts one. The tab also has Start 2D Sketch, Hole, the patterns (Rectangular, Circular, Mirror) and the work features (Plane, Axis, Point, UCS). **Defaults**: **Material** (filter) and
+**Rule** from the rule table (it fills the values and, on OK, the part's material), **Edit Rules File...** (opens the
+table in Excel: one rule per row; save it, then **Reload**); thickness,
 K-factor, bend radius and reliefs (unticked values follow the thickness). **Face**: choose the sketch with the
 closed profile, Flip. **Flange**: click sheet edges (green under the cursor, blue dots when taken; again
 removes), Height, Angle, Bend Radius, Bend Position, Flip. **Width Extents** of a Flange: Edge, Width (centred or from an offset) or Offset; the orange arrows at

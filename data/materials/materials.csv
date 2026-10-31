@@ -10,6 +10,8 @@ name,category,density,yield_mpa,youngs_gpa,appearance
 Generic,Generic,1.0,,,Default
 Steel S235,Steel,7.85,235,210,Steel - Satin
 Steel S355,Steel,7.85,355,210,Steel - Satin
+Steel DC01,Steel,7.85,210,210,Steel - Satin
+Galvanized Steel DX51D,Steel,7.85,140,210,Steel - Satin
 Steel AISI 1018,Steel,7.87,370,205,Steel - Satin
 Steel AISI 4140,Steel,7.85,415,205,Steel - Satin
 Stainless Steel 304,Steel,8.00,215,193,Stainless Steel - Brushed
@@ -18,6 +20,7 @@ Cast Iron EN-GJL-250,Iron,7.20,,110,Cast Iron
 Aluminium 6061-T6,Aluminium,2.70,276,68.9,Aluminium - Satin
 Aluminium 6082-T6,Aluminium,2.70,260,70,Aluminium - Satin
 Aluminium 7075-T6,Aluminium,2.81,503,71.7,Aluminium - Satin
+Aluminium 5754-H22,Aluminium,2.67,130,70,Aluminium - Satin
 Brass CuZn37,Copper Alloys,8.44,,100,Brass - Polished
 Copper Cu-ETP,Copper Alloys,8.96,69,117,Copper
 Titanium Grade 5 (Ti-6Al-4V),Titanium,4.43,880,113.8,Titanium

@@ -1,0 +1,66 @@
+# 3DCadCraft built-in sheet metal rules (Sheet Metal Defaults > Sheet Metal Rule).
+# One rule per line: a material at a thickness. A user file with the same columns in
+# %APPDATA%\3dcadcraft\sheet_metal\rules.csv (~/.config/3dcadcraft/sheet_metal/ elsewhere) replaces
+# rules by name and adds new ones; Sheet Metal Defaults > Edit Rules File opens it (in Excel or any
+# spreadsheet: ',' or ';' between cells, a decimal comma with ';').
+# Lengths in mm. An empty cell follows the thickness as Inventor's default rule does: bend radius T,
+# relief width T, relief depth T*0.5, corner relief T*4, gap T. A cell may be an expression of the
+# thickness: T*1.5 (or Thickness*1.5). corner_shape: Round, Square, Tear or Trim.
+# The values are typical starting points (inside radius about the thickness, K-factor 0.43..0.45),
+# not a press brake's table: check them against your tooling.
+name,material,thickness,bend_radius,k_factor,relief_width,relief_depth,corner_relief,corner_shape,gap,note
+Default,Generic,2,,0.44,,,,Round,,The part default: every size follows the thickness
+Steel DC01 0.5 mm,Steel DC01,0.5,,0.44,,,,Round,,Cold rolled
+Steel DC01 0.8 mm,Steel DC01,0.8,,0.44,,,,Round,,Cold rolled
+Steel DC01 1 mm,Steel DC01,1,,0.44,,,,Round,,Cold rolled
+Steel DC01 1.2 mm,Steel DC01,1.2,,0.44,,,,Round,,Cold rolled
+Steel DC01 1.5 mm,Steel DC01,1.5,,0.44,,,,Round,,Cold rolled
+Steel DC01 2 mm,Steel DC01,2,,0.44,,,,Round,,Cold rolled
+Steel DC01 2.5 mm,Steel DC01,2.5,,0.44,,,,Round,,Cold rolled
+Steel DC01 3 mm,Steel DC01,3,,0.44,,,,Round,,Cold rolled
+Galvanized Steel DX51D 0.5 mm,Galvanized Steel DX51D,0.5,,0.44,,,,Round,,Hot-dip galvanized
+Galvanized Steel DX51D 0.7 mm,Galvanized Steel DX51D,0.7,,0.44,,,,Round,,Hot-dip galvanized
+Galvanized Steel DX51D 0.8 mm,Galvanized Steel DX51D,0.8,,0.44,,,,Round,,Hot-dip galvanized
+Galvanized Steel DX51D 1 mm,Galvanized Steel DX51D,1,,0.44,,,,Round,,Hot-dip galvanized
+Galvanized Steel DX51D 1.2 mm,Galvanized Steel DX51D,1.2,,0.44,,,,Round,,Hot-dip galvanized
+Galvanized Steel DX51D 1.5 mm,Galvanized Steel DX51D,1.5,,0.44,,,,Round,,Hot-dip galvanized
+Galvanized Steel DX51D 2 mm,Galvanized Steel DX51D,2,,0.44,,,,Round,,Hot-dip galvanized
+Galvanized Steel DX51D 2.5 mm,Galvanized Steel DX51D,2.5,,0.44,,,,Round,,Hot-dip galvanized
+Galvanized Steel DX51D 3 mm,Galvanized Steel DX51D,3,,0.44,,,,Round,,Hot-dip galvanized
+Steel S235 3 mm,Steel S235,3,,0.44,,,,Round,,Hot rolled; thick plate bends wider
+Steel S235 4 mm,Steel S235,4,,0.44,,,,Round,,Hot rolled; thick plate bends wider
+Steel S235 5 mm,Steel S235,5,,0.44,,,,Round,,Hot rolled; thick plate bends wider
+Steel S235 6 mm,Steel S235,6,T*1.5,0.44,,,,Round,,Hot rolled; thick plate bends wider
+Steel S235 8 mm,Steel S235,8,T*1.5,0.44,,,,Round,,Hot rolled; thick plate bends wider
+Steel S235 10 mm,Steel S235,10,T*1.5,0.44,,,,Round,,Hot rolled; thick plate bends wider
+Stainless Steel 304 0.5 mm,Stainless Steel 304,0.5,,0.45,,,,Round,,1.4301
+Stainless Steel 304 0.8 mm,Stainless Steel 304,0.8,,0.45,,,,Round,,1.4301
+Stainless Steel 304 1 mm,Stainless Steel 304,1,,0.45,,,,Round,,1.4301
+Stainless Steel 304 1.2 mm,Stainless Steel 304,1.2,,0.45,,,,Round,,1.4301
+Stainless Steel 304 1.5 mm,Stainless Steel 304,1.5,,0.45,,,,Round,,1.4301
+Stainless Steel 304 2 mm,Stainless Steel 304,2,,0.45,,,,Round,,1.4301
+Stainless Steel 304 2.5 mm,Stainless Steel 304,2.5,,0.45,,,,Round,,1.4301
+Stainless Steel 304 3 mm,Stainless Steel 304,3,,0.45,,,,Round,,1.4301
+Stainless Steel 304 4 mm,Stainless Steel 304,4,T*1.5,0.45,,,,Round,,1.4301
+Stainless Steel 304 5 mm,Stainless Steel 304,5,T*1.5,0.45,,,,Round,,1.4301
+Stainless Steel 304 6 mm,Stainless Steel 304,6,T*1.5,0.45,,,,Round,,1.4301
+Aluminium 5754-H22 0.5 mm,Aluminium 5754-H22,0.5,,0.43,,,,Round,,AlMg3
+Aluminium 5754-H22 0.8 mm,Aluminium 5754-H22,0.8,,0.43,,,,Round,,AlMg3
+Aluminium 5754-H22 1 mm,Aluminium 5754-H22,1,,0.43,,,,Round,,AlMg3
+Aluminium 5754-H22 1.5 mm,Aluminium 5754-H22,1.5,,0.43,,,,Round,,AlMg3
+Aluminium 5754-H22 2 mm,Aluminium 5754-H22,2,,0.43,,,,Round,,AlMg3
+Aluminium 5754-H22 2.5 mm,Aluminium 5754-H22,2.5,,0.43,,,,Round,,AlMg3
+Aluminium 5754-H22 3 mm,Aluminium 5754-H22,3,,0.43,,,,Round,,AlMg3
+Aluminium 5754-H22 4 mm,Aluminium 5754-H22,4,T*1.5,0.43,,,,Round,,AlMg3
+Aluminium 5754-H22 5 mm,Aluminium 5754-H22,5,T*1.5,0.43,,,,Round,,AlMg3
+Aluminium 5754-H22 6 mm,Aluminium 5754-H22,6,T*1.5,0.43,,,,Round,,AlMg3
+Copper Cu-ETP 0.5 mm,Copper Cu-ETP,0.5,,0.44,,,,Round,,
+Copper Cu-ETP 1 mm,Copper Cu-ETP,1,,0.44,,,,Round,,
+Copper Cu-ETP 1.5 mm,Copper Cu-ETP,1.5,,0.44,,,,Round,,
+Copper Cu-ETP 2 mm,Copper Cu-ETP,2,,0.44,,,,Round,,
+Copper Cu-ETP 3 mm,Copper Cu-ETP,3,,0.44,,,,Round,,
+Brass CuZn37 0.5 mm,Brass CuZn37,0.5,,0.44,,,,Round,,
+Brass CuZn37 1 mm,Brass CuZn37,1,,0.44,,,,Round,,
+Brass CuZn37 1.5 mm,Brass CuZn37,1.5,,0.44,,,,Round,,
+Brass CuZn37 2 mm,Brass CuZn37,2,,0.44,,,,Round,,
+Brass CuZn37 3 mm,Brass CuZn37,3,,0.44,,,,Round,,

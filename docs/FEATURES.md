@@ -1117,7 +1117,9 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 
 **Imported sheet metal** (2026-10-29): Convert to Sheet Metal of a STEP body with round bends — pick the base face, no edges: the thickness and every bend are found, then Flat Pattern / DXF work (spec §6.1e).
 
-**Sheet metal rules (Sheet Metal Rules / Styles):**
+**Sheet metal rules (Sheet Metal Rules / Styles):** a table of named rules (material × thickness) the user edits in
+Excel or any spreadsheet — Sheet Metal Defaults › Rule picks one (filtered by material), Edit Rules File opens
+`%APPDATA%\3dcadcraft\sheet_metal\rules.csv`, Reload reads it again (2026-10-31; 55 built-in rules). Each rule holds:
 - thickness;
 - bend radius;
 - **K-factor** (position of the neutral axis; it sets the developed length) or a bend table;
