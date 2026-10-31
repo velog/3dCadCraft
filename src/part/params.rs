@@ -50,7 +50,7 @@ pub struct UserParam {
 }
 
 /// Reads a linked parameter's source: its value (internal units) and unit.
-pub type LinkReader = dyn Fn(&ParamLink) -> Result<(Real, Unit), String>;
+pub type LinkReader<'a> = dyn Fn(&ParamLink) -> Result<(Real, Unit), String> + 'a;
 
 /// Where a linked user parameter takes its value (spec 3.10 §3.9: Inventor's
 /// Link of the Parameters dialog, a master parameter document, a
@@ -1357,10 +1357,7 @@ impl PartDocument {
     /// `read` (value in internal units, unit); changed values are written and
     /// the part rebuilt. Returns whether something changed and the links
     /// that could not be read (`<name>: <why>`; their last value stays).
-    pub fn update_param_links(
-        &mut self,
-        read: &LinkReader,
-    ) -> (bool, Vec<String>) {
+    pub fn update_param_links(&mut self, read: &LinkReader) -> (bool, Vec<String>) {
         let mut changed = false;
         let mut errors = Vec::new();
         let links: Vec<(String, ParamLink, Unit, String)> = self
