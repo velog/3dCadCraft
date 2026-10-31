@@ -183,6 +183,16 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     `commands::interface_only(action)` (`PartPlanned` / `AsmPlanned` through `Planned::has_logic`,
     `SmPlanned` through `PlannedKind::has_logic`, every drawing `DrwCmd::Planned`) — a command that gets
     its logic is added to `has_logic` in the same change.
+19. **The active selector filters the selection by itself** (owner's rule, 2026-10-31): while a command waits
+    for an input, only what that input takes is highlighted under the cursor and taken by a click — a frame
+    member's line selector takes edges and sketch lines (no faces, no whole component lit), Chamfer takes
+    edges and faces but never a vertex. A selector whose kinds depend on an option (Insert Frame's Select,
+    Copy Object's Select) returns them from `PartDialog::accepts`; a whole component lights up only for a
+    selector of bodies (`frame_hover`). The user's selection filter can only narrow this further.
+20. **Interaction budgets** (owner's rule, 2026-10-31): a pick, a hover or a command's OK on a typical model
+    stays within 100–200 ms, and an idle / hovering frame within a frame (~16 ms). Anything per frame is
+    cached (edge lists per part, `asm_edges`; resolved skeleton lines); quadratic walks over a body's edges
+    × faces are never per pick (`edge_ref` per edge took 4.4 s on one faceted part).
 
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 

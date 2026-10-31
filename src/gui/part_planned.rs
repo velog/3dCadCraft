@@ -1705,9 +1705,22 @@ impl PartDialog {
         Flow::new(sels, self.active)
     }
 
-    /// What selector `key` takes now: Copy Object's Objects follow its Select (Face · Body).
+    /// What selector `key` takes now: Copy Object's Objects follow its Select (Face · Body),
+    /// Insert Frame's edges its Select (Edge: edges and sketch lines only; Face / Body
+    /// Edges: a face) — the picking and the highlight take nothing else (spec 0-ui rule 19).
     fn accepts(&self, key: &str, def: &'static [PickKind]) -> &'static [PickKind] {
         match (self.kind, key) {
+            (Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame), "edges") => {
+                if self.index(0, "Select") == 0 {
+                    &[
+                        PickKind::Edge,
+                        PickKind::StraightEdge,
+                        PickKind::SketchCurve,
+                    ]
+                } else {
+                    &[PickKind::Face, PickKind::PlanarFace]
+                }
+            }
             (Planned::Part(PartPlanned::CopyObject), "objects") => {
                 if self.index(0, "Select") == 1 {
                     &[PickKind::Body, PickKind::Surface]

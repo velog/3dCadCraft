@@ -475,19 +475,63 @@ impl CadCraftApp {
         {
             return Some(v.clone());
         }
+        // One pass over the faces for every edge's faces, and only the
+        // visible edges: a faceted body (a member the kernel could not cut)
+        // has ~30 000 edges, and `edge_ref` per edge walked every face
+        // (4.4 s on the owner's frame, each time a part changed).
         let list = self.with_part(r, |p| {
             let body = &p.body;
             let opts = crate::kernel::TessellationOptions::default();
-            body.edges()
-                .filter(|(_, e)| {
-                    matches!(
-                        body.curve(e.curve),
-                        Some(crate::kernel::Curve::Line(_) | crate::kernel::Curve::Circle(_))
-                    )
+            let mut faces_of: std::collections::HashMap<crate::kernel::EdgeId, Vec<&str>> =
+                std::collections::HashMap::new();
+            for (_, f) in body.faces() {
+                let Some(name) = f.name.as_deref() else {
+                    continue;
+                };
+                for lp in std::iter::once(&f.outer).chain(&f.inner) {
+                    for ce in &lp.coedges {
+                        faces_of.entry(ce.edge).or_default().push(name);
+                    }
+                }
+            }
+            body.visible_edges()
+                .into_iter()
+                .filter(|&e| {
+                    body.edge(e).is_some_and(|x| {
+                        matches!(
+                            body.curve(x.curve),
+                            Some(crate::kernel::Curve::Line(_) | crate::kernel::Curve::Circle(_))
+                        )
+                    })
                 })
-                .filter_map(|(e, _)| {
-                    let r = crate::part::blend::edge_ref(body, e)?;
-                    Some((r, body.sample_edge(e, &opts).ok()?))
+                .filter_map(|e| {
+                    let names = faces_of.get(&e)?;
+                    let [n0, n1] = names[..] else {
+                        return None;
+                    };
+                    if n0 == n1 {
+                        return None;
+                    }
+                    let pts = body.sample_edge(e, &opts).ok()?;
+                    // The point half way along the edge (a straight one: its
+                    // middle; a half circle's chord middle is its centre).
+                    let total: f64 = pts.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+                    let mut left = total / 2.0;
+                    let mut m = *pts.first()?;
+                    for w in pts.windows(2) {
+                        let l = (w[1] - w[0]).norm();
+                        if l >= left && l > 0.0 {
+                            m = w[0] + (w[1] - w[0]) * (left / l);
+                            break;
+                        }
+                        left -= l;
+                        m = w[1];
+                    }
+                    let r = crate::part::EdgeRef {
+                        faces: [n0.to_owned(), n1.to_owned()],
+                        hint: [m.x, m.y, m.z],
+                    };
+                    Some((r, pts))
                 })
                 .collect::<EdgeList>()
         })?;

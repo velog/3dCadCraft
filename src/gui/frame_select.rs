@@ -122,10 +122,13 @@ impl CadCraftApp {
         if member_colour(d, key).is_some() {
             return hover.filter(|&o| self.is_frame_member(o));
         }
-        if face_colour(d, key).is_some() {
-            return None;
-        }
-        hover
+        // A selector of faces, edges or lines: the whole component is not
+        // what a click takes, so it is not highlighted (spec 0-ui rule 19).
+        let takes_body = d
+            .flow()
+            .current()
+            .is_some_and(|s| s.accepts.contains(&crate::command::flow::PickKind::Body));
+        hover.filter(|_| takes_body)
     }
 
     /// A click while a member selector is active: only a frame member is

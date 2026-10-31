@@ -949,6 +949,12 @@ pub struct PartDocument {
     /// that feature's health instead of "needs the exact geometry kernel".
     #[serde(skip)]
     pub exact_failure: Option<(String, String)>,
+    /// Never rebuild faceted (runtime only): a part made by a command that
+    /// must stay exact and fast (frame members) reports the kernel's failure
+    /// as feature health instead — a faceted member took ~5 s and came out
+    /// with ~15 000 faces, which made every pick in the assembly slow.
+    #[serde(skip)]
+    pub exact_only: bool,
     /// Edit Feature rolls the part back: only the features before this
     /// index are built (Inventor shows the model as it was before the
     /// edited feature). Runtime only.
@@ -1061,6 +1067,15 @@ impl PartDocument {
         self.evaluate_parameters();
         self.exact_failure = None;
         self.exact = exact::enabled() && self.build_features(true)?;
+        if !self.exact && self.exact_only {
+            let (id, msg) = self
+                .exact_failure
+                .clone()
+                .unwrap_or_else(|| (String::new(), "the exact kernel gave up".into()));
+            self.feature_health
+                .insert(id, format!("the geometry kernel failed: {msg}"));
+            return Ok(());
+        }
         if !self.exact {
             self.build_features(false)?;
             // A feature only the exact kernel builds, which made it give up:

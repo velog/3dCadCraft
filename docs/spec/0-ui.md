@@ -193,6 +193,7 @@ Sources: [Dynamic input (HUD) in sketches](https://help.autodesk.com/cloudhelp/2
 | Rectangle selection (window / crossing) | ✅ ([0.9](0.9-selection.md)); Always Window / Crossing modes 🟡 ([0.9a](0.9a-selection-filters.md)) |
 | Selection filters (vertices, edges, faces, bodies, sketches, work features, Origin) and intersection with the command's selector | 🟡 ([0.9a](0.9a-selection-filters.md), waiting for a visual check) |
 | Selecting a row in Properties highlights the corresponding geometry | ✅ |
+| **The active selector filters by itself** (owner's rule 19, 2026-10-31): only what the active input takes is highlighted and picked (a frame member's lines: edges and sketch lines; Chamfer: edges and faces, never a vertex); a selector's kinds may follow an option of its panel (Insert Frame's Select); a whole component lights up only for a body selector | 🟡 2026-10-31 checked for Insert Frame (Edge: the edge under the cursor orange, no face or component lit; Face / Body Edges: the face); other commands to audit |
 
 ### 3.3 In-place editing
 
@@ -299,6 +300,7 @@ the drawing and events in `gui/command_ui.rs`. Face Draft and Shell already use 
 | Sketch regions are computed only on change | ✅ (cache) |
 | The Extrude preview is built only when the settings change | ✅ (cache) |
 | Regenerating a part with dozens of features under 100 ms | ⬜ (will be measured with a benchmark) |
+| **Interaction budgets** (owner's rule 20, 2026-10-31): a pick, a hover or a command's OK within 100–200 ms; an idle or hovering frame within ~16 ms; per-frame work cached | 🟡 2026-10-31: assembly face / edge picking 5.1 s → 5 ms after the first build (one pass over the faces, visible edges only); frame members never rebuild faceted (`PartDocument::exact_only`), a shape the kernel failed on is not tried again in the same run; Insert Frame of a 23-edge body 0.3–0.4 s (mitred cuts ~0.35 s each in the kernel, in parallel: still over the budget) |
 
 ## 6. Language and accessibility
 

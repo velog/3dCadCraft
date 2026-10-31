@@ -639,7 +639,10 @@ impl Section {
         if !(length.is_finite() && length > 1e-6) {
             return Err(PartError::Feature("the member has no length".into()));
         }
-        let mut part = PartDocument::default();
+        let mut part = PartDocument {
+            exact_only: true,
+            ..Default::default()
+        };
         let opts = SketchOptions {
             auto_project_origin: false,
             auto_reference_edges: false,

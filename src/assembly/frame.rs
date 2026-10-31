@@ -1306,7 +1306,11 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
                         length: part_length(project, m.doc).unwrap_or(0.0),
                         ..Default::default()
                     });
-                    if !old.same(&sh) {
+                    if let Some(why) = failed_before(m.doc, &sh) {
+                        // The kernel failed on this very shape already: not
+                        // again (a failing Notch took it 3–8 s each solve).
+                        out.sick.push((m.occ, why));
+                    } else if !old.same(&sh) {
                         jobs.push((
                             m.occ,
                             m.doc,
@@ -1373,6 +1377,7 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
             }
             Err(e) => {
                 failed.insert(occ);
+                remember_failure(doc, &sh, &e);
                 out.sick.push((occ, e));
             }
         }
@@ -1399,6 +1404,27 @@ pub fn solve(project: &mut Project, linked: &Linked, asm: DocumentId) -> Result<
     }
     out.moved = changed.len();
     Ok(out)
+}
+
+/// Member shapes the kernel failed on (document, shape, why), this run only.
+static FAILED: std::sync::Mutex<Vec<(DocumentId, Shape, String)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Why the kernel failed on member part `doc` with shape `sh`, if it did.
+fn failed_before(doc: DocumentId, sh: &Shape) -> Option<String> {
+    let f = FAILED.lock().ok()?;
+    f.iter()
+        .find(|(d, s, _)| *d == doc && s.same(sh))
+        .map(|(_, _, why)| why.clone())
+}
+
+fn remember_failure(doc: DocumentId, sh: &Shape, why: &str) {
+    if let Ok(mut f) = FAILED.lock() {
+        if f.len() > 256 {
+            f.remove(0);
+        }
+        f.push((doc, sh.clone(), why.to_owned()));
+    }
 }
 
 /// The member part's length along its axis (the body's extent in Z):
@@ -1950,7 +1976,14 @@ pub fn corner_treatments(
                 continue;
             };
             for &k in v {
-                if k != through {
+                // Only members that meet the column at an angle (a piece
+                // of an edge split in line with it does not).
+                let meets = joint(
+                    lines[through].1,
+                    lines[k].1,
+                    lines[through].2.max(lines[k].2),
+                );
+                if k != through && meets.is_some() {
                     out.push(Treatment::CornerJoint {
                         a: lines[through].0,
                         b: lines[k].0,
@@ -3432,6 +3465,183 @@ mod tests {
             // The bar: 400 between the rails' axes, less half a rail at each end.
             let bar = outer_length(&part(&p, asm(&p, aid), occs[4])).unwrap();
             assert!((bar - 360.0).abs() < 0.2, "{level:?}: {bar}");
+        }
+    }
+
+    /// Timings on a saved assembly (`CADCRAFT_FRAME_PROBE` = its path, the
+    /// skeleton the first part occurrence): resolving each member's line,
+    /// and Insert Frame on all the skeleton body's straight edges.
+    #[test]
+    #[ignore]
+    fn probe_frame_file() {
+        let Ok(path) = std::env::var("CADCRAFT_FRAME_PROBE") else {
+            return;
+        };
+        let path = std::path::Path::new(&path);
+        let mut p = Project::load(path).unwrap();
+        let mut linked = Linked::new();
+        let dir = path.parent().unwrap();
+        for l in p.libraries().to_vec() {
+            if let Ok(mut q) = Project::load(&dir.join(&l.path)) {
+                let ids: Vec<_> = q.documents().iter().map(|d| d.id).collect();
+                for id in ids {
+                    if let Some(DocumentData::Part(x)) = q.document_mut(id).map(|d| &mut d.data) {
+                        let _ = x.regenerate();
+                    }
+                }
+                linked.insert(l.id, std::rc::Rc::new(q));
+            }
+        }
+        let aid = p
+            .documents()
+            .iter()
+            .find(|d| matches!(&d.data, DocumentData::Assembly(a) if !a.frames.is_empty()))
+            .unwrap()
+            .id;
+        let a = asm(&p, aid).clone();
+        for t in &a.frames[0].treatments {
+            eprintln!("PROBE treatment {t:?}");
+        }
+        for m in &a.frames[0].members {
+            eprintln!(
+                "PROBE member {} orient {:?} built {:?}",
+                m.occurrence,
+                m.orientation,
+                m.built
+                    .as_ref()
+                    .map(|b| (b.length, b.ext, b.cuts.len(), b.notches.len()))
+            );
+        }
+        for o in a.occurrences.iter().take(0) {
+            let Some(part) = super::super::tree::part_of(&p, &linked, o.component) else {
+                continue;
+            };
+            let t0 = std::time::Instant::now();
+            let _ = part.body_signature();
+            let t1 = t0.elapsed().as_secs_f64() * 1e3;
+            let body = &part.body;
+            let opts = crate::kernel::TessellationOptions::default();
+            let mut ne = 0;
+            let mut t_faces = 0.0;
+            let mut t_sample = 0.0;
+            for (e, _) in body.edges() {
+                let t = std::time::Instant::now();
+                let _ = crate::part::blend::edge_ref(body, e);
+                t_faces += t.elapsed().as_secs_f64() * 1e3;
+                let t = std::time::Instant::now();
+                let _ = body.sample_edge(e, &opts);
+                t_sample += t.elapsed().as_secs_f64() * 1e3;
+                ne += 1;
+            }
+            eprintln!(
+                "PROBE part {}: signature {t1:.1} ms, {ne} edges, edge_ref {t_faces:.1} ms, sample {t_sample:.1} ms, faces {}",
+                o.name,
+                body.faces().count()
+            );
+        }
+        let t0 = std::time::Instant::now();
+        let mut n = 0;
+        for m in a.frames.iter().flat_map(|f| &f.members) {
+            skeleton_line(&p, &linked, &a, &m.skeleton).unwrap();
+            n += 1;
+        }
+        eprintln!(
+            "PROBE {n} skeleton lines: {:.1} ms",
+            t0.elapsed().as_secs_f64() * 1e3
+        );
+        if let Some(DocumentData::Assembly(x)) = p.document_mut(aid).map(|d| &mut d.data) {
+            for m in x.frames.iter_mut().flat_map(|f| &mut f.members) {
+                m.built = None;
+            }
+        }
+        let t0 = std::time::Instant::now();
+        let s = solve(&mut p, &linked, aid).unwrap();
+        for o in asm(&p, aid).occurrences.iter() {
+            if let Some(DocumentData::Part(x)) = p.document(o.component.document).map(|d| &d.data) {
+                eprintln!(
+                    "PROBE rebuilt {}: exact {} faces {}",
+                    o.name,
+                    x.exact,
+                    x.body.faces().count()
+                );
+            }
+        }
+        eprintln!(
+            "PROBE solve: {:.1} ms (moved {}, sick {:?})",
+            t0.elapsed().as_secs_f64() * 1e3,
+            s.moved,
+            s.sick
+        );
+        {
+            let mut q = p.clone();
+            let fid = a.frames[0].id;
+            let c = Corners {
+                kind: CornerType::Miter,
+                gap: 0.0,
+                tees: TeeJoint::Butt,
+            };
+            let t0 = std::time::Instant::now();
+            let r = edit_frame(&mut q, &linked, aid, fid, None, Some(c));
+            eprintln!(
+                "PROBE edit_frame corners: {:.1} ms {:?}",
+                t0.elapsed().as_secs_f64() * 1e3,
+                r.as_ref().err()
+            );
+            for t in &asm(&q, aid).frames[0].treatments {
+                eprintln!("PROBE new treatment {t:?}");
+            }
+            for o in asm(&q, aid).occurrences.iter() {
+                if let Some(DocumentData::Part(x)) =
+                    q.document(o.component.document).map(|d| &d.data)
+                    && !x.exact
+                {
+                    eprintln!("PROBE still faceted {}", o.name);
+                }
+            }
+        }
+        let skel = a
+            .occurrences
+            .iter()
+            .find(|o| {
+                !a.frames
+                    .iter()
+                    .any(|f| f.members.iter().any(|m| m.occurrence == o.id))
+            })
+            .unwrap();
+        let part = super::super::tree::part_of(&p, &linked, skel.component)
+            .unwrap()
+            .clone();
+        let t0 = std::time::Instant::now();
+        let edges: Vec<Skeleton> = straight_edges(&part, None)
+            .into_iter()
+            .map(|edge| {
+                Skeleton::Edge(GeomRef::Edge {
+                    occurrence: skel.id,
+                    sub: Vec::new(),
+                    edge,
+                })
+            })
+            .collect();
+        eprintln!(
+            "PROBE {} straight edges: {:.1} ms",
+            edges.len(),
+            t0.elapsed().as_secs_f64() * 1e3
+        );
+        for (kind, layout) in [
+            (CornerType::None, Side::Center),
+            (CornerType::Miter, Side::Inside),
+        ] {
+            let mut q = p.clone();
+            let mut o = opts();
+            o.corners.kind = kind;
+            o.layout.side = layout;
+            let t0 = std::time::Instant::now();
+            let r = insert(&mut q, &linked, aid, &edges, &o, Library::builtin(), None);
+            eprintln!(
+                "PROBE insert {kind:?} {layout:?}: {:.1} ms {:?}",
+                t0.elapsed().as_secs_f64() * 1e3,
+                r.as_ref().err()
+            );
         }
     }
 

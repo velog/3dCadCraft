@@ -303,6 +303,72 @@ impl CadCraftApp {
     /// The components' visible sketches (thin lines, always, as Inventor
     /// shows a skeleton's sketches); while Insert Frame is open also the
     /// picked skeleton lines (thick) and the line under the cursor.
+    /// Insert Frame's preview (spec 6.1 §3.1 Preview): every picked line's
+    /// member as a wire outline — the section at both ends joined by lines
+    /// along it — with the panel's family, size, orientation and Position;
+    /// drawn from the section table each frame (no kernel work), corners
+    /// uncut.
+    fn frame_preview(&self, d: &PartDialog, painter: &egui::Painter, rect: Rect) {
+        if d.skeletons.is_empty() {
+            return;
+        }
+        let Some(o) = insert_options(d) else {
+            return;
+        };
+        let lib = Library::current();
+        let Some(sec) = lib.find(&o.family, &o.size) else {
+            return;
+        };
+        let Some(a) = self.assembly() else {
+            return;
+        };
+        let linked = self.linked();
+        let lines: Vec<(Point3, Point3)> = d
+            .skeletons
+            .iter()
+            .filter_map(|s| frame::skeleton_line(&self.project, &linked, a, s).ok())
+            .collect();
+        let n = lines.len().max(1) as f64;
+        let centre = Point3::from(
+            lines
+                .iter()
+                .fold(crate::kernel::Vector3::zeros(), |s, (p, q)| {
+                    s + (p.coords + q.coords) / 2.0
+                })
+                / n,
+        );
+        let outline = sec.outline();
+        if outline.len() < 3 {
+            return;
+        }
+        let stroke = Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 140, 30, 200));
+        // Lines along the member at a few points of the outline.
+        let step = (outline.len() / 8).max(1);
+        for &(p, q) in &lines {
+            let ori = o.layout.orient(&o.orientation, p, q, centre);
+            let Some(t) = frame::placement(sec, p, q, &ori) else {
+                continue;
+            };
+            let len = (q - p).norm();
+            let at = |v: &crate::sketch::Point2, z: f64| {
+                self.camera
+                    .project(&t.transform_point(&Point3::new(v.x, v.y, z)), rect)
+            };
+            for z in [0.0, len] {
+                let mut ring: Vec<Pos2> = outline.iter().filter_map(|v| at(v, z)).collect();
+                if ring.len() == outline.len() {
+                    ring.push(ring[0]);
+                    painter.add(egui::Shape::line(ring, stroke));
+                }
+            }
+            for v in outline.iter().step_by(step) {
+                if let (Some(a), Some(b)) = (at(v, 0.0), at(v, len)) {
+                    painter.line_segment([a, b], stroke);
+                }
+            }
+        }
+    }
+
     pub(super) fn frame_overlay(&self, painter: &egui::Painter, rect: Rect, pointer: Option<Pos2>) {
         let seg = |a: &Point3, b: &Point3| -> Option<[Pos2; 2]> {
             Some([self.camera.project(a, rect)?, self.camera.project(b, rect)?])
@@ -318,6 +384,9 @@ impl CadCraftApp {
         };
         if d.kind != Planned::Asm(AsmPlanned::InsertFrame) {
             return;
+        }
+        if d.members.list.is_empty() {
+            self.frame_preview(d, painter, rect);
         }
         for s in &d.skeletons {
             match s {
@@ -337,6 +406,18 @@ impl CadCraftApp {
             && let Some(s) = seg(&a, &b)
         {
             painter.line_segment(s, Stroke::new(3.0, HOVER));
+            return;
+        }
+        // The model edge (Select: Edge) or face (Face / Body Edges) a click
+        // would take; nothing else lights up (spec 0-ui rule 19).
+        if d.active == Some("edges")
+            && let Some(p) = pointer
+            && let Some(g) = self.geom_under_pub(p, rect)
+        {
+            let face = matches!(g, crate::assembly::relation::GeomRef::Face { .. });
+            if face == (d.index(0, "Select") != 0) {
+                self.draw_geom(painter, rect, &g, HOVER);
+            }
         }
     }
 }
