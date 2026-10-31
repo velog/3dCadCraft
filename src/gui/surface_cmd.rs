@@ -680,6 +680,13 @@ impl CadCraftApp {
         let Some(Feature::BodyOp(b)) = self.part().features.get(k).cloned() else {
             return;
         };
+        // A derived feature edits in the Derive panel (spec 3.10 §3.5).
+        if let BodyOp::Import(o) = &b.op
+            && let Some(l) = &o.derive
+        {
+            self.derive_edit(k, l.clone());
+            return;
+        }
         let kind = match &b.op {
             BodyOp::Stitch(_) => PartPlanned::Stitch,
             BodyOp::Patch(_) => PartPlanned::Patch,

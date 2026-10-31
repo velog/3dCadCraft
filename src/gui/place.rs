@@ -243,8 +243,12 @@ impl CadCraftApp {
         if self.is_drawing() {
             return models_of(p);
         }
-        if self.asm.place_for_replace || self.asm.place_for_derive {
+        if self.asm.place_for_replace {
             return parts_of(p);
+        }
+        // Derive takes parts and assemblies of a file (spec 3.10 §3.5).
+        if self.asm.place_for_derive {
+            return models_of(p);
         }
         let linked = self.linked_from(p.libraries().iter().map(|l| l.id).collect());
         models_of(p)
@@ -536,10 +540,21 @@ impl CadCraftApp {
             // Derive: never the part itself.
             let me = DocRef::local(self.part_id);
             let derive = self.asm.place_for_derive;
-            self.placeable_here()
+            let mut v: Vec<(DocRef, String)> = self
+                .placeable_here()
                 .into_iter()
                 .filter(|(r, _)| !(derive && *r == me))
-                .collect()
+                .collect();
+            // Derive Assembly: the assemblies of this file not holding it.
+            if derive {
+                for d in self.project.documents() {
+                    let r = DocRef::local(d.id);
+                    if matches!(d.data, DocumentData::Assembly(_)) && !self.derive_loops(r, 0) {
+                        v.push((r, format!("{} (assembly)", d.name)));
+                    }
+                }
+            }
+            v
         };
         let saved = !self.file_path.trim().is_empty();
         if !saved && !local.is_empty() {

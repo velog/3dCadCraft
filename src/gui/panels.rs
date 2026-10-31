@@ -50,6 +50,8 @@ enum BrowserCmd {
     BreakContext(usize),
     /// Break Link of a Reference Model import (it stops following its file).
     BreakImportLink(usize),
+    /// Break Link of a derived feature (spec 3.10 §3.5).
+    BreakDeriveLink(usize),
     /// Suppress if... (the condition window for feature k).
     SuppressIf(usize),
     /// Move the End of Part so that this many features are built.
@@ -435,6 +437,7 @@ impl CadCraftApp {
             }
             BrowserCmd::Suppress(k, on) => self.set_suppressed(k, on),
             BrowserCmd::BreakImportLink(k) => self.break_import_link(k),
+            BrowserCmd::BreakDeriveLink(k) => self.break_derive_link(k),
             BrowserCmd::BreakContext(i) => {
                 self.checkpoint("Break Link");
                 match self.part_mut().break_sketch_context(i) {
@@ -888,6 +891,20 @@ impl CadCraftApp {
                 .clicked()
         {
             cmds.push(BrowserCmd::BreakImportLink(k));
+            ui.close();
+        }
+        if let Feature::BodyOp(b) = f
+            && let crate::part::BodyOp::Import(o) = &b.op
+            && let Some(d) = &o.derive
+            && ui
+                .button("Break Link")
+                .on_hover_text(format!(
+                    "Stop following {}: the derived bodies keep their geometry",
+                    d.name
+                ))
+                .clicked()
+        {
+            cmds.push(BrowserCmd::BreakDeriveLink(k));
             ui.close();
         }
         if let Feature::Work(w) = f

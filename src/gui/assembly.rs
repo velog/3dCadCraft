@@ -93,6 +93,8 @@ pub(super) struct AsmUi {
     pub place_for_derive: bool,
     /// The Derive panel's chosen source and its name.
     pub derive_source: Option<(DocRef, String)>,
+    /// The bodies an edited derived feature leaves out (kept by Edit).
+    pub derive_exclude: Vec<String>,
     /// Replace's new component and the name its occurrences get.
     pub replace_with: Option<(DocRef, String)>,
     /// The name the placed occurrences get (`bracket` → `bracket:1`).

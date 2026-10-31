@@ -18,7 +18,48 @@ use serde::{Deserialize, Serialize};
 use super::import::ImportOp;
 use super::{BodyOp, BodyOpFeature, Feature, PartDocument, PartError};
 use crate::document::DocRef;
-use crate::kernel::Real;
+use crate::kernel::{Real, Transform3};
+
+/// What a derived feature reads: the source's parts and where they stand
+/// in it (one part at the identity, or every part of an assembly placed),
+/// and their signature.
+pub struct DeriveSource<'a> {
+    /// The parts, each with its placement in the source.
+    pub parts: Vec<(&'a PartDocument, Transform3)>,
+    /// What changes when any of them changes or moves.
+    pub signature: u64,
+}
+
+impl<'a> DeriveSource<'a> {
+    /// A part as the source.
+    pub fn part(p: &'a PartDocument) -> Self {
+        Self::of(vec![(p, Transform3::identity())])
+    }
+
+    /// Parts placed in an assembly as the source (Derive Assembly).
+    pub fn of(parts: Vec<(&'a PartDocument, Transform3)>) -> Self {
+        let signature = parts_signature(&parts);
+        Self { parts, signature }
+    }
+}
+
+/// [`signature`] of every part and its placement.
+fn parts_signature(parts: &[(&PartDocument, Transform3)]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    if let [(p, t)] = parts
+        && *t == Transform3::identity()
+    {
+        return signature(p);
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for (p, t) in parts {
+        signature(p).hash(&mut h);
+        for v in t.to_homogeneous().iter() {
+            v.to_bits().hash(&mut h);
+        }
+    }
+    h.finish()
+}
 use crate::kernel::exact::{self, ExactOp, ExactSolid};
 
 /// How the derived bodies are kept (Inventor's Derive Style).
@@ -101,31 +142,37 @@ impl DeriveLink {
         }
     }
 
-    /// The source part's bodies as this link takes them: filtered, joined
-    /// (single styles), scaled and mirrored; and the source's signature.
-    pub fn bodies(&self, source: &PartDocument) -> Result<(Vec<ExactSolid>, u64), String> {
+    /// The source's bodies as this link takes them: each part's bodies
+    /// placed where the part stands, filtered, joined (single styles),
+    /// scaled and mirrored; and the source's signature.
+    pub fn bodies(&self, source: &DeriveSource) -> Result<(Vec<ExactSolid>, u64), String> {
         if !(self.scale.is_finite() && self.scale > 0.0) {
             return Err("the scale factor must be greater than 0".into());
         }
-        if !source.exact {
-            return Err(format!(
-                "{} is not built by the exact kernel (it cannot be derived)",
-                self.name
-            ));
-        }
-        let mut kept: Vec<ExactSolid> = source
-            .exact_bodies
-            .0
-            .iter()
-            .filter(|s| {
+        let mut kept: Vec<ExactSolid> = Vec::new();
+        for (part, at) in &source.parts {
+            if !part.exact {
+                return Err(format!(
+                    "{} is not built by the exact kernel (it cannot be derived)",
+                    self.name
+                ));
+            }
+            for s in &part.exact_bodies.0 {
                 let name = s.name.as_deref().unwrap_or("");
                 let open = s.is_open();
-                !self.exclude.iter().any(|x| x == name)
-                    && if open { self.surfaces } else { self.solids }
-                    && !source.hidden_bodies.iter().any(|h| h == name)
-            })
-            .cloned()
-            .collect();
+                if self.exclude.iter().any(|x| x == name)
+                    || !(if open { self.surfaces } else { self.solids })
+                    || part.hidden_bodies.iter().any(|h| h == name)
+                {
+                    continue;
+                }
+                kept.push(if *at == Transform3::identity() {
+                    s.clone()
+                } else {
+                    exact::similar(s, &at.to_homogeneous())?
+                });
+            }
+        }
         if kept.is_empty() {
             return Err(format!("{} has no body the filters keep", self.name));
         }
@@ -161,11 +208,11 @@ impl DeriveLink {
                 .map(|s| exact::similar(s, &m))
                 .collect::<Result<_, _>>()?;
         }
-        Ok((kept, signature(source)))
+        Ok((kept, source.signature))
     }
 
     /// The STEP text of [`Self::bodies`] and the source's signature.
-    pub fn text(&self, source: &PartDocument) -> Result<(Arc<str>, u64), String> {
+    pub fn text(&self, source: &DeriveSource) -> Result<(Arc<str>, u64), String> {
         let (bodies, sig) = self.bodies(source)?;
         let text = exact::step_text(&bodies, &self.name)?;
         Ok((text.into(), sig))
@@ -195,6 +242,15 @@ impl PartDocument {
     pub fn add_derive(
         &mut self,
         source: &PartDocument,
+        link: DeriveLink,
+    ) -> Result<String, PartError> {
+        self.add_derive_from(&DeriveSource::part(source), link)
+    }
+
+    /// [`Self::add_derive`] of any source (an assembly's parts placed).
+    pub fn add_derive_from(
+        &mut self,
+        source: &DeriveSource,
         mut link: DeriveLink,
     ) -> Result<String, PartError> {
         let (text, sig) = link.text(source).map_err(PartError::Feature)?;
@@ -231,6 +287,15 @@ impl PartDocument {
     /// names. `Ok(false)` when the source did not change. Nothing changes on
     /// failure.
     pub fn update_derive(&mut self, k: usize, source: &PartDocument) -> Result<bool, PartError> {
+        self.update_derive_from(k, &DeriveSource::part(source))
+    }
+
+    /// [`Self::update_derive`] from any source.
+    pub fn update_derive_from(
+        &mut self,
+        k: usize,
+        source: &DeriveSource,
+    ) -> Result<bool, PartError> {
         let fail = |m: String| PartError::Feature(format!("Derive: {m}"));
         let Some(Feature::BodyOp(b)) = self.features.get(k) else {
             return Err(fail("no such feature".into()));
@@ -241,7 +306,7 @@ impl PartDocument {
         let Some(link) = op.derive.clone() else {
             return Err(fail("not a derived feature".into()));
         };
-        if signature(source) == link.signature {
+        if source.signature == link.signature {
             return Ok(false);
         }
         let (text, sig) = link.text(source).map_err(fail)?;
@@ -260,6 +325,40 @@ impl PartDocument {
             return Err(e);
         }
         Ok(true)
+    }
+
+    /// **Edit Feature** of derived feature `k`: its options become `link`'s
+    /// (style, filters, scale, mirror, even another source) and the text is
+    /// written again from `source`; faces matched by geometry keep their
+    /// names. Nothing changes on failure.
+    pub fn edit_derive(
+        &mut self,
+        k: usize,
+        source: &DeriveSource,
+        mut link: DeriveLink,
+    ) -> Result<(), PartError> {
+        let before = self.features.get(k).cloned();
+        let Some(Feature::BodyOp(b)) = self.features.get_mut(k) else {
+            return Err(PartError::Feature("Derive: no such feature".into()));
+        };
+        let BodyOp::Import(op) = &mut b.op else {
+            return Err(PartError::Feature("Derive: not a derived feature".into()));
+        };
+        // Signature 0: the update below always writes the text again.
+        link.signature = 0;
+        let name = link.name.clone();
+        op.derive = Some(link);
+        b.name = name;
+        match self.update_derive_from(k, source) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if let Some(f) = before {
+                    self.features[k] = f;
+                    let _ = self.regenerate();
+                }
+                Err(e)
+            }
+        }
     }
 
     /// **Break Link** of derived feature `k`: it stays as it is, a plain

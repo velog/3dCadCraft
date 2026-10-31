@@ -251,3 +251,118 @@ fn refusals_leave_the_part_unchanged() {
     assert!(matches!(d.features[k], Feature::BodyOp(_)));
     assert!((volume(&d) - volume(&src)).abs() < 1e-3 * volume(&src));
 }
+
+// Derive Assembly: the parts of an assembly, each placed, as the source.
+
+use cadcraft3d::kernel::{Transform3, Vector3};
+use cadcraft3d::part::derive::DeriveSource;
+
+/// A 100 × 60 × 10 base plate and a 10 × 10 × 50 post standing on it at
+/// `post_at` (a weldment's parts).
+fn weldment() -> (PartDocument, PartDocument) {
+    (
+        PartDocument::with_box("Box1", [100.0, 60.0, 10.0]).unwrap(),
+        PartDocument::with_box("Box1", [10.0, 10.0, 50.0]).unwrap(),
+    )
+}
+
+#[test]
+fn a_weldment_assembly_is_derived_into_one_part() {
+    let (plate, post) = weldment();
+    let at = Transform3::translation(45.0, 25.0, 10.0);
+    let src = DeriveSource::of(vec![(&plate, Transform3::identity()), (&post, at)]);
+    // Each part a body, where it stands.
+    let mut each = PartDocument::default();
+    each.add_derive_from(&src, link("Weldment")).unwrap();
+    assert_eq!(each.exact_bodies.0.len(), 2);
+    let (lo, hi) = bbox(&each);
+    assert!(
+        (hi.z - 60.0).abs() < 1e-6 && lo.z.abs() < 1e-6,
+        "{lo:?} {hi:?}"
+    );
+    let v = 100.0 * 60.0 * 10.0 + 10.0 * 10.0 * 50.0;
+    assert!((volume(&each) - v).abs() < 1e-3 * v);
+    // One solid: the post welded onto the plate.
+    let mut l = link("Weldment");
+    l.style = DeriveStyle::Single;
+    let mut one = PartDocument::default();
+    one.add_derive_from(&src, l).unwrap();
+    assert_eq!(one.exact_bodies.0.len(), 1);
+    assert!((volume(&one) - v).abs() < 1e-3 * v);
+}
+
+#[test]
+fn a_turned_component_is_derived_where_it_stands() {
+    // The post lies on its side: turned 90° about Y.
+    let (_, post) = weldment();
+    let at = Transform3::new(
+        Vector3::new(0.0, 0.0, 10.0),
+        Vector3::y() * std::f64::consts::FRAC_PI_2,
+    );
+    let src = DeriveSource::of(vec![(&post, at)]);
+    let mut d = PartDocument::default();
+    d.add_derive_from(&src, link("Lying post")).unwrap();
+    let (lo, hi) = bbox(&d);
+    assert!(((hi.x - lo.x) - 50.0).abs() < 1e-6, "{lo:?} {hi:?}");
+    assert!(((hi.z - lo.z) - 10.0).abs() < 1e-6, "{lo:?} {hi:?}");
+}
+
+#[test]
+fn a_moved_component_updates_the_derived_part() {
+    let (plate, post) = weldment();
+    let src = DeriveSource::of(vec![
+        (&plate, Transform3::identity()),
+        (&post, Transform3::translation(45.0, 25.0, 10.0)),
+    ]);
+    let mut d = PartDocument::default();
+    d.add_derive_from(&src, link("Weldment")).unwrap();
+    // Same placements: nothing to do.
+    assert!(!d.update_derive_from(0, &src).unwrap());
+    // The post moved to the plate's corner.
+    let moved = DeriveSource::of(vec![
+        (&plate, Transform3::identity()),
+        (&post, Transform3::translation(0.0, 0.0, 10.0)),
+    ]);
+    assert!(d.update_derive_from(0, &moved).unwrap());
+    let (lo, _) = bbox(&d);
+    assert!(lo.x.abs() < 1e-6);
+    assert!(
+        d.body
+            .faces()
+            .filter_map(|(_, f)| f.mesh.as_ref())
+            .flat_map(|m| m.positions.iter())
+            .any(|q| (q.z - 60.0).abs() < 1e-6 && q.x.abs() < 1e-6 && q.y.abs() < 1e-6)
+    );
+}
+
+#[test]
+fn editing_a_derived_feature_mirrors_it_in_place() {
+    // The right-hand blank is edited into the left-hand one: same feature,
+    // same id, mirrored about YZ; a second edit back undoes it.
+    let src = casting(60.0);
+    let mut d = PartDocument::default();
+    let id = d.add_derive(&src, link("Casting")).unwrap();
+    let k = d.derived()[0].0;
+    let mut l = d.derived()[0].1.clone();
+    l.mirror = Some(MirrorPlane::Yz);
+    d.edit_derive(k, &DeriveSource::part(&src), l.clone())
+        .unwrap();
+    assert_eq!(d.features[k].id(), id);
+    assert_eq!(d.features.len(), 1);
+    let (lo, hi) = bbox(&d);
+    assert!(
+        (lo.x + 60.0).abs() < 1e-6 && hi.x.abs() < 1e-6,
+        "{lo:?} {hi:?}"
+    );
+    l.mirror = None;
+    d.edit_derive(k, &DeriveSource::part(&src), l).unwrap();
+    let (lo, _) = bbox(&d);
+    assert!(lo.x.abs() < 1e-6);
+    // A bad edit changes nothing.
+    let mut bad = d.derived()[0].1.clone();
+    bad.scale = -1.0;
+    let before = volume(&d);
+    assert!(d.edit_derive(k, &DeriveSource::part(&src), bad).is_err());
+    assert!((volume(&d) - before).abs() < 1e-6);
+    assert_eq!(d.derived()[0].1.scale, 1.0);
+}
