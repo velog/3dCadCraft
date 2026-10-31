@@ -2,7 +2,10 @@
 //! multi-body master part become parts of their own — each a part whose
 //! base feature derives that one body from the master (`part::derive`) — and
 //! optionally the components of an assembly, placed where the bodies are.
-//! Changing the master updates every part made from it ([`update_derived`]).
+//! Changing the master updates every part made from it ([`update_derived`]);
+//! linked parameters (spec 3.10 §3.9) follow their master document or CSV
+//! file ([`update_parameters`]), and [`update_all`] runs both until the
+//! design file settles.
 
 use crate::document::{AssemblyDocument, DocRef, DocumentData, DocumentId, Project};
 use crate::kernel::Transform3;
@@ -225,4 +228,93 @@ fn source_parts(project: &Project, id: DocumentId) -> Option<Vec<(PartDocument, 
         }
         _ => None,
     }
+}
+
+/// The value of linked parameter source `link` now: a parameter of a part
+/// of `project`, or a row of a CSV file.
+pub fn read_link(
+    project: &Project,
+    link: &crate::part::params::ParamLink,
+) -> Result<(crate::kernel::Real, crate::part::expr::Unit), String> {
+    use crate::part::params::ParamLink;
+    match link {
+        ParamLink::Document { source, name } => {
+            if source.library.is_some() {
+                return Err("a parameter of a linked file is read by the app".into());
+            }
+            let d = project
+                .document(source.document)
+                .ok_or("the parameter document no longer exists")?;
+            let DocumentData::Part(p) = &d.data else {
+                return Err(format!("{} is not a part", d.name));
+            };
+            let row = p
+                .parameter(name)
+                .ok_or_else(|| format!("{} has no parameter {name}", d.name))?;
+            Ok((row.value, row.unit))
+        }
+        ParamLink::Csv { path, name } => {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+            crate::part::params::csv_parameters(&text)
+                .into_iter()
+                .find(|(n, ..)| n == name)
+                .map(|(_, v, u)| (v, u))
+                .ok_or_else(|| format!("{path} has no row {name}"))
+        }
+    }
+}
+
+/// The linked parameters of every part of `project` read again (spec 3.10
+/// §3.9); the parts whose values changed, and the links that failed.
+pub fn update_parameters(project: &mut Project) -> (Vec<DocumentId>, Vec<String>) {
+    let mut changed = Vec::new();
+    let mut errors = Vec::new();
+    let ids: Vec<DocumentId> = project.documents().iter().map(|d| d.id).collect();
+    for id in ids {
+        let has = matches!(project.document(id).map(|d| &d.data),
+            Some(DocumentData::Part(p)) if p.user_params.iter().any(|u| u.link.is_some()));
+        if !has {
+            continue;
+        }
+        let Some(DocumentData::Part(mut part)) = project.document(id).map(|d| d.data.clone())
+        else {
+            continue;
+        };
+        let snapshot = project.clone();
+        let (did, errs) = part.update_param_links(&|l| read_link(&snapshot, l));
+        let name = project
+            .document(id)
+            .map(|d| d.name.clone())
+            .unwrap_or_default();
+        errors.extend(errs.into_iter().map(|e| format!("{name}: {e}")));
+        if did {
+            if let Some(DocumentData::Part(p)) = project.document_mut(id).map(|d| &mut d.data) {
+                *p = part;
+            }
+            changed.push(id);
+        }
+    }
+    (changed, errors)
+}
+
+/// [`update_parameters`] and [`update_derived`] until nothing changes (a
+/// master parameter drives a master part that drives its components).
+pub fn update_all(project: &mut Project) -> (Vec<DocumentId>, Vec<String>) {
+    let mut changed: Vec<DocumentId> = Vec::new();
+    let mut errors = Vec::new();
+    for _ in 0..8 {
+        let (a, e1) = update_parameters(project);
+        let (b, e2) = update_derived(project);
+        errors = e1.into_iter().chain(e2).collect();
+        let round: Vec<DocumentId> = a.into_iter().chain(b).collect();
+        if round.is_empty() {
+            break;
+        }
+        for d in round {
+            if !changed.contains(&d) {
+                changed.push(d);
+            }
+        }
+    }
+    (changed, errors)
 }

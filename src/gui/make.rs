@@ -106,13 +106,14 @@ impl CadCraftApp {
     /// master changed) when a document is shown; one Undo step.
     pub(super) fn make_follow(&mut self) {
         let any = self.project.documents().iter().any(|d| {
-            matches!(&d.data, DocumentData::Part(p) if p.derived().iter().any(|(_, l)| l.source.library.is_none()))
+            matches!(&d.data, DocumentData::Part(p) if p.derived().iter().any(|(_, l)| l.source.library.is_none())
+                || p.user_params.iter().any(|u| u.link.is_some()))
         });
         if !any {
             return;
         }
         let before = self.project.clone();
-        let (changed, errors) = make::update_derived(&mut self.project);
+        let (changed, errors) = make::update_all(&mut self.project);
         if changed.is_empty() && errors.is_empty() {
             return;
         }

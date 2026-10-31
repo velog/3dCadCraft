@@ -6554,6 +6554,13 @@ impl CadCraftApp {
                         edits.push(Edit::Add);
                     }
                     if ui
+                        .button("Link...")
+                        .on_hover_text("Parameters of another part of this file or of a CSV sheet, linked (they follow it)")
+                        .clicked()
+                    {
+                        self.param_link.open = true;
+                    }
+                    if ui
                         .button("Purge Unused")
                         .on_hover_text("Delete the user parameters nothing uses")
                         .clicked()
@@ -6673,6 +6680,17 @@ impl CadCraftApp {
             let part = self.part_mut();
             let r = match e {
                 Edit::Rename(a, b) => part.rename_parameter(&a, &b),
+                Edit::Expr(n, t)
+                    if part
+                        .user_params
+                        .iter()
+                        .any(|u| u.name == n && u.link.is_some()) =>
+                {
+                    let _ = t;
+                    Err(crate::part::PartError::Feature(format!(
+                        "{n} is linked: its value comes from its source (Link... > Break Link first)"
+                    )))
+                }
                 Edit::Expr(n, t) => part.set_parameter_expr(&n, &t),
                 Edit::Eval(i, c, ev) => {
                     let sk = &mut part.sketches[i].sketch;

@@ -1380,7 +1380,7 @@ impl Planned {
             (Planned::Part(PartPlanned::Derive), "Derive Style", Some("Body as work surface"))
             | (
                 Planned::Part(PartPlanned::Derive),
-                "Sketches" | "Work Geometry" | "Parameters" | "Show All Objects",
+                "Sketches" | "Work Geometry" | "Show All Objects",
                 None,
             ) => Some("Comes later (spec 3.10 §3.5 Element status)"),
             (Planned::Part(PartPlanned::MakePart), "Place part in target assembly", None)

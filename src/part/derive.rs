@@ -112,6 +112,10 @@ pub struct DeriveLink {
     /// Mirror Part: the plane, when mirrored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mirror: Option<MirrorPlane>,
+    /// Include Parameters: the source part's user parameters become linked
+    /// parameters of this part (spec 3.10 §3.9).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub parameters: bool,
     /// The text was generated from a source whose bodies had this signature
     /// (Update needed when the source's differs).
     #[serde(default)]
@@ -138,6 +142,7 @@ impl DeriveLink {
             exclude: Vec::new(),
             scale: 1.0,
             mirror: None,
+            parameters: false,
             signature: 0,
         }
     }
@@ -256,10 +261,36 @@ impl PartDocument {
         let (text, sig) = link.text(source).map_err(PartError::Feature)?;
         link.signature = sig;
         let name = link.name.clone();
+        // Include Parameters: the source part's user parameters, linked.
+        let params: Vec<(String, Real, crate::part::expr::Unit)> = match source.parts.as_slice() {
+            [(p, _)] if link.parameters => p
+                .user_params
+                .iter()
+                .map(|u| (u.name.clone(), u.value, u.unit))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let before = self.clone();
+        for (n, v, u) in params {
+            let l = crate::part::params::ParamLink::Document {
+                source: link.source,
+                name: n.clone(),
+            };
+            if let Err(e) = self.add_linked_parameter(&n, v, u, l) {
+                *self = before;
+                return Err(e);
+            }
+        }
         let mut op = ImportOp::new(link.name.clone(), text);
         op.surfaces = true;
         op.derive = Some(link);
-        let id = self.add_body_op(BodyOpFeature::new(BodyOp::Import(op)))?;
+        let id = match self.add_body_op(BodyOpFeature::new(BodyOp::Import(op))) {
+            Ok(id) => id,
+            Err(e) => {
+                *self = before;
+                return Err(e);
+            }
+        };
         // Shown under the source's name (Inventor lists the derived file).
         if let Some(Feature::BodyOp(b)) = self.features.iter_mut().find(|f| f.id() == id) {
             b.name = name;

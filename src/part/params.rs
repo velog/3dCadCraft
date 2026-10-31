@@ -42,6 +42,90 @@ pub struct UserParam {
     /// The evaluated text of a Text parameter (runtime).
     #[serde(skip)]
     pub text: String,
+    /// A linked parameter (spec 3.10 §3.9): its value comes from another
+    /// document or a CSV file at Update; `expr` holds the last value (so the
+    /// part builds alone and old builds read a plain value).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<ParamLink>,
+}
+
+/// Reads a linked parameter's source: its value (internal units) and unit.
+pub type LinkReader = dyn Fn(&ParamLink) -> Result<(Real, Unit), String>;
+
+/// Where a linked user parameter takes its value (spec 3.10 §3.9: Inventor's
+/// Link of the Parameters dialog, a master parameter document, a
+/// spreadsheet).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "from")]
+pub enum ParamLink {
+    /// Parameter `name` of another document (a part of this design file or
+    /// of a linked file).
+    Document {
+        /// The document.
+        source: crate::document::DocRef,
+        /// Its parameter.
+        name: String,
+    },
+    /// Row `name` of a CSV file (`name,value[,unit[,comment]]` per line).
+    Csv {
+        /// The file.
+        path: String,
+        /// Its row.
+        name: String,
+    },
+}
+
+impl ParamLink {
+    /// The parameter it reads (shown in the table).
+    pub fn describe(&self) -> String {
+        match self {
+            ParamLink::Document { name, .. } => format!("linked: {name}"),
+            ParamLink::Csv { path, name } => {
+                let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
+                format!("linked: {name} ({file})")
+            }
+        }
+    }
+}
+
+/// The rows of a CSV parameter file: `name,value[,unit[,comment]]` per line
+/// (a header line whose value is no number is skipped, `#` starts a
+/// comment). Values with a unit after them (`800 mm`) or in the third
+/// column; a bare number takes millimetres for a length unit column, else is
+/// unitless.
+pub fn csv_parameters(text: &str) -> Vec<(String, Real, Unit)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let cols: Vec<&str> = line.split([',', ';', '\t']).map(str::trim).collect();
+        let (Some(name), Some(raw)) = (cols.first(), cols.get(1)) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let unit_col = cols.get(2).copied().unwrap_or("");
+        let unit = Unit::ALL
+            .iter()
+            .copied()
+            .find(|u| u.label() == unit_col)
+            .or_else(|| {
+                Unit::ALL
+                    .iter()
+                    .copied()
+                    .find(|u| raw.ends_with(u.label()) && !u.label().is_empty())
+            })
+            .unwrap_or(Unit::Ul);
+        let number = raw.trim_end_matches(unit.label()).trim();
+        let Ok(v) = number.parse::<Real>() else {
+            continue;
+        };
+        out.push(((*name).to_owned(), unit.from_display(v), unit));
+    }
+    out
 }
 
 /// Key flag and display precision of a parameter (any kind).
@@ -1221,8 +1305,106 @@ impl PartDocument {
             unit_spec: None,
             values: Vec::new(),
             text: String::new(),
+            link: None,
         });
         name
+    }
+
+    /// **Link** (Parameters dialog, spec 3.10 §3.9): a user parameter that
+    /// takes its value (`value` in internal units of `unit`) from `link`;
+    /// named `name`, or `name_2`… when taken. Returns its name.
+    pub fn add_linked_parameter(
+        &mut self,
+        name: &str,
+        value: Real,
+        unit: Unit,
+        link: ParamLink,
+    ) -> Result<String, PartError> {
+        let rows = self.parameter_table();
+        let free = |n: &str| !rows.iter().any(|r| r.name == n);
+        let mut new = name.to_owned();
+        let mut k = 2;
+        while !free(&new) {
+            new = format!("{name}_{k}");
+            k += 1;
+        }
+        if !expr::valid_name(&new) {
+            return Err(PartError::Feature(format!(
+                "'{name}' is not a parameter name"
+            )));
+        }
+        let before = self.clone();
+        let comment = link.describe();
+        self.user_params.push(UserParam {
+            name: new.clone(),
+            expr: format_value(value, unit),
+            unit,
+            comment,
+            value,
+            unit_spec: None,
+            values: Vec::new(),
+            text: String::new(),
+            link: Some(link),
+        });
+        if let Err(e) = self.set_parameter_expr(&new, &format_value(value, unit)) {
+            *self = before;
+            return Err(e);
+        }
+        Ok(new)
+    }
+
+    /// Update of the linked user parameters: each reads its source through
+    /// `read` (value in internal units, unit); changed values are written and
+    /// the part rebuilt. Returns whether something changed and the links
+    /// that could not be read (`<name>: <why>`; their last value stays).
+    pub fn update_param_links(
+        &mut self,
+        read: &LinkReader,
+    ) -> (bool, Vec<String>) {
+        let mut changed = false;
+        let mut errors = Vec::new();
+        let links: Vec<(String, ParamLink, Unit, String)> = self
+            .user_params
+            .iter()
+            .filter_map(|u| {
+                u.link
+                    .clone()
+                    .map(|l| (u.name.clone(), l, u.unit, u.expr.clone()))
+            })
+            .collect();
+        for (name, link, unit, expr) in links {
+            match read(&link) {
+                Ok((v, u)) => {
+                    // The source's unit kind decides how it is written here.
+                    let shown = if u.is_length() == unit.is_length() {
+                        unit
+                    } else {
+                        u
+                    };
+                    let text = format_value(v, shown);
+                    if text != expr {
+                        match self.set_parameter_expr(&name, &text) {
+                            Ok(()) => changed = true,
+                            Err(e) => errors.push(format!("{name}: {e}")),
+                        }
+                    }
+                }
+                Err(e) => errors.push(format!("{name}: {e}")),
+            }
+        }
+        // The new values reach the features.
+        if changed && let Err(e) = self.regenerate() {
+            errors.push(e.to_string());
+        }
+        (changed, errors)
+    }
+
+    /// Break Link of linked parameter `name`: it keeps its value.
+    pub fn break_param_link(&mut self, name: &str) -> bool {
+        self.user_params
+            .iter_mut()
+            .find(|u| u.name == name)
+            .is_some_and(|u| u.link.take().is_some())
     }
 
     /// Multi-Value: user parameter `i` chooses from `list` (each checked as

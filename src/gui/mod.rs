@@ -99,6 +99,7 @@ mod nav;
 mod new_file;
 mod overlay;
 mod panels;
+mod param_link;
 mod part_planned;
 mod pattern_dialog;
 mod pattern_feature;
@@ -596,6 +597,8 @@ struct CadCraftApp {
     viewport_rect: egui::Rect,
     /// The Parameters window is open.
     show_params: bool,
+    /// The Parameters dialog's Link... window (spec 3.10 §3.9).
+    param_link: param_link::LinkUi,
     /// Text being typed in Parameters cells (key: column + name).
     param_buf: std::collections::HashMap<String, String>,
     /// Parameters table filter: All, User, Model, Used, Unused.
@@ -977,6 +980,7 @@ impl CadCraftApp {
             viewport_rect: egui::Rect::NOTHING,
             dim_tol_open: false,
             show_params: false,
+            param_link: Default::default(),
             param_buf: Default::default(),
             param_filter: 0,
             param_phys_key: String::new(),
@@ -7974,6 +7978,7 @@ impl eframe::App for CadCraftApp {
         self.options_window(&ctx);
         self.documents_windows(&ctx);
         self.parameters_window(&ctx);
+        self.param_link_window(&ctx);
         self.suppress_if_window(&ctx);
         self.material_windows(&ctx);
         self.measure_window(&ctx);

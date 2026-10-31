@@ -173,6 +173,7 @@ impl CadCraftApp {
         };
         link.solids = d.check(0, "Solid Bodies");
         link.surfaces = d.check(0, "Surface Bodies");
+        link.parameters = d.check(0, "Parameters");
         link.scale = d.num(1, "Scale Factor").unwrap_or(1.0);
         if d.check(1, "Mirror Part") {
             link.mirror = Some(match d.index(1, "Mirror Plane") {
