@@ -631,6 +631,7 @@ impl BRep {
                 shells: vec![shell],
                 open,
                 name: None,
+                mesh: false,
             }));
         }
         Ok(out)

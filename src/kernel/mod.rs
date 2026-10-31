@@ -1278,6 +1278,10 @@ pub struct Solid {
     /// 2; Inventor's "Solids" selection refers to bodies by it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// A mesh body (an imported STL / OBJ): faces of triangles with no edges or loops, so there
+    /// is no topology to validate; shown, measured and moved only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mesh: bool,
 }
 
 /// Entity counts of a solid, used for the Euler–Poincaré check.
@@ -1576,6 +1580,7 @@ impl BRep {
             shells,
             open: false,
             name: None,
+            mesh: false,
         }))
     }
 
@@ -1662,6 +1667,9 @@ impl BRep {
             .solids
             .get(solid)
             .ok_or(KernelError::DanglingReference("solid"))?;
+        if s.mesh {
+            return self.stats(solid);
+        }
         for shell in &s.shells {
             self.check_closed_shell(shell)?;
         }

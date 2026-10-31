@@ -160,6 +160,8 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 53: Flange Width Extents Between and Height Extents To
 ///   (`FlangeWidth::Between`, `SheetFlangeFeature::from` / `to` /
 ///   `height_to`) (2026-10-30).
+/// - 54: Import of a mesh (STL, OBJ) as mesh bodies (`ImportOp` holding OBJ text)
+///   (2026-10-31).
 /// - 55: sheet metal Contour Roll (`SheetOp::ContourRoll`) (2026-10-31).
 pub const FORMAT_REVISION: u32 = 55;
 

@@ -48,13 +48,31 @@ pub(super) enum DialogPurpose {
 const MODEL_EXTS: &[&str] = &[FILE_EXTENSION, "ccpart", "ccasm", "ccdrw"];
 
 /// What File → Open lists: our files and the formats it imports (spec 7.7a).
-const OPEN_EXTS: &[&str] = &[FILE_EXTENSION, "ccpart", "ccasm", "ccdrw", "step", "stp"];
+const OPEN_EXTS: &[&str] = &[
+    FILE_EXTENSION,
+    "ccpart",
+    "ccasm",
+    "ccdrw",
+    "step",
+    "stp",
+    "stl",
+    "obj",
+];
 
-/// Files File → Open imports instead of opening (STEP).
+/// Files File → Open imports instead of opening (STEP, and meshes: STL, OBJ).
 pub(super) fn is_import_file(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        ["step", "stp", "stl", "obj"]
+            .iter()
+            .any(|x| e.eq_ignore_ascii_case(x))
+    })
+}
+
+/// Mesh files (STL, OBJ): imported as mesh bodies (spec 7.7a 3.14).
+pub(super) fn is_mesh_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("step") || e.eq_ignore_ascii_case("stp"))
+        .is_some_and(|e| e.eq_ignore_ascii_case("stl") || e.eq_ignore_ascii_case("obj"))
 }
 
 impl DialogPurpose {
@@ -83,7 +101,7 @@ impl DialogPurpose {
         match self {
             DialogPurpose::Open => OPEN_EXTS,
             DialogPurpose::LinkFile | DialogPurpose::InsertDocument => MODEL_EXTS,
-            DialogPurpose::ImportCad => &["step", "stp"],
+            DialogPurpose::ImportCad => &["step", "stp", "stl", "obj"],
             // The active document's kind (`.ccpart`…) or the package.
             DialogPurpose::SaveAs => MODEL_EXTS,
             DialogPurpose::Extract(_, crate::document::DocumentKind::Part) => &["ccpart"],

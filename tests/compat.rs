@@ -1130,6 +1130,47 @@ fn loft_edges_r41() -> PartDocument {
     p
 }
 
+/// Revision 54: an ASCII STL of a 10 × 20 × 30 box imported as a mesh body (Import of a mesh).
+fn mesh_r54() -> PartDocument {
+    use cadcraft3d::part::import::{ImportOp, mesh_text};
+    use cadcraft3d::part::{BodyOp, BodyOpFeature};
+    let c = |i: usize| {
+        [
+            if i & 1 != 0 { 10.0 } else { 0.0 },
+            if i & 2 != 0 { 20.0 } else { 0.0 },
+            if i & 4 != 0 { 30.0 } else { 0.0 },
+        ]
+    };
+    let quads = [
+        [0, 2, 3, 1],
+        [4, 5, 7, 6],
+        [0, 1, 5, 4],
+        [2, 6, 7, 3],
+        [0, 4, 6, 2],
+        [1, 3, 7, 5],
+    ];
+    let mut stl = String::from("solid Block\n");
+    for q in quads {
+        for t in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
+            stl += "facet normal 0 0 0\nouter loop\n";
+            for k in t {
+                let p: [f64; 3] = c(k);
+                stl += &format!("vertex {} {} {}\n", p[0], p[1], p[2]);
+            }
+            stl += "endloop\nendfacet\n";
+        }
+    }
+    stl += "endsolid Block\n";
+    let text = mesh_text(stl.as_bytes(), "block.stl", 1.0).unwrap();
+    let mut p = PartDocument::default();
+    p.add_body_op(BodyOpFeature::new(BodyOp::Import(ImportOp::new(
+        "block.stl",
+        text,
+    ))))
+    .unwrap();
+    p
+}
+
 /// Revision 42: a 40 × 30 × 20 box written to STEP and imported into an empty part (Import),
 /// then a 3 mm fillet on an imported edge.
 fn import_r42() -> PartDocument {
@@ -3234,6 +3275,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("LoftEdgesR41");
             project.add_document("Part1", DocumentData::Part(loft_edges_r41()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r54/mesh_r54.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("MeshR54");
+            project.add_document("Part1", DocumentData::Part(mesh_r54()));
             project.save(&f).unwrap();
         }
         let f = root().join("r42/import_r42.3dcadcraft");

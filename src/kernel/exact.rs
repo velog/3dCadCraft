@@ -994,6 +994,61 @@ pub fn step_volumes(text: &str) -> Result<Vec<Real>, String> {
         .collect()
 }
 
+impl ExactSolid {
+    /// A mesh body ([`mesh_solid`]): triangles, no B-rep.
+    pub fn is_mesh(&self) -> bool {
+        self.body.is_mesh()
+    }
+}
+
+/// A mesh body (spec 7.7a 3.14: no B-rep, so it is shown, measured, moved and exported but takes
+/// no part in Booleans or blends) from `triangles` over `positions` (mm), named `name`, its one
+/// face `<name>:Mesh`. A mesh where some triangle side has no neighbour is a surface body.
+pub fn mesh_solid(
+    positions: &[Point3],
+    triangles: &[[u32; 3]],
+    name: &str,
+) -> Result<ExactSolid, String> {
+    let pts: Vec<sg::Vec3> = positions
+        .iter()
+        .map(|p| sg::Vec3::new(p.x, p.y, p.z))
+        .collect();
+    let body = guarded("mesh body", || sk::mesh_body(&pts, triangles))?;
+    // Closed: every side shared by two triangles (vertices merged by position first).
+    let mut id: HashMap<[u64; 3], u32> = HashMap::new();
+    let merged: Vec<u32> = positions
+        .iter()
+        .map(|p| {
+            let k = [
+                (p.x + 0.0).to_bits(),
+                (p.y + 0.0).to_bits(),
+                (p.z + 0.0).to_bits(),
+            ];
+            let n = id.len() as u32;
+            *id.entry(k).or_insert(n)
+        })
+        .collect();
+    let mut sides: HashMap<(u32, u32), u32> = HashMap::new();
+    for t in triangles {
+        let v = t.map(|k| merged.get(k as usize).copied().unwrap_or(u32::MAX));
+        if v[0] == v[1] || v[1] == v[2] || v[2] == v[0] {
+            continue;
+        }
+        for (a, b) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
+            *sides.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+        }
+    }
+    let closed = !sides.is_empty() && sides.values().all(|&n| n == 2);
+    let n = body.face_count();
+    Ok(ExactSolid {
+        sheet: !closed,
+        name: Some(name.to_owned()),
+        body,
+        face_names: vec![Some(format!("{name}:Mesh")); n],
+        profiles: Vec::new(),
+    })
+}
+
 /// A body read from a STEP file by [`step_bodies`].
 #[derive(Clone, Debug)]
 pub struct StepBody {
@@ -3711,7 +3766,10 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
             })
             .collect();
         let loops = chain_loops(out, coedges);
-        let Some((outer, inner)) = split_outer(out, loops) else {
+        let Some((outer, inner)) = split_outer(out, loops).or_else(|| {
+            // A mesh body's face: triangles only, no edges to bound it.
+            (s.is_mesh() && !meshes[f].triangles.is_empty()).then(|| (Loop::default(), Vec::new()))
+        }) else {
             continue;
         };
         let surface = surfaces[f]
@@ -3739,6 +3797,7 @@ fn add_solid(out: &mut BRep, s: &ExactSolid, lenient: bool) -> Result<(), String
             shells,
             open: s.is_open(),
             name: s.name.clone(),
+            mesh: s.is_mesh(),
         });
         name_edges_and_vertices(out, solid, &s.profiles);
     }

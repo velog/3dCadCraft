@@ -1405,7 +1405,12 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
         let key = self.body_key();
         // One row per body: a solid gets the closed-manifold check, a surface
         // body (open on purpose) only its counts.
-        type Row = (String, bool, Result<crate::kernel::TopologyStats, String>);
+        type Row = (
+            String,
+            bool,
+            Option<usize>,
+            Result<crate::kernel::TopologyStats, String>,
+        );
         let cached = ui.ctx().memory(|m| {
             m.data
                 .get_temp::<(String, Vec<Row>)>(egui::Id::new("body_validation"))
@@ -1424,7 +1429,17 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                         } else {
                             body.validate_solid(id).map_err(|e| e.to_string())
                         };
-                        (name, s.open, check)
+                        // A mesh body: its triangles (it has no B-rep to check).
+                        let mesh = s.mesh.then(|| {
+                            s.shells
+                                .iter()
+                                .flat_map(|sh| &sh.faces)
+                                .filter_map(|f| {
+                                    body.face(*f)?.mesh.as_ref().map(|m| m.triangles.len())
+                                })
+                                .sum::<usize>()
+                        });
+                        (name, s.open, mesh, check)
                     })
                     .collect();
                 ui.ctx().memory_mut(|m| {
@@ -1438,9 +1453,21 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             ui.label("No solid");
         }
         let many = rows.len() > 1;
-        for (name, open, check) in rows {
+        for (name, open, mesh, check) in rows {
             if many {
                 ui.label(RichText::new(&name).weak());
+            }
+            if let Some(n) = mesh {
+                ui.label(format!("{n} triangles"));
+                ui.colored_label(
+                    Color32::from_rgb(20, 150, 50),
+                    if open {
+                        "✔ open mesh body: view and measure"
+                    } else {
+                        "✔ closed mesh body: view and measure"
+                    },
+                );
+                continue;
             }
             match check {
                 Ok(s) if open => {

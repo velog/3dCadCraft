@@ -20,6 +20,11 @@ use crate::part::{BodyOp, BodyOpFeature};
 /// The STEP text of `path`.
 fn read_step(path: &Path) -> Result<Arc<str>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    // Meshes (STL, OBJ) become the OBJ text a mesh import embeds (spec 7.7a 3.14), in mm.
+    if crate::gui::files::is_mesh_file(path) {
+        let name = path.display().to_string();
+        return crate::part::import::mesh_text(&bytes, &name, 1.0).map(Into::into);
+    }
     // STEP is ASCII (ISO 10303-21); stray bytes in comments or names must not stop it.
     Ok(String::from_utf8_lossy(&bytes).into())
 }
@@ -50,7 +55,8 @@ pub(super) struct ImportJob {
 /// The worker's job: an assembly file opened becomes a design file of documents; anything else
 /// is read as the bodies of one part.
 fn read_in_worker(text: &Arc<str>, open: bool, file: &str, stem: &str) -> ReadResult {
-    if open {
+    let mesh = ImportOp::new("", text.clone()).is_mesh();
+    if open && !mesh {
         let r = crate::kernel::exact::step_bodies(text, "Import1")?;
         if crate::assembly::import::is_assembly(&r) {
             let mut p = crate::document::Project::new(stem);

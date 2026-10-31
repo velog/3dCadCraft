@@ -1072,5 +1072,8 @@
     "ContourRoll1:Side:S8",
     "ContourRoll1:Side:S8",
     "ContourRoll1:Start"
+  ],
+  "r54/mesh_r54.3dcadcraft": [
+    "Import1:Mesh"
   ]
 }

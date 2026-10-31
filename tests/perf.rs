@@ -1255,6 +1255,57 @@ fn speed_budgets() {
         ));
     }
 
+    // Mesh import (spec 7.7a 3.14): a binary STL of a sphere in 100 000 triangles, converted to
+    // the embedded OBJ text and brought in as a mesh body.
+    {
+        use cadcraft3d::part::import::{ImportOp, mesh_text};
+        use cadcraft3d::part::{BodyOp, BodyOpFeature};
+        let (nu, nv) = (250usize, 200usize);
+        let at = |i: usize, j: usize| {
+            let (u, v) = (
+                i as f64 / nu as f64 * std::f64::consts::TAU,
+                j as f64 / nv as f64 * std::f64::consts::PI,
+            );
+            [
+                (50.0 * v.sin() * u.cos()) as f32,
+                (50.0 * v.sin() * u.sin()) as f32,
+                (50.0 * v.cos()) as f32,
+            ]
+        };
+        let mut tris: Vec<[[f32; 3]; 3]> = Vec::new();
+        for j in 0..nv {
+            for i in 0..nu {
+                let (a, b, c, d) = (at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+                tris.push([a, c, b]);
+                tris.push([a, d, c]);
+            }
+        }
+        let mut stl = vec![0u8; 80];
+        stl.extend_from_slice(&(tris.len() as u32).to_le_bytes());
+        for t in &tris {
+            stl.extend_from_slice(&[0u8; 12]);
+            for p in t {
+                for v in p {
+                    stl.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+            stl.extend_from_slice(&[0u8; 2]);
+        }
+        rows.push((
+            "import: a binary STL of 100 000 triangles as a mesh body",
+            1000.0,
+            median_ms(3, || {
+                let text = mesh_text(&stl, "sphere.stl", 1.0).unwrap();
+                let mut p = cadcraft3d::part::PartDocument::default();
+                p.add_body_op(BodyOpFeature::new(BodyOp::Import(ImportOp::new(
+                    "sphere.stl",
+                    text,
+                ))))
+                .unwrap();
+            }),
+        ));
+    }
+
     // Frames: a member on each of the 12 edges of a box skeleton (each a part of the design file,
     // the section extruded by its length), then a solve that has nothing to change.
     {

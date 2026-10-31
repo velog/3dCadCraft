@@ -143,6 +143,246 @@ pub struct UpdateReport {
     pub gone: Vec<String>,
 }
 
+/// The first line of the OBJ text a mesh import embeds.
+const MESH_HEADER: &str = "# 3DCadCraft mesh import";
+
+/// Whether an import's text is a mesh (OBJ) rather than STEP.
+fn is_mesh_text(text: &str) -> bool {
+    text.trim_start().starts_with(MESH_HEADER)
+}
+
+/// One object of a mesh file.
+struct MeshObject {
+    name: String,
+    positions: Vec<crate::kernel::Point3>,
+    triangles: Vec<[u32; 3]>,
+}
+
+/// The most triangles a mesh file may bring (untrusted input).
+const MESH_LIMIT: usize = 5_000_000;
+
+/// An STL (binary or ASCII) or OBJ file as the OBJ text an import embeds (vertices and triangles
+/// in mm, one `o` per solid / object; normals and textures dropped). `scale`: millimetres per
+/// file unit. `file` names the file in errors and decides OBJ by its extension.
+pub fn mesh_text(bytes: &[u8], file: &str, scale: Real) -> Result<String, String> {
+    let obj = file.to_ascii_lowercase().ends_with(".obj");
+    let objects = if obj {
+        parse_obj(&String::from_utf8_lossy(bytes))?
+    } else {
+        parse_stl(bytes)?
+    };
+    let mut out = String::from(MESH_HEADER);
+    out.push('\n');
+    let mut base = 1usize;
+    for o in &objects {
+        out += &format!("o {}\n", o.name.replace(['\n', '\r'], " "));
+        for p in &o.positions {
+            out += &format!("v {} {} {}\n", p.x * scale, p.y * scale, p.z * scale);
+        }
+        for t in &o.triangles {
+            out += &format!(
+                "f {} {} {}\n",
+                t[0] as usize + base,
+                t[1] as usize + base,
+                t[2] as usize + base
+            );
+        }
+        base += o.positions.len();
+    }
+    Ok(out)
+}
+
+/// The objects of OBJ text (`o` / `g` start one; faces of more corners are fanned; negative
+/// indices count back from the last vertex).
+fn parse_obj(text: &str) -> Result<Vec<MeshObject>, String> {
+    let mut verts: Vec<crate::kernel::Point3> = Vec::new();
+    let mut objects: Vec<(String, Vec<[usize; 3]>)> = vec![(String::new(), Vec::new())];
+    let mut count = 0usize;
+    for line in text.lines() {
+        let mut w = line.split_whitespace();
+        match w.next() {
+            Some("v") => {
+                let c: Vec<Real> = w.take(3).filter_map(|x| x.parse().ok()).collect();
+                let [x, y, z] = c[..] else {
+                    return Err(format!("OBJ: a vertex without three numbers: {line}"));
+                };
+                verts.push(crate::kernel::Point3::new(x, y, z));
+            }
+            Some("o") | Some("g") => {
+                let name = w.collect::<Vec<_>>().join(" ");
+                match objects.last_mut() {
+                    Some(last) if last.1.is_empty() => last.0 = name,
+                    _ => objects.push((name, Vec::new())),
+                }
+            }
+            Some("f") => {
+                let idx: Vec<usize> = w
+                    .filter_map(|c| c.split('/').next()?.parse::<i64>().ok())
+                    .filter_map(|i| {
+                        if i > 0 {
+                            Some(i as usize - 1)
+                        } else if i < 0 {
+                            verts.len().checked_sub(i.unsigned_abs() as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if idx.len() < 3 || idx.iter().any(|&i| i >= verts.len()) {
+                    return Err(format!("OBJ: a face with a missing vertex: {line}"));
+                }
+                count += idx.len() - 2;
+                if count > MESH_LIMIT {
+                    return Err(format!("OBJ: more than {MESH_LIMIT} triangles"));
+                }
+                if let Some(last) = objects.last_mut() {
+                    for k in 1..idx.len() - 1 {
+                        last.1.push([idx[0], idx[k], idx[k + 1]]);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Each object keeps only the vertices it uses.
+    let mut out = Vec::new();
+    for (k, (name, tris)) in objects.into_iter().enumerate() {
+        if tris.is_empty() {
+            continue;
+        }
+        let mut map: BTreeMap<usize, u32> = BTreeMap::new();
+        let mut positions = Vec::new();
+        let triangles = tris
+            .iter()
+            .map(|t| {
+                t.map(|i| {
+                    *map.entry(i).or_insert_with(|| {
+                        positions.push(verts[i]);
+                        (positions.len() - 1) as u32
+                    })
+                })
+            })
+            .collect();
+        let name = if name.is_empty() {
+            format!("Mesh{}", k + 1)
+        } else {
+            name
+        };
+        out.push(MeshObject {
+            name,
+            positions,
+            triangles,
+        });
+    }
+    if out.is_empty() {
+        return Err("OBJ: no faces".into());
+    }
+    Ok(out)
+}
+
+/// The solids of an STL file: binary (80-byte header, count, 50 bytes a triangle) or ASCII
+/// (`solid name` … `endsolid`).
+fn parse_stl(bytes: &[u8]) -> Result<Vec<MeshObject>, String> {
+    let binary = bytes.len() >= 84 && {
+        let n = u32::from_le_bytes([bytes[80], bytes[81], bytes[82], bytes[83]]) as usize;
+        84 + n * 50 == bytes.len()
+    };
+    let mut objects = Vec::new();
+    if binary {
+        let n = u32::from_le_bytes([bytes[80], bytes[81], bytes[82], bytes[83]]) as usize;
+        if n > MESH_LIMIT {
+            return Err(format!("STL: more than {MESH_LIMIT} triangles"));
+        }
+        let f = |o: usize| {
+            bytes
+                .get(o..o + 4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as Real)
+                .unwrap_or(0.0)
+        };
+        let mut positions = Vec::with_capacity(n * 3);
+        let mut triangles = Vec::with_capacity(n);
+        for t in 0..n {
+            let at = 84 + t * 50 + 12;
+            for c in 0..3 {
+                let o = at + c * 12;
+                positions.push(crate::kernel::Point3::new(f(o), f(o + 4), f(o + 8)));
+            }
+            let k = (t * 3) as u32;
+            triangles.push([k, k + 1, k + 2]);
+        }
+        let header = String::from_utf8_lossy(&bytes[..80]);
+        let name = header
+            .trim_start_matches("solid")
+            .trim_matches(|c: char| c.is_whitespace() || c == '\0')
+            .to_owned();
+        objects.push(MeshObject {
+            name: if name.is_empty() {
+                "Mesh1".into()
+            } else {
+                name
+            },
+            positions,
+            triangles,
+        });
+    } else {
+        let text = String::from_utf8_lossy(bytes);
+        let mut cur: Option<MeshObject> = None;
+        for line in text.lines() {
+            let mut w = line.split_whitespace();
+            match w.next() {
+                Some("solid") => {
+                    cur = Some(MeshObject {
+                        name: w.collect::<Vec<_>>().join(" "),
+                        positions: Vec::new(),
+                        triangles: Vec::new(),
+                    });
+                }
+                Some("vertex") => {
+                    let c: Vec<Real> = w.take(3).filter_map(|x| x.parse().ok()).collect();
+                    let [x, y, z] = c[..] else {
+                        return Err(format!("STL: a vertex without three numbers: {line}"));
+                    };
+                    let o = cur.get_or_insert_with(|| MeshObject {
+                        name: String::new(),
+                        positions: Vec::new(),
+                        triangles: Vec::new(),
+                    });
+                    o.positions.push(crate::kernel::Point3::new(x, y, z));
+                    if o.positions.len().is_multiple_of(3) {
+                        let k = (o.positions.len() - 3) as u32;
+                        o.triangles.push([k, k + 1, k + 2]);
+                        if o.triangles.len() > MESH_LIMIT {
+                            return Err(format!("STL: more than {MESH_LIMIT} triangles"));
+                        }
+                    }
+                }
+                Some("endsolid") => {
+                    if let Some(o) = cur.take()
+                        && !o.triangles.is_empty()
+                    {
+                        objects.push(o);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(o) = cur.take()
+            && !o.triangles.is_empty()
+        {
+            objects.push(o);
+        }
+        for (k, o) in objects.iter_mut().enumerate() {
+            if o.name.is_empty() {
+                o.name = format!("Mesh{}", k + 1);
+            }
+        }
+    }
+    if objects.is_empty() {
+        return Err("STL: no triangles".into());
+    }
+    Ok(objects)
+}
+
 /// The STEP entity of a face name `<body>:F<entity>`.
 fn entity_of(name: &str) -> Option<u64> {
     name.rsplit_once(":F")?.1.parse().ok()
@@ -175,7 +415,7 @@ impl ImportOp {
     /// Refuses a definition with nothing to read.
     pub fn validate(&self) -> Result<(), String> {
         if self.text.trim().is_empty() {
-            return Err("choose a STEP file (Browse...)".into());
+            return Err("choose a STEP, STL or OBJ file (Browse...)".into());
         }
         if !self.solids && !self.surfaces {
             return Err("turn on Solids or Surfaces".into());
@@ -193,6 +433,9 @@ impl ImportOp {
 
     /// The bodies the filters keep (and the reader's warnings).
     pub fn read(&self, id: &str) -> Result<(Vec<ExactSolid>, Vec<String>), String> {
+        if self.is_mesh() {
+            return self.read_mesh(id);
+        }
         let r = exact::step_bodies(&self.text, id)?;
         let total = r.bodies.len();
         let warnings = r.warnings;
@@ -223,6 +466,50 @@ impl ImportOp {
 }
 
 impl ImportOp {
+    /// The embedded text is a mesh (our OBJ text from an STL or OBJ file, spec 7.7a 3.14), not
+    /// STEP.
+    pub fn is_mesh(&self) -> bool {
+        is_mesh_text(&self.text)
+    }
+
+    /// The mesh bodies of the embedded OBJ text: one per object, named `id`, `id#2` …
+    fn read_mesh(&self, id: &str) -> Result<(Vec<ExactSolid>, Vec<String>), String> {
+        let objects = parse_obj(&self.text)?;
+        let total = objects.len();
+        let mut kept = Vec::new();
+        let mut found = Vec::new();
+        for (k, o) in objects.into_iter().enumerate() {
+            let name = if k == 0 {
+                id.to_owned()
+            } else {
+                format!("{id}#{}", k + 1)
+            };
+            let s = exact::mesh_solid(&o.positions, &o.triangles, &name)?;
+            if !(if s.is_open() {
+                self.surfaces
+            } else {
+                self.solids
+            }) {
+                continue;
+            }
+            found.push(FileBody {
+                name,
+                label: o.name,
+                color: None,
+            });
+            kept.push(s);
+        }
+        let _ = self.found.0.set(found);
+        if kept.is_empty() {
+            return Err(match (total, self.solids) {
+                (0, _) => "the file has no triangles".into(),
+                (_, true) => "the mesh is not closed (turn on Surfaces?)".into(),
+                (_, false) => "the mesh is closed (turn on Solids?)".into(),
+            });
+        }
+        Ok((kept, Vec::new()))
+    }
+
     /// `s` with the names `keep` gives its faces.
     fn renamed(&self, mut s: ExactSolid) -> ExactSolid {
         if self.keep.is_empty() {
@@ -250,6 +537,24 @@ impl ImportOp {
     /// The same import read from `text` (the changed file): faces matched to the current ones by
     /// geometry (same body, area, centre, plane normal) keep their names. `id` is the feature's id.
     pub fn updated(&self, id: &str, text: Arc<str>) -> Result<(ImportOp, UpdateReport), String> {
+        if self.is_mesh() || is_mesh_text(&text) {
+            // A mesh has no faces to match: the new triangles replace the old ones.
+            let mut next = ImportOp {
+                text,
+                keep: BTreeMap::new(),
+                found: FileBodies::default(),
+                ..self.clone()
+            };
+            let (new, _) = next.read(id)?;
+            if let Some(l) = &mut next.link {
+                *l = SourceLink::now(&l.path);
+            }
+            let report = UpdateReport {
+                new: new.len(),
+                ..Default::default()
+            };
+            return Ok((next, report));
+        }
         let (old, _) = self.read(id)?;
         let mut next = ImportOp {
             text,
@@ -506,6 +811,116 @@ mod tests {
                 .count(),
             6
         );
+    }
+
+    /// A 10 × 20 × 30 box as 12 triangles wound outward: (corners, triangles).
+    fn box_triangles() -> (Vec<[f32; 3]>, Vec<[usize; 3]>) {
+        let c = |i: usize| {
+            [
+                if i & 1 != 0 { 10.0 } else { 0.0 },
+                if i & 2 != 0 { 20.0 } else { 0.0 },
+                if i & 4 != 0 { 30.0 } else { 0.0 },
+            ]
+        };
+        let quads = [
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+        ];
+        let mut tris = Vec::new();
+        for q in quads {
+            tris.push([q[0], q[1], q[2]]);
+            tris.push([q[0], q[2], q[3]]);
+        }
+        ((0..8).map(c).collect(), tris)
+    }
+
+    fn binary_stl() -> Vec<u8> {
+        let (pts, tris) = box_triangles();
+        let mut out = vec![0u8; 80];
+        out[..10].copy_from_slice(b"solid Brkt");
+        out.extend_from_slice(&(tris.len() as u32).to_le_bytes());
+        for t in tris {
+            out.extend_from_slice(&[0u8; 12]);
+            for k in t {
+                for v in pts[k] {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+            out.extend_from_slice(&[0u8; 2]);
+        }
+        out
+    }
+
+    fn ascii_stl() -> String {
+        let (pts, tris) = box_triangles();
+        let mut s = String::from("solid Block\n");
+        for t in tris {
+            s += "facet normal 0 0 0\nouter loop\n";
+            for k in t {
+                s += &format!("vertex {} {} {}\n", pts[k][0], pts[k][1], pts[k][2]);
+            }
+            s += "endloop\nendfacet\n";
+        }
+        s + "endsolid Block\n"
+    }
+
+    fn mesh_part(bytes: &[u8], file: &str) -> PartDocument {
+        let text = mesh_text(bytes, file, 1.0).expect("mesh");
+        let mut p = PartDocument::default();
+        p.add_body_op(BodyOpFeature::new(BodyOp::Import(ImportOp::new(
+            file, text,
+        ))))
+        .expect("import");
+        p
+    }
+
+    /// Spec 7.7a 3.14: a binary and an ASCII STL and an OBJ of quads come in as mesh bodies
+    /// with the box's volume and the file's names; an open mesh is a surface body.
+    #[test]
+    fn meshes_come_in_as_mesh_bodies() {
+        for (bytes, file, label) in [
+            (binary_stl(), "a.stl", "Brkt"),
+            (ascii_stl().into_bytes(), "b.stl", "Block"),
+        ] {
+            let p = mesh_part(&bytes, file);
+            assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+            assert_eq!(p.exact_bodies.0.len(), 1);
+            let s = &p.exact_bodies.0[0];
+            assert!(!s.is_open(), "{file}: a closed mesh is a solid");
+            let v = s.volume_at(1e-3).unwrap_or(0.0);
+            assert!((v - 6000.0).abs() < 1e-6, "{file}: volume {v}");
+            // Shown: the display B-rep has its one face with the triangles.
+            let faces: Vec<usize> = p
+                .body
+                .faces()
+                .map(|(_, f)| f.mesh.as_ref().map_or(0, |m| m.triangles.len()))
+                .collect();
+            assert_eq!(faces, vec![12], "{file}: {faces:?} {:?}", p.feature_health);
+            assert_eq!(
+                p.bodies_before(usize::MAX),
+                vec![("Import1".to_owned(), label.to_owned())]
+            );
+        }
+        // OBJ: two objects, quads, the second open (its top left out).
+        let mut obj = String::from("# test\no Lid\n");
+        let (pts, _) = box_triangles();
+        for q in &pts {
+            obj += &format!("v {} {} {}\n", q[0], q[1], q[2]);
+        }
+        obj += "f 1 3 4 2\nf 5 6 8 7\nf 1 2 6 5\nf 3 7 8 4\nf 1 5 7 3\nf 2 4 8 6\n";
+        obj += "o Tray\nf 1 3 4 2\nf 1 2 6 5\nf 3 7 8 4\nf 1 5 7 3\nf 2 4 8 6\n";
+        let p = mesh_part(obj.as_bytes(), "c.obj");
+        assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+        let open: Vec<bool> = p.exact_bodies.0.iter().map(|s| s.is_open()).collect();
+        assert_eq!(open, vec![false, true]);
+        assert_eq!(p.file_label("Import1#2"), Some("Tray"));
+        // Bad files are refused with the reason.
+        assert!(mesh_text(b"solid x\nendsolid x\n", "x.stl", 1.0).is_err());
+        assert!(mesh_text(b"v 0 0 0\nf 1 2 3\n", "x.obj", 1.0).is_err());
     }
 
     /// Spec 7.7a 3.9: bodies are shown by the file's names for them and take its colours as body
