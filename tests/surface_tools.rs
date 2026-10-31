@@ -1751,3 +1751,91 @@ fn loft_between_a_holed_and_a_plain_surface() {
         .sum();
     close(area, 1600.0, 1e-4);
 }
+
+/// Trim of a curved surface by a closed sketch rectangle (spec 5.4a T2): the hole keeps sharp
+/// corners — each the point of the surface over the rectangle's corner. A cylinder r 30 (an arc on
+/// XZ extruded 40 along -Y) and a 10 × 20 rectangle on XY below it: the hole on the surface is
+/// 20 · r · 2 asin(5 / r) = 200.94 (rounded corners would take less).
+#[test]
+fn trim_a_curved_surface_by_a_closed_rectangle_keeps_its_corners() {
+    let mut p = PartDocument::default();
+    let (i, arc) = xz_sketch(&mut p, |sk| {
+        let o = sk.add_point(Point2::new(0.0, 0.0));
+        let a = sk.add_point(Point2::new(
+            30.0 * (0.25 as Real).cos(),
+            30.0 * (0.25 as Real).sin(),
+        ));
+        let b = sk.add_point(Point2::new(
+            -30.0 * (0.25 as Real).cos(),
+            30.0 * (0.25 as Real).sin(),
+        ));
+        vec![sk.add_arc(o, a, b).unwrap()]
+    });
+    let mut f = ExtrudeFeature::new(Vec::new(), 40.0);
+    f.output = Output::Surface;
+    f.open = Some(OpenProfile {
+        curves: arc,
+        flip: false,
+        match_shape: false,
+    });
+    let s = p.add_extrude(i, f).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    let before = sheet_area(&p);
+    let ys: Vec<Real> = p
+        .exact_bodies
+        .0
+        .iter()
+        .flat_map(|b| b.triangles().unwrap())
+        .flatten()
+        .map(|q| q.y)
+        .collect();
+    let (y0, y1) = ys
+        .iter()
+        .fold((Real::MAX, Real::MIN), |(a, b), y| (a.min(*y), b.max(*y)));
+    let ym = 0.5 * (y0 + y1);
+    let k = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts())
+        .unwrap();
+    p.sketches[k]
+        .sketch
+        .add_rectangle_two_point(Point2::new(-5.0, ym - 10.0), Point2::new(5.0, ym + 10.0))
+        .unwrap();
+    let sid = p.sketches[k].id.clone();
+    op(
+        &mut p,
+        BodyOp::Trim(TrimOp {
+            surface: s,
+            tool: TrimTool::Sketch(sid),
+            remove: [0.0, ym, 30.0],
+            more: Vec::new(),
+            invert: false,
+        }),
+    );
+    let hole = before - sheet_area(&p);
+    let want = 20.0 * 30.0 * 2.0 * (5.0 as Real / 30.0).asin();
+    close(hole, want, 2e-3);
+    // The hole's rim turns square at its corners (seen from above): a rounded corner turns a
+    // little at each of many samples instead.
+    let opts = cadcraft3d::kernel::TessellationOptions::default();
+    let mut turn: Real = 0.0;
+    for (e, _) in p.body.edges() {
+        let pts = p.body.sample_edge(e, &opts).unwrap();
+        if !pts
+            .iter()
+            .all(|q| q.x.abs() <= 5.0 + 1e-3 && (q.y - ym).abs() <= 10.0 + 1e-3)
+        {
+            continue;
+        }
+        for w in pts.windows(3) {
+            let (a, b) = ((w[1] - w[0]).xy(), (w[2] - w[1]).xy());
+            if a.norm() > 1e-9 && b.norm() > 1e-9 {
+                turn = turn.max((a.dot(&b) / (a.norm() * b.norm())).clamp(-1.0, 1.0).acos());
+            }
+        }
+    }
+    assert!(
+        turn.to_degrees() > 45.0,
+        "the sharpest turn of the rim: {}°",
+        turn.to_degrees()
+    );
+}

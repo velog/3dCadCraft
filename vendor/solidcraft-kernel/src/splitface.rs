@@ -449,6 +449,15 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<
     {
         return Ok(c);
     }
+    // Sketch curves with corners on a curved face: the split line keeps their corners (each the
+    // point of the face over the corner, along the sketch's normal) instead of rounding them
+    // through the traced points. 3DCadCraft.
+    if let Field::Curve { plane, pts: poly } = g
+        && !matches!(face.surface(), mt::Surface::Plane(_))
+        && let Some(c) = cornered_fit(plane, poly, face, pts, scale)
+    {
+        return Ok(c);
+    }
     // A plane through a round (a fillet's or a cylinder's surface, square to
     // the plane): the traced points lie on a circle, and a spline through
     // them (2 % of the body apart) was 0.01 mm off it, so a sketch arc on the
@@ -565,6 +574,112 @@ fn polyline_on(plane: &Plane, poly: &[Vec2], face: &mt::Plane, traced: &[mt::Poi
     knots.extend((1..k).map(|i| i as f64));
     knots.extend([k as f64, k as f64]);
     mt::BSplineCurve::try_new(mt::KnotVec::from(knots), out).ok().map(mt::Curve::BSplineCurve)
+}
+
+/// The split line of sketch polyline `poly` (in `plane`) over a curved face, through the traced
+/// points `traced` with the polyline's corners (turns over 20°) put in exactly — each the point
+/// of the face whose projection on the plane is the corner — and the curve kinked there. `None`
+/// when no corner lies on this line.
+fn cornered_fit(plane: &Plane, poly: &[Vec2], face: &mt::Face, traced: &[mt::Point3], scale: f64) -> Option<mt::Curve> {
+    let n = poly.len();
+    if n < 3 || traced.len() < 3 {
+        return None;
+    }
+    let closed = (poly[0] - poly[n - 1]).len() <= 1e-9 * (1.0 + poly[0].len());
+    let m = if closed { n - 1 } else { n };
+    let turn = |k: usize| -> bool {
+        let (prev, next) = if closed { ((k + m - 1) % m, (k + 1) % m) } else if k == 0 || k + 1 >= n { return false } else { (k - 1, k + 1) };
+        let (a, b) = (poly[k] - poly[prev], poly[next] - poly[k]);
+        let (la, lb) = (a.len(), b.len());
+        la > 0.0 && lb > 0.0 && a.dot(b) / (la * lb) < (20f64).to_radians().cos()
+    };
+    let corners2: Vec<Vec2> = (0..m).filter(|&k| turn(k)).map(|k| poly[k]).collect();
+    if corners2.is_empty() {
+        return None;
+    }
+    let surface = face.surface();
+    let nrm = plane.normal();
+    let local = |p: mt::Point3| {
+        let q = plane.to_local(from_p3(p));
+        Vec2::new(q.x, q.y)
+    };
+    let tol = scale * 1e-6 + 1e-9;
+    let mut pts: Vec<mt::Point3> = traced.to_vec();
+    let mut corner_at: Vec<usize> = Vec::new();
+    for c in corners2 {
+        // The traced point nearest the corner (on the plane); none near: not on this line.
+        let Some((j, d)) = pts.iter().enumerate().map(|(j, p)| (j, (local(*p) - c).len())).min_by(|a, b| a.1.total_cmp(&b.1)) else { continue };
+        let spacing = pts.windows(2).map(|w| w[0].distance(w[1])).fold(0.0, f64::max);
+        if d > 2.0 * spacing + tol {
+            continue;
+        }
+        // Onto the face over the corner: alternate between the line through the corner along
+        // the normal and the nearest point of the face.
+        let w = plane.to_world(c);
+        let mut p = pts[j];
+        let mut hint = None;
+        for _ in 0..30 {
+            let q = w + nrm * (from_p3(p) - w).dot(nrm);
+            let Some(uv) = surface.search_nearest_parameter(p3(q), hint, 50) else { break };
+            hint = Some(uv);
+            p = surface.subs(uv.0, uv.1);
+            if (local(p) - c).len() <= tol {
+                break;
+            }
+        }
+        if (local(p) - c).len() > scale * 1e-5 + 1e-7 {
+            continue;
+        }
+        pts[j] = p;
+        corner_at.push(j);
+    }
+    if corner_at.is_empty() {
+        return None;
+    }
+    // Drop traced points crowding a corner (closer than a tenth of the spacing).
+    let spacing = pts.windows(2).map(|w| w[0].distance(w[1])).sum::<f64>() / (pts.len() - 1).max(1) as f64;
+    let mut out: Vec<mt::Point3> = Vec::new();
+    let mut is_corner: Vec<bool> = Vec::new();
+    for (j, p) in pts.iter().enumerate() {
+        let c = corner_at.contains(&j);
+        if !c && corner_at.iter().any(|&k| pts[k].distance(*p) < 0.1 * spacing) {
+            continue;
+        }
+        out.push(*p);
+        is_corner.push(c);
+    }
+    fit_kinked(&out, &is_corner, scale).ok()
+}
+
+/// [`fit`] with kinks: at a point marked in `corner` the curve's tangents on either side come
+/// from that side alone (C0 there), elsewhere as in `fit`.
+fn fit_kinked(pts: &[mt::Point3], corner: &[bool], scale: f64) -> Result<mt::Curve> {
+    let (Some(a), Some(b)) = (pts.first(), pts.last()) else { return Err(KernelError::Failed("empty split line".into())) };
+    let m = pts.len().saturating_sub(1);
+    if m < 1 {
+        return Err(KernelError::Failed("split line too short".into()));
+    }
+    let closed = a.distance(*b) <= scale * 1e-9 && m >= 3;
+    let at = |i: isize| -> mt::Point3 {
+        let i = if closed { i.rem_euclid(m as isize) as usize } else { i.clamp(0, m as isize) as usize };
+        pts.get(i).copied().unwrap_or(*a)
+    };
+    let kink = |i: isize| -> bool {
+        let i = if closed { i.rem_euclid(m as isize) as usize } else { i.clamp(0, m as isize) as usize };
+        corner.get(i).copied().unwrap_or(false)
+    };
+    let mut ctrl = vec![*a];
+    let mut knots = vec![0.0; 4];
+    for i in 0..m as isize {
+        let (p0, p1) = (at(i), at(i + 1));
+        let t0 = if kink(i) { (p1 - p0) / 3.0 } else { (at(i + 1) - at(i - 1)) / 6.0 };
+        let t1 = if kink(i + 1) { (p1 - p0) / 3.0 } else { (at(i + 2) - at(i)) / 6.0 };
+        ctrl.extend([p0 + t0, p1 - t1, p1]);
+        let k = (i + 1) as f64;
+        knots.extend(if i + 1 == m as isize { [k; 4].to_vec() } else { [k; 3].to_vec() });
+    }
+    let bsp = mt::BSplineCurve::try_new(mt::KnotVec::from(knots), ctrl).map_err(|e| KernelError::Failed(format!("split line: {e}")))?;
+    Ok(mt::Curve::BSplineCurve(bsp))
 }
 
 /// Cut an edge at a parameter (none when the point is already a vertex): the vertex and the
