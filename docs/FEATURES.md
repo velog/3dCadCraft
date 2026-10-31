@@ -933,7 +933,8 @@ Finds the overlapping volumes between components, shows them in red and gives th
   component's face that follows it on Update, edges (straight, round, free-form), single loops and whole faces of other components projected into sketches).
 - **Adaptivity:** a part's size driven by the assembly (🟡 2026-10-29: Adaptive components, sketches and
   extrusions; the free sizes are solved with the placements when the relationships need them, also while a partner is dragged, for parts inside subassemblies and parts of linked files — saved into their files with the assembly).
-- **Derive:** a part derived from another, e.g. a casting mould from a model.
+- **Derive:** a part derived from another, e.g. a casting mould from a model (🟡 2026-10-31: Derive Part — bodies of a part of
+  this file or a part file, each kept or joined, scaled, mirrored, following the source on Update; assemblies as sources ⬜).
 - **Skeleton / layout:** one master skeleton drives the whole product.
 
 ## 3.11 Simplification — ⬜ · M
@@ -1147,7 +1148,7 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 ## 5.7 Feature reuse and part families — ⬜ · L
 
 **Mechanisms.**
-- **Derive Part:** a part derived from another, with scale, mirror and choice of bodies.
+- **Derive Part:** a part derived from another, with scale, mirror and choice of bodies (🟡 2026-10-31, spec 3.10 §3.5).
 - **iFeature:** a saved feature (e.g. a standard keyway) for inserting into other parts.
 - **Part families (iPart in Inventor):** a table of variants, e.g. an M6/M8/M10 bolt with lengths. Each row is a configuration.
 

@@ -443,7 +443,7 @@ impl PartPlanned {
                                 "Keep each solid as a body",
                                 "Body as work surface",
                             ],
-                            0,
+                            2,
                         ),
                         Head("Include"),
                         Check("Solid Bodies", true),
@@ -1365,6 +1365,7 @@ impl Planned {
                     | PartPlanned::Sculpt
                     | PartPlanned::CopyObject
                     | PartPlanned::Import
+                    | PartPlanned::Derive
                     | PartPlanned::AuthorFrameProfile
             )
         )
@@ -1374,6 +1375,12 @@ impl Planned {
     /// whose logic exists: `Some(tooltip)` draws it disabled.
     pub fn option_off(self, label: &str, choice: Option<&str>) -> Option<&'static str> {
         match (self, label, choice) {
+            (Planned::Part(PartPlanned::Derive), "Derive Style", Some("Body as work surface"))
+            | (
+                Planned::Part(PartPlanned::Derive),
+                "Sketches" | "Work Geometry" | "Parameters" | "Show All Objects",
+                None,
+            ) => Some("Comes later (spec 3.10 §3.5 Element status)"),
             (Planned::Part(PartPlanned::CopyObject), "Create New", Some("Group")) => Some(
                 "Needs the construction environment, not available yet (spec 2.13 Copy Object)",
             ),
@@ -1720,6 +1727,10 @@ impl PartDialog {
             None if self.kind.is_import() => {
                 format!("{t}: choose a STEP file (Browse...), set the options, then OK")
             }
+            None if self.kind == Planned::Part(PartPlanned::Derive) => {
+                format!("{t}: choose the source part (Browse...), set the options, then OK")
+            }
+            None if self.kind.has_logic() => format!("{t}: set the options, then OK"),
             None => format!("{t}: set the options (the command itself comes later)"),
         }
     }
@@ -2456,6 +2467,8 @@ impl CadCraftApp {
         if let Some(b) = d.pressed.take() {
             if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::Replace) {
                 self.replace_browse();
+            } else if d.kind == Planned::Part(PartPlanned::Derive) {
+                self.derive_browse();
             } else if d.kind.is_import() {
                 self.open_dialog(super::files::DialogPurpose::ImportCad);
             } else if b == "Refresh Categories" {
@@ -2552,6 +2565,11 @@ impl CadCraftApp {
             }
             Planned::Asm(super::asm_planned::AsmPlanned::PlaceImported) => {
                 if self.place_imported_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Part(PartPlanned::Derive) => {
+                if self.derive_ok(&d) {
                     self.part_planned = None;
                 }
             }

@@ -89,6 +89,10 @@ pub(super) struct AsmUi {
     /// The Place window was opened by Replace's Browse: the chosen part
     /// becomes Replace's new component instead of being placed.
     pub place_for_replace: bool,
+    /// The Place window chooses the Derive panel's source part.
+    pub place_for_derive: bool,
+    /// The Derive panel's chosen source and its name.
+    pub derive_source: Option<(DocRef, String)>,
     /// Replace's new component and the name its occurrences get.
     pub replace_with: Option<(DocRef, String)>,
     /// The name the placed occurrences get (`bracket` → `bracket:1`).
@@ -447,6 +451,8 @@ impl CadCraftApp {
         self.asm_refresh_status();
         self.follow_patterns();
         self.follow_frames();
+        // A derived part follows its source (spec 3.10 §3.5).
+        self.derive_follow();
         self.scene_dirty = true;
         self.fit_view();
     }

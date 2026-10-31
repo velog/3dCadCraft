@@ -2056,6 +2056,40 @@ pub fn transformed(
         profiles: Vec::new(),
     })
 }
+
+/// `s` placed by the similarity `m` (a rigid motion, a reflection, a uniform
+/// scale about the origin, or a product of them — Derive's Scale Factor and
+/// Mirror). Names, the body's name and its kind are kept.
+pub fn similar(s: &ExactSolid, m: &nalgebra::Matrix4<Real>) -> Result<ExactSolid, String> {
+    let lin = m.fixed_view::<3, 3>(0, 0).into_owned();
+    let gram = lin.transpose() * lin;
+    let k = gram[(0, 0)];
+    let uniform = (gram - nalgebra::Matrix3::identity() * k).abs().max() < 1e-9 * k.max(1.0);
+    let bottom = m[(3, 0)].abs() + m[(3, 1)].abs() + m[(3, 2)].abs() + (m[(3, 3)] - 1.0).abs();
+    if !(k > 1e-18 && uniform && bottom < 1e-12) {
+        return Err("the transformation is not a similarity (uniform scale, turn, mirror)".into());
+    }
+    // SolidCraft's matrices are column-major: c[col][row].
+    let mut c = [[0.0; 4]; 4];
+    for (col, cc) in c.iter_mut().enumerate() {
+        for (row, x) in cc.iter_mut().enumerate() {
+            *x = m[(row, col)];
+        }
+    }
+    let placed = guarded("transform", || sk::transform_matrix(&s.body, c))?;
+    let mut face_names = names_from(&placed, &[s], &|_| None);
+    if face_names.iter().all(Option::is_none) && placed.face_count() == s.face_names.len() {
+        face_names = s.face_names.clone();
+    }
+    Ok(ExactSolid {
+        sheet: s.sheet,
+        name: s.name.clone(),
+        body: placed,
+        face_names,
+        profiles: Vec::new(),
+    })
+}
+
 // ---------------------------------------------------------- hole tools ---
 
 /// The frame of a tool about an axis: origin on the axis, `x` radial (the

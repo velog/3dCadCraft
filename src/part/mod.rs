@@ -31,6 +31,7 @@ pub mod combine;
 pub mod context;
 pub mod copy_object;
 mod cut_edges;
+pub mod derive;
 pub mod draft;
 mod exact;
 pub mod export;

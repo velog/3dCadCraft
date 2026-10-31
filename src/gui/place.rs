@@ -243,7 +243,7 @@ impl CadCraftApp {
         if self.is_drawing() {
             return models_of(p);
         }
-        if self.asm.place_for_replace {
+        if self.asm.place_for_replace || self.asm.place_for_derive {
             return parts_of(p);
         }
         let linked = self.linked_from(p.libraries().iter().map(|l| l.id).collect());
@@ -533,7 +533,13 @@ impl CadCraftApp {
         let local = if self.is_drawing() {
             Vec::new()
         } else {
+            // Derive: never the part itself.
+            let me = DocRef::local(self.part_id);
+            let derive = self.asm.place_for_derive;
             self.placeable_here()
+                .into_iter()
+                .filter(|(r, _)| !(derive && *r == me))
+                .collect()
         };
         let saved = !self.file_path.trim().is_empty();
         if !saved && !local.is_empty() {
@@ -651,6 +657,10 @@ impl CadCraftApp {
             self.replace_chosen(r, name);
             return;
         }
+        if self.asm.place_for_derive {
+            self.derive_chosen(r, name);
+            return;
+        }
         self.asm.place_name = name.clone();
         self.asm.tool = Some(super::assembly::AsmTool::Place(r));
         self.file_status = Some(Ok(format!(
@@ -738,6 +748,8 @@ impl CadCraftApp {
         let owner = PathBuf::from(self.file_path.trim());
         self.checkpoint(if self.asm.place_for_replace {
             "Replace"
+        } else if self.asm.place_for_derive {
+            "Derive"
         } else {
             "Place"
         });
@@ -755,6 +767,10 @@ impl CadCraftApp {
             Ok(r) if self.asm.place_for_replace => {
                 self.asm.place = None;
                 self.replace_chosen(r, base_name(&path, &parts, doc));
+            }
+            Ok(r) if self.asm.place_for_derive => {
+                self.asm.place = None;
+                self.derive_chosen(r, base_name(&path, &parts, doc));
             }
             Ok(r) => {
                 self.asm.place = None;
@@ -789,6 +805,8 @@ impl CadCraftApp {
         let mut cancel = false;
         let title = if self.asm.place_for_replace {
             "Replace Component: New Component"
+        } else if self.asm.place_for_derive {
+            "Derive: Source Part"
         } else {
             "Place Component"
         };
@@ -826,7 +844,12 @@ impl CadCraftApp {
                     ui.horizontal(|ui| {
                         let ready =
                             d.local_pick.is_some() || (d.selected.is_some() && d.part.is_some());
-                        if ui.add_enabled(ready, egui::Button::new("Place")).clicked() {
+                        let label = if self.asm.place_for_derive || self.asm.place_for_replace {
+                            "OK"
+                        } else {
+                            "Place"
+                        };
+                        if ui.add_enabled(ready, egui::Button::new(label)).clicked() {
                             if let Some(id) = d.local_pick {
                                 local = Some((id, true));
                             } else if let (Some(p), Some(doc)) = (d.selected.clone(), d.part) {
@@ -1031,6 +1054,7 @@ impl CadCraftApp {
         if cancel || !open {
             self.asm.place = None;
             self.asm.place_for_replace = false;
+            self.asm.place_for_derive = false;
         }
     }
 }

@@ -2510,6 +2510,68 @@ fn speed_budgets() {
         ));
     }
 
+    // Derive (spec 3.10 §3.5): a plate with 36 holes derived into a new
+    // part (its bodies → STEP text → read back), and an Update after the
+    // source grew (text again, faces matched to keep their names).
+    {
+        use cadcraft3d::document::{DocRef, DocumentId};
+        use cadcraft3d::part::derive::DeriveLink;
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let holed = |w: Real| {
+            let mut p = PartDocument::with_box("Box1", [w, 100.0, 10.0]).unwrap();
+            let j = p
+                .create_sketch(SketchPlacement::on_face("Box1:Top"), &o)
+                .unwrap();
+            let plane = p.sketches[j].sketch.plane.clone();
+            for k in 0..36 {
+                let c = plane.project(&Point3::new(
+                    10.0 + 16.0 * (k % 6) as Real,
+                    10.0 + 16.0 * (k / 6) as Real,
+                    10.0,
+                ));
+                p.sketches[j].sketch.add_circle(c, 3.0).unwrap();
+            }
+            let rg = p.sketches[j].sketch.regions();
+            let holes: Vec<ProfileRef> = rg
+                .iter()
+                .filter(|r| r.area() < 100.0)
+                .map(|r| ProfileRef::of(r, r.interior_point()))
+                .collect();
+            let mut cut = ExtrudeFeature::new(holes, 1.0);
+            cut.operation = Operation::Cut;
+            cut.extent = cadcraft3d::part::Extent::ThroughAll;
+            cut.direction = ExtentDirection::Flipped;
+            p.add_extrude(j, cut).unwrap();
+            p
+        };
+        let src = holed(100.0);
+        let link = DeriveLink::new(DocRef::local(DocumentId::new_random()), "Plate");
+        rows.push((
+            "derive: a 36-hole plate derived into a new part (bodies → STEP → read back)",
+            300.0,
+            median_ms(3, || {
+                let mut d = PartDocument::default();
+                d.add_derive(&src, link.clone()).unwrap();
+            }),
+        ));
+        let mut d = PartDocument::default();
+        d.add_derive(&src, link.clone()).unwrap();
+        let grown = holed(120.0);
+        rows.push((
+            "derive: Update of the derived 36-hole plate after its source grew",
+            400.0,
+            median_ms(3, || {
+                let mut x = d.clone();
+                x.build_cache = Default::default();
+                assert!(x.update_derive(0, &grown).unwrap());
+            }),
+        ));
+    }
+
     // Assembly picking (docs/spec/3.1, A1): the occurrence under the cursor
     // every frame — 100 occurrences of the 36-hole plate, the ray taken into
     // each occurrence's frame against the part's cached triangles.

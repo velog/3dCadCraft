@@ -44,6 +44,7 @@ mod commands;
 mod constrain;
 mod delete_face;
 mod demos;
+mod derive;
 mod diag;
 mod doc_settings;
 mod doc_tabs;

@@ -53,6 +53,10 @@ pub struct ImportOp {
     /// saved: every regeneration reads it again).
     #[serde(skip)]
     pub found: FileBodies,
+    /// Derive (spec 3.10 §3.5): the text was generated from another part's bodies, which
+    /// Update reads again. Old builds see a plain import of the same text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derive: Option<super::derive::DeriveLink>,
 }
 
 /// A body as the file describes it.
@@ -155,6 +159,7 @@ impl ImportOp {
             link: None,
             keep: BTreeMap::new(),
             found: FileBodies::default(),
+            derive: None,
         }
     }
 
@@ -180,7 +185,10 @@ impl ImportOp {
 
     /// The browser's tooltip.
     pub fn describe(&self) -> String {
-        format!("Import of {}", self.file_name())
+        match &self.derive {
+            Some(d) => format!("Derived from {}", d.name),
+            None => format!("Import of {}", self.file_name()),
+        }
     }
 
     /// The bodies the filters keep (and the reader's warnings).
