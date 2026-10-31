@@ -968,8 +968,12 @@ impl AsmPlanned {
                     Sel(
                         "points",
                         "Start / End Point",
-                        "select the start point and the end point (Between Points)",
+                        "click near an end of an edge or sketch line for the start, then for the end (Between Points)",
                         POINT,
+                    ),
+                    Button("+ Add Set"),
+                    Note(
+                        "+ Add Set keeps these lines with the section below; pick more lines for another family or size, OK places every set in one frame.",
                     ),
                     Button("Flip Direction"),
                     Button("Copy Properties"),
@@ -1764,6 +1768,10 @@ impl CadCraftApp {
     pub(super) fn asm_planned_click(&mut self, p: egui::Pos2, rect: egui::Rect) {
         // Edit Frame Members: the current member's anchor points first.
         if self.frame_anchor_click(p, rect) {
+            return;
+        }
+        // Insert Frame's Between Points: ends of edges and sketch lines.
+        if self.frame_between_click(p, rect) {
             return;
         }
         let Some(kinds) = self

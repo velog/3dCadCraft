@@ -91,6 +91,10 @@ impl CadCraftApp {
                 }
                 r.context_menu(|ui| {
                     if ui.button("Edit Frame...").clicked() {
+                        cmds.push(FrameCmd::EditMembers(all.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Position and Corners...").clicked() {
                         cmds.push(FrameCmd::Start(AsmPlanned::EditFrame, all.clone()));
                         ui.close();
                     }
@@ -460,6 +464,8 @@ impl CadCraftApp {
         self.frame_fill_change(&mut d, edit[0]);
         self.fill_member_material(&mut d, edit[0]);
         self.member_skeletons(&mut d);
+        // Corners are made again only when asked (a Corner Type / T Joints).
+        d.set_index(0, "T Joints", 0);
         d.active = None;
         self.asm.tool = None;
         self.part_planned = Some(d);
@@ -633,14 +639,43 @@ impl CadCraftApp {
             .collect();
         let linked = self.linked();
         let mut trial = self.project.clone();
-        match frame::edit_members(
+        let r = frame::edit_members(
             &mut trial,
             &linked,
             self.part_id,
             &edits,
             &o,
             &Library::current(),
-        ) {
+        )
+        .and_then(|s| {
+            // A Corner Type other than None makes the frame's corners again.
+            if o.corners.kind == frame::CornerType::None && o.corners.tees == frame::TeeJoint::None
+            {
+                return Ok(s);
+            }
+            let fid = self
+                .assembly()
+                .and_then(|a| {
+                    a.frames
+                        .iter()
+                        .find(|f| {
+                            f.members
+                                .iter()
+                                .any(|m| d.members.edit.contains(&m.occurrence))
+                        })
+                        .map(|f| f.id)
+                })
+                .ok_or("the members belong to no frame")?;
+            frame::edit_frame(
+                &mut trial,
+                &linked,
+                self.part_id,
+                fid,
+                None,
+                Some(o.corners),
+            )
+        });
+        match r {
             Ok(_) => {
                 self.frame_commit("Edit Frame Members", trial);
                 true

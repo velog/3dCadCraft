@@ -374,7 +374,28 @@ impl CadCraftApp {
             d.members.anchor.insert(occ, k);
             d.set_index(0, "Anchor", k);
         }
+        self.apply_member_anchor(occ, k);
         true
+    }
+
+    /// Edit Frame Members: member `occ` takes anchor `k` (of `Anchor::ALL`)
+    /// at once — it moves in the view, one Undo step.
+    pub(super) fn apply_member_anchor(&mut self, occ: u32, k: usize) {
+        let Some(&anchor) = frame::Anchor::ALL.get(k) else {
+            return;
+        };
+        let linked = self.linked();
+        let mut trial = self.project.clone();
+        match frame::set_anchor(&mut trial, &linked, self.part_id, occ, anchor) {
+            Ok(_) => {
+                self.history.break_coalescing();
+                self.checkpoint("Frame Member Anchor");
+                self.project = trial;
+                self.history.break_coalescing();
+                self.scene_dirty = true;
+            }
+            Err(e) => self.file_status = Some(Err(format!("Edit Frame Members: {e}"))),
+        }
     }
 
     /// A dot at the end of each picked member that Lengthen/Shorten

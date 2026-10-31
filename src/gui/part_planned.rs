@@ -1424,11 +1424,6 @@ impl Planned {
             }
             (
                 Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame),
-                "Placement",
-                Some("Between Points"),
-            ) => Some("Comes with stage F2 (spec 6.1 Insert Frame)"),
-            (
-                Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame),
                 "Merge Frame Members" | "Apply Appearance to Part",
                 None,
             ) => Some("Comes with stage F3 (spec 6.1 Insert Frame)"),
@@ -1559,11 +1554,26 @@ pub(super) struct PartDialog {
     /// The frame end treatment this panel edits (frame id, index): OK
     /// replaces it (`gui/frame_edit.rs`).
     pub frame_edit: Option<(u32, usize)>,
+    /// Insert Frame's Between Points: the start point picked (the line it
+    /// ends, which end, where), waiting for the end point.
+    pub between_first: Option<(crate::assembly::frame::Skeleton, u8, crate::kernel::Point3)>,
+    /// Insert Frame's sets kept by + Add Set: lines (with their labels) and
+    /// the section, material and orientation they take.
+    pub frame_sets: Vec<FrameSet>,
     /// Insert Frame as the edit of placed members: every member of their
     /// frame (the Members list), the ones edited, the one shown with its
     /// anchor points, each member's anchor (index into `Anchor::ALL`) and
     /// the edited members' skeleton lines when the panel opened.
     pub members: MemberEditState,
+}
+
+/// One set of Insert Frame (+ Add Set): its lines and options.
+#[derive(Clone, Debug)]
+pub struct FrameSet {
+    /// The skeleton lines.
+    pub skeletons: Vec<crate::assembly::frame::Skeleton>,
+    /// Section, material, orientation and Position of its members.
+    pub options: crate::assembly::frame::InsertOptions,
 }
 
 /// Insert Frame's edit of placed members (`PartDialog::members`).
@@ -1602,6 +1612,7 @@ const LIVE_BUTTONS: &[&str] = &[
     "Find Remaining Free Edges",
     "Browse...",
     "Refresh Categories",
+    "+ Add Set",
 ];
 
 /// Buttons that switch an option on and off (kept like a check box).
@@ -1686,6 +1697,8 @@ impl PartDialog {
             skeletons: Vec::new(),
             clicks: Vec::new(),
             frame_edit: None,
+            between_first: None,
+            frame_sets: Vec::new(),
             members: MemberEditState::default(),
         }
     }
@@ -1713,7 +1726,7 @@ impl PartDialog {
 
     /// What selector `key` takes now: Copy Object's Objects follow its Select (Face · Body),
     /// Insert Frame's edges its Select (Edge: edges and sketch lines only; Face / Body
-    /// Edges: a face) — the picking and the highlight take nothing else (spec 0-ui rule 19).
+    /// Edges: a face or an edge) — the picking and the highlight take nothing else (spec 0-ui rule 19).
     fn accepts(&self, key: &str, def: &'static [PickKind]) -> &'static [PickKind] {
         match (self.kind, key) {
             (Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame), "edges") => {
@@ -1724,7 +1737,15 @@ impl PartDialog {
                         PickKind::SketchCurve,
                     ]
                 } else {
-                    &[PickKind::Face, PickKind::PlanarFace]
+                    // A face, or an edge (a click near one finds the edge
+                    // first): Body Edges takes its body's edges, Face Edges
+                    // the edge itself.
+                    &[
+                        PickKind::Face,
+                        PickKind::PlanarFace,
+                        PickKind::Edge,
+                        PickKind::StraightEdge,
+                    ]
                 }
             }
             (Planned::Part(PartPlanned::CopyObject), "objects") => {
@@ -2478,10 +2499,30 @@ impl CadCraftApp {
         if !d.members.list.is_empty() {
             self.member_list_ui(ui, &mut d);
         }
+        if !d.frame_sets.is_empty() {
+            super::frame::sets_ui(ui, &mut d);
+        }
+        // Insert Frame's active input follows Placement (Enter / a failed OK
+        // moved it on to the points, which took no lines any more).
+        if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::InsertFrame)
+            && d.members.list.is_empty()
+            && d.active.is_some()
+        {
+            d.active = Some(if d.index(0, "Placement") == 1 {
+                "points"
+            } else {
+                "edges"
+            });
+        }
         let (cancel, ok) = d.ui(ui);
+        // The Anchor list of Edit Frame Members moves the current member
+        // at once (like a click on one of its points).
+        let mut moved = None;
         if let Some(c) = d.members.current {
             let k = d.index(0, "Anchor");
-            d.members.anchor.insert(c, k);
+            if d.members.anchor.insert(c, k) != Some(k) {
+                moved = Some((c, k));
+            }
         }
         if let Some(b) = d.pressed.take() {
             if d.kind == Planned::Asm(super::asm_planned::AsmPlanned::Replace) {
@@ -2492,11 +2533,16 @@ impl CadCraftApp {
                 self.open_dialog(super::files::DialogPurpose::ImportCad);
             } else if b == "Refresh Categories" {
                 d.note = Some(super::frame::refresh_categories());
+            } else if b == "+ Add Set" {
+                d.note = Some(super::frame::add_set(&mut d));
             } else {
                 d.note = self.surface_button(&d, b);
             }
         }
         self.part_planned = (!cancel).then_some(d);
+        if let Some((c, k)) = moved {
+            self.apply_member_anchor(c, k);
+        }
         if ok {
             self.planned_ok();
         }

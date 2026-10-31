@@ -69,6 +69,64 @@ fn orientation(d: &PartDialog) -> Orientation {
     }
 }
 
+/// The *+ Add Set* button: the picked lines with the panel's section and
+/// orientation become a set; the selection is cleared for the next one.
+/// The panel's note says what was kept.
+pub(super) fn add_set(d: &mut PartDialog) -> String {
+    if d.skeletons.is_empty() {
+        return "+ Add Set: select the lines of this set first".into();
+    }
+    let Some(options) = insert_options(d) else {
+        return "+ Add Set: the section table is empty".into();
+    };
+    let n = d.skeletons.len();
+    let text = format!(
+        "Set {}: {}, {n} line(s) kept",
+        d.frame_sets.len() + 1,
+        options.size
+    );
+    d.frame_sets.push(super::part_planned::FrameSet {
+        skeletons: std::mem::take(&mut d.skeletons),
+        options,
+    });
+    d.picks.insert("edges", Vec::new());
+    text
+}
+
+/// The kept sets above Insert Frame's panel: family, size and line count,
+/// each with an x that drops it.
+pub(super) fn sets_ui(ui: &mut egui::Ui, d: &mut PartDialog) {
+    let mut drop = None;
+    egui::CollapsingHeader::new(format!("Sets ({})", d.frame_sets.len()))
+        .default_open(true)
+        .show(ui, |ui| {
+            for (i, s) in d.frame_sets.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Label::new(format!(
+                            "{}. {} · {} line(s)",
+                            i + 1,
+                            s.options.size,
+                            s.skeletons.len()
+                        ))
+                        .truncate(),
+                    )
+                    .on_hover_text(&s.options.family);
+                    if ui
+                        .small_button("x")
+                        .on_hover_text("Drop this set")
+                        .clicked()
+                    {
+                        drop = Some(i);
+                    }
+                });
+            }
+        });
+    if let Some(i) = drop {
+        d.frame_sets.remove(i);
+    }
+}
+
 /// The panel's Position and Level.
 pub(super) fn layout(d: &PartDialog) -> frame::Layout {
     frame::Layout {
@@ -138,30 +196,73 @@ impl CadCraftApp {
             app.file_status = Some(Err(format!("Insert Frame: {e}")));
             false
         };
-        if d.index(0, "Placement") != 0 {
-            return fail(self, "Between Points comes with stage F2 (spec 6.1)");
-        }
         if d.refs.get("align").is_some_and(|v| !v.is_empty()) {
             return fail(self, "Align comes with stage F2 (spec 6.1)");
-        }
-        let edges = d.skeletons.clone();
-        if edges.is_empty() {
-            return fail(self, "select the skeleton edges or sketch lines");
         }
         let Some(o) = insert_options(d) else {
             return fail(self, "the section table is empty");
         };
+        // The kept sets, then the lines picked now (with the panel's section).
+        let mut sets: Vec<(Vec<Skeleton>, InsertOptions)> = d
+            .frame_sets
+            .iter()
+            .map(|s| (s.skeletons.clone(), s.options.clone()))
+            .collect();
+        if !d.skeletons.is_empty() {
+            sets.push((d.skeletons.clone(), o.clone()));
+        }
+        if sets.is_empty() {
+            return fail(self, "select the skeleton edges or sketch lines");
+        }
         let mut trial = self.project.clone();
         let linked = self.linked();
-        match frame::insert(
-            &mut trial,
-            &linked,
-            self.part_id,
-            &edges,
-            &o,
-            &Library::current(),
-            None,
-        ) {
+        let lib = Library::current();
+        let corners = o.corners;
+        // One frame per assembly (Inventor): new members join the frame of a
+        // selected member, else the last one; only the first insert makes one.
+        let existing = self.assembly().and_then(|a| {
+            a.frames
+                .iter()
+                .find(|f| {
+                    f.members
+                        .iter()
+                        .any(|m| self.asm.sel.contains(&m.occurrence))
+                })
+                .or(a.frames.last())
+                .map(|f| f.id)
+        });
+        let result = (|| {
+            let mut frame_id = existing;
+            let mut occs = Vec::new();
+            // Several sets, or members joining a frame: the corners once all
+            // are in (between the new members and the frame's).
+            let many = sets.len() > 1 || existing.is_some();
+            for (lines, mut opts) in sets {
+                if many {
+                    // The corners come once all sets are in.
+                    opts.corners = Default::default();
+                }
+                let (fid, made) = frame::insert(
+                    &mut trial,
+                    &linked,
+                    self.part_id,
+                    &lines,
+                    &opts,
+                    &lib,
+                    frame_id,
+                )?;
+                frame_id = Some(fid);
+                occs.extend(made);
+            }
+            if let Some(fid) = frame_id.filter(|_| many)
+                && (corners.kind != frame::CornerType::None
+                    || corners.tees != frame::TeeJoint::None)
+            {
+                frame::add_corners(&mut trial, &linked, self.part_id, fid, &occs, &corners)?;
+            }
+            Ok::<_, String>((frame_id, occs))
+        })();
+        match result {
             Ok((_, occs)) => {
                 self.history.break_coalescing();
                 self.checkpoint("Insert Frame");
@@ -285,6 +386,95 @@ impl CadCraftApp {
             .map(|(_, l)| l)
     }
 
+    /// Between Points: a click near an end of a model edge or a sketch line
+    /// takes that end — the first as the start, the second as the end of a
+    /// new straight skeleton (`Skeleton::Between`). False when Between Points
+    /// is off or nothing is near.
+    pub(super) fn frame_between_click(&mut self, p: Pos2, rect: Rect) -> bool {
+        let on = self.part_planned.as_ref().is_some_and(|d| {
+            d.kind == Planned::Asm(AsmPlanned::InsertFrame)
+                && d.members.list.is_empty()
+                && d.index(0, "Placement") == 1
+        });
+        if !on {
+            return false;
+        }
+        let Some(a) = self.assembly() else {
+            return true;
+        };
+        let linked = self.linked();
+        // The line under the cursor: a sketch line, else a model edge.
+        let line = self
+            .sketch_line_under(p, rect)
+            .map(|l| (l.0, l.2, l.3))
+            .or_else(|| {
+                let g @ crate::assembly::relation::GeomRef::Edge { .. } =
+                    self.geom_under_pub(p, rect)?
+                else {
+                    return None;
+                };
+                let s = Skeleton::Edge(g);
+                let (u, v) = frame::skeleton_line(&self.project, &linked, a, &s).ok()?;
+                Some((s, u, v))
+            });
+        let Some((s, u, v)) = line else {
+            self.file_status = Some(Err(
+                "Insert Frame: click near an end of an edge or a sketch line".into(),
+            ));
+            return true;
+        };
+        let near = |w: &Point3| {
+            self.camera
+                .project(w, rect)
+                .map_or(f32::MAX, |q| q.distance(p))
+        };
+        let (end, at) = if near(&v) < near(&u) {
+            (1u8, v)
+        } else {
+            (0u8, u)
+        };
+        let Some(d) = self.part_planned.as_mut() else {
+            return true;
+        };
+        match d.between_first.take() {
+            None => {
+                d.between_first = Some((s, end, at));
+                d.picks.insert("points", vec!["start point".into()]);
+                self.file_status = Some(Ok("Insert Frame: now the end point".into()));
+            }
+            Some((from, from_end, start)) => {
+                if (at - start).norm() < 1e-6 {
+                    d.between_first = Some((from, from_end, start));
+                    self.file_status =
+                        Some(Err("Insert Frame: the end point is the start point".into()));
+                    return true;
+                }
+                let n = d.skeletons.len() + 1;
+                d.pick_skeleton(
+                    format!("Between Points {n}"),
+                    Skeleton::Between {
+                        from: Box::new(from),
+                        from_end,
+                        to: Box::new(s),
+                        to_end: end,
+                    },
+                );
+                d.picks.insert("points", Vec::new());
+                self.file_status = None;
+            }
+        }
+        true
+    }
+
+    /// The start point of Between Points, while the end is still to pick.
+    fn between_start_dot(&self, d: &PartDialog, painter: &egui::Painter, rect: Rect) {
+        if let Some((_, _, at)) = &d.between_first
+            && let Some(q) = self.camera.project(at, rect)
+        {
+            painter.circle(q, 5.0, PICKED, Stroke::new(1.5, Color32::WHITE));
+        }
+    }
+
     /// A click of Insert Frame on a component's sketch line: it becomes a
     /// skeleton line of the panel. False when no line is under `p`.
     pub(super) fn frame_pick_sketch_line(&mut self, p: Pos2, rect: Rect) -> bool {
@@ -309,12 +499,30 @@ impl CadCraftApp {
     /// drawn from the section table each frame (no kernel work), corners
     /// uncut.
     fn frame_preview(&self, d: &PartDialog, painter: &egui::Painter, rect: Rect) {
-        if d.skeletons.is_empty() {
-            return;
+        // The kept sets with their own sections, then the lines picked now.
+        let mut groups: Vec<(&[Skeleton], InsertOptions)> = d
+            .frame_sets
+            .iter()
+            .map(|s| (s.skeletons.as_slice(), s.options.clone()))
+            .collect();
+        if let Some(o) = insert_options(d) {
+            groups.push((d.skeletons.as_slice(), o));
         }
-        let Some(o) = insert_options(d) else {
-            return;
-        };
+        for (skeletons, o) in groups {
+            if !skeletons.is_empty() {
+                self.preview_set(skeletons, &o, painter, rect);
+            }
+        }
+    }
+
+    /// The wire preview of one set's members.
+    fn preview_set(
+        &self,
+        skeletons: &[Skeleton],
+        o: &InsertOptions,
+        painter: &egui::Painter,
+        rect: Rect,
+    ) {
         let lib = Library::current();
         let Some(sec) = lib.find(&o.family, &o.size) else {
             return;
@@ -323,8 +531,7 @@ impl CadCraftApp {
             return;
         };
         let linked = self.linked();
-        let lines: Vec<(Point3, Point3)> = d
-            .skeletons
+        let lines: Vec<(Point3, Point3)> = skeletons
             .iter()
             .filter_map(|s| frame::skeleton_line(&self.project, &linked, a, s).ok())
             .collect();
@@ -388,9 +595,19 @@ impl CadCraftApp {
         if d.members.list.is_empty() {
             self.frame_preview(d, painter, rect);
         }
+        self.between_start_dot(d, painter, rect);
         for s in &d.skeletons {
             match s {
                 Skeleton::Edge(g) => self.draw_geom(painter, rect, g, PICKED),
+                Skeleton::Between { .. } => {
+                    if let Some(a) = self.assembly()
+                        && let Ok((p, q)) =
+                            frame::skeleton_line(&self.project, &self.linked(), a, s)
+                        && let Some(s) = seg(&p, &q)
+                    {
+                        painter.line_segment(s, Stroke::new(3.0, PICKED));
+                    }
+                }
                 Skeleton::SketchLine { .. } => {
                     if let Some((_, _, a, b)) = lines.iter().find(|l| &l.0 == s)
                         && let Some(s) = seg(a, b)
@@ -415,7 +632,7 @@ impl CadCraftApp {
             && let Some(g) = self.geom_under_pub(p, rect)
         {
             let face = matches!(g, crate::assembly::relation::GeomRef::Face { .. });
-            if face == (d.index(0, "Select") != 0) {
+            if !face || d.index(0, "Select") != 0 {
                 self.draw_geom(painter, rect, &g, HOVER);
             }
         }

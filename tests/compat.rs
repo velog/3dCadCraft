@@ -2662,6 +2662,99 @@ fn drawing_r39_project() -> Project {
     project
 }
 
+/// Revision 58: a frame member Between Points — from the vertex of the
+/// box's top front edge at x = 0 to the back edge's vertex at x = 400 (the
+/// top's diagonal, 500 long).
+fn between_r58_project() -> Project {
+    use cadcraft3d::assembly::frame::{
+        InsertOptions, Skeleton, insert, skeleton_line, straight_edges,
+    };
+    use cadcraft3d::assembly::relation::GeomRef;
+    use cadcraft3d::assembly::tree::Linked;
+    use cadcraft3d::document::{AssemblyDocument, DocRef};
+    use cadcraft3d::kernel::Transform3;
+    use cadcraft3d::part::frame::Library;
+    let sk = PartDocument::with_box("Box1", [400.0, 300.0, 200.0]).unwrap();
+    let edge = |at: [f64; 3]| {
+        let e = straight_edges(&sk, None)
+            .into_iter()
+            .find(|e| (0..3).all(|k| (e.hint[k] - at[k]).abs() < 1e-6))
+            .unwrap();
+        Skeleton::Edge(GeomRef::Edge {
+            occurrence: 1,
+            sub: Vec::new(),
+            edge: e,
+        })
+    };
+    let (front, back) = (edge([200.0, 0.0, 200.0]), edge([200.0, 300.0, 200.0]));
+    let mut p = Project::new("BetweenR58");
+    let skd = p.add_document("Skeleton", DocumentData::Part(sk.clone()));
+    let mut a = AssemblyDocument::default();
+    a.place(
+        DocRef::local(skd),
+        "Skeleton:1",
+        Transform3::identity(),
+        true,
+    );
+    let lf = skeleton_line(&p, &Linked::new(), &a, &front).unwrap();
+    let lb = skeleton_line(&p, &Linked::new(), &a, &back).unwrap();
+    let aid = p.add_document("Frame", DocumentData::Assembly(a));
+    let s = Skeleton::Between {
+        from: Box::new(front),
+        from_end: u8::from(lf.1.x < lf.0.x),
+        to: Box::new(back),
+        to_end: u8::from(lb.1.x > lb.0.x),
+    };
+    let o = InsertOptions {
+        family: "Square hollow section (EN 10219)".into(),
+        size: "40x40x3".into(),
+        material: Some("Steel S235".into()),
+        orientation: Default::default(),
+        corners: Default::default(),
+        layout: Default::default(),
+    };
+    insert(
+        &mut p,
+        &Linked::new(),
+        aid,
+        &[s],
+        &o,
+        Library::builtin(),
+        None,
+    )
+    .unwrap();
+    p
+}
+
+/// The revision 58 frame reads back: its member runs 500 between the points.
+#[test]
+fn between_r58_reads() {
+    use cadcraft3d::assembly::frame::{length_of, solve};
+    use cadcraft3d::assembly::tree::Linked;
+    let f = root().join("r58/between_r58.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let mut project = Project::load(&f).unwrap();
+    let aid = project
+        .documents()
+        .iter()
+        .find(|d| matches!(d.data, DocumentData::Assembly(_)))
+        .unwrap()
+        .id;
+    assert_eq!(solve(&mut project, &Linked::new(), aid).unwrap().moved, 0);
+    let len = project
+        .documents()
+        .iter()
+        .filter_map(|d| match &d.data {
+            DocumentData::Part(p) if d.name.starts_with("SHS") => length_of(p),
+            _ => None,
+        })
+        .next()
+        .unwrap();
+    assert!((len - 500.0).abs() < 1e-6, "{len}");
+}
+
 /// Revision 57: a frame member mitred at both ends, one `BodyOp::Prism`
 /// (an SHS 40x40x3, 400 long on its axis, ends at 45°).
 fn prism_r57() -> PartDocument {
@@ -3323,6 +3416,11 @@ fn old_files_still_open() {
             let mut project = Project::new("RipR50");
             project.add_document("Part1", DocumentData::Part(rip_r50()));
             project.save(&f).unwrap();
+        }
+        let f = root().join("r58/between_r58.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            between_r58_project().save(&f).unwrap();
         }
         let f = root().join("r57/prism_r57.3dcadcraft");
         if !f.exists() {

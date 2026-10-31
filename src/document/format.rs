@@ -166,7 +166,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 56: sheet metal Lofted Flange (`SheetOp::LoftedFlange`) (2026-10-31).
 /// - 57: frame member bodies between two planes (`BodyOp::Prism`, mitred
 ///   members without a Trim Solid) (2026-10-31).
-pub const FORMAT_REVISION: u32 = 57;
+/// - 58: frame members between two points (`Skeleton::Between`: ends of
+///   edges and sketch lines) (2026-10-31).
+pub const FORMAT_REVISION: u32 = 58;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

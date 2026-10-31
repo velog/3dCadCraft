@@ -270,5 +270,6 @@
   "r55/contour_roll_r55.3dcadcraft": {"volume": 12041.894071899344, "faces": 18, "features": 1, "sketches": 1, "exact": true},
   "r54/mesh_r54.3dcadcraft": {"volume": 6000.0, "faces": 1, "features": 1, "sketches": 0, "exact": true},
   "r57/prism_r57.3dcadcraft": {"volume": 168274.36451469746, "faces": 18, "features": 1, "sketches": 0, "exact": true},
-  "r56/lofted_flange_r56.3dcadcraft": {"volume": 13852.451852392038, "faces": 62, "features": 2, "sketches": 2, "exact": true}
+  "r56/lofted_flange_r56.3dcadcraft": {"volume": 13852.451852392038, "faces": 62, "features": 2, "sketches": 2, "exact": true},
+  "r58/between_r58.3dcadcraft": {"volume": 23999999.999999974, "faces": 6, "features": 1, "sketches": 0, "exact": true}
 }

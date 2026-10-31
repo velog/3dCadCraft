@@ -131,14 +131,28 @@ pub enum Skeleton {
         /// The line.
         line: crate::sketch::EntityId,
     },
+    /// Insert Frame's Between Points (format revision 58): a straight run
+    /// from an end of one skeleton line (an edge's vertex, a sketch line's
+    /// point) to an end of another, following both.
+    Between {
+        /// The line the start point ends.
+        from: Box<Skeleton>,
+        /// Which end of it (0 start, 1 end).
+        from_end: u8,
+        /// The line the end point ends.
+        to: Box<Skeleton>,
+        /// Which end of it.
+        to_end: u8,
+    },
 }
 
 impl Skeleton {
-    /// The occurrence it lies on.
+    /// The occurrence it lies on (Between Points: its start's).
     pub fn occurrence(&self) -> u32 {
         match self {
             Skeleton::Edge(g) => g.occurrence(),
             Skeleton::SketchLine { occurrence, .. } => *occurrence,
+            Skeleton::Between { from, .. } => from.occurrence(),
         }
     }
 
@@ -147,6 +161,7 @@ impl Skeleton {
         match self {
             Skeleton::Edge(g) => g.sub(),
             Skeleton::SketchLine { sub, .. } => sub,
+            Skeleton::Between { from, .. } => from.sub(),
         }
     }
 }
@@ -588,6 +603,21 @@ pub fn skeleton_line(
     asm: &AssemblyDocument,
     r: &Skeleton,
 ) -> Result<(Point3, Point3), String> {
+    if let Skeleton::Between {
+        from,
+        from_end,
+        to,
+        to_end,
+    } = r
+    {
+        let end = |l: (Point3, Point3), k: u8| if k == 0 { l.0 } else { l.1 };
+        let a = end(skeleton_line(project, linked, asm, from)?, *from_end);
+        let b = end(skeleton_line(project, linked, asm, to)?, *to_end);
+        if (b - a).norm() < 1e-6 {
+            return Err("its two points coincide".into());
+        }
+        return Ok((a, b));
+    }
     let n = super::tree::nested(project, linked, asm, r.occurrence(), r.sub())?;
     let part = super::tree::part_of(project, linked, n.component)
         .ok_or_else(|| format!("{} shows no part", n.name))?;
@@ -608,7 +638,9 @@ pub fn skeleton_line(
                 _ => return Err("the skeleton edge has no ends".into()),
             }
         }
-        Skeleton::Edge(_) => return Err("a frame member follows an edge or a sketch line".into()),
+        Skeleton::Edge(_) | Skeleton::Between { .. } => {
+            return Err("a frame member follows an edge or a sketch line".into());
+        }
         Skeleton::SketchLine { sketch, line, .. } => {
             let ps = part
                 .sketches
@@ -1462,6 +1494,7 @@ pub fn add_miter(
     let result = (|| {
         let a = asm_mut(project, asm)?;
         for &(x, y) in pairs {
+            merge_frames_of(a, &[x, y]);
             let f = a
                 .frames
                 .iter_mut()
@@ -1469,7 +1502,7 @@ pub fn add_miter(
                     f.members.iter().any(|m| m.occurrence == x)
                         && f.members.iter().any(|m| m.occurrence == y)
                 })
-                .ok_or("both members must belong to one frame")?;
+                .ok_or("both members must be frame members")?;
             f.treatments.retain(|t| {
                 let m = t.members();
                 !(matches!(t, Treatment::Miter { .. }) && m.contains(&x) && m.contains(&y))
@@ -1512,6 +1545,7 @@ pub fn add_treatments(
         let mut touched = Vec::new();
         for t in ts {
             let ms = t.members();
+            merge_frames_of(a, &ms);
             let f = a
                 .frames
                 .iter_mut()
@@ -1519,7 +1553,7 @@ pub fn add_treatments(
                     ms.iter()
                         .all(|o| f.members.iter().any(|m| m.occurrence == *o))
                 })
-                .ok_or("the members must belong to one frame")?;
+                .ok_or("the members must be frame members")?;
             f.treatments.retain(|x| {
                 !(std::mem::discriminant(x) == std::mem::discriminant(&t) && x.members() == ms)
             });
@@ -1536,6 +1570,30 @@ pub fn add_treatments(
         *project = before;
     }
     result
+}
+
+/// Members of different frames treated together (a Trim/Extend, a corner
+/// between frames inserted apart): their frames become one, the first's
+/// (members and treatments moved over). Inventor keeps one frame per
+/// assembly that Insert Frame adds to; files with several keep working.
+pub fn merge_frames_of(a: &mut AssemblyDocument, members: &[u32]) {
+    let idx: Vec<usize> = a
+        .frames
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.members.iter().any(|m| members.contains(&m.occurrence)))
+        .map(|(i, _)| i)
+        .collect();
+    let [keep, rest @ ..] = idx.as_slice() else {
+        return;
+    };
+    // From the last, so the indices stay valid.
+    for &i in rest.iter().rev() {
+        let f = a.frames.remove(i);
+        let k = if i < *keep { *keep - 1 } else { *keep };
+        a.frames[k].members.extend(f.members);
+        a.frames[k].treatments.extend(f.treatments);
+    }
 }
 
 /// Change: members `members` get the section, material and orientation of
@@ -1569,6 +1627,38 @@ pub struct MemberEdit {
     pub skeleton: Option<Skeleton>,
     /// Its orientation (before `o.layout`, when that is not Center).
     pub orientation: Orientation,
+}
+
+/// A member's new anchor, at once (Edit Frame Members' points): only its
+/// place changes, then the frame is solved (its corners follow). On an
+/// error nothing changes.
+pub fn set_anchor(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    occ: u32,
+    anchor: Anchor,
+) -> Result<Solved, String> {
+    let before = project.clone();
+    let result = (|| {
+        let a = asm_mut(project, asm)?;
+        let m = a
+            .frames
+            .iter_mut()
+            .flat_map(|f| &mut f.members)
+            .find(|m| m.occurrence == occ)
+            .ok_or("only frame members have an anchor")?;
+        m.orientation.anchor = anchor;
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(o, _)| *o == occ) {
+            return Err(why.clone());
+        }
+        Ok(s)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
 }
 
 /// Edit of frame members (Inventor's edit of a member with the Insert
@@ -2024,6 +2114,49 @@ pub fn corner_treatments(
         }
     }
     out
+}
+
+/// The corners new members `new` make with each other and with the rest
+/// of frame `frame` (the frame's own treatments stay), then a solve; on an
+/// error nothing changes.
+pub fn add_corners(
+    project: &mut Project,
+    linked: &Linked,
+    asm: DocumentId,
+    frame: u32,
+    new: &[u32],
+    corners: &Corners,
+) -> Result<Solved, String> {
+    let before = project.clone();
+    let result = (|| {
+        let a = asm_of(project, asm)?;
+        let f = a
+            .frames
+            .iter()
+            .find(|f| f.id == frame)
+            .ok_or("no such frame")?;
+        let all: Vec<u32> = f.members.iter().map(|m| m.occurrence).collect();
+        let ts: Vec<Treatment> = corner_treatments(project, linked, a, &all, corners)
+            .into_iter()
+            .filter(|t| t.members().iter().any(|m| new.contains(m)))
+            .collect();
+        let a = asm_mut(project, asm)?;
+        let f = a
+            .frames
+            .iter_mut()
+            .find(|f| f.id == frame)
+            .ok_or("no such frame")?;
+        f.treatments.extend(ts);
+        let s = solve(project, linked, asm)?;
+        if let Some((_, why)) = s.sick.iter().find(|(o, _)| new.contains(o)) {
+            return Err(format!("corners: {why}"));
+        }
+        Ok(s)
+    })();
+    if result.is_err() {
+        *project = before;
+    }
+    result
 }
 
 /// Edit Frame (spec 6.1 §3.12): every member of frame `frame` gets
@@ -2899,6 +3032,123 @@ mod tests {
         };
         assert!(add_treatments(&mut p, &Linked::new(), aid, vec![t]).is_err());
         assert_eq!(asm(&p, aid).frames[0].treatments.len(), 1);
+    }
+
+    /// Members inserted apart into one frame get the corners with the ones
+    /// already there (and the frame's own treatments stay); a Corner Joint
+    /// between two frames (older files) makes them one frame.
+    #[test]
+    fn one_frame_for_inserts_apart_and_merged_frames() {
+        let (mut p, aid, _) = project();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let mut o = opts();
+        let (fid, a) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[x],
+            &o,
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        o.corners.kind = CornerType::Miter;
+        let (fid2, b) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[y],
+            &o,
+            Library::builtin(),
+            Some(fid),
+        )
+        .unwrap();
+        assert_eq!(fid, fid2);
+        let c = o.corners;
+        add_corners(&mut p, &Linked::new(), aid, fid, &b, &c).unwrap();
+        let ts = &asm(&p, aid).frames[0].treatments;
+        assert_eq!(ts.len(), 1, "{ts:?}");
+        assert!(matches!(ts[0], Treatment::Miter { .. }));
+        // Two frames (inserted apart before): a Corner Joint merges them.
+        let (mut p, aid, _) = project();
+        let x = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let y = find_edge(&p, aid, Point3::new(0.0, 150.0, 200.0));
+        let (_, a2) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[x],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let (_, b2) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[y],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(asm(&p, aid).frames.len(), 2);
+        let t = Treatment::CornerJoint {
+            a: a2[0],
+            b: b2[0],
+            offsets: [0.0, 0.0],
+        };
+        add_treatments(&mut p, &Linked::new(), aid, vec![t]).unwrap();
+        assert_eq!(asm(&p, aid).frames.len(), 1);
+        assert_eq!(asm(&p, aid).frames[0].members.len(), 2);
+        let _ = a;
+    }
+
+    /// Between Points: a member from a vertex of the box (the start of one
+    /// top edge) to the opposite corner of the top (the end of another): the
+    /// diagonal, 500 long; it survives a save and follows the box.
+    #[test]
+    fn a_member_between_two_points() {
+        let (mut p, aid, _) = project();
+        let front = find_edge(&p, aid, Point3::new(200.0, 0.0, 200.0));
+        let back = find_edge(&p, aid, Point3::new(200.0, 300.0, 200.0));
+        let a = asm(&p, aid);
+        let (f0, f1) = skeleton_line(&p, &Linked::new(), a, &front).unwrap();
+        let (b0, b1) = skeleton_line(&p, &Linked::new(), a, &back).unwrap();
+        // Start at front's end with x = 0, end at back's end with x = 400.
+        let from_end = u8::from(f1.x < f0.x);
+        let to_end = u8::from(b1.x > b0.x);
+        let s = Skeleton::Between {
+            from: Box::new(front),
+            from_end,
+            to: Box::new(back),
+            to_end,
+        };
+        let (_, occs) = insert(
+            &mut p,
+            &Linked::new(),
+            aid,
+            &[s],
+            &opts(),
+            Library::builtin(),
+            None,
+        )
+        .unwrap();
+        let m = part(&p, asm(&p, aid), occs[0]);
+        assert!((length_of(&m).unwrap() - 500.0).abs() < 1e-6);
+        let dir = std::env::temp_dir().join(format!("cc-between-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let f = dir.join("between.3dcadcraft");
+        p.save(&f).unwrap();
+        let mut q = Project::load(&f).unwrap();
+        assert_eq!(
+            asm(&q, aid).frames[0].members[0].skeleton,
+            asm(&p, aid).frames[0].members[0].skeleton
+        );
+        assert_eq!(solve(&mut q, &Linked::new(), aid).unwrap().moved, 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Body Edges / Face Edges: the box skeleton has 12 straight edges, its

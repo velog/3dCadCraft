@@ -1159,5 +1159,13 @@
     "LoftedFlange1:Top",
     "LoftedFlange1:Top",
     "LoftedFlange1:Top"
+  ],
+  "r58/between_r58.3dcadcraft": [
+    "Box1:Back",
+    "Box1:Bottom",
+    "Box1:Front",
+    "Box1:Left",
+    "Box1:Right",
+    "Box1:Top"
   ]
 }
