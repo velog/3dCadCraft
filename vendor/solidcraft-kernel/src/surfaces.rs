@@ -556,9 +556,20 @@ fn loop_sides(lp: &[mt::Edge]) -> Option<Vec<Vec<mt::Edge>>> {
 /// turned the way that pairs the corners nearest A's): the faces share their corner lines, so
 /// they come out as one surface body.
 fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge], weights: [Option<f64>; 2]) -> Result<Body> {
-    let none = || KernelError::Invalid("not supported yet: a smooth closed boundary (no corners) as a loft section".into());
-    let mut sa = loop_sides(la).ok_or_else(none)?;
-    let mut sb = loop_sides(lb).ok_or_else(none)?;
+    let none = || KernelError::Invalid("not supported yet: a closed boundary of one edge as a loft section".into());
+    // A smooth boundary (a circle) has no corners: its edges' joints serve as corners, so it
+    // pairs with the other boundary's corners (3DCadCraft addition).
+    let sides = |lp: &[mt::Edge]| loop_sides(lp).or_else(|| (lp.len() >= 2).then(|| lp.iter().map(|e| vec![e.clone()]).collect()));
+    let (mut sa, mut sb) = match (loop_sides(la), loop_sides(lb)) {
+        // One smooth boundary against corners: it is cut where it comes nearest the corners, so
+        // a circle to a square keeps the square's four corners.
+        (None, Some(b)) => (cut_at(la, &b).ok_or_else(none)?, b),
+        (Some(a), None) => {
+            let b = cut_at(lb, &a).ok_or_else(none)?;
+            (a, b)
+        }
+        _ => (sides(la).ok_or_else(none)?, sides(lb).ok_or_else(none)?),
+    };
     // Different numbers of sides: the boundary with more keeps the corners nearest the other's
     // (in order round both) and its other sides are joined; a joined side keeps its corner
     // inside its bridge (3DCadCraft addition).
@@ -894,6 +905,94 @@ fn interpolated_at(pts: &[Vec3], params: &[f64]) -> Result<mt::BSplineCurve<mt::
         ctrl.extend(c1.into_iter().skip(1));
     }
     mt::BSplineCurve::try_new(mt::KnotVec::from(knots), ctrl).map_err(|e| KernelError::Invalid(format!("a section's curve: {e}")))
+}
+
+/// A smooth closed boundary `lp` cut into as many sides as `other` has, at its points nearest
+/// `other`'s corners (an existing vertex within the tolerance is used as it is); the pieces of a
+/// cut edge are new edges on its curve (Stitch cuts the surface's own edge there to match).
+/// `None` when a cut fails or two corners fall on one point.
+fn cut_at(lp: &[mt::Edge], other: &[Vec<mt::Edge>]) -> Option<Vec<Vec<mt::Edge>>> {
+    let tol = solidcraft_geom::LINEAR_TOL.max(1e-6);
+    let corners: Vec<mt::Point3> = other.iter().filter_map(|side| side.first().map(|e| e.front().point())).collect();
+    // The nearest point of the loop to each corner: (edge index, parameter on its absolute curve).
+    let mut cuts: Vec<Vec<f64>> = vec![Vec::new(); lp.len()];
+    let mut at_vertex: Vec<mt::VertexID> = Vec::new();
+    for q in &corners {
+        let mut best: Option<(f64, usize, f64)> = None;
+        for (k, e) in lp.iter().enumerate() {
+            let abs = if e.orientation() { e.clone() } else { e.inverse() };
+            let c = abs.curve();
+            let (t0, t1) = c.range_tuple();
+            let n = 64;
+            let ts = (0..=n)
+                .map(|i| t0 + (t1 - t0) * i as f64 / n as f64)
+                .min_by(|a, b| c.subs(*a).distance(*q).total_cmp(&c.subs(*b).distance(*q)))?;
+            let t = c.search_nearest_parameter(*q, Some(ts), 100).unwrap_or(ts).clamp(t0.min(t1), t0.max(t1));
+            let d = c.subs(t).distance(*q);
+            if best.is_none_or(|(b, _, _)| d < b) {
+                best = Some((d, k, t));
+            }
+        }
+        let (_, k, t) = best?;
+        let abs = if lp[k].orientation() { lp[k].clone() } else { lp[k].inverse() };
+        let p = abs.curve().subs(t);
+        if let Some(v) = [abs.front(), abs.back()].into_iter().find(|v| v.point().distance(p) <= tol) {
+            at_vertex.push(v.id());
+        } else {
+            cuts[k].push(t);
+        }
+    }
+    // The loop with its edges cut; the corner vertices.
+    let mut edges: Vec<mt::Edge> = Vec::new();
+    let mut corner_ids: Vec<mt::VertexID> = at_vertex;
+    for (k, e) in lp.iter().enumerate() {
+        let mut ts = cuts[k].clone();
+        if ts.is_empty() {
+            edges.push(e.clone());
+            continue;
+        }
+        let abs = if e.orientation() { e.clone() } else { e.inverse() };
+        ts.sort_by(f64::total_cmp);
+        let mut pieces: Vec<mt::Edge> = Vec::new();
+        let mut rest = abs;
+        // Cut from the far end back, so each parameter stays on the piece still to be cut.
+        for t in ts.iter().rev() {
+            let v = mt::Vertex::new(rest.curve().subs(*t));
+            let (a, b) = rest.cut_with_parameter(&v, *t)?;
+            corner_ids.push(v.id());
+            pieces.push(b);
+            rest = a;
+        }
+        pieces.push(rest);
+        pieces.reverse();
+        if e.orientation() {
+            edges.extend(pieces);
+        } else {
+            edges.extend(pieces.iter().rev().map(mt::Edge::inverse));
+        }
+    }
+    let mut unique: Vec<mt::VertexID> = Vec::new();
+    for v in corner_ids {
+        if !unique.contains(&v) {
+            unique.push(v);
+        }
+    }
+    let corner_ids = unique;
+    if corner_ids.len() != corners.len() {
+        return None;
+    }
+    // Sides from corner to corner.
+    let n = edges.len();
+    let first = (0..n).find(|&k| corner_ids.contains(&edges[k].front().id()))?;
+    let mut sides: Vec<Vec<mt::Edge>> = Vec::new();
+    for i in 0..n {
+        let e = &edges[(first + i) % n];
+        if corner_ids.contains(&e.front().id()) {
+            sides.push(Vec::new());
+        }
+        sides.last_mut()?.push(e.clone());
+    }
+    Some(sides)
 }
 
 /// The sides of boundary `many` joined into as many as `few` has: the kept corners (starts of
@@ -1273,7 +1372,10 @@ fn on_curve(c: &mt::Curve, q: mt::Point3, tol: f64) -> bool {
     else {
         return false;
     };
-    c.search_nearest_parameter(q, Some(ts), 100).is_some_and(|t| c.subs(t).distance(q) <= tol)
+    // Within the curve's own range: the nearest parameter of an arc's circle can lie on the
+    // other half, and two halves of a circle (the same ends) were taken for one edge. 3DCadCraft.
+    let (lo, hi) = (t0.min(t1), t0.max(t1));
+    c.search_nearest_parameter(q, Some(ts), 100).is_some_and(|t| t >= lo - 1e-9 * (1.0 + hi - lo) && t <= hi + 1e-9 * (1.0 + hi - lo) && c.subs(t).distance(q) <= tol)
 }
 
 /// The edges of `faces` (in their own direction, by id) that carry another edge's vertex within

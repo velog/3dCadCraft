@@ -1451,3 +1451,80 @@ fn loft_between_surfaces_of_different_side_counts() {
         assert!(v > 400.0 * 10.0 * 0.9 && v < hex_area * 10.0 * 1.1, "{v}");
     }
 }
+
+/// A planar patch of a circle on a plane `z` above XY.
+fn patch_circle_at(p: &mut PartDocument, z: Real, r: Real) -> String {
+    let w = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: z,
+        })))
+        .unwrap();
+    let i = p
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(w),
+                ..Default::default()
+            },
+            &opts(),
+        )
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_circle(Point2::new(0.0, 0.0), r)
+        .unwrap();
+    let rg = p.sketches[i].sketch.regions();
+    let id = p.sketches[i].id.clone();
+    op(
+        p,
+        BodyOp::Patch(PatchOp {
+            edges: Vec::new(),
+            sketch: Some(id),
+            profile: Some(ProfileRef::of(&rg[0], rg[0].interior_point())),
+            solid: false,
+        }),
+    )
+}
+
+/// Loft between surfaces with smooth boundaries (spec 5.4a F13): circles have no corners, so the
+/// joints of their edges stand in, and against corners a circle is cut where it comes nearest
+/// them. Two circles (r 10 at z = 0, r 6 at z = 10) give the frustum
+/// of a cone (π h / 3 · (R² + R r + r²) = 2051.3), a circle and a square a closed solid between
+/// them.
+#[test]
+fn loft_between_surfaces_with_smooth_boundaries() {
+    use cadcraft3d::part::{LoftFeature, LoftSection};
+    let frustum = PI * 10.0 / 3.0 * (100.0 + 60.0 + 36.0);
+    for square in [false, true] {
+        let mut p = PartDocument::default();
+        let a = patch_circle_at(&mut p, 0.0, 10.0);
+        let b = if square {
+            patch_polygon_at(
+                &mut p,
+                10.0,
+                &[(-6.0, -6.0), (6.0, -6.0), (6.0, 6.0), (-6.0, 6.0)],
+            )
+        } else {
+            patch_circle_at(&mut p, 10.0, 6.0)
+        };
+        let mut def = LoftFeature::new(vec![
+            LoftSection::Edges(boundary_of(&p, &a)),
+            LoftSection::Edges(boundary_of(&p, &b)),
+        ]);
+        def.output = Output::Solid;
+        p.add_loft(def).unwrap();
+        assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+        let v = solid_volume(&p);
+        if square {
+            // Between the square's prism (1440) and the circle's (3141.6); the circle is cut
+            // where it comes nearest the square's corners, so all four corners are kept: one
+            // bridge per side (2 surfaces + 4 bridges).
+            assert!(v > 1440.0 && v < 3141.6, "{v}");
+            let solid = p.exact_bodies.0.iter().find(|s| !s.is_open()).unwrap();
+            let b = cadcraft3d::kernel::exact::to_brep(std::slice::from_ref(solid)).unwrap();
+            assert_eq!(b.faces().count(), 6);
+        } else {
+            close(v, frustum, 5e-3);
+        }
+    }
+}
