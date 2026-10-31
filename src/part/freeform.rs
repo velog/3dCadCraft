@@ -13,6 +13,9 @@ pub enum FreeformKind {
     /// A rectangular sheet on its plane.
     #[default]
     Plane,
+    /// A tube round the plane's normal through the centre (`length` = diameter, `width` =
+    /// height, `length_faces` around, `width_faces` up); its cage closes around.
+    Cylinder,
 }
 
 /// A moved cage point: its index along the length (`i`) and the width (`j`) and its offset from
@@ -58,6 +61,29 @@ pub struct FreeformOp {
 pub const MAX_FACES: usize = 64;
 
 impl FreeformOp {
+    /// A cylinder (tube) of `diameter` and `height` with 8 × 4 faces on `plane`.
+    pub fn cylinder(plane: PlaneRef, diameter: Real, height: Real) -> Self {
+        Self {
+            shape: FreeformKind::Cylinder,
+            length_faces: 8,
+            ..Self::plane(plane, diameter, height)
+        }
+    }
+
+    /// Whether the cage closes around (its first and last rows join).
+    pub fn closed(&self) -> bool {
+        self.shape == FreeformKind::Cylinder
+    }
+
+    /// Cage rows along the length / around (a closed cage does not repeat its first row).
+    pub fn rows(&self) -> usize {
+        if self.closed() {
+            self.length_faces
+        } else {
+            self.length_faces + 1
+        }
+    }
+
     /// A plane of `length` × `width` with 4 × 4 faces on `plane`.
     pub fn plane(plane: PlaneRef, length: Real, width: Real) -> Self {
         Self {
@@ -83,10 +109,13 @@ impl FreeformOp {
                 return Err(format!("faces each way: 1 to {MAX_FACES}"));
             }
         }
+        if self.closed() && self.length_faces < 3 {
+            return Err("a cylinder needs 3 faces around or more".into());
+        }
         if self
             .moved
             .iter()
-            .any(|m| m.i > self.length_faces || m.j > self.width_faces)
+            .any(|m| m.i >= self.rows() || m.j > self.width_faces)
         {
             return Err("a moved point lies outside the cage".into());
         }
@@ -115,6 +144,9 @@ impl FreeformOp {
     /// mirror (`(i, j)` itself included).
     pub fn mirrors(&self, i: usize, j: usize) -> Vec<(usize, usize, [bool; 2])> {
         let mut out = vec![(i, j, [false, false])];
+        if self.closed() {
+            return out;
+        }
         if self.symmetry[0] {
             out.push((self.length_faces - i, j, [true, false]));
         }
@@ -129,26 +161,39 @@ impl FreeformOp {
         out
     }
 
-    /// A cage point at rest in plane coordinates (x, y).
-    pub fn rest(&self, i: usize, j: usize) -> [Real; 2] {
-        let x = self.center[0] - self.length / 2.0
-            + self.length * i as Real / self.length_faces as Real;
-        let y =
-            self.center[1] - self.width / 2.0 + self.width * j as Real / self.width_faces as Real;
-        [x, y]
+    /// A cage point at rest in plane coordinates (x, y, along the normal).
+    pub fn rest(&self, i: usize, j: usize) -> [Real; 3] {
+        match self.shape {
+            FreeformKind::Plane => {
+                let x = self.center[0] - self.length / 2.0
+                    + self.length * i as Real / self.length_faces as Real;
+                let y = self.center[1] - self.width / 2.0
+                    + self.width * j as Real / self.width_faces as Real;
+                [x, y, 0.0]
+            }
+            FreeformKind::Cylinder => {
+                let a = std::f64::consts::TAU * i as Real / self.length_faces as Real;
+                let r = self.length / 2.0;
+                [
+                    self.center[0] + r * a.cos(),
+                    self.center[1] + r * a.sin(),
+                    self.width * j as Real / self.width_faces as Real,
+                ]
+            }
+        }
     }
 
     /// The cage on `plane`: rows along the length (`net[i][j]`), each point at rest plus its offset.
     pub fn cage(&self, plane: &Plane) -> Vec<Vec<Point3>> {
         let n: Vector3 = plane.normal.into_inner();
         let (xa, ya) = (plane.x_axis.into_inner(), plane.y_axis().into_inner());
-        (0..=self.length_faces)
+        (0..self.rows())
             .map(|i| {
                 (0..=self.width_faces)
                     .map(|j| {
-                        let [x, y] = self.rest(i, j);
+                        let [x, y, z] = self.rest(i, j);
                         let [dx, dy, dz] = self.offset(i, j);
-                        plane.origin + xa * (x + dx) + ya * (y + dy) + n * dz
+                        plane.origin + xa * (x + dx) + ya * (y + dy) + n * (z + dz)
                     })
                     .collect()
             })
@@ -157,6 +202,16 @@ impl FreeformOp {
 
     /// Browser tooltip.
     pub fn describe(&self) -> String {
+        if self.closed() {
+            return format!(
+                "Freeform Cylinder Ø{} × {} mm, {} × {} faces, {} point(s) moved",
+                self.length,
+                self.width,
+                self.length_faces,
+                self.width_faces,
+                self.moved.len()
+            );
+        }
         format!(
             "Freeform Plane {} × {} mm, {} × {} faces, {} point(s) moved",
             self.length,

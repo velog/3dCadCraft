@@ -563,7 +563,8 @@ impl CadCraftApp {
                     delete_original: d.check(t, "Delete Original"),
                 })
             }
-            PartPlanned::FreeformPlane => {
+            PartPlanned::FreeformPlane | PartPlanned::FreeformCylinder => {
+                let tube = kind == PartPlanned::FreeformCylinder;
                 // The base plane: the pick (a planar face, a work plane), the feature's in Edit
                 // Feature, else XY.
                 let picked = d
@@ -589,21 +590,33 @@ impl CadCraftApp {
                 };
                 let faces =
                     |label: &str| d.num(t, label).map_or(4, |v| v.round().max(0.0) as usize);
-                let mut op = crate::part::freeform::FreeformOp::plane(
-                    plane,
-                    d.num(t, "Length").unwrap_or(50.0),
-                    d.num(t, "Width").unwrap_or(50.0),
-                );
+                let mut op = if tube {
+                    let mut o = crate::part::freeform::FreeformOp::cylinder(
+                        plane,
+                        d.num(t, "Diameter").unwrap_or(50.0),
+                        d.num(t, "Height").unwrap_or(50.0),
+                    );
+                    o.length_faces = faces("Around Faces");
+                    o.width_faces = faces("Height Faces");
+                    o
+                } else {
+                    let mut o = crate::part::freeform::FreeformOp::plane(
+                        plane,
+                        d.num(t, "Length").unwrap_or(50.0),
+                        d.num(t, "Width").unwrap_or(50.0),
+                    );
+                    o.length_faces = faces("Length Faces");
+                    o.width_faces = faces("Width Faces");
+                    o.symmetry = [d.check(t, "Symmetry X"), d.check(t, "Symmetry Y")];
+                    o
+                };
                 op.center = center;
-                op.length_faces = faces("Length Faces");
-                op.width_faces = faces("Width Faces");
-                op.symmetry = [d.check(t, "Symmetry X"), d.check(t, "Symmetry Y")];
                 // Edit Feature keeps the moved points that are still in the cage.
                 if let Some(o) = prev {
                     op.moved = o
                         .moved
                         .into_iter()
-                        .filter(|m| m.i <= op.length_faces && m.j <= op.width_faces)
+                        .filter(|m| m.i < op.rows() && m.j <= op.width_faces)
                         .collect();
                 }
                 BodyOp::Freeform(op)

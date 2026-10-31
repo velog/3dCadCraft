@@ -78,3 +78,47 @@ fn freeform_refuses_bad_sizes_and_changes_nothing() {
     assert!(p.features.is_empty());
     let _ = opts();
 }
+
+#[test]
+fn freeform_cylinder_closes_around_and_bulges_where_pulled() {
+    let mut p = PartDocument::default();
+    let mut op = FreeformOp::cylinder(PlaneRef::Origin(OriginPlane::XY), 40.0, 30.0);
+    let id = p
+        .add_body_op(BodyOpFeature::new(BodyOp::Freeform(op.clone())))
+        .unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    let t = sheet(&p, &id);
+    // A closed tube inside its cage (a cubic B-spline ring of 8 points on r 20 runs at ~r 18.3),
+    // from z = 0 to 30; two faces sharing their seams (no free edge along the height).
+    let r: Vec<Real> = t.iter().flatten().map(|q| q.x.hypot(q.y)).collect();
+    let (rmin, rmax) = r
+        .iter()
+        .fold((Real::MAX, Real::MIN), |(a, b), x| (a.min(*x), b.max(*x)));
+    assert!(rmin > 17.0 && rmax < 20.0, "{rmin} {rmax}");
+    let zs: Vec<Real> = t.iter().flatten().map(|q| q.z).collect();
+    let (zmin, zmax) = zs
+        .iter()
+        .fold((Real::MAX, Real::MIN), |(a, b), x| (a.min(*x), b.max(*x)));
+    assert!(zmin > -1e-6 && zmax < 30.0 + 1e-6, "{zmin} {zmax}");
+    let free = p
+        .body
+        .edges()
+        .filter(|(e, _)| p.body.edge_faces(*e).len() == 1)
+        .count();
+    assert_eq!(
+        free, 4,
+        "two rims, each in two halves; the seams are shared"
+    );
+    // One ring point at mid height pulled outwards 10: the tube bulges there.
+    op.set_offset(0, 2, [10.0, 0.0, 0.0]);
+    let mut p2 = PartDocument::default();
+    let id2 = p2
+        .add_body_op(BodyOpFeature::new(BodyOp::Freeform(op)))
+        .unwrap();
+    let xmax = sheet(&p2, &id2)
+        .iter()
+        .flatten()
+        .map(|q| q.x)
+        .fold(Real::MIN, Real::max);
+    assert!(xmax > rmax + 2.0, "{xmax}");
+}

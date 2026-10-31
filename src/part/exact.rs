@@ -1181,7 +1181,13 @@ pub(super) fn body_op(
         super::BodyOp::Freeform(o) => {
             let pl = super::placement::plane_of(&o.plane, body, works)
                 .map_err(|e| User(format!("the base plane: {e}")))?;
-            let made = exact::surface_ops::freeform_sheet(&o.cage(&pl), &f.id).map_err(User)?;
+            let cage = o.cage(&pl);
+            let made = if o.closed() {
+                exact::surface_ops::freeform_tube(&cage, &f.id)
+            } else {
+                exact::surface_ops::freeform_sheet(&cage, &f.id)
+            }
+            .map_err(User)?;
             Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
         }
         super::BodyOp::Prism(o) => {

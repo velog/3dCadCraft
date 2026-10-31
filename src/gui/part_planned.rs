@@ -1366,6 +1366,7 @@ impl Planned {
                     | PartPlanned::CopyObject
                     | PartPlanned::Import
                     | PartPlanned::FreeformPlane
+                    | PartPlanned::FreeformCylinder
                     | PartPlanned::Derive
                     | PartPlanned::MakePart
                     | PartPlanned::MakeComponents
@@ -1388,6 +1389,13 @@ impl Planned {
             | (Planned::Part(PartPlanned::MakeComponents), "Include parameters", None) => {
                 Some("Comes later (spec 3.10 §3.6)")
             }
+            (
+                Planned::Part(PartPlanned::FreeformCylinder),
+                "Symmetry X" | "Symmetry Y" | "Symmetry Z" | "Direction",
+                None,
+            ) => Some(
+                "Comes later: the cylinder stands on its plane, along its normal (spec 5.5 §3.1)",
+            ),
             (Planned::Part(PartPlanned::Patch), "Condition", Some("Smooth (G2)")) => Some(
                 "Comes later: Contact (G0) and Tangent (G1) are built (spec 5.4 Boundary Patch)",
             ),

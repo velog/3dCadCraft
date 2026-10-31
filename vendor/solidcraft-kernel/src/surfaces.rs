@@ -1503,6 +1503,77 @@ pub fn bspline_sheet(net: &[Vec<Vec3>]) -> Result<Body> {
     })
 }
 
+/// A cubic B-spline tube: closed (periodic, C2) around through the rings of control points
+/// `net[i]` (i around, at least 3; each ring along the height, at least 2 points, clamped there).
+/// Built as two faces (halves of the period, cut with full knots) sharing the two seams, so no
+/// edge meets itself; its open ends are its two rims. (3DCadCraft addition: Freeform Cylinder.)
+pub fn bspline_tube(net: &[Vec<Vec3>]) -> Result<Body> {
+    let n = net.len();
+    let nv = net.first().map_or(0, Vec::len);
+    if n < 3 || nv < 2 || net.iter().any(|r| r.len() != nv) || n * nv > 100_000 {
+        return Err(KernelError::Invalid("a tube cage needs 3 rings or more of 2 points or more".into()));
+    }
+    if net.iter().flatten().any(|p| !p.is_finite()) {
+        return Err(KernelError::Invalid("the control net has a point that is not finite".into()));
+    }
+    guard("freeform", || {
+        // Periodic around: the first three rings again at the end, uniform knots 0 ..= n + 6; the
+        // period is [3, n + 3].
+        let mut rows: Vec<Vec<mt::Point3>> = net.iter().map(|r| r.iter().map(|q| p3(*q)).collect()).collect();
+        for k in 0..3 {
+            rows.push(rows[k].clone());
+        }
+        let ku = mt::KnotVec::from((0..rows.len() + 4).map(|k| k as f64).collect::<Vec<_>>());
+        let dv = (nv - 1).min(3);
+        let inner = nv - dv - 1;
+        let mut kvv = vec![0.0; dv + 1];
+        kvv.extend((1..=inner).map(|i| i as f64 / (inner + 1) as f64));
+        kvv.extend(vec![1.0; dv + 1]);
+        let kv = mt::KnotVec::from(kvv);
+        let mut whole = mt::BSplineSurface::try_new((ku, kv), rows).map_err(|e| KernelError::Invalid(format!("the freeform tube: {e}")))?;
+        let (t0, t1) = (3.0, (n + 3) as f64);
+        let mid = 0.5 * (t0 + t1);
+        let mut period = whole.ucut(t0);
+        let _ = period.ucut(t1);
+        let mut a = period;
+        let b = a.ucut(mid);
+        // Border curves of a clamped half: its first / last column (along v), its first / last
+        // control row (along u).
+        let col = |s: &mt::BSplineSurface<mt::Point3>, last: bool| -> Result<mt::BSplineCurve<mt::Point3>> {
+            let cps = s.control_points();
+            let c = if last { cps.last() } else { cps.first() };
+            let c = c.ok_or_else(|| KernelError::Failed("an empty tube half".into()))?;
+            mt::BSplineCurve::try_new(s.vknot_vec().clone(), c.clone()).map_err(|e| KernelError::Failed(format!("a tube seam: {e}")))
+        };
+        let rim = |s: &mt::BSplineSurface<mt::Point3>, top: bool| -> Result<mt::BSplineCurve<mt::Point3>> {
+            let pts: Vec<mt::Point3> = s.control_points().iter().filter_map(|c| if top { c.last() } else { c.first() }).copied().collect();
+            mt::BSplineCurve::try_new(s.uknot_vec().clone(), pts).map_err(|e| KernelError::Failed(format!("a tube rim: {e}")))
+        };
+        // Seam 0 (where the period starts and ends) and seam 1 (the middle), shared by both faces.
+        let s0 = col(&a, false)?;
+        let s1 = col(&a, true)?;
+        let (p00, p01) = (s0.front(), s0.back());
+        let (p10, p11) = (s1.front(), s1.back());
+        let (v00, v01, v10, v11) = (mt::Vertex::new(p00), mt::Vertex::new(p01), mt::Vertex::new(p10), mt::Vertex::new(p11));
+        let seam0 = mt::Edge::new(&v00, &v01, mt::Curve::BSplineCurve(s0));
+        let seam1 = mt::Edge::new(&v10, &v11, mt::Curve::BSplineCurve(s1));
+        let face = |s: mt::BSplineSurface<mt::Point3>, from: &mt::Edge, to: &mt::Edge| -> Result<mt::Face> {
+            let (f0, f1) = (from.front().clone(), from.back().clone());
+            let (g0, g1) = (to.front().clone(), to.back().clone());
+            let bottom = mt::Edge::new(&f0, &g0, mt::Curve::BSplineCurve(rim(&s, false)?));
+            let top = mt::Edge::new(&f1, &g1, mt::Curve::BSplineCurve(rim(&s, true)?));
+            let wire: mt::Wire = vec![bottom, to.clone(), top.inverse(), from.inverse()].into();
+            mt::Face::try_new(vec![wire], mt::Surface::BSplineSurface(s)).map_err(|e| KernelError::Failed(format!("freeform tube: {e}")))
+        };
+        let fa = face(a, &seam0, &seam1)?;
+        let fb = face(b, &seam1, &seam0)?;
+        let mut rec = Rebuild::default();
+        rec.made(&fa, Vec::new());
+        rec.made(&fb, Vec::new());
+        Ok(rebuilt_body(surface_body(vec![fa, fb]), &[], &rec))
+    })
+}
+
 /// The edges of `body` picked by points on them, chained into one closed loop (each turned to
 /// run along it). Call it under [`guard`]: sampling an intersection curve can fail in truck.
 pub(crate) fn picked_loop(body: &Body, at: &[Vec3]) -> Result<Vec<mt::Edge>> {

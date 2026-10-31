@@ -100,7 +100,8 @@ impl CadCraftApp {
     /// point by its weight (1 for a picked one, a smooth falloff within the radius), mirrored
     /// across the symmetry lines.
     fn ff_moved(e: &FfEdit, start: &[[Real; 3]], delta: [Real; 3]) -> Vec<[Real; 3]> {
-        let (nl, nw) = (e.op.length_faces, e.op.width_faces);
+        let (rows, nw) = (e.op.rows(), e.op.width_faces);
+        let closed = e.op.closed();
         let idx = |i: usize, j: usize| i * (nw + 1) + j;
         let mut out = start.to_vec();
         // The picked points with their mirrors, each with how its move is mirrored.
@@ -112,15 +113,18 @@ impl CadCraftApp {
                 }
             }
         }
-        for i in 0..=nl {
+        for i in 0..rows {
             for j in 0..=nw {
                 // The nearest seed (in cage faces) decides the weight and the mirroring.
                 let Some((d, flip)) = seeds
                     .iter()
                     .map(|(si, sj, f)| {
-                        let d = ((i as Real - *si as Real).powi(2)
-                            + (j as Real - *sj as Real).powi(2))
-                        .sqrt();
+                        // Around a closed cage the short way round.
+                        let mut di = (i as Real - *si as Real).abs();
+                        if closed {
+                            di = di.min(rows as Real - di);
+                        }
+                        let d = (di.powi(2) + (j as Real - *sj as Real).powi(2)).sqrt();
                         (d, *f)
                     })
                     .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -152,7 +156,7 @@ impl CadCraftApp {
 
     /// Every cage point's offset (row by row).
     fn ff_offsets(op: &FreeformOp) -> Vec<[Real; 3]> {
-        (0..=op.length_faces)
+        (0..op.rows())
             .flat_map(|i| (0..=op.width_faces).map(move |j| (i, j)))
             .map(|(i, j)| op.offset(i, j))
             .collect()
@@ -279,7 +283,13 @@ impl CadCraftApp {
                 if let Some(b) = row.get(j + 1).and_then(pr) {
                     painter.line_segment([a, b], line);
                 }
-                if let Some(b) = net.get(i + 1).and_then(|r| r.get(j)).and_then(pr) {
+                // A closed cage's last row joins its first.
+                let next = if e.op.closed() {
+                    (i + 1) % net.len()
+                } else {
+                    i + 1
+                };
+                if let Some(b) = net.get(next).and_then(|r| r.get(j)).and_then(pr) {
                     painter.line_segment([a, b], line);
                 }
             }
@@ -338,7 +348,7 @@ impl CadCraftApp {
             ui.label(format!(
                 "{} of {} × {}",
                 e.picked.len(),
-                e.op.length_faces + 1,
+                e.op.rows(),
                 e.op.width_faces + 1
             ));
             ui.end_row();
@@ -395,13 +405,24 @@ impl CadCraftApp {
                 let k = e.feature;
                 let op = e.op.clone();
                 self.ff_done();
-                self.start_part_planned(super::part_planned::PartPlanned::FreeformPlane);
+                use super::part_planned::PartPlanned;
+                let tube = op.closed();
+                self.start_part_planned(if tube {
+                    PartPlanned::FreeformCylinder
+                } else {
+                    PartPlanned::FreeformPlane
+                });
                 if let Some(d) = self.part_planned.as_mut() {
                     d.feature = Some(k);
-                    d.set_num(0, "Length", op.length);
-                    d.set_num(0, "Width", op.width);
-                    d.set_num(0, "Length Faces", op.length_faces as Real);
-                    d.set_num(0, "Width Faces", op.width_faces as Real);
+                    let [a, b, fa, fb] = if tube {
+                        ["Diameter", "Height", "Around Faces", "Height Faces"]
+                    } else {
+                        ["Length", "Width", "Length Faces", "Width Faces"]
+                    };
+                    d.set_num(0, a, op.length);
+                    d.set_num(0, b, op.width);
+                    d.set_num(0, fa, op.length_faces as Real);
+                    d.set_num(0, fb, op.width_faces as Real);
                     d.set_check(0, "Symmetry X", op.symmetry[0]);
                     d.set_check(0, "Symmetry Y", op.symmetry[1]);
                 }

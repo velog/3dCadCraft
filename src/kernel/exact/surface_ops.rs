@@ -122,6 +122,20 @@ pub fn freeform_sheet(net: &[Vec<Point3>], name: &str) -> Result<ExactSolid, Str
     ))
 }
 
+/// **Freeform Cylinder** (spec 5.5): the cubic B-spline tube of the rings `net[i]` (closed
+/// around): a new surface body `name` (faces `<name>:Face`).
+pub fn freeform_tube(net: &[Vec<Point3>], name: &str) -> Result<ExactSolid, String> {
+    let net: Vec<Vec<_>> = net.iter().map(|r| r.iter().map(v3).collect()).collect();
+    let body = guarded("freeform", || sk::bspline_tube(&net))?;
+    Ok(named(
+        body,
+        &[],
+        &format!("{name}:Face"),
+        Some(name.to_owned()),
+        true,
+    ))
+}
+
 /// What trims a surface.
 pub enum TrimBy<'a> {
     /// A plane (a work plane, an origin plane, a planar face), unbounded.
