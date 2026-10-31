@@ -459,13 +459,18 @@ pub fn bridge_edges_tangent(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3], we
             // The outer boundaries, and the holes paired nearest (when both surfaces have as
             // many): a solid through the holes (3DCadCraft addition).
             let mut faces = bridge_loops(a, &la[0], b, &lb[0], weights)?;
-            if la.len() == lb.len() && la.len() > 1 {
+            // With different numbers of holes, as many pairs as the fewer has (each with the
+            // nearest hole of the other); the rest stay open.
+            if la.len() > 1 && lb.len() > 1 {
                 let centre = |lp: &[mt::Edge]| chain_points(lp).map(|p| centroid(&p)).unwrap_or(Vec3::new(0.0, 0.0, 0.0));
-                let mut free: Vec<usize> = (1..lb.len()).collect();
-                for ha in &la[1..] {
-                    let ca = centre(ha);
-                    let Some(k) = (0..free.len()).min_by(|x, y| ca.dist(centre(&lb[free[*x]])).total_cmp(&ca.dist(centre(&lb[free[*y]])))) else { break };
-                    let hb = &lb[free.remove(k)];
+                let a_fewer = la.len() <= lb.len();
+                let (few, many) = if a_fewer { (&la[1..], &lb[1..]) } else { (&lb[1..], &la[1..]) };
+                let mut free: Vec<usize> = (0..many.len()).collect();
+                for h in few {
+                    let c = centre(h);
+                    let Some(k) = (0..free.len()).min_by(|x, y| c.dist(centre(&many[free[*x]])).total_cmp(&c.dist(centre(&many[free[*y]])))) else { break };
+                    let other = &many[free.remove(k)];
+                    let (ha, hb) = if a_fewer { (h, other) } else { (other, h) };
                     faces.extend(bridge_loops(a, ha, b, hb, weights)?);
                 }
             }
@@ -676,18 +681,26 @@ fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge], weights: [
                 (Some(p), Some(q)) => (*p + *q) * 0.5,
                 _ => continue,
             };
-            if let Some(x) = reaches[k].0.last_mut() {
-                *x = ma;
-            }
-            if let Some(x) = reaches[j].0.first_mut() {
-                *x = ma;
-            }
-            if let Some(x) = reaches[k].1.last_mut() {
-                *x = mb;
-            }
-            if let Some(x) = reaches[j].1.first_mut() {
-                *x = mb;
-            }
+            // The change faded in over the last (first) 15 % of each row: moving the end point
+            // alone kinked the row there and twisted the bridge next to the corner.
+            let fade = |row: &mut Vec<Vec3>, to: Vec3, at_end: bool| {
+                let n = row.len();
+                if n == 0 {
+                    return;
+                }
+                let end = if at_end { n - 1 } else { 0 };
+                let delta = to - row[end];
+                let reach = ((n as f64) * 0.15).ceil().max(1.0) as usize;
+                for s in 0..reach.min(n) {
+                    let i = if at_end { n - 1 - s } else { s };
+                    let x = s as f64 / reach as f64;
+                    row[i] = row[i] + delta * (1.0 - x).powi(3);
+                }
+            };
+            fade(&mut reaches[k].0, ma, true);
+            fade(&mut reaches[j].0, ma, false);
+            fade(&mut reaches[k].1, mb, true);
+            fade(&mut reaches[j].1, mb, false);
         }
     }
     let lines: Vec<mt::Edge> = (0..n)
@@ -881,23 +894,11 @@ fn outward_row(body: &Body, chain: &[mt::Edge], pts: &[Vec3], per_edge: usize) -
     for (i, uv) in uvs.iter().enumerate() {
         let k = edge_of(i);
         let (surf, same) = info.get(k).ok_or_else(|| KernelError::Invalid("a section has no edges".into()))?;
-        // The edge's own direction here (the points' order lies where a tiny piece of a trimmed
-        // rim runs back), as the chain runs it, then as the face's boundary does.
-        let c = chain[k].oriented_curve();
-        let (t0, t1) = c.range_tuple();
-        let ts = (0..=16)
-            .map(|j| t0 + (t1 - t0) * j as f64 / 16.0)
-            .min_by(|a, b| c.subs(*a).distance(p3(pts[i])).total_cmp(&c.subs(*b).distance(p3(pts[i]))))
-            .unwrap_or(t0);
-        let tp = c.search_nearest_parameter(p3(pts[i]), Some(ts), 50).unwrap_or(ts).clamp(t0.min(t1), t0.max(t1));
-        let dv = c.der(tp);
-        let t = Vec3::new(dv.x, dv.y, dv.z)
-            .normalized()
-            .or_else(|| {
-                let (i0, i1) = (i.saturating_sub(1), (i + 1).min(last));
-                (pts[i1] - pts[i0]).normalized()
-            })
-            .ok_or_else(|| KernelError::Invalid("a section edge has no direction".into()))?;
+        // The run's direction here from the points either side (one side at the ends). (The
+        // edge curve's own derivative was tried: a curve's parameters run past its edge and the
+        // nearest one landed elsewhere, turning a loft's bridge out into a sheet.)
+        let (i0, i1) = (i.saturating_sub(1), (i + 1).min(last));
+        let t = (pts[i1] - pts[i0]).normalized().ok_or_else(|| KernelError::Invalid("a section edge has no direction".into()))?;
         let t = if *same { t } else { -t };
         let (u, v) = uv.ok_or_else(|| KernelError::Failed("a point of a section edge is not on its surface".into()))?;
         let nn = surf.normal(u, v);

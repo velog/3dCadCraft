@@ -491,8 +491,8 @@ impl LoftFeature {
                 }
                 Ok(_) => {
                     last = concat!(
-                        "the bridges' edges do not match the surfaces' (sewing them into a solid ",
-                        "is not supported yet: use Output Surface, spec 5.4a L3)"
+                        "they leave openings: a hole of one surface without a hole to pair with ",
+                        "on the other, or edges that do not meet; use Output Surface"
                     )
                     .into()
                 }

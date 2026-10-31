@@ -1708,3 +1708,46 @@ fn tangent_patch_over_four_walls_is_a_dome() {
         );
     }
 }
+
+/// Loft between a holed surface and a plain one (spec 5.4a F13): only the outer boundaries pair;
+/// Output Surface bridges them, Output Solid is refused (the hole would stay open) and nothing
+/// changes.
+#[test]
+fn loft_between_a_holed_and_a_plain_surface() {
+    use cadcraft3d::part::{LoftFeature, LoftSection};
+    let mut p = PartDocument::default();
+    let a = holed_patch_at(&mut p, 0.0);
+    let b = patch_polygon_at(
+        &mut p,
+        10.0,
+        &[(-20.0, -20.0), (20.0, -20.0), (20.0, 20.0), (-20.0, 20.0)],
+    );
+    let sections = vec![
+        LoftSection::Edges(boundary_of(&p, &a)),
+        LoftSection::Edges(boundary_of(&p, &b)),
+    ];
+    let mut solid = LoftFeature::new(sections.clone());
+    solid.output = Output::Solid;
+    let n = p.features.len();
+    let err = p.add_loft(solid).unwrap_err().to_string();
+    assert!(err.contains("openings"), "{err}");
+    assert_eq!(p.features.len(), n);
+    let mut surf = LoftFeature::new(sections);
+    surf.output = Output::Surface;
+    p.add_loft(surf).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    // The outer walls only: 4 × 40 × 10.
+    let bridge = p
+        .exact_bodies
+        .0
+        .iter()
+        .find(|s| s.name.as_deref() == Some("Loft1"))
+        .unwrap();
+    let area: Real = bridge
+        .triangles()
+        .unwrap()
+        .iter()
+        .map(|[a, b, c]| (b - a).cross(&(c - a)).norm() / 2.0)
+        .sum();
+    close(area, 1600.0, 1e-4);
+}
