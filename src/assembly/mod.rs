@@ -19,6 +19,7 @@ pub mod import;
 pub mod interference;
 pub mod joint;
 pub mod looks;
+pub mod make;
 pub mod pattern;
 pub mod physical;
 pub mod relation;

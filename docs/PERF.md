@@ -83,6 +83,8 @@ Target times for interactive work:
 | Assembly Update of cross-part edges: a gasket projecting a 200 mm flange's outline and 16 hole rims, the flange moved (`assembly::context::update`, revision 47) | 300 ms | 107 ms release (2026-10-29, under load) |
 | Derive Part: a 100 mm plate with 36 holes derived into a new part (exact bodies → STEP text → read back, `PartDocument::add_derive`) | 300 ms | 48.7 ms release (2026-10-31, under load) |
 | Derive Update: the derived 36-hole plate after its source grew 100 → 120 (text again, faces matched by geometry, `update_derive`) | 400 ms | 59.4 ms release (2026-10-31, under load) |
+| Make Components: a 36-hole plate master made a placed component (`assembly::make::make_components`) | 300 ms | 69.8 ms release (2026-10-31, under load) |
+| Make Components update: the component follows the master that grew (`assembly::make::update_derived`) | 400 ms | 60.8 ms release (2026-10-31, under load) |
 | Adaptive part during a drag: one drag step of a wall pulling a 100 mm plate 20 mm longer (`assembly::adapt::adapt_dragged`) | 30 ms | 2.6 ms release (2026-10-30) |
 | Project Geometry of another component's whole face: a 200 mm flange's top with 16 holes, every edge of its 17 loops (`assembly::context::face_outline` + `project_context_edges`) | 100 ms | 3.3 ms release (2026-10-30, under load) |
 | Adaptivity: a plate free in length mated to two walls 100 mm apart, size and place solved together (`assembly::adapt`, spec 3.10 T4) | 50 ms | 1.8 ms release (2026-10-29, under load) |

@@ -742,7 +742,7 @@ A mirror copy of features or of the whole body about a plane.
 - **Split** (cutting with a plane/surface);
 - **Move/Copy body**;
 - parts with **several bodies** (multi-body);
-- **Make Components** (the body becomes a separate part in an assembly).
+- **Make Components** (the body becomes a separate part in an assembly; 🟡 2026-10-31: Make Part and Make Components, the parts following the master, spec 3.10 §3.6).
 
 **How it works.**
 1. Face–face intersection (analytic for plane/cylinder/cone/sphere, numeric for NURBS).

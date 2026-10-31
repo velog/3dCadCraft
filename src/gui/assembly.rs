@@ -453,7 +453,8 @@ impl CadCraftApp {
         self.asm_refresh_status();
         self.follow_patterns();
         self.follow_frames();
-        // A derived part follows its source (spec 3.10 §3.5).
+        // Derived parts follow their sources (spec 3.10 §3.5, §3.6).
+        self.make_follow();
         self.derive_follow();
         self.scene_dirty = true;
         self.fit_view();

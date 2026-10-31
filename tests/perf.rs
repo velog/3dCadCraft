@@ -2621,6 +2621,42 @@ fn speed_budgets() {
                 assert!(x.update_derive(0, &grown).unwrap());
             }),
         ));
+        // Make Components (spec 3.10 §3.6): the plate as a master made a
+        // placed component, then every derived part of the file updated
+        // after the master grew.
+        {
+            use cadcraft3d::assembly::make::{self, Target};
+            use cadcraft3d::document::{DocumentData, Project};
+            let mut p = Project::new("Master");
+            let m = p.add_document("Master", DocumentData::Part(src.clone()));
+            let body: Vec<String> = src
+                .exact_bodies
+                .0
+                .iter()
+                .filter_map(|b| b.name.clone())
+                .collect();
+            rows.push((
+                "make components: a 36-hole plate master made a placed component",
+                300.0,
+                median_ms(3, || {
+                    let mut q = p.clone();
+                    make::make_components(&mut q, m, &body, &[], Target::New("A".into())).unwrap();
+                }),
+            ));
+            make::make_components(&mut p, m, &body, &[], Target::New("A".into())).unwrap();
+            if let Some(DocumentData::Part(x)) = p.document_mut(m).map(|d| &mut d.data) {
+                *x = grown.clone();
+            }
+            rows.push((
+                "make components: the component follows the master that grew (update_derived)",
+                400.0,
+                median_ms(3, || {
+                    let mut q = p.clone();
+                    let (changed, errors) = make::update_derived(&mut q);
+                    assert!(errors.is_empty() && changed.len() == 1);
+                }),
+            ));
+        }
     }
 
     // Assembly picking (docs/spec/3.1, A1): the occurrence under the cursor

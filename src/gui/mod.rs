@@ -89,6 +89,7 @@ mod keymap;
 mod keys;
 mod layout;
 mod loft;
+mod make;
 mod manip;
 mod material;
 mod measure;

@@ -1366,6 +1366,8 @@ impl Planned {
                     | PartPlanned::CopyObject
                     | PartPlanned::Import
                     | PartPlanned::Derive
+                    | PartPlanned::MakePart
+                    | PartPlanned::MakeComponents
                     | PartPlanned::AuthorFrameProfile
             )
         )
@@ -1381,6 +1383,10 @@ impl Planned {
                 "Sketches" | "Work Geometry" | "Parameters" | "Show All Objects",
                 None,
             ) => Some("Comes later (spec 3.10 §3.5 Element status)"),
+            (Planned::Part(PartPlanned::MakePart), "Place part in target assembly", None)
+            | (Planned::Part(PartPlanned::MakeComponents), "Include parameters", None) => {
+                Some("Comes later (spec 3.10 §3.6)")
+            }
             (Planned::Part(PartPlanned::CopyObject), "Create New", Some("Group")) => Some(
                 "Needs the construction environment, not available yet (spec 2.13 Copy Object)",
             ),
@@ -2583,6 +2589,16 @@ impl CadCraftApp {
             }
             Planned::Part(PartPlanned::Derive) => {
                 if self.derive_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Part(PartPlanned::MakePart) => {
+                if self.make_part_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
+            Planned::Part(PartPlanned::MakeComponents) => {
+                if self.make_components_ok(&d) {
                     self.part_planned = None;
                 }
             }
