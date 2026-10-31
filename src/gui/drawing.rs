@@ -399,8 +399,27 @@ fn hash_str(s: &str) -> u64 {
     h.finish()
 }
 
-/// A view row of the browser: id, identifier, parent, model name.
-type TreeView = (u32, String, Option<u32>, String);
+/// A view row of the browser: id, identifier, parent, model name, its
+/// breaks and break outs.
+type TreeView = (u32, String, Option<u32>, String, Vec<TreeOp>);
+
+/// A Break (`out` false) or Break Out under a view in the browser: its index
+/// and whether it is suppressed.
+#[derive(Clone, Copy)]
+struct TreeOp {
+    out: bool,
+    k: usize,
+    suppressed: bool,
+}
+
+/// What a Break / Break Out row of the browser asks for.
+#[derive(Clone, Copy)]
+enum OpAction {
+    Edit,
+    EditSketch,
+    Suppress(bool),
+    Delete,
+}
 
 /// A view drawn this frame.
 pub(super) struct ShownView {
@@ -2061,7 +2080,22 @@ impl CadCraftApp {
                         let model = d
                             .model_of(s, v.id)
                             .map_or_else(String::new, |m| self.model_name(m));
-                        (v.id, v.identifier.clone(), v.parent(), model)
+                        let ops = v
+                            .breaks
+                            .iter()
+                            .enumerate()
+                            .map(|(k, b)| TreeOp {
+                                out: false,
+                                k,
+                                suppressed: b.suppressed,
+                            })
+                            .chain(v.break_outs.iter().enumerate().map(|(k, b)| TreeOp {
+                                out: true,
+                                k,
+                                suppressed: b.suppressed,
+                            }))
+                            .collect();
+                        (v.id, v.identifier.clone(), v.parent(), model, ops)
                     })
                     .collect();
                 (s.name.clone(), s.size.label(), views)
@@ -2074,6 +2108,7 @@ impl CadCraftApp {
         let mut select = None;
         let mut edit_view = None;
         let mut delete_view = None;
+        let mut op_action: Option<(usize, u32, TreeOp, OpAction)> = None;
         ui.horizontal(|ui| {
             super::panels::tree_icon(ui, Icon::Drawing);
             ui.label(RichText::new(name).strong());
@@ -2148,6 +2183,61 @@ impl CadCraftApp {
                                     }
                                 });
                             });
+                            // Its breaks and break outs (spec 4.10, 4.11).
+                            for op in &v.4 {
+                                ui.horizontal(|ui| {
+                                    ui.add_space((depth + 1) as f32 * 14.0);
+                                    let icon = if op.out {
+                                        Icon::BreakOut
+                                    } else {
+                                        Icon::BreakView
+                                    };
+                                    super::panels::tree_icon(ui, icon);
+                                    let name = if op.out { "Break Out" } else { "Break" };
+                                    let text = RichText::new(format!("{name}{}", op.k + 1));
+                                    let text = if op.suppressed {
+                                        text.weak().strikethrough()
+                                    } else {
+                                        text
+                                    };
+                                    let r = ui.selectable_label(false, text);
+                                    let r = if op.suppressed {
+                                        r.on_hover_text("Suppressed: the view is drawn without it")
+                                    } else {
+                                        r
+                                    };
+                                    let mut act = |a| op_action = Some((i, id, *op, a));
+                                    if r.double_clicked() {
+                                        act(OpAction::Edit);
+                                    } else if r.clicked() {
+                                        select = Some((i, id));
+                                    }
+                                    r.context_menu(|ui| {
+                                        let edit = if op.out {
+                                            "Edit Break Out"
+                                        } else {
+                                            "Edit Break"
+                                        };
+                                        if ui.button(edit).clicked() {
+                                            act(OpAction::Edit);
+                                            ui.close();
+                                        }
+                                        if op.out && ui.button("Edit Break Out Sketch").clicked() {
+                                            act(OpAction::EditSketch);
+                                            ui.close();
+                                        }
+                                        let mut on = op.suppressed;
+                                        if ui.checkbox(&mut on, "Suppress").clicked() {
+                                            act(OpAction::Suppress(on));
+                                            ui.close();
+                                        }
+                                        if ui.button("Delete").clicked() {
+                                            act(OpAction::Delete);
+                                            ui.close();
+                                        }
+                                    });
+                                });
+                            }
                             for c in views.iter().filter(|c| c.2 == Some(id)).rev() {
                                 stack.push((c.0, depth + 1));
                             }
@@ -2201,6 +2291,26 @@ impl CadCraftApp {
         if let Some((i, id)) = delete_view {
             switch(self, i);
             self.delete_drawing_view(id);
+        }
+        if let Some((i, id, op, a)) = op_action {
+            switch(self, i);
+            self.drw.sel = Some(id);
+            match (a, op.out) {
+                (OpAction::Edit, false) => self.open_break_edit(id, op.k),
+                (OpAction::Edit, true) => self.open_break_out_edit(id, op.k),
+                (OpAction::EditSketch, _) => self.open_break_out_sketch_edit(id, op.k),
+                (OpAction::Delete, false) => self.delete_break(id, op.k),
+                (OpAction::Delete, true) => self.delete_break_out(id, op.k),
+                (OpAction::Suppress(on), out) => {
+                    let label = if on { "Suppress" } else { "Unsuppress" };
+                    if self.edit_drawing(label, move |d| d.suppress_break(id, out, op.k, on))
+                        != Some(true)
+                    {
+                        self.history.cancel();
+                    }
+                    self.history.break_coalescing();
+                }
+            }
         }
         if let Some(i) = edit_sheet {
             self.open_sheet_dialog(i);

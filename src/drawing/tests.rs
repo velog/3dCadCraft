@@ -2397,6 +2397,12 @@ fn break_views_shorten_and_keep_true_values() {
         1.0,
     );
     close(narrow.size().0, 125.0, 1e-9, "gap 5 (Inventor: 125)");
+    // A suppressed break leaves the view whole.
+    let off = ViewBreak {
+        suppressed: true,
+        ..b.clone()
+    };
+    assert_eq!(brk::apply(&whole, std::slice::from_ref(&off), 1.0), whole);
     // At 1:2 the gap stays 6 sheet mm: 120 / 2 + 6 = 66 mm on the sheet.
     close(
         brk::apply(&whole, std::slice::from_ref(&b), 0.5).size().0 * 0.5,
@@ -2641,9 +2647,11 @@ fn break_out_cuts_inside_the_profile() {
         depth: BreakOutDepth::FromPoint {
             point: top,
             depth: 4.0,
+            hole: None,
         },
         section_all: false,
         sketch: Some(Box::new(super::view_sketch::ViewSketch::from_line(&rect))),
+        suppressed: false,
     };
     assert_eq!(d.add_break_out(v, out.clone()), Some(0));
     // The break out under a point of its profile (the right-click menu).
@@ -2712,4 +2720,98 @@ fn break_out_cuts_inside_the_profile() {
     assert!(d.remove_break_out(v, 0));
     assert!(!serde_json::to_string(&d).unwrap().contains("break_outs"));
     assert_eq!(lines_now(&d), whole);
+}
+
+/// Break Out › To Hole: the cut goes through the axis of a hole seen from
+/// the side (a front view of a box with a clearance hole drilled from the
+/// top); a hole seen face-on (the top view) is refused.
+#[test]
+fn break_out_to_hole_cuts_through_the_axis() {
+    use super::{BreakOut, BreakOutDepth, break_out_hole_point};
+    use crate::kernel::Point3;
+    use crate::part::hole::HoleCenter;
+    use crate::part::standards::Standards;
+    use crate::part::{FastenerFit, HoleFeature, HoleSpec};
+    let t = Standards::builtin();
+    let mut part = PartDocument::with_box("Box1", [60.0, 40.0, 20.0]).unwrap();
+    let (i, ids) = part
+        .create_hole_sketch("Box1:Top", &[Point3::new(30.0, 25.0, 20.0)])
+        .unwrap();
+    let mut def =
+        HoleFeature::new(HoleSpec::clearance(&t, "ISO 273", "M6", FastenerFit::Normal).unwrap());
+    def.sketch = part.sketches[i].id.clone();
+    def.centers = ids.into_iter().map(HoleCenter::Point).collect();
+    part.add_hole(def).unwrap();
+    let h = part.holes()[0].clone();
+    let top = ViewOrientation::Top.frame();
+    assert!(break_out_hole_point(&h, &top).is_err(), "seen face-on");
+    let mut d = DrawingDocument::default();
+    let v = d
+        .add_base_view(
+            model(),
+            ViewOrientation::Front,
+            [150.0, 150.0],
+            1.0,
+            ViewStyle::HiddenRemoved,
+        )
+        .unwrap();
+    let frame = d.frame_of(d.sheet().unwrap(), v).unwrap();
+    let p = break_out_hole_point(&h, &frame).unwrap();
+    let axis = frame.depth(&Point3::new(p[0], p[1], p[2]));
+    close(
+        axis,
+        frame.depth(&Point3::new(30.0, 25.0, 0.0)),
+        1e-9,
+        "the axis' depth",
+    );
+    // A profile round the hole in the front view, cut at its axis.
+    let c = frame.project(&Point3::new(30.0, 25.0, 10.0));
+    let rect = vec![
+        [c[0] - 8.0, c[1] - 12.0],
+        [c[0] + 8.0, c[1] - 12.0],
+        [c[0] + 8.0, c[1] + 12.0],
+        [c[0] - 8.0, c[1] + 12.0],
+    ];
+    let out = BreakOut {
+        profile: vec![rect],
+        depth: BreakOutDepth::FromPoint {
+            point: p,
+            depth: 0.0,
+            hole: Some(h.key()),
+        },
+        section_all: false,
+        sketch: None,
+        suppressed: false,
+    };
+    assert_eq!(out.cut(&frame).depth, axis, "To Hole cuts at the axis");
+    d.add_break_out(v, out.clone()).unwrap();
+    let sheet = d.sheet().unwrap().clone();
+    let LinesJob::Model { frame, aligned, .. } = d.lines_job(&sheet, v).unwrap() else {
+        panic!("a model job");
+    };
+    let l = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_deref());
+    // The cut face: the profile's 16 × 20 of material (the box's top is
+    // at the profile's middle + 10) less the bore's Ø6.6 strip.
+    let cut: f64 = l.section.iter().map(|lp| area(lp)).sum();
+    close(
+        cut,
+        16.0 * 20.0 - 6.6 * 20.0,
+        4.0,
+        "the cut face beside the bore",
+    );
+    // Suppressed: the view is drawn whole, the break out kept.
+    assert!(d.suppress_break(v, true, 0, true));
+    assert!(!d.suppress_break(v, true, 0, true), "already suppressed");
+    let sheet = d.sheet().unwrap().clone();
+    let LinesJob::Model { frame, aligned, .. } = d.lines_job(&sheet, v).unwrap() else {
+        panic!("a model job");
+    };
+    let l = super::hlr::view_lines_with(&part_model(&part), &frame, aligned.as_deref());
+    assert!(l.section.is_empty(), "nothing cut while suppressed");
+    assert_eq!(BreakOut::under(&sheet.view(v).unwrap().break_outs, c), None);
+    // An old build reads it as From Point at depth 0: the same cut.
+    let text = serde_json::to_string(&out).unwrap();
+    assert!(text.contains("\"hole\""));
+    let back: BreakOut = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, out);
 }

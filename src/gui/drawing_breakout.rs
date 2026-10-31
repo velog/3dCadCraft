@@ -5,7 +5,7 @@
 use eframe::egui::{self, Rect};
 
 use super::CadCraftApp;
-use super::drawing::{DrwTool, ShownView};
+use super::drawing::{DrwTool, SheetCam, ShownView};
 use crate::drawing::{BreakOut, BreakOutDepth};
 use crate::sketch::Sketch;
 
@@ -13,6 +13,7 @@ use crate::sketch::Sketch;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DepthKind {
     FromPoint,
+    ToHole,
     ThroughPart,
 }
 
@@ -30,6 +31,9 @@ pub(super) struct BoDraft {
     /// From Point: the picked point (model mm) and the view it was picked
     /// in (`None` for an edited break out's point).
     pub point: Option<([f64; 3], Option<u32>)>,
+    /// To Hole: the hole's key, the point of its axis the cut goes through
+    /// (model mm) and the view it was picked in (`None` when edited).
+    pub hole: Option<(String, [f64; 3], Option<u32>)>,
     /// The sketch the profile was drawn in.
     pub sketch: Option<Box<crate::drawing::view_sketch::ViewSketch>>,
     /// Edit Break Out: the break out's index in the view.
@@ -45,6 +49,7 @@ impl BoDraft {
             kind: DepthKind::FromPoint,
             value: 5.0,
             point: None,
+            hole: None,
             sketch: None,
             edit: None,
         }
@@ -52,11 +57,21 @@ impl BoDraft {
 
     /// Edit Break Out of break out `k` of `view`.
     pub fn editing(view: u32, k: usize, b: &BreakOut) -> Self {
-        let (kind, value, point) = match b.depth {
-            BreakOutDepth::FromPoint { point, depth } => {
-                (DepthKind::FromPoint, depth, Some((point, None)))
+        let (kind, value, point, hole) = match &b.depth {
+            BreakOutDepth::FromPoint {
+                point,
+                hole: Some(h),
+                ..
+            } => (
+                DepthKind::ToHole,
+                5.0,
+                None,
+                Some((h.clone(), *point, None)),
+            ),
+            BreakOutDepth::FromPoint { point, depth, .. } => {
+                (DepthKind::FromPoint, *depth, Some((*point, None)), None)
             }
-            BreakOutDepth::ThroughPart => (DepthKind::ThroughPart, 5.0, None),
+            BreakOutDepth::ThroughPart => (DepthKind::ThroughPart, 5.0, None, None),
         };
         Self {
             view,
@@ -64,6 +79,7 @@ impl BoDraft {
             kind,
             value,
             point,
+            hole,
             sketch: b.sketch.clone(),
             edit: Some(k),
         }
@@ -75,7 +91,16 @@ impl BoDraft {
             DepthKind::FromPoint => BreakOutDepth::FromPoint {
                 point: self.point?.0,
                 depth: self.value,
+                hole: None,
             },
+            DepthKind::ToHole => {
+                let (key, point, _) = self.hole.clone()?;
+                BreakOutDepth::FromPoint {
+                    point,
+                    depth: 0.0,
+                    hole: Some(key),
+                }
+            }
             DepthKind::ThroughPart => BreakOutDepth::ThroughPart,
         };
         Some(BreakOut {
@@ -83,14 +108,18 @@ impl BoDraft {
             depth,
             section_all: false,
             sketch: self.sketch.clone(),
+            suppressed: false,
         })
     }
 
     /// The status-bar prompt.
     pub fn prompt(&self) -> &'static str {
-        match (self.kind, self.point) {
-            (DepthKind::FromPoint, None) => {
+        match (self.kind, self.point, &self.hole) {
+            (DepthKind::FromPoint, None, _) => {
                 "Break Out: click the point the depth starts from, in another view of the model"
+            }
+            (DepthKind::ToHole, _, None) => {
+                "Break Out: click a hole of the model (in any view); the cut goes through its axis"
             }
             _ => "Break Out: set the depth, then OK (Esc: cancel)",
         }
@@ -164,7 +193,31 @@ impl CadCraftApp {
                 ));
             }
         }
-        if let Some((_, Some(pv))) = d.point
+        let picked = match d.kind {
+            DepthKind::FromPoint => d.point.and_then(|p| p.1),
+            DepthKind::ToHole => d.hole.as_ref().and_then(|h| h.2),
+            DepthKind::ThroughPart => None,
+        };
+        // To Hole: the hole under the pointer lit, the picked one marked.
+        if d.kind == DepthKind::ToHole {
+            let hover = response
+                .hover_pos()
+                .and_then(|p| hole_under(views, rect, cam, p));
+            let lit = |key: &str, color: egui::Color32| {
+                for v in views {
+                    for piece in hole_pieces(v, rect, cam, key) {
+                        painter.add(egui::Shape::line(piece, egui::Stroke::new(2.5, color)));
+                    }
+                }
+            };
+            if let Some((key, _, _)) = &d.hole {
+                lit(key, egui::Color32::from_rgb(20, 90, 200));
+            }
+            if let Some((_, key)) = hover {
+                lit(&key, egui::Color32::from_rgb(230, 160, 20));
+            }
+        }
+        if let Some(pv) = picked
             && let Some(v) = views.iter().find(|v| v.id == pv)
         {
             painter.rect_stroke(
@@ -203,9 +256,9 @@ impl CadCraftApp {
                             .on_disabled_hover_text(
                                 "Planned: sketched geometry of another view (docs/spec/4.11-break-out.md)",
                             );
-                        ui.add_enabled(false, egui::RadioButton::new(false, "To Hole"))
-                            .on_disabled_hover_text(
-                                "Planned: the axis of a hole in the view (docs/spec/4.11-break-out.md)",
+                        ui.radio_value(&mut d.kind, DepthKind::ToHole, "To Hole")
+                            .on_hover_text(
+                                "The cut goes through the axis of a hole, picked in any view of the model",
                             );
                         ui.radio_value(&mut d.kind, DepthKind::ThroughPart, "Through Part")
                             .on_hover_text("Cut all through the part");
@@ -225,6 +278,15 @@ impl CadCraftApp {
                                 .on_hover_text("How far behind the point the cut lies");
                         });
                     });
+                    if d.kind == DepthKind::ToHole {
+                        ui.horizontal(|ui| {
+                            ui.label("Hole:");
+                            ui.label(match &d.hole {
+                                Some((k, _, _)) => format!("✔ {k} (click again to change)"),
+                                None => "click a hole in a view".into(),
+                            });
+                        });
+                    }
                     ui.label(egui::RichText::new("Display").strong());
                     ui.add_enabled(false, egui::Checkbox::new(&mut false, "Show Hidden Edges"))
                         .on_disabled_hover_text(
@@ -249,6 +311,16 @@ impl CadCraftApp {
         {
             match self.break_out_point(views, rect, p, d.view) {
                 Ok((pt, v)) => d.point = Some((pt, Some(v))),
+                Err(e) => self.file_status = Some(Err(format!("Break Out: {e}"))),
+            }
+        }
+        // To Hole: a hole of the same model, its axis across the view.
+        if d.kind == DepthKind::ToHole
+            && response.clicked()
+            && let Some(p) = response.hover_pos()
+        {
+            match self.break_out_hole(views, rect, p, d.view) {
+                Ok((key, pt, v)) => d.hole = Some((key, pt, Some(v))),
                 Err(e) => self.file_status = Some(Err(format!("Break Out: {e}"))),
             }
         }
@@ -316,6 +388,36 @@ impl CadCraftApp {
         Ok(([m.x, m.y, m.z], g.view))
     }
 
+    /// The hole under `p` in a view of the same model as `view`: its key and
+    /// the point of its axis the cut of `view` goes through.
+    fn break_out_hole(
+        &self,
+        views: &[ShownView],
+        rect: Rect,
+        p: egui::Pos2,
+        view: u32,
+    ) -> Result<(String, [f64; 3], u32), String> {
+        let (pv, key) = hole_under(views, rect, self.drw.cam, p)
+            .ok_or("click a hole's edge (a circle, or its outline seen from the side)")?;
+        let doc = self.drawing().ok_or("no drawing")?;
+        let sheet = doc.sheet().ok_or("no sheet")?;
+        let model = doc.model_of(sheet, view).ok_or("the view has no model")?;
+        if doc.model_of(sheet, pv) != Some(model) {
+            return Err("that hole is in another model".into());
+        }
+        let frame = doc
+            .frame_of(sheet, view)
+            .ok_or("the view has no direction")?;
+        let h = self
+            .with_part(model, |part| {
+                part.holes().iter().find(|h| h.key() == key).cloned()
+            })
+            .flatten()
+            .ok_or("holes of assembly views are not supported yet")?;
+        let pt = crate::drawing::break_out_hole_point(&h, &frame)?;
+        Ok((key, pt, pv))
+    }
+
     /// Edit Break Out of break out `k` of view `view`: the dialog again.
     pub(super) fn open_break_out_edit(&mut self, view: u32, k: usize) {
         let b = self
@@ -369,4 +471,63 @@ impl CadCraftApp {
         }
         self.history.break_coalescing();
     }
+}
+
+/// The hole whose edges (visible or hidden) pass nearest the pointer, within
+/// a few pixels: its view and key.
+fn hole_under(
+    views: &[ShownView],
+    rect: Rect,
+    cam: SheetCam,
+    p: egui::Pos2,
+) -> Option<(u32, String)> {
+    let mut best: Option<(f32, u32, String)> = None;
+    for v in views {
+        let Some(l) = v.lines.as_deref() else {
+            continue;
+        };
+        let mut seen = std::collections::HashSet::new();
+        for key in l.edges.iter().filter_map(|e| e.hole.as_deref()) {
+            if !seen.insert(key) {
+                continue;
+            }
+            let d = hole_pieces(v, rect, cam, key)
+                .iter()
+                .flat_map(|piece| piece.windows(2).map(|w| seg_distance(p, w[0], w[1])))
+                .fold(f32::MAX, f32::min);
+            if d <= 7.0 && best.as_ref().is_none_or(|b| d < b.0) {
+                best = Some((d, v.id, key.to_string()));
+            }
+        }
+    }
+    best.map(|(_, v, k)| (v, k))
+}
+
+/// The screen pieces (visible and hidden) of hole `key`'s edges in view `v`.
+fn hole_pieces(v: &ShownView, rect: Rect, cam: SheetCam, key: &str) -> Vec<Vec<egui::Pos2>> {
+    let (Some(l), Some(pl)) = (v.lines.as_deref(), super::drawing_break::placement(v)) else {
+        return Vec::new();
+    };
+    let of_hole = |src: &Option<u32>| {
+        src.and_then(|k| l.edges.get(k as usize))
+            .is_some_and(|e| e.hole.as_deref() == Some(key))
+    };
+    let vis = l.visible.iter().zip(l.visible_src.iter());
+    let hid = l.hidden.iter().zip(l.hidden_src.iter());
+    vis.chain(hid)
+        .filter(|(_, src)| of_hole(src))
+        .map(|(piece, _)| {
+            piece
+                .iter()
+                .map(|q| cam.to_screen(rect, pl.to_sheet(*q)))
+                .collect()
+        })
+        .collect()
+}
+
+/// Screen distance from `p` to the segment `a`-`b`.
+fn seg_distance(p: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
+    let ab = b - a;
+    let t = ((p - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+    (a + ab * t).distance(p)
 }

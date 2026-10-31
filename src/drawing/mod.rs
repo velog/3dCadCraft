@@ -715,14 +715,19 @@ pub struct BreakOut {
     /// opens it again; the profile is what draws).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sketch: Option<Box<view_sketch::ViewSketch>>,
+    /// Suppressed: kept, but the view is drawn as if it were not there
+    /// (old builds draw it).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppressed: bool,
 }
 
 impl BreakOut {
     /// The break out of `view` under view-plane point `q`: the last one
-    /// whose profile holds it.
+    /// shown whose profile holds it.
     pub fn under(outs: &[BreakOut], q: [f64; 2]) -> Option<usize> {
-        outs.iter()
-            .rposition(|b| b.profile.iter().filter(|l| hlr::inside_loop(l, q)).count() % 2 == 1)
+        outs.iter().rposition(|b| {
+            !b.suppressed && b.profile.iter().filter(|l| hlr::inside_loop(l, q)).count() % 2 == 1
+        })
     }
 }
 
@@ -738,6 +743,11 @@ pub enum BreakOutDepth {
         point: [f64; 3],
         /// How far behind it (mm).
         depth: f64,
+        /// To Hole: the hole (`HoleInstance::key`) whose axis the cut goes
+        /// through; `point` is then on that axis and `depth` 0 (old builds
+        /// read it as From Point and cut at the same place).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hole: Option<String>,
     },
     /// Through Part: everything inside the profile is cut away.
     ThroughPart,
@@ -747,13 +757,31 @@ impl BreakOut {
     /// The removed region in a view seen in `frame`.
     pub fn cut(&self, frame: &ViewFrame) -> hlr::OutCut {
         let depth = match self.depth {
-            BreakOutDepth::FromPoint { point, depth } => {
+            BreakOutDepth::FromPoint { point, depth, .. } => {
                 frame.depth(&crate::kernel::Point3::new(point[0], point[1], point[2])) - depth
             }
             BreakOutDepth::ThroughPart => -1e12,
         };
         hlr::OutCut::new(self.profile.clone(), depth)
     }
+}
+
+/// Break Out › To Hole: the point of hole `h` the cut goes through, seen in
+/// `frame` (the cut is square to the view, so the hole's axis must lie
+/// across it).
+pub fn break_out_hole_point(
+    h: &crate::part::hole::HoleInstance,
+    frame: &ViewFrame,
+) -> Result<[f64; 3], &'static str> {
+    let d = h
+        .direction
+        .try_normalize(1e-12)
+        .ok_or("the hole has no axis")?;
+    if d.dot(&frame.toward).abs() > 1e-3 {
+        return Err("the hole's axis must lie across the view (pick a hole seen from the side)");
+    }
+    let o = h.origin;
+    Ok([o.x, o.y, o.z])
 }
 
 /// What a view of a sheet metal part shows (Drawing View › Sheet Metal
@@ -1149,10 +1177,15 @@ impl DrawingDocument {
     pub fn lines_job(&self, sheet: &Sheet, id: u32) -> Option<LinesJob> {
         let mut job = self.lines_job_whole(sheet, id)?;
         let v = sheet.view(id)?;
-        if !v.break_outs.is_empty()
+        if v.break_outs.iter().any(|b| !b.suppressed)
             && let LinesJob::Model { frame, aligned, .. } = &mut job
         {
-            let outs: Vec<hlr::OutCut> = v.break_outs.iter().map(|b| b.cut(frame)).collect();
+            let outs: Vec<hlr::OutCut> = v
+                .break_outs
+                .iter()
+                .filter(|b| !b.suppressed)
+                .map(|b| b.cut(frame))
+                .collect();
             match aligned {
                 Some(a) => a.outs = outs,
                 None => {
@@ -1461,6 +1494,27 @@ impl DrawingDocument {
         match self.sheet_mut().and_then(|s| s.view_mut(id)) {
             Some(v) if k < v.breaks.len() => {
                 v.breaks.remove(k);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Suppresses (or shows again) break `k` of view `id` when `out` is
+    /// false, else break out `k`. False when there is no such operation or
+    /// it already is so.
+    pub fn suppress_break(&mut self, id: u32, out: bool, k: usize, on: bool) -> bool {
+        let Some(v) = self.sheet_mut().and_then(|s| s.view_mut(id)) else {
+            return false;
+        };
+        let flag = if out {
+            v.break_outs.get_mut(k).map(|b| &mut b.suppressed)
+        } else {
+            v.breaks.get_mut(k).map(|b| &mut b.suppressed)
+        };
+        match flag {
+            Some(f) if *f != on => {
+                *f = on;
                 true
             }
             _ => false,

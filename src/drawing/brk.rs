@@ -62,6 +62,10 @@ pub struct ViewBreak {
     /// Break symbols on each break line (Structural, 1–3).
     #[serde(default = "default_symbols")]
     pub symbols: u8,
+    /// Suppressed: kept, but the view is drawn as if it were not there
+    /// (old builds draw it).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppressed: bool,
 }
 
 fn default_gap() -> f64 {
@@ -88,6 +92,7 @@ impl ViewBreak {
             gap: DEFAULT_GAP,
             display: default_display(),
             symbols: default_symbols(),
+            suppressed: false,
         }
     }
 
@@ -185,7 +190,7 @@ impl BreakMap {
     pub fn new(breaks: &[ViewBreak], scale: f64) -> Self {
         let mut list: Vec<Cut> = Vec::new();
         for (index, b) in breaks.iter().enumerate() {
-            if b.to - b.from <= 1e-9 || list.len() >= MAX_BREAKS {
+            if b.suppressed || b.to - b.from <= 1e-9 || list.len() >= MAX_BREAKS {
                 continue;
             }
             let c = Cut {
