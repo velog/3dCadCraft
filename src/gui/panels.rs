@@ -1286,6 +1286,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             self.thicken_panel(ui);
             return;
         }
+        if self.ff_edit.is_some() {
+            self.ff_panel(ui);
+            return;
+        }
         if self.delete_draft.is_some() {
             self.delete_face_panel(ui);
             return;
@@ -4981,6 +4985,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     let text = self.section_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
                 }
+                (Mode::Normal, None) if self.ff_edit.is_some() => {
+                    let text = self.ff_prompt().unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
+                }
                 (Mode::Normal, None) if self.thicken_draft.is_some() => {
                     let text = self.thicken_prompt().unwrap_or_default();
                     ui.add(egui::Label::new(RichText::new(text).strong()).truncate());
@@ -6800,6 +6808,7 @@ pub(super) fn feature_look(f: &Feature) -> (Icon, String) {
                 crate::part::BodyOp::CopyObject(_) => Icon::CopyObject,
                 crate::part::BodyOp::Import(_) => Icon::Import,
                 crate::part::BodyOp::Prism(_) => Icon::InsertFrame,
+                crate::part::BodyOp::Freeform(_) => Icon::FfPlane,
             },
             f.describe(),
         ),

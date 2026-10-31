@@ -42,6 +42,7 @@ impl CadCraftApp {
         self.work_draft = None;
         self.part_planned = None;
         self.thicken_draft = None;
+        self.ff_edit = None;
         self.delete_draft = None;
         self.move_draft = None;
         self.section = None;

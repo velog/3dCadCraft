@@ -1108,10 +1108,16 @@ Springs and helical surfaces. Defined by height and pitch, number of revolutions
 
 **Kernel foundation.** Requires NURBS surfaces and robust surface–surface intersection.
 
-## 5.5 Direct editing and Freeform — ⬜ · L / XL
+## 5.5 Direct editing and Freeform — 🟡 (Freeform Plane + Edit Form) · L / XL
+
+**Specification:** [spec/5.5-freeform.md](spec/5.5-freeform.md)
 
 - **Direct edit:** moving, rotating and scaling faces without history. Useful for imported STEP models.
-- **Freeform (T-spline/SubD):** organic shapes by dragging a control cage. A long-term goal.
+- **Freeform:** organic shapes by dragging a control cage. Done (2026-10-31): **Freeform Plane** (a cubic
+  B-spline sheet whose control net is the cage, `BodyOp::Freeform`, format revision 59) and **Edit Form** (Edit
+  Feature of a Freeform: the cage over the view, click / Shift / Ctrl to pick points, drag to move them in the
+  view plane as Alias moves CVs, a smooth falloff to the neighbours, offsets by numbers, symmetry, Reset, Undo
+  per drag). Next: Cylinder / Torus (periodic cages), then Box / Sphere / Quadball (n-sided patches).
 
 ## 5.6 Sheet Metal — 🟡 (Defaults, Face, Flange, Convert, Hem, Fold, Contour Flange, Cut, Corner Seam, Corner Round, Corner Chamfer, Unfold / Refold, Flat Pattern, DXF; waiting for a visual check) · XL
 

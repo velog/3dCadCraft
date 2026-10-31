@@ -2814,6 +2814,51 @@ fn drawing_r60_reads() {
     ));
 }
 
+/// Revision 59: a Freeform Plane 40 × 20 on XY (4 × 4 faces) with its middle point 10 up.
+fn freeform_r59() -> PartDocument {
+    use cadcraft3d::part::freeform::FreeformOp;
+    use cadcraft3d::part::{BodyOp, BodyOpFeature, PlaneRef};
+    let mut p = PartDocument::default();
+    let mut op = FreeformOp::plane(PlaneRef::Origin(OriginPlane::XY), 40.0, 20.0);
+    op.set_offset(2, 2, [0.0, 0.0, 10.0]);
+    p.add_body_op(BodyOpFeature::new(BodyOp::Freeform(op)))
+        .unwrap();
+    p
+}
+
+/// The revision 59 Freeform reads back: its sheet rises in the middle, below the pulled point.
+#[test]
+fn freeform_r59_reads() {
+    let f = root().join("r59/freeform_r59.3dcadcraft");
+    if !f.exists() {
+        return; // written by CADCRAFT_WRITE_COMPAT=1 with the others
+    }
+    let project = Project::load(&f).unwrap();
+    let mut p = project
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    p.regenerate().unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    let zmax = p
+        .exact_bodies
+        .0
+        .iter()
+        .find(|s| s.name.as_deref() == Some("Freeform1"))
+        .unwrap()
+        .triangles()
+        .unwrap()
+        .into_iter()
+        .flatten()
+        .map(|q| q.z)
+        .fold(f64::MIN, f64::max);
+    assert!(zmax > 2.0 && zmax < 10.0, "{zmax}");
+}
+
 /// Revision 57: a frame member mitred at both ends, one `BodyOp::Prism`
 /// (an SHS 40x40x3, 400 long on its axis, ends at 45°).
 fn prism_r57() -> PartDocument {
@@ -3479,6 +3524,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("RipR50");
             project.add_document("Part1", DocumentData::Part(rip_r50()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r59/freeform_r59.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("FreeformR59");
+            project.add_document("Part1", DocumentData::Part(freeform_r59()));
             project.save(&f).unwrap();
         }
         let f = root().join("r58/between_r58.3dcadcraft");

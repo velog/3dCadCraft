@@ -1450,6 +1450,59 @@ fn four_sided_from(body: &Body, sides: Vec<Vec<mt::Edge>>, tangent: Option<f64>)
     Ok(rebuilt_body(surface_body(vec![face]), &[&body.solid], &rec))
 }
 
+/// A cubic B-spline sheet whose control net is `net` (rows along u, each the same length; at
+/// least 2 × 2): clamped uniform knots, so the sheet ends on the net's border (its corners are
+/// the net's corners); its four border curves are its edges. One face, a surface body.
+/// (3DCadCraft addition: Freeform Plane, a control cage edited point by point.)
+pub fn bspline_sheet(net: &[Vec<Vec3>]) -> Result<Body> {
+    let nu = net.len();
+    let nv = net.first().map_or(0, Vec::len);
+    if nu < 2 || nv < 2 || net.iter().any(|r| r.len() != nv) || nu * nv > 100_000 {
+        return Err(KernelError::Invalid("a control net of at least 2 × 2 equal rows".into()));
+    }
+    if net.iter().flatten().any(|p| !p.is_finite()) {
+        return Err(KernelError::Invalid("the control net has a point that is not finite".into()));
+    }
+    guard("freeform", || {
+        // Degree min(3, points - 1), clamped uniform knots.
+        let knots = |n: usize| -> (usize, mt::KnotVec) {
+            let d = (n - 1).min(3);
+            let inner = n - d - 1;
+            let mut k = vec![0.0; d + 1];
+            k.extend((1..=inner).map(|i| i as f64 / (inner + 1) as f64));
+            k.extend(vec![1.0; d + 1]);
+            (d, mt::KnotVec::from(k))
+        };
+        let ((_, ku), (_, kv)) = (knots(nu), knots(nv));
+        let cps: Vec<Vec<mt::Point3>> = net.iter().map(|r| r.iter().map(|q| p3(*q)).collect()).collect();
+        let surface = mt::BSplineSurface::try_new((ku.clone(), kv.clone()), cps.clone())
+            .map_err(|e| KernelError::Invalid(format!("the freeform surface: {e}")))?;
+        let curve = |k: &mt::KnotVec, pts: Vec<mt::Point3>| {
+            mt::BSplineCurve::try_new(k.clone(), pts).map_err(|e| KernelError::Invalid(format!("a freeform edge: {e}")))
+        };
+        // Borders: v = 0 (along u), u = 1 (along v), v = 1, u = 0.
+        let bottom = curve(&ku, cps.iter().map(|r| r[0]).collect())?;
+        let right = curve(&kv, cps[nu - 1].clone())?;
+        let top = curve(&ku, cps.iter().map(|r| r[nv - 1]).collect())?;
+        let left = curve(&kv, cps[0].clone())?;
+        let v00 = mt::Vertex::new(cps[0][0]);
+        let v10 = mt::Vertex::new(cps[nu - 1][0]);
+        let v11 = mt::Vertex::new(cps[nu - 1][nv - 1]);
+        let v01 = mt::Vertex::new(cps[0][nv - 1]);
+        let wire: mt::Wire = vec![
+            mt::Edge::new(&v00, &v10, mt::Curve::BSplineCurve(bottom)),
+            mt::Edge::new(&v10, &v11, mt::Curve::BSplineCurve(right)),
+            mt::Edge::new(&v01, &v11, mt::Curve::BSplineCurve(top)).inverse(),
+            mt::Edge::new(&v00, &v01, mt::Curve::BSplineCurve(left)).inverse(),
+        ]
+        .into();
+        let face = mt::Face::try_new(vec![wire], mt::Surface::BSplineSurface(surface)).map_err(|e| KernelError::Failed(format!("freeform: {e}")))?;
+        let mut rec = Rebuild::default();
+        rec.made(&face, Vec::new());
+        Ok(rebuilt_body(surface_body(vec![face]), &[], &rec))
+    })
+}
+
 /// The edges of `body` picked by points on them, chained into one closed loop (each turned to
 /// run along it). Call it under [`guard`]: sampling an intersection curve can fail in truck.
 pub(crate) fn picked_loop(body: &Body, at: &[Vec3]) -> Result<Vec<mt::Edge>> {

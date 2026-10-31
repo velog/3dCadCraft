@@ -1178,6 +1178,12 @@ pub(super) fn body_op(
         super::BodyOp::Sculpt(o) => so::sculpt(o, &f.id, cur, sheets),
         super::BodyOp::CopyObject(o) => super::copy_object::copy_object(o, &f.id, cur, sheets),
         super::BodyOp::Import(o) => super::import::import(o, &f.id, cur, sheets),
+        super::BodyOp::Freeform(o) => {
+            let pl = super::placement::plane_of(&o.plane, body, works)
+                .map_err(|e| User(format!("the base plane: {e}")))?;
+            let made = exact::surface_ops::freeform_sheet(&o.cage(&pl), &f.id).map_err(User)?;
+            Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
+        }
         super::BodyOp::Prism(o) => {
             let (loops, start, end) = o.sections().map_err(User)?;
             let made = exact::prism_between(&loops, &start, &end, &f.id).map_err(Kernel)?;

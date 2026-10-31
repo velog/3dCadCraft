@@ -38,6 +38,7 @@ pub mod export;
 pub mod expr;
 pub mod extrude;
 pub mod frame;
+pub mod freeform;
 pub mod history;
 pub mod hole;
 pub mod import;

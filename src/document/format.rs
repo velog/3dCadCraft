@@ -168,6 +168,8 @@ pub const FORMAT_VERSION: u32 = 1;
 ///   members without a Trim Solid) (2026-10-31).
 /// - 58: frame members between two points (`Skeleton::Between`: ends of
 ///   edges and sketch lines) (2026-10-31).
+/// - 59: Freeform (`BodyOp::Freeform`: a control cage and its moved points,
+///   a cubic B-spline sheet) (2026-10-31).
 /// - 60: drawing Break Out To Sketch (`BreakOutDepth::ToSketch`) (2026-10-31).
 pub const FORMAT_REVISION: u32 = 60;
 

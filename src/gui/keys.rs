@@ -133,7 +133,7 @@ impl CadCraftApp {
             && (self.tools.pattern_dialog.is_some()
                 || self.tools.has_dialog()
                 || self.tools.edit_pattern.is_some());
-        let open: [(bool, &'static str); 27] = [
+        let open: [(bool, &'static str); 28] = [
             (self.drw_open(), "Drawing View"),
             (matches!(self.mode, super::Mode::PickPlane(_)), "Pick Plane"),
             (self.sm.draft.is_some(), "Sheet Metal"),
@@ -167,6 +167,7 @@ impl CadCraftApp {
             (self.relink.is_some(), "Replace Reference"),
             (self.confirm_delete.is_some(), "Delete Features"),
             (self.rename.is_some(), "Rename"),
+            (self.ff_edit.is_some(), "Edit Form"),
         ];
         let command = extrude
             .or(prim)

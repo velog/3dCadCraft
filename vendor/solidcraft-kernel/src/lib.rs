@@ -124,7 +124,7 @@ pub use step_out::{ExportBody, ExportProduct, StepHeader, step_export_bodies, st
 pub use surface_kind::{FaceSurface, face_surface, face_surfaces};
 pub use surface_offset::offset_surface;
 pub use surfaces::{
-    bridge_edges, bridge_edges_tangent, copy_faces, extend, extrude_sheet, loft_sheet, patch_edges, patch_edges_tangent, patch_region, remove_faces, reverse_faces, revolve_sheet, stitch, sweep_sheet,
+    bridge_edges, bridge_edges_tangent, bspline_sheet, copy_faces, extend, extrude_sheet, loft_sheet, patch_edges, patch_edges_tangent, patch_region, remove_faces, reverse_faces, revolve_sheet, stitch, sweep_sheet,
     sweep_sheet_points, thicken, thicken_with_tolerance, trim, unstitch,
 };
 pub use sweep_path::sweep_path;

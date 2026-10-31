@@ -108,6 +108,20 @@ pub fn patch_region(plane: &Plane, prof: &ExactProfile, name: &str) -> Result<Ex
     ))
 }
 
+/// **Freeform** (spec 5.5): the cubic B-spline sheet of the control net `net` (rows along u): a
+/// new surface body `name` (one face `<name>:Face`).
+pub fn freeform_sheet(net: &[Vec<Point3>], name: &str) -> Result<ExactSolid, String> {
+    let net: Vec<Vec<_>> = net.iter().map(|r| r.iter().map(v3).collect()).collect();
+    let body = guarded("freeform", || sk::bspline_sheet(&net))?;
+    Ok(named(
+        body,
+        &[],
+        &format!("{name}:Face"),
+        Some(name.to_owned()),
+        true,
+    ))
+}
+
 /// What trims a surface.
 pub enum TrimBy<'a> {
     /// A plane (a work plane, an origin plane, a planar face), unbounded.

@@ -563,6 +563,51 @@ impl CadCraftApp {
                     delete_original: d.check(t, "Delete Original"),
                 })
             }
+            PartPlanned::FreeformPlane => {
+                // The base plane: the pick (a planar face, a work plane), the feature's in Edit
+                // Feature, else XY.
+                let picked = d
+                    .items_of("plane")
+                    .first()
+                    .and_then(|(item, _)| self.plane_of_pick(item));
+                let prev = match old {
+                    Some(BodyOp::Freeform(o)) => Some(o.clone()),
+                    _ => None,
+                };
+                let plane = picked
+                    .or_else(|| prev.as_ref().map(|o| o.plane.clone()))
+                    .unwrap_or(PlaneRef::Origin(crate::part::OriginPlane::XY));
+                let pl =
+                    crate::part::placement::plane_of(&plane, &self.part().body, &self.part().work)
+                        .map_err(|e| e.to_string())?;
+                let center = match d.items_of("center").first().and_then(|(_, at)| *at) {
+                    Some(h) => {
+                        let q = pl.project(&Point3::new(h[0], h[1], h[2]));
+                        [q.x, q.y]
+                    }
+                    None => prev.as_ref().map_or([0.0, 0.0], |o| o.center),
+                };
+                let faces =
+                    |label: &str| d.num(t, label).map_or(4, |v| v.round().max(0.0) as usize);
+                let mut op = crate::part::freeform::FreeformOp::plane(
+                    plane,
+                    d.num(t, "Length").unwrap_or(50.0),
+                    d.num(t, "Width").unwrap_or(50.0),
+                );
+                op.center = center;
+                op.length_faces = faces("Length Faces");
+                op.width_faces = faces("Width Faces");
+                op.symmetry = [d.check(t, "Symmetry X"), d.check(t, "Symmetry Y")];
+                // Edit Feature keeps the moved points that are still in the cage.
+                if let Some(o) = prev {
+                    op.moved = o
+                        .moved
+                        .into_iter()
+                        .filter(|m| m.i <= op.length_faces && m.j <= op.width_faces)
+                        .collect();
+                }
+                BodyOp::Freeform(op)
+            }
             _ => return Err("only the interface exists yet".into()),
         })
     }
@@ -706,6 +751,11 @@ impl CadCraftApp {
             BodyOp::Sculpt(_) => PartPlanned::Sculpt,
             BodyOp::CopyObject(_) => PartPlanned::CopyObject,
             BodyOp::Import(_) => PartPlanned::Import,
+            // A Freeform edits by its cage (Edit Form); its sizes from that panel's button.
+            BodyOp::Freeform(_) => {
+                self.ff_start(k);
+                return;
+            }
             _ => return,
         };
         self.start_part_planned(kind);

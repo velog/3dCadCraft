@@ -1365,6 +1365,7 @@ impl Planned {
                     | PartPlanned::Sculpt
                     | PartPlanned::CopyObject
                     | PartPlanned::Import
+                    | PartPlanned::FreeformPlane
                     | PartPlanned::Derive
                     | PartPlanned::MakePart
                     | PartPlanned::MakeComponents

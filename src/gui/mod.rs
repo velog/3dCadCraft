@@ -76,6 +76,7 @@ mod format_text;
 mod frame;
 mod frame_edit;
 mod frame_select;
+mod freeform;
 mod hole;
 mod hole_dims;
 mod hole_panel;
@@ -758,6 +759,8 @@ struct CadCraftApp {
     pattern_drag: Option<(sketch_tools::PatGrip, String)>,
     /// A manipulator being dragged: whose, the handle, its current value.
     manip_drag: Option<(ManipOwner, manip::Handle, f64)>,
+    /// Edit Form of a Freeform feature (`gui/freeform.rs`).
+    ff_edit: Option<freeform::FfEdit>,
     /// What the Hole arrow being dragged moves (`hole_dims`).
     hole_drag: Option<hole_dims::HoleHandle>,
     /// Measure into a field (the `>` menu, Edit Dimension), `measure_pick`.
@@ -1046,6 +1049,7 @@ impl CadCraftApp {
             cube_context: false,
             view_cube: Default::default(),
             manip_drag: None,
+            ff_edit: None,
             hole_drag: None,
             measure_pick: None,
             show_dims: None,
@@ -5731,6 +5735,8 @@ impl CadCraftApp {
         {
             d.pick(input);
         }
+        // --- Edit Form of a Freeform: its cage takes the pointer ---
+        let ff_took = self.ff_view_input(ui, &response, rect);
         let idle = !picking
             && self.work_draft.is_none()
             && self.blend_draft.is_none()
@@ -5752,6 +5758,8 @@ impl CadCraftApp {
             && self.prim_draft.is_none()
             && self.target_pick.is_none()
             && self.sm.draft.is_none()
+            && self.ff_edit.is_none()
+            && !ff_took
             && on_cube.is_none();
         // Edges first (vertex > edge > face, 0-ui §3.2); the other
         // categories come from `sel_item_at` (one pick order, one filter).
@@ -6823,6 +6831,7 @@ impl CadCraftApp {
         // --- 3D ---
         let painter = ui.painter_at(rect);
         self.render_view(ui, frame, rect, &painter);
+        self.ff_draw(&painter, rect, pointer);
 
         // --- overlays ---
         let hovered_work = match (&plane_hover, &body_hover) {

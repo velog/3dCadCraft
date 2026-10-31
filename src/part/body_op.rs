@@ -196,6 +196,8 @@ pub enum BodyOp {
     /// A frame member's body: its section between two planes (format
     /// revision 57).
     Prism(super::frame::PrismOp),
+    /// Freeform (format revision 59): a control cage's B-spline sheet.
+    Freeform(super::freeform::FreeformOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -443,6 +445,7 @@ impl BodyOpFeature {
             BodyOp::CopyObject(_) => "CopyObject",
             BodyOp::Import(_) => "Import",
             BodyOp::Prism(_) => "Prism",
+            BodyOp::Freeform(_) => "Freeform",
         }
     }
 
@@ -471,6 +474,7 @@ impl BodyOpFeature {
             BodyOp::CopyObject(o) => o.validate(),
             BodyOp::Import(o) => o.validate(),
             BodyOp::Prism(o) => o.validate(),
+            BodyOp::Freeform(o) => o.validate(),
         }
     }
 
@@ -485,7 +489,8 @@ impl BodyOpFeature {
             | BodyOp::Stitch(_)
             | BodyOp::CopyObject(_)
             | BodyOp::Import(_)
-            | BodyOp::Prism(_) => true,
+            | BodyOp::Prism(_)
+            | BodyOp::Freeform(_) => true,
             BodyOp::Sculpt(s) => s.operation == super::surface_op::SculptOperation::NewSolid,
             BodyOp::DeleteFace(_)
             | BodyOp::MoveBodies(_)
@@ -499,6 +504,7 @@ impl BodyOpFeature {
     pub fn fields(&self) -> Vec<(&'static str, Unit)> {
         match &self.op {
             BodyOp::Thicken(_) => vec![("distance", Unit::Mm)],
+            BodyOp::Freeform(_) => vec![("length", Unit::Mm), ("width", Unit::Mm)],
             BodyOp::Extend(_) | BodyOp::Ruled(_) => vec![("distance", Unit::Mm)],
             BodyOp::DeleteFace(_)
             | BodyOp::Stitch(_)
@@ -524,6 +530,8 @@ impl BodyOpFeature {
             (BodyOp::Thicken(t), "distance") => Some(t.distance),
             (BodyOp::Extend(o), "distance") => Some(o.distance),
             (BodyOp::Ruled(o), "distance") => Some(o.distance),
+            (BodyOp::Freeform(o), "length") => Some(o.length),
+            (BodyOp::Freeform(o), "width") => Some(o.width),
             (BodyOp::MoveBodies(m), f) => step_value(&mut m.clone(), f).map(|v| *v),
             _ => None,
         }
@@ -535,6 +543,8 @@ impl BodyOpFeature {
             (BodyOp::Thicken(t), "distance") => t.distance = v,
             (BodyOp::Extend(o), "distance") => o.distance = v,
             (BodyOp::Ruled(o), "distance") => o.distance = v,
+            (BodyOp::Freeform(o), "length") => o.length = v,
+            (BodyOp::Freeform(o), "width") => o.width = v,
             (BodyOp::MoveBodies(m), f) => {
                 if let Some(x) = step_value(m, f) {
                     *x = v;
@@ -592,6 +602,7 @@ impl BodyOpFeature {
             BodyOp::CopyObject(o) => o.describe(),
             BodyOp::Import(o) => o.describe(),
             BodyOp::Prism(_) => "Frame member".into(),
+            BodyOp::Freeform(o) => o.describe(),
         }
     }
 }

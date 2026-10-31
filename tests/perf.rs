@@ -1498,6 +1498,28 @@ fn speed_budgets() {
         ));
     }
 
+    // Freeform (spec 5.5): a 16 × 16 cage with points pulled (Edit Form rebuilds on every drag
+    // step, so this is the drag's frame budget).
+    {
+        use cadcraft3d::part::freeform::FreeformOp;
+        use cadcraft3d::part::{BodyOp, BodyOpFeature, OriginPlane, PlaneRef};
+        let mut op = FreeformOp::plane(PlaneRef::Origin(OriginPlane::XY), 200.0, 200.0);
+        op.length_faces = 16;
+        op.width_faces = 16;
+        for k in 3..14 {
+            op.set_offset(k, 8, [0.0, 0.0, (k as f64 - 8.0).abs() * 3.0]);
+        }
+        rows.push((
+            "freeform: a 16 x 16 cage with 11 points pulled (add_body_op)",
+            150.0,
+            median_ms(5, || {
+                let mut p = PartDocument::default();
+                p.add_body_op(BodyOpFeature::new(BodyOp::Freeform(op.clone())))
+                    .unwrap();
+            }),
+        ));
+    }
+
     // Bounded Trim (spec 5.4a T2) on the owner's Surface_test_4: the upper wave holed by the
     // rectangle tube of four walls, the lower one by the closed rectangle of Sketch4.
     {
