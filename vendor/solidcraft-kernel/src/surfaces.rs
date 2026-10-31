@@ -437,8 +437,25 @@ pub fn bridge_edges_tangent(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3], we
     }
     guard("bridge", || {
         // Whole boundaries (closed loops): one bridge per pair of sides.
-        if let (Some(la), Some(lb)) = (longest_loop(a, at_a)?, longest_loop(b, at_b)?) {
-            return bridge_loops(a, &la, b, &lb, weights);
+        if let (Some(la), Some(lb)) = (all_loops(a, at_a)?, all_loops(b, at_b)?) {
+            // The outer boundaries, and the holes paired nearest (when both surfaces have as
+            // many): a solid through the holes (3DCadCraft addition).
+            let mut faces = bridge_loops(a, &la[0], b, &lb[0], weights)?;
+            if la.len() == lb.len() && la.len() > 1 {
+                let centre = |lp: &[mt::Edge]| chain_points(lp).map(|p| centroid(&p)).unwrap_or(Vec3::new(0.0, 0.0, 0.0));
+                let mut free: Vec<usize> = (1..lb.len()).collect();
+                for ha in &la[1..] {
+                    let ca = centre(ha);
+                    let Some(k) = (0..free.len()).min_by(|x, y| ca.dist(centre(&lb[free[*x]])).total_cmp(&ca.dist(centre(&lb[free[*y]])))) else { break };
+                    let hb = &lb[free.remove(k)];
+                    faces.extend(bridge_loops(a, ha, b, hb, weights)?);
+                }
+            }
+            let mut rec = Rebuild::default();
+            for f in &faces {
+                rec.made(f, Vec::new());
+            }
+            return Ok(rebuilt_body(surface_body(faces), &[&a.solid, &b.solid], &rec));
         }
         // Open chains: one bridge on the chains' own edges (as the sides of whole boundaries).
         let ea = picked_chain(a, at_a)?;
@@ -488,9 +505,9 @@ pub fn bridge_edges_tangent(a: &Body, at_a: &[Vec3], b: &Body, at_b: &[Vec3], we
     })
 }
 
-/// The picked edges chained into closed loops, the longest of them; `None` when they do not all
+/// The picked edges chained into closed loops, the longest first; `None` when they do not all
 /// close (an open chain).
-fn longest_loop(body: &Body, at: &[Vec3]) -> Result<Option<Vec<mt::Edge>>> {
+fn all_loops(body: &Body, at: &[Vec3]) -> Result<Option<Vec<Vec<mt::Edge>>>> {
     let mut pool: Vec<mt::Edge> = Vec::new();
     for p in at {
         let e = edge_near(body, *p).ok_or_else(|| KernelError::Invalid(format!("no edge at {p:?}")))?;
@@ -515,7 +532,8 @@ fn longest_loop(body: &Body, at: &[Vec3]) -> Result<Option<Vec<mt::Edge>>> {
         loops.push(chain);
     }
     let len = |c: &Vec<mt::Edge>| chain_points(c).map(|p| p.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>()).unwrap_or(0.0);
-    Ok(loops.into_iter().max_by(|x, y| len(x).total_cmp(&len(y))))
+    loops.sort_by(|x, y| len(y).total_cmp(&len(x)));
+    Ok((!loops.is_empty()).then_some(loops))
 }
 
 /// The direction an edge runs at its start (`end`: at its end), from two close points.
@@ -555,7 +573,7 @@ fn loop_sides(lp: &[mt::Edge]) -> Option<Vec<Vec<mt::Edge>>> {
 /// One bridge per pair of sides of two closed boundaries (each cut at its corners, B run and
 /// turned the way that pairs the corners nearest A's): the faces share their corner lines, so
 /// they come out as one surface body.
-fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge], weights: [Option<f64>; 2]) -> Result<Body> {
+fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge], weights: [Option<f64>; 2]) -> Result<Vec<mt::Face>> {
     let none = || KernelError::Invalid("not supported yet: a closed boundary of one edge as a loft section".into());
     // A smooth boundary (a circle) has no corners: its edges' joints serve as corners, so it
     // pairs with the other boundary's corners (3DCadCraft addition).
@@ -691,11 +709,7 @@ fn bridge_loops(a: &Body, la: &[mt::Edge], b: &Body, lb: &[mt::Edge], weights: [
             faces = faces.iter().map(mt::Face::inverse).collect();
         }
     }
-    let mut rec = Rebuild::default();
-    for f in &faces {
-        rec.made(f, Vec::new());
-    }
-    Ok(rebuilt_body(surface_body(faces), &[&a.solid, &b.solid], &rec))
+    Ok(faces)
 }
 
 /// The ruled surface between point rows `qa` (v = 0) and `qb` (v = 1) whose normal agrees with

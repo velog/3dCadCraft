@@ -1399,13 +1399,16 @@ fn patch_polygon_at(p: &mut PartDocument, z: Real, pts: &[(Real, Real)]) -> Stri
     )
 }
 
-/// The whole free boundary of surface body `body` as an edge section.
+/// The whole free boundary of surface body `body` (holes included) as an edge section.
 fn boundary_of(p: &PartDocument, body: &str) -> Vec<SurfEdge> {
     let opts = cadcraft3d::kernel::TessellationOptions::default();
     let mut out = Vec::new();
     for f in cadcraft3d::part::select::faces_of_body(&p.body, body) {
         let face = p.body.face(f).unwrap();
-        for ce in &face.outer.coedges {
+        for ce in std::iter::once(&face.outer)
+            .chain(&face.inner)
+            .flat_map(|lp| &lp.coedges)
+        {
             if p.body.edge_faces(ce.edge).len() != 1 {
                 continue;
             }
@@ -1527,4 +1530,70 @@ fn loft_between_surfaces_with_smooth_boundaries() {
             close(v, frustum, 5e-3);
         }
     }
+}
+
+/// A planar patch of a 40 × 40 square with a 10 × 10 hole, on a plane `z` above XY.
+fn holed_patch_at(p: &mut PartDocument, z: Real) -> String {
+    let w = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: z,
+        })))
+        .unwrap();
+    let i = p
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(w),
+                ..Default::default()
+            },
+            &opts(),
+        )
+        .unwrap();
+    let sk = &mut p.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(-20.0, -20.0), Point2::new(20.0, 20.0))
+        .unwrap();
+    sk.add_rectangle_two_point(Point2::new(-5.0, -5.0), Point2::new(5.0, 5.0))
+        .unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let outer = r
+        .iter()
+        .max_by(|a, b| a.area().total_cmp(&b.area()))
+        .unwrap();
+    let id = p.sketches[i].id.clone();
+    op(
+        p,
+        BodyOp::Patch(PatchOp {
+            edges: Vec::new(),
+            sketch: Some(id),
+            profile: Some(ProfileRef::of(outer, outer.interior_point())),
+            solid: false,
+        }),
+    )
+}
+
+/// Loft between two surfaces with a hole each (spec 5.4a F13): the outer boundaries are bridged
+/// and so are the holes (paired nearest), so Output Solid is a solid with the hole through it:
+/// 40 × 40 × 10 − 10 × 10 × 10.
+#[test]
+fn loft_between_surfaces_with_holes() {
+    use cadcraft3d::part::{LoftFeature, LoftSection};
+    let mut p = PartDocument::default();
+    let a = holed_patch_at(&mut p, 0.0);
+    let b = holed_patch_at(&mut p, 10.0);
+    assert_eq!(boundary_of(&p, &a).len(), 8, "outer rim and hole");
+    let mut def = LoftFeature::new(vec![
+        LoftSection::Edges(boundary_of(&p, &a)),
+        LoftSection::Edges(boundary_of(&p, &b)),
+    ]);
+    def.output = Output::Solid;
+    p.add_loft(def).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    close(solid_volume(&p), 15000.0, 1e-4);
+    let solid = p.exact_bodies.0.iter().find(|s| !s.is_open()).unwrap();
+    let br = cadcraft3d::kernel::exact::to_brep(std::slice::from_ref(solid)).unwrap();
+    assert_eq!(
+        br.faces().count(),
+        10,
+        "2 holed faces, 4 outside, 4 in the hole"
+    );
 }
