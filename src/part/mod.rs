@@ -493,6 +493,12 @@ impl Feature {
         match self {
             Feature::Sweep(s) => s.sketch_ids(),
             Feature::Loft(l) => l.sketch_ids(),
+            Feature::SheetOp(o) => match &o.op {
+                sheet_metal::SheetOp::LoftedFlange {
+                    sketch1, sketch2, ..
+                } => vec![sketch1.as_str(), sketch2.as_str()],
+                _ => o.sketch().into_iter().collect(),
+            },
             f => f.sketch().into_iter().collect(),
         }
     }

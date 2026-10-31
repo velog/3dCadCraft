@@ -313,7 +313,8 @@ Properties its extents and bends; again goes back. **Rip** (Create): click the f
 (an edge midpoint or vertex on one of its edges) or the start and end; Face Extents takes a bend's round face.
 A converted closed shape (a tube) unfolds only after a rip. **Contour Roll** (Create): click a line of the
 open profile, then the axis (a line of the same sketch); Rolled Angle, Side, Direction, Unroll Method.
-**Lofted Flange** and **Punch Tool** open their whole panel (selectors take picks, every
+**Lofted Flange** (Create): click a curve of
+each profile's sketch; Die Form or Press Brake with its Facet Control. **Punch Tool** opens its whole panel (selectors take picks, every
 option works in the panel) with OK disabled: the interface comes first, the geometry after the owner's check.
 **Corner Round** and **Corner Chamfer** (Modify) round or cut the sheet's outside corners through the thickness, in
 the folded part and the flat pattern: click corner edges, or drag a box from empty space (left to right: window,

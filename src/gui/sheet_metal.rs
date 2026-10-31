@@ -319,7 +319,8 @@ impl SmDraft {
                 | SheetOp::CornerChamfer { .. }
                 | SheetOp::Bend { .. }
                 | SheetOp::Rip { .. }
-                | SheetOp::ContourRoll { .. } => Vec::new(),
+                | SheetOp::ContourRoll { .. }
+                | SheetOp::LoftedFlange { .. } => Vec::new(),
             },
             _ => Vec::new(),
         };
@@ -1710,7 +1711,8 @@ impl CadCraftApp {
                     | SheetOp::CornerChamfer { .. }
                     | SheetOp::Bend { .. }
                     | SheetOp::Rip { .. }
-                    | SheetOp::ContourRoll { .. } => {}
+                    | SheetOp::ContourRoll { .. }
+                    | SheetOp::LoftedFlange { .. } => {}
                     SheetOp::CornerSeam {
                         body,
                         a,
@@ -3613,6 +3615,7 @@ pub(super) fn feature_title(f: &Feature) -> &'static str {
             SheetOp::Bend { .. } => "Bend",
             SheetOp::Rip { .. } => "Rip",
             SheetOp::ContourRoll { .. } => "Contour Roll",
+            SheetOp::LoftedFlange { .. } => "Lofted Flange",
             SheetOp::Unfold { .. } => "Unfold",
             SheetOp::Refold { .. } => "Refold",
         },

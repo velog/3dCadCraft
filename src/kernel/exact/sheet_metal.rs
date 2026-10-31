@@ -957,8 +957,10 @@ pub fn edge_frame(
     ))
 }
 
+mod lofted;
 mod recognize;
 mod roll;
+pub use lofted::{LoftProfile, Lofted, lofted_flange};
 pub use recognize::{Recognized, Rip, RipKind, recognize, rip_open};
 pub use roll::{Roll, RollUnroll, contour_roll};
 

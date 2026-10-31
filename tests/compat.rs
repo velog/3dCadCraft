@@ -617,6 +617,63 @@ fn surfaces_r37() -> PartDocument {
     p
 }
 
+/// Revision 56: Lofted Flange — a 60 × 40 rectangle (z = 0) to a Ø30 circle
+/// on a work plane 50 above, Press Brake (facets no wider than 15 mm).
+fn lofted_flange_r56() -> PartDocument {
+    use cadcraft3d::part::sheet_metal::{FacetControl, RipSide, SheetOp, SheetOpFeature};
+    use cadcraft3d::part::{OriginPlane, PlaneRef, WorkDef, WorkFeature, WorkPlaneDef};
+    use cadcraft3d::sketch::Point2;
+    let mut p = PartDocument::default();
+    p.make_sheet_metal(None);
+    let o = SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(Point2::new(-30.0, -20.0), Point2::new(30.0, 20.0))
+        .unwrap();
+    let s1 = p.sketches[i].id.clone();
+    let wp = p
+        .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+            base: PlaneRef::Origin(OriginPlane::XY),
+            distance: 50.0,
+        })))
+        .unwrap();
+    let j = p
+        .create_sketch(
+            SketchPlacement {
+                plane: PlaneRef::Work(wp),
+                ..Default::default()
+            },
+            &o,
+        )
+        .unwrap();
+    let sk = &mut p.sketches[j].sketch;
+    let c = sk.add_point(Point2::new(0.0, 0.0));
+    let (a, b) = (
+        sk.add_point(Point2::new(15.0, 0.0)),
+        sk.add_point(Point2::new(-15.0, 0.0)),
+    );
+    sk.add_arc(c, a, b).unwrap();
+    let c2 = sk.add_point(Point2::new(0.0, 0.0));
+    sk.add_arc(c2, b, a).unwrap();
+    let s2 = p.sketches[j].id.clone();
+    p.add_sheet_op(SheetOpFeature::new(SheetOp::LoftedFlange {
+        sketch1: s1,
+        sketch2: s2,
+        press_brake: true,
+        facet: FacetControl::FacetDistance(15.0),
+        side: RipSide::Default,
+        radius: None,
+    }))
+    .unwrap();
+    p
+}
+
 /// Revision 55: Contour Roll — an L profile (30..50 along X, then 40 up)
 /// rolled 120° about the Z axis drawn in the same sketch.
 fn contour_roll_r55() -> PartDocument {
@@ -3230,6 +3287,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("ContextSplineR51");
             project.add_document("Part1", DocumentData::Part(context_spline_r51()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r56/lofted_flange_r56.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("LoftedFlangeR56");
+            project.add_document("Part1", DocumentData::Part(lofted_flange_r56()));
             project.save(&f).unwrap();
         }
         let f = root().join("r55/contour_roll_r55.3dcadcraft");

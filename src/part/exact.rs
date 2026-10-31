@@ -3731,6 +3731,121 @@ fn open_chain(ps: &super::PartSketch, skip: &[&str]) -> Result<Vec<[Real; 2]>, S
     Ok(pts)
 }
 
+/// A Lofted Flange's profile: the sketch's own lines and arcs as one chain
+/// (open or closed), in world coordinates. Die Form splits lines into pieces
+/// of at most 5 mm and arcs of at most 5°; Press Brake keeps lines whole and
+/// splits arcs by `facet`.
+fn loft_profile(
+    ps: &super::PartSketch,
+    press_brake: bool,
+    facet: super::sheet_metal::FacetControl,
+) -> Result<crate::kernel::exact::sheet_metal::LoftProfile, String> {
+    use crate::sketch::{Entity, Style};
+    let sk = &ps.sketch;
+    // (start, end, arc centre): an arc runs counter-clockwise from start to end.
+    type Seg = ([Real; 2], [Real; 2], Option<[Real; 2]>);
+    let mut segs: Vec<Seg> = Vec::new();
+    for (id, e) in sk.entities() {
+        if sk.style(id) != Style::Normal || ps.is_reference(id) {
+            continue;
+        }
+        let p = |k| sk.point(k).map(|q| [q.position.x, q.position.y]);
+        match e {
+            Entity::Line { start, end } => {
+                if let (Some(a), Some(b)) = (p(*start), p(*end)) {
+                    segs.push((a, b, None));
+                }
+            }
+            Entity::Arc { center, start, end } => {
+                if let (Some(c), Some(a), Some(b)) = (p(*center), p(*start), p(*end)) {
+                    segs.push((a, b, Some(c)));
+                }
+            }
+            _ => return Err("only lines and arcs make a lofted flange's profile".into()),
+        }
+    }
+    if segs.is_empty() {
+        return Err(format!("the sketch {} has no lines or arcs", ps.name));
+    }
+    let same = |p: [Real; 2], q: [Real; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-6;
+    let degree = |p: [Real; 2]| {
+        segs.iter()
+            .filter(|(a, b, _)| same(*a, p) || same(*b, p))
+            .count()
+    };
+    let open_end = segs
+        .iter()
+        .flat_map(|(a, b, _)| [*a, *b])
+        .find(|p| degree(*p) == 1);
+    let closed = open_end.is_none();
+    let start = open_end.unwrap_or(segs[0].0);
+    let mut used = vec![false; segs.len()];
+    let mut at = start;
+    let mut pts: Vec<[Real; 2]> = vec![start];
+    while let Some(k) =
+        (0..segs.len()).find(|&k| !used[k] && (same(segs[k].0, at) || same(segs[k].1, at)))
+    {
+        used[k] = true;
+        let (a, b, c) = segs[k];
+        let forward = same(a, at);
+        let end = if forward { b } else { a };
+        match c {
+            None => {
+                let len = (end[0] - at[0]).hypot(end[1] - at[1]);
+                let n = if press_brake {
+                    1
+                } else {
+                    (len / 5.0).ceil().max(1.0) as usize
+                };
+                for j in 1..=n {
+                    let w = j as Real / n as Real;
+                    pts.push([at[0] + (end[0] - at[0]) * w, at[1] + (end[1] - at[1]) * w]);
+                }
+            }
+            Some(c) => {
+                let r = (a[0] - c[0]).hypot(a[1] - c[1]);
+                let a0 = (a[1] - c[1]).atan2(a[0] - c[0]);
+                let mut a1 = (b[1] - c[1]).atan2(b[0] - c[0]);
+                while a1 <= a0 + 1e-12 {
+                    a1 += std::f64::consts::TAU;
+                }
+                let sweep = a1 - a0;
+                let n = if press_brake {
+                    facet.facets(r, sweep)
+                } else {
+                    (sweep / 5f64.to_radians()).ceil().max(1.0) as usize
+                };
+                for j in 1..=n {
+                    let w = j as Real / n as Real;
+                    let ang = if forward {
+                        a0 + sweep * w
+                    } else {
+                        a1 - sweep * w
+                    };
+                    pts.push([c[0] + r * ang.cos(), c[1] + r * ang.sin()]);
+                }
+            }
+        }
+        at = end;
+    }
+    if used.iter().any(|u| !u) {
+        return Err(format!(
+            "the lines and arcs of {} must form one chain (no branches, no gaps)",
+            ps.name
+        ));
+    }
+    if closed && pts.len() > 1 {
+        pts.pop();
+    }
+    Ok(crate::kernel::exact::sheet_metal::LoftProfile {
+        points: pts
+            .iter()
+            .map(|p| ps.sketch.plane.point_at(p[0], p[1]))
+            .collect(),
+        closed,
+    })
+}
+
 /// The ends of the sketch line with this entity key (sketch coordinates).
 fn sketch_line_ends(ps: &super::PartSketch, key: &str) -> Option<([Real; 2], [Real; 2])> {
     use crate::sketch::Entity;
@@ -3780,6 +3895,35 @@ pub(super) fn sheet_op(
     };
     let rv = rule.values();
     match &op.op {
+        SheetOp::LoftedFlange {
+            sketch1,
+            sketch2,
+            press_brake,
+            facet,
+            side,
+            radius,
+        } => {
+            use super::sheet_metal::RipSide;
+            rule.validate().map_err(User)?;
+            let a = loft_profile(sketch_of(sketch1)?, *press_brake, *facet).map_err(User)?;
+            let b = loft_profile(sketch_of(sketch2)?, *press_brake, *facet).map_err(User)?;
+            let alpha = match side {
+                RipSide::Default => 0.0,
+                RipSide::Flipped => 1.0,
+                RipSide::Both => 0.5,
+            };
+            let mut rv = rv;
+            if let Some(r) = radius {
+                rv.bend_radius = *r;
+            }
+            let lf = ksm::lofted_flange(&op.id, &rv, &a, &b, alpha, *press_brake).map_err(User)?;
+            let faces = lf.solid.face_names.len();
+            let mut state = SheetState::rolled(lf.model, faces);
+            state.extra_bends = lf.bends;
+            let mut next = solids.to_vec();
+            next.push(lf.solid);
+            Ok((next, Some((op.id.clone(), state))))
+        }
         SheetOp::ContourRoll {
             sketch,
             axis,

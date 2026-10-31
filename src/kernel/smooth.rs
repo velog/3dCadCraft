@@ -117,7 +117,9 @@ impl BRep {
     /// visible face (both on the same curved surface).
     pub(crate) fn is_smooth_seam(&self, a: FaceId, b: FaceId) -> bool {
         match (self.face_surface_of(a), self.face_surface_of(b)) {
-            (Some(x), Some(y)) => a != b && (same_curved(x, y) || self.same_free_form(a, b)),
+            (Some(x), Some(y)) => {
+                a != b && (same_curved(x, y) || self.same_free_form(a, b) || self.same_facets(a, b))
+            }
             _ => false,
         }
     }
@@ -131,6 +133,15 @@ impl BRep {
             return false;
         };
         fa.name.is_some() && fa.name == fb.name && self.free_form(a) && self.free_form(b)
+    }
+
+    /// Two flat facets of one smooth surface made of triangles (a Die Form
+    /// Lofted Flange): the same persistent name, marked `:Smooth:`.
+    fn same_facets(&self, a: FaceId, b: FaceId) -> bool {
+        let (Some(fa), Some(fb)) = (self.face(a), self.face(b)) else {
+            return false;
+        };
+        fa.name.as_deref().is_some_and(|n| n.contains(":Smooth:")) && fa.name == fb.name
     }
 
     /// A face whose display mesh leaves its (plane) surface: free-form.
@@ -159,7 +170,12 @@ impl BRep {
         let Some(own) = self.face_surface_of(f) else {
             return vec![f];
         };
-        if matches!(own, Surface::Plane(_) | Surface::Extrusion(_)) && !self.free_form(f) {
+        let facets = self
+            .face(f)
+            .and_then(|x| x.name.as_deref())
+            .is_some_and(|n| n.contains(":Smooth:"));
+        if matches!(own, Surface::Plane(_) | Surface::Extrusion(_)) && !self.free_form(f) && !facets
+        {
             return vec![f];
         }
         let map = self.edge_face_map();

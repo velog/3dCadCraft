@@ -197,6 +197,14 @@ impl OrbitCamera {
 
     /// Camera → clip transform with wgpu's `[0, 1]` depth range.
     pub fn projection(&self, aspect: Real) -> Matrix4<Real> {
+        // A minimised window has a viewport of zero size: nalgebra panics on
+        // a zero aspect ratio (the app crashed when another window came to
+        // the front and minimised it).
+        let aspect = if aspect.is_finite() && aspect > 1e-6 {
+            aspect
+        } else {
+            1.0
+        };
         let far = self.distance * 100.0;
         let gl = if self.is_ortho() {
             let h = self.distance * (self.fov_y / 2.0).tan();
@@ -479,6 +487,14 @@ fn aspect(rect: Rect) -> Real {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_viewport_of_zero_size_does_not_panic() {
+        let cam = super::OrbitCamera::default();
+        for aspect in [0.0, f64::NAN, f64::INFINITY] {
+            assert!(cam.projection(aspect).iter().all(|v| v.is_finite()));
+        }
+    }
+
     #[test]
     fn a_moved_view_shows_moved_points_in_the_same_place() {
         use crate::kernel::Transform3;

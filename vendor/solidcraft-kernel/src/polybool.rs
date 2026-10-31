@@ -578,6 +578,35 @@ fn polys_boolean(pa: Vec<Poly>, pb: Vec<Poly>, size: f64, op: BoolOp, eps: f64, 
     rebuild(polys, size, sources).map(Some)
 }
 
+/// 3DCadCraft addition: a B-rep body of planar faces from a closed triangle mesh wound outward
+/// (the Lofted Flange's thickened strip). The history is over the mesh alone: a face is (a
+/// piece of) triangle `face` of operand 0.
+pub fn polyhedron_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
+    if triangles.len() > MAX_POLYS {
+        return Err(KernelError::Invalid(format!("polyhedron with {} triangles", triangles.len())));
+    }
+    let get = |i: u32| positions.get(i as usize).copied();
+    let (mut lo, mut hi) = (Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN));
+    for p in positions {
+        if !(p.x.is_finite() && p.y.is_finite() && p.z.is_finite()) {
+            return Err(KernelError::Invalid("polyhedron with a non-finite point".into()));
+        }
+        lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+        hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+    }
+    let size = (hi - lo).len().max(1e-6);
+    let mut polys = Vec::with_capacity(triangles.len());
+    for (face, t) in triangles.iter().enumerate() {
+        let (Some(p), Some(q), Some(r)) = (get(t[0]), get(t[1]), get(t[2])) else {
+            return Err(KernelError::Invalid("polyhedron triangle index out of range".into()));
+        };
+        let Some(n) = (q - p).cross(r - p).normalized() else { continue };
+        polys.push(Poly { v: vec![p, q, r], plane: PlaneEq { n, w: n.dot(p) }, src: FaceOrigin::Face { operand: 0, face } });
+    }
+    let sources = Sources { counts: vec![(triangles.len(), 0)], edges: vec![None] };
+    rebuild(polys, size, &sources)
+}
+
 /// What a rebuilt body's history is over: each operand's face and edge counts and, where it is
 /// a B-rep, its edges in its edge order (the faces each bounds, and its ends).
 struct Sources {

@@ -1850,7 +1850,7 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::SmPlanned(PlannedKind::LoftedFlange))
         .alias(&["SLF"])
         .at(&[Place::Ribbon("Sheet Metal", "Create")]).env(PART)
-        .tip("A transition between two profiles (square to round), die formed or press brake (panel only: the geometry comes next)").spec("5.6-sheet-metal.md"),
+        .tip("A transition between two profiles (square to round), die formed or press brake").spec("5.6-sheet-metal.md"),
     c("sm.rip", "Rip", "Разрез", Icon::SmRip)
         .run(Action::SmPlanned(PlannedKind::Rip))
         .alias(&["SRP"])
@@ -2824,7 +2824,10 @@ mod tests {
         assert!(!interface_only(Action::AsmPlanned(Ap::Notch)));
         assert!(!interface_only(Action::AsmPlanned(Ap::InsertFrame)));
         assert!(!interface_only(Action::AsmPlanned(Ap::Pattern)));
-        assert!(interface_only(Action::SmPlanned(PlannedKind::LoftedFlange)));
+        assert!(interface_only(Action::SmPlanned(PlannedKind::Punch)));
+        assert!(!interface_only(Action::SmPlanned(
+            PlannedKind::LoftedFlange
+        )));
         assert!(!interface_only(Action::SmPlanned(PlannedKind::ContourRoll)));
         assert!(!interface_only(Action::SmPlanned(PlannedKind::CornerRound)));
         assert!(!interface_only(Action::PartPlanned(Pp::Stitch)));

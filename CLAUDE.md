@@ -1117,7 +1117,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   in the sketch plane, joined one by one (`planar_regions_boolean` does not join regions within its second set),
   revolved; the state's model is a Contour Flange as wide as the unrolled length (its flat is the roll's), so
   `SheetState::rolled` blocks further sheet features (`blocked()`). Planned panels' sketch curve items are
-  `<sketch id>|<entity key>`. Model vertex picking tests
+  `<sketch id>|<entity key>`.
+  Lofted Flange (revision 56, `kernel/exact/sheet_metal/lofted.rs`): a strip of triangles thickened and made a
+  B-rep of planar faces by vendor `polyhedron_body` (`mesh_body` gives a mesh body with no B-rep: `to_brep` shows
+  nothing). Faces named `<id>:Smooth:<side>` are one smooth face for display (`smooth.rs::same_facets`). The flat is
+  developed over the coarse strip (one triangle across each generator); `SheetState::extra_bends` holds a Press
+  Brake's bend lines. A zero-size viewport (a minimised window) made `OrbitCamera::projection` panic: the aspect
+  falls back to 1. Model vertex picking tests
   visibility along the ray through the point's own pixel (`vertex_under`; the cursor's ray hid edge midpoints).
   Laser-ready corners are per Flange feature (`relief_placement`, `laser_corners`; serde defaults = the old
   behaviour, so `tests/compat` sheet fixtures keep their volumes and face names — never change corner geometry

@@ -3785,6 +3785,69 @@ fn speed_budgets() {
             }),
         ));
     }
+    // Lofted Flange (docs/spec/5.6 §6.1k): a 60 × 40 rectangle to a Ø30
+    // circle 50 above, Die Form, + its flat.
+    {
+        use cadcraft3d::part::sheet_metal::{FacetControl, RipSide, SheetOp, SheetOpFeature};
+        use cadcraft3d::part::{OriginPlane, PlaneRef, WorkDef, WorkFeature, WorkPlaneDef};
+        use cadcraft3d::sketch::Point2;
+        let mut base = PartDocument::default();
+        base.make_sheet_metal(None);
+        let o = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = base
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+            .unwrap();
+        base.sketches[i]
+            .sketch
+            .add_rectangle_two_point(Point2::new(-30.0, -20.0), Point2::new(30.0, 20.0))
+            .unwrap();
+        let s1 = base.sketches[i].id.clone();
+        let wp = base
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XY),
+                distance: 50.0,
+            })))
+            .unwrap();
+        let j = base
+            .create_sketch(
+                SketchPlacement {
+                    plane: PlaneRef::Work(wp),
+                    ..Default::default()
+                },
+                &o,
+            )
+            .unwrap();
+        let sk = &mut base.sketches[j].sketch;
+        let c = sk.add_point(Point2::new(0.0, 0.0));
+        let (a, b) = (
+            sk.add_point(Point2::new(15.0, 0.0)),
+            sk.add_point(Point2::new(-15.0, 0.0)),
+        );
+        sk.add_arc(c, a, b).unwrap();
+        let c2 = sk.add_point(Point2::new(0.0, 0.0));
+        sk.add_arc(c2, b, a).unwrap();
+        let op = SheetOpFeature::new(SheetOp::LoftedFlange {
+            sketch1: s1,
+            sketch2: base.sketches[j].id.clone(),
+            press_brake: false,
+            facet: FacetControl::default(),
+            side: RipSide::Default,
+            radius: None,
+        });
+        rows.push((
+            "sheet metal: Lofted Flange rectangle to circle, Die Form + flat",
+            1000.0,
+            median_ms(3, || {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                p.add_sheet_op(op.clone()).unwrap();
+                assert!(p.flat_extents().is_some());
+            }),
+        ));
+    }
     // Bill of Materials (docs/spec/3.6): 2000 occurrences of 50 parts,
     // merged by part number, as the window computes them every frame.
     {

@@ -1187,6 +1187,28 @@ pub enum SheetOp {
         #[serde(default, skip_serializing_if = "RipSide::is_default")]
         side: RipSide,
     },
+    /// Lofted Flange (format revision 56): a transition between the profiles
+    /// of two sketches (lines and arcs, both open or both closed), smooth (Die
+    /// Form) or of flat facets (Press Brake); the flat pattern is the strip
+    /// developed.
+    LoftedFlange {
+        /// The first profile's sketch.
+        sketch1: String,
+        /// The second's.
+        sketch2: String,
+        /// Press Brake (facets with bend lines); otherwise Die Form.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        press_brake: bool,
+        /// Press Brake: how arcs become facets.
+        #[serde(default)]
+        facet: FacetControl,
+        /// Where the profiles lie in the thickness.
+        #[serde(default, skip_serializing_if = "RipSide::is_default")]
+        side: RipSide,
+        /// Bend radius of the facets' bends (flat pattern notes); `None`: the rule's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<Real>,
+    },
     /// Contour Roll (format revision 55): an open chain of sketch lines,
     /// thickened and bent at its corners, revolved about a line of the same
     /// sketch; its flat pattern is the chain developed, as long as the angle
@@ -1211,6 +1233,37 @@ pub enum SheetOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         radius: Option<Real>,
     },
+}
+
+/// How a Press Brake Lofted Flange splits its arcs into facets.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum FacetControl {
+    /// The chord stays this close to the arc (mm).
+    ChordTolerance(Real),
+    /// The chord turns at most this much from the arc's tangent (radians).
+    FacetAngle(Real),
+    /// No facet wider than this (mm).
+    FacetDistance(Real),
+}
+
+impl Default for FacetControl {
+    fn default() -> Self {
+        Self::ChordTolerance(0.1)
+    }
+}
+
+impl FacetControl {
+    /// How many facets an arc of `radius` turning `sweep` gets.
+    pub fn facets(self, radius: Real, sweep: Real) -> usize {
+        let step = match self {
+            Self::ChordTolerance(c) if c > 0.0 && c < radius => 2.0 * (1.0 - c / radius).acos(),
+            Self::ChordTolerance(_) => std::f64::consts::PI,
+            Self::FacetAngle(a) => 2.0 * a,
+            Self::FacetDistance(d) => 2.0 * (d / (2.0 * radius)).min(1.0).asin(),
+        };
+        let step = step.max(1e-3);
+        ((sweep.abs() / step).ceil() as usize).clamp(1, 720)
+    }
 }
 
 /// A Contour Roll's Unroll Method: where its neutral cylinder lies.
@@ -1377,6 +1430,7 @@ impl SheetOpFeature {
             SheetOp::Bend { .. } => "Bend",
             SheetOp::Rip { .. } => "Rip",
             SheetOp::ContourRoll { .. } => "ContourRoll",
+            SheetOp::LoftedFlange { .. } => "LoftedFlange",
         }
     }
 
@@ -1387,6 +1441,7 @@ impl SheetOpFeature {
             | SheetOp::Contour { sketch, .. }
             | SheetOp::ContourRoll { sketch, .. }
             | SheetOp::Cut { sketch, .. } => Some(sketch),
+            SheetOp::LoftedFlange { sketch1, .. } => Some(sketch1),
             _ => None,
         }
     }
@@ -1395,7 +1450,7 @@ impl SheetOpFeature {
     pub fn creates_body(&self) -> bool {
         matches!(
             self.op,
-            SheetOp::Contour { .. } | SheetOp::ContourRoll { .. }
+            SheetOp::Contour { .. } | SheetOp::ContourRoll { .. } | SheetOp::LoftedFlange { .. }
         )
     }
 
@@ -1612,6 +1667,19 @@ impl SheetOpFeature {
             SheetOp::ContourRoll { sketch, angle, .. } => {
                 format!("Contour Roll of {sketch}, {:.1}°", angle.to_degrees())
             }
+            SheetOp::LoftedFlange {
+                sketch1,
+                sketch2,
+                press_brake,
+                ..
+            } => format!(
+                "Lofted Flange {sketch1} – {sketch2}, {}",
+                if *press_brake {
+                    "Press Brake"
+                } else {
+                    "Die Form"
+                }
+            ),
         }
     }
 }
@@ -1636,9 +1704,13 @@ pub struct SheetState {
     /// A converted shape that closes on itself: no flat pattern until a Rip
     /// opens it (`model` is then the sheet walked without the closing bends).
     pub closed: Option<std::sync::Arc<ClosedSheet>>,
-    /// A Contour Roll: `model` is its flat pattern's (the profile developed),
-    /// not its rolled shape, so no further sheet feature works on it yet.
+    /// A Contour Roll or Lofted Flange: `model` is its flat pattern's (the
+    /// profile developed), not its shape, so no further sheet feature works
+    /// on it yet.
     pub rolled: bool,
+    /// Bend lines of the flat the model does not hold (a Press Brake Lofted
+    /// Flange's facet edges).
+    pub extra_bends: Vec<ksm::BendLine>,
 }
 
 /// A converted sheet that closes on itself (spec 5.6 §6.1g): the body stays
@@ -1678,7 +1750,15 @@ impl SheetState {
             flat_brep: Default::default(),
             closed: None,
             rolled: false,
+            extra_bends: Vec::new(),
         }
+    }
+
+    /// The flat's bend lines.
+    pub fn bend_lines(&self) -> Vec<ksm::BendLine> {
+        let mut v = ksm::bends(&self.model);
+        v.extend(self.extra_bends.iter().cloned());
+        v
     }
 
     /// A Contour Roll's state: `model` gives its flat pattern only.
@@ -1693,8 +1773,7 @@ impl SheetState {
     pub fn blocked(&self) -> Option<String> {
         self.closed_note().or_else(|| {
             self.rolled.then(|| {
-                "not yet: sheet metal features on a Contour Roll (its flat pattern works)"
-                    .to_owned()
+                "not yet: sheet metal features on a Contour Roll or Lofted Flange (its flat pattern works)".to_owned()
             })
         })
     }
@@ -1742,7 +1821,7 @@ impl SheetState {
                 Some(FlatPattern {
                     body: body.to_owned(),
                     size: ksm::flat_size(&self.model).ok()?,
-                    bends: ksm::bends(&self.model),
+                    bends: self.bend_lines(),
                     solid: ksm::flat_solid(&self.model, body).ok()?,
                 })
             })
@@ -2044,7 +2123,7 @@ impl super::PartDocument {
             return Err(why);
         }
         let loops = ksm::flat_profile(&st.model)?;
-        let bends = ksm::bends(&st.model);
+        let bends = st.bend_lines();
         Ok(dxf(&loops, &bends))
     }
 
@@ -2168,7 +2247,7 @@ impl super::PartDocument {
             return Vec::new();
         };
         let z = ksm::thickness(&st.model) * 1.002;
-        ksm::bends(&st.model)
+        st.bend_lines()
             .into_iter()
             .map(|b| {
                 let (s, e) = (b.start, b.end);

@@ -50,6 +50,7 @@ impl PlannedKind {
                 | PlannedKind::CornerChamfer
                 | PlannedKind::Rip
                 | PlannedKind::ContourRoll
+                | PlannedKind::LoftedFlange
         )
     }
 
@@ -577,6 +578,29 @@ impl Planned {
                         .flatten(),
                 })
             }
+            PlannedKind::LoftedFlange => {
+                use crate::part::sheet_metal::{FacetControl, RipSide};
+                // Sketch curve items are `<sketch id>|<entity key>`.
+                let sketch = |key: &str| {
+                    self.items(key)
+                        .first()
+                        .and_then(|(label, _)| label.split_once('|'))
+                        .map(|(s, _)| s.to_owned())
+                        .unwrap_or_default()
+                };
+                Some(SheetOp::LoftedFlange {
+                    sketch1: sketch("profile1"),
+                    sketch2: sketch("profile2"),
+                    press_brake: self.press_brake,
+                    facet: match self.facet {
+                        0 => FacetControl::ChordTolerance(self.chord),
+                        1 => FacetControl::FacetAngle(self.facet_angle.to_radians()),
+                        _ => FacetControl::FacetDistance(self.facet_distance),
+                    },
+                    side: RipSide::Default,
+                    radius: self.radius,
+                })
+            }
             PlannedKind::ContourRoll => {
                 use crate::part::sheet_metal::{RipSide, RollMethod};
                 // Sketch curve items are `<sketch id>|<entity key>`.
@@ -754,6 +778,36 @@ impl Planned {
                 if let Some(e) = edge {
                     p.add("edge", (e.clone(), Vec::new()));
                 }
+                Some(p)
+            }
+            SheetOp::LoftedFlange {
+                sketch1,
+                sketch2,
+                press_brake,
+                facet,
+                radius,
+                ..
+            } => {
+                use crate::part::sheet_metal::FacetControl;
+                let mut p = Self::new(PlannedKind::LoftedFlange, rule);
+                p.press_brake = *press_brake;
+                p.radius = *radius;
+                match facet {
+                    FacetControl::ChordTolerance(c) => {
+                        p.facet = 0;
+                        p.chord = *c;
+                    }
+                    FacetControl::FacetAngle(a) => {
+                        p.facet = 1;
+                        p.facet_angle = a.to_degrees();
+                    }
+                    FacetControl::FacetDistance(d) => {
+                        p.facet = 2;
+                        p.facet_distance = *d;
+                    }
+                }
+                p.add("profile1", (format!("{sketch1}|"), Vec::new()));
+                p.add("profile2", (format!("{sketch2}|"), Vec::new()));
                 Some(p)
             }
             SheetOp::ContourRoll {
@@ -1047,8 +1101,13 @@ impl Planned {
     fn lofted_flange(&mut self, ui: &mut egui::Ui, rule: &SheetRuleValues) {
         psection(ui, "smp_loft_rule", "Sheet Metal Rule", |ui| {
             plabel(ui, "Rule");
-            ui.checkbox(&mut self.follow_defaults, "Follow Defaults")
-                .on_hover_text("The part's thickness and rule (off: a rule of its own)");
+            ui.add_enabled(
+                false,
+                egui::Checkbox::new(&mut self.follow_defaults, "Follow Defaults"),
+            )
+            .on_disabled_hover_text(
+                "The part's thickness and rule (a rule of its own is not there yet: docs/spec/5.6-sheet-metal.md)",
+            );
             ui.end_row();
             plabel(ui, "Thickness");
             ui.weak(format!("{:.3} mm", rule.thickness));
@@ -1065,8 +1124,10 @@ impl Planned {
             ui.end_row();
             if self.press_brake {
                 plabel(ui, "Bends");
-                ui.checkbox(&mut self.converge, "Converge")
-                    .on_hover_text("The facets' bends meet near one point in the flat");
+                ui.add_enabled(false, egui::Checkbox::new(&mut self.converge, "Converge"))
+                    .on_disabled_hover_text(
+                        "The facets' bends meet near one point in the flat (not yet: docs/spec/5.6-sheet-metal.md)",
+                    );
                 ui.end_row();
                 plabel(ui, "Facet Control");
                 let ways = [
