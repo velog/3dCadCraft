@@ -369,6 +369,13 @@ pub(crate) fn rebuilt(result: Solid, operands: &[&Solid], rec: &Rebuild) -> Resu
     build(result, &solid_counts(operands), faces, edges.as_ref())
 }
 
+/// [`rebuilt`] of a local edit of an oriented body: it stays oriented, so the whole is not meshed
+/// to check (3DCadCraft).
+pub(crate) fn rebuilt_placed(result: Solid, operands: &[&Solid], rec: &Rebuild) -> Result<Body> {
+    let (faces, edges) = rec.history(&result, operands).unzip();
+    build_placed(result, &solid_counts(operands), faces, edges.as_ref(), false, None, true)
+}
+
 /// [`rebuilt`] for a body made as it is (a surface, which `Body::new` does not take): its
 /// solid is the one the operation built.
 pub(crate) fn rebuilt_body(body: Body, operands: &[&Solid], rec: &Rebuild) -> Body {

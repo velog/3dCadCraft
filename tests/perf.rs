@@ -2183,12 +2183,12 @@ fn speed_budgets() {
         }),
     ));
     // Countersinks at both ends: a ray per hole finds where it leaves the
-    // plate. 90° on faces square to the hole: the kernel's chamfer of each
-    // bore rim after the bores (cone tools through the general Boolean:
-    // 6 holes 2.3 s, 36 holes ~40 s, ROADMAP K4).
+    // plate. 90° on faces square to the hole: each bore rim's faces edited
+    // after the bores (`sk::chamfer_loops`; cone tools through the general
+    // Boolean: 6 holes 2.3 s, 36 holes ~40 s; the kernel's chamfer 0.95 s).
     rows.push((
         "hole: 6 holes chamfered at both ends (countersink + far side)",
-        1000.0,
+        200.0,
         median_ms(3, || {
             use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, SeatType, Termination};
             let mut p = plate.clone();
@@ -2211,7 +2211,7 @@ fn speed_budgets() {
     ));
     rows.push((
         "hole: 36 countersunk 90° Ø5.5 holes in one feature (rim chamfers)",
-        5000.0,
+        1500.0,
         median_ms(3, || {
             use cadcraft3d::part::{HoleCenter, HoleFeature, HoleSpec, SeatType, Termination};
             let mut p = plate.clone();

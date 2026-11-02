@@ -1280,7 +1280,9 @@ pub fn chamfer_circles(
             .filter(|&j| !done[j] && (circles[j].distance - d).abs() <= 1e-9 * d.max(1.0))
             .collect();
         let pts: Vec<sg::Vec3> = group.iter().map(|&j| v3(&circles[j].at)).collect();
-        let body = guarded("chamfer", || sk::chamfer(&cur.body, &pts, d))?;
+        // Rims of holes on faces square to them: by editing the faces, no Boolean.
+        let body = guarded("chamfer", || sk::chamfer_loops(&cur.body, &pts, d))
+            .or_else(|_| guarded("chamfer", || sk::chamfer(&cur.body, &pts, d)))?;
         let mut next = blend_result(&cur, body, prefix, "Bevel");
         let new: Vec<usize> = next
             .face_names
@@ -1295,9 +1297,10 @@ pub fn chamfer_circles(
             .map(|(f, _)| f)
             .collect();
         if !new.is_empty() {
-            let samples = face_samples(&next)?;
+            // A corner of each bevel says whose it is: no mesh of the whole body.
+            let samples = next.body.face_corners();
             for f in new {
-                let Some(p) = samples.get(f).copied().flatten() else {
+                let Some(p) = samples.get(f).copied().flatten().map(p3) else {
                     continue;
                 };
                 let near = group.iter().copied().min_by(|&a, &b| {

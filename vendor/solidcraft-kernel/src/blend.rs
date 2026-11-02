@@ -2106,6 +2106,66 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
     }
 }
 
+/// Equal chamfers of edges that are whole loops of planar faces (the rims of holes), by editing the
+/// faces: each face shrinks, its walls are trimmed, a bevel goes between them. No Boolean and none of
+/// [`chamfer`]'s other routes or checks, which the caller's knowledge of the rims stands in for
+/// (3DCadCraft: hole rims known to lie on a face square to the hole). Refused when the edges are not
+/// such loops or the size does not fit them.
+pub fn chamfer_loops(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
+    use mt::{BoundedCurve, ParametricCurve};
+    body.require_brep("chamfer")?;
+    if !(distance.is_finite() && distance > 1e-6 && distance < 1e6) {
+        return Err(KernelError::Invalid("chamfer size must be positive".into()));
+    }
+    let counts = record::counts(&[body]);
+    let mut lc = body.clone().with_checked_history(Some(History::identity(body)), &counts);
+    let near = (body.size() * 1e-6).max(1e-6);
+    for p in edges {
+        let size = lc.size();
+        // The body itself, not a copy: the edit makes a new solid and leaves this one as it is.
+        let holder = lc.solid.clone();
+        let solid: &Solid = &holder;
+        // The wire of a planar face holding an edge through the point: found on the curves, without
+        // a mesh of the whole body for every rim.
+        let gap = |e: &mt::Edge| {
+            let c = e.curve();
+            let (t0, t1) = c.range_tuple();
+            let at = |k: usize| {
+                let q = c.subs(t0 + (t1 - t0) * k as f64 / 16.0);
+                Vec3::new(q.x, q.y, q.z)
+            };
+            let (mut best, mut len) = (f64::INFINITY, 0.0);
+            for k in 0..16 {
+                let (a, b) = (at(k), at(k + 1));
+                best = f64::min(best, p.dist_to_segment(a, b));
+                len += (b - a).len();
+            }
+            // The chords' sag stays under 2 % of the curve's length.
+            if best <= len * 0.02 + near { Some(best) } else { None }
+        };
+        let ids = guard("chamfer", || {
+            let mut found: Option<(f64, Vec<mt::EdgeID>)> = None;
+            for f in solid.face_iter().filter(|f| matches!(f.oriented_surface(), mt::Surface::Plane(_))) {
+                for w in f.absolute_boundaries() {
+                    if let Some(d) = w.edge_iter().filter_map(&gap).min_by(f64::total_cmp)
+                        && found.as_ref().is_none_or(|(x, _)| d < *x)
+                    {
+                        found = Some((d, w.edge_iter().map(|e| e.id()).collect()));
+                    }
+                }
+            }
+            found.map(|(_, ids)| ids).ok_or_else(|| unsupported("no whole loop of a planar face through the point"))
+        })?;
+        let Some(res) = crate::loopblend::loop_blend(solid, &ids, size, distance, false) else {
+            return Err(unsupported("the edges are not a whole loop of a planar face"));
+        };
+        let (made, rec) = guard("chamfer", || res)?;
+        // An edit of an oriented body stays oriented: no orientation mesh of the whole each time.
+        lc = record::after(record::rebuilt_placed(made, &[solid], &rec)?, &lc, &counts);
+    }
+    Ok(lc)
+}
+
 /// [`chamfer`], once the size is known to fit.
 fn chamfer_built(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
     // Each step's result carries its history over `[body]`.

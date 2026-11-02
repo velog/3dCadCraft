@@ -1897,6 +1897,7 @@ pub(super) fn hole(
     let points = body_points(body);
     let mut rays: Option<super::rib::Rays> = None;
     let (mut seats, mut bores) = (Vec::new(), Vec::new());
+    let mut jobs: Vec<ToolJob> = Vec::new();
     // 90° countersinks on a face square to the hole: the kernel's chamfer of
     // the bore's rim after the bores (36 holes 5 s instead of ~40 s with cone
     // tools, ROADMAP K4). Their cone tools are kept for Pattern / Mirror and
@@ -2033,52 +2034,28 @@ pub(super) fn hole(
         }
         let last = parts.len().saturating_sub(1);
         for (j, prof) in parts.iter().enumerate() {
-            let pts: Vec<[Real; 2]> = prof.iter().map(|x| x.0).collect();
-            let names: Vec<String> = prof.iter().map(|x| format!("{}:{n}", x.1)).collect();
-            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
             let seam = 0.2 + 0.613 * k as Real + 0.29 * j as Real;
-            // Countersinks (start and far side) as tapered discs: a cone of
-            // revolution sent the Boolean down a slow path (~1 s a hole).
-            let cone = prof.len() == 4
-                && prof[0].0[0] == 0.0
-                && prof[3].0[0] == 0.0
-                && matches!(prof[1].1, "CSink" | "FarCSink");
-            let tool = if cone {
-                // Start: wide end at the top (point 1), narrow inside the bore
-                // (point 2). Far side: wide below the far face (point 2).
-                let n: Vec<&str> = names.iter().map(String::as_str).collect();
-                let (wide, narrow, caps) = if prof[1].1 == "CSink" {
-                    (prof[1].0, prof[2].0, [n[0], n[1], n[2]])
-                } else {
-                    (prof[2].0, prof[1].0, [n[2], n[1], n[0]])
-                };
-                exact::cone_tool(
-                    *o,
-                    up,
-                    seam,
-                    (wide[0], wide[1]),
-                    (narrow[0], narrow[1]),
-                    caps,
-                    &h.id,
-                )
-                .or_else(|_| exact::revolved_tool(*o, up, seam, &pts, &refs, &h.id))
-                .map_err(Kernel)?
-            } else {
-                exact::revolved_tool(*o, up, seam, &pts, &refs, &h.id).map_err(Kernel)?
-            };
+            let cone = hole_cone(prof);
             let rim = match prof[1].1 {
                 "CSink" if cone => start_rim.take(),
                 "FarCSink" if cone => far_rim.take(),
                 _ => None,
             };
-            if j == last {
-                bores.push(tool);
-            } else if let Some(rim) = rim {
-                deferred.push(tool);
-                rims.push(rim);
-            } else {
-                seats.push(tool);
-            }
+            jobs.push(ToolJob {
+                origin: *o,
+                up,
+                seam,
+                prof: prof.clone(),
+                n,
+                class: if j == last {
+                    ToolClass::Bore
+                } else if let Some(rim) = rim {
+                    rims.push(rim);
+                    ToolClass::Deferred
+                } else {
+                    ToolClass::Seat
+                },
+            });
         }
         out.holes.push(HoleInstance {
             feature: h.id.clone(),
@@ -2156,6 +2133,14 @@ pub(super) fn hole(
             }
         }
     }
+    // The tools of revolution, in parallel (2 ms each, three a hole with countersinks at both ends).
+    for (job, tool) in jobs.iter().zip(hole_tools(&jobs, &h.id).map_err(Kernel)?) {
+        match job.class {
+            ToolClass::Bore => bores.push(tool),
+            ToolClass::Deferred => deferred.push(tool),
+            ToolClass::Seat => seats.push(tool),
+        }
+    }
     // Seats first, then the bores through their floors; each stage is one
     // Boolean (`combine` joins tools apart from each other). Both stages are
     // kept as tool sets, in that order, so Pattern / Mirror can copy holes.
@@ -2187,6 +2172,92 @@ pub(super) fn hole(
             Ok((next, out, sets))
         }
     }
+}
+
+/// Which stage of [`hole`] a tool of revolution belongs to.
+#[derive(Clone, Copy)]
+enum ToolClass {
+    Bore,
+    Seat,
+    /// A countersink cut only if its rim cannot be chamfered.
+    Deferred,
+}
+
+/// One tool of revolution of [`hole`].
+struct ToolJob {
+    origin: Point3,
+    up: crate::kernel::Vector3,
+    seam: Real,
+    prof: Vec<([Real; 2], &'static str)>,
+    n: usize,
+    class: ToolClass,
+}
+
+/// A countersink's profile (start or far side): a tapered disc on the axis.
+fn hole_cone(prof: &[([Real; 2], &str)]) -> bool {
+    prof.len() == 4
+        && prof[0].0[0] == 0.0
+        && prof[3].0[0] == 0.0
+        && matches!(prof[1].1, "CSink" | "FarCSink")
+}
+
+fn hole_tool(job: &ToolJob, id: &str) -> Result<ExactSolid, String> {
+    let (o, up, seam, prof) = (job.origin, job.up, job.seam, &job.prof);
+    let pts: Vec<[Real; 2]> = prof.iter().map(|x| x.0).collect();
+    let names: Vec<String> = prof.iter().map(|x| format!("{}:{}", x.1, job.n)).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    // Countersinks as tapered discs: a cone of revolution sent the Boolean down a slow path
+    // (~1 s a hole).
+    if hole_cone(prof) {
+        // Start: wide end at the top (point 1), narrow inside the bore (point 2). Far side: wide
+        // below the far face (point 2).
+        let (wide, narrow, caps) = if prof[1].1 == "CSink" {
+            (prof[1].0, prof[2].0, [refs[0], refs[1], refs[2]])
+        } else {
+            (prof[2].0, prof[1].0, [refs[2], refs[1], refs[0]])
+        };
+        exact::cone_tool(
+            o,
+            up,
+            seam,
+            (wide[0], wide[1]),
+            (narrow[0], narrow[1]),
+            caps,
+            id,
+        )
+        .or_else(|_| exact::revolved_tool(o, up, seam, &pts, &refs, id))
+    } else {
+        exact::revolved_tool(o, up, seam, &pts, &refs, id)
+    }
+}
+
+/// [`hole_tool`] of every job, in order, on as many threads as help.
+fn hole_tools(jobs: &[ToolJob], id: &str) -> Result<Vec<ExactSolid>, String> {
+    let threads = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(8);
+    if jobs.len() < 4 || threads < 2 {
+        return jobs.iter().map(|j| hole_tool(j, id)).collect();
+    }
+    let chunk = jobs.len().div_ceil(threads);
+    let parts: Vec<Result<Vec<ExactSolid>, String>> = std::thread::scope(|s| {
+        let handles: Vec<_> = jobs
+            .chunks(chunk)
+            .map(|c| s.spawn(move || c.iter().map(|j| hole_tool(j, id)).collect()))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err("a hole tool panicked".to_owned()))
+            })
+            .collect()
+    });
+    let mut out = Vec::with_capacity(jobs.len());
+    for p in parts {
+        out.extend(p?);
+    }
+    Ok(out)
 }
 
 /// The chamfers of [`hole`]'s rims, each on the solid whose box holds its

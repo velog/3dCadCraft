@@ -1753,6 +1753,11 @@ impl Body {
         self.tessellate(self.size() * 2e-3).map(|m| m.contains(p)).unwrap_or(false)
     }
 
+    /// A vertex of each face's boundary, by face (none on a face without vertices). 3DCadCraft.
+    pub fn face_corners(&self) -> Vec<Option<Vec3>> {
+        self.solid.face_iter().map(|f| f.boundaries().first().and_then(|w| w.vertex_iter().next()).map(|v| from_p3(v.point()))).collect()
+    }
+
     /// B-rep faces (a mesh body is one face; [`crate::measure`] counts its triangles).
     pub fn face_count(&self) -> usize {
         match &self.mesh {
