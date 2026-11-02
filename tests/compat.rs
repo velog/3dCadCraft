@@ -3896,9 +3896,10 @@ fn face_names_stay() {
 /// the face under its point; a far point, or a missing name of any other kind, finds nothing.
 #[test]
 fn old_names_of_renamed_faces_resolve_by_their_point() {
-    use cadcraft3d::kernel::exact;
     use cadcraft3d::kernel::Point3;
-    let pr = cadcraft3d::document::Project::load(Path::new("tests/compat/r3/shell_r3.3dcadcraft")).unwrap();
+    use cadcraft3d::kernel::exact;
+    let pr = cadcraft3d::document::Project::load(Path::new("tests/compat/r3/shell_r3.3dcadcraft"))
+        .unwrap();
     let mut part = pr
         .documents()
         .iter()
@@ -3915,11 +3916,17 @@ fn old_names_of_renamed_faces_resolve_by_their_point() {
     let found = exact::faces_named(s, "Fillet1:Corner:1", on).unwrap();
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(
-        s.face_names[found[0]].as_deref().is_some_and(|n| n.starts_with("Fillet1:")),
+        s.face_names[found[0]]
+            .as_deref()
+            .is_some_and(|n| n.starts_with("Fillet1:")),
         "{:?}",
         s.face_names[found[0]]
     );
     let far = Point3::new(500.0, 500.0, 500.0);
-    assert!(exact::faces_named(s, "Fillet1:Corner:1", far).unwrap().is_empty());
+    assert!(
+        exact::faces_named(s, "Fillet1:Corner:1", far)
+            .unwrap()
+            .is_empty()
+    );
     assert!(exact::faces_named(s, "Gone1:Top", on).unwrap().is_empty());
 }

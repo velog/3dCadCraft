@@ -1460,10 +1460,7 @@ fn is_renamable(name: &str) -> bool {
     name.contains(":Corner:") || name.contains(":rim.") || name.contains(":Bend:")
 }
 
-fn faces_named_exactly(
-    s: &ExactSolid,
-    refs: &[(&str, Point3)],
-) -> Result<Vec<Vec<usize>>, String> {
+fn faces_named_exactly(s: &ExactSolid, refs: &[(&str, Point3)]) -> Result<Vec<Vec<usize>>, String> {
     let named: Vec<Vec<usize>> = refs
         .iter()
         .map(|(name, _)| {
