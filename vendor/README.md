@@ -73,6 +73,20 @@ A fix made when the pin moved to `d4eeedb` (the upstream commit has the defect):
 | `blend.rs` `chamfer_loops` (exported), `record.rs` `rebuilt_placed`, `body.rs` `face_corners` | equal chamfers of whole loops of planar faces by editing the faces (`loopblend`), the loop found on the edge curves, no Boolean, no mesh of the whole body per rim | 6 holes countersunk at both ends: 954 ms to 134 ms; 36 holes 3.2 s to 0.86 s |
 | `blend_fit.rs` `meshed_volumes` (in `right_way`, `volume_in`) | a mesh at 1e-4 of the size, with its sag as the slack, before the full measure; only an unclear result is measured | a chamfer chain round a rounded box: the check 296 ms → a few ms (the chamfer itself 65 ms) |
 
+An addition for library fasteners (`docs/spec/6.3-content-center.md` §6.0b); not proposed upstream yet:
+
+| File | Change | Effect |
+|---|---|---|
+| `axial.rs` (new), `lib.rs` export | `axial_stack`: a stepped body about Z from its meridian's runs (turned chains of lines and arcs, polygon prisms, a cone cut on a prism's end meeting each flat in one exact rational quadratic), the runs' rings joined by planar faces that keep their edges; a new function, nothing else in the crate changes | ISO 4017 M8 x 30: 234 ms → 4.2 ms; chamfered: 1465 ms → 7 ms; orientation read off the lowest planar face (`Body::new_placed`), no mesh |
+
+
+A fix (not about speed): a chamfer of a concave straight edge went the wrong way.
+
+| File | Change | Effect |
+|---|---|---|
+| `blend.rs` `edge_frame` | its convexity test could never fail (the directions were turned to pass it just before), so a concave edge got a convex edge's cutter; now each face's interior side comes from its boundary, as `blend_one` does | an L's inner edge, 1 mm: −102 mm³ → +15 mm³ (the same bug on the d4eeedb pin ends in a refusal there) |
+
+
 ## `solidcraft-doc`
 
 SolidCraft's document crate (`crates/doc`, same commit, MIT OR Apache-2.0, licence files in the

@@ -12,6 +12,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod axial;
 mod blend;
 mod blend_corner;
 mod blend_fit;
@@ -155,6 +156,7 @@ mod untouched_faces_tests;
 pub mod watch;
 mod whole_face;
 
+pub use axial::{AxialCone, AxialRun, AxialShape, axial_stack};
 pub use blend::{ChamferSide, chamfer, chamfer_loops, chamfer_sides, fillet, fillet_each, fillet_g2, fillet_g2_corners, fillet_max, fillet_max_each};
 pub use blend_corner::fillet_radii;
 pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_spline, taper};
