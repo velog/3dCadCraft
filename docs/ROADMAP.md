@@ -384,8 +384,41 @@ Expand / Collapse All, Promote / Demote; Last Used from Edit Feature; default pr
 import from the installed Inventor; spline closing; Trim by an extruded spline outline; chains of open curves; Boundary Patch Guide
 Rails; Motion and Contact (spec 3.1b).
 
-Open: motion links picked on faces directly; Transitional only on slides (a follower on a Slider and a cam); Dynamic Simulation (no solver for it yet); a shaded preview of a surface Revolve (wires only). A tangent touch of a spline and another curve without a crossing does not divide regions.
-motion links picked on faces directly.
+Also done since: Files tab pictures, arrows, drag into an assembly; linked files loaded on a worker thread; a spline crossing a
+curve divides regions; flat rings of a revolve as one face; Patch takes the whole loop and hidden sketches.
+
+### Not finished
+
+| Item | State |
+|---|---|
+| Dynamic Simulation | not started: there is no dynamics solver yet (spec 3.1b) |
+| Motion links picked on faces | links take existing relationships only |
+| Transitional | only a follower on a Slider against a cam |
+| Surface Revolve preview | wires only, not shaded |
+| Spline touching a curve without crossing it | does not divide regions (a tangent touch is not found) |
+| A guide of Boundary Patch | a picked sketch guides with all its curves; Inventor picks single curves |
+| Part2 of the owner's Framing | rebuilds in 0.77 s (kernel Cut and Trim); no longer blocks the view, the operations are not faster |
+| Plastic part features | researched only, no spec or code |
+
+### Waiting for the owner
+
+- The row of tabs above the view for a file's own documents: the owner reviews it (keep, hide or shorten).
+- A part or assembly dropped from Windows Explorer: place it in the active assembly? It opens a tab today.
+- The owner's remark cut off at "Men", and what else "a number of others" adds to the browser.
+
+### To test in the app
+
+The agent has not driven these through the GUI yet:
+
+- Flush on axes (Mate of a hole and a cylinder, then the Solution button); Mate of two cylindrical walls, not an edge and a wall.
+- A frame member past the middle of its line (the extra short profile reported by the owner): only a unit test so far.
+- Extrude's Last Used after Edit Feature.
+- Project Geometry of another component's edge while editing in place.
+- A Patch whose guide visibly changes its shape, in the app (a guide in a sketch of its own; only a test checks the height).
+- Place by a drop from the Files tab into a saved subassembly, and Undo of each drop in a file with several links.
+
+For the owner to confirm (checked by the agent, spec rows stay 🟡): Files tab, arc in a rectangle, Trim by a closed loop with
+Invert Selection, Mate of axes with Lock Rotation and Drive, Motion and Contact, Inventor key import on the installed settings.
 
 ## Interface: gaps and next steps
 
