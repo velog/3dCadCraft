@@ -343,7 +343,6 @@ fn exact_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
 /// samples check the answer against the curve it replaces. `None`: the surfaces do not tell (or
 /// the samples disagree), fit it to samples.
 fn analytic_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
-    use crate::splitface::{Analytic as Field, analytic_field};
     use mt::{BoundedCurve, ParametricCurve};
     let c = e.curve();
     let mt::Curve::IntersectionCurve(ic) = &c else { return None };
@@ -353,7 +352,7 @@ fn analytic_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
     if front == back || a.dist(b) < tol {
         return None;
     }
-    let (f0, f1) = (analytic_field(ic.surface0())?, analytic_field(ic.surface1())?);
+    let (f0, f1) = (surface_kind(ic.surface0())?, surface_kind(ic.surface1())?);
     let (t0, t1) = c.range_tuple();
     let at = |s: f64| from_p3(c.subs(t0 + (t1 - t0) * s));
     let checked = |x: mt::Edge, on: &dyn Fn(Vec3) -> f64| -> Option<mt::Edge> { [0.25, 0.5, 0.75].iter().all(|s| on(at(*s)) < tol).then_some(x) };
@@ -362,9 +361,19 @@ fn analytic_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
         checked(builder::line(front, back), &on)
     };
     match (f0, f1) {
-        (Field::Plane { .. }, Field::Plane { .. }) => line(()),
-        (Field::Plane { n }, Field::Cylinder { o, axis, r, .. }) | (Field::Cylinder { o, axis, r, .. }, Field::Plane { n }) => {
-            let k = Vec3::new(axis.x, axis.y, axis.z);
+        (Kind::Plane(_), Kind::Plane(_)) => line(()),
+        // A cone meets a plane square to its axis in a circle; any other plane is fitted.
+        (Kind::Plane(n), Kind::Cone(o, k)) | (Kind::Cone(o, k), Kind::Plane(n)) => {
+            if (n.dot(k).abs() - 1.0).abs() >= 1e-9 {
+                return None;
+            }
+            let m = at(0.5);
+            let centre = o + k * (m - o).dot(k);
+            let r = centre.dist(m);
+            let on = move |p: Vec3| ((p - centre).len() - r).abs().max((p - centre).dot(k).abs());
+            checked(builder::circle_arc(front, back, mt::Point3::new(m.x, m.y, m.z)), &on)
+        }
+        (Kind::Plane(n), Kind::Cylinder(o, k, r)) | (Kind::Cylinder(o, k, r), Kind::Plane(n)) => {
             let along = n.dot(k);
             // Along the axis: a ruling. Square to it: a circle, as the fit writes one.
             if along.abs() < 1e-9 {
@@ -385,6 +394,62 @@ fn analytic_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
             checked(x, &on)
         }
         _ => None,
+    }
+}
+
+/// The analytic surfaces a plane can be written against.
+#[derive(Clone, Copy)]
+enum Kind {
+    /// A plane, its unit normal.
+    Plane(Vec3),
+    /// A cylinder: a point of the axis, its unit direction, the radius.
+    Cylinder(Vec3, Vec3, f64),
+    /// A cone: a point of the axis and its unit direction.
+    Cone(Vec3, Vec3),
+}
+
+/// What a surface is. A surface of revolution is read off its straight generator directly (no
+/// sampling, and `analytic_field` does not take these).
+fn surface_kind(s: &mt::Surface) -> Option<Kind> {
+    use crate::splitface::{Analytic as Field, analytic_field};
+    if let mt::Surface::RevolutedCurve(rc) = s {
+        if *rc.transform() != <mt::Matrix4 as mt::One>::one() {
+            return None;
+        }
+        let o = from_p3(rc.entity().origin());
+        let ax = rc.entity().axis();
+        let k = Vec3::new(ax.x, ax.y, ax.z).normalized()?;
+        let mt::Curve::Line(l) = rc.entity().entity_curve() else { return None };
+        let (a, b) = (from_p3(l.0), from_p3(l.1));
+        let radius = |p: Vec3| {
+            let w = p - o;
+            (w - k * w.dot(k)).len()
+        };
+        let (ra, rb) = (radius(a), radius(b));
+        let (rise, grow) = ((b - a).dot(k), rb - ra);
+        let run = a.dist(b);
+        if run < 1e-12 {
+            return None;
+        }
+        // The generator must lie in a plane through the axis: else it sweeps a hyperboloid.
+        let skew = {
+            let (wa, wb) = (a - o, b - o);
+            k.cross(wa - k * wa.dot(k)).dot(wb - k * wb.dot(k))
+        };
+        if skew.abs() > 1e-9 * run * (ra + rb + 1.0) {
+            return None;
+        }
+        return Some(if grow.abs() < 1e-9 * run {
+            Kind::Cylinder(o, k, ra)
+        } else if rise.abs() < 1e-9 * run {
+            Kind::Plane(k)
+        } else {
+            Kind::Cone(o, k)
+        });
+    }
+    match analytic_field(s)? {
+        Field::Plane { n } => Some(Kind::Plane(n)),
+        Field::Cylinder { o, axis, r, .. } => Some(Kind::Cylinder(o, Vec3::new(axis.x, axis.y, axis.z), r)),
     }
 }
 

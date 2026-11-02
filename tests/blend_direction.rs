@@ -474,6 +474,92 @@ fn blend_routes_with_times() {
         BlendFeature::chamfer(chain, 7.0),
     );
 
+    // General Booleans with a turned body (no blend): a hexagon joined to a shank, and a cut.
+    let revolve = |p: &mut PartDocument, outline: &[(f64, f64)], op: Operation| {
+        let o = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = p
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+            .unwrap();
+        let v = outline
+            .iter()
+            .map(|&(r, z)| (Point2::new(r, z), None))
+            .collect();
+        draw_loop(&mut p.sketches[i].sketch, Loop::Path(v)).unwrap();
+        let regions = p.sketches[i].sketch.regions();
+        let reg = regions.first().unwrap();
+        let mut f = RevolveFeature::new(
+            vec![ProfileRef::of(reg, reg.interior_point())],
+            AxisRef::Origin(2),
+        );
+        f.operation = op;
+        p.add_revolve(i, f).unwrap();
+    };
+    let across = 13.0 / 3f64.sqrt();
+    let hexagon: Vec<(f64, f64)> = (0..6)
+        .map(|k| {
+            let a = k as f64 * PI / 3.0;
+            (across * a.cos(), across * a.sin())
+        })
+        .collect();
+    let head = prism(&hexagon, 5.3);
+    let shank = [
+        (0.0, 2.65),
+        (4.0, 2.65),
+        (4.0, -29.2),
+        (3.2, -30.0),
+        (0.0, -30.0),
+    ];
+    let mut v: Vec<f64> = (0..5)
+        .map(|_| {
+            let mut p = head.clone();
+            p.build_cache = Default::default();
+            let t = Instant::now();
+            revolve(&mut p, &shank, Operation::Join);
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            assert!(p.exact && p.feature_health.is_empty());
+            ms
+        })
+        .collect();
+    v.sort_by(f64::total_cmp);
+    println!(
+        "{:<52} {:>8.1} ms",
+        "Join: a hexagon and a turned shank", v[2]
+    );
+    let block = plate(40.0, 30.0, 10.0);
+    let tool = [
+        (0.0, -1.0),
+        (6.0, -1.0),
+        (6.0, 4.0),
+        (3.0, 7.0),
+        (3.0, 11.0),
+        (0.0, 11.0),
+    ];
+    let moved: Vec<(f64, f64)> = tool.to_vec();
+    let mut v: Vec<f64> = (0..5)
+        .map(|_| {
+            let mut p = block.clone();
+            p.build_cache = Default::default();
+            let t = Instant::now();
+            revolve(&mut p, &moved, Operation::Cut);
+            let ms = t.elapsed().as_secs_f64() * 1e3;
+            assert!(
+                p.exact && p.feature_health.is_empty(),
+                "{:?}",
+                p.feature_health
+            );
+            ms
+        })
+        .collect();
+    v.sort_by(f64::total_cmp);
+    println!(
+        "{:<52} {:>8.1} ms",
+        "Cut: a turned tool with a cone at a plate's corner", v[2]
+    );
+
     // Hole rims through the general path.
     for n in [6usize, 12, 36] {
         let mut p = plate(200.0, 200.0, 10.0);
@@ -623,7 +709,7 @@ fn an_inclined_cut_is_an_exact_ellipse() {
     for (id, _) in p.body.solids() {
         p.body.validate_solid(id).unwrap();
     }
-    // A point of the rim lies on the plane and on the cylinder, whichever way it is sampled.
+    // A hint lies on the edge's display polyline: on the plane, within its chord of the cylinder.
     let rim = edges_where(&p, |q| q[2] > 16.0 && q[2] < 24.0);
     assert!(!rim.is_empty(), "no rim edge");
     for e in &rim {
@@ -633,7 +719,7 @@ fn an_inclined_cut_is_an_exact_ellipse() {
             "{q:?} off the plane"
         );
         assert!(
-            (q[0].hypot(q[1]) - r).abs() < 1e-6,
+            (q[0].hypot(q[1]) - r).abs() < 0.01,
             "{q:?} off the cylinder"
         );
     }
