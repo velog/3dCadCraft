@@ -493,6 +493,9 @@ fn shell_planar(b: &Body, open: &[Vec3], thickness: f64) -> Result<Body> {
     if let Some(shell) = shell_barrel(&healed, &opened, thickness)? {
         return Ok(record::after(shell, &healed, &record::counts(&[b])));
     }
+    if let Some(shell) = shell_convex(&healed, &mesh, &opened, thickness) {
+        return Ok(record::after(shell, &healed, &record::counts(&[b])));
+    }
     let margin = thickness + size * 0.05;
     shell_opened(b, &healed, open, &opened, thickness, margin).map_err(|e| match rim_without_thickness(&healed, &opened, thickness, false) {
         Some(r) => unsupported_shell(&format!(
@@ -555,11 +558,17 @@ fn shell_barrel(b: &Body, opened: &[usize], thickness: f64) -> Result<Option<Bod
     {
         return Err(unsupported_shell("the barrel cavity changed topology"));
     }
+    sew_cavity(b, &faces, &cavity, history, opened).map(Some)
+}
+
+/// `b` with its faces lined by `cavity`, whose faces are offsets of `faces` in their order, each
+/// open face a rim between its own wires and the cavity's (`cavity`'s copy of it lies in its plane).
+fn sew_cavity(b: &Body, faces: &[mt::Face], cavity: &Body, history: &History, opened: &[usize]) -> Result<Body> {
     let inner: Vec<mt::Face> = cavity.solid.face_iter().cloned().collect();
     let mut out = Vec::new();
     let mut provenance = Vec::new();
     for (i, outer) in faces.iter().enumerate() {
-        let inset = inner.get(i).ok_or_else(|| unsupported_shell("the barrel cavity lost a face"))?;
+        let inset = inner.get(i).ok_or_else(|| unsupported_shell("the cavity lost a face"))?;
         if opened.contains(&i) {
             let mut wires = outer.absolute_boundaries().to_vec();
             wires.extend(inset.absolute_boundaries().iter().map(|w| w.inverse()));
@@ -574,9 +583,72 @@ fn shell_barrel(b: &Body, opened: &[usize], thickness: f64) -> Result<Option<Bod
             provenance.extend([record::from_face(0, i, Change::Kept), record::generated(vec![FaceOrigin::Offset { operand: 0, face: i }])]);
         }
     }
-    let solid = Solid::try_new(vec![out.into()]).map_err(|e| KernelError::Failed(format!("shell barrel: {e}")))?;
-    let copies = record::edges_by_identity(&cavity, history).filter_map(|(id, origins)| origins.into_iter().next().map(|o| (id, o))).collect();
-    record::attach(Body::new(solid)?, &[record::Operand::new(b)], Some(provenance), copies).map(Some)
+    let solid = Solid::try_new(vec![out.into()]).map_err(|e| KernelError::Failed(format!("shell: {e}")))?;
+    let copies = record::edges_by_identity(cavity, history).filter_map(|(id, origins)| origins.into_iter().next().map(|o| (id, o))).collect();
+    record::attach(Body::new(solid)?, &[record::Operand::new(b)], Some(provenance), copies)
+}
+
+/// Shell of a convex body with analytic faces, sewn from what is already known: the faces, their
+/// offsets and a rim round each open face. No Boolean: 320 ms → 90 ms on a rounded, chamfered box,
+/// whose cavity, pushed out past the rim for the Cut, also closed its corners and took 2.5 % too
+/// much. `None` when the body is not convex or the offset does not simply line it; the
+/// Cut decides those. 3DCadCraft.
+fn shell_convex(b: &Body, mesh: &solidcraft_geom::Mesh, opened: &[usize], thickness: f64) -> Option<Body> {
+    use mt::{BoundedCurve, ParametricCurve};
+    if b.solid.boundaries().len() != 1 || b.face_count() > 256 {
+        return None;
+    }
+    let faces: Vec<mt::Face> = b.solid.face_iter().cloned().collect();
+    let size = b.size();
+    let surf_tol = (size * 1e-7).max(1e-9) * 100.0;
+    let near = (size * 1e-5).max(1e-6);
+    // Open faces must be planar, with one wire and no corner in common: a rim all the way round each.
+    let mut corners: Vec<mt::VertexID> = Vec::new();
+    for i in opened {
+        let f = faces.get(*i)?;
+        if !matches!(f.oriented_surface(), mt::Surface::Plane(_)) || f.boundaries().len() != 1 {
+            return None;
+        }
+        for v in f.vertex_iter() {
+            if corners.contains(&v.id()) {
+                return None;
+            }
+        }
+        corners.extend(f.vertex_iter().map(|v| v.id()));
+    }
+    // The tangent planes at the middle of each face's edges.
+    let mut supports: Vec<(Vec3, Vec3, bool)> = Vec::new();
+    for (i, f) in faces.iter().enumerate() {
+        let surf = crate::offset::surf_of(f, surf_tol)?;
+        for e in f.edge_iter() {
+            let c = e.curve();
+            let (t0, t1) = c.range_tuple();
+            let mid = from_p3(c.subs((t0 + t1) / 2.0));
+            supports.push((mid, surf.normal(mid)?, opened.contains(&i)));
+        }
+    }
+    // Convex: the whole body under each of them, so the offset can meet only its own neighbours.
+    if mesh.positions.iter().any(|q| supports.iter().any(|(p, n, _)| n.dot(*q - *p) > near)) {
+        return None;
+    }
+    let cavity = offset_planar(b, |i, _| if opened.contains(&i) { 0.0 } else { -thickness }).ok()?;
+    let history = cavity.history()?;
+    if cavity.face_count() != faces.len()
+        || cavity.solid.edge_iter().count() != b.solid.edge_iter().count()
+        || history.faces.iter().enumerate().any(|(i, f)| f.origins.as_slice() != [FaceOrigin::Face { operand: 0, face: i }])
+    {
+        return None;
+    }
+    // A wall thick enough to swallow a face turns its edges inside out: a corner then stands past a
+    // moved plane.
+    let inside = cavity.solid.vertex_iter().all(|v| {
+        let q = from_p3(v.point());
+        supports.iter().all(|(p, n, open)| n.dot(q - *p) <= if *open { near } else { near - thickness })
+    });
+    if !inside {
+        return None;
+    }
+    sew_cavity(b, &faces, &cavity, history, opened).ok()
 }
 
 /// The radius of a convex round (cylinder or torus) that meets an open face tangentially and
