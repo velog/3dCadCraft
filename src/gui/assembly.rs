@@ -19,6 +19,7 @@ use std::sync::Arc;
 use eframe::egui::{self, Color32, PointerButton, Pos2, Rect, RichText, Stroke};
 
 use super::CadCraftApp;
+use super::icons::{Icon, menu_item};
 use super::ribbon::Action;
 use super::valuefield::ExprValue;
 use crate::assembly::{self as asm, Hit, PickMesh};
@@ -2521,17 +2522,17 @@ impl CadCraftApp {
             self.paste_occurrences();
             ui.close();
         }
-        if ui.button("Place...").clicked() {
-            self.asm_apply(Action::AsmPlace);
-            ui.close();
-        }
-        if ui.button("Free Move").clicked() {
-            self.asm_apply(Action::AsmFreeMove);
-            ui.close();
-        }
-        if ui.button("Free Rotate").clicked() {
-            self.asm_apply(Action::AsmFreeRotate);
-            ui.close();
+        // Inventor's marking menu in an assembly.
+        for (action, icon, label) in [
+            (Action::AsmConstrain, Icon::Coincident, "Constrain"),
+            (Action::AsmPlace, Icon::Place, "Place..."),
+            (Action::AsmFreeMove, Icon::FreeMove, "Free Move"),
+            (Action::AsmFreeRotate, Icon::FreeRotate, "Free Rotate"),
+        ] {
+            if menu_item(ui, Some(icon), label, true).clicked() {
+                self.asm_apply(action);
+                ui.close();
+            }
         }
         if ui.button("Zoom All").clicked() {
             self.fit_view();

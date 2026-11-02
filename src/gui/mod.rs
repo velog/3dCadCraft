@@ -452,6 +452,22 @@ impl PickCache {
         best
     }
 
+    /// The nearest hit among faces `take` accepts.
+    pub(super) fn pick_among(
+        &self,
+        o: &Point3,
+        d: &crate::kernel::Vector3,
+        take: impl Fn(crate::kernel::FaceId) -> bool,
+    ) -> Option<(crate::kernel::FaceId, f64)> {
+        let mut best: Option<(crate::kernel::FaceId, f64)> = None;
+        for (f, t) in self.hits(o, d) {
+            if take(f) && best.is_none_or(|(_, bt)| t < bt) {
+                best = Some((f, t));
+            }
+        }
+        best
+    }
+
     /// Faces using edge `e`.
     pub(super) fn faces_of(&self, e: crate::kernel::EdgeId) -> Vec<crate::kernel::FaceId> {
         self.edge_faces.get(&e).cloned().unwrap_or_default()
@@ -799,6 +815,14 @@ struct CadCraftApp {
     view_before_sketch: Option<(camera::OrbitCamera, crate::kernel::Vector3)>,
     /// Select Other control, and where/since when the cursor rests.
     select_other: Option<SelectOther>,
+    /// The control serves an open command: the shared pickers answer with its
+    /// current candidate near its place (`other_choice`).
+    other_in_command: bool,
+    /// A command took a click: the control closes next frame, after the
+    /// command's picking has read its candidate.
+    other_clear: bool,
+    /// A click the next frame sees (Select Other's name in a command).
+    inject_click: Option<egui::Pos2>,
     rest: Option<(egui::Pos2, f64)>,
     /// The model edge selected in the view and where the click was.
     edge_sel: Option<(crate::kernel::EdgeId, egui::Pos2)>,
@@ -1128,6 +1152,9 @@ impl CadCraftApp {
             cursor_value_enabled: true,
             inject_keys: Vec::new(),
             view_before_sketch: None,
+            other_in_command: false,
+            other_clear: false,
+            inject_click: None,
             select_other: None,
             rest: None,
             edge_cache: std::cell::RefCell::new(None),
@@ -2692,6 +2719,11 @@ impl CadCraftApp {
     /// The visible model edge under `pos` (within `POINT_PICK_PX`); edges
     /// hidden behind a face do not count.
     fn edge_under(&self, pos: egui::Pos2, rect: egui::Rect) -> Option<crate::kernel::EdgeId> {
+        match self.other_choice(pos) {
+            Some(select::SelItem::Edge(e)) => return Some(*e),
+            Some(_) => return None,
+            None => {}
+        }
         if !self.cat_on(crate::command::selection::Category::Edge) {
             return None;
         }
@@ -5475,6 +5507,11 @@ impl CadCraftApp {
         with_origin_planes: bool,
     ) -> Option<PlaneRef> {
         use crate::command::selection::Category;
+        match self.other_choice(pos) {
+            Some(select::SelItem::Face(n)) => return Some(PlaneRef::Face(n.clone())),
+            Some(_) => return None,
+            None => {}
+        }
         let (origin, dir) = self.camera.ray(pos, rect)?;
         let body = &self.part().body;
         if let Some((f, _)) = self.face_hit(&origin, &dir)
@@ -5883,7 +5920,15 @@ impl CadCraftApp {
         let mut edge_hover = edge_hover;
         let mut face_hover = face_hover;
         let mut other_hover: Option<select::SelItem> = None;
-        if idle {
+        // Select Other also serves an open command that picks model items:
+        // its candidates are what the active selector takes.
+        let in_command = !idle && !picking && self.select_other_serves_command();
+        if std::mem::take(&mut self.other_clear) {
+            self.select_other = None;
+            self.rest = None;
+        }
+        self.other_in_command = in_command;
+        if idle || in_command {
             match (pointer, self.rest) {
                 (Some(p), Some((at, _))) if p.distance(at) <= 3.0 => {}
                 (Some(p), _) => {
@@ -5919,7 +5964,11 @@ impl CadCraftApp {
                 && now - since > 0.7
                 && self.dragging.is_none()
             {
-                let items = self.sel_candidates(p, rect);
+                let items = if in_command {
+                    self.command_candidates(p, rect)
+                } else {
+                    self.sel_candidates(p, rect)
+                };
                 if items.len() > 1 {
                     self.select_other = Some(SelectOther {
                         at: p,
@@ -5940,7 +5989,11 @@ impl CadCraftApp {
                         _ => (None, None),
                     };
                     other_hover = Some(cur.clone());
-                    if accept {
+                    if accept && in_command {
+                        // As if the place were clicked: the command picks
+                        // the candidate through the shared pickers.
+                        self.inject_click = Some(at);
+                    } else if accept {
                         self.select_other = None;
                         self.idle_select(Some(cur), at, false, false);
                     }
@@ -5957,7 +6010,11 @@ impl CadCraftApp {
             && on_cube.is_none()
             && let Some(p) = pointer
         {
-            self.select_other = None;
+            if self.other_in_command {
+                self.other_clear = true;
+            } else {
+                self.select_other = None;
+            }
             if self.prim_draft.is_some() {
                 self.primitive_click(p, rect);
             } else if self.target_pick.is_some() {
@@ -8089,6 +8146,17 @@ impl eframe::App for CadCraftApp {
                 }
                 _ => true,
             });
+        }
+        if let Some(at) = self.inject_click.take() {
+            raw_input.events.push(egui::Event::PointerMoved(at));
+            for pressed in [true, false] {
+                raw_input.events.push(egui::Event::PointerButton {
+                    pos: at,
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
         }
         // The value next to the cursor: Tab walks its fields, the first
         // digit typed over the view opens it (before egui or an alias sees it).

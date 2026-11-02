@@ -150,6 +150,20 @@ impl CadCraftApp {
         origin: &crate::kernel::Point3,
         dir: &crate::kernel::Vector3,
     ) -> Option<(FaceId, f64)> {
+        // Select Other in a command: the candidate, not the nearest face.
+        if self.other_in_command
+            && let Some(so) = &self.select_other
+        {
+            return match so.items.get(so.index) {
+                Some(SelItem::Face(n)) => {
+                    let body = &self.part().body;
+                    self.picker().pick_among(origin, dir, |f| {
+                        body.face(f).and_then(|x| x.name.as_deref()) == Some(n.as_str())
+                    })
+                }
+                _ => None,
+            };
+        }
         if !self.cat_on(Category::Face) {
             return None;
         }
@@ -357,6 +371,57 @@ impl CadCraftApp {
             _ => None,
         };
         self.resolved(self.raw_under(p, rect, edge, face.as_deref(), true))
+    }
+
+    /// Whether Select Other serves the open command: it picks model items
+    /// through the shared pickers (Extrude picks regions, a sketch curves).
+    pub(super) fn select_other_serves_command(&self) -> bool {
+        self.editing.is_none()
+            && self.extrude.is_none()
+            && self.active_pick_kinds().is_some_and(|kinds| {
+                kinds.iter().any(|k| {
+                    matches!(
+                        k,
+                        PickKind::Face
+                            | PickKind::PlanarFace
+                            | PickKind::Edge
+                            | PickKind::StraightEdge
+                    )
+                })
+            })
+    }
+
+    /// What the active selector can take under the cursor, nearest first;
+    /// the user's Select Priority does not apply in a command (spec 0.9a §5).
+    pub(super) fn command_candidates(&self, p: egui::Pos2, rect: egui::Rect) -> Vec<SelItem> {
+        let edge = self.edge_under(p, rect);
+        let face = match self.plane_under(p, rect, false) {
+            Some(crate::part::PlaneRef::Face(n)) => Some(n),
+            _ => None,
+        };
+        let raw = self.raw_under(p, rect, edge, face.as_deref(), true);
+        let cands: Vec<Candidate> = raw.iter().map(|(_, c)| *c).collect();
+        let f = self.pick_filter.get().filter;
+        let mut out: Vec<SelItem> = Vec::new();
+        for (i, _) in cs::filter_candidates(&cands, cs::Priority::FacesEdges, f) {
+            let x = &raw[i].0;
+            if matches!(x, SelItem::Edge(_) | SelItem::Face(_)) && !out.contains(x) {
+                out.push(x.clone());
+            }
+        }
+        out
+    }
+
+    /// The candidate Select Other holds for the open command, near its
+    /// place; the shared pickers answer with it.
+    pub(super) fn other_choice(&self, p: egui::Pos2) -> Option<&SelItem> {
+        if !self.other_in_command {
+            return None;
+        }
+        let so = self.select_other.as_ref()?;
+        (so.at.distance(p) <= 60.0)
+            .then(|| so.items.get(so.index))
+            .flatten()
     }
 
     /// A visible sketch with a curve under the cursor.
@@ -1139,7 +1204,11 @@ impl CadCraftApp {
                 MenuEntry::Prehighlight => {}
                 MenuEntry::SelectOther => {
                     if let Some((p, rect)) = at {
-                        let items = self.sel_candidates(p, rect);
+                        let items = if self.select_other_serves_command() {
+                            self.command_candidates(p, rect)
+                        } else {
+                            self.sel_candidates(p, rect)
+                        };
                         if !items.is_empty() {
                             self.select_other = Some(super::SelectOther {
                                 at: p,
@@ -1212,7 +1281,8 @@ impl CadCraftApp {
         if let Some(kinds) = self.active_pick_kinds() {
             return MenuContext::Command {
                 kinds,
-                overlapping: false,
+                overlapping: self.select_other_serves_command()
+                    && self.command_candidates(p, rect).len() > 1,
             };
         }
         let under_face = matches!(
@@ -1297,7 +1367,12 @@ impl CadCraftApp {
                 Action::Tool(Tool::Dimension),
             ]
         } else {
-            &[Action::Extrude, Action::Hole, Action::Fillet]
+            &[
+                Action::Extrude,
+                Action::Hole,
+                Action::Fillet,
+                Action::WorkPlane,
+            ]
         };
         let mut run = None;
         for &a in list {
