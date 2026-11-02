@@ -284,6 +284,7 @@ fn patch_rect(p: &mut PartDocument, a: (Real, Real), b: (Real, Real)) -> String 
     op(
         p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: Vec::new(),
             sketch: Some(id),
             profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
@@ -363,6 +364,7 @@ fn walls_and_two_patches_stitch_into_a_solid() {
     let bottom = op(
         &mut p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: e0,
             sketch: None,
             profile: None,
@@ -374,6 +376,7 @@ fn walls_and_two_patches_stitch_into_a_solid() {
     let top = op(
         &mut p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: e5,
             sketch: None,
             profile: None,
@@ -409,6 +412,7 @@ fn boundary_patch_of_a_sketch_region() {
     op(
         &mut p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: Vec::new(),
             sketch: Some(id),
             profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
@@ -740,6 +744,7 @@ fn every_surface_command_survives_save_and_load() {
             keep_surface: true,
         }),
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: vec![SurfEdge {
                 face: "A:Side:0".into(),
                 hint: [1.0, 2.0, 3.0],
@@ -897,6 +902,7 @@ fn boundary_patch_output_solid_closes_an_open_box() {
     let bottom = op(
         &mut p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: e0,
             sketch: None,
             profile: None,
@@ -917,6 +923,7 @@ fn boundary_patch_output_solid_closes_an_open_box() {
     op(
         &mut p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: e5,
             sketch: None,
             profile: None,
@@ -1287,6 +1294,7 @@ fn trim_by_a_tube_of_walls_cuts_only_inside_it() {
         let s = op(
             &mut p,
             BodyOp::Patch(PatchOp {
+                guides: Vec::new(),
                 edges: Vec::new(),
                 sketch: Some(id),
                 profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
@@ -1399,6 +1407,7 @@ fn patch_polygon_at(p: &mut PartDocument, z: Real, pts: &[(Real, Real)]) -> Stri
     op(
         p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: Vec::new(),
             sketch: Some(id),
             profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),
@@ -1490,6 +1499,7 @@ fn patch_circle_at(p: &mut PartDocument, z: Real, r: Real) -> String {
     op(
         p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: Vec::new(),
             sketch: Some(id),
             profile: Some(ProfileRef::of(&rg[0], rg[0].interior_point())),
@@ -1573,6 +1583,7 @@ fn holed_patch_at(p: &mut PartDocument, z: Real) -> String {
     op(
         p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: Vec::new(),
             sketch: Some(id),
             profile: Some(ProfileRef::of(outer, outer.interior_point())),
@@ -1626,6 +1637,7 @@ fn tangent_patch_of_a_hole_in_a_plane_is_flat() {
         op(
             &mut p,
             BodyOp::Patch(PatchOp {
+                guides: Vec::new(),
                 edges: hole,
                 sketch: None,
                 profile: None,
@@ -1676,6 +1688,7 @@ fn tangent_patch_over_four_walls_is_a_dome() {
         op(
             &mut p,
             BodyOp::Patch(PatchOp {
+                guides: Vec::new(),
                 edges: rim,
                 sketch: None,
                 profile: None,

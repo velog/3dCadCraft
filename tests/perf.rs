@@ -4577,7 +4577,7 @@ fn contact_check_of_a_drag() {
         Transform3::new(Vector3::new(90.0, 90.0, 5.0), Vector3::zeros()),
     );
     let apart = Transform3::new(
-        Vector3::new(160.0, 2.0, 0.0),
+        Vector3::new(150.0, 79.3, 0.0),
         Vector3::new(0.0, 0.0, std::f64::consts::FRAC_PI_4),
     );
     let tol = contact_tolerance(&m, &m);
@@ -4592,5 +4592,5 @@ fn contact_check_of_a_drag() {
     times.sort_by(f64::total_cmp);
     let ms = times[2];
     println!("contact check of a 36-hole plate pair: {ms:.1} ms");
-    assert!(ms < 40.0, "contact check took {ms:.1} ms");
+    assert!(ms < 5.0, "contact check took {ms:.1} ms");
 }

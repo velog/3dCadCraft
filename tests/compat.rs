@@ -608,6 +608,7 @@ fn surfaces_r37() -> PartDocument {
     let r = p.sketches[i].sketch.regions();
     let id = p.sketches[i].id.clone();
     p.add_body_op(BodyOpFeature::new(BodyOp::Patch(PatchOp {
+        guides: Vec::new(),
         edges: Vec::new(),
         sketch: Some(id),
         profile: Some(ProfileRef::of(&r[0], r[0].interior_point())),

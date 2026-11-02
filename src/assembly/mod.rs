@@ -165,6 +165,8 @@ pub struct PickMesh {
     tris: Vec<(FaceId, [Point3; 3])>,
     /// The box of the triangles (part coordinates).
     pub bbox: Option<(Point3, Point3)>,
+    /// The triangles along the contact check's ray (built when first asked).
+    ray_grid: std::sync::OnceLock<motion::RayGrid>,
 }
 
 impl PickMesh {
@@ -191,7 +193,11 @@ impl PickMesh {
                 }
             }
         }
-        Self { tris, bbox }
+        Self {
+            tris,
+            bbox,
+            ray_grid: Default::default(),
+        }
     }
 
     /// One mesh of several placed meshes (a subassembly's parts in its own
@@ -209,7 +215,17 @@ impl PickMesh {
                 tris.push((*f, p));
             }
         }
-        Self { tris, bbox }
+        Self {
+            tris,
+            bbox,
+            ray_grid: Default::default(),
+        }
+    }
+
+    /// The triangles along the contact check's ray.
+    pub(crate) fn ray_grid(&self) -> &motion::RayGrid {
+        self.ray_grid
+            .get_or_init(|| motion::RayGrid::new(&self.tris))
     }
 
     /// Every triangle (face, corners) in part coordinates.

@@ -306,7 +306,7 @@ fn deepest(
     for w in candidates.iter().step_by(stride) {
         // In `b`'s own coordinates: its triangles stay as they are.
         let p = inv * *w;
-        if !inside(&p, tris) {
+        if !inside(&p, b) {
             continue;
         }
         let d = tris
@@ -320,11 +320,85 @@ fn deepest(
     0.0
 }
 
-/// Ray parity along a skew direction (no axis-aligned edge hits).
-fn inside(p: &Point3, tris: &[(crate::kernel::FaceId, [Point3; 3])]) -> bool {
-    let dir = Vector3::new(0.577_215_664_9, 0.327_118_441_9, 0.751_891_438_7);
+/// The parity ray's direction: skew, so no axis-aligned edge is hit head on.
+const RAY: [Real; 3] = [0.577_215_664_9, 0.327_118_441_9, 0.751_891_438_7];
+
+/// A mesh's triangles binned along the parity ray: a ray only meets the triangles of its
+/// own cell (testing every triangle for every sample point took 80 ms on a pair of 36-hole
+/// plates; a drag checks every frame).
+#[derive(Clone, Debug)]
+pub struct RayGrid {
+    u: Vector3,
+    v: Vector3,
+    lo: [Real; 2],
+    cell: Real,
+    n: usize,
+    cells: Vec<Vec<u32>>,
+}
+
+impl RayGrid {
+    /// Bins `tris`.
+    pub(crate) fn new(tris: &[(crate::kernel::FaceId, [Point3; 3])]) -> Self {
+        let dir = Vector3::new(RAY[0], RAY[1], RAY[2]).normalize();
+        let u = dir.cross(&Vector3::x()).normalize();
+        let v = dir.cross(&u);
+        let at = |p: &Point3| [p.coords.dot(&u), p.coords.dot(&v)];
+        let (mut lo, mut hi) = ([Real::MAX; 2], [Real::MIN; 2]);
+        for (_, t) in tris {
+            for p in t {
+                let q = at(p);
+                for k in 0..2 {
+                    lo[k] = lo[k].min(q[k]);
+                    hi[k] = hi[k].max(q[k]);
+                }
+            }
+        }
+        let n = ((tris.len() as Real).sqrt().ceil() as usize).clamp(1, 256);
+        let span = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(1e-9);
+        let cell = span / n as Real * (1.0 + 1e-9);
+        let index = |x: Real, k: usize| (((x - lo[k]) / cell).floor().max(0.0) as usize).min(n - 1);
+        let mut cells = vec![Vec::new(); n * n];
+        for (i, (_, t)) in tris.iter().enumerate() {
+            let q = [at(&t[0]), at(&t[1]), at(&t[2])];
+            let range = |k: usize| {
+                let (a, b, c) = (q[0][k], q[1][k], q[2][k]);
+                (index(a.min(b).min(c), k), index(a.max(b).max(c), k))
+            };
+            let ((u0, u1), (v0, v1)) = (range(0), range(1));
+            for iu in u0..=u1 {
+                for iv in v0..=v1 {
+                    cells[iu * n + iv].push(i as u32);
+                }
+            }
+        }
+        Self {
+            u,
+            v,
+            lo,
+            cell,
+            n,
+            cells,
+        }
+    }
+
+    /// The triangles a ray from `p` along [`RAY`] can meet.
+    fn near(&self, p: &Point3) -> &[u32] {
+        let a = (p.coords.dot(&self.u) - self.lo[0]) / self.cell;
+        let b = (p.coords.dot(&self.v) - self.lo[1]) / self.cell;
+        if a < 0.0 || b < 0.0 || a >= self.n as Real || b >= self.n as Real {
+            return &[];
+        }
+        &self.cells[a as usize * self.n + b as usize]
+    }
+}
+
+/// Ray parity along a skew direction.
+fn inside(p: &Point3, mesh: &PickMesh) -> bool {
+    let dir = Vector3::new(RAY[0], RAY[1], RAY[2]).normalize();
+    let tris = mesh.triangles();
     let mut n = 0;
-    for (_, [a, b, c]) in tris {
+    for &i in mesh.ray_grid().near(p) {
+        let [a, b, c] = &tris[i as usize].1;
         let (e1, e2) = (b - a, c - a);
         let h = dir.cross(&e2);
         let det = e1.dot(&h);

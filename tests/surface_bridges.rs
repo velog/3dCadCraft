@@ -364,6 +364,7 @@ fn patch_of_a_hole_in_a_wavy_surface() {
         let n = q.features.len();
         assert!(
             q.add_body_op(BodyOpFeature::new(BodyOp::Patch(PatchOp {
+                guides: Vec::new(),
                 edges: hole.clone(),
                 sketch: None,
                 profile: None,
@@ -377,6 +378,7 @@ fn patch_of_a_hole_in_a_wavy_surface() {
     op(
         &mut p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: hole,
             sketch: None,
             profile: None,

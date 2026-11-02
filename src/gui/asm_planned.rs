@@ -1732,6 +1732,28 @@ impl CadCraftApp {
     /// components fill its first selector when it takes components (rule 17).
     pub(super) fn start_asm_planned(&mut self, kind: AsmPlanned) {
         self.asm.tool = None;
+        // Edit Frame edits the whole frame in Insert Frame's full panel: the frame of the
+        // selected member, else the first one (*Position and Corners...* is the short one).
+        if kind == AsmPlanned::EditFrame {
+            let all = self.assembly().and_then(|a| {
+                let selected = self.asm.sel.first().copied();
+                a.frames
+                    .iter()
+                    .find(|f| f.members.iter().any(|m| Some(m.occurrence) == selected))
+                    .or(a.frames.first())
+                    .map(|f| f.members.iter().map(|m| m.occurrence).collect::<Vec<u32>>())
+            });
+            match all {
+                Some(ids) if !ids.is_empty() => {
+                    self.edit_members_start(&ids);
+                    return;
+                }
+                _ => {
+                    self.file_status = Some(Err("Edit Frame: the assembly has no frame".into()));
+                    return;
+                }
+            }
+        }
         let mut d = PartDialog::new(kind);
         let defs = selector_defs(Planned::Asm(kind));
         if !self.frame_preselect(&mut d)

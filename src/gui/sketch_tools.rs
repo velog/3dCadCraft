@@ -3722,6 +3722,27 @@ mod tests {
         assert_relative_eq!((b.x - a.x).abs(), 40.0, epsilon = 1e-6);
     }
 
+    /// Shift + click: Horizontal and Vertical swap.
+    #[test]
+    fn shift_swaps_horizontal_and_vertical() {
+        let mut ps = sketch();
+        let mut t = SketchTools::default();
+        let line = ps
+            .sketch
+            .add_line(Point2::new(0.0, 0.0), Point2::new(30.0, 10.0));
+        t.set_tool(Tool::Constrain(ConstraintTool::Horizontal));
+        t.swap_direction = true;
+        let at = Pick {
+            pos: Point2::new(15.0, 5.0),
+            snap: Snap::OnEntity(line),
+            infer: None,
+            align: Align::default(),
+        };
+        t.click(&mut ps, at).unwrap();
+        let (a, b) = ps.sketch.line_geometry(line).unwrap();
+        assert_relative_eq!(a.x, b.x, epsilon = 1e-6);
+    }
+
     /// A point inside a square: Vertical to the bottom line's midpoint and
     /// Horizontal to the right line's midpoint put it in the centre.
     #[test]
