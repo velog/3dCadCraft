@@ -184,6 +184,14 @@ impl CadCraftApp {
         let mut out = self.surf_edges(picks);
         let mut taken: std::collections::HashSet<crate::kernel::EdgeId> =
             std::collections::HashSet::new();
+        // The panel may have listed the chain already (the pick does): none of them twice.
+        let picked: std::collections::HashSet<crate::kernel::EdgeId> = picks
+            .iter()
+            .filter_map(|(item, _)| match item {
+                SelItem::Edge(e) => Some(*e),
+                _ => None,
+            })
+            .collect();
         for (item, _) in picks {
             let SelItem::Edge(e) = item else {
                 continue;
@@ -194,7 +202,7 @@ impl CadCraftApp {
             let chain = crate::part::select::free_chain(body, *e, false);
             for (k, y) in chain.into_iter().enumerate() {
                 // The first is the picked edge itself (already in `out`).
-                if !taken.insert(y) || k == 0 {
+                if !taken.insert(y) || k == 0 || picked.contains(&y) {
                     continue;
                 }
                 let face = body

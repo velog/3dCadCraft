@@ -409,6 +409,13 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   line, so a constraint commit that does not solve is tried again from the centres shifted a little
   (`sketch_tools::solve_from_near`); only a solved result stays. A click on a line's *midpoint* snap is a real Midpoint,
   which can truly conflict. An arc with all three points fixed adds no equation (it read as redundancy on projected loops).
+- **Red in the view**: back faces are drawn *under* the front faces without depth (`backfaces_under`): with depth, a
+  front face's slope bias pushed its last pixels behind the flat back faces, a red rim along walls seen edge-on. Section
+  views keep the old order (the back faces are the section). Red that remains means no front face there: a real hole.
+- **Display triangles are not saved** and a free-form face has no tessellation of its own: a part that is not the active
+  document opened with its spline wall missing (a hole, red behind it). `Project::rebuild_unmeshed_parts` rebuilds only
+  such parts at open (`PartDocument::has_undrawable_faces`); rebuilding all would slow a large assembly.
+- **`<Command>: OK (n ms)` in the log counts from when the command opened**, not the kernel's work: never read it as speed.
 - **Redundancy in composite shapes:** every builder in `sketch/shapes.rs` has a test
   asserting exact DOF *and* `redundant == 0`. Known traps: circumscribed polygon with
   even N (Pitot — drop one Equal), arc slot (a construction centre arc would be

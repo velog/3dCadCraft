@@ -197,3 +197,121 @@ fn a_patch_of_model_edges_passes_through_its_guide() {
     let t = top(&part);
     assert!(t > 12.0 && t < 21.0, "top {t}");
 }
+
+/// The owner's surface with a hole: the hole's rim (the shortest loop of free edges that
+/// goes up and down), one click's chain.
+fn hole_rim(part: &PartDocument) -> Vec<cadcraft3d::kernel::EdgeId> {
+    let opts = cadcraft3d::kernel::TessellationOptions::default();
+    let body = &part.body;
+    let length = |e| -> f64 {
+        body.sample_edge(e, &opts)
+            .map(|q| q.windows(2).map(|w| (w[1] - w[0]).norm()).sum())
+            .unwrap_or(0.0)
+    };
+    body.edges()
+        .map(|(e, _)| select::free_chain(body, e, false))
+        .filter(|c| {
+            let z: Vec<f64> = c
+                .iter()
+                .flat_map(|e| body.sample_edge(*e, &opts).unwrap_or_default())
+                .map(|q| q.z)
+                .collect();
+            let (lo, hi) = (
+                z.iter().copied().fold(f64::MAX, f64::min),
+                z.iter().copied().fold(f64::MIN, f64::max),
+            );
+            c.len() >= 2 && hi - lo > 1.0
+        })
+        .min_by(|a, b| {
+            let l = |c: &Vec<_>| c.iter().map(|e| length(*e)).sum::<f64>();
+            l(a).total_cmp(&l(b))
+        })
+        .unwrap()
+}
+
+/// The owner's surface with a hole, one click on its rim and a guide: the rim samples into
+/// hundreds of tiny pieces.
+#[test]
+fn a_patch_of_a_wavy_hole_takes_a_guide() {
+    let project = cadcraft3d::document::Project::load(std::path::Path::new(
+        "tests/data/surface_hole_patch.3dcadcraft",
+    ))
+    .unwrap();
+    let Some(cadcraft3d::document::DocumentData::Part(saved)) =
+        project.documents().first().map(|d| &d.data)
+    else {
+        panic!("a part");
+    };
+    let mut part = saved.clone();
+    part.regenerate().unwrap();
+    let hole = hole_rim(&part);
+    let tess = cadcraft3d::kernel::TessellationOptions::default();
+    // Where the rim crosses the XZ plane, and between them a spline bowing out of the surface.
+    let mut at_plane: Vec<Point2> = Vec::new();
+    for e in &hole {
+        let q = part.body.sample_edge(*e, &tess).unwrap();
+        for w in q.windows(2) {
+            if w[0].y * w[1].y <= 0.0 && w[0].y != w[1].y {
+                let t = w[0].y / (w[0].y - w[1].y);
+                let c = w[0] + (w[1] - w[0]) * t;
+                // The XZ plane's sketch x = X, y = Z.
+                at_plane.push(p(c.x, c.z));
+            }
+        }
+    }
+    println!("rim crosses y = 0 at {at_plane:?}");
+    assert_eq!(at_plane.len(), 2);
+    let i = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts())
+        .unwrap();
+    let sk = &mut part.sketches[i].sketch;
+    let (a, b) = (at_plane[0], at_plane[1]);
+    let mid = Point2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0 + 12.0);
+    let ids = vec![sk.add_point(a), sk.add_point(mid), sk.add_point(b)];
+    sk.add_interp_spline(ids).unwrap();
+    let guide = part.sketches[i].id.clone();
+    let edges: Vec<surface_op::SurfEdge> = hole
+        .iter()
+        .map(|e| {
+            let face = part.body.edge_faces(*e)[0];
+            let q = select::polyline_middle(&part.body.sample_edge(*e, &tess).unwrap()).unwrap();
+            surface_op::SurfEdge {
+                face: part.body.face(face).unwrap().name.clone().unwrap(),
+                hint: [q.x, q.y, q.z],
+            }
+        })
+        .collect();
+    let id = part
+        .add_body_op(BodyOpFeature::new(BodyOp::Patch(PatchOp {
+            edges,
+            sketch: None,
+            profile: None,
+            solid: false,
+            tangent: None,
+            guides: vec![guide],
+        })))
+        .unwrap();
+    assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+    let patch = part
+        .exact_bodies
+        .0
+        .iter()
+        .find(|s| s.name.as_deref() == Some(id.as_str()))
+        .expect("the patch body");
+    let _ = patch;
+    // It rises to the guide: above the middle of the two crossings.
+    let top = part
+        .body
+        .faces()
+        .filter(|(_, f)| {
+            f.name
+                .as_deref()
+                .is_some_and(|n| n.starts_with(id.as_str()))
+        })
+        .filter_map(|(_, f)| f.mesh.as_ref())
+        .flat_map(|m| m.positions.iter())
+        .map(|q| q.z)
+        .fold(f64::MIN, f64::max);
+    println!("patch top {top:.2}, the guide's middle {:.2}", mid.y);
+    assert!(top > mid.y - 2.0, "{top} vs {}", mid.y);
+}

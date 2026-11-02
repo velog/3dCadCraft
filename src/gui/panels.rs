@@ -1516,7 +1516,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             }
         };
         let many = rows.len() > 1;
-        for (name, open, mesh, check) in rows {
+        for (k, (name, open, mesh, check)) in rows.into_iter().enumerate() {
             if many {
                 ui.label(RichText::new(&name).weak());
             }
@@ -1542,17 +1542,20 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 }
                 Ok(s) => {
                     ui.colored_label(Color32::from_rgb(20, 150, 50), "✔ valid solid");
-                    ui.collapsing("Details", |ui| {
-                        ui.label(format!(
-                            "V {}   E {}   F {}   shells {}",
-                            s.vertices, s.edges, s.faces, s.shells
-                        ));
-                        ui.label(format!(
-                            "Euler–Poincaré: V - E + F = {}, genus {}",
-                            s.euler_characteristic(),
-                            s.genus().map_or_else(|| "-".to_owned(), |g| g.to_string())
-                        ));
-                    });
+                    // One per body: two with one label id were egui's red "widget ID" warning.
+                    egui::CollapsingHeader::new("Details")
+                        .id_salt(("body_details", k))
+                        .show(ui, |ui| {
+                            ui.label(format!(
+                                "V {}   E {}   F {}   shells {}",
+                                s.vertices, s.edges, s.faces, s.shells
+                            ));
+                            ui.label(format!(
+                                "Euler–Poincaré: V - E + F = {}, genus {}",
+                                s.euler_characteristic(),
+                                s.genus().map_or_else(|| "-".to_owned(), |g| g.to_string())
+                            ));
+                        });
                 }
                 Err(e) => {
                     ui.colored_label(Color32::RED, format!("✘ {e}"));

@@ -363,10 +363,11 @@ impl CadCraftApp {
     /// Trim Surface's Cutting Tool takes a closed outline directly, also of a sketch an
     /// extrusion has consumed and hidden: those sketches show while it waits.
     pub(super) fn hidden_sketches_shown(&self) -> bool {
-        self.part_planned.as_ref().is_some_and(|d| {
-            d.kind
-                == super::part_planned::Planned::Part(super::part_planned::PartPlanned::TrimSurface)
-                && d.active == Some("tool")
+        use super::part_planned::{PartPlanned, Planned};
+        self.part_planned.as_ref().is_some_and(|d| match d.kind {
+            Planned::Part(PartPlanned::TrimSurface) => d.active == Some("tool"),
+            Planned::Part(PartPlanned::Patch) => matches!(d.active, Some("boundary" | "rails")),
+            _ => false,
         })
     }
 

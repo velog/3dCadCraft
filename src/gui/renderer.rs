@@ -232,6 +232,7 @@ struct Target {
 pub struct ViewportRenderer {
     shaded: wgpu::RenderPipeline,
     backfaces: wgpu::RenderPipeline,
+    backfaces_under: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     /// Front faces into the depth buffer only (wireframe styles).
     depth_faces: wgpu::RenderPipeline,
@@ -399,6 +400,18 @@ impl ViewportRenderer {
             "fs_backface",
             bias(16),
         );
+        // Under the front faces, without depth: a front face's slope bias pushes its last pixels
+        // behind the solid's flat back faces there, a red rim along every wall seen edge-on.
+        let backfaces_under = pipeline_ex(
+            "back faces under",
+            Topo::TriangleList,
+            Some(Face::Front),
+            "fs_backface",
+            Default::default(),
+            false,
+            wgpu::CompareFunction::LessEqual,
+            wgpu::ColorWrites::ALL,
+        );
         let lines = pipeline("lines", Topo::LineList, None, "fs_flat", Default::default());
         let depth_faces = pipeline_ex(
             "depth faces",
@@ -530,6 +543,7 @@ impl ViewportRenderer {
         Self {
             shaded,
             backfaces,
+            backfaces_under,
             lines,
             depth_faces,
             hidden_lines,
@@ -693,8 +707,11 @@ impl ViewportRenderer {
                 if let (Some(vb), Some(ib)) = (&g.tri_vbuf, &g.tri_ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    let faces: &[&wgpu::RenderPipeline] = if style.faces {
+                    // A cut shows the back faces as the section, in front of what lies behind.
+                    let faces: &[&wgpu::RenderPipeline] = if style.faces && cut.a.is_some() {
                         &[&self.shaded, &self.backfaces]
+                    } else if style.faces {
+                        &[&self.backfaces_under, &self.shaded]
                     } else if style.depth_only {
                         &[&self.depth_faces]
                     } else {

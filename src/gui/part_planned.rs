@@ -720,7 +720,7 @@ impl PartPlanned {
                         "rails",
                         "Guide Rails",
                         "Select guide curves (optional)",
-                        CURVES,
+                        LINE,
                     ),
                     Radio("Output", &["Surface", "Solid"], 0),
                 ],
@@ -2349,9 +2349,37 @@ impl CadCraftApp {
         };
         let what = self.item_label(&item);
         let at = self.click_point(&item, p, rect).map(|q| [q.x, q.y, q.z]);
-        if let Some(d) = self.part_planned.as_mut() {
-            d.pick_item(what, item, at);
+        let chain = self.patch_chain(&item);
+        let Some(d) = self.part_planned.as_mut() else {
+            return;
+        };
+        let count = |d: &PartDialog| d.active.and_then(|k| d.picks.get(k)).map_or(0, Vec::len);
+        let before = count(d);
+        d.pick_item(what, item, at);
+        // The same click again takes the edge off: then nothing joins it.
+        if count(d) > before && !chain.is_empty() {
+            self.part_planned_add(chain);
         }
+    }
+
+    /// Boundary Patch with Automatic Edge Chain: the free edges joined to the picked one, so the
+    /// panel's count and the highlight show the whole loop at once.
+    fn patch_chain(&self, item: &SelItem) -> Vec<SelItem> {
+        let SelItem::Edge(e) = item else {
+            return Vec::new();
+        };
+        let on = self.part_planned.as_ref().is_some_and(|d| {
+            d.kind == Planned::Part(PartPlanned::Patch)
+                && d.active == Some("boundary")
+                && d.check(0, "Automatic Edge Chain")
+        });
+        if !on {
+            return Vec::new();
+        }
+        crate::part::select::free_chain(&self.part().body, *e, false)
+            .into_iter()
+            .map(SelItem::Edge)
+            .collect()
     }
 
     /// Adds `items` to the planned panel's active selector (those it takes), each with a point

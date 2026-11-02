@@ -1014,6 +1014,18 @@ pub struct PartDocument {
 }
 
 impl PartDocument {
+    /// Whether a face of the body comes out of the tessellation without a triangle.
+    pub fn has_undrawable_faces(&self) -> bool {
+        let opts = crate::kernel::TessellationOptions::default();
+        self.body.solids().any(|(id, s)| {
+            !s.mesh
+                && self
+                    .body
+                    .tessellate_solid(id, &opts)
+                    .is_ok_and(|m| m.face_triangles.iter().any(|(_, r)| r.is_empty()))
+        })
+    }
+
     /// A cheap signature of the body (no walk over face meshes): the
     /// vertices' box, the element counts, the mesh sizes and the hidden
     /// bodies. It changes on every rebuild; caches of display or picking

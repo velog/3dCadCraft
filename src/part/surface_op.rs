@@ -954,7 +954,17 @@ fn guided_patch(
     };
     let every: Vec<usize> = (0..surface_ops::face_count(&sheet)).collect();
     let split = exact::split_faces_lenient(&sheet, &every, &tool, "trim", None)
-        .map_err(|e| User(format!("the outline does not cut the patch ({e})")))?
+        .map_err(|e| {
+            // A sketch's every curve is a guide: its curves at other levels fold the sheet until
+            // it cannot be traced.
+            if op.guides.is_empty() {
+                User(format!("the outline does not cut the patch ({e})"))
+            } else {
+                User(format!(
+                    "the guides bend the patch too far: keep only the guide curve in its sketch ({e})"
+                ))
+            }
+        })?
         .ok_or_else(|| User("the outline does not cut the patch".into()))?;
     let b = exact::to_brep(std::slice::from_ref(&split)).map_err(Kernel)?;
     let inside: Vec<bool> = b

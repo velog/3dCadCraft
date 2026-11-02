@@ -3979,6 +3979,7 @@ impl CadCraftApp {
         let path = std::path::PathBuf::from(self.file_path.trim());
         self.file_status = Some(match Project::load(&path) {
             Ok(mut project) => {
+                project.rebuild_unmeshed_parts();
                 // A top-level assembly (placed in no other) opens first,
                 // else the first part.
                 let used: Vec<DocumentId> = project

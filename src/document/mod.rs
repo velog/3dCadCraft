@@ -539,6 +539,23 @@ impl Project {
         id
     }
 
+    /// Rebuilds from its features every part with a face the saved body cannot draw: display
+    /// triangles are not saved and a free-form face has no tessellation of its own, so a blade's
+    /// spline wall opened as a hole (the back faces behind it red). The others keep the saved
+    /// body: rebuilding all of them would make opening a large assembly slow.
+    pub fn rebuild_unmeshed_parts(&mut self) -> usize {
+        let mut n = 0;
+        for d in &mut self.documents {
+            if let DocumentData::Part(p) = &mut d.data
+                && p.has_undrawable_faces()
+            {
+                let _ = p.regenerate();
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// All documents, in project order.
     pub fn documents(&self) -> &[Document] {
         &self.documents
