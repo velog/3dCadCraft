@@ -865,10 +865,10 @@ A more intuitive way: one operation sets both the *position* and the *motion*.
 
 **Inventor equivalent.** Constrain, Joint.
 
-## 3.4 Dragging and contact — ⬜ · M
+## 3.4 Dragging and contact — 🟡 (Contact Solver, contact sets, motion links, motion studies, exploded views: [spec/3.1b](spec/3.1b-motion-contact.md); Transitional ⬜) · M
 
 - Dragging a component with the mouse within its freedom. It uses the same idea as dragging points in the sketch, which already works.
-- **Contact solver:** components cannot penetrate each other while dragging.
+- **Contact solver:** components cannot penetrate each other while dragged, driven or played (sampled display triangles).
 
 ## 3.5 Interference check — 🟡 (Analyze Interference: two sets, volumes and centroids, red display; waiting for a visual check by the owner) · M
 

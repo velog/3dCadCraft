@@ -4524,3 +4524,73 @@ fn command_search_per_keystroke() {
     println!("command search: {ms:.3} ms per keystroke (300 commands)");
     assert!(ms < 1.0, "command search: {ms:.3} ms per keystroke > 1 ms");
 }
+
+/// The Contact Solver checks every frame of a drag: two parts of ~1000 triangles passing
+/// through each other, within a frame's budget (spec 3.1b, rule 20).
+#[test]
+fn contact_check_of_a_drag() {
+    if std::env::var_os("CADCRAFT3D_NO_BUDGETS").is_some() {
+        return;
+    }
+    use cadcraft3d::assembly::PickMesh;
+    use cadcraft3d::assembly::motion::{contact_tolerance, mesh_overlap};
+    use cadcraft3d::kernel::{Transform3, Vector3};
+    use cadcraft3d::part::{OriginPlane, PartDocument, SketchPlacement};
+    use cadcraft3d::sketch::Point2;
+    let mut part = PartDocument::default();
+    let opts = cadcraft3d::part::SketchOptions {
+        auto_project_origin: false,
+        ..Default::default()
+    };
+    let i = part
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts)
+        .unwrap();
+    let sk = &mut part.sketches[i].sketch;
+    sk.add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 100.0))
+        .unwrap();
+    for x in 0..6 {
+        for y in 0..6 {
+            sk.add_circle(
+                Point2::new(10.0 + 16.0 * f64::from(x), 10.0 + 16.0 * f64::from(y)),
+                4.0,
+            )
+            .unwrap();
+        }
+    }
+    let regions = part.sketches[i].sketch.regions();
+    let plate = regions
+        .iter()
+        .max_by_key(|r| r.holes.len())
+        .unwrap()
+        .clone();
+    let e = cadcraft3d::part::ExtrudeFeature::new(
+        vec![cadcraft3d::part::ProfileRef::of(
+            &plate,
+            plate.interior_point(),
+        )],
+        10.0,
+    );
+    part.add_extrude(i, e).unwrap();
+    let m = PickMesh::of(&part);
+    let (ta, tb) = (
+        Transform3::identity(),
+        Transform3::new(Vector3::new(90.0, 90.0, 5.0), Vector3::zeros()),
+    );
+    let apart = Transform3::new(
+        Vector3::new(160.0, 2.0, 0.0),
+        Vector3::new(0.0, 0.0, std::f64::consts::FRAC_PI_4),
+    );
+    let tol = contact_tolerance(&m, &m);
+    let mut times = Vec::new();
+    for _ in 0..5 {
+        let t = std::time::Instant::now();
+        assert!(mesh_overlap(&m, &ta, &m, &tb, tol).is_some());
+        // Boxes overlapping, the material apart: every sample tested.
+        assert!(mesh_overlap(&m, &ta, &m, &apart, tol).is_none());
+        times.push(t.elapsed().as_secs_f64() * 1e3);
+    }
+    times.sort_by(f64::total_cmp);
+    let ms = times[2];
+    println!("contact check of a 36-hole plate pair: {ms:.1} ms");
+    assert!(ms < 40.0, "contact check took {ms:.1} ms");
+}

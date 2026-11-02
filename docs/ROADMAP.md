@@ -375,6 +375,18 @@ foundations; the order below builds those first. Each stage: spec rows first, In
 
 ---
 
+## Owner's batch 2026-11-01
+
+Done: touching profiles join (Extrude, Revolve); sketch Mirror dialog; Ctrl / Shift + right click constraints; Horizontal / Vertical
+swap with Shift; Mate / Flush change over; axis Mate by angle with Lock Rotation and Drive; display meshes cached (hover and
+selection no longer tessellate every occurrence); member cut past the middle; Create opens in place; browser Files tab, folders,
+Expand / Collapse All, Promote / Demote; Last Used from Edit Feature; default projection and visual style; Inventor's keys and
+import from the installed Inventor; spline closing; Trim by an extruded spline outline; chains of open curves; Boundary Patch Guide
+Rails; Motion and Contact (spec 3.1b).
+
+Open: Transitional constraints; Demote keeping relationships to the rest by paths; Patch with guides on a loop of model edges;
+motion links picked on faces directly.
+
 ## Interface: gaps and next steps
 
 Collected from [REFERENCE.md](REFERENCE.md) (the reference written from the code on 2026-10-19), the sections "Differences from Inventor" and "Differences from docs/UI.md". The numbers point to [FEATURES.md](FEATURES.md).

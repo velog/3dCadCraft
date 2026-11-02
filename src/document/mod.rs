@@ -354,6 +354,12 @@ impl Occurrence {
 pub struct AssemblyDocument {
     /// Placed components.
     pub occurrences: Vec<Occurrence>,
+    /// Motion links, contact sets, motion studies, exploded views.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::assembly::motion::MotionData::is_empty"
+    )]
+    pub motion: crate::assembly::motion::MotionData,
     /// Browser folders (only a way to list the components).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub folders: Vec<crate::assembly::restructure::BrowserFolder>,
@@ -674,6 +680,8 @@ mod tests {
 
     pub(crate) fn assembly_of(refs: &[DocRef]) -> DocumentData {
         DocumentData::Assembly(AssemblyDocument {
+            folders: Vec::new(),
+            motion: Default::default(),
             occurrences: refs
                 .iter()
                 .enumerate()

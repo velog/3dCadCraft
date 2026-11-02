@@ -98,6 +98,7 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [3.1-assemblies.md](3.1-assemblies.md) | Assemblies: placing components, constraints (Mate, Flush, Angle, Tangent, Insert, Symmetry), joints; one solver for both; what is taken from SolidCraft; plan and cost |
 | [3.10-top-down.md](3.10-top-down.md) | Top-down design: Create in place, Edit in place, cross-part references and Update, adaptivity, Derive, Make Part / Make Components, layouts and skeletons, assembly features, linked parameters; order of work T0–T10 |
 | [3.1a-subassemblies.md](3.1a-subassemblies.md) | Subassemblies: an assembly placed in an assembly (Rigid / Flexible), nested display and picking, relationships into nested parts, BOM levels, Interference, Demote / Promote |
+| [3.1b-motion-contact.md](3.1b-motion-contact.md) | Motion links, Contact Solver and sets, motion studies, exploded views, Mate of axes | 🟡 |
 | [5.1-sweep.md](5.1-sweep.md) | Sweep: profile along a path (sketch or edges), Guide Rail, Parallel, Taper, Twist |
 | [5.2-loft.md](5.2-loft.md) | Loft: sections (sketches, faces, point), Closed Loop, conditions, transition |
 | [2.11-patterns.md](2.11-patterns.md) | Rectangular Pattern and Circular Pattern of features and bodies |

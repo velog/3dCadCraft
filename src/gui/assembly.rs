@@ -1858,6 +1858,7 @@ impl CadCraftApp {
                 .preview
                 .as_ref()
                 .and_then(|p| p.get(&o.id).copied())
+                .or_else(|| self.motion.display.get(&o.id).copied())
                 .unwrap_or(o.transform);
             // Disabled: faint; Transparent (or showing an interference):
             // see-through.
@@ -2252,6 +2253,24 @@ impl CadCraftApp {
     }
 
     fn continue_drag(&mut self, d: AsmDrag, now: Pos2, rect: Rect) {
+        // The Contact Solver: a move that would pass through something does not
+        // happen (the part stops at the last free place).
+        let contact = self.assembly().is_some_and(|a| a.motion.contact_enabled);
+        let before: Vec<(u32, Transform3)> = if contact {
+            self.assembly()
+                .map(|a| a.occurrences.iter().map(|o| (o.id, o.transform)).collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let was_hit = contact && self.contact_hit().is_some();
+        self.continue_drag_free(d, now, rect);
+        if contact {
+            self.contact_guard(&before, was_hit);
+        }
+    }
+
+    fn continue_drag_free(&mut self, d: AsmDrag, now: Pos2, rect: Rect) {
         let (back, up) = self.camera.frame();
         let right = up.cross(&back);
         let delta = now - d.last;

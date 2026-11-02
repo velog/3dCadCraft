@@ -120,6 +120,7 @@ fn disc(p: &mut PartDocument, r: Real, z: Real) -> String {
     op(
         p,
         BodyOp::Patch(PatchOp {
+            guides: Vec::new(),
             edges: Vec::new(),
             sketch: Some(id),
             profile: Some(ProfileRef::of(&rg[0], rg[0].interior_point())),

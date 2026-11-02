@@ -499,6 +499,16 @@ pub enum Icon {
     FrameInfo,
     FrameRefresh,
     EditFrame,
+    /// Activate Contact Solver: two blocks stopped at each other.
+    ContactSolver,
+    /// Contact Sets: three blocks grouped.
+    ContactSets,
+    /// Motion links: two meshing wheels.
+    MotionLink,
+    /// Motion Study: a timeline with keys.
+    MotionStudy,
+    /// Exploded View: blocks pushed apart.
+    ExplodedView,
     BeamColumn,
     /// Shaft (stepped sections).
     Shaft,
@@ -2791,6 +2801,38 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.closed(&[(3.5, 7.0), (8.5, 7.0), (8.5, 12.0), (3.5, 12.0)], ink);
             p.line(&[(9.0, 9.0), (15.0, 3.0)], acc);
             p.line(&[(9.0, 9.0), (8.4, 10.6), (10.0, 10.0)], acc);
+        }
+        ContactSolver => {
+            p.rect(1.5, 5.0, 7.5, 11.0, ink);
+            p.rect(8.5, 5.0, 14.5, 11.0, acc);
+            p.line(&[(8.0, 3.0), (8.0, 13.0)], hot);
+        }
+        ContactSets => {
+            p.rect(2.0, 2.5, 7.0, 7.5, ink);
+            p.rect(9.0, 2.5, 14.0, 7.5, acc);
+            p.rect(5.5, 9.0, 10.5, 14.0, ink);
+            p.closed(&[(1.0, 1.5), (15.0, 1.5), (15.0, 15.0), (1.0, 15.0)], soft);
+        }
+        MotionLink => {
+            p.circle(5.5, 8.0, 3.8, ink);
+            p.circle(12.0, 8.0, 2.6, acc);
+            p.line(&[(5.5, 8.0), (5.5, 5.0)], ink);
+            p.line(&[(12.0, 8.0), (12.0, 10.2)], acc);
+            p.disc(9.3, 8.0, 0.8, hot);
+        }
+        MotionStudy => {
+            p.line(&[(1.5, 11.0), (14.5, 11.0)], ink);
+            p.disc(4.0, 11.0, 1.2, acc);
+            p.disc(9.0, 11.0, 1.2, acc);
+            p.disc(13.0, 11.0, 1.2, acc);
+            p.fill(&[(5.0, 2.5), (5.0, 8.0), (10.0, 5.2)], hot);
+        }
+        ExplodedView => {
+            p.rect(1.5, 6.0, 5.5, 10.0, ink);
+            p.rect(10.5, 6.0, 14.5, 10.0, ink);
+            p.rect(6.0, 1.5, 10.0, 5.0, acc);
+            p.line(&[(6.5, 8.0), (9.5, 8.0)], hot);
+            p.line(&[(8.0, 6.0), (8.0, 11.5)], hot);
         }
         FrameRefresh => {
             p.rect(3.0, 5.0, 13.0, 11.0, acc);

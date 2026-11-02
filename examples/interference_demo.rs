@@ -89,6 +89,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     project.add_document(
         "Assembly",
         DocumentData::Assembly(AssemblyDocument {
+            folders: Vec::new(),
+            motion: Default::default(),
             occurrences,
             constraints: Vec::new(),
             patterns: Vec::new(),

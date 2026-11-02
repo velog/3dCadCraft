@@ -760,6 +760,16 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 ],
             ),
             panel(
+                "Motion",
+                vec![
+                    c("asm.contact_solver").large(),
+                    c("asm.contact_sets"),
+                    c("asm.motion_link"),
+                    c("asm.motion_study"),
+                    c("asm.exploded"),
+                ],
+            ),
+            panel(
                 "Pattern",
                 vec![c("asm.pattern"), c("asm.mirror"), c("asm.copy")],
             ),

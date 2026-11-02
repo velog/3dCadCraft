@@ -158,6 +158,10 @@ pub enum AppCmd {
     Delete,
     /// Zoom All: fit the model into the view.
     ZoomAll,
+    /// Activate Contact Solver, on or off.
+    ContactSolver,
+    /// The Motion and Contact window on one of its tabs.
+    Motion(super::motion::MotionTab),
     /// Return: from Edit in place back to the assembly.
     Return,
     /// Find in Browser: the selected component's row.
@@ -405,6 +409,7 @@ const A_COMPONENT: Place = Place::Ribbon("Assemble", "Component");
 const A_POSITION: Place = Place::Ribbon("Assemble", "Position");
 const A_RELATIONSHIPS: Place = Place::Ribbon("Assemble", "Relationships");
 const A_PATTERN: Place = Place::Ribbon("Assemble", "Pattern");
+const A_MOTION: Place = Place::Ribbon("Assemble", "Motion");
 const A_PRODUCTIVITY: Place = Place::Ribbon("Assemble", "Productivity");
 const A_SIMPLIFY: Place = Place::Ribbon("Assemble", "Simplification");
 const I_INTERFERENCE: Place = Place::Ribbon("Inspect", "Interference");
@@ -1746,6 +1751,43 @@ pub static COMMANDS: &[Command] = &[
         .at(&[KEY])
         .tip("Fit the whole model into the view (double middle click)")
         .spec("0.3-view.md"),
+    c("asm.contact_solver", "Contact Solver", "Контактен решател", Icon::ContactSolver)
+        .inv("Activate Contact Solver")
+        .run(Action::App(AppCmd::ContactSolver))
+        .alias(&["CSO"])
+        .at(&[A_MOTION])
+        .env(ASSEMBLY)
+        .tip("On: components in contact stop each other when dragged or driven")
+        .spec("3.1b-motion-contact.md"),
+    c("asm.contact_sets", "Contact Sets", "Контактни групи", Icon::ContactSets)
+        .run(Action::App(AppCmd::Motion(super::motion::MotionTab::Contact)))
+        .alias(&["CST"])
+        .at(&[A_MOTION])
+        .env(ASSEMBLY)
+        .tip("Which components stop each other: sets of the selected components, or all")
+        .spec("3.1b-motion-contact.md"),
+    c("asm.motion_link", "Motion", "Движение", Icon::MotionLink)
+        .inv("Motion Constraint")
+        .run(Action::App(AppCmd::Motion(super::motion::MotionTab::Links)))
+        .alias(&["MLK"])
+        .at(&[A_MOTION])
+        .env(ASSEMBLY)
+        .tip("One relationship follows another: gears, rack and pinion, a screw")
+        .spec("3.1b-motion-contact.md"),
+    c("asm.motion_study", "Motion Study", "Анимация на движение", Icon::MotionStudy)
+        .run(Action::App(AppCmd::Motion(super::motion::MotionTab::Study)))
+        .alias(&["MST"])
+        .at(&[A_MOTION])
+        .env(ASSEMBLY)
+        .tip("Relationships' values keyed along a timeline; play, stop at contact, export the poses")
+        .spec("3.1b-motion-contact.md"),
+    c("asm.exploded", "Exploded View", "Разглобен изглед", Icon::ExplodedView)
+        .run(Action::App(AppCmd::Motion(super::motion::MotionTab::Exploded)))
+        .alias(&["EXV"])
+        .at(&[A_MOTION])
+        .env(ASSEMBLY)
+        .tip("Components moved apart for show; the design keeps its places")
+        .spec("3.1b-motion-contact.md"),
     c("asm.return_parent", "Return", "Връщане", Icon::Home)
         .run(Action::App(AppCmd::Return))
         .key("Ctrl+Equals")

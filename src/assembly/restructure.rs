@@ -213,10 +213,7 @@ pub fn promote(
     }
     // The assembly's relationships into it now name it directly.
     for c in &mut a.constraints {
-        for g in [&mut c.a, &mut c.b]
-            .into_iter()
-            .chain(c.plane.as_mut().into_iter())
-        {
+        for g in [&mut c.a, &mut c.b].into_iter().chain(c.plane.as_mut()) {
             if g.occurrence() != ASSEMBLY
                 && g.occurrence() == top
                 && g.sub().first() == Some(&inner)
@@ -248,13 +245,13 @@ mod tests {
             sub: Vec::new(),
             occurrence: o,
             name: "F".into(),
-            hint: crate::kernel::Point3::origin(),
+            hint: [0.0, 0.0, 0.0],
         }
     }
 
     fn setup() -> (Project, DocumentId, [u32; 3]) {
         let mut p = Project::new("t");
-        let part = p.add_document("Part", DocumentData::Part(Box::default()));
+        let part = p.add_document("Part", DocumentData::Part(PartDocument::default()));
         let mut a = AssemblyDocument::default();
         let r = DocRef {
             library: None,

@@ -99,6 +99,7 @@ mod manip;
 mod material;
 mod measure;
 mod measure_pick;
+mod motion;
 mod move_bodies;
 mod nav;
 mod new_file;
@@ -825,6 +826,8 @@ struct CadCraftApp {
     /// Where the last right click in the view was (the plain menu's Select
     /// Other asks the candidates there).
     menu_at: Option<(egui::Pos2, egui::Rect)>,
+    /// The Motion and Contact window.
+    motion: motion::MotionUi,
     /// The browser's Files tab.
     files: file_explorer::FilesUi,
     /// The views rested on (F5, Shift+F5).
@@ -1112,6 +1115,7 @@ impl CadCraftApp {
             shift_rmb: false,
             ctrl_rmb: false,
             menu_at: None,
+            motion: Default::default(),
             files: Default::default(),
             view_history: Default::default(),
             zoom_window: None,
@@ -4390,6 +4394,8 @@ impl CadCraftApp {
             }
             AppCmd::ZoomAll => self.fit_view(),
             AppCmd::Return => self.return_to_assembly(),
+            AppCmd::ContactSolver => self.toggle_contact_solver(),
+            AppCmd::Motion(t) => self.open_motion(t),
             AppCmd::FindInBrowser => {
                 self.asm.find_in_browser = self.asm.sel.first().copied();
                 self.files.tab = file_explorer::BrowserTab::Model;
@@ -8170,6 +8176,7 @@ impl eframe::App for CadCraftApp {
         if self.is_assembly() {
             self.bom_window(&ctx);
             self.drive_window(&ctx);
+            self.motion_window(&ctx);
             self.interference_poll(&ctx);
             self.interference_window(&ctx);
             self.pattern_preview_poll();

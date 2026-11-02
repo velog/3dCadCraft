@@ -28,6 +28,10 @@ pub(super) struct DriveWin {
     done: u32,
     /// Start → End → Start counts as one repetition.
     back_and_forth: bool,
+    /// The step the components stand at (where a contact check starts from).
+    at: u32,
+    /// Collision Detection: contact stops the drive.
+    collision: bool,
     /// The value, lock and placements before driving.
     saved: (Real, bool, Vec<(u32, Transform3)>),
     angle: bool,
@@ -61,6 +65,7 @@ impl CadCraftApp {
             )));
             return;
         }
+        let contact = a.motion.contact_enabled;
         let saved = (
             c.value,
             c.locked,
@@ -83,6 +88,8 @@ impl CadCraftApp {
             repetitions: 1,
             done: 0,
             back_and_forth: false,
+            at: 0,
+            collision: contact,
             saved,
             angle,
         });
@@ -97,6 +104,11 @@ impl CadCraftApp {
         }
         self.asm_solve(None);
         self.cons.last.converged
+    }
+
+    /// A relationship's value now.
+    fn driven_now(&self, id: u32) -> Option<Real> {
+        self.assembly()?.constraint(id).map(|c| c.value)
     }
 
     /// The Drive window and its animation.
@@ -154,6 +166,8 @@ impl CadCraftApp {
                     });
                 ui.checkbox(&mut w.back_and_forth, "Start/End/Start")
                     .on_hover_text("One repetition goes to the end and back");
+                ui.checkbox(&mut w.collision, "Collision Detection")
+                    .on_hover_text("Stops where components in contact would pass through each other (Contact Sets)");
                 ui.horizontal(|ui| {
                     if ui.button("|<").on_hover_text("To the start").clicked() {
                         w.dir = 0;
@@ -213,7 +227,17 @@ impl CadCraftApp {
         if let Some(k) = jump {
             w.k = k;
             let v = w.start + (w.end - w.start) * k as Real / w.steps as Real;
-            if !self.drive_to(w.id, v) {
+            let from = w.start + (w.end - w.start) * w.at as Real / w.steps as Real;
+            w.at = k;
+            if w.collision
+                && let Some((x, y)) = self.drive_with_contact(w.id, from, v)
+            {
+                w.dir = 0;
+                self.file_status = Some(Ok(format!(
+                    "Drive: {x} stops at {y} at {:.3}{sfx}",
+                    unit(self.driven_now(w.id).unwrap_or(v))
+                )));
+            } else if !w.collision && !self.drive_to(w.id, v) {
                 w.dir = 0;
                 self.file_status = Some(Err(format!(
                     "Drive: the constraints cannot hold at {:.3}{sfx}",
