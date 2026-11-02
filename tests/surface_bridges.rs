@@ -19,6 +19,14 @@ fn sheet_area(part: &PartDocument) -> Real {
         .sum()
 }
 
+/// One test at a time: the stitch's time budget is for the operation alone (next to the other
+/// tests of this file it took 9 s, alone 1.5 s). Never a reason to raise the budget.
+fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn surfaces(part: &PartDocument) -> usize {
     part.exact_bodies.0.iter().filter(|s| s.is_open()).count()
 }
@@ -50,6 +58,7 @@ fn solid_volume(p: &PartDocument) -> Real {
 /// between their trimmed edges (which lie on the curved wall, not in a plane) bridges them.
 #[test]
 fn loft_bridges_the_owners_trimmed_surfaces() {
+    let _alone = one_at_a_time();
     use cadcraft3d::document::{DocumentData, Project};
     use cadcraft3d::kernel::{Point3, TessellationOptions};
     use cadcraft3d::part::{LoftFeature, LoftSection};
@@ -120,6 +129,7 @@ fn loft_bridges_the_owners_trimmed_surfaces() {
 /// closes a solid, and Output Solid makes it in one feature.
 #[test]
 fn loft_between_two_whole_surfaces() {
+    let _alone = one_at_a_time();
     use cadcraft3d::document::{DocumentData, Project};
     use cadcraft3d::kernel::TessellationOptions;
     use cadcraft3d::part::{LoftFeature, LoftSection};
@@ -258,6 +268,7 @@ fn loft_between_two_whole_surfaces() {
 /// solid of the same volume as Loft between the two whole surfaces.
 #[test]
 fn stitch_closes_the_owners_eight_lofts() {
+    let _alone = one_at_a_time();
     use cadcraft3d::document::{DocumentData, Project};
     let pr = Project::load(std::path::Path::new(
         "tests/data/surface_test3_owner.3dcadcraft",
@@ -313,6 +324,7 @@ fn stitch_closes_the_owners_eight_lofts() {
 /// of the hole (a disc of r ≈ 42 on a slope).
 #[test]
 fn patch_of_a_hole_in_a_wavy_surface() {
+    let _alone = one_at_a_time();
     use cadcraft3d::document::{DocumentData, Project};
     use cadcraft3d::kernel::TessellationOptions;
     use cadcraft3d::part::surface_op::PatchOp;
