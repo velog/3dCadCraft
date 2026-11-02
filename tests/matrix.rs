@@ -437,8 +437,8 @@ fn s_shell_closed() -> Result<PartDocument, String> {
     shell_of(plate(40.0, 30.0, 20.0)?, &[], 2.0, ShellDirection::Inside)
 }
 
-/// The four vertical edges of the 40×30×20 plate (every piece: after a
-/// shell they are split where the floor inside is, the blend joins them).
+/// The four vertical edges of the 40×30×20 plate (every piece, where a shell
+/// splits them at the floor inside; the blend joins them).
 fn vertical_edges(part: &PartDocument) -> Vec<EdgeRef> {
     edges_where(part, |h| {
         h[2] > 1e-6
@@ -464,7 +464,7 @@ fn c_fillet_then_shell() -> Result<PartDocument, String> {
 fn c_shell_then_fillet() -> Result<PartDocument, String> {
     let mut part = s_shell_box()?;
     let e = vertical_edges(&part);
-    if e.len() != 8 {
+    if e.len() != 4 && e.len() != 8 {
         return Err(format!("{} vertical edge pieces", e.len()));
     }
     part.add_blend(BlendFeature::fillet(e, 1.0))

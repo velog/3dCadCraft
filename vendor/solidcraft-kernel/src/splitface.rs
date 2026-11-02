@@ -521,7 +521,7 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<
     // Sketch curves splitting a planar face parallel to their plane: the split line is the
     // tool's own polyline (corners kept), not a spline through the traced points, which
     // rounded a rectangle's corners by the tracing step (a hole cut by a closed loop). 3DCadCraft.
-    if let (Field::Curve { plane, pts: poly, .. }, mt::Surface::Plane(pl)) = (g, face.surface())
+    if let (Field::Curve { plane, pts: poly, along: None, .. }, mt::Surface::Plane(pl)) = (g, face.surface())
         && let Some(c) = polyline_on(plane, poly, &pl, pts, scale)
     {
         return Ok(c);
@@ -529,7 +529,7 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<
     // Sketch curves with corners on a curved face: the split line keeps their corners (each the
     // point of the face over the corner, along the sketch's normal) instead of rounding them
     // through the traced points. 3DCadCraft.
-    if let Field::Curve { plane, pts: poly } = g
+    if let Field::Curve { plane, pts: poly, along: None, .. } = g
         && !matches!(face.surface(), mt::Surface::Plane(_))
         && let Some(c) = cornered_fit(plane, poly, face, pts, scale)
     {

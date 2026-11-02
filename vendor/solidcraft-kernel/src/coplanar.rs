@@ -819,6 +819,56 @@ pub(crate) fn boolean_grown(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Opt
     apart_with(pa.as_ref().unwrap_or(a), pb.as_ref().unwrap_or(b), op, true)
 }
 
+/// The prism `b` (one section between two end faces), the tool of a cut, with the end faces flush with faces of the target `a`
+/// (pointing the same way) moved past them where nothing of `a` is in the way: swept again from an end face, a body with its
+/// history over `b`. Pushing the faces of the tool in place can fail where this does not. `None` when `b` is no such prism
+/// or no end face is flush. 3DCadCraft.
+pub(crate) fn tool_past_flush_faces(a: &Body, b: &Body) -> Option<Body> {
+    let size = a.size().max(b.size());
+    let tol = (size * 1e-7).max(1e-9);
+    let (skin, margin) = (tol * 10.0, size * 0.01);
+    let flush: Vec<(Vec3, f64)> = coincident_planes(a, b).into_iter().filter(|(_, _, s)| *s).map(|(n, d, _)| (n, d)).collect();
+    let d = crate::prism::prism_axis(b)?;
+    if flush.is_empty() || flush.iter().any(|(n, _)| n.cross(d).len() > 1e-9) {
+        return None;
+    }
+    let target = Clearance::new(a, size * 2e-4)?;
+    for (n, e) in &flush {
+        if target.swept(&in_plane(b, *n, *e, skin), *n, skin, margin * 1.25) != Occupancy::Empty {
+            return None;
+        }
+    }
+    let past = |n: Vec3, at: f64| flush.iter().any(|(m, e)| m.dot(n) > 0.0 && (e - at).abs() < skin);
+    let mut shells = Vec::new();
+    // A tool of several pieces apart from each other (two holes), each a prism of its own.
+    for shell in b.solid.boundaries() {
+        // The end faces, along the axis: exactly one each way.
+        let ends: Vec<(mt::Face, Vec3, f64)> = shell
+            .face_iter()
+            .filter_map(|f| match f.oriented_surface() {
+                mt::Surface::Plane(p) => {
+                    let m = p.normal();
+                    let m = Vec3::new(m.x, m.y, m.z).normalized()?;
+                    (m.cross(d).len() < 1e-9).then(|| (f.clone(), m, m.dot(from_p3(p.origin()))))
+                }
+                _ => None,
+            })
+            .collect();
+        let [(low, nl, dl), (_, nh, dh)] = ends.as_slice() else { return None };
+        if nl.dot(*nh) > 0.0 {
+            return None;
+        }
+        let (back, ahead) = (if past(*nl, *dl) { margin } else { 0.0 }, if past(*nh, *dh) { margin } else { 0.0 });
+        // Swept from the first end, which faces away from the way it sweeps.
+        let length = dl + dh + back + ahead;
+        let start = crate::guard("tool past a face", || Ok(builder::translated(low, v3(*nl * back)))).ok()?;
+        let swept = crate::guard("tool past a face", || Body::new(builder::tsweep(&start, v3(*nh * length)))).ok()?;
+        shells.extend(swept.solid.boundaries().iter().cloned());
+    }
+    let swept = crate::guard("tool past a face", || Body::new(mt::Solid::new(shells))).ok()?;
+    crate::whole_face::traced_onto(swept, b, tol * 100.0).ok()
+}
+
 fn apart_with(a: &Body, b: &Body, op: BoolOp, grow: bool) -> Option<Result<Option<Body>>> {
     let size = a.size().max(b.size());
     let tol = (size * 1e-7).max(1e-9);

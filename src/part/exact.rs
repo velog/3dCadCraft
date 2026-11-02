@@ -1074,6 +1074,13 @@ pub(super) fn blend(
     for (i, p) in picker.points(&bl.edges).map_err(User)? {
         points[i].push(p);
     }
+    // Cone at small rounds asked for where the size passes a round: the kernel's chamfer now
+    // builds such a loop, with sharp corners and no cone, so the option is reported first.
+    if bl.cone_corners
+        && let Err(User(msg)) = loop_blend(bl, body, cur)
+    {
+        return Err(User(msg));
+    }
     match kernel_blend(bl, cur, &points) {
         // A size larger than an arc of the loop (a chamfer wider than the
         // fillet before it): the kernel's blend cannot shrink the arc away.

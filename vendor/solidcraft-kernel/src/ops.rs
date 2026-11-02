@@ -1687,6 +1687,22 @@ where
                 return Ok(r);
             }
         }
+        // A prism tool flush with a face of the target, whose faces could not be pushed apart:
+        // made again past that face, the same cut, without the coincidence. Asked before the
+        // shifted tries and the nudge: a nudged tool left a skin over the hole, a hair off the
+        // face, which `has_skin` cannot see (3DCadCraft: a bore through a tee pipe, 5 % of area).
+        if attempt == 1 && op == BoolOp::Cut && !APART.with(|c| c.get()) && let Some(past) = crate::coplanar::tool_past_flush_faces(a, b) {
+            APART.with(|c| c.set(true));
+            let (r, diagnostics) = capture_boolean_diagnostics(|| boolean(a, &past, op));
+            APART.with(|c| c.set(false));
+            if let Ok(Some(body)) = r {
+                let body = nudged(body, &past, &counts);
+                if check(&body).0 {
+                    merge(diagnostics);
+                    return Ok(Some(body));
+                }
+            }
+        }
         // An implausible empty result from the unshifted numerical tries must still give
         // the exact strategies above a chance (#1765), including seam-face recovery. If none
         // recovers it, keep the original candidate for the outer guard, before displaced retries.

@@ -101,7 +101,7 @@ pub fn face_prism(target: &Body, face: WholeFace, length: f64, outward: bool, bu
 
 /// `swept`, made in place of `built`, with each of its faces coming from the face of `built`
 /// nearest it (so a feature names its faces as it named `built`'s).
-fn traced_onto(swept: Body, built: &Body, tol: f64) -> Result<Body> {
+pub(crate) fn traced_onto(swept: Body, built: &Body, tol: f64) -> Result<Body> {
     let (mine, theirs) = (swept.tessellate(tol)?, built.tessellate(tol)?);
     let mut faces = Vec::with_capacity(swept.face_count());
     for i in 0..swept.face_count() {

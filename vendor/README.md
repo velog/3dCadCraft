@@ -2,9 +2,9 @@
 
 ## `solidcraft-kernel`
 
-SolidCraft's kernel crate (https://github.com/bherbruck/solidcraft, now tangency-labs/solidcraft),
-commit `4687e3b0734e41d761be0d0a2611e5402f088348`, MIT OR Apache-2.0 (`LICENSE-MIT`,
-`LICENSE-APACHE`), used through `[patch."https://github.com/bherbruck/solidcraft"]` in our
+SolidCraft's kernel crate (https://github.com/tangency-labs/solidcraft),
+commit `d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516`, MIT OR Apache-2.0 (`LICENSE-MIT`,
+`LICENSE-APACHE`), used through `[patch."https://github.com/tangency-labs/solidcraft"]` in our
 `Cargo.toml`. `src/` is the original apart from the changes below (each with a comment saying
 why); `Cargo.toml` spells out the original's workspace inheritance. Everything
 else (`solidcraft-geom`, the truck crates) still comes from the pinned commit.
@@ -62,6 +62,12 @@ already does without its own matching).
 Kernel tests (`cargo test -p solidcraft-kernel --release` in a SolidCraft checkout with this
 `src/`): 476 pass; `issue_851_tests::arc_top_edge_sizes_never_panic` fails on Windows with the
 original source as well.
+
+A fix made when the pin moved to `d4eeedb` (the upstream commit has the defect):
+
+| File | Change | Effect |
+|---|---|---|
+| `coplanar.rs` `tool_past_flush_faces`, `ops.rs` `boolean_whole` (before the shifted tries), `whole_face.rs` `traced_onto` (visible in the crate) | a prism tool of a Cut flush with a face of the target, whose faces could not be pushed apart, is swept again from its end face past that face (history kept) before the shifted tries and the nudge: a nudged tool left a skin over the hole, a hair off the face, which `has_skin` cannot see | a bore through a tee pipe: 9 faces and the right area (was 10 faces, area 5 % too large, the same volume) |
 
 ## `solidcraft-doc`
 
