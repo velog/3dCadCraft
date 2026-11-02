@@ -41,6 +41,12 @@ An addition for library fasteners (`docs/spec/6.3-content-center.md` §6.0b); no
 |---|---|---|
 | `axial.rs` (new), `lib.rs` export | `axial_stack`: a stepped body about Z from its meridian's runs (turned chains of lines and arcs, polygon prisms, a cone cut on a prism's end meeting each flat in one exact rational quadratic), the runs' rings joined by planar faces that keep their edges; a new function, nothing else in the crate changes | ISO 4017 M8 x 30: 234 ms → 4.2 ms; chamfered: 1465 ms → 7 ms; orientation read off the lowest planar face (`Body::new_placed`), no mesh |
 
+A fix (not about speed): a chamfer of a concave straight edge went the wrong way.
+
+| File | Change | Effect |
+|---|---|---|
+| `blend.rs` `edge_frame` | its convexity test could never fail (the directions were turned to pass it just before), so a concave edge got a convex edge's cutter; now each face's interior side comes from its boundary, as `blend_one` does | an L's inner edge, 1 mm: −102 mm³ → +15 mm³ (the same bug on the d4eeedb pin ends in a refusal there) |
+
 An addition for Thicken/Offset's Allow Approximation (`docs/spec/2.14-thicken-offset.md`):
 
 | File | Change | Effect |

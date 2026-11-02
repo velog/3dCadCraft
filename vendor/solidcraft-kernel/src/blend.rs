@@ -1964,6 +1964,20 @@ fn edge_frame(cur: &Body, p: Vec3) -> Result<(usize, EdgeFrame)> {
     if n1.dot(t2) > 1e-9 || n2.dot(t1) > 1e-9 || t1.dot(t2) < -1.0 + 1e-6 {
         return Err(unsupported("only convex edges"));
     }
+    // 3DCadCraft: the test above can never see a concave edge, t1 and t2 were just turned to pass
+    // it, and the cutter of a concave edge then cut into the material (an L's inner edge lost
+    // 102 mm³ where its chamfer adds 15). Which way each face really lies from the edge decides:
+    // its boundary runs counter-clockwise about its outward normal, its interior to the left.
+    let into = |f: &mt::Face, n: Vec3| -> Option<Vec3> {
+        let e = f.boundary_iters().into_iter().flatten().find(|e| e.id() == edge.id())?;
+        n.cross((vtx(e.back()) - vtx(e.front())).normalized()?).normalized()
+    };
+    if let (Some(a), Some(b)) = (into(f1, n1), into(f2, n2))
+        && n1.dot(b) > 1e-9
+        && n2.dot(a) > 1e-9
+    {
+        return Err(unsupported("only convex edges"));
+    }
     Ok((idx, EdgeFrame { p0, p1, d, n1, n2, t1, t2 }))
 }
 

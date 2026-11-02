@@ -77,17 +77,19 @@ fn cases(d: f64, f: f64) -> Vec<Case> {
         tol: 1e-3,
     });
 
-    // The inner corner of an L.
-    let mut p = plate(40.0, 30.0, 10.0);
-    let t = top(&p, 10.0);
-    let j = sketch_on(&mut p, &t, |sk, at| {
-        sk.add_rectangle_two_point(at(0.0, 0.0, 10.0), at(20.0, 30.0, 10.0))
-            .unwrap();
-    });
-    boss(&mut p, j, 10.0, |r| {
-        r.holes.is_empty() && (r.area() - 600.0).abs() < 1.0
-    });
-    let e = edges_where(&p, |h| on(h[0], 20.0) && on(h[2], 10.0));
+    // The inner corner of an L, along Z.
+    let p = prism(
+        &[
+            (0.0, 0.0),
+            (40.0, 0.0),
+            (40.0, 10.0),
+            (20.0, 10.0),
+            (20.0, 20.0),
+            (0.0, 20.0),
+        ],
+        30.0,
+    );
+    let e = edges_where(&p, |h| on(h[0], 20.0) && on(h[1], 10.0));
     out.push(Case {
         name: "L inner edge (concave line)",
         base: p,
