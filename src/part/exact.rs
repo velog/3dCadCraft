@@ -1076,10 +1076,12 @@ pub(super) fn blend(
     }
     // Cone at small rounds asked for where the size passes a round: the kernel's chamfer now
     // builds such a loop, with sharp corners and no cone, so the option is reported first.
-    if bl.cone_corners
-        && let Err(User(msg)) = loop_blend(bl, body, cur)
-    {
-        return Err(User(msg));
+    if bl.cone_corners {
+        let mut cone_needed = false;
+        let _ = loop_tools(bl, body, cur, &mut cone_needed);
+        if cone_needed {
+            return Err(User(CONE_NOT_YET.into()));
+        }
     }
     match kernel_blend(bl, cur, &points) {
         // A size larger than an arc of the loop (a chamfer wider than the
@@ -2691,6 +2693,9 @@ fn kernel_blend(
     Ok(out)
 }
 
+const CONE_NOT_YET: &str =
+    "Cone at small rounds is not supported yet for a blend larger than the round";
+
 /// Fillet / Chamfer of the whole outer loop of a planar face ("cap") whose
 /// walls are perpendicular to it, the loop convex, built from cutting tools:
 /// a wedge along every straight edge, extended past its ends, and a
@@ -2702,10 +2707,7 @@ fn loop_blend(bl: &BlendFeature, body: &BRep, cur: &[ExactSolid]) -> Result<Vec<
     let mut cone_needed = false;
     loop_tools(bl, body, cur, &mut cone_needed).map_err(|e| {
         if cone_needed {
-            User(
-                "Cone at small rounds is not supported yet for a blend larger than the round"
-                    .into(),
-            )
+            User(CONE_NOT_YET.into())
         } else {
             Kernel(e)
         }
