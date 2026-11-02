@@ -395,8 +395,8 @@ const TABLE: &[(&str, &str)] = &[
         "Spline: щракнете контролните точки; Enter или двоен клик завършва",
     ),
     (
-        "Interpolation Spline: click the points it passes through; Enter or double-click finishes",
-        "Interpolation Spline: щракнете точките, през които минава; Enter или двоен клик завършва",
+        "Interpolation Spline: click the points it passes through; Enter or double-click finishes, the first point closes it",
+        "Interpolation Spline: щракнете точките, през които минава; Enter или двоен клик завършва, първата точка го затваря",
     ),
     ("Point: click to place", "Point: щракнете, за да поставите"),
     (

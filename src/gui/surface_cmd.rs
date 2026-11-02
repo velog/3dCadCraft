@@ -216,6 +216,30 @@ impl CadCraftApp {
     }
 
     /// A plane from a pick: a planar face, a work plane.
+    /// Boundary Patch's Guide Rails: the sketches picked (never the boundary's own); left
+    /// empty, the feature's.
+    fn guide_sketches(
+        &self,
+        d: &PartDialog,
+        boundary: Option<usize>,
+        old: Option<&BodyOp>,
+    ) -> Vec<String> {
+        let picked: Vec<String> = d
+            .items_of("rails")
+            .iter()
+            .filter_map(|(item, _)| match item {
+                SelItem::Sketch(i) if Some(*i) != boundary => {
+                    self.part().sketches.get(*i).map(|s| s.id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        match old {
+            Some(BodyOp::Patch(o)) if picked.is_empty() => o.guides.clone(),
+            _ => picked,
+        }
+    }
+
     fn plane_of_pick(&self, item: &SelItem) -> Option<PlaneRef> {
         match item {
             SelItem::Face(f) => Some(PlaneRef::Face(f.clone())),
@@ -276,6 +300,7 @@ impl CadCraftApp {
                         profile: Some(crate::part::ProfileRef::of(region, region.interior_point())),
                         solid,
                         tangent: None,
+                        guides: self.guide_sketches(d, Some(i), old),
                     })
                 } else {
                     // Automatic Edge Chain: a picked free edge brings the rest of its loop.
@@ -291,11 +316,13 @@ impl CadCraftApp {
                         return Ok(BodyOp::Patch(PatchOp {
                             solid,
                             tangent: if o.sketch.is_some() { None } else { tangent },
+                            guides: self.guide_sketches(d, None, old),
                             ..o.clone()
                         }));
                     }
                     edges.dedup();
                     BodyOp::Patch(PatchOp {
+                        guides: Vec::new(),
                         edges,
                         sketch: None,
                         profile: None,

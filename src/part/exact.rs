@@ -1174,6 +1174,7 @@ pub(super) fn body_op(
     body: &BRep,
     works: &super::placement::WorkGeom,
     sketches: &[super::PartSketch],
+    features: &[super::Feature],
     cur: &[ExactSolid],
     sheets: &[ExactSolid],
 ) -> Result<Vec<ExactSolid>, Fail> {
@@ -1187,7 +1188,7 @@ pub(super) fn body_op(
         super::BodyOp::MoveBodies(m) => move_bodies(m, body, works, cur, sheets),
         super::BodyOp::Stitch(o) => so::stitch(o, &f.id, cur, sheets),
         super::BodyOp::Patch(o) => so::patch(o, &f.id, body, sketches, cur, sheets),
-        super::BodyOp::Trim(o) => so::trim(o, body, works, sketches, cur, sheets),
+        super::BodyOp::Trim(o) => so::trim(o, body, works, sketches, features, cur, sheets),
         super::BodyOp::Extend(o) => so::extend(o, body, works, cur, sheets),
         super::BodyOp::Ruled(o) => so::ruled(o, &f.id, body, works, cur, sheets),
         super::BodyOp::ReplaceFace(o) => so::replace_face(o, &f.id, body, works, cur, sheets),

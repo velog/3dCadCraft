@@ -71,6 +71,9 @@ pub struct PatchOp {
     /// face it bounds (a loop of edges of four sides); `None` = Contact (G0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tangent: Option<Real>,
+    /// Guide Rails: sketches (by id) whose curves the patch of a sketch region passes through.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guides: Vec<String>,
 }
 
 /// What trims a surface.
@@ -227,6 +230,9 @@ impl PatchOp {
                 "the Tangent condition applies to a loop of model edges (a sketch region is planar)"
                     .into(),
             ),
+            (None, _) if !self.guides.is_empty() => {
+                Err("Guide Rails work with a sketch region as the boundary".into())
+            }
             _ => Ok(()),
         }
     }
@@ -547,8 +553,12 @@ pub(super) fn patch(
             .resolve(&regions)
             .ok_or_else(|| User("the sketch region no longer exists".into()))?;
         let (outer, holes) = super::extrude::kernel_profile(region);
-        let prof = exact::profile(&outer, &holes).map_err(Kernel)?;
-        surface_ops::patch_region(&ps.sketch.plane, &prof, id).map_err(User)?
+        if op.guides.is_empty() {
+            let prof = exact::profile(&outer, &holes).map_err(Kernel)?;
+            surface_ops::patch_region(&ps.sketch.plane, &prof, id).map_err(User)?
+        } else {
+            guided_patch(op, id, ps, region, sketches)?
+        }
     } else {
         let all: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
         let b = edge_body(&all, &op.edges)?;
@@ -585,12 +595,284 @@ pub(super) fn patch(
     Ok(out)
 }
 
+/// The height over a plane that passes through the given points: a thin plate (the surface
+/// of least bending through them, `h(p) = Σ w·r²·ln r + a + b·x + c·y`), so it stays smooth
+/// across a guide curve and continues naturally past the boundary.
+struct ThinPlate {
+    at: Vec<nalgebra::Point2<Real>>,
+    w: Vec<Real>,
+    plane: [Real; 3],
+}
+
+impl ThinPlate {
+    fn fit(at: Vec<nalgebra::Point2<Real>>, h: &[Real]) -> Option<ThinPlate> {
+        let n = at.len();
+        let kernel = |r2: Real| if r2 > 1e-18 { 0.5 * r2 * r2.ln() } else { 0.0 };
+        let mut m = nalgebra::DMatrix::<Real>::zeros(n + 3, n + 3);
+        for i in 0..n {
+            for j in 0..n {
+                m[(i, j)] = kernel((at[i] - at[j]).norm_squared());
+            }
+            // A little give: samples of one curve can lie nearly on each other.
+            m[(i, i)] += 1e-9;
+            for (k, v) in [1.0, at[i].x, at[i].y].into_iter().enumerate() {
+                m[(i, n + k)] = v;
+                m[(n + k, i)] = v;
+            }
+        }
+        let mut b = nalgebra::DVector::<Real>::zeros(n + 3);
+        for (i, v) in h.iter().enumerate() {
+            b[i] = *v;
+        }
+        let x = m.lu().solve(&b)?;
+        let w = x.iter().take(n).copied().collect();
+        Some(ThinPlate {
+            at,
+            w,
+            plane: [x[n], x[n + 1], x[n + 2]],
+        })
+    }
+
+    fn eval(&self, p: nalgebra::Point2<Real>) -> Real {
+        let kernel = |r2: Real| if r2 > 1e-18 { 0.5 * r2 * r2.ln() } else { 0.0 };
+        self.plane[0]
+            + self.plane[1] * p.x
+            + self.plane[2] * p.y
+            + self
+                .at
+                .iter()
+                .zip(&self.w)
+                .map(|(q, w)| w * kernel((p - q).norm_squared()))
+                .sum::<Real>()
+    }
+}
+
+/// At most `n` of `v`, evenly along it.
+fn thin<T: Copy>(v: &[T], n: usize) -> Vec<T> {
+    if v.len() <= n {
+        return v.to_vec();
+    }
+    (0..n).map(|k| v[k * v.len() / n]).collect()
+}
+
+/// Boundary Patch of a sketch region through guide curves: a free-form sheet over the region's
+/// box whose height is 0 on the boundary and the curves' height on them, cut by the region's
+/// outline; what lies inside it is the patch.
+fn guided_patch(
+    op: &PatchOp,
+    id: &str,
+    ps: &super::PartSketch,
+    region: &crate::sketch::Region,
+    sketches: &[super::PartSketch],
+) -> Result<ExactSolid, Fail> {
+    use nalgebra::Point2;
+    let plane = &ps.sketch.plane;
+    let normal = plane.normal.into_inner();
+    let size = {
+        let pts = region.outer.polygon(1e-2);
+        let lo = pts
+            .iter()
+            .fold(Point2::new(Real::MAX, Real::MAX), |a, b| a.inf(b));
+        let hi = pts
+            .iter()
+            .fold(Point2::new(Real::MIN, Real::MIN), |a, b| a.sup(b));
+        (lo, hi)
+    };
+    let (lo, hi) = size;
+    let reach = (hi - lo).norm();
+    let mut at: Vec<Point2<Real>> = Vec::new();
+    let mut h: Vec<Real> = Vec::new();
+    let mut outline: Vec<Point2<Real>> = Vec::new();
+    // Evenly along each loop: a straight side is only its two ends in the polygon.
+    for l in std::iter::once(&region.outer).chain(&region.holes) {
+        let poly = l.polygon(reach * 1e-3);
+        let n = poly.len();
+        let perimeter: Real = (0..n).map(|k| (poly[(k + 1) % n] - poly[k]).norm()).sum();
+        let step = (perimeter / 96.0).max(1e-6);
+        for k in 0..n {
+            let (a, b) = (poly[k], poly[(k + 1) % n]);
+            let parts = ((b - a).norm() / step).ceil().max(1.0) as usize;
+            for j in 0..parts {
+                outline.push(a + (b - a) * (j as Real / parts as Real));
+            }
+        }
+    }
+    for q in &outline {
+        at.push(*q);
+        h.push(0.0);
+    }
+    let on_outline = |q: Point2<Real>| {
+        outline
+            .iter()
+            .map(|p| (p - q).norm())
+            .fold(Real::MAX, Real::min)
+    };
+    let mut guide_points = 0;
+    for sid in &op.guides {
+        let g = sketches
+            .iter()
+            .find(|s| &s.id == sid)
+            .ok_or_else(|| User(format!("guide sketch {sid} is missing")))?;
+        let mut samples = Vec::new();
+        for chain in sketch_chains(g) {
+            for seg in chain {
+                for k in 0..=32 {
+                    let w = g.sketch.to_world(&seg.point(f64::from(k) / 32.0));
+                    samples.push(w);
+                }
+            }
+        }
+        for w in thin(&samples, 96) {
+            let q = plane.project(&w);
+            // A point of the curve on the outline is the outline's.
+            if on_outline(q) < reach * 0.02 {
+                continue;
+            }
+            at.push(q);
+            h.push((w - plane.origin).dot(&normal));
+            guide_points += 1;
+        }
+    }
+    if guide_points == 0 {
+        return Err(User(
+            "the guide curves must pass over the region (no point of them lies inside it)".into(),
+        ));
+    }
+    let plate = ThinPlate::fit(at, &h).ok_or_else(|| User("the guide curves conflict".into()))?;
+    // The sheet's control net over the box, a little past it so the outline cuts inside.
+    let pad = (hi - lo) * 0.06;
+    let (a, b) = (lo - pad, hi + pad);
+    let span = b - a;
+    let cell = span.x.max(span.y) / 40.0;
+    let nx = ((span.x / cell).ceil() as usize).clamp(8, 48);
+    let ny = ((span.y / cell).ceil() as usize).clamp(8, 48);
+    let at_grid = |i: usize, j: usize| {
+        Point2::new(
+            a.x + span.x * i as Real / nx as Real,
+            a.y + span.y * j as Real / ny as Real,
+        )
+    };
+    let values: Vec<Vec<Real>> = (0..=nx)
+        .map(|i| (0..=ny).map(|j| plate.eval(at_grid(i, j))).collect())
+        .collect();
+    // A cubic B-spline averages its control points (1/6, 4/6, 1/6): two rounds of
+    // correction make it pass through the values.
+    let smooth = |c: &Vec<Vec<Real>>, i: usize, j: usize| -> Real {
+        let w = |k: isize, n: usize| (k.clamp(0, n as isize)) as usize;
+        let mut sum = 0.0;
+        for (di, a) in [(-1isize, 1.0), (0, 4.0), (1, 1.0)] {
+            for (dj, b) in [(-1isize, 1.0), (0, 4.0), (1, 1.0)] {
+                let row = w(i as isize + di, nx);
+                let col = w(j as isize + dj, ny);
+                sum += a * b * c[row][col];
+            }
+        }
+        sum / 36.0
+    };
+    let mut control = values.clone();
+    for _ in 0..3 {
+        let mut next = control.clone();
+        for i in 0..=nx {
+            for j in 0..=ny {
+                next[i][j] = control[i][j] + values[i][j] - smooth(&control, i, j);
+            }
+        }
+        control = next;
+    }
+    let net: Vec<Vec<Point3>> = (0..=nx)
+        .map(|i| {
+            (0..=ny)
+                .map(|j| {
+                    let q = at_grid(i, j);
+                    ps.sketch.to_world(&q) + normal * control[i][j]
+                })
+                .collect()
+        })
+        .collect();
+    let sheet = surface_ops::freeform_sheet(&net, id).map_err(User)?;
+    let (outer, holes) = super::extrude::kernel_profile(region);
+    let curves: Vec<Vec<crate::kernel::Segment2>> = std::iter::once(outer)
+        .chain(holes)
+        .map(|l| l.into_iter().map(|s| s.geometry).collect())
+        .collect();
+    let tool = exact::SplitBy::Curves {
+        plane: plane.clone(),
+        curves,
+    };
+    let all: Vec<usize> = (0..surface_ops::face_count(&sheet)).collect();
+    let split = exact::split_faces_lenient(&sheet, &all, &tool, "trim", None)
+        .map_err(|e| User(format!("the outline does not cut the patch ({e})")))?
+        .ok_or_else(|| User("the outline does not cut the patch".into()))?;
+    let b = exact::to_brep(std::slice::from_ref(&split)).map_err(Kernel)?;
+    let inside: Vec<bool> = b
+        .faces()
+        .map(|(_, f)| {
+            // At its largest triangle: the middle of a ring's points is in its hole.
+            f.mesh.as_ref().is_some_and(|m| {
+                m.triangles
+                    .iter()
+                    .map(|t| {
+                        let [a, b, c] = t.map(|j| m.positions[j as usize]);
+                        (
+                            (b - a).cross(&(c - a)).norm(),
+                            Point3::from((a.coords + b.coords + c.coords) / 3.0),
+                        )
+                    })
+                    .max_by(|x, y| x.0.total_cmp(&y.0))
+                    .is_some_and(|(_, q)| region.contains(plane.project(&q)))
+            })
+        })
+        .collect();
+    let gone: Vec<usize> = (0..inside.len()).filter(|k| !inside[*k]).collect();
+    if gone.is_empty() || gone.len() == inside.len() {
+        return Err(User("the outline does not cut the patch".into()));
+    }
+    let mut trimmed = exact::delete_faces(&split, &gone, false)
+        .map_err(|e| User(format!("the patch cannot be trimmed ({e})")))?;
+    trimmed.name = Some(id.to_owned());
+    Ok(trimmed)
+}
+
+/// The outline a surface was extruded from: its closed profiles or open curves as sketch
+/// curves, with the sketch's plane. Cutting by these is exact, whatever the walls are made of
+/// (a spline wall has no analytic surface to read a section from).
+fn extruded_outline(
+    features: &[super::Feature],
+    sketches: &[super::PartSketch],
+    name: &str,
+) -> Option<exact::SplitBy> {
+    let f = features.iter().find_map(|f| match f {
+        super::Feature::Extrude(e) if e.id == name && e.taper.abs() < 1e-12 => Some(e),
+        _ => None,
+    })?;
+    let ps = sketches.iter().find(|s| s.id == f.sketch)?;
+    let regions = ps.sketch.regions();
+    let mut curves: Vec<Vec<crate::kernel::Segment2>> = Vec::new();
+    for pr in &f.profiles {
+        let (outer, holes) = super::extrude::kernel_profile(pr.resolve(&regions)?);
+        curves.extend(
+            std::iter::once(outer)
+                .chain(holes)
+                .map(|l| l.into_iter().map(|s| s.geometry).collect::<Vec<_>>()),
+        );
+    }
+    if let Some(open) = &f.open {
+        let (chain, ..) = super::extrude::open_chain(open, &ps.sketch).ok()?;
+        curves.push(chain.into_iter().map(|s| s.geometry).collect());
+    }
+    (!curves.is_empty()).then(|| exact::SplitBy::Curves {
+        plane: ps.sketch.plane.clone(),
+        curves,
+    })
+}
+
 /// Trim: the surface replaced by what is left of it.
 pub(super) fn trim(
     op: &TrimOp,
     body: &BRep,
     works: &WorkGeom,
     sketches: &[super::PartSketch],
+    features: &[super::Feature],
     cur: &[ExactSolid],
     sheets: &[ExactSolid],
 ) -> Result<Vec<ExactSolid>, Fail> {
@@ -609,7 +891,7 @@ pub(super) fn trim(
         TrimTool::Plane(_) => false,
     };
     if !op.more.is_empty() || bounded {
-        return trim_pieces(op, body, works, sketches, cur, sheets, i);
+        return trim_pieces(op, body, works, sketches, features, cur, sheets, i);
     }
     let remove = p(&op.remove);
     // The kernel keeps a side: the other side of the tool from the removed piece.
@@ -819,11 +1101,13 @@ fn distinct_names(s: &ExactSolid) -> usize {
 
 /// Trim with several areas: surface `i` divided where the tool meets it (Split Face), then the
 /// pieces under the picked points removed (Invert Selection: every other piece removed).
+#[allow(clippy::too_many_arguments)]
 fn trim_pieces(
     op: &TrimOp,
     body: &BRep,
     works: &WorkGeom,
     sketches: &[super::PartSketch],
+    features: &[super::Feature],
     cur: &[ExactSolid],
     sheets: &[ExactSolid],
     i: usize,
@@ -839,13 +1123,16 @@ fn trim_pieces(
             }
             if distinct_names(&sheets[t]) > 1 {
                 // Walls along one direction (a tube): cut along the walls only.
-                let (plane, curves) = exact::walls_section(&sheets[t]).ok_or_else(|| {
-                    User(
-                        "a cutting surface of several faces must be walls along one direction (an extruded outline): trim by each face, or by a sketch (spec 5.4a T2)"
-                            .into(),
-                    )
-                })?;
-                exact::SplitBy::Curves { plane, curves }
+                match exact::walls_section(&sheets[t]) {
+                    Some((plane, curves)) => exact::SplitBy::Curves { plane, curves },
+                    // Spline walls: by the outline they were extruded from.
+                    None => extruded_outline(features, sketches, name).ok_or_else(|| {
+                        User(
+                            "a cutting surface of several faces must be walls along one direction (an extruded outline): trim by each face, or by a sketch (spec 5.4a T2)"
+                                .into(),
+                        )
+                    })?,
+                }
             } else {
                 exact::SplitBy::Sheet(sheets[t].clone())
             }
@@ -927,7 +1214,28 @@ fn trim_pieces(
                         }
                     }
                 }
-                best.map_or(0.0, |(_, s)| s)
+                // Closed loops: inside or outside, whatever the nearest piece says (past a
+                // convex corner its side does not tell).
+                let closed = curves.iter().all(|c| match (c.first(), c.last()) {
+                    (Some(a), Some(b)) => (a.point(0.0) - b.point(1.0)).norm() < 1e-6,
+                    _ => false,
+                });
+                let side = closed.then(|| {
+                    let mut crossings = 0;
+                    for g in curves.iter().flatten() {
+                        for k in 0..64 {
+                            let (a, b) =
+                                (g.point(k as Real / 64.0), g.point((k + 1) as Real / 64.0));
+                            if (a.y > q2.y) != (b.y > q2.y)
+                                && q2.x < a.x + (q2.y - a.y) / (b.y - a.y) * (b.x - a.x)
+                            {
+                                crossings += 1;
+                            }
+                        }
+                    }
+                    if crossings % 2 == 1 { 1.0 } else { -1.0 }
+                });
+                best.map_or(0.0, |(d, s)| side.map_or(s, |x| x * d.abs()))
             }
         }
     };

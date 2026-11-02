@@ -3320,6 +3320,12 @@ impl CadCraftApp {
         let offset_of = self.offset_source();
         let offset_loop = self.tools.offset_loop;
         self.tools.swap_direction = self.click_shift;
+        // A click this near the first point closes a spline (the snap radius).
+        self.tools.close_reach = {
+            let per_px = 2.0 * self.camera.distance * (self.camera.fov_y / 2.0).tan()
+                / f64::from(self.viewport_rect.height().max(1.0));
+            per_px * f64::from(overlay::POINT_SNAP_PX)
+        };
         self.tool_op(|t, ps| t.click(ps, pick));
         if vals.iter().all(Option::is_none) {
             return;

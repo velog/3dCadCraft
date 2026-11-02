@@ -500,6 +500,14 @@ impl Feature {
                 } => vec![sketch1.as_str(), sketch2.as_str()],
                 _ => o.sketch().into_iter().collect(),
             },
+            // A patch reads its guide sketches too (the regeneration cache's key).
+            Feature::BodyOp(b) => {
+                let mut v: Vec<&str> = b.sketch().into_iter().collect();
+                if let BodyOp::Patch(p) = &b.op {
+                    v.extend(p.guides.iter().map(String::as_str));
+                }
+                v
+            }
             f => f.sketch().into_iter().collect(),
         }
     }
@@ -1267,7 +1275,16 @@ impl PartDocument {
                 )),
                 BuildStep::Shell(sh) if use_exact => exact::shell(sh, &solids).map(Some),
                 BuildStep::BodyOp(op) if use_exact => {
-                    exact::body_op(op, &body, &works, &self.sketches, &solids, &sheets).map(Some)
+                    exact::body_op(
+                        op,
+                        &body,
+                        &works,
+                        &self.sketches,
+                        &self.features,
+                        &solids,
+                        &sheets,
+                    )
+                    .map(Some)
                 }
                 BuildStep::BodyOp(op) => Err(exact::Fail::User(format!(
                     "{} needs the exact geometry kernel (an earlier feature uses an option it does not cover yet)",

@@ -244,17 +244,36 @@ impl CadCraftApp {
         if bounds {
             return false;
         }
+        // One click takes the whole connected chain (a bottle's outline), not one
+        // piece of it; a click on a chosen piece takes that chain off again.
+        let chain: Vec<crate::sketch::EntityId> = sk
+            .chain(e)
+            .0
+            .into_iter()
+            .map(|(c, _)| c)
+            .filter(|c| !ps.is_reference(*c) && sk.style(*c) == crate::sketch::Style::Normal)
+            .collect();
+        let chain = if chain.contains(&e) { chain } else { vec![e] };
         let Some(d) = self.extrude.as_mut() else {
             return false;
         };
         let x = match &mut d.def {
             DraftDef::Extrude(x) => x,
             DraftDef::Revolve(r) => {
-                match r.open.iter().position(|&c| c == e) {
-                    Some(k) => {
-                        r.open.remove(k);
+                // The axis line is not part of the profile.
+                let axis = match &r.axis {
+                    crate::part::AxisRef::SketchLine(l) => Some(*l),
+                    _ => None,
+                };
+                let chain: Vec<_> = chain.into_iter().filter(|c| Some(*c) != axis).collect();
+                if r.open.contains(&e) {
+                    r.open.retain(|c| !chain.contains(c));
+                } else {
+                    for c in chain {
+                        if !r.open.contains(&c) {
+                            r.open.push(c);
+                        }
                     }
-                    None => r.open.push(e),
                 }
                 return true;
             }
@@ -264,10 +283,14 @@ impl CadCraftApp {
             flip: false,
             match_shape: true,
         });
-        if let Some(k) = open.curves.iter().position(|&c| c == e) {
-            open.curves.remove(k);
+        if open.curves.contains(&e) {
+            open.curves.retain(|c| !chain.contains(c));
         } else {
-            open.curves.push(e);
+            for c in chain {
+                if !open.curves.contains(&c) {
+                    open.curves.push(c);
+                }
+            }
         }
         if open.curves.is_empty() {
             x.open = None;

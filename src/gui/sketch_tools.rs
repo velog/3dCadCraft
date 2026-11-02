@@ -432,6 +432,9 @@ pub struct SketchTools {
     /// New points are Center Points (Format → Center Point; Hole takes them
     /// by default).
     pub center_point: bool,
+    /// How near the first point (sketch units) a click closes a spline: the snap
+    /// radius at this zoom, kept by the view.
+    pub close_reach: Real,
     /// Mirror: the chosen mirror line.
     pub mirror_line: Option<EntityId>,
     /// Shift is held at this click: Horizontal and Vertical swap.
@@ -516,6 +519,7 @@ impl Default for SketchTools {
             polygon_inscribed: true,
             construction: false,
             center_point: false,
+            close_reach: 0.0,
             mirror_line: None,
             swap_direction: false,
             selected: Vec::new(),
@@ -789,7 +793,7 @@ impl SketchTools {
             }
             Tool::SplineCv => "Spline: click control points; Enter or double-click finishes",
             Tool::SplineInterp => {
-                "Interpolation Spline: click the points it passes through; Enter or double-click finishes"
+                "Interpolation Spline: click the points it passes through; Enter or double-click finishes, the first point closes it"
             }
             Tool::Point => "Point: click to place",
             Tool::Constrain(c) => c.prompt(n),
@@ -1143,6 +1147,13 @@ impl SketchTools {
                     .is_some_and(|p| (p.pos - pick.pos).norm() < 1e-6)
                 {
                     return Ok(None); // second click of a double-click
+                }
+                // A click on the first point closes an interpolation spline.
+                if self.tool == Tool::SplineInterp
+                    && self.picks.len() >= 3
+                    && (self.picks[0].pos - pick.pos).norm() < 1e-6 + self.close_reach
+                {
+                    return self.finish_spline(ps, true);
                 }
                 self.picks.push(pick);
                 Ok(None)
@@ -1728,6 +1739,11 @@ impl SketchTools {
             self.picks.clear();
             return Ok(None);
         }
+        self.finish_spline(ps, false)
+    }
+
+    /// Makes the spline of the points clicked; `closed`: it returns to its first point.
+    fn finish_spline(&mut self, ps: &mut PartSketch, closed: bool) -> ClickResult {
         let interp = self.tool == Tool::SplineInterp;
         let picks = std::mem::take(&mut self.picks);
         if picks.len() < 2 {
@@ -1748,7 +1764,10 @@ impl SketchTools {
                 })
                 .collect();
             if interp {
-                ps.sketch.add_interp_spline(pts)?;
+                let id = ps.sketch.add_interp_spline(pts)?;
+                if closed {
+                    ps.sketch.set_spline_closed(id, true)?;
+                }
             } else {
                 ps.sketch.add_spline(pts)?;
             }
