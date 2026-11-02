@@ -122,6 +122,7 @@ mod select;
 mod sheet_metal;
 mod shell;
 mod show_dims;
+mod sketch_marking;
 mod sketch_tools;
 mod sm_planned;
 mod steps;
@@ -849,6 +850,12 @@ struct CadCraftApp {
     shift_rmb: bool,
     /// The right button went down with Ctrl in a sketch: its constraints.
     ctrl_rmb: bool,
+    /// Application Options: those constraints in a ring, not a column.
+    constraint_ring: bool,
+    /// The ring, open at this point.
+    constraint_menu: Option<egui::Pos2>,
+    /// It opened this frame (the press that opened it must not close it).
+    constraint_menu_fresh: bool,
     /// Where the last right click in the view was (the plain menu's Select
     /// Other asks the candidates there).
     menu_at: Option<(egui::Pos2, egui::Rect)>,
@@ -1138,6 +1145,9 @@ impl CadCraftApp {
             sel_menu_fresh: false,
             shift_rmb: false,
             ctrl_rmb: false,
+            constraint_ring: false,
+            constraint_menu: None,
+            constraint_menu_fresh: false,
             menu_at: None,
             motion: Default::default(),
             tab_structure: None,
@@ -5259,7 +5269,10 @@ impl CadCraftApp {
             }
         }
         // Esc first closes the selection menu (Shift + right-click).
-        if pressed(Key::Escape) && self.sel_menu.take().is_none() {
+        if pressed(Key::Escape)
+            && self.sel_menu.take().is_none()
+            && self.constraint_menu.take().is_none()
+        {
             self.select_other = None;
             self.project_geometry = false;
             self.relink = None;
@@ -6070,7 +6083,7 @@ impl CadCraftApp {
             let part = self.part();
             let alive = |x: &select::SelItem| match x {
                 select::SelItem::Face(n) => part.body.find_face(n).is_some(),
-                select::SelItem::Edge(_) => false,
+                select::SelItem::Edge(_) | select::SelItem::Point(..) => false,
                 select::SelItem::Feature(id) => part.features.iter().any(|f| f.id() == id),
                 select::SelItem::Body(n) => part
                     .body
@@ -6189,13 +6202,18 @@ impl CadCraftApp {
             && let Some(p) = pointer
         {
             self.select_other = None;
-            let menu = if self.ctrl_rmb {
-                crate::command::selection::MenuContext::SketchConstraints
+            if self.ctrl_rmb && self.constraint_ring {
+                self.constraint_menu = Some(p);
+                self.constraint_menu_fresh = true;
             } else {
-                self.shift_menu_context(p, rect)
-            };
-            self.sel_menu = Some((p, rect, menu));
-            self.sel_menu_fresh = true;
+                let menu = if self.ctrl_rmb {
+                    crate::command::selection::MenuContext::SketchConstraints
+                } else {
+                    self.shift_menu_context(p, rect)
+                };
+                self.sel_menu = Some((p, rect, menu));
+                self.sel_menu_fresh = true;
+            }
         }
         // A right click on an item that is not selected selects it, so the
         // menu offers its commands (rule 17, `gui/sel_menu.rs`).

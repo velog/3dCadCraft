@@ -1370,6 +1370,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             self.tool_dialog_panel(ui);
             return;
         }
+        super::cursor_value::panel_is_idle(ui.ctx());
         let shown = self.shown_selection();
         egui::ScrollArea::vertical().show(ui, |ui| match shown {
             Selection::Feature(k) => self.feature_properties(ui, k),
@@ -5394,6 +5395,11 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     );
                 }
                 if tab == "Sketch" {
+                ui.checkbox(
+                    &mut self.constraint_ring,
+                    "Ctrl + right click: the constraints in a ring",
+                )
+                .on_hover_text("As in Inventor's marking menu; off: a column at the cursor");
                 ui.label(RichText::new("Constraint Settings — Inference").strong());
                 let k = &mut self.tools.inference;
                 ui.checkbox(&mut k.infer, "Infer constraints")

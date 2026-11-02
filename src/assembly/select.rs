@@ -146,7 +146,8 @@ pub struct RayPart {
     pub hi: Point3,
 }
 
-fn ray_hits_box(o: &Point3, d: &Vector3, lo: &Point3, hi: &Point3) -> bool {
+/// Whether the ray from `o` along `d` passes the box `lo`..`hi`.
+pub fn ray_hits_box(o: &Point3, d: &Vector3, lo: &Point3, hi: &Point3) -> bool {
     let (mut near, mut far) = (Real::NEG_INFINITY, Real::INFINITY);
     for k in 0..3 {
         if d[k].abs() < 1e-12 {
@@ -316,6 +317,32 @@ mod tests {
         let seen: HashMap<u32, f64> = [(1, 50.0), (2, 0.0), (3, 5.0)].into_iter().collect();
         assert_eq!(external(&seen, 5.0), vec![1, 3]);
         assert_eq!(internal(&seen, 5.0), vec![2]);
+    }
+
+    /// Measure's snap points: 8 corners and 12 middles of a box; a hole's two
+    /// rims give two centres however many pieces their circles come in.
+    #[test]
+    fn snap_points_are_corners_middles_and_centres() {
+        use crate::part::PartDocument;
+        use crate::part::measure::{SnapKind, snap_points};
+        let Ok(mut p) = PartDocument::with_box("Box1", [10.0, 20.0, 30.0]) else {
+            panic!("the test part did not build");
+        };
+        if p.regenerate().is_err() {
+            panic!("the test part did not regenerate");
+        }
+        let s = snap_points(&p.body);
+        let n = |k| s.iter().filter(|(x, _)| *x == k).count();
+        assert_eq!(n(SnapKind::Vertex), 8);
+        assert_eq!(n(SnapKind::Midpoint), 12);
+        assert_eq!(n(SnapKind::Center), 0);
+        assert!(
+            s.iter().any(|(k, at)| *k == SnapKind::Midpoint
+                && (at.x.abs() - 5.0).abs() < 1e-9
+                && at.y.abs() % 20.0 < 1e-9
+                && at.z.abs() % 30.0 < 1e-9),
+            "{s:?}"
+        );
     }
 
     /// Measure between two points of two components (the owner's example):

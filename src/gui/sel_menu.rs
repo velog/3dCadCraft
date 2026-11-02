@@ -250,7 +250,7 @@ impl CadCraftApp {
                 SelKind::StraightEdge
             }
             SelItem::Edge(_) => SelKind::Edge,
-            SelItem::Vertex(_) => SelKind::Vertex,
+            SelItem::Vertex(_) | SelItem::Point(..) => SelKind::Vertex,
             SelItem::Body(n) if crate::part::select::body_is_surface(&part.body, n) => {
                 SelKind::SurfaceBody
             }

@@ -9,9 +9,10 @@ use eframe::egui::{self, Color32, RichText, Stroke};
 use super::CadCraftApp;
 use super::select::SelItem;
 use crate::assembly::relation::GeomRef;
+use crate::kernel::Point3;
 use crate::kernel::{BRep, EdgeId, Transform3};
 use crate::part::blend::EdgeRef;
-use crate::part::measure::{self, Measurement, Target};
+use crate::part::measure::{self, Measurement, SnapKind, Target};
 
 /// The axes' colours in the view (the triad's): X, Y, Z.
 const AXIS_COLORS: [Color32; 3] = [
@@ -35,12 +36,54 @@ fn value_plate(painter: &egui::Painter, at: egui::Pos2, text: String, c: Color32
 pub(super) enum AsmPick {
     /// A face or an edge of a component.
     Geom(GeomRef),
-    /// A vertex of a part: its occurrence, the path to the part and its name.
+    /// A vertex, an edge's middle or a circle's centre of a part: its
+    /// occurrence, the path to the part and where it is on the part.
     Point {
         occurrence: u32,
         sub: Vec<u32>,
-        name: String,
+        kind: SnapKind,
+        local: [f64; 3],
     },
+}
+
+/// A body's snap points and box, built once while Measure is open.
+type Snaps = std::rc::Rc<(Vec<(SnapKind, Point3)>, Point3, Point3)>;
+
+fn snaps_of(body: &BRep) -> Snaps {
+    let list = measure::snap_points(body);
+    let mut lo = Point3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+    let mut hi = -lo;
+    for (_, p) in &list {
+        lo = lo.inf(p);
+        hi = hi.sup(p);
+    }
+    // A flat or empty box still has to be hit by a ray passing nearby.
+    let grow = ((hi - lo).norm() * 0.02).max(1.0);
+    let g = crate::kernel::Vector3::new(grow, grow, grow);
+    std::rc::Rc::new((list, lo - g, hi + g))
+}
+
+/// The snap radius: a vertex takes more room than what lies along an edge,
+/// so that the edge itself stays easy to pick.
+fn snap_radius(kind: SnapKind) -> f32 {
+    match kind {
+        SnapKind::Vertex => super::overlay::POINT_SNAP_PX,
+        _ => 8.0,
+    }
+}
+
+fn dot_at(painter: &egui::Painter, s: egui::Pos2, kind: SnapKind, col: Color32, label: bool) {
+    painter.circle_filled(s, 5.0, col);
+    painter.circle_stroke(s, 5.0, Stroke::new(1.0, Color32::WHITE));
+    if label {
+        painter.text(
+            s + egui::vec2(8.0, 8.0),
+            egui::Align2::LEFT_TOP,
+            kind.label(),
+            egui::FontId::proportional(12.0),
+            col,
+        );
+    }
 }
 
 /// State of the Measure window.
@@ -59,6 +102,10 @@ pub(super) struct MeasureUi {
     pub asm_picks: Vec<AsmPick>,
     /// In an assembly: the point, face or edge under the cursor.
     pub asm_hover: Option<AsmPick>,
+    /// Snap points per component, while the window is open.
+    snaps: std::cell::RefCell<std::collections::HashMap<crate::document::DocRef, Snaps>>,
+    /// The part's snap points and the body they were made for.
+    part_snaps: std::cell::RefCell<Option<(String, Snaps)>>,
 }
 
 /// The measurable targets of the selection (the last two), and whether
@@ -71,6 +118,11 @@ pub(super) fn targets(sel: &[SelItem]) -> (Vec<Target>, bool) {
             SelItem::Face(n) => out.push(Target::Face(n.clone())),
             SelItem::Edge(e) => out.push(Target::Edge(*e)),
             SelItem::Vertex(n) => out.push(Target::Vertex(n.clone())),
+            SelItem::Point(_, b) => out.push(Target::Point(Point3::new(
+                f64::from_bits(b[0]),
+                f64::from_bits(b[1]),
+                f64::from_bits(b[2]),
+            ))),
             SelItem::Body(n) => out.push(Target::Body(n.clone())),
             SelItem::Feature(_) | SelItem::Sketch(_) => skipped = true,
         }
@@ -80,6 +132,8 @@ pub(super) fn targets(sel: &[SelItem]) -> (Vec<Target>, bool) {
 }
 
 fn mm(v: f64) -> String {
+    // Never "-0.000": a rounding error is not a direction.
+    let v = if v.abs() < 0.0005 { 0.0 } else { v };
     format!("{v:.3} mm")
 }
 
@@ -177,7 +231,9 @@ impl CadCraftApp {
             let (component, at) = self.asm_pick_part(g)?;
             let item = self.with_part(component, |p| {
                 let t = match g {
-                    AsmPick::Point { name, .. } => Target::Vertex(name.clone()),
+                    AsmPick::Point { local, .. } => {
+                        Target::Point(Point3::new(local[0], local[1], local[2]))
+                    }
                     AsmPick::Geom(GeomRef::Face { name, .. }) => Target::Face(name.clone()),
                     AsmPick::Geom(GeomRef::Edge { edge, .. }) => {
                         Target::Edge(edge_by_ref(&p.body, edge)?)
@@ -212,46 +268,148 @@ impl CadCraftApp {
         }
     }
 
-    /// The point, face or edge Measure takes at `p`: a vertex within the
-    /// point snap first, so two corners give their distance.
-    fn asm_pick_under(&self, p: egui::Pos2, rect: egui::Rect) -> Option<AsmPick> {
-        if let Some(super::asm_select::AsmSub::Point {
-            occurrence,
-            sub,
-            name,
-            ..
-        }) = self.asm_point_under(p, rect)
-        {
-            return Some(AsmPick::Point {
-                occurrence,
-                sub,
-                name,
-            });
+    /// The snap point of any component nearest the cursor. Every part whose
+    /// box the eye ray passes is asked, not only the one under the cursor: a
+    /// hole's centre has nothing under it. One in front of what the ray hits.
+    fn asm_snap_under(&self, p: egui::Pos2, rect: egui::Rect) -> Option<AsmPick> {
+        let (o, d) = self.camera.ray(p, rect)?;
+        let d = d.try_normalize(1e-12)?;
+        let front = self.part_hit(p, rect).map(|h| h.2);
+        let mut best: Option<(f32, AsmPick)> = None;
+        for part in self.pick_parts() {
+            let cached = self.measure.snaps.borrow().get(&part.component).cloned();
+            let snaps = match cached {
+                Some(s) => s,
+                None => {
+                    let s = self.with_part(part.component, |x| snaps_of(&x.body))?;
+                    self.measure
+                        .snaps
+                        .borrow_mut()
+                        .insert(part.component, s.clone());
+                    s
+                }
+            };
+            let inv = part.place.inverse();
+            if !crate::assembly::select::ray_hits_box(&(inv * o), &(inv * d), &snaps.1, &snaps.2) {
+                continue;
+            }
+            for (kind, at) in &snaps.0 {
+                let w = part.place * at;
+                let Some(s) = self.camera.project(&w, rect) else {
+                    continue;
+                };
+                let dist = s.distance(p);
+                if dist > snap_radius(*kind)
+                    || best.as_ref().is_some_and(|b| b.0 <= dist)
+                    || front.is_some_and(|t| (w - o).dot(&d) > t * 1.02)
+                {
+                    continue;
+                }
+                best = Some((
+                    dist,
+                    AsmPick::Point {
+                        occurrence: part.top,
+                        sub: part.sub.clone(),
+                        kind: *kind,
+                        local: [at.x, at.y, at.z],
+                    },
+                ));
+            }
         }
-        self.geom_under_pub(p, rect).map(AsmPick::Geom)
+        best.map(|b| b.1)
+    }
+
+    /// The point, face or edge Measure takes at `p`: a point first, so two
+    /// corners, middles or centres give their distance.
+    fn asm_pick_under(&self, p: egui::Pos2, rect: egui::Rect) -> Option<AsmPick> {
+        self.asm_snap_under(p, rect)
+            .or_else(|| self.geom_under_pub(p, rect).map(AsmPick::Geom))
     }
 
     /// Draws a pick: a dot on a point, the geometry otherwise.
-    fn draw_asm_pick(&self, painter: &egui::Painter, rect: egui::Rect, g: &AsmPick, col: Color32) {
+    fn draw_asm_pick(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        g: &AsmPick,
+        col: Color32,
+        label: bool,
+    ) {
         match g {
             AsmPick::Geom(x) => self.draw_geom(painter, rect, x, col),
-            AsmPick::Point { name, .. } => {
-                let Some((component, place)) = self.asm_pick_part(g) else {
+            AsmPick::Point { kind, local, .. } => {
+                let Some((_, place)) = self.asm_pick_part(g) else {
                     return;
                 };
-                let at = self
-                    .with_part(component, |p| {
-                        p.body
-                            .vertices()
-                            .find(|(_, v)| v.name.as_deref() == Some(name.as_str()))
-                            .map(|(_, v)| place * v.point)
-                    })
-                    .flatten();
-                if let Some(s) = at.and_then(|w| self.camera.project(&w, rect)) {
-                    painter.circle_filled(s, 5.0, col);
-                    painter.circle_stroke(s, 5.0, Stroke::new(1.0, Color32::WHITE));
+                let w = place * Point3::new(local[0], local[1], local[2]);
+                if let Some(s) = self.camera.project(&w, rect) {
+                    dot_at(painter, s, *kind, col, label);
                 }
             }
+        }
+    }
+
+    /// The middle or centre Measure snaps to in a part (`idle`): vertices come
+    /// from the selection itself.
+    pub(super) fn measure_snap_at(&self, p: egui::Pos2, rect: egui::Rect) -> Option<SelItem> {
+        if !self.measure.open || self.measure.loop_mode {
+            return None;
+        }
+        let key = self.body_key();
+        let cached = self
+            .measure
+            .part_snaps
+            .borrow()
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, s)| s.clone());
+        let snaps = cached.unwrap_or_else(|| {
+            let s = snaps_of(&self.part().body);
+            *self.measure.part_snaps.borrow_mut() = Some((key, s.clone()));
+            s
+        });
+        let (o, d) = self.camera.ray(p, rect)?;
+        let d = d.try_normalize(1e-12)?;
+        let front = self.picker().pick(&o, &d).map(|(_, t)| t);
+        let mut best: Option<(f32, SelItem)> = None;
+        for (kind, at) in &snaps.0 {
+            if *kind == SnapKind::Vertex {
+                continue;
+            }
+            let Some(s) = self.camera.project(at, rect) else {
+                continue;
+            };
+            let dist = s.distance(p);
+            if dist > snap_radius(*kind)
+                || best.as_ref().is_some_and(|b| b.0 <= dist)
+                || front.is_some_and(|t| (at - o).dot(&d) > t * 1.02)
+            {
+                continue;
+            }
+            best = Some((
+                dist,
+                SelItem::Point(*kind, [at.x.to_bits(), at.y.to_bits(), at.z.to_bits()]),
+            ));
+        }
+        best.map(|b| b.1)
+    }
+
+    /// A part's snapped point in the view.
+    pub(super) fn draw_snap_item(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        kind: SnapKind,
+        bits: &[u64; 3],
+        col: Color32,
+    ) {
+        let w = Point3::new(
+            f64::from_bits(bits[0]),
+            f64::from_bits(bits[1]),
+            f64::from_bits(bits[2]),
+        );
+        if let Some(s) = self.camera.project(&w, rect) {
+            dot_at(painter, s, kind, col, true);
         }
     }
 
@@ -269,6 +427,7 @@ impl CadCraftApp {
         if !self.measure.open {
             self.measure.asm_picks.clear();
             self.measure.asm_hover = None;
+            self.measure.snaps.borrow_mut().clear();
             return;
         }
         self.measure.asm_hover = pointer.and_then(|p| self.asm_pick_under(p, rect));
@@ -290,10 +449,10 @@ impl CadCraftApp {
             } else {
                 Color32::from_rgb(200, 110, 255)
             };
-            self.draw_asm_pick(painter, rect, g, col);
+            self.draw_asm_pick(painter, rect, g, col, false);
         }
         if let Some(g) = self.measure.asm_hover.clone() {
-            self.draw_asm_pick(painter, rect, &g, Color32::from_rgb(110, 220, 120));
+            self.draw_asm_pick(painter, rect, &g, Color32::from_rgb(40, 150, 70), true);
         }
         self.draw_measure(painter, rect);
     }
@@ -312,6 +471,8 @@ impl CadCraftApp {
 
     pub(super) fn measure_window(&mut self, ctx: &egui::Context) {
         if !self.measure.open {
+            // Its snapped points mean nothing to any other command.
+            self.sel.retain(|x| !matches!(x, SelItem::Point(..)));
             return;
         }
         let mut open = true;

@@ -200,7 +200,7 @@ Works for Line, Center Point Circle, Two Point / Two Point Center Rectangle, Poi
 | **Shift + right click** in the view | **Selection** menu next to the cursor (by context: part / command / sketch; [spec/0.9a](spec/0.9a-selection-filters.md)); does not start Pan |
 | Esc | clears the selection (Previous Selection brings it back); closes Select Other |
 | **Digit, `.` or `-`** over the view while a command is open | opens the value next to the cursor with that character; Enter applies, Esc drops it, Tab goes to the next value (spec 0-ui §4.2) |
-| **Ctrl + right click** in a sketch | the Dimension and the constraints in a column at the cursor (spec 0.9a §6a) |
+| **Ctrl + right click** in a sketch | the Dimension and the constraints in a column at the cursor, or in a ring (Application Options › Sketch; spec 0.9a §6a) |
 | **Right click → Next / Back** in a command | the next / previous input, then its values next to the cursor (rule 21) |
 | Extrude/Revolve: dragging from empty space | picking profiles with a rectangle |
 | **Rebuild** (the top bar) / Tools → Update → Rebuild All | all features again, without the cache |

@@ -236,6 +236,8 @@ pub struct AppOptions {
     pub thread_texture: bool,
     /// A command's value and its editor next to the cursor.
     pub cursor_value: bool,
+    /// Ctrl + right click in a sketch: the constraints in a ring (off: a column).
+    pub constraint_ring: bool,
     /// The view's projection when the program starts.
     pub default_projection: super::camera::Projection,
     /// The visual style when the program starts.
@@ -331,6 +333,7 @@ impl Default for AppOptions {
             show_labels: true,
             thread_texture: true,
             cursor_value: true,
+            constraint_ring: false,
             default_projection: Default::default(),
             default_visual_style: Default::default(),
             internal_names: false,
@@ -947,6 +950,7 @@ impl CadCraftApp {
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
             cursor_value: self.cursor_value_enabled,
+            constraint_ring: self.constraint_ring,
             default_projection: self.default_projection,
             default_visual_style: self.default_visual_style,
             internal_names: self.internal_names,
@@ -979,6 +983,7 @@ impl CadCraftApp {
         self.tools.inference = o.inference;
         self.show_labels = o.show_labels;
         self.cursor_value_enabled = o.cursor_value;
+        self.constraint_ring = o.constraint_ring;
         if self.default_projection != o.default_projection || !self.view_defaults_taken {
             self.camera.projection = o.default_projection;
         }
@@ -1341,6 +1346,7 @@ impl CadCraftApp {
                 .show(ui, |ui| self.viewport(ui, frame));
         }
         self.shift_menu_ui(ui.ctx());
+        self.constraint_menu_ui(ui.ctx());
         if let Some(on) = self.full_screen_cmd.take() {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));

@@ -228,7 +228,8 @@ impl super::CadCraftApp {
                         }
                     }
                 }
-                SelItem::Vertex(_) | SelItem::Body(_) | SelItem::Sketch(_) => {}
+                SelItem::Vertex(_) | SelItem::Body(_) | SelItem::Sketch(_) | SelItem::Point(..) => {
+                }
             }
         }
         b

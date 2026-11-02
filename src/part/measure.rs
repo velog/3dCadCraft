@@ -93,6 +93,58 @@ pub fn measure(body: &BRep, targets: &[Target]) -> Result<Measurement, String> {
 /// component (its part's body, the occurrence's placement).
 pub type Placed<'a> = (&'a BRep, Target, Transform3);
 
+/// What a point Measure can snap to is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SnapKind {
+    /// An end of edges.
+    Vertex,
+    /// The middle of a straight or free-form edge.
+    Midpoint,
+    /// The centre of a circle or arc.
+    Center,
+}
+
+impl SnapKind {
+    /// The name next to the point in the view.
+    pub fn label(self) -> &'static str {
+        match self {
+            SnapKind::Vertex => "vertex",
+            SnapKind::Midpoint => "midpoint",
+            SnapKind::Center => "center",
+        }
+    }
+}
+
+/// The points of a body Measure can snap to (part coordinates): its vertices,
+/// the middles of its straight and free-form edges, the centres of its circles
+/// and arcs (one for the pieces of a circle). A circle's own middle is left out:
+/// the kernel splits circles at places that mean nothing to the user.
+pub fn snap_points(body: &BRep) -> Vec<(SnapKind, Point3)> {
+    let mut out: Vec<(SnapKind, Point3)> = body
+        .vertices()
+        .map(|(_, v)| (SnapKind::Vertex, v.point))
+        .collect();
+    for (_, e) in body.edges() {
+        let Some(c) = body.curve(e.curve) else {
+            continue;
+        };
+        let (kind, at) = match c {
+            crate::kernel::Curve::Circle(k) => (SnapKind::Center, k.center),
+            other => (
+                SnapKind::Midpoint,
+                other.point_at((e.range.min + e.range.max) / 2.0),
+            ),
+        };
+        if !out
+            .iter()
+            .any(|(k, p)| *k == kind && (p - at).norm() < 1e-6)
+        {
+            out.push((kind, at));
+        }
+    }
+    out
+}
+
 /// The way from `p` to `q` along X, then Y, then Z: each leg's ends and signed
 /// length. A leg of no length (below `tol`) is left out.
 pub fn axis_legs(p: &Point3, q: &Point3, tol: Real) -> Vec<(usize, Point3, Point3, Real)> {

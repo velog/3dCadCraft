@@ -30,6 +30,9 @@ pub(super) enum SelItem {
     Feature(String),
     Body(String),
     Sketch(usize),
+    /// A middle or centre Measure snapped to (only while it is open): where,
+    /// as the bits of x, y, z.
+    Point(crate::part::measure::SnapKind, [u64; 3]),
 }
 
 /// How many hidden-line tests one drawn polyline gets at most.
@@ -358,6 +361,9 @@ impl CadCraftApp {
         edge: Option<EdgeId>,
         face: Option<&str>,
     ) -> Option<SelItem> {
+        if let Some(x) = self.measure_snap_at(p, rect) {
+            return Some(x);
+        }
         self.resolved(self.raw_under(p, rect, edge, face, false))
             .into_iter()
             .next()
@@ -370,7 +376,12 @@ impl CadCraftApp {
             Some(crate::part::PlaneRef::Face(n)) => Some(n),
             _ => None,
         };
-        self.resolved(self.raw_under(p, rect, edge, face.as_deref(), true))
+        let mut items = self.resolved(self.raw_under(p, rect, edge, face.as_deref(), true));
+        // Measure: the middle or centre here comes first, the rest stays in reach.
+        if let Some(x) = self.measure_snap_at(p, rect) {
+            items.insert(0, x);
+        }
+        items
     }
 
     /// Whether Select Other serves the open command: it picks model items
@@ -469,7 +480,9 @@ impl CadCraftApp {
             }
             SelItem::Feature(id) => psel::faces_of_feature(body, id),
             SelItem::Body(n) => psel::faces_of_body(body, n),
-            SelItem::Edge(_) | SelItem::Sketch(_) | SelItem::Vertex(_) => Vec::new(),
+            SelItem::Edge(_) | SelItem::Sketch(_) | SelItem::Vertex(_) | SelItem::Point(..) => {
+                Vec::new()
+            }
         }
     }
 
@@ -480,6 +493,7 @@ impl CadCraftApp {
             SelItem::Edge(e) => self.edge_description(*e),
             SelItem::Face(f) => self.face_description(f),
             SelItem::Vertex(n) => format!("Vertex {n}"),
+            SelItem::Point(kind, _) => kind.label().to_owned(),
             SelItem::Feature(id) => part
                 .features
                 .iter()
@@ -547,6 +561,7 @@ impl CadCraftApp {
                 .position(|f| f.id() == id)
                 .map(|k| feature_sel(self, k)),
             Some(SelItem::Sketch(i)) => Some(Selection::Sketch(*i)),
+            Some(SelItem::Point(..)) => None,
             Some(SelItem::Body(_)) => Some(Selection::Body),
             Some(SelItem::Edge(e)) => self.edge_feature(*e).map(|k| feature_sel(self, k)),
             Some(SelItem::Face(n) | SelItem::Vertex(n)) => Some(
@@ -940,6 +955,9 @@ impl CadCraftApp {
             SelItem::Edge(e) => line(*e, color),
             SelItem::Sketch(i) => sketch(*i, color),
             SelItem::Vertex(n) => vertex(n, color),
+            SelItem::Point(kind, bits) => {
+                self.draw_snap_item(painter, rect, *kind, bits, color);
+            }
             other => rim(other, color),
         };
         for x in sel {
@@ -1017,7 +1035,7 @@ impl CadCraftApp {
             (count(|x| matches!(x, SelItem::Face(_))), "face", "faces"),
             (count(|x| matches!(x, SelItem::Edge(_))), "edge", "edges"),
             (
-                count(|x| matches!(x, SelItem::Vertex(_))),
+                count(|x| matches!(x, SelItem::Vertex(_) | SelItem::Point(..))),
                 "vertex",
                 "vertices",
             ),

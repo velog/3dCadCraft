@@ -55,13 +55,30 @@ fn list_id() -> egui::Id {
     egui::Id::new("panel_fields")
 }
 
+fn idle_id() -> egui::Id {
+    egui::Id::new("panel_fields_idle")
+}
+
 /// Forgets last frame's values (start of `properties`).
 pub(super) fn begin(ctx: &egui::Context) {
-    ctx.data_mut(|d| d.remove_temp::<Vec<PanelField>>(list_id()));
+    ctx.data_mut(|d| {
+        d.remove_temp::<Vec<PanelField>>(list_id());
+        d.insert_temp(idle_id(), false);
+    });
+}
+
+/// Properties goes on to the selected item's own panel, not a command's: its
+/// values must not follow the cursor (a digit would edit a finished feature
+/// while another command, such as picking a sketch plane, is open).
+pub(super) fn panel_is_idle(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(idle_id(), true));
 }
 
 /// Adds a value of the panel being drawn.
 pub(super) fn register(ctx: &egui::Context, f: PanelField) {
+    if ctx.data(|d| d.get_temp::<bool>(idle_id())).unwrap_or(false) {
+        return;
+    }
     ctx.data_mut(|d| {
         d.get_temp_mut_or_default::<Vec<PanelField>>(list_id())
             .push(f);

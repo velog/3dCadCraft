@@ -2307,7 +2307,7 @@ pub(super) fn takes(kinds: &[PickKind], item: &SelItem) -> bool {
     match item {
         SelItem::Face(_) => any(&[K::Face, K::PlanarFace, K::Surface]),
         SelItem::Edge(_) => any(&[K::Edge, K::StraightEdge]),
-        SelItem::Vertex(_) => any(&[K::Point]),
+        SelItem::Vertex(_) | SelItem::Point(..) => any(&[K::Point]),
         SelItem::Body(_) => any(&[K::Body, K::Surface]),
         SelItem::Sketch(_) => any(&[K::Sketch, K::Region, K::SketchCurve, K::SketchPoint]),
         SelItem::Feature(_) => any(&[K::Plane, K::Axis, K::Point, K::Face, K::Body]),
