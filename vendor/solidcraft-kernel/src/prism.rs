@@ -2315,7 +2315,11 @@ fn simple_prism_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2
     let alike = |v: f64| (u - v).abs() <= tol * (1.0 + u);
     // A tool that misses its target (or an intersection that is one operand whole) leaves it
     // as it is: the B-rep boolean reuses that operand itself, where this would rebuild it.
-    if matches!(op, BoolOp::Cut | BoolOp::Intersect) && (same_area(u, x, tol) || (op == BoolOp::Intersect && same_area(u, y, tol))) {
+    // By height too (3DCadCraft): a tool of the same section but longer than its target, cut to the
+    // target's height, is neither operand whole; the B-rep boolean failed on such a tangent circle.
+    let whole_a = same_area(u, x, tol) && (op == BoolOp::Cut || spans);
+    let whole_b = op == BoolOp::Intersect && same_area(u, y, tol) && pa.lo <= pb.lo + tol && pa.hi >= pb.hi - tol;
+    if matches!(op, BoolOp::Cut | BoolOp::Intersect) && (whole_a || whole_b) {
         return None;
     }
     let (lo, hi) = if stacked {
