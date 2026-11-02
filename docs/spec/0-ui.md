@@ -28,6 +28,7 @@ Status: ✅ done · 🟡 partial · ⬜ to do.
 | Anti-aliasing | MSAA 4× where the hardware allows it | ✅ |
 | High DPI | the interface follows the system scale | ✅ (egui) |
 | Selectable theme (light/dark) and a custom colour scheme | like Inventor's In-canvas Color Scheme | ⬜ |
+| **Menu icons** | the right-click menus show an icon before each entry that has one (Next, Back, OK, Apply, Cancel, Flip, Repeat, the selection tools, the commands by their own icon); the text stays in one column (`icons::menu_item`, `icons::sub_menu`) | 🟡 |
 | **Command icons** | our own vector icons (`gui/icons.rs`), two-coloured (outline + accent, points in orange, removed parts in red); faded for unavailable commands | ✅ |
 | **Ribbon** | as in Inventor: large buttons (icon above text), columns of three small buttons (icon + text), icon-only columns for the constraints (the name is in the tooltip); drop-down buttons show the icon of the current variant; toggles (Construction, Relax, DOF) stay pressed while on; all panels of a tab fit in 1400 px | ✅ |
 | Model browser icons | project, part, Origin, planes, axes, box, features, sketches | ✅ |

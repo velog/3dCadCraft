@@ -226,10 +226,14 @@ impl CadCraftApp {
                         };
                         commit = valuefield::value_field(ui, &spec);
                         if flip
-                            && ui
-                                .small_button("Flip")
-                                .on_hover_text("Flip the direction")
-                                .clicked()
+                            && super::icons::menu_item(
+                                ui,
+                                Some(super::icons::Icon::MenuFlip),
+                                "Flip",
+                                true,
+                            )
+                            .on_hover_text("Flip the direction")
+                            .clicked()
                         {
                             flip_clicked = true;
                         }

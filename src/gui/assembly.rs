@@ -2078,9 +2078,16 @@ impl CadCraftApp {
         let cube_menu = self.cube_context;
         if response.secondary_clicked() {
             self.asm.menu_at = ui.input(|i| i.pointer.interact_pos()).map(|p| (p, rect));
+            self.shift_rmb = ui.input(|i| i.modifiers.shift);
         }
         response.context_menu(|ui| {
             if cube_menu {
+                return;
+            }
+            // Shift + right click: the Select options next to the cursor.
+            if self.shift_rmb {
+                ui.label(RichText::new("Selection").strong());
+                self.asm_select_body(ui);
                 return;
             }
             if self.part_planned.is_some() && self.command_context_menu(ui) {

@@ -93,6 +93,55 @@ const SEL: [f32; 3] = [0.25, 0.5, 0.95];
 const HOVER: [f32; 3] = [0.4, 0.82, 0.45];
 
 impl CadCraftApp {
+    /// The occurrences of the selected occurrences' components.
+    fn asm_all_occurrences(&self) -> Vec<u32> {
+        let Some(a) = self.assembly() else {
+            return Vec::new();
+        };
+        let picked: Vec<_> = a
+            .occurrences
+            .iter()
+            .filter(|o| self.asm.sel.contains(&o.id))
+            .map(|o| o.component)
+            .collect();
+        a.occurrences
+            .iter()
+            .filter(|o| picked.contains(&o.component))
+            .map(|o| o.id)
+            .collect()
+    }
+
+    /// The selection and everything joined to it by a constraint.
+    fn asm_constrained_to(&self) -> Vec<u32> {
+        let Some(a) = self.assembly() else {
+            return Vec::new();
+        };
+        let mut out = self.asm.sel.clone();
+        for c in &a.constraints {
+            let (x, y) = (c.a.occurrence(), c.b.occurrence());
+            for (from, to) in [(x, y), (y, x)] {
+                if self.asm.sel.contains(&from)
+                    && !out.contains(&to)
+                    && a.occurrences.iter().any(|o| o.id == to)
+                {
+                    out.push(to);
+                }
+            }
+        }
+        out
+    }
+
+    /// Every occurrence that is not selected.
+    fn asm_inverted(&self) -> Vec<u32> {
+        self.assembly().map_or_else(Vec::new, |a| {
+            a.occurrences
+                .iter()
+                .map(|o| o.id)
+                .filter(|id| !self.asm.sel.contains(id))
+                .collect()
+        })
+    }
+
     /// The assembly's Select Priority.
     pub(super) fn asm_priority(&self) -> AsmPriority {
         self.select.asm_priority
@@ -277,7 +326,17 @@ impl CadCraftApp {
         let p = self.asm_priority();
         let short = p.label().trim_end_matches(" Priority");
         let title = format!("Select: {}", short.trim_start_matches("Select "));
-        ui.menu_button(title, |ui| {
+        ui.menu_button(title, |ui| self.asm_select_body(ui))
+            .response
+            .on_hover_text("Selection priority in the assembly: what one click takes");
+    }
+
+    /// The assembly's Select options (the Quick Access list and Shift +
+    /// right click). Rows without logic are shown disabled (rule 15).
+    pub(super) fn asm_select_body(&mut self, ui: &mut egui::Ui) {
+        use super::icons::{Icon, menu_item};
+        let p = self.asm_priority();
+        {
             for q in AsmPriority::ALL {
                 let r = ui
                     .add_enabled(q.available(), egui::RadioButton::new(p == q, q.label()))
@@ -305,9 +364,45 @@ impl CadCraftApp {
                 self.scene_dirty = true;
                 ui.close();
             }
-        })
-        .response
-        .on_hover_text("Selection priority in the assembly: what one click takes");
+            let any_sel = !self.asm.sel.is_empty();
+            if menu_item(ui, Some(Icon::SelAll), "Select All Occurrences", any_sel)
+                .on_hover_text("Every occurrence of the selected components")
+                .clicked()
+            {
+                self.asm.sel = self.asm_all_occurrences();
+                self.scene_dirty = true;
+                ui.close();
+            }
+            if menu_item(ui, Some(Icon::SelTangent), "Constrained To", any_sel)
+                .on_hover_text("The components constrained to the selected ones")
+                .clicked()
+            {
+                self.asm.sel = self.asm_constrained_to();
+                self.scene_dirty = true;
+                ui.close();
+            }
+            if menu_item(ui, Some(Icon::SelInvert), "Invert Selection", true).clicked() {
+                self.asm.sel = self.asm_inverted();
+                self.scene_dirty = true;
+                ui.close();
+            }
+            ui.separator();
+            for label in [
+                "Select Visible Only",
+                "Component Size...",
+                "Component Offset...",
+                "Sphere Offset...",
+                "Select by Plane...",
+                "External Components...",
+                "Internal Components...",
+                "All in Camera",
+                "Previous Selection",
+            ] {
+                menu_item(ui, None, label, false).on_disabled_hover_text(
+                    "Interface only: the logic comes later (spec 0.9a §6a)",
+                );
+            }
+        }
     }
 
     /// What the Appearance list acts on: the selected components, or the

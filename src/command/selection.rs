@@ -525,6 +525,9 @@ pub enum MenuContext {
         /// Something is selected in the sketch.
         selection: bool,
     },
+    /// Ctrl + right click in a sketch: only its constraints (drawn by the
+    /// GUI, which knows the tools), no selection entries.
+    SketchConstraints,
 }
 
 /// An entry of the Shift + right-click menu.
@@ -560,6 +563,9 @@ pub enum MenuEntry {
 /// enabled, for its context. Inside a command only what the active
 /// selector can take is offered as a filter.
 pub fn shift_menu(ctx: &MenuContext) -> Vec<(MenuEntry, bool)> {
+    if *ctx == MenuContext::SketchConstraints {
+        return Vec::new();
+    }
     let boxes = BoxMode::ALL.map(|b| (MenuEntry::Box(b), true));
     let mut v = Vec::new();
     match ctx {
@@ -596,6 +602,7 @@ pub fn shift_menu(ctx: &MenuContext) -> Vec<(MenuEntry, bool)> {
                 v.push((MenuEntry::AllFilters, true));
             }
         }
+        MenuContext::SketchConstraints => {}
         MenuContext::Sketch { selection } => {
             v.push((MenuEntry::SelectAll, true));
             v.push((MenuEntry::SelectInvert, true));
@@ -817,6 +824,11 @@ mod tests {
         assert!(!BoxMode::ByDirection.is_window(20.0, 10.0));
         assert!(BoxMode::Window.is_window(20.0, 10.0));
         assert!(!BoxMode::Crossing.is_window(10.0, 20.0));
+    }
+
+    #[test]
+    fn constraints_menu_has_no_selection_entries() {
+        assert!(shift_menu(&MenuContext::SketchConstraints).is_empty());
     }
 
     #[test]

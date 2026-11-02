@@ -10,6 +10,7 @@
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Stroke};
 
 use super::CadCraftApp;
+use super::icons::{Icon, menu_item};
 use crate::command::flow::{EnterAction, Flow, MenuItem, PickKind, Selector};
 
 /// Appended to the prompt when every required input is there.
@@ -157,7 +158,15 @@ pub(super) fn command_menu(
             }
             ui.separator();
         }
-        if ui.add_enabled(on, egui::Button::new(label)).clicked() {
+        let icon = match item {
+            MenuItem::Ok => Icon::MenuOk,
+            MenuItem::Apply => Icon::MenuApply,
+            MenuItem::Continue => Icon::StepNext,
+            MenuItem::Back => Icon::StepBack,
+            MenuItem::Cancel => Icon::MenuCancel,
+            MenuItem::Repeat => Icon::MenuRepeat,
+        };
+        if menu_item(ui, Some(icon), &label, on).clicked() {
             out = Some(MenuChoice::Item(item));
             ui.close();
         }

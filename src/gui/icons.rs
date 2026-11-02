@@ -41,6 +41,36 @@ impl Palette {
 #[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
+    // menus of an open command
+    /// The next input.
+    StepNext,
+    /// The previous input.
+    StepBack,
+    /// OK.
+    MenuOk,
+    /// Apply.
+    MenuApply,
+    /// Cancel.
+    MenuCancel,
+    /// Flip Direction.
+    MenuFlip,
+    /// Repeat the last command.
+    MenuRepeat,
+    // selection tools
+    /// Select Other.
+    SelOther,
+    /// Select Loop.
+    SelLoop,
+    /// Select Tangencies.
+    SelTangent,
+    /// Select Invert.
+    SelInvert,
+    /// Select All.
+    SelAll,
+    /// Previous Selection.
+    SelPrevious,
+    /// Clear Selection.
+    SelClear,
     // sketch: create
     Select,
     Line,
@@ -627,6 +657,50 @@ impl Pen<'_> {
     }
 }
 
+/// A menu entry with an icon before its text; `None` keeps the text in line
+/// with the entries that have one.
+pub fn menu_item(
+    ui: &mut eframe::egui::Ui,
+    icon: Option<Icon>,
+    text: &str,
+    on: bool,
+) -> eframe::egui::Response {
+    use eframe::egui;
+    let r = ui.add_enabled(on, egui::Button::new(format!("       {text}")));
+    if let Some(icon) = icon {
+        let at = egui::Rect::from_center_size(
+            egui::pos2(r.rect.left() + 11.0, r.rect.center().y),
+            egui::vec2(15.0, 15.0),
+        );
+        let pal = if on {
+            Palette::ENABLED
+        } else {
+            Palette::DISABLED
+        };
+        paint(ui.painter(), at, icon, &pal);
+    }
+    r
+}
+
+/// A sub-menu in line with [`menu_item`]s.
+pub fn sub_menu<R>(
+    ui: &mut eframe::egui::Ui,
+    icon: Option<Icon>,
+    text: &str,
+    add: impl FnOnce(&mut eframe::egui::Ui) -> R,
+) -> Option<R> {
+    use eframe::egui;
+    let r = ui.menu_button(format!("       {text}"), add);
+    if let Some(icon) = icon {
+        let at = egui::Rect::from_center_size(
+            egui::pos2(r.response.rect.left() + 11.0, r.response.rect.center().y),
+            egui::vec2(15.0, 15.0),
+        );
+        paint(ui.painter(), at, icon, &Palette::ENABLED);
+    }
+    r.inner
+}
+
 /// Draws `icon` into `rect` (square) with palette `k`.
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
     let pen = Pen {
@@ -640,6 +714,93 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
     let p = &pen;
     use Icon::*;
     match icon {
+        StepNext => {
+            p.line(&[(2.5, 8.0), (12.5, 8.0)], acc);
+            p.head((14.0, 8.0), (1.0, 0.0), acc);
+            p.head((14.0, 8.0), (1.0, 0.0), acc);
+            p.line(&[(8.5, 3.5), (13.0, 8.0), (8.5, 12.5)], acc);
+        }
+        StepBack => {
+            p.line(&[(13.5, 8.0), (3.5, 8.0)], ink);
+            p.line(&[(7.5, 3.5), (3.0, 8.0), (7.5, 12.5)], ink);
+        }
+        MenuOk => {
+            p.line(&[(2.5, 8.5), (6.5, 12.5), (13.5, 3.5)], ok);
+        }
+        MenuApply => {
+            p.line(&[(1.5, 8.5), (4.5, 11.5), (9.5, 4.5)], ok);
+            p.line(&[(11.0, 9.5), (15.0, 9.5)], acc);
+            p.line(&[(13.0, 7.5), (13.0, 11.5)], acc);
+        }
+        MenuCancel => {
+            p.line(&[(3.5, 3.5), (12.5, 12.5)], warn);
+            p.line(&[(12.5, 3.5), (3.5, 12.5)], warn);
+        }
+        MenuFlip => {
+            p.line(&[(1.5, 8.0), (14.5, 8.0)], tint(ink, 150));
+            p.line(&[(8.0, 6.5), (8.0, 2.5)], acc);
+            p.line(&[(5.5, 4.5), (8.0, 2.0), (10.5, 4.5)], acc);
+            p.line(&[(8.0, 9.5), (8.0, 13.5)], hot);
+            p.line(&[(5.5, 11.5), (8.0, 14.0), (10.5, 11.5)], hot);
+        }
+        MenuRepeat => {
+            p.line(
+                &[
+                    (12.5, 5.0),
+                    (10.0, 3.0),
+                    (6.0, 3.0),
+                    (3.0, 6.0),
+                    (3.0, 10.0),
+                    (6.0, 13.0),
+                    (10.0, 13.0),
+                    (13.0, 10.0),
+                ],
+                acc,
+            );
+            p.line(&[(13.0, 2.0), (13.0, 5.5), (9.5, 5.5)], acc);
+        }
+        SelOther => {
+            p.closed(
+                &[(2.0, 5.0), (9.0, 5.0), (9.0, 12.0), (2.0, 12.0)],
+                tint(ink, 150),
+            );
+            p.closed(&[(6.0, 2.5), (13.5, 2.5), (13.5, 9.5), (6.0, 9.5)], acc);
+        }
+        SelLoop => {
+            p.closed(&[(3.0, 3.0), (13.0, 3.0), (13.0, 13.0), (3.0, 13.0)], acc);
+            p.disc(3.0, 3.0, 1.4, hot);
+        }
+        SelTangent => {
+            p.line(&[(1.5, 13.0), (7.0, 13.0)], acc);
+            p.line(&[(7.0, 13.0), (11.0, 11.5), (13.5, 8.0), (14.0, 3.0)], acc);
+            p.disc(7.0, 13.0, 1.3, hot);
+        }
+        SelInvert => {
+            p.fill(&[(2.5, 2.5), (8.0, 2.5), (8.0, 13.5), (2.5, 13.5)], acc);
+            p.closed(&[(2.5, 2.5), (13.5, 2.5), (13.5, 13.5), (2.5, 13.5)], ink);
+        }
+        SelAll => {
+            p.fill(&[(3.0, 3.0), (7.0, 3.0), (7.0, 7.0), (3.0, 7.0)], acc);
+            p.fill(&[(9.0, 3.0), (13.0, 3.0), (13.0, 7.0), (9.0, 7.0)], acc);
+            p.fill(&[(3.0, 9.0), (7.0, 9.0), (7.0, 13.0), (3.0, 13.0)], acc);
+            p.fill(&[(9.0, 9.0), (13.0, 9.0), (13.0, 13.0), (9.0, 13.0)], acc);
+        }
+        SelPrevious => {
+            p.closed(
+                &[(5.0, 5.0), (13.5, 5.0), (13.5, 13.5), (5.0, 13.5)],
+                tint(ink, 150),
+            );
+            p.line(&[(9.0, 2.0), (2.5, 2.0), (2.5, 8.5)], acc);
+            p.line(&[(4.5, 0.5), (2.5, 2.0), (4.5, 3.5)], acc);
+        }
+        SelClear => {
+            p.closed(
+                &[(2.5, 2.5), (13.5, 2.5), (13.5, 13.5), (2.5, 13.5)],
+                tint(ink, 150),
+            );
+            p.line(&[(5.5, 5.5), (10.5, 10.5)], warn);
+            p.line(&[(10.5, 5.5), (5.5, 10.5)], warn);
+        }
         Select => {
             p.fill(&[(4.0, 2.0), (4.0, 13.0), (7.0, 10.0)], ink);
             p.fill(&[(4.0, 2.0), (7.0, 10.0), (12.0, 9.5)], ink);

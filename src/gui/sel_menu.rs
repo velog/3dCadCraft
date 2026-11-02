@@ -197,6 +197,21 @@ pub(super) fn entries(kind: SelKind, one: bool) -> Vec<Entry> {
     v
 }
 
+/// The icon of a selection-menu entry: its command's, found by name
+/// ("Shell (remove these faces)" is Shell).
+fn entry_icon(e: Entry) -> Option<super::icons::Icon> {
+    use super::icons::Icon;
+    if e == Entry::NewSketch {
+        return Some(Icon::StartSketch);
+    }
+    let label = e.label();
+    let head = label.split(" (").next().unwrap_or(label);
+    super::commands::COMMANDS
+        .iter()
+        .find(|c| c.name == head)
+        .map(|c| c.icon)
+}
+
 impl CadCraftApp {
     /// Whether model face `name` is planar.
     fn face_is_planar(&self, name: &str) -> bool {
@@ -360,7 +375,7 @@ impl CadCraftApp {
                 continue;
             }
             let ok = self.entry_available(e);
-            let mut b = ui.add_enabled(ok, egui::Button::new(e.label()));
+            let mut b = super::icons::menu_item(ui, entry_icon(e), e.label(), ok);
             if let E::Planned(p) = e {
                 b = b.on_hover_text(format!(
                     "Opens its panel; the logic comes next (FEATURES {})",

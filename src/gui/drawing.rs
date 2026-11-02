@@ -1667,7 +1667,40 @@ impl CadCraftApp {
         let target = self.drw.sel;
         let menu_break = self.drw.menu_break;
         let menu_out = self.drw.menu_break_out;
+        if response.secondary_clicked() {
+            self.shift_rmb = response.ctx.input(|i| i.modifiers.shift);
+        }
         response.context_menu(|ui| {
+            // Shift + right click: Inventor's Select modes of a drawing.
+            if self.shift_rmb {
+                ui.label(RichText::new("Selection").strong());
+                for label in [
+                    "Edge Priority",
+                    "Feature Priority",
+                    "Part Priority",
+                    "All Inventor Dimensions",
+                    "All Model Dimensions",
+                    "All Overridden Dimensions",
+                    "Edit Select Filters...",
+                ] {
+                    super::icons::menu_item(ui, None, label, false).on_disabled_hover_text(
+                        "Interface only: the logic comes later (spec 0.9a §6a)",
+                    );
+                }
+                ui.separator();
+                if super::icons::menu_item(
+                    ui,
+                    Some(super::icons::Icon::SelClear),
+                    "Clear Selection (Esc)",
+                    target.is_some(),
+                )
+                .clicked()
+                {
+                    self.drw.sel = None;
+                    ui.close();
+                }
+                return;
+            }
             if let Some(id) = target {
                 if ui.button("Edit View...").clicked() {
                     self.open_edit_view(id);

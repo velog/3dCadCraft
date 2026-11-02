@@ -810,6 +810,11 @@ struct CadCraftApp {
     /// The right button went down with Shift (the selection menu, never a
     /// pan or the context menu).
     shift_rmb: bool,
+    /// The right button went down with Ctrl in a sketch: its constraints.
+    ctrl_rmb: bool,
+    /// Where the last right click in the view was (the plain menu's Select
+    /// Other asks the candidates there).
+    menu_at: Option<(egui::Pos2, egui::Rect)>,
     /// The selected set (several faces, edges, features, bodies, sketches).
     sel: Vec<select::SelItem>,
     /// The set before the last change (Previous Selection).
@@ -1080,6 +1085,8 @@ impl CadCraftApp {
             sel_menu: None,
             sel_menu_fresh: false,
             shift_rmb: false,
+            ctrl_rmb: false,
+            menu_at: None,
             sel: Vec::new(),
             prev_sel: Vec::new(),
             sel_key: String::new(),
@@ -6031,7 +6038,9 @@ impl CadCraftApp {
         }
         // Shift + right-click: the selection menu at the cursor (Inventor).
         if response.hovered() && ui.input(|i| i.pointer.button_pressed(PointerButton::Secondary)) {
-            self.shift_rmb = ui.input(|i| i.modifiers.shift);
+            let (shift, ctrl) = ui.input(|i| (i.modifiers.shift, i.modifiers.ctrl));
+            self.ctrl_rmb = ctrl && !shift && self.editing.is_some();
+            self.shift_rmb = shift || self.ctrl_rmb;
         }
         if response.secondary_clicked()
             && self.shift_rmb
@@ -6039,7 +6048,11 @@ impl CadCraftApp {
             && let Some(p) = pointer
         {
             self.select_other = None;
-            let menu = self.shift_menu_context(p, rect);
+            let menu = if self.ctrl_rmb {
+                crate::command::selection::MenuContext::SketchConstraints
+            } else {
+                self.shift_menu_context(p, rect)
+            };
             self.sel_menu = Some((p, rect, menu));
             self.sel_menu_fresh = true;
         }
@@ -6056,6 +6069,7 @@ impl CadCraftApp {
         if response.secondary_clicked()
             && let Some(p) = pointer
         {
+            self.menu_at = Some((p, rect));
             self.context_target = self.plane_under(p, rect, false);
             self.context_edge = self.edge_under(p, rect);
             self.context_face = self.camera.ray(p, rect).and_then(|(o, d)| {
@@ -6115,23 +6129,42 @@ impl CadCraftApp {
                 // Every other command: Next and Back to its inputs (rule 21),
                 // Flip where there is a direction, OK and Cancel of its panel.
                 if self.step_menu(ui) {
-                    if self.flip_available() && ui.button("Flip Direction").clicked() {
+                    if self.flip_available()
+                        && icons::menu_item(ui, Some(icons::Icon::MenuFlip), "Flip Direction", true)
+                            .clicked()
+                    {
                         self.flip_direction();
                         ui.close();
                     }
                     if self.editing.is_none() {
                         self.ok_cancel_menu(ui);
                     }
+                    self.blend_mode_menu(ui);
                     ui.separator();
                 }
                 // No Repeat while any command is open (spec 0.15 §3.1.1, A0).
                 if self.open_state().repeat_in_menu()
                     && let Some(a) = self.repeatable()
                 {
-                    if ui.button(format!("Repeat {}", command_label(a))).clicked() {
+                    if icons::menu_item(
+                        ui,
+                        Some(icons::Icon::MenuRepeat),
+                        &format!("Repeat {}", command_label(a)),
+                        true,
+                    )
+                    .clicked()
+                    {
                         self.apply(a);
                         ui.close();
                     }
+                    ui.separator();
+                }
+                // Inventor's marking menu with nothing selected: the
+                // everyday commands of the environment.
+                if self.open_state().repeat_in_menu()
+                    && self.sel.is_empty()
+                    && self.quick_commands_menu(ui)
+                {
                     ui.separator();
                 }
                 if self.editing.is_some() && self.project_geometry {
@@ -6153,6 +6186,7 @@ impl CadCraftApp {
                     ui.separator();
                 }
                 if self.editing.is_none() && !self.sel.is_empty() {
+                    self.selection_tools_menu(ui);
                     self.selection_menu(ui);
                     self.appearance_context_menu(ui);
                     self.measure_context(ui);
@@ -6164,7 +6198,7 @@ impl CadCraftApp {
                         ui.close();
                     }
                 }
-                ui.menu_button("Projection", |ui| {
+                icons::sub_menu(ui, None, "Projection", |ui| {
                     for p in [
                         camera::Projection::Orthographic,
                         camera::Projection::Perspective,
@@ -6185,7 +6219,7 @@ impl CadCraftApp {
                     self.plane_picked(plane.clone());
                     ui.close();
                 }
-                if ui.button("Home View (F6)").clicked() {
+                if icons::menu_item(ui, Some(icons::Icon::Home), "Home View (F6)", true).clicked() {
                     self.set_view(StandardView::Home);
                     ui.close();
                 }
@@ -6200,12 +6234,16 @@ impl CadCraftApp {
                             self.tool_op(|t, ps| t.finish(ps));
                             ui.close();
                         }
-                        if ui.button("Cancel (Esc)").clicked() {
+                        if icons::menu_item(ui, Some(icons::Icon::MenuCancel), "Cancel (Esc)", true)
+                            .clicked()
+                        {
                             self.tools.escape();
                             ui.close();
                         }
                     }
-                    if ui.button("Finish 2D Sketch").clicked() {
+                    if icons::menu_item(ui, Some(icons::Icon::Finish), "Finish 2D Sketch", true)
+                        .clicked()
+                    {
                         self.finish_sketch();
                         ui.close();
                     }

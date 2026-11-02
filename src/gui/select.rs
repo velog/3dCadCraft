@@ -48,7 +48,13 @@ impl CadCraftApp {
             let id = n.split(':').next()?.split(['#', '~']).next()?;
             self.part().feature_index(id)
         })
-        .map_or(self.selection, super::Selection::Feature)
+        .map_or(self.selection, |k| {
+            // The box's panel is the body's (`Selection::Body`).
+            match self.part().features.get(k) {
+                Some(crate::part::Feature::Box(_)) => super::Selection::Body,
+                _ => super::Selection::Feature(k),
+            }
+        })
     }
 
     /// Whether category `c` may be picked this frame (the active selector's
@@ -1110,9 +1116,7 @@ impl CadCraftApp {
                     }
                     r.changed()
                 }
-                _ => ui
-                    .add_enabled(*enabled, egui::Button::new(entry_label(e)))
-                    .clicked(),
+                _ => super::icons::menu_item(ui, entry_icon(e), entry_label(e), *enabled).clicked(),
             };
             if !clicked {
                 continue;
@@ -1214,6 +1218,92 @@ impl CadCraftApp {
         }
     }
 
+    /// The sketch's Dimension and constraints, one under the other with icon
+    /// and alias (the owner's choice over Inventor's ring). Returns whether
+    /// one was chosen.
+    fn constraint_column(&mut self, ui: &mut egui::Ui) -> bool {
+        use super::commands::by_action;
+        use super::ribbon::Action;
+        use super::sketch_tools::{ConstraintTool, Tool};
+        let mut tools = vec![Action::Tool(Tool::Dimension)];
+        tools.extend(
+            ConstraintTool::ALL
+                .iter()
+                .map(|&k| Action::Tool(Tool::Constrain(k))),
+        );
+        let mut chosen = None;
+        for a in tools {
+            let Some(c) = by_action(a) else { continue };
+            let text = match self.keymap.shown_key(c) {
+                Some(key) => format!("{}  ({key})", c.name),
+                None => c.name.to_owned(),
+            };
+            if super::icons::menu_item(ui, Some(c.icon), &text, true)
+                .on_hover_text(c.tip)
+                .clicked()
+            {
+                chosen = Some(a);
+            }
+        }
+        if let Some(a) = chosen {
+            self.apply(a);
+            return true;
+        }
+        false
+    }
+
+    /// Select Other, Loop and Tangencies in the plain right-click menu of a
+    /// picked face or edge (Inventor has Select Tangencies there).
+    pub(super) fn selection_tools_menu(&mut self, ui: &mut egui::Ui) {
+        if !matches!(self.sel.last(), Some(SelItem::Edge(_) | SelItem::Face(_))) {
+            return;
+        }
+        let at = self.menu_at;
+        let overlapping = at.is_some_and(|(p, r)| self.sel_candidates(p, r).len() > 1);
+        let entries = [
+            (MenuEntry::SelectOther, overlapping),
+            (MenuEntry::SelectLoop, true),
+            (MenuEntry::SelectTangencies, self.tangent_source().is_some()),
+        ];
+        super::icons::sub_menu(ui, Some(super::icons::Icon::SelOther), "Select", |ui| {
+            if self.menu_entries(ui, &entries, at) {
+                ui.close();
+            }
+        });
+        ui.separator();
+    }
+
+    /// The commands Inventor's marking menu keeps at hand with nothing
+    /// selected. Returns whether it listed any.
+    pub(super) fn quick_commands_menu(&mut self, ui: &mut egui::Ui) -> bool {
+        use super::ribbon::Action;
+        use super::sketch_tools::Tool;
+        let list: &[Action] = if self.editing.is_some() {
+            &[
+                Action::Tool(Tool::Line),
+                Action::Tool(Tool::CircleCenter),
+                Action::Tool(Tool::RectTwoPoint),
+                Action::Tool(Tool::Dimension),
+            ]
+        } else {
+            &[Action::Extrude, Action::Hole, Action::Fillet]
+        };
+        let mut run = None;
+        for &a in list {
+            let Some(c) = super::commands::by_action(a) else {
+                continue;
+            };
+            if super::icons::menu_item(ui, Some(c.icon), c.name, true).clicked() {
+                run = Some(a);
+            }
+        }
+        if let Some(a) = run {
+            self.apply(a);
+            ui.close();
+        }
+        !list.is_empty()
+    }
+
     /// Draws the open Shift + right-click selection menu at its place;
     /// closes it on a choice, Esc or a click elsewhere.
     pub(super) fn shift_menu_ui(&mut self, ctx: &egui::Context) {
@@ -1229,8 +1319,26 @@ impl CadCraftApp {
             .show(ctx, |ui| {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_min_width(190.0);
-                    ui.label(egui::RichText::new("Selection").strong());
-                    chosen = self.menu_entries(ui, &entries, Some((at, rect)));
+                    // Rows like a menu's: no frames, one width.
+                    ui.style_mut().visuals.button_frame = false;
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    let layout = egui::Layout::top_down_justified(egui::Align::LEFT);
+                    ui.with_layout(layout, |ui| {
+                        if matches!(
+                            menu,
+                            MenuContext::Sketch { .. } | MenuContext::SketchConstraints
+                        ) {
+                            ui.label(egui::RichText::new("Constrain").strong());
+                            chosen = self.constraint_column(ui);
+                        }
+                        if !entries.is_empty() {
+                            if !chosen && matches!(menu, MenuContext::Sketch { .. }) {
+                                ui.separator();
+                            }
+                            ui.label(egui::RichText::new("Selection").strong());
+                            chosen |= self.menu_entries(ui, &entries, Some((at, rect)));
+                        }
+                    });
                 });
             });
         let clicked_out = ctx.input(|i| i.pointer.any_pressed())
@@ -1245,6 +1353,21 @@ impl CadCraftApp {
         }
         self.sel_menu_fresh = false;
     }
+}
+
+/// The icon of a plain menu entry.
+fn entry_icon(e: &MenuEntry) -> Option<super::icons::Icon> {
+    use super::icons::Icon as I;
+    Some(match e {
+        MenuEntry::SelectOther => I::SelOther,
+        MenuEntry::SelectLoop => I::SelLoop,
+        MenuEntry::SelectTangencies => I::SelTangent,
+        MenuEntry::SelectInvert => I::SelInvert,
+        MenuEntry::SelectAll => I::SelAll,
+        MenuEntry::PreviousSelection => I::SelPrevious,
+        MenuEntry::ClearSelection => I::SelClear,
+        _ => return None,
+    })
 }
 
 /// The text of a plain menu entry.

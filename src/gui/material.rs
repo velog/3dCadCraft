@@ -882,7 +882,7 @@ impl CadCraftApp {
     /// pick (`Some(None)`: As Material / remove the override).
     pub(super) fn appearance_submenu(&self, ui: &mut egui::Ui) -> Option<Option<String>> {
         let mut out = None;
-        ui.menu_button("Appearance", |ui| {
+        ui.menu_button("       Appearance", |ui| {
             ui.set_max_height(480.0);
             out = self.appearance_items(ui, &self.part().looks.appearances);
         });

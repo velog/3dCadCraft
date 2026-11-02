@@ -11,6 +11,7 @@ use eframe::egui;
 
 use super::CadCraftApp;
 use super::cursor_value;
+use super::icons::{Icon, menu_item};
 use super::sketch_tools::Tool;
 use crate::command::flow::{Flow, PickKind as K, Selector, colors};
 
@@ -486,16 +487,14 @@ impl CadCraftApp {
             return false;
         }
         let ctx = ui.ctx().clone();
-        if ui
-            .add_enabled(self.step_can_next(&ctx), egui::Button::new("Next"))
+        if menu_item(ui, Some(Icon::StepNext), "Next", self.step_can_next(&ctx))
             .on_hover_text("The next input of the command")
             .clicked()
         {
             self.step_next(&ctx);
             ui.close();
         }
-        if ui
-            .add_enabled(self.step_can_back(), egui::Button::new("Back"))
+        if menu_item(ui, Some(Icon::StepBack), "Back", self.step_can_back())
             .on_hover_text("The previous input of the command")
             .clicked()
         {
@@ -509,18 +508,35 @@ impl CadCraftApp {
     /// keys, so every panel answers them already.
     pub(super) fn ok_cancel_menu(&mut self, ui: &mut egui::Ui) {
         let ready = self.step_flow().is_none_or(|f| f.ready());
-        if ui
-            .add_enabled(ready, egui::Button::new("OK (Ctrl+Enter)"))
-            .clicked()
-        {
+        if menu_item(ui, Some(Icon::MenuOk), "OK (Ctrl+Enter)", ready).clicked() {
             self.inject_keys
                 .push((egui::Key::Enter, egui::Modifiers::COMMAND));
             ui.close();
         }
-        if ui.button("Cancel (Esc)").clicked() {
+        if menu_item(ui, Some(Icon::MenuCancel), "Cancel (Esc)", true).clicked() {
             self.inject_keys
                 .push((egui::Key::Escape, egui::Modifiers::NONE));
             ui.close();
+        }
+    }
+
+    /// The command menu's entries for an open Fillet / Chamfer: how a click
+    /// takes edges (Select Mode of its panel).
+    pub(super) fn blend_mode_menu(&mut self, ui: &mut egui::Ui) {
+        use super::blend::EdgeMode as M;
+        let Some(d) = self.blend_draft.as_mut() else {
+            return;
+        };
+        ui.separator();
+        for (m, label) in [
+            (M::Edge, "Edge"),
+            (M::Loop, "Select Loop"),
+            (M::Feature, "Select Feature"),
+        ] {
+            if ui.radio(d.mode == m, label).clicked() {
+                d.mode = m;
+                ui.close();
+            }
         }
     }
 

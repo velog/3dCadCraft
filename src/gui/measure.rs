@@ -61,8 +61,7 @@ impl CadCraftApp {
 
     /// The right-click menu's Measure: opens the window on the selection.
     pub(super) fn measure_context(&mut self, ui: &mut egui::Ui) {
-        if ui
-            .button("Measure")
+        if super::icons::menu_item(ui, Some(super::icons::Icon::Measure), "Measure", true)
             .on_hover_text("Measure the selection (M)")
             .clicked()
         {
