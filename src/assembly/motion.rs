@@ -37,6 +37,9 @@ pub enum LinkKind {
     RotationTranslation,
     /// A slide drives a slide, or any other pair of values.
     Linear,
+    /// Inventor's Transitional: the driven relationship's component keeps touching the
+    /// cam (`MotionLink::cam`) along its slide, whatever moves the cam: a cam follower.
+    Transitional,
 }
 
 /// The driven relationship's value is `ratio · driver + offset`.
@@ -56,6 +59,9 @@ pub struct MotionLink {
     /// The driven value when the driver reads 0.
     #[serde(default)]
     pub offset: Real,
+    /// Transitional: the occurrence the follower rides on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cam: Option<u32>,
     /// Kept, but not followed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub suppressed: bool,
@@ -247,6 +253,69 @@ pub fn mesh_overlap(
     }
     let depth = deepest(a, ta, b, tb, &bb, tol).max(deepest(b, tb, a, ta, &ba, tol));
     (depth > tol).then_some(depth)
+}
+
+/// How far `follower` has to travel along the unit direction `d` to touch `cam` (negative:
+/// it is already into it and backs out); `None` when no line along `d` from one meets the
+/// other. Vertices of each are cast at the other, in both senses along the line.
+pub fn travel_to_contact(
+    follower: &PickMesh,
+    tf: &Transform3,
+    cam: &PickMesh,
+    tc: &Transform3,
+    d: &Vector3,
+) -> Option<Real> {
+    let mut best: Option<Real> = None;
+    let mut take = |t: Real| best = Some(best.map_or(t, |b: Real| b.min(t)));
+    cast(follower, tf, cam, tc, d, &mut take);
+    cast(cam, tc, follower, tf, &(-d), &mut take);
+    best
+}
+
+/// Calls `take` with the nearest hit along `d` on `to` of the line through each vertex of
+/// `from` (at most a few hundred of them).
+fn cast(
+    from: &PickMesh,
+    tf: &Transform3,
+    to: &PickMesh,
+    tt: &Transform3,
+    d: &Vector3,
+    take: &mut impl FnMut(Real),
+) {
+    let inv = tt.inverse();
+    let dl = inv * *d;
+    let tris = from.triangles();
+    let stride = (tris.len() / 300).max(1);
+    for (_, t) in tris.iter().step_by(stride) {
+        for p in t {
+            let o = inv * (tf * p);
+            let mut first: Option<Real> = None;
+            for (_, [a, b, c]) in to.triangles() {
+                let (e1, e2) = (b - a, c - a);
+                let h = dl.cross(&e2);
+                let det = e1.dot(&h);
+                if det.abs() < 1e-14 {
+                    continue;
+                }
+                let f = 1.0 / det;
+                let s = o - a;
+                let u = f * s.dot(&h);
+                if !(0.0..=1.0).contains(&u) {
+                    continue;
+                }
+                let q = s.cross(&e1);
+                let v = f * dl.dot(&q);
+                if v < 0.0 || u + v > 1.0 {
+                    continue;
+                }
+                let at = f * e2.dot(&q);
+                first = Some(first.map_or(at, |x: Real| x.min(at)));
+            }
+            if let Some(t) = first {
+                take(t);
+            }
+        }
+    }
 }
 
 /// The tolerance a touch is forgiven: the display meshes of a shaft and its hole
@@ -521,6 +590,7 @@ mod tests {
             kind: LinkKind::Rotation,
             ratio: -2.0,
             offset: 1.0,
+            cam: None,
             suppressed: false,
             last: None,
         };
@@ -547,6 +617,23 @@ mod tests {
         // Turned: still detected.
         let t = Transform3::new(Vector3::new(10.0, 0.0, 0.0), Vector3::new(0.3, 0.2, 0.1));
         assert!(mesh_overlap(&a, &at(0.0), &b, &t, tol).is_some());
+    }
+
+    #[test]
+    fn a_follower_travels_to_the_cam() {
+        let (a, b) = (cube(10.0), cube(20.0));
+        // A 10 cube below a 20 cube lifted to z = 30: 20 of air.
+        let tf = Transform3::identity();
+        let tc = Transform3::new(Vector3::new(-5.0, -5.0, 30.0), Vector3::zeros());
+        let t = travel_to_contact(&a, &tf, &b, &tc, &Vector3::z()).unwrap();
+        assert!((t - 20.0).abs() < 1e-6, "{t}");
+        // 5 into it: backs out.
+        let tc = Transform3::new(Vector3::new(-5.0, -5.0, 5.0), Vector3::zeros());
+        let t = travel_to_contact(&a, &tf, &b, &tc, &Vector3::z()).unwrap();
+        assert!((t + 5.0).abs() < 1e-6, "{t}");
+        // Off to the side: nothing to touch.
+        let tc = Transform3::new(Vector3::new(100.0, 0.0, 30.0), Vector3::zeros());
+        assert!(travel_to_contact(&a, &tf, &b, &tc, &Vector3::z()).is_none());
     }
 
     #[test]
@@ -600,6 +687,7 @@ mod tests {
             kind: LinkKind::RotationTranslation,
             ratio: 0.5,
             offset: 0.0,
+            cam: None,
             suppressed: false,
             last: Some(3.0),
         });

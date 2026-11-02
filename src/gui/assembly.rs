@@ -979,7 +979,9 @@ impl CadCraftApp {
         });
         self.asm.context_hover = None;
         match ctx {
-            Some((t, c, hover)) if own.is_none() || own_t.is_some_and(|o| t < o) => {
+            // A face of another component beats the part's own planes (faces beat origin
+            // planes, which fill the view); only a nearer face of the part goes first.
+            Some((t, c, hover)) if own_t.is_none_or(|o| t < o) => {
                 self.asm.context_hover = Some(hover);
                 if click {
                     self.asm.pending_context = Some(c);
@@ -2263,10 +2265,15 @@ impl CadCraftApp {
         } else {
             Vec::new()
         };
+        let values = if contact {
+            self.relation_values()
+        } else {
+            Vec::new()
+        };
         let was_hit = contact && self.contact_hit().is_some();
         self.continue_drag_free(d, now, rect);
         if contact {
-            self.contact_guard(&before, was_hit);
+            self.contact_guard(&before, &values, was_hit, d.id);
         }
     }
 
@@ -2653,6 +2660,23 @@ impl CadCraftApp {
             ui.close();
         }
         self.folder_menu(ui, ids);
+        if let [id] = ids {
+            let mut name = self
+                .assembly()
+                .and_then(|a| a.find(*id))
+                .map_or_else(String::new, |o| o.name.clone());
+            ui.horizontal(|ui| {
+                ui.label("Rename");
+                if ui.text_edit_singleline(&mut name).changed() && !name.trim().is_empty() {
+                    let (id, name) = (*id, name.clone());
+                    self.edit_assembly("Rename", |a| {
+                        if let Some(o) = a.find_mut(id) {
+                            o.name = name;
+                        }
+                    });
+                }
+            });
+        }
         if ids.len() == 1 && ui.button("Find in Browser").clicked() {
             self.asm.find_in_browser = Some(ids[0]);
             ui.close();

@@ -360,12 +360,22 @@ impl CadCraftApp {
     }
 
     /// A visible sketch with a curve under the cursor.
+    /// Trim Surface's Cutting Tool takes a closed outline directly, also of a sketch an
+    /// extrusion has consumed and hidden: those sketches show while it waits.
+    pub(super) fn hidden_sketches_shown(&self) -> bool {
+        self.part_planned.as_ref().is_some_and(|d| {
+            d.kind
+                == super::part_planned::Planned::Part(super::part_planned::PartPlanned::TrimSurface)
+                && d.active == Some("tool")
+        })
+    }
+
     pub(super) fn sketch_under(&self, p: egui::Pos2, rect: egui::Rect) -> Option<usize> {
         if !self.cat_on(Category::Sketch) && !self.cat_on(Category::SketchEntity) {
             return None;
         }
         self.part().sketches.iter().enumerate().find_map(|(i, ps)| {
-            (ps.visible
+            ((ps.visible || self.hidden_sketches_shown())
                 && overlay::pick_entity(&self.camera, rect, &ps.sketch, p, overlay::CURVE_SNAP_PX)
                     .is_some())
             .then_some(i)

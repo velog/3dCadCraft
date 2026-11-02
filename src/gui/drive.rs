@@ -32,6 +32,8 @@ pub(super) struct DriveWin {
     at: u32,
     /// Collision Detection: contact stops the drive.
     collision: bool,
+    /// The value contact stopped it at.
+    stopped: Option<Real>,
     /// The value, lock and placements before driving.
     saved: (Real, bool, Vec<(u32, Transform3)>),
     angle: bool,
@@ -90,6 +92,7 @@ impl CadCraftApp {
             back_and_forth: false,
             at: 0,
             collision: contact,
+            stopped: None,
             saved,
             angle,
         });
@@ -104,11 +107,6 @@ impl CadCraftApp {
         }
         self.asm_solve(None);
         self.cons.last.converged
-    }
-
-    /// A relationship's value now.
-    fn driven_now(&self, id: u32) -> Option<Real> {
-        self.assembly()?.constraint(id).map(|c| c.value)
     }
 
     /// The Drive window and its animation.
@@ -191,7 +189,9 @@ impl CadCraftApp {
                         jump = Some(w.steps);
                     }
                 });
-                let v = w.start + (w.end - w.start) * w.k as Real / w.steps as Real;
+                let v = w
+                    .stopped
+                    .unwrap_or(w.start + (w.end - w.start) * w.k as Real / w.steps as Real);
                 ui.label(
                     RichText::new(format!(
                         "{:.3}{sfx}  (step {} of {})",
@@ -226,16 +226,18 @@ impl CadCraftApp {
         }
         if let Some(k) = jump {
             w.k = k;
+            w.stopped = None;
             let v = w.start + (w.end - w.start) * k as Real / w.steps as Real;
             let from = w.start + (w.end - w.start) * w.at as Real / w.steps as Real;
             w.at = k;
             if w.collision
-                && let Some((x, y)) = self.drive_with_contact(w.id, from, v)
+                && let Some((x, y, at)) = self.drive_with_contact(w.id, from, v)
             {
                 w.dir = 0;
+                w.stopped = Some(at);
                 self.file_status = Some(Ok(format!(
                     "Drive: {x} stops at {y} at {:.3}{sfx}",
-                    unit(self.driven_now(w.id).unwrap_or(v))
+                    unit(at)
                 )));
             } else if !w.collision && !self.drive_to(w.id, v) {
                 w.dir = 0;

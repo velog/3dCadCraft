@@ -230,8 +230,11 @@ impl PatchOp {
                 "the Tangent condition applies to a loop of model edges (a sketch region is planar)"
                     .into(),
             ),
-            (None, _) if !self.guides.is_empty() => {
-                Err("Guide Rails work with a sketch region as the boundary".into())
+            _ if !self.guides.is_empty() && self.solid => {
+                Err("Output Solid: a patch through guide rails stays a surface".into())
+            }
+            _ if !self.guides.is_empty() && self.tangent.is_some() => {
+                Err("the Tangent condition does not take guide rails".into())
             }
             _ => Ok(()),
         }
@@ -557,8 +560,10 @@ pub(super) fn patch(
             let prof = exact::profile(&outer, &holes).map_err(Kernel)?;
             surface_ops::patch_region(&ps.sketch.plane, &prof, id).map_err(User)?
         } else {
-            guided_patch(op, id, ps, region, sketches)?
+            guided_patch(op, id, &region_outline(&ps.sketch.plane, region), sketches)?
         }
+    } else if !op.guides.is_empty() {
+        guided_patch(op, id, &edges_outline(body, &op.edges)?, sketches)?
     } else {
         let all: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
         let b = edge_body(&all, &op.edges)?;
@@ -655,56 +660,211 @@ fn thin<T: Copy>(v: &[T], n: usize) -> Vec<T> {
     (0..n).map(|k| v[k * v.len() / n]).collect()
 }
 
-/// Boundary Patch of a sketch region through guide curves: a free-form sheet over the region's
-/// box whose height is 0 on the boundary and the curves' height on them, cut by the region's
-/// outline; what lies inside it is the patch.
-fn guided_patch(
-    op: &PatchOp,
-    id: &str,
-    ps: &super::PartSketch,
-    region: &crate::sketch::Region,
-    sketches: &[super::PartSketch],
-) -> Result<ExactSolid, Fail> {
-    use nalgebra::Point2;
-    let plane = &ps.sketch.plane;
-    let normal = plane.normal.into_inner();
-    let size = {
+/// What a guided patch is bounded by, in its plane.
+struct GuidedOutline {
+    plane: Plane,
+    /// Loops of (point in the plane, height over it).
+    loops: Vec<Vec<(nalgebra::Point2<Real>, Real)>>,
+    /// The same loops as curves, to cut the sheet with.
+    curves: Vec<Vec<crate::kernel::Segment2>>,
+}
+
+impl GuidedOutline {
+    /// Inside the outer loop, outside the others.
+    fn contains(&self, q: nalgebra::Point2<Real>) -> bool {
+        let inside = |l: &[(nalgebra::Point2<Real>, Real)]| {
+            let mut odd = false;
+            for k in 0..l.len() {
+                let (a, b) = (l[k].0, l[(k + 1) % l.len()].0);
+                if (a.y > q.y) != (b.y > q.y) && q.x < a.x + (q.y - a.y) / (b.y - a.y) * (b.x - a.x)
+                {
+                    odd = !odd;
+                }
+            }
+            odd
+        };
+        match self.loops.split_first() {
+            Some((outer, holes)) => inside(outer) && !holes.iter().any(|h| inside(h)),
+            None => false,
+        }
+    }
+}
+
+/// The outline of a sketch region (height 0 everywhere).
+fn region_outline(plane: &Plane, region: &crate::sketch::Region) -> GuidedOutline {
+    let reach = {
         let pts = region.outer.polygon(1e-2);
         let lo = pts
             .iter()
-            .fold(Point2::new(Real::MAX, Real::MAX), |a, b| a.inf(b));
+            .fold(nalgebra::Point2::new(Real::MAX, Real::MAX), |a, b| a.inf(b));
         let hi = pts
             .iter()
-            .fold(Point2::new(Real::MIN, Real::MIN), |a, b| a.sup(b));
-        (lo, hi)
+            .fold(nalgebra::Point2::new(Real::MIN, Real::MIN), |a, b| a.sup(b));
+        (hi - lo).norm()
     };
-    let (lo, hi) = size;
-    let reach = (hi - lo).norm();
-    let mut at: Vec<Point2<Real>> = Vec::new();
-    let mut h: Vec<Real> = Vec::new();
-    let mut outline: Vec<Point2<Real>> = Vec::new();
-    // Evenly along each loop: a straight side is only its two ends in the polygon.
-    for l in std::iter::once(&region.outer).chain(&region.holes) {
-        let poly = l.polygon(reach * 1e-3);
-        let n = poly.len();
-        let perimeter: Real = (0..n).map(|k| (poly[(k + 1) % n] - poly[k]).norm()).sum();
-        let step = (perimeter / 96.0).max(1e-6);
-        for k in 0..n {
-            let (a, b) = (poly[k], poly[(k + 1) % n]);
-            let parts = ((b - a).norm() / step).ceil().max(1.0) as usize;
-            for j in 0..parts {
-                outline.push(a + (b - a) * (j as Real / parts as Real));
+    let loops = std::iter::once(&region.outer)
+        .chain(&region.holes)
+        .map(|l| {
+            l.polygon(reach * 1e-3)
+                .into_iter()
+                .map(|q| (q, 0.0))
+                .collect()
+        })
+        .collect();
+    let (outer, holes) = super::extrude::kernel_profile(region);
+    let curves = std::iter::once(outer)
+        .chain(holes)
+        .map(|l| l.into_iter().map(|s| s.geometry).collect())
+        .collect();
+    GuidedOutline {
+        plane: plane.clone(),
+        loops,
+        curves,
+    }
+}
+
+/// The samples of the edge a picked `SurfEdge` names.
+fn edge_samples(body: &BRep, e: &SurfEdge) -> Option<Vec<Point3>> {
+    let hint = e.point();
+    let opts = crate::kernel::TessellationOptions::default();
+    let mut best: Option<(Real, Vec<Point3>)> = None;
+    for (_, f) in body
+        .faces()
+        .filter(|(_, f)| f.name.as_deref() == Some(e.face.as_str()))
+    {
+        for lp in std::iter::once(&f.outer).chain(&f.inner) {
+            for ce in &lp.coedges {
+                let Ok(pts) = body.sample_edge(ce.edge, &opts) else {
+                    continue;
+                };
+                let d = pts
+                    .windows(2)
+                    .map(|w| {
+                        let ab = w[1] - w[0];
+                        let t =
+                            ((hint - w[0]).dot(&ab) / ab.norm_squared().max(1e-24)).clamp(0.0, 1.0);
+                        (w[0] + ab * t - hint).norm()
+                    })
+                    .fold(Real::MAX, Real::min);
+                if best.as_ref().is_none_or(|(x, _)| d < *x) {
+                    best = Some((d, pts));
+                }
             }
         }
     }
-    for q in &outline {
-        at.push(*q);
-        h.push(0.0);
-    }
-    let on_outline = |q: Point2<Real>| {
-        outline
+    best.map(|(_, p)| p)
+}
+
+/// The outline of a closed loop of model edges: chained end to end, in its best-fit plane,
+/// with each point's height over it.
+fn edges_outline(body: &BRep, edges: &[SurfEdge]) -> Result<GuidedOutline, Fail> {
+    let mut left: Vec<Vec<Point3>> = edges
+        .iter()
+        .map(|e| {
+            edge_samples(body, e)
+                .ok_or_else(|| User(format!("an edge of {} no longer exists", e.face)))
+        })
+        .collect::<Result<_, _>>()?;
+    let mut chain = left.remove(0);
+    while !left.is_empty() {
+        let end = *chain
+            .last()
+            .ok_or_else(|| User("select the edges".into()))?;
+        let next = left
             .iter()
-            .map(|p| (p - q).norm())
+            .enumerate()
+            .flat_map(|(k, c)| {
+                let (a, b) = (c.first().copied(), c.last().copied());
+                [(k, false, a), (k, true, b)]
+            })
+            .filter_map(|(k, flip, q)| q.map(|q| (k, flip, (q - end).norm())))
+            .min_by(|x, y| x.2.total_cmp(&y.2));
+        let Some((k, flip, gap)) = next else {
+            break;
+        };
+        if gap > 1e-2 {
+            return Err(User("the edges do not make a closed loop".into()));
+        }
+        let mut c = left.remove(k);
+        if flip {
+            c.reverse();
+        }
+        chain.extend(c.into_iter().skip(1));
+    }
+    if chain.len() < 3 || (chain[0] - chain[chain.len() - 1]).norm() > 1e-2 {
+        return Err(User("the edges do not make a closed loop".into()));
+    }
+    chain.pop();
+    // Newell's normal and the middle give the plane.
+    let n = chain.len();
+    let mid = chain
+        .iter()
+        .fold(nalgebra::Vector3::zeros(), |v, q| v + q.coords)
+        / n as Real;
+    let mut normal = nalgebra::Vector3::zeros();
+    for k in 0..n {
+        normal += (chain[k].coords - mid).cross(&(chain[(k + 1) % n].coords - mid));
+    }
+    let plane = Plane::from_normal(Point3::from(mid), normal)
+        .map_err(|_| User("the edges do not enclose an area".into()))?;
+    let unit = plane.normal.into_inner();
+    let lp: Vec<(nalgebra::Point2<Real>, Real)> = chain
+        .iter()
+        .map(|q| (plane.project(q), (q - plane.origin).dot(&unit)))
+        .collect();
+    let curve = (0..n)
+        .map(|k| crate::kernel::Segment2::Line {
+            a: lp[k].0,
+            b: lp[(k + 1) % n].0,
+        })
+        .collect();
+    Ok(GuidedOutline {
+        plane,
+        loops: vec![lp],
+        curves: vec![curve],
+    })
+}
+
+/// Boundary Patch through guide curves: a free-form sheet over the outline's box whose height
+/// is the outline's on it and the curves' on them, cut by the outline; what lies inside it is
+/// the patch.
+fn guided_patch(
+    op: &PatchOp,
+    id: &str,
+    outline: &GuidedOutline,
+    sketches: &[super::PartSketch],
+) -> Result<ExactSolid, Fail> {
+    use nalgebra::Point2;
+    let plane = &outline.plane;
+    let normal = plane.normal.into_inner();
+    let all: Vec<Point2<Real>> = outline.loops.iter().flatten().map(|x| x.0).collect();
+    let lo = all
+        .iter()
+        .fold(Point2::new(Real::MAX, Real::MAX), |a, b| a.inf(b));
+    let hi = all
+        .iter()
+        .fold(Point2::new(Real::MIN, Real::MIN), |a, b| a.sup(b));
+    let reach = (hi - lo).norm();
+    // Evenly along each loop: a straight side is only its two ends in the polygon.
+    let mut rim: Vec<(Point2<Real>, Real)> = Vec::new();
+    for l in &outline.loops {
+        let n = l.len();
+        let perimeter: Real = (0..n).map(|k| (l[(k + 1) % n].0 - l[k].0).norm()).sum();
+        let step = (perimeter / 96.0).max(1e-6);
+        for k in 0..n {
+            let (a, b) = (l[k], l[(k + 1) % n]);
+            let parts = ((b.0 - a.0).norm() / step).ceil().max(1.0) as usize;
+            for j in 0..parts {
+                let t = j as Real / parts as Real;
+                rim.push((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+            }
+        }
+    }
+    let mut at: Vec<Point2<Real>> = rim.iter().map(|x| x.0).collect();
+    let mut h: Vec<Real> = rim.iter().map(|x| x.1).collect();
+    let near_rim = |q: Point2<Real>| {
+        rim.iter()
+            .map(|p| (p.0 - q).norm())
             .fold(Real::MAX, Real::min)
     };
     let mut guide_points = 0;
@@ -717,15 +877,14 @@ fn guided_patch(
         for chain in sketch_chains(g) {
             for seg in chain {
                 for k in 0..=32 {
-                    let w = g.sketch.to_world(&seg.point(f64::from(k) / 32.0));
-                    samples.push(w);
+                    samples.push(g.sketch.to_world(&seg.point(f64::from(k) / 32.0)));
                 }
             }
         }
         for w in thin(&samples, 96) {
             let q = plane.project(&w);
             // A point of the curve on the outline is the outline's.
-            if on_outline(q) < reach * 0.02 {
+            if near_rim(q) < reach * 0.02 {
                 continue;
             }
             at.push(q);
@@ -755,16 +914,14 @@ fn guided_patch(
     let values: Vec<Vec<Real>> = (0..=nx)
         .map(|i| (0..=ny).map(|j| plate.eval(at_grid(i, j))).collect())
         .collect();
-    // A cubic B-spline averages its control points (1/6, 4/6, 1/6): two rounds of
-    // correction make it pass through the values.
+    // A cubic B-spline averages its control points (1/6, 4/6, 1/6): rounds of correction
+    // make it pass through the values.
     let smooth = |c: &Vec<Vec<Real>>, i: usize, j: usize| -> Real {
         let w = |k: isize, n: usize| (k.clamp(0, n as isize)) as usize;
         let mut sum = 0.0;
         for (di, a) in [(-1isize, 1.0), (0, 4.0), (1, 1.0)] {
             for (dj, b) in [(-1isize, 1.0), (0, 4.0), (1, 1.0)] {
-                let row = w(i as isize + di, nx);
-                let col = w(j as isize + dj, ny);
-                sum += a * b * c[row][col];
+                sum += a * b * c[w(i as isize + di, nx)][w(j as isize + dj, ny)];
             }
         }
         sum / 36.0
@@ -779,28 +936,24 @@ fn guided_patch(
         }
         control = next;
     }
+    let to_world = |q: Point2<Real>, z: Real| {
+        let v = plane.x_axis.into_inner() * q.x + normal.cross(&plane.x_axis.into_inner()) * q.y;
+        plane.origin + v + normal * z
+    };
     let net: Vec<Vec<Point3>> = (0..=nx)
         .map(|i| {
             (0..=ny)
-                .map(|j| {
-                    let q = at_grid(i, j);
-                    ps.sketch.to_world(&q) + normal * control[i][j]
-                })
+                .map(|j| to_world(at_grid(i, j), control[i][j]))
                 .collect()
         })
         .collect();
     let sheet = surface_ops::freeform_sheet(&net, id).map_err(User)?;
-    let (outer, holes) = super::extrude::kernel_profile(region);
-    let curves: Vec<Vec<crate::kernel::Segment2>> = std::iter::once(outer)
-        .chain(holes)
-        .map(|l| l.into_iter().map(|s| s.geometry).collect())
-        .collect();
     let tool = exact::SplitBy::Curves {
         plane: plane.clone(),
-        curves,
+        curves: outline.curves.clone(),
     };
-    let all: Vec<usize> = (0..surface_ops::face_count(&sheet)).collect();
-    let split = exact::split_faces_lenient(&sheet, &all, &tool, "trim", None)
+    let every: Vec<usize> = (0..surface_ops::face_count(&sheet)).collect();
+    let split = exact::split_faces_lenient(&sheet, &every, &tool, "trim", None)
         .map_err(|e| User(format!("the outline does not cut the patch ({e})")))?
         .ok_or_else(|| User("the outline does not cut the patch".into()))?;
     let b = exact::to_brep(std::slice::from_ref(&split)).map_err(Kernel)?;
@@ -819,7 +972,7 @@ fn guided_patch(
                         )
                     })
                     .max_by(|x, y| x.0.total_cmp(&y.0))
-                    .is_some_and(|(_, q)| region.contains(plane.project(&q)))
+                    .is_some_and(|(_, q)| outline.contains(plane.project(&q)))
             })
         })
         .collect();

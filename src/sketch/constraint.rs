@@ -814,6 +814,24 @@ impl Constraint {
                         out.push(radial.dot(&d) / (safe_norm(&radial) * safe_norm(&d)));
                         return;
                     }
+                    // An arc's end held on the line (PointOnLine: an arc from a corner
+                    // ending on the opposite side and touching it there): the same double
+                    // root, so Coincident and Tangent refused each other.
+                    let ends = g.sketch().entities[circle].endpoints();
+                    let on = g.sketch().constraints().find_map(|(_, c)| match *c {
+                        Constraint::PointOnLine { point, line: l }
+                            if l == line && ends.contains(&point) =>
+                        {
+                            Some(point)
+                        }
+                        _ => None,
+                    });
+                    if let Some(q) = on {
+                        let d = g.direction(line);
+                        let radial = g.point(q) - g.circle(circle).0;
+                        out.push(radial.dot(&d) / (safe_norm(&radial) * safe_norm(&d)));
+                        return;
+                    }
                 }
                 if ea.is_line() || eb.is_line() {
                     let (line, circle) = if ea.is_line() { (a, b) } else { (b, a) };

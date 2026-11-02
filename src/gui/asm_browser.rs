@@ -507,6 +507,14 @@ impl CadCraftApp {
             .assembly()
             .map(|a| a.folders.iter().map(|f| (f.id, f.name.clone())).collect())
             .unwrap_or_default();
+        if ui.button("Expand All Children").clicked() {
+            super::panels::request_fold_all(ui.ctx(), true);
+            ui.close();
+        }
+        if ui.button("Collapse All Children").clicked() {
+            super::panels::request_fold_all(ui.ctx(), false);
+            ui.close();
+        }
         ui.menu_button("Add to Folder", |ui| {
             if ui.button("New Folder").clicked() {
                 self.edit_assembly("Create Folder", |a| {
@@ -542,15 +550,9 @@ impl CadCraftApp {
                 self.checkpoint("Demote");
                 self.project = copy;
                 self.asm.sel = vec![d.occurrence];
+                self.asm_solve(None);
                 self.scene_dirty = true;
-                self.file_status = Some(Ok(if d.removed.is_empty() {
-                    format!("Demote: {name} made")
-                } else {
-                    format!(
-                        "Demote: {name} made; relationships to the rest removed: {}",
-                        d.removed.join(", ")
-                    )
-                }));
+                self.file_status = Some(Ok(format!("Demote: {name} made")));
             }
             Err(e) => self.file_status = Some(Err(format!("Demote: {e}"))),
         }
@@ -578,6 +580,7 @@ impl CadCraftApp {
                 self.project = copy;
                 self.asm.sub.clear();
                 self.asm.sel = vec![id];
+                self.asm_solve(None);
                 self.scene_dirty = true;
                 self.file_status = Some(Ok(if removed.is_empty() {
                     "Promote: done".to_owned()

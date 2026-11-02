@@ -179,7 +179,7 @@ impl CadCraftApp {
     /// follows them (cross-part references, [`Self::context_follow`]).
     pub(super) fn asm_solve(&mut self, drag: Option<&asm::Drag>) {
         self.asm_solve_once(drag);
-        self.motion_links_follow(drag);
+        self.motion_links_follow(drag.map(|d| d.occurrence));
         if drag.is_none() {
             self.adapt_follow();
             self.context_follow();

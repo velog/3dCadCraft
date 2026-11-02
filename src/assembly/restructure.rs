@@ -59,8 +59,6 @@ pub struct Demoted {
     pub document: DocumentId,
     /// Its occurrence in the assembly.
     pub occurrence: u32,
-    /// Relationships between a moved and a staying component (removed).
-    pub removed: Vec<String>,
 }
 
 /// Why a component cannot leave its assembly: what depends on its place in it.
@@ -79,7 +77,7 @@ fn pinned(a: &AssemblyDocument, id: u32) -> Option<&'static str> {
 
 /// Moves the occurrences `ids` of assembly `asm` into a new subassembly named
 /// `name`, placed at the assembly's origin so nothing moves. Relationships among
-/// them go with them; those to a component that stays are removed and listed.
+/// them go with them; those to a component that stays remain, by a path into it.
 pub fn demote(
     project: &mut Project,
     asm: DocumentId,
@@ -103,36 +101,28 @@ pub fn demote(
     }
     let mut inner = AssemblyDocument::default();
     let mut outer = a.clone();
-    let mut removed = Vec::new();
     let moves = |g: &GeomRef| ids.contains(&g.occurrence());
+    // Relationships among the moved ones go with them; those to a component that stays
+    // remain here, reaching into the subassembly by a path.
     outer.constraints.retain(|c| {
-        let refs = std::iter::once(&c.a)
+        let all = std::iter::once(&c.a)
             .chain(std::iter::once(&c.b))
-            .chain(c.plane.iter());
-        let (mut any, mut all) = (false, true);
-        for g in refs {
-            let m = moves(g);
-            any |= m;
-            // The assembly's own origin stays outside.
-            all &= m;
-        }
+            .chain(c.plane.iter())
+            .all(moves);
         if all {
             inner.constraints.push(c.clone());
-            return false;
         }
-        if any {
-            removed.push(c.name.clone());
-            return false;
-        }
-        true
+        !all
     });
-    // The same occurrence ids inside: a subassembly has its own id space, and
-    // the relationships that moved keep pointing at them.
+    // The same occurrence ids inside: a subassembly has its own id space, and the
+    // relationships keep pointing at them.
     for o in a.occurrences.iter().filter(|o| ids.contains(&o.id)) {
         inner.occurrences.push(o.clone());
     }
     inner.fix_ids();
     let grounded = inner.occurrences.iter().any(|o| o.grounded);
+    // Removed first: `remove` also takes the relationships that use an occurrence.
+    let kept = std::mem::take(&mut outer.constraints);
     for &id in ids {
         outer.remove(id);
     }
@@ -147,19 +137,30 @@ pub fn demote(
         Transform3::identity(),
         grounded,
     );
+    outer.constraints = kept;
+    for c in &mut outer.constraints {
+        for g in [&mut c.a, &mut c.b].into_iter().chain(c.plane.as_mut()) {
+            let old = g.occurrence();
+            if ids.contains(&old) {
+                *g.occurrence_mut() = occurrence;
+                g.sub_mut().insert(0, old);
+            }
+        }
+    }
     if let Some(d) = project.document_mut(asm) {
         d.data = DocumentData::Assembly(outer);
     }
     Ok(Demoted {
         document,
         occurrence,
-        removed,
     })
 }
 
 /// Moves occurrence `inner` of the subassembly placed as `top` up into assembly
-/// `asm`, keeping its place. Relationships inside the subassembly that use it are
-/// removed and listed; the assembly's references into it follow.
+/// `asm`, keeping its place. Relationships inside the subassembly that use it move up
+/// with it, reaching the others by a path; one to the subassembly's own origin cannot
+/// (a placed subassembly has no origin to name) and is removed and listed. The
+/// assembly's references into it follow.
 pub fn promote(
     project: &mut Project,
     asm: DocumentId,
@@ -194,14 +195,10 @@ pub fn promote(
         .find(inner)
         .ok_or("the component no longer exists")?
         .clone();
-    let mut removed = Vec::new();
-    sub.constraints.retain(|c| {
-        let uses = c.uses(inner);
-        if uses {
-            removed.push(c.name.clone());
-        }
-        !uses
-    });
+    let (moving, stay): (Vec<_>, Vec<_>) = std::mem::take(&mut sub.constraints)
+        .into_iter()
+        .partition(|c| c.uses(inner));
+    sub.constraints = stay;
     sub.remove(inner);
     let id = a.place(o.component, &o.name, place * o.transform, o.grounded);
     if let Some(n) = a.find_mut(id) {
@@ -210,6 +207,26 @@ pub fn promote(
         n.transparent = o.transparent;
         n.suppressed = o.suppressed;
         n.looks = o.looks.clone();
+    }
+    let mut removed = Vec::new();
+    for mut c in moving {
+        let refs = std::iter::once(&c.a)
+            .chain(std::iter::once(&c.b))
+            .chain(c.plane.iter());
+        if refs.clone().any(|g| g.occurrence() == ASSEMBLY) {
+            removed.push(c.name.clone());
+            continue;
+        }
+        for g in [&mut c.a, &mut c.b].into_iter().chain(c.plane.as_mut()) {
+            let old = g.occurrence();
+            if old == inner {
+                *g.occurrence_mut() = id;
+            } else {
+                *g.occurrence_mut() = top;
+                g.sub_mut().insert(0, old);
+            }
+        }
+        a.add_constraint(c);
     }
     // The assembly's relationships into it now name it directly.
     for c in &mut a.constraints {
@@ -289,10 +306,14 @@ mod tests {
     fn demote_keeps_places_and_inner_relationships() {
         let (mut p, asm, ids) = setup();
         let d = demote(&mut p, asm, &ids[1..], "Sub").unwrap();
-        assert_eq!(d.removed, vec!["Mate:2".to_owned()]);
         let top = assembly(&p, asm);
         assert_eq!(top.occurrences.len(), 2);
-        assert!(top.constraints.is_empty());
+        // The relationship to the one that stayed remains, by a path.
+        assert_eq!(top.constraints.len(), 1);
+        let c = &top.constraints[0];
+        assert_eq!(c.a.occurrence(), ids[0]);
+        assert_eq!(c.b.occurrence(), d.occurrence);
+        assert_eq!(c.b.sub(), &[ids[1]]);
         let sub = assembly(&p, d.document);
         assert_eq!(sub.occurrences.len(), 2);
         assert_eq!(sub.constraints.len(), 1);
@@ -324,7 +345,22 @@ mod tests {
         }
         let inner = assembly(&p, d.document).occurrences[1].id;
         let (id, removed) = promote(&mut p, asm, d.occurrence, inner).unwrap();
-        assert_eq!(removed.len(), 1);
+        assert!(removed.is_empty(), "{removed:?}");
+        // Its relationship came up, reaching the other one by a path; the one from the
+        // stayer into the subassembly still does.
+        let top = assembly(&p, asm);
+        assert_eq!(top.constraints.len(), 2);
+        assert!(
+            top.constraints
+                .iter()
+                .any(|c| c.uses(id) && c.a.occurrence() == d.occurrence && c.a.sub() == [ids[1]])
+        );
+        assert!(
+            top.constraints
+                .iter()
+                .any(|c| c.a.occurrence() == ids[0] && c.b.sub() == [ids[1]])
+        );
+        assert!(assembly(&p, d.document).constraints.is_empty());
         let t = assembly(&p, asm)
             .find(id)
             .unwrap()

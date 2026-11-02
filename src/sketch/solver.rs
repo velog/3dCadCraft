@@ -199,6 +199,12 @@ impl<'a> System<'a> {
                 if seen.contains(&(center, end, start)) || !seen.insert((center, start, end)) {
                     continue;
                 }
+                // All three points fixed (a projected arc): nothing to solve, and counted it
+                // read as a redundancy, so a fresh sketch on a face said Over-constrained.
+                let fixed = |p: super::PointId| sketch.points.get(p).is_some_and(|q| q.fixed);
+                if fixed(center) && fixed(start) && fixed(end) {
+                    continue;
+                }
                 equations.push(Equation::Arc(id));
             }
         }

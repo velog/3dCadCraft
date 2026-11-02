@@ -59,6 +59,8 @@ pub struct MotionUi {
     pub tab: MotionTab,
     /// New link: driver, driven, kind, ratio (shown form), reverse.
     link: (Option<u32>, Option<u32>, LinkKind, Real, bool),
+    /// New Transitional link's cam.
+    cam: Option<u32>,
     /// New set's name.
     set_name: String,
     /// The study edited.
@@ -122,7 +124,7 @@ impl CadCraftApp {
 
     /// After a solve: each link's driven relationship follows its driver; dragging the
     /// driven side turns the link round. No Undo step (part of the change it follows).
-    pub(super) fn motion_links_follow(&mut self, drag: Option<&crate::assembly::Drag>) {
+    pub(super) fn motion_links_follow(&mut self, dragged: Option<u32>) {
         for _ in 0..4 {
             let Some(a) = self.assembly() else {
                 return;
@@ -134,6 +136,12 @@ impl CadCraftApp {
             let mut changes: Vec<(u32, Real, Option<u32>)> = Vec::new();
             let mut lasts: Vec<(u32, Real)> = Vec::new();
             for l in links.iter().filter(|l| !l.suppressed) {
+                if l.kind == LinkKind::Transitional {
+                    if let Some(v) = self.transitional_value(l) {
+                        changes.push((l.driven, v, None));
+                    }
+                    continue;
+                }
                 let (Some(driver), Some(driven)) = (
                     a.constraint(l.driver).cloned(),
                     a.constraint(l.driven).cloned(),
@@ -141,13 +149,13 @@ impl CadCraftApp {
                     continue;
                 };
                 // Dragging the driven side: it leads, and the driver follows.
-                let turned =
-                    drag.is_some_and(|d| driven.uses(d.occurrence) && !driver.uses(d.occurrence));
+                let turned = dragged.is_some_and(|d| driven.uses(d) && !driver.uses(d));
                 if turned {
                     let Some(now) = self.relation_value(&driven) else {
                         continue;
                     };
                     if let Some(v) = l.driver_value(now) {
+                        lasts.push((l.id, v));
                         changes.push((l.driver, v, Some(l.driven)));
                     }
                 } else {
@@ -193,6 +201,49 @@ impl CadCraftApp {
         }
     }
 
+    /// A Transitional link: the driven relationship's value that puts its component on the
+    /// cam. The component is the side of the relationship that is not grounded; it travels
+    /// along the relationship's axis, towards the cam.
+    fn transitional_value(&self, l: &MotionLink) -> Option<Real> {
+        let a = self.assembly()?;
+        let c = a.constraint(l.driven)?;
+        let cam = a.find(l.cam?)?;
+        let is_free = |id: u32| a.find(id).is_some_and(|o| !o.grounded);
+        let (follower, sign) =
+            if c.b.occurrence() != relation::ASSEMBLY && is_free(c.b.occurrence()) {
+                (c.b.occurrence(), 1.0)
+            } else if c.a.occurrence() != relation::ASSEMBLY && is_free(c.a.occurrence()) {
+                (c.a.occurrence(), -1.0)
+            } else {
+                return None;
+            };
+        let f = a.find(follower)?;
+        // The relationship's value runs along the first selection's direction.
+        let first = match c.a.occurrence() {
+            relation::ASSEMBLY => Transform3::identity(),
+            o => a.find(o)?.transform,
+        };
+        let geom = self.asm_local_geom(&c.a).ok()?;
+        let axis = (if c.kind.is_joint() {
+            geom.as_frame()
+        } else {
+            geom
+        })
+        .moved(&first)
+        .direction()
+        .try_normalize(1e-9)?;
+        let (mf, mc) = (self.asm_mesh(f.component)?, self.asm_mesh(cam.component)?);
+        let middle = |m: &crate::assembly::PickMesh, t: &Transform3| -> Option<Point3> {
+            let (lo, hi) = m.bbox?;
+            Some(t * Point3::from((lo.coords + hi.coords) / 2.0))
+        };
+        let towards = (middle(&mc, &cam.transform)? - middle(&mf, &f.transform)?).dot(&axis);
+        let d = if towards >= 0.0 { axis } else { -axis };
+        let travel = motion::travel_to_contact(&mf, &f.transform, &mc, &cam.transform, &d)?;
+        let now = self.relation_value(c)?;
+        Some(now + sign * travel * d.dot(&axis))
+    }
+
     /// Places of the occurrences now.
     fn places(&self) -> Vec<(u32, Transform3)> {
         self.assembly()
@@ -202,6 +253,12 @@ impl CadCraftApp {
 
     /// The first pair in contact that passes through each other, by name.
     pub(super) fn contact_hit(&self) -> Option<(String, String)> {
+        let places = self.places();
+        self.contact_hit_at(&places)
+    }
+
+    /// [`Self::contact_hit`] with the components at `places`.
+    fn contact_hit_at(&self, places: &[(u32, Transform3)]) -> Option<(String, String)> {
         let a = self.assembly()?;
         let ids: Vec<u32> = a
             .occurrences
@@ -209,6 +266,7 @@ impl CadCraftApp {
             .filter(|o| !o.suppressed)
             .map(|o| o.id)
             .collect();
+        let place = |id: u32| places.iter().find(|p| p.0 == id).map(|p| p.1);
         for (x, y) in a.motion.contact_pairs(&ids) {
             let (ox, oy) = (a.find(x)?, a.find(y)?);
             let (Some(mx), Some(my)) = (self.asm_mesh(ox.component), self.asm_mesh(oy.component))
@@ -216,42 +274,138 @@ impl CadCraftApp {
                 continue;
             };
             let tol = motion::contact_tolerance(&mx, &my);
-            if motion::mesh_overlap(&mx, &ox.transform, &my, &oy.transform, tol).is_some() {
+            if motion::mesh_overlap(&mx, &place(x)?, &my, &place(y)?, tol).is_some() {
                 return Some((ox.name.clone(), oy.name.clone()));
             }
         }
         None
     }
 
-    /// A drag moved things: where contact is broken they go back to `before` (they
-    /// stop at the last place that was free). An assembly already overlapping may
-    /// move out of it (`was_hit`).
-    pub(super) fn contact_guard(&mut self, before: &[(u32, Transform3)], was_hit: bool) {
+    /// Whether the move from `before` to `after` passes through something on its way, not only
+    /// at its end (a fast drag jumped right over a stop): the first fraction of the move that
+    /// breaks contact, found in steps of a quarter of the thinnest part in contact and then by
+    /// bisection, with the pair; the fraction is the last free one.
+    fn swept_hit(
+        &self,
+        before: &[(u32, Transform3)],
+        after: &[(u32, Transform3)],
+    ) -> Option<(Real, String, String)> {
+        let a = self.assembly()?;
+        let ids: Vec<u32> = a.occurrences.iter().map(|o| o.id).collect();
+        let pairs = a.motion.contact_pairs(&ids);
+        if pairs.is_empty() {
+            return None;
+        }
+        let mut thin = Real::MAX;
+        let mut travel: Real = 0.0;
+        for (x, y) in &pairs {
+            for id in [*x, *y] {
+                let o = a.find(id)?;
+                let (lo, hi) = self.asm_mesh(o.component)?.bbox?;
+                let d = hi - lo;
+                thin = thin.min(d.x).min(d.y).min(d.z);
+                let (t0, t1) = (
+                    before.iter().find(|p| p.0 == id)?.1,
+                    after.iter().find(|p| p.0 == id)?.1,
+                );
+                for k in 0..8 {
+                    let q = Point3::new(
+                        if k & 1 == 0 { lo.x } else { hi.x },
+                        if k & 2 == 0 { lo.y } else { hi.y },
+                        if k & 4 == 0 { lo.z } else { hi.z },
+                    );
+                    travel = travel.max((t1 * q - t0 * q).norm());
+                }
+            }
+        }
+        let step = (thin * 0.25).max(0.01);
+        let samples = ((travel / step).ceil() as usize).clamp(1, 256);
+        let at = |t: Real| -> Vec<(u32, Transform3)> {
+            before
+                .iter()
+                .filter_map(|(id, t0)| {
+                    let t1 = after.iter().find(|p| p.0 == *id)?.1;
+                    Some((*id, t0.try_lerp_slerp(&t1, t, 1e-9).unwrap_or(t1)))
+                })
+                .collect()
+        };
+        let mut lo = 0.0;
+        for k in 1..=samples {
+            let hi = k as Real / samples as Real;
+            if let Some((x, y)) = self.contact_hit_at(&at(hi)) {
+                let (mut l, mut h) = (lo, hi);
+                for _ in 0..10 {
+                    let mid = (l + h) / 2.0;
+                    if self.contact_hit_at(&at(mid)).is_some() {
+                        h = mid;
+                    } else {
+                        l = mid;
+                    }
+                }
+                return Some((l, x, y));
+            }
+            lo = hi;
+        }
+        None
+    }
+
+    /// The relationships' values and locks, to put back when contact refuses a move.
+    pub(super) fn relation_values(&self) -> Vec<(u32, Real, bool)> {
+        self.assembly()
+            .map(|a| {
+                a.constraints
+                    .iter()
+                    .map(|c| (c.id, c.value, c.locked))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A drag moved things: where they would pass through something they stop at the last free
+    /// place along the move. The values a link wrote for the refused part of the move go back
+    /// too, then the links follow the place they stopped at. An assembly already overlapping
+    /// may move out of it (`was_hit`).
+    pub(super) fn contact_guard(
+        &mut self,
+        before: &[(u32, Transform3)],
+        values: &[(u32, Real, bool)],
+        was_hit: bool,
+        dragged: u32,
+    ) {
         if was_hit {
             return;
         }
-        if let Some((x, y)) = self.contact_hit() {
+        let after = self.places();
+        if let Some((t, x, y)) = self.swept_hit(before, &after) {
             if let Some(a) = self.assembly_mut() {
-                for (id, t) in before {
+                for (id, v, l) in values {
+                    if let Some(c) = a.constraint_mut(*id) {
+                        c.value = *v;
+                        c.locked = *l;
+                    }
+                }
+                for (id, t0) in before {
+                    let t1 = after.iter().find(|p| p.0 == *id).map_or(*t0, |p| p.1);
                     if let Some(o) = a.find_mut(*id) {
-                        o.transform = *t;
+                        o.transform = t0.try_lerp_slerp(&t1, t, 1e-9).unwrap_or(*t0);
                     }
                 }
             }
+            self.motion_links_follow(Some(dragged));
             self.scene_dirty = true;
             self.file_status = Some(Ok(format!("Contact: {x} stops at {y}")));
         }
     }
 
-    /// Sets `id`'s value towards `value`, stopping short of a collision (bisection from
-    /// where it is, after SolidCraft's `drive_with_contact`). Returns the pair that
-    /// stopped it.
+    /// Sets `id`'s value towards `value`, stopping short of a collision (bisection from where it
+    /// is, after SolidCraft's `drive_with_contact`). Returns the pair that stopped it and the
+    /// value it stopped at.
     pub(super) fn drive_with_contact(
         &mut self,
         id: u32,
         from: Real,
         value: Real,
-    ) -> Option<(String, String)> {
+    ) -> Option<(String, String, Real)> {
         let set = |app: &mut Self, v: Real| {
             if let Some(c) = app.assembly_mut().and_then(|a| a.constraint_mut(id)) {
                 c.value = v;
@@ -260,12 +414,14 @@ impl CadCraftApp {
             app.asm_solve(None);
         };
         let started_free = self.contact_hit().is_none();
+        let before = self.places();
         set(self, value);
         if !started_free {
             return None;
         }
-        let hit = self.contact_hit()?;
-        let (mut lo, mut hi) = (from, value);
+        let after = self.places();
+        let (t, x, y) = self.swept_hit(&before, &after)?;
+        let (mut lo, mut hi) = (from, from + (value - from) * (t + 0.05).min(1.0));
         for _ in 0..10 {
             let mid = (lo + hi) / 2.0;
             set(self, mid);
@@ -276,7 +432,7 @@ impl CadCraftApp {
             }
         }
         set(self, lo);
-        Some(hit)
+        Some((x, y, lo))
     }
 
     /// The relationships that have a value to move, for the lists.
@@ -358,10 +514,35 @@ impl CadCraftApp {
                 .map_or("Select".to_owned(), |x| x.1.clone())
         };
         let (mut driver, mut driven, mut kind, mut ratio, mut reverse) = self.motion.link;
+        let parts: Vec<(u32, String)> = self
+            .assembly()
+            .map(|a| {
+                a.occurrences
+                    .iter()
+                    .map(|o| (o.id, o.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut cam = self.motion.cam;
         egui::Grid::new("motion_link_new")
             .num_columns(2)
             .show(ui, |ui| {
                 for (label, slot) in [("Driver", &mut driver), ("Driven", &mut driven)] {
+                    if kind == LinkKind::Transitional && label == "Driver" {
+                        ui.label("Cam");
+                        egui::ComboBox::from_id_salt("motion_link_cam")
+                            .selected_text(
+                                cam.and_then(|c| parts.iter().find(|x| x.0 == c))
+                                    .map_or("Select", |x| x.1.as_str()),
+                            )
+                            .show_ui(ui, |ui| {
+                                for (id, n) in &parts {
+                                    ui.selectable_value(&mut cam, Some(*id), n);
+                                }
+                            });
+                        ui.end_row();
+                        continue;
+                    }
                     ui.label(label);
                     egui::ComboBox::from_id_salt(("motion_link", label))
                         .selected_text(name(*slot))
@@ -381,47 +562,64 @@ impl CadCraftApp {
                         "Rotation-Translation",
                     );
                     ui.selectable_value(&mut kind, LinkKind::Linear, "Linear");
+                    ui.selectable_value(&mut kind, LinkKind::Transitional, "Transitional")
+                        .on_hover_text(
+                            "The driven relationship's component keeps touching the cam along its slide",
+                        );
                 });
                 ui.end_row();
-                ui.label(if kind == LinkKind::RotationTranslation {
-                    "Distance per turn"
-                } else {
-                    "Ratio"
-                });
-                let suffix = if kind == LinkKind::RotationTranslation {
-                    " mm"
-                } else {
-                    ""
-                };
-                ui.add(ExprValue::new(&mut ratio).suffix(suffix));
-                ui.end_row();
-                ui.label("Solution");
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut reverse, false, "Forward");
-                    ui.selectable_value(&mut reverse, true, "Reverse");
-                });
-                ui.end_row();
+                if kind != LinkKind::Transitional {
+                    let per_turn = kind == LinkKind::RotationTranslation;
+                    ui.label(if per_turn { "Distance per turn" } else { "Ratio" });
+                    let suffix = if per_turn { " mm" } else { "" };
+                    ui.add(ExprValue::new(&mut ratio).suffix(suffix));
+                    ui.end_row();
+                    ui.label("Solution");
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut reverse, false, "Forward");
+                        ui.selectable_value(&mut reverse, true, "Reverse");
+                    });
+                    ui.end_row();
+                }
             });
         self.motion.link = (driver, driven, kind, ratio, reverse);
-        let ready = driver.is_some() && driven.is_some() && driver != driven;
+        self.motion.cam = cam;
+        let ready = if kind == LinkKind::Transitional {
+            cam.is_some() && driven.is_some()
+        } else {
+            driver.is_some() && driven.is_some() && driver != driven
+        };
         if ui
             .add_enabled(ready, egui::Button::new("Add Link"))
             .clicked()
-            && let (Some(x), Some(y)) = (driver, driven)
         {
-            self.add_link(x, y, kind, ratio, reverse);
+            if kind == LinkKind::Transitional {
+                if let Some(y) = driven {
+                    self.add_transitional(y, cam);
+                }
+            } else if let (Some(x), Some(y)) = (driver, driven) {
+                self.add_link(x, y, kind, ratio, reverse);
+            }
         }
         ui.separator();
         let mut remove = None;
         let mut toggle = None;
         for l in &self.data().links {
             ui.horizontal(|ui| {
-                let label = format!(
-                    "{} : {}  ×{:.4}",
-                    name(Some(l.driver)),
-                    name(Some(l.driven)),
-                    l.ratio
-                );
+                let label = if l.kind == LinkKind::Transitional {
+                    let cam = l
+                        .cam
+                        .and_then(|c| parts.iter().find(|x| x.0 == c))
+                        .map_or("?", |x| x.1.as_str());
+                    format!("{} rides on {cam}", name(Some(l.driven)))
+                } else {
+                    format!(
+                        "{} : {}  ×{:.4}",
+                        name(Some(l.driver)),
+                        name(Some(l.driven)),
+                        l.ratio
+                    )
+                };
                 let mut on = !l.suppressed;
                 if ui.checkbox(&mut on, label).changed() {
                     toggle = Some((l.id, !on));
@@ -445,6 +643,27 @@ impl CadCraftApp {
         if let Some(id) = remove {
             self.edit_assembly("Motion Link", |a| a.motion.links.retain(|l| l.id != id));
         }
+    }
+
+    fn add_transitional(&mut self, driven: u32, cam: Option<u32>) {
+        let Some(id) = self.assembly().map(|a| a.motion.next_id()) else {
+            return;
+        };
+        let link = MotionLink {
+            id,
+            driver: 0,
+            driven,
+            kind: LinkKind::Transitional,
+            ratio: 0.0,
+            offset: 0.0,
+            cam,
+            suppressed: false,
+            last: None,
+        };
+        self.edit_assembly("Motion Link", |a| a.motion.links.push(link));
+        self.asm_solve(None);
+        self.motion.link.1 = None;
+        self.motion.cam = None;
     }
 
     fn add_link(&mut self, driver: u32, driven: u32, kind: LinkKind, ratio: Real, reverse: bool) {
@@ -474,6 +693,7 @@ impl CadCraftApp {
             kind,
             ratio: signed,
             offset: vy - signed * vx,
+            cam: None,
             suppressed: false,
             last: Some(vx),
         };
@@ -895,10 +1115,12 @@ impl CadCraftApp {
             }
         }
         self.asm_solve(None);
+        let after = self.places();
         if contact
             && !was_hit
-            && let Some(hit) = self.contact_hit()
+            && let Some((_, x, y)) = self.swept_hit(&before, &after)
         {
+            let hit = (x, y);
             // Back to the last free pose.
             if let Some(a) = self.assembly_mut() {
                 for (id, v, l) in values {

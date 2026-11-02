@@ -828,6 +828,8 @@ struct CadCraftApp {
     menu_at: Option<(egui::Pos2, egui::Rect)>,
     /// The Motion and Contact window.
     motion: motion::MotionUi,
+    /// Tab (false: Demote) or Shift+Tab (true: Promote) waiting for `shortcuts`.
+    tab_structure: Option<bool>,
     /// The browser's Files tab.
     files: file_explorer::FilesUi,
     /// The views rested on (F5, Shift+F5).
@@ -1116,6 +1118,7 @@ impl CadCraftApp {
             ctrl_rmb: false,
             menu_at: None,
             motion: Default::default(),
+            tab_structure: None,
             files: Default::default(),
             view_history: Default::default(),
             zoom_window: None,
@@ -5060,6 +5063,14 @@ impl CadCraftApp {
         if ctx.egui_wants_keyboard_input() || self.file_window_open() {
             return; // typing into a text field
         }
+        if let Some(promote) = self.tab_structure.take() {
+            if promote {
+                self.promote_selected();
+            } else {
+                self.demote_selected();
+            }
+            return;
+        }
         // The user's own key combinations come before the built-in keys.
         if !self.home.shown && self.user_key_shortcuts(ctx) {
             return;
@@ -7294,7 +7305,8 @@ impl CadCraftApp {
             let profile_sketch = self.extrude.as_ref().is_some_and(|d| d.sketch == i)
                 || self.show_dims.as_ref().is_some_and(|s| s.sketch == Some(i));
             // Sketches below the End of Part are rolled back: not drawn.
-            let shown = ps.visible && !self.part().sketch_rolled_back(i);
+            let shown =
+                (ps.visible || self.hidden_sketches_shown()) && !self.part().sketch_rolled_back(i);
             // Project Geometry: earlier sketches are pickable, hidden ones too.
             let source = self.project_geometry
                 && self
@@ -8064,6 +8076,28 @@ impl eframe::App for CadCraftApp {
                     modifiers,
                 });
             }
+        }
+        // Tab / Shift+Tab in an assembly: Demote / Promote. Taken before egui, which would move
+        // the keyboard focus to the File menu (the next Enter would open it).
+        if self.cv.step.is_none()
+            && self.is_assembly()
+            && !ctx.egui_wants_keyboard_input()
+            && !self.home.shown
+        {
+            raw_input.events.retain(|e| match e {
+                egui::Event::Key {
+                    key: Key::Tab,
+                    pressed,
+                    modifiers,
+                    ..
+                } if !modifiers.command => {
+                    if *pressed {
+                        self.tab_structure = Some(modifiers.shift);
+                    }
+                    false
+                }
+                _ => true,
+            });
         }
         // The value next to the cursor: Tab walks its fields, the first
         // digit typed over the view opens it (before egui or an alias sees it).

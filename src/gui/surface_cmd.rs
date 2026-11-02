@@ -322,7 +322,7 @@ impl CadCraftApp {
                     }
                     edges.dedup();
                     BodyOp::Patch(PatchOp {
-                        guides: Vec::new(),
+                        guides: self.guide_sketches(d, None, old),
                         edges,
                         sketch: None,
                         profile: None,

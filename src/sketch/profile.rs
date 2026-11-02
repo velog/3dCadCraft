@@ -919,3 +919,109 @@ mod tests {
         let _ = bc;
     }
 }
+
+#[cfg(test)]
+mod arc_in_a_rectangle {
+    use super::super::*;
+
+    /// A fully fixed rectangle 100 × 40, an arc from its lower right corner ending on the top
+    /// line. Returns the sketch, the arc, its end, centre and the lines (bottom, right, top).
+    fn setup() -> (Sketch, EntityId, PointId, PointId, [EntityId; 3]) {
+        let mut s = Sketch::default();
+        let sh = s
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(100.0, 40.0))
+            .unwrap();
+        for p in &sh.points {
+            s.set_fixed(*p, true).unwrap();
+        }
+        let end = s.add_point(Point2::new(70.0, 38.0));
+        let c = s.add_point(Point2::new(68.0, 10.0));
+        let arc = s.add_arc(c, sh.points[1], end).unwrap();
+        (
+            s,
+            arc,
+            end,
+            c,
+            [sh.entities[0], sh.entities[1], sh.entities[2]],
+        )
+    }
+
+    fn solved_clean(s: &mut Sketch, what: &str) -> SolveReport {
+        let r = s.solve().unwrap();
+        assert_eq!(r.status, SolveStatus::Solved, "{what}: {r:?}");
+        // 4: the fixed corners repeat the rectangle's own Horizontal / Vertical.
+        assert_eq!(r.redundant, 4, "{what}: {r:?}");
+        r
+    }
+
+    /// The owner's arc: its end on the top line and tangent to it, in either order.
+    #[test]
+    fn its_end_on_a_line_and_tangent_to_that_line() {
+        for order in [0, 1] {
+            let (mut s, arc, end, c, [_, _, top]) = setup();
+            let on = Constraint::PointOnLine {
+                point: end,
+                line: top,
+            };
+            if order == 0 {
+                s.add_constraint(on).unwrap();
+                solved_clean(&mut s, "on");
+                s.add_tangent(arc, top).unwrap();
+            } else {
+                s.add_tangent(arc, top).unwrap();
+                solved_clean(&mut s, "tangent");
+                s.add_constraint(on).unwrap();
+            }
+            let r = solved_clean(&mut s, "both");
+            assert_eq!(r.dof, 1, "one size left: {r:?}");
+            let (e, q) = (s.point(end).unwrap().position, s.point(c).unwrap().position);
+            assert!((e.y - 40.0).abs() < 1e-6, "{e:?}");
+            assert!(
+                (e.x - q.x).abs() < 1e-6,
+                "the radius is square to the line: {e:?} {q:?}"
+            );
+        }
+    }
+
+    /// The same end on the top line and the arc tangent at the corner, to the right or the
+    /// bottom line: either side of the corner.
+    #[test]
+    fn tangent_at_the_corner_and_its_end_on_the_top_line() {
+        for which in [0, 1] {
+            let (mut s, arc, end, c, lines) = setup();
+            s.add_constraint(Constraint::PointOnLine {
+                point: end,
+                line: lines[2],
+            })
+            .unwrap();
+            s.add_tangent(arc, lines[which]).unwrap();
+            let r = solved_clean(&mut s, "corner");
+            assert_eq!(r.dof, 1, "{which}: {r:?}");
+            let q = s.point(c).unwrap().position;
+            if which == 0 {
+                assert!((q.x - 100.0).abs() < 1e-6, "{q:?}");
+            } else {
+                assert!(q.y.abs() < 1e-6, "{q:?}");
+            }
+        }
+    }
+
+    /// Fully defined by its radius (the arc of the owner's blade).
+    #[test]
+    fn a_radius_finishes_it() {
+        let (mut s, arc, end, _, [_, _, top]) = setup();
+        s.add_constraint(Constraint::PointOnLine {
+            point: end,
+            line: top,
+        })
+        .unwrap();
+        s.add_tangent(arc, top).unwrap();
+        s.add_constraint(Constraint::Radius {
+            circle: arc,
+            value: 45.0,
+        })
+        .unwrap();
+        let r = solved_clean(&mut s, "radius");
+        assert_eq!(r.dof, 0, "{r:?}");
+    }
+}
