@@ -291,6 +291,44 @@ fn lm(cons: &[&Con], set: &[u32], place: &mut Place, drag: Option<&Drag>, iters:
     worst(&r, m)
 }
 
+/// Whether a relationship stands on the wrong side at `place`.
+fn cons_on_wrong_side(cons: &[Con], free: &HashSet<u32>, place: &Place) -> bool {
+    cons.iter().any(|k| {
+        let (a, b) = (k.c.a.occurrence(), k.c.b.occurrence());
+        (free.contains(&a) || free.contains(&b))
+            && relation::wrong_side(&k.c, &k.a.moved(&at(place, a)), &k.b.moved(&at(place, b)))
+                .is_some()
+    })
+}
+
+/// Turns the free component of each relationship on the wrong side half round
+/// about a line in the plane (`which`: 0 or 1, two directions square to each
+/// other): Mate changed to Flush has no slope to turn along (see
+/// `relation::wrong_side`).
+fn turn_wrong_sides(cons: &[Con], free: &HashSet<u32>, place: &mut Place, which: usize) {
+    for k in cons {
+        let (a, b) = (k.c.a.occurrence(), k.c.b.occurrence());
+        let Some((p, n)) =
+            relation::wrong_side(&k.c, &k.a.moved(&at(place, a)), &k.b.moved(&at(place, b)))
+        else {
+            continue;
+        };
+        let turned = if free.contains(&b) {
+            b
+        } else if free.contains(&a) {
+            a
+        } else {
+            continue;
+        };
+        let u = super::joint::square_x(n);
+        let axis = if which == 0 { u } else { n.cross(&u) };
+        let half = Transform3::translation(p.x, p.y, p.z)
+            * Transform3::rotation(axis * std::f64::consts::PI)
+            * Transform3::translation(-p.x, -p.y, -p.z);
+        place.insert(turned, half * at(place, turned));
+    }
+}
+
 /// The passes over the whole assembly (see the module docs).
 fn passes(cons: &[Con], free: &HashSet<u32>, place: &mut Place, order: &[u32]) -> Real {
     // The constraints of each component (scanning all of them for every
@@ -448,7 +486,9 @@ fn gather(
                 if c.resting && drag.is_none() {
                     c.locked = true;
                 }
-                let (a, b) = if c.kind.is_joint() {
+                // A Mate of axes: frames, so the turn about them can be measured
+                // and locked.
+                let (a, b) = if c.kind.is_joint() || relation::is_axis_mate(c.kind, &a, &b) {
                     (a.as_frame(), b.as_frame())
                 } else {
                     (a, b)
@@ -549,7 +589,20 @@ pub fn solve(
         lm(&mine, &group, &mut place, Some(d), 40);
     }
     let order = graph_order(&cons, &free, &blocks, drag.map(|d| d.occurrence));
+    let before = place.clone();
+    turn_wrong_sides(&cons, &free, &mut place, 0);
     let mut worst = passes(&cons, &free, &mut place, &order);
+    // The half turn about the other square direction, when the first one
+    // cannot meet the other relationships.
+    if worst >= 1e-6 && cons_on_wrong_side(&cons, &free, &before) {
+        let mut second = before;
+        turn_wrong_sides(&cons, &free, &mut second, 1);
+        let w = passes(&cons, &free, &mut second, &order);
+        if w < worst {
+            worst = w;
+            place = second;
+        }
+    }
     // Limits: a value past one is held there; then solve again.
     for _ in 0..3 {
         let mut held = false;
@@ -768,6 +821,76 @@ mod tests {
         a.find_mut(2).unwrap().suppressed = false;
         let s = solve(&a, &cube_geom, None);
         assert!(s.transforms.iter().any(|(i, _)| *i == 2));
+    }
+
+    /// Mate turned into Flush (and back) with the faces already mated: the
+    /// residual has no slope there, the component has to turn half round.
+    #[test]
+    fn mate_and_flush_change_over_from_either_side() {
+        let mut a = two_cubes();
+        let id = a.add_constraint(con(
+            ConstraintKind::Mate,
+            face(1, "Top"),
+            face(2, "Bottom"),
+            0.0,
+        ));
+        let s = solve(&a, &cube_geom, None);
+        assert!(s.converged, "{}", s.residual);
+        applied(&mut a, &s);
+        for (kind, sign) in [
+            (ConstraintKind::Flush, 1.0),
+            (ConstraintKind::Mate, -1.0),
+            (ConstraintKind::Flush, 1.0),
+        ] {
+            a.constraint_mut(id).unwrap().kind = kind;
+            let s = solve(&a, &cube_geom, None);
+            assert!(s.converged, "{kind:?}: {}", s.residual);
+            applied(&mut a, &s);
+            // Cube 2's bottom normal against cube 1's top normal.
+            let n = a.find(2).unwrap().transform * -Vector3::z();
+            assert!((n.dot(&Vector3::z()) - sign).abs() < 1e-6, "{kind:?} {n}");
+        }
+    }
+
+    /// A Mate of two axes: the value is the turn about them, measured from the
+    /// parts' own directions, and Lock Rotation holds it.
+    #[test]
+    fn a_mate_of_axes_locks_its_angle() {
+        let axis = |r: &GeomRef| -> Result<Geom, String> {
+            let GeomRef::Face { name, .. } = r else {
+                return Err("face".into());
+            };
+            let _ = name;
+            Ok(Geom::Axis {
+                p: Point3::new(0.0, 0.0, 0.0),
+                d: Vector3::z(),
+            })
+        };
+        let mut a = two_cubes();
+        let id = a.add_constraint(con(
+            ConstraintKind::Mate,
+            face(1, "Hole"),
+            face(2, "Hole"),
+            0.0,
+        ));
+        let s = solve(&a, &axis, None);
+        assert!(s.converged, "{}", s.residual);
+        assert_eq!(s.dof[&2], 2, "a turn and a slide stay free");
+        applied(&mut a, &s);
+        for deg in [30.0_f64, 170.0, -90.0] {
+            let c = a.constraint_mut(id).unwrap();
+            c.locked = true;
+            c.value = deg.to_radians();
+            let s = solve(&a, &axis, None);
+            assert!(s.converged, "{deg}: {}", s.residual);
+            assert_eq!(s.dof[&2], 1, "only the slide stays free");
+            applied(&mut a, &s);
+            let c = a.constraint(id).unwrap().clone();
+            let fa = axis(&c.a).unwrap().as_frame().moved(&a.find(1).unwrap().transform);
+            let fb = axis(&c.b).unwrap().as_frame().moved(&a.find(2).unwrap().transform);
+            let m = relation::measure(&c, &fa, &fb).unwrap();
+            assert!((m - deg.to_radians()).abs() < 1e-6, "{deg}: {m}");
+        }
     }
 
     #[test]

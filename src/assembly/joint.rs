@@ -23,7 +23,7 @@ pub struct Frame {
 
 /// A unit vector square to `z`: the part's X projected, else its Y — so a
 /// face's frame turns with the part (it is computed in part coordinates).
-fn square_x(z: Vector3) -> Vector3 {
+pub(super) fn square_x(z: Vector3) -> Vector3 {
     let pick = if z.x.abs() < 0.9 {
         Vector3::x()
     } else {

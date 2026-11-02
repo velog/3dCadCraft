@@ -1346,21 +1346,40 @@ impl CadCraftApp {
             }
         }
         ui.add_space(4.0);
-        let angle = d.kind == ConstraintKind::Angle;
-        ui.horizontal(|ui| {
-            ui.label(if angle { "Angle" } else { "Offset" });
-            let mut v = if angle { d.value.to_degrees() } else { d.value };
-            let before = v;
-            ui.add(
-                ExprValue::new(&mut v)
-                    .suffix(if angle { "°" } else { " mm" })
-                    .equation(&mut d.expr)
-                    .cursor(if angle { "Angle" } else { "Offset" }),
-            );
-            if v != before {
-                d.value = if angle { v.to_radians() } else { v };
-                d.typed = true;
+        // A Mate of axes (holes, shafts): what is left is a turn, so its value
+        // is an angle, held only with Lock Rotation.
+        let axes = self.is_axis_mate_refs(d.kind, d.a.as_ref(), d.b.as_ref());
+        if axes {
+            let mut lock = d.locked;
+            if ui
+                .checkbox(&mut lock, "Lock Rotation")
+                .on_hover_text("Hold the turn about the axes at the angle below")
+                .changed()
+            {
+                d.locked = lock;
+                if lock {
+                    d.value = self.axis_turn(d).unwrap_or(0.0);
+                    d.typed = true;
+                }
             }
+        }
+        let angle = d.kind == ConstraintKind::Angle || axes;
+        ui.add_enabled_ui(!axes || d.locked, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(if angle { "Angle" } else { "Offset" });
+                let mut v = if angle { d.value.to_degrees() } else { d.value };
+                let before = v;
+                ui.add(
+                    ExprValue::new(&mut v)
+                        .suffix(if angle { "°" } else { " mm" })
+                        .equation(&mut d.expr)
+                        .cursor(if angle { "Angle" } else { "Offset" }),
+                );
+                if v != before {
+                    d.value = if angle { v.to_radians() } else { v };
+                    d.typed = true;
+                }
+            });
         });
         ui.add_space(4.0);
         ui.label("Solution");
@@ -1371,7 +1390,9 @@ impl CadCraftApp {
                     ("Flush", ConstraintKind::Flush),
                 ] {
                     if ui.selectable_label(d.kind == k, label).clicked() {
+                        // The user's choice: prediction no longer decides it.
                         d.kind = k;
+                        d.predict = false;
                     }
                 }
             }
@@ -1416,7 +1437,6 @@ impl CadCraftApp {
             d.typed = false;
         }
         // Limits: the offset (angle) moves freely between them when dragged.
-        let angle = d.kind == ConstraintKind::Angle;
         let unit = |v: Real| if angle { v.to_degrees() } else { v };
         let back = |v: Real| if angle { v.to_radians() } else { v };
         let suffix = if angle { "°" } else { " mm" };
@@ -1605,6 +1625,38 @@ impl CadCraftApp {
 
     /// Properties of the constraint selected in the browser; `false` when
     /// there is none.
+    /// Is this a Mate / Flush of two axes?
+    pub(super) fn is_axis_mate_refs(
+        &self,
+        kind: ConstraintKind,
+        a: Option<&GeomRef>,
+        b: Option<&GeomRef>,
+    ) -> bool {
+        let (Some(a), Some(b)) = (a, b) else {
+            return false;
+        };
+        matches!((self.asm_local_geom(a), self.asm_local_geom(b)),
+            (Ok(x), Ok(y)) if relation::is_axis_mate(kind, &x, &y))
+    }
+
+    /// The turn about the axes of a Mate as the components stand.
+    pub(super) fn relation_turn(&self, c: &Constraint) -> Option<Real> {
+        let asm = self.assembly()?;
+        let world = |r: &GeomRef| -> Option<Geom> {
+            let t = match r.occurrence() {
+                relation::ASSEMBLY => Transform3::identity(),
+                o => asm.find(o)?.transform,
+            };
+            Some(self.asm_local_geom(r).ok()?.as_frame().moved(&t))
+        };
+        relation::measure(c, &world(&c.a)?, &world(&c.b)?)
+    }
+
+    /// [`Self::relation_turn`] for the open dialog.
+    fn axis_turn(&self, d: &ConstrainDraft) -> Option<Real> {
+        self.relation_turn(&d.constraint()?)
+    }
+
     pub(super) fn constraint_properties(&mut self, ui: &mut egui::Ui) -> bool {
         let Some(c) = self
             .cons
@@ -1657,17 +1709,61 @@ impl CadCraftApp {
             });
             return true;
         }
-        let angle = c.kind == ConstraintKind::Angle;
+        // Mate or Flush, at any time.
+        if matches!(c.kind, ConstraintKind::Mate | ConstraintKind::Flush) {
+            let mut to = None;
+            ui.horizontal(|ui| {
+                ui.label("Solution");
+                for k in [ConstraintKind::Mate, ConstraintKind::Flush] {
+                    if ui.selectable_label(c.kind == k, k.label()).clicked() && c.kind != k {
+                        to = Some(k);
+                    }
+                }
+            });
+            if let Some(k) = to
+                && let Err(e) = self.asm_try("Edit Constraint", |a| {
+                    if let Some(x) = a.constraint_mut(c.id) {
+                        x.kind = k;
+                    }
+                })
+            {
+                self.file_status = Some(Err(format!("{}: {e}", k.label())));
+            }
+        }
+        let axes = self.is_axis_mate_refs(c.kind, Some(&c.a), Some(&c.b));
+        if axes {
+            let mut lock = c.locked;
+            if ui
+                .checkbox(&mut lock, "Lock Rotation")
+                .on_hover_text("Hold the turn about the axes at the angle below")
+                .changed()
+            {
+                let now = self.relation_turn(&c).unwrap_or(c.value);
+                if let Err(e) = self.asm_try("Edit Constraint", |a| {
+                    if let Some(x) = a.constraint_mut(c.id) {
+                        x.locked = lock;
+                        if lock {
+                            x.value = now;
+                        }
+                    }
+                }) {
+                    self.file_status = Some(Err(format!("{}: {e}", c.kind.label())));
+                }
+            }
+        }
+        let angle = c.kind == ConstraintKind::Angle || axes;
         let mut v = if angle { c.value.to_degrees() } else { c.value };
         let mut expr = c.expr.clone();
         let before = v;
-        ui.horizontal(|ui| {
-            ui.label(if angle { "Angle" } else { "Offset" });
-            ui.add(
-                ExprValue::new(&mut v)
-                    .suffix(if angle { "°" } else { " mm" })
-                    .equation(&mut expr),
-            );
+        ui.add_enabled_ui(!axes || c.locked, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(if angle { "Angle" } else { "Offset" });
+                ui.add(
+                    ExprValue::new(&mut v)
+                        .suffix(if angle { "°" } else { " mm" })
+                        .equation(&mut expr),
+                );
+            });
         });
         if v != before {
             let value = if angle { v.to_radians() } else { v };

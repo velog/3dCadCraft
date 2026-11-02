@@ -42,7 +42,17 @@ impl CadCraftApp {
         let Some(c) = a.constraint(id).cloned() else {
             return;
         };
-        let angle = matches!(c.kind, ConstraintKind::Angle | ConstraintKind::Rotational);
+        // A Mate of axes (holes, shafts) drives its turn, not a distance.
+        let axes = self.is_axis_mate_refs(c.kind, Some(&c.a), Some(&c.b));
+        let angle = axes || matches!(c.kind, ConstraintKind::Angle | ConstraintKind::Rotational);
+        let start = if axes && !c.locked {
+            self.relation_turn(&c).unwrap_or(c.value)
+        } else {
+            c.value
+        };
+        let Some(a) = self.assembly() else {
+            return;
+        };
         let has_value = !c.kind.is_joint() || c.kind.joint_value().is_some();
         if !has_value {
             self.file_status = Some(Err(format!(
@@ -63,8 +73,8 @@ impl CadCraftApp {
         };
         self.drive = Some(DriveWin {
             id,
-            start: c.min.unwrap_or(c.value),
-            end: c.max.unwrap_or(c.value + span),
+            start: c.min.unwrap_or(start),
+            end: c.max.unwrap_or(start + span),
             steps: 30,
             k: 0,
             dir: 0,
@@ -83,9 +93,7 @@ impl CadCraftApp {
     fn drive_to(&mut self, id: u32, value: Real) -> bool {
         if let Some(c) = self.assembly_mut().and_then(|a| a.constraint_mut(id)) {
             c.value = value;
-            if c.kind.is_joint() {
-                c.locked = true;
-            }
+            c.locked = true;
         }
         self.asm_solve(None);
         self.cons.last.converged

@@ -357,6 +357,38 @@ pub struct Constraint {
     pub plane: Option<GeomRef>,
 }
 
+/// Is this a Mate / Flush of two axes (holes, shafts, circles, axes)?
+pub fn is_axis_mate(kind: ConstraintKind, a: &Geom, b: &Geom) -> bool {
+    matches!(kind, ConstraintKind::Mate | ConstraintKind::Flush)
+        && a.is_axis_like()
+        && b.is_axis_like()
+}
+
+/// Where the solver cannot start: normals that a relationship wants opposed
+/// point the same way (or the other way round). The residual is at its largest
+/// there and has no slope, so no step turns the part. Gives a point of the
+/// plane and the normal; the solver turns a component half round first.
+pub fn wrong_side(c: &Constraint, a: &Geom, b: &Geom) -> Option<(Point3, Vector3)> {
+    use ConstraintKind::*;
+    let (pa, na, nb) = match (c.kind, a, b) {
+        (Mate | Flush, Geom::Plane { p, n }, Geom::Plane { n: m, .. }) => (*p, *n, *m),
+        (Insert, Geom::Circle { c: q, n, .. }, Geom::Circle { n: m, .. }) => (*q, *n, *m),
+        (
+            Rigid | Rotational | Slider | Cylindrical | Planar,
+            Geom::Frame { p, z, .. },
+            Geom::Frame { z: m, .. },
+        ) => (*p, *z, *m),
+        _ => return None,
+    };
+    let opposed = match c.kind {
+        Flush => false,
+        Mate => true,
+        _ => !c.aligned,
+    };
+    let s = if opposed { 1.0 } else { -1.0 };
+    ((na + nb * s).norm() > 1.9).then_some((pa, na))
+}
+
 impl Constraint {
     /// Whether its value is held now: always without limits; with limits
     /// only when the solver locked it at a limit (or at rest).
@@ -550,6 +582,15 @@ impl Geom {
             Geom::Cylinder { p, d, .. } => Some((p, d)),
             Geom::Plane { .. } | Geom::Point { .. } | Geom::Sphere { .. } => None,
         }
+    }
+
+    /// An axis of something round or straight: a Mate of two of these leaves a
+    /// turn about them, so its value is an angle, never a distance.
+    pub fn is_axis_like(&self) -> bool {
+        matches!(
+            self,
+            Geom::Axis { .. } | Geom::Circle { .. } | Geom::Cylinder { .. } | Geom::Frame { .. }
+        )
     }
 
     /// The point of a point, or a circle's centre.
@@ -876,6 +917,14 @@ pub fn residuals(c: &Constraint, a: &Geom, b: &Geom, out: &mut Vec<Real>) -> Res
             let (pb, ub) = y.line().ok_or("not an axis")?;
             vec3(out, ua.cross(&ub));
             vec3(out, off_line(pa, ua, pb));
+            // Lock Rotation: the turn about the axis held at the value.
+            if c.locked
+                && let (Geom::Frame { z, x: xa, .. }, Geom::Frame { x: xb, .. }) = (x, y)
+            {
+                let ya = z.cross(xa);
+                out.push(xb.dot(xa) - d.cos());
+                out.push(xb.dot(&ya) - d.sin());
+            }
         }
         (Angle, x, y) => {
             if hold {
@@ -924,6 +973,11 @@ pub fn measure(c: &Constraint, a: &Geom, b: &Geom) -> Option<Real> {
     match (c.kind, a, b) {
         (Mate | Flush, Geom::Plane { p: pa, n: na }, Geom::Plane { p: pb, .. }) => {
             Some(na.dot(&(pb - pa)))
+        }
+        // Axes on one line: the turn about them.
+        (Mate | Flush, Geom::Frame { z, x: xa, .. }, Geom::Frame { x: xb, .. }) => {
+            let ya = z.cross(xa);
+            Some(xb.dot(&ya).atan2(xb.dot(xa)))
         }
         (
             Mate | Flush,
