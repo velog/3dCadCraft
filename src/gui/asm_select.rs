@@ -33,13 +33,30 @@ pub(super) enum AsmSub {
     Geom(GeomRef),
     /// A part inside subassembly `occurrence` (Part Priority), by its path.
     Part { occurrence: u32, sub: Vec<u32> },
+    /// A body of a part: its name and the faces it has now.
+    Body {
+        occurrence: u32,
+        sub: Vec<u32>,
+        name: String,
+        faces: Vec<String>,
+    },
+    /// A vertex of a part: its name; `at` in assembly coordinates (drawn as a dot).
+    Point {
+        occurrence: u32,
+        sub: Vec<u32>,
+        name: String,
+        at: [f64; 3],
+    },
 }
 
 impl AsmSub {
     /// The occurrence it lies on.
     pub fn occurrence(&self) -> u32 {
         match self {
-            AsmSub::Feature { occurrence, .. } | AsmSub::Part { occurrence, .. } => *occurrence,
+            AsmSub::Feature { occurrence, .. }
+            | AsmSub::Part { occurrence, .. }
+            | AsmSub::Body { occurrence, .. }
+            | AsmSub::Point { occurrence, .. } => *occurrence,
             AsmSub::Geom(g) => g.occurrence(),
         }
     }
@@ -47,7 +64,10 @@ impl AsmSub {
     /// The path below the occurrence to the part it lies on.
     fn sub(&self) -> &[u32] {
         match self {
-            AsmSub::Feature { sub, .. } | AsmSub::Part { sub, .. } => sub,
+            AsmSub::Feature { sub, .. }
+            | AsmSub::Part { sub, .. }
+            | AsmSub::Body { sub, .. }
+            | AsmSub::Point { sub, .. } => sub,
             AsmSub::Geom(g) => g.sub(),
         }
     }
@@ -62,7 +82,8 @@ impl AsmSub {
             AsmSub::Feature { id, .. } => feature_of_face(name) == id,
             AsmSub::Geom(GeomRef::Face { name: n, .. }) => n == name,
             AsmSub::Part { .. } => true,
-            AsmSub::Geom(_) => false,
+            AsmSub::Body { faces, .. } => faces.iter().any(|f| f == name),
+            AsmSub::Geom(_) | AsmSub::Point { .. } => false,
         }
     }
 
@@ -83,7 +104,9 @@ impl AsmSub {
                 occurrence: *occurrence,
                 name: name.clone(),
             }),
-            AsmSub::Geom(_) | AsmSub::Part { .. } => None,
+            AsmSub::Geom(_) | AsmSub::Part { .. } | AsmSub::Body { .. } | AsmSub::Point { .. } => {
+                None
+            }
         }
     }
 }
@@ -181,12 +204,72 @@ impl CadCraftApp {
                     sub: part.sub,
                 })
             }
-            AsmPriority::FacesEdges => match self.geom_under_pub(pos, rect)? {
-                g @ (GeomRef::Face { .. } | GeomRef::Edge { .. }) => Some(AsmSub::Geom(g)),
-                _ => None,
-            },
+            AsmPriority::Body => {
+                let (part, f, _) = self.part_hit(pos, rect)?;
+                let (name, faces) = self.with_part(part.component, |p| {
+                    let body = &p.body;
+                    let (_, solid) = body
+                        .solids()
+                        .find(|(_, s)| s.shells.iter().any(|sh| sh.faces.contains(&f)))?;
+                    let faces: Vec<String> = solid
+                        .shells
+                        .iter()
+                        .flat_map(|sh| sh.faces.iter())
+                        .filter_map(|x| body.face(*x).and_then(|y| y.name.clone()))
+                        .collect();
+                    Some((solid.name.clone().unwrap_or_default(), faces))
+                })??;
+                Some(AsmSub::Body {
+                    occurrence: part.top,
+                    sub: part.sub,
+                    name,
+                    faces,
+                })
+            }
+            AsmPriority::FacesEdges => {
+                if let Some(point) = self.asm_point_under(pos, rect) {
+                    return Some(point);
+                }
+                match self.geom_under_pub(pos, rect)? {
+                    g @ (GeomRef::Face { .. } | GeomRef::Edge { .. }) => Some(AsmSub::Geom(g)),
+                    _ => None,
+                }
+            }
             _ => None,
         }
+    }
+
+    /// A vertex near the cursor on the part under it (Faces and Edges takes
+    /// points too, nearest first). The same snap as a sketch's points.
+    pub(super) fn asm_point_under(&self, pos: Pos2, rect: Rect) -> Option<AsmSub> {
+        let (part, _, t) = self.part_hit(pos, rect)?;
+        let eye = self.camera.ray(pos, rect)?.0;
+        let place = part.place;
+        let best = self.with_part(part.component, |p| {
+            let mut best: Option<(f32, String, [f64; 3])> = None;
+            for (_, v) in p.body.vertices() {
+                let Some(name) = &v.name else { continue };
+                let w = place * v.point;
+                let Some(s) = self.camera.project(&w, rect) else {
+                    continue;
+                };
+                let d = s.distance(pos);
+                // Not behind the face under the cursor (2 % of the distance).
+                if d <= super::overlay::POINT_SNAP_PX
+                    && (w - eye).norm() <= t * 1.02
+                    && best.as_ref().is_none_or(|b| d < b.0)
+                {
+                    best = Some((d, name.clone(), [w.x, w.y, w.z]));
+                }
+            }
+            best
+        })??;
+        Some(AsmSub::Point {
+            occurrence: part.top,
+            sub: part.sub,
+            name: best.1,
+            at: best.2,
+        })
     }
 
     /// A click under Feature / Faces and Edges priority: `under` replaces
@@ -319,6 +402,21 @@ impl CadCraftApp {
         if let Some(AsmSub::Geom(g @ GeomRef::Edge { .. })) = &self.asm.sub_hover {
             self.draw_geom(painter, rect, g, Color32::from_rgb(110, 220, 120));
         }
+        let dot = |at: &[f64; 3], c: Color32| {
+            let w = crate::kernel::Point3::new(at[0], at[1], at[2]);
+            if let Some(s) = self.camera.project(&w, rect) {
+                painter.circle_filled(s, 5.0, c);
+                painter.circle_stroke(s, 5.0, egui::Stroke::new(1.0, Color32::WHITE));
+            }
+        };
+        for s in &self.asm.sub {
+            if let AsmSub::Point { at, .. } = s {
+                dot(at, Color32::from_rgb(70, 130, 245));
+            }
+        }
+        if let Some(AsmSub::Point { at, .. }) = &self.asm.sub_hover {
+            dot(at, Color32::from_rgb(110, 220, 120));
+        }
     }
 
     /// The Select drop-down of the Quick Access Toolbar in an assembly.
@@ -382,26 +480,45 @@ impl CadCraftApp {
                 ui.close();
             }
             if menu_item(ui, Some(Icon::SelInvert), "Invert Selection", true).clicked() {
+                self.asm.prev_sel = self.asm.sel.clone();
                 self.asm.sel = self.asm_inverted();
                 self.scene_dirty = true;
                 ui.close();
             }
-            ui.separator();
-            for label in [
-                "Select Visible Only",
-                "Component Size...",
-                "Component Offset...",
-                "Sphere Offset...",
-                "Select by Plane...",
-                "External Components...",
-                "Internal Components...",
-                "All in Camera",
-                "Previous Selection",
-            ] {
-                menu_item(ui, None, label, false).on_disabled_hover_text(
-                    "Interface only: the logic comes later (spec 0.9a §6a)",
-                );
+            let previous = !self.asm.prev_sel.is_empty();
+            if menu_item(ui, Some(Icon::SelPrevious), "Previous Selection", previous).clicked() {
+                std::mem::swap(&mut self.asm.sel, &mut self.asm.prev_sel);
+                self.scene_dirty = true;
+                ui.close();
             }
+            ui.separator();
+            super::icons::sub_menu(ui, None, "Component Selection", |ui| {
+                ui.checkbox(&mut self.select.asm_visible_only, "Select Visible Only")
+                    .on_hover_text("The modes below skip hidden components");
+                ui.separator();
+                use super::asm_select_modes::SelMode as M;
+                for (mode, tip) in [
+                    (
+                        M::External,
+                        "Components that can be seen from outside (shown)",
+                    ),
+                    (M::Internal, "Components hidden inside the others"),
+                    (M::Size, "By the size of their box"),
+                    (M::Offset, "Inside a box around the selection"),
+                    (M::Sphere, "Inside a sphere around the selection"),
+                    (M::Plane, "On one side of a plane"),
+                    (M::Camera, "In the current view"),
+                ] {
+                    if ui
+                        .button(format!("{}...", mode.title()))
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
+                        self.asm_open_sel_mode(mode);
+                        ui.close();
+                    }
+                }
+            });
         }
     }
 

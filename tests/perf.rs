@@ -2725,6 +2725,37 @@ fn speed_budgets() {
         ));
     }
 
+    // External / Internal Components (spec 0.9a §6b): rays from the six sides on
+    // a worker thread, 100 occurrences of a box in a 10 × 10 grid.
+    {
+        use cadcraft3d::assembly::PickMesh;
+        use cadcraft3d::assembly::select::{RayPart, exposure};
+        use cadcraft3d::kernel::{Transform3, Vector3};
+        use std::sync::Arc;
+        let mut part = PartDocument::with_box("Box1", [10.0, 10.0, 10.0]).unwrap();
+        part.regenerate().unwrap();
+        let mesh = Arc::new(PickMesh::of(&part));
+        let parts: Vec<RayPart> = (0..100u32)
+            .map(|k| {
+                let at = Vector3::new(f64::from(k % 10) * 12.0, f64::from(k / 10) * 12.0, 0.0);
+                RayPart {
+                    top: k + 1,
+                    place: Transform3::translation(at.x, at.y, at.z),
+                    mesh: mesh.clone(),
+                    lo: Point3::from(at),
+                    hi: Point3::from(at) + Vector3::new(10.0, 10.0, 10.0),
+                }
+            })
+            .collect();
+        rows.push((
+            "external components: 100 occurrences, rays from six sides (worker thread)",
+            500.0,
+            median_ms(3, || {
+                assert_eq!(exposure(&parts, 24).len(), 100);
+            }),
+        ));
+    }
+
     // Assembly picking (docs/spec/3.1, A1): the occurrence under the cursor
     // every frame — 100 occurrences of the 36-hole plate, the ray taken into
     // each occurrence's frame against the part's cached triangles.

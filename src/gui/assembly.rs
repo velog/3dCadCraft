@@ -111,6 +111,10 @@ pub(super) struct AsmUi {
     /// Faces and Edges (`gui/asm_select.rs`), and the one under the cursor.
     pub sub: Vec<super::asm_select::AsmSub>,
     pub sub_hover: Option<super::asm_select::AsmSub>,
+    /// The open component selection mode (`asm_select_modes`).
+    pub sel_mode: Option<super::asm_select_modes::SelModeDraft>,
+    /// The selection before the last mode, for Previous Selection.
+    pub prev_sel: Vec<u32>,
     /// The feature row under the cursor in the browser (prehighlighted).
     pub tree_hover: Option<super::asm_select::AsmSub>,
     /// The browser's search text.
@@ -2149,6 +2153,7 @@ impl CadCraftApp {
         }
         let painter = ui.painter_at(rect);
         self.render_view(ui, frame, rect, &painter);
+        self.asm_sel_mode_window(ui.ctx(), rect);
         let cursor = ui
             .input(|i| i.pointer.hover_pos())
             .filter(|p| rect.contains(*p));
@@ -2429,8 +2434,8 @@ impl CadCraftApp {
     fn asm_cursor_hint(&self) -> Option<String> {
         if self.asm.tool.is_none() && self.cons.draft.is_none() && self.measure.open {
             return Some(match self.measure.asm_picks.len() {
-                1 => "Measure: click a second face or edge".into(),
-                _ => "Measure: click a face or an edge".into(),
+                1 => "Measure: click a second point, face or edge".into(),
+                _ => "Measure: click a point, a face or an edge".into(),
             });
         }
         match self.asm.tool? {
@@ -2519,7 +2524,7 @@ impl CadCraftApp {
                 self.isolate(None);
                 ui.close();
             }
-            if ui.button("Show All").clicked() {
+            if menu_item(ui, None, "Show All", true).clicked() {
                 self.show_all();
                 ui.close();
             }
@@ -2540,7 +2545,7 @@ impl CadCraftApp {
                 ui.close();
             }
         }
-        if ui.button("Zoom All").clicked() {
+        if menu_item(ui, None, "Zoom All", true).clicked() {
             self.fit_view();
             ui.close();
         }

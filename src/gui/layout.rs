@@ -91,7 +91,7 @@ pub struct UiSettings {
 
 /// Windows that choose their own first place (the others open at
 /// [`first_window_pos`]).
-const OWN_FIRST_PLACE: &[&str] = &["file_window", "interference", "import_update"];
+const OWN_FIRST_PLACE: &[&str] = &["file_window", "interference", "import_update", "measure"];
 
 /// Where a floating window opens the first time: over the view, below the
 /// ribbon. egui's default is the top left corner, on File, Save and Undo.

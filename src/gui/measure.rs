@@ -13,6 +13,36 @@ use crate::kernel::{BRep, EdgeId, Transform3};
 use crate::part::blend::EdgeRef;
 use crate::part::measure::{self, Measurement, Target};
 
+/// The axes' colours in the view (the triad's): X, Y, Z.
+const AXIS_COLORS: [Color32; 3] = [
+    Color32::from_rgb(215, 50, 40),
+    Color32::from_rgb(30, 150, 60),
+    Color32::from_rgb(40, 100, 225),
+];
+
+/// A value in the view, centred on `at`, on a plate so that neither its line
+/// nor the model runs through the digits.
+fn value_plate(painter: &egui::Painter, at: egui::Pos2, text: String, c: Color32) {
+    let galley = painter.layout_no_wrap(text, egui::FontId::proportional(13.0), c);
+    let r = egui::Rect::from_center_size(at, galley.size() + egui::vec2(8.0, 4.0));
+    painter.rect_filled(r, 3.0, Color32::from_rgba_unmultiplied(255, 255, 255, 225));
+    painter.rect_stroke(r, 3.0, Stroke::new(1.0, c), egui::StrokeKind::Inside);
+    painter.galley(r.min + egui::vec2(4.0, 2.0), galley, c);
+}
+
+/// An item picked for Measure in an assembly.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum AsmPick {
+    /// A face or an edge of a component.
+    Geom(GeomRef),
+    /// A vertex of a part: its occurrence, the path to the part and its name.
+    Point {
+        occurrence: u32,
+        sub: Vec<u32>,
+        name: String,
+    },
+}
+
 /// State of the Measure window.
 #[derive(Default)]
 pub(super) struct MeasureUi {
@@ -24,11 +54,11 @@ pub(super) struct MeasureUi {
     pub loop_mode: bool,
     /// Accumulate: values added with "Add to Accumulate" (label, mm).
     pub acc: Vec<(String, f64)>,
-    /// In an assembly: the picked faces / edges of components (two at
-    /// most; a third click starts a new pair).
-    pub asm_picks: Vec<GeomRef>,
-    /// In an assembly: the face / edge under the cursor.
-    pub asm_hover: Option<GeomRef>,
+    /// In an assembly: the picked points, faces and edges of components (two
+    /// at most; a third click starts a new pair).
+    pub asm_picks: Vec<AsmPick>,
+    /// In an assembly: the point, face or edge under the cursor.
+    pub asm_hover: Option<AsmPick>,
 }
 
 /// The measurable targets of the selection (the last two), and whether
@@ -131,7 +161,7 @@ impl CadCraftApp {
         }
         let mut key = format!("asm|{picks:?}");
         for g in picks {
-            let Some((component, t)) = self.geom_part(g) else {
+            let Some((component, t)) = self.asm_pick_part(g) else {
                 return Some(Err("the component is gone".into()));
             };
             let sig = self.with_part(component, |p| p.body_signature())?;
@@ -144,12 +174,15 @@ impl CadCraftApp {
         }
         let mut placed: Vec<(BRep, Target, Transform3)> = Vec::new();
         for g in picks {
-            let (component, at) = self.geom_part(g)?;
+            let (component, at) = self.asm_pick_part(g)?;
             let item = self.with_part(component, |p| {
                 let t = match g {
-                    GeomRef::Face { name, .. } => Target::Face(name.clone()),
-                    GeomRef::Edge { edge, .. } => Target::Edge(edge_by_ref(&p.body, edge)?),
-                    _ => return None,
+                    AsmPick::Point { name, .. } => Target::Vertex(name.clone()),
+                    AsmPick::Geom(GeomRef::Face { name, .. }) => Target::Face(name.clone()),
+                    AsmPick::Geom(GeomRef::Edge { edge, .. }) => {
+                        Target::Edge(edge_by_ref(&p.body, edge)?)
+                    }
+                    AsmPick::Geom(_) => return None,
                 };
                 Some((p.body.clone(), t))
             })?;
@@ -165,7 +198,64 @@ impl CadCraftApp {
         Some(r)
     }
 
-    /// Measure in an assembly view (no command open): the face / edge
+    /// The part an assembly pick lies on and its placement now.
+    fn asm_pick_part(&self, g: &AsmPick) -> Option<(crate::document::DocRef, Transform3)> {
+        match g {
+            AsmPick::Geom(x) => self.geom_part(x),
+            AsmPick::Point {
+                occurrence, sub, ..
+            } => self
+                .pick_parts()
+                .into_iter()
+                .find(|p| p.top == *occurrence && p.sub == *sub)
+                .map(|p| (p.component, p.place)),
+        }
+    }
+
+    /// The point, face or edge Measure takes at `p`: a vertex within the
+    /// point snap first, so two corners give their distance.
+    fn asm_pick_under(&self, p: egui::Pos2, rect: egui::Rect) -> Option<AsmPick> {
+        if let Some(super::asm_select::AsmSub::Point {
+            occurrence,
+            sub,
+            name,
+            ..
+        }) = self.asm_point_under(p, rect)
+        {
+            return Some(AsmPick::Point {
+                occurrence,
+                sub,
+                name,
+            });
+        }
+        self.geom_under_pub(p, rect).map(AsmPick::Geom)
+    }
+
+    /// Draws a pick: a dot on a point, the geometry otherwise.
+    fn draw_asm_pick(&self, painter: &egui::Painter, rect: egui::Rect, g: &AsmPick, col: Color32) {
+        match g {
+            AsmPick::Geom(x) => self.draw_geom(painter, rect, x, col),
+            AsmPick::Point { name, .. } => {
+                let Some((component, place)) = self.asm_pick_part(g) else {
+                    return;
+                };
+                let at = self
+                    .with_part(component, |p| {
+                        p.body
+                            .vertices()
+                            .find(|(_, v)| v.name.as_deref() == Some(name.as_str()))
+                            .map(|(_, v)| place * v.point)
+                    })
+                    .flatten();
+                if let Some(s) = at.and_then(|w| self.camera.project(&w, rect)) {
+                    painter.circle_filled(s, 5.0, col);
+                    painter.circle_stroke(s, 5.0, Stroke::new(1.0, Color32::WHITE));
+                }
+            }
+        }
+    }
+
+    /// Measure in an assembly view (no command open): the point, face or edge
     /// under the cursor is highlighted, a click picks it (a third click
     /// starts a new pair, a click on nothing clears), the picks and the
     /// distance are drawn.
@@ -181,7 +271,7 @@ impl CadCraftApp {
             self.measure.asm_hover = None;
             return;
         }
-        self.measure.asm_hover = pointer.and_then(|p| self.geom_under_pub(p, rect));
+        self.measure.asm_hover = pointer.and_then(|p| self.asm_pick_under(p, rect));
         if clicked {
             match self.measure.asm_hover.clone() {
                 Some(g) => {
@@ -200,10 +290,10 @@ impl CadCraftApp {
             } else {
                 Color32::from_rgb(200, 110, 255)
             };
-            self.draw_geom(painter, rect, g, col);
+            self.draw_asm_pick(painter, rect, g, col);
         }
         if let Some(g) = self.measure.asm_hover.clone() {
-            self.draw_geom(painter, rect, &g, Color32::from_rgb(110, 220, 120));
+            self.draw_asm_pick(painter, rect, &g, Color32::from_rgb(110, 220, 120));
         }
         self.draw_measure(painter, rect);
     }
@@ -235,6 +325,9 @@ impl CadCraftApp {
                 egui::Window::new("Measure")
                     .open(&mut open)
                     .default_width(320.0)
+                    // Beside the model it measures, not over it.
+                    .pivot(egui::Align2::LEFT_TOP)
+                    .default_pos(ctx.content_rect().left_top() + egui::vec2(260.0, 190.0))
                     .resizable(true),
             )
             .show(ctx, |ui| {
@@ -252,9 +345,9 @@ impl CadCraftApp {
                     RichText::new(if self.measure.loop_mode {
                         "Click an edge: the length of the loop it belongs to (with a face selected too: that face's loop)."
                     } else if asm {
-                        "Click a face or an edge of a component; click a second one (on \
-                         the same or another component) for the distance and angle (a \
-                         third click starts again)."
+                        "Click a point, a face or an edge of a component; click a second \
+                         one (on the same or another component) for the distance and angle \
+                         (a third click starts again)."
                     } else {
                         "Click a face, edge, vertex or body; click a second one for the \
                          distance and angle (a third click starts again)."
@@ -328,9 +421,14 @@ impl CadCraftApp {
                                         ui.label(mm(d));
                                         ui.end_row();
                                         let v = q - p;
-                                        ui.label("dX, dY, dZ");
-                                        ui.label(format!("{:.3}, {:.3}, {:.3}", v.x, v.y, v.z));
-                                        ui.end_row();
+                                        for k in 0..3 {
+                                            ui.colored_label(
+                                                AXIS_COLORS[k],
+                                                ["dX", "dY", "dZ"][k],
+                                            );
+                                            ui.colored_label(AXIS_COLORS[k], mm(v[k]));
+                                            ui.end_row();
+                                        }
                                     }
                                     if let Some(c) = m.center_distance {
                                         ui.label("Centre distance");
@@ -401,18 +499,28 @@ impl CadCraftApp {
         else {
             return;
         };
+        // The way along the axes under the shortest line, each in its colour.
+        for (axis, from, to, len) in measure::axis_legs(&p, &q, 1e-6) {
+            let (Some(s), Some(e)) = (
+                self.camera.project(&from, rect),
+                self.camera.project(&to, rect),
+            ) else {
+                continue;
+            };
+            let c = AXIS_COLORS[axis];
+            painter.line_segment([s, e], Stroke::new(2.0, c));
+            value_plate(
+                painter,
+                s + (e - s) * 0.5,
+                format!("{} {len:.3}", ["X", "Y", "Z"][axis]),
+                c,
+            );
+        }
         let col = Color32::from_rgb(230, 120, 20);
         painter.line_segment([a, b], Stroke::new(2.0, col));
         painter.circle_filled(a, 3.5, col);
         painter.circle_filled(b, 3.5, col);
-        let mid = a + (b - a) * 0.5 + egui::vec2(6.0, -6.0);
-        painter.text(
-            mid,
-            egui::Align2::LEFT_BOTTOM,
-            mm(d),
-            egui::FontId::proportional(14.0),
-            col,
-        );
+        value_plate(painter, a + (b - a) * 0.5, mm(d), col);
     }
 }
 

@@ -31,6 +31,7 @@ mod asm_pattern;
 mod asm_planned;
 mod asm_replace;
 mod asm_select;
+mod asm_select_modes;
 mod assembly;
 mod blend;
 mod bom;

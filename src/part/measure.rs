@@ -93,6 +93,23 @@ pub fn measure(body: &BRep, targets: &[Target]) -> Result<Measurement, String> {
 /// component (its part's body, the occurrence's placement).
 pub type Placed<'a> = (&'a BRep, Target, Transform3);
 
+/// The way from `p` to `q` along X, then Y, then Z: each leg's ends and signed
+/// length. A leg of no length (below `tol`) is left out.
+pub fn axis_legs(p: &Point3, q: &Point3, tol: Real) -> Vec<(usize, Point3, Point3, Real)> {
+    let mut out = Vec::new();
+    let mut at = *p;
+    for axis in 0..3 {
+        let d = q[axis] - p[axis];
+        let mut next = at;
+        next[axis] = q[axis];
+        if d.abs() > tol {
+            out.push((axis, at, next, d));
+        }
+        at = next;
+    }
+    out
+}
+
 /// Measures one or two targets, each in its own body and placement (an
 /// assembly's components): items are described in their body, then moved,
 /// so the values (lengths, radii, areas) stay exact and the positions,

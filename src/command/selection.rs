@@ -243,6 +243,8 @@ pub enum AsmPriority {
     Component,
     /// Parts, also inside subassemblies.
     Part,
+    /// A body of a part (a part may hold several).
+    Body,
     /// The feature that made the face under the cursor.
     Feature,
     /// The face or edge itself.
@@ -253,9 +255,10 @@ pub enum AsmPriority {
 
 impl AsmPriority {
     /// Every priority, in menu order.
-    pub const ALL: [AsmPriority; 5] = [
+    pub const ALL: [AsmPriority; 6] = [
         AsmPriority::Component,
         AsmPriority::Part,
+        AsmPriority::Body,
         AsmPriority::Feature,
         AsmPriority::FacesEdges,
         AsmPriority::SketchFeatures,
@@ -266,6 +269,7 @@ impl AsmPriority {
         match self {
             AsmPriority::Component => "Component Priority",
             AsmPriority::Part => "Part Priority",
+            AsmPriority::Body => "Select Bodies",
             AsmPriority::Feature => "Feature Priority",
             AsmPriority::FacesEdges => "Select Faces and Edges",
             AsmPriority::SketchFeatures => "Select Sketch Features",
@@ -299,6 +303,8 @@ pub struct SelectSettings {
     pub prehighlight: bool,
     /// Select Priority in an assembly (separate from the part's).
     pub asm_priority: AsmPriority,
+    /// Select Visible Only: the component modes skip hidden components.
+    pub asm_visible_only: bool,
 }
 
 impl Default for SelectSettings {
@@ -309,6 +315,7 @@ impl Default for SelectSettings {
             box_mode: BoxMode::default(),
             prehighlight: true,
             asm_priority: AsmPriority::default(),
+            asm_visible_only: true,
         }
     }
 }
