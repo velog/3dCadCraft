@@ -1,6 +1,6 @@
 //! Assemble › Bill of Materials (`docs/spec/3.6-bom.md`): the Model Data,
 //! Structured and Parts Only views as tabs, Part Number Row Merge, sorting
-//! by a column, optional custom iProperty columns, editing the components'
+//! by a column, optional custom Property columns, editing the components'
 //! Part Number / Stock Number / Description / BOM Structure (components of
 //! this file; a linked part file is read only), the Reference override per
 //! occurrence, and Export to CSV.
@@ -20,7 +20,7 @@ pub(super) struct BomWin {
     all_levels: bool,
     /// Sort by column (index) and direction.
     sort: Option<(usize, bool)>,
-    /// Custom iProperty columns shown.
+    /// Custom Property columns shown.
     extra: Vec<String>,
 }
 
@@ -172,7 +172,7 @@ impl CadCraftApp {
                 }
                 if !customs.is_empty() {
                     ui.menu_button("Columns", |ui| {
-                        ui.label("Custom iProperties");
+                        ui.label("Custom Properties");
                         for c in &customs {
                             let mut on = w.extra.contains(c);
                             if ui.checkbox(&mut on, c).changed() {
@@ -228,7 +228,7 @@ impl CadCraftApp {
                         let doc = r.components.first().copied();
                         // Components of this file can be edited here.
                         let local = r.components.iter().all(|c| c.library.is_none()) && !r.missing;
-                        let tip = "A linked part file: open the part to change its iProperties";
+                        let tip = "A linked part file: open the part to change its Properties";
                         if model {
                             let id = r.occurrences[0];
                             let name = asm.find(id).map_or("?".to_owned(), |o| o.name.clone());
@@ -257,10 +257,10 @@ impl CadCraftApp {
                         } else if local {
                             cell(ui, "part_number", &r.part_number);
                         } else {
-                            // A linked part file: its iProperties window writes into it.
+                            // A linked part file: its Properties window writes into it.
                             ui.horizontal(|ui| {
                                 ui.label(&r.part_number);
-                                if ui.small_button("...").on_hover_text("iProperties of the part file").clicked() {
+                                if ui.small_button("...").on_hover_text("Properties of the part file").clicked() {
                                     open_props = Some(r.occurrences[0]);
                                 }
                             });
@@ -296,7 +296,7 @@ impl CadCraftApp {
                 ui.weak("Nothing to list: place components (Assemble > Place).");
             }
         });
-        // Changes to the components' iProperties (one Undo step per edit).
+        // Changes to the components' Properties (one Undo step per edit).
         if !edits.is_empty() || !structures.is_empty() || !overrides.is_empty() {
             self.checkpoint("Bill of Materials");
             for (d, key, v) in edits {

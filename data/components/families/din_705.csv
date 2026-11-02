@@ -1,0 +1,13 @@
+# DIN 705 A: Adjusting ring. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d,D,b
+6,6,12,6
+8,8,16,8
+10,10,20,10
+12,12,22,12
+15,15,25,12
+16,16,28,12
+20,20,32,14
+25,25,40,16
+30,30,45,16
+40,40,60,18
+50,50,80,20

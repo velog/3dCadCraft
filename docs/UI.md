@@ -242,7 +242,7 @@ right-click → OK / Place Grounded at Origin / Rotate 90° about X, Y, Z; Esc e
 drag inside the green circle = free turn, on its rim = turn in the screen plane. **Delete** deletes the
 selected occurrences, **Esc** ends the command or clears the selection, double-click (view or browser) opens
 the component's part file in its own tab. Right-click a component: Grounded,
-Visibility, Open, iProperties, Copy / Paste, Delete. **V** = Free Move, **G** = Free Rotate, **J** = Joint (Type, the two origins — a face's centre, a circle's
+Visibility, Open, Properties, Copy / Paste, Delete. **V** = Free Move, **G** = Free Rotate, **J** = Joint (Type, the two origins — a face's centre, a circle's
 centre, an edge's midpoint or end (white dots; **hold Shift** to keep the face under the cursor), an axis or
 Origin / work geometry from the browser, shown as a red-green-blue triad — Flip, Lock
 the angle / distance, Minimum / Maximum limits). **Ctrl+C / Ctrl+V**
@@ -253,7 +253,7 @@ axes, centre point), its part's work features and its constraints; with Constrai
 row is a selection (it lights up in the view under the cursor). **Use the current distance** (Constrain
 panel, remembered): on, the offset is the distance the components have now; off, they snap together at 0.
 **The whole assembly command set** ([spec/3.0](spec/3.0-assembly-commands.md), interface only — OK disabled): tabs
-Assemble (Component: Place from Content Center **PCC**, Place Imported CAD Files **PIF**, Create **CRC**, Replace
+Assemble (Component: Place from Library **PFL**, Place Imported CAD Files **PIF**, Create **CRC**, Replace
 **RC** / **RA**; Relationships: Assemble **ASM**, Show **SHR**, Show Sick **SSR**, Hide All **HAR**; Pattern **PCO**,
 Mirror **MIC**, Copy **CPC**; Productivity: Make Layout **MKL**, Create Derived Substitutes **CDS**; Simplify
 **SIM**), **Design** (Bolted Connection **BC**, Clevis / Secure / Radial Pin **CVP SCP RDP**, Insert Frame **IFR**,
@@ -263,7 +263,7 @@ Trim/Extend **FTE**, Lengthen/Shorten **FLS**, Reuse / Change Reuse **FRU FCR**,
 Shaft **SHF**, Spur / Worm / Bevel Gear **SPG WGR BVG**, Bearing **BRG**, Key **KEY**, V-Belts **VBT**, Synchronous
 Belts **SBT**, Roller Chains **RCH**, Disc / Linear / Cylindrical Cam **DCM LCM CCM**, Involute / Parallel Splines
 **ISP PSP**, O-Ring **ORG**, Compression / Extension / Torsion / Belleville Spring **CSP ESP TSP BSP**), Inspect ›
-Analyze Interference **INT**, Manage › Create iAssembly **CIA**, View › Degrees of Freedom **DOF**, Environments
+Analyze Interference **INT**, Manage › Create Assembly Family **CAF**, View › Degrees of Freedom **DOF**, Environments
 (Tube & Pipe **TAP**, Cable & Harness **CAH**, Dynamic Simulation **DSI**, Stress Analysis **STA**, Studio **STU**,
 Presentation **PRS**). Each opens its panel in Properties: selectors take a component (click it) or a face / edge of
 one; the selected components fill the first selector; Enter / right-click Continue / Esc as in the other
@@ -271,7 +271,7 @@ commands. A component's right-click menu offers Replace, Pattern, Mirror, Copy a
 
 The label column of Properties is wider or narrower by dragging its border. **Assemble › BOM**: the Bill of
 Materials (tabs Model Data / Structured / Parts Only, Part Number Row Merge, click a header to sort, Columns for
-custom iProperties, edit Part Number / Stock Number / Description / BOM Structure of the file's own components,
+custom Properties, edit Part Number / Stock Number / Description / BOM Structure of the file's own components,
 *Ref* per occurrence in Model Data, Export… to CSV). **C** = Constrain: the Place Constraint panel (Mate with Mate / Flush, Angle, Tangent with Inside / Outside,
 Insert with Opposed / Aligned, Symmetry with a third selection — the plane), click selection 1 then 2 in the view (an edge within a few pixels wins over its face;
 blue / violet / green under the cursor), Offset or Angle field, Show Preview, Predict Offset and Orientation;
@@ -365,11 +365,10 @@ Sketch Driven Pattern **SDP**, Stitch **STI**, Sculpt **SCU**, Patch **PAT**, Tr
 Surface **RUS**, Replace Face **RF**, Repair Bodies **RB**, Fit Mesh Face **FMF**, Grill **GRL**, Boss **BOS**, Rest
 **RST**, Snap Fit **SNF**, Rule Fillet **RUF**, Lip **LIP**, Freeform Box / Plane / Cylinder / Sphere / Torus /
 Quadball / Face / Convert **FFB FFP FFY FFS FFT FFQ FFF FFC**, Zebra **ZEB**, Draft Analysis **DFA**, Curvature
-**CUR**, Surface Analysis **SAN**, Section Analysis **SEA**, Extract iFeature **XIF**, Create iPart **CIP**, Insert
-iFeature **IIF**, Insert Object **INO**, Make Part **MKP**, Make Components **MKC**, Assembly Features **AF**, Author Frame Profile **AFP**, Customize **CUS**, Studio
+**CUR**, Surface Analysis **SAN**, Section Analysis **SEA**, Extract Feature Template **XFT**, Create Part Family **CPF**, Insert Feature Template **IFT**, Insert Object **INO**, Make Part **MKP**, Make Components **MKC**, Assembly Features **AF**, Author Frame Profile **AFP**, Customize **CUS**, Studio
 **STU**, Stress Analysis **STA**, Shape Generator **SHG**, 3D Print **3DP**, BIM Content **BIM**, Center of Gravity
 **COG**, Analysis Visibility **ANV**, Shadows **SHD**, Reflections **RFL**, Ground Plane **GRP**, Ray Tracing **RTR**.
-Emboss, Extend and Extract iFeature do not start with E (E must start Extrude at once).
+Emboss, Extend and Extract Feature Template do not start with E (E must start Extrude at once).
 🟡 waiting for the owner's check.
 
 ### Drawings (Place Views / Annotate tabs, [spec/4-drawings.md](spec/4-drawings.md))
@@ -435,15 +434,21 @@ The **Help** menu (on the right in Quick Access): **Help** (F1), **Save Diagnost
 | Drawing (`.idw`/`.dwg`) | **Drawing** document (planned) | |
 | Presentation (`.ipn`) | **Presentation** (planned) | |
 | Project file (`.ipj`) | the **project** itself + the linked **libraries** | no separate file with search paths |
+| iFeature | **Feature Template** | |
+| iMate | **Connection** | |
+| AutoDrop | **Smart Drop** | |
+| Inventor Studio | **Render Studio** | |
+| Shape Generator | **Shape Optimization** | |
+| ViewCube | **View Cube** | |
 | Pack and Go | **Pack** | embeds the libraries; the project becomes self-contained |
-| Content Center | **library projects** (`*.3dcadcraft`) + Link | ordinary files, can live in git |
+| Content Center | **Component Library** (planned, spec 6.3): folders of family files | ordinary files, can live in git |
 | Vault | git with an unpacked folder + locking and revisions (planned) | |
 | iProperties | the document's **Properties** | the Physical tab = Inspect → **Physical Properties** |
 | Material / Appearance Browser | **Material Browser**, **Appearance Browser** (Tools → Material and Appearance) | the libraries are CSV files; the user's is in `%APPDATA%\3dcadcraft\materials` |
 | Adjust / Clear (appearance) | **Adjust**, **Clear** | precedence Face > Feature > Body > Part > Material |
 | Parameters (fx) | **Parameters** | expressions with units |
-| iPart / iAssembly | **configurations** (table of variants) | |
-| Model States | **configurations** | shared mechanism with iPart |
+| iPart / iAssembly | **Part Family** / **Assembly Family** (table of variants) | |
+| Model States | **configurations** | shared mechanism with part families |
 | iLogic | **rules** (scripts in pure Rust, e.g. Rhai) | every action can be undone |
 | Autodesk Assistant | **AI assistant through MCP** | any MCP agent can drive the program |
 | Sketch constraint colors | the same meanings | green = fully constrained, blue = under-constrained |
@@ -455,7 +460,7 @@ The **Help** menu (on the right in Quick Access): **Help** (F1), **Save Diagnost
 
 1. **Models:** export **STEP AP242** from Inventor (File → Export → CAD Format) and open it in 3DCadCraft (level 7.7, planned). The geometry comes in exact but *without history*. Changes are made by direct editing (5.5) or by remodelling from the sketches.
 2. **Drawings:** DXF for reference. New drawings are created associatively from the model.
-3. **Standard parts:** instead of Content Center, build a company library `company-standard.3dcadcraft` (see FEATURES 6.3).
+3. **Standard parts:** a company library is a folder of family files (planned, see FEATURES 6.3).
 4. **Templates:** title blocks and styles are recreated in Styles & Standards (4.1).
 5. **Habits:** the "Inventor" mouse profile and the keys above are on by default.
 

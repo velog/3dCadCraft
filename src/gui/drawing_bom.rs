@@ -1311,7 +1311,7 @@ impl CadCraftApp {
                 ui.horizontal(|ui| {
                     if ui
                         .button("Column Chooser...")
-                        .on_hover_text("Add, remove and order the columns (any iProperty or custom property)")
+                        .on_hover_text("Add, remove and order the columns (any Property or custom property)")
                         .clicked()
                     {
                         ed.chooser = !ed.chooser;

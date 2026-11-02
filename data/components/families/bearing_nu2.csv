@@ -1,0 +1,9 @@
+# Series NU2: Cylindrical roller bearing. Nominal values in mm, typed for this library; compared with NSK; NTN listings (NU204, NU208).
+size,d,D,B
+NU204,20,47,14
+NU205,25,52,15
+NU206,30,62,16
+NU207,35,72,17
+NU208,40,80,18
+NU209,45,85,19
+NU210,50,90,20

@@ -1,0 +1,8 @@
+# ISO 3547: Wrapped plain bush. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d,D,lengths
+10 x 12,10,12,10;15
+12 x 14,12,14,10;15;20
+15 x 17,15,17,10;15;20
+20 x 23,20,23,15;20;30
+25 x 28,25,28,15;20;30
+30 x 34,30,34,20;30;40

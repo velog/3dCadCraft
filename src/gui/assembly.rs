@@ -90,6 +90,10 @@ pub(super) struct AsmUi {
     /// The Place window was opened by Replace's Browse: the chosen part
     /// becomes Replace's new component instead of being placed.
     pub place_for_replace: bool,
+    /// The Place from Library window.
+    pub(super) library: Option<super::library::LibraryUi>,
+    /// The Create Part Family window.
+    pub(super) part_family: Option<super::part_family::PartFamilyUi>,
     /// The Place window chooses the Derive panel's source part.
     pub place_for_derive: bool,
     /// The Derive panel's chosen source and its name.
@@ -1863,6 +1867,7 @@ impl CadCraftApp {
             return;
         };
         let looks = self.asm_scene_looks();
+        let mut threads = Vec::new();
         for o in a.occurrences.iter().filter(|o| self.asm_shown(o)) {
             // The Constrain preview moves components before OK.
             let place = self
@@ -1888,11 +1893,42 @@ impl CadCraftApp {
                 None
             };
             self.add_occurrence_mesh(g, o, &place, alpha, &looks);
+            if self.thread_texture && o.enabled {
+                self.occurrence_threads(o, &place, &mut threads);
+            }
+        }
+        // Cosmetic threads: one mesh for every occurrence (spec 2.9).
+        if !threads.is_empty() {
+            g.add_thread_bands(&crate::part::ThreadBands::of(&threads));
         }
         // A subassembly edited in place: the rest of the top assembly.
         self.in_place_scene(g);
         self.interference_scene(g);
         self.pattern_preview_scene(g);
+    }
+
+    /// The cosmetic threads of occurrence `o` at `place`, a subassembly's parts
+    /// where its own solve put them.
+    fn occurrence_threads(
+        &self,
+        o: &crate::document::Occurrence,
+        place: &crate::kernel::Transform3,
+        out: &mut Vec<crate::part::CosmeticThread>,
+    ) {
+        let mut add = |component, at: crate::kernel::Transform3| {
+            let m = at.to_homogeneous();
+            self.with_part(component, |p| {
+                out.extend(p.cosmetic_threads.iter().map(|c| c.transformed(&m)));
+            });
+        };
+        let linked = self.linked();
+        if let Some(sub) = crate::assembly::tree::assembly_of(&self.project, &linked, o.component) {
+            for l in crate::assembly::tree::leaves(&self.project, &linked, o.component, sub) {
+                add(l.component, place * l.world);
+            }
+        } else {
+            add(o.component, *place);
+        }
     }
 
     /// Everything the view does while an assembly is active: picking,
@@ -1909,7 +1945,7 @@ impl CadCraftApp {
         cube_drag: bool,
     ) {
         let ctx = ui.ctx().clone();
-        let modal = self.asm.place.is_some();
+        let modal = self.asm.place.is_some() || self.asm.library.is_some();
         // A linked part file saved meanwhile: reload it.
         if self.poll_libraries() {
             self.scene_dirty = true;
@@ -2693,7 +2729,7 @@ impl CadCraftApp {
             self.asm.find_in_browser = Some(ids[0]);
             ui.close();
         }
-        if ids.len() == 1 && ui.button("iProperties...").clicked() {
+        if ids.len() == 1 && ui.button("Properties...").clicked() {
             self.open_component_iproperties(ids[0]);
             ui.close();
         }

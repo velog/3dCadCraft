@@ -94,6 +94,7 @@ mod iprops;
 mod keymap;
 mod keys;
 mod layout;
+mod library;
 mod loft;
 mod make;
 mod manip;
@@ -107,6 +108,7 @@ mod new_file;
 mod overlay;
 mod panels;
 mod param_link;
+mod part_family;
 mod part_planned;
 mod pattern_dialog;
 mod pattern_feature;
@@ -195,7 +197,7 @@ enum MousePreset {
 impl MousePreset {
     fn label(self) -> &'static str {
         match self {
-            MousePreset::Inventor => "Inventor",
+            MousePreset::Inventor => "Standard",
             MousePreset::Classic => "Classic (left = orbit)",
         }
     }
@@ -720,7 +722,7 @@ struct CadCraftApp {
     in_place_opts: layout::InPlaceOptions,
     /// Application Options › Save: the preview picture.
     thumbnail_source: layout::ThumbnailSource,
-    /// The iProperties window (`iprops.rs`).
+    /// The Properties window (`iprops.rs`).
     iprops: Option<iprops::IPropsWin>,
     /// The Bill of Materials window (`bom.rs`) and the CSV waiting for its
     /// Export file name.
@@ -8268,6 +8270,8 @@ impl eframe::App for CadCraftApp {
         valuefield::draw_whip(&ctx);
         self.alias_window(&ctx);
         self.place_window(&ctx);
+        self.library_window(&ctx);
+        self.part_family_window(&ctx);
         self.drawing_windows(&ctx);
         self.doc_settings_window(&ctx);
         self.iprops_window(&ctx);

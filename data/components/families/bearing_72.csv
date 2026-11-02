@@ -1,0 +1,12 @@
+# Series 72: Angular contact ball bearing. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d,D,B
+7200,10,30,9
+7201,12,32,10
+7202,15,35,11
+7203,17,40,12
+7204,20,47,14
+7205,25,52,15
+7206,30,62,16
+7207,35,72,17
+7208,40,80,18
+7210,50,90,20

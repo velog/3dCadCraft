@@ -1,0 +1,12 @@
+# Series 12: Self-aligning ball bearing. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d,D,B
+1200,10,30,9
+1201,12,32,10
+1202,15,35,11
+1203,17,40,12
+1204,20,47,14
+1205,25,52,15
+1206,30,62,16
+1207,35,72,17
+1208,40,80,18
+1210,50,90,20

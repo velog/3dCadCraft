@@ -1,0 +1,10 @@
+# ASME B18.21.1: Helical spring lock washer. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d1,d2,s
+No.10,4.902,8.484,1.194
+1/4,6.477,12.421,1.575
+5/16,8.103,14.884,1.981
+3/8,9.703,17.348,2.388
+7/16,11.328,19.787,2.769
+1/2,12.929,22.174,3.175
+5/8,16.154,27.407,3.962
+3/4,19.456,32.283,4.775

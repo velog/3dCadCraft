@@ -1,0 +1,18 @@
+# ISO 3601: O-ring. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d1,d2
+5 x 1.5,5,1.5
+8 x 1.5,8,1.5
+10 x 2,10,2
+12 x 2,12,2
+15 x 2,15,2
+16 x 2.5,16,2.5
+20 x 2.5,20,2.5
+22 x 3,22,3
+25 x 3,25,3
+30 x 3,30,3
+35 x 3,35,3
+40 x 3,40,3
+50 x 4,50,4
+60 x 4,60,4
+80 x 5,80,5
+100 x 5,100,5

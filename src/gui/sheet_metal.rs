@@ -3702,9 +3702,8 @@ impl CadCraftApp {
                 .map(|l| l.bend)
                 .collect();
             ui.label(RichText::new(format!("Flat Pattern of {body}")).strong());
-            ui.label("Flat Pattern Extents").on_hover_text(
-                "Inventor's FLAT PATTERN EXTENTS LENGTH / WIDTH / AREA (also BOM columns)",
-            );
+            ui.label("Flat Pattern Extents")
+                .on_hover_text("FLAT PATTERN EXTENTS LENGTH / WIDTH / AREA (also BOM columns)");
             ui.label(format!("Length {:.2} mm", x.length));
             ui.label(format!("Width {:.2} mm", x.width));
             ui.label(format!("Area {:.2} mm²", x.area));

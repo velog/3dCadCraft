@@ -651,7 +651,7 @@ impl CadCraftApp {
         self.layout
             .place("drawing_custom_view", ctx.content_rect(), false, win)
             .show(ctx, |ui| {
-                ui.weak("Drag on the sheet to orbit the model; the ViewCube works too.");
+                ui.weak("Drag on the sheet to orbit the model; the View Cube works too.");
                 ui.separator();
                 ui.label(egui::RichText::new("Rotate at Angle").strong());
                 ui.horizontal(|ui| {

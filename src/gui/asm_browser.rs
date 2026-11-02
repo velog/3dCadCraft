@@ -173,7 +173,7 @@ impl CadCraftApp {
                 None => r,
             };
             r.context_menu(|ui| {
-                if ui.button("iProperties...").clicked() {
+                if ui.button("Properties...").clicked() {
                     iprops = true;
                     ui.close();
                 }

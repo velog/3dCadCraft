@@ -4625,3 +4625,20 @@ fn contact_check_of_a_drag() {
     println!("contact check of a 36-hole plate pair: {ms:.1} ms");
     assert!(ms < 5.0, "contact check took {ms:.1} ms");
 }
+
+/// Spec 6.3 §6.6: a new library member takes at most 500 ms to build.
+#[test]
+fn library_samples_build_within_budget() {
+    let mut seen = std::collections::BTreeSet::new();
+    for sample in cadcraft3d::components::samples::all() {
+        // The largest of each family costs the most, and its first shows it.
+        if !seen.insert(sample.family.clone()) {
+            continue;
+        }
+        let ms = median_ms(3, || {
+            sample.part().unwrap();
+        });
+        println!("library sample {}: {ms:.0} ms", sample.designation());
+        assert!(ms < 500.0, "{}: {ms:.0} ms > 500 ms", sample.designation());
+    }
+}

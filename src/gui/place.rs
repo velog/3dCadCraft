@@ -446,7 +446,7 @@ impl CadCraftApp {
         }
     }
 
-    /// Writes the iProperties of document `doc` of the part file `path`:
+    /// Writes the Properties of document `doc` of the part file `path`:
     /// into its tab when it is open (unsaved there, as any edit), else into
     /// the file itself. The assembly's copy is updated at once. Returns the
     /// message and the project as it is now.
@@ -476,7 +476,7 @@ impl CadCraftApp {
         let project = match done {
             Some(p) => {
                 msg = format!(
-                    "iProperties changed in the open {} (save it there)",
+                    "Properties changed in the open {} (save it there)",
                     key.display()
                 );
                 p
@@ -486,7 +486,7 @@ impl CadCraftApp {
                 let d = p.document_mut(doc).ok_or("the part is not in its file")?;
                 d.properties = props;
                 p.save(&key).map_err(|e| e.to_string())?;
-                msg = format!("iProperties saved into {}", key.display());
+                msg = format!("Properties saved into {}", key.display());
                 Rc::new(load_regenerated(&key)?)
             }
         };
@@ -502,7 +502,7 @@ impl CadCraftApp {
         Ok((msg, project))
     }
 
-    /// [`Self::part_file`] for the iProperties window.
+    /// [`Self::part_file`] for the Properties window.
     pub(super) fn part_file_pub(&self, path: &Path) -> Result<Rc<Project>, String> {
         self.part_file(path)
     }
@@ -845,7 +845,7 @@ impl CadCraftApp {
     }
 
     /// Links part `doc` of `path` and starts placing it.
-    fn place_chosen(&mut self, path: PathBuf, doc: DocumentId) {
+    pub(super) fn place_chosen(&mut self, path: PathBuf, doc: DocumentId) {
         let parts = self
             .part_file(&path)
             .map(|p| self.file_models(&p))
@@ -1305,7 +1305,19 @@ fn shade(n: Vector3, back: Vector3) -> f32 {
 
 /// A shaded picture of `mesh` in `rect`, seen from above at an angle and
 /// turned by `yaw` (painter's algorithm: far triangles first).
-fn draw_preview(painter: &egui::Painter, rect: Rect, mesh: &PickMesh, yaw: f32) {
+pub(super) fn draw_preview(painter: &egui::Painter, rect: Rect, mesh: &PickMesh, yaw: f32) {
+    draw_preview_threads(painter, rect, mesh, yaw, &[]);
+}
+
+/// [`draw_preview`] with the outside threads drawn on it as helix lines on the
+/// side facing the eye; turns closer than a few pixels are thinned out.
+pub(super) fn draw_preview_threads(
+    painter: &egui::Painter,
+    rect: Rect,
+    mesh: &PickMesh,
+    yaw: f32,
+    threads: &[crate::part::CosmeticThread],
+) {
     let Some((lo, hi)) = mesh.bbox else {
         return;
     };
@@ -1351,6 +1363,37 @@ fn draw_preview(painter: &egui::Painter, rect: Rect, mesh: &PickMesh, yaw: f32) 
         m.add_triangle(i, i + 1, i + 2);
     }
     painter.add(egui::Shape::mesh(m));
+    let stroke = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(30, 34, 40, 170));
+    for t in threads.iter().filter(|t| t.shown && !t.internal) {
+        if t.pitch <= 0.0 || t.length <= 0.0 {
+            continue;
+        }
+        let u = t.axis.cross(&Vector3::x());
+        let u = u.try_normalize(1e-9).unwrap_or_else(Vector3::y);
+        let v = t.axis.cross(&u);
+        let thin = (3.0 / (t.pitch * scale).max(1e-6)).ceil().max(1.0);
+        let turns = (t.length / (t.pitch * thin)).floor() as usize;
+        for k in 0..=turns {
+            let z0 = k as Real * t.pitch * thin;
+            let mut line: Vec<Pos2> = Vec::new();
+            for s in 0..=32 {
+                let f = Real::from(s) / 32.0;
+                let a = f * std::f64::consts::TAU;
+                let n = u * a.cos() + v * a.sin();
+                let z = (z0 + f * t.pitch).min(t.length);
+                if n.dot(&back) > 0.05 {
+                    line.push(to_screen(&(t.start + t.axis * z + n * t.face_radius)));
+                } else if line.len() > 1 {
+                    painter.add(egui::Shape::line(std::mem::take(&mut line), stroke));
+                } else {
+                    line.clear();
+                }
+            }
+            if line.len() > 1 {
+                painter.add(egui::Shape::line(line, stroke));
+            }
+        }
+    }
 }
 
 /// The part `mesh` moved by `t`, drawn see-through over the view (where a

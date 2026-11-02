@@ -13,7 +13,7 @@ use crate::sketch::{Constraint, SolveStatus};
 /// Browser actions, collected while drawing and applied afterwards.
 enum BrowserCmd {
     Select(Selection),
-    /// The iProperties window of a document.
+    /// The Properties window of a document.
     IProperties(crate::document::DocumentId),
     /// A Manage › Documents command on a document (spec 0.6b).
     Doc(super::documents::DocCmd, crate::document::DocumentId),
@@ -298,7 +298,7 @@ impl CadCraftApp {
                                 if let Some((c, d)) = ask {
                                     cmds.push(BrowserCmd::Doc(c, d));
                                 }
-                                if ui.button("iProperties...").clicked() {
+                                if ui.button("Properties...").clicked() {
                                     cmds.push(BrowserCmd::IProperties(*id));
                                     ui.close();
                                 }
@@ -533,7 +533,7 @@ impl CadCraftApp {
             .show_header(ui, |ui| {
                 tree_icon(ui, Icon::Part);
                 ui.label(RichText::new(name).strong()).context_menu(|ui| {
-                    if ui.button("iProperties...").clicked() {
+                    if ui.button("Properties...").clicked() {
                         cmds.push(BrowserCmd::IProperties(self.part_id));
                         ui.close();
                     }
@@ -6163,7 +6163,7 @@ fn extrude_options(
         }
         ui.end_row();
         plabel(ui, "");
-        ui.add_enabled(false, egui::Checkbox::new(&mut false, "Infer iMates"))
+        ui.add_enabled(false, egui::Checkbox::new(&mut false, "Infer Connections"))
             .on_disabled_hover_text("Assemblies (FEATURES 3.x)");
         ui.end_row();
     });

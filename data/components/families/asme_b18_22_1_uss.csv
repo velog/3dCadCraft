@@ -1,0 +1,9 @@
+# ASME B18.22.1 USS: Plain washer, USS pattern. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d1,d2,h
+1/4,7.925,18.644,1.651
+5/16,9.525,22.225,2.108
+3/8,11.125,25.4,2.108
+1/2,14.275,34.925,2.769
+5/8,17.475,44.45,3.404
+3/4,20.625,50.8,3.759
+1,26.975,63.5,4.191

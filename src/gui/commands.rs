@@ -1131,7 +1131,7 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["PPT"])
         .inv("Sketch Driven Pattern")
         .at(&[S_PATTERN])
-        .tip("Copies of the selected geometry at points; each copy follows its point (Inventor: Sketch Driven Pattern)")
+        .tip("Copies of the selected geometry at points; each copy follows its point")
         .spec("1.7-patterns.md"),
     // ---- Sketch: Constrain -----------------------------------------------
     t("sketch.dimension", Tool::Dimension, "Dimension", "Размер", Icon::Dimension)
@@ -1284,7 +1284,7 @@ pub static COMMANDS: &[Command] = &[
         .inv("iProperties: Physical")
         .at(&[I_MEASURE])
         .env(Envs::MODELS)
-        .tip("Mass, area, volume, centre of gravity and inertia (iProperties: Physical)")
+        .tip("Mass, area, volume, centre of gravity and inertia (Properties: Physical)")
         .spec("0.10-physical.md"),
     c("inspect.validate", "Validate Solid", "Проверка на тялото", Icon::Validate)
         .alias(&["IVS"])
@@ -1369,7 +1369,8 @@ pub static COMMANDS: &[Command] = &[
         .at(&[T_UPDATE])
         .tip("Recompute every feature of the part from scratch (also clears the build cache)")
         .spec("0-ui.md"),
-    c("tools.rules", "Rules", "Правила (iLogic)", Icon::Rules)
+    c("tools.rules", "Rules", "Правила", Icon::Rules)
+        .inv("iLogic")
         .at(&[T_AUTO])
         .todo("7.5"),
     c("tools.assistant", "AI Assistant", "AI асистент", Icon::Assistant)
@@ -1499,14 +1500,17 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["UPK"])
         .at(&[G_STORE])
         .tip("Unpack: every document of this file into its own file, linked back"),
-    pp("manage.extract_ifeature", "Extract iFeature", "Извличане на iFeature", Icon::ExtractIFeature, Pp::ExtractIFeature)
-        .alias(&["XIF"])
+    pp("manage.extract_ifeature", "Extract Feature Template", "Извличане на шаблон на елемент", Icon::ExtractFeatureTemplate, Pp::ExtractFeatureTemplate)
+        .inv("Extract iFeature")
+        .alias(&["XFT"])
         .at(&[G_AUTHOR]),
-    pp("manage.create_ipart", "Create iPart", "Фамилия детайли (iPart)", Icon::CreateIPart, Pp::CreateIPart)
-        .alias(&["CIP"])
+    pp("manage.create_ipart", "Create Part Family", "Фамилия детайли", Icon::CreatePartFamily, Pp::CreatePartFamily)
+        .inv("Create iPart")
+        .alias(&["CPF"])
         .at(&[G_AUTHOR]),
-    pp("manage.insert_ifeature", "Insert iFeature", "Вмъкване на iFeature", Icon::InsertIFeature, Pp::InsertIFeature)
-        .alias(&["IIF"])
+    pp("manage.insert_ifeature", "Insert Feature Template", "Вмъкване на шаблон на елемент", Icon::InsertFeatureTemplate, Pp::InsertFeatureTemplate)
+        .inv("Insert iFeature")
+        .alias(&["IFT"])
         .at(&[G_INSERT]),
     pp("manage.make_part", "Make Part", "Създаване на детайл от тела", Icon::MakePart, Pp::MakePart)
         .alias(&["MKP"])
@@ -1530,7 +1534,8 @@ pub static COMMANDS: &[Command] = &[
         .at(&[T_OPTIONS])
         .tip("Your own aliases and shortcuts for every command (Keyboard)")
         .spec("0.15-context-menus-shortcuts.md"),
-    c("env.studio", "Inventor Studio", "Рендиране (Studio)", Icon::Studio)
+    c("env.studio", "Render Studio", "Рендиране", Icon::Studio)
+        .inv("Inventor Studio")
         .short("Studio")
         .alias(&["STU"])
         .at(&[E_BEGIN])
@@ -1541,7 +1546,8 @@ pub static COMMANDS: &[Command] = &[
         .at(&[E_BEGIN])
         .env(PART)
         .todo("7.1"),
-    c("env.shape_generator", "Shape Generator", "Генератор на форма", Icon::ShapeGenerator)
+    c("env.shape_generator", "Shape Optimization", "Оптимизация на форма", Icon::ShapeGenerator)
+        .inv("Shape Generator")
         .alias(&["SHG"])
         .at(&[E_BEGIN])
         .env(PART)
@@ -1619,7 +1625,7 @@ pub static COMMANDS: &[Command] = &[
         .alias(&["NPO"])
         .run(Action::Projection(Projection::PerspectiveOrthoFaces))
         .at(&[V_LOOK])
-        .tip("Perspective, but orthographic while looking straight at a ViewCube face")
+        .tip("Perspective, but orthographic while looking straight at a View Cube face")
         .spec("0.3-view.md"),
     c("view.vis_origin_planes", "Origin Planes", "Основни равнини (видимост)", Icon::WorkPlane)
         .alias(&["NVO"])
@@ -1704,11 +1710,12 @@ pub static COMMANDS: &[Command] = &[
         .at(&[V_WIN, VIEW])
         .tip("Show or hide the status bar")
         .spec("0.13-ui-layout.md"),
-    c("view.view_cube", "ViewCube", "Куб на изгледите (показване)", Icon::UiPanels)
+    c("view.view_cube", "View Cube", "Куб на изгледите (показване)", Icon::UiPanels)
+        .inv("ViewCube")
         .alias(&["UIV"])
         .run(Action::Ui(UiCmd::Toggle(Element::ViewCube)))
         .at(&[V_WIN, VIEW])
-        .tip("Show or hide the ViewCube")
+        .tip("Show or hide the View Cube")
         .spec("0.13-ui-layout.md"),
     c("view.triad", "Axis Triad", "Триада на осите (показване)", Icon::UiPanels)
         .alias(&["UIT"])
@@ -2065,12 +2072,13 @@ pub static COMMANDS: &[Command] = &[
         .run(Action::AsmBom)
         .at(&[Place::Ribbon("Assemble", "Manage")])
         .env(ASSEMBLY)
-        .tip("The parts of the assembly with their quantities and iProperties: Model Data, Structured, Parts Only; Export to CSV")
+        .tip("The parts of the assembly with their quantities and Properties: Model Data, Structured, Parts Only; Export to CSV")
         .spec("3.6-bom.md"),
     // ---- Assembly commands with their panel only (spec 3.0) ---------------
-    ap("asm.place_cc", "Place from Content Center", "Поставяне от библиотеката", Icon::PlaceContent, Ap::PlaceContentCenter)
-        .short("Content Center")
-        .alias(&["PCC"])
+    ap("asm.place_cc", "Place from Library", "Поставяне от библиотеката", Icon::PlaceFromLibrary, Ap::PlaceFromLibrary)
+        .short("Library")
+        .inv("Place from Content Center")
+        .alias(&["PFL"])
         .at(&[A_COMPONENT]),
     ap("asm.place_imported", "Place Imported CAD Files", "Поставяне на чужд CAD файл", Icon::PlaceImported, Ap::PlaceImported)
         .short("Imported CAD")
@@ -2143,8 +2151,9 @@ pub static COMMANDS: &[Command] = &[
         .short("Interference")
         .alias(&["INT"])
         .at(&[I_INTERFERENCE]),
-    ap("manage.create_iassembly", "Create iAssembly", "Създаване на iAssembly", Icon::CreateIAssembly, Ap::CreateIAssembly)
-        .alias(&["CIA"])
+    ap("manage.create_iassembly", "Create Assembly Family", "Създаване на фамилия сборки", Icon::CreateAssemblyFamily, Ap::CreateAssemblyFamily)
+        .inv("Create iAssembly")
+        .alias(&["CAF"])
         .at(&[G_AUTHOR]),
     c("view.dof", "Degrees of Freedom", "Степени на свобода", Icon::DofGlyph)
         .short("DOF")
@@ -2297,7 +2306,8 @@ pub static COMMANDS: &[Command] = &[
         .at(&[A_ENV])
         .env(ASSEMBLY)
         .todo("7.1"),
-    c("env.asm_studio", "Inventor Studio", "Рендиране (Studio)", Icon::Studio)
+    c("env.asm_studio", "Render Studio", "Рендиране", Icon::Studio)
+        .inv("Inventor Studio")
         .short("Studio")
         .alias(&["STU"])
         .at(&[A_ENV])

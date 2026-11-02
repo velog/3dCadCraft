@@ -1,5 +1,5 @@
 //! Frame member sections (`docs/spec/6.1-frame-generator.md`, profile
-//! library 6.3 L3), GUI-free: the section table (`data/profiles/profiles.csv`,
+//! library 6.3 CC3), GUI-free: the section table (`data/profiles/profiles.csv`,
 //! built in, plus a user file overriding sizes by family + size), each
 //! shape's outline (lines and arcs, its bounding box centred on the origin),
 //! the section properties in closed form over the outline, and the member
@@ -593,7 +593,7 @@ impl Section {
 }
 
 /// Draws one loop into `sk` (sketch coordinates = the loop's).
-fn draw_loop(sk: &mut Sketch, l: Loop) -> Result<(), PartError> {
+pub(crate) fn draw_loop(sk: &mut Sketch, l: Loop) -> Result<(), PartError> {
     let err = |e: crate::sketch::SketchError| PartError::Feature(e.to_string());
     {
         {
@@ -694,7 +694,7 @@ fn grow_corners(cs: &[(Point2, Real)], by: Real) -> Vec<(Point2, Real)> {
 
 impl Section {
     /// A member part: this section extruded by `length` along +Z from its
-    /// XY plane, with the member's iProperties (Stock Number, Description,
+    /// XY plane, with the member's Properties (Stock Number, Description,
     /// `G_L`) and `material` when the library knows it.
     pub fn member_part(
         &self,
@@ -901,7 +901,7 @@ impl Section {
         Ok(())
     }
 
-    /// The iProperties a member of this section and `length` carries.
+    /// The Properties a member of this section and `length` carries.
     pub fn member_properties(&self, length: Real) -> IProperties {
         let mut p = IProperties::default();
         p.set("stock_number", &self.stock_number());
@@ -915,7 +915,7 @@ impl Section {
 }
 
 /// A work feature of a member part, not shown (the part's construction).
-fn hidden(def: WorkDef) -> WorkFeature {
+pub(crate) fn hidden(def: WorkDef) -> WorkFeature {
     let mut w = WorkFeature::new(def);
     w.visible = false;
     w
@@ -1555,7 +1555,15 @@ impl Library {
         v
     }
 
-    /// The sizes of `family`.
+    /// The family named `family`, with the table's lifetime.
+    pub fn families_named(&self, family: &str) -> Option<&str> {
+        self.sections
+            .iter()
+            .find(|s| s.family == family)
+            .map(|s| s.family.as_str())
+    }
+
+    /// The sizes of a family, in table order.
     pub fn sizes(&self, family: &str) -> Vec<&str> {
         self.sections
             .iter()

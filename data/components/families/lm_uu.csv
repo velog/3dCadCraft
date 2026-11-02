@@ -1,0 +1,10 @@
+# LM Series: Linear ball bushing. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d,D,lengths
+LM6UU,6,12,19
+LM8UU,8,15,24
+LM10UU,10,19,29
+LM12UU,12,21,30
+LM16UU,16,28,37
+LM20UU,20,32,42
+LM25UU,25,40,59
+LM30UU,30,45,64

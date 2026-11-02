@@ -514,6 +514,24 @@ impl Parser<'_> {
                 q = Q::text(format!("{x}{y}"));
                 continue;
             }
+            // A number joins a text as it reads (`"M" + d`).
+            if plus {
+                let number = |v: Real| {
+                    let s = format!("{v:.6}");
+                    s.trim_end_matches('0').trim_end_matches('.').to_owned()
+                };
+                match (&q.k, &r.k) {
+                    (K::Text(x), K::Num) => {
+                        q = Q::text(format!("{x}{}", number(r.v)));
+                        continue;
+                    }
+                    (K::Num, K::Text(y)) => {
+                        q = Q::text(format!("{}{y}", number(q.v)));
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             q = match self.align(&q, &r, "add") {
                 Ok((a, b, dim)) => Q::num(if plus { a + b } else { a - b }, dim),
                 Err(e) => self.fail(e, Q::bare(0.0))?,

@@ -1,0 +1,12 @@
+# DIN 471: Retaining ring for shafts. Nominal values in mm, typed for this library; compared with fasten.it.
+size,d1,d2,s
+10,10,9.6,1
+12,12,11.5,1
+15,15,14.3,1
+17,17,16.2,1
+20,20,19,1.2
+25,25,23.9,1.2
+30,30,28.6,1.5
+35,35,33,1.5
+40,40,37.5,1.75
+50,50,47,2

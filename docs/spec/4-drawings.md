@@ -9,14 +9,14 @@ Status: ✅ done · 🟡 partial · ⬜ to do · ⛔ blocked by another feature.
 ## 1. Purpose
 
 A drawing document (`.idw` / `.dwg` in Inventor) holds sheets with views of parts and assemblies,
-dimensions and notes, a title block filled from iProperties, parts lists with balloons and tables. It is
+dimensions and notes, a title block filled from Properties, parts lists with balloons and tables. It is
 **associative**: a change of the model updates the views; annotations follow the edges they are attached
 to, and an annotation whose edge is gone is marked (not deleted).
 
 ## 2. Inputs
 
 - Part, assembly and (later) sheet metal documents — linked files, as an assembly links parts (3.1).
-- Their iProperties (0.16), BOM (3.6), Hole data (`PartDocument::holes`, 2.3), sketch / feature
+- Their Properties (0.16), BOM (3.6), Hole data (`PartDocument::holes`, 2.3), sketch / feature
   dimensions (for Retrieve), sheet metal flat pattern and bends (5.6).
 
 ## 3. Options
@@ -29,7 +29,7 @@ to, and an annotation whose edge is gone is marked (not deleted).
 | Sheets | several per drawing; New Sheet, Edit Sheet (name, size A4–A0 / ANSI A–E / custom — Height / Width editable only for a custom size, orientation), Delete (several at once, a dialog lists them), Copy / Paste, Next / Previous Sheet in the canvas menu; Exclude from count / printing | | 🟡 New Sheet (NS), Edit Sheet (ES: name, size incl. custom, orientation, revision, border / title block, exclude from count / printing), Delete Sheet, Activate (browser); Copy / Paste and Next / Previous Sheet ⬜; waiting for a visual check |
 | Sheet Formats | a saved sheet (size, border, title block, views with their settings) in Drawing Resources; Create Sheet Format from a sheet's menu (option *Fit views to sheet*); New Sheet from a format asks for a model for its views; a format is never edited in place — make a sheet from it, change it, save it under the same name | | ⬜ |
 | Drawing Resources | Sheet Formats (sheet + views ready to place), Borders, Title Blocks, Sketched Symbols — editable as sketches with property fields | | ⬜ |
-| Title block fields | text bound to iProperties of the drawing or the model of the first view (Part Number, Description, Designer, Date, Material, Mass, Scale, Sheet n of m); **prompted entries** asked when the block is placed, changed later in Edit Property Fields (only prompted values are editable there; iProperties through their own dialog); Reorder Prompted Entries in the definition | | 🟡 a fixed ISO 7200-like block (title, part number, designed / checked by, date, material, scale, revision, sheet n / m) filled from the drawing's and the first view's model iProperties; prompted entries ⬜; waiting for a visual check |
+| Title block fields | text bound to Properties of the drawing or the model of the first view (Part Number, Description, Designer, Date, Material, Mass, Scale, Sheet n of m); **prompted entries** asked when the block is placed, changed later in Edit Property Fields (only prompted values are editable there; Properties through their own dialog); Reorder Prompted Entries in the definition | | 🟡 a fixed ISO 7200-like block (title, part number, designed / checked by, date, material, scale, revision, sheet n / m) filled from the drawing's and the first view's model Properties; prompted entries ⬜; waiting for a visual check |
 | Title block / border definition | drawn as a sketch (Manage › Define › Title Block), text with property fields, images; Save Title Block; Edit Definition from the sheet | | ⬜ |
 | Standards (Styles) | Standard — General: units, decimal marker, preset values (line weights, text heights, scales, hatch angles), characters excluded from automatic identifiers, Global Line Scale; View Preferences: view label per view type (prefix, text with scale / identifier fields, above / below, visible), default cut edges (Jagged / Smooth) for detail and section, thread edge display, **projection type** (first angle / third angle), Front View Plane (XY / YZ / XZ / From Model, new views only); Available Styles; Object Defaults (style + layer per object type: visible, hidden, tangent, centre, section, dimension…); **Material Hatch Pattern Defaults** (material → hatch pattern table, default pattern) | | 🟡 the drawing stores its standard (ISO / ANSI / DIN) and projection type (ISO, DIN first angle; ANSI third); zones of the border follow it; the rest ⬜ |
 | Active standard / Update / Purge | Style and Standard Editor as for parts | | ⬜ |
@@ -64,7 +64,7 @@ to, and an annotation whose edge is gone is marked (not deleted).
 | Retrieve Model Annotations | brings in the model's sketch and feature dimensions that lie in the view plane | | ⬜ |
 | Hole and Thread Notes | from the Hole feature (`HoleSpec::note`) | 🟡 HN: click a hole's circle (a circle on the axis of a Hole feature's hole), then place the note; the text comes from the hole (Ø, depth / THRU, counterbore / countersink, thread) at every redraw, led by the quantity of every identical hole on its plane from any Hole feature, pattern or mirror (`2x Ø6.6 THRU`); symbols written as text (DEEP, CBORE, CSK) until the drawing font has them |
 | Centre Mark, Centerline, Centerline Bisector, Centered Pattern; Automated Centerlines | | | 🟡 Center Mark (CM) on circles / arcs seen face-on, Centerline (CL) through two circle centres, both in centre-line style (long dash, dot) passing the circle by 2 mm; Bisector, Centered Pattern, automated centrelines ⬜; waiting for a visual check |
-| Text, Leader Text | text with iProperty / parameter fields | | 🟡 Text (T): a note with several lines and a height (Format Text window), double-click edits it, drag moves it; Leader Text (LE): the arrow's tip (snaps to end points / centres), then the text's place, same window; property fields and attaching the leader to geometry ⬜; waiting for a visual check |
+| Text, Leader Text | text with Property / parameter fields | | 🟡 Text (T): a note with several lines and a height (Format Text window), double-click edits it, drag moves it; Leader Text (LE): the arrow's tip (snaps to end points / centres), then the text's place, same window; property fields and attaching the leader to geometry ⬜; waiting for a visual check |
 | Symbols | Surface Texture, Welding, Feature Control Frame (GD&T), Datum Identifier, Datum Target | | ⬜ |
 | Balloons / Auto Balloon | item balloons from a BOM view: Around / Horizontal / Vertical placement, offset, first instance only | ⛔ BOM (3.6, done first level) | ⬜ |
 | Orphaned annotations | an annotation whose geometry is gone is shown marked, never removed silently | | 🟡 annotations reference (view, edge name); a missing edge leaves the annotation in the drawing, marked with a red "?" where it was; deleting a view deletes its annotations (as in Inventor); waiting for a visual check |
@@ -301,7 +301,7 @@ and cached, except a last-good copy for a missing model file (§5).
 
 | Stage | Content |
 |---|---|
-| D1 | Drawing document, one ISO sheet (A4–A0, border, simple title block from iProperties), Base + Projected views of a part with exact HLR (visible / hidden / tangent lines), move views, PDF export |
+| D1 | Drawing document, one ISO sheet (A4–A0, border, simple title block from Properties), Base + Projected views of a part with exact HLR (visible / hidden / tangent lines), move views, PDF export |
 | D2 | Section (full / half / offset, Depth, hatching), Detail, Auxiliary; view labels; associativity on model change |
 | D3 | Annotations: general dimensions (linear, radius, diameter, angle), centre marks / centrelines, text and leaders, hole notes, Retrieve Model Dimensions; orphan marking |
 | D4 | Assemblies in views; Parts List + Balloons / Auto Balloon from the BOM; Revision and Hole tables |

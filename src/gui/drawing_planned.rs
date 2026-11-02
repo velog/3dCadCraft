@@ -667,7 +667,7 @@ impl Planned {
                 "Define Title Block",
                 &[
                     Note(
-                        "A sketch with lines, texts and property fields (iProperties of the drawing or of the model of the first view), prompted entries",
+                        "A sketch with lines, texts and property fields (Properties of the drawing or of the model of the first view), prompted entries",
                     ),
                     Text("Name", "ISO"),
                     Button("Edit Definition..."),

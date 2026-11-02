@@ -1,6 +1,6 @@
 //! Bill of Materials (`docs/spec/3.6-bom.md`): the rows of an assembly's
 //! BOM in the Model Data, Structured and Parts Only views, from its
-//! occurrences and each component's iProperties and BOM Structure; CSV
+//! occurrences and each component's Properties and BOM Structure; CSV
 //! export. GUI-free: the components are reached through a callback.
 
 use std::collections::BTreeMap;
@@ -25,7 +25,7 @@ pub enum BomView {
 pub struct ComponentInfo {
     /// File (or document) name: the default Part Number.
     pub file_name: String,
-    /// Its iProperties.
+    /// Its Properties.
     pub props: IProperties,
     /// Its material's name.
     pub material: Option<String>,
@@ -74,9 +74,9 @@ pub struct BomRow {
     pub components: Vec<DocRef>,
     /// The occurrences counted (ids).
     pub occurrences: Vec<u32>,
-    /// Custom iProperties by name (text).
+    /// Custom Properties by name (text).
     pub custom: BTreeMap<String, String>,
-    /// The component's standard iProperties by key (`iprops::STANDARD`),
+    /// The component's standard Properties by key (`iprops::STANDARD`),
     /// for parts list columns.
     pub props: BTreeMap<String, String>,
     /// A component of it was not found.
@@ -272,7 +272,7 @@ fn gather(
     }
 }
 
-/// The custom iProperty names used by `rows` (optional columns).
+/// The custom Property names used by `rows` (optional columns).
 pub fn custom_columns(rows: &[BomRow]) -> Vec<String> {
     let mut v: Vec<String> = rows.iter().flat_map(|r| r.custom.keys().cloned()).collect();
     v.sort();

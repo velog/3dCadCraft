@@ -1,4 +1,4 @@
-//! iProperties (`docs/spec/0.16-iproperties.md`): the descriptive properties
+//! Properties (`docs/spec/0.16-iproperties.md`): the descriptive properties
 //! of every document — Summary, Project and Status fields by key, the
 //! Design State, and custom properties of the user's own (Text, Date,
 //! Number, Yes or No). Stored on [`super::Document`], skipped when empty.
@@ -163,7 +163,7 @@ pub struct CustomProperty {
     pub value: PropValue,
 }
 
-/// The iProperties of a document.
+/// The Properties of a document.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct IProperties {
     /// Standard properties by key ([`STANDARD`]); empty ones are absent.

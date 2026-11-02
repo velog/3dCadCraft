@@ -1049,8 +1049,8 @@ fn card_menu(ui: &mut egui::Ui, r: &Recent, ask: &mut Option<Ask>, remove: &mut 
         ui.close();
     }
     planned(
-        ui.add_enabled(false, egui::Button::new("iProperties...")),
-        "iProperties of a file that is not open",
+        ui.add_enabled(false, egui::Button::new("Properties...")),
+        "Properties of a file that is not open",
     );
 }
 

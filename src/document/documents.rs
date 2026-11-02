@@ -33,7 +33,7 @@ impl Project {
             .unwrap_or_else(|| base.to_owned())
     }
 
-    /// Adds a document of a new name `<base><n>` with fresh iProperties and
+    /// Adds a document of a new name `<base><n>` with fresh Properties and
     /// returns its id (New Part / Assembly / Drawing in this file).
     pub fn add_new_document(&mut self, base: &str, data: DocumentData) -> DocumentId {
         let name = self.free_name(base);

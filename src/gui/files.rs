@@ -728,6 +728,8 @@ pub(super) enum Pending {
     CloseTab,
     /// Assemble › Place, after the assembly was saved.
     Place,
+    /// Assemble › Place from Library, after the assembly was saved.
+    Library,
 }
 
 /// The user's home folder: `USERPROFILE` on Windows (Git Bash / MSYS set
@@ -952,6 +954,7 @@ impl CadCraftApp {
             Pending::Open => self.open_dialog(DialogPurpose::Open),
             Pending::CloseTab => self.close_active_tab(),
             Pending::Place => self.open_place_dialog(),
+            Pending::Library => self.place_from_library(),
             Pending::Close => {
                 // Every changed tab asks in turn.
                 if let Some(k) = self.dirty_other_tab() {
@@ -1494,7 +1497,7 @@ impl CadCraftApp {
             });
         });
         if ui
-            .button("iProperties...")
+            .button("Properties...")
             .on_hover_text("Title, part number, status and custom properties of this document")
             .clicked()
         {

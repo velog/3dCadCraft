@@ -1,0 +1,8 @@
+# Ring Magnet: Ring magnet. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d1,d2,h
+10 x 4 x 3,4,10,3
+12 x 5 x 4,5,12,4
+15 x 6 x 5,6,15,5
+20 x 8 x 5,8,20,5
+25 x 10 x 6,10,25,6
+30 x 12 x 6,12,30,6

@@ -1,0 +1,10 @@
+# DIN 472: Retaining ring for bores. Nominal values in mm, typed for this library; compared with fasten.it.
+size,d1,d2,s
+20,20,21,1
+25,25,26.2,1.2
+30,30,31.4,1.2
+35,35,37,1.5
+40,40,42.5,1.75
+47,47,49.5,1.75
+52,52,55,2
+62,62,65,2

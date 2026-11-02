@@ -93,6 +93,7 @@ tubes in a T took the kernel 11–15 s); editing in `gui/frame_edit.rs` (the fra
 | `assembly::motion`, `gui::motion` | spec 3.1b, adapted from SolidCraft: `MotionData` in `AssemblyDocument::motion` (links, contact sets, studies, exploded views), `mesh_overlap` on `PickMesh`; window **Motion and Contact**, `motion_links_follow` (after each solve), `contact_guard` (drags), `drive_with_contact` (Drive's Collision Detection) | `MotionData`, `MotionLink`, `ContactSet`, `MotionStudy`, `ExplodedView` |
 | `assembly::restructure`, `gui::file_explorer` | Demote / Promote, `BrowserFolder` (`AssemblyDocument::folders`); the browser's Files tab (the file's documents by kind, the folder), `active_document_menu` replaces the row of document chips | `BrowserFolder`, `Demoted`, `FilesUi` |
 | `gui::inventor_keys`, `gui::view_nav` | Inventor's key combinations and the import of the installed Inventor's; Previous / Next View, Zoom Window, Zoom Selected | `DEFAULT_KEYS`, `ViewHistory` |
+| `components` | Component Library (spec 6.3): a folder of categories under `root_dir()`: `Samples/` (`samples.rs`: one small family per kind of component, plain parts), `User/` (families published from a part with a `part::family` table); `catalog.rs` lists them, `member_file` writes a member once with ids derived from its identity (`write_part`), so links survive a rebuilt library; GUI `gui/library.rs` (Place from Library) and `gui/part_family.rs` (Create Part Family, Publish) | `Catalog`, `Family`, `Entry`, `Sample`, `FamilyTable` |
 | `api` | JSON-RPC/MCP server — placeholder | |
 | `gui` (feature `gui`) | Manage › Documents (`documents.rs`, spec 0.6b: `DocCmd`, `DocsUi`, the Documents window, Rename, browser menus; changes go through `docs_edit` = try on a copy, one Undo step); Home start page (`home.rs`, spec 0.17: `HomeUi`, a tab of its own — `home.shown` hides the browser / Properties and replaces the view; settings in `settings.json` `home`); keyboard rules of every command (`keys.rs`: `OpenState` from `CadCraftApp::open_state` = the one "a command is open" check, Repeat on Enter/Space/menu, letters without Ctrl/Alt, `PanelKey` Enter/Ctrl+Enter for panel OKs); Sweep / Loft commands (`sweep.rs`: selectors Profiles → Path → Guide Rail, Sections, preview, panels); Coil / Rib commands (`coil_rib.rs`: `command_ui::selector_rows`, picks, preview, panels, Properties); breadcrumb of every feature panel (`breadcrumb.rs`: `BreadcrumbState`, `show`); command guidance (`command_ui.rs`: selector rows with dot/count/`x`, the right-click menu of an open command, Enter/Ctrl+Enter, cursor hint, minimal breadcrumb rename; Face Draft, Shell, Combine and Split use it); Combine / Split commands (`combine_split.rs`); panel/window layout and persisted UI settings (`layout.rs`: `UiSettings`, `AppOptions`, `LayoutUi::place` for floating windows, View → User Interface, Clean Screen, Full Screen, debounced atomic save into `settings.json` keys `ui`/`options`); Hole / Thread commands (`hole.rs`, panel `hole_panel.rs`), Materials/appearances/Physical Properties (`material.rs`: QAT lists, browsers, Adjust, Clear, Styles Editor, Manage tab, coloured scene), Rebuild All (`rebuild_all`, QAT + Tools), Fillet/Chamfer select modes and types (`blend.rs`); the Loft panel (`loft.rs`: Curves / Conditions / Transition tabs on the shared selector flow); selection modes and multi-select in the idle view (`select.rs`: `SelectMode`, `SelItem`, box/tangencies/invert/previous; part-side helpers in `part/select.rs`); navigation (`nav.rs`: Free / Constrained orbit about the model point under the cursor, zoom to the cursor, zoom out when the edited sketch or a placed component leaves the view — `keep_in_view`), Inventor-like shell: ribbon (large/small/icon-only buttons), vector icons (`icons.rs`), expression fields with the `>` menu (`valuefield.rs`), feature manipulators (`manip.rs`: distance arrows, taper grip, revolve angle arc), sketch pattern command dialog (`pattern_dialog.rs`: selectors, preview, OK/Cancel), part Rectangular/Circular Pattern and Mirror command (`pattern_feature.rs`; its panel in `panels.rs`), browser, properties, ViewCube, viewport, overlays; sketch tool state machine (`sketch_tools.rs`: Line/Circle/Arc/Rectangle/Slot/Polygon/Spline/Point, constraint tools, General Dimension) | `CadCraftApp`, `SketchTools` |
 
@@ -124,7 +125,7 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
    deterministic; `serde_json` keeps `float_roundtrip`.
 7. **Ribbon lists the full Inventor command set.** Unimplemented commands stay
    disabled with the `docs/FEATURES.md` section in the tooltip; implemented ones get
-   an `Action`. Keep Inventor's command names (English).
+   an `Action`. Keep Inventor's command names (English), except its own brand names (owner's rule, 2026-11-02): Content Center = Component Library, iPart / iAssembly = Part / Assembly Family, iFeature = Feature Template, iMate = Connection, AutoDrop = Smart Drop, iProperties = Properties, iLogic = Rules, Inventor Studio = Render Studio, Shape Generator = Shape Optimization, ViewCube = View Cube; `.inv(..)` keeps Inventor's name for the command search only. Command ids stay (settings store them).
 8. **Assembly-ready part data** (assemblies come next; don't block them):
    - a `PartDocument` must regenerate from its own features only — deterministic,
      no dependency on where/how often it is placed (it is shared by N occurrences);
@@ -1051,7 +1052,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   per-face colour lookup. Pattern / Mirror push `c.transformed(&m)` copies into
   `extra.cosmetic` like holes (a mirror flips the hand). `fwidth` must come before the
   `discard` (uniform control flow); `renderer::tests::viewport_shader_validates` runs naga on
-  the shader. Option: `AppOptions::thread_texture` (Application Options → Display).
+  the shader. Option: `AppOptions::thread_texture` (Application Options → Display). An assembly gathers every occurrence's threads into one sleeve mesh (`occurrence_threads`); the library's preview draws outside threads as helix lines (`draw_preview_threads`).
 
 - **Assemblies (A1)**: the active document is `part_id` — a part *or* an assembly of the same project
   (`activate_document`; the browser's other documents open on double-click). While an assembly is
@@ -1233,9 +1234,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   the eye ray and a depth margin of 2 % of the distance — with the screen parameter and a 0.1 mm margin no plate
   edge could be picked (the face it bounds, hit a pixel away, was always "in front").
 - **BOM** (`assembly::bom`, `gui/bom.rs`): computed every frame from the occurrences and each component's
-  iProperties (`bom_info` through `with_part` / `part_file`); only `IProperties::bom_structure` and
+  Properties (`bom_info` through `with_part` / `part_file`); only `IProperties::bom_structure` and
   `Occurrence::bom` are stored.
-- **iProperties** (`document::iprops`, `gui/iprops.rs`): on `Document::properties` (skipped when empty);
+- **Properties** (`document::iprops`, `gui/iprops.rs`): on `Document::properties` (skipped when empty);
   standard keys in `STANDARD` are stored in files — never rename one.
 - **Model edges have their own GPU buffer** (`SceneGeometry::add_edge_polyline`, used by
   `material::add_part_meshes*`): the visual style draws, hides or dashes them; grid, axes and overlays stay in

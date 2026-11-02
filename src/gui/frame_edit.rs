@@ -243,7 +243,7 @@ impl CadCraftApp {
             return false;
         }
         let mut cmds = Vec::new();
-        ui.menu_button("Frame Generator", |ui| member_menu(ui, ids, &mut cmds));
+        ui.menu_button("Frame", |ui| member_menu(ui, ids, &mut cmds));
         for c in cmds {
             self.frame_cmd(c);
         }

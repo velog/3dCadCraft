@@ -472,7 +472,7 @@ impl Project {
 }
 
 /// What the Open dialog shows of a project without loading it: the preview
-/// picture, the previewed document's name, kind and iProperties, the
+/// picture, the previewed document's name, kind and Properties, the
 /// documents and the build that wrote it.
 #[derive(Clone, Debug, Default)]
 pub struct FilePreview {
@@ -484,7 +484,7 @@ pub struct FilePreview {
     pub documents: Vec<(String, DocumentKind)>,
     /// The previewed document (the active one at save, else the first).
     pub document: Option<(String, DocumentKind)>,
-    /// Its iProperties.
+    /// Its Properties.
     pub properties: super::iprops::IProperties,
 }
 

@@ -33,7 +33,7 @@ pub const COLUMNS: [(&str, &str); 5] = [
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RevScope {
     /// One table for the whole drawing (writes the drawing's Revision
-    /// Number iProperty).
+    /// Number Property).
     #[default]
     Drawing,
     /// A table of the active sheet (writes the sheet's revision).

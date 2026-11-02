@@ -135,9 +135,9 @@ pub enum PartPlanned {
     SurfaceAnalysis,
     SectionAnalysis,
     // Manage
-    InsertIFeature,
-    ExtractIFeature,
-    CreateIPart,
+    InsertFeatureTemplate,
+    ExtractFeatureTemplate,
+    CreatePartFamily,
     MakePart,
     MakeComponents,
     AuthorFrameProfile,
@@ -183,9 +183,9 @@ impl PartPlanned {
         PartPlanned::Curvature,
         PartPlanned::SurfaceAnalysis,
         PartPlanned::SectionAnalysis,
-        PartPlanned::InsertIFeature,
-        PartPlanned::ExtractIFeature,
-        PartPlanned::CreateIPart,
+        PartPlanned::InsertFeatureTemplate,
+        PartPlanned::ExtractFeatureTemplate,
+        PartPlanned::CreatePartFamily,
         PartPlanned::MakePart,
         PartPlanned::MakeComponents,
         PartPlanned::AuthorFrameProfile,
@@ -231,9 +231,9 @@ impl PartPlanned {
             Curvature => "Curvature Analysis",
             SurfaceAnalysis => "Surface Analysis",
             SectionAnalysis => "Section Analysis",
-            InsertIFeature => "Insert iFeature",
-            ExtractIFeature => "Extract iFeature",
-            CreateIPart => "Create iPart",
+            InsertFeatureTemplate => "Insert Feature Template",
+            ExtractFeatureTemplate => "Extract Feature Template",
+            CreatePartFamily => "Create Part Family",
             MakePart => "Make Part",
             MakeComponents => "Make Components",
             AuthorFrameProfile => "Author Frame Profile",
@@ -280,9 +280,9 @@ impl PartPlanned {
             Curvature => Icon::Curvature,
             SurfaceAnalysis => Icon::SurfaceAnalysis,
             SectionAnalysis => Icon::SectionAnalysis,
-            InsertIFeature => Icon::InsertIFeature,
-            ExtractIFeature => Icon::ExtractIFeature,
-            CreateIPart => Icon::CreateIPart,
+            InsertFeatureTemplate => Icon::InsertFeatureTemplate,
+            ExtractFeatureTemplate => Icon::ExtractFeatureTemplate,
+            CreatePartFamily => Icon::CreatePartFamily,
             MakePart => Icon::MakePart,
             MakeComponents => Icon::MakeComponents,
             AuthorFrameProfile => Icon::AuthorFrameProfile,
@@ -305,7 +305,7 @@ impl PartPlanned {
             FreeformBox | FreeformPlane | FreeformCylinder | FreeformSphere | FreeformTorus
             | FreeformQuadball | FreeformFace | FreeformConvert => "5.5",
             Zebra | DraftAnalysis | Curvature | SurfaceAnalysis | SectionAnalysis => "0.10",
-            InsertIFeature | ExtractIFeature | CreateIPart => "5.7",
+            InsertFeatureTemplate | ExtractFeatureTemplate | CreatePartFamily => "5.7",
             MakePart | MakeComponents => "3.10",
             AuthorFrameProfile => "6.1",
         }
@@ -353,9 +353,15 @@ impl PartPlanned {
             Curvature => "Curvature combs on edges and faces.",
             SurfaceAnalysis => "Colours faces by their curvature.",
             SectionAnalysis => "A live section through the part with a wall-thickness check.",
-            InsertIFeature => "Inserts a saved iFeature: placement plane, sizes, position.",
-            ExtractIFeature => "Saves selected features as an iFeature with size parameters.",
-            CreateIPart => "A family table: parameters, properties and suppression per member.",
+            InsertFeatureTemplate => {
+                "Inserts a saved feature template: placement plane, sizes, position."
+            }
+            ExtractFeatureTemplate => {
+                "Saves selected features as a feature template with size parameters."
+            }
+            CreatePartFamily => {
+                "A family table: parameters, properties and suppression per member."
+            }
             MakePart => "A new part derived from chosen bodies of this one.",
             MakeComponents => "Each chosen body becomes a part in an assembly.",
             AuthorFrameProfile => {
@@ -1167,8 +1173,8 @@ impl PartPlanned {
                     Radio("Show", &["Inside", "Outside"], 0),
                 ],
             )],
-            InsertIFeature => &[
-                Page("Select", &[Button("Browse..."), Text("iFeature", "")]),
+            InsertFeatureTemplate => &[
+                Page("Select", &[Button("Browse..."), Text("Template", "")]),
                 Page(
                     "Position",
                     &[
@@ -1185,7 +1191,7 @@ impl PartPlanned {
                 Page(
                     "Size",
                     &[Note(
-                        "The iFeature's size parameters are listed here (name, value)",
+                        "The template's size parameters are listed here (name, value)",
                     )],
                 ),
                 Page(
@@ -1193,12 +1199,12 @@ impl PartPlanned {
                     &[Check("Activate sketch edit immediately", false)],
                 ),
             ],
-            ExtractIFeature => &[Page(
-                "Extract iFeature",
+            ExtractFeatureTemplate => &[Page(
+                "Extract Feature Template",
                 &[
                     Radio(
                         "Type",
-                        &["Standard iFeature", "Sheet Metal Punch iFeature"],
+                        &["Standard Feature Template", "Sheet Metal Punch Template"],
                         0,
                     ),
                     Sel(
@@ -1212,7 +1218,7 @@ impl PartPlanned {
                     Button("Save..."),
                 ],
             )],
-            CreateIPart => &[
+            CreatePartFamily => &[
                 Page(
                     "Parameters",
                     &[
@@ -1223,14 +1229,14 @@ impl PartPlanned {
                 Page(
                     "Properties",
                     &[Note(
-                        "iProperties as table columns (Part Number, Description…)",
+                        "Properties as table columns (Part Number, Description…)",
                     )],
                 ),
                 Page(
                     "Suppression",
                     &[Note("Features computed or suppressed per member")],
                 ),
-                Page("iMate", &[Note("iMates per member")]),
+                Page("Connections", &[Note("Connections per member")]),
                 Page(
                     "Work Features",
                     &[Note("Work features included per member")],
@@ -1338,7 +1344,8 @@ impl Planned {
         matches!(
             self,
             Planned::Asm(
-                super::asm_planned::AsmPlanned::Interference
+                super::asm_planned::AsmPlanned::PlaceFromLibrary
+                    | super::asm_planned::AsmPlanned::Interference
                     | super::asm_planned::AsmPlanned::Create
                     | super::asm_planned::AsmPlanned::Pattern
                     | super::asm_planned::AsmPlanned::Replace
@@ -1371,6 +1378,7 @@ impl Planned {
                     | PartPlanned::MakePart
                     | PartPlanned::MakeComponents
                     | PartPlanned::AuthorFrameProfile
+                    | PartPlanned::CreatePartFamily
             )
         )
     }
@@ -2310,6 +2318,11 @@ impl CadCraftApp {
     /// Opens the panel of planned command `kind`. What is selected and
     /// fits the first selector fills it (rule 17).
     pub(super) fn start_part_planned(&mut self, kind: PartPlanned) {
+        if kind == PartPlanned::CreatePartFamily {
+            self.finish_sketch();
+            self.part_family_start();
+            return;
+        }
         let kind = Planned::Part(kind);
         let pre = self.sel.clone();
         self.finish_sketch();

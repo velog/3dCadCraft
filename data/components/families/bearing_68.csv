@@ -1,0 +1,12 @@
+# Series 68: Deep groove ball bearing, thin section. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d,D,B
+6800,10,19,5
+6801,12,21,5
+6802,15,24,5
+6803,17,26,5
+6804,20,32,7
+6805,25,37,7
+6806,30,42,7
+6807,35,47,7
+6808,40,52,7
+6810,50,65,7

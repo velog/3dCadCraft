@@ -1,7 +1,7 @@
 //! Design projects (`.ccproj`, `docs/spec/0.6a-file-types-projects.md` §3.2):
 //! Inventor's project file in our own form — a small JSON file naming where a
 //! design's files live (workspace, libraries, shortcuts, template / style /
-//! Content Center folders) and how saving treats old versions.
+//! component library folders) and how saving treats old versions.
 //!
 //! A project is user setup, not model data: switching projects never changes
 //! a document. The built-in *Default* project has no file. Which project is
@@ -58,7 +58,7 @@ pub struct DesignProject {
     /// Styles (design data) folder (`None` = default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub styles: Option<PathBuf>,
-    /// Content Center files folder (`None` = default).
+    /// component library files folder (`None` = default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_center: Option<PathBuf>,
     /// Old versions kept on save (Inventor's default 1; −1 = all).

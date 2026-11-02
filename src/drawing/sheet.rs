@@ -226,7 +226,7 @@ pub enum Prim {
     },
 }
 
-/// Fields of the title block: iProperties of the drawing or of the model of
+/// Fields of the title block: Properties of the drawing or of the model of
 /// its first view, and values of the sheet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TitleField {

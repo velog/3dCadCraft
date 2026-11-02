@@ -37,6 +37,7 @@ mod exact;
 pub mod export;
 pub mod expr;
 pub mod extrude;
+pub mod family;
 pub mod frame;
 pub mod freeform;
 pub mod history;
@@ -955,6 +956,9 @@ pub struct PartDocument {
     /// (`assembly::adapt`). A plain list: old builds ignore it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adaptive: Vec<String>,
+    /// The table of a part family (spec 5.7). A new field old builds ignore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<family::FamilyTable>,
     /// Whether the last regeneration used the exact kernel (`false`: the
     /// faceted one, see [`PartDocument::regenerate`]).
     #[serde(skip)]

@@ -1,0 +1,7 @@
+# DIN 660: Round head rivet. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d,dk,k,lengths
+3,3,5.3,1.8,6;8;10;12;16
+4,4,7,2.4,8;10;12;16;20
+5,5,8.8,3,10;12;16;20;25
+6,6,11,3.6,12;16;20;25;30
+8,8,14,4.8,16;20;25;30;40

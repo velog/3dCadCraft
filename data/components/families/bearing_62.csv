@@ -1,0 +1,13 @@
+# Series 62: Deep groove ball bearing, light. Nominal values in mm, typed for this library; compared with GMN.
+size,d,D,B
+6200,10,30,9
+6201,12,32,10
+6202,15,35,11
+6203,17,40,12
+6204,20,47,14
+6205,25,52,15
+6206,30,62,16
+6207,35,72,17
+6208,40,80,18
+6209,45,85,19
+6210,50,90,20

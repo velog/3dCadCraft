@@ -60,8 +60,8 @@ impl BomKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Column {
     /// What it shows: `item`, `qty`, `unit`, `part_number`, `structure`,
-    /// `description`, `stock_number`, `material`, a standard iProperty key
-    /// (`iprops::STANDARD`) or `custom:<name>` (a custom iProperty).
+    /// `description`, `stock_number`, `material`, a standard Property key
+    /// (`iprops::STANDARD`) or `custom:<name>` (a custom Property).
     pub key: String,
     /// Heading text.
     pub title: String,
@@ -113,7 +113,7 @@ pub fn default_columns() -> Vec<Column> {
 }
 
 /// Every column a parts list of `rows` can show: the BOM's own, every
-/// standard iProperty, then the custom iProperties used.
+/// standard Property, then the custom Properties used.
 pub fn available_columns(rows: &[BomRow]) -> Vec<(String, String)> {
     let mut keys: Vec<String> = [
         "item",
@@ -966,7 +966,7 @@ mod tests {
         assert_eq!(pl.overrides.len(), 1);
     }
 
-    /// Any iProperty or custom property as a column; hidden and custom rows.
+    /// Any Property or custom property as a column; hidden and custom rows.
     #[test]
     fn columns_hidden_and_custom_rows() {
         let mut pl = PartsList::new(1, [400.0, 280.0]);

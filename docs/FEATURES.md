@@ -156,7 +156,7 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
 **Settings.** Enabling/disabling the server, allowed operations (read-only / full control), a log of the agent's actions.
 
-**Inventor equivalent.** Inventor API, iLogic, Autodesk Assistant (2027).
+**Inventor equivalent.** Inventor API, Rules, Autodesk Assistant (2027).
 
 ## 0.8 Persistent topology naming — 🟡 · XL (v0: names from the primitives, immutable feature `id` ✅)
 
@@ -190,12 +190,12 @@ See **[FILE_FORMAT.md](FILE_FORMAT.md)**. In short:
 
 **Settings.** Material (density), accuracy (low/medium/high), moment-of-inertia system.
 
-**Inventor equivalent.** Measure, iProperties → Physical.
+**Inventor equivalent.** Measure, Properties → Physical.
 
 ## 0.11 Application and document settings — 🟡 · S
 
 **State (2026-10-19):** Tools → Application Options has Navigation (mouse profile, Reverse zoom direction), Language (hints in Bulgarian), Sketch, Display and Constraint Settings — Inference. `settings.json` stores the hint language, the recent files, all Application Options (`options`) and the interface layout (`ui`). Keys are hard-coded. Document Settings ⬜. Full list of options, keys and mouse: **[REFERENCE.md](REFERENCE.md)** (§5 keys, §8 settings); the gaps — [ROADMAP.md](ROADMAP.md#interface-gaps-and-next-steps) (U1, U2, U8).
-**iProperties** — 🟡 (2026-10-24): every document (part, assembly) has General, Summary, Project, Status (with Design State) and Custom properties (Text, Date, Number, Yes or No); File → iProperties or right-click the document / a component; new documents get Author, Designer and Creation Date; an empty Part Number is the file name. **Specification:** [spec/0.16-iproperties.md](spec/0.16-iproperties.md)
+**Properties** — 🟡 (2026-10-24): every document (part, assembly) has General, Summary, Project, Status (with Design State) and Custom properties (Text, Date, Number, Yes or No); File → Properties or right-click the document / a component; new documents get Author, Designer and Creation Date; an empty Part Number is the file name. **Specification:** [spec/0.16-iproperties.md](spec/0.16-iproperties.md)
 
 **Interface layout** — 🟡: dragging and remembering the widths of the browser, Properties and the status bar; the label column of Properties (drag its border, remembered); collapsing the ribbon to its tabs; View → User Interface (Browser, Properties, Ribbon, Status Bar, ViewCube, Axis Triad), Clean Screen (Ctrl+0), Full Screen (F11 outside a sketch), Reset UI Layout; browser and Properties on the left or on the right; floating windows remember their place and size. **Specification:** [spec/0.13-ui-layout.md](spec/0.13-ui-layout.md)
 
@@ -830,7 +830,7 @@ surface lofts, a tube swept along a spline (Pappus). **Specification:** [spec/2.
 
 **Settings.** Position on placement, "place at the origin, grounded" (Place Grounded at Origin), number of copies, name.
 
-**Inventor equivalent.** Place, Place from Content Center, Place Grounded at Origin.
+**Inventor equivalent.** Place, Place from Library, Place Grounded at Origin.
 
 ## 3.2 Assembly constraints — 🟡 (A2: Mate / Flush, Angle, Insert; waiting for a visual check) · L
 
@@ -961,7 +961,7 @@ Used for handing models to suppliers without revealing the details.
 ## 4.1 Sheets, formats, standards — 🟡 · M
 
 **Specification:** [spec/4-drawings.md](spec/4-drawings.md). 🟡 2026-10-26: drawing documents, sheets
-(New / Edit / Delete), ISO 5457 border with zones, a fixed title block from iProperties; waiting for a
+(New / Edit / Delete), ISO 5457 border with zones, a fixed title block from Properties; waiting for a
 visual check.
 
 **What it does.** Sheets A4–A0 (or ANSI A–E), a border, a **title block** with fields filled in automatically from the model's properties (name, material, mass, drafter, date, revision).
@@ -1021,7 +1021,7 @@ per annotation; colour / On / Plot on the screen and in the PDF; spec [4.6](spec
 
 ## 4.4 Tables — 🟡 · M
 
-🟡 2026-10-26: assembly views; **Parts List** (BOM view, numbering, merge, wrapping, any iProperty as a
+🟡 2026-10-26: assembly views; **Parts List** (BOM view, numbering, merge, wrapping, any Property as a
 column, cell overrides kept by part number, sort / renumber, hidden and custom rows) with **Balloon** and
 **Auto Balloon** reading item numbers through it. Waiting for a visual check. Bend tables of flat pattern views with bend tags (Table on a flat view, spec
 4.8); hole tables (2026-10-27); 🟡 2026-10-28: general tables (Empty, CSV file) and revision tables with
@@ -1160,10 +1160,12 @@ Excel or any spreadsheet — Sheet Metal Defaults › Rule picks one (filtered b
 
 ## 5.7 Feature reuse and part families — ⬜ · L
 
+**Specification:** [spec/5.7-part-families.md](spec/5.7-part-families.md)
+
 **Mechanisms.**
 - **Derive Part:** a part derived from another, with scale, mirror and choice of bodies (🟡 2026-10-31, spec 3.10 §3.5).
-- **iFeature:** a saved feature (e.g. a standard keyway) for inserting into other parts.
-- **Part families (iPart in Inventor):** a table of variants, e.g. an M6/M8/M10 bolt with lengths. Each row is a configuration.
+- **Feature Template:** a saved feature (e.g. a standard keyway) for inserting into other parts.
+- **Part Family:** a table of variants, e.g. an M6/M8/M10 bolt with lengths. Each row is a configuration.
 
 **3DCadCraft approach.** **Configurations** (see 3.9 Model States) and tables are one common mechanism. One document with a parameter table gives all variants, and a Link to "bolt, row M8×30" is an ordinary `DocRef` + a choice of configuration.
 
@@ -1228,16 +1230,16 @@ Generators that **calculate** and **model** standard machine elements:
 
 **How it works.** The calculation modules are pure logic (tested with examples from the standards), and the output is ordinary parts and assemblies in the project.
 
-## 6.3 Standard parts library (Content Center) — ⬜ · L
+## 6.3 Component Library — ⬜ · L
 
-**Specification (research first):** [spec/6.3-content-center.md](spec/6.3-content-center.md) — stages L1–L5.
+**Specification:** [spec/6.3-content-center.md](spec/6.3-content-center.md) — stages CC0–CC7.
 
 **What it does.** Thousands of standard parts: bolts, nuts, washers, bearings, profiles, seals per ISO/DIN/ANSI. New in Inventor 2027: publishing **whole assemblies** to the library.
 
 **3DCadCraft approach.**
-- Libraries are **ordinary `.3dcadcraft` projects** with parametric families (5.7), connected by Link (already implemented).
-- A company keeps its `company-standard.3dcadcraft` in a shared folder or in git.
-- Pack embeds whatever is used when sending a project out.
+- A library is a **plain folder** of categories and family files (a `.ccpart` with a family table, 5.7), so a company can keep its own in a shared folder or in git.
+- A placed member is a generated part file in a cache, linked like any part; Pack embeds whatever is used when sending a project out.
+- Frame sections (`data/profiles/profiles.csv`) appear in the same tree under Structural Shapes.
 
 ## 6.4 Weldments — ⬜ · L
 
@@ -1296,7 +1298,7 @@ Photorealistic images: PBR materials, HDR environment lighting, shadows, depth o
 
 Exploded views with trail lines, storyboards, disassembly animation, export to video and images. The views are used in drawings (4.2) for assembly instructions.
 
-## 7.5 Rules and automation (iLogic equivalent) — ⬜ · L
+## 7.5 Rules and automation (Rules equivalent) — ⬜ · L
 
 **What it does.** Rules that react to changes, for example:
 

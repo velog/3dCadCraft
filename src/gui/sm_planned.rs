@@ -1407,13 +1407,13 @@ impl Planned {
         psection(ui, "smp_punch_preview", "Punch", |ui| {
             plabel(ui, "Location");
             ui.weak("Sheet Metal Punch library")
-                .on_hover_text("The folder of punch iFeatures (the library comes with 6.3)");
+                .on_hover_text("The folder of punch templates (the library comes with 6.3)");
             ui.end_row();
             plabel(ui, "Punch");
             egui::ComboBox::from_id_salt("smp_punch")
                 .selected_text("(no punches yet)")
                 .show_ui(ui, |ui| {
-                    ui.weak("The punch library (iFeatures, 6.3) is not there yet");
+                    ui.weak("The punch library (feature templates, 6.3) is not there yet");
                 });
             ui.end_row();
         });

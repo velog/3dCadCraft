@@ -1,0 +1,12 @@
+# DIN 3760: Radial shaft seal. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d,D,b
+10 x 22 x 7,10,22,7
+12 x 24 x 7,12,24,7
+15 x 30 x 7,15,30,7
+17 x 32 x 7,17,32,7
+20 x 40 x 7,20,40,7
+25 x 40 x 7,25,40,7
+30 x 47 x 7,30,47,7
+35 x 52 x 7,35,52,7
+40 x 62 x 7,40,62,7
+50 x 72 x 8,50,72,8

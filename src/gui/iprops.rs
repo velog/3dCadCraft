@@ -1,4 +1,4 @@
-//! The iProperties window (`docs/spec/0.16-iproperties.md`): General,
+//! The Properties window (`docs/spec/0.16-iproperties.md`): General,
 //! Summary, Project, Status, Custom and Physical tabs for any document of
 //! the project — or for a linked part file of an assembly: its changes are
 //! kept until Apply (or closing the window) and then written into the part
@@ -53,12 +53,12 @@ impl IPropsWin {
 }
 
 impl CadCraftApp {
-    /// File → iProperties, or a document's row in the browser.
+    /// File → Properties, or a document's row in the browser.
     pub(super) fn open_iproperties(&mut self, doc: DocumentId) {
         self.iprops = Some(IPropsWin::new(doc, None));
     }
 
-    /// iProperties of an assembly component: its document, or (read only)
+    /// Properties of an assembly component: its document, or (read only)
     /// the linked part file.
     pub(super) fn open_component_iproperties(&mut self, occurrence: u32) {
         let Some(r) = self
@@ -114,7 +114,7 @@ impl CadCraftApp {
         let mut apply = false;
         let mut open = true;
         let mut physical = false;
-        let title = format!("{file_name} iProperties");
+        let title = format!("{file_name} Properties");
         let win = egui::Window::new(title)
             .id(egui::Id::new("iproperties"))
             .open(&mut open)
@@ -170,14 +170,14 @@ impl CadCraftApp {
                     }
                 });
                 if let Some(e) = &w.error {
-                    ui.colored_label(Color32::from_rgb(235, 80, 70), format!("iProperties: {e}"));
+                    ui.colored_label(Color32::from_rgb(235, 80, 70), format!("Properties: {e}"));
                 }
             });
         if edited != props {
             if linked {
                 w.pending = Some(edited);
             } else {
-                self.checkpoint("iProperties");
+                self.checkpoint("Properties");
                 if let Some(d) = self.project.document_mut(w.doc) {
                     d.properties = edited;
                 }
@@ -192,7 +192,7 @@ impl CadCraftApp {
                     w.linked = Some((path, project));
                     self.file_status = Some(Ok(msg));
                 }
-                Err(e) => self.file_status = Some(Err(format!("iProperties: {e}"))),
+                Err(e) => self.file_status = Some(Err(format!("Properties: {e}"))),
             }
         }
         if physical {

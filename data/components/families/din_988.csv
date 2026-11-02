@@ -1,0 +1,10 @@
+# DIN 988: Shim ring. Nominal values in mm, typed for this library; not yet compared with a source.
+size,d1,d2,h
+10 x 16 x 0.5,10,16,0.5
+12 x 18 x 0.5,12,18,0.5
+15 x 21 x 0.5,15,21,0.5
+20 x 28 x 0.5,20,28,0.5
+25 x 35 x 1,25,35,1
+30 x 42 x 1,30,42,1
+40 x 50 x 1,40,50,1
+50 x 62 x 1,50,62,1

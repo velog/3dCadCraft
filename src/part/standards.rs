@@ -203,7 +203,9 @@ fn parse_csv(text: &str) -> Csv {
     let mut rows = Vec::new();
     for (n, line) in text.lines().enumerate() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
+        // `#` starts a comment, but `#10-24 UNC` is a numbered inch thread.
+        let comment = line.starts_with('#') && !line[1..].starts_with(|c: char| c.is_ascii_digit());
+        if line.is_empty() || comment {
             continue;
         }
         let cells: Vec<String> = line.split(',').map(|c| c.trim().to_owned()).collect();
@@ -464,6 +466,10 @@ mod tests {
         assert_eq!(iso.of_size("M10").count(), 3, "M10, M10x1.25, M10x1");
         let un = s.thread_table(ANSI_UNIFIED).unwrap();
         let q = un.row("1/4-20 UNC").unwrap();
+        // Numbered sizes begin with `#`, which also starts a comment.
+        let n10 = un.row("#10-24 UNC").unwrap();
+        assert!((n10.major - 4.826).abs() < 1e-9, "{n10:?}");
+        assert!(un.row("#6-32 UNC").is_some());
         assert!((q.major - 6.35).abs() < 1e-9);
         assert!((q.pitch - 1.27).abs() < 1e-9);
         // 75 % thread: 0.25 − 0.9743/20 in = 0.2013 in (a #7 drill).

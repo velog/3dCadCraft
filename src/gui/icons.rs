@@ -410,12 +410,12 @@ pub enum Icon {
     SurfaceAnalysis,
     /// Section Analysis (a block cut by a plane).
     SectionAnalysis,
-    /// Insert iFeature.
-    InsertIFeature,
-    /// Extract iFeature.
-    ExtractIFeature,
-    /// Create iPart (a table).
-    CreateIPart,
+    /// Insert Feature Template.
+    InsertFeatureTemplate,
+    /// Extract Feature Template.
+    ExtractFeatureTemplate,
+    /// Create Part Family (a table).
+    CreatePartFamily,
     /// Make Part (a body pulled out to a part).
     MakePart,
     /// Make Components (bodies into an assembly).
@@ -450,8 +450,8 @@ pub enum Icon {
     /// BIM Content (a building).
     BimContent,
     // assembly commands with an interface only (`gui/asm_planned.rs`, spec 3.0)
-    /// Place from Content Center (a bolt from a library shelf).
-    PlaceContent,
+    /// Place from Library (a bolt from a library shelf).
+    PlaceFromLibrary,
     /// Place Imported CAD Files (a file arrow onto a component).
     PlaceImported,
     /// Create In-Place Component (a new block with a plus).
@@ -474,8 +474,8 @@ pub enum Icon {
     Substitutes,
     /// Assemble (a face moving onto another).
     AsmAssemble,
-    /// Create iAssembly (a table of assemblies).
-    CreateIAssembly,
+    /// Create Assembly Family (a table of assemblies).
+    CreateAssemblyFamily,
     /// Bolted Connection (a bolt through two plates).
     Bolt,
     /// Clevis Pin (a pin with a head and a hole).
@@ -709,6 +709,248 @@ pub fn sub_menu<R>(
         paint(ui.painter(), at, icon, &Palette::ENABLED);
     }
     r.inner
+}
+
+/// The icon of a library category (`Fasteners/Bolts/Hex Head`), by its last
+/// level: each kind drawn side on, as it looks on a catalogue page.
+pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
+    let k = Palette::ENABLED;
+    let (ink, acc) = (k.ink, k.accent);
+    let p = Pen {
+        p: painter,
+        r: rect,
+        w: (rect.width() / 16.0 * 1.1).max(1.0),
+    };
+    let threads = |x0: f32, x1: f32, y0: f32, y1: f32| {
+        let mut y = y0;
+        while y <= y1 {
+            p.line(&[(x0, y + 0.5), (x1, y - 0.5)], acc);
+            y += 1.8;
+        }
+    };
+    let shank = |x0: f32, x1: f32, y0: f32, y1: f32| {
+        p.line(&[(x0, y0), (x0, y1), (x1, y1), (x1, y0)], ink);
+    };
+    let hexagon = |x: f32, y: f32, r: f32, c: Color32| {
+        let pts: Vec<(f32, f32)> = (0..6)
+            .map(|i| {
+                let a = (i as f32 * 60.0).to_radians();
+                (x + r * a.cos(), y + r * a.sin())
+            })
+            .collect();
+        p.closed(&pts, c);
+    };
+    let ring = |r0: f32, r1: f32| {
+        p.circle(8.0, 8.0, r1, ink);
+        p.circle(8.0, 8.0, r0, acc);
+    };
+    let section = |pts: &[(f32, f32)]| p.closed(pts, ink);
+    let leaf = category.rsplit('/').next().unwrap_or(category);
+    match leaf {
+        "Fasteners" | "Bolts" | "Hex Head" | "Square Head" | "T-Bolt" | "Eye" | "Carriage"
+        | "Shoulder" => {
+            p.rect(3.5, 1.5, 12.5, 5.0, ink);
+            p.line(&[(6.5, 1.5), (6.5, 5.0)], ink);
+            p.line(&[(9.5, 1.5), (9.5, 5.0)], ink);
+            shank(6.0, 10.0, 5.0, 14.5);
+            threads(6.0, 10.0, 8.0, 14.0);
+        }
+        "Hex Head Flanged" => {
+            p.rect(4.5, 1.5, 11.5, 4.0, ink);
+            p.rect(2.5, 4.0, 13.5, 5.5, ink);
+            shank(6.0, 10.0, 5.5, 14.5);
+            threads(6.0, 10.0, 8.5, 14.0);
+        }
+        "Socket Head" | "Pan Head" | "Cheese Head" => {
+            p.rect(4.0, 1.5, 12.0, 6.0, ink);
+            p.rect(6.5, 1.5, 9.5, 4.0, acc);
+            shank(6.0, 10.0, 6.0, 14.5);
+            threads(6.0, 10.0, 9.0, 14.0);
+        }
+        "Countersunk" => {
+            p.closed(&[(2.5, 2.0), (13.5, 2.0), (10.0, 6.0), (6.0, 6.0)], ink);
+            shank(6.0, 10.0, 6.0, 14.5);
+            threads(6.0, 10.0, 8.5, 14.0);
+        }
+        "Button Head" | "Round Head" => {
+            p.arc(8.0, 7.0, 5.5, 0.0, 180.0, ink);
+            p.line(&[(2.5, 7.0), (13.5, 7.0)], ink);
+            shank(6.0, 10.0, 7.0, 14.5);
+        }
+        "Set Screws" | "Flat Point" | "Cone Point" | "Cup Point" | "Dog Point" => {
+            p.rect(5.5, 2.0, 10.5, 14.0, ink);
+            p.rect(6.8, 2.0, 9.2, 5.0, acc);
+            threads(5.5, 10.5, 6.5, 13.0);
+        }
+        "Studs" | "Threaded Rod" | "Double End" | "Weld" => {
+            p.rect(6.0, 1.5, 10.0, 14.5, ink);
+            threads(6.0, 10.0, 2.5, 14.0);
+        }
+        "Nuts" | "Hex" | "Hex Thin" | "Hex Flanged" | "Prevailing Torque" | "Square" | "Wing"
+        | "Round" | "Coupling" | "Slotted" | "T-Slot" | "Clinch Nuts" | "Cage Nuts" => {
+            hexagon(8.0, 8.0, 6.3, ink);
+            p.circle(8.0, 8.0, 2.8, acc);
+        }
+        "Cap" => {
+            p.rect(3.5, 8.0, 12.5, 13.0, ink);
+            p.arc(8.0, 8.0, 4.0, 0.0, 180.0, ink);
+            p.rect(6.2, 9.5, 9.8, 13.0, acc);
+        }
+        "Washers" | "Plain" | "Large" | "Shim" | "Thrust Washer" | "Thrust Washers" | "Shims"
+        | "Conical" | "Spherical" | "Toothed" | "Taper Washer" | "Magnets" | "Tab Washer" => {
+            ring(2.8, 6.3)
+        }
+        "Spring" => {
+            p.arc(8.0, 8.0, 6.0, 25.0, 335.0, ink);
+            p.arc(8.0, 8.0, 3.0, 25.0, 335.0, acc);
+        }
+        "Pins" | "Cylindrical" | "Grooved" | "Clevis" | "Cotter" => {
+            p.rect(6.0, 1.5, 10.0, 14.5, ink);
+            p.line(&[(6.0, 3.0), (10.0, 3.0)], acc);
+            p.line(&[(6.0, 13.0), (10.0, 13.0)], acc);
+        }
+        "Taper" => p.closed(&[(5.5, 1.5), (10.5, 1.5), (9.5, 14.5), (6.5, 14.5)], ink),
+        "Rivets" | "Blind" => {
+            p.arc(8.0, 6.0, 5.0, 0.0, 180.0, ink);
+            p.line(&[(3.0, 6.0), (13.0, 6.0)], ink);
+            shank(6.0, 10.0, 6.0, 14.5);
+        }
+        "Shaft Parts"
+        | "Bearings"
+        | "Deep Groove Ball"
+        | "Angular Contact Ball"
+        | "Self-Aligning Ball"
+        | "Spherical Roller"
+        | "Thrust Ball" => {
+            p.circle(8.0, 8.0, 7.0, ink);
+            p.circle(8.0, 8.0, 3.0, ink);
+            for i in 0..8 {
+                let a = (i as f32 * 45.0).to_radians();
+                p.disc(8.0 + 5.0 * a.cos(), 8.0 + 5.0 * a.sin(), 1.0, acc);
+            }
+        }
+        "Cylindrical Roller" | "Tapered Roller" | "Needle Roller" | "Plain Bush"
+        | "Ball Bushing" | "Drill Bushings" => {
+            p.rect(2.5, 3.0, 13.5, 13.0, ink);
+            p.rect(5.0, 3.0, 11.0, 13.0, acc);
+        }
+        "Retaining Rings" | "External" | "Internal" | "E-Clip" => {
+            p.arc(8.0, 8.0, 6.2, 40.0, 320.0, ink);
+            p.arc(8.0, 8.0, 3.8, 40.0, 320.0, acc);
+            p.line(&[(12.7, 4.0), (10.9, 5.6)], ink);
+            p.line(&[(12.7, 12.0), (10.9, 10.4)], ink);
+        }
+        "Keys" | "Parallel" | "Woodruff" => {
+            p.closed(
+                &[
+                    (4.0, 5.5),
+                    (12.0, 5.5),
+                    (14.0, 8.0),
+                    (12.0, 10.5),
+                    (4.0, 10.5),
+                    (2.0, 8.0),
+                ],
+                ink,
+            );
+            p.line(&[(4.0, 8.0), (12.0, 8.0)], acc);
+        }
+        "Sealing" | "O-Ring" | "Radial Shaft Seal" | "Felt Ring" => {
+            p.circle(8.0, 8.0, 6.3, ink);
+            p.circle(8.0, 8.0, 4.2, ink);
+        }
+        "Collars" | "Set Collar" | "Lock Nuts" | "Slotted Bearing Nut" => {
+            ring(3.2, 6.3);
+            p.rect(7.0, 1.2, 9.0, 3.6, acc);
+        }
+        "Structural Shapes" | "I-Beams" => section(&[
+            (3.0, 2.0),
+            (13.0, 2.0),
+            (13.0, 4.0),
+            (9.0, 4.0),
+            (9.0, 12.0),
+            (13.0, 12.0),
+            (13.0, 14.0),
+            (3.0, 14.0),
+            (3.0, 12.0),
+            (7.0, 12.0),
+            (7.0, 4.0),
+            (3.0, 4.0),
+        ]),
+        "Angles" => section(&[
+            (3.0, 2.0),
+            (5.5, 2.0),
+            (5.5, 11.5),
+            (13.0, 11.5),
+            (13.0, 14.0),
+            (3.0, 14.0),
+        ]),
+        "Channels" => section(&[
+            (3.0, 2.0),
+            (13.0, 2.0),
+            (13.0, 4.5),
+            (5.5, 4.5),
+            (5.5, 11.5),
+            (13.0, 11.5),
+            (13.0, 14.0),
+            (3.0, 14.0),
+        ]),
+        "Tees" => section(&[
+            (2.5, 2.0),
+            (13.5, 2.0),
+            (13.5, 4.5),
+            (9.2, 4.5),
+            (9.2, 14.0),
+            (6.8, 14.0),
+            (6.8, 4.5),
+            (2.5, 4.5),
+        ]),
+        "Zees" => section(&[
+            (7.0, 2.0),
+            (13.5, 2.0),
+            (13.5, 4.3),
+            (9.3, 4.3),
+            (9.3, 14.0),
+            (2.5, 14.0),
+            (2.5, 11.7),
+            (7.0, 11.7),
+        ]),
+        "Round Tubes" => {
+            p.circle(8.0, 8.0, 6.3, ink);
+            p.circle(8.0, 8.0, 4.5, ink);
+        }
+        "Square and Rectangular Tubes" => {
+            p.rect(2.0, 3.0, 14.0, 13.0, ink);
+            p.rect(4.0, 5.0, 12.0, 11.0, ink);
+        }
+        "Round Bars" => {
+            p.circle(8.0, 8.0, 6.0, ink);
+            p.disc(
+                8.0,
+                8.0,
+                5.0,
+                Color32::from_rgba_unmultiplied(acc.r(), acc.g(), acc.b(), 70),
+            );
+        }
+        "Square, Flat and Hexagon Bars" => {
+            hexagon(8.0, 8.0, 6.3, ink);
+            p.disc(
+                8.0,
+                8.0,
+                3.5,
+                Color32::from_rgba_unmultiplied(acc.r(), acc.g(), acc.b(), 70),
+            );
+        }
+        "Own Parts" => {
+            p.block(
+                [3.0, 6.0, 7.0, 7.0, 3.5],
+                ink,
+                Color32::from_rgba_unmultiplied(acc.r(), acc.g(), acc.b(), 60),
+            );
+        }
+        _ => {
+            p.block([3.0, 6.0, 7.0, 7.0, 3.5], ink, Color32::TRANSPARENT);
+        }
+    }
 }
 
 /// Draws `icon` into `rect` (square) with palette `k`.
@@ -2321,10 +2563,10 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.block([2.0, 6.0, 9.0, 7.0, 3.5], ink, tint(ink, 40));
             p.closed(&[(6.5, 3.5), (9.0, 1.5), (9.0, 11.5), (6.5, 13.5)], acc);
         }
-        InsertIFeature | ExtractIFeature => {
+        InsertFeatureTemplate | ExtractFeatureTemplate => {
             p.block([5.0, 7.0, 8.0, 6.0, 3.0], ink, tint(ink, 40));
             p.text(3.0, 4.5, "i", 8.0, acc);
-            if icon == InsertIFeature {
+            if icon == InsertFeatureTemplate {
                 p.line(&[(9.0, 1.0), (9.0, 3.5)], acc);
                 p.head((9.0, 5.0), (0.0, 1.0), acc);
             } else {
@@ -2332,7 +2574,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
                 p.head((13.5, 1.8), (1.0, -0.7), acc);
             }
         }
-        CreateIPart => {
+        CreatePartFamily => {
             p.rect(1.5, 2.5, 14.5, 13.5, ink);
             p.line(&[(1.5, 6.0), (14.5, 6.0)], ink);
             p.line(&[(6.0, 2.5), (6.0, 13.5)], ink);
@@ -2565,7 +2807,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             }
         }
         // ---- assembly commands with an interface only (spec 3.0) ----
-        PlaceContent => {
+        PlaceFromLibrary => {
             p.line(&[(1.5, 14.0), (14.5, 14.0)], ink);
             p.rect(3.0, 2.0, 7.0, 5.0, acc);
             p.line(&[(5.0, 5.0), (5.0, 12.5)], acc);
@@ -2641,7 +2883,7 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.line(&[(10.5, 7.0), (10.5, 9.5)], hot);
             p.head((10.5, 10.5), (0.0, 1.0), hot);
         }
-        CreateIAssembly => {
+        CreateAssemblyFamily => {
             p.rect(1.5, 2.0, 14.5, 14.0, ink);
             p.line(&[(1.5, 6.0), (14.5, 6.0)], ink);
             p.line(&[(6.0, 2.0), (6.0, 14.0)], ink);

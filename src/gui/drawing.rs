@@ -841,7 +841,7 @@ impl CadCraftApp {
                 if self.drw.dialog.as_ref().is_some_and(|d| d.orient.custom.is_some()) {
                     "Custom View: drag on the sheet to orbit, Rotate at Angle turns by steps, Finish Custom View ends".into()
                 } else {
-                    "Base View: drag the preview to move it, the ViewCube turns it, a corner scales it, the triangles add projected views; OK places it".into()
+                    "Base View: drag the preview to move it, the View Cube turns it, a corner scales it, the triangles add projected views; OK places it".into()
                 }
             }
             Some(DrwTool::Projected(None)) => "Projected View: select the parent view".into(),
@@ -849,7 +849,7 @@ impl CadCraftApp {
                 "Projected View: click beside the view for an orthographic view, diagonally for an isometric one (Esc ends)".into()
             }
             None if self.orient_active() => {
-                "Edit View: the ViewCube turns the view, a corner scales it; OK applies".into()
+                "Edit View: the View Cube turns the view, a corner scales it; OK applies".into()
             }
             None if self.drw.sel_ann.is_some() => {
                 "Drag a dimension, note, parts list or balloon to move it, Delete removes it, double-click edits it".into()
@@ -1422,7 +1422,7 @@ impl CadCraftApp {
         fmt::format_prims(d, i, &get)
     }
 
-    /// The title block's fields of sheet `i`: the drawing's iProperties and
+    /// The title block's fields of sheet `i`: the drawing's Properties and
     /// those of the model of the sheet's first view.
     pub(super) fn title_values(&self, d: &DrawingDocument, i: usize) -> Vec<(TitleField, String)> {
         let model = d
@@ -2789,7 +2789,7 @@ fn component_tab(
         } else {
             // Inventor sets it with the ViewCube beside the preview.
             ui.label(d.orientation.label());
-            ui.weak("ViewCube at the preview's upper right corner");
+            ui.weak("View Cube at the preview's upper right corner");
             if ui
                 .add_enabled(
                     d.orient.custom.is_none(),
@@ -2849,7 +2849,7 @@ fn component_tab(
 }
 
 fn model_tab(ui: &mut egui::Ui) {
-    ui.label("Options of iParts / iAssemblies, reference data and weldments.");
+    ui.label("Options of part and assembly families, reference data and weldments.");
     ui.add_enabled_ui(false, |ui| {
         ui.horizontal(|ui| {
             ui.label("Member");
@@ -2874,7 +2874,7 @@ fn model_tab(ui: &mut egui::Ui) {
         ui.checkbox(&mut v, "Weld Annotations");
     })
     .response
-    .on_disabled_hover_text("Planned: iParts, reference data and weldments (spec 4 §3.2)");
+    .on_disabled_hover_text("Planned: part families, reference data and weldments (spec 4 §3.2)");
 }
 
 fn display_tab(ui: &mut egui::Ui, d: &mut ViewDialog) {

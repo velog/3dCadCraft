@@ -1,0 +1,11 @@
+# Series 511: Thrust ball bearing. Nominal values in mm, typed for this library; compared with NSK; SKF listings (51104, 51106).
+size,d,D,T
+51100,10,24,9
+51101,12,26,9
+51102,15,28,9
+51103,17,30,9
+51104,20,35,10
+51105,25,42,11
+51106,30,47,11
+51107,35,52,12
+51108,40,60,13

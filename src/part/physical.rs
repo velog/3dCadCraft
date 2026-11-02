@@ -1,5 +1,5 @@
 //! Physical Properties (`docs/spec/0.10-physical.md`, Inventor's
-//! iProperties → Physical): mass, volume, area, centre of gravity and the
+//! Properties → Physical): mass, volume, area, centre of gravity and the
 //! inertia tensor of every solid body and of the whole part.
 //!
 //! Integrals come from the body's display triangles with the divergence

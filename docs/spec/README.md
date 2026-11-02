@@ -62,11 +62,12 @@ One file per feature or mechanism. Each file describes **exactly what** the feat
 | [4.7-drawing-commands.md](4.7-drawing-commands.md) | The whole Inventor drawing command set (Place Views, Annotate, Manage): each command's dialog first, logic later (parts list / BOM source, balloons, dimension sets, tolerances, symbols, welding, hole tables, revisions, model reference) |
 | [6.1-frame-generator.md](6.1-frame-generator.md) | Frames (Frame Generator): Insert Frame, End Cap, Change, Miter, Corner Joint, Trim/Extend, Notch, Lengthen/Shorten, Reuse, Frame Member Info, Refresh, naming, cut lists — stages F0–F5 |
 | [6.4-weldments.md](6.4-weldments.md) | Weldments: Convert to Weldment, Preparation / Welds / Machining groups, Fillet, Groove and Cosmetic welds, Welding Symbol, Bead Report, drawing states — stages W0–W5 |
-| [6.3-content-center.md](6.3-content-center.md) | Library of standard components (Content Center) — research document and stages L1–L5 |
+| [5.7-part-families.md](5.7-part-families.md) | Part families (Create Part Family), the base of the library |
+| [6.3-content-center.md](6.3-content-center.md) | Component Library: placing, defining and publishing; samples, plan CC0–CC7 |
 | [5.6-sheet-metal.md](5.6-sheet-metal.md) | Sheet Metal: rules, features, flat pattern, DXF — research document and stages (nothing implemented yet) |
 | [3.0-assembly-commands.md](3.0-assembly-commands.md) | The whole assembly command set (Assemble, Design, Inspect, Manage, View, Environments) with every dialog, interface first |
 | [3.6-bom.md](3.6-bom.md) | Bill of Materials: Model Data / Structured / Parts Only, BOM Structure, merge, Export |
-| [0.16-iproperties.md](0.16-iproperties.md) | iProperties: General, Summary, Project, Status and custom properties of every document |
+| [0.16-iproperties.md](0.16-iproperties.md) | Properties: General, Summary, Project, Status and custom properties of every document |
 | [0.13-ui-layout.md](0.13-ui-layout.md) | Interface layout: panel sizes, ribbon collapsing, User Interface, Clean Screen, Full Screen, floating windows, `settings.json` |
 | [0-ui.md](0-ui.md) | Interface: look, colours, glyphs, command behaviour, selection, guiding the user, performance |
 | [1.1-sketch.md](1.1-sketch.md) | 2D sketch: creation, editing, coordinate system, projections, settings |

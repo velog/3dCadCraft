@@ -161,7 +161,7 @@ impl Element {
             Element::Properties => "Properties",
             Element::Ribbon => "Ribbon",
             Element::StatusBar => "Status Bar",
-            Element::ViewCube => "ViewCube",
+            Element::ViewCube => "View Cube",
             Element::Triad => "Axis Triad",
         }
     }

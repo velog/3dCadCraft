@@ -83,7 +83,7 @@ Legend for the column "Theirs":
 | 2.16 Tree (Browser) | engine: Timeline (folders, Suppress, reordering) | our interface; the logic is to be ported |
 | 2.17 Emboss / Engrave | kernel: `emboss_cylinder`, `raise_band` | stage D |
 | 3.x Assemblies | engine: Components, Joints, Contact, Interference, Explode, Motion | long stage, research |
-| 3.9 Representations | engine: Configurations | research (like iPart/iAssembly) |
+| 3.9 Representations | engine: Configurations | research (like part family/assembly family) |
 | 4.x Drawings | — | **we develop it ourselves** |
 | 5.1 Sweep | kernel: `sweep`, `sweep_path` | stage D |
 | 5.2 Loft | kernel: `loft`, `loft_to_point` | stage D |
@@ -97,7 +97,7 @@ Legend for the column "Theirs":
 | 7.1 FEA | — | we develop it ourselves |
 | 7.2 Dynamic simulation | engine: Motion, Drive Joints | research |
 | 7.3 Rendering | `render` (HDR) | research |
-| 7.5 Rules (iLogic) | engine: Configuration Rules | research |
+| 7.5 Rules (Rules) | engine: Configuration Rules | research |
 | 7.6 AI | MCP, skills, control channel | **take the model** (stage E) |
 | 7.7 Data exchange | kernel: STEP, IGES, STL, OBJ, 3MF | stage C |
 | 7.9 Command line | `solidcraft-cli` | stage E |

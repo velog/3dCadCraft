@@ -459,7 +459,7 @@ pub struct Document {
     pub name: String,
     /// Contents.
     pub data: DocumentData,
-    /// iProperties (`iprops`): title, part number, custom ones…
+    /// Properties (`iprops`): title, part number, custom ones…
     #[serde(default, skip_serializing_if = "iprops::IProperties::is_empty")]
     pub properties: iprops::IProperties,
 }

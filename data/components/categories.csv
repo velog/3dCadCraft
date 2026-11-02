@@ -1,0 +1,31 @@
+# 3DCadCraft component library: the category tree (spec 6.3). Our own grouping.
+# Folders below a library; `/` separates levels.
+category
+Fasteners
+Fasteners/Bolts
+Fasteners/Set Screws
+Fasteners/Studs
+Fasteners/Nuts
+Fasteners/Washers
+Fasteners/Pins
+Fasteners/Rivets
+Shaft Parts
+Shaft Parts/Bearings
+Shaft Parts/Retaining Rings
+Shaft Parts/Keys
+Shaft Parts/Sealing
+Shaft Parts/Collars
+Shaft Parts/Lock Nuts
+Shaft Parts/Shims
+Shaft Parts/Thrust Washers
+Structural Shapes
+Sheet Metal Hardware
+Pipe Parts
+Pipe Parts/Fittings
+Pipe Parts/Flanges
+Pipe Parts/Valves
+Machine Elements
+Machine Elements/Gears and Chains
+Machine Elements/Springs
+Machine Elements/Linear Motion
+Other Parts

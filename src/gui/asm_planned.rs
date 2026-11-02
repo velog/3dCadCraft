@@ -78,7 +78,7 @@ const REMOVE: &[&str] = &["None", "All", "Range", "Preserve"];
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AsmPlanned {
     // Assemble › Component
-    PlaceContentCenter,
+    PlaceFromLibrary,
     PlaceImported,
     Create,
     Pattern,
@@ -93,7 +93,7 @@ pub enum AsmPlanned {
     // Inspect › Interference
     Interference,
     // Manage › Author
-    CreateIAssembly,
+    CreateAssemblyFamily,
     // Design › Fasten
     BoltedConnection,
     ClevisPin,
@@ -143,7 +143,7 @@ impl AsmPlanned {
     pub const ALL: [AsmPlanned; 51] = {
         use AsmPlanned::*;
         [
-            PlaceContentCenter,
+            PlaceFromLibrary,
             PlaceImported,
             Create,
             Pattern,
@@ -155,7 +155,7 @@ impl AsmPlanned {
             DerivedSubstitutes,
             Assemble,
             Interference,
-            CreateIAssembly,
+            CreateAssemblyFamily,
             BoltedConnection,
             ClevisPin,
             SecurePin,
@@ -201,7 +201,7 @@ impl AsmPlanned {
     pub fn title(self) -> &'static str {
         use AsmPlanned::*;
         match self {
-            PlaceContentCenter => "Place from Content Center",
+            PlaceFromLibrary => "Place from Library",
             PlaceImported => "Place Imported CAD Files",
             Create => "Create In-Place Component",
             Pattern => "Pattern Component",
@@ -213,7 +213,7 @@ impl AsmPlanned {
             DerivedSubstitutes => "Create Derived Substitutes",
             Assemble => "Assemble",
             Interference => "Analyze Interference",
-            CreateIAssembly => "Create iAssembly",
+            CreateAssemblyFamily => "Create Assembly Family",
             BoltedConnection => "Bolted Connection",
             ClevisPin => "Clevis Pin",
             SecurePin => "Secure Pin",
@@ -259,7 +259,7 @@ impl AsmPlanned {
     pub fn icon(self) -> Icon {
         use AsmPlanned::*;
         match self {
-            PlaceContentCenter => Icon::PlaceContent,
+            PlaceFromLibrary => Icon::PlaceFromLibrary,
             PlaceImported => Icon::PlaceImported,
             Create => Icon::AsmCreate,
             Pattern => Icon::AsmPattern,
@@ -271,7 +271,7 @@ impl AsmPlanned {
             DerivedSubstitutes => Icon::Substitutes,
             Assemble => Icon::AsmAssemble,
             Interference => Icon::Interference,
-            CreateIAssembly => Icon::CreateIAssembly,
+            CreateAssemblyFamily => Icon::CreateAssemblyFamily,
             BoltedConnection => Icon::Bolt,
             ClevisPin => Icon::ClevisPin,
             SecurePin => Icon::SecurePin,
@@ -317,7 +317,7 @@ impl AsmPlanned {
     pub fn section(self) -> &'static str {
         use AsmPlanned::*;
         match self {
-            PlaceContentCenter | BoltedConnection | ClevisPin | SecurePin | RadialPin => "6.3",
+            PlaceFromLibrary | BoltedConnection | ClevisPin | SecurePin | RadialPin => "6.3",
             PlaceImported => "7.7",
             Create | MakeLayout => "3.10",
             Pattern | Mirror => "3.7",
@@ -325,7 +325,7 @@ impl AsmPlanned {
             Simplify | DerivedSubstitutes => "3.11",
             Assemble => "3.2",
             Interference => "3.5",
-            CreateIAssembly => "5.7",
+            CreateAssemblyFamily => "5.7",
             InsertFrame | FrameChange | EndCap | Miter | CornerJoint | TrimExtend | Notch
             | LengthenShorten | RemoveEndTreatments | Reuse | ChangeReuse | FrameMemberInfo
             | FrameRefresh | EditFrame => "6.1",
@@ -337,7 +337,7 @@ impl AsmPlanned {
     pub fn about(self) -> &'static str {
         use AsmPlanned::*;
         match self {
-            PlaceContentCenter => {
+            PlaceFromLibrary => {
                 "Places a standard part (bolt, nut, washer, profile) from the library."
             }
             PlaceImported => {
@@ -363,7 +363,9 @@ impl AsmPlanned {
                 "Pick a face or edge of the moving component, then one of the target: the relationship is inferred."
             }
             Interference => "Finds the volumes where components overlap.",
-            CreateIAssembly => "A family table of the assembly: members, components, parameters.",
+            CreateAssemblyFamily => {
+                "A family table of the assembly: members, components, parameters."
+            }
             BoltedConnection => "A bolt, washers and a nut through holes drilled in the plates.",
             ClevisPin | SecurePin | RadialPin => "A pin from the library with its hole.",
             InsertFrame => "Frame members along sketch lines or edges of a skeleton.",
@@ -407,8 +409,8 @@ impl AsmPlanned {
     pub fn pages(self) -> &'static [Page] {
         use AsmPlanned::*;
         match self {
-            PlaceContentCenter => &[Page(
-                "Place from Content Center",
+            PlaceFromLibrary => &[Page(
+                "Place from Library",
                 &[
                     Combo(
                         "Category View",
@@ -833,7 +835,7 @@ impl AsmPlanned {
                     ),
                 ],
             )],
-            CreateIAssembly => &[
+            CreateAssemblyFamily => &[
                 Page(
                     "Components",
                     &[
@@ -849,7 +851,7 @@ impl AsmPlanned {
                 ),
                 Page(
                     "Properties",
-                    &[Note("iProperties as columns (Part Number, Description…)")],
+                    &[Note("Properties as columns (Part Number, Description…)")],
                 ),
                 Page(
                     "Work Features",
@@ -1753,6 +1755,10 @@ impl CadCraftApp {
                     return;
                 }
             }
+        }
+        if kind == AsmPlanned::PlaceFromLibrary {
+            self.place_from_library();
+            return;
         }
         let mut d = PartDialog::new(kind);
         let defs = selector_defs(Planned::Asm(kind));
