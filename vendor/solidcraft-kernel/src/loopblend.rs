@@ -380,12 +380,24 @@ fn build(
     // Walls: the other face of each edge, perpendicular to the face; all on one side.
     let mut walls: Vec<usize> = Vec::with_capacity(k);
     let mut side = 0.0;
+    // The other face of each loop edge, found in one walk over the body (3DCadCraft).
+    let wall_of: HashMap<mt::EdgeID, usize> = {
+        let wanted: std::collections::HashSet<mt::EdgeID> = edges.iter().map(|e| e.id()).collect();
+        let mut m = HashMap::new();
+        for (gi, g) in faces.iter().enumerate() {
+            if gi != fi {
+                for e in g.edge_iter() {
+                    if wanted.contains(&e.id()) {
+                        m.entry(e.id()).or_insert(gi);
+                    }
+                }
+            }
+        }
+        m
+    };
     for (oi, s) in owner.iter().zip(&segs) {
         let e = edges.get(*oi).ok_or_else(|| KernelError::Failed("edge".into()))?;
-        let wf = faces
-            .iter()
-            .position(|g| !std::ptr::eq(*g, *f) && g.edge_iter().any(|x| x.id() == e.id()))
-            .ok_or_else(|| unsupported("an edge with one face"))?;
+        let wf = *wall_of.get(&e.id()).ok_or_else(|| unsupported("an edge with one face"))?;
         let mid = match *s {
             Seg::Line { a, b } => (a + b) * 0.5,
             Seg::Arc { mid, .. } => mid,
@@ -640,7 +652,28 @@ fn build(
         joint_vertex.push(edges.last().map(|e| e.back().clone()));
     }
     let loop_ids: Vec<mt::EdgeID> = edges.iter().map(|e| e.id()).collect();
-    let on_face = |e: &mt::Edge| f.edge_iter().any(|x| x.id() == e.id());
+    let face_edges: std::collections::HashSet<mt::EdgeID> = f.edge_iter().map(|x| x.id()).collect();
+    let on_face = |e: &mt::Edge| face_edges.contains(&e.id());
+    // The edges at each joint's vertex, once: looking through every face for every joint made a
+    // rim's chamfer grow with the whole body (12 ms at 222 faces). 3DCadCraft.
+    let mut at_vertex: HashMap<mt::VertexID, Vec<mt::Edge>> = HashMap::new();
+    {
+        let wanted: std::collections::HashSet<mt::VertexID> = joint_vertex.iter().flatten().map(|v| v.id()).collect();
+        let mut seen: std::collections::HashSet<mt::EdgeID> = std::collections::HashSet::new();
+        for g in faces {
+            for e in g.edge_iter() {
+                let (a, b) = (e.front().id(), e.back().id());
+                if (wanted.contains(&a) || wanted.contains(&b)) && seen.insert(e.id()) {
+                    for v in [a, b] {
+                        if wanted.contains(&v) {
+                            at_vertex.entry(v).or_default().push(e.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let edges_at = |v: &mt::Vertex| at_vertex.get(&v.id()).map_or(&[][..], |x| x.as_slice());
     // A blend as tall as its walls uses them up: each wall seam ends exactly where the
     // wall-side rail would, at a vertex of the walls' far boundary, which becomes the rail.
     let wall_end: Vec<Option<mt::Vertex>> = joint_vertex
@@ -648,8 +681,8 @@ fn build(
         .zip(&pb)
         .map(|(v, target)| {
             let v = v.as_ref()?;
-            faces.iter().flat_map(|g| g.edge_iter()).find_map(|e| {
-                if loop_ids.contains(&e.id()) || on_face(&e) || !(e.front() == v || e.back() == v) || !matches!(e.curve(), mt::Curve::Line(_)) {
+            edges_at(v).iter().find_map(|e| {
+                if loop_ids.contains(&e.id()) || on_face(e) || !(e.front() == v || e.back() == v) || !matches!(e.curve(), mt::Curve::Line(_)) {
                     return None;
                 }
                 let other = if e.front() == v { e.back().clone() } else { e.front().clone() };
@@ -777,8 +810,8 @@ fn build(
     let mut seam_ends: HashMap<mt::EdgeID, (mt::Edge, Option<mt::Vertex>, Option<mt::Vertex>)> = HashMap::new();
     for (i, v) in joint_vertex.iter().enumerate() {
         let Some(v) = v else { continue };
-        for g in faces {
-            for e in g.edge_iter() {
+        {
+            for e in edges_at(v) {
                 if loop_ids.contains(&e.id()) || !(e.front() == v || e.back() == v) {
                     continue;
                 }
@@ -790,10 +823,10 @@ fn build(
                 }
                 let (fa, fb) = (e.absolute_front().clone(), e.absolute_back().clone());
                 let other = if &fa == v { &fb } else { &fa };
-                if !is_straight(&e, (size * 1e-5).max(1e-6)) {
+                if !is_straight(e, (size * 1e-5).max(1e-6)) {
                     return Err(unsupported("the wall seams must be straight"));
                 }
-                let face_side = on_face(&e);
+                let face_side = on_face(e);
                 // A used-up wall goes, seams and all.
                 if walls_used_up && !face_side {
                     continue;
