@@ -3057,7 +3057,7 @@ fn ring_chamfer(
     };
     // Each line in the frame: a point, the way it runs (the inside on its left), the inward
     // normal, its bevel's name; in order round the loop (convex: by the angle it runs at).
-    let mut around: Vec<(Point2<Real>, Vector2<Real>, Vector2<Real>, &str)> = lines
+    let mut around: Vec<_> = lines
         .iter()
         .map(|l| {
             let u = flat(first.a + l.inward) - flat(first.a);
