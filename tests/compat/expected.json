@@ -1,6 +1,6 @@
 {
   "r1/features_r1.3dcadcraft": {
-    "volume": 48812.011601960585,
+    "volume": 48812.28500703092,
     "faces": 16,
     "features": 5,
     "sketches": 2,
@@ -21,7 +21,7 @@
     "exact": true
   },
   "r1/hollow_fillet.3dcadcraft": {
-    "volume": 27367.13886128538,
+    "volume": 27367.2580160362,
     "faces": 23,
     "features": 3,
     "sketches": 1,
@@ -105,14 +105,14 @@
     "exact": true
   },
   "r9/draft_r9.3dcadcraft": {
-    "volume": 12490.473059139249,
+    "volume": 12490.460373974272,
     "faces": 39,
     "features": 5,
     "sketches": 1,
     "exact": true
   },
   "r10/hole_r10.3dcadcraft": {
-    "volume": 47322.033782868646,
+    "volume": 47321.88742982901,
     "faces": 16,
     "features": 3,
     "sketches": 2,
@@ -140,8 +140,8 @@
     "exact": true
   },
   "r15/revolve_work_r15.3dcadcraft": {
-    "volume": 3139.535488560142,
-    "faces": 12,
+    "volume": 3139.535488560157,
+    "faces": 8,
     "features": 2,
     "sketches": 1,
     "exact": true
@@ -210,7 +210,7 @@
     "exact": true
   },
   "r26/drawing_r26.3dcadcraft": {
-    "volume": 31458.065903299444,
+    "volume": 31458.121407110833,
     "faces": 54,
     "features": 3,
     "sketches": 1,
@@ -224,13 +224,13 @@
     "exact": true
   },
   "r28/drawing_r28.3dcadcraft": {
-    "volume": 31458.065903299444,
+    "volume": 31458.121407110833,
     "faces": 54,
     "features": 3,
     "sketches": 1,
     "exact": true
   },
-  "r29/drawing_r29.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r29/drawing_r29.3dcadcraft": {"volume": 31458.121407110833, "faces": 54, "features": 3, "sketches": 1, "exact": true},
   "r30/sheet_r30.3dcadcraft": {
     "volume": 11860.329912369796,
     "faces": 9,
@@ -245,14 +245,14 @@
     "sketches": 0,
     "exact": true
   },
-  "r32/drawing_r32.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
-  "r33/drawing_r33.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r32/drawing_r32.3dcadcraft": {"volume": 31458.121407110833, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r33/drawing_r33.3dcadcraft": {"volume": 31458.121407110833, "faces": 54, "features": 3, "sketches": 1, "exact": true},
   "r34/delete_face_r34.3dcadcraft": {"volume": 64000.0, "faces": 5, "features": 4, "sketches": 0, "exact": true},
   "r35/move_bodies_r35.3dcadcraft": {"volume": 24999.999999999975, "faces": 12, "features": 3, "sketches": 1, "exact": true},
-  "r36/drawing_r36.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r36/drawing_r36.3dcadcraft": {"volume": 31458.121407110833, "faces": 54, "features": 3, "sketches": 1, "exact": true},
   "r37/surfaces_r37.3dcadcraft": {"volume": 35333.333333333365, "faces": 10, "features": 8, "sketches": 3, "exact": true},
-  "r38/drawing_r38.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
-  "r39/drawing_r39.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r38/drawing_r38.3dcadcraft": {"volume": 31458.121407110833, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r39/drawing_r39.3dcadcraft": {"volume": 31458.121407110833, "faces": 54, "features": 3, "sketches": 1, "exact": true},
   "r40/copy_object_r40.3dcadcraft": {"volume": 33999.99999999997, "faces": 19, "features": 4, "sketches": 1, "exact": true},
   "r41/loft_edges_r41.3dcadcraft": {"volume": -1333.3333333333337, "faces": 3, "features": 3, "sketches": 2, "exact": true},
   "r42/import_r42.3dcadcraft": {"volume": 23941.714821850466, "faces": 7, "features": 2, "sketches": 0, "exact": true},
@@ -272,6 +272,6 @@
   "r57/prism_r57.3dcadcraft": {"volume": 168274.36451469746, "faces": 18, "features": 1, "sketches": 0, "exact": true},
   "r56/lofted_flange_r56.3dcadcraft": {"volume": 13852.451852392038, "faces": 62, "features": 2, "sketches": 2, "exact": true},
   "r58/between_r58.3dcadcraft": {"volume": 23999999.999999974, "faces": 6, "features": 1, "sketches": 0, "exact": true},
-  "r60/drawing_r60.3dcadcraft": {"volume": 31458.065903299444, "faces": 54, "features": 3, "sketches": 1, "exact": true},
+  "r60/drawing_r60.3dcadcraft": {"volume": 31458.121407110833, "faces": 54, "features": 3, "sketches": 1, "exact": true},
   "r59/freeform_r59.3dcadcraft": {"volume": 362.0584112942583, "faces": 1, "features": 1, "sketches": 0, "exact": true}
 }

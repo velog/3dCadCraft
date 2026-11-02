@@ -3891,3 +3891,35 @@ fn face_names_stay() {
         problems.join("\n")
     );
 }
+
+/// A reference to a corner patch's old name (the kernel now names it after its edge) still finds
+/// the face under its point; a far point, or a missing name of any other kind, finds nothing.
+#[test]
+fn old_names_of_renamed_faces_resolve_by_their_point() {
+    use cadcraft3d::kernel::exact;
+    use cadcraft3d::kernel::Point3;
+    let pr = cadcraft3d::document::Project::load(Path::new("tests/compat/r3/shell_r3.3dcadcraft")).unwrap();
+    let mut part = pr
+        .documents()
+        .iter()
+        .find_map(|d| match &d.data {
+            cadcraft3d::document::DocumentData::Part(p) => Some(p.clone()),
+            _ => None,
+        })
+        .unwrap();
+    part.regenerate().unwrap();
+    let s = &part.exact_bodies.0[0];
+    // On the round r2 of the corner x = y = 0, low down.
+    let c = 2.0 - 2.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let on = Point3::new(c, c, 1.5);
+    let found = exact::faces_named(s, "Fillet1:Corner:1", on).unwrap();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        s.face_names[found[0]].as_deref().is_some_and(|n| n.starts_with("Fillet1:")),
+        "{:?}",
+        s.face_names[found[0]]
+    );
+    let far = Point3::new(500.0, 500.0, 500.0);
+    assert!(exact::faces_named(s, "Fillet1:Corner:1", far).unwrap().is_empty());
+    assert!(exact::faces_named(s, "Gone1:Top", on).unwrap().is_empty());
+}

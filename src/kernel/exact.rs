@@ -1419,6 +1419,51 @@ pub fn faces_named_many(
     s: &ExactSolid,
     refs: &[(&str, Point3)],
 ) -> Result<Vec<Vec<usize>>, String> {
+    let mut found = faces_named_exactly(s, refs)?;
+    // A name the kernel no longer gives (see `is_renamable`): the face under the reference's point.
+    if found
+        .iter()
+        .zip(refs)
+        .any(|(v, (name, _))| v.is_empty() && is_renamable(name))
+    {
+        let tol = (s.body.size() * 1e-4).max(1e-4);
+        let mesh = guarded("tessellate", || s.body.tessellate(tol))?;
+        for (v, (name, hint)) in found.iter_mut().zip(refs) {
+            if !v.is_empty() || !is_renamable(name) {
+                continue;
+            }
+            let mut best: Option<(Real, usize)> = None;
+            for (t, &f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+                if let Some([a, b, c]) = mesh.tri(t) {
+                    let q = sheet::closest_on_triangle(hint, &p3(a), &p3(b), &p3(c));
+                    let d = (q - hint).norm();
+                    if best.is_none_or(|(x, _)| d < x) {
+                        best = Some((d, f as usize));
+                    }
+                }
+            }
+            if let Some((d, f)) = best
+                && d <= tol * 10.0
+            {
+                v.push(f);
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Names whose exact form changed with the kernel's history and display mesh, the geometry being
+/// the same: a blend's corner patches (`<id>:Corner:k` became `<id>:Round[..]`) and a sheet's
+/// rims and bends (named by a sample of the display mesh). Old references to them are found by
+/// their point; any other missing name stays a missing reference (the feature's health).
+fn is_renamable(name: &str) -> bool {
+    name.contains(":Corner:") || name.contains(":rim.") || name.contains(":Bend:")
+}
+
+fn faces_named_exactly(
+    s: &ExactSolid,
+    refs: &[(&str, Point3)],
+) -> Result<Vec<Vec<usize>>, String> {
     let named: Vec<Vec<usize>> = refs
         .iter()
         .map(|(name, _)| {
@@ -1515,7 +1560,10 @@ pub fn faces_in_solids(
     let mut cands: Vec<Vec<(usize, usize)>> = vec![Vec::new(); refs.len()];
     for (i, s) in solids.iter().enumerate() {
         let asks: Vec<usize> = (0..refs.len())
-            .filter(|&k| s.face_names.iter().any(|n| n.as_deref() == Some(refs[k].0)))
+            .filter(|&k| {
+                is_renamable(refs[k].0)
+                    || s.face_names.iter().any(|n| n.as_deref() == Some(refs[k].0))
+            })
             .collect();
         if asks.is_empty() {
             continue;
