@@ -600,7 +600,13 @@ impl CadCraftApp {
             warning_box(ui, h);
         }
         ui.label(b.describe());
-        if ui.button("Edit Feature").clicked() {
+        // A library fastener's shape comes from its table: nothing to edit here.
+        let editable = !matches!(b.op, BodyOp::Axial(_));
+        if ui
+            .add_enabled(editable, egui::Button::new("Edit Feature"))
+            .on_disabled_hover_text("A library component's size comes from its table")
+            .clicked()
+        {
             match b.op {
                 BodyOp::Thicken(_) => self.thicken_edit(k),
                 BodyOp::DeleteFace(_) => self.delete_face_edit(k),

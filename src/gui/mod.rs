@@ -1798,6 +1798,11 @@ impl CadCraftApp {
                 crate::part::BodyOp::Thicken(_) => self.thicken_edit(k),
                 crate::part::BodyOp::DeleteFace(_) => self.delete_face_edit(k),
                 crate::part::BodyOp::MoveBodies(_) => self.move_bodies_edit(k),
+                crate::part::BodyOp::Axial(_) => {
+                    self.file_status = Some(Err(
+                        "Edit Feature: a library component's size comes from its table".into(),
+                    ));
+                }
                 _ => self.surface_op_edit(k),
             },
             Feature::Extrude(e) => {

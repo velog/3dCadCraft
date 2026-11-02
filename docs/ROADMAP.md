@@ -292,6 +292,7 @@ Before each step: verify its rows against the Inventor 2027 help (spec §7).
 
 - Frame Generator (6.1): [spec](spec/6.1-frame-generator.md) written 2026-10-29, stages F0–F5.
 - Libraries of standard components (6.3): [spec](spec/6.3-content-center.md) rewritten 2026-11-02 with the plan CC0–CC7 (interface, families [5.7](spec/5.7-part-families.md), library and fasteners, profiles in the tree, everyday use, AutoDrop, own libraries and publishing, breadth); waiting for the owner's decisions (its §7).
+  Fasteners built directly, no Boolean, 2026-11-02 (spec 6.3 §6.0b, format revision 61): all 2586 members build in 17 s, worst family 33.7 ms.
 - Bolted connections, shafts and gears (6.2).
 - Weldments (6.4): [spec](spec/6.4-weldments.md) written 2026-10-29, stages W0–W5.
 - Tube & pipe and cables (6.5, 6.6).

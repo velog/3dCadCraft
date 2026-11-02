@@ -1240,6 +1240,7 @@ Generators that **calculate** and **model** standard machine elements:
 - A library is a **plain folder** of categories and family files (a `.ccpart` with a family table, 5.7), so a company can keep its own in a shared folder or in git.
 - A placed member is a generated part file in a cache, linked like any part; Pack embeds whatever is used when sending a project out.
 - Frame sections (`data/profiles/profiles.csv`) appear in the same tree under Structural Shapes.
+- Fasteners with a hexagon are one stepped body built without a Boolean (`BodyOp::Axial`, spec 6.3 §6.0b): ~5 ms a bolt, ~10 ms with exact corner chamfers.
 
 ## 6.4 Weldments — ⬜ · L
 
