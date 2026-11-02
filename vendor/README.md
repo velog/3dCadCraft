@@ -68,6 +68,8 @@ A fix made when the pin moved to `d4eeedb` (the upstream commit has the defect):
 | File | Change | Effect |
 |---|---|---|
 | `coplanar.rs` `tool_past_flush_faces`, `ops.rs` `boolean_whole` (before the shifted tries), `whole_face.rs` `traced_onto` (visible in the crate) | a prism tool of a Cut flush with a face of the target, whose faces could not be pushed apart, is swept again from its end face past that face (history kept) before the shifted tries and the nudge: a nudged tool left a skin over the hole, a hair off the face, which `has_skin` cannot see | a bore through a tee pipe: 9 faces and the right area (was 10 faces, area 5 % too large, the same volume) |
+| `ops.rs` `conical_cut_junction` | the finer tolerance for cuts between conical bodies only for a tool under half the target's size (a countersink, a pattern's copy) | shell of a chamfered rounded box: the cavity's Cut 4 s → 0.3 s |
+| `blend_fit.rs` `meshed_volumes` (in `right_way`, `volume_in`) | a mesh at 1e-4 of the size, with its sag as the slack, before the full measure; only an unclear result is measured | a chamfer chain round a rounded box: the check 296 ms → a few ms (the chamfer itself 65 ms) |
 
 ## `solidcraft-doc`
 

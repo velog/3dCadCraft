@@ -232,6 +232,11 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
 - `kernel::exact::to_brep` stores the kernel's triangles in `Face::mesh` (display/picking);
   seams (a face meeting itself) are not drawn. Blend faces are named after the replaced
   edge (`Fillet1:Round[A|B]`); `blend::face_matcher` finds old faceted names by feature.
+- **Names that follow the kernel** (`exact::is_renamable`): a blend's corner patches and a sheet's rims and
+  bends are found by the reference's point when their old name is gone; any other missing name stays a
+  missing reference. Do not widen the list: a deleted face must surface as health (rule 8).
+- **A Cut flush with a face after the nudge** left a skin a hair off the face, with the same volume: only the
+  area shows it (oracle 23, 39). `coplanar::tool_past_flush_faces` sweeps the tool past the face first.
 - **Reference tests** (`tests/oracle/`, from SolidCraft): never edit `expected.json` to match
   the program; a case that cannot pass yet goes into `known_failures.txt` with the reason,
   and a known failure that starts passing fails the run. Every crash or geometry fix lands
@@ -688,7 +693,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   kernel face (centre of its largest triangle at size·1e-4 — the kernel picks faces within
   size·1e-3). Inside uses `sk::shell`; Outside/Both/closed use `offset_faces` minus a cavity
   whose faces are pre-named `Shell1:Inner[..]`. The rim keeps the removed face's name.
-  After an Inside shell the outer straight edges are split at the floor level — select
+  After an Inside shell the outer straight edges may be split at the floor level — select
   every piece (blends join them). Rounds ≥ the wall at an open face: the kernel refuses the
   rim; `shell_with_openings` = closed cavity + a prism of the face outline grown by
   0.001·t (a prism side along the round's tangent edge only *touches* it and the cut fails).
