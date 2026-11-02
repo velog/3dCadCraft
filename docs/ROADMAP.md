@@ -544,6 +544,28 @@ What agents driving SolidCraft's MCP server ran into (SolidCraft-Agent-Skills, s
 
 ---
 
+## Next big step: catch up with SolidCraft (2026-10-31)
+
+Our pin (`4687e3b`, 2026-10-14) is ~2500 commits behind SolidCraft's main (licence still MIT OR
+Apache-2.0; its kernel speed work moved to solidcore). In this order:
+
+1. **Move the pin** (kernel, geom, doc, truck patches) on a branch: port or drop each `vendor/README.md`
+   row (drop where upstream has it), then `cargo xtask ci`; report every changed face name
+   (`tests/compat/names.json`), volume (oracle) and time (`tests/perf.rs`) before merging. Gains for free:
+   Boolean / blend / shell / tessellation fixes, STEP import (Y-up, hyperbola / parabola, periodic
+   B-splines, voids, large assemblies in parallel with instancing).
+2. **Kernel features to wire up**: IGES import, G2 fillets of straight edges, sweep guide rails / two
+   rails / twist / end scale, surface Extend (natural / tangent / curvature), Untrim, surfaces through
+   curve networks, boundary patches with G1/G2, continuity analysis, exact hidden lines for drawings
+   (`geom/hlr`), clearance and version compare.
+3. **Viewport**: a BVH per body mesh for face / edge picking (`edge_under` walks every edge segment per
+   hover — rule 20 on large imports), order-independent transparency, the evaluated model cached in the
+   file (open without regenerating).
+4. **Smaller items**, each through its spec: 3D sketch arcs (with 1.10), equation curves, sheet metal
+   perforations, pipe-thread table check.
+
+---
+
 ## How progress is checked
 
 - `cargo test --no-default-features`: the tests of the kernel, the solver, the part and the files (122 now; 142 with the GUI tests).
