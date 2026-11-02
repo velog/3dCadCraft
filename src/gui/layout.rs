@@ -236,6 +236,10 @@ pub struct AppOptions {
     pub thread_texture: bool,
     /// A command's value and its editor next to the cursor.
     pub cursor_value: bool,
+    /// The view's projection when the program starts.
+    pub default_projection: super::camera::Projection,
+    /// The visual style when the program starts.
+    pub default_visual_style: super::view_style::VisualStyle,
     /// The user's aliases and keys (Tools → Customize → Keyboard).
     pub keymap: super::keymap::Keymap,
     /// The hover text names faces and edges by their persistent names
@@ -327,6 +331,8 @@ impl Default for AppOptions {
             show_labels: true,
             thread_texture: true,
             cursor_value: true,
+            default_projection: Default::default(),
+            default_visual_style: Default::default(),
             internal_names: false,
             keymap: Default::default(),
             alias_input: false,
@@ -941,6 +947,8 @@ impl CadCraftApp {
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
             cursor_value: self.cursor_value_enabled,
+            default_projection: self.default_projection,
+            default_visual_style: self.default_visual_style,
             internal_names: self.internal_names,
             keymap: self.keymap.clone(),
             alias_input: self.alias_input,
@@ -971,6 +979,15 @@ impl CadCraftApp {
         self.tools.inference = o.inference;
         self.show_labels = o.show_labels;
         self.cursor_value_enabled = o.cursor_value;
+        if self.default_projection != o.default_projection || !self.view_defaults_taken {
+            self.camera.projection = o.default_projection;
+        }
+        if self.default_visual_style != o.default_visual_style || !self.view_defaults_taken {
+            self.visual_style = o.default_visual_style;
+        }
+        self.view_defaults_taken = true;
+        self.default_projection = o.default_projection;
+        self.default_visual_style = o.default_visual_style;
         if self.thread_texture != o.thread_texture {
             self.thread_texture = o.thread_texture;
             self.scene_dirty = true;
@@ -1324,6 +1341,7 @@ impl CadCraftApp {
                 .show(ui, |ui| self.viewport(ui, frame));
         }
         self.shift_menu_ui(ui.ctx());
+        self.constraint_menu_ui(ui.ctx());
         if let Some(on) = self.full_screen_cmd.take() {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));

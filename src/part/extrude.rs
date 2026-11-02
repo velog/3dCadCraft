@@ -566,13 +566,29 @@ impl ExtrudeFeature {
         let regions = sketch.regions();
         let plane: &Plane = &sketch.plane;
         let mut out = Vec::new();
-        for (n, pr) in self.profiles.iter().enumerate() {
-            let region = pr
-                .resolve(&regions)
-                .ok_or_else(|| format!("profile #{} no longer exists in the sketch", n + 1))?;
+        let picked = self
+            .profiles
+            .iter()
+            .enumerate()
+            .map(|(n, pr)| {
+                pr.resolve(&regions)
+                    .ok_or_else(|| format!("profile #{} no longer exists in the sketch", n + 1))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Solids: profiles that touch make one body (a surface keeps a wall per loop).
+        let groups = if self.output == super::Output::Surface {
+            picked
+                .iter()
+                .enumerate()
+                .map(|(n, r)| (n, (*r).clone()))
+                .collect()
+        } else {
+            crate::sketch::merge_regions(&picked)
+        };
+        for (n, region) in &groups {
             let (outer, holes) = kernel_profile(region);
             out.push(Piece {
-                prefix: piece_prefix(&self.id, n),
+                prefix: piece_prefix(&self.id, *n),
                 span: self.span(body, works, plane, &probe_points(region))?,
                 outer,
                 holes,
@@ -583,7 +599,7 @@ impl ExtrudeFeature {
             let (outer, bounds) = open_loop(op, body, sketch, self.operation)?;
             let probes = segments_polygon(&outer);
             out.push(Piece {
-                prefix: piece_prefix(&self.id, out.len()),
+                prefix: piece_prefix(&self.id, self.profiles.len()),
                 span: self.span(body, works, plane, &probes)?,
                 outer,
                 holes: Vec::new(),
@@ -1717,6 +1733,60 @@ mod default_profile_tests {
 
     /// A plate with a hole drawn by the user: the ring only (the circle
     /// inside fills its hole).
+    fn whole_volume(part: &PartDocument) -> crate::part::Real {
+        let mut t = Vec::new();
+        let ids: Vec<_> = part.body.solids().map(|(id, _)| id).collect();
+        ids.into_iter()
+            .map(|sid| crate::kernel::csg::volume(&part.body.solid_polygons(sid, &mut t).unwrap()))
+            .sum()
+    }
+
+    /// The owner's scissors part: a plate with two holes and the discs filling
+    /// them, all picked: one solid without inner walls (Inventor), and a Join of
+    /// the discs on top of it stays quick.
+    #[test]
+    fn touching_profiles_make_one_solid() {
+        let mut part = PartDocument::default();
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            ..Default::default()
+        };
+        let i = part
+            .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &opts)
+            .unwrap();
+        let sk = &mut part.sketches[i].sketch;
+        sk.add_rectangle_two_point(Point2::new(-6.0, -20.0), Point2::new(6.0, 20.0))
+            .unwrap();
+        sk.add_circle(Point2::new(0.0, 15.0), 3.0).unwrap();
+        sk.add_circle(Point2::new(0.0, -15.0), 3.0).unwrap();
+        let regions = sk.regions();
+        let all: Vec<ProfileRef> = regions
+            .iter()
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let discs: Vec<ProfileRef> = regions
+            .iter()
+            .filter(|r| r.holes.is_empty())
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        part.add_extrude(i, ExtrudeFeature::new(all, 5.0)).unwrap();
+        assert_eq!(part.body.solids().count(), 1);
+        assert_eq!(part.body.faces().count(), 6);
+        let v = whole_volume(&part);
+        assert!((v - 2400.0).abs() < 1e-6, "{v}");
+
+        let t = std::time::Instant::now();
+        let mut pins = ExtrudeFeature::new(discs, 8.0);
+        pins.direction = crate::part::ExtentDirection::Flipped;
+        pins.operation = crate::part::Operation::Join;
+        part.add_extrude(i, pins).unwrap();
+        assert!(t.elapsed().as_secs() < 10, "{:?}", t.elapsed());
+        let v = whole_volume(&part);
+        let want = 2400.0 + 2.0 * std::f64::consts::PI * 9.0 * 8.0;
+        assert!((v - want).abs() < 2.0, "{v} vs {want}");
+        assert_eq!(part.body.solids().count(), 1);
+    }
+
     #[test]
     fn a_plate_with_a_hole_keeps_the_hole() {
         let mut part = PartDocument::default();

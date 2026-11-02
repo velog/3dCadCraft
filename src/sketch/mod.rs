@@ -52,7 +52,7 @@ pub fn wrap_angle_pub(a: Real) -> Real {
 pub use corner::ChamferKind;
 pub use dimparam::{DimDisplay, DimParam, EvalSize, TolKind, Tolerance};
 pub use pattern::{InstanceOffset, PatternDirection, PatternInstance, PatternKind, SketchPattern};
-pub use profile::{ProfileCurve, ProfileEdge, ProfileLoop, Region};
+pub use profile::{ProfileCurve, ProfileEdge, ProfileLoop, Region, merge_regions};
 pub use shapes::Shape;
 pub use solver::{DofAnalysis, PointFreedom, SolveReport, SolveStatus, SolverOptions};
 pub use spline::SplineFit;

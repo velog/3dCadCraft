@@ -114,7 +114,10 @@ impl PresetUi {
     fn used<T: PresetData>(&mut self, command: &str, def: &T, new: bool) -> Result<(), String> {
         let active = self.active(command);
         let data = self.store.data_mut(command);
-        if new {
+        // An edit counts too: a feature turned from Surface to Solid must not
+        // leave the next one starting as a Surface. A new feature's Last Used
+        // is `new`; an edit only replaces it when one exists.
+        if new || data.last_used.is_some() {
             data.record_last_used(def.capture());
         }
         if let Active::Named(n) = active {
@@ -560,11 +563,12 @@ mod tests {
         assert_eq!((d.thickness, d.direction), (3.0, ShellDirection::Outside));
         ui.stamp("Shell", &mut d);
         assert_eq!(d.preset, None, "Last Used records no name");
-        // Edit Feature OKs do not change Last Used.
+        // An Edit Feature OK is the last use too (a Surface turned into a
+        // Solid must not leave the next Extrude starting as a Surface).
         ui.used("Shell", &ShellFeature::new(9.0), false).unwrap();
         let mut d = ShellFeature::new(2.0);
         ui.start(&part, "Shell", &mut d);
-        assert_eq!(d.thickness, 3.0);
+        assert_eq!(d.thickness, 9.0);
         // New Shell Default = No Preset.
         ui.store.data_mut("Shell").new_default = NewDefault::NoPreset;
         let mut d = ShellFeature::new(2.0);

@@ -380,10 +380,10 @@ impl CadCraftApp {
     /// A key combination the user bound starts its command (before the
     /// built-in keys). Returns whether it took the key.
     pub(super) fn user_key_shortcuts(&mut self, ctx: &egui::Context) -> bool {
-        if self.keymap.keys.is_empty() {
-            return false;
-        }
         let env = self.alias_env();
+        // While a sketch tool takes values, a sign or a decimal point belongs
+        // to Dynamic Input, not to a shortcut.
+        let typing = self.editing.is_some() && self.tools.drawing();
         let hit = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
                 egui::Event::Key {
@@ -392,11 +392,16 @@ impl CadCraftApp {
                     repeat: false,
                     modifiers,
                     ..
-                } => chord_text(*modifiers, *key).and_then(|t| {
-                    self.keymap
-                        .command_for_key(&t, env)
-                        .map(|c| (c, *key, *modifiers))
-                }),
+                } if !(typing && modifiers.is_none()) => {
+                    chord_text(*modifiers, *key).and_then(|t| {
+                        self.keymap
+                            .command_for_key(&t, env)
+                            .or_else(|| {
+                                super::inventor_keys::default_command(&self.keymap, &t, env)
+                            })
+                            .map(|c| (c, *key, *modifiers))
+                    })
+                }
                 _ => None,
             })
         });
@@ -406,6 +411,28 @@ impl CadCraftApp {
         ctx.input_mut(|i| i.consume_key(m, key));
         self.start_command(c);
         true
+    }
+
+    /// Takes the keys and aliases of the installed Inventor.
+    fn import_inventor_keys(&mut self) {
+        use super::inventor_keys as inv;
+        let Some(path) = inv::installed_file() else {
+            self.customize.message =
+                Some("Import: no Inventor settings found for this user".into());
+            return;
+        };
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let found = inv::parse(&inv::decode(&bytes));
+                let (keys, aliases) = inv::apply(&mut self.keymap, &found);
+                self.customize.message = Some(format!(
+                    "{}: {keys} keys, {aliases} aliases taken",
+                    path.display()
+                ));
+                self.keymap_changed();
+            }
+            Err(e) => self.customize.message = Some(format!("Import: {e}")),
+        }
     }
 
     /// The Customize window (Keyboard tab).
@@ -726,6 +753,13 @@ impl CadCraftApp {
                         self.customize.import = Some(text);
                     }
                 }
+            }
+            if ui
+                .button("Import from Inventor")
+                .on_hover_text("The keys and aliases of the Inventor installed for this user")
+                .clicked()
+            {
+                self.import_inventor_keys();
             }
             if ui.button("Close").clicked() {
                 self.customize.open = false;

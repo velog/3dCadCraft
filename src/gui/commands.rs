@@ -158,6 +158,14 @@ pub enum AppCmd {
     Delete,
     /// Zoom All: fit the model into the view.
     ZoomAll,
+    /// Zoom Selected: fit the selection into the view.
+    ZoomSelected,
+    /// Previous View of the view history.
+    PreviousView,
+    /// Next View of the view history.
+    NextView,
+    /// Zoom Window: a rectangle dragged in the view.
+    ZoomWindow,
     /// Inspect → Measure (M): the Measure window.
     Measure,
     /// Tools → Customize: the user's keys (Keyboard tab).
@@ -1728,18 +1736,30 @@ pub static COMMANDS: &[Command] = &[
         .at(&[KEY])
         .tip("Fit the whole model into the view (double middle click)")
         .spec("0.3-view.md"),
+    c("view.zoom_selected", "Zoom Selected", "Побиране на избраното", Icon::Home)
+        .run(Action::App(AppCmd::ZoomSelected))
+        .key("End")
+        .at(&[KEY])
+        .tip("Fit the selected items into the view")
+        .spec("0.3-view.md"),
     c("view.previous", "Previous View", "Предишен изглед", Icon::Home)
+        .run(Action::App(AppCmd::PreviousView))
         .key("F5")
         .at(&[KEY])
-        .todo("0.3"),
+        .tip("Back to the view before this one")
+        .spec("0.3-view.md"),
     c("view.next", "Next View", "Следващ изглед", Icon::Home)
+        .run(Action::App(AppCmd::NextView))
         .key("Shift+F5")
         .at(&[KEY])
-        .todo("0.3"),
+        .tip("Forward to the view after this one")
+        .spec("0.3-view.md"),
     c("view.zoom_window", "Zoom Window", "Мащаб с прозорец", Icon::Home)
+        .run(Action::App(AppCmd::ZoomWindow))
         .key("Shift+F3")
         .at(&[KEY])
-        .todo("0.3"),
+        .tip("Drag a rectangle: it fills the view")
+        .spec("0.3-view.md"),
     c("view.pan", "Pan", "Панорама", Icon::Move)
         .key("F2")
         .bound()

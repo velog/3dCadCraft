@@ -2031,6 +2031,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 let n = self.tools.pick_count();
                 let count = self.tools.selected.len();
                 let mut reselect = false;
+                let mut pick_line = false;
                 psection(ui, "tooldlg_input", "Input", |ui| {
                     plabel(ui, "Geometry");
                     let text = if count > 0 {
@@ -2049,6 +2050,24 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     ui.end_row();
                     for (k, name) in steps.iter().enumerate() {
                         plabel(ui, name);
+                        if t == Tool::Mirror {
+                            let set = self.tools.mirror_line.is_some();
+                            let state = if set { "Line" } else { "Click in the view" };
+                            let text = if ready {
+                                format!("> {state}")
+                            } else {
+                                state.to_owned()
+                            };
+                            if ui
+                                .selectable_label(ready, text)
+                                .on_hover_text("Click, then click the line of symmetry in the view")
+                                .clicked()
+                            {
+                                pick_line = true;
+                            }
+                            ui.end_row();
+                            continue;
+                        }
                         let active = ready && k == n;
                         let state = if k < n { "Set" } else { "Click in the view" };
                         let _ = ui.selectable_label(
@@ -2064,6 +2083,19 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 });
                 if reselect {
                     self.tools.reselect_geometry();
+                }
+                if pick_line && let Err(e) = self.tools.pick_mirror_line() {
+                    self.file_status = Some(Err(e));
+                }
+                if t == Tool::Mirror {
+                    let can = count > 0 && self.tools.mirror_line.is_some();
+                    if ui
+                        .add_enabled(can, egui::Button::new("Apply"))
+                        .on_hover_text("Make the mirrored copy and stay in the command")
+                        .clicked()
+                    {
+                        self.tool_op(|t, ps| t.mirror_apply(ps));
+                    }
                 }
                 // Precise values (the same fields as next to the cursor).
                 let fields = self.hud_fields();
@@ -5245,6 +5277,47 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 }
                 if tab == "Display" {
                 ui.label(RichText::new("Display").strong());
+                ui.horizontal(|ui| {
+                    ui.label("Default projection");
+                    let before = self.default_projection;
+                    egui::ComboBox::from_id_salt("opt_default_projection")
+                        .selected_text(before.label())
+                        .show_ui(ui, |ui| {
+                            for p in [
+                                super::camera::Projection::Orthographic,
+                                super::camera::Projection::Perspective,
+                                super::camera::Projection::PerspectiveOrthoFaces,
+                            ] {
+                                ui.selectable_value(&mut self.default_projection, p, p.label());
+                            }
+                        });
+                    if self.default_projection != before {
+                        self.camera.projection = self.default_projection;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Default visual style");
+                    let before = self.default_visual_style;
+                    egui::ComboBox::from_id_salt("opt_default_style")
+                        .selected_text(before.label())
+                        .show_ui(ui, |ui| {
+                            use super::view_style::VisualStyle as V;
+                            for v in [
+                                V::Shaded,
+                                V::ShadedWithEdges,
+                                V::ShadedWithHiddenEdges,
+                                V::Wireframe,
+                                V::WireframeWithHiddenEdges,
+                                V::WireframeWithVisibleEdgesOnly,
+                                V::Monochrome,
+                            ] {
+                                ui.selectable_value(&mut self.default_visual_style, v, v.label());
+                            }
+                        });
+                    if self.default_visual_style != before {
+                        self.visual_style = self.default_visual_style;
+                    }
+                });
                 ui.checkbox(&mut self.show_labels, "Show constraint labels");
                 if ui
                     .checkbox(&mut self.thread_texture, "Thread texture")

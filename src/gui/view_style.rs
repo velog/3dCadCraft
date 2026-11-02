@@ -13,7 +13,9 @@ use crate::part::PlaneRef;
 
 /// Inventor's visual styles we draw (Realistic, Watercolor, Illustration
 /// and Technical Illustration need rendering, FEATURES 7.3).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum VisualStyle {
     Shaded,
     #[default]

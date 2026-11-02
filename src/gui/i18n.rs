@@ -486,12 +486,20 @@ const TABLE: &[(&str, &str)] = &[
         "Concentric: изберете втората окръжност или дъга",
     ),
     (
+        "Mirror: press Apply or Enter, or click another line",
+        "Mirror: натиснете Apply или Enter, или щракнете друга линия",
+    ),
+    (
         "Fix: select a point or curve",
         "Fix: изберете точка или крива",
     ),
     (
-        "Select a line, or a first point",
-        "Изберете линия или първа точка",
+        "Select a line, or a first point (Shift + click: the other direction)",
+        "Изберете линия или първа точка (Shift + клик: другата посока)",
+    ),
+    (
+        "Select the second point (Shift + click: the other direction)",
+        "Изберете втората точка (Shift + клик: другата посока)",
     ),
     ("Select the second point", "Изберете втората точка"),
     (

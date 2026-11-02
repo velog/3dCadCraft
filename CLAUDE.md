@@ -1403,6 +1403,14 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.
 
+- **Touching profiles make one solid** (`sketch::merge_regions`, used by Extrude and Revolve with Output Solid): a plate
+  with holes + the discs filling them were separate tools with inner walls (and a Join on them took 84 s). Regions sharing
+  an edge become one; a surface keeps a wall per loop. A merged group's piece keeps the first profile's prefix.
+- **Key combinations**: `gui/inventor_keys.rs::DEFAULT_KEYS` runs them through `user_key_shortcuts` (after the user's own
+  keys); a `.key(..)` in `commands.rs` only *shows* a key — without a table row or a hard-coded branch it does nothing
+  (Home, F5, PageUp, Shift+F3 did nothing until 2026-11-01). Plain punctuation is left to Dynamic Input while a sketch tool
+  draws. Customize's Import from Inventor reads the user's own customization file (values `hex:06,00,00,00,<flags>,00,<vk>`).
+
 ## Status and next steps
 
 See `docs/ROADMAP.md`. Done: kernel base, sketch solver, viewport, file format v1,

@@ -216,6 +216,130 @@ impl Region {
     }
 }
 
+/// Do two edges run along the same path, in either direction?
+fn same_path(a: &ProfileCurve, b: &ProfileCurve, tol: Real) -> bool {
+    let close = |p: Point2, q: Point2| (p - q).norm() <= tol;
+    let forward = close(a.start(), b.start())
+        && close(a.end(), b.end())
+        && close(a.point(0.25), b.point(0.25));
+    let backward = close(a.start(), b.end())
+        && close(a.end(), b.start())
+        && close(a.point(0.25), b.point(0.75));
+    (forward || backward) && close(a.point(0.5), b.point(0.5))
+}
+
+/// Joins the regions among `regions` that share an edge into one region each:
+/// the shared edges disappear (Inventor: selected profiles that touch make one
+/// body, without walls between them). A rectangle with two holes and the two
+/// discs filling them becomes the whole rectangle. The result is ordered by
+/// each group's first region and gives that first index; a region sharing no
+/// edge comes back unchanged, as does a group whose outline does not make one
+/// outer loop (regions meeting only at corners around a gap).
+pub fn merge_regions(regions: &[&Region]) -> Vec<(usize, Region)> {
+    let tol = 1e-6
+        * regions
+            .iter()
+            .flat_map(|r| r.outer.edges.iter())
+            .flat_map(|e| [e.curve.start(), e.curve.end()])
+            .map(|p| p.coords.amax())
+            .fold(1.0, Real::max);
+    let all: Vec<Vec<&ProfileEdge>> = regions
+        .iter()
+        .map(|r| {
+            std::iter::once(&r.outer)
+                .chain(r.holes.iter())
+                .flat_map(|l| l.edges.iter())
+                .collect()
+        })
+        .collect();
+    // Which regions touch: union-find over shared edges.
+    let mut group: Vec<usize> = (0..regions.len()).collect();
+    fn root(g: &mut [usize], mut i: usize) -> usize {
+        while g[i] != i {
+            g[i] = g[g[i]];
+            i = g[i];
+        }
+        i
+    }
+    for i in 0..regions.len() {
+        for j in i + 1..regions.len() {
+            let shares = all[i]
+                .iter()
+                .any(|a| all[j].iter().any(|b| same_path(&a.curve, &b.curve, tol)));
+            if shares {
+                let (a, b) = (root(&mut group, i), root(&mut group, j));
+                group[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for i in 0..regions.len() {
+        if root(&mut group, i) != i {
+            continue;
+        }
+        let members: Vec<usize> = (0..regions.len())
+            .filter(|&k| root(&mut group, k) == i)
+            .collect();
+        if members.len() == 1 {
+            out.push((i, regions[i].clone()));
+            continue;
+        }
+        // An edge stays when no other member of the group has it.
+        let mut edges: Vec<&ProfileEdge> = Vec::new();
+        for &k in &members {
+            for e in &all[k] {
+                let shared = members
+                    .iter()
+                    .filter(|&&o| o != k)
+                    .any(|&o| all[o].iter().any(|b| same_path(&e.curve, &b.curve, tol)));
+                if !shared {
+                    edges.push(e);
+                }
+            }
+        }
+        match region_of_edges(&edges, tol) {
+            Some(r) => out.push((i, r)),
+            None => out.extend(members.iter().map(|&k| (k, regions[k].clone()))),
+        }
+    }
+    out.sort_by_key(|(k, _)| *k);
+    out
+}
+
+/// The region bounded by `edges` (each runs with the material on its left):
+/// chained head to tail, exactly one counter-clockwise loop. `None` otherwise.
+fn region_of_edges(edges: &[&ProfileEdge], tol: Real) -> Option<Region> {
+    let mut used = vec![false; edges.len()];
+    let mut outer: Option<ProfileLoop> = None;
+    let mut holes = Vec::new();
+    while let Some(first) = used.iter().position(|u| !u) {
+        used[first] = true;
+        let start = edges[first].curve.start();
+        let mut end = edges[first].curve.end();
+        let mut chain = vec![edges[first].clone()];
+        while (end - start).norm() > tol {
+            let next = (0..edges.len())
+                .find(|&k| !used[k] && (edges[k].curve.start() - end).norm() <= tol)?;
+            used[next] = true;
+            end = edges[next].curve.end();
+            chain.push(edges[next].clone());
+        }
+        let lp = ProfileLoop { edges: chain };
+        if lp.area() > 0.0 {
+            if outer.is_some() {
+                return None;
+            }
+            outer = Some(lp);
+        } else {
+            holes.push(lp);
+        }
+    }
+    Some(Region {
+        outer: outer?,
+        holes,
+    })
+}
+
 fn polygon_area(pts: &[Point2]) -> Real {
     let n = pts.len();
     (0..n)
@@ -630,6 +754,51 @@ mod tests {
 
     /// A circle drawn on another (a projected edge) and radial lines: one
     /// edge, 8 sectors (coincident pieces gave 0 regions).
+    #[test]
+    fn touching_regions_merge_into_one() {
+        // A plate with two holes and the discs filling them: one rectangle.
+        let mut s = Sketch::default();
+        s.add_rectangle_two_point(p(-6.0, -20.0), p(6.0, 20.0))
+            .unwrap();
+        s.add_circle(p(0.0, 15.0), 3.0).unwrap();
+        s.add_circle(p(0.0, -15.0), 3.0).unwrap();
+        let regions = s.regions();
+        assert_eq!(regions.len(), 3);
+        let refs: Vec<&Region> = regions.iter().collect();
+        let merged = merge_regions(&refs);
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].1.holes.is_empty());
+        assert_relative_eq!(merged[0].1.area(), 480.0, epsilon = 1e-6);
+
+        // The plate and one disc: the other hole stays.
+        let plate = regions.iter().find(|r| r.holes.len() == 2).unwrap();
+        let disc = regions.iter().find(|r| r.holes.is_empty()).unwrap();
+        let merged = merge_regions(&[plate, disc]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].1.holes.len(), 1);
+
+        // Two discs apart stay two regions.
+        let discs: Vec<&Region> = regions.iter().filter(|r| r.holes.is_empty()).collect();
+        assert_eq!(merge_regions(&discs).len(), 2);
+    }
+
+    #[test]
+    fn neighbours_across_a_shared_line_merge() {
+        // A rectangle split by a line, with a circle over that line.
+        let mut s = Sketch::default();
+        s.add_rectangle_two_point(p(0.0, 0.0), p(20.0, 10.0))
+            .unwrap();
+        s.add_line(p(10.0, 0.0), p(10.0, 10.0));
+        s.add_circle(p(10.0, 5.0), 2.0).unwrap();
+        let regions = s.regions();
+        assert!(regions.len() >= 4, "{}", regions.len());
+        let refs: Vec<&Region> = regions.iter().collect();
+        let merged = merge_regions(&refs);
+        assert_eq!(merged.len(), 1);
+        assert_relative_eq!(merged[0].1.area(), 200.0, epsilon = 1e-3);
+        assert!(merged[0].1.holes.is_empty());
+    }
+
     #[test]
     fn coincident_circles_are_one_edge() {
         let mut s = Sketch::default();

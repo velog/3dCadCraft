@@ -87,6 +87,7 @@ mod icons;
 mod if_builder;
 mod import;
 mod interference;
+mod inventor_keys;
 mod iprops;
 mod keymap;
 mod keys;
@@ -116,6 +117,7 @@ mod select;
 mod sheet_metal;
 mod shell;
 mod show_dims;
+mod sketch_marking;
 mod sketch_tools;
 mod sm_planned;
 mod steps;
@@ -124,6 +126,7 @@ mod sweep;
 mod thicken;
 mod trim_preview;
 mod valuefield;
+mod view_nav;
 mod view_style;
 mod viewcube;
 mod work;
@@ -568,6 +571,12 @@ struct CadCraftApp {
     show_labels: bool,
     /// Application Options → Display → Thread texture (cosmetic threads).
     thread_texture: bool,
+    /// Application Options › Display: the projection at start.
+    default_projection: camera::Projection,
+    /// Application Options › Display: the visual style at start.
+    default_visual_style: view_style::VisualStyle,
+    /// The defaults above have been applied once.
+    view_defaults_taken: bool,
     /// Application Options → Display → Internal names in hover text.
     internal_names: bool,
     /// Application Options → Show command alias input dialog (G6).
@@ -815,6 +824,16 @@ struct CadCraftApp {
     /// Where the last right click in the view was (the plain menu's Select
     /// Other asks the candidates there).
     menu_at: Option<(egui::Pos2, egui::Rect)>,
+    /// The views rested on (F5, Shift+F5).
+    view_history: view_nav::ViewHistory,
+    /// Zoom Window is waiting: for the drag, then with its first corner.
+    zoom_window: Option<Option<egui::Pos2>>,
+    /// Shift is held in this frame (Horizontal / Vertical swap at a click).
+    click_shift: bool,
+    /// The sketch's constraint menu, open at this point (Ctrl / Shift + right click).
+    constraint_menu: Option<egui::Pos2>,
+    /// It opened this frame (the press that opened it must not close it).
+    constraint_menu_fresh: bool,
     /// The selected set (several faces, edges, features, bodies, sketches).
     sel: Vec<select::SelItem>,
     /// The set before the last change (Previous Selection).
@@ -974,6 +993,9 @@ impl CadCraftApp {
             sketch_opts: SketchOptions::default(),
             show_labels: true,
             thread_texture: true,
+            default_projection: Default::default(),
+            default_visual_style: Default::default(),
+            view_defaults_taken: false,
             internal_names: false,
             alias_input: false,
             alias: Default::default(),
@@ -1087,6 +1109,11 @@ impl CadCraftApp {
             shift_rmb: false,
             ctrl_rmb: false,
             menu_at: None,
+            view_history: Default::default(),
+            zoom_window: None,
+            click_shift: false,
+            constraint_menu: None,
+            constraint_menu_fresh: false,
             sel: Vec::new(),
             prev_sel: Vec::new(),
             sel_key: String::new(),
@@ -3288,6 +3315,7 @@ impl CadCraftApp {
         };
         let offset_of = self.offset_source();
         let offset_loop = self.tools.offset_loop;
+        self.tools.swap_direction = self.click_shift;
         self.tool_op(|t, ps| t.click(ps, pick));
         if vals.iter().all(Option::is_none) {
             return;
@@ -4351,6 +4379,10 @@ impl CadCraftApp {
                 }
             }
             AppCmd::ZoomAll => self.fit_view(),
+            AppCmd::ZoomSelected => self.zoom_selected(),
+            AppCmd::PreviousView => self.view_step(true),
+            AppCmd::NextView => self.view_step(false),
+            AppCmd::ZoomWindow => self.zoom_window = Some(None),
             AppCmd::Measure => self.toggle_measure(),
             AppCmd::Customize => self.customize.open = true,
         }
@@ -5158,7 +5190,10 @@ impl CadCraftApp {
             }
         }
         // Esc first closes the selection menu (Shift + right-click).
-        if pressed(Key::Escape) && self.sel_menu.take().is_none() {
+        if pressed(Key::Escape)
+            && self.sel_menu.take().is_none()
+            && self.constraint_menu.take().is_none()
+        {
             self.select_other = None;
             self.project_geometry = false;
             self.relink = None;
@@ -5495,6 +5530,14 @@ impl CadCraftApp {
         let (rect, mut response) =
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.viewport_rect = rect;
+        self.view_history.watch(&self.camera, ui.input(|i| i.time));
+        // Zoom Window owns the mouse until its rectangle is drawn.
+        if self.zoom_window.is_some() {
+            let painter = ui.painter_at(rect);
+            self.zoom_window_input(ui.ctx(), &painter, rect);
+            response.flags = egui::response::Flags::empty();
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
         // New geometry out of the view (a sketch's sizes, a placement).
         self.keep_in_view(ui.ctx(), rect);
         // What may be picked this frame: selector kinds ∩ user filter.
@@ -6036,6 +6079,7 @@ impl CadCraftApp {
         if response.secondary_clicked() {
             self.cube_context = on_cube.is_some();
         }
+        self.click_shift = ui.input(|i| i.modifiers.shift);
         // Shift + right-click: the selection menu at the cursor (Inventor).
         if response.hovered() && ui.input(|i| i.pointer.button_pressed(PointerButton::Secondary)) {
             let (shift, ctrl) = ui.input(|i| (i.modifiers.shift, i.modifiers.ctrl));

@@ -487,11 +487,27 @@ pub(super) fn revolve(
     let (start, sweep) = r.sweep_in(body, works, sketch).map_err(User)?;
     let regions = sketch.regions();
     let mut out = Vec::new();
-    for (n, pr) in r.profiles.iter().enumerate() {
-        let region = pr
-            .resolve(&regions)
-            .ok_or_else(|| User(format!("profile #{} no longer exists in the sketch", n + 1)))?;
-        let (outer, holes) = kernel_profile(region);
+    let picked = r
+        .profiles
+        .iter()
+        .enumerate()
+        .map(|(n, pr)| {
+            pr.resolve(&regions)
+                .ok_or_else(|| User(format!("profile #{} no longer exists in the sketch", n + 1)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // Solids: profiles that touch make one body.
+    let groups = if r.output == Output::Surface {
+        picked
+            .iter()
+            .enumerate()
+            .map(|(n, g)| (n, (*g).clone()))
+            .collect()
+    } else {
+        crate::sketch::merge_regions(&picked)
+    };
+    for (n, region) in groups {
+        let (outer, holes) = kernel_profile(&region);
         if r.output == Output::Surface {
             // The walls only, as an exact sheet (`exact::revolve_sheet`).
             let chains: Vec<_> = std::iter::once(outer)

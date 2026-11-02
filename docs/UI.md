@@ -488,3 +488,14 @@ Below the title of the **Extrude, Revolve, Fillet, Chamfer, Shell** and **Face D
 - **...** — Save Current, Rename Current, Delete Current, **New <Command> Default** (Last Used / Use Current Preset / No Preset), **Sort** (Recently Used / Date created / Alpha-Numeric / Last modified), Show built-in presets.
 
 An asterisk (`*Name`) means a value was changed after the set was chosen. Sets keep only the settings, never the profiles, edges or faces. They are saved for the user (`%APPDATA%\3dcadcraft\presets\<Command>.json`, on Linux `~/.config/3dcadcraft/presets`), not in the project; the feature remembers only the set's name and Edit Feature shows it again.
+
+## Inventor's keys (`gui/inventor_keys.rs`)
+
+Home Zoom All, End Zoom Selected, PageUp Look At, F5 / Shift+F5 Previous / Next View, Shift+F3 Zoom Window, Alt+\` Parameters,
+Alt+B Rebuild All, Ctrl+F7 Validate Solid, `]` `/` `.` Work Plane / Axis / Point, Ctrl+] origin planes, Alt+] Alt+/ Alt+. work
+feature visibility, `-` `=` Horizontal / Equal (not while a sketch tool takes values), Ctrl+Shift+C Circle, Ctrl+Shift+K Chamfer,
+Ctrl+Shift+F Fillet, Ctrl+Shift+L Loft, Ctrl+Shift+O / R / M Circular Pattern / Rectangular Pattern / Mirror, Ctrl+Shift+E DOF,
+Ctrl+H Replace, Ctrl+Alt+A Assemble, Ctrl+Shift+T Leader Text, Ctrl+Shift+N New Sheet. Tools › Customize › Import from Inventor
+takes the installed Inventor's keys and aliases.
+
+In a sketch: Ctrl or Shift + right click = the constraints at the cursor. Shift + click with Horizontal / Vertical = the other one.

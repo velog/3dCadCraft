@@ -6,7 +6,7 @@ use nalgebra::{Matrix4, Rotation3, Vector4};
 use crate::kernel::{Plane, Point3, Real, Vector3};
 
 /// How the view is projected (Inventor: View → Appearance, ViewCube menu).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Projection {
     /// Parallel projection.
     Orthographic,

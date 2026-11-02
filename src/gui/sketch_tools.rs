@@ -98,8 +98,12 @@ impl ConstraintTool {
             (Concentric, 0) => "Concentric: select the first circle or arc",
             (Concentric, _) => "Concentric: select the second circle or arc",
             (Fix, _) => "Fix: select a point or curve",
-            (Horizontal, 0) | (Vertical, 0) => "Select a line, or a first point",
-            (Horizontal, _) | (Vertical, _) => "Select the second point",
+            (Horizontal, 0) | (Vertical, 0) => {
+                "Select a line, or a first point (Shift + click: the other direction)"
+            }
+            (Horizontal, _) | (Vertical, _) => {
+                "Select the second point (Shift + click: the other direction)"
+            }
             (Tangent, 0) => "Tangent: select the first curve",
             (Tangent, _) => "Tangent: select the second curve",
             (Symmetric, 0) => "Symmetric: select the first point or curve",
@@ -428,6 +432,10 @@ pub struct SketchTools {
     /// New points are Center Points (Format → Center Point; Hole takes them
     /// by default).
     pub center_point: bool,
+    /// Mirror: the chosen mirror line.
+    pub mirror_line: Option<EntityId>,
+    /// Shift is held at this click: Horizontal and Vertical swap.
+    pub swap_direction: bool,
     /// Selected entities (Select tool, and the input of Move/Copy/Rotate/Mirror).
     pub selected: Vec<EntityId>,
     /// Selected constraints (glyphs or dimensions picked in the window).
@@ -508,6 +516,8 @@ impl Default for SketchTools {
             polygon_inscribed: true,
             construction: false,
             center_point: false,
+            mirror_line: None,
+            swap_direction: false,
             selected: Vec::new(),
             selected_constraints: Vec::new(),
             selected_points: Vec::new(),
@@ -557,6 +567,7 @@ impl SketchTools {
         self.selected_constraints.clear();
         self.fillet_first = None;
         self.chamfer_first = None;
+        self.mirror_line = None;
         // Pattern commands open their dialog (with the pre-selection as the
         // geometry).
         self.pattern_dialog = matches!(
@@ -580,6 +591,33 @@ impl SketchTools {
     /// the tool now picks its points.
     pub fn transform_ready(&self) -> bool {
         self.transform_ready
+    }
+
+    /// Mirror's Apply: the selected geometry is copied about the line and the
+    /// command stays open for more (Inventor), keeping the line.
+    pub fn mirror_apply(&mut self, ps: &mut PartSketch) -> ClickResult {
+        let Some(line) = self.mirror_line else {
+            return Err("Mirror: click the mirror line".into());
+        };
+        if self.selected.is_empty() {
+            return Err("Mirror: select the geometry".into());
+        }
+        let sel = self.selected.clone();
+        let r = commit(ps, "Mirror", false, |ps| {
+            ps.sketch.mirror_geometry(&sel, line).map(|_| ())
+        })?;
+        self.selected.clear();
+        self.transform_ready = false;
+        Ok(r)
+    }
+
+    /// The Mirror dialog's Mirror line selector was clicked.
+    pub fn pick_mirror_line(&mut self) -> Result<(), String> {
+        if self.selected.is_empty() {
+            return Err("Mirror: select the geometry".into());
+        }
+        self.transform_ready = true;
+        Ok(())
     }
 
     /// Back to choosing the geometry of a transform tool (its dialog's
@@ -788,6 +826,9 @@ impl SketchTools {
             Tool::Rotate if n == 0 => "Rotate: click the centre point",
             Tool::Rotate if n == 1 => "Rotate: click a reference point",
             Tool::Rotate => "Rotate: click to set the angle",
+            Tool::Mirror if self.mirror_line.is_some() => {
+                "Mirror: press Apply or Enter, or click another line"
+            }
             Tool::Mirror => "Mirror: click the mirror line",
             Tool::PatternRect if n == 0 => {
                 "Rectangular Pattern: click the Direction 1 line (count, spacing in Properties)"
@@ -1007,12 +1048,9 @@ impl SketchTools {
                 if !ps.sketch.entity(line).is_some_and(Entity::is_line) {
                     return Err("The mirror line must be a line".into());
                 }
-                let sel = std::mem::take(&mut self.selected);
-                let r = commit(ps, "Mirror", false, |ps| {
-                    ps.sketch.mirror_geometry(&sel, line).map(|_| ())
-                });
-                self.set_tool(Tool::Select);
-                r
+                // Inventor: the line is an input; Apply makes the copy.
+                self.mirror_line = Some(line);
+                Ok(None)
             }
             Tool::PatternRect | Tool::PatternCircular | Tool::PatternPath | Tool::PatternPoints => {
                 Ok(None)
@@ -1668,6 +1706,17 @@ impl SketchTools {
             self.transform_ready = true;
             return Ok(None);
         }
+        // Enter with everything chosen: Apply, and the command is done.
+        if self.tool == Tool::Mirror {
+            if self.mirror_line.is_none() {
+                return Ok(None);
+            }
+            let r = self.mirror_apply(ps);
+            if r.is_ok() {
+                self.set_tool(Tool::Select);
+            }
+            return r;
+        }
         if self.pattern_dialog.is_some() {
             return if self.dialog_enter() {
                 self.dialog_ok(ps)
@@ -1862,6 +1911,12 @@ impl SketchTools {
         if pick.snap == Snap::None {
             return Err("Select a point or curve".into());
         }
+        // Shift at the click: the other of Horizontal / Vertical.
+        let tool = match tool {
+            Horizontal if self.swap_direction => Vertical,
+            Vertical if self.swap_direction => Horizontal,
+            t => t,
+        };
         self.picks.push(pick);
         let sk = &ps.sketch;
         let kind = |s: Snap| match s {
@@ -2276,7 +2331,11 @@ impl SketchTools {
                     return out;
                 }
                 if t == Tool::Mirror {
-                    if let Snap::OnEntity(line) = cursor.snap
+                    let hover = match cursor.snap {
+                        Snap::OnEntity(line) => Some(line),
+                        _ => None,
+                    };
+                    if let Some(line) = self.mirror_line.or(hover)
                         && tmp.entity(line).is_some_and(Entity::is_line)
                         && let Ok(sh) = tmp.mirror_geometry(&self.selected, line)
                     {
