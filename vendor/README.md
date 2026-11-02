@@ -35,6 +35,12 @@ An addition for frame members (`docs/spec/6.1-frame-generator.md`):
 |---|---|---|
 | `build.rs` `prism_between` (exported in `lib.rs`) | a new function: a region's loops (outer and holes), each as its section on a start and an end plane (matched segments, arcs as conics), joined by ruled sides and closed by planar caps with holes (`uniform_wire`, `ruled_loft_faces`, `cap_and_close`) | a member mitred at both ends in ~15 ms (extrusion + two Trim Solids: ~0.75 s, the split tracing the section and meshing its spline edges) |
 
+An addition for library fasteners (`docs/spec/6.3-content-center.md` §6.0b); not proposed upstream yet:
+
+| File | Change | Effect |
+|---|---|---|
+| `axial.rs` (new), `lib.rs` export | `axial_stack`: a stepped body about Z from its meridian's runs (turned chains of lines and arcs, polygon prisms, a cone cut on a prism's end meeting each flat in one exact rational quadratic), the runs' rings joined by planar faces that keep their edges; a new function, nothing else in the crate changes | ISO 4017 M8 x 30: 234 ms → 4.2 ms; chamfered: 1465 ms → 7 ms; orientation read off the lowest planar face (`Body::new_placed`), no mesh |
+
 An addition for Thicken/Offset's Allow Approximation (`docs/spec/2.14-thicken-offset.md`):
 
 | File | Change | Effect |

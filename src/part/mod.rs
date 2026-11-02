@@ -23,6 +23,7 @@
 //!    stays where it is in 3D).
 
 pub mod appearance;
+pub mod axial;
 pub mod blend;
 pub mod body_op;
 pub mod boolean;

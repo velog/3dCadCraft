@@ -167,6 +167,179 @@ pub fn prism_between(
     })
 }
 
+/// A cone cutting an end of a [`AxialShape::Hexagon`] run: the circle it leaves on the end
+/// plane and the height lost per unit of radius.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AxialCone {
+    /// Radius of the circle on the end plane.
+    pub radius: Real,
+    /// Height lost per unit of radius.
+    pub slope: Real,
+    /// The role of its faces.
+    pub role: String,
+}
+
+/// A segment of a turned run in (radius, z), ending at `to` (the run's chain starts at its
+/// `from`), straight or an arc about `centre` turning counter-clockwise when `ccw`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AxialSeg {
+    /// Where it ends: (radius, z).
+    pub to: [Real; 2],
+    /// An arc's centre and sense.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arc: Option<([Real; 2], bool)>,
+    /// The role of its faces.
+    pub role: String,
+}
+
+/// One run of a stepped body's meridian ([`axial_stack`]).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum AxialShape {
+    /// Lines and arcs in (radius, z), revolved fully about Z.
+    Turned {
+        /// Where the chain starts: (radius, z).
+        from: [Real; 2],
+        /// The chain.
+        segs: Vec<AxialSeg>,
+    },
+    /// A hexagon across flats `across` (corners on +X, flats at ±Y) from `z0` to `z1`.
+    Hexagon {
+        /// Across flats.
+        across: Real,
+        /// Height the run starts at.
+        z0: Real,
+        /// Height the run ends at.
+        z1: Real,
+        /// Its flats' role: faces `<role>:1` … `<role>:6`.
+        role: String,
+        /// Cone cutting the `z0` end.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start_cone: Option<AxialCone>,
+        /// Cone cutting the `z1` end.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        end_cone: Option<AxialCone>,
+    },
+}
+
+/// A run and the role of the planar face after it.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AxialRun {
+    /// Its shape.
+    pub shape: AxialShape,
+    /// Role of the planar face towards the next run (or the last run's cap); `None` only where
+    /// a tip ends the chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+}
+
+/// A stepped body about Z (a bolt, a nut, a socket screw) built face by face, no Boolean: the
+/// meridian's runs, joined by planar faces at their common heights. `first_cap`: role of the
+/// disc closing the first run's start (`None` at a tip or when `closed`, where the last run's
+/// face joins back to the first). Faces: `<prefix>:<role>`, the same at every size.
+pub fn axial_stack(
+    runs: &[AxialRun],
+    first_cap: Option<&str>,
+    closed: bool,
+    prefix: &str,
+) -> Result<ExactSolid, String> {
+    fn number(role: &str, names: &mut Vec<String>) -> usize {
+        names.push(role.to_owned());
+        names.len() - 1
+    }
+    let mut names: Vec<String> = Vec::new();
+    let mut input = Vec::with_capacity(runs.len());
+    for r in runs {
+        let shape = match &r.shape {
+            AxialShape::Turned { from, segs } => {
+                let mut start = *from;
+                let mut out = Vec::with_capacity(segs.len());
+                let mut numbers = Vec::with_capacity(segs.len());
+                for s in segs {
+                    out.push(match s.arc {
+                        None => sg::Seg2::Line {
+                            a: sg::Vec2::new(start[0], start[1]),
+                            b: sg::Vec2::new(s.to[0], s.to[1]),
+                        },
+                        Some((c, ccw)) => {
+                            let radius = (start[0] - c[0]).hypot(start[1] - c[1]);
+                            let angle = |p: [Real; 2]| (p[1] - c[1]).atan2(p[0] - c[0]);
+                            let from_angle = angle(start);
+                            let mut sweep = angle(s.to) - from_angle;
+                            let tau = std::f64::consts::TAU;
+                            if ccw && sweep <= 0.0 {
+                                sweep += tau;
+                            } else if !ccw && sweep >= 0.0 {
+                                sweep -= tau;
+                            }
+                            sg::Seg2::Arc {
+                                center: sg::Vec2::new(c[0], c[1]),
+                                radius,
+                                start: from_angle,
+                                sweep,
+                            }
+                        }
+                    });
+                    numbers.push(number(&s.role, &mut names));
+                    start = s.to;
+                }
+                sk::AxialShape::Turned { segs: out, numbers }
+            }
+            AxialShape::Hexagon {
+                across,
+                z0,
+                z1,
+                role,
+                start_cone,
+                end_cone,
+            } => {
+                let rc = across / 3f64.sqrt();
+                let corners = (0..6)
+                    .map(|k| {
+                        let a = k as Real * std::f64::consts::FRAC_PI_3;
+                        sg::Vec2::new(rc * a.cos(), rc * a.sin())
+                    })
+                    .collect();
+                let numbers = (1..=6)
+                    .map(|k| number(&format!("{role}:{k}"), &mut names))
+                    .collect();
+                let cone = |c: &Option<AxialCone>, names: &mut Vec<String>| {
+                    c.as_ref().map(|c| sk::AxialCone {
+                        radius: c.radius,
+                        slope: c.slope,
+                        number: number(&c.role, names),
+                    })
+                };
+                let start_cone = cone(start_cone, &mut names);
+                let end_cone = cone(end_cone, &mut names);
+                sk::AxialShape::Prism {
+                    corners,
+                    z0: *z0,
+                    z1: *z1,
+                    numbers,
+                    start_cone,
+                    end_cone,
+                }
+            }
+        };
+        let after = r.after.as_deref().map(|a| number(a, &mut names));
+        input.push(sk::AxialRun { shape, after });
+    }
+    let first = first_cap.map(|a| number(a, &mut names));
+    let body = guarded("stepped body", || sk::axial_stack(&input, first, closed))
+        .map_err(|e| format!("this part cannot be built ({e})"))?;
+    let face_names = names_from(&body, &[], &|o| match o {
+        FaceOrigin::Profile { segment } => names.get(*segment).map(|n| format!("{prefix}:{n}")),
+        _ => None,
+    });
+    Ok(ExactSolid {
+        name: Some(prefix.to_owned()),
+        body,
+        face_names,
+        profiles: Vec::new(),
+        sheet: false,
+    })
+}
+
 /// Boolean operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExactOp {

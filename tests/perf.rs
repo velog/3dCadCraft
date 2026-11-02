@@ -4642,3 +4642,48 @@ fn library_samples_build_within_budget() {
         assert!(ms < 500.0, "{}: {ms:.0} ms > 500 ms", sample.designation());
     }
 }
+
+/// Spec 6.3 §6.0b: a fastener built directly (no Boolean, display mesh
+/// included) takes at most 50 ms, at every level, smallest and largest size.
+#[test]
+fn library_fasteners_build_directly() {
+    use cadcraft3d::components::samples::{Detail, Kind, all};
+    let every: Vec<_> = all()
+        .into_iter()
+        .filter(|s| {
+            matches!(
+                s.kind,
+                Kind::HexBolt(..)
+                    | Kind::PartThreadBolt(..)
+                    | Kind::SocketScrew(..)
+                    | Kind::HexNut(..)
+                    | Kind::Countersunk(..)
+                    | Kind::ButtonHead(..)
+                    | Kind::SetScrew(..)
+                    | Kind::FlangeBolt(..)
+                    | Kind::FlangeNut(..)
+                    | Kind::CapNut(..)
+            )
+        })
+        .collect();
+    assert!(every.len() > 100, "{} members", every.len());
+    for (k, s) in every.iter().enumerate() {
+        let first = k == 0 || every[k - 1].family != s.family;
+        let last = k + 1 == every.len() || every[k + 1].family != s.family;
+        if !first && !last {
+            continue;
+        }
+        for detail in Detail::ALL {
+            let ms = median_ms(3, || {
+                s.part_at(detail).unwrap();
+            });
+            println!("{} {}: {ms:.1} ms", s.designation(), detail.label());
+            assert!(
+                ms < 50.0,
+                "{} {}: {ms:.1} ms > 50 ms",
+                s.designation(),
+                detail.label()
+            );
+        }
+    }
+}

@@ -5,19 +5,20 @@
 //! Z; a fastener's seat lies on the XY plane, its head above it. Only families
 //! whose type has a builder are listed; the others wait in the tables.
 //!
-//! Hexagons have no 30° corner chamfers yet: an Intersect with a cone blank
-//! took the kernel 1.3–2 s a part, and a ring cut did not finish in 10 minutes
-//! (spec 6.3 §6.4).
+//! Fasteners with a hexagon are one `BodyOp::Axial`, built face by face without
+//! a Boolean (spec 6.3 §6.0b): a hexagon joined to a shank took the kernel's
+//! Boolean ~240 ms, its 30° corner chamfers 1.3–2 s.
 
 use crate::document::iprops::IProperties;
 use crate::kernel::{Point3, Real, Surface};
+use crate::part::axial::{AxialCone, AxialOp, AxialRun, AxialSeg, AxialShape};
 use crate::part::frame::{Library, Loop, draw_loop, hidden};
 use crate::part::hole::{ThreadFeature, ThreadSpec};
 use crate::part::standards::{ANSI_UNIFIED, ISO_METRIC, Standards};
 use crate::part::work::{WorkDef, WorkPlaneDef};
 use crate::part::{
-    AxisRef, ExtentDirection, ExtrudeFeature, Operation, OriginPlane, PartDocument, PartError,
-    PlaneRef, ProfileRef, RevolveFeature, SketchOptions, SketchPlacement,
+    AxisRef, BodyOp, BodyOpFeature, ExtentDirection, ExtrudeFeature, Operation, OriginPlane,
+    PartDocument, PartError, PlaneRef, ProfileRef, RevolveFeature, SketchOptions, SketchPlacement,
 };
 use crate::sketch::Point2;
 
@@ -907,18 +908,14 @@ fn simple_part(kind: Kind) -> Result<PartDocument, PartError> {
     }
 }
 
-/// The hexagon's corners cut at 30° from a circle of 0.95 s by intersecting
-/// with a turned blank (1.3–2 s in the kernel, so only at this level).
-fn chamfer_blank(s: Real, h: Real, both: bool) -> Vec<(Real, Real)> {
-    let (r0, r1) = (0.475 * s, s / 3f64.sqrt() + 0.2);
-    let rise = (r1 - r0) * (30f64).to_radians().tan();
-    let mut v = vec![(0.0, h), (r0, h), (r1, h - rise)];
-    if both {
-        v.extend([(r1, rise), (r0, 0.0), (0.0, 0.0)]);
-    } else {
-        v.extend([(r1, 0.0), (0.0, 0.0)]);
+/// The 30° chamfer of a hexagon's corners, from a circle of 0.95 s on its end
+/// face: one exact cone meeting each flat in a hyperbola.
+fn hex_chamfer(s: Real, role: &str) -> AxialCone {
+    AxialCone {
+        radius: 0.475 * s,
+        slope: (30f64).to_radians().tan(),
+        role: role.to_owned(),
     }
-    v
 }
 
 fn full_hex_bolt(
@@ -928,57 +925,17 @@ fn full_hex_bolt(
     k: Real,
     thread: Option<Real>,
 ) -> Result<PartDocument, PartError> {
-    let mut spec = thread_spec(d, false)?;
-    let d = spec.major;
-    if let Some(b) = thread.filter(|b| *b < l) {
-        spec.full_depth = false;
-        spec.depth = b;
-    }
-    let mut part = blank();
-    extrude(
-        &mut part,
-        vec![hexagon(s)],
-        Point2::new(0.0, 0.0),
-        0.0,
-        k,
-        false,
-        Operation::NewSolid,
-    )?;
-    revolve(&mut part, &chamfer_blank(s, k, false), Operation::Intersect)?;
-    revolve(&mut part, &shank(d, l, k / 2.0), Operation::Join)?;
-    add_thread(
-        &mut part,
-        spec,
-        d / 2.0,
-        Point3::new(d / 2.0, 0.0, -l + d / 5.0),
-    )?;
-    Ok(part)
+    hex_bolt_shape(d, l, s, k, thread, Some(hex_chamfer(s, "HeadChamfer")))
 }
 
 fn full_hex_nut(d: Real, s: Real, m: Real) -> Result<PartDocument, PartError> {
-    let spec = thread_spec(d, true)?;
-    let bore = spec.minor;
-    let mut part = blank();
-    extrude(
-        &mut part,
-        vec![
-            hexagon(s),
-            Loop::Circle(Point2::new(0.0, 0.0), bore / 2.0, true),
-        ],
-        Point2::new(0.45 * s, 0.0),
-        0.0,
+    hex_nut_shape(
+        d,
+        s,
         m,
-        false,
-        Operation::NewSolid,
-    )?;
-    revolve(&mut part, &chamfer_blank(s, m, true), Operation::Intersect)?;
-    add_thread(
-        &mut part,
-        spec,
-        bore / 2.0,
-        Point3::new(bore / 2.0, 0.0, 0.0),
-    )?;
-    Ok(part)
+        Some(hex_chamfer(s, "SeatChamfer")),
+        Some(hex_chamfer(s, "TopChamfer")),
+    )
 }
 
 /// Two rings with a gap and the row of rolling elements between them, as three
@@ -1071,19 +1028,6 @@ fn ring(outline: &[(Real, Real)]) -> Result<PartDocument, PartError> {
     Ok(part)
 }
 
-/// The hexagon's corners, across flats `s`, counter-clockwise.
-fn hexagon(s: Real) -> Loop {
-    let r = s / 3f64.sqrt();
-    Loop::Path(
-        (0..6)
-            .map(|k| {
-                let a = (k as Real) * std::f64::consts::FRAC_PI_3;
-                (Point2::new(r * a.cos(), r * a.sin()), None)
-            })
-            .collect(),
-    )
-}
-
 /// `loops` on the XY plane offset to `z`, extruded by `length` towards +Z
 /// (or −Z when `down`); `seed` picks the region.
 fn extrude(
@@ -1169,11 +1113,19 @@ fn add_thread(
     Ok(())
 }
 
-/// Shank below the seat, its end chamfered; it reaches a little into the
-/// head, so the Join has no coplanar faces.
-fn shank(d: Real, l: Real, into: Real) -> Vec<(Real, Real)> {
-    let (r, c) = (d / 2.0, d / 10.0);
-    vec![(0.0, into), (r, into), (r, -l + c), (r - c, -l), (0.0, -l)]
+/// A part that is one stepped body about Z (spec 6.3 §6.0b).
+fn axial_part(
+    runs: Vec<AxialRun>,
+    first_cap: Option<&str>,
+    closed: bool,
+) -> Result<PartDocument, PartError> {
+    let mut part = blank();
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        runs,
+        first_cap: first_cap.map(str::to_owned),
+        closed,
+    })))?;
+    Ok(part)
 }
 
 fn hex_bolt(
@@ -1183,30 +1135,51 @@ fn hex_bolt(
     k: Real,
     thread: Option<Real>,
 ) -> Result<PartDocument, PartError> {
+    hex_bolt_shape(d, l, s, k, thread, None)
+}
+
+fn hex_bolt_shape(
+    d: Real,
+    l: Real,
+    s: Real,
+    k: Real,
+    thread: Option<Real>,
+    chamfer: Option<AxialCone>,
+) -> Result<PartDocument, PartError> {
     let mut spec = thread_spec(d, false)?;
     let d = spec.major;
-    // Shorter than the shank: from the end; else the whole shank.
-    if let Some(b) = thread.filter(|b| *b < l) {
+    let (r, c) = (d / 2.0, d / 10.0);
+    // Shorter than the shank's cylinder: from the end; else the whole of it.
+    if let Some(b) = thread.filter(|b| *b < l - c) {
         spec.full_depth = false;
         spec.depth = b;
     }
-    let mut part = blank();
-    extrude(
-        &mut part,
-        vec![hexagon(s)],
-        Point2::new(0.0, 0.0),
-        0.0,
-        k,
+    let mut part = axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r - c, -l, ""),
+                    (r, -l + c, "EndChamfer"),
+                    (r, 0.0, "Shank"),
+                ],
+                Some("Seat"),
+            ),
+            AxialRun {
+                shape: AxialShape::Hexagon {
+                    across: s,
+                    z0: 0.0,
+                    z1: k,
+                    role: "Flat".to_owned(),
+                    start_cone: None,
+                    end_cone: chamfer,
+                },
+                after: Some("Top".to_owned()),
+            },
+        ],
+        Some("End"),
         false,
-        Operation::NewSolid,
     )?;
-    revolve(&mut part, &shank(d, l, k / 2.0), Operation::Join)?;
-    add_thread(
-        &mut part,
-        spec,
-        d / 2.0,
-        Point3::new(d / 2.0, 0.0, -l + d / 5.0),
-    )?;
+    add_thread(&mut part, spec, r, Point3::new(r, 0.0, -l + 2.0 * c))?;
     Ok(part)
 }
 
@@ -1221,56 +1194,60 @@ fn socket_screw(
     let spec = thread_spec(d, false)?;
     let d = spec.major;
     let (r, rk, c, e) = (d / 2.0, dk / 2.0, d / 10.0, dk / 25.0);
-    let mut part = blank();
-    revolve(
-        &mut part,
-        &[
-            (0.0, -l),
-            (r - c, -l),
-            (r, -l + c),
-            (r, 0.0),
-            (rk, 0.0),
-            (rk, k - e),
-            (rk - e, k),
-            (0.0, k),
+    let mut part = axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r - c, -l, ""),
+                    (r, -l + c, "EndChamfer"),
+                    (r, 0.0, "Shank"),
+                    (rk, 0.0, "Seat"),
+                    (rk, k - e, "Head"),
+                    (rk - e, k, "HeadChamfer"),
+                ],
+                Some("Top"),
+            ),
+            AxialRun::hexagon(s, k, k - t, "Socket", Some("SocketFloor")),
         ],
-        Operation::NewSolid,
-    )?;
-    extrude(
-        &mut part,
-        vec![hexagon(s)],
-        Point2::new(0.0, 0.0),
-        k,
-        t,
-        true,
-        Operation::Cut,
+        Some("End"),
+        false,
     )?;
     add_thread(&mut part, spec, r, Point3::new(r, 0.0, -l + 2.0 * c))?;
     Ok(part)
 }
 
 fn hex_nut(d: Real, s: Real, m: Real) -> Result<PartDocument, PartError> {
+    hex_nut_shape(d, s, m, None, None)
+}
+
+fn hex_nut_shape(
+    d: Real,
+    s: Real,
+    m: Real,
+    seat: Option<AxialCone>,
+    top: Option<AxialCone>,
+) -> Result<PartDocument, PartError> {
     let spec = thread_spec(d, true)?;
-    let bore = spec.minor;
-    let mut part = blank();
-    extrude(
-        &mut part,
+    let r = spec.minor / 2.0;
+    let mut part = axial_part(
         vec![
-            hexagon(s),
-            Loop::Circle(Point2::new(0.0, 0.0), bore / 2.0, true),
+            AxialRun {
+                shape: AxialShape::Hexagon {
+                    across: s,
+                    z0: 0.0,
+                    z1: m,
+                    role: "Flat".to_owned(),
+                    start_cone: seat,
+                    end_cone: top,
+                },
+                after: Some("Top".to_owned()),
+            },
+            AxialRun::turned(&[(r, m, ""), (r, 0.0, "Bore")], Some("Seat")),
         ],
-        Point2::new(0.45 * s, 0.0),
-        0.0,
-        m,
-        false,
-        Operation::NewSolid,
+        None,
+        true,
     )?;
-    add_thread(
-        &mut part,
-        spec,
-        bore / 2.0,
-        Point3::new(bore / 2.0, 0.0, 0.0),
-    )?;
+    add_thread(&mut part, spec, r, Point3::new(r, 0.0, 0.0))?;
     Ok(part)
 }
 
@@ -1349,62 +1326,75 @@ fn countersunk(d: Real, l: Real, dk: Real, k: Real, s: Real) -> Result<PartDocum
     let spec = thread_spec(d, false)?;
     let d = spec.major;
     let (r, c) = (d / 2.0, d / 10.0);
-    let mut part = blank();
-    revolve(
-        &mut part,
-        &[
-            (0.0, -l),
-            (r - c, -l),
-            (r, -l + c),
-            (r, -k),
-            (dk / 2.0, 0.0),
-            (0.0, 0.0),
+    let mut part = axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r - c, -l, ""),
+                    (r, -l + c, "EndChamfer"),
+                    (r, -k, "Shank"),
+                    (dk / 2.0, 0.0, "Head"),
+                ],
+                Some("Top"),
+            ),
+            AxialRun::hexagon(s, 0.0, -0.6 * k, "Socket", Some("SocketFloor")),
         ],
-        Operation::NewSolid,
-    )?;
-    extrude(
-        &mut part,
-        vec![hexagon(s)],
-        Point2::new(0.0, 0.0),
-        0.0,
-        0.6 * k,
-        true,
-        Operation::Cut,
+        Some("End"),
+        false,
     )?;
     add_thread(&mut part, spec, r, Point3::new(r, 0.0, -l + 2.0 * c))?;
     Ok(part)
 }
 
+/// A segment of a turned run: straight to (r, z).
+fn line_to(r: Real, z: Real, role: &str) -> AxialSeg {
+    AxialSeg {
+        to: [r, z],
+        arc: None,
+        role: role.to_owned(),
+    }
+}
+
+/// A segment of a turned run: counter-clockwise about `centre`, to (r, z).
+fn arc_to(r: Real, z: Real, centre: [Real; 2], role: &str) -> AxialSeg {
+    AxialSeg {
+        to: [r, z],
+        arc: Some((centre, true)),
+        role: role.to_owned(),
+    }
+}
+
+/// A turned run of lines and arcs.
+fn chain(from: [Real; 2], segs: Vec<AxialSeg>, after: Option<&str>) -> AxialRun {
+    AxialRun {
+        shape: AxialShape::Turned { from, segs },
+        after: after.map(str::to_owned),
+    }
+}
+
 /// A shank under a low spherical head with a flat where the socket opens, as
-/// real ones have: the kernel found no result cutting a hexagon through a dome.
+/// real ones have.
 fn button_head(d: Real, l: Real, dk: Real, k: Real, s: Real) -> Result<PartDocument, PartError> {
     let spec = thread_spec(d, false)?;
     let d = spec.major;
     let (r, rk, flat) = (d / 2.0, dk / 2.0, 0.65 * s);
     // The sphere through the rim and the flat's edge.
     let y0 = (k * k + flat * flat - rk * rk) / (2.0 * k);
-    let centre = Point2::new(0.0, y0);
-    let mut part = blank();
-    revolve_loop(
-        &mut part,
-        Loop::Path(vec![
-            (Point2::new(0.0, -l), None),
-            (Point2::new(r, -l), None),
-            (Point2::new(r, 0.0), None),
-            (Point2::new(rk, 0.0), Some((centre, true))),
-            (Point2::new(flat, k), None),
-            (Point2::new(0.0, k), None),
-        ]),
-        Operation::NewSolid,
-    )?;
-    extrude(
-        &mut part,
-        vec![hexagon(s)],
-        Point2::new(0.0, 0.0),
-        k + 1.0,
-        0.6 * k + 1.0,
-        true,
-        Operation::Cut,
+    let mut part = axial_part(
+        vec![
+            chain(
+                [r, -l],
+                vec![
+                    line_to(r, 0.0, "Shank"),
+                    line_to(rk, 0.0, "Seat"),
+                    arc_to(flat, k, [0.0, y0], "Dome"),
+                ],
+                Some("Top"),
+            ),
+            AxialRun::hexagon(s, k, 0.4 * k, "Socket", Some("SocketFloor")),
+        ],
+        Some("End"),
+        false,
     )?;
     add_thread(&mut part, spec, r, Point3::new(r, 0.0, -l / 2.0))?;
     Ok(part)
@@ -1415,27 +1405,21 @@ fn set_screw(d: Real, l: Real, s: Real, t: Real) -> Result<PartDocument, PartErr
     let spec = thread_spec(d, false)?;
     let d = spec.major;
     let (r, c) = (d / 2.0, d / 10.0);
-    let mut part = blank();
-    revolve(
-        &mut part,
-        &[
-            (0.0, 0.0),
-            (r - c, 0.0),
-            (r, c),
-            (r, l - c),
-            (r - c, l),
-            (0.0, l),
+    let mut part = axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r - c, 0.0, ""),
+                    (r, c, "EndChamfer"),
+                    (r, l - c, "Shank"),
+                    (r - c, l, "TopChamfer"),
+                ],
+                Some("Top"),
+            ),
+            AxialRun::hexagon(s, l, l - t.min(0.8 * l), "Socket", Some("SocketFloor")),
         ],
-        Operation::NewSolid,
-    )?;
-    extrude(
-        &mut part,
-        vec![hexagon(s)],
-        Point2::new(0.0, 0.0),
-        l,
-        t.min(0.8 * l),
-        true,
-        Operation::Cut,
+        Some("End"),
+        false,
     )?;
     add_thread(&mut part, spec, r, Point3::new(r, 0.0, l / 2.0))?;
     Ok(part)
@@ -1474,77 +1458,57 @@ fn split_ring(d1: Real, d2: Real, h: Real, half: Real) -> Result<PartDocument, P
     )
 }
 
-/// Flange and shank in one revolve, the hexagon starting inside the flange
-/// (joined the other way round the kernel took 3 s).
+/// Shank and flange turned, the hexagon standing on the flange.
 fn flange_bolt(d: Real, l: Real, s: Real, k: Real, dc: Real) -> Result<PartDocument, PartError> {
     let spec = thread_spec(d, false)?;
     let d = spec.major;
     let (r, c, tf) = (d / 2.0, d / 10.0, 0.25 * k);
-    let mut part = blank();
-    revolve(
-        &mut part,
-        &[
-            (0.0, tf),
-            (dc / 2.0, tf),
-            (dc / 2.0, 0.0),
-            (r, 0.0),
-            (r, -l + c),
-            (r - c, -l),
-            (0.0, -l),
+    let mut part = axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r - c, -l, ""),
+                    (r, -l + c, "EndChamfer"),
+                    (r, 0.0, "Shank"),
+                    (dc / 2.0, 0.0, "Seat"),
+                    (dc / 2.0, tf, "FlangeRim"),
+                ],
+                Some("FlangeTop"),
+            ),
+            AxialRun::hexagon(s, tf, k, "Flat", Some("Top")),
         ],
-        Operation::NewSolid,
-    )?;
-    extrude(
-        &mut part,
-        vec![hexagon(s)],
-        Point2::new(0.0, 0.0),
-        tf / 2.0,
-        k - tf / 2.0,
+        Some("End"),
         false,
-        Operation::Join,
     )?;
     add_thread(&mut part, spec, r, Point3::new(r, 0.0, -l + 2.0 * c))?;
     Ok(part)
 }
 
-/// A solid hexagon and flange, bored afterwards so bore and body stay one wall.
+/// Bore and flange turned, the hexagon standing on the flange.
 fn flange_nut(d: Real, s: Real, m: Real, dc: Real) -> Result<PartDocument, PartError> {
     let spec = thread_spec(d, true)?;
-    let (bore, tf, inner) = (spec.minor, 0.25 * m, 0.4 * s);
-    let mut part = blank();
-    extrude(
-        &mut part,
-        vec![hexagon(s)],
-        Point2::new(0.0, 0.0),
-        0.0,
-        m,
-        false,
-        Operation::NewSolid,
-    )?;
-    revolve(
-        &mut part,
-        &[
-            (0.0, 0.0),
-            (dc / 2.0, 0.0),
-            (dc / 2.0, tf),
-            (inner, tf),
-            (inner, m / 2.0),
-            (0.0, m / 2.0),
+    let (r, tf) = (spec.minor / 2.0, 0.25 * m);
+    let mut part = axial_part(
+        vec![
+            AxialRun::turned(
+                &[
+                    (r, m, ""),
+                    (r, 0.0, "Bore"),
+                    (dc / 2.0, 0.0, "Seat"),
+                    (dc / 2.0, tf, "FlangeRim"),
+                ],
+                Some("FlangeTop"),
+            ),
+            AxialRun::hexagon(s, tf, m, "Flat", Some("Top")),
         ],
-        Operation::Join,
-    )?;
-    let r = bore / 2.0;
-    revolve(
-        &mut part,
-        &[(0.0, -1.0), (r, -1.0), (r, m + 1.0), (0.0, m + 1.0)],
-        Operation::Cut,
+        None,
+        true,
     )?;
     add_thread(&mut part, spec, r, Point3::new(r, 0.0, 0.0))?;
     Ok(part)
 }
 
-/// A hexagon under a dome, with a blind threaded bore from the seat. The
-/// dome's rim stands clear of the hexagon's top: on that plane its Join failed.
+/// A hexagon under a neck and a dome, with a blind threaded bore from the seat.
 fn cap_nut(d: Real, s: Real, m: Real) -> Result<PartDocument, PartError> {
     let spec = thread_spec(d, true)?;
     let hex = 0.5 * m;
@@ -1552,32 +1516,22 @@ fn cap_nut(d: Real, s: Real, m: Real) -> Result<PartDocument, PartError> {
     let rd = 0.45 * s;
     let top = m - rim;
     let rs = (rd * rd + top * top) / (2.0 * top);
-    let centre = Point2::new(0.0, m - rs);
-    let mut part = blank();
-    revolve_loop(
-        &mut part,
-        Loop::Path(vec![
-            (Point2::new(0.0, hex / 2.0), None),
-            (Point2::new(rd, hex / 2.0), None),
-            (Point2::new(rd, rim), Some((centre, true))),
-            (Point2::new(0.0, m), None),
-        ]),
-        Operation::NewSolid,
-    )?;
-    extrude(
-        &mut part,
-        vec![hexagon(s)],
-        Point2::new(0.0, 0.0),
-        0.0,
-        hex,
-        false,
-        Operation::Join,
-    )?;
     let r = spec.minor / 2.0;
-    revolve(
-        &mut part,
-        &[(0.0, -1.0), (r, -1.0), (r, 0.7 * m), (0.0, 0.7 * m)],
-        Operation::Cut,
+    let mut part = axial_part(
+        vec![
+            chain([r, 0.7 * m], vec![line_to(r, 0.0, "Bore")], Some("Seat")),
+            AxialRun::hexagon(s, 0.0, hex, "Flat", Some("HexTop")),
+            chain(
+                [rd, hex],
+                vec![
+                    line_to(rd, rim, "Neck"),
+                    arc_to(0.0, m, [0.0, m - rs], "Dome"),
+                ],
+                None,
+            ),
+        ],
+        Some("BoreFloor"),
+        false,
     )?;
     add_thread(&mut part, spec, r, Point3::new(r, 0.0, 0.0))?;
     Ok(part)

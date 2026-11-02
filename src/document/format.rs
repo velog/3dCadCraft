@@ -171,7 +171,9 @@ pub const FORMAT_VERSION: u32 = 1;
 /// - 59: Freeform (`BodyOp::Freeform`: a control cage and its moved points,
 ///   a cubic B-spline sheet) (2026-10-31).
 /// - 60: drawing Break Out To Sketch (`BreakOutDepth::ToSketch`) (2026-10-31).
-pub const FORMAT_REVISION: u32 = 60;
+/// - 61: library fasteners' stepped bodies without a Boolean (`BodyOp::Axial`)
+///   (2026-11-02).
+pub const FORMAT_REVISION: u32 = 61;
 
 const FORMAT_MAGIC: &str = "3dcadcraft";
 const MIMETYPE: &str = "application/vnd.3dcadcraft.project+zip";

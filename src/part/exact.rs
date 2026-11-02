@@ -1207,6 +1207,11 @@ pub(super) fn body_op(
             .map_err(User)?;
             Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
         }
+        super::BodyOp::Axial(o) => {
+            let made = exact::axial_stack(&o.runs, o.first_cap.as_deref(), o.closed, &f.id)
+                .map_err(Kernel)?;
+            Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
+        }
         super::BodyOp::Prism(o) => {
             let (loops, start, end) = o.sections().map_err(User)?;
             let made = exact::prism_between(&loops, &start, &end, &f.id).map_err(Kernel)?;

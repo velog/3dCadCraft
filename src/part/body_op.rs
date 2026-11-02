@@ -198,6 +198,9 @@ pub enum BodyOp {
     Prism(super::frame::PrismOp),
     /// Freeform (format revision 59): a control cage's B-spline sheet.
     Freeform(super::freeform::FreeformOp),
+    /// A library fastener's stepped body about Z, built without a Boolean
+    /// (format revision 61).
+    Axial(super::axial::AxialOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -446,6 +449,7 @@ impl BodyOpFeature {
             BodyOp::Import(_) => "Import",
             BodyOp::Prism(_) => "Prism",
             BodyOp::Freeform(_) => "Freeform",
+            BodyOp::Axial(_) => "Axial",
         }
     }
 
@@ -475,6 +479,7 @@ impl BodyOpFeature {
             BodyOp::Import(o) => o.validate(),
             BodyOp::Prism(o) => o.validate(),
             BodyOp::Freeform(o) => o.validate(),
+            BodyOp::Axial(o) => o.validate(),
         }
     }
 
@@ -490,6 +495,7 @@ impl BodyOpFeature {
             | BodyOp::CopyObject(_)
             | BodyOp::Import(_)
             | BodyOp::Prism(_)
+            | BodyOp::Axial(_)
             | BodyOp::Freeform(_) => true,
             BodyOp::Sculpt(s) => s.operation == super::surface_op::SculptOperation::NewSolid,
             BodyOp::DeleteFace(_)
@@ -514,6 +520,7 @@ impl BodyOpFeature {
             | BodyOp::Sculpt(_)
             | BodyOp::CopyObject(_)
             | BodyOp::Import(_)
+            | BodyOp::Axial(_)
             | BodyOp::Prism(_) => Vec::new(),
             BodyOp::MoveBodies(m) => m
                 .steps
@@ -602,6 +609,7 @@ impl BodyOpFeature {
             BodyOp::CopyObject(o) => o.describe(),
             BodyOp::Import(o) => o.describe(),
             BodyOp::Prism(_) => "Frame member".into(),
+            BodyOp::Axial(_) => "Library component".into(),
             BodyOp::Freeform(o) => o.describe(),
         }
     }

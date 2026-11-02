@@ -2860,6 +2860,49 @@ fn freeform_r59_reads() {
     assert!(zmax > 2.0 && zmax < 10.0, "{zmax}");
 }
 
+/// Revision 61: a chamfered hex bolt and a nut as one `BodyOp::Axial` each
+/// (the numbers written out: a library table may change).
+fn axial_r61() -> PartDocument {
+    use cadcraft3d::part::axial::{AxialCone, AxialOp, AxialRun, AxialShape};
+    use cadcraft3d::part::{BodyOp, BodyOpFeature};
+    let (r, c, s, k, l) = (4.0, 0.8, 13.0, 5.3, 30.0);
+    let mut part = PartDocument {
+        exact_only: true,
+        ..Default::default()
+    };
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        runs: vec![
+            AxialRun::turned(
+                &[
+                    (r - c, -l, ""),
+                    (r, -l + c, "EndChamfer"),
+                    (r, 0.0, "Shank"),
+                ],
+                Some("Seat"),
+            ),
+            AxialRun {
+                shape: AxialShape::Hexagon {
+                    across: s,
+                    z0: 0.0,
+                    z1: k,
+                    role: "Flat".to_owned(),
+                    start_cone: None,
+                    end_cone: Some(AxialCone {
+                        radius: 0.475 * s,
+                        slope: 30f64.to_radians().tan(),
+                        role: "HeadChamfer".to_owned(),
+                    }),
+                },
+                after: Some("Top".to_owned()),
+            },
+        ],
+        first_cap: Some("End".to_owned()),
+        closed: false,
+    })))
+    .unwrap();
+    part
+}
+
 /// Revision 57: a frame member mitred at both ends, one `BodyOp::Prism`
 /// (an SHS 40x40x3, 400 long on its axis, ends at 45°).
 fn prism_r57() -> PartDocument {
@@ -3525,6 +3568,13 @@ fn old_files_still_open() {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             let mut project = Project::new("RipR50");
             project.add_document("Part1", DocumentData::Part(rip_r50()));
+            project.save(&f).unwrap();
+        }
+        let f = root().join("r61/axial_r61.3dcadcraft");
+        if !f.exists() {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut project = Project::new("AxialR61");
+            project.add_document("Part1", DocumentData::Part(axial_r61()));
             project.save(&f).unwrap();
         }
         let f = root().join("r59/freeform_r59.3dcadcraft");
