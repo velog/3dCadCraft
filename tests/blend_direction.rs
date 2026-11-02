@@ -411,3 +411,160 @@ fn chamfer_options_go_the_right_way() {
     println!("distance and angle removes {removed:.3}, a triangle is {triangle:.3}");
     assert!((removed - triangle).abs() < 0.05, "{removed} vs {triangle}");
 }
+
+/// Where a blend's time goes, route by route (`--ignored --nocapture`).
+#[test]
+#[ignore = "diagnostic"]
+fn blend_routes_with_times() {
+    let time = |name: &str, base: &PartDocument, bl: BlendFeature| {
+        let mut v: Vec<f64> = (0..5)
+            .map(|_| {
+                let mut p = base.clone();
+                p.build_cache = Default::default();
+                let t = Instant::now();
+                let r = p.add_blend(bl.clone());
+                let ms = t.elapsed().as_secs_f64() * 1e3;
+                assert!(r.is_ok(), "{name}: {r:?}");
+                assert!(
+                    p.feature_health.is_empty(),
+                    "{name}: {:?}",
+                    p.feature_health
+                );
+                ms
+            })
+            .collect();
+        v.sort_by(f64::total_cmp);
+        println!("{name:<52} {:>8.1} ms", v[2]);
+    };
+    // 8 edges of a box: the top's four and the four uprights.
+    let b = plate(100.0, 60.0, 30.0);
+    let eight = edges_where(&b, |h| on(h[2], 30.0) || (h[2] > 1.0 && h[2] < 29.0));
+    assert_eq!(eight.len(), 8);
+    time(
+        "fillet r5, 8 edges of a box (kernel)",
+        &b,
+        BlendFeature::fillet(eight.clone(), 5.0),
+    );
+    let top4 = edges_where(&b, |h| on(h[2], 30.0));
+    time(
+        "chamfer 2, 4 top edges of a box (kernel)",
+        &b,
+        BlendFeature::chamfer(top4.clone(), 2.0),
+    );
+
+    // A rounded box: the chain round its top.
+    let mut r = plate(100.0, 60.0, 30.0);
+    let up = edges_where(&r, |h| h[2] > 1.0 && h[2] < 29.0);
+    r.add_blend(BlendFeature::fillet(up, 5.0)).unwrap();
+    let chain = edges_where(&r, |h| on(h[2], 30.0));
+    assert_eq!(chain.len(), 8);
+    time(
+        "chamfer 2, chain of 8 round a rounded top (kernel)",
+        &r,
+        BlendFeature::chamfer(chain.clone(), 2.0),
+    );
+    time(
+        "fillet 2, chain of 8 round a rounded top (kernel)",
+        &r,
+        BlendFeature::fillet(chain.clone(), 2.0),
+    );
+    time(
+        "chamfer 7, past the rounds (loop_tools)",
+        &r,
+        BlendFeature::chamfer(chain, 7.0),
+    );
+
+    // Hole rims through the general path.
+    for n in [6usize, 12, 36] {
+        let mut p = plate(200.0, 200.0, 10.0);
+        let t = top(&p, 10.0);
+        let centre = |k: usize| (10.0 + 30.0 * (k % 6) as f64, 10.0 + 30.0 * (k / 6) as f64);
+        let j = sketch_on(&mut p, &t, |sk, at| {
+            for k in 0..n {
+                let (x, y) = centre(k);
+                sk.add_circle(at(x, y, 10.0), 4.0).unwrap();
+            }
+        });
+        cut(&mut p, j, None, |r| r.holes.is_empty() && r.area() < 60.0);
+        let e = edges_where(&p, |h| {
+            on(h[2], 10.0) && h[0] > 1.0 && h[0] < 199.0 && h[1] > 1.0 && h[1] < 199.0
+        });
+        time(
+            &format!("chamfer 1, {n} hole rims (kernel)"),
+            &p,
+            BlendFeature::chamfer(e, 1.0),
+        );
+    }
+}
+
+/// A chamfer wider than the rounds of its loop: the bevel planes run on through the corners and
+/// meet sharp. Against the slices of the kept shape, with the bevels' names kept.
+#[test]
+fn a_chamfer_wider_than_the_rounds_removes_what_it_says() {
+    let (w, l, h, r, d) = (100.0f64, 60.0f64, 30.0f64, 5.0f64, 7.0f64);
+    let mut p = plate(w, l, h);
+    let up = edges_where(&p, |q| q[2] > 1.0 && q[2] < h - 1.0);
+    p.add_blend(BlendFeature::fillet(up, r)).unwrap();
+    let before = volume(&p);
+    let chain = edges_where(&p, |q| on(q[2], h));
+    p.add_blend(BlendFeature::chamfer(chain, d)).unwrap();
+    assert!(
+        p.exact && p.feature_health.is_empty(),
+        "{:?}",
+        p.feature_health
+    );
+    for (id, _) in p.body.solids() {
+        p.body.validate_solid(id).unwrap();
+    }
+    // Rounded rectangle less the frame between it and the inset rectangle, per slice.
+    let in_round = |x: f64, y: f64| {
+        let (ax, ay) = ((x - w / 2.0).abs(), (y - l / 2.0).abs());
+        let (cx, cy) = (w / 2.0 - r, l / 2.0 - r);
+        ax <= cx || ay <= cy || (ax - cx).hypot(ay - cy) <= r
+    };
+    let (slices, grid) = (70, 500);
+    let mut removed = 0.0;
+    for k in 0..slices {
+        let inset = d * (k as f64 + 0.5) / slices as f64;
+        let (dx, dy) = (w / grid as f64, l / grid as f64);
+        let mut area = 0.0;
+        for i in 0..grid {
+            for j in 0..grid {
+                let (x, y) = ((i as f64 + 0.5) * dx, (j as f64 + 0.5) * dy);
+                let inside = x >= inset && x <= w - inset && y >= inset && y <= l - inset;
+                if in_round(x, y) && !inside {
+                    area += dx * dy;
+                }
+            }
+        }
+        removed += area * d / slices as f64;
+    }
+    let measured = before - volume(&p);
+    println!("removed {measured:.1}, slices {removed:.1}");
+    assert!(
+        (measured - removed).abs() < removed * 0.01,
+        "{measured} vs {removed}"
+    );
+    let names: Vec<String> = p
+        .body
+        .faces()
+        .filter_map(|(_, f)| f.name.clone())
+        .filter(|n| n.contains("Bevel"))
+        .collect();
+    assert_eq!(names.len(), 4, "{names:?}");
+    let mut unique = names.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), 4, "a bevel per straight edge: {names:?}");
+    assert!(
+        names.iter().all(|n| n.starts_with("Chamfer1:Bevel[")),
+        "{names:?}"
+    );
+    assert!(
+        !p.body
+            .faces()
+            .filter_map(|(_, f)| f.name.as_ref())
+            .any(|n| n.contains("#r")),
+        "a tool's name is left"
+    );
+}

@@ -1855,6 +1855,10 @@ fn closed(input: &Body, b: Body) -> Result<Body> {
 /// largest that works).
 pub fn fillet(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
     body.require_brep("fillet")?;
+    // Whole circles by editing their faces, the band checked, as for a chamfer. 3DCadCraft.
+    if let Ok(r) = blend_wires(body, edges, radius, true, true) {
+        return Ok(r);
+    }
     // A round that would run past its faces into other geometry or another round (#1080).
     // Checked once built, so a refusal of the build itself stands as it is.
     let size = crate::blend_fit::Size::Round(radius);
@@ -2097,6 +2101,11 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
     if edges.is_empty() || edges.len() > 1000 {
         return Err(KernelError::Invalid("select 1…1000 edges".into()));
     }
+    // Whole circles (hole rims, boss rims) by editing their faces, the band checked: 1871 ms for 36
+    // rims through the cutters below, 460 ms this way. 3DCadCraft.
+    if let Ok(r) = blend_wires(body, edges, distance, true, false) {
+        return Ok(r);
+    }
     // A chamfer that would run past its faces into other geometry or another chamfer, or whose
     // result changes more than the chamfers can (#1080).
     let size = crate::blend_fit::Size::Chamfer(distance);
@@ -2112,12 +2121,14 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
 /// (3DCadCraft: hole rims known to lie on a face square to the hole). Refused when the edges are not
 /// such loops or the size does not fit them.
 pub fn chamfer_loops(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
-    chamfer_wires(body, edges, distance, false)
+    blend_wires(body, edges, distance, false, false)
 }
 
-/// [`chamfer_loops`] where `circles` asks every wire to be one whole circle (edges picked by a user:
-/// a pick on any wire of straight edges means that edge alone). 3DCadCraft.
-fn chamfer_wires(body: &Body, edges: &[Vec3], distance: f64, circles: bool) -> Result<Body> {
+/// [`chamfer_loops`] (a round of that radius with `round`) where `circles` asks every wire to be one
+/// whole circle (edges picked by a user: a pick on any wire of straight edges means that edge alone),
+/// with the band the blend takes of the face, on both sides of the circle, clear of the face's other
+/// boundaries: such a result needs none of `blend_fit`'s checks. 3DCadCraft.
+fn blend_wires(body: &Body, edges: &[Vec3], distance: f64, circles: bool, round: bool) -> Result<Body> {
     use mt::{BoundedCurve, ParametricCurve};
     body.require_brep("chamfer")?;
     if !(distance.is_finite() && distance > 1e-6 && distance < 1e6) {
@@ -2152,21 +2163,37 @@ fn chamfer_wires(body: &Body, edges: &[Vec3], distance: f64, circles: bool) -> R
         // The body itself, not a copy: the edit makes a new solid and leaves this one as it is.
         let holder = lc.solid.clone();
         let solid: &Solid = &holder;
-        let wire = guard("chamfer", || {
-            let mut found: Option<(f64, mt::Wire)> = None;
+        let (wire, others) = guard("chamfer", || {
+            let mut found: Option<(f64, mt::Wire, Vec<mt::Wire>)> = None;
             for f in solid.face_iter().filter(|f| matches!(f.oriented_surface(), mt::Surface::Plane(_))) {
                 for w in f.absolute_boundaries() {
                     if let Some(d) = w.edge_iter().filter_map(|e| gap(*p, e)).min_by(f64::total_cmp)
-                        && found.as_ref().is_none_or(|(x, _)| d < *x)
+                        && found.as_ref().is_none_or(|(x, _, _)| d < *x)
                     {
-                        found = Some((d, w.clone()));
+                        let others = f.absolute_boundaries().iter().filter(|o| o.edge_iter().next().map(|e| e.id()) != w.edge_iter().next().map(|e| e.id())).cloned().collect();
+                        found = Some((d, w.clone(), others));
                     }
                 }
             }
-            found.map(|(_, w)| w).ok_or_else(|| unsupported("no whole loop of a planar face through the point"))
+            found.map(|(_, w, o)| (w, o)).ok_or_else(|| unsupported("no whole loop of a planar face through the point"))
         })?;
-        if circles && !crate::loopblend::one_circle(&wire, (size * 1e-5).max(1e-6)) {
-            return Err(unsupported("not a whole circle"));
+        if circles {
+            let Some((centre, radius)) = crate::loopblend::one_circle(&wire, (size * 1e-5).max(1e-6)) else {
+                return Err(unsupported("not a whole circle"));
+            };
+            // Nothing else of the face within the band.
+            let reach = distance + (size * 1e-5).max(1e-6);
+            let clear = others.iter().flat_map(|w| w.edge_iter()).all(|e| {
+                let c = e.curve();
+                let (t0, t1) = c.range_tuple();
+                (0..=32).all(|k| {
+                    let q = c.subs(t0 + (t1 - t0) * k as f64 / 32.0);
+                    (Vec3::new(q.x, q.y, q.z).dist(centre) - radius).abs() > reach
+                })
+            });
+            if !clear || radius <= reach {
+                return Err(unsupported("the blend reaches another boundary of the face"));
+            }
         }
         // Another pick on the same wire (two halves of one circle) is this loop too.
         for (k, q) in edges.iter().enumerate().skip(i + 1) {
@@ -2177,7 +2204,7 @@ fn chamfer_wires(body: &Body, edges: &[Vec3], distance: f64, circles: bool) -> R
             }
         }
         let ids: Vec<mt::EdgeID> = wire.edge_iter().map(|e| e.id()).collect();
-        let Some(res) = crate::loopblend::loop_blend(solid, &ids, size, distance, false) else {
+        let Some(res) = crate::loopblend::loop_blend(solid, &ids, size, distance, round) else {
             return Err(unsupported("the edges are not a whole loop of a planar face"));
         };
         let (made, rec) = guard("chamfer", || res)?;
@@ -2189,11 +2216,6 @@ fn chamfer_wires(body: &Body, edges: &[Vec3], distance: f64, circles: bool) -> R
 
 /// [`chamfer`], once the size is known to fit.
 fn chamfer_built(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
-    // Whole circles (hole rims, boss rims) by editing their faces: 1871 ms for 36 rims through the
-    // cutters below, 460 ms this way. 3DCadCraft.
-    if let Ok(r) = chamfer_wires(body, edges, distance, true) {
-        return Ok(r);
-    }
     // Each step's result carries its history over `[body]`.
     let counts = record::counts(&[body]);
     // All cutters at once (their union mitres the corners), else one edge at a time.
