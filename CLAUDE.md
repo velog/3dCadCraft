@@ -403,6 +403,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   oracle case 64, which stalled at 7e-10) — and uses the first-order form (radius ⟂
   line / centres collinear with the point). Tools should still **share** point ids for
   chains and tangent arcs.
+- **An arc's end held on a line it is tangent to** (the owner's arc in a rectangle): `Constraint::Tangent` uses the
+  first-order form there too, as a *length* (radius along the line, mm), not a cosine: with the centre near the line the
+  radius lies along it, the cosine is at its extreme and has no slope. `|distance| - r` is flat for a centre just past the
+  line, so a constraint commit that does not solve is tried again from the centres shifted a little
+  (`sketch_tools::solve_from_near`); only a solved result stays. A click on a line's *midpoint* snap is a real Midpoint,
+  which can truly conflict. An arc with all three points fixed adds no equation (it read as redundancy on projected loops).
 - **Redundancy in composite shapes:** every builder in `sketch/shapes.rs` has a test
   asserting exact DOF *and* `redundant == 0`. Known traps: circumscribed polygon with
   even N (Pitot — drop one Equal), arc slot (a construction centre arc would be

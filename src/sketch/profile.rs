@@ -1006,6 +1006,31 @@ mod arc_in_a_rectangle {
         }
     }
 
+    /// Tangent at the corner, its end on the top line, then tangent to the top line too: a
+    /// half circle, a long way from where the arc stands.
+    #[test]
+    fn two_tangents_and_its_end_on_the_line_reach_a_half_circle() {
+        let (mut s, arc, end, c, lines) = setup();
+        s.add_constraint(Constraint::PointOnLine {
+            point: end,
+            line: lines[2],
+        })
+        .unwrap();
+        s.add_tangent(arc, lines[0]).unwrap();
+        solved_clean(&mut s, "first tangent");
+        s.add_tangent(arc, lines[2]).unwrap();
+        let r = s.solve().unwrap();
+        println!(
+            "{r:?} c={:?} e={:?}",
+            s.point(c).unwrap().position,
+            s.point(end).unwrap().position
+        );
+        solved_clean(&mut s, "second tangent");
+        let (e, q) = (s.point(end).unwrap().position, s.point(c).unwrap().position);
+        assert!((e - Point2::new(100.0, 40.0)).norm() < 1e-6, "{e:?}");
+        assert!((q - Point2::new(100.0, 20.0)).norm() < 1e-6, "{q:?}");
+    }
+
     /// Fully defined by its radius (the arc of the owner's blade).
     #[test]
     fn a_radius_finishes_it() {
@@ -1023,5 +1048,49 @@ mod arc_in_a_rectangle {
         .unwrap();
         let r = solved_clean(&mut s, "radius");
         assert_eq!(r.dof, 0, "{r:?}");
+    }
+}
+
+#[cfg(test)]
+mod arc_from_far {
+    use super::super::*;
+
+    /// The same arc as drawn in the view (its centre almost on the top line, so its radius at
+    /// the end lies along that line): a cosine residual had no slope there and the second
+    /// tangent was refused as a conflict.
+    #[test]
+    fn a_second_tangent_from_where_the_arc_was_drawn() {
+        let mut s = Sketch::default();
+        let sh = s
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(40.0, 25.0))
+            .unwrap();
+        s.set_fixed(sh.points[0], true).unwrap();
+        for (a, b, value) in [(0, 1, 40.0), (1, 2, 25.0)] {
+            s.add_constraint(Constraint::Distance {
+                a: sh.points[a],
+                b: sh.points[b],
+                value,
+            })
+            .unwrap();
+        }
+        let c = s.add_point(Point2::new(40.0, 25.4));
+        let e = s.add_point(Point2::new(14.6, 25.0));
+        let arc = s.add_arc(c, sh.points[1], e).unwrap();
+        s.add_tangent(arc, sh.entities[0]).unwrap();
+        s.add_constraint(Constraint::PointOnLine {
+            point: e,
+            line: sh.entities[2],
+        })
+        .unwrap();
+        s.add_tangent(arc, sh.entities[2]).unwrap();
+        let r = s.solve().unwrap();
+        assert_eq!(
+            (r.status, r.dof, r.redundant),
+            (SolveStatus::Solved, 0, 0),
+            "{r:?}"
+        );
+        let (q, p) = (s.point(c).unwrap().position, s.point(e).unwrap().position);
+        assert!((q - Point2::new(40.0, 12.5)).norm() < 1e-6, "{q:?}");
+        assert!((p - Point2::new(40.0, 25.0)).norm() < 1e-6, "{p:?}");
     }
 }

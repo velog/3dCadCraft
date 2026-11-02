@@ -2634,12 +2634,46 @@ fn commit_constraints(
             ))
         }
         _ => {
+            if let Some(solved) = solve_from_near(&ps.sketch, redundant_before) {
+                ps.sketch = solved;
+                return Ok(Some(label.to_owned()));
+            }
             ps.sketch = before;
             Err(format!(
                 "{label} conflicts with existing constraints (not applied)"
             ))
         }
     }
+}
+
+/// A constraint the solver could not reach from where the geometry stands may still hold: a
+/// centre just past a line it should be tangent to is on a flat of `|distance| - r` (the arc
+/// the owner drew in a rectangle was refused as a conflict). Tries again from the centres
+/// shifted a little each way; none of it stays unless it solves.
+fn solve_from_near(sketch: &Sketch, redundant_before: usize) -> Option<Sketch> {
+    let pts: Vec<Point2> = sketch.points().map(|(_, p)| p.position).collect();
+    let (mut lo, mut hi) = (
+        Point2::new(Real::MAX, Real::MAX),
+        Point2::new(Real::MIN, Real::MIN),
+    );
+    for p in &pts {
+        lo = lo.inf(p);
+        hi = hi.sup(p);
+    }
+    let size = (hi - lo).norm();
+    for shift in [size * 0.05, size * 0.2] {
+        for (x, y) in [(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
+            let mut trial = sketch.clone();
+            trial.nudge_centres(Vector2::new(x * shift, y * shift));
+            if let Ok(r) = trial.solve()
+                && r.status == SolveStatus::Solved
+                && r.redundant <= redundant_before
+            {
+                return Some(trial);
+            }
+        }
+    }
+    None
 }
 
 /// The entity of an entity pick. Callers check the pick kind first; any
@@ -3935,5 +3969,40 @@ mod tests {
                 .dimension_text(id, crate::sketch::DimDisplay::Value),
             "Ø30.00"
         );
+    }
+}
+
+#[cfg(test)]
+mod near_start {
+    use super::*;
+
+    /// The arc as drawn over a rectangle, its centre just above the top line: tangent to the
+    /// bottom line it solves, tangent to the top line too only from another start.
+    #[test]
+    fn a_second_tangent_is_reached_from_a_nearby_start() {
+        let mut s = Sketch::default();
+        let sh = s
+            .add_rectangle_two_point(Point2::new(0.0, 0.0), Point2::new(40.0, 25.0))
+            .unwrap();
+        s.set_fixed(sh.points[0], true).unwrap();
+        for (a, b, value) in [(0, 1, 40.0), (1, 2, 25.0)] {
+            s.add_constraint(Constraint::Distance {
+                a: sh.points[a],
+                b: sh.points[b],
+                value,
+            })
+            .unwrap();
+        }
+        let c = s.add_point(Point2::new(40.0, 25.4));
+        let e = s.add_point(Point2::new(14.6, 25.0));
+        let arc = s.add_arc(c, sh.points[1], e).unwrap();
+        s.add_tangent(arc, sh.entities[0]).unwrap();
+        s.solve().unwrap();
+        s.add_tangent(arc, sh.entities[2]).unwrap();
+        let mut plain = s.clone();
+        assert_eq!(plain.solve().unwrap().status, SolveStatus::Failed);
+        let solved = solve_from_near(&s, 0).unwrap();
+        let q = solved.point(c).unwrap().position;
+        assert!((q - Point2::new(40.0, 12.5)).norm() < 1e-6, "{q:?}");
     }
 }

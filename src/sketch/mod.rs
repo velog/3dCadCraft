@@ -589,6 +589,26 @@ impl Sketch {
         Ok(self.constraints.insert(constraint))
     }
 
+    /// Moves the centres of the arcs and circles that are not fixed by `by` (a new start for
+    /// the solver: the rest of the sketch would only carry them along).
+    pub fn nudge_centres(&mut self, by: Vector2) {
+        let centres: Vec<PointId> = self
+            .entities
+            .values()
+            .filter_map(|e| match *e {
+                Entity::Arc { center, .. } | Entity::Circle { center, .. } => Some(center),
+                _ => None,
+            })
+            .collect();
+        for c in centres {
+            if let Some(p) = self.points.get_mut(c)
+                && !p.fixed
+            {
+                p.position += by;
+            }
+        }
+    }
+
     /// Adds a tangency, choosing internal vs. external contact for two
     /// circles from the current geometry (whichever is nearer to true), which
     /// is what the user means when they click two circles.

@@ -384,7 +384,7 @@ Expand / Collapse All, Promote / Demote; Last Used from Edit Feature; default pr
 import from the installed Inventor; spline closing; Trim by an extruded spline outline; chains of open curves; Boundary Patch Guide
 Rails; Motion and Contact (spec 3.1b).
 
-Open: Transitional constraints; Demote keeping relationships to the rest by paths; Patch with guides on a loop of model edges;
+Open: motion links picked on faces directly; Transitional only on slides (a follower on a Slider and a cam); Dynamic Simulation (no solver for it yet); a shaded preview of a surface Revolve (wires only).
 motion links picked on faces directly.
 
 ## Interface: gaps and next steps

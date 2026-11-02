@@ -829,7 +829,9 @@ impl Constraint {
                     if let Some(q) = on {
                         let d = g.direction(line);
                         let radial = g.point(q) - g.circle(circle).0;
-                        out.push(radial.dot(&d) / (safe_norm(&radial) * safe_norm(&d)));
+                        // In mm, not the cosine: with the centre near the line the radius lies
+                        // along it, the cosine is at its extreme there and has no slope.
+                        out.push(radial.dot(&d) / safe_norm(&d));
                         return;
                     }
                 }
