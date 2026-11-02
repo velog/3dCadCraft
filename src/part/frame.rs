@@ -752,7 +752,9 @@ impl Section {
             ));
         }
         // Slanted ends (a mitre): the section between its two end planes in
-        // one kernel call, no Trim Solid.
+        // one kernel call, no Trim Solid. Which end a plane cuts follows from
+        // the side it keeps, never from where it lies: a start cut past the
+        // member's middle taken for an end cut left the short piece as well.
         let plane = |c: &EndCut| {
             [
                 [c.point.x, c.point.y, c.point.z],
@@ -760,7 +762,7 @@ impl Section {
             ]
         };
         let (starts, ends): (Vec<&EndCut>, Vec<&EndCut>) =
-            slanted.iter().partition(|c| c.point.z < length / 2.0);
+            slanted.iter().partition(|c| c.normal.z < 0.0);
         if !slanted.is_empty() && starts.len() <= 1 && ends.len() <= 1 {
             let square = |z: Real| [[0.0, 0.0, z], [0.0, 0.0, 1.0]];
             let op = PrismOp {
@@ -1711,6 +1713,43 @@ mod tests {
 
     /// A member mitred at 45° at both ends is one prism (no Trim Solid):
     /// volume A × mean length, Start / End caps on the planes, quickly.
+    /// A slanted start cut past the member's middle keeps the far piece only:
+    /// taken for an end cut (by where it lies) it left the short piece as well.
+    #[test]
+    fn a_slanted_cut_past_the_middle_keeps_one_piece() {
+        let s = sec("Square hollow section (EN 10219)", "40x40x3");
+        let (w, _) = s.extent();
+        for (point, n, keep) in [
+            // Start side kept off: material above the plane.
+            (240.0, Vector3::new(0.5, 0.0, -1.0), 160.0),
+            (200.0, Vector3::new(0.5, 0.0, -1.0), 200.0),
+            // End side kept off, before the middle: material below it.
+            (160.0, Vector3::new(0.5, 0.0, 1.0), 160.0),
+        ] {
+            let cuts = [EndCut {
+                point: Point3::new(0.0, 0.0, point),
+                normal: n.normalize(),
+            }];
+            let part = s
+                .member_part_cut(400.0, [w + 1.0, w + 1.0], &cuts, &[], None)
+                .unwrap();
+            assert!(part.feature_health.is_empty(), "{:?}", part.feature_health);
+            assert_eq!(part.exact_bodies.0.len(), 1, "one body at {point}");
+            let v: Real = part
+                .exact_bodies
+                .0
+                .iter()
+                .filter_map(|b| b.volume_at(1e-3))
+                .sum();
+            let (area, _) = (s.properties().area, 0);
+            // Measured along the axis: the slant is symmetric about the point
+            // where the plane crosses the axis (+ the extension past the far end).
+            let far = w + 1.0;
+            let want = area * (keep + far);
+            assert!((v - want).abs() / want < 0.02, "{point}: {v} vs {want}");
+        }
+    }
+
     #[test]
     fn a_mitred_member_is_one_prism() {
         for (f, size) in [

@@ -72,6 +72,7 @@ mod drawing_sketch;
 mod drawing_styles;
 mod drive;
 mod feature_cmd;
+mod file_explorer;
 mod files;
 mod format_text;
 mod frame;
@@ -824,6 +825,8 @@ struct CadCraftApp {
     /// Where the last right click in the view was (the plain menu's Select
     /// Other asks the candidates there).
     menu_at: Option<(egui::Pos2, egui::Rect)>,
+    /// The browser's Files tab.
+    files: file_explorer::FilesUi,
     /// The views rested on (F5, Shift+F5).
     view_history: view_nav::ViewHistory,
     /// Zoom Window is waiting: for the drag, then with its first corner.
@@ -1109,6 +1112,7 @@ impl CadCraftApp {
             shift_rmb: false,
             ctrl_rmb: false,
             menu_at: None,
+            files: Default::default(),
             view_history: Default::default(),
             zoom_window: None,
             click_shift: false,
@@ -4379,6 +4383,14 @@ impl CadCraftApp {
                 }
             }
             AppCmd::ZoomAll => self.fit_view(),
+            AppCmd::Return => self.return_to_assembly(),
+            AppCmd::FindInBrowser => {
+                self.asm.find_in_browser = self.asm.sel.first().copied();
+                self.files.tab = file_explorer::BrowserTab::Model;
+            }
+            AppCmd::BrowserSearch => self.asm.search_focus = true,
+            AppCmd::Promote => self.promote_selected(),
+            AppCmd::Demote => self.demote_selected(),
             AppCmd::ZoomSelected => self.zoom_selected(),
             AppCmd::PreviousView => self.view_step(true),
             AppCmd::NextView => self.view_step(false),

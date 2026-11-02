@@ -220,7 +220,7 @@ impl CadCraftApp {
                 }
                 // The active file's documents (spec 0.6b §3.3).
                 if active {
-                    self.document_chips(ui);
+                    self.active_document_menu(ui);
                 }
                 r.context_menu(|ui| {
                     if ui.button("Close").clicked() {

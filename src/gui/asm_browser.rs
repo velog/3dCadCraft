@@ -81,6 +81,12 @@ fn feature_rows(p: &crate::part::PartDocument) -> Vec<FeatureRow> {
 }
 
 /// What a click in the tree asked for (done after drawing).
+/// A folder row's command.
+enum FolderCmd {
+    Rename(u32, String),
+    Delete(u32),
+}
+
 enum TreeCmd {
     Select(u32, bool),
     /// A feature row (occurrence, feature id), Ctrl adds.
@@ -115,6 +121,8 @@ impl CadCraftApp {
         };
         // A pattern's copies are listed under its elements.
         let patterns = a.patterns.clone();
+        let folders = a.folders.clone();
+        let mut folder_cmd: Option<FolderCmd> = None;
         let occs: Vec<(u32, String, bool, bool, crate::document::DocRef)> = a
             .occurrences
             .iter()
@@ -209,18 +217,20 @@ impl CadCraftApp {
             if !opts.hide_work && query.is_empty() {
                 self.origin_folder(ui, ASSEMBLY, &mut cmds);
             }
-            for (id, label, grounded, visible, component) in occs {
+            type OccRow = (u32, String, bool, bool, crate::document::DocRef);
+            let mut row = |this: &mut Self, ui: &mut egui::Ui, occ: &OccRow| {
+                let (id, label, grounded, visible, component) = occ.clone();
                 let (suppressed, enabled) = looks.get(&id).copied().unwrap_or((false, true));
-                let dof = self.occurrence_dof(id);
+                let dof = this.occurrence_dof(id);
                 if opts.hide_fully_constrained && dof == 0 {
-                    continue;
+                    return;
                 }
                 let features = if opts.modeling {
-                    self.with_part(component, feature_rows).unwrap_or_default()
+                    this.with_part(component, feature_rows).unwrap_or_default()
                 } else {
                     Vec::new()
                 };
-                let uses: Vec<u32> = self
+                let uses: Vec<u32> = this
                     .assembly()
                     .map(|a| {
                         a.constraints
@@ -246,7 +256,7 @@ impl CadCraftApp {
                     !uses.is_empty()
                 };
                 if !own_hit && !child_hit {
-                    continue;
+                    return;
                 }
                 let reveal = !query.is_empty() && child_hit && !own_hit;
                 if find == Some(id) || reveal {
@@ -263,7 +273,7 @@ impl CadCraftApp {
                     cmds.push(TreeCmd::Select(id, false));
                 }
                 let sub =
-                    crate::assembly::tree::assembly_of(&self.project, &linked, component).is_some();
+                    crate::assembly::tree::assembly_of(&this.project, &linked, component).is_some();
                 let header = fold(ui, ("asm_occ", id), false, |ui| {
                     if visibility_button(ui, visible) {
                         cmds.push(TreeCmd::ToggleVisible(id));
@@ -282,7 +292,7 @@ impl CadCraftApp {
                     if !enabled {
                         text = text.italics();
                     }
-                    let r = ui.selectable_label(self.asm.sel.contains(&id), text);
+                    let r = ui.selectable_label(this.asm.sel.contains(&id), text);
                     if opts.constraint_state {
                         state_dot(ui, dof);
                     }
@@ -302,36 +312,36 @@ impl CadCraftApp {
                         cmds.push(TreeCmd::Edit(id, Vec::new()));
                     }
                     if r.hovered() {
-                        self.asm.hover = Some(id);
+                        this.asm.hover = Some(id);
                     }
                     r.context_menu(|ui| {
-                        self.asm.menu_at = None;
-                        if !self.asm.sel.contains(&id) {
-                            self.asm.sel = vec![id];
+                        this.asm.menu_at = None;
+                        if !this.asm.sel.contains(&id) {
+                            this.asm.sel = vec![id];
                         }
-                        let ids = self.asm.sel.clone();
-                        self.occurrence_menu(ui, &ids);
+                        let ids = this.asm.sel.clone();
+                        this.occurrence_menu(ui, &ids);
                     });
                 });
                 header.body(|ui| {
                     if !opts.hide_work && query.is_empty() {
-                        self.origin_folder(ui, id, &mut cmds);
+                        this.origin_folder(ui, id, &mut cmds);
                     }
                     if sub {
                         let mut stack = vec![asm_doc];
-                        self.nested_rows(ui, id, component, &[], &mut stack, &mut cmds);
+                        this.nested_rows(ui, id, component, &[], &mut stack, &mut cmds);
                     }
                     if opts.modeling {
                         // Modeling View: the part's features in history
                         // order (work features among them).
                         for f in &features {
-                            self.feature_row(ui, id, f, opts.extended_names, &mut cmds);
+                            this.feature_row(ui, id, f, opts.extended_names, &mut cmds);
                         }
                         return;
                     }
                     if !opts.hide_work {
                         // The part's work features.
-                        let works = self
+                        let works = this
                             .with_part(component, |p| {
                                 let mut v: Vec<(String, String)> = p
                                     .features
@@ -356,14 +366,49 @@ impl CadCraftApp {
                                 occurrence: id,
                                 id: wid,
                             };
-                            self.geom_row(ui, Icon::WorkPlane, &wname, g, &mut cmds);
+                            this.geom_row(ui, Icon::WorkPlane, &wname, g, &mut cmds);
                         }
                     }
                     // Assembly View: its relationships.
                     for c in &uses {
-                        self.constraint_row(ui, *c, &mut cmds);
+                        this.constraint_row(ui, *c, &mut cmds);
                     }
                 });
+            };
+            // Folders first, each with its components; then the rest.
+            let in_folder: Vec<u32> = folders.iter().flat_map(|f| f.items.clone()).collect();
+            for f in &folders {
+                let items: Vec<&OccRow> = occs.iter().filter(|o| f.items.contains(&o.0)).collect();
+                let key = ("asm_folder", f.id);
+                fold(ui, key, true, |ui| {
+                    super::panels::tree_icon(ui, Icon::Project);
+                    let r = ui.selectable_label(false, &f.name);
+                    r.context_menu(|ui| {
+                        let mut name = f.name.clone();
+                        ui.horizontal(|ui| {
+                            ui.label("Name");
+                            if ui.text_edit_singleline(&mut name).changed() {
+                                folder_cmd = Some(FolderCmd::Rename(f.id, name.clone()));
+                            }
+                        });
+                        if ui
+                            .button("Delete Folder")
+                            .on_hover_text("The components stay")
+                            .clicked()
+                        {
+                            folder_cmd = Some(FolderCmd::Delete(f.id));
+                            ui.close();
+                        }
+                    });
+                })
+                .body(|ui| {
+                    for o in items {
+                        row(self, ui, o);
+                    }
+                });
+            }
+            for o in occs.iter().filter(|o| !in_folder.contains(&o.0)) {
+                row(self, ui, o);
             }
             // Patterns after the components, their sources and copies
             // inside (Inventor's browser).
@@ -434,11 +479,116 @@ impl CadCraftApp {
                 TreeCmd::Drive(id) => self.open_drive(id),
             }
         }
+        if let Some(c) = folder_cmd {
+            self.folder_cmd(c);
+        }
         for c in pcmds {
             self.pattern_cmd(c);
         }
         for c in fcmds {
             self.frame_cmd(c);
+        }
+    }
+
+    fn folder_cmd(&mut self, c: FolderCmd) {
+        match c {
+            FolderCmd::Rename(id, name) => self.edit_assembly("Rename Folder", |a| {
+                if let Some(f) = a.folders.iter_mut().find(|f| f.id == id) {
+                    f.name = name;
+                }
+            }),
+            FolderCmd::Delete(id) => self.edit_assembly("Delete Folder", |a| a.delete_folder(id)),
+        }
+    }
+
+    /// The menu entries that file components into folders.
+    pub(super) fn folder_menu(&mut self, ui: &mut egui::Ui, ids: &[u32]) {
+        let folders: Vec<(u32, String)> = self
+            .assembly()
+            .map(|a| a.folders.iter().map(|f| (f.id, f.name.clone())).collect())
+            .unwrap_or_default();
+        ui.menu_button("Add to Folder", |ui| {
+            if ui.button("New Folder").clicked() {
+                self.edit_assembly("Create Folder", |a| {
+                    a.add_folder(None, ids);
+                });
+                ui.close();
+            }
+            for (id, name) in &folders {
+                if ui.button(name).clicked() {
+                    self.edit_assembly("Add to Folder", |a| a.move_to_folder(Some(*id), ids));
+                    ui.close();
+                }
+            }
+            if !folders.is_empty() && ui.button("Out of its folder").clicked() {
+                self.edit_assembly("Remove from Folder", |a| a.move_to_folder(None, ids));
+                ui.close();
+            }
+        });
+    }
+
+    /// Demote: the selected components into a new subassembly.
+    pub(super) fn demote_selected(&mut self) {
+        let ids = self.asm.sel.clone();
+        if ids.is_empty() {
+            self.file_status = Some(Err("Demote: select the components first".into()));
+            return;
+        }
+        let doc = self.part_id;
+        let name = self.project.free_name("SubAssembly");
+        let mut copy = self.project.clone();
+        match crate::assembly::restructure::demote(&mut copy, doc, &ids, &name) {
+            Ok(d) => {
+                self.checkpoint("Demote");
+                self.project = copy;
+                self.asm.sel = vec![d.occurrence];
+                self.scene_dirty = true;
+                self.file_status = Some(Ok(if d.removed.is_empty() {
+                    format!("Demote: {name} made")
+                } else {
+                    format!(
+                        "Demote: {name} made; relationships to the rest removed: {}",
+                        d.removed.join(", ")
+                    )
+                }));
+            }
+            Err(e) => self.file_status = Some(Err(format!("Demote: {e}"))),
+        }
+    }
+
+    /// Promote: the part selected inside a subassembly up to this assembly.
+    pub(super) fn promote_selected(&mut self) {
+        let picked = self.asm.sub.iter().find_map(|s| match s {
+            super::asm_select::AsmSub::Part { occurrence, sub } if sub.len() == 1 => {
+                Some((*occurrence, sub[0]))
+            }
+            _ => None,
+        });
+        let Some((top, inner)) = picked else {
+            self.file_status = Some(Err(
+                "Promote: select a component inside a subassembly in the browser".into(),
+            ));
+            return;
+        };
+        let doc = self.part_id;
+        let mut copy = self.project.clone();
+        match crate::assembly::restructure::promote(&mut copy, doc, top, inner) {
+            Ok((id, removed)) => {
+                self.checkpoint("Promote");
+                self.project = copy;
+                self.asm.sub.clear();
+                self.asm.sel = vec![id];
+                self.scene_dirty = true;
+                self.file_status = Some(Ok(if removed.is_empty() {
+                    "Promote: done".to_owned()
+                } else {
+                    format!(
+                        "Promote: done; relationships removed: {}",
+                        removed.join(", ")
+                    )
+                }));
+            }
+            Err(e) => self.file_status = Some(Err(format!("Promote: {e}"))),
         }
     }
 
@@ -610,6 +760,20 @@ impl CadCraftApp {
             {
                 o.modeling = true;
             }
+            if ui
+                .small_button("+")
+                .on_hover_text("Expand All Children")
+                .clicked()
+            {
+                super::panels::request_fold_all(ui.ctx(), true);
+            }
+            if ui
+                .small_button("-")
+                .on_hover_text("Collapse All Children")
+                .clicked()
+            {
+                super::panels::request_fold_all(ui.ctx(), false);
+            }
             ui.menu_button("Filter", |ui| {
                 ui.checkbox(&mut o.hide_work, "Hide Work Features")
                     .on_hover_text("Work features and the Origin folders");
@@ -629,6 +793,9 @@ impl CadCraftApp {
                     .hint_text("Search")
                     .desired_width(ui.available_width() - 28.0),
             );
+            if std::mem::take(&mut self.asm.search_focus) {
+                r.request_focus();
+            }
             if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.asm.search.clear();
             }
@@ -822,12 +989,7 @@ fn fold<'a>(
     open: bool,
     header: impl FnOnce(&mut egui::Ui),
 ) -> egui::collapsing_header::HeaderResponse<'a, ()> {
-    egui::collapsing_header::CollapsingState::load_with_default_open(
-        ui.ctx(),
-        ui.make_persistent_id(id),
-        open,
-    )
-    .show_header(ui, header)
+    super::panels::tree_fold(ui, ui.make_persistent_id(id), open).show_header(ui, header)
 }
 
 /// The eye at the start of a component row: open = visible. Returns whether

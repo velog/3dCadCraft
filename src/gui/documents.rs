@@ -780,47 +780,7 @@ impl CadCraftApp {
     }
 }
 
-impl CadCraftApp {
-    /// Document chips after the active file's tab: one per document of the
-    /// file when it holds several (spec 0.6b §3.3); a click makes that
-    /// document the active one, sharing the file's Undo and Save.
-    pub(super) fn document_chips(&mut self, ui: &mut egui::Ui) {
-        if self.project.documents().len() < 2 {
-            return;
-        }
-        let docs: Vec<(DocumentId, String, DocumentKind)> = self
-            .project
-            .documents()
-            .iter()
-            .map(|d| (d.id, d.name.clone(), d.data.kind()))
-            .collect();
-        let mut open = None;
-        let mut ask = None;
-        for (id, name, kind) in docs {
-            super::panels::tree_icon(ui, kind_icon(kind));
-            let on = id == self.part_id;
-            let text = if on {
-                RichText::new(&name).strong()
-            } else {
-                RichText::new(&name)
-            };
-            let r = ui
-                .selectable_label(on, text)
-                .on_hover_text("A document of this file: click to work on it");
-            if r.clicked() && !on {
-                open = Some(id);
-            }
-            r.context_menu(|ui| doc_menu(ui, id, &mut ask, &mut open));
-        }
-        if let Some(id) = open {
-            self.asm.came_from = None;
-            self.activate_document(id);
-        }
-        if let Some((c, id)) = ask {
-            self.docs_apply_to(c, id);
-        }
-    }
-}
+impl CadCraftApp {}
 
 /// The right-click menu of a document row (browser, Documents window).
 pub(super) fn doc_menu(

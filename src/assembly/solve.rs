@@ -886,8 +886,14 @@ mod tests {
             assert_eq!(s.dof[&2], 1, "only the slide stays free");
             applied(&mut a, &s);
             let c = a.constraint(id).unwrap().clone();
-            let fa = axis(&c.a).unwrap().as_frame().moved(&a.find(1).unwrap().transform);
-            let fb = axis(&c.b).unwrap().as_frame().moved(&a.find(2).unwrap().transform);
+            let fa = axis(&c.a)
+                .unwrap()
+                .as_frame()
+                .moved(&a.find(1).unwrap().transform);
+            let fb = axis(&c.b)
+                .unwrap()
+                .as_frame()
+                .moved(&a.find(2).unwrap().transform);
             let m = relation::measure(&c, &fa, &fb).unwrap();
             assert!((m - deg.to_radians()).abs() < 1e-6, "{deg}: {m}");
         }

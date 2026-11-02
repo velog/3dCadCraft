@@ -457,71 +457,67 @@ impl CadCraftApp {
             .flat_map(|e| e.1.iter().map(|x| x.0))
             .collect();
         let on = !all.is_empty() && all.iter().all(|i| self.asm.sel.contains(i));
-        egui::collapsing_header::CollapsingState::load_with_default_open(
-            ui.ctx(),
-            ui.make_persistent_id(("asm_pattern", p.id)),
-            false,
-        )
-        .show_header(ui, |ui| {
-            super::panels::tree_icon(ui, Icon::AsmPattern);
-            let r = ui.selectable_label(on, &p.name);
-            if r.clicked() {
-                cmds.push(PatternCmd::Select(p.id));
-            }
-            if r.double_clicked() {
-                cmds.push(PatternCmd::Edit(p.id));
-            }
-            r.context_menu(|ui| {
-                if ui.button("Edit").clicked() {
+        super::panels::tree_fold(ui, ui.make_persistent_id(("asm_pattern", p.id)), false)
+            .show_header(ui, |ui| {
+                super::panels::tree_icon(ui, Icon::AsmPattern);
+                let r = ui.selectable_label(on, &p.name);
+                if r.clicked() {
+                    cmds.push(PatternCmd::Select(p.id));
+                }
+                if r.double_clicked() {
                     cmds.push(PatternCmd::Edit(p.id));
-                    ui.close();
                 }
-                if ui.button("Delete").clicked() {
-                    cmds.push(PatternCmd::Delete(p.id));
-                    ui.close();
-                }
-            });
-        })
-        .body(|ui| {
-            for (index, occs) in elements {
-                let ids: Vec<u32> = occs.iter().map(|x| x.0).collect();
-                let on = !ids.is_empty() && ids.iter().all(|i| self.asm.sel.contains(i));
-                egui::collapsing_header::CollapsingState::load_with_default_open(
-                    ui.ctx(),
-                    ui.make_persistent_id(("asm_pattern_el", p.id, index)),
-                    false,
-                )
-                .show_header(ui, |ui| {
-                    super::panels::tree_icon(ui, Icon::AsmPattern);
-                    let r = ui.selectable_label(on, format!("Element:{index}"));
-                    if r.clicked() {
-                        cmds.push(PatternCmd::SelectElement(p.id, index));
+                r.context_menu(|ui| {
+                    if ui.button("Edit").clicked() {
+                        cmds.push(PatternCmd::Edit(p.id));
+                        ui.close();
                     }
-                })
-                .body(|ui| {
-                    for (id, name) in occs {
-                        ui.horizontal(|ui| {
-                            super::panels::tree_icon(ui, Icon::Part);
-                            let r = ui.selectable_label(self.asm.sel.contains(&id), name);
-                            if r.clicked() {
-                                cmds.push(PatternCmd::SelectOccurrence(id));
-                            }
-                            if r.hovered() {
-                                self.asm.hover = Some(id);
-                            }
-                            r.context_menu(|ui| {
-                                self.asm.menu_at = None;
-                                if !self.asm.sel.contains(&id) {
-                                    self.asm.sel = vec![id];
-                                }
-                                let sel = self.asm.sel.clone();
-                                self.occurrence_menu(ui, &sel);
-                            });
-                        });
+                    if ui.button("Delete").clicked() {
+                        cmds.push(PatternCmd::Delete(p.id));
+                        ui.close();
                     }
                 });
-            }
-        });
+            })
+            .body(|ui| {
+                for (index, occs) in elements {
+                    let ids: Vec<u32> = occs.iter().map(|x| x.0).collect();
+                    let on = !ids.is_empty() && ids.iter().all(|i| self.asm.sel.contains(i));
+                    super::panels::tree_fold(
+                        ui,
+                        ui.make_persistent_id(("asm_pattern_el", p.id, index)),
+                        false,
+                    )
+                    .show_header(ui, |ui| {
+                        super::panels::tree_icon(ui, Icon::AsmPattern);
+                        let r = ui.selectable_label(on, format!("Element:{index}"));
+                        if r.clicked() {
+                            cmds.push(PatternCmd::SelectElement(p.id, index));
+                        }
+                    })
+                    .body(|ui| {
+                        for (id, name) in occs {
+                            ui.horizontal(|ui| {
+                                super::panels::tree_icon(ui, Icon::Part);
+                                let r = ui.selectable_label(self.asm.sel.contains(&id), name);
+                                if r.clicked() {
+                                    cmds.push(PatternCmd::SelectOccurrence(id));
+                                }
+                                if r.hovered() {
+                                    self.asm.hover = Some(id);
+                                }
+                                r.context_menu(|ui| {
+                                    self.asm.menu_at = None;
+                                    if !self.asm.sel.contains(&id) {
+                                        self.asm.sel = vec![id];
+                                    }
+                                    let sel = self.asm.sel.clone();
+                                    self.occurrence_menu(ui, &sel);
+                                });
+                            });
+                        }
+                    });
+                }
+            });
     }
 
     /// Runs a browser command of a pattern.

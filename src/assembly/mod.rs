@@ -25,6 +25,7 @@ pub mod pattern;
 pub mod physical;
 pub mod relation;
 pub mod replace;
+pub mod restructure;
 pub mod solve;
 pub mod tree;
 

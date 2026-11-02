@@ -152,11 +152,43 @@ fn drop_target(ui: &egui::Ui, r: &egui::Response, k: usize, cmds: &mut Vec<Brows
     }
 }
 
+/// Asks every browser node to open (`true`) or close on the next frame
+/// (Expand All Children / Collapse All Children).
+pub(super) fn request_fold_all(ctx: &egui::Context, open: bool) {
+    // The frame number first: asking the context inside `data_mut` deadlocks.
+    let frame = ctx.cumulative_frame_nr() + 1;
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("browser_fold_all"), (open, frame)));
+}
+
+/// A browser node's fold state, following a pending Expand / Collapse All.
+pub(super) fn tree_fold(
+    ui: &egui::Ui,
+    id: egui::Id,
+    open: bool,
+) -> egui::collapsing_header::CollapsingState {
+    let mut st =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, open);
+    let all = ui
+        .ctx()
+        .data(|d| d.get_temp::<(bool, u64)>(egui::Id::new("browser_fold_all")));
+    if let Some((want, frame)) = all
+        && frame == ui.ctx().cumulative_frame_nr()
+    {
+        st.set_open(want);
+        st.store(ui.ctx());
+    }
+    st
+}
+
 impl CadCraftApp {
     /// Model Browser: project → documents → Origin, features, sketches.
     pub(super) fn browser(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Model").strong());
+        self.browser_tabs(ui);
         ui.separator();
+        if self.files.tab == super::file_explorer::BrowserTab::Files {
+            self.files_tab(ui);
+            return;
+        }
         self.browser_hover = None;
         let mut cmds = Vec::new();
         let mut activate = None;
@@ -204,6 +236,24 @@ impl CadCraftApp {
                     }
                 });
             });
+            if !self.is_assembly() {
+                ui.horizontal(|ui| {
+                    if ui
+                        .small_button("+")
+                        .on_hover_text("Expand All Children")
+                        .clicked()
+                    {
+                        request_fold_all(ui.ctx(), true);
+                    }
+                    if ui
+                        .small_button("-")
+                        .on_hover_text("Collapse All Children")
+                        .clicked()
+                    {
+                        request_fold_all(ui.ctx(), false);
+                    }
+                });
+            }
             let only_active = self.is_assembly();
             ui.indent("docs", |ui| {
                 for (id, name, kind) in &docs {
@@ -479,232 +529,225 @@ impl CadCraftApp {
     /// The tree of the active part.
     fn part_tree(&self, ui: &mut egui::Ui, name: &str, cmds: &mut Vec<BrowserCmd>) {
         let part = self.part();
-        egui::collapsing_header::CollapsingState::load_with_default_open(
-            ui.ctx(),
-            ui.make_persistent_id("active_part"),
-            true,
-        )
-        .show_header(ui, |ui| {
-            tree_icon(ui, Icon::Part);
-            ui.label(RichText::new(name).strong()).context_menu(|ui| {
-                if ui.button("iProperties...").clicked() {
-                    cmds.push(BrowserCmd::IProperties(self.part_id));
-                    ui.close();
-                }
-            });
-        })
-        .body(|ui| {
-            let bodies = part.body.solids().filter(|(_, s)| !s.open).count();
-            // One row per surface body name: a body in pieces apart (stitched strips meeting at a
-            // point) is several solids of the B-rep with one name.
-            let surfaces = {
-                let mut names: Vec<Option<&String>> = part
-                    .body
-                    .solids()
-                    .filter(|(_, s)| s.open)
-                    .map(|(_, s)| s.name.as_ref())
-                    .collect();
-                names.sort();
-                names.dedup_by(|a, b| a.is_some() && a == b);
-                names.len()
-            };
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                ui.make_persistent_id("solid_bodies"),
-                false,
-            )
+        tree_fold(ui, ui.make_persistent_id("active_part"), true)
             .show_header(ui, |ui| {
-                tree_icon(ui, Icon::Box);
-                ui.label(format!("Solid Bodies({bodies})"));
+                tree_icon(ui, Icon::Part);
+                ui.label(RichText::new(name).strong()).context_menu(|ui| {
+                    if ui.button("iProperties...").clicked() {
+                        cmds.push(BrowserCmd::IProperties(self.part_id));
+                        ui.close();
+                    }
+                });
             })
             .body(|ui| {
-                // Display names by the creating feature (Solid1, Solid2...).
-                let names = part.bodies_before(usize::MAX);
-                let mut labels: Vec<(String, String)> = part
-                    .body
-                    .solids()
-                    .filter(|(_, s)| !s.open)
-                    .map(|(_, s)| {
-                        let id = s.name.clone().unwrap_or_default();
-                        let label = names
-                            .iter()
-                            .find(|(n, _)| *n == id)
-                            .map_or_else(|| "Solid".to_owned(), |(_, l)| l.clone());
-                        (label, id)
-                    })
-                    .collect();
-                labels.sort();
-                labels.dedup();
-                for (label, id) in labels {
-                    ui.horizontal(|ui| {
-                        tree_icon(ui, Icon::Part);
-                        let shown = part.body_visible(&id);
-                        let text = if shown {
-                            RichText::new(label)
-                        } else {
-                            RichText::new(label).weak()
-                        };
-                        let r = ui
-                            .selectable_label(
-                                self.sel.contains(&super::select::SelItem::Body(id.clone())),
-                                text,
-                            )
-                            .on_hover_text(format!("Created by {id}"));
-                        if r.clicked() {
-                            cmds.push(BrowserCmd::Select(Selection::Body));
-                            cmds.push(BrowserCmd::CommandPick(
-                                super::combine_split::BodyPick::Body(id.clone()),
-                            ));
-                        }
-                        r.context_menu(|ui| {
-                            let mut v = shown;
-                            if ui.checkbox(&mut v, "Visibility").clicked() {
-                                cmds.push(BrowserCmd::BodyVisible(id.clone(), v));
-                                ui.close();
-                            }
-                            if let Some(m) = self.material_submenu(ui) {
-                                cmds.push(BrowserCmd::BodyMaterial(id.clone(), m));
-                                ui.close();
-                            }
-                            if let Some(a) = self.appearance_submenu(ui) {
-                                use crate::part::appearance::LookTarget;
-                                cmds.push(BrowserCmd::Look(LookTarget::Body(id.clone()), a));
-                                ui.close();
-                            }
-                        });
-                    });
-                }
-            });
-            if surfaces > 0 {
-                egui::collapsing_header::CollapsingState::load_with_default_open(
-                    ui.ctx(),
-                    ui.make_persistent_id("surface_bodies"),
-                    true,
-                )
-                .show_header(ui, |ui| {
-                    tree_icon(ui, Icon::Part);
-                    ui.label(format!("Surface Bodies({surfaces})"));
-                })
-                .body(|ui| {
-                    let mut ids: Vec<String> = part
+                let bodies = part.body.solids().filter(|(_, s)| !s.open).count();
+                // One row per surface body name: a body in pieces apart (stitched strips meeting at a
+                // point) is several solids of the B-rep with one name.
+                let surfaces = {
+                    let mut names: Vec<Option<&String>> = part
                         .body
                         .solids()
                         .filter(|(_, s)| s.open)
-                        .filter_map(|(_, s)| s.name.clone())
+                        .map(|(_, s)| s.name.as_ref())
                         .collect();
-                    ids.sort();
-                    ids.dedup();
-                    for id in ids {
-                        ui.horizontal(|ui| {
-                            tree_icon(ui, Icon::Part);
-                            let shown = part.body_visible(&id);
-                            let label = match part.file_label(&id) {
-                                Some(l) => format!("Srf: {l}"),
-                                None => part
-                                    .features
+                    names.sort();
+                    names.dedup_by(|a, b| a.is_some() && a == b);
+                    names.len()
+                };
+                tree_fold(ui, ui.make_persistent_id("solid_bodies"), false)
+                    .show_header(ui, |ui| {
+                        tree_icon(ui, Icon::Box);
+                        ui.label(format!("Solid Bodies({bodies})"));
+                    })
+                    .body(|ui| {
+                        // Display names by the creating feature (Solid1, Solid2...).
+                        let names = part.bodies_before(usize::MAX);
+                        let mut labels: Vec<(String, String)> = part
+                            .body
+                            .solids()
+                            .filter(|(_, s)| !s.open)
+                            .map(|(_, s)| {
+                                let id = s.name.clone().unwrap_or_default();
+                                let label = names
                                     .iter()
-                                    .find(|f| f.id() == id.split('#').next().unwrap_or(&id))
-                                    .map_or_else(|| id.clone(), |f| format!("Srf: {}", f.name())),
-                            };
-                            let text = if shown {
-                                RichText::new(label)
-                            } else {
-                                RichText::new(label).weak()
-                            };
-                            let r = ui
-                                .selectable_label(
-                                    self.sel.contains(&super::select::SelItem::Body(id.clone())),
-                                    text,
-                                )
-                                .on_hover_text(format!("Surface body {id} (a Split tool)"));
-                            if r.clicked() {
-                                cmds.push(BrowserCmd::CommandPick(
-                                    super::combine_split::BodyPick::Surface(id.clone()),
-                                ));
-                            }
-                            r.context_menu(|ui| {
-                                let mut v = shown;
-                                if ui.checkbox(&mut v, "Visibility").clicked() {
-                                    cmds.push(BrowserCmd::BodyVisible(id.clone(), v));
-                                    ui.close();
+                                    .find(|(n, _)| *n == id)
+                                    .map_or_else(|| "Solid".to_owned(), |(_, l)| l.clone());
+                                (label, id)
+                            })
+                            .collect();
+                        labels.sort();
+                        labels.dedup();
+                        for (label, id) in labels {
+                            ui.horizontal(|ui| {
+                                tree_icon(ui, Icon::Part);
+                                let shown = part.body_visible(&id);
+                                let text = if shown {
+                                    RichText::new(label)
+                                } else {
+                                    RichText::new(label).weak()
+                                };
+                                let r = ui
+                                    .selectable_label(
+                                        self.sel
+                                            .contains(&super::select::SelItem::Body(id.clone())),
+                                        text,
+                                    )
+                                    .on_hover_text(format!("Created by {id}"));
+                                if r.clicked() {
+                                    cmds.push(BrowserCmd::Select(Selection::Body));
+                                    cmds.push(BrowserCmd::CommandPick(
+                                        super::combine_split::BodyPick::Body(id.clone()),
+                                    ));
                                 }
+                                r.context_menu(|ui| {
+                                    let mut v = shown;
+                                    if ui.checkbox(&mut v, "Visibility").clicked() {
+                                        cmds.push(BrowserCmd::BodyVisible(id.clone(), v));
+                                        ui.close();
+                                    }
+                                    if let Some(m) = self.material_submenu(ui) {
+                                        cmds.push(BrowserCmd::BodyMaterial(id.clone(), m));
+                                        ui.close();
+                                    }
+                                    if let Some(a) = self.appearance_submenu(ui) {
+                                        use crate::part::appearance::LookTarget;
+                                        cmds.push(BrowserCmd::Look(
+                                            LookTarget::Body(id.clone()),
+                                            a,
+                                        ));
+                                        ui.close();
+                                    }
+                                });
                             });
-                        });
-                    }
-                });
-            }
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                ui.make_persistent_id("origin"),
-                false,
-            )
-            .show_header(ui, |ui| {
-                tree_icon(ui, Icon::Origin);
-                ui.label("Origin");
-            })
-            .body(|ui| {
-                for p in OriginPlane::ALL {
-                    ui.horizontal(|ui| {
-                        tree_icon(ui, Icon::WorkPlane);
-                        let r = ui
-                            .selectable_label(false, p.label())
-                            .on_hover_text("Right-click: New Sketch");
-                        if r.clicked() {
-                            cmds.push(BrowserCmd::CommandPick(
-                                super::combine_split::BodyPick::Plane(PlaneRef::Origin(p)),
-                            ));
                         }
-                        r.context_menu(|ui| {
-                            if ui.button("New Sketch").clicked() {
-                                cmds.push(BrowserCmd::NewSketchOn(PlaneRef::Origin(p)));
-                                ui.close();
+                    });
+                if surfaces > 0 {
+                    tree_fold(ui, ui.make_persistent_id("surface_bodies"), true)
+                        .show_header(ui, |ui| {
+                            tree_icon(ui, Icon::Part);
+                            ui.label(format!("Surface Bodies({surfaces})"));
+                        })
+                        .body(|ui| {
+                            let mut ids: Vec<String> = part
+                                .body
+                                .solids()
+                                .filter(|(_, s)| s.open)
+                                .filter_map(|(_, s)| s.name.clone())
+                                .collect();
+                            ids.sort();
+                            ids.dedup();
+                            for id in ids {
+                                ui.horizontal(|ui| {
+                                    tree_icon(ui, Icon::Part);
+                                    let shown = part.body_visible(&id);
+                                    let label = match part.file_label(&id) {
+                                        Some(l) => format!("Srf: {l}"),
+                                        None => part
+                                            .features
+                                            .iter()
+                                            .find(|f| f.id() == id.split('#').next().unwrap_or(&id))
+                                            .map_or_else(
+                                                || id.clone(),
+                                                |f| format!("Srf: {}", f.name()),
+                                            ),
+                                    };
+                                    let text = if shown {
+                                        RichText::new(label)
+                                    } else {
+                                        RichText::new(label).weak()
+                                    };
+                                    let r = ui
+                                        .selectable_label(
+                                            self.sel.contains(&super::select::SelItem::Body(
+                                                id.clone(),
+                                            )),
+                                            text,
+                                        )
+                                        .on_hover_text(format!("Surface body {id} (a Split tool)"));
+                                    if r.clicked() {
+                                        cmds.push(BrowserCmd::CommandPick(
+                                            super::combine_split::BodyPick::Surface(id.clone()),
+                                        ));
+                                    }
+                                    r.context_menu(|ui| {
+                                        let mut v = shown;
+                                        if ui.checkbox(&mut v, "Visibility").clicked() {
+                                            cmds.push(BrowserCmd::BodyVisible(id.clone(), v));
+                                            ui.close();
+                                        }
+                                    });
+                                });
                             }
                         });
-                    });
                 }
-                for (icon, item) in [
-                    (Icon::WorkAxis, "X Axis"),
-                    (Icon::WorkAxis, "Y Axis"),
-                    (Icon::WorkAxis, "Z Axis"),
-                    (Icon::WorkPoint, "Center Point"),
-                ] {
-                    ui.horizontal(|ui| {
-                        tree_icon(ui, icon);
-                        ui.label(RichText::new(item).weak());
+                tree_fold(ui, ui.make_persistent_id("origin"), false)
+                    .show_header(ui, |ui| {
+                        tree_icon(ui, Icon::Origin);
+                        ui.label("Origin");
+                    })
+                    .body(|ui| {
+                        for p in OriginPlane::ALL {
+                            ui.horizontal(|ui| {
+                                tree_icon(ui, Icon::WorkPlane);
+                                let r = ui
+                                    .selectable_label(false, p.label())
+                                    .on_hover_text("Right-click: New Sketch");
+                                if r.clicked() {
+                                    cmds.push(BrowserCmd::CommandPick(
+                                        super::combine_split::BodyPick::Plane(PlaneRef::Origin(p)),
+                                    ));
+                                }
+                                r.context_menu(|ui| {
+                                    if ui.button("New Sketch").clicked() {
+                                        cmds.push(BrowserCmd::NewSketchOn(PlaneRef::Origin(p)));
+                                        ui.close();
+                                    }
+                                });
+                            });
+                        }
+                        for (icon, item) in [
+                            (Icon::WorkAxis, "X Axis"),
+                            (Icon::WorkAxis, "Y Axis"),
+                            (Icon::WorkAxis, "Z Axis"),
+                            (Icon::WorkPoint, "Center Point"),
+                        ] {
+                            ui.horizontal(|ui| {
+                                tree_icon(ui, icon);
+                                ui.label(RichText::new(item).weak());
+                            });
+                        }
                     });
-                }
-            });
 
-            // History order (Inventor): sketches and features as they were
-            // created. A consumed sketch is nested under its feature; a
-            // shared one also stands above its first feature; a free
-            // sketch stays where it was created. The End of Part marker
-            // stands where the history stops; below it everything is
-            // rolled back (greyed).
-            let mut listed = vec![false; part.sketches.len()];
-            let n = part.features.len();
-            let eop = part.eop_index();
-            for pos in 0..=n {
-                for (i, ps) in part.sketches.iter().enumerate() {
-                    let at = ps.after_features.unwrap_or(n).min(n);
-                    if !listed[i] && at == pos && part.consumers(&ps.id).is_empty() {
-                        listed[i] = true;
+                // History order (Inventor): sketches and features as they were
+                // created. A consumed sketch is nested under its feature; a
+                // shared one also stands above its first feature; a free
+                // sketch stays where it was created. The End of Part marker
+                // stands where the history stops; below it everything is
+                // rolled back (greyed).
+                let mut listed = vec![false; part.sketches.len()];
+                let n = part.features.len();
+                let eop = part.eop_index();
+                for pos in 0..=n {
+                    for (i, ps) in part.sketches.iter().enumerate() {
+                        let at = ps.after_features.unwrap_or(n).min(n);
+                        if !listed[i] && at == pos && part.consumers(&ps.id).is_empty() {
+                            listed[i] = true;
+                            self.sketch_row(ui, i, cmds);
+                        }
+                    }
+                    if pos == eop {
+                        self.eop_row(ui, cmds);
+                    }
+                    if let Some(f) = part.features.get(pos) {
+                        self.feature_node(ui, pos, f, &mut listed, cmds);
+                    }
+                }
+                for (i, done) in listed.iter().enumerate() {
+                    if !done {
                         self.sketch_row(ui, i, cmds);
                     }
                 }
-                if pos == eop {
-                    self.eop_row(ui, cmds);
-                }
-                if let Some(f) = part.features.get(pos) {
-                    self.feature_node(ui, pos, f, &mut listed, cmds);
-                }
-            }
-            for (i, done) in listed.iter().enumerate() {
-                if !done {
-                    self.sketch_row(ui, i, cmds);
-                }
-            }
-        });
+            });
     }
 
     /// The End of Part row: drag it onto a feature (above / below it), or
@@ -1086,21 +1129,17 @@ impl CadCraftApp {
             return;
         }
         // Expanded / collapsed is remembered per feature id.
-        egui::collapsing_header::CollapsingState::load_with_default_open(
-            ui.ctx(),
-            ui.make_persistent_id(("feature", f.id())),
-            false,
-        )
-        .show_header(ui, |ui| {
-            if let Some(r) = self.feature_label(ui, k, icon, hover, selected, select, cmds) {
-                r.context_menu(|ui| self.feature_menu(ui, k, &used, cmds));
-            }
-        })
-        .body(|ui| {
-            for &i in &nested {
-                self.sketch_row(ui, i, cmds);
-            }
-        });
+        tree_fold(ui, ui.make_persistent_id(("feature", f.id())), false)
+            .show_header(ui, |ui| {
+                if let Some(r) = self.feature_label(ui, k, icon, hover, selected, select, cmds) {
+                    r.context_menu(|ui| self.feature_menu(ui, k, &used, cmds));
+                }
+            })
+            .body(|ui| {
+                for &i in &nested {
+                    self.sketch_row(ui, i, cmds);
+                }
+            });
     }
 
     /// One sketch in the browser: visibility, name, context menu (with

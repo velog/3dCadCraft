@@ -158,6 +158,16 @@ pub enum AppCmd {
     Delete,
     /// Zoom All: fit the model into the view.
     ZoomAll,
+    /// Return: from Edit in place back to the assembly.
+    Return,
+    /// Find in Browser: the selected component's row.
+    FindInBrowser,
+    /// The browser's search field.
+    BrowserSearch,
+    /// Promote: a component out of its subassembly.
+    Promote,
+    /// Demote: the selected components into a new subassembly.
+    Demote,
     /// Zoom Selected: fit the selection into the view.
     ZoomSelected,
     /// Previous View of the view history.
@@ -1736,6 +1746,38 @@ pub static COMMANDS: &[Command] = &[
         .at(&[KEY])
         .tip("Fit the whole model into the view (double middle click)")
         .spec("0.3-view.md"),
+    c("asm.return_parent", "Return", "Връщане", Icon::Home)
+        .run(Action::App(AppCmd::Return))
+        .key("Ctrl+Equals")
+        .at(&[KEY])
+        .tip("Back from Edit in place to the assembly")
+        .spec("3.10-top-down.md"),
+    c("asm.promote", "Promote", "Издигане", Icon::Assembly)
+        .run(Action::App(AppCmd::Promote))
+        .key("Shift+Tab")
+        .at(&[KEY])
+        .env(ASSEMBLY)
+        .tip("Move the selected part out of its subassembly")
+        .spec("3.1a-subassemblies.md"),
+    c("asm.demote", "Demote", "Понижаване", Icon::Assembly)
+        .run(Action::App(AppCmd::Demote))
+        .key("Tab")
+        .at(&[KEY])
+        .env(ASSEMBLY)
+        .tip("Move the selected components into a new subassembly")
+        .spec("3.1a-subassemblies.md"),
+    c("view.browser_search", "Search Browser", "Търсене в браузъра", Icon::Home)
+        .run(Action::App(AppCmd::BrowserSearch))
+        .key("Ctrl+F")
+        .at(&[KEY])
+        .tip("Go to the browser's search field")
+        .spec("3.0-assembly-commands.md"),
+    c("view.find_in_browser", "Find in Browser", "Намиране в браузъра", Icon::Home)
+        .run(Action::App(AppCmd::FindInBrowser))
+        .key("Ctrl+B")
+        .at(&[KEY])
+        .tip("Show the selected component in the browser")
+        .spec("3.0-assembly-commands.md"),
     c("view.zoom_selected", "Zoom Selected", "Побиране на избраното", Icon::Home)
         .run(Action::App(AppCmd::ZoomSelected))
         .key("End")

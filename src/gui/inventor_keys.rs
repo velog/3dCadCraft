@@ -84,6 +84,12 @@ pub const DEFAULT_KEYS: &[(&str, &str, &str)] = &[
     ("AssemblyDegreesOfFreedomCmd", "Ctrl+Shift+E", "sketch.dof"),
     ("AssemblyReplaceCmd", "Ctrl+H", "asm.replace"),
     ("AssembleCmd", "Ctrl+Alt+A", "asm.assemble"),
+    ("AppBrowserSearchCmd", "Ctrl+F", "view.browser_search"),
+    ("AppFindInBrowserCtxCmd", "Ctrl+B", "view.find_in_browser"),
+    ("AssemblyPromoteCmd", "Shift+Tab", "asm.promote"),
+    ("AssemblyDemoteCmd", "Tab", "asm.demote"),
+    ("AppReturnParentCmd", "Ctrl+Equals", "asm.return_parent"),
+    ("AppReturnTopCmd", "Ctrl+Minus", "asm.return_parent"),
     ("DrawingLeaderTextCmd", "Ctrl+Shift+T", "drw.leader_text"),
     ("DrawingInsertSheetCmd", "Ctrl+Shift+N", "drw.new_sheet"),
 ];

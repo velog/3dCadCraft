@@ -354,6 +354,9 @@ impl Occurrence {
 pub struct AssemblyDocument {
     /// Placed components.
     pub occurrences: Vec<Occurrence>,
+    /// Browser folders (only a way to list the components).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<crate::assembly::restructure::BrowserFolder>,
     /// Constraints between them (`assembly::relation`). Older builds
     /// ignore them (the components keep their saved places).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

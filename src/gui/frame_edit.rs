@@ -78,122 +78,118 @@ impl CadCraftApp {
         for (fid, fname, members) in frames {
             let all: Vec<u32> = members.iter().map(|m| m.0).collect();
             let on = !all.is_empty() && all.iter().all(|i| self.asm.sel.contains(i));
-            egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                ui.make_persistent_id(("asm_frame", fid)),
-                true,
-            )
-            .show_header(ui, |ui| {
-                super::panels::tree_icon(ui, Icon::InsertFrame);
-                let r = ui.selectable_label(on, &fname);
-                if r.clicked() {
-                    cmds.push(FrameCmd::Select(all.clone(), false));
-                }
-                r.context_menu(|ui| {
-                    if ui.button("Edit Frame...").clicked() {
-                        cmds.push(FrameCmd::EditMembers(all.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Position and Corners...").clicked() {
-                        cmds.push(FrameCmd::Start(AsmPlanned::EditFrame, all.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Change").clicked() {
-                        cmds.push(FrameCmd::Start(AsmPlanned::FrameChange, all.clone()));
-                        ui.close();
-                    }
-                    if ui.button("Delete").clicked() {
-                        cmds.push(FrameCmd::DeleteMembers(all.clone()));
-                        ui.close();
-                    }
-                });
-            })
-            .body(|ui| {
-                for (id, name) in &members {
-                    ui.horizontal(|ui| {
-                        super::panels::tree_icon(ui, Icon::Part);
-                        let r = ui.selectable_label(self.asm.sel.contains(id), name);
-                        if r.clicked() {
-                            let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
-                            cmds.push(FrameCmd::Select(vec![*id], add));
-                        }
-                        // Inventor: double-click a member = Edit with Frame Generator.
-                        if r.double_clicked() {
-                            cmds.push(FrameCmd::EditMembers(vec![*id]));
-                        }
-                        if r.hovered() {
-                            self.asm.hover = Some(*id);
-                        }
-                        r.context_menu(|ui| {
-                            let ids = if self.asm.sel.contains(id) {
-                                self.asm.sel.clone()
-                            } else {
-                                vec![*id]
-                            };
-                            member_menu(ui, &ids, cmds);
-                        });
-                    });
-                }
-                let own: Vec<&(u32, usize, String, Vec<u32>)> =
-                    rows.iter().filter(|r| r.0 == fid).collect();
-                if own.is_empty() {
-                    return;
-                }
-                egui::collapsing_header::CollapsingState::load_with_default_open(
-                    ui.ctx(),
-                    ui.make_persistent_id(("asm_frame_ends", fid)),
-                    true,
-                )
+            super::panels::tree_fold(ui, ui.make_persistent_id(("asm_frame", fid)), true)
                 .show_header(ui, |ui| {
-                    super::panels::tree_icon(ui, Icon::Miter);
-                    ui.label("End Treatments");
+                    super::panels::tree_icon(ui, Icon::InsertFrame);
+                    let r = ui.selectable_label(on, &fname);
+                    if r.clicked() {
+                        cmds.push(FrameCmd::Select(all.clone(), false));
+                    }
+                    r.context_menu(|ui| {
+                        if ui.button("Edit Frame...").clicked() {
+                            cmds.push(FrameCmd::EditMembers(all.clone()));
+                            ui.close();
+                        }
+                        if ui.button("Position and Corners...").clicked() {
+                            cmds.push(FrameCmd::Start(AsmPlanned::EditFrame, all.clone()));
+                            ui.close();
+                        }
+                        if ui.button("Change").clicked() {
+                            cmds.push(FrameCmd::Start(AsmPlanned::FrameChange, all.clone()));
+                            ui.close();
+                        }
+                        if ui.button("Delete").clicked() {
+                            cmds.push(FrameCmd::DeleteMembers(all.clone()));
+                            ui.close();
+                        }
+                    });
                 })
                 .body(|ui| {
-                    for (f, i, name, ms) in own {
+                    for (id, name) in &members {
                         ui.horizontal(|ui| {
-                            super::panels::tree_icon(ui, treatment_icon(name));
-                            let on = ms.iter().all(|m| self.asm.sel.contains(m));
-                            let r = ui.selectable_label(on, name);
+                            super::panels::tree_icon(ui, Icon::Part);
+                            let r = ui.selectable_label(self.asm.sel.contains(id), name);
                             if r.clicked() {
-                                cmds.push(FrameCmd::Select(ms.clone(), false));
+                                let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
+                                cmds.push(FrameCmd::Select(vec![*id], add));
                             }
+                            // Inventor: double-click a member = Edit with Frame Generator.
                             if r.double_clicked() {
-                                cmds.push(FrameCmd::EditTreatment(*f, *i));
+                                cmds.push(FrameCmd::EditMembers(vec![*id]));
+                            }
+                            if r.hovered() {
+                                self.asm.hover = Some(*id);
                             }
                             r.context_menu(|ui| {
-                                if ui.button("Edit").clicked() {
-                                    cmds.push(FrameCmd::EditTreatment(*f, *i));
-                                    ui.close();
-                                }
-                                if ui.button("Delete").clicked() {
-                                    cmds.push(FrameCmd::DeleteTreatment(*f, *i));
-                                    ui.close();
-                                }
-                                // A corner can change its kind (spec 6.1 §3.10).
-                                if name.starts_with("Miter") || name.starts_with("Corner") {
-                                    ui.separator();
-                                    for (label, k) in [
-                                        ("Corner: Miter", frame::CornerType::Miter),
-                                        (
-                                            "Corner: Butt - first through",
-                                            frame::CornerType::ButtFirst,
-                                        ),
-                                        (
-                                            "Corner: Butt - second through",
-                                            frame::CornerType::ButtSecond,
-                                        ),
-                                    ] {
-                                        if ui.button(label).clicked() {
-                                            cmds.push(FrameCmd::Retype(*f, *i, k));
-                                            ui.close();
-                                        }
-                                    }
-                                }
+                                let ids = if self.asm.sel.contains(id) {
+                                    self.asm.sel.clone()
+                                } else {
+                                    vec![*id]
+                                };
+                                member_menu(ui, &ids, cmds);
                             });
                         });
                     }
+                    let own: Vec<&(u32, usize, String, Vec<u32>)> =
+                        rows.iter().filter(|r| r.0 == fid).collect();
+                    if own.is_empty() {
+                        return;
+                    }
+                    super::panels::tree_fold(
+                        ui,
+                        ui.make_persistent_id(("asm_frame_ends", fid)),
+                        true,
+                    )
+                    .show_header(ui, |ui| {
+                        super::panels::tree_icon(ui, Icon::Miter);
+                        ui.label("End Treatments");
+                    })
+                    .body(|ui| {
+                        for (f, i, name, ms) in own {
+                            ui.horizontal(|ui| {
+                                super::panels::tree_icon(ui, treatment_icon(name));
+                                let on = ms.iter().all(|m| self.asm.sel.contains(m));
+                                let r = ui.selectable_label(on, name);
+                                if r.clicked() {
+                                    cmds.push(FrameCmd::Select(ms.clone(), false));
+                                }
+                                if r.double_clicked() {
+                                    cmds.push(FrameCmd::EditTreatment(*f, *i));
+                                }
+                                r.context_menu(|ui| {
+                                    if ui.button("Edit").clicked() {
+                                        cmds.push(FrameCmd::EditTreatment(*f, *i));
+                                        ui.close();
+                                    }
+                                    if ui.button("Delete").clicked() {
+                                        cmds.push(FrameCmd::DeleteTreatment(*f, *i));
+                                        ui.close();
+                                    }
+                                    // A corner can change its kind (spec 6.1 §3.10).
+                                    if name.starts_with("Miter") || name.starts_with("Corner") {
+                                        ui.separator();
+                                        for (label, k) in [
+                                            ("Corner: Miter", frame::CornerType::Miter),
+                                            (
+                                                "Corner: Butt - first through",
+                                                frame::CornerType::ButtFirst,
+                                            ),
+                                            (
+                                                "Corner: Butt - second through",
+                                                frame::CornerType::ButtSecond,
+                                            ),
+                                        ] {
+                                            if ui.button(label).clicked() {
+                                                cmds.push(FrameCmd::Retype(*f, *i, k));
+                                                ui.close();
+                                            }
+                                        }
+                                    }
+                                });
+                            });
+                        }
+                    });
                 });
-            });
         }
     }
 

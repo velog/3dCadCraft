@@ -149,6 +149,8 @@ pub(super) struct AsmUi {
     /// Isolate (a view state, not saved, as Inventor's temporary
     /// representation).
     pub isolated: Option<Vec<u32>>,
+    /// Focus the browser's search field (Ctrl+F; taken by the bar).
+    pub search_focus: bool,
     /// Find in Browser: the row to open and scroll to (taken by the tree).
     pub find_in_browser: Option<u32>,
     /// Analyze Interference: the running search and its result window.
@@ -2621,6 +2623,17 @@ impl CadCraftApp {
             self.toggle_flag(ids, "Enabled", |o| &mut o.enabled);
             ui.close();
         }
+        // Inventor's browser: into a new subassembly, into a folder.
+        if ui
+            .button("Demote")
+            .on_hover_text("Move these components into a new subassembly (Tab)")
+            .clicked()
+        {
+            self.asm.sel = ids.to_vec();
+            self.demote_selected();
+            ui.close();
+        }
+        self.folder_menu(ui, ids);
         if ids.len() == 1 && ui.button("Find in Browser").clicked() {
             self.asm.find_in_browser = Some(ids[0]);
             ui.close();
