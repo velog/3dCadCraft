@@ -498,7 +498,7 @@ Ctrl+Shift+F Fillet, Ctrl+Shift+L Loft, Ctrl+Shift+O / R / M Circular Pattern / 
 Ctrl+H Replace, Ctrl+Alt+A Assemble, Ctrl+Shift+T Leader Text, Ctrl+Shift+N New Sheet. Tools › Customize › Import from Inventor
 takes the installed Inventor's keys and aliases.
 
-In a sketch: Ctrl or Shift + right click = the constraints at the cursor. Shift + click with Horizontal / Vertical = the other one.
+In a sketch: Ctrl + right click = the constraints in a column at the cursor (Shift + right click: the same column above Selection). Shift + click with Horizontal / Vertical = the other one.
 
 Assembly › Motion: CSO Contact Solver, CST Contact Sets, MLK Motion, MST Motion Study, EXV Exploded View. Tab Demote, Shift+Tab Promote, Ctrl+B
 Find in Browser, Ctrl+F browser search, Ctrl+= / Ctrl+- Return.

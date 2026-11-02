@@ -119,7 +119,6 @@ mod select;
 mod sheet_metal;
 mod shell;
 mod show_dims;
-mod sketch_marking;
 mod sketch_tools;
 mod sm_planned;
 mod steps;
@@ -838,10 +837,6 @@ struct CadCraftApp {
     zoom_window: Option<Option<egui::Pos2>>,
     /// Shift is held in this frame (Horizontal / Vertical swap at a click).
     click_shift: bool,
-    /// The sketch's constraint menu, open at this point (Ctrl / Shift + right click).
-    constraint_menu: Option<egui::Pos2>,
-    /// It opened this frame (the press that opened it must not close it).
-    constraint_menu_fresh: bool,
     /// The selected set (several faces, edges, features, bodies, sketches).
     sel: Vec<select::SelItem>,
     /// The set before the last change (Previous Selection).
@@ -1123,8 +1118,6 @@ impl CadCraftApp {
             view_history: Default::default(),
             zoom_window: None,
             click_shift: false,
-            constraint_menu: None,
-            constraint_menu_fresh: false,
             sel: Vec::new(),
             prev_sel: Vec::new(),
             sel_key: String::new(),
@@ -5225,10 +5218,7 @@ impl CadCraftApp {
             }
         }
         // Esc first closes the selection menu (Shift + right-click).
-        if pressed(Key::Escape)
-            && self.sel_menu.take().is_none()
-            && self.constraint_menu.take().is_none()
-        {
+        if pressed(Key::Escape) && self.sel_menu.take().is_none() {
             self.select_other = None;
             self.project_geometry = false;
             self.relink = None;

@@ -1341,7 +1341,6 @@ impl CadCraftApp {
                 .show(ui, |ui| self.viewport(ui, frame));
         }
         self.shift_menu_ui(ui.ctx());
-        self.constraint_menu_ui(ui.ctx());
         if let Some(on) = self.full_screen_cmd.take() {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
