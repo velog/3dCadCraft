@@ -138,3 +138,24 @@ to `assets/` and their paths point there.
 | `surfaces.rs` `bridge_loops` (corner fade) | Loft Tangent between whole boundaries: the change that makes two bridges share a corner curve is faded in over the last 15 % of each reach row (moving the end point alone kinked the row and twisted the bridge next to the corner) | smoother corners of tangent lofts (spec 5.4a F6) |
 | `surfaces.rs` `bspline_sheet`, `bspline_tube` | Freeform: a clamped cubic B-spline sheet whose control net is a cage, and a tube closed (C2) around (the first three rings repeated, uniform knots, the period cut into two clamped faces sharing their seams) | Freeform Plane / Cylinder (spec 5.5) |
 | `splitface.rs` `cornered_fit`, `fit_kinked` (in `fit_on`) | sketch curves with corners splitting a curved face: each corner put in exactly (the face's point over it along the sketch's normal) and the split line kinked there, instead of the spline through the traced points rounding it | Trim of a curved surface by a closed sketch rectangle (spec 5.4a T2) |
+
+## `truck-geometry`, `truck-modeling`
+
+truck (https://github.com/ricosjp/truck, RICOS Co. Ltd., Apache-2.0, `LICENSE`), used through
+`[patch.crates-io]` in our `Cargo.toml`: `truck-geometry` 0.5.0 as SolidCraft's fixed copy at commit
+`d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516` (its `vendor/truck-geometry`), `truck-modeling` 0.6.0 as
+published. Originals apart from the changes below; drop them when the pin moves to a commit that
+has them.
+
+A nearest-point search without a hint evaluates a whole grid of surface points on every call:
+51 × 51 for a NURBS surface, 101 × 101 for a revolved one (`truck-modeling` does not call
+`RevolutedCurve`'s own search there). A Boolean asks this for each point of its intersection curves.
+
+| File | Change | Effect |
+|---|---|---|
+| `truck-geometry/src/presearch_grid.rs` (new), `nurbs/nurbssurface.rs` `presearch_kept`, `truck-modeling/src/geometry.rs` `revolved_presearch` | the grid is kept per thread for the surfaces searched last (16 NURBS, 8 revolved straight lines: about 3 MB a thread); the same points in the same order give the same answer | wider chamfer 311 → 115 ms, turned tool's Cut 582 → 127 ms, hexagon and shank's Join 100 → 46 ms |
+
+The answers were compared with the plain search, bit for bit, on every search of the whole test
+suite (1 013 381, no difference). The crates' own tests keep that comparison; they are outside the
+workspace, so run them from each crate's folder: `cargo test --lib presearch` in `truck-geometry`, and in
+`truck-modeling` with `--config 'patch.crates-io.truck-geometry.path="../truck-geometry"'`.

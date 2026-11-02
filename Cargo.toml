@@ -104,7 +104,8 @@ codegen-units = 1
 
 # SolidCraft's fixed copies of truck crates (see its vendor/README.md).
 [patch.crates-io]
-truck-geometry = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
+truck-geometry = { path = "vendor/truck-geometry" }
+truck-modeling = { path = "vendor/truck-modeling" }
 truck-shapeops = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
 truck-stepio = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }
 truck-meshalgo = { git = "https://github.com/tangency-labs/solidcraft", rev = "d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516" }

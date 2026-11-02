@@ -294,8 +294,8 @@ fn median_ms(runs: usize, mut f: impl FnMut()) -> f64 {
     ms
 }
 
-/// The fillet/chamfer acceptance part: box, 8 fillets r5, top-loop chamfer 2.
-fn rounded_box() -> PartDocument {
+/// Box with 8 fillets r5.
+fn box_with_rounds() -> PartDocument {
     let (a, b, h, r) = (40.0, 30.0, 20.0, 5.0);
     let mut part = PartDocument::with_box("Box1", [a, b, h]).unwrap();
     let f = |x: &str, y: &str, hint: [Real; 3]| EdgeRef {
@@ -316,6 +316,11 @@ fn rounded_box() -> PartDocument {
         r,
     ))
     .unwrap();
+    part
+}
+
+/// The edges round the top of [`box_with_rounds`].
+fn top_chain(part: &PartDocument) -> Vec<EdgeRef> {
     let top = part
         .body
         .edges()
@@ -327,8 +332,14 @@ fn rounded_box() -> PartDocument {
         })
         .map(|(e, _)| e)
         .unwrap();
-    part.add_blend(BlendFeature::chamfer(tangent_chain(&part.body, top), 2.0))
-        .unwrap();
+    tangent_chain(&part.body, top)
+}
+
+/// The fillet/chamfer acceptance part: box, 8 fillets r5, top-loop chamfer 2.
+fn rounded_box() -> PartDocument {
+    let mut part = box_with_rounds();
+    let chain = top_chain(&part);
+    part.add_blend(BlendFeature::chamfer(chain, 2.0)).unwrap();
     part
 }
 
@@ -949,6 +960,21 @@ fn speed_budgets() {
             p.build_cache = Default::default(); // measure the build, not the cache
             p.regenerate().unwrap();
             assert!(p.exact);
+        }),
+    ));
+
+    // A general Boolean over rounds: most of it was evaluating search grids (`presearch_grid`).
+    let rounds = box_with_rounds();
+    let chain = top_chain(&rounds);
+    rows.push((
+        "a chamfer wider than the rounds of a box's top (one ring cut, a general Boolean)",
+        300.0,
+        median_ms(3, || {
+            let mut p = rounds.clone();
+            p.build_cache = Default::default();
+            p.add_blend(BlendFeature::chamfer(chain.clone(), 7.0))
+                .unwrap();
+            assert!(p.exact && p.feature_health.is_empty());
         }),
     ));
 

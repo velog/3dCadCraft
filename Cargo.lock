@@ -3673,7 +3673,6 @@ dependencies = [
 [[package]]
 name = "truck-geometry"
 version = "0.5.0"
-source = "git+https://github.com/tangency-labs/solidcraft?rev=d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516#d4eeedbf95bfcd3cf7a2ec3ce17d4ddf9435e516"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
@@ -3715,8 +3714,6 @@ dependencies = [
 [[package]]
 name = "truck-modeling"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8082c2dfac8c2732a014d81807fb5d24dbac0d72ee4de2a705b7fbc05fa05b18"
 dependencies = [
  "derive_more",
  "rustc-hash 2.1.3",
