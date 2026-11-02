@@ -2112,6 +2112,12 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
 /// (3DCadCraft: hole rims known to lie on a face square to the hole). Refused when the edges are not
 /// such loops or the size does not fit them.
 pub fn chamfer_loops(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
+    chamfer_wires(body, edges, distance, false)
+}
+
+/// [`chamfer_loops`] where `circles` asks every wire to be one whole circle (edges picked by a user:
+/// a pick on any wire of straight edges means that edge alone). 3DCadCraft.
+fn chamfer_wires(body: &Body, edges: &[Vec3], distance: f64, circles: bool) -> Result<Body> {
     use mt::{BoundedCurve, ParametricCurve};
     body.require_brep("chamfer")?;
     if !(distance.is_finite() && distance > 1e-6 && distance < 1e6) {
@@ -2120,42 +2126,57 @@ pub fn chamfer_loops(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body>
     let counts = record::counts(&[body]);
     let mut lc = body.clone().with_checked_history(Some(History::identity(body)), &counts);
     let near = (body.size() * 1e-6).max(1e-6);
-    for p in edges {
+    // How far a point is from an edge, when it lies on it: found on the curve, with no mesh of the
+    // whole body for every rim. The chords' sag stays under 2 % of the curve's length.
+    let gap = |p: Vec3, e: &mt::Edge| {
+        let c = e.curve();
+        let (t0, t1) = c.range_tuple();
+        let at = |k: usize| {
+            let q = c.subs(t0 + (t1 - t0) * k as f64 / 16.0);
+            Vec3::new(q.x, q.y, q.z)
+        };
+        let (mut best, mut len) = (f64::INFINITY, 0.0);
+        for k in 0..16 {
+            let (a, b) = (at(k), at(k + 1));
+            best = f64::min(best, p.dist_to_segment(a, b));
+            len += (b - a).len();
+        }
+        if best <= len * 0.02 + near { Some(best) } else { None }
+    };
+    let mut done = vec![false; edges.len()];
+    for (i, p) in edges.iter().enumerate() {
+        if done.get(i).copied().unwrap_or(false) {
+            continue;
+        }
         let size = lc.size();
         // The body itself, not a copy: the edit makes a new solid and leaves this one as it is.
         let holder = lc.solid.clone();
         let solid: &Solid = &holder;
-        // The wire of a planar face holding an edge through the point: found on the curves, without
-        // a mesh of the whole body for every rim.
-        let gap = |e: &mt::Edge| {
-            let c = e.curve();
-            let (t0, t1) = c.range_tuple();
-            let at = |k: usize| {
-                let q = c.subs(t0 + (t1 - t0) * k as f64 / 16.0);
-                Vec3::new(q.x, q.y, q.z)
-            };
-            let (mut best, mut len) = (f64::INFINITY, 0.0);
-            for k in 0..16 {
-                let (a, b) = (at(k), at(k + 1));
-                best = f64::min(best, p.dist_to_segment(a, b));
-                len += (b - a).len();
-            }
-            // The chords' sag stays under 2 % of the curve's length.
-            if best <= len * 0.02 + near { Some(best) } else { None }
-        };
-        let ids = guard("chamfer", || {
-            let mut found: Option<(f64, Vec<mt::EdgeID>)> = None;
+        let wire = guard("chamfer", || {
+            let mut found: Option<(f64, mt::Wire)> = None;
             for f in solid.face_iter().filter(|f| matches!(f.oriented_surface(), mt::Surface::Plane(_))) {
                 for w in f.absolute_boundaries() {
-                    if let Some(d) = w.edge_iter().filter_map(&gap).min_by(f64::total_cmp)
+                    if let Some(d) = w.edge_iter().filter_map(|e| gap(*p, e)).min_by(f64::total_cmp)
                         && found.as_ref().is_none_or(|(x, _)| d < *x)
                     {
-                        found = Some((d, w.edge_iter().map(|e| e.id()).collect()));
+                        found = Some((d, w.clone()));
                     }
                 }
             }
-            found.map(|(_, ids)| ids).ok_or_else(|| unsupported("no whole loop of a planar face through the point"))
+            found.map(|(_, w)| w).ok_or_else(|| unsupported("no whole loop of a planar face through the point"))
         })?;
+        if circles && !crate::loopblend::one_circle(&wire, (size * 1e-5).max(1e-6)) {
+            return Err(unsupported("not a whole circle"));
+        }
+        // Another pick on the same wire (two halves of one circle) is this loop too.
+        for (k, q) in edges.iter().enumerate().skip(i + 1) {
+            if wire.edge_iter().any(|e| gap(*q, e).is_some())
+                && let Some(d) = done.get_mut(k)
+            {
+                *d = true;
+            }
+        }
+        let ids: Vec<mt::EdgeID> = wire.edge_iter().map(|e| e.id()).collect();
         let Some(res) = crate::loopblend::loop_blend(solid, &ids, size, distance, false) else {
             return Err(unsupported("the edges are not a whole loop of a planar face"));
         };
@@ -2168,6 +2189,11 @@ pub fn chamfer_loops(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body>
 
 /// [`chamfer`], once the size is known to fit.
 fn chamfer_built(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
+    // Whole circles (hole rims, boss rims) by editing their faces: 1871 ms for 36 rims through the
+    // cutters below, 460 ms this way. 3DCadCraft.
+    if let Ok(r) = chamfer_wires(body, edges, distance, true) {
+        return Ok(r);
+    }
     // Each step's result carries its history over `[body]`.
     let counts = record::counts(&[body]);
     // All cutters at once (their union mitres the corners), else one edge at a time.

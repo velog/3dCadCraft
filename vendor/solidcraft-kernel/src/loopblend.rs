@@ -129,6 +129,23 @@ fn offset_profile(prev: &Seg, cur: &Seg, n: Vec3, side: f64, (r, rw): (f64, f64)
 }
 
 /// The exact shape of an oriented loop edge (a line, or an arc found from samples).
+/// Whether a wire's edges are arcs of one circle, the whole way round. 3DCadCraft.
+pub(crate) fn one_circle(wire: &mt::Wire, tol: f64) -> bool {
+    let mut first: Option<(Vec3, f64)> = None;
+    let mut turned = 0.0;
+    for e in wire.edge_iter() {
+        let Some(Seg::Arc { a, c, angle, .. }) = seg_of(e, tol) else { return false };
+        let r = c.dist(a);
+        match first {
+            None => first = Some((c, r)),
+            Some((c0, r0)) if c0.dist(c) > tol || (r0 - r).abs() > tol => return false,
+            _ => {}
+        }
+        turned += angle.abs();
+    }
+    first.is_some() && (turned - std::f64::consts::TAU).abs() < 1e-6
+}
+
 fn seg_of(e: &mt::Edge, tol: f64) -> Option<Seg> {
     use mt::{BoundedCurve, ParametricCurve};
     let (a, b) = (from_p3(e.front().point()), from_p3(e.back().point()));
