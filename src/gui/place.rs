@@ -46,7 +46,13 @@ pub(super) struct LibCache {
     /// walk: (file path, its library ids, the projects). Built again when
     /// either changes or a file is (re)loaded.
     linked: RefCell<Option<LinkedKey>>,
+    /// Files being read and rebuilt on a worker thread (a large one takes a second), until
+    /// `part_file` takes them.
+    loading: RefCell<HashMap<PathBuf, Loading>>,
 }
+
+/// A worker's result: `None` until it is done.
+type Loading = std::sync::Arc<std::sync::Mutex<Option<Result<Project, String>>>>;
 
 /// The cached linked files: (file path, its library ids, the projects).
 type LinkedKey = (String, Vec<LibraryId>, Rc<asm::tree::Linked>);
@@ -85,6 +91,8 @@ pub(super) struct PlaceDialog {
     /// The assembly is saved, so other files can be linked (by a path
     /// relative to it).
     can_link: bool,
+    /// The file clicked, still loading on a worker thread.
+    loading: Option<PathBuf>,
 }
 
 impl PlaceDialog {
@@ -101,6 +109,7 @@ impl PlaceDialog {
             local: Vec::new(),
             local_pick: None,
             can_link: true,
+            loading: None,
         };
         d.refresh();
         d
@@ -164,6 +173,56 @@ fn base_name(path: &Path, parts: &[(DocumentId, String)], doc: DocumentId) -> St
 }
 
 impl LibCache {
+    /// Starts reading file `path` on a worker thread, unless it is here or on its way.
+    pub(super) fn prefetch(&self, path: &Path) {
+        let Ok(key) = path.canonicalize() else {
+            return;
+        };
+        if self.files.borrow().contains_key(&key) || self.loading.borrow().contains_key(&key) {
+            return;
+        }
+        let slot: Loading = Default::default();
+        let out = slot.clone();
+        let at = key.clone();
+        let spawned = std::thread::Builder::new()
+            .name("load-linked".into())
+            .stack_size(64 << 20)
+            .spawn(move || {
+                let r = load_regenerated(&at);
+                *crate::diagnostics::lock(&out) = Some(r);
+            });
+        match spawned {
+            Ok(_) => {
+                self.loading.borrow_mut().insert(key, slot);
+            }
+            Err(e) => log::warn!("load {}: {e}", path.display()),
+        }
+    }
+
+    /// Whether `part_file` has `path` at once: loaded, or the worker is done.
+    pub(super) fn ready(&self, path: &Path) -> bool {
+        let Ok(key) = path.canonicalize() else {
+            return true; // `part_file` reports the error.
+        };
+        self.files.borrow().contains_key(&key)
+            || self
+                .loading
+                .borrow()
+                .get(&key)
+                .is_some_and(|s| crate::diagnostics::lock(s).is_some())
+    }
+
+    /// What the worker made of `key`, waiting for it when it is on its way.
+    fn take_loading(&self, key: &Path) -> Option<Result<Project, String>> {
+        let slot = self.loading.borrow_mut().remove(key)?;
+        loop {
+            if let Some(r) = crate::diagnostics::lock(&slot).take() {
+                return Some(r);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     /// The project of the open tab of file `path` stands for the file (the
     /// assembly shows a part as edited in its tab, saved or not); the file's
     /// next save on disk replaces it as usual.
@@ -454,7 +513,12 @@ impl CadCraftApp {
         if let Some(e) = self.asm.libs.files.borrow().get(&key) {
             return Ok(e.project.clone());
         }
-        let project = Rc::new(load_regenerated(&key)?);
+        let loaded = self
+            .asm
+            .libs
+            .take_loading(&key)
+            .unwrap_or_else(|| load_regenerated(&key));
+        let project = Rc::new(loaded?);
         let modified = std::fs::metadata(&key).and_then(|m| m.modified()).ok();
         {
             // Shown and stored paths never carry canonicalize's verbatim prefix.
@@ -686,6 +750,21 @@ impl CadCraftApp {
     /// Selects file `path` in the dialog: loads it and previews its first
     /// part.
     fn place_select(&mut self, path: PathBuf) {
+        if !self.asm.libs.ready(&path) {
+            self.asm.libs.prefetch(&path);
+            if let Some(d) = self.asm.place.as_mut() {
+                d.selected = Some(path.clone());
+                d.local_pick = None;
+                d.preview = None;
+                d.parts.clear();
+                d.part = None;
+                d.loading = Some(path);
+            }
+            return;
+        }
+        if let Some(d) = self.asm.place.as_mut() {
+            d.loading = None;
+        }
         let loaded = self.part_file(&path);
         let models = loaded
             .as_ref()
@@ -805,6 +884,115 @@ impl CadCraftApp {
         }
     }
 
+    /// The mesh of the model a drop of file `path` would place.
+    pub(super) fn file_mesh(&self, path: &Path) -> Option<Arc<PickMesh>> {
+        let p = self.part_file(path).ok()?;
+        let doc = self.file_top_model(&p)?;
+        match p.document(doc).map(|x| &x.data) {
+            Some(DocumentData::Part(part)) => Some(Arc::new(PickMesh::of(part))),
+            Some(DocumentData::Assembly(_)) => self.file_assembly_mesh(&p, doc),
+            _ => None,
+        }
+    }
+
+    /// What dropping a file places: its top assembly (placed in no other), else its first part.
+    fn file_top_model(&self, p: &Project) -> Option<DocumentId> {
+        let models = self.file_models(p);
+        let used: Vec<DocumentId> = p
+            .documents()
+            .iter()
+            .flat_map(|d| d.data.references())
+            .map(|r| r.document)
+            .collect();
+        models
+            .iter()
+            .find(|(id, _)| {
+                !used.contains(id)
+                    && matches!(
+                        p.document(*id).map(|d| &d.data),
+                        Some(DocumentData::Assembly(_))
+                    )
+            })
+            .or_else(|| {
+                models.iter().find(|(id, _)| {
+                    matches!(
+                        p.document(*id).map(|d| &d.data),
+                        Some(DocumentData::Part(_))
+                    )
+                })
+            })
+            .map(|x| x.0)
+    }
+
+    /// Document `id` of this file dropped in the assembly at `at` (one Undo step).
+    pub(super) fn place_doc_at(&mut self, id: DocumentId, at: Point3) {
+        let r = DocRef::local(id);
+        let linked = self.linked();
+        if asm::tree::would_loop(&self.project, &linked, self.part_id, r) {
+            self.file_status = Some(Err("Place: an assembly cannot be placed in itself".into()));
+            return;
+        }
+        let name = self
+            .project
+            .document(id)
+            .map_or_else(|| "Part".to_owned(), |d| d.name.clone());
+        self.asm.place_name = name.clone();
+        self.place_at(r, at, false);
+        self.history.break_coalescing();
+        self.file_status = Some(Ok(format!("Placed {name}")));
+    }
+
+    /// File `path` dropped in the assembly at `at`: linked, placed (one Undo step).
+    pub(super) fn place_file_at(&mut self, path: &Path, at: Point3) {
+        if self.file_path.trim().is_empty() {
+            self.file_status = Some(Err(
+                "Place: save the assembly first (part files are linked by a path relative to it)"
+                    .into(),
+            ));
+            return;
+        }
+        let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        };
+        let owner = PathBuf::from(self.file_path.trim());
+        if same(path, &owner) {
+            self.file_status = Some(Err(
+                "Place: the documents of the open file are in the list above".into(),
+            ));
+            return;
+        }
+        let loaded = match self.part_file(path) {
+            Ok(p) => p,
+            Err(e) => {
+                self.file_status = Some(Err(format!("Place: {e}")));
+                return;
+            }
+        };
+        let Some(doc) = self.file_top_model(&loaded) else {
+            self.file_status = Some(Err(format!(
+                "Place: {} has no part or assembly to place",
+                path.display()
+            )));
+            return;
+        };
+        self.checkpoint("Place");
+        let mut resolver = crate::document::Resolver::new();
+        match resolver.link(&mut self.project, &owner, path, doc) {
+            Ok(r) => {
+                // Named after the file (what the row said), not `File-Document (assembly)`.
+                self.asm.place_name = base_name(path, &[], doc);
+                self.place_at(r, at, false);
+                self.history.break_coalescing();
+                self.file_status = Some(Ok(format!("Placed {}", path.display())));
+            }
+            Err(e) => {
+                self.history.cancel();
+                self.file_status = Some(Err(format!("Place: {e}")));
+            }
+        }
+    }
+
     /// The Place Component window.
     pub(super) fn place_window(&mut self, ctx: &egui::Context) {
         let Some(d) = self.asm.place.as_mut() else {
@@ -813,6 +1001,13 @@ impl CadCraftApp {
         let mut open = true;
         let mut go: Option<PathBuf> = None;
         let mut select: Option<PathBuf> = None;
+        if let Some(p) = d.loading.clone() {
+            if self.asm.libs.ready(&p) {
+                select = Some(p);
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+        }
         let mut place: Option<(PathBuf, DocumentId)> = None;
         let mut new_part: Option<DocumentId> = None;
         let mut local: Option<(DocRef, bool)> = None;
@@ -977,7 +1172,11 @@ impl CadCraftApp {
                                 painter.text(
                                     rect.center(),
                                     egui::Align2::CENTER_CENTER,
-                                    "Select a part or assembly file",
+                                    if d.loading.is_some() {
+                                        "Loading..."
+                                    } else {
+                                        "Select a part or assembly file"
+                                    },
                                     egui::FontId::proportional(14.0),
                                     Color32::GRAY,
                                 );
@@ -1154,9 +1353,10 @@ pub(super) fn draw_ghost(
 ) {
     let (back, _) = camera.frame();
     let tris = mesh.triangles();
-    let step = (tris.len() / 20000).max(1);
+    // Painted every frame: the large faces are enough.
+    let keep = mesh.largest_triangles(6000);
     let mut m = egui::Mesh::default();
-    for (_, [a, b, c]) in tris.iter().step_by(step) {
+    for (_, [a, b, c]) in keep.iter().filter_map(|k| tris.get(*k as usize)) {
         let (a, b, c) = (t * a, t * b, t * c);
         let (Some(pa), Some(pb), Some(pc)) = (
             camera.project(&a, rect),

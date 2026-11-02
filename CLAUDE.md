@@ -416,6 +416,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   document opened with its spline wall missing (a hole, red behind it). `Project::rebuild_unmeshed_parts` rebuilds only
   such parts at open (`PartDocument::has_undrawable_faces`); rebuilding all would slow a large assembly.
 - **`<Command>: OK (n ms)` in the log counts from when the command opened**, not the kernel's work: never read it as speed.
+- **Linked files load off the main thread where they can** (`LibCache::prefetch`, `ready`; `part_file` takes the worker's
+  result or waits for it): a large file's parts took a second to rebuild (one part 0.77 s), so threads per part hardly
+  help. Place's list and a drag from the Files tab use it. A save's picture shows the file's top assembly when a part of it
+  is active (`picture_assembly`). `gui_win.py`: `down x y`, `move`, `up` for a held drag.
 - **Redundancy in composite shapes:** every builder in `sketch/shapes.rs` has a test
   asserting exact DOF *and* `redundant == 0`. Known traps: circumscribed polygon with
   even N (Pitot — drop one Equal), arc slot (a construction centre arc would be

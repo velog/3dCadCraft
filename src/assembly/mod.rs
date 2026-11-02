@@ -167,6 +167,8 @@ pub struct PickMesh {
     pub bbox: Option<(Point3, Point3)>,
     /// The triangles along the contact check's ray (built when first asked).
     ray_grid: std::sync::OnceLock<motion::RayGrid>,
+    /// The largest triangles, for a ghost drawn every frame (built when first asked).
+    largest: std::sync::OnceLock<Vec<u32>>,
 }
 
 impl PickMesh {
@@ -197,6 +199,7 @@ impl PickMesh {
             tris,
             bbox,
             ray_grid: Default::default(),
+            largest: Default::default(),
         }
     }
 
@@ -219,6 +222,7 @@ impl PickMesh {
             tris,
             bbox,
             ray_grid: Default::default(),
+            largest: Default::default(),
         }
     }
 
@@ -226,6 +230,24 @@ impl PickMesh {
     pub(crate) fn ray_grid(&self) -> &motion::RayGrid {
         self.ray_grid
             .get_or_init(|| motion::RayGrid::new(&self.tris))
+    }
+
+    /// The indices of the `n` largest triangles: every n-th would leave holes in big faces,
+    /// which are few triangles among the many of small rounds (a frame's ghost looked like
+    /// scattered shards).
+    pub fn largest_triangles(&self, n: usize) -> &[u32] {
+        self.largest.get_or_init(|| {
+            let area = |k: u32| {
+                let [a, b, c] = self.tris[k as usize].1;
+                (b - a).cross(&(c - a)).norm_squared()
+            };
+            let mut all: Vec<u32> = (0..self.tris.len() as u32).collect();
+            if all.len() > n {
+                all.select_nth_unstable_by(n, |x, y| area(*y).total_cmp(&area(*x)));
+                all.truncate(n);
+            }
+            all
+        })
     }
 
     /// Every triangle (face, corners) in part coordinates.

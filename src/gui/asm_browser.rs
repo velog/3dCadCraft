@@ -282,7 +282,12 @@ impl CadCraftApp {
                     if grounded {
                         super::panels::tree_icon(ui, Icon::Ground);
                     }
-                    let mut text = RichText::new(&label);
+                    // A component in a file of its own says so.
+                    let mut text = RichText::new(if component.library.is_some() {
+                        format!("{label}  (linked)")
+                    } else {
+                        label.clone()
+                    });
                     if !visible || suppressed {
                         text = text.weak();
                     }
@@ -658,7 +663,12 @@ impl CadCraftApp {
                 if o.grounded {
                     super::panels::tree_icon(ui, Icon::Ground);
                 }
-                let mut text = RichText::new(&o.name);
+                // A component in a file of its own says so (one of this file does not).
+                let mut text = RichText::new(if o.component.library.is_some() {
+                    format!("{}  (linked)", o.name)
+                } else {
+                    o.name.clone()
+                });
                 if !o.shown() {
                     text = text.weak();
                 }

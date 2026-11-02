@@ -5593,6 +5593,12 @@ impl CadCraftApp {
         let (rect, mut response) =
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.viewport_rect = rect;
+        // A row of the Files tab dropped here.
+        if let Some(item) = response.dnd_release_payload::<file_explorer::FileItem>()
+            && let Some(p) = ui.ctx().pointer_interact_pos()
+        {
+            self.file_item_dropped(&item, p, rect);
+        }
         self.view_history.watch(&self.camera, ui.input(|i| i.time));
         // Zoom Window owns the mouse until its rectangle is drawn.
         if self.zoom_window.is_some() {

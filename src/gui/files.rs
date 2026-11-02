@@ -1719,9 +1719,11 @@ impl CadCraftApp {
         };
         let started = std::time::Instant::now();
         let mut scene = thumbnail::Scene::default();
-        if let Some(a) = self.assembly() {
-            for o in a.occurrences.iter().filter(|o| o.shown()) {
-                self.with_part(o.component, |part| scene.add_part(part, Some(&o.transform)));
+        // The assembly a file opens with (and that a drop from the Files tab places), also when
+        // a part of it was open at the save; subassemblies come part by part.
+        if let Some(id) = self.picture_assembly() {
+            if let Some((s, _)) = self.doc_scene(id) {
+                scene = s;
             }
         } else if let Some(d) = self.drawing() {
             // A drawing shows the model of its first view (the sheet itself

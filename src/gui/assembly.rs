@@ -1815,7 +1815,7 @@ impl CadCraftApp {
     }
 
     /// Places `doc` at `at` (its origin there, with the current turn).
-    fn place_at(&mut self, doc: DocRef, at: Point3, grounded_origin: bool) {
+    pub(super) fn place_at(&mut self, doc: DocRef, at: Point3, grounded_origin: bool) {
         let base = self.asm.place_name.clone();
         let turn = self.asm.place_turn.unwrap_or_else(Transform3::identity);
         let t = if grounded_origin {
@@ -1837,7 +1837,7 @@ impl CadCraftApp {
 
     /// Where a click places a component: on the component under the
     /// cursor, else on the assembly's XY plane.
-    fn place_point(&self, pos: Pos2, rect: Rect) -> Option<Point3> {
+    pub(super) fn place_point(&self, pos: Pos2, rect: Rect) -> Option<Point3> {
         if let Some((_, p)) = self.asm_pick(pos, rect) {
             return Some(p);
         }
@@ -2150,6 +2150,7 @@ impl CadCraftApp {
         self.draw_cursor_value(ui.ctx(), &painter, rect, cursor);
 
         // --- overlays ---
+        self.files_drag_view(&ctx, &painter, rect);
         if let (Some(AsmTool::Place(doc)), Some(p)) = (self.asm.tool, pointer)
             && !on_cube
             && !modal
