@@ -420,6 +420,9 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   result or waits for it): a large file's parts took a second to rebuild (one part 0.77 s), so threads per part hardly
   help. Place's list and a drag from the Files tab use it. A save's picture shows the file's top assembly when a part of it
   is active (`picture_assembly`). `gui_win.py`: `down x y`, `move`, `up` for a held drag.
+- **Splines divide regions** (`profile_pieces`, `SplineWalk`): crossings come from samples + bisection / Newton, the other
+  curve is cut at the same point, the spline by knot insertion into pieces of their own (`split_bspline`); a spline meeting
+  nothing stays one edge, so old files keep their names. A tangent touch without a crossing is not found.
 - **Redundancy in composite shapes:** every builder in `sketch/shapes.rs` has a test
   asserting exact DOF *and* `redundant == 0`. Known traps: circumscribed polygon with
   even N (Pitot — drop one Equal), arc slot (a construction centre arc would be
@@ -736,8 +739,8 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   analytic surface sharing an edge are one `smooth_group`; the edge between them is a seam
   (`is_smooth_seam`) — hidden in `visible_edges` / `feature_edges` and in `tessellate_solid`'s edge
   lines. Selection draws `item_faces` = every face of the name and its group, an edge every piece of
-  `edge_group` (same circle / line, same visible faces). Planes are never merged (Split Face cuts
-  them on purpose). Geometry and names stay per piece — this is display and selection only.
+  `edge_group` (same circle / line, same visible faces). Planes merge only when they keep one name (the sectors of a revolved ring,
+  `same_plane_sector`; Split Face gives its pieces names of their own). Geometry and names stay per piece — this is display and selection only.
 - **`body_key()` runs many times a frame** (every `picker()`, every hidden-line test): it is
   cached per frame (`body_key_frame`, on only inside `ui`) and never walks face meshes —
   `BRep::bounding_box` reads every mesh position (2.4 ms on a 2500-hole plate; a selected

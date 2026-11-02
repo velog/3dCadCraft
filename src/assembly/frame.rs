@@ -1733,7 +1733,22 @@ pub fn edit_members(
                 d.data = DocumentData::Part(part);
                 d.properties = section.member_properties(length);
             }
+            // A generated name follows the section (it kept saying the old size); a name the
+            // user gave stays.
+            let stock = section.stock_number();
+            let renamed = project.document(doc).and_then(|d| {
+                let (head, tail) = d.name.rsplit_once('-')?;
+                let generated = !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit());
+                (generated && head != stock).then_some(())
+            });
+            let new_name = renamed.map(|()| project.free_name(&format!("{stock}-")));
+            if let (Some(n), Some(d)) = (&new_name, project.document_mut(doc)) {
+                d.name = n.clone();
+            }
             let a = asm_mut(project, asm)?;
+            if let (Some(n), Some(o)) = (&new_name, a.find_mut(occ)) {
+                o.name = format!("{n}:1");
+            }
             if let Some(m) = a
                 .frames
                 .iter_mut()
@@ -2885,6 +2900,9 @@ mod tests {
         .unwrap();
         let a = asm(&p, aid);
         assert_eq!(a.frames[0].members[0].size, "60x10");
+        // Its generated name follows the section.
+        let named = a.find(occs[0]).map(|o| o.name.clone()).unwrap_or_default();
+        assert!(named.contains("60x10"), "{named}");
         let la = outer_length(&part(&p, a, occs[0])).unwrap();
         let lb = outer_length(&part(&p, a, occs[1])).unwrap();
         assert!((la - 430.0).abs() < 1e-3, "{la}");

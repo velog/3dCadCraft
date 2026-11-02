@@ -826,6 +826,11 @@ impl CadCraftApp {
         signature_of(&self.project)
     }
 
+    /// [`Self::project_signature`] for the other modules.
+    pub(super) fn project_signature_now(&self) -> u64 {
+        self.project_signature()
+    }
+
     /// The project as it is now counts as saved.
     pub(super) fn mark_saved(&mut self) {
         self.saved_sig = self.project_signature();

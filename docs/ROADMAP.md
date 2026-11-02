@@ -384,7 +384,7 @@ Expand / Collapse All, Promote / Demote; Last Used from Edit Feature; default pr
 import from the installed Inventor; spline closing; Trim by an extruded spline outline; chains of open curves; Boundary Patch Guide
 Rails; Motion and Contact (spec 3.1b).
 
-Open: motion links picked on faces directly; Transitional only on slides (a follower on a Slider and a cam); Dynamic Simulation (no solver for it yet); a shaded preview of a surface Revolve (wires only). A closed spline crossing another curve without a shared point does not divide the regions (`Sketch::regions`; a circle does): the extrude comes out wrong; faces of planar rings of a full surface Revolve show their sector seams.
+Open: motion links picked on faces directly; Transitional only on slides (a follower on a Slider and a cam); Dynamic Simulation (no solver for it yet); a shaded preview of a surface Revolve (wires only). A tangent touch of a spline and another curve without a crossing does not divide regions.
 motion links picked on faces directly.
 
 ## Interface: gaps and next steps

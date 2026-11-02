@@ -118,7 +118,11 @@ impl BRep {
     pub(crate) fn is_smooth_seam(&self, a: FaceId, b: FaceId) -> bool {
         match (self.face_surface_of(a), self.face_surface_of(b)) {
             (Some(x), Some(y)) => {
-                a != b && (same_curved(x, y) || self.same_free_form(a, b) || self.same_facets(a, b))
+                a != b
+                    && (same_curved(x, y)
+                        || self.same_free_form(a, b)
+                        || self.same_plane_sector(a, b)
+                        || self.same_facets(a, b))
             }
             _ => false,
         }
@@ -133,6 +137,24 @@ impl BRep {
             return false;
         };
         fa.name.is_some() && fa.name == fb.name && self.free_form(a) && self.free_form(b)
+    }
+
+    /// Two sectors of one flat ring of a revolved surface: the same persistent name on the
+    /// same plane (a face cut on purpose has names of its own, Split Face's `~`).
+    fn same_plane_sector(&self, a: FaceId, b: FaceId) -> bool {
+        let (Some(fa), Some(fb)) = (self.face(a), self.face(b)) else {
+            return false;
+        };
+        if fa.name.is_none() || fa.name != fb.name {
+            return false;
+        }
+        let (Some(Surface::Plane(x)), Some(Surface::Plane(y))) =
+            (self.face_surface_of(a), self.face_surface_of(b))
+        else {
+            return false;
+        };
+        let (nx, ny) = (x.normal.into_inner(), y.normal.into_inner());
+        nx.cross(&ny).norm() < 1e-9 && (y.origin - x.origin).dot(&nx).abs() < 1e-6
     }
 
     /// Two flat facets of one smooth surface made of triangles (a Die Form

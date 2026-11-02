@@ -633,9 +633,69 @@ impl Sketch {
             .flat_map(|(_, e)| e.endpoints())
             .filter_map(pos)
             .collect();
+        let scale = ends.iter().map(|p| p.coords.amax()).fold(1.0, Real::max);
+        // Splines meet the other curves where the samples say so: both are cut there.
+        let mut walks: Vec<Option<SplineWalk>> = curves
+            .iter()
+            .map(|(id, ent)| match ent {
+                Entity::Spline { points } if points.iter().all(|&p| pos(p).is_some()) => {
+                    let (cv, knots) = self.spline_def(*id, &|p| {
+                        self.point(p)
+                            .map_or(Vector2::zeros(), |q| q.position.coords)
+                    });
+                    SplineWalk::new(cv.into_iter().map(Point2::from).collect(), &knots)
+                }
+                _ => None,
+            })
+            .collect();
+        let mut extra: Vec<Vec<Point2>> = vec![Vec::new(); curves.len()];
+        for i in 0..curves.len() {
+            if walks[i].is_none() {
+                continue;
+            }
+            for (j, h) in geoms.iter().enumerate() {
+                let Some(h) = h else {
+                    continue;
+                };
+                let hits = walks[i].as_ref().map_or_else(Vec::new, |w| w.hits_with(h));
+                for (u, x) in hits {
+                    extra[j].push(x);
+                    if let Some(w) = walks[i].as_mut() {
+                        w.cut(u, scale);
+                    }
+                }
+            }
+            for j in i + 1..curves.len() {
+                let hits = match (&walks[i], &walks[j]) {
+                    (Some(a), Some(b)) => a.hits_with_spline(b),
+                    _ => Vec::new(),
+                };
+                for (u, v) in hits {
+                    if let Some(w) = walks[i].as_mut() {
+                        w.cut(u, scale);
+                    }
+                    if let Some(w) = walks[j].as_mut() {
+                        w.cut(v, scale);
+                    }
+                }
+            }
+            for &q in &ends {
+                let at = walks[i].as_ref().and_then(|w| w.on_curve(q, scale));
+                if let (Some(u), Some(w)) = (at, walks[i].as_mut()) {
+                    w.cut(u, scale);
+                }
+            }
+        }
         let mut out = Vec::new();
         for (i, (id, ent)) in curves.iter().enumerate() {
             let Some(g) = geoms[i] else {
+                // A spline met by another curve: a piece between each two meetings.
+                if let Some(w) = walks[i].as_ref().filter(|w| !w.cuts.is_empty()) {
+                    for piece in w.pieces() {
+                        out.push((*id, piece));
+                    }
+                    continue;
+                }
                 // Spline: whole, joined only at its end points.
                 if let Entity::Spline { points } = ent {
                     if points.iter().any(|&p| pos(p).is_none()) {
@@ -659,7 +719,7 @@ impl Sketch {
                 }
                 continue;
             };
-            let mut cuts: Vec<Real> = Vec::new();
+            let mut cuts: Vec<Real> = extra[i].iter().map(|p| g.param(*p)).collect();
             for (j, h) in geoms.iter().enumerate() {
                 if let (Some(h), true) = (h, i != j) {
                     for p in g.carrier_hits(h) {
@@ -734,6 +794,223 @@ impl Sketch {
         }
         out
     }
+}
+
+/// A spline's samples, to find where other curves meet it, and the places found.
+struct SplineWalk {
+    curve: crate::kernel::BSplineCurve,
+    /// (parameter, point) along the curve.
+    samples: Vec<(Real, Point2)>,
+    /// Parameters to cut at, sorted, none at the ends.
+    cuts: Vec<Real>,
+}
+
+impl SplineWalk {
+    fn new(points: Vec<Point2>, knots: &[Real]) -> Option<Self> {
+        use crate::kernel::{BSplineCurve, Point3};
+        let n = points.len();
+        let cvs = points.iter().map(|p| Point3::new(p.x, p.y, 0.0)).collect();
+        let curve = BSplineCurve::sketch_spline(cvs, knots).ok()?;
+        let d = curve.domain();
+        let m = (32 * n).max(64);
+        let mut w = Self {
+            curve,
+            samples: Vec::with_capacity(m + 1),
+            cuts: Vec::new(),
+        };
+        for k in 0..=m {
+            let u = d.min + (d.max - d.min) * k as Real / m as Real;
+            let q = w.at(u);
+            w.samples.push((u, q));
+        }
+        Some(w)
+    }
+
+    fn at(&self, u: Real) -> Point2 {
+        let q = self.curve.point_at(u);
+        Point2::new(q.x, q.y)
+    }
+
+    /// Where the curve crosses `g`: (parameter, point on the curve).
+    fn hits_with(&self, g: &Geom) -> Vec<(Real, Point2)> {
+        let f = |p: Point2| match *g {
+            Geom::Seg(a, b) => {
+                let d = b - a;
+                d.perp(&(p - a)) / d.norm().max(1e-12)
+            }
+            Geom::Arc { c, r, .. } | Geom::Circle { c, r } => (p - c).norm() - r,
+        };
+        let mut out = Vec::new();
+        for w in self.samples.windows(2) {
+            let (mut lo, mut hi) = (w[0].0, w[1].0);
+            let (mut flo, fhi) = (f(w[0].1), f(w[1].1));
+            // Along the other curve (a chain's own joint) is no crossing.
+            if flo * fhi >= 0.0 || (flo.abs() < 1e-9 && fhi.abs() < 1e-9) {
+                continue;
+            }
+            for _ in 0..48 {
+                let mid = (lo + hi) / 2.0;
+                let fm = f(self.at(mid));
+                if flo * fm <= 0.0 {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                    flo = fm;
+                }
+            }
+            let u = (lo + hi) / 2.0;
+            let x = self.at(u);
+            if g.contains(x) {
+                out.push((u, x));
+            }
+        }
+        out
+    }
+
+    /// Where two splines cross: (this one's parameter, the other's).
+    fn hits_with_spline(&self, o: &SplineWalk) -> Vec<(Real, Real)> {
+        let mut out = Vec::new();
+        for a in self.samples.windows(2) {
+            let (p, r) = (a[0].1, a[1].1 - a[0].1);
+            for b in o.samples.windows(2) {
+                let (q, s) = (b[0].1, b[1].1 - b[0].1);
+                let den = r.perp(&s);
+                if den.abs() < 1e-12 {
+                    continue;
+                }
+                let t = (q - p).perp(&s) / den;
+                let v = (q - p).perp(&r) / den;
+                if !(0.0..=1.0).contains(&t) || !(0.0..=1.0).contains(&v) {
+                    continue;
+                }
+                // Newton from the samples' crossing, so that both end on one point.
+                let mut u0 = a[0].0 + (a[1].0 - a[0].0) * t;
+                let mut u1 = b[0].0 + (b[1].0 - b[0].0) * v;
+                for _ in 0..8 {
+                    let h = 1e-6 * (a[1].0 - a[0].0).abs().max(1e-9);
+                    let e = self.at(u0) - o.at(u1);
+                    let d0 = (self.at(u0 + h) - self.at(u0 - h)) / (2.0 * h);
+                    let d1 = (o.at(u1 + h) - o.at(u1 - h)) / (2.0 * h);
+                    let det = d1.perp(&d0);
+                    if det.abs() < 1e-14 {
+                        break;
+                    }
+                    u0 -= d1.perp(&e) / det;
+                    u1 -= d0.perp(&e) / det;
+                }
+                out.push((u0, u1));
+            }
+        }
+        out
+    }
+
+    /// The parameter of `q` when it lies on the curve (a line ending on it).
+    fn on_curve(&self, q: Point2, scale: Real) -> Option<Real> {
+        let (k, _) = self
+            .samples
+            .iter()
+            .enumerate()
+            .min_by(|a, b| (a.1.1 - q).norm().total_cmp(&(b.1.1 - q).norm()))?;
+        let (mut lo, mut hi) = (
+            self.samples[k.saturating_sub(1)].0,
+            self.samples[(k + 1).min(self.samples.len() - 1)].0,
+        );
+        for _ in 0..60 {
+            let (m1, m2) = (lo + (hi - lo) / 3.0, hi - (hi - lo) / 3.0);
+            if (self.at(m1) - q).norm() < (self.at(m2) - q).norm() {
+                hi = m2;
+            } else {
+                lo = m1;
+            }
+        }
+        let u = (lo + hi) / 2.0;
+        ((self.at(u) - q).norm() <= 1e-7 * scale).then_some(u)
+    }
+
+    /// Cuts at `u`, unless it is at an end of the curve or at a cut already there.
+    fn cut(&mut self, u: Real, scale: Real) {
+        let d = self.curve.domain();
+        let x = self.at(u);
+        let tol = 1e-6 * scale;
+        let near = |v: Real, s: &Self| (s.at(v) - x).norm() <= tol;
+        if near(d.min, self) || near(d.max, self) || self.cuts.iter().any(|v| near(*v, self)) {
+            return;
+        }
+        self.cuts.push(u);
+        self.cuts.sort_by(Real::total_cmp);
+    }
+
+    /// The curve between its cuts: splines of their own (full knots at each cut).
+    fn pieces(&self) -> Vec<ProfileCurve> {
+        let p = self.curve.degree();
+        let to2 = |c: &crate::kernel::Point3| Point2::new(c.x, c.y);
+        let mut cv: Vec<Point2> = self.curve.control_points().iter().map(to2).collect();
+        let mut knots: Vec<Real> = self.curve.knots().to_vec();
+        let mut out = Vec::new();
+        for &u in &self.cuts {
+            let (left_cv, left_k, right_cv, right_k) = split_bspline(&cv, &knots, p, u);
+            out.push(ProfileCurve::Spline {
+                points: left_cv,
+                reversed: false,
+                knots: left_k,
+            });
+            cv = right_cv;
+            knots = right_k;
+        }
+        out.push(ProfileCurve::Spline {
+            points: cv,
+            reversed: false,
+            knots,
+        });
+        out
+    }
+}
+
+/// A clamped B-spline cut at `u` by knot insertion: the two curves it is made of.
+pub(super) fn split_bspline(
+    cv: &[Point2],
+    knots: &[Real],
+    p: usize,
+    u: Real,
+) -> (Vec<Point2>, Vec<Real>, Vec<Point2>, Vec<Real>) {
+    let mut cv = cv.to_vec();
+    let mut knots = knots.to_vec();
+    let eps = 1e-9 * (knots[knots.len() - 1] - knots[0]).abs().max(1e-12);
+    // A cut at a knot already there uses it.
+    let u = knots
+        .iter()
+        .copied()
+        .find(|k| (k - u).abs() <= eps)
+        .unwrap_or(u);
+    while knots.iter().filter(|k| (*k - u).abs() <= eps).count() < p {
+        // The span holding u: knots[k] <= u < knots[k + 1].
+        let k = knots
+            .iter()
+            .rposition(|x| *x <= u + eps)
+            .unwrap_or(0)
+            .min(knots.len() - 2);
+        let mut next = Vec::with_capacity(cv.len() + 1);
+        for i in 0..=cv.len() {
+            if i + p <= k {
+                next.push(cv[i]);
+            } else if i > k {
+                next.push(cv[i - 1]);
+            } else {
+                let a = (u - knots[i]) / (knots[i + p] - knots[i]);
+                next.push(Point2::from(
+                    cv[i - 1].coords * (1.0 - a) + cv[i].coords * a,
+                ));
+            }
+        }
+        cv = next;
+        knots.insert(k + 1, u);
+    }
+    let j = knots.iter().position(|x| (x - u).abs() <= eps).unwrap_or(p);
+    let mut left_k = knots[..j + p].to_vec();
+    left_k.push(u);
+    let mut right_k = vec![u];
+    right_k.extend_from_slice(&knots[j..]);
+    (cv[..j].to_vec(), left_k, cv[j - 1..].to_vec(), right_k)
 }
 
 #[cfg(test)]
@@ -1092,5 +1369,174 @@ mod arc_from_far {
         let (q, p) = (s.point(c).unwrap().position, s.point(e).unwrap().position);
         assert!((q - Point2::new(40.0, 12.5)).norm() < 1e-6, "{q:?}");
         assert!((p - Point2::new(40.0, 25.0)).norm() < 1e-6, "{p:?}");
+    }
+}
+
+#[cfg(test)]
+mod splines_divide {
+    use super::super::*;
+
+    fn p(x: Real, y: Real) -> Point2 {
+        Point2::new(x, y)
+    }
+
+    fn closed_spline(s: &mut Sketch, at: &[(Real, Real)]) -> EntityId {
+        let ids: Vec<_> = at.iter().map(|&(x, y)| s.add_point(p(x, y))).collect();
+        let mut l = ids.clone();
+        l.push(ids[0]);
+        s.add_interp_spline(l).unwrap()
+    }
+
+    /// Area of a shape from fine samples of its region list.
+    fn total(r: &[Region]) -> Real {
+        r.iter().map(Region::area).sum()
+    }
+
+    #[test]
+    fn a_closed_spline_across_a_rectangle_makes_three_regions() {
+        let mut alone = Sketch::default();
+        closed_spline(
+            &mut alone,
+            &[(5.0, -10.0), (15.0, -5.0), (17.0, 8.0), (8.0, 12.0)],
+        );
+        let whole = total(&alone.regions());
+        let mut s = Sketch::default();
+        s.add_rectangle_two_point(p(0.0, 0.0), p(40.0, 25.0))
+            .unwrap();
+        closed_spline(
+            &mut s,
+            &[(5.0, -10.0), (15.0, -5.0), (17.0, 8.0), (8.0, 12.0)],
+        );
+        let r = s.regions();
+        assert_eq!(
+            r.len(),
+            3,
+            "{:?}",
+            r.iter().map(Region::area).collect::<Vec<_>>()
+        );
+        // The rectangle's bite + the lens + what sticks out: the two shapes, the lens once.
+        let lens = r
+            .iter()
+            .map(Region::area)
+            .find(|a| *a > 1.0 && *a < whole)
+            .unwrap_or(0.0);
+        assert!(total(&r) < 1000.0 + whole, "{}", total(&r));
+        assert!(total(&r) > 1000.0, "{lens}");
+        // Touching regions come back as one outline, the rectangle and the spline's outside.
+        let refs: Vec<&Region> = r.iter().collect();
+        let m = merge_regions(&refs);
+        assert_eq!(m.len(), 1);
+        assert!(
+            (m[0].1.area() - total(&r)).abs() < 1e-3,
+            "{}",
+            m[0].1.area()
+        );
+    }
+
+    #[test]
+    fn split_pieces_keep_the_curve() {
+        let cv = [
+            p(0.0, 0.0),
+            p(1.0, 3.0),
+            p(4.0, 3.0),
+            p(6.0, 0.0),
+            p(9.0, 1.0),
+        ];
+        let w = SplineWalkProbe::new(&cv);
+        for u in [0.21, 0.5, 0.77] {
+            let (a, ak, b, bk) = w.split(u);
+            let at = w.at(u);
+            assert!((a[a.len() - 1] - at).norm() < 1e-9, "left end {u}");
+            assert!((b[0] - at).norm() < 1e-9, "right start {u}");
+            for s in [0.25, 0.5, 0.75] {
+                let v = u * s;
+                let q = SplineWalkProbe::of(&a, &ak).at_u(v);
+                assert!((q - w.at(v)).norm() < 1e-9, "left at {v}");
+                let v = u + (1.0 - u) * s;
+                let q = SplineWalkProbe::of(&b, &bk).at_u(v);
+                assert!((q - w.at(v)).norm() < 1e-9, "right at {v}");
+            }
+        }
+    }
+
+    /// A curve on [0, 1] to check the split against.
+    struct SplineWalkProbe(crate::kernel::BSplineCurve);
+
+    impl SplineWalkProbe {
+        fn of(cv: &[Point2], knots: &[Real]) -> Self {
+            let cvs = cv
+                .iter()
+                .map(|q| crate::kernel::Point3::new(q.x, q.y, 0.0))
+                .collect();
+            Self(crate::kernel::BSplineCurve::sketch_spline(cvs, knots).unwrap())
+        }
+
+        fn new(cv: &[Point2]) -> Self {
+            Self::of(cv, &[0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0])
+        }
+
+        fn at_u(&self, u: Real) -> Point2 {
+            let q = self.0.point_at(u);
+            p(q.x, q.y)
+        }
+
+        fn at(&self, u: Real) -> Point2 {
+            self.at_u(u)
+        }
+
+        fn split(&self, u: Real) -> (Vec<Point2>, Vec<Real>, Vec<Point2>, Vec<Real>) {
+            let cv: Vec<Point2> = self
+                .0
+                .control_points()
+                .iter()
+                .map(|c| p(c.x, c.y))
+                .collect();
+            super::super::profile::split_bspline(&cv, self.0.knots(), self.0.degree(), u)
+        }
+    }
+
+    #[test]
+    fn two_splines_crossing_and_a_line_ending_on_a_spline() {
+        let mut s = Sketch::default();
+        closed_spline(
+            &mut s,
+            &[(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)],
+        );
+        closed_spline(
+            &mut s,
+            &[(10.0, 5.0), (30.0, 5.0), (30.0, 25.0), (10.0, 25.0)],
+        );
+        assert_eq!(s.regions().len(), 3);
+        // A line across a closed spline's inside, ending on it at both ends.
+        let mut l = Sketch::default();
+        let e = closed_spline(
+            &mut l,
+            &[(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)],
+        );
+        let a = l.add_point(p(10.0, -5.0));
+        let b = l.add_point(p(10.0, 25.0));
+        l.add_line_between(a, b).unwrap();
+        let r = l.regions();
+        assert_eq!(
+            r.len(),
+            2,
+            "{:?}",
+            r.iter().map(Region::area).collect::<Vec<_>>()
+        );
+        let _ = e;
+    }
+
+    #[test]
+    fn a_spline_touching_nothing_stays_whole() {
+        let mut s = Sketch::default();
+        s.add_rectangle_two_point(p(0.0, 0.0), p(10.0, 10.0))
+            .unwrap();
+        closed_spline(
+            &mut s,
+            &[(20.0, 0.0), (30.0, 0.0), (30.0, 10.0), (20.0, 10.0)],
+        );
+        let r = s.regions();
+        assert_eq!(r.len(), 2);
+        assert!(r.iter().any(|x| x.outer.edges.len() == 1));
     }
 }

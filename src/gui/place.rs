@@ -690,7 +690,18 @@ impl CadCraftApp {
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            // What the file holds as itself: the members of its assemblies stay inside them
+            // (a linked frame listed each of its members here).
+            let inner: Vec<DocumentId> = file
+                .documents()
+                .iter()
+                .flat_map(|d| d.data.references())
+                .map(|r| r.document)
+                .collect();
             for (id, name) in parts_of(&file) {
+                if inner.contains(&id) {
+                    continue;
+                }
                 let r = DocRef {
                     library: Some(l.id),
                     document: id,

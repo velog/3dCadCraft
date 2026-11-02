@@ -441,8 +441,13 @@ impl CadCraftApp {
         self.asm.hover = None;
         self.asm.place = None;
         self.part_id = id;
+        // Rebuilding what was saved is no change of the user's: `*` stays as it was.
+        let was_saved = self.project_signature_now() == self.saved_sig;
         if let Some(DocumentData::Part(p)) = self.project.document_mut(id).map(|d| &mut d.data) {
             let _ = p.regenerate();
+        }
+        if was_saved {
+            self.mark_saved();
         }
         self.selection = super::Selection::Body;
         self.editing = None;
