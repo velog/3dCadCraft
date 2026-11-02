@@ -689,8 +689,7 @@ impl CadCraftApp {
                     self.sweep_draft = Some(next);
                 } else {
                     self.sweep_draft = None;
-                    let k = d.edit.unwrap_or_else(|| self.part().last_inserted());
-                    self.selection = super::Selection::Feature(k);
+                    self.selection = super::Selection::Body;
                 }
             }
             Err(e) => {
@@ -733,8 +732,7 @@ impl CadCraftApp {
                     self.loft_draft = Some(next);
                 } else {
                     self.loft_draft = None;
-                    let k = d.edit.unwrap_or_else(|| self.part().last_inserted());
-                    self.selection = super::Selection::Feature(k);
+                    self.selection = super::Selection::Body;
                 }
             }
             Err(e) => {

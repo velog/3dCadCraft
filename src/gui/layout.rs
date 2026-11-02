@@ -89,6 +89,19 @@ pub struct UiSettings {
     pub props_label_width: Option<f32>,
 }
 
+/// Windows that choose their own first place (the others open at
+/// [`first_window_pos`]).
+const OWN_FIRST_PLACE: &[&str] = &["file_window", "interference", "import_update"];
+
+/// Where a floating window opens the first time: over the view, below the
+/// ribbon. egui's default is the top left corner, on File, Save and Undo.
+pub(super) fn first_window_pos(screen: Rect) -> egui::Pos2 {
+    egui::pos2(
+        (screen.center().x - 220.0).max(screen.left() + BROWSER_W + 10.0),
+        screen.top() + 190.0,
+    )
+}
+
 /// Default widths of the side panels (today's layout).
 pub const BROWSER_W: f32 = 250.0;
 pub const PROPERTIES_W: f32 = 300.0;
@@ -221,6 +234,8 @@ pub struct AppOptions {
     pub show_labels: bool,
     /// Cosmetic threads drawn as a texture on their faces.
     pub thread_texture: bool,
+    /// A command's value and its editor next to the cursor.
+    pub cursor_value: bool,
     /// The user's aliases and keys (Tools → Customize → Keyboard).
     pub keymap: super::keymap::Keymap,
     /// The hover text names faces and edges by their persistent names
@@ -311,6 +326,7 @@ impl Default for AppOptions {
             inference: InferenceSettings::default(),
             show_labels: true,
             thread_texture: true,
+            cursor_value: true,
             internal_names: false,
             keymap: Default::default(),
             alias_input: false,
@@ -828,6 +844,10 @@ impl LayoutUi {
             if sized {
                 w = w.default_size(r.size());
             }
+        } else if !OWN_FIRST_PLACE.contains(&key) {
+            w = w
+                .pivot(egui::Align2::LEFT_TOP)
+                .default_pos(first_window_pos(screen));
         }
         w
     }
@@ -920,6 +940,7 @@ impl CadCraftApp {
             inference: self.tools.inference,
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
+            cursor_value: self.cursor_value_enabled,
             internal_names: self.internal_names,
             keymap: self.keymap.clone(),
             alias_input: self.alias_input,
@@ -949,6 +970,7 @@ impl CadCraftApp {
         self.sketch_opts = o.sketch;
         self.tools.inference = o.inference;
         self.show_labels = o.show_labels;
+        self.cursor_value_enabled = o.cursor_value;
         if self.thread_texture != o.thread_texture {
             self.thread_texture = o.thread_texture;
             self.scene_dirty = true;
@@ -1251,10 +1273,17 @@ impl CadCraftApp {
                 Side::Left => egui::Panel::left(self.layout.panel_id("model_browser")),
                 Side::Right => egui::Panel::right(self.layout.panel_id("model_browser")),
             };
-            let r = p
-                .resizable(true)
-                .default_size(w)
-                .show(ui, |ui| self.browser(ui));
+            let r = p.resizable(true).default_size(w).show(ui, |ui| {
+                // Like Properties: a long name is cut, it never widens the
+                // panel and moves the view ("Sketch1 (Revolve)  (editing)").
+                let rect = ui.available_rect_before_wrap();
+                let clip = ui.clip_rect().intersect(rect);
+                let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                inner.set_clip_rect(clip);
+                inner.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                self.browser(&mut inner);
+                ui.expand_to_include_rect(rect);
+            });
             LayoutUi::note(&mut self.layout.s.browser_width, r.response.rect.width());
         }
         if props {
@@ -1264,19 +1293,24 @@ impl CadCraftApp {
                 Side::Right => egui::Panel::right(self.layout.panel_id("properties")),
             };
             let r = p.resizable(true).default_size(w).show(ui, |ui| {
-                // Long names wrap or are cut instead of widening the panel
-                // (which moved the view under the cursor mid-command).
-                ui.set_max_width(ui.available_width());
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                // A child the panel does not grow with: a row too long for
+                // it is cut. The panel used to widen, which moved the view
+                // under the cursor at the first dimension of a sketch.
+                let rect = ui.available_rect_before_wrap();
+                let clip = ui.clip_rect().intersect(rect);
+                let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                inner.set_clip_rect(clip);
+                inner.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 // Long command panels scroll (Hole, Loft…: they outgrew the
                 // window).
                 egui::ScrollArea::vertical()
                     .id_salt("properties_scroll")
                     .auto_shrink([false, false])
-                    .show(ui, |ui| {
+                    .show(&mut inner, |ui| {
                         ui.set_max_width(ui.available_width());
                         self.properties(ui)
-                    })
+                    });
+                ui.expand_to_include_rect(rect);
             });
             LayoutUi::note(&mut self.layout.s.properties_width, r.response.rect.width());
         }

@@ -1081,6 +1081,44 @@ impl CadCraftApp {
     }
 
     /// The status-bar prompt while Constrain is open.
+    /// The selections of the open Constrain / Joint as inputs (`steps`).
+    pub(super) fn constrain_flow(&self) -> Option<crate::command::flow::Flow> {
+        use crate::command::flow::{Flow, PickKind as K, Selector};
+        let d = self.cons.draft.as_ref()?;
+        let one = |key, label, count: bool, color| Selector {
+            key,
+            label,
+            prompt: label,
+            accepts: &[K::Face, K::Edge, K::Point, K::Axis, K::Plane],
+            single: true,
+            required: true,
+            count: usize::from(count),
+            color,
+        };
+        let mut v = vec![
+            one("a", "Selection 1", d.a.is_some(), [64, 128, 242]),
+            one("b", "Selection 2", d.b.is_some(), [230, 120, 20]),
+        ];
+        if d.kind == ConstraintKind::Symmetry {
+            v.push(one("plane", "Plane", d.plane.is_some(), [30, 160, 160]));
+        }
+        let active = ["a", "b", "plane"].get(d.active).copied();
+        Some(Flow::new(v, active))
+    }
+
+    /// Makes selection `key` active; whether a Constrain is open.
+    pub(super) fn constrain_activate(&mut self, key: &str) -> bool {
+        let Some(d) = self.cons.draft.as_mut() else {
+            return false;
+        };
+        d.active = match key {
+            "b" => 1,
+            "plane" => 2,
+            _ => 0,
+        };
+        true
+    }
+
     pub(super) fn constrain_prompt(&self) -> Option<String> {
         let d = self.cons.draft.as_ref()?;
         if d.kind.is_joint() {
@@ -1316,7 +1354,8 @@ impl CadCraftApp {
             ui.add(
                 ExprValue::new(&mut v)
                     .suffix(if angle { "°" } else { " mm" })
-                    .equation(&mut d.expr),
+                    .equation(&mut d.expr)
+                    .cursor(if angle { "Angle" } else { "Offset" }),
             );
             if v != before {
                 d.value = if angle { v.to_radians() } else { v };

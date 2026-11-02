@@ -53,7 +53,7 @@ const PICK: egui::Color32 = egui::Color32::from_rgb(60, 190, 90);
 const CHOSEN: egui::Color32 = egui::Color32::from_rgb(40, 120, 230);
 const PREVIEW: egui::Color32 = egui::Color32::from_rgb(230, 120, 20);
 
-fn coil_flow(d: &CoilDraft) -> Flow {
+pub(super) fn coil_flow(d: &CoilDraft) -> Flow {
     Flow::new(
         vec![
             Selector {
@@ -85,7 +85,7 @@ fn coil_flow(d: &CoilDraft) -> Flow {
     )
 }
 
-fn rib_flow(d: &RibDraft) -> Flow {
+pub(super) fn rib_flow(d: &RibDraft) -> Flow {
     let mut s = vec![Selector {
         key: "profile",
         label: "Profile",
@@ -632,8 +632,7 @@ impl CadCraftApp {
                     self.coil_draft = Some(next);
                 } else {
                     self.coil_draft = None;
-                    let k = d.edit.unwrap_or_else(|| self.part().last_inserted());
-                    self.selection = super::Selection::Feature(k);
+                    self.selection = super::Selection::Body;
                 }
             }
             Err(e) => {
@@ -683,8 +682,7 @@ impl CadCraftApp {
                     self.rib_draft = Some(next);
                 } else {
                     self.rib_draft = None;
-                    let k = d.edit.unwrap_or_else(|| self.part().last_inserted());
-                    self.selection = super::Selection::Feature(k);
+                    self.selection = super::Selection::Body;
                 }
             }
             Err(e) => {

@@ -264,7 +264,7 @@ pub fn set_frame_table(ctx: &egui::Context, table: Vec<ParamRow>) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("frame_param_table"), table));
 }
 
-fn frame_table(ctx: &egui::Context) -> Vec<ParamRow> {
+pub(super) fn frame_table(ctx: &egui::Context) -> Vec<ParamRow> {
     ctx.data(|d| d.get_temp(egui::Id::new("frame_param_table")))
         .unwrap_or_default()
 }
@@ -306,6 +306,7 @@ pub struct ExprValue<'a, T: ExprNumber> {
     max: Real,
     suffix: String,
     equation: Option<&'a mut Option<String>>,
+    cursor: Option<&'a str>,
 }
 
 impl<'a, T: ExprNumber> ExprValue<'a, T> {
@@ -317,7 +318,15 @@ impl<'a, T: ExprNumber> ExprValue<'a, T> {
             max: Real::INFINITY,
             suffix: String::new(),
             equation: None,
+            cursor: None,
         }
+    }
+
+    /// Also offered as `label` next to the cursor while its command is open
+    /// (`cursor_value`).
+    pub fn cursor(mut self, label: &'a str) -> Self {
+        self.cursor = Some(label);
+        self
     }
 
     /// Keeps the entered text when it names parameters (else clears it),
@@ -370,6 +379,19 @@ impl<T: ExprNumber> egui::Widget for ExprValue<'_, T> {
             expr: None,
             table: &table,
         };
+        if let Some(label) = self.cursor {
+            super::cursor_value::register(
+                ui.ctx(),
+                super::cursor_value::PanelField {
+                    id,
+                    label: label.to_owned(),
+                    value: internal,
+                    unit,
+                    name: None,
+                    expr: None,
+                },
+            );
+        }
         let mut inner = ui.scope(|ui| value_field(ui, &spec));
         if let Some(text) = inner.inner
             && let Ok((_, v, _)) = eval_field_in(&table, &text, unit, None)

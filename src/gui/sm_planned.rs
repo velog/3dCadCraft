@@ -980,7 +980,12 @@ impl Planned {
                 }
                 match &mut self.radius {
                     Some(r) => {
-                        ui.add(ExprValue::new(r).range(0.0..=1e6).suffix(" mm"));
+                        ui.add(
+                            ExprValue::new(r)
+                                .range(0.0..=1e6)
+                                .suffix(" mm")
+                                .cursor("Radius"),
+                        );
                     }
                     None => {
                         ui.weak(format!("{:.3} mm (rule)", rule.bend_radius));
@@ -1013,6 +1018,7 @@ impl Planned {
             plabel(ui, "Rolled Angle");
             ui.add(
                 ExprValue::new(&mut self.roll_angle)
+                    .cursor("Rolled Angle")
                     .range(0.0..=360.0)
                     .suffix("°"),
             )
@@ -1060,6 +1066,7 @@ impl Planned {
                     plabel(ui, "Developed Length");
                     ui.add(
                         ExprValue::new(&mut self.developed_length)
+                            .cursor("Developed Length")
                             .range(0.0..=1e7)
                             .suffix(" mm"),
                     );
@@ -1069,6 +1076,7 @@ impl Planned {
                     plabel(ui, "Neutral Radius");
                     ui.add(
                         ExprValue::new(&mut self.neutral_radius)
+                            .cursor("Neutral Radius")
                             .range(0.0..=1e7)
                             .suffix(" mm"),
                     );
@@ -1076,7 +1084,11 @@ impl Planned {
                 }
                 4 => {
                     plabel(ui, "K-Factor");
-                    ui.add(ExprValue::new(&mut self.k_factor).range(0.0..=1.0));
+                    ui.add(
+                        ExprValue::new(&mut self.k_factor)
+                            .cursor("K-Factor")
+                            .range(0.0..=1.0),
+                    );
                     ui.end_row();
                 }
                 1 => {
@@ -1154,16 +1166,19 @@ impl Planned {
                 match self.facet {
                     0 => ui.add(
                         ExprValue::new(&mut self.chord)
+                            .cursor("Chord Tolerance")
                             .range(0.0..=1e6)
                             .suffix(" mm"),
                     ),
                     1 => ui.add(
                         ExprValue::new(&mut self.facet_angle)
+                            .cursor("Facet Angle")
                             .range(0.0..=180.0)
                             .suffix("°"),
                     ),
                     _ => ui.add(
                         ExprValue::new(&mut self.facet_distance)
+                            .cursor("Facet Distance")
                             .range(0.0..=1e6)
                             .suffix(" mm"),
                     ),
@@ -1217,7 +1232,12 @@ impl Planned {
                     }
                     match &mut self.rip_gap {
                         Some(g) => {
-                            ui.add(ExprValue::new(g).range(0.0..=1e6).suffix(" mm"));
+                            ui.add(
+                                ExprValue::new(g)
+                                    .range(0.0..=1e6)
+                                    .suffix(" mm")
+                                    .cursor("Gap"),
+                            );
                         }
                         None => {
                             ui.weak(format!("{:.3} mm (GapSize)", rule.gap));
@@ -1255,8 +1275,13 @@ impl Planned {
             for (k, r) in self.radii.iter_mut().enumerate() {
                 plabel(ui, &format!("Radius {}", k + 1));
                 ui.horizontal(|ui| {
-                    ui.add(ExprValue::new(r).range(0.0..=1e6).suffix(" mm"))
-                        .on_hover_text(format!("The radius of corner edge set {}", k + 1));
+                    ui.add(
+                        ExprValue::new(r)
+                            .range(0.0..=1e6)
+                            .suffix(" mm")
+                            .cursor("Radius"),
+                    )
+                    .on_hover_text(format!("The radius of corner edge set {}", k + 1));
                     if n > 1
                         && ui
                             .small_button("x")

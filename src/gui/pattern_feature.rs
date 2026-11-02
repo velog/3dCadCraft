@@ -413,8 +413,7 @@ impl CadCraftApp {
                     self.pattern_draft = Some(next);
                 } else {
                     self.pattern_draft = None;
-                    let k = d.edit.unwrap_or(self.part().last_inserted());
-                    self.selection = super::Selection::Feature(k);
+                    self.selection = super::Selection::Body;
                 }
             }
             Err(e) => {

@@ -43,6 +43,7 @@ mod combine_split;
 mod command_ui;
 mod commands;
 mod constrain;
+mod cursor_value;
 mod delete_face;
 mod demos;
 mod derive;
@@ -117,6 +118,7 @@ mod shell;
 mod show_dims;
 mod sketch_tools;
 mod sm_planned;
+mod steps;
 mod surface_cmd;
 mod sweep;
 mod thicken;
@@ -776,6 +778,15 @@ struct CadCraftApp {
     /// The model face selected in the view (persistent name) and where the
     /// click was (for the contextual toolbar).
     face_sel: Option<(String, egui::Pos2)>,
+    /// The value next to the cursor (`cursor_value`).
+    cv: cursor_value::CursorValue,
+    /// Application Options: the value and its editor next to the cursor.
+    cursor_value_enabled: bool,
+    /// Keys the next frame sees as pressed (a menu's OK and Cancel).
+    inject_keys: Vec<(Key, egui::Modifiers)>,
+    /// The view before a sketch's automatic Look At, and the direction that
+    /// Look At gave: Finish Sketch returns unless the user turned the view.
+    view_before_sketch: Option<(camera::OrbitCamera, crate::kernel::Vector3)>,
     /// Select Other control, and where/since when the cursor rests.
     select_other: Option<SelectOther>,
     rest: Option<(egui::Pos2, f64)>,
@@ -1075,6 +1086,10 @@ impl CadCraftApp {
             scene_sel: (Vec::new(), None),
             trim_preview: None,
             trim_side: None,
+            cv: Default::default(),
+            cursor_value_enabled: true,
+            inject_keys: Vec::new(),
+            view_before_sketch: None,
             select_other: None,
             rest: None,
             edge_cache: std::cell::RefCell::new(None),
@@ -1304,7 +1319,11 @@ impl CadCraftApp {
         }
         self.part_mut().sketches[i].visible = true;
         if self.sketch_opts.look_at_on_create {
+            let before = self.camera.clone();
             self.look_at_sketch(i);
+            if self.view_before_sketch.is_none() {
+                self.view_before_sketch = Some((before, self.camera.frame().0));
+            }
         }
         self.solve();
     }
@@ -1340,6 +1359,14 @@ impl CadCraftApp {
         self.tools.dim_edit = None;
         self.tools.over_prompt = None;
         self.report = None;
+        // Inventor returns to the view from before the sketch. A view the
+        // user turned meanwhile stays (zoom and pan do not count).
+        if let Some((view, look)) = self.view_before_sketch.take()
+            && (self.camera.frame().0 - look).norm() < 1e-3
+        {
+            let before = std::mem::replace(&mut self.camera, view);
+            self.view_cube.animate(before, &mut self.camera);
+        }
         // Back to the tab the sketch was opened from; no sketch open: the
         // ribbon stays where the user put it (it jumped to 3D Model after
         // every sheet metal command, owner 2026-10-26).
@@ -2347,7 +2374,7 @@ impl CadCraftApp {
         }
         match result {
             Ok(_) => {
-                self.selection = Selection::Feature(d.edit.unwrap_or(self.part().last_inserted()));
+                self.selection = Selection::Body;
                 self.extrude = None;
                 self.target_pick = None;
                 self.file_status = None;
@@ -6085,29 +6112,15 @@ impl CadCraftApp {
                 if self.command_context_menu(ui) {
                     return;
                 }
-                // Extrude / Revolve: Continue (to the axis), OK, Cancel.
-                if self.editing.is_none()
-                    && let Some(d) = self.extrude.as_ref()
-                {
-                    let revolve_profiles = matches!(d.def, DraftDef::Revolve(_)) && !d.axis_pick;
-                    if revolve_profiles
-                        && ui
-                            .button("Continue")
-                            .on_hover_text("Done with the profiles: pick the axis")
-                            .clicked()
-                    {
-                        if let Some(d) = self.extrude.as_mut() {
-                            d.axis_pick = true;
-                        }
+                // Every other command: Next and Back to its inputs (rule 21),
+                // Flip where there is a direction, OK and Cancel of its panel.
+                if self.step_menu(ui) {
+                    if self.flip_available() && ui.button("Flip Direction").clicked() {
+                        self.flip_direction();
                         ui.close();
                     }
-                    if ui.button("OK (Ctrl+Enter)").clicked() {
-                        self.commit_extrude();
-                        ui.close();
-                    }
-                    if ui.button("Cancel (Esc)").clicked() {
-                        self.cancel_extrude();
-                        ui.close();
+                    if self.editing.is_none() {
+                        self.ok_cancel_menu(ui);
                     }
                     ui.separator();
                 }
@@ -6163,26 +6176,26 @@ impl CadCraftApp {
                         }
                     }
                 });
-                match &context_target {
-                    // A selection lists New Sketch itself.
-                    Some(_) if self.editing.is_none() && !self.sel.is_empty() => {}
-                    Some(plane) => {
-                        if ui.button("New Sketch").clicked() {
-                            self.mode = Mode::PickPlane(PickPurpose::NewSketch);
-                            self.plane_picked(plane.clone());
-                            ui.close();
-                        }
-                    }
-                    None => {
-                        ui.label(RichText::new("No face under the cursor").weak());
-                    }
+                // A selection lists New Sketch itself.
+                if let Some(plane) = &context_target
+                    && (self.editing.is_some() || self.sel.is_empty())
+                    && ui.button("New Sketch").clicked()
+                {
+                    self.mode = Mode::PickPlane(PickPurpose::NewSketch);
+                    self.plane_picked(plane.clone());
+                    ui.close();
+                }
+                if ui.button("Home View (F6)").clicked() {
+                    self.set_view(StandardView::Home);
+                    ui.close();
                 }
                 if self.editing.is_some() {
                     if self.tools.tool != Tool::Select {
-                        if ui
-                            .button("Done")
-                            .on_hover_text("End the line chain / create the spline")
-                            .clicked()
+                        if self.step_flow().is_none()
+                            && ui
+                                .button("Done")
+                                .on_hover_text("End the line chain / create the spline")
+                                .clicked()
                         {
                             self.tool_op(|t, ps| t.finish(ps));
                             ui.close();
@@ -7036,6 +7049,7 @@ impl CadCraftApp {
             }
             self.draw_draft_overlay(&painter, rect, draft_hover.as_ref());
             self.draw_command_hint(&painter, rect, pointer);
+            self.draw_cursor_value(ui.ctx(), &painter, rect, pointer);
             self.draw_split_arrow(&painter, rect);
             self.draw_pattern_refs(&painter, rect);
             if self.scene_sel.0 != want_sel || self.scene_sel.1 != want_hover {
@@ -7933,7 +7947,55 @@ impl CadCraftApp {
 impl eframe::App for CadCraftApp {
     /// While Dynamic Input fields are shown, Tab moves between them: take it
     /// before egui uses it to move its widget focus.
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        for (key, modifiers) in std::mem::take(&mut self.inject_keys) {
+            for pressed in [true, false] {
+                raw_input.events.push(egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                });
+            }
+        }
+        // The value next to the cursor: Tab walks its fields, the first
+        // digit typed over the view opens it (before egui or an alias sees it).
+        if self.cv.step.is_some() {
+            raw_input.events.retain(|e| match e {
+                egui::Event::Key {
+                    key: Key::Tab,
+                    pressed,
+                    modifiers,
+                    ..
+                } if !modifiers.command => {
+                    if *pressed {
+                        self.cv.tab += if modifiers.shift { -1 } else { 1 };
+                    }
+                    false
+                }
+                // Esc drops what was typed, never the whole command.
+                egui::Event::Key {
+                    key: Key::Escape,
+                    pressed,
+                    ..
+                } => {
+                    self.cv.esc |= *pressed;
+                    false
+                }
+                _ => true,
+            });
+        } else if self.cv.in_view
+            && !ctx.egui_wants_keyboard_input()
+            && self.cursor_value_on(ctx)
+            && let Some(k) = raw_input
+                .events
+                .iter()
+                .position(|e| matches!(e, egui::Event::Text(t) if cursor_value::starts_value(t)))
+            && let egui::Event::Text(t) = raw_input.events.remove(k)
+        {
+            self.cv.seed = Some(t);
+        }
         // Ctrl+Tab / Ctrl+Shift+Tab: document tabs (`doc_tabs`).
         raw_input.events.retain(|e| match e {
             egui::Event::Key {

@@ -2087,6 +2087,8 @@ impl CadCraftApp {
                 return;
             }
             if self.cons.draft.is_some() {
+                self.step_menu(ui);
+                ui.separator();
                 if ui.button("OK").clicked() {
                     self.commit_constrain_pub(true);
                     ui.close();
@@ -2129,6 +2131,10 @@ impl CadCraftApp {
         }
         let painter = ui.painter_at(rect);
         self.render_view(ui, frame, rect, &painter);
+        let cursor = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| rect.contains(*p));
+        self.draw_cursor_value(ui.ctx(), &painter, rect, cursor);
 
         // --- overlays ---
         if let (Some(AsmTool::Place(doc)), Some(p)) = (self.asm.tool, pointer)

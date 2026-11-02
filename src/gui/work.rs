@@ -1551,8 +1551,7 @@ impl CadCraftApp {
         match result {
             Ok(()) => {
                 self.work_draft = None;
-                let k = d.edit.unwrap_or(self.part().last_inserted());
-                self.selection = super::Selection::Feature(k);
+                self.selection = super::Selection::Body;
                 self.file_status = None;
                 self.scene_dirty = true;
             }

@@ -193,7 +193,6 @@ impl CadCraftApp {
         }
         match built {
             Ok(_) => {
-                let k = d.edit.unwrap_or(self.part().last_inserted());
                 self.file_status = None;
                 self.scene_dirty = true;
                 if keep_open && d.edit.is_none() {
@@ -206,7 +205,7 @@ impl CadCraftApp {
                 } else {
                     self.delete_draft = None;
                     self.end_feature_edit();
-                    self.selection = super::Selection::Feature(k);
+                    self.selection = super::Selection::Body;
                 }
             }
             Err(e) => {

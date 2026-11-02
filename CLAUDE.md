@@ -77,6 +77,7 @@ Names: product **3DCadCraft**, binary `3dcadcraft`, Rust package/lib **`cadcraft
 | `gui::asm_planned` | assembly commands with their panel only (rule 15, spec 3.0): `AsmPlanned` (37 commands: Component, Pattern, Productivity, Simplify, Interference, the Design tab…), `pages()` as data; shown by `part_planned::PartDialog` whose `kind` is a `Planned` (`Part` / `Asm`); in an assembly `PickKind::Body` = a component, faces / edges via `geom_under`; OK disabled | `AsmPlanned`, `Planned` |
 | `gui::if_builder` | decisions without typing their syntax (spec 0.5): `CondBuilder` (rows *parameter · comparison · value* joined by and / or, read back from a typed condition, else text), `IfBuilder` + `window` (the If window of a field: `>` → If..., Parameters' **if** button), `if_hint` / `draw_hint` (the `if(` argument hint under a field), `condition_now`; Suppress if uses the same rows | `CondBuilder`, `IfBuilder` |
 | `gui::keymap` | the user's keys (spec 0.15 §4.3, G5): `Keymap` in `AppOptions::keymap` (aliases / key per command id, only differences), Tools → Customize → Keyboard (`CustomizeUi`), the ribbon buttons' right-click menu (`button_menu`, Blender's Assign Shortcut; requests through egui temp data), `user_key_shortcuts` (before the built-in keys), `commands::alias_match_in` | `Keymap`, `CustomizeUi` |
+| `gui::steps`, `gui::cursor_value` | rule 21: Next / Back of every command (`step_flow`: the inputs of whatever is open, `step_next`, `step_menu`, Flip Direction, OK / Cancel as injected keys); the value next to the cursor and its editor (panel fields register in `field_row` / `ExprValue::cursor`; spec 0-ui §4.2) | `CursorValue`, `PanelField` |
 | `gui::sel_menu` | rule 17 menus: `SelKind` of the selection, `entries(kind, one)` (Inventor's order), `run_entry` starts each command with the selection as its first input; a right click selects the item under the cursor first (`select_for_menu`) | `SelKind`, `Entry` |
 | `gui::view_style` | View › Visual Style (`VisualStyle` → `renderer::ViewStyle`: faces, depth-only faces, edges, dashed hidden edges, monochrome) and Section View (`Section`: 1–2 `PlaneRef` with offset / flip → `renderer::Cut`, Quarter = both planes cut, Three Quarter = either; `view_cut` gives Slice Graphics first) | `VisualStyle`, `Section` |
 | `part::body_op` | body operations of 3D Model › Modify / Surface as one feature type `Feature::BodyOp(BodyOpFeature { op: BodyOp })` (format revision 31): `Thicken(ThickenOp)` — faces (`FaceRef`) or quilts (surface body names), Solid (Join / Cut / Intersect / New Solid) or Surface; geometry `kernel::exact::{face_sheet, thicken_sheet, thicken_faces, offset_sheet}` + `part/exact.rs::body_op` (sees the surface bodies); GUI `gui/thicken.rs`; `CopyObject` (`part/copy_object.rs`, revision 40: faces / bodies into surfaces, a composite, a solid or solids; new bodies `<id>`, `<id>#2`…, faces `<body>:<source face>`; GUI the planned panel through `gui/surface_cmd.rs`) | `BodyOpFeature`, `BodyOp`, `ThickenOp`, `CopyObjectOp` |
@@ -196,6 +197,13 @@ changed (rebuilds body, re-resolves every sketch) → `scene_dirty = true`.
     stays within 100–200 ms, and an idle / hovering frame within a frame (~16 ms). Anything per frame is
     cached (edge lists per part, `asm_edges`; resolved skeleton lines); quadratic walks over a body's edges
     × faces are never per pick (`edge_ref` per edge took 4.4 s on one faceted part).
+
+21. **Next in every command** (owner's rule, 2026-11-02): every command with more than one input has **Next**
+    and **Back** on top of its right-click menu (`gui/steps.rs`): Next is the next selector, then the panel's
+    values one by one in the editor next to the cursor (`gui/cursor_value.rs`, spec 0-ui §4.2). Example: sketch
+    Mirror: select the lines, right click, Next, pick the mirror line; Extrude: pick the profile, Next, type the
+    distance, Flip Direction in the same menu. A new command gets this by having a `Flow` (`command_ui::Cmd`, or a
+    branch of `step_flow`) and by its numbers going through `field_row` or `ExprValue::cursor(label)`.
 
 ## Exact kernel (SolidCraft / truck) — see `docs/SOLIDCRAFT.md`
 
@@ -1385,6 +1393,12 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   ranges (a line 0..1, an arc its angle), so a tube cap's hole and outline tied and the hole could become the outer loop.
   Bodies with the kernel's meshes looked right; a body read from a file (no meshes) was triangulated inside out (frame
   members sketched on a work plane: a third of their mass, red caps). Check new B-rep code with a save + load.
+- **Properties cannot widen** (`layout.rs`, a child `Ui` the panel does not grow with): a row too long is cut, so wrap
+  it (`horizontal_wrapped`). A wide row used to move the view at the first dimension of a sketch.
+- **The value next to the cursor is the panel's field**: it registers in `field_row` / `ExprValue::cursor` each frame
+  and commits through `measure_pick::result_id`, so it needs no command code. Its Tab, Esc and first digit are taken in
+  `raw_input_hook` (Esc in `shortcuts` would cancel the whole command). Scripted `key 5` sends no `Text` event: use `type 5`.
+- **A menu's OK and Cancel are keys** (`inject_keys`, pushed in `raw_input_hook`): every panel already answers Ctrl+Enter and Esc.
 - **Properties label column**: `panels::plabel` draws a drag handle on its right border; the width lives in
   egui temp data (`label_width`) and `UiSettings::props_label_width`. New property grids use
   `min_col_width(label_width(ctx))` and `plabel`.

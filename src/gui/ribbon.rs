@@ -999,7 +999,7 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
             constrain.push(sk("sketch.dof").mini());
             constrain.push(c(constraints).mini());
             constrain.push(sk("sketch.coordinate_system").mini());
-            vec![
+            let mut panels = vec![
                 panel(
                     "Create",
                     vec![
@@ -1086,21 +1086,13 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                         sk("sketch.center_point").mini(),
                     ],
                 ),
-                panel(
-                    "Demo",
-                    vec![split(
-                        "Demo",
-                        items(&[
-                            "demo.rectangle",
-                            "demo.slot",
-                            "demo.tangents",
-                            "demo.lines",
-                            "demo.revolve",
-                        ]),
-                    )],
-                ),
                 panel("Exit", vec![sk("sketch.finish").large()]),
-            ]
+            ];
+            // Outside a sketch every tool is grey: this is the way in.
+            if !st.editing {
+                panels.insert(0, panel("Sketch", vec![c("part.start_sketch").large()]));
+            }
+            panels
         }
         Tab::Inspect if st.assembly => vec![
             panel(

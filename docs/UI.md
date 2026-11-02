@@ -48,7 +48,7 @@ What is copied is the **organisation and the workflow**, not the graphics: the i
 
 **The ribbon (the same for every document today):**
 - **3D Model, Inspect, Tools, Manage, View** and **Sketch**. Tools has a **Material and Appearance** panel (Material, Appearance, Adjust, Clear); Manage — **Documents** (the design file's documents: New Part / Assembly / Drawing in this file, Duplicate, Rename, Delete, the Documents window), **Storage** (Save to Separate File, Embed, Embed All, Separate All) and **Styles and Standards** (Styles Editor, Update, Purge); Inspect → **Physical Properties**.
-- **Sketch tab:** panels Create (with the **Project Geometry** split button: Project Geometry — points and curves from earlier sketches, model vertices, edges and faces, work features, and while a part is edited in place the edges and faces of the other components; Shift = construction; Ctrl = the whole loop of the edge under the cursor (on the face parallel to the sketch); Esc / right click → Done stops it —, **Project Cut Edges** (PCE) and **Project Flat Pattern** (PFP)), Modify, Pattern, Constrain, Format, Demo, Exit (there is no Insert panel; Image etc. ⬜).
+- **Sketch tab:** panels Create (with the **Project Geometry** split button: Project Geometry — points and curves from earlier sketches, model vertices, edges and faces, work features, and while a part is edited in place the edges and faces of the other components; Shift = construction; Ctrl = the whole loop of the edge under the cursor (on the face parallel to the sketch); Esc / right click → Done stops it —, **Project Cut Edges** (PCE) and **Project Flat Pattern** (PFP)), Modify, Pattern, Constrain, Format, Exit, and outside a sketch **Start 2D Sketch** first (there is no Insert panel; Image etc. ⬜). Demo sketches are in Help → Demo Sketches.
 - 🟡 **Assembly:** Assemble, Design (calculators), Inspect, Tools, Manage, View, Environments (2026-10-27: every command on the ribbon, spec 3.0).
 - ⬜ **Drawing:** Place Views, Annotate, Sketch, Tools, View.
 
@@ -199,6 +199,8 @@ Works for Line, Center Point Circle, Two Point / Two Point Center Rectangle, Poi
 | **Select: …** (the top bar, next to Undo/Redo; also in a command) | priority: Faces and Edges / Features / Bodies / Sketch Features; **Filters ▸** (Faces, Edges, Vertices, Features, Solid/Surface Bodies, Sketches, Sketch Entities, Work Planes/Axes/Points, Origin; Select All Filters); Window/Crossing by Direction / Always Window / Always Crossing; Enable Prehighlight; Select Loop, Select Tangencies, Select Invert, Select All, Previous Selection, Clear Selection. `*` in the title = a filter is off |
 | **Shift + right click** in the view | **Selection** menu next to the cursor (by context: part / command / sketch; [spec/0.9a](spec/0.9a-selection-filters.md)); does not start Pan |
 | Esc | clears the selection (Previous Selection brings it back); closes Select Other |
+| **Digit, `.` or `-`** over the view while a command is open | opens the value next to the cursor with that character; Enter applies, Esc drops it, Tab goes to the next value (spec 0-ui §4.2) |
+| **Right click → Next / Back** in a command | the next / previous input, then its values next to the cursor (rule 21) |
 | Extrude/Revolve: dragging from empty space | picking profiles with a rectangle |
 | **Rebuild** (the top bar) / Tools → Update → Rebuild All | all features again, without the cache |
 | File → **Export** → STL / STEP / GLB | file dialog with the suggested name `<name>.stl` / `.step` / `.glb` |
@@ -220,7 +222,7 @@ As in Inventor's panels ([spec/0-ui.md §4.1](spec/0-ui.md)):
 | click in the browser (Split) | Origin → XY / XZ / YZ, a work plane row, a sketch or Surface Bodies → surface go into the Split Tool selector; a row in Solid Bodies — into Solid |
 | Split Tool active | the origin planes are shown temporarily, the one pointed at is highlighted |
 | cursor in the view | label next to the mouse: what the active selector is waiting for |
-| **right click** | the command's menu: **OK**, **Apply (+)**, **Continue**, **Back**, **Cancel**, **Repeat …** + the options (Draft: type, One Way / Symmetric / Asymmetric, Flip pull direction; Shell: Inside / Outside / Center, Sharp / Rounded Corners) |
+| **right click** | the command's menu: **Next**, **Back**, **OK**, **Apply**, **Cancel**, **Repeat …** + the options (Draft: type, One Way / Symmetric / Asymmetric, Flip pull direction; Shell: Inside / Outside / Center, Sharp / Rounded Corners) |
 | **Enter** | Continue to an empty required selector, otherwise OK (does not repeat the last command while the command is open) |
 | **Ctrl+Enter** | OK |
 | **Esc** | Cancel |
@@ -353,7 +355,7 @@ Every Inventor part command without logic yet opens its whole panel in Propertie
 picks in the view, every option with its default); OK and Apply stay disabled. Selectors, Enter, the right-click
 menu (Continue / Back / Cancel), the cursor hint and the status prompt work as in Face Draft or Combine. What is
 selected before and fits the first selector fills it (rule 17). When the window is too narrow, the rarely used
-ribbon panels (Surface, Plastic Part, Freeform, Primitives, Convert, Demo, Format…) collapse first into one
+ribbon panels (Surface, Plastic Part, Freeform, Primitives, Convert, Format…) collapse first into one
 button each that drops the panel down, then the others from the right (Inventor's behaviour).
 
 Aliases: Emboss **RLF**, Derive **DER**, Import **IMP**, Decal **DCL**, Mark **MK**, Unwrap **UNW**,

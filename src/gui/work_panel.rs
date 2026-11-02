@@ -254,6 +254,7 @@ impl CadCraftApp {
                     plabel(ui, "Distance");
                     ui.add(
                         super::valuefield::ExprValue::new(&mut d.distance)
+                            .cursor("Offset")
                             .speed(0.5)
                             .suffix(" mm"),
                     );

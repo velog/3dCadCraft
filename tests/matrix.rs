@@ -2821,7 +2821,7 @@ fn cases() -> Vec<Case> {
             name: "shell 16 in a box 20 high: refused",
             budget_ms: 300.0,
             build: c_shell_too_thick,
-            want: Want::Error("geometry kernel"),
+            want: Want::Error("cannot be built"),
         },
         Case {
             level: "complex",

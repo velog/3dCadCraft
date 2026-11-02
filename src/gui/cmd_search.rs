@@ -174,10 +174,32 @@ impl CadCraftApp {
                                 if !can {
                                     t = t.color(Color32::GRAY);
                                 }
-                                let b = ui.add(
-                                    egui::Button::new(t)
-                                        .frame(k == current)
-                                        .min_size(egui::vec2(200.0, 0.0)),
+                                // The name reads from the left edge, in a
+                                // column of its own.
+                                let (cell, b) = ui.allocate_exact_size(
+                                    egui::vec2(220.0, 18.0),
+                                    egui::Sense::click(),
+                                );
+                                if k == current || b.hovered() {
+                                    ui.painter().rect_filled(
+                                        cell,
+                                        3.0,
+                                        ui.visuals().selection.bg_fill,
+                                    );
+                                }
+                                let galley = egui::WidgetText::from(t).into_galley(
+                                    ui,
+                                    Some(egui::TextWrapMode::Truncate),
+                                    cell.width() - 8.0,
+                                    egui::TextStyle::Button,
+                                );
+                                ui.painter().galley(
+                                    egui::pos2(
+                                        cell.left() + 4.0,
+                                        cell.center().y - galley.size().y / 2.0,
+                                    ),
+                                    galley,
+                                    ui.visuals().text_color(),
                                 );
                                 if let Some(key) = self.keymap.shown_key(h.cmd) {
                                     ui.label(RichText::new(key).monospace().weak());

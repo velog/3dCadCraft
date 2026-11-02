@@ -430,6 +430,8 @@ impl CadCraftApp {
         let mut ok = false;
         let mut cancel = false;
         egui::Window::new("Edit Break")
+            .pivot(egui::Align2::LEFT_TOP)
+            .default_pos(super::layout::first_window_pos(ctx.content_rect()))
             .collapsible(false)
             .resizable(false)
             .open(&mut open)

@@ -680,7 +680,7 @@ impl CoilFeature {
                 g.constant_pitch(),
                 &plan.prefix,
             )
-            .map_err(|e| User(format!("the geometry kernel cannot build the coil ({e})")))?;
+            .map_err(|e| User(format!("this coil cannot be built ({e})")))?;
             tools.push(tool.clone());
             if self.operation == Operation::NewSolid {
                 out.push(tool);

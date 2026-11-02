@@ -1145,8 +1145,13 @@ impl CadCraftApp {
             if editing {
                 label.push_str("  (editing)");
             }
+            let selected = self.selection == Selection::Sketch(i);
             let mut text = RichText::new(label);
-            if editing {
+            if editing && selected {
+                // The state's colour was unreadable on the selection's; the
+                // status bar and Properties show it.
+                text = text.strong().color(Color32::WHITE);
+            } else if editing {
                 text = text.strong().color(self.sketch_color());
             } else if rolled {
                 text = text.color(ui.visuals().weak_text_color()).italics();
@@ -1166,7 +1171,6 @@ impl CadCraftApp {
 Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 ));
             }
-            let selected = self.selection == Selection::Sketch(i);
             let r = ui.selectable_label(selected, text).on_hover_text(hover);
             slow_click(ui, &r, selected, target.clone());
             if r.clicked() {
@@ -1219,6 +1223,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
 
     /// Properties of the current selection (Inventor-style property panel).
     pub(super) fn properties(&mut self, ui: &mut egui::Ui) {
+        super::cursor_value::begin(ui.ctx());
         ui.label(RichText::new("Properties").strong());
         ui.separator();
         if self.is_drawing() {
@@ -1326,7 +1331,8 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             self.tool_dialog_panel(ui);
             return;
         }
-        egui::ScrollArea::vertical().show(ui, |ui| match self.selection {
+        let shown = self.shown_selection();
+        egui::ScrollArea::vertical().show(ui, |ui| match shown {
             Selection::Feature(k) => self.feature_properties(ui, k),
             Selection::Project => self.project_properties(ui),
             Selection::Body => self.body_properties(ui),
@@ -1470,9 +1476,6 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 r
             }
         };
-        if rows.is_empty() {
-            ui.label("No solid");
-        }
         let many = rows.len() > 1;
         for (name, open, mesh, check) in rows {
             if many {
@@ -1499,19 +1502,18 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     );
                 }
                 Ok(s) => {
-                    ui.label(format!(
-                        "V {}   E {}   F {}   shells {}",
-                        s.vertices, s.edges, s.faces, s.shells
-                    ));
-                    ui.label(format!(
-                        "Euler–Poincaré: V - E + F = {}, genus {}",
-                        s.euler_characteristic(),
-                        s.genus().map_or_else(|| "-".to_owned(), |g| g.to_string())
-                    ));
-                    ui.colored_label(
-                        Color32::from_rgb(20, 150, 50),
-                        "✔ valid closed manifold solid",
-                    );
+                    ui.colored_label(Color32::from_rgb(20, 150, 50), "✔ valid solid");
+                    ui.collapsing("Details", |ui| {
+                        ui.label(format!(
+                            "V {}   E {}   F {}   shells {}",
+                            s.vertices, s.edges, s.faces, s.shells
+                        ));
+                        ui.label(format!(
+                            "Euler–Poincaré: V - E + F = {}, genus {}",
+                            s.euler_characteristic(),
+                            s.genus().map_or_else(|| "-".to_owned(), |g| g.to_string())
+                        ));
+                    });
                 }
                 Err(e) => {
                     ui.colored_label(Color32::RED, format!("✘ {e}"));
@@ -1704,7 +1706,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             if ui
                 .add_enabled(
                     ready,
-                    egui::Button::new("OK").min_size(egui::vec2(70.0, 22.0)),
+                    egui::Button::new("OK").min_size(egui::vec2(60.0, 22.0)),
                 )
                 .on_hover_text("Create the feature (Enter, Ctrl+Enter)")
                 .clicked()
@@ -1712,23 +1714,23 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             {
                 self.commit_extrude();
             }
-            if ui
-                .add(egui::Button::new("Cancel").min_size(egui::vec2(70.0, 22.0)))
-                .clicked()
-            {
-                self.cancel_extrude();
-            }
             let editing = self.extrude.as_ref().is_some_and(|d| d.edit.is_some());
             if !editing
                 && ui
                     .add_enabled(
                         ready,
-                        egui::Button::new("+").min_size(egui::vec2(26.0, 22.0)),
+                        egui::Button::new("Apply").min_size(egui::vec2(60.0, 22.0)),
                     )
-                    .on_hover_text("Apply (+): create the feature and start the command again")
+                    .on_hover_text("Create the feature and start the command again")
                     .clicked()
             {
                 self.apply_and_continue();
+            }
+            if ui
+                .add(egui::Button::new("Cancel").min_size(egui::vec2(60.0, 22.0)))
+                .clicked()
+            {
+                self.cancel_extrude();
             }
         });
     }
@@ -4580,10 +4582,12 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 Some(Ok(r)) => {
                     ui.colored_label(self.sketch_color(), self.sketch_state_text());
                     ui.label(format!("DOF left: {}    redundant: {}", r.dof, r.redundant));
-                    ui.label(format!(
-                        "iterations: {}    max residual: {:.1e}",
-                        r.iterations, r.max_residual
-                    ));
+                    ui.collapsing("Solver details", |ui| {
+                        ui.label(format!(
+                            "iterations: {}    max residual: {:.1e}",
+                            r.iterations, r.max_residual
+                        ));
+                    });
                 }
                 Some(Err(e)) => {
                     ui.colored_label(Color32::RED, e);
@@ -4613,11 +4617,13 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 .values()
                 .filter(|f| **f != crate::sketch::PointFreedom::Fixed)
                 .count();
-            ui.label(format!(
-                "Free points: {free} · rotating curves: {} · free radii: {}",
-                dof.rotating.len(),
-                dof.free_radius.len()
-            ));
+            if free + dof.rotating.len() + dof.free_radius.len() > 0 {
+                ui.label(format!(
+                    "Free points: {free} · rotating curves: {} · free radii: {}",
+                    dof.rotating.len(),
+                    dof.free_radius.len()
+                ));
+            }
             ui.toggle_value(&mut self.show_dof, "Show All Degrees of Freedom");
         }
         if !self.tools.selected.is_empty()
@@ -4654,7 +4660,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             .map(|(id, c)| (id, c.clone(), sketch.is_driven(id), sketch.measure(id)))
             .collect();
         for (id, c, driven, measured) in rows {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui
                     .small_button("x")
                     .on_hover_text("Delete constraint")
@@ -4757,6 +4763,17 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
             Some(Ok(r)) if r.redundant > 0 => {
                 format!("Over-constrained ({} redundant)", r.redundant)
             }
+            Some(Ok(r))
+                if r.dof == 0
+                    && self
+                        .editing
+                        .and_then(|i| self.part().sketches.get(i))
+                        .is_some_and(|ps| {
+                            ps.sketch.entities().all(|(e, _)| ps.is_reference(e))
+                        }) =>
+            {
+                "Empty sketch".into()
+            }
             Some(Ok(r)) if r.dof == 0 => "Fully constrained".into(),
             Some(Ok(r)) => format!("Needs {} dimension(s)/constraint(s)", r.dof),
             Some(Err(e)) => e.clone(),
@@ -4830,10 +4847,10 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     // under each other and under the controls).
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                     let room = ui.available_width();
-                    let prompt_room = if self.file_status.is_some() {
-                        room * 0.6
-                    } else {
-                        room
+                    let prompt_room = match &self.file_status {
+                        Some(Err(_)) => room * 0.6,
+                        Some(Ok(_)) => (room - 200.0).max(room * 0.6),
+                        None => room,
                     };
                     ui.scope(|ui| {
                     ui.set_max_width(prompt_room);
@@ -5088,6 +5105,17 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     .collapsible(false),
             )
             .show(ctx, |ui| {
+                let tab_id = egui::Id::new("options_tab");
+                let mut tab: &'static str =
+                    ui.data(|d| d.get_temp(tab_id)).unwrap_or("General");
+                ui.horizontal(|ui| {
+                    for name in ["General", "Save", "Display", "Prompts", "Sketch", "Assembly"] {
+                        ui.selectable_value(&mut tab, name, name);
+                    }
+                });
+                ui.data_mut(|d| d.insert_temp(tab_id, tab));
+                ui.separator();
+                if tab == "General" {
                 ui.label(RichText::new("Navigation").strong());
                 for preset in [MousePreset::Inventor, MousePreset::Classic] {
                     ui.radio_value(&mut self.mouse, preset, preset.label());
@@ -5124,7 +5152,8 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 .on_hover_text(
                     "A sketch made larger (typed sizes, dimensions) or a placed component that no longer fits: the view zooms out to show everything",
                 );
-                ui.separator();
+                }
+                if tab == "General" {
                 ui.label(RichText::new("Language").strong());
                 let mut bg = super::i18n::bulgarian();
                 if ui
@@ -5133,7 +5162,8 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 {
                     super::i18n::set_bulgarian(bg);
                 }
-                ui.separator();
+                }
+                if tab == "Sketch" {
                 ui.label(RichText::new("Sketch").strong());
                 let o = &mut self.sketch_opts;
                 ui.checkbox(
@@ -5151,7 +5181,8 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 ui.checkbox(&mut o.show_grid, "Grid lines");
                 ui.checkbox(&mut o.show_axes, "Axes");
                 ui.checkbox(&mut o.show_triad, "Coordinate system indicator");
-                ui.separator();
+                }
+                if tab == "Save" {
                 ui.label(RichText::new("Save").strong());
                 let mut on = self.thumbnail_source != super::layout::ThumbnailSource::Off;
                 if ui
@@ -5194,7 +5225,8 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     ui.radio_value(&mut self.docs.separate, true, "As separate files")
                         .on_hover_text("Each new document is a new file in a tab of its own");
                 });
-                ui.separator();
+                }
+                if tab == "Assembly" {
                 ui.label(RichText::new("Assembly").strong());
                 ui.checkbox(&mut self.in_place_opts.associative, "Cross-part geometry projection")
                     .on_hover_text(
@@ -5210,7 +5242,8 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     "Features are initially adaptive",
                 )
                 .on_hover_text("Features made while a part is edited in place are adaptive");
-                ui.separator();
+                }
+                if tab == "Display" {
                 ui.label(RichText::new("Display").strong());
                 ui.checkbox(&mut self.show_labels, "Show constraint labels");
                 if ui
@@ -5230,13 +5263,22 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                     .on_hover_text(
                         "Name faces and edges under the cursor by their persistent names (Extrusion1:End), as used in files and journals; off: kind, feature and body",
                     );
-                ui.separator();
+                }
+                if tab == "Prompts" {
                 ui.label(RichText::new("Prompted Interaction").strong());
+                ui.checkbox(
+                    &mut self.cursor_value_enabled,
+                    "Value and its editor next to the cursor",
+                )
+                .on_hover_text(
+                    "While a command is open its value follows the mouse; typing a number edits it there",
+                );
                 ui.checkbox(&mut self.alias_input, "Show command alias input dialog")
                     .on_hover_text(
                         "A letter typed over the view opens a field next to the cursor with the matching commands; Enter or Space starts one (off: a letter starts its command at once)",
                     );
-                ui.separator();
+                }
+                if tab == "Sketch" {
                 ui.label(RichText::new("Constraint Settings — Inference").strong());
                 let k = &mut self.tools.inference;
                 ui.checkbox(&mut k.infer, "Infer constraints")
@@ -5263,6 +5305,7 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 });
                 ui.checkbox(&mut k.coincident, "Coincident (snap to and share points)")
                     .on_hover_text("Off: new lines do not join existing points");
+                }
             });
         self.show_options = open;
     }
@@ -5690,6 +5733,17 @@ pub(super) fn field_row(
         expr: p.as_ref().and_then(|p| p.expr.as_deref()),
         table: fx.table,
     };
+    super::cursor_value::register(
+        ui.ctx(),
+        super::cursor_value::PanelField {
+            id: spec.id,
+            label: label.to_owned(),
+            value: spec.value,
+            unit: spec.unit,
+            name: spec.name.map(str::to_owned),
+            expr: spec.expr.map(str::to_owned),
+        },
+    );
     if let Some(t) = super::valuefield::value_field(ui, &spec) {
         fx.commits.push((field, t));
     }
@@ -6603,6 +6657,8 @@ impl CadCraftApp {
         if let Some((i, mut text)) = values_edit.take() {
             let mut keep = true;
             egui::Window::new("Multi-Value List")
+                .pivot(egui::Align2::LEFT_TOP)
+                .default_pos(super::layout::first_window_pos(ctx.content_rect()))
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {

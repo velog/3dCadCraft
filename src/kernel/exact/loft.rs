@@ -687,7 +687,7 @@ pub fn loft_guided(g: &GuidedLoft, prefix: &str) -> Result<ExactSolid, String> {
     } else {
         guarded("loft", || sk::loft_matched(&input))
     };
-    let body = built.map_err(|e| format!("the geometry kernel cannot build it ({e})"))?;
+    let body = built.map_err(|e| format!("this shape cannot be built ({e})"))?;
     let face_names = names_from(&body, &[], &side_names(&names, prefix));
     Ok(ExactSolid {
         name: Some(prefix.to_owned()),

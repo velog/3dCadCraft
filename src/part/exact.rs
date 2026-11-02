@@ -726,7 +726,7 @@ pub(super) fn combine(
 /// rebuild could not build a pattern either).
 pub(super) fn as_user(f: Fail) -> Fail {
     match f {
-        Kernel(e) => User(format!("the geometry kernel cannot build it ({e})")),
+        Kernel(e) => User(format!("this shape cannot be built ({e})")),
         u => u,
     }
 }
@@ -1069,7 +1069,7 @@ pub(super) fn blend(
                 log::debug!("loop blend: {e}");
                 wedge_blend(bl, body, cur).map_err(|e| {
                     log::debug!("wedge blend: {e}");
-                    User(format!("the geometry kernel cannot build it ({msg})"))
+                    User(format!("this shape cannot be built ({msg})"))
                 })
             }
             r => r,
@@ -1132,7 +1132,7 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
                     "free-form faces (a sweep or loft along a curve) cannot be offset yet ({e})"
                 ))
             } else {
-                User(format!("the geometry kernel cannot build it ({e})"))
+                User(format!("this shape cannot be built ({e})"))
             }
         },
     )?;
@@ -1350,7 +1350,7 @@ fn thicken(
                 .into(),
             )
         } else {
-            User(format!("the geometry kernel cannot build it ({e})"))
+            User(format!("this shape cannot be built ({e})"))
         }
     };
     // Every body that can hold a picked face: solids, then surface bodies.
@@ -1468,9 +1468,9 @@ fn thicken(
         (Err(e), Some((i, faces))) if !symmetric => {
             let eps = (0.1 * d.abs()).clamp(0.02, 0.5) * -d.signum();
             let sheet = exact::offset_sheet(all[*i], faces, eps, t.tolerance, id)
-                .map_err(|_| User(format!("the geometry kernel cannot build it ({e})")))?;
+                .map_err(|_| User(format!("this shape cannot be built ({e})")))?;
             let slab = exact::thicken_sheet(&sheet, d - eps, false, t.tolerance, id)
-                .map_err(|_| User(format!("the geometry kernel cannot build it ({e})")))?;
+                .map_err(|_| User(format!("this shape cannot be built ({e})")))?;
             exact::boolean(&cur[target], &slab, op)
                 .map_err(kernel)?
                 .ok_or_else(|| User(format!("{:?}: nothing is left of the solid", t.operation)))?
@@ -1504,7 +1504,7 @@ pub(super) fn draft(
     }
     let pull = dr.pull_direction(body, works).map_err(User)?;
     let refs = dr.faces_with_blends(body, pull);
-    let kernel = |e: String| User(format!("the geometry kernel cannot build it ({e})"));
+    let kernel = |e: String| User(format!("this shape cannot be built ({e})"));
     let mut out = cur.to_vec();
     if let Some(two) = dr
         .two_sided(body, works, pull, sketch_lines)
@@ -2354,7 +2354,7 @@ fn special_fillet(
     let BlendKind::Fillet { radius } = bl.kind else {
         return Err(User("not a fillet".into()));
     };
-    let cannot = |e: String| User(format!("the geometry kernel cannot build it ({e})"));
+    let cannot = |e: String| User(format!("this shape cannot be built ({e})"));
     let mut out = cur.to_vec();
     let mut picker = EdgePoints::new(body);
     // Constant sets: one point and one radius per edge, per solid.

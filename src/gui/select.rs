@@ -36,6 +36,21 @@ pub(super) enum SelItem {
 const HIDDEN_TESTS: usize = 24;
 
 impl CadCraftApp {
+    /// What Properties shows: the feature of the face, edge or vertex picked
+    /// in the view (Inventor), else the browser's selection.
+    pub(super) fn shown_selection(&self) -> super::Selection {
+        let name = match self.sel.as_slice() {
+            [SelItem::Face(n) | SelItem::Vertex(n) | SelItem::Feature(n)] => Some(n.clone()),
+            [SelItem::Edge(e)] => self.part().body.edge(*e).and_then(|x| x.name.clone()),
+            _ => None,
+        };
+        name.and_then(|n| {
+            let id = n.split(':').next()?.split(['#', '~']).next()?;
+            self.part().feature_index(id)
+        })
+        .map_or(self.selection, super::Selection::Feature)
+    }
+
     /// Whether category `c` may be picked this frame (the active selector's
     /// kinds ∩ the user filter, see `update_pick_filter`).
     pub(super) fn cat_on(&self, c: Category) -> bool {

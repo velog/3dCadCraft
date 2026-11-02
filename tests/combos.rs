@@ -233,7 +233,7 @@ fn fillet_of_a_partial_arc_concave_edge() {
         }
         // A clear refusal is acceptable (open in SolidCraft); the part stays.
         Err(e) => {
-            assert!(e.to_string().contains("kernel"), "{e}");
+            assert!(e.to_string().contains("cannot be built"), "{e}");
             assert!((volume(&p) - before).abs() < 1e-6);
         }
     }
@@ -372,7 +372,7 @@ fn shell_removing_a_piece_of_a_split_top() {
             }
             assert!(volume(&q) < volume(&p));
         }
-        Err(e) => assert!(e.to_string().contains("kernel"), "{e}"),
+        Err(e) => assert!(e.to_string().contains("cannot be built"), "{e}"),
     }
 }
 
@@ -436,7 +436,7 @@ fn shell_of_a_shelled_box() {
             assert!(volume(&p) < before);
         }
         Err(e) => {
-            assert!(e.to_string().contains("kernel"), "{e}");
+            assert!(e.to_string().contains("cannot be built"), "{e}");
             assert!((volume(&p) - before).abs() < 1e-6, "part changed");
         }
     }
@@ -455,7 +455,7 @@ fn shell_bad_thickness_leaves_the_part() {
             if th == 0.0 {
                 "greater than 0"
             } else {
-                "kernel"
+                "cannot be built"
             },
         );
         assert_eq!(p.features.len(), 1);
@@ -494,7 +494,7 @@ fn negative_draft_then_shell_outside() {
             );
             check(&p, outer - inner, 1e-3);
         }
-        Err(e) => assert!(e.to_string().contains("kernel"), "{e}"),
+        Err(e) => assert!(e.to_string().contains("cannot be built"), "{e}"),
     }
 }
 
@@ -586,7 +586,7 @@ fn draft_of_zero_degrees_is_a_no_op() {
     }
     match p.add_draft(d) {
         Ok(_) => check(&p, 24_000.0, 1e-9),
-        Err(e) => assert!(e.to_string().contains("kernel"), "{e}"),
+        Err(e) => assert!(e.to_string().contains("cannot be built"), "{e}"),
     }
 }
 
@@ -600,7 +600,7 @@ fn draft_of_a_face_square_to_the_pull_is_refused() {
     d.draft_type = DraftType::FixedPlane;
     d.plane = Some(PlaneRef::Origin(OriginPlane::XY));
     d.faces.push(face_ref(&p, &t, [20.0, 15.0, 20.0]));
-    refused(p.add_draft(d), "kernel");
+    refused(p.add_draft(d), "cannot be built");
     assert_eq!(p.features.len(), 1);
     check(&p, 24_000.0, 1e-9);
 }
@@ -717,7 +717,7 @@ fn chamfer_then_fillet_neighbours() {
                 "{v}"
             );
         }
-        Err(e) => assert!(e.to_string().contains("kernel"), "{e}"),
+        Err(e) => assert!(e.to_string().contains("cannot be built"), "{e}"),
     }
 }
 

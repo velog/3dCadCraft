@@ -434,8 +434,8 @@ const TABLE: &[(&str, &str)] = &[
     ("Select the second line", "Изберете втората линия"),
     ("Select the first line", "Изберете първата линия"),
     (
-        "Select geometry, then press Enter (or right-click: Done)",
-        "Изберете геометрия, после Enter (или десен клик: Done)",
+        "Select geometry, then press Enter (or right-click: Next)",
+        "Изберете геометрия, после Enter (или десен клик: Next)",
     ),
     (
         "Scale: click the base point (scale factor in Properties)",

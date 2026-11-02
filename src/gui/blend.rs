@@ -451,7 +451,7 @@ impl CadCraftApp {
             Ok(_) if d.edit.is_some() => {
                 self.scene_dirty = true;
                 self.blend_draft = None;
-                self.selection = super::Selection::Feature(d.edit.unwrap_or_default());
+                self.selection = super::Selection::Body;
             }
             Ok(_) => {
                 self.scene_dirty = true;
@@ -465,7 +465,7 @@ impl CadCraftApp {
                     self.blend_draft = Some(next);
                 } else {
                     self.blend_draft = None;
-                    self.selection = super::Selection::Feature(self.part().last_inserted());
+                    self.selection = super::Selection::Body;
                 }
             }
             Err(e) => {

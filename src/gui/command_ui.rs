@@ -129,13 +129,20 @@ pub(super) fn command_menu(
     apply: bool,
     repeat: Option<String>,
     options: &[MenuOption],
+    can: (bool, bool),
 ) -> Option<MenuChoice> {
     let mut out = None;
     for (item, on) in flow.menu(apply, repeat.is_some()) {
+        // Next also reaches the panel's values, Back returns from them.
+        let on = match item {
+            MenuItem::Continue => can.0,
+            MenuItem::Back => can.1,
+            _ => on,
+        };
         let label = match item {
             MenuItem::Ok => "OK (Ctrl+Enter)".to_owned(),
-            MenuItem::Apply => "Apply (+)".to_owned(),
-            MenuItem::Continue => "Continue (Enter)".to_owned(),
+            MenuItem::Apply => "Apply".to_owned(),
+            MenuItem::Continue => "Next".to_owned(),
             MenuItem::Back => "Back".to_owned(),
             MenuItem::Cancel => "Cancel (Esc)".to_owned(),
             MenuItem::Repeat => format!("Repeat {}", repeat.clone().unwrap_or_default()),
@@ -372,7 +379,7 @@ impl CadCraftApp {
         let Some(cmd) = self.flow_cmd() else {
             return false;
         };
-        let Some(mut flow) = self.command_flow() else {
+        let Some(flow) = self.command_flow() else {
             return false;
         };
         let editing = match cmd {
@@ -462,26 +469,16 @@ impl CadCraftApp {
                 ui.separator();
             }
         }
-        let Some(choice) = command_menu(ui, &flow, !editing, repeat, &options) else {
+        let ctx = ui.ctx().clone();
+        let can = (self.step_can_next(&ctx), self.step_can_back());
+        let Some(choice) = command_menu(ui, &flow, !editing, repeat, &options, can) else {
             return true;
         };
         match choice {
             MenuChoice::Item(MenuItem::Ok) => self.command_ok(false),
             MenuChoice::Item(MenuItem::Apply) => self.command_ok(true),
-            MenuChoice::Item(MenuItem::Continue) => {
-                if flow.continue_()
-                    && let Some(k) = flow.active_key()
-                {
-                    self.command_activate(k);
-                }
-            }
-            MenuChoice::Item(MenuItem::Back) => {
-                if flow.back()
-                    && let Some(k) = flow.active_key()
-                {
-                    self.command_activate(k);
-                }
-            }
+            MenuChoice::Item(MenuItem::Continue) => self.step_next(&ctx),
+            MenuChoice::Item(MenuItem::Back) => self.step_back(&ctx),
             MenuChoice::Item(MenuItem::Cancel) => self.command_cancel(),
             MenuChoice::Item(MenuItem::Repeat) => {
                 if let Some(a) = self.repeatable() {

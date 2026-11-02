@@ -778,7 +778,7 @@ impl SketchTools {
             | Tool::Stretch
                 if !self.transform_ready =>
             {
-                "Select geometry, then press Enter (or right-click: Done)"
+                "Select geometry, then press Enter (or right-click: Next)"
             }
             Tool::Scale => "Scale: click the base point (scale factor in Properties)",
             Tool::Stretch if n == 0 => "Stretch: click the base point",

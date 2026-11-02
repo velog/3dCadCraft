@@ -2277,7 +2277,7 @@ impl PartDialog {
             Num(label, def, unit) => {
                 plabel(ui, label);
                 let v = self.nums.entry(at).or_insert(def);
-                ui.add(ExprValue::new(v).suffix(unit));
+                ui.add(ExprValue::new(v).suffix(unit).cursor(label));
                 ui.end_row();
             }
             Text(label, def) => {

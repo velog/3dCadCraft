@@ -258,7 +258,7 @@ Source: Autodesk forum, "RE BUILD ALL vs LOCAL UPDATE" (behaviour as described b
 | **Warnings ("health")** | "sick" sketches and features are orange in the browser, and the reason is in the tooltip and in Properties | ✅ |
 | **Questions on conflict** | a dimension that over-constrains → a question whether it should be driven | ✅ |
 | **Explanation in the dialog** | what is disabled and why (for example Join/Cut), what is awaited ("Pick the To face…") | ✅ |
-| **Demo sketches** | Sketch tab → Demo sketches panel (rectangle, slot, tangents, lines), for a quick start | ✅ |
+| **Demo sketches** | Help → Demo Sketches (rectangle, slot, tangents, lines, revolve), for a quick start; their ribbon panel kept Constrain folded at 1400 px | ✅ |
 | **Help (F1)** | opens the specification of the current command (`docs/spec/…`) with the system program | 🟡 implemented, no visual check; the path points to the source folder (an installation will need the documents packaged) |
 | **Command search** | a search field by name (and by the Inventor name), Alt+S — [0.15 §5.3](0.15-context-menus-shortcuts.md) | ⬜ |
 | **First launch** | a short introduction: mouse profile, where Start 2D Sketch is | ⬜ |
@@ -275,15 +275,27 @@ the drawing and events in `gui/command_ui.rs`. Face Draft and Shell already use 
 | **Selector = row** | name; arrow; **coloured dot** (the same colour as the highlight in the view: faces — blue, direction — orange, plane/tool — turquoise, edges — purple); state ("Select", "3 face(s)", "XY Plane"); `x` clears; red `*` — required and empty | 🟡 Face Draft, Shell |
 | **The active selector** | underlined and marked; only it takes clicks in the view; a click on a row makes it active; `x` clears it and makes it active | 🟡 |
 | **Automatic advance** | after a valid pick, a single-item selector (direction, plane, tool) moves on to the next empty one (otherwise to the next one); a multi-item selector stays | 🟡 |
-| **Right click in the view** | the command's menu instead of the usual one: **OK**, **Apply (+)** (not in Edit Feature), **Continue**, **Back**, **Cancel**, **Repeat <the last one>**, plus the command's options (Draft: Fixed Edge / Fixed Plane / Parting Line, One Way / Symmetric / Asymmetric, Flip pull direction; Shell: Inside / Outside / Center, Sharp / Rounded Corners). OK is disabled while a required input is missing | 🟡 ordinary context menu (radial ⬜) |
-| **Continue / Back** | Continue: the first empty required selector, otherwise the next one; Back: the previous one | 🟡 |
+| **Right click in the view** | the command's menu instead of the usual one: **Next**, **Back**, **OK**, **Apply** (not in Edit Feature), **Cancel**, **Repeat <the last one>**, plus the command's options (Draft: Fixed Edge / Fixed Plane / Parting Line, One Way / Symmetric / Asymmetric, Flip pull direction; Shell: Inside / Outside / Center, Sharp / Rounded Corners). OK is disabled while a required input is missing | 🟡 ordinary context menu (radial ⬜) |
+| **Next / Back** (owner's rule 21; Inventor calls Next *Continue*) | Next: the first empty required selector, otherwise the next one, after the last selector the panel's values in the editor next to the cursor (§4.2); Back: the previous one. Every command with more than one input: the shared flow, Extrude, Revolve, Fillet / Chamfer, Sweep, Coil, Rib, Pattern / Mirror, Hole, Thread, work features, assembly Constrain and Joint, sketch Move / Copy / Rotate / Mirror / Scale / Stretch and sketch patterns (`gui/steps.rs`). Not applicable: commands whose every click is complete by itself or moves on by itself (Line, Dimension, the constraints, Trim, Point, drawing annotations whose right click already ends them) | ✅ checked: sketch Mirror, Extrude, Fillet, Shell, Work Plane; 🟡 others |
 | **Enter** | while a required selector is empty — Continue (the focus goes to it); otherwise OK. **Ctrl+Enter** — always OK, if possible. Esc — Cancel. While the dialog is open, Enter/Space do **not** repeat the last command | 🟡 |
 | **Prompt next to the cursor** | a yellow label next to the mouse with what the active selector is waiting for ("Select faces to draft", "Select the pull direction (…)") | 🟡 |
 | **Status bar** | `<Command>: <the active selector's prompt>`; once everything is selected — "…, or OK (Enter)"; EN + BG (`gui/i18n.rs`) | 🟡 |
 | **Prehighlight** | under the cursor only what the active selector accepts is highlighted (`PickKind`: face, planar face, plane, straight edge, edge, axis, sketch, body); for a direction — a faint arrow on the candidate | 🟡 Face Draft |
 | **Input glyphs** | the command draws its inputs in the view: the direction (arrow), the plane (outline), the edge that stays (Fixed Edge), the fixed edges | 🟡 Face Draft |
 
-**How another command adopts it** (Extrude, Fillet, Hole, Pattern… — not migrated yet):
+### 4.2 The value next to the cursor (owner's request, 2026-11-02)
+
+While a part or assembly command is open and its inputs are complete, its first value follows the mouse (`Distance A: 10 mm`). The editor is the panel's own field (`gui/cursor_value.rs`), so a command needs no code of its own.
+
+| Rule | Status |
+|---|---|
+| Typing a digit, `.` or `-` over the view opens the editor at the cursor with that character; letters stay the aliases | ✅ Extrude, Fillet, Shell |
+| Next reaches the same editor with the value selected, so a parameter name can be typed too; it stops following the mouse, so `>` and Flip can be clicked | ✅ Extrude, Fillet |
+| Enter applies and closes (a second Enter is OK); Esc drops what was typed, never the command; Tab / Shift+Tab walk the panel's values | ✅ Enter, Esc; 🟡 Tab: no visual check |
+| Flip in the editor and Flip Direction in the right-click menu | ✅ Extrude; ⬜ other commands with a direction |
+| Off in Application Options › Prompts; a sketch keeps Dynamic Input instead | ✅ |
+
+**How another command adopts the shared flow** (not migrated yet: Extrude, Fillet, Hole, Pattern… have their inputs in `steps.rs`, without selector rows):
 1. it describes its selectors as `Vec<Selector>` (key, name, prompt, accepted `PickKind`,
    single/many, required, count, colour), like `command::flow::draft_selectors`;
 2. it keeps only the key of the active selector in its draft and builds a `Flow` every frame;
@@ -310,6 +322,8 @@ the drawing and events in `gui/command_ui.rs`. Face Draft and Shell already use 
 - Full keyboard control. ⬜
 
 ## 6a. Sources
+
+- Returning to the prior view on Finish Sketch: Autodesk Inventor forum, [When exiting a 2D sketch](https://forums.autodesk.com/t5/inventor-forum/when-existing-a-2d-sketch/m-p/10622932), [home view after finishing a sketch](https://forums.autodesk.com/t5/Inventor-General/home-view-after-finishing-a-sketch/td-p/2906150).
 
 - Inventor Help (2026): *ViewCube Menu Reference* — Orthographic / Perspective / Perspective with Ortho Faces — GUID-285B9036-0E97-4F18-A6D2-EF78B8B8FAA9
 - Inventor Help (2020): *About the ViewCube* — GUID-B266056E-5E88-42A0-B29C-7BB25C377BD3

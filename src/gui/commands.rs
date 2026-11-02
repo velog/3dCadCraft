@@ -370,7 +370,8 @@ const S_MODIFY: Place = Place::Ribbon("Sketch", "Modify");
 const S_PATTERN: Place = Place::Ribbon("Sketch", "Pattern");
 const S_CONSTRAIN: Place = Place::Ribbon("Sketch", "Constrain");
 const S_FORMAT: Place = Place::Ribbon("Sketch", "Format");
-const S_DEMO: Place = Place::Ribbon("Sketch", "Demo");
+const S_DEMO: Place = HELP;
+const S_START: Place = Place::Ribbon("Sketch", "Sketch");
 const S_EXIT: Place = Place::Ribbon("Sketch", "Exit");
 const I_MEASURE: Place = Place::Ribbon("Inspect", "Measure");
 const I_ANALYSIS: Place = Place::Ribbon("Inspect", "Analysis");
@@ -541,7 +542,7 @@ pub static COMMANDS: &[Command] = &[
         .inv("Start 2D Sketch")
         .alias(&["S"])
         .bound()
-        .at(&[M_SKETCH, SM_SKETCH])
+        .at(&[M_SKETCH, SM_SKETCH, S_START])
         .env(PART)
         .tip("Pick an origin plane or a planar face to sketch on")
         .spec("1.1-sketch.md"),
@@ -2807,6 +2808,11 @@ pub fn search_in(
             })
         })
         .collect();
+    // Letters scattered through a name only count when nothing matches
+    // properly ("fil": Fillet, not Cylinder).
+    if hits.iter().any(|h| h.tier != Tier::Fuzzy) {
+        hits.retain(|h| h.tier != Tier::Fuzzy);
+    }
     let group = |h: &Hit| match (h.ready, h.valid) {
         (true, true) => 0,
         (true, false) => 1,

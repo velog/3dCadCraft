@@ -511,6 +511,16 @@ impl CadCraftApp {
             self.open_help();
             ui.close();
         }
+        if !self.home.shown && !self.is_assembly() && !self.is_drawing() {
+            ui.menu_button("Demo Sketches", |ui| {
+                for d in super::demos::Demo::ALL {
+                    if ui.button(d.label()).clicked() {
+                        self.apply(super::ribbon::Action::Demo(d));
+                        ui.close();
+                    }
+                }
+            });
+        }
         ui.separator();
         if ui
             .button("Save Diagnostics...")

@@ -49,6 +49,8 @@ impl CadCraftApp {
         let mut link_now = false;
         let mut break_one: Option<String> = None;
         egui::Window::new("Link Parameters")
+            .pivot(egui::Align2::LEFT_TOP)
+            .default_pos(super::layout::first_window_pos(ctx.content_rect()))
             .open(&mut open)
             .resizable(true)
             .default_size([420.0, 420.0])

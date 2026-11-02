@@ -256,12 +256,12 @@ impl Flow {
             None => !self.selectors.is_empty(),
         };
         let mut v = vec![
-            (MenuItem::Ok, self.ready()),
             (MenuItem::Continue, next),
             (MenuItem::Back, self.active.is_some_and(|i| i > 0)),
+            (MenuItem::Ok, self.ready()),
         ];
         if apply {
-            v.insert(1, (MenuItem::Apply, self.ready()));
+            v.insert(3, (MenuItem::Apply, self.ready()));
         }
         v.push((MenuItem::Cancel, true));
         if repeat {
@@ -757,7 +757,8 @@ mod tests {
         assert_eq!(get(MenuItem::Repeat), Some(true));
         let f = Flow::new(draft(1, 1), Some("faces"));
         let m = f.menu(false, false);
-        assert_eq!(m.first(), Some(&(MenuItem::Ok, true)));
+        assert_eq!(m.first(), Some(&(MenuItem::Continue, false)));
+        assert!(m.contains(&(MenuItem::Ok, true)));
         assert!(
             !m.iter()
                 .any(|(x, _)| *x == MenuItem::Apply || *x == MenuItem::Repeat)

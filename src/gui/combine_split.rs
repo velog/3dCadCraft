@@ -735,7 +735,7 @@ impl CadCraftApp {
                 next(self);
                 if self.combine_draft.is_none() && self.split_draft.is_none() {
                     self.end_feature_edit();
-                    self.selection = super::Selection::Feature(k);
+                    self.selection = super::Selection::Body;
                 }
             }
             Err(e) => {

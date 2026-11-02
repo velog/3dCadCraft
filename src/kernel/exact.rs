@@ -154,7 +154,7 @@ pub fn prism_between(
         })
         .collect();
     let body = guarded("prism", || sk::prism_between(&input))
-        .map_err(|e| format!("the geometry kernel cannot build the member ({e})"))?;
+        .map_err(|e| format!("this member cannot be built ({e})"))?;
     let n: usize = loops.iter().map(|l| l.0.len()).sum();
     let names: Vec<String> = (0..n).map(|k| k.to_string()).collect();
     let face_names = names_from(&body, &[], &sweep::side_names(&names, prefix));

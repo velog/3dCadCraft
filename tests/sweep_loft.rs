@@ -211,7 +211,7 @@ fn closed_loop_loft_ring() {
         }
         Err(e) => {
             eprintln!("closed loop refused: {e}");
-            assert!(e.to_string().contains("kernel"), "{e}");
+            assert!(e.to_string().contains("cannot be built"), "{e}");
         }
     }
 }
