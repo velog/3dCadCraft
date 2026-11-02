@@ -959,7 +959,10 @@ fn conical_cut_junction(a: &Body, b: &Body) -> bool {
             let tol = (body.size() * 1e-5).max(1e-7);
             body.solid.face_iter().any(|face| matches!(crate::offset::surf_of(face, tol), Some(crate::offset::Surf::Cone { .. })))
         };
-        Ok(conical(b) && conical(a))
+        // Cutters small against the target (a countersink, a pattern's copy). A tool about as
+        // large as the target (a shell's cavity under a chamfer) takes the usual route: at the
+        // finer tolerance the Cut took 4 s instead of 0.3 s. 3DCadCraft.
+        Ok(b.size() < a.size() * 0.5 && conical(b) && conical(a))
     })
     .unwrap_or(false)
 }

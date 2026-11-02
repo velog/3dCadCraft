@@ -571,6 +571,12 @@ fn right_way(input: &Body, out: Body, edges: &[Vec3], size: Size) -> Result<Body
     if !(convex || concave) {
         return Ok(out);
     }
+    // Clearly the right way on a mesh a tenth as fine as the measure's: no need to measure.
+    if let Some((va, vb, slack)) = meshed_volumes(input, &out)
+        && ((convex && va - vb > slack) || (concave && vb - va > slack))
+    {
+        return Ok(out);
+    }
     let (Ok(a), Ok(b)) = (crate::measure(input), crate::measure(&out)) else { return Ok(out) };
     let slack = a.volume.abs() * 1e-5 + 1e-6;
     let grew = b.volume - a.volume;
@@ -625,6 +631,13 @@ fn volume_in(sel: &Selection, input: &Body, out: Body, size: Size) -> Result<Bod
             return Ok(out);
         }
     }
+    // A finer mesh before the measure, which costs ten times as much (3DCadCraft: 300 ms on a
+    // chamfer of 65 ms round a rounded box).
+    if let Some((va, vb, slack)) = meshed_volumes(input, &out)
+        && (va - vb).abs() + slack <= bound * 1.02
+    {
+        return Ok(out);
+    }
     let (Ok(ma), Ok(mb)) = (crate::measure(input), crate::measure(&out)) else { return Ok(out) };
     let slack = ma.volume.abs() * 1e-4 + (ma.area + mb.area) * sel.size * 1e-5;
     let changed = (ma.volume - mb.volume).abs();
@@ -639,6 +652,14 @@ fn volume_in(sel: &Selection, input: &Body, out: Body, size: Size) -> Result<Bod
         )));
     }
     Ok(out)
+}
+
+/// The volumes of two bodies on meshes at 1e-4 of their size, and what those meshes can miss (a
+/// chord's sag over every face). `None` when one cannot be meshed. 3DCadCraft.
+fn meshed_volumes(a: &Body, b: &Body) -> Option<(f64, f64, f64)> {
+    let chord = (a.size().max(b.size()) * 1e-4).max(1e-4);
+    let (ma, mb) = (a.tessellate(chord).ok()?.measure(), b.tessellate(chord).ok()?.measure());
+    Some((ma.volume, mb.volume, (ma.area + mb.area) * chord))
 }
 
 /// A length in mm, without trailing zeros.
