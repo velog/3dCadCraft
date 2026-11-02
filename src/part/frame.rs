@@ -593,7 +593,7 @@ impl Section {
 }
 
 /// Draws one loop into `sk` (sketch coordinates = the loop's).
-fn draw_loop(sk: &mut Sketch, l: Loop) -> Result<(), PartError> {
+pub fn draw_loop(sk: &mut Sketch, l: Loop) -> Result<(), PartError> {
     let err = |e: crate::sketch::SketchError| PartError::Feature(e.to_string());
     {
         {
