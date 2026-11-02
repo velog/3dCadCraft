@@ -1024,8 +1024,18 @@ impl PartDocument {
             .filter_map(|(_, f)| f.mesh.as_ref())
             .map(|m| m.positions.len())
             .sum();
+        // Every vertex counts: a hole moved inside a plate leaves the box and
+        // the counts as they were, and display meshes are cached by this.
+        let places = body.vertices().fold(0u64, |h, (_, v)| {
+            let c = v.point.coords;
+            let mut x = h;
+            for k in [c.x, c.y, c.z] {
+                x = x.rotate_left(7) ^ k.to_bits();
+            }
+            x
+        });
         format!(
-            "{}|{}|{}|{mesh}|{bbox:?}|{:?}",
+            "{}|{}|{}|{mesh}|{places:x}|{bbox:?}|{:?}",
             body.edges().count(),
             body.faces().count(),
             body.vertices().count(),

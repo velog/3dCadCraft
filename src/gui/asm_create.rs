@@ -65,7 +65,7 @@ impl CadCraftApp {
                     "Create: {name} placed; sketch its first feature, then Return"
                 )));
                 if template != Template::Assembly {
-                    self.open_component(c.occurrence);
+                    self.edit_in_place(c.occurrence, Vec::new());
                 }
                 true
             }

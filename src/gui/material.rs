@@ -197,6 +197,48 @@ pub(super) fn add_part_meshes_seen(
     add_part_meshes_with(g, part, place, alpha, &|_| FaceOver { look: None, tint });
 }
 
+thread_local! {
+    /// A solid's display mesh per body state: a scene is rebuilt on every
+    /// hover and selection change, and tessellating every occurrence each time
+    /// made an assembly of 24 parts drop frames (the owner's frame).
+    static MESHES: std::cell::RefCell<std::collections::HashMap<String, std::collections::HashMap<crate::kernel::SolidId, std::sync::Arc<crate::kernel::SolidMesh>>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Bodies whose meshes are kept.
+const MESHES_KEPT: usize = 512;
+
+/// The display mesh of solid `id` of `part`, tessellated once per body state.
+fn cached_mesh(
+    part: &PartDocument,
+    id: crate::kernel::SolidId,
+) -> Option<std::sync::Arc<crate::kernel::SolidMesh>> {
+    let key = part.body_signature();
+    if let Some(m) = MESHES.with(|c| c.borrow().get(&key).and_then(|b| b.get(&id).cloned())) {
+        return Some(m);
+    }
+    match part
+        .body
+        .tessellate_solid(id, &TessellationOptions::default())
+    {
+        Ok(m) => {
+            let m = std::sync::Arc::new(m);
+            MESHES.with(|c| {
+                let mut c = c.borrow_mut();
+                if c.len() >= MESHES_KEPT && !c.contains_key(&key) {
+                    c.clear();
+                }
+                c.entry(key).or_default().insert(id, m.clone());
+            });
+            Some(m)
+        }
+        Err(e) => {
+            log::error!("tessellation failed: {e}");
+            None
+        }
+    }
+}
+
 /// What an assembly changes on one face of an occurrence: its appearance
 /// override and a selection / prehighlight tint.
 #[derive(Clone, Debug, Default)]
@@ -222,15 +264,16 @@ pub(super) fn add_part_meshes_with(
         if solid.name.as_deref().is_some_and(|n| !part.body_visible(n)) {
             continue;
         }
-        let mesh = match body.tessellate_solid(id, &TessellationOptions::default()) {
-            Ok(m) => match place {
-                Some(t) => moved(m, t),
-                None => m,
-            },
-            Err(e) => {
-                log::error!("tessellation failed: {e}");
-                continue;
+        let Some(cached) = cached_mesh(part, id) else {
+            continue;
+        };
+        let moved_mesh;
+        let mesh: &crate::kernel::SolidMesh = match place {
+            Some(t) => {
+                moved_mesh = moved((*cached).clone(), t);
+                &moved_mesh
             }
+            None => &cached,
         };
         let f = &mesh.faces;
         let mut colors = vec![SURFACE_AMBER; f.positions.len()];
