@@ -126,7 +126,14 @@ const EVALUATION_SAMPLES: usize = 32;
 pub(crate) fn edges_evaluate(solid: &Solid) -> bool {
     use truck_meshalgo::prelude::TrySubs;
     use truck_modeling::BoundedCurve;
+    // 3DCadCraft: each edge once (`edge_iter` gives a shared edge once per face), and only
+    // intersection curves: the others have no projection that could fail. Sampling them all took
+    // 283 ms of a cut's 850 ms over a rounded box.
+    let mut seen = std::collections::HashSet::new();
     solid.boundaries().iter().flat_map(|shell| shell.edge_iter()).all(|edge| {
+        if !matches!(edge.curve(), truck_modeling::Curve::IntersectionCurve(_)) || !seen.insert(edge.id()) {
+            return true;
+        }
         let curve = edge.curve();
         let (t0, t1) = curve.range_tuple();
         (0..=EVALUATION_SAMPLES).all(|k| {

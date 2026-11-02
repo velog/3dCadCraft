@@ -333,7 +333,109 @@ fn exact_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
     if !matches!(e.curve(), mt::Curve::IntersectionCurve(_)) {
         return None;
     }
-    fit_exact(e, tol)
+    analytic_curve(e, tol).or_else(|| fit_exact(e, tol))
+}
+
+/// What the edge's two surfaces say it is. 3DCadCraft: a plane meeting a plane or a cylinder gives a line, a circle or an ellipse, known
+/// from the surfaces. Evaluating an intersection curve projects onto both surfaces (~0.5 ms a
+/// point on a revolved cylinder), so 17 samples an edge took 260 ms of a cut over a rounded box,
+/// and an ellipse left as an intersection curve cost every later step the same again. Three
+/// samples check the answer against the curve it replaces. `None`: the surfaces do not tell (or
+/// the samples disagree), fit it to samples.
+fn analytic_curve(e: &mt::Edge, tol: f64) -> Option<mt::Edge> {
+    use crate::splitface::{Analytic as Field, analytic_field};
+    use mt::{BoundedCurve, ParametricCurve};
+    let c = e.curve();
+    let mt::Curve::IntersectionCurve(ic) = &c else { return None };
+    let (front, back) = (e.absolute_front(), e.absolute_back());
+    let (a, b) = (from_p3(front.point()), from_p3(back.point()));
+    // A closed edge has no second vertex to end at; fitting decides it as it always did.
+    if front == back || a.dist(b) < tol {
+        return None;
+    }
+    let (f0, f1) = (analytic_field(ic.surface0())?, analytic_field(ic.surface1())?);
+    let (t0, t1) = c.range_tuple();
+    let at = |s: f64| from_p3(c.subs(t0 + (t1 - t0) * s));
+    let checked = |x: mt::Edge, on: &dyn Fn(Vec3) -> f64| -> Option<mt::Edge> { [0.25, 0.5, 0.75].iter().all(|s| on(at(*s)) < tol).then_some(x) };
+    let line = |_: ()| {
+        let on = move |p: Vec3| p.dist_to_segment(a, b);
+        checked(builder::line(front, back), &on)
+    };
+    match (f0, f1) {
+        (Field::Plane { .. }, Field::Plane { .. }) => line(()),
+        (Field::Plane { n }, Field::Cylinder { o, axis, r, .. }) | (Field::Cylinder { o, axis, r, .. }, Field::Plane { n }) => {
+            let k = Vec3::new(axis.x, axis.y, axis.z);
+            let along = n.dot(k);
+            // Along the axis: a ruling. Square to it: a circle, as the fit writes one.
+            if along.abs() < 1e-9 {
+                return line(());
+            }
+            let m = at(0.5);
+            if (along.abs() - 1.0).abs() < 1e-9 {
+                let centre = o + k * (m - o).dot(k);
+                let on = move |p: Vec3| ((p - centre).len() - r).abs().max((p - centre).dot(k).abs());
+                return checked(builder::circle_arc(front, back, mt::Point3::new(m.x, m.y, m.z)), &on);
+            }
+            let x = ellipse_arc(e, a, b, m, n, o, k, r)?;
+            let centre = o + k * ((a - o).dot(n) / along);
+            let on = move |p: Vec3| {
+                let w = p - centre;
+                w.dot(n).abs().max(((w - k * w.dot(k)).len() - r).abs())
+            };
+            checked(x, &on)
+        }
+        _ => None,
+    }
+}
+
+/// The arc of the ellipse where the plane through `a` with normal `n` meets the cylinder (`o`,
+/// unit `k`, `r`), from `a` to `b` by way of `m`: rational quadratics of at most a quarter turn of
+/// the cylinder, exact.
+#[allow(clippy::too_many_arguments)]
+fn ellipse_arc(e: &mt::Edge, a: Vec3, b: Vec3, m: Vec3, n: Vec3, o: Vec3, k: Vec3, r: f64) -> Option<mt::Edge> {
+    use std::f64::consts::{FRAC_PI_2, TAU};
+    let along = n.dot(k);
+    let centre = o + k * ((a - o).dot(n) / along);
+    // A frame square to the axis, and the ellipse as centre + u cos t + v sin t.
+    let e1 = {
+        let w = a - centre;
+        (w - k * w.dot(k)).normalized()?
+    };
+    let e2 = k.cross(e1).normalized()?;
+    let lift = |d: Vec3| d * r - k * (r * n.dot(d) / along);
+    let (u, v) = (lift(e1), lift(e2));
+    let angle = |p: Vec3| {
+        let w = p - centre;
+        w.dot(e2).atan2(w.dot(e1))
+    };
+    let (ta, tb, tm) = (angle(a), angle(b), angle(m));
+    let mut sweep = (tb - ta).rem_euclid(TAU);
+    // The way through the middle sample.
+    if (tm - ta).rem_euclid(TAU) > sweep {
+        sweep -= TAU;
+    }
+    if sweep.abs() < 1e-9 {
+        return None;
+    }
+    let spans = (sweep.abs() / FRAC_PI_2 - 1e-9).ceil().max(1.0) as usize;
+    let half = sweep / (2.0 * spans as f64);
+    let w = half.cos();
+    let point = |t: f64, scale: f64| centre + (u * t.cos() + v * t.sin()) * scale;
+    let mut control = vec![mt::Vector4::new(a.x, a.y, a.z, 1.0)];
+    let mut knots = vec![0.0, 0.0, 0.0];
+    for i in 0..spans {
+        let start = ta + sweep * i as f64 / spans as f64;
+        let apex = point(start + half, 1.0 / w);
+        control.push(mt::Vector4::new(apex.x * w, apex.y * w, apex.z * w, w));
+        let end = if i + 1 == spans { b } else { point(start + 2.0 * half, 1.0) };
+        control.push(mt::Vector4::new(end.x, end.y, end.z, 1.0));
+        let joint = (i + 1) as f64 / spans as f64;
+        knots.push(joint);
+        knots.push(joint);
+    }
+    knots.push(1.0);
+    let curve = mt::NurbsCurve::new(mt::BSplineCurve::new(mt::KnotVec::from(knots), control));
+    Some(mt::Edge::new(e.absolute_front(), e.absolute_back(), mt::Curve::NurbsCurve(curve)))
 }
 
 /// A line or circular arc through the edge's samples, if they all lie on one.

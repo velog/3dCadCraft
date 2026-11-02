@@ -2873,6 +2873,8 @@ fn loop_tools(
         .position(|(_, x)| x.shells.iter().any(|sh| sh.faces.contains(&cap)))
         .ok_or("the cap has no solid")?;
     let mut tools = Vec::new();
+    let mut ring_lines: Vec<RingLine> = Vec::new();
+    let mut any_arc_tool = false;
     for (k, &e) in loop_edges.iter().enumerate() {
         let x = body.edge(e).ok_or("edge missing")?;
         let (a, b) = (
@@ -2911,6 +2913,11 @@ fn loop_tools(
                 {
                     return Err("the loop is not convex".into());
                 }
+                ring_lines.push(RingLine {
+                    a,
+                    inward,
+                    face: face_name.clone(),
+                });
                 let n = inward.cross(&down);
                 let start = if n.dot(&t) > 0.0 { a } else { b };
                 let plane = Plane::new(start - n * ext, n, inward).map_err(|e| e.to_string())?;
@@ -2957,6 +2964,7 @@ fn loop_tools(
                 } else {
                     -1.0
                 };
+                any_arc_tool = true;
                 tools.push((
                     false,
                     exact::revolve(
@@ -2974,6 +2982,22 @@ fn loop_tools(
         }
     }
     let mut out = cur.to_vec();
+    // Only straight bevels (a chamfer wider than every round): one tool for all of them. A cut
+    // per edge took four Booleans, each dearer than the last, 823 ms on a rounded box.
+    if matches!(bl.kind, BlendKind::Chamfer { .. })
+        && !any_arc_tool
+        && let Ok(made) = ring_chamfer(
+            &out[solid],
+            &ring_lines,
+            down,
+            setback,
+            wall_setback,
+            &bl.id,
+        )
+    {
+        out[solid] = made;
+        return Ok(out);
+    }
     let mut s = out[solid].clone();
     // Arcs first: their cones touch the bevel planes along a line, which
     // the Booleans resolve on the original walls but not on a cut plane.
@@ -2993,6 +3017,113 @@ fn loop_tools(
     }
     out[solid] = s;
     Ok(out)
+}
+
+/// A straight edge of a blended loop, for [`ring_chamfer`].
+struct RingLine {
+    /// A point of the edge, on the cap.
+    a: Point3,
+    /// In the cap, into the loop.
+    inward: crate::kernel::Vector3,
+    /// The name its bevel takes.
+    face: String,
+}
+
+/// The chamfer of a convex loop of straight edges (the rounds between them narrower than the
+/// chamfer run through) as one cut: a ring round the loop whose inner walls are the bevel
+/// planes, run on past the cap and past the walls, its outer walls just clear of the part.
+/// `Err`: not such a loop, the caller cuts edge by edge.
+fn ring_chamfer(
+    solid: &ExactSolid,
+    lines: &[RingLine],
+    down: crate::kernel::Vector3,
+    setback: Real,
+    wall_setback: Real,
+    id: &str,
+) -> Result<ExactSolid, String> {
+    use crate::kernel::Plane;
+    use exact::PrismSeg;
+    use nalgebra::{Point2, Vector2};
+    let first = lines.first().ok_or("no straight edges")?;
+    if lines.len() < 3 {
+        return Err("too few edges for a closed polygon".into());
+    }
+    let e = 0.1 * (setback + wall_setback) + 0.01;
+    // One 2D frame on both planes, counter-clockwise about `down`.
+    let frame = Plane::new(first.a, down, first.inward).map_err(|x| x.to_string())?;
+    let flat = |p: Point3| {
+        let q = frame.project(&p);
+        Point2::new(q.x, q.y)
+    };
+    // Each line in the frame: a point, the way it runs (the inside on its left), the inward
+    // normal, its bevel's name; in order round the loop (convex: by the angle it runs at).
+    let mut around: Vec<(Point2<Real>, Vector2<Real>, Vector2<Real>, &str)> = lines
+        .iter()
+        .map(|l| {
+            let u = flat(first.a + l.inward) - flat(first.a);
+            (flat(l.a), Vector2::new(u.y, -u.x), u, l.face.as_str())
+        })
+        .collect();
+    around.sort_by(|p, q| p.1.y.atan2(p.1.x).total_cmp(&q.1.y.atan2(q.1.x)));
+    let n = around.len();
+    // The polygon of every line moved in by `inset`; corner i joins lines i - 1 and i.
+    let polygon = |inset: Real| -> Result<Vec<Point2<Real>>, String> {
+        (0..n)
+            .map(|i| {
+                let (p0, t0, u0, _) = around[(i + n - 1) % n];
+                let (p1, t1, u1, _) = around[i];
+                let (a, b) = (p0 + u0 * inset, p1 + u1 * inset);
+                let den = t0.x * t1.y - t0.y * t1.x;
+                if den.abs() < 1e-9 {
+                    return Err("two neighbouring edges are parallel".to_owned());
+                }
+                let w = b - a;
+                Ok(a + t0 * ((w.x * t1.y - w.y * t1.x) / den))
+            })
+            .collect()
+    };
+    // The bevel's inset at a depth below the cap, on its line through both setbacks.
+    let inset_at = |q: Real| setback * (1.0 - q / wall_setback);
+    let (q0, q1) = (-e, wall_setback + e);
+    let (top, bottom) = (polygon(inset_at(q0))?, polygon(inset_at(q1))?);
+    // Above the cap the polygon must still be the same polygon: every edge running its own way.
+    for (i, item) in around.iter().enumerate() {
+        if (top[(i + 1) % n] - top[i]).dot(&item.1) <= 1e-9 {
+            return Err("the chamfer closes the loop".into());
+        }
+    }
+    // Outside: the lines moved out past the widest the bevel gets.
+    let outer = polygon(-(setback * e / wall_setback + e))?;
+    let ccw = |v: &[Point2<Real>]| -> Vec<PrismSeg> {
+        (0..n)
+            .map(|i| PrismSeg::Line(v[i], v[(i + 1) % n]))
+            .collect()
+    };
+    // Clockwise: side k runs line n - k - 1 backwards.
+    let cw = |v: &[Point2<Real>]| -> Vec<PrismSeg> {
+        (0..n)
+            .map(|k| PrismSeg::Line(v[(n - k) % n], v[n - k - 1]))
+            .collect()
+    };
+    let loops = vec![(ccw(&outer), ccw(&outer)), (cw(&top), cw(&bottom))];
+    let start = Plane::new(first.a + down * q0, down, first.inward).map_err(|x| x.to_string())?;
+    let end = Plane::new(first.a + down * q1, down, first.inward).map_err(|x| x.to_string())?;
+    let prefix = format!("{id}#r");
+    let tool = exact::prism_between(&loops, &start, &end, &prefix)?;
+    let mut made = exact::boolean(solid, &tool, ExactOp::Cut)?.ok_or("nothing is left")?;
+    let head = format!("{prefix}:Side:");
+    for name in made.face_names.iter_mut().flatten() {
+        // The sides after the outer loop's n are the bevels.
+        if let Some(k) = name
+            .strip_prefix(&head)
+            .and_then(|k| k.parse::<usize>().ok())
+            .and_then(|k| k.checked_sub(n))
+            && let Some(line) = around.get(n.wrapping_sub(k + 1))
+        {
+            *name = format!("{id}:{}", line.3);
+        }
+    }
+    Ok(made)
 }
 
 /// A straight-sided section cut to `x <= xmax` (Sutherland-Hodgman); the

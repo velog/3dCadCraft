@@ -568,3 +568,78 @@ fn a_chamfer_wider_than_the_rounds_removes_what_it_says() {
         "a tool's name is left"
     );
 }
+
+/// A cylinder cut by an inclined plane: its rim is an exact ellipse (`heal.rs`, no longer an
+/// intersection curve). The volume follows the mean height, and the rim takes a chamfer.
+#[test]
+fn an_inclined_cut_is_an_exact_ellipse() {
+    let (r, h) = (5.0f64, 40.0f64);
+    let mut p = PartDocument::default();
+    let o = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XY), &o)
+        .unwrap();
+    draw_loop(
+        &mut p.sketches[i].sketch,
+        Loop::Circle(Point2::new(0.0, 0.0), r, false),
+    )
+    .unwrap();
+    let sk = &p.sketches[i].sketch;
+    let flip = sk.plane.normal.z < 0.0;
+    let regions = sk.regions();
+    let reg = regions.first().unwrap();
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(reg, reg.interior_point())], h);
+    if flip {
+        e.direction = ExtentDirection::Flipped;
+    }
+    p.add_extrude(i, e).unwrap();
+    // Everything above z = 20 + x / 2.
+    let j = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &o)
+        .unwrap();
+    let wedge = [(-30.0, 5.0), (30.0, 35.0), (30.0, 80.0), (-30.0, 80.0)]
+        .iter()
+        .map(|&(x, z)| (Point2::new(x, z), None))
+        .collect();
+    draw_loop(&mut p.sketches[j].sketch, Loop::Path(wedge)).unwrap();
+    let regions = p.sketches[j].sketch.regions();
+    let reg = regions.first().unwrap();
+    let mut cut = ExtrudeFeature::new(vec![ProfileRef::of(reg, reg.interior_point())], 40.0);
+    cut.operation = Operation::Cut;
+    cut.direction = ExtentDirection::Symmetric;
+    p.add_extrude(j, cut).unwrap();
+    assert!(
+        p.exact && p.feature_health.is_empty(),
+        "{:?}",
+        p.feature_health
+    );
+    let expected = PI * r * r * 20.0;
+    let v = volume(&p);
+    assert!((v - expected).abs() < expected * 1e-3, "{v} vs {expected}");
+    for (id, _) in p.body.solids() {
+        p.body.validate_solid(id).unwrap();
+    }
+    // A point of the rim lies on the plane and on the cylinder, whichever way it is sampled.
+    let rim = edges_where(&p, |q| q[2] > 16.0 && q[2] < 24.0);
+    assert!(!rim.is_empty(), "no rim edge");
+    for e in &rim {
+        let q = e.hint;
+        assert!(
+            (q[2] - (20.0 + q[0] / 2.0)).abs() < 1e-6,
+            "{q:?} off the plane"
+        );
+        assert!(
+            (q[0].hypot(q[1]) - r).abs() < 1e-6,
+            "{q:?} off the cylinder"
+        );
+    }
+    // A chamfer on it, as the kernel takes an ellipse.
+    let before = volume(&p);
+    p.add_blend(BlendFeature::chamfer(rim, 0.5)).unwrap();
+    assert!(p.feature_health.is_empty(), "{:?}", p.feature_health);
+    assert!(volume(&p) < before, "the chamfer must take material away");
+}

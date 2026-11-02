@@ -35,6 +35,14 @@ An addition for frame members (`docs/spec/6.1-frame-generator.md`):
 |---|---|---|
 | `build.rs` `prism_between` (exported in `lib.rs`) | a new function: a region's loops (outer and holes), each as its section on a start and an end plane (matched segments, arcs as conics), joined by ruled sides and closed by planar caps with holes (`uniform_wire`, `ruled_loft_faces`, `cap_and_close`) | a member mitred at both ends in ~15 ms (extrusion + two Trim Solids: ~0.75 s, the split tracing the section and meshing its spline edges) |
 
+Speed of every general Boolean: what comes after the intersection cost more than the intersection
+(a cut over a rounded box: 122 ms in truck, 579 ms in the result's assembly).
+
+| File | Change | Effect |
+|---|---|---|
+| `heal.rs` `analytic_curve`, `ellipse_arc` | a plane meeting a plane or a cylinder is written from the surfaces (a line, a circle, an ellipse as exact rational quadratics), three samples checking it, instead of 17 samples of the intersection curve; other pairs are fitted as before | heal 260 → 99 ms; an ellipse no longer stays an intersection curve, so the checks after it cost nothing: result mesh 59 → 5 ms, edge reach 72 → 0 ms |
+| `boolean_record.rs` `edges_evaluate` | each edge once (`edge_iter` gives a shared edge once per face), and only intersection curves | 283 → 0 ms on that cut |
+
 An addition for Thicken/Offset's Allow Approximation (`docs/spec/2.14-thicken-offset.md`):
 
 | File | Change | Effect |
