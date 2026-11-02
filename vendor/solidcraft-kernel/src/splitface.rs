@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use mt::{BoundedCurve, InnerSpace, MetricSpace, ParametricCurve, ParametricSurface, ParametricSurface3D, SearchNearestParameter};
-use solidcraft_geom::{Plane, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Plane, Seg2, UnitVec3, Vec2, Vec3};
 use truck_meshalgo::tessellation::RobustMeshableShape;
 use truck_modeling as mt;
 
@@ -24,10 +24,11 @@ pub enum SplitTool<'a> {
     Plane(Plane),
     /// The surface of another body's face (`face` in that body's face order), extended.
     Face { body: &'a Body, face: usize },
-    /// Sketch curves (chains of segments in `plane`) swept along the plane's normal; each curve
-    /// splits on its own, extended past its ends. A single line or arc splits exactly (a plane
-    /// or a cylinder); longer chains and splines follow the curve.
-    Curves { plane: Plane, curves: Vec<Vec<Seg2>> },
+    /// Sketch curves (chains of segments in `plane`) swept along `along` (none: the plane's
+    /// normal); each curve splits on its own, an open one extended past its ends. A single line
+    /// splits exactly (a plane), and so does a single arc swept along the normal (a cylinder);
+    /// longer chains, splines and arcs swept aslant follow the curve.
+    Curves { plane: Plane, curves: Vec<Vec<Seg2>>, along: Option<Vec3> },
 }
 
 /// Which side of the tool a point is on (zero on the tool).
@@ -41,13 +42,17 @@ enum Field {
     /// +1 when the tool's normal points away from the axis.
     Cylinder {
         o: Vec3,
-        axis: Vec3,
+        axis: UnitVec3,
         r: f64,
         out: f64,
     },
+    /// A chain of points in `plane`, swept along `along` (the plane's normal when none). A
+    /// closed chain is positive inside it; an open one on its left, its end segments extended.
     Curve {
         plane: Plane,
         pts: Vec<Vec2>,
+        closed: bool,
+        along: Option<Vec3>,
     },
 }
 
@@ -68,12 +73,29 @@ impl Field {
                 let radial = v - *axis * v.dot(*axis);
                 *out * (radial.len() - *r)
             }
-            Field::Curve { plane, pts } => {
+            Field::Curve { plane, pts, closed, along } => {
+                // Where p's line along the sweep direction meets the plane.
+                let p = match along {
+                    Some(d) => p - *d * ((p - plane.origin).dot(plane.normal()) / d.dot(plane.normal())),
+                    None => p,
+                };
                 let q = plane.to_local(p);
                 let q = Vec2::new(q.x, q.y);
-                // Signed distance to the polyline, its end segments extended as lines. A closed
-                // polyline is not extended (the extended ends crossed the outside at its first
-                // corner): the distance to it, positive inside.
+                if *closed {
+                    // Distance to the loop, positive inside it.
+                    let d = (0..pts.len().saturating_sub(1))
+                        .filter_map(|i| Some((*pts.get(i)?, *pts.get(i + 1)?)))
+                        .map(|(a, b)| {
+                            let d = b - a;
+                            let l2 = d.dot(d);
+                            let t = if l2 > 0.0 { ((q - a).dot(d) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                            (q - (a + d * t)).len()
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    let uv: Vec<(f64, f64)> = pts.iter().map(|p| (p.x, p.y)).collect();
+                    return if inside(&uv, (q.x, q.y)) { d } else { -d };
+                }
+                // Signed distance to the polyline, its end segments extended as lines.
                 let n = pts.len();
                 let closed = n > 3 && pts.first().zip(pts.last()).is_some_and(|(a, b)| (*a - *b).len() <= 1e-9 * (1.0 + a.len()));
                 if closed {
@@ -140,11 +162,19 @@ struct Chain {
 /// Mesh tolerance for tracing a face.
 fn trace_tol(face: &mt::Face, size: f64) -> f64 {
     let _ = face;
+    trace_tol_of(size)
+}
+
+/// Mesh tolerance for tracing on a body of this size.
+fn trace_tol_of(size: f64) -> f64 {
     (size * 2e-3).max(1e-4)
 }
 
 /// Trace the zero set of `g` over a face: chains of exact points.
 fn trace(face: &mt::Face, g: &Field, size: f64) -> Result<Vec<Chain>> {
+    if let Some(chains) = trace_flat(face, g, size) {
+        return Ok(chains);
+    }
     let tol = trace_tol(face, size);
     let shell: mt::Shell = vec![face.clone()].into();
     let meshed = shell.robust_triangulation(tol);
@@ -311,6 +341,53 @@ fn trace(face: &mt::Face, g: &Field, size: f64) -> Result<Vec<Chain>> {
     Ok(chains)
 }
 
+/// A plane across a flat face (a plane, or a B-spline surface that is one) with straight edges,
+/// exactly: the line the two planes meet in, inside the face between pairs of its crossings with
+/// the boundary, taken in order along the line. Which side a corner is on is decided once, at
+/// the corner, so a plane through a corner crosses the boundary there once or not at all, as it
+/// should. `None` (traced on a mesh instead) for any other face or tool, and where an edge lies
+/// in the plane.
+fn trace_flat(face: &mt::Face, g: &Field, size: f64) -> Option<Vec<Chain>> {
+    let Field::Plane { o, n } = g else { return None };
+    let surface = face.surface();
+    let Field::Plane { n: m, .. } = surface_field(&surface) else { return None };
+    let along = m.cross(*n).normalized()?;
+    let tol = size * 1e-7 + 1e-9;
+    let mut hits: Vec<mt::Point3> = Vec::new();
+    for e in face.boundaries().iter().flat_map(|w| w.edge_iter()) {
+        let (a, b) = (from_p3(e.front().point()), from_p3(e.back().point()));
+        let (ga, gb) = ((a - *o).dot(*n), (b - *o).dot(*n));
+        // Straight: a line, or a curve (a B-spline of degree one) whose points all lie on its
+        // chord; such an edge crosses the plane once at most.
+        let straight = matches!(e.curve(), mt::Curve::Line(_)) || {
+            let c = e.curve();
+            let (t0, t1) = c.range_tuple();
+            (1..8).all(|k| from_p3(c.subs(t0 + (t1 - t0) * k as f64 / 8.0)).dist_to_segment(a, b) <= tol)
+        };
+        if !straight || (ga.abs() <= tol && gb.abs() <= tol) || !ga.is_finite() || !gb.is_finite() {
+            return None;
+        }
+        if (ga >= 0.0) != (gb >= 0.0) {
+            hits.push(p3(a + (b - a) * (ga / (ga - gb)).clamp(0.0, 1.0)));
+        }
+    }
+    if !hits.len().is_multiple_of(2) {
+        return None;
+    }
+    hits.sort_by(|a, b| from_p3(*a).dot(along).total_cmp(&from_p3(*b).dot(along)));
+    let uv = |p: mt::Point3| surface.search_nearest_parameter(p, None, 50);
+    let mut chains = Vec::new();
+    for pair in hits.chunks(2) {
+        let [a, b] = pair else { return None };
+        // A corner the plane only touches: no line.
+        if a.distance(*b) <= tol {
+            continue;
+        }
+        chains.push(Chain { pts: vec![(*a, uv(*a)?), (*b, uv(*b)?)], closed: false });
+    }
+    Some(chains)
+}
+
 /// Where the zero set crosses a boundary edge of the face (exact, by bisection on the curve).
 fn boundary_hits(face: &mt::Face, g: &Field) -> Vec<Hit> {
     let mut out = Vec::new();
@@ -435,7 +512,7 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<
         && a.distance(*b) > scale * 1e-9
     {
         let n = pl.normal();
-        if n.cross(crate::body::v3(*axis)).magnitude() < 1e-9 {
+        if n.cross(crate::body::v3(axis.vec())).magnitude() < 1e-9 {
             let (va, vb) = (mt::Vertex::new(*a), mt::Vertex::new(*b));
             let e = guard("split arc", || Ok(mt::builder::circle_arc(&va, &vb, *m)))?;
             return Ok(e.curve());
@@ -444,7 +521,7 @@ fn fit_on(g: &Field, face: &mt::Face, pts: &[mt::Point3], scale: f64) -> Result<
     // Sketch curves splitting a planar face parallel to their plane: the split line is the
     // tool's own polyline (corners kept), not a spline through the traced points, which
     // rounded a rectangle's corners by the tracing step (a hole cut by a closed loop). 3DCadCraft.
-    if let (Field::Curve { plane, pts: poly }, mt::Surface::Plane(pl)) = (g, face.surface())
+    if let (Field::Curve { plane, pts: poly, .. }, mt::Surface::Plane(pl)) = (g, face.surface())
         && let Some(c) = polyline_on(plane, poly, &pl, pts, scale)
     {
         return Ok(c);
@@ -744,11 +821,18 @@ fn expand(e: &mt::Edge, cuts: &[(mt::Edge, (mt::Edge, mt::Edge))], out: &mut Vec
     }
 }
 
+/// The parameter of the point of `c` nearest `q`, searched from the nearest of points along it (a
+/// long arc's search from its middle can settle on the far side).
+fn nearest(c: &mt::Curve, q: mt::Point3) -> Option<f64> {
+    let (t0, t1) = c.range_tuple();
+    let hint = (0..=16).map(|k| t0 + (t1 - t0) * k as f64 / 16.0).min_by(|x, y| c.subs(*x).distance2(q).total_cmp(&c.subs(*y).distance2(q)));
+    c.search_nearest_parameter(q, hint, 100)
+}
+
 /// `body` with its edges cut at the given points where they pass through them (not at their
 /// ends): the faces either side keep the same region, bounded by the pieces. Used to give two
 /// faces that cover the same region the same vertices before they are glued (#674).
 pub(crate) fn split_edges_at(body: &Body, points: &[Vec3]) -> Result<Body> {
-    use mt::SearchNearestParameter;
     let size = body.size();
     let tol = size * 1e-7 + 1e-9;
     guard("split edges", || {
@@ -771,11 +855,11 @@ pub(crate) fn split_edges_at(body: &Body, points: &[Vec3]) -> Result<Body> {
                 }
                 let c = e.curve();
                 let (t0, t1) = c.range_tuple();
-                c.search_nearest_parameter(q, None, 100).is_some_and(|t| t > t0.min(t1) && t < t0.max(t1) && c.subs(t).distance(q) <= tol * 10.0)
+                nearest(&c, q).is_some_and(|t| t > t0.min(t1) && t < t0.max(t1) && c.subs(t).distance(q) <= tol * 10.0)
             });
             let Some(k) = hit else { continue };
             let (e, root) = current.swap_remove(k);
-            let Some(t) = e.curve().search_nearest_parameter(q, None, 100) else { continue };
+            let Some(t) = nearest(&e.curve(), q) else { continue };
             let (_, cut) = cut_edge(&e, t, q, tol)?;
             if let Some((a, b)) = cut {
                 rec.piece(&a, &root);
@@ -809,6 +893,7 @@ pub(crate) fn split_edges_at(body: &Body, points: &[Vec3]) -> Result<Body> {
         let split = Body {
             solid: std::sync::Arc::new(solid),
             size: 0.0,
+            boundary_tol: body.boundary_tol,
             volume: Some(std::sync::Arc::new(std::sync::Mutex::new(None))),
             coarse_missing: None,
             mesh: None,
@@ -817,6 +902,9 @@ pub(crate) fn split_edges_at(body: &Body, points: &[Vec3]) -> Result<Body> {
             splits: body.splits.clone(),
             face_sources: None,
             history: None,
+            display_of: None,
+            meshes: None,
+            phased: false,
             regularization_protected: true,
         };
         Ok(crate::record::rebuilt_body(split, &[&body.solid], &rec))
@@ -1109,7 +1197,7 @@ fn surface_field(s: &mt::Surface) -> Field {
     for along_v in [true, false] {
         let pt = |t: f64, w: f64| if along_v { at(t, w) } else { at(w, t) };
         let d = pt(0.0, 1.0) - pt(0.0, 0.0);
-        let Some(axis) = d.normalized() else { continue };
+        let Some(axis) = d.unit() else { continue };
         let straight = (0..=6).all(|k| {
             let t = k as f64 / 6.0;
             (0..=4).all(|m| (pt(t, m as f64 / 4.0) - pt(t, 0.0) - d * (m as f64 / 4.0)).len() <= tol)
@@ -1141,7 +1229,7 @@ fn surface_field(s: &mt::Surface) -> Field {
 /// A plane or circular cylinder behind a surface (for offsetting).
 pub(crate) enum Analytic {
     Plane { n: Vec3 },
-    Cylinder { o: Vec3, axis: Vec3, r: f64, out: f64 },
+    Cylinder { o: Vec3, axis: UnitVec3, r: f64, out: f64 },
 }
 
 pub(crate) fn analytic_field(s: &mt::Surface) -> Option<Analytic> {
@@ -1154,9 +1242,25 @@ pub(crate) fn analytic_field(s: &mt::Surface) -> Option<Analytic> {
 
 /// Which side of a tool a point is on.
 pub(crate) fn side_of_point(tool: &SplitTool, p: Vec3) -> Result<f64> {
-    let f = fields(tool)?;
-    let [g] = f.as_slice() else { return Err(KernelError::Invalid("one tool at a time".into())) };
-    Ok(g.eval(p))
+    Ok(ToolSide::of(tool)?.at(p))
+}
+
+/// Which side of a tool points are on, the tool's field built once for many points.
+pub(crate) struct ToolSide(Field);
+
+impl ToolSide {
+    pub(crate) fn of(tool: &SplitTool) -> Result<ToolSide> {
+        let mut f = fields(tool)?;
+        match (f.pop(), f.is_empty()) {
+            (Some(g), true) => Ok(ToolSide(g)),
+            _ => Err(KernelError::Invalid("one tool at a time".into())),
+        }
+    }
+
+    /// The side of `p`: its sign says which, zero on the tool (NaN where it can't be told).
+    pub(crate) fn at(&self, p: Vec3) -> f64 {
+        self.0.eval(p)
+    }
 }
 
 /// Which side of a tool a face lies on (its field well inside it).
@@ -1174,18 +1278,39 @@ fn fields(tool: &SplitTool) -> Result<Vec<Field>> {
             let f = other.solid.face_iter().nth(*face).ok_or_else(|| KernelError::Invalid(format!("the tool body has no face {face}")))?;
             vec![surface_field(&f.oriented_surface())]
         }
-        SplitTool::Curves { plane, curves } => {
+        SplitTool::Curves { plane, curves, along } => {
+            let n = plane.normal();
+            // The sweep direction, turned to the plane's side (a direction along the plane sweeps
+            // nothing).
+            let along = match along {
+                None => None,
+                Some(d) => {
+                    let d = d
+                        .normalized()
+                        .filter(|d| d.is_finite())
+                        .ok_or_else(|| KernelError::Invalid("the projection direction must be a nonzero vector".into()))?;
+                    if d.dot(n).abs() < 1e-6 {
+                        return Err(KernelError::Invalid("the projection direction runs along the sketch plane".into()));
+                    }
+                    let d = if d.dot(n) < 0.0 { -d } else { d };
+                    (d.cross(n).len() > 1e-12).then_some(d)
+                }
+            };
+            let sweep = along.unwrap_or(n);
             let mut out = Vec::new();
             for c in curves {
                 out.push(match c.as_slice() {
                     [Seg2::Line { a, b }] => {
                         let (wa, wb) = (plane.to_world(*a), plane.to_world(*b));
-                        let n = plane.normal().cross(wb - wa).normalized().ok_or_else(|| KernelError::Invalid("a zero-length split line".into()))?;
+                        let n = sweep.cross(wb - wa).normalized().ok_or_else(|| KernelError::Invalid("a zero-length split line".into()))?;
                         Field::Plane { o: wa, n }
                     }
-                    [Seg2::Arc { center, radius, .. }] if radius.is_finite() && *radius > 0.0 => {
-                        Field::Cylinder { o: plane.to_world(*center), axis: plane.normal(), r: *radius, out: 1.0 }
-                    }
+                    [Seg2::Arc { center, radius, .. }] if along.is_none() && radius.is_finite() && *radius > 0.0 => Field::Cylinder {
+                        o: plane.to_world(*center),
+                        axis: n.unit().ok_or_else(|| KernelError::Invalid("a sketch plane with no normal".into()))?,
+                        r: *radius,
+                        out: 1.0,
+                    },
                     segs => {
                         let mut pts: Vec<Vec2> = Vec::new();
                         for sg in segs {
@@ -1198,7 +1323,9 @@ fn fields(tool: &SplitTool) -> Result<Vec<Field>> {
                         if pts.len() < 2 || pts.iter().any(|p| !(p.x.is_finite() && p.y.is_finite())) || pts.len() > 1_000_000 {
                             return Err(KernelError::Invalid("split curves need finite segments".into()));
                         }
-                        Field::Curve { plane: *plane, pts }
+                        let span = pts.iter().fold(0.0f64, |m, p| m.max(p.len()));
+                        let closed = pts.len() > 3 && pts.first().zip(pts.last()).is_some_and(|(a, b)| (*a - *b).len() <= span * 1e-9 + 1e-9);
+                        Field::Curve { plane: *plane, pts, closed, along }
                     }
                 });
             }
@@ -1304,6 +1431,7 @@ pub(crate) fn split_any(body: &Body, faces: &[usize], tool: &SplitTool) -> Resul
         let split = Body {
             solid: std::sync::Arc::new(solid),
             size: 0.0,
+            boundary_tol: body.boundary_tol,
             volume: Some(std::sync::Arc::new(std::sync::Mutex::new(None))),
             coarse_missing: None,
             mesh: None,
@@ -1312,15 +1440,31 @@ pub(crate) fn split_any(body: &Body, faces: &[usize], tool: &SplitTool) -> Resul
             splits: body.splits.clone(),
             face_sources: None,
             history: None,
+            display_of: None,
+            meshes: None,
+            phased: false,
             regularization_protected: true,
         };
         Ok((crate::record::rebuilt_body(split, &[&body.solid], &imp.rec), imp))
     })
 }
 
-/// A point well inside a face (a mesh triangle's centre where the field is largest) and the
-/// field there.
+/// The field at a point well inside a face (a mesh triangle's centre where the field is
+/// largest; for a plane, the face's corner farthest from it).
 fn side_of(face: &mt::Face, g: &Field, size: f64) -> Result<f64> {
+    // A face the plane does not cross is on the side of whichever corner lies off it (the
+    // farthest, against rounding); a face with every corner on the plane is meshed.
+    if let Field::Plane { .. } = g {
+        let far = face
+            .boundaries()
+            .iter()
+            .flat_map(|w| w.vertex_iter())
+            .map(|v| g.eval(from_p3(v.point())))
+            .fold(0.0, |b: f64, x| if x.abs() > b.abs() { x } else { b });
+        if far.abs() > size * 1e-6 {
+            return Ok(far);
+        }
+    }
     let shell: mt::Shell = vec![face.clone()].into();
     let meshed = shell.robust_triangulation((size * 2e-3).max(1e-4));
     let pm = meshed.face_iter().next().and_then(|f| f.surface()).ok_or_else(|| KernelError::Failed("a face could not be meshed".into()))?;
@@ -1359,6 +1503,62 @@ fn chain_loops(edges: &[mt::Edge]) -> Result<Vec<Vec<mt::Edge>>> {
         out.push(lp);
     }
     Ok(out)
+}
+
+/// The regions of a body cut by a tool: for each face (in face order), the region it lies in,
+/// and how many there are. Faces are in one region when they meet at an edge the tool does not
+/// run along; an edge along the tool (a split line) parts them.
+pub(crate) fn regions(split: &Body, tool: &SplitTool) -> Result<(Vec<usize>, usize)> {
+    let fields = fields(tool)?;
+    let tol = trace_tol_of(split.size());
+    let faces: Vec<&mt::Face> = split.solid.face_iter().collect();
+    let mut along_tool: HashMap<mt::EdgeID, bool> = HashMap::new();
+    let mut by_edge: HashMap<mt::EdgeID, Vec<usize>> = HashMap::new();
+    for (i, f) in faces.iter().enumerate() {
+        for e in f.boundaries().iter().flat_map(|w| w.edge_iter()) {
+            by_edge.entry(e.id()).or_default().push(i);
+            along_tool.entry(e.id()).or_insert_with(|| {
+                let c = e.curve();
+                let (t0, t1) = c.range_tuple();
+                let at: Vec<Vec3> = [0.25, 0.5, 0.75].iter().map(|s| from_p3(c.subs(t0 + (t1 - t0) * s))).collect();
+                fields.iter().any(|g| at.iter().all(|p| g.eval(*p).abs() <= tol))
+            });
+        }
+    }
+    let mut region = vec![usize::MAX; faces.len()];
+    let mut count = 0;
+    for s in 0..faces.len() {
+        if region.get(s) != Some(&usize::MAX) {
+            continue;
+        }
+        if let Some(r) = region.get_mut(s) {
+            *r = count;
+        }
+        let mut stack = vec![s];
+        while let Some(i) = stack.pop() {
+            let Some(f) = faces.get(i) else { continue };
+            for e in f.boundaries().iter().flat_map(|w| w.edge_iter()) {
+                if along_tool.get(&e.id()).copied().unwrap_or(false) {
+                    continue;
+                }
+                for &j in by_edge.get(&e.id()).into_iter().flatten() {
+                    if let Some(r) = region.get_mut(j)
+                        && *r == usize::MAX
+                    {
+                        *r = count;
+                        stack.push(j);
+                    }
+                }
+            }
+        }
+        count += 1;
+    }
+    Ok((region, count))
+}
+
+/// How many fields a tool is (a sketch tool: one per curve).
+pub(crate) fn field_count(tool: &SplitTool) -> Result<usize> {
+    Ok(fields(tool)?.len())
 }
 
 /// Faces grouped by shared edges (in face order).
@@ -1436,7 +1636,7 @@ pub fn split_body(body: &Body, tool: &SplitTool) -> Result<Vec<Body>> {
             let x = (if axis.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).cross(*axis).normalized().unwrap_or(Vec3::X);
             let (a, b) = (*o + *axis * lo + x * *r, *o + *axis * hi + x * *r);
             let line = mt::Curve::Line(mt::Line(p3(a), p3(b)));
-            crate::step_in::geom::revolved_oriented(line, p3(*o), crate::body::v3(*axis), 0.5, crate::body::v3(x * *out))
+            crate::step_in::geom::revolved_oriented(line, p3(*o), crate::body::v3(axis.vec()), 0.5, crate::body::v3(x * *out))
         }
         Field::Surface(s) => s.clone(),
         Field::Curve { .. } => return Err(KernelError::Invalid("a body is split by a plane or a face".into())),
@@ -1652,7 +1852,7 @@ mod tests {
         let side = c.faces(0.01).unwrap().iter().position(|f| f.plane_normal.is_none()).unwrap();
         // A horizontal line seen from the front (XZ sketch) at z = 5, swept along y.
         let xz = Plane { y: Vec3::Z, ..Plane::XZ };
-        let tool = SplitTool::Curves { plane: xz, curves: vec![vec![Seg2::Line { a: Vec2::new(-20.0, 5.0), b: Vec2::new(20.0, 5.0) }]] };
+        let tool = SplitTool::Curves { plane: xz, curves: vec![vec![Seg2::Line { a: Vec2::new(-20.0, 5.0), b: Vec2::new(20.0, 5.0) }]], along: None };
         let s = split_faces(&c, &[side], &tool).unwrap();
         let m = measure(&s).unwrap();
         // (Measured on meshes: curved faces agree to about 1e-4.)
@@ -1734,7 +1934,7 @@ mod tests {
         let t = top(&b, 30.0);
         let arc = Seg2::Arc { center: Vec2::new(0.0, 0.0), radius: 6.0, start: 0.0, sweep: std::f64::consts::FRAC_PI_2 };
         let plane = Plane { origin: Vec3::new(0.0, 0.0, 30.0), ..Plane::XY };
-        let tool = SplitTool::Curves { plane, curves: vec![vec![arc]] };
+        let tool = SplitTool::Curves { plane, curves: vec![vec![arc]], along: None };
         let (s, map) = split_faces_with_map(&b, &[t], &tool).unwrap();
         assert_eq!(map.len(), s.face_count());
         assert_eq!(map.iter().filter(|o| **o == t).count(), 2);

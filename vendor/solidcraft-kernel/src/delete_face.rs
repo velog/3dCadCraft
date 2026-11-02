@@ -3,7 +3,8 @@
 //!
 //! The body is rebuilt from its own topology. Faces away from the gap are kept as they are.
 //! Each neighbouring face (planar) keeps its edges that don't touch the gap; a loop that ran
-//! entirely along deleted faces (a hole's rim, a boss's footprint) is dropped; a corner on the
+//! entirely along deleted faces is dropped for a hole's rim or a boss's footprint, or restored
+//! at the moved corners for a face enclosed by rounds. A corner on the
 //! gap moves to where its planes meet the neighbours across the gap (a fillet's tangent points
 //! go to the sharp corner), and the stretch of loop that bordered deleted faces closes with a
 //! straight edge between the moved corners. Anything else (curved neighbours, a gap the
@@ -11,7 +12,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use solidcraft_geom::Vec3;
+use solidcraft_geom::{Aabb3, Vec3};
 use truck_modeling::{self as mt, builder};
 
 use crate::body::{Body, Solid, from_p3, p3};
@@ -116,19 +117,9 @@ pub fn delete_faces(body: &Body, faces: &[usize]) -> Result<Body> {
         }
     }
     // Corners across the gap: three neighbour planes meeting near the deleted faces.
-    let (mut lo, mut hi) =
-        (Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY), Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY));
-    for &f in &del {
-        for v in all.get(f).into_iter().flat_map(|x| x.vertex_iter()) {
-            let p = from_p3(v.point());
-            lo = lo.min(p);
-            hi = hi.max(p);
-        }
-    }
-    let reach = (hi - lo).len().max(size * 1e-3);
-    let near = |p: Vec3| {
-        p.x >= lo.x - reach && p.y >= lo.y - reach && p.z >= lo.z - reach && p.x <= hi.x + reach && p.y <= hi.y + reach && p.z <= hi.z + reach
-    };
+    let gap: Aabb3 = del.iter().flat_map(|f| all.get(*f).into_iter().flat_map(|x| x.vertex_iter())).map(|v| from_p3(v.point())).collect();
+    let near_gap = gap.inflated(gap.diagonal().max(size * 1e-3));
+    let near = |p: Vec3| near_gap.contains(p);
     let on = |p: Vec3, f: usize| planes.get(&f).is_some_and(|(n, d)| (n.dot(p) - d).abs() <= size * 1e-6);
     let nb: Vec<usize> = neighbours.iter().copied().collect();
     let mut corners: Vec<Vec3> = Vec::new();
@@ -212,10 +203,54 @@ pub fn delete_faces(body: &Body, faces: &[usize]) -> Result<Body> {
             }
             let pos = |v: &mt::Vertex| moved.get(&v.id()).copied().unwrap_or_else(|| from_p3(v.point()));
             let gap = |e: &mt::Edge| efaces.get(&e.id()).is_some_and(|fs| fs.iter().any(|x| del.contains(x)));
+            // A face that only loses whole loops (a hole's rim, a pocket's opening) and has no
+            // corner moving keeps its own surface: rebuilding a plane from its outer boundary
+            // fails when imported edges are not exactly on one plane.
+            let mut stays = f.vertex_iter().all(|v| !moved.contains_key(&v.id()));
+            let mut kept: Vec<mt::Wire> = Vec::new();
+            for w in f.absolute_boundaries() {
+                let gaps = w.edge_iter().filter(|e| gap(e)).count();
+                if gaps == 0 {
+                    kept.push(w.clone());
+                } else if gaps != w.len() {
+                    stays = false;
+                }
+            }
+            if stays && !kept.is_empty() {
+                let mut face = mt::Face::try_new(kept, f.surface()).map_err(|e| fail(format!("face {fi} cannot close: {e}")))?;
+                if !f.orientation() {
+                    face.invert();
+                }
+                rec.face(&face, f);
+                out.push(face);
+                continue;
+            }
             let mut wires: Vec<mt::Wire> = Vec::new();
             for w in f.boundaries() {
                 let edges: Vec<mt::Edge> = w.edge_iter().cloned().collect();
                 if edges.iter().all(gap) {
+                    // A hole or boss footprint disappears when its walls are removed. A
+                    // face surrounded by rounds does not: its whole boundary moves back to
+                    // the intersections of the remaining planes (#1557). Keep that loop,
+                    // sharing its restored edges with the adjacent rebuilt faces.
+                    let moving = edges.iter().any(|e| moved.contains_key(&e.front().id()) || moved.contains_key(&e.back().id()));
+                    if moving {
+                        if !edges.iter().all(|e| moved.contains_key(&e.front().id()) && moved.contains_key(&e.back().id())) {
+                            return Err(fail(format!("face {fi} has a closed gap boundary that cannot be restored completely")));
+                        }
+                        let mut boundary = Vec::new();
+                        for e in &edges {
+                            let (a, b) = (pos(e.front()), pos(e.back()));
+                            if a.dist(b) > q * 10.0 {
+                                let restored = line(a, b, &mut verts);
+                                rec.piece(&restored, e);
+                                boundary.push(restored);
+                            }
+                        }
+                        if !boundary.is_empty() {
+                            wires.push(boundary.into());
+                        }
+                    }
                     continue;
                 }
                 // Start after a gap stretch so stretches don't wrap around.
@@ -319,6 +354,53 @@ mod tests {
                 m.triangles.iter().zip(&m.tri_face).filter(|(_, x)| **x as usize == *f).all(|(t, _)| m.tri(t).unwrap().iter().all(|p| keep(*p)))
             })
             .collect()
+    }
+
+    #[test]
+    fn issue1557_delete_closed_fillet_ring_keeps_the_floor() {
+        let b = box_solid(Vec3::ZERO, Vec3::new(25.0, 25.0, 10.0)).unwrap();
+        let picks = [Vec3::new(12.5, 0.0, 0.0), Vec3::new(25.0, 12.5, 0.0), Vec3::new(12.5, 25.0, 0.0), Vec3::new(0.0, 12.5, 0.0)];
+        let rounded = fillet(&b, &picks, 2.0).unwrap();
+        let rounds: Vec<usize> =
+            rounded.solid.face_iter().enumerate().filter(|(_, f)| crate::blend::plane_normal(f).is_none()).map(|(i, _)| i).collect();
+        assert_eq!(rounds.len(), 4);
+        let restored = delete_faces(&rounded, &rounds).unwrap();
+        assert_eq!(restored.face_count(), 6);
+        assert_eq!(restored.unmeshed_faces(), 0);
+        assert!((volume(&restored) - 6250.0).abs() < 1e-6);
+        assert!(restored.contains(Vec3::new(0.1, 0.1, 0.1)));
+    }
+
+    #[test]
+    fn delete_pocket_keeps_an_imported_face_around_it() {
+        use truck_modeling as mt;
+        // A shallow round pocket in the top of a plate whose top edges bow 5e-5 mm off the
+        // plane, as the edges of an imported part do: within the planar test, but too far for a
+        // plane rebuilt from them. The top only loses its inner loop, so it keeps its surface.
+        let plate = box_solid(Vec3::ZERO, Vec3::new(100.0, 100.0, 10.0)).unwrap();
+        let tool = cylinder(Vec3::new(50.0, 50.0, 9.5), Vec3::Z, 7.5, 2.0).unwrap();
+        let pocketed = boolean(&plate, &tool, BoolOp::Cut).unwrap().unwrap();
+        let pocket = faces_where(&pocketed, |p| (p.x - 50.0).hypot(p.y - 50.0) < 7.5 + 1e-3 && p.z > 9.5 - 1e-6);
+        assert!(!pocket.is_empty());
+        let mut bowed = 0;
+        for e in pocketed.solid.edge_iter() {
+            let (a, b) = (e.front().point(), e.back().point());
+            if let mt::Curve::Line(_) = e.curve()
+                && (a.z - 10.0).abs() < 1e-9
+                && (b.z - 10.0).abs() < 1e-9
+            {
+                let lift = mt::Vector3::new(0.0, 0.0, 1e-4);
+                let mid = mt::Point3::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0, 10.0) + lift;
+                let c = if e.orientation() { vec![a, mid, b] } else { vec![b, mid, a] };
+                e.set_curve(mt::Curve::BSplineCurve(mt::BSplineCurve::new(mt::KnotVec::bezier_knot(2), c)));
+                bowed += 1;
+            }
+        }
+        assert_eq!(bowed, 4);
+        let filled = delete_faces(&pocketed, &pocket).unwrap();
+        assert_eq!(filled.face_count(), 6);
+        assert_eq!(filled.unmeshed_faces(), 0);
+        assert!((volume(&filled) - 100000.0).abs() < 1e-3, "{}", volume(&filled));
     }
 
     #[test]

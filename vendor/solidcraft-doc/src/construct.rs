@@ -280,9 +280,9 @@ pub(crate) fn line(ctx: &Ctx, g: &GeoRef) -> Result<(Vec3, Vec3)> {
         GeoRef::Face { at, name } => {
             let (b, fi, _) = face_of(ctx.st, *at, name)?;
             match kernel::face_surface(&b.body, fi) {
-                Some(FaceSurface::Cylinder { origin, axis, .. }) => Ok((origin, axis)),
-                Some(FaceSurface::Cone { apex, axis, .. }) => Ok((apex, axis)),
-                Some(FaceSurface::Torus { center, axis, .. }) => Ok((center, axis)),
+                Some(FaceSurface::Cylinder { origin, axis, .. }) => Ok((origin, axis.vec())),
+                Some(FaceSurface::Cone { apex, axis, .. }) => Ok((apex, axis.vec())),
+                Some(FaceSurface::Torus { center, axis, .. }) => Ok((center, axis.vec())),
                 _ => Err(bad("the face is not a cylinder, cone or torus")),
             }
         }
@@ -362,7 +362,7 @@ fn path_points(ctx: &Ctx, g: &GeoRef) -> Result<Vec<Vec3>> {
 /// The surface's unit normal at (the point of the surface nearest) `p`, and that point.
 fn surface_normal(s: FaceSurface, p: Vec3) -> Option<(Vec3, Vec3)> {
     match s {
-        FaceSurface::Plane { normal, point } => Some((p - normal * (p - point).dot(normal), normal)),
+        FaceSurface::Plane { normal, point } => { let normal = normal.vec(); Some((p - normal * (p - point).dot(normal), normal)) }
         FaceSurface::Cylinder { origin, axis, radius } => {
             let w = p - origin;
             let r = (w - axis * w.dot(axis)).normalized()?;
@@ -398,7 +398,7 @@ fn face_surface_at(ctx: &Ctx, g: &GeoRef) -> Result<(FaceSurface, Vec3)> {
         }
         GeoRef::Plane { .. } => {
             let pl = plane(ctx, g)?;
-            Ok((FaceSurface::Plane { normal: pl.normal(), point: pl.origin }, pl.origin))
+            Ok((FaceSurface::Plane { normal: solidcraft_geom::UnitVec3::new(pl.normal()).ok_or_else(|| bad("the plane has no normal"))?, point: pl.origin }, pl.origin))
         }
         _ => Err(bad("pick a face")),
     }

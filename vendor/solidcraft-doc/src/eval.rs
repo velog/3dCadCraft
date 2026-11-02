@@ -243,7 +243,7 @@ fn thread_on(st: &ModelState, feature: u64, p: Vec3, designation: Option<&str>, 
         pitch,
         internal: cyl.internal,
         axis_point: cyl.axis_point,
-        axis: cyl.axis,
+        axis: cyl.axis.vec(),
         start: a,
         end: b,
     })
@@ -1808,7 +1808,7 @@ fn faces_through(st: &ModelState, p: Vec3, reach: f64) -> Vec<(f64, Vec3, Option
         }
         for (f, (d, facet)) in near {
             let (exact, off) = match kernel::face_surface(&b.body, f as usize) {
-                Some(kernel::FaceSurface::Plane { normal, point }) => (Some(normal), Some((p - point).dot(normal).abs())),
+                Some(kernel::FaceSurface::Plane { normal, point }) => (Some(normal.vec()), Some((p - point).dot(*normal).abs())),
                 Some(kernel::FaceSurface::Cylinder { origin, axis, .. }) => {
                     let v = p - origin;
                     ((v - axis * v.dot(axis)).normalized(), None)
@@ -3973,7 +3973,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     if curves.is_empty() {
                         return Err(DocError::Invalid(format!("sketch `{}` has no curves to split with", ss.name)));
                     }
-                    kernel::split_faces(&mb.body, &picked, &kernel::SplitTool::Curves { plane: ss.plane, curves })?
+                    kernel::split_faces(&mb.body, &picked, &kernel::SplitTool::Curves { plane: ss.plane, curves, along: None })?
                 }
                 (None, None) => {
                     let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;

@@ -152,7 +152,7 @@ impl Bez {
     }
 
     fn seg(&self) -> sg::Seg2 {
-        let mut p = [sg::Vec2::new(0.0, 0.0); 8];
+        let mut p = [sg::Vec2::new(0.0, 0.0); 10];
         for (q, b) in p.iter_mut().zip(self.0) {
             *q = sg::Vec2::new(b.x, b.y);
         }

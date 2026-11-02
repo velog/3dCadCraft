@@ -4073,7 +4073,7 @@ pub(super) fn sheet_op(
             let mut rips = c.rips.clone();
             rips.push(rip);
             match ksm::recognize(&c.solid, &c.prefix, &rv, c.face, &rips).map_err(User)? {
-                ksm::Recognized::Sheet(solid, model) => Ok(replace(k, solid, model, body)),
+                ksm::Recognized::Sheet(solid, model) => Ok(replace(k, *solid, model, body)),
                 ksm::Recognized::Closed { model, loops } => {
                     let closed = ClosedSheet {
                         rips,
@@ -4552,7 +4552,7 @@ pub(super) fn sheet_convert(
             ksm::Recognized::Sheet(solid, model) => {
                 let faces = solid.face_names.len();
                 let mut next = solids.to_vec();
-                next[k] = solid;
+                next[k] = *solid;
                 Ok((next, SheetState::new(model, faces)))
             }
             // Converted as it is; a Rip opens it (Inventor's flat pattern fails until then).

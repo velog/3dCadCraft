@@ -28,8 +28,9 @@ pub(crate) enum Surf {
     /// outward normal points away from the axis.
     Cone { v: Vec3, a: Vec3, half: f64, convex: bool },
     /// Axis point and unit axis, the tube's centre circle (radius `big` at height `h` along the
-    /// axis) and the tube radius; `convex` when the outward normal points away from the tube's
-    /// centre.
+    /// axis) and the tube radius; `big` is negative on the inner sheet of a spindle torus,
+    /// whose meridian circle's centre lies across the axis. `convex` when the outward normal
+    /// points away from the tube's centre.
     Torus { o: Vec3, a: Vec3, big: f64, h: f64, r: f64, convex: bool },
 }
 
@@ -292,9 +293,10 @@ fn torus_of(f: &mt::Face, s: &[(Vec3, Vec3)], tol: f64) -> Option<Surf> {
     }
     let x = crate::polyhedron::solve3_pub(m, rhs)?;
     let (big, h, r) = (x[0], x[1], x[2]);
-    // (A tube wider than its circle, a spindle torus, is fine: blends use its outer part, where
-    // each point's tube centre is the one on its own side of the axis.)
-    if !(big > 1e-9 && r.abs() > 1e-9) {
+    // A spindle torus also has an inner sheet: a barrel revolved from an arc whose
+    // centre is across the axis. Its signed ring radius is negative; retain that sign
+    // so distances, normals and the moved meridian use the centre on the opposite side.
+    if !(big.abs() > 1e-9 && r.abs() > 1e-9) {
         return None;
     }
     let t = Surf::Torus { o, a, big, h, r: r.abs(), convex: r > 0.0 };
@@ -459,6 +461,7 @@ fn split_corner(
     // normal, so its inside is to the left; the edge is convex when the face beyond it falls
     // away from there.
     let mut sign = 0.0f64;
+    let mut mixed = false;
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     for &(fi, na, ..) in &planes {
         for w in faces.get(fi)?.boundaries() {
@@ -474,7 +477,7 @@ fn split_corner(
                     continue;
                 }
                 if sign * s < 0.0 {
-                    return None;
+                    mixed = true;
                 }
                 sign = s.signum();
             }
@@ -483,33 +486,55 @@ fn split_corner(
     if sign == 0.0 {
         return None;
     }
+    // Which triples of faces may meet at a new corner. All convex or all concave: any triple
+    // whose point is inside all the other moved planes. Mixed (a saddle, such as a box on a
+    // box that overhangs its side): the faces round the corner in order, and each new corner
+    // on three faces in a row (the two new edges on the middle face meet there). A saddle's
+    // faces bound no convex region, so a right corner can be outside another face's moved
+    // plane, and the inside-all-the-others test does not apply. What keeps a corner in place
+    // is that it is where its middle face's two new edges meet; a corner past the far end of
+    // one of the corner's edges turns that edge round, and a face whose loops cross after the
+    // move is refused (both checked in `offset_body`).
+    let triples: Vec<[usize; 3]> = if mixed {
+        let ring = face_ring(&pairs, planes.len())?;
+        let n = ring.len();
+        (0..n).map(|i| [ring[(i + n - 1) % n], ring[i], ring[(i + 1) % n]]).collect()
+    } else {
+        let mut t = Vec::new();
+        for ia in 0..planes.len() {
+            for ib in ia + 1..planes.len() {
+                for ic in ib + 1..planes.len() {
+                    t.push([planes[ia].0, planes[ib].0, planes[ic].0]);
+                }
+            }
+        }
+        t
+    };
+    let plane_of = |fi: usize| planes.iter().find(|x| x.0 == fi);
     // Convex: the body's side, n·x ≤ d; concave: the outside's, n·x ≥ d.
     let side = -sign;
     let merge = size * 1e-6;
     let mut nodes: Vec<(Vec3, Vec<usize>)> = Vec::new();
-    for (ia, a) in planes.iter().enumerate() {
-        for (ib, b) in planes.iter().enumerate().skip(ia + 1) {
-            for c in planes.iter().skip(ib + 1) {
-                let den = a.1.dot(b.1.cross(c.1));
-                if den.abs() < 1e-9 {
-                    continue;
-                }
-                let x = (b.1.cross(c.1) * a.3 + c.1.cross(a.1) * b.3 + a.1.cross(b.1) * c.3) * (1.0 / den);
-                if !x.is_finite() || x.dist(p) > size || planes.iter().any(|q| side * (q.1.dot(x) - q.3) > merge) {
-                    continue;
-                }
-                let fs = [a.0, b.0, c.0];
-                match nodes.iter_mut().find(|(q, _)| q.dist(x) < merge) {
-                    Some((_, nf)) => {
-                        for f in fs {
-                            if !nf.contains(&f) {
-                                nf.push(f);
-                            }
-                        }
+    for [fa, fb, fc] in triples {
+        let (a, b, c) = (plane_of(fa)?, plane_of(fb)?, plane_of(fc)?);
+        let den = a.1.dot(b.1.cross(c.1));
+        if den.abs() < 1e-9 {
+            continue;
+        }
+        let x = (b.1.cross(c.1) * a.3 + c.1.cross(a.1) * b.3 + a.1.cross(b.1) * c.3) * (1.0 / den);
+        if !x.is_finite() || x.dist(p) > size || (!mixed && planes.iter().any(|q| side * (q.1.dot(x) - q.3) > merge)) {
+            continue;
+        }
+        let fs = [fa, fb, fc];
+        match nodes.iter_mut().find(|(q, _)| q.dist(x) < merge) {
+            Some((_, nf)) => {
+                for f in fs {
+                    if !nf.contains(&f) {
+                        nf.push(f);
                     }
-                    None => nodes.push((x, fs.to_vec())),
                 }
             }
+            None => nodes.push((x, fs.to_vec())),
         }
     }
     // Every face keeps a corner here, and every edge an end.
@@ -525,6 +550,39 @@ fn split_corner(
         *q = p + span_step(&ns, &ss)?;
     }
     Some(nodes)
+}
+
+/// The faces round a corner in order, from the pairs of faces on each of its edges: `None`
+/// unless they form one simple ring of `count` faces (each face meets the corner once, between
+/// exactly two neighbours).
+fn face_ring(pairs: &[(usize, usize)], count: usize) -> Option<Vec<usize>> {
+    let mut next: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &(a, b) in pairs {
+        for (x, y) in [(a, b), (b, a)] {
+            let ns = next.entry(x).or_default();
+            if !ns.contains(&y) {
+                ns.push(y);
+            }
+        }
+    }
+    if next.len() != count || next.values().any(|ns| ns.len() != 2) {
+        return None;
+    }
+    let first = *next.keys().min()?;
+    let mut ring = vec![first];
+    let mut prev = first;
+    let mut cur = *next.get(&first)?.first()?;
+    while cur != first {
+        if ring.len() >= count {
+            return None;
+        }
+        ring.push(cur);
+        let ns = next.get(&cur)?;
+        let to = if ns[0] == prev { ns[1] } else { ns[0] };
+        prev = cur;
+        cur = to;
+    }
+    (ring.len() == count).then_some(ring)
 }
 
 /// The corners of a split corner (see [`split_corner`]) on face `face`, in order from corner
@@ -1032,6 +1090,13 @@ pub(crate) fn offset_body(b: &Body, shift: impl Fn(usize, Vec3) -> f64) -> Resul
                     let (o, s, n) = pick(fs);
                     let m2 =
                         move_point(m, &o, &s, &n, size * 1e-6).ok_or_else(|| fail("an edge whose faces don't meet the same way after the move"))?;
+                    // An arc turned round: its ends moved past its middle (next to a face it meets
+                    // tangentially), so the arc through them goes the long way round its circle.
+                    let (a0, c0, a1, c1) =
+                        (from_p3(e.absolute_front().point()), from_p3(e.absolute_back().point()), from_p3(a.point()), from_p3(c.point()));
+                    if (m - a0).cross(c0 - a0).dot((m2 - a1).cross(c1 - a1)) < 0.0 {
+                        return Err(fail("not supported yet: the move is larger than a wall or step is thick (faces would cross)"));
+                    }
                     builder::circle_arc(a, c, p3(m2))
                 }
             };
@@ -1120,9 +1185,10 @@ pub(crate) fn offset_body(b: &Body, shift: impl Fn(usize, Vec3) -> f64) -> Resul
 
 /// Draft walls parallel to `pull` (planes, and cylinders about axes along `pull`) by `angle`
 /// about their line on the neutral plane: at height h along `pull` a wall moves along its
-/// outward normal by −h·tan(angle), so planes tilt and cylinders become cones. The other
-/// faces must be caps square to `pull`; the topology is kept, and the result's history is over
-/// `[b]` (each face and edge the one it was moved from).
+/// outward normal by −h·tan(angle), so planes tilt and cylinders become cones. The faces that
+/// share a corner with a drafted wall must be caps square to `pull` or walls; the rest of the
+/// body (a rounded edge elsewhere, say) is left as it is. The topology is kept, and the
+/// result's history is over `[b]` (each face and edge the one it was moved from).
 pub(crate) fn draft_walls(b: &Body, chosen: &[usize], neutral: &solidcraft_geom::Plane, pull: Vec3, angle: f64) -> Result<Body> {
     let faces: Vec<mt::Face> = b.solid.face_iter().cloned().collect();
     let size = b.size();
@@ -1134,37 +1200,6 @@ pub(crate) fn draft_walls(b: &Body, chosen: &[usize], neutral: &solidcraft_geom:
     }
     let height = |p: Vec3| (p - neutral.origin).dot(nn) / den;
     let tan = angle.tan();
-    let mut old = Vec::with_capacity(faces.len());
-    for (i, f) in faces.iter().enumerate() {
-        let sf = surf_of(f, tol * 100.0).ok_or_else(|| fail("draft: only bodies with planar and cylindrical faces"))?;
-        let wall = match sf {
-            Surf::Plane { n, .. } => n.dot(pull).abs() < 1e-9,
-            Surf::Cylinder { a, .. } => a.dot(pull).abs() > 1.0 - 1e-9,
-            Surf::Sphere { .. } | Surf::Cone { .. } | Surf::Torus { .. } => false,
-        };
-        let cap = matches!(sf, Surf::Plane { n, .. } if n.dot(pull).abs() > 1.0 - 1e-9);
-        if chosen.contains(&i) && !wall {
-            return Err(fail("draft: a chosen face isn't parallel to the pull direction"));
-        }
-        if !chosen.contains(&i) && !cap && !wall {
-            return Err(fail("draft: faces next to the drafted walls must be square to the pull direction"));
-        }
-        old.push(sf);
-    }
-    // Shifts and moved surfaces at a height.
-    let at = |ids: &[usize], h: f64| -> Option<(Vec<Surf>, Vec<f64>, Vec<Surf>)> {
-        let mut o = Vec::new();
-        let mut s = Vec::new();
-        let mut n = Vec::new();
-        for i in ids {
-            let sf = *old.get(*i)?;
-            let sh = if chosen.contains(i) { -h * tan } else { 0.0 };
-            o.push(sf);
-            s.push(sh);
-            n.push(sf.moved(sh)?);
-        }
-        Some((o, s, n))
-    };
     let mut vfaces: HashMap<mt::VertexID, Vec<usize>> = HashMap::new();
     let mut efaces: HashMap<mt::EdgeID, Vec<usize>> = HashMap::new();
     for (i, f) in faces.iter().enumerate() {
@@ -1181,9 +1216,53 @@ pub(crate) fn draft_walls(b: &Body, chosen: &[usize], neutral: &solidcraft_geom:
             }
         }
     }
+    // A corner moves when one of its faces is drafted; the faces round a moving corner must be
+    // walls or caps for the corner to follow them. Faces away from the drafted walls may be
+    // anything: they keep their surface and their edges.
+    let moves = |vid: &mt::VertexID| vfaces.get(vid).is_some_and(|fs| fs.iter().any(|i| chosen.contains(i)));
+    let touched: Vec<bool> = faces.iter().enumerate().map(|(i, f)| chosen.contains(&i) || f.vertex_iter().any(|v| moves(&v.id()))).collect();
+    let mut old: Vec<Option<Surf>> = Vec::with_capacity(faces.len());
+    for (i, f) in faces.iter().enumerate() {
+        if !touched.get(i).copied().unwrap_or(false) {
+            old.push(None);
+            continue;
+        }
+        let sf = surf_of(f, tol * 100.0).ok_or_else(|| fail("draft: the faces next to the drafted walls must be planes or cylinders"))?;
+        let wall = match sf {
+            Surf::Plane { n, .. } => n.dot(pull).abs() < 1e-9,
+            Surf::Cylinder { a, .. } => a.dot(pull).abs() > 1.0 - 1e-9,
+            Surf::Sphere { .. } | Surf::Cone { .. } | Surf::Torus { .. } => false,
+        };
+        let cap = matches!(sf, Surf::Plane { n, .. } if n.dot(pull).abs() > 1.0 - 1e-9);
+        if chosen.contains(&i) && !wall {
+            return Err(fail("draft: a chosen face isn't parallel to the pull direction"));
+        }
+        if !chosen.contains(&i) && !cap && !wall {
+            return Err(fail("draft: faces next to the drafted walls must be square to the pull direction"));
+        }
+        old.push(Some(sf));
+    }
+    // Shifts and moved surfaces at a height.
+    let at = |ids: &[usize], h: f64| -> Option<(Vec<Surf>, Vec<f64>, Vec<Surf>)> {
+        let mut o = Vec::new();
+        let mut s = Vec::new();
+        let mut n = Vec::new();
+        for i in ids {
+            let sf = (*old.get(*i)?)?;
+            let sh = if chosen.contains(i) { -h * tan } else { 0.0 };
+            o.push(sf);
+            s.push(sh);
+            n.push(sf.moved(sh)?);
+        }
+        Some((o, s, n))
+    };
     let mut newpos: HashMap<mt::VertexID, Vec3> = HashMap::new();
     for v in b.solid.vertex_iter() {
         let p = from_p3(v.point());
+        if !moves(&v.id()) {
+            newpos.insert(v.id(), p);
+            continue;
+        }
         let fs = vfaces.get(&v.id()).ok_or_else(|| fail("vertex"))?;
         let (o, s, n) = at(fs, height(p)).ok_or_else(|| fail("draft: a wall shrinks to nothing"))?;
         let q = move_point(p, &o, &s, &n, size * 1e-6).ok_or_else(|| fail("draft: a corner whose faces don't meet the same way after the draft"))?;
@@ -1192,10 +1271,8 @@ pub(crate) fn draft_walls(b: &Body, chosen: &[usize], neutral: &solidcraft_geom:
     // New surfaces for the drafted walls: planes through their hinge line, cylinders → cones.
     let mut surfaces: Vec<Option<mt::Surface>> = vec![None; faces.len()];
     for (i, sf) in old.iter().enumerate() {
-        if !chosen.contains(&i) {
-            continue;
-        }
-        let surface = match *sf {
+        let (true, Some(sf)) = (chosen.contains(&i), *sf) else { continue };
+        let surface = match sf {
             Surf::Plane { n, d } => {
                 let n2 = (n * angle.cos() + pull * angle.sin()).normalized().ok_or_else(|| fail("draft"))?;
                 // A point of the old plane on the neutral plane: the hinge.
@@ -1248,7 +1325,14 @@ pub(crate) fn draft_walls(b: &Body, chosen: &[usize], neutral: &solidcraft_geom:
                 continue;
             }
             let (Some(a), Some(c)) = (verts.get(&e.absolute_front().id()), verts.get(&e.absolute_back().id())) else { return Err(fail("edge")) };
-            let kind = arc_mid(&e, size * 1e-6).ok_or_else(|| fail("draft: edges must be lines or arcs"))?;
+            // An edge whose ends stay keeps its curve (it may be anything: a blend's spline).
+            if !moves(&e.absolute_front().id()) && !moves(&e.absolute_back().id()) {
+                let ne = mt::Edge::try_new(a, c, e.curve().clone()).map_err(|e| fail(&e.to_string()))?;
+                rec.piece(&ne, &e);
+                edges.insert(e.id(), ne);
+                continue;
+            }
+            let kind = arc_mid(&e, size * 1e-6).ok_or_else(|| fail("draft: edges next to the drafted walls must be lines or arcs"))?;
             let ne = match kind {
                 None => builder::line(a, c),
                 Some(m) => {
@@ -1277,7 +1361,7 @@ pub(crate) fn draft_walls(b: &Body, chosen: &[usize], neutral: &solidcraft_geom:
                 Some(mut surface) => {
                     // Outward like the old face (checked at a boundary point).
                     let probe = f.boundaries().first().and_then(|w| w.vertex_iter().next()).map(|v| from_p3(v.point()));
-                    let want = probe.and_then(|p| old.get(i).and_then(|s| s.normal(p)));
+                    let want = probe.and_then(|p| old.get(i).copied().flatten().and_then(|s| s.normal(p)));
                     if let (Some(p), Some(want)) = (probe, want) {
                         use mt::{ParametricSurface3D, SearchNearestParameter};
                         if let Some((u, v)) = surface.search_nearest_parameter(p3(p), None, 100) {

@@ -329,6 +329,7 @@ pub fn split_by_sheet(
                 Some(Analytic::Cylinder(pl, arc)) => sk::SplitTool::Curves {
                     plane: *pl,
                     curves: vec![vec![*arc]],
+                    along: None,
                 },
                 None => sk::SplitTool::Face {
                     body: &sheet.body,
@@ -410,6 +411,7 @@ pub(super) fn split_faces_by(
         Some(Analytic::Cylinder(pl, arc)) => sk::SplitTool::Curves {
             plane: *pl,
             curves: vec![vec![*arc]],
+            along: None,
         },
         None => sk::SplitTool::Face {
             body: &sheet.body,
@@ -446,12 +448,12 @@ fn analytic_tool(k: sk::FaceSurface) -> Option<Analytic> {
         )
     };
     match k {
-        sk::FaceSurface::Plane { normal, point } => frame(point, normal).map(Analytic::Plane),
+        sk::FaceSurface::Plane { normal, point } => frame(point, normal.vec()).map(Analytic::Plane),
         sk::FaceSurface::Cylinder {
             origin,
             axis,
             radius,
-        } if radius > 0.0 => frame(origin, axis).map(|pl| {
+        } if radius > 0.0 => frame(origin, axis.vec()).map(|pl| {
             Analytic::Cylinder(
                 pl,
                 sg::Seg2::Arc {
@@ -509,13 +511,13 @@ pub fn walls_section(sheet: &ExactSolid) -> Option<(Plane, Vec<Vec<Segment2>>)> 
     let normals: Vec<Vector3> = walls
         .iter()
         .filter_map(|(k, _)| match k {
-            F::Plane { normal, .. } => v(*normal).try_normalize(1e-12),
+            F::Plane { normal, .. } => v(normal.vec()).try_normalize(1e-12),
             _ => None,
         })
         .collect();
     for (k, _) in &walls {
         match k {
-            F::Cylinder { axis, .. } => dir = dir.or(v(*axis).try_normalize(1e-12)),
+            F::Cylinder { axis, .. } => dir = dir.or(v(axis.vec()).try_normalize(1e-12)),
             F::Plane { .. } => {}
             _ => return None,
         }
@@ -533,8 +535,8 @@ pub fn walls_section(sheet: &ExactSolid) -> Option<(Plane, Vec<Vec<Segment2>>)> 
     let d = dir?;
     for (k, _) in &walls {
         let ok = match k {
-            F::Plane { normal, .. } => v(*normal).normalize().dot(&d).abs() < 1e-7,
-            F::Cylinder { axis, .. } => v(*axis).normalize().cross(&d).norm() < 1e-7,
+            F::Plane { normal, .. } => v(normal.vec()).normalize().dot(&d).abs() < 1e-7,
+            F::Cylinder { axis, .. } => v(axis.vec()).normalize().cross(&d).norm() < 1e-7,
             _ => false,
         };
         if !ok {
@@ -562,7 +564,7 @@ pub fn walls_section(sheet: &ExactSolid) -> Option<(Plane, Vec<Vec<Segment2>>)> 
         }
         match k {
             F::Plane { normal, point } => {
-                let n = plane.project(&(origin + v(*normal))) - plane.project(&origin);
+                let n = plane.project(&(origin + v(normal.vec()))) - plane.project(&origin);
                 let tl = V2::new(-n.y, n.x).try_normalize(1e-12)?;
                 let o = plane.project(&p3_of(*point));
                 let s = |q: &P2| (q - o).dot(&tl);
@@ -638,8 +640,8 @@ fn same_surface(a: &sk::FaceSurface, b: &sk::FaceSurface, tol: Real) -> bool {
                 point: p2,
             },
         ) => {
-            let n = v(*n1).normalize();
-            parallel(*n1, *n2) && (v(*p1) - v(*p2)).dot(&n).abs() < tol
+            let n = v(n1.vec()).normalize();
+            parallel(n1.vec(), n2.vec()) && (v(*p1) - v(*p2)).dot(&n).abs() < tol
         }
         (
             F::Cylinder {
@@ -653,9 +655,11 @@ fn same_surface(a: &sk::FaceSurface, b: &sk::FaceSurface, tol: Real) -> bool {
                 radius: r2,
             },
         ) => {
-            let a = v(*a1).normalize();
+            let a = v(a1.vec()).normalize();
             let d = v(*o2) - v(*o1);
-            parallel(*a1, *a2) && (r1 - r2).abs() < tol && (d - a * d.dot(&a)).norm() < tol
+            parallel(a1.vec(), a2.vec())
+                && (r1 - r2).abs() < tol
+                && (d - a * d.dot(&a)).norm() < tol
         }
         (
             F::Cone {
@@ -668,7 +672,7 @@ fn same_surface(a: &sk::FaceSurface, b: &sk::FaceSurface, tol: Real) -> bool {
                 axis: a2,
                 half_angle: h2,
             },
-        ) => near(*p1, *p2) && parallel(*a1, *a2) && (h1 - h2).abs() < 1e-9,
+        ) => near(*p1, *p2) && parallel(a1.vec(), a2.vec()) && (h1 - h2).abs() < 1e-9,
         (
             F::Sphere {
                 center: c1,
@@ -692,7 +696,12 @@ fn same_surface(a: &sk::FaceSurface, b: &sk::FaceSurface, tol: Real) -> bool {
                 major: m2,
                 minor: n2,
             },
-        ) => near(*c1, *c2) && parallel(*a1, *a2) && (m1 - m2).abs() < tol && (n1 - n2).abs() < tol,
+        ) => {
+            near(*c1, *c2)
+                && parallel(a1.vec(), a2.vec())
+                && (m1 - m2).abs() < tol
+                && (n1 - n2).abs() < tol
+        }
         _ => false,
     }
 }

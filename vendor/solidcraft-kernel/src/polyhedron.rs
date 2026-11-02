@@ -9,7 +9,7 @@ use solidcraft_geom::{Plane, Vec3};
 use truck_modeling::{self as mt, builder};
 
 use crate::body::{Body, Solid, from_p3, p3, v3};
-use crate::history::{EdgeOrigin, FaceOrigin, FaceProv, History};
+use crate::history::{Change, EdgeOrigin, FaceOrigin, FaceProv, History};
 use crate::record;
 use crate::{KernelError, Result, guard};
 
@@ -490,6 +490,9 @@ fn shell_planar(b: &Body, open: &[Vec3], thickness: f64) -> Result<Body> {
             "the rim would have no thickness: an open face meets a round of radius {r:.4} mm tangentially, and the shell is {thickness:.4} mm thick (make the round smaller than the thickness)"
         )));
     }
+    if let Some(shell) = shell_barrel(&healed, &opened, thickness)? {
+        return Ok(record::after(shell, &healed, &record::counts(&[b])));
+    }
     let margin = thickness + size * 0.05;
     shell_opened(b, &healed, open, &opened, thickness, margin).map_err(|e| match rim_without_thickness(&healed, &opened, thickness, false) {
         Some(r) => unsupported_shell(&format!(
@@ -497,6 +500,83 @@ fn shell_planar(b: &Body, open: &[Vec3], thickness: f64) -> Result<Body> {
         )),
         None => e,
     })
+}
+
+/// A convex circular-meridian barrel between two axial caps. Sew its exact inset walls
+/// to the original walls at annular rims: a Boolean of the two spindle sheets cannot
+/// reliably find their cap intersections, and sweeping an inset cap makes a cylindrical
+/// lip that cuts away part of the curved wall.
+fn shell_barrel(b: &Body, opened: &[usize], thickness: f64) -> Result<Option<Body>> {
+    use crate::offset::Surf;
+    if b.solid.boundaries().len() != 1 || b.face_count() > 256 {
+        return Ok(None);
+    }
+    let faces: Vec<mt::Face> = b.solid.face_iter().cloned().collect();
+    let tol = (b.size() * 1e-7).max(1e-9) * 100.0;
+    let surfs: Option<Vec<Surf>> = faces.iter().map(|f| crate::offset::surf_of(f, tol)).collect();
+    let Some(surfs) = surfs else { return Ok(None) };
+    let Some((centre, axis, big, radius)) = surfs.iter().find_map(|s| match *s {
+        Surf::Torus { o, a, big, h, r, convex: true } if big < -tol => Some((o + a * h, a, big, r)),
+        _ => None,
+    }) else {
+        return Ok(None);
+    };
+    let mut caps = Vec::new();
+    for (i, s) in surfs.iter().enumerate() {
+        match *s {
+            Surf::Torus { o, a, big: ring, h, r, convex: true }
+                if (o + a * h).dist(centre) < tol && a.dot(axis).abs() > 1.0 - 1e-9 && (ring - big).abs() < tol && (r - radius).abs() < tol => {}
+            Surf::Plane { n, d } if n.dot(axis).abs() > 1.0 - 1e-9 && faces.get(i).is_some_and(|f| f.boundaries().len() == 1) => {
+                caps.push((i, (d - n.dot(centre)) / n.dot(axis), n.dot(axis)));
+            }
+            _ => return Ok(None),
+        }
+    }
+    if caps.len() != 2 || opened.iter().any(|i| !caps.iter().any(|c| c.0 == *i)) {
+        return Ok(None);
+    }
+    caps.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let (Some(&(lower, lo, down)), Some(&(upper, hi, up))) = (caps.first(), caps.get(1)) else { return Ok(None) };
+    if down >= 0.0 || up <= 0.0 {
+        return Ok(None);
+    }
+    let lo = lo + if opened.contains(&lower) { 0.0 } else { thickness };
+    let hi = hi - if opened.contains(&upper) { 0.0 } else { thickness };
+    let inner_radius = radius - thickness;
+    if lo >= hi || inner_radius <= 0.0 || [lo, hi].iter().any(|z| inner_radius * inner_radius - z * z <= big * big) {
+        return Err(KernelError::Invalid("shell thickness leaves no barrel cavity".into()));
+    }
+    let cavity = offset_planar(b, |i, _| if opened.contains(&i) { 0.0 } else { -thickness })?;
+    let history = cavity.history().ok_or_else(|| unsupported_shell("the barrel cavity has no face history"))?;
+    // Every wall must still be the one offset of its source, in source order. No collapsed
+    // faces or changed topology can be sewn by this construction.
+    if cavity.face_count() != faces.len()
+        || history.faces.iter().enumerate().any(|(i, f)| f.origins.as_slice() != [FaceOrigin::Face { operand: 0, face: i }])
+    {
+        return Err(unsupported_shell("the barrel cavity changed topology"));
+    }
+    let inner: Vec<mt::Face> = cavity.solid.face_iter().cloned().collect();
+    let mut out = Vec::new();
+    let mut provenance = Vec::new();
+    for (i, outer) in faces.iter().enumerate() {
+        let inset = inner.get(i).ok_or_else(|| unsupported_shell("the barrel cavity lost a face"))?;
+        if opened.contains(&i) {
+            let mut wires = outer.absolute_boundaries().to_vec();
+            wires.extend(inset.absolute_boundaries().iter().map(|w| w.inverse()));
+            let mut rim = mt::Face::try_new(wires, outer.surface()).map_err(|e| KernelError::Failed(format!("shell rim: {e}")))?;
+            if !outer.orientation() {
+                rim.invert();
+            }
+            out.push(rim);
+            provenance.push(record::from_face(0, i, Change::Modified));
+        } else {
+            out.extend([outer.clone(), inset.inverse()]);
+            provenance.extend([record::from_face(0, i, Change::Kept), record::generated(vec![FaceOrigin::Offset { operand: 0, face: i }])]);
+        }
+    }
+    let solid = Solid::try_new(vec![out.into()]).map_err(|e| KernelError::Failed(format!("shell barrel: {e}")))?;
+    let copies = record::edges_by_identity(&cavity, history).filter_map(|(id, origins)| origins.into_iter().next().map(|o| (id, o))).collect();
+    record::attach(Body::new(solid)?, &[record::Operand::new(b)], Some(provenance), copies).map(Some)
 }
 
 /// The radius of a convex round (cylinder or torus) that meets an open face tangentially and
@@ -561,6 +641,14 @@ fn shell_opened(b: &Body, healed: &Body, open: &[Vec3], opened: &[usize], thickn
         Ok(c) => c,
         Err(e) => return shell_by_opening(healed, opened, thickness, margin).map_err(|_| e),
     };
+    let cavity = match opening_overreach(healed, &cavity, opened, thickness, margin) {
+        Ok(Some(trimmed)) => trimmed,
+        Ok(None) => cavity,
+        Err(e) => {
+            log::warn!("shell: could not trim the opening to the open faces ({e}); the wall next to it may be cut");
+            cavity
+        }
+    };
     let r = crate::ops::boolean(healed, &cavity, crate::BoolOp::Cut);
     if r.is_err()
         && let Ok(x) = shell_by_opening(healed, opened, thickness, margin)
@@ -602,6 +690,83 @@ fn shell_opened(b: &Body, healed: &Body, open: &[Vec3], opened: &[usize], thickn
     }
 }
 
+/// The cavity with each open face pushed out (`cavity`), trimmed so that beyond an open face's
+/// plane it only reaches through the open face itself; `None` when it already does.
+///
+/// The pushed-out face carries the cavity past every edge of the open face. Past a convex edge
+/// that is outside the body, but past a concave one (a box on a box, its side face open where it
+/// meets the lower box's top) it runs on into the neighbouring wall and cuts a strip through it,
+/// as wide as the push. The trimmed cavity is the shell's cavity with every face moved in,
+/// together with the pushed-out cavity's parts that are on the body's side of every open face's
+/// plane or in front of that open face.
+fn opening_overreach(healed: &Body, cavity: &Body, opened: &[usize], thickness: f64, margin: f64) -> Result<Option<Body>> {
+    let size = healed.size();
+    let tol = size * 1e-6 + 1e-9;
+    let faces: Vec<mt::Face> = healed.solid.face_iter().cloned().collect();
+    // Each open face's plane (outward normal, offset) and its triangles.
+    let mesh = healed.tessellate((size * 1e-3).max(1e-3))?;
+    let mut open: Vec<(&mt::Face, Vec3, f64, Vec<[Vec3; 3]>)> = Vec::new();
+    for fi in opened {
+        let Some(f) = faces.get(*fi) else { return Ok(None) };
+        let mt::Surface::Plane(pl) = f.oriented_surface() else { return Ok(None) };
+        let n = pl.normal();
+        let Some(n) = Vec3::new(n.x, n.y, n.z).normalized() else { return Ok(None) };
+        let d = n.dot(from_p3(pl.origin()));
+        let tris: Vec<[Vec3; 3]> =
+            mesh.triangles.iter().zip(&mesh.tri_face).filter(|(_, f)| **f as usize == *fi).filter_map(|(t, _)| mesh.tri(t)).collect();
+        if tris.is_empty() {
+            return Ok(None);
+        }
+        open.push((f, n, d, tris));
+    }
+    // Only a corner of the cavity past an open face's plane and not in front of that face can be
+    // in a wall; with none, the cavity is right as it is.
+    let overreach = cavity.solid.vertex_iter().any(|v| {
+        let q = from_p3(v.point());
+        open.iter().any(|(_, n, d, tris)| {
+            let h = n.dot(q) - d;
+            h > tol && {
+                let on = q - *n * h;
+                !tris.iter().any(|[a, b, c]| point_tri(on, *a, *b, *c) < size * 1e-4 + 1e-6)
+            }
+        })
+    });
+    if !overreach {
+        return Ok(None);
+    }
+    let closed = offset_planar(healed, |_, _| -thickness)?;
+    // Keep: on the body's side of each open plane, or in front of the open face.
+    let reach = size * 4.0;
+    let mut keep: Option<Body> = None;
+    for (f, n, d, _) in &open {
+        let c = *n * *d;
+        let mut hs = vec![HalfSpace { n: *n, d: *d }];
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            hs.push(HalfSpace { n: axis, d: axis.dot(c) + reach });
+            hs.push(HalfSpace { n: axis * -1.0, d: -axis.dot(c) + reach });
+        }
+        let (side, _) = polyhedron(&hs)?;
+        // In front of the face: its prism, from half a wall inside the body (overlapping `side`
+        // rather than touching it) to past the pushed-out face.
+        let inset = thickness * 0.5;
+        let prism = guard("shell opening prism", || {
+            let start = builder::translated(*f, v3(*n * -inset));
+            let solid: Solid = builder::tsweep(&start, v3(*n * (inset + margin * 2.0)));
+            Ok(solid)
+        })?;
+        let prism = Body::new(prism)?;
+        let k = crate::ops::boolean(&side, &prism, crate::BoolOp::Union)?.ok_or_else(|| KernelError::Failed("shell: opening".into()))?;
+        keep = Some(match keep {
+            None => k,
+            Some(acc) => crate::ops::boolean(&acc, &k, crate::BoolOp::Intersect)?.ok_or_else(|| KernelError::Failed("shell: opening".into()))?,
+        });
+    }
+    let Some(keep) = keep else { return Ok(None) };
+    let kept = crate::ops::boolean(cavity, &keep, crate::BoolOp::Intersect)?.ok_or_else(|| KernelError::Failed("shell: opening".into()))?;
+    let trimmed = crate::ops::boolean(&closed, &kept, crate::BoolOp::Union)?.ok_or_else(|| KernelError::Failed("shell: opening".into()))?;
+    Ok(Some(trimmed))
+}
+
 /// A shell made from the cavity with every face moved in by the thickness (open faces too),
 /// joined with each open face's moved copy swept out through the body. No history: the
 /// opening's walls, swept from the cavity's edges, come from nothing of `b`.
@@ -631,7 +796,7 @@ fn unsupported_shell(m: &str) -> KernelError {
     KernelError::Failed(format!("not supported yet: {m}"))
 }
 
-fn point_tri(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
+pub(crate) fn point_tri(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
     let n = (b - a).cross(c - a);
     let Some(nn) = n.normalized() else { return f64::INFINITY };
     let h = (p - a).dot(nn);
@@ -670,16 +835,14 @@ fn solve3(m: [[f64; 3]; 3], r: [f64; 3]) -> Option<[f64; 3]> {
     Some(out)
 }
 
-/// Move the planar faces at the given points along their outward normals by `distance`
-/// (negative: into the body). The body's other faces follow (its topology is kept).
-pub fn offset_faces(b: &Body, at: &[Vec3], distance: f64) -> Result<Body> {
-    b.require_brep("offset faces")?;
-    if !distance.is_finite() || distance.abs() > 1e6 {
-        return Err(KernelError::Invalid("offset distance".into()));
-    }
-    let healed = crate::boolean_record::healed(b)?.with_split_lines(b.splits.clone());
-    let size = healed.size();
-    let mesh = healed.tessellate((size * 1e-3).max(1e-3))?;
+/// The faces of `body` the given points pick, each whole (every piece of its surface).
+///
+/// Taken per body rather than once, because an operation may be tried again on the same body
+/// with a face split in two, and the pieces are numbered differently then. The points do not
+/// move, so they pick the same surface either way.
+fn faces_at(body: &Body, at: &[Vec3]) -> Result<Vec<usize>> {
+    let size = body.size();
+    let mesh = body.tessellate((size * 1e-3).max(1e-3))?;
     let mut chosen: Vec<usize> = Vec::new();
     for p in at {
         let near = mesh
@@ -697,13 +860,39 @@ pub fn offset_faces(b: &Body, at: &[Vec3], distance: f64) -> Result<Body> {
             _ => return Err(KernelError::Invalid(format!("no face at {:?}", [p.x, p.y, p.z]))),
         }
     }
-    let chosen = crate::offset::with_same_surface(&healed, &chosen);
-    match offset_planar(&healed, |fi, _| if chosen.contains(&fi) { distance } else { 0.0 }) {
-        Ok(r) => Ok(record::after(r, &healed, &record::counts(&[b]))),
-        // A piece of a split face (its neighbour stays): the piece swept along its normal
-        // joins on (outward) or cuts in, with walls along the split lines.
-        Err(e) if !healed.split_keep().is_empty() => press_pieces(&healed, &chosen, distance).map_err(|_| e),
-        Err(e) => Err(e),
+    Ok(crate::offset::with_same_surface(body, &chosen))
+}
+
+/// Move the planar faces at the given points along their outward normals by `distance`
+/// (negative: into the body). The body's other faces follow (its topology is kept).
+pub fn offset_faces(b: &Body, at: &[Vec3], distance: f64) -> Result<Body> {
+    b.require_brep("offset faces")?;
+    if !distance.is_finite() || distance.abs() > 1e6 {
+        return Err(KernelError::Invalid("offset distance".into()));
+    }
+    // Healing is part of the attempt, not a step before it: a face that runs along a seam edge
+    // twice fails there, and the retry below needs the whole of it to run on the split body.
+    let run = |body: &Body| -> Result<Body> {
+        let healed = crate::boolean_record::healed(body)?.with_split_lines(body.splits.clone());
+        let chosen = faces_at(&healed, at)?;
+        match offset_planar(&healed, |fi, _| if chosen.contains(&fi) { distance } else { 0.0 }) {
+            Ok(r) => Ok(record::after(r, &healed, &record::counts(&[body]))),
+            // A piece of a split face (its neighbour stays): the piece swept along its normal
+            // joins on (outward) or cuts in, with walls along the split lines.
+            Err(e) if !healed.split_keep().is_empty() => press_pieces(&healed, &chosen, distance).map_err(|_| e),
+            Err(e) => Err(e),
+        }
+    };
+    match crate::guard("offset faces", || run(b)) {
+        Ok(r) => Ok(r),
+        // A face that runs along a seam edge twice — a hole's wall as a STEP file writes it, one
+        // whole turn bounded by one wire. Healing it, or moving its neighbour, fails where the
+        // same body with that face in two halves works, so split it and ask again, which is what
+        // a boolean already does (`seam_faces`).
+        Err(e) => match crate::seam_faces::one_body(b, "offset faces off their seams", &run) {
+            Some(Ok(r)) => Ok(r),
+            _ => Err(e),
+        },
     }
 }
 
