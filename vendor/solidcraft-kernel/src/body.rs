@@ -277,7 +277,7 @@ fn mesh_shells(solid: &Solid, tol: f64) -> Vec<MeshedShell> {
 fn mesh_shells_within(solid: &Solid, deflection: Deflection) -> Vec<MeshedShell> {
     solid
         .boundaries()
-        .iter()
+        .par_iter()
         // The robust search tries the exact one first, so exact geometry costs nothing extra; a
         // face can also come back as an empty mesh rather than none (boolean results with
         // approximate intersection curves), so always use it.

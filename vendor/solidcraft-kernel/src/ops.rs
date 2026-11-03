@@ -2133,17 +2133,19 @@ fn union_apart_untimed(bodies: &[Body]) -> Result<Option<Body>> {
     if bodies.len() < 2 || bodies.len() > 10_000 || bodies.iter().any(Body::is_mesh) {
         return Ok(None);
     }
-    let mut boxes = Vec::with_capacity(bodies.len());
-    for b in bodies {
-        // A coarse mesh is enough: the chord tolerance bounds how far the true surface lies
-        // outside it, and the box grows by twice that.
-        let tol = (b.size() * 0.02).max(1e-3);
-        let bb = b.tessellate(tol)?.bounds();
-        if bb.is_empty() {
-            return Ok(None);
-        }
-        boxes.push(bb.inflated(2.0 * tol));
-    }
+    // Side by side: 36 tools were a tenth of a Cut through as many holes (3DCadCraft).
+    use rayon::prelude::*;
+    let boxes: Vec<Option<solidcraft_geom::Aabb3>> = bodies
+        .par_iter()
+        .map(|b| {
+            // A coarse mesh is enough: the chord tolerance bounds how far the true surface lies
+            // outside it, and the box grows by twice that.
+            let tol = (b.size() * 0.02).max(1e-3);
+            let bb = b.tessellate(tol)?.bounds();
+            Ok((!bb.is_empty()).then(|| bb.inflated(2.0 * tol)))
+        })
+        .collect::<Result<_>>()?;
+    let Some(boxes) = boxes.into_iter().collect::<Option<Vec<solidcraft_geom::Aabb3>>>() else { return Ok(None) };
     // Sweep along x: only boxes whose x ranges overlap are compared.
     let mut order: Vec<usize> = (0..boxes.len()).collect();
     order.sort_by(|&i, &j| boxes.get(i).map(|b| b.min.x).unwrap_or(0.0).total_cmp(&boxes.get(j).map(|b| b.min.x).unwrap_or(0.0)));
@@ -2201,11 +2203,9 @@ pub(crate) fn join_pieces(pieces: Vec<Body>) -> Result<Option<Body>> {
             let shells: Vec<mt::Shell> = pieces.iter().flat_map(|p| p.solid.boundaries().clone()).collect();
             let solid = guard("pieces", || Solid::try_new(shells).map_err(|e| KernelError::Failed(e.to_string())))?;
             let protected = pieces.iter().any(|piece| piece.regularization_protected);
-            // Each piece is a body already turned outward: no orientation mesh of a large whole
+            // Each piece is a body already turned outward: no orientation mesh of the whole
             // (3DCadCraft: 2500 pattern copies took 6.5 s here).
-            let large = solid.face_iter().count() > crate::body::ORIENT_MESH_FACES;
-            let body = if large { Body::new_placed(solid, false, None, false) } else { Body::new(solid) };
-            body.map(|mut body| {
+            Body::new_placed(solid, false, None, false).map(|mut body| {
                 body.regularization_protected = protected;
                 Some(body)
             })

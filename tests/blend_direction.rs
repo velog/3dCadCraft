@@ -777,3 +777,98 @@ fn edges_without_a_mesh_are_those_of_the_mesh() {
         }
     }
 }
+
+/// Blends and joined pieces are not meshed again to orient them: bodies that came in from a STEP
+/// file or were stitched from surfaces must still end up facing out, which a later Cut relies on.
+#[test]
+fn imported_and_stitched_solids_stay_outward_through_blends() {
+    use solidcraft_geom::{Loop2, Plane, Region2, Vec2, Vec3};
+    use solidcraft_kernel::{
+        Body, BoolOp, boolean, chamfer, copy_faces, extrude, fillet, step_export, step_import,
+        stitch, union_apart,
+    };
+    let block = |x: f64| {
+        let corners =
+            [(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0)].map(|(a, b)| Vec2::new(a + x, b));
+        let region = Region2 {
+            outer: Loop2::polygon(&corners),
+            holes: vec![],
+        };
+        extrude(&Plane::XY, &[region], 0.0, 20.0)
+            .unwrap()
+            .pop()
+            .unwrap()
+    };
+    let volume = |b: &Body| b.tessellate(0.01).unwrap().measure().volume;
+    let imported = |b: &Body| {
+        let text = step_export(&[b], "test").unwrap();
+        step_import(&text).unwrap().bodies.remove(0).body
+    };
+    let stitched = |x: f64| {
+        let b = block(x);
+        let c = |a: f64, y: f64, z: f64| Vec3::new(a + x, y, z);
+        let faces = [
+            c(20.0, 15.0, 0.0),
+            c(20.0, 15.0, 20.0),
+            c(20.0, 0.0, 10.0),
+            c(20.0, 30.0, 10.0),
+            c(0.0, 15.0, 10.0),
+            c(40.0, 15.0, 10.0),
+        ];
+        let sheets: Vec<Body> = faces
+            .iter()
+            .map(|p| copy_faces(&b, &[*p]).unwrap())
+            .collect();
+        stitch(&sheets.iter().collect::<Vec<_>>(), 1e-3).unwrap()
+    };
+    let round = 24_000.0 - (1.0 - std::f64::consts::FRAC_PI_4) * 25.0 * 30.0;
+    let wedge = 24_000.0 - 0.5 * 25.0 * 30.0;
+    let edge = Vec3::new(40.0, 15.0, 20.0);
+    let drill = || {
+        let region = Region2 {
+            outer: Loop2::circle(Vec2::new(10.0, 15.0), 3.0),
+            holes: vec![],
+        };
+        extrude(&Plane::XY, &[region], -1.0, 21.0)
+            .unwrap()
+            .pop()
+            .unwrap()
+    };
+    let hole = std::f64::consts::PI * 9.0 * 20.0;
+    for (name, body) in [("STEP", imported(&block(0.0))), ("stitched", stitched(0.0))] {
+        assert!(
+            (volume(&body) - 24_000.0).abs() < 1.0,
+            "{name}: {}",
+            volume(&body)
+        );
+        let blends = [
+            ("fillet", fillet(&body, &[edge], 5.0).unwrap(), round),
+            ("chamfer", chamfer(&body, &[edge], 5.0).unwrap(), wedge),
+        ];
+        for (what, blended, expected) in blends {
+            let v = volume(&blended);
+            assert!(
+                (v - expected).abs() < 1.0,
+                "{name} {what}: {v} vs {expected}"
+            );
+            // Inside out, a Cut would add material or find nothing to take. (The mesh's hole is
+            // an inscribed polygon: about 1 mm³ off at this chord.)
+            let cut = boolean(&blended, &drill(), BoolOp::Cut).unwrap().unwrap();
+            let left = volume(&cut);
+            assert!(
+                (left - (expected - hole)).abs() < 3.0,
+                "{name} {what}: {left}"
+            );
+        }
+    }
+    // Pieces of each route joined without a mesh of the whole.
+    for (name, a, b) in [
+        ("STEP", imported(&block(0.0)), imported(&block(100.0))),
+        ("stitched", stitched(0.0), stitched(100.0)),
+    ] {
+        let joined = union_apart(&[a, b]).unwrap().unwrap();
+        assert!((volume(&joined) - 48_000.0).abs() < 1.0, "{name}");
+        let cut = boolean(&joined, &drill(), BoolOp::Cut).unwrap().unwrap();
+        assert!((volume(&cut) - (48_000.0 - hole)).abs() < 3.0, "{name}");
+    }
+}

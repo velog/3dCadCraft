@@ -1131,7 +1131,7 @@ pub fn fillet_g2(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
         let solid = cur.deep_copy();
         let edge = Body::unique_edges(&solid).into_iter().nth(idx).ok_or_else(|| KernelError::Invalid("edge index".into()))?;
         let (made, rec) = guard("G2 fillet", || blend_one(&solid, &edge, size, radius, Shape::Curvature))?;
-        cur = record::after(record::rebuilt(made, &[&solid], &rec)?, &cur, &counts);
+        cur = record::after(record::rebuilt_blend(made, &[&solid], &rec)?, &cur, &counts);
     }
     closed(body, cur)
 }
@@ -1276,7 +1276,7 @@ fn blend_in_order(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str,
                 match crate::loopblend::loop_blend(&solid, &ids, size, r, shape == Shape::Round) {
                     Some(res) => {
                         let (made, rec) = guard(what, || res)?;
-                        lc = record::after(record::rebuilt(made, &[&solid], &rec)?, &lc, &counts);
+                        lc = record::after(record::rebuilt_blend(made, &[&solid], &rec)?, &lc, &counts);
                     }
                     None => return Err(unsupported("the edges are not a whole loop of a planar face")),
                 }
@@ -1339,7 +1339,7 @@ fn blend_each(mut cur: Body, edges: &[Vec3], r: f64, shape: Shape, what: &str, c
         if todo.len() >= 2
             && let Some((ids, covered)) = run_on_loop(&cur, &solid, &todo)?
             && let Some(Ok((res, rec))) = crate::loopblend::loop_blend(&solid, &ids, size, r, shape == Shape::Round)
-            && let Ok(b) = guard(what, || Ok(res)).and_then(|res| record::rebuilt(res, &[&solid], &rec))
+            && let Ok(b) = guard(what, || Ok(res)).and_then(|res| record::rebuilt_blend(res, &[&solid], &rec))
         {
             let near = edges_box(&solid, &ids, r + tol);
             refused.retain(|(_, b, _)| !boxes_meet(b, &near));
@@ -1447,7 +1447,7 @@ fn blend_each(mut cur: Body, edges: &[Vec3], r: f64, shape: Shape, what: &str, c
             };
             // What this attempt could change: the edge and its smooth chain, with room for the blend.
             let reach = edges_box(&solid, chain.as_deref().unwrap_or(&[edge.id()]), r + tol);
-            match attempt.and_then(|((o, rec), js)| record::rebuilt(o, &[&solid], &rec).map(|b| (b, js))) {
+            match attempt.and_then(|((o, rec), js)| record::rebuilt_blend(o, &[&solid], &rec).map(|b| (b, js))) {
                 Ok((b, js)) => {
                     done = Some((b, js, reach));
                     break;
@@ -1921,7 +1921,7 @@ fn corners(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str, g2: bo
         false => crate::curveblend::corner_blend(&solid, &ids, size, r, shape == Shape::Round),
         true => crate::curveblend::corner_blend_style(&solid, &ids, size, r, shape == Shape::Round, true),
     })?;
-    Ok(record::after(record::rebuilt(made, &[&solid], &rec)?, &cur, &counts))
+    Ok(record::after(record::rebuilt_blend(made, &[&solid], &rec)?, &cur, &counts))
 }
 
 /// [`fillet`] whose corners where three blended edges meet are G2 patches: the corner repeats each
@@ -2269,7 +2269,7 @@ fn chamfer_built(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
                 match crate::loopblend::loop_blend(&solid, &ids, size, distance, false) {
                     Some(res) => {
                         let (made, rec) = guard("chamfer", || res)?;
-                        lc = record::after(record::rebuilt(made, &[&solid], &rec)?, &lc, &counts);
+                        lc = record::after(record::rebuilt_blend(made, &[&solid], &rec)?, &lc, &counts);
                     }
                     None => return Err(unsupported("the edges are not a whole loop of a planar face")),
                 }
@@ -2515,7 +2515,7 @@ fn chamfer_sides_curved(body: &Body, edges: &[Vec3], d1: f64, side: ChamferSide,
         match crate::loopblend::loop_chamfer_sides(&solid, &ids, size, d1, side, flip) {
             Some(res) => {
                 let (made, rec) = guard("chamfer", || res)?;
-                Ok(record::after(record::rebuilt(made, &[&solid], &rec)?, cur, &counts))
+                Ok(record::after(record::rebuilt_blend(made, &[&solid], &rec)?, cur, &counts))
             }
             None => Err(unsupported(
                 "a two-distance or distance-angle chamfer of a curved edge that is not on the boundary of a planar face (an equal-distance chamfer may work there)",
