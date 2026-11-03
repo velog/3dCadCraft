@@ -532,6 +532,12 @@ pub enum Icon {
     MotionStudy,
     /// Exploded View: blocks pushed apart.
     ExplodedView,
+    RepView,
+    RepPosition,
+    RepState,
+    RepTable,
+    RepVerify,
+    RepLock,
     BeamColumn,
     /// Shaft (stepped sections).
     Shaft,
@@ -3221,6 +3227,50 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, k: &Palette) {
             p.disc(9.0, 11.0, 1.2, acc);
             p.disc(13.0, 11.0, 1.2, acc);
             p.fill(&[(5.0, 2.5), (5.0, 8.0), (10.0, 5.2)], hot);
+        }
+        RepView => {
+            p.line(
+                &[(1.0, 8.0), (4.5, 4.5), (8.0, 3.5), (11.5, 4.5), (15.0, 8.0)],
+                ink,
+            );
+            p.line(
+                &[
+                    (1.0, 8.0),
+                    (4.5, 11.5),
+                    (8.0, 12.5),
+                    (11.5, 11.5),
+                    (15.0, 8.0),
+                ],
+                ink,
+            );
+            p.closed(&[(6.0, 6.0), (10.0, 6.0), (10.0, 10.0), (6.0, 10.0)], acc);
+        }
+        RepPosition => {
+            p.rect(1.5, 10.0, 14.5, 13.5, ink);
+            p.line(&[(4.0, 10.0), (8.0, 3.0)], acc);
+            p.line(&[(4.0, 10.0), (12.5, 6.0)], hot);
+            p.head((12.5, 6.0), (0.9, -0.4), hot);
+        }
+        RepState => {
+            p.rect(1.5, 1.5, 8.5, 6.5, ink);
+            p.rect(5.5, 5.5, 14.5, 10.5, acc);
+            p.rect(2.5, 9.5, 9.5, 14.5, ink);
+        }
+        RepTable => {
+            p.rect(1.5, 2.5, 14.5, 13.5, ink);
+            p.line(&[(1.5, 6.0), (14.5, 6.0)], ink);
+            p.line(&[(1.5, 9.8), (14.5, 9.8)], ink);
+            p.line(&[(6.0, 2.5), (6.0, 13.5)], acc);
+            p.line(&[(10.3, 2.5), (10.3, 13.5)], acc);
+        }
+        RepVerify => {
+            p.rect(1.5, 9.5, 14.5, 13.5, ink);
+            p.line(&[(4.0, 9.5), (7.0, 3.5)], acc);
+            p.line(&[(9.0, 5.0), (11.0, 7.0), (15.0, 1.5)], hot);
+        }
+        RepLock => {
+            p.rect(4.0, 7.5, 12.0, 14.0, ink);
+            p.arc(8.0, 7.5, 3.0, 180.0, 360.0, acc);
         }
         ExplodedView => {
             p.rect(1.5, 6.0, 5.5, 10.0, ink);

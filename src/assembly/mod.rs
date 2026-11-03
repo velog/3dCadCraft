@@ -26,6 +26,7 @@ pub mod pattern;
 pub mod physical;
 pub mod relation;
 pub mod replace;
+pub mod reps;
 pub mod restructure;
 pub mod select;
 pub mod solve;

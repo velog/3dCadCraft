@@ -4898,3 +4898,30 @@ fn library_fasteners_build_directly() {
         }
     }
 }
+
+/// Representations are synced once a frame while an assembly has them (rule 20).
+#[test]
+fn representations_sync_within_a_frame() {
+    use cadcraft3d::assembly::reps::Representations;
+    use cadcraft3d::document::{AssemblyDocument, DocRef, DocumentId};
+    use cadcraft3d::kernel::Transform3;
+    let mut a = AssemblyDocument::default();
+    let r = DocRef::local(DocumentId::new_random());
+    for k in 0..2000 {
+        a.place(
+            r,
+            "Bolt",
+            Transform3::translation(k as Real, 0.0, 0.0),
+            false,
+        );
+    }
+    let mut reps = Representations::default();
+    reps.new_view(&a);
+    reps.new_state(&a);
+    reps.new_position(&mut a);
+    let ms = median_ms(9, || {
+        reps.sync(&a);
+    });
+    println!("representations sync, 2000 occurrences: {ms:.2} ms");
+    assert!(ms < 4.0, "{ms:.2} ms > 4 ms");
+}

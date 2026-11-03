@@ -1240,6 +1240,16 @@ fn panels(tab: Tab, st: &State) -> Vec<PanelDef> {
                 vec![
                     docs,
                     storage,
+                    panel(
+                        "Representations",
+                        vec![
+                            c("asm.rep_view"),
+                            c("asm.rep_position"),
+                            c("asm.rep_state"),
+                            c("asm.rep_table"),
+                            c("asm.rep_verify"),
+                        ],
+                    ),
                     styles,
                     panel("Author", vec![c("manage.create_iassembly").large()]),
                 ]

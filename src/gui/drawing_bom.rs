@@ -277,10 +277,14 @@ impl CadCraftApp {
 
     /// The signature of an assembly view's model (`None`: not an assembly):
     /// each component's body and each occurrence's placement.
-    pub(super) fn assembly_signature(&self, model: DocRef) -> Option<String> {
+    pub(super) fn assembly_signature(
+        &self,
+        model: DocRef,
+        reps: crate::drawing::ViewReps,
+    ) -> Option<String> {
         let mut s = String::new();
         let mut seen: Vec<DocRef> = Vec::new();
-        for (id, sub, c, t) in self.drawing_leaves(model)? {
+        for (id, sub, c, t) in self.drawing_leaves(model, reps)? {
             if !seen.contains(&c) {
                 seen.push(c);
                 let sig = self
@@ -297,9 +301,21 @@ impl CadCraftApp {
     /// this file and of linked files, spec 3.1a): its top-level occurrence
     /// (balloons and parts lists count those), its component in this file's
     /// terms and its placement. `None`: `model` is no assembly.
-    fn drawing_leaves(&self, model: DocRef) -> Option<Vec<ViewLeaf>> {
+    fn drawing_leaves(
+        &self,
+        model: DocRef,
+        reps: crate::drawing::ViewReps,
+    ) -> Option<Vec<ViewLeaf>> {
         let linked = self.linked();
         let asm = crate::assembly::tree::assembly_of(&self.project, &linked, model)?;
+        // Standing in the chosen representations (never solved: stored poses).
+        let composed;
+        let asm = if reps.is_active() {
+            asm
+        } else {
+            composed = asm.reps.composed(asm, reps.view, reps.position, reps.state);
+            &composed
+        };
         Some(
             crate::assembly::tree::leaves(&self.project, &linked, model, asm)
                 .into_iter()
@@ -312,8 +328,13 @@ impl CadCraftApp {
     }
 
     /// Copies of what a view of `model` is computed from.
-    pub(super) fn model_job(&self, model: DocRef, flat: bool) -> Option<ModelJob> {
-        let Some(leaves) = self.drawing_leaves(model) else {
+    pub(super) fn model_job(
+        &self,
+        model: DocRef,
+        flat: bool,
+        reps: crate::drawing::ViewReps,
+    ) -> Option<ModelJob> {
+        let Some(leaves) = self.drawing_leaves(model, reps) else {
             let part = self.with_part(model, |p| p.clone())?;
             return Some(ModelJob {
                 parts: vec![part],
@@ -345,6 +366,42 @@ impl CadCraftApp {
             assembly: true,
             flat: false,
         })
+    }
+
+    /// The representations of assembly `model` for the Drawing View dialog: views,
+    /// positions, model states (empty lists: not an assembly).
+    pub(super) fn rep_lists(&self, model: DocRef) -> [Vec<(u32, String)>; 3] {
+        let linked = self.linked();
+        let Some(a) = crate::assembly::tree::assembly_of(&self.project, &linked, model) else {
+            return Default::default();
+        };
+        let name = |id: u32, n: &str| {
+            if id == crate::assembly::reps::PRIMARY {
+                "[Primary]".to_owned()
+            } else {
+                n.to_owned()
+            }
+        };
+        let r = &a.reps;
+        let mut views: Vec<_> = r
+            .views
+            .iter()
+            .map(|v| (v.id, name(v.id, &v.name)))
+            .collect();
+        if views.is_empty() {
+            views.push((crate::assembly::reps::PRIMARY, "[Primary]".to_owned()));
+        }
+        let mut positions = vec![(crate::assembly::reps::PRIMARY, "[Primary]".to_owned())];
+        positions.extend(r.positions.iter().map(|p| (p.id, p.name.clone())));
+        let mut states: Vec<_> = r
+            .states
+            .iter()
+            .map(|s| (s.id, name(s.id, &s.name)))
+            .collect();
+        if states.is_empty() {
+            states.push((crate::assembly::reps::PRIMARY, "[Primary]".to_owned()));
+        }
+        [views, positions, states]
     }
 
     /// The BOM rows of a view's model: an assembly's BOM, or a part's one

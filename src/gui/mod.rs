@@ -116,6 +116,7 @@ mod place;
 mod presets;
 mod project;
 mod renderer;
+mod reps;
 mod ribbon;
 mod sel_menu;
 mod select;
@@ -4293,6 +4294,8 @@ impl CadCraftApp {
         match action {
             Action::Drawing(c) => self.drw_apply(c),
             Action::AsmFeatures => self.asm_features_edit(),
+            Action::AsmPlace | Action::AsmJoint | Action::AsmConstrain
+                if self.reps_refuse_structure() => {}
             Action::AsmPlace
             | Action::AsmFreeMove
             | Action::AsmFreeRotate
@@ -4316,6 +4319,8 @@ impl CadCraftApp {
             | Action::SmCornerSeam
             | Action::SmPlanned(_) => self.sm_apply(action),
             Action::PartPlanned(k) => self.start_part_planned(k),
+            Action::AsmPlanned(k)
+                if !k.reps_allow_in_position() && self.reps_refuse_structure() => {}
             Action::AsmPlanned(k) => self.start_asm_planned(k),
             Action::Thicken => self.start_thicken(),
             Action::DeleteFace => self.start_delete_face(),
@@ -4465,6 +4470,9 @@ impl CadCraftApp {
             AppCmd::Return => self.return_to_assembly(),
             AppCmd::ContactSolver => self.toggle_contact_solver(),
             AppCmd::Motion(t) => self.open_motion(t),
+            AppCmd::NewRep(k) => self.new_representation(k),
+            AppCmd::StateTable => self.open_state_table(),
+            AppCmd::VerifyPositions => self.verify_positions(),
             AppCmd::FindInBrowser => {
                 self.asm.find_in_browser = self.asm.sel.first().copied();
                 self.files.tab = file_explorer::BrowserTab::Model;
@@ -8359,6 +8367,8 @@ impl eframe::App for CadCraftApp {
             self.bom_window(&ctx);
             self.drive_window(&ctx);
             self.motion_window(&ctx);
+            self.reps_windows(&ctx);
+            self.reps_tick();
             self.interference_poll(&ctx);
             self.interference_window(&ctx);
             self.pattern_preview_poll();
