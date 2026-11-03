@@ -214,13 +214,13 @@ impl CadCraftApp {
             && *s == signature
             && *l == label
         {
-            return Some(anchor(g.clone().moved(&t)));
+            return Some(anchor(g.moved(&t)));
         }
         let g = self.asm_local_geom(r).ok()?;
         self.cons
             .glyphs
             .local
-            .insert((id, second), (signature, label, g.clone()));
+            .insert((id, second), (signature, label, g));
         Some(anchor(g.moved(&t)))
     }
 
