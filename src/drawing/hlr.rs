@@ -1000,16 +1000,10 @@ pub fn view_lines_simplified(
                 );
                 let hidden = behind_cap(m2, md)
                     || grid.as_ref().is_some_and(|g| {
-                        if !silhouette {
-                            return g.hidden(m2, md, eps);
-                        }
-                        // Covered from well in front it is no sag: one query, as most
-                        // silhouettes of a large assembly are (the side tests took a tenth of
-                        // a view of 20 000 components).
-                        g.hidden(m2, md, eps + aside)
-                            || (g.hidden(m2, md, eps)
-                                && g.hidden([m2[0] + nx, m2[1] + ny], md, eps)
-                                && g.hidden([m2[0] - nx, m2[1] - ny], md, eps))
+                        g.hidden(m2, md, eps)
+                            && (!silhouette
+                                || (g.hidden([m2[0] + nx, m2[1] + ny], md, eps)
+                                    && g.hidden([m2[0] - nx, m2[1] - ny], md, eps)))
                     });
                 if hidden && simplify.no_hidden {
                     continue;
