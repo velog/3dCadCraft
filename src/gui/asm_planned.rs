@@ -79,6 +79,8 @@ const REMOVE: &[&str] = &["None", "All", "Range", "Preserve"];
 pub enum AsmPlanned {
     // Assemble › Component
     PlaceFromLibrary,
+    /// Another size or level for placed library parts.
+    ChangeSize,
     PlaceImported,
     Create,
     Pattern,
@@ -140,10 +142,11 @@ pub enum AsmPlanned {
 
 impl AsmPlanned {
     #[cfg(test)]
-    pub const ALL: [AsmPlanned; 51] = {
+    pub const ALL: [AsmPlanned; 52] = {
         use AsmPlanned::*;
         [
             PlaceFromLibrary,
+            ChangeSize,
             PlaceImported,
             Create,
             Pattern,
@@ -202,6 +205,7 @@ impl AsmPlanned {
         use AsmPlanned::*;
         match self {
             PlaceFromLibrary => "Place from Library",
+            ChangeSize => "Change Size",
             PlaceImported => "Place Imported CAD Files",
             Create => "Create In-Place Component",
             Pattern => "Pattern Component",
@@ -260,6 +264,7 @@ impl AsmPlanned {
         use AsmPlanned::*;
         match self {
             PlaceFromLibrary => Icon::PlaceFromLibrary,
+            ChangeSize => Icon::ChangeSize,
             PlaceImported => Icon::PlaceImported,
             Create => Icon::AsmCreate,
             Pattern => Icon::AsmPattern,
@@ -317,7 +322,8 @@ impl AsmPlanned {
     pub fn section(self) -> &'static str {
         use AsmPlanned::*;
         match self {
-            PlaceFromLibrary | BoltedConnection | ClevisPin | SecurePin | RadialPin => "6.3",
+            PlaceFromLibrary | ChangeSize | BoltedConnection | ClevisPin | SecurePin
+            | RadialPin => "6.3",
             PlaceImported => "7.7",
             Create | MakeLayout => "3.10",
             Pattern | Mirror => "3.7",
@@ -340,6 +346,7 @@ impl AsmPlanned {
             PlaceFromLibrary => {
                 "Places a standard part (bolt, nut, washer, profile) from the library."
             }
+            ChangeSize => "Another size or level of detail for the selected library parts.",
             PlaceImported => {
                 "Places a STEP file as a component: its assembly, or one multi-body part."
             }
@@ -409,6 +416,7 @@ impl AsmPlanned {
     pub fn pages(self) -> &'static [Page] {
         use AsmPlanned::*;
         match self {
+            ChangeSize => &[],
             PlaceFromLibrary => &[Page(
                 "Place from Library",
                 &[
@@ -1755,6 +1763,11 @@ impl CadCraftApp {
                     return;
                 }
             }
+        }
+        if kind == AsmPlanned::ChangeSize {
+            let ids = self.asm.sel.clone();
+            self.change_size_start(&ids);
+            return;
         }
         if kind == AsmPlanned::PlaceFromLibrary {
             self.place_from_library();

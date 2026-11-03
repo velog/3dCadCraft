@@ -4758,6 +4758,42 @@ fn contact_check_of_a_drag() {
     assert!(ms < 5.0, "contact check took {ms:.1} ms");
 }
 
+/// Spec 6.3 §6.6: Smart Drop chooses a size on every new item under the cursor,
+/// within a frame even in the largest family.
+#[test]
+fn smart_drop_chooses_within_a_frame() {
+    use cadcraft3d::components::fit::{Fit, Target, choose};
+    let all = cadcraft3d::components::samples::all();
+    let mut families = std::collections::BTreeMap::<&str, Vec<Fit>>::new();
+    for s in &all {
+        families
+            .entry(s.family.as_str())
+            .or_default()
+            .push(Fit::of(&s.kind));
+    }
+    let largest = families
+        .values()
+        .max_by_key(|f| f.len())
+        .unwrap_or_else(|| panic!("no families"));
+    let t = Target {
+        hole: true,
+        diameter: 9.0,
+        thread: None,
+        depth: 12.0,
+        blind: false,
+    };
+    let start = std::time::Instant::now();
+    for _ in 0..1000 {
+        std::hint::black_box(choose(largest, &t));
+    }
+    let each = start.elapsed().as_secs_f64();
+    println!("Smart Drop choice among {}: {:.3} ms", largest.len(), each);
+    assert!(
+        each < 16.0,
+        "1000 choices took {each:.1} s: over a frame each"
+    );
+}
+
 /// Spec 6.3 §6.6: a new library member takes at most 500 ms to build.
 #[test]
 fn library_samples_build_within_budget() {

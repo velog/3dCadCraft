@@ -37,6 +37,9 @@ pub(super) enum AsmTool {
     FreeMove,
     /// Free Rotate: the component turned (after the first click).
     FreeRotate(Option<u32>),
+    /// Smart Drop: a library family resized to the hole under the cursor
+    /// (`AsmUi::smart` holds its state).
+    SmartDrop,
 }
 
 impl AsmTool {
@@ -45,6 +48,7 @@ impl AsmTool {
             AsmTool::Place(_) => Action::AsmPlace,
             AsmTool::FreeMove => Action::AsmFreeMove,
             AsmTool::FreeRotate(_) => Action::AsmFreeRotate,
+            AsmTool::SmartDrop => Action::AsmPlace,
         }
     }
 }
@@ -92,6 +96,10 @@ pub(super) struct AsmUi {
     pub place_for_replace: bool,
     /// The Place from Library window.
     pub(super) library: Option<super::library::LibraryUi>,
+    /// Smart Drop's state while its tool runs.
+    pub(super) smart: Option<super::smart_drop::SmartDrop>,
+    /// The Change Size window.
+    pub(super) change_size: Option<super::smart_drop::ChangeSize>,
     /// The Create Part Family window.
     pub(super) part_family: Option<super::part_family::PartFamilyUi>,
     /// The Place window chooses the Derive panel's source part.
@@ -1945,7 +1953,9 @@ impl CadCraftApp {
         cube_drag: bool,
     ) {
         let ctx = ui.ctx().clone();
-        let modal = self.asm.place.is_some() || self.asm.library.is_some();
+        let modal = self.asm.place.is_some()
+            || self.asm.library.is_some()
+            || self.asm.change_size.is_some();
         // A linked part file saved meanwhile: reload it.
         if self.poll_libraries() {
             self.scene_dirty = true;
@@ -2012,7 +2022,10 @@ impl CadCraftApp {
         };
         if self.asm.drag.is_none() {
             let pre = self.select.prehighlight;
-            let hover = hit.map(|(h, _)| h.occurrence).filter(|_| pre && !sub_mode);
+            // Smart Drop lights what it would land on, never a whole component (rule 19).
+            let hover = hit
+                .map(|(h, _)| h.occurrence)
+                .filter(|_| pre && !sub_mode && self.asm.tool != Some(AsmTool::SmartDrop));
             self.asm.hover = self.frame_hover(hover);
             self.asm.sub_hover = sub_hit.clone().filter(|_| pre);
         }
@@ -2053,6 +2066,7 @@ impl CadCraftApp {
                         self.place_at(doc, p, false);
                     }
                 }
+                Some(AsmTool::SmartDrop) => self.smart_drop_click(pointer, rect),
                 Some(AsmTool::FreeRotate(_)) => {
                     if let Some((h, _)) = hit {
                         self.asm.tool = Some(AsmTool::FreeRotate(Some(h.occurrence)));
@@ -2208,6 +2222,9 @@ impl CadCraftApp {
             let t = Transform3::translation(at.x, at.y, at.z) * turn;
             super::place::draw_ghost(&painter, &self.camera, rect, &mesh, &t);
         }
+        if !on_cube && !modal {
+            self.smart_drop_view(&painter, rect, pointer);
+        }
         if let Some((c, r)) = circle {
             let stroke = Stroke::new(1.5, Color32::from_rgb(90, 200, 110));
             painter.circle_stroke(c, r, stroke);
@@ -2283,7 +2300,7 @@ impl CadCraftApp {
         }
         if matches!(
             self.asm.tool,
-            Some(AsmTool::Place(_) | AsmTool::FreeRotate(_))
+            Some(AsmTool::Place(_) | AsmTool::FreeRotate(_) | AsmTool::SmartDrop)
         ) {
             return None;
         }
@@ -2479,6 +2496,7 @@ impl CadCraftApp {
                 let next = self.assembly()?.next_name(&self.asm.place_name);
                 Some(format!("Place {next}"))
             }
+            AsmTool::SmartDrop => Some("Smart Drop".into()),
             AsmTool::FreeMove => Some("Free Move".into()),
             AsmTool::FreeRotate(None) => Some("Free Rotate: click a component".into()),
             AsmTool::FreeRotate(Some(_)) => None,
@@ -2488,6 +2506,7 @@ impl CadCraftApp {
     /// The status-bar prompt of the assembly environment.
     pub(super) fn asm_prompt(&self) -> String {
         match self.asm.tool {
+            Some(AsmTool::SmartDrop) => "Smart Drop: pause on a hole's edge or a shaft, click to place the size shown; click a cylinder, then its plane; Esc ends".into(),
             Some(AsmTool::Place(_)) => "Place: click in the view to place an occurrence (on a component or the XY plane); right-click for OK, Place Grounded at Origin or a 90° turn; Esc ends".into(),
             Some(AsmTool::FreeMove) => "Free Move: drag a component in the view plane (grounded ones too); Esc ends".into(),
             Some(AsmTool::FreeRotate(None)) => "Free Rotate: click the component to turn; Esc ends".into(),
@@ -2633,6 +2652,10 @@ impl CadCraftApp {
         }
         if ui.button("Measure").clicked() {
             self.apply(Action::App(super::commands::AppCmd::Measure));
+            ui.close();
+        }
+        if self.change_size_offered(ids) && ui.button("Change Size...").clicked() {
+            self.change_size_start(ids);
             ui.close();
         }
         ui.separator();

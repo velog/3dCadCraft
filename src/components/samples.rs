@@ -795,6 +795,16 @@ impl Sample {
         }?;
         part.set_material(Some(self.material()), crate::materials::with_user())
             .map_err(|e| bad(&e))?;
+        use crate::part::connection::{Connection, ConnectionRole};
+        match super::fit::Fit::of(&self.kind) {
+            super::fit::Fit::Into { d, .. } => part
+                .connections
+                .push(Connection::seat(ConnectionRole::Into, d)),
+            super::fit::Fit::Over { bore } | super::fit::Fit::Bearing { bore, .. } => part
+                .connections
+                .push(Connection::seat(ConnectionRole::Over, bore)),
+            super::fit::Fit::Manual => {}
+        }
         Ok(part)
     }
 

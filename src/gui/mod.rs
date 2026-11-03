@@ -125,6 +125,7 @@ mod show_dims;
 mod sketch_marking;
 mod sketch_tools;
 mod sm_planned;
+mod smart_drop;
 mod steps;
 mod surface_cmd;
 mod sweep;
@@ -659,6 +660,8 @@ struct CadCraftApp {
     /// Place from Library: the Standard filter and the level, kept in the settings.
     library_standard: Option<String>,
     library_detail: String,
+    /// Place from Library places by hand instead of Smart Drop.
+    library_manual: bool,
     /// The command search field (Alt+S, `cmd_search`).
     cmd_search: cmd_search::CmdSearch,
     /// The Extrude command, while its dialog is open.
@@ -1059,6 +1062,7 @@ impl CadCraftApp {
             recent_commands: Vec::new(),
             library_standard: None,
             library_detail: String::new(),
+            library_manual: false,
             cmd_search: Default::default(),
             dim_display: Default::default(),
             viewport_rect: egui::Rect::NOTHING,
@@ -8299,6 +8303,9 @@ impl eframe::App for CadCraftApp {
         self.alias_window(&ctx);
         self.place_window(&ctx);
         self.library_window(&ctx);
+        self.smart_drop_window(&ctx);
+        self.change_size_window(&ctx);
+        self.connections_window(&ctx);
         self.part_family_window(&ctx);
         self.drawing_windows(&ctx);
         self.doc_settings_window(&ctx);

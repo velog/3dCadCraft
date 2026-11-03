@@ -41,6 +41,10 @@ pub struct Family {
     pub file: Option<PathBuf>,
     /// What its table was compared with (`data/components/SOURCES.md`); empty: not yet.
     pub checked: String,
+    /// A published family's table.
+    pub table: Option<crate::part::family::FamilyTable>,
+    /// A published family's connection on an edge: what makes it droppable.
+    pub connection: Option<crate::part::connection::Connection>,
     /// The members.
     pub members: Vec<Entry>,
 }
@@ -96,6 +100,8 @@ impl Catalog {
                     name,
                     standard,
                     file: None,
+                    table: None,
+                    connection: None,
                     members: vec![entry],
                 }),
             }
@@ -118,7 +124,7 @@ impl Catalog {
                 }
             } else if p.extension().is_some_and(|e| e == "ccpart") {
                 match read_family(&p) {
-                    Ok(table) => {
+                    Ok((table, connection)) => {
                         let category = dir
                             .strip_prefix(top)
                             .map(|r| r.to_string_lossy().replace('\\', "/"))
@@ -141,6 +147,8 @@ impl Catalog {
                             standard: "Own".to_owned(),
                             file: Some(p),
                             checked: String::new(),
+                            table: Some(table),
+                            connection,
                             members,
                         });
                     }
@@ -233,6 +241,101 @@ impl Catalog {
             }
         }
         out
+    }
+
+    /// The washers and nut of a bolt of family `family` with diameter `d`
+    /// (Bolted Connection): the standard's plain washer and hex nut.
+    pub fn bolted_stack(&self, family: usize, d: crate::kernel::Real) -> Option<super::fit::Stack> {
+        let inch = self.families.get(family)?.standard == "ANSI";
+        let (washers, nuts) = if inch {
+            ("ASME B18.22.1 SAE", "ASME B18.2.2")
+        } else {
+            ("ISO 7089", "ISO 4032")
+        };
+        let t = super::fit::Target {
+            hole: false,
+            diameter: d,
+            thread: None,
+            depth: 0.0,
+            blind: false,
+        };
+        let member = |name: &str| {
+            let f = self.families.iter().position(|x| x.name == name)?;
+            let k = super::fit::choose(&self.fits(f), &t)?;
+            let Source::Sample(s) = &self.families[f].members.get(k)?.source else {
+                return None;
+            };
+            Some((f, k, s.kind))
+        };
+        let (wf, wk, washer) = member(washers)?;
+        let (nf, nk, nut) = member(nuts)?;
+        let (samples::Kind::Washer(_, _, washer_h), samples::Kind::HexNut(_, _, nut_m)) =
+            (washer, nut)
+        else {
+            return None;
+        };
+        Some(super::fit::Stack {
+            washer: (wf, wk),
+            washer_h,
+            nut: (nf, nk),
+            nut_m,
+        })
+    }
+
+    /// The fit of each member, in order (a published family goes by its
+    /// connection; without one it is placed by hand).
+    pub fn fits(&self, family: usize) -> Vec<super::fit::Fit> {
+        self.families
+            .get(family)
+            .map(|f| {
+                f.members
+                    .iter()
+                    .map(|m| match &m.source {
+                        Source::Sample(s) => super::fit::Fit::of(&s.kind),
+                        Source::Row(r) => row_fit(f, *r),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The family and member a built-in member's file belongs to, at any
+    /// level of detail, and that level (Change Size).
+    pub fn locate_level(&self, path: &Path) -> Option<(usize, usize, Detail)> {
+        let norm = |x: &Path| {
+            crate::document::library::without_verbatim(
+                x.canonicalize().unwrap_or_else(|_| x.to_path_buf()),
+            )
+        };
+        let below = norm(path)
+            .strip_prefix(norm(&self.root.join("Samples")))
+            .ok()
+            .map(Path::to_path_buf);
+        for (i, f) in self.families.iter().enumerate() {
+            for (k, m) in f.members.iter().enumerate() {
+                if let Source::Sample(s) = &m.source {
+                    if let Some(below) = &below {
+                        for d in Detail::ALL {
+                            if s.relative_path_at(d) == *below {
+                                return Some((i, k, s.level_of(d)));
+                            }
+                        }
+                    }
+                } else if let Source::Row(r) = &m.source
+                    && let Some(table) = &f.table
+                    && let Ok(name) = table.member_name(*r)
+                    && norm(&row_path(&self.root, table, &f.name, &name)) == norm(path)
+                {
+                    return Some((i, k, Detail::Standard));
+                }
+            }
+        }
+        None
+    }
+
+    /// The family and member a built-in member's file belongs to.
+    pub fn locate(&self, path: &Path) -> Option<(usize, usize)> {
+        self.locate_level(path).map(|(f, m, _)| (f, m))
     }
 
     /// A picture of a family's first member, `THUMBNAIL`² RGBA. Takes a build
@@ -349,11 +452,9 @@ impl Catalog {
                     .as_ref()
                     .ok_or("the file holds no family table")?;
                 // Named with its family: the file's name becomes the occurrence's.
-                let name = format!("{} {}", f.name, table.member_name(*r)?);
-                let path = user_dir(&self.root)
-                    .join(MEMBERS)
-                    .join(safe_name(&table.id))
-                    .join(format!("{}.ccpart", safe_name(&name)));
+                let row = table.member_name(*r)?;
+                let name = format!("{} {row}", f.name);
+                let path = row_path(&self.root, table, &f.name, &row);
                 if !path.exists() {
                     let made = table
                         .member(template, props, *r)
@@ -379,12 +480,63 @@ fn first_part(p: &Project) -> Option<(&PartDocument, &IProperties)> {
     })
 }
 
-fn read_family(path: &Path) -> Result<crate::part::family::FamilyTable, String> {
+/// The file of a published family's member.
+fn row_path(
+    root: &Path,
+    table: &crate::part::family::FamilyTable,
+    family: &str,
+    row: &str,
+) -> PathBuf {
+    user_dir(root)
+        .join(MEMBERS)
+        .join(safe_name(&table.id))
+        .join(format!("{}.ccpart", safe_name(&format!("{family} {row}"))))
+}
+
+/// How row `r` of a published family lands: by its connection, at the diameter
+/// its column gives.
+fn row_fit(f: &Family, r: usize) -> super::fit::Fit {
+    use crate::part::connection::ConnectionRole;
+    use crate::part::expr::Value;
+    let Some(c) = &f.connection else {
+        return super::fit::Fit::Manual;
+    };
+    let d = c
+        .diameter_column
+        .as_ref()
+        .and_then(|col| match f.table.as_ref()?.values(r).ok()?.get(col)? {
+            Value::Num(v, _) => Some(*v),
+            _ => None,
+        })
+        .unwrap_or(c.diameter);
+    match c.role {
+        ConnectionRole::Into => super::fit::Fit::Into {
+            d,
+            length: None,
+            sink: 0.0,
+        },
+        ConnectionRole::Over => super::fit::Fit::Over { bore: d },
+    }
+}
+
+/// A published file's table, and its connection on an edge.
+fn read_family(
+    path: &Path,
+) -> Result<
+    (
+        crate::part::family::FamilyTable,
+        Option<crate::part::connection::Connection>,
+    ),
+    String,
+> {
     let project = Project::load(path).map_err(|e| e.to_string())?;
     let (part, _) = first_part(&project).ok_or("the file holds no part")?;
-    part.family
+    let table = part
+        .family
         .clone()
-        .ok_or_else(|| "the file holds no family table".to_owned())
+        .ok_or_else(|| "the file holds no family table".to_owned())?;
+    let connection = part.connections.iter().find(|c| c.edge.is_some()).cloned();
+    Ok((table, connection))
 }
 
 /// A name usable as a file name on every system.

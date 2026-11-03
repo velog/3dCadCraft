@@ -1510,6 +1510,10 @@ pub static COMMANDS: &[Command] = &[
         .inv("Create iPart")
         .alias(&["CPF"])
         .at(&[G_AUTHOR]),
+    pp("manage.connection", "Connection", "Връзка", Icon::Connection, Pp::Connection)
+        .inv("iMate")
+        .alias(&["CNN"])
+        .at(&[G_AUTHOR]),
     pp("manage.insert_ifeature", "Insert Feature Template", "Вмъкване на шаблон на елемент", Icon::InsertFeatureTemplate, Pp::InsertFeatureTemplate)
         .inv("Insert iFeature")
         .alias(&["IFT"])
@@ -2081,6 +2085,9 @@ pub static COMMANDS: &[Command] = &[
         .short("Library")
         .inv("Place from Content Center")
         .alias(&["PFL"])
+        .at(&[A_COMPONENT]),
+    ap("asm.change_size", "Change Size", "Смяна на размера", Icon::ChangeSize, Ap::ChangeSize)
+        .alias(&["CSZ"])
         .at(&[A_COMPONENT]),
     ap("asm.place_imported", "Place Imported CAD Files", "Поставяне на чужд CAD файл", Icon::PlaceImported, Ap::PlaceImported)
         .short("Imported CAD")

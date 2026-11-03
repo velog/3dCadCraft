@@ -289,6 +289,13 @@ pub fn feature_instances(
     id: &str,
 ) -> Result<Vec<(u32, Transform3)>, String> {
     use crate::part::Feature;
+    if part
+        .features
+        .iter()
+        .any(|f| matches!(f, Feature::Hole(h) if h.id == id))
+    {
+        return hole_instances(part, id);
+    }
     let (k, p) = part
         .features
         .iter()
@@ -307,6 +314,31 @@ pub fn feature_instances(
             nalgebra::try_convert::<_, Transform3>(m)
                 .map(|t| (k as u32, t))
                 .ok_or_else(|| format!("{} mirrors: a component cannot follow it", p.name))
+        })
+        .collect()
+}
+
+/// The holes of Hole feature `id` after its first (Smart Drop's Follow Pattern,
+/// spec 6.3 §3.5): one element per hole, moved from the first hole to it. A part
+/// whose holes are not built yet is an error, so no element is lost by it.
+fn hole_instances(
+    part: &crate::part::PartDocument,
+    id: &str,
+) -> Result<Vec<(u32, Transform3)>, String> {
+    let holes: Vec<_> = part.holes().iter().filter(|h| h.feature == id).collect();
+    let first = holes
+        .first()
+        .ok_or_else(|| format!("the holes of {id} are not built"))?;
+    holes
+        .iter()
+        .skip(1)
+        .enumerate()
+        .map(|(k, h)| {
+            if (h.direction - first.direction).norm() > 1e-6 {
+                return Err(format!("{id}: its holes do not all point the same way"));
+            }
+            let d = h.origin - first.origin;
+            Ok((k as u32 + 2, Transform3::translation(d.x, d.y, d.z)))
         })
         .collect()
 }

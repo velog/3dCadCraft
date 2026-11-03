@@ -347,3 +347,50 @@ fn a_family_tells_what_its_table_was_compared_with() {
     assert_eq!(of("Series 68"), "Koyo");
     assert_eq!(of("Metric O-Ring"), "");
 }
+
+/// A published family with a connection: droppable, each member at the diameter
+/// its column gives, and Change Size finds a placed member's row.
+#[test]
+fn a_published_family_goes_by_its_connection() {
+    use cadcraft3d::components::fit::{Fit, Target, choose};
+    use cadcraft3d::part::blend::EdgeRef;
+    use cadcraft3d::part::connection::{Connection, ConnectionRole};
+    let root = tmp("published_fit");
+    let mut part = block();
+    part.connections.push(Connection {
+        name: "Connection1".into(),
+        role: ConnectionRole::Into,
+        edge: Some(EdgeRef {
+            faces: ["a".into(), "b".into()],
+            hint: [0.0; 3],
+        }),
+        diameter: 1.0,
+        diameter_column: Some("L".into()),
+    });
+    publish(&root, "Own", "Pegs", &part, &IProperties::default()).unwrap();
+    let c = Catalog::load(&root);
+    let f = c.families.iter().position(|x| x.name == "Pegs").unwrap();
+    let fits = c.fits(f);
+    assert!(matches!(fits[0], Fit::Into { d, .. } if (d - 10.0).abs() < 1e-9));
+    assert!(matches!(fits[1], Fit::Into { d, .. } if (d - 25.0).abs() < 1e-9));
+    let hole = |diameter| Target {
+        hole: true,
+        diameter,
+        thread: None,
+        depth: 5.0,
+        blind: false,
+    };
+    assert_eq!(choose(&fits, &hole(26.0)), Some(1));
+    assert_eq!(choose(&fits, &hole(11.0)), Some(0));
+
+    // Without a connection it stays by hand.
+    publish(&root, "Own", "Plain", &block(), &IProperties::default()).unwrap();
+    let c = Catalog::load(&root);
+    let plain = c.families.iter().position(|x| x.name == "Plain").unwrap();
+    assert!(c.fits(plain).iter().all(|x| !x.droppable()));
+
+    let f = c.families.iter().position(|x| x.name == "Pegs").unwrap();
+    let path = c.member_file(f, 1).unwrap();
+    assert_eq!(c.locate(&path), Some((f, 1)));
+    let _ = std::fs::remove_dir_all(&root);
+}

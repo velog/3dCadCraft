@@ -138,6 +138,8 @@ pub enum PartPlanned {
     InsertFeatureTemplate,
     ExtractFeatureTemplate,
     CreatePartFamily,
+    /// Named geometry for being placed (spec 6.3 §3.5).
+    Connection,
     MakePart,
     MakeComponents,
     AuthorFrameProfile,
@@ -146,7 +148,7 @@ pub enum PartPlanned {
 impl PartPlanned {
     /// Every planned command, in ribbon order.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const ALL: [PartPlanned; 42] = [
+    pub const ALL: [PartPlanned; 43] = [
         PartPlanned::Emboss,
         PartPlanned::Decal,
         PartPlanned::Mark,
@@ -186,6 +188,7 @@ impl PartPlanned {
         PartPlanned::InsertFeatureTemplate,
         PartPlanned::ExtractFeatureTemplate,
         PartPlanned::CreatePartFamily,
+        PartPlanned::Connection,
         PartPlanned::MakePart,
         PartPlanned::MakeComponents,
         PartPlanned::AuthorFrameProfile,
@@ -234,6 +237,7 @@ impl PartPlanned {
             InsertFeatureTemplate => "Insert Feature Template",
             ExtractFeatureTemplate => "Extract Feature Template",
             CreatePartFamily => "Create Part Family",
+            Connection => "Connection",
             MakePart => "Make Part",
             MakeComponents => "Make Components",
             AuthorFrameProfile => "Author Frame Profile",
@@ -283,6 +287,7 @@ impl PartPlanned {
             InsertFeatureTemplate => Icon::InsertFeatureTemplate,
             ExtractFeatureTemplate => Icon::ExtractFeatureTemplate,
             CreatePartFamily => Icon::CreatePartFamily,
+            Connection => Icon::Connection,
             MakePart => Icon::MakePart,
             MakeComponents => Icon::MakeComponents,
             AuthorFrameProfile => Icon::AuthorFrameProfile,
@@ -306,6 +311,7 @@ impl PartPlanned {
             | FreeformQuadball | FreeformFace | FreeformConvert => "5.5",
             Zebra | DraftAnalysis | Curvature | SurfaceAnalysis | SectionAnalysis => "0.10",
             InsertFeatureTemplate | ExtractFeatureTemplate | CreatePartFamily => "5.7",
+            Connection => "6.3",
             MakePart | MakeComponents => "3.10",
             AuthorFrameProfile => "6.1",
         }
@@ -358,6 +364,9 @@ impl PartPlanned {
             }
             ExtractFeatureTemplate => {
                 "Saves selected features as a feature template with size parameters."
+            }
+            Connection => {
+                "Names a circular edge this part lands with: placed, it goes to a hole or a shaft that fits."
             }
             CreatePartFamily => {
                 "A family table: parameters, properties and suppression per member."
@@ -1218,6 +1227,23 @@ impl PartPlanned {
                     Button("Save..."),
                 ],
             )],
+            Connection => &[Page(
+                "Connection",
+                &[
+                    Sel(
+                        "edge",
+                        "Circular Edge",
+                        "Select the circular edge that lands on the target",
+                        &[PickKind::Edge],
+                    ),
+                    Radio("Role", &["Goes into a hole", "Goes over a shaft"], 0),
+                    Text("Name", ""),
+                    Text("Diameter Column", ""),
+                    Note(
+                        "Placing this part then offers the holes or shafts of this diameter. In a family, name the table's column that holds it.",
+                    ),
+                ],
+            )],
             CreatePartFamily => &[
                 Page(
                     "Parameters",
@@ -1345,6 +1371,7 @@ impl Planned {
             self,
             Planned::Asm(
                 super::asm_planned::AsmPlanned::PlaceFromLibrary
+                    | super::asm_planned::AsmPlanned::ChangeSize
                     | super::asm_planned::AsmPlanned::Interference
                     | super::asm_planned::AsmPlanned::Create
                     | super::asm_planned::AsmPlanned::Pattern
@@ -1380,6 +1407,7 @@ impl Planned {
                     | PartPlanned::MakeComponents
                     | PartPlanned::AuthorFrameProfile
                     | PartPlanned::CreatePartFamily
+                    | PartPlanned::Connection
             )
         )
     }
@@ -2614,6 +2642,11 @@ impl CadCraftApp {
             return;
         };
         match d.kind {
+            Planned::Part(PartPlanned::Connection) => {
+                if self.connection_ok(&d) {
+                    self.part_planned = None;
+                }
+            }
             Planned::Asm(super::asm_planned::AsmPlanned::Interference) => {
                 if self.start_interference(&d) {
                     self.part_planned = None;
