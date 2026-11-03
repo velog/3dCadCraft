@@ -109,7 +109,7 @@ pub fn png(scene: &Scene, view: Vector3, size: u32) -> Option<Vec<u8>> {
     encode_png(&rgba, size, size)
 }
 
-/// [`png`] on a solid `back` colour (Colors › Preview Image Background) instead
+/// [`png()`] on a solid `back` colour (Colors › Preview Image Background) instead
 /// of a transparent background.
 pub fn png_on(scene: &Scene, view: Vector3, size: u32, back: Option<[u8; 3]>) -> Option<Vec<u8>> {
     let mut rgba = render(scene, view, size)?;
