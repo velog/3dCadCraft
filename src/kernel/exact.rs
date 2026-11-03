@@ -1081,6 +1081,16 @@ pub fn contains(s: &ExactSolid, p: Point3) -> bool {
     crate::diagnostics::crash::guard(|| s.body.contains(v3(&p))).unwrap_or(false)
 }
 
+/// [`contains`] for many points: whether a point is in any of `solids`, each meshed once (each
+/// `contains` meshes its body again).
+pub fn inside_any(solids: &[ExactSolid]) -> impl Fn(&Point3) -> bool + use<> {
+    let meshes: Vec<_> = solids
+        .iter()
+        .filter_map(|s| guarded("inside", || s.body.tessellate(s.body.size() * 2e-3)).ok())
+        .collect();
+    move |p| meshes.iter().any(|m| m.contains(v3(p)))
+}
+
 /// Whether two solids share material or touch.
 pub fn meets(a: &ExactSolid, b: &ExactSolid) -> bool {
     guarded("meets", || a.body.meets(&b.body)).unwrap_or(false)

@@ -1700,8 +1700,7 @@ impl PartDocument {
                                                     .map_err(|_| exact::Fail::Kernel(msg)),
                                                 _ => Err(exact::Fail::Kernel(msg)),
                                             };
-                                            let now = solids.clone();
-                                            let inside = |p: &Point3| now.iter().any(|s| crate::kernel::exact::contains(s, *p));
+                                            let inside = crate::kernel::exact::inside_any(&solids);
                                             match exact::section_cut_tools(e, &body, &works, &ps.sketch, grow, &inside) {
                                                 Ok(Some([first, second])) => {
                                                     let two = exact::combine(solids.clone(), first, op, chosen, false).and_then(|cut| {
