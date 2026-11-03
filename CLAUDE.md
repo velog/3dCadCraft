@@ -516,6 +516,7 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   screenshot before scripting clicks (the "DOF" button sits left of "Relax").
 - **egui text fields in popups:** call `request_focus()` only once (track a flag);
   re-requesting every frame swallows Enter.
+- **Focus only a widget this frame has drawn, and never show one id on two layers**: `request_focus` for a field that opens next frame stops AccessKit ("Focused ID is not in the node list"); the same id in the panel and in a popup is an egui assertion. Both crashed a debug build on the Hole picture's labels: give the popup's field an id of its own and ask for focus right after drawing it.
 - **Scripted clicks on menus/buttons** need a hovered frame before the press
   (`tools/gui_sim.py click` sleeps 0.15 s after moving); otherwise menu items and
   even tool buttons are silently missed and later clicks go to the wrong tool.
