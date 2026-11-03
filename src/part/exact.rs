@@ -1195,6 +1195,11 @@ pub(super) fn body_op(
         super::BodyOp::Sculpt(o) => so::sculpt(o, &f.id, cur, sheets),
         super::BodyOp::CopyObject(o) => super::copy_object::copy_object(o, &f.id, cur, sheets),
         super::BodyOp::Import(o) => super::import::import(o, &f.id, cur, sheets),
+        super::BodyOp::Emboss(o) => super::emboss::emboss(o, &f.id, body, works, sketches, cur)
+            .map(|mut out| {
+                out.extend(sheets.iter().cloned());
+                out
+            }),
         super::BodyOp::Freeform(o) => {
             let pl = super::placement::plane_of(&o.plane, body, works)
                 .map_err(|e| User(format!("the base plane: {e}")))?;

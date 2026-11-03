@@ -809,9 +809,9 @@ surface lofts, a tube swept along a spline (Pappus). **Specification:** [spec/2.
 
 **How it works.** A part is a list of features. Regeneration runs them in order, caches the results and on a change re-runs only the features from the changed one onwards. On an error (for example an edge that no longer exists) the feature is marked red and the rest continue where possible.
 
-## 2.17 Emboss / Engrave, Decal — ⬜ · M
+## 2.17 Emboss / Engrave, Decal — 🟡 · M
 
-**Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
+**Specification:** [spec/2.17-emboss.md](spec/2.17-emboss.md) (Emboss, Engrave, From Plane with taper, Wrap of rectangles on cylinders; text and curved wraps to do). **Command set and dialogs:** [spec/2.0-part-commands.md](spec/2.0-part-commands.md)
 
 - **Emboss / Engrave:** raised or recessed text or outline on a face, including wrapped around a cylinder.
 - **Decal:** an image projected onto a face.

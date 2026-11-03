@@ -34,6 +34,7 @@ pub mod copy_object;
 mod cut_edges;
 pub mod derive;
 pub mod draft;
+pub mod emboss;
 mod exact;
 pub mod export;
 pub mod expr;
@@ -2417,6 +2418,12 @@ impl PartDocument {
         def.validate().map_err(PartError::Feature)?;
         let id = self.next_feature_id(def.kind_name());
         (def.id, def.name) = (id.clone(), id.clone());
+        // An Emboss consumes its sketch, as an Extrude does.
+        if let BodyOp::Emboss(o) = &def.op {
+            let used = [o.sketch.clone()];
+            self.add_consuming(Feature::BodyOp(def), &used)?;
+            return Ok(id);
+        }
         self.insert_feature_checked(Feature::BodyOp(def))?;
         self.adopt_file_colors(&id);
         Ok(id)

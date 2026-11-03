@@ -940,6 +940,138 @@ fn speed_budgets() {
         ));
     }
 
+    // Emboss: 12 pads on a plate, one feature (a timed clone: no cache hits).
+    {
+        use cadcraft3d::part::emboss::EmbossOp;
+        use cadcraft3d::part::{BodyOp, BodyOpFeature, SketchOptions, SketchPlacement};
+        let mut p = PartDocument::with_box("Box1", [200.0, 100.0, 20.0]).unwrap();
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let i = p
+            .create_sketch(SketchPlacement::on_face("Box1:Top"), &opts)
+            .unwrap();
+        let plane = p.sketches[i].sketch.plane.clone();
+        let uv = |x: f64, y: f64| plane.project(&Point3::new(x, y, 20.0));
+        for k in 0..12 {
+            let x = 10.0 + 15.0 * k as f64;
+            let (a, b) = (uv(x, 20.0), uv(x + 10.0, 80.0));
+            p.sketches[i].sketch.add_rectangle_two_point(a, b).unwrap();
+        }
+        let id = p.sketches[i].id.clone();
+        p.add_body_op(BodyOpFeature::new(BodyOp::Emboss(EmbossOp::new(id, 2.0))))
+            .unwrap();
+        rows.push((
+            "Emboss: 12 pads on a plate, regenerate",
+            500.0,
+            median_ms(3, || {
+                let mut c = p.clone();
+                c.build_cache = Default::default();
+                c.regenerate().unwrap();
+            }),
+        ));
+    }
+
+    // Emboss on a curved face and wrapped round it.
+    {
+        use cadcraft3d::part::emboss::{EmbossKind, EmbossOp};
+        use cadcraft3d::part::shell::FaceRef;
+        use cadcraft3d::part::work::WorkPlaneDef;
+        use cadcraft3d::part::{
+            BodyOp, BodyOpFeature, ExtrudeFeature, Operation, OriginPlane, PlaneRef, ProfileRef,
+            SketchOptions, SketchPlacement, WorkDef, WorkFeature,
+        };
+        let opts = SketchOptions {
+            auto_project_origin: false,
+            auto_reference_edges: false,
+            ..Default::default()
+        };
+        let mut p = PartDocument::default();
+        let i = p
+            .create_sketch(
+                SketchPlacement {
+                    plane: PlaneRef::Origin(OriginPlane::XY),
+                    ..Default::default()
+                },
+                &opts,
+            )
+            .unwrap();
+        let sk = &mut p.sketches[i].sketch;
+        sk.add_circle(nalgebra::Point2::new(0.0, 0.0), 20.0)
+            .unwrap();
+        let r: Vec<ProfileRef> = sk
+            .regions()
+            .iter()
+            .map(|r| ProfileRef::of(r, r.interior_point()))
+            .collect();
+        let mut ex = ExtrudeFeature::new(r, 60.0);
+        ex.operation = Operation::NewSolid;
+        p.add_extrude(i, ex).unwrap();
+        let wp = p
+            .add_work(WorkFeature::new(WorkDef::Plane(WorkPlaneDef::Offset {
+                base: PlaneRef::Origin(OriginPlane::XZ),
+                distance: -25.0,
+            })))
+            .unwrap();
+        let i = p
+            .create_sketch(
+                SketchPlacement {
+                    plane: PlaneRef::Work(wp),
+                    ..Default::default()
+                },
+                &opts,
+            )
+            .unwrap();
+        let plane = p.sketches[i].sketch.plane.clone();
+        let uv = |x: f64, z: f64| plane.project(&Point3::new(x, 25.0, z));
+        let (a, b) = (uv(-5.0, 20.0), uv(5.0, 40.0));
+        p.sketches[i].sketch.add_rectangle_two_point(a, b).unwrap();
+        let id = p.sketches[i].id.clone();
+        let wall = p
+            .body
+            .faces()
+            .find(|(_, f)| {
+                matches!(
+                    p.body.surface(f.surface),
+                    Some(cadcraft3d::kernel::Surface::Cylinder(_))
+                )
+            })
+            .and_then(|(_, f)| f.name.clone())
+            .unwrap();
+        for (name, budget, wrap) in [
+            ("Emboss: a pad on a cylinder, projected", 3000.0, false),
+            ("Emboss: a pad wrapped round a cylinder", 1500.0, true),
+        ] {
+            let mut op = EmbossOp::new(id.clone(), 2.0);
+            op.style = EmbossKind::EmbossFromFace;
+            if wrap {
+                op.wrap = Some(FaceRef {
+                    face: wall.clone(),
+                    hint: [0.0, 20.0, 30.0],
+                });
+            } else {
+                // Towards the cylinder.
+                if plane.normal.y > 0.0 {
+                    op.side = cadcraft3d::part::emboss::EmbossSide::Direction2;
+                }
+            }
+            let mut q = p.clone();
+            q.add_body_op(BodyOpFeature::new(BodyOp::Emboss(op)))
+                .unwrap();
+            rows.push((
+                name,
+                budget,
+                median_ms(3, || {
+                    let mut c = q.clone();
+                    c.build_cache = Default::default();
+                    c.regenerate().unwrap();
+                }),
+            ));
+        }
+    }
+
     let rb = rounded_box();
     rows.push((
         "regenerate the rounded box (box, 8 fillets, chamfer chain)",

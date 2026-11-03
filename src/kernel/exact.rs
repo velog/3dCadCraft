@@ -5320,6 +5320,7 @@ mod sphere_tests {
 mod hole_tests;
 
 mod coil;
+pub mod emboss;
 pub use coil::{CoilMesh, CoilMotion, CoilZone, coil, coil_boolean, coil_mesh};
 
 mod loft;

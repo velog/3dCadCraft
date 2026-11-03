@@ -1363,7 +1363,8 @@ impl Planned {
                     | super::asm_planned::AsmPlanned::FrameMemberInfo
                     | super::asm_planned::AsmPlanned::PlaceImported
             ) | Planned::Part(
-                PartPlanned::Stitch
+                PartPlanned::Emboss
+                    | PartPlanned::Stitch
                     | PartPlanned::Patch
                     | PartPlanned::TrimSurface
                     | PartPlanned::ExtendSurface
@@ -2284,8 +2285,14 @@ impl PartDialog {
             }
             Num(label, def, unit) => {
                 plabel(ui, label);
+                // Emboss: From Plane has a taper and no depth, the face types the other way round.
+                let plane = self.index(at.0, "Type") == 2;
+                let off = self.kind == Planned::Part(PartPlanned::Emboss)
+                    && ((label == "Depth" && plane) || (label == "Taper" && !plane));
                 let v = self.nums.entry(at).or_insert(def);
-                ui.add(ExprValue::new(v).suffix(unit).cursor(label));
+                ui.add_enabled_ui(!off, |ui| {
+                    ui.add(ExprValue::new(v).suffix(unit).cursor(label));
+                });
                 ui.end_row();
             }
             Text(label, def) => {
