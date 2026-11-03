@@ -1,4 +1,4 @@
-# ASME B18.8.2: Hardened dowel pin. Nominal values in mm, typed for this library; not yet compared with a source.
+# ASME B18.8.2: Hardened dowel pin. Nominal values in mm, typed for this library; compared with nominal fractions.
 size,d,lengths
 1/8,3.175,12.7;19.05;25.4
 3/16,4.762,12.7;19.05;25.4;38.1

@@ -1,4 +1,4 @@
-# ISO 2339: Taper pin. Nominal values in mm, typed for this library; not yet compared with a source.
+# ISO 2339: Taper pin. Nominal values in mm, typed for this library; compared with fasten.it (diameters).
 size,d,lengths
 2,2,6;8;10;12;16;20
 3,3,8;10;12;16;20;30

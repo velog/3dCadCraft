@@ -1,4 +1,4 @@
-# Series 12: Self-aligning ball bearing. Nominal values in mm, typed for this library; not yet compared with a source.
+# Series 12: Self-aligning ball bearing. Nominal values in mm, typed for this library; compared with Koyo.
 size,d,D,B
 1200,10,30,9
 1201,12,32,10

@@ -1,8 +1,8 @@
-# DIN 7349: Heavy washer for pins and bolts. Nominal values in mm, typed for this library; not yet compared with a source.
+# DIN 7349: Heavy washer for pins and bolts. Nominal values in mm, typed for this library; compared with fasten.it.
 size,d1,d2,h
 6,6.4,17,3
 8,8.4,21,4
-10,10.5,25,5
+10,10.5,25,4
 12,13,30,6
-16,17,40,8
-20,21,50,10
+16,17,40,6
+20,21,44,8

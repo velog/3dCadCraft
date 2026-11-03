@@ -1,4 +1,4 @@
-# ISO 3601: O-ring. Nominal values in mm, typed for this library; not yet compared with a source.
+# Metric O-Ring: O-ring, common metric sizes (not the ISO 3601 series). Nominal values in mm, typed for this library; not yet compared with a source.
 size,d1,d2
 5 x 1.5,5,1.5
 8 x 1.5,8,1.5

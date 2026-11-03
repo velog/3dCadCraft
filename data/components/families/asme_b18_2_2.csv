@@ -1,4 +1,4 @@
-# ASME B18.2.2: Hex nut, UNC. Nominal values in mm, typed for this library; not yet compared with a source.
+# ASME B18.2.2: Hex nut, UNC. Nominal values in mm, typed for this library; compared with fasten.it (No.10 not listed).
 size,d,P,s,m
 No.10-24,4.826,1.058,9.525,3.175
 1/4-20,6.35,1.27,11.112,5.556

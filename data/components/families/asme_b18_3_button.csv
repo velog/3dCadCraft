@@ -1,6 +1,6 @@
-# ASME B18.3 Button: Button head socket screw, UNC. Nominal values in mm, typed for this library; not yet compared with a source.
+# ASME B18.3 Button: Button head socket screw, UNC. Nominal values in mm, typed for this library; compared with fasten.it.
 size,d,P,dk,k,s,lengths
-No.10-24,4.826,1.058,7.925,2.667,3.175,12.7;19.05;25.4;31.75;38.1;50.8
+No.10-24,4.826,1.058,9.169,2.565,3.175,12.7;19.05;25.4;31.75;38.1;50.8
 1/4-20,6.35,1.27,11.112,3.353,3.969,12.7;19.05;25.4;31.75;38.1;50.8;63.5;76.2
 5/16-18,7.938,1.411,13.891,4.216,4.762,19.05;25.4;31.75;38.1;50.8;63.5;76.2;101.6
 3/8-16,9.525,1.587,16.669,5.055,5.556,25.4;31.75;38.1;50.8;63.5;76.2;101.6

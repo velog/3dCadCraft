@@ -1,4 +1,4 @@
-# DIN 439 B: Hexagon thin nut (older across flats). Nominal values in mm, typed for this library; not yet compared with a source.
+# DIN 439 B: Hexagon thin nut (older across flats). Nominal values in mm, typed for this library; compared with fasten.it.
 size,d,P,s,m
 M4,4,0.7,7,2.2
 M5,5,0.8,8,2.7

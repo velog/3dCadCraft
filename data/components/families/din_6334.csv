@@ -1,4 +1,4 @@
-# DIN 6334: Long hexagon coupling nut. Nominal values in mm, typed for this library; not yet compared with a source.
+# DIN 6334: Long hexagon coupling nut. Nominal values in mm, typed for this library; compared with fasten.it; PGB (M4; M5).
 size,d,P,s,m
 M4,4,0.7,7,12
 M5,5,0.8,8,15

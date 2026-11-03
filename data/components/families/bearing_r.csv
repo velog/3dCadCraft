@@ -1,8 +1,11 @@
-# Series R: Deep groove ball bearing, inch. Nominal values in mm, typed for this library; not yet compared with a source.
+# Series R: Deep groove ball bearing, inch. Nominal values in mm, typed for this library; compared with BDS; USA Roller Chain (both widths kept).
 size,d,D,B
 R4,6.35,15.875,4.978
 R6,9.525,22.225,7.137
+R6 (B 5.558),9.525,22.225,5.558
 R8,12.7,28.575,7.938
+R8 (B 6.35),12.7,28.575,6.35
 R10,15.875,34.925,8.738
+R10 (B 7.142),15.875,34.925,7.142
 R12,19.05,41.275,7.938
 R16,25.4,50.8,12.7

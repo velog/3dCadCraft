@@ -1,11 +1,13 @@
-# ISO 7093-1: Plain washer, large series. Nominal values in mm, typed for this library; not yet compared with a source.
+# ISO 7093-1: Plain washer, large series. Nominal values in mm, typed for this library; compared with fasten.it; DIN 9021 (both kept).
 size,d1,d2,h
 3,3.2,9,0.8
 4,4.3,12,1
 5,5.3,15,1.2
+5 (h 1),5.3,15,1
 6,6.4,18,1.6
 8,8.4,24,2
 10,10.5,30,2.5
 12,13,37,3
 16,17,50,3
 20,22,60,4
+20 (d1 21),21,60,4
