@@ -114,6 +114,7 @@ pub struct SnapFitOp {
     /// Extend to next: the root goes on to the next face; else it stops at the point.
     pub extend: bool,
     /// Hook or Loop.
+    #[serde(rename = "style")]
     pub kind: SnapKind,
 }
 

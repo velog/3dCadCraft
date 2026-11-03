@@ -190,6 +190,7 @@ pub struct BossOp {
     #[serde(default, skip_serializing_if = "is_zero")]
     pub offset: Real,
     /// Head or Thread.
+    #[serde(rename = "style")]
     pub kind: BossKind,
     /// Draft of the outside.
     #[serde(default, skip_serializing_if = "is_zero")]

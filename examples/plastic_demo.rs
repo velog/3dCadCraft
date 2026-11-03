@@ -5,7 +5,7 @@
 use cadcraft3d::document::Project;
 use cadcraft3d::document::DocumentData;
 use cadcraft3d::part::blend::edge_ref;
-use cadcraft3d::part::plastic::boss::{BossHead, BossKind, BossOp, BossRibs};
+use cadcraft3d::part::plastic::boss::{BossOp, BossRibs};
 use cadcraft3d::part::plastic::grill::{GrillCurves, GrillOp};
 use cadcraft3d::part::plastic::lip::LipOp;
 use cadcraft3d::part::plastic::rule_fillet::{FilletRule, RuleFilletOp, RuleRow};
@@ -138,7 +138,6 @@ fn main() -> R<()> {
             top_offset: 0.5,
             bottom_offset: 1.0,
         });
-        println!("adding Grill");
         p.add_body_op(BodyOpFeature::new(BodyOp::Grill(op)))?;
         let mut op = BossOp::new(boss_id);
         op.ribs = Some(BossRibs {
@@ -147,21 +146,15 @@ fn main() -> R<()> {
             ..BossRibs::default()
         });
         op.fillet = 0.5;
-        println!("adding Boss");
-        let boss = p.add_body_op(BodyOpFeature::new(BodyOp::Boss(op)))?;
-        let _ = (BossKind::Head(BossHead::default()), boss);
-        println!("adding SnapFit");
+        p.add_body_op(BodyOpFeature::new(BodyOp::Boss(op)))?;
         p.add_body_op(BodyOpFeature::new(BodyOp::SnapFit(SnapFitOp::new(snap_id))))?;
         let mut op = cadcraft3d::part::plastic::rest::RestOp::new(p.sketches[r].id.clone(), 1.5);
         op.flip = false;
-        println!("adding Rest");
         p.add_body_op(BodyOpFeature::new(BodyOp::Rest(op)))?;
         let mut lip = LipOp::new(rim, 1.5, 1.0);
         lip.pull = Some(LineRef::Origin(2));
-        println!("adding Lip");
         let lip_id = p.add_body_op(BodyOpFeature::new(BodyOp::Lip(lip)))?;
         let row = RuleRow::features(vec![lip_id], FilletRule::FreeEdges, 0.3);
-        println!("adding RuleFillet");
         p.add_body_op(BodyOpFeature::new(BodyOp::RuleFillet(RuleFilletOp {
             rows: vec![row],
             exclude_faces: Vec::new(),

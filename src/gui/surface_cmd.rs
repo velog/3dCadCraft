@@ -265,7 +265,7 @@ impl CadCraftApp {
     }
 
     /// The surface command's definition from the panel, or why not.
-    fn surface_op_from(&self, d: &PartDialog, old: Option<&BodyOp>) -> Result<BodyOp, String> {
+    pub(super) fn surface_op_from(&self, d: &PartDialog, old: Option<&BodyOp>) -> Result<BodyOp, String> {
         let Planned::Part(kind) = d.kind else {
             return Err("not a part command".into());
         };

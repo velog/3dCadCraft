@@ -1,5 +1,6 @@
 //! Plastic part features (`docs/spec/5.8-plastic-parts.md`): Grill, Boss, Rest, Snap Fit, Rule
 //! Fillet and Lip, each a [`BodyOp`](super::BodyOp) variant built with tools and Booleans.
+//! `BodyOp` is tagged by a `kind` key in files: no op may have a field saved under that name.
 
 pub mod boss;
 pub(super) mod common;

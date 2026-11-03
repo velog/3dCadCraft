@@ -909,3 +909,67 @@ fn bosses_with_ribs_in_a_tray() {
         }
     }
 }
+
+/// All six in one part survive a save and a load, with the same body.
+#[test]
+fn every_feature_survives_a_save() {
+    use cadcraft3d::document::{DocumentData, Project};
+    let mut p = wall();
+    let id = center_at(&mut p, 20.0);
+    let mut op = BossOp::new(id);
+    op.kind = BossKind::Head(BossHead::default());
+    let boss = add(&mut p, BodyOp::Boss(op));
+    let i = plane_at(&mut p, 3.0);
+    p.sketches[i].sketch.add_center_point(p2(80.0, 45.0));
+    let mut op = SnapFitOp::new(p.sketches[i].id.clone());
+    op.extend = false;
+    add(&mut p, BodyOp::SnapFit(op));
+    let i = plane_at(&mut p, 8.0);
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(p2(20.0, 20.0), p2(35.0, 40.0))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let id = p.sketches[i].id.clone();
+    add(&mut p, BodyOp::Rest(RestOp::new(id, 1.0)));
+    let i = plane_at(&mut p, -5.0);
+    p.sketches[i]
+        .sketch
+        .add_rectangle_two_point(p2(70.0, 10.0), p2(90.0, 25.0))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let id = p.sketches[i].id.clone();
+    add(&mut p, BodyOp::Grill(GrillOp::new(id)));
+    let row = RuleRow::features(vec![boss], FilletRule::AgainstPart, 0.5);
+    add(
+        &mut p,
+        BodyOp::RuleFillet(RuleFilletOp {
+            rows: vec![row],
+            exclude_faces: Vec::new(),
+            remove_merged: false,
+        }),
+    );
+    let (lip_part, inner, _) = ring();
+    let mut lip = LipOp::new(inner, 1.0, 1.0);
+    lip.pull = Some(LineRef::Origin(2));
+    let mut lip_part = lip_part;
+    add(&mut lip_part, BodyOp::Lip(lip));
+    let (v1, v2) = (volume(&p), volume(&lip_part));
+    let path = std::env::temp_dir().join(format!("plastic_rt_{}.3dcadcraft", std::process::id()));
+    let mut project = Project::new("Plastic");
+    project.add_document("A", DocumentData::Part(p));
+    project.add_document("B", DocumentData::Part(lip_part));
+    project.save(&path).unwrap_or_else(|e| panic!("{e}"));
+    let loaded = Project::load(&path).unwrap_or_else(|e| panic!("{e}"));
+    let _ = std::fs::remove_file(&path);
+    let mut got: Vec<Real> = Vec::new();
+    for d in loaded.documents() {
+        if let DocumentData::Part(q) = &d.data {
+            let mut q = q.clone();
+            q.regenerate().unwrap_or_else(|e| panic!("{e}"));
+            assert!(q.feature_health.is_empty(), "{:?}", q.feature_health);
+            got.push(volume(&q));
+        }
+    }
+    assert_eq!(got.len(), 2);
+    close(got[0], v1, 1e-6, "part after load");
+    close(got[1], v2, 1e-6, "lip after load");
+}

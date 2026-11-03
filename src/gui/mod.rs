@@ -7364,6 +7364,8 @@ impl CadCraftApp {
                 Some(self.hole_preview())
             } else if self.thread_draft.is_some() {
                 Some(self.thread_preview())
+            } else if self.part_planned.as_ref().is_some_and(plastic::is_plastic) {
+                Some(self.plastic_preview())
             } else {
                 None
             };

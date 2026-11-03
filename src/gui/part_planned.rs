@@ -2717,6 +2717,20 @@ impl CadCraftApp {
             });
         }
         let (cancel, ok) = d.ui(ui);
+        // A plastic command says why its definition cannot be built, before OK.
+        if super::plastic::is_plastic(&d) {
+            match self.plastic_preview() {
+                Err(e) if e == super::PREVIEW_PENDING => {
+                    ui.label(e);
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(50));
+                }
+                Err(e) if !e.is_empty() => {
+                    ui.label(RichText::new(e).color(egui::Color32::from_rgb(230, 120, 20)));
+                }
+                _ => {}
+            }
+        }
         // The Anchor list of Edit Frame Members moves the current member
         // at once (like a click on one of its points).
         let mut moved = None;

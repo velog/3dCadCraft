@@ -21,7 +21,7 @@ use crate::part::plastic::rule_fillet::{FilletRule, RuleFilletOp, RuleRow, RuleS
 use crate::part::plastic::snap_fit::{SnapFitOp, SnapHook, SnapKind, SnapLoop};
 use crate::part::placement::PointRef;
 use crate::part::select::feature_id_of_face;
-use crate::part::{BodyOp, EdgeRef, FaceRef, LineRef, PlaneRef, ProfileRef};
+use crate::part::{BodyOp, BodyOpFeature, EdgeRef, FaceRef, Feature, LineRef, PlaneRef, ProfileRef};
 use crate::sketch::{EntityId, PointId, Region};
 
 type Picks<'a> = &'a [(SelItem, Option<[f64; 3]>)];
@@ -99,8 +99,44 @@ impl CadCraftApp {
             .map(|s| &s.sketch)
     }
 
-    /// The nearest curve to each click (none for a whole sketch: every free curve).
-    fn plastic_curves(&self, id: &str, pts: &[Option<crate::sketch::Point2>]) -> Vec<EntityId> {
+    /// The curves of the closed outline a click on `at` means: regions read without curves that
+    /// have a free end (centre lines usually cross it without sharing a point with it).
+    fn outline_curves(&self, id: &str, at: crate::sketch::Point2) -> Vec<EntityId> {
+        let Some(sk) = self.sketch_named(id) else {
+            return Vec::new();
+        };
+        let mut uses: std::collections::HashMap<PointId, usize> = Default::default();
+        let ends = |e: &crate::sketch::Entity| match e {
+            crate::sketch::Entity::Line { start, end } => vec![*start, *end],
+            _ => Vec::new(),
+        };
+        for (_, e) in sk.entities() {
+            for p in ends(e) {
+                *uses.entry(p).or_default() += 1;
+            }
+        }
+        let mut clean = sk.clone();
+        for (e, ent) in sk.entities() {
+            if ends(ent).iter().any(|p| uses.get(p).copied().unwrap_or(0) < 2) {
+                let _ = clean.set_style(e, crate::sketch::Style::Construction);
+            }
+        }
+        clean
+            .regions()
+            .iter()
+            .filter(|r| r.contains(at))
+            .max_by(|a, b| a.outer.area().abs().total_cmp(&b.outer.area().abs()))
+            .map(|r| ProfileRef::of(r, at).sources)
+            .unwrap_or_default()
+    }
+
+    /// The nearest curve to each click, never one of `keep_off`.
+    fn plastic_curves(
+        &self,
+        id: &str,
+        pts: &[Option<crate::sketch::Point2>],
+        keep_off: &[EntityId],
+    ) -> Vec<EntityId> {
         let Some(sk) = self.sketch_named(id) else {
             return Vec::new();
         };
@@ -121,8 +157,10 @@ impl CadCraftApp {
                     Some((d, e))
                 })
                 .min_by(|a, b| a.0.total_cmp(&b.0));
+            // A click on the boundary is no rib: it is dropped, never moved to a curve far away.
             if let Some((_, e)) = best
                 && !out.contains(&e)
+                && !keep_off.contains(&e)
             {
                 out.push(e);
             }
@@ -225,7 +263,10 @@ impl CadCraftApp {
             for (item, _) in picks {
                 match item {
                     SelItem::Vertex(n) => points.push(PointRef::Vertex(n.clone())),
-                    SelItem::Feature(id) => points.push(PointRef::Work(id.clone())),
+                    // Only a work point: the selection at the start can be any feature.
+                    SelItem::Feature(id) if self.part().work.points.contains_key(id) => {
+                        points.push(PointRef::Work(id.clone()));
+                    }
                     _ => {}
                 }
             }
@@ -503,9 +544,20 @@ impl CadCraftApp {
         else {
             return Err("select the boundary profile".into());
         };
+        // A rib or spar never takes a curve of the boundary (that would open it).
+        let keep_off: Vec<EntityId> = boundary_pick
+            .as_ref()
+            .and_then(|(id, pts)| {
+                pts.iter()
+                    .flatten()
+                    .next()
+                    .map(|at| self.outline_curves(id, *at))
+            })
+            .unwrap_or_default();
         let curves = |key: &str, thick: Real, height: Real, top: Real, bottom: Real, was| {
             let chosen = self.plastic_sketch_pick(d.items_of(key)).map(|(id, pts)| {
-                let list = self.plastic_curves(&id, &pts);
+                let off: &[EntityId] = if id == sketch { &keep_off } else { &[] };
+                let list = self.plastic_curves(&id, &pts, off);
                 (id, list)
             });
             match (chosen, was) {
@@ -765,6 +817,47 @@ impl CadCraftApp {
         }))
     }
 
+    /// The new faces' edges while a plastic command is open, built on a worker thread from a copy
+    /// of the part. `Err("")`: its inputs are not complete yet.
+    pub(super) fn plastic_preview(&self) -> Result<Vec<Vec<Point3>>, String> {
+        let Some(d) = &self.part_planned else {
+            return Err(String::new());
+        };
+        let edit = d.feature;
+        let old = edit.and_then(|k| match self.part().features.get(k) {
+            Some(Feature::BodyOp(b)) => Some(b.clone()),
+            _ => None,
+        });
+        let op = self
+            .surface_op_from(d, old.as_ref().map(|b| &b.op))
+            .map_err(|_| String::new())?;
+        let mut f = old.unwrap_or_else(|| BodyOpFeature::new(op.clone()));
+        f.op = op;
+        if f.validate().is_err() {
+            return Err(String::new());
+        }
+        let key = format!("plastic|{edit:?}|{:?}", f.op);
+        if let Some(r) = self.preview_ready(&key) {
+            return r;
+        }
+        let mut trial = self.part().clone();
+        self.preview_async(key, move || {
+            let built = match edit {
+                Some(k) => {
+                    let id = f.id.clone();
+                    trial.replace_feature(k, Feature::BodyOp(f)).map(|_| id)
+                }
+                None => trial.add_body_op(f),
+            };
+            built
+                .map(|id| {
+                    let own = format!("{id}:");
+                    super::combine_split::face_edges(&trial, |n| n.starts_with(&own))
+                })
+                .map_err(|e| e.to_string())
+        })
+    }
+
     /// Grill's Flow Area for the panel's current values.
     pub(super) fn grill_flow_line(&self, d: &PartDialog) -> String {
         match self.grill_from(d, None) {
@@ -964,6 +1057,21 @@ pub(super) fn fill_dialog(d: &mut PartDialog, op: &BodyOp) {
         }
         _ => {}
     }
+}
+
+/// Is the panel one of the plastic commands?
+pub(super) fn is_plastic(d: &PartDialog) -> bool {
+    matches!(
+        d.kind,
+        super::part_planned::Planned::Part(
+            PartPlanned::Grill
+                | PartPlanned::Boss
+                | PartPlanned::Rest
+                | PartPlanned::SnapFit
+                | PartPlanned::RuleFillet
+                | PartPlanned::Lip
+        )
+    )
 }
 
 /// The plastic command of a body operation, if it is one.

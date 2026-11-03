@@ -33,6 +33,7 @@ pub enum LipKind {
 pub struct LipOp {
     /// Lip or Groove.
     #[serde(default)]
+    #[serde(rename = "style")]
     pub kind: LipKind,
     /// The path's edges.
     pub path: Vec<EdgeRef>,
