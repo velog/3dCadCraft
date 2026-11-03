@@ -10,6 +10,7 @@ use super::CadCraftApp;
 use super::part_planned::{PartDialog, PartPlanned};
 use super::select::SelItem;
 use crate::kernel::{Point3, Real};
+use crate::part::placement::PointRef;
 use crate::part::plastic::Centers;
 use crate::part::plastic::boss::{
     BossHead, BossKind, BossOp, BossRibs, BossThread, HeadStyle, ThreadHole,
@@ -19,9 +20,10 @@ use crate::part::plastic::lip::{LipKind, LipOp};
 use crate::part::plastic::rest::{RestExtent, RestLanding, RestOp, RestSide};
 use crate::part::plastic::rule_fillet::{FilletRule, RuleFilletOp, RuleRow, RuleSource};
 use crate::part::plastic::snap_fit::{SnapFitOp, SnapHook, SnapKind, SnapLoop};
-use crate::part::placement::PointRef;
 use crate::part::select::feature_id_of_face;
-use crate::part::{BodyOp, BodyOpFeature, EdgeRef, FaceRef, Feature, LineRef, PlaneRef, ProfileRef};
+use crate::part::{
+    BodyOp, BodyOpFeature, EdgeRef, FaceRef, Feature, LineRef, PlaneRef, ProfileRef,
+};
 use crate::sketch::{EntityId, PointId, Region};
 
 type Picks<'a> = &'a [(SelItem, Option<[f64; 3]>)];
@@ -74,7 +76,10 @@ impl CadCraftApp {
     }
 
     /// The sketch and its plane point of a pick.
-    fn plastic_sketch_pick(&self, picks: Picks) -> Option<(String, Vec<Option<crate::sketch::Point2>>)> {
+    fn plastic_sketch_pick(
+        &self,
+        picks: Picks,
+    ) -> Option<(String, Vec<Option<crate::sketch::Point2>>)> {
         let part = self.part();
         let mut id = None;
         let mut pts = Vec::new();
@@ -117,7 +122,10 @@ impl CadCraftApp {
         }
         let mut clean = sk.clone();
         for (e, ent) in sk.entities() {
-            if ends(ent).iter().any(|p| uses.get(p).copied().unwrap_or(0) < 2) {
+            if ends(ent)
+                .iter()
+                .any(|p| uses.get(p).copied().unwrap_or(0) < 2)
+            {
                 let _ = clean.set_style(e, crate::sketch::Style::Construction);
             }
         }
@@ -871,7 +879,11 @@ impl CadCraftApp {
     }
 }
 
-fn segment_distance(p: crate::sketch::Point2, a: crate::sketch::Point2, b: crate::sketch::Point2) -> Real {
+fn segment_distance(
+    p: crate::sketch::Point2,
+    a: crate::sketch::Point2,
+    b: crate::sketch::Point2,
+) -> Real {
     let u = b - a;
     let t = ((p - a).dot(&u) / u.dot(&u).max(1e-24)).clamp(0.0, 1.0);
     (a + u * t - p).norm()
@@ -882,7 +894,11 @@ pub(super) fn fill_dialog(d: &mut PartDialog, op: &BodyOp) {
     let deg = Real::to_degrees;
     match op {
         BodyOp::Boss(o) => {
-            d.set_index(0, "Placement", usize::from(matches!(o.centers, Centers::Points { .. })));
+            d.set_index(
+                0,
+                "Placement",
+                usize::from(matches!(o.centers, Centers::Points { .. })),
+            );
             d.set_check(0, "Flip", o.flip);
             d.set_num(0, "Offset", o.offset);
             d.set_num(0, "Fillet", o.fillet);
@@ -938,7 +954,11 @@ pub(super) fn fill_dialog(d: &mut PartDialog, op: &BodyOp) {
             }
         }
         BodyOp::SnapFit(o) => {
-            d.set_index(0, "Placement", usize::from(matches!(o.centers, Centers::Points { .. })));
+            d.set_index(
+                0,
+                "Placement",
+                usize::from(matches!(o.centers, Centers::Points { .. })),
+            );
             d.set_check(0, "Flip", o.flip);
             d.set_index(0, "Hook Direction", o.hook_arrow as usize);
             d.set_index(0, "Extents", usize::from(!o.extend));
@@ -1024,7 +1044,11 @@ pub(super) fn fill_dialog(d: &mut PartDialog, op: &BodyOp) {
         }
         BodyOp::RuleFillet(o) => {
             for (t, r) in o.rows.iter().enumerate().take(3) {
-                d.set_index(t, "Source", usize::from(matches!(r.source, RuleSource::Faces(_))));
+                d.set_index(
+                    t,
+                    "Source",
+                    usize::from(matches!(r.source, RuleSource::Faces(_))),
+                );
                 d.set_num(t, "Radius", r.radius);
                 d.set_check(t, "All Rounds", r.all_rounds);
                 d.set_check(t, "All Fillets", r.all_fillets);

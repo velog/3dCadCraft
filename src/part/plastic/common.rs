@@ -117,7 +117,9 @@ impl Piece {
         match *self {
             Piece::Line(a, b) => vec![PrismSeg::Line(a, b)],
             Piece::Arc { c, r, a0, sweep } => {
-                let n = (sweep.abs() / (std::f64::consts::TAU / 3.0)).ceil().max(1.0) as usize;
+                let n = (sweep.abs() / (std::f64::consts::TAU / 3.0))
+                    .ceil()
+                    .max(1.0) as usize;
                 let step = sweep / n as Real;
                 (0..n)
                     .map(|k| {
@@ -198,7 +200,11 @@ fn join(a: &Piece, b: &Piece, at: Point2) -> Option<Point2> {
             }
             let root = disc.sqrt();
             let (x, y) = (p + u * (-along + root), p + u * (-along - root));
-            Some(if (x - at).norm() < (y - at).norm() { x } else { y })
+            Some(if (x - at).norm() < (y - at).norm() {
+                x
+            } else {
+                y
+            })
         }
         (Piece::Arc { c: c1, r: r1, .. }, Piece::Arc { c: c2, r: r2, .. }) => {
             let d = c2 - c1;
@@ -214,7 +220,11 @@ fn join(a: &Piece, b: &Piece, at: Point2) -> Option<Point2> {
             let (u, h) = (d / l, h2.sqrt());
             let n = Vector2::new(-u.y, u.x);
             let (p, q) = (c1 + u * x + n * h, c1 + u * x - n * h);
-            Some(if (p - at).norm() < (q - at).norm() { p } else { q })
+            Some(if (p - at).norm() < (q - at).norm() {
+                p
+            } else {
+                q
+            })
         }
     }
 }
@@ -445,10 +455,7 @@ pub(in crate::part) fn apply_fillets(
     let mut pts: Vec<Vec<Point3>> = vec![Vec::new(); out.len()];
     let mut radii: Vec<Vec<Real>> = vec![Vec::new(); out.len()];
     for (e, r) in chosen {
-        for (i, p) in picker
-            .points(std::slice::from_ref(e))
-            .map_err(Fail::User)?
-        {
+        for (i, p) in picker.points(std::slice::from_ref(e)).map_err(Fail::User)? {
             pts[i].push(p);
             radii[i].push(*r);
         }

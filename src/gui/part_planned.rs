@@ -97,10 +97,25 @@ const RULES: &[&str] = &[
 ];
 const RULE_ROW_1: &[Row] = &[
     Radio("Source", &["Features", "Faces"], 0),
-    Sel("src1", "Selection", "Select the features or faces of this rule", FEATURES),
+    Sel(
+        "src1",
+        "Selection",
+        "Select the features or faces of this rule",
+        FEATURES,
+    ),
     Combo("Rule", RULES, 1),
-    Sel("scope1", "Scope", "Select the features of the scope (Against Features)", FEATURES),
-    Sel("axis1", "Axis", "Select the axis (Incident Edges)", DIRECTION),
+    Sel(
+        "scope1",
+        "Scope",
+        "Select the features of the scope (Against Features)",
+        FEATURES,
+    ),
+    Sel(
+        "axis1",
+        "Axis",
+        "Select the axis (Incident Edges)",
+        DIRECTION,
+    ),
     Check("Flip Axis", false),
     Num("Tolerance", 1.0, "°"),
     Num("Radius", 1.0, " mm"),
@@ -109,10 +124,25 @@ const RULE_ROW_1: &[Row] = &[
 ];
 const RULE_ROW_2: &[Row] = &[
     Radio("Source", &["Features", "Faces"], 0),
-    Sel("src2", "Selection", "Select the features or faces of this rule", FEATURES),
+    Sel(
+        "src2",
+        "Selection",
+        "Select the features or faces of this rule",
+        FEATURES,
+    ),
     Combo("Rule", RULES, 1),
-    Sel("scope2", "Scope", "Select the features of the scope (Against Features)", FEATURES),
-    Sel("axis2", "Axis", "Select the axis (Incident Edges)", DIRECTION),
+    Sel(
+        "scope2",
+        "Scope",
+        "Select the features of the scope (Against Features)",
+        FEATURES,
+    ),
+    Sel(
+        "axis2",
+        "Axis",
+        "Select the axis (Incident Edges)",
+        DIRECTION,
+    ),
     Check("Flip Axis", false),
     Num("Tolerance", 1.0, "°"),
     Num("Radius", 1.0, " mm"),
@@ -121,17 +151,31 @@ const RULE_ROW_2: &[Row] = &[
 ];
 const RULE_ROW_3: &[Row] = &[
     Radio("Source", &["Features", "Faces"], 0),
-    Sel("src3", "Selection", "Select the features or faces of this rule", FEATURES),
+    Sel(
+        "src3",
+        "Selection",
+        "Select the features or faces of this rule",
+        FEATURES,
+    ),
     Combo("Rule", RULES, 1),
-    Sel("scope3", "Scope", "Select the features of the scope (Against Features)", FEATURES),
-    Sel("axis3", "Axis", "Select the axis (Incident Edges)", DIRECTION),
+    Sel(
+        "scope3",
+        "Scope",
+        "Select the features of the scope (Against Features)",
+        FEATURES,
+    ),
+    Sel(
+        "axis3",
+        "Axis",
+        "Select the axis (Incident Edges)",
+        DIRECTION,
+    ),
     Check("Flip Axis", false),
     Num("Tolerance", 1.0, "°"),
     Num("Radius", 1.0, " mm"),
     Check("All Rounds", true),
     Check("All Fillets", true),
 ];
-
 
 /// A part command with an interface and no logic yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -875,14 +919,24 @@ impl PartPlanned {
                 Page(
                     "Island",
                     &[
-                        Sel("island", "Profile", "Click inside the island profiles", PROFILE),
+                        Sel(
+                            "island",
+                            "Profile",
+                            "Click inside the island profiles",
+                            PROFILE,
+                        ),
                         Num("Thickness", 0.0, " mm"),
                     ],
                 ),
                 Page(
                     "Rib",
                     &[
-                        Sel("ribs", "Profiles", "Select the ribs' centre lines", SKETCH_CURVES),
+                        Sel(
+                            "ribs",
+                            "Profiles",
+                            "Select the ribs' centre lines",
+                            SKETCH_CURVES,
+                        ),
                         Num("Thickness", 1.0, " mm"),
                         Num("Height", 2.0, " mm"),
                         Num("Top Offset", 0.0, " mm"),
@@ -891,7 +945,12 @@ impl PartPlanned {
                 Page(
                     "Spar",
                     &[
-                        Sel("spars", "Profiles", "Select the spars' centre lines", SKETCH_CURVES),
+                        Sel(
+                            "spars",
+                            "Profiles",
+                            "Select the spars' centre lines",
+                            SKETCH_CURVES,
+                        ),
                         Num("Thickness", 1.0, " mm"),
                         Num("Top Offset", 0.0, " mm"),
                         Num("Bottom Offset", 0.0, " mm"),
@@ -914,7 +973,12 @@ impl PartPlanned {
                         Radio("Placement", &["From Sketch", "On Point"], 0),
                         Radio("Type", &["Head", "Thread"], 1),
                         Sel("centers", "Centers", "Select the boss centres", POINTS),
-                        Sel("direction", "Direction", "Select the boss direction (On Point)", DIRECTION),
+                        Sel(
+                            "direction",
+                            "Direction",
+                            "Select the boss direction (On Point)",
+                            DIRECTION,
+                        ),
                         Sel("solid", "Solid", "Select the target body", BODIES),
                         Check("Flip", false),
                         Num("Offset", 0.0, " mm"),
@@ -972,14 +1036,24 @@ impl PartPlanned {
                 Page(
                     "Shape",
                     &[
-                        Sel("profile", "Profile", "Click inside the rest's closed profile", PROFILE),
+                        Sel(
+                            "profile",
+                            "Profile",
+                            "Click inside the rest's closed profile",
+                            PROFILE,
+                        ),
                         Sel("solid", "Solid", "Select the target body", BODIES),
                         Check("Flip", false),
                         Num("Thickness", 1.0, " mm"),
                         Radio("Thickness Side", &["Inside", "Outside", "Both Sides"], 0),
                         Radio("Platform", &["Through All", "Distance", "To Surface"], 0),
                         Num("Distance", 2.0, " mm"),
-                        Sel("to", "Surface", "Select the surface the platform runs to", PLANE),
+                        Sel(
+                            "to",
+                            "Surface",
+                            "Select the surface the platform runs to",
+                            PLANE,
+                        ),
                         Num("Offset", 0.0, " mm"),
                     ],
                 ),
@@ -988,7 +1062,12 @@ impl PartPlanned {
                     &[
                         Radio("Landing", &["Distance", "To Surface"], 0),
                         Num("Landing Distance", 0.0, " mm"),
-                        Sel("land", "Surface", "Select the surface of the landing", PLANE),
+                        Sel(
+                            "land",
+                            "Surface",
+                            "Select the surface of the landing",
+                            PLANE,
+                        ),
                         Num("Landing Offset", 0.0, " mm"),
                         Num("Landing Taper", 0.0, "°"),
                         Num("Clearance Taper", 0.0, "°"),
@@ -1006,7 +1085,12 @@ impl PartPlanned {
                         ),
                         Radio("Placement", &["From Sketch", "On Point"], 0),
                         Sel("centers", "Centers", "Select the snap fit points", POINTS),
-                        Sel("direction", "Direction", "Select the beam direction (On Point)", DIRECTION),
+                        Sel(
+                            "direction",
+                            "Direction",
+                            "Select the beam direction (On Point)",
+                            DIRECTION,
+                        ),
                         Sel("solid", "Solid", "Select the target body", BODIES),
                         Check("Flip", false),
                         Radio("Hook Direction", &["0°", "90°", "180°", "270°"], 0),
@@ -1058,7 +1142,12 @@ impl PartPlanned {
                 Page(
                     "More",
                     &[
-                        Sel("exclude", "Exclude Faces", "Select faces whose edges stay as they are", FACES),
+                        Sel(
+                            "exclude",
+                            "Exclude Faces",
+                            "Select faces whose edges stay as they are",
+                            FACES,
+                        ),
                         Check("Remove Merged Faces", false),
                     ],
                 ),
@@ -1075,7 +1164,12 @@ impl PartPlanned {
                             EDGES,
                         ),
                         Radio("Orientation", &["Guide Face", "Pull Direction"], 1),
-                        Sel("guide", "Guide Face", "Select the wall next to the path", FACES),
+                        Sel(
+                            "guide",
+                            "Guide Face",
+                            "Select the wall next to the path",
+                            FACES,
+                        ),
                         Sel(
                             "pull",
                             "Pull Direction",
@@ -1807,7 +1901,9 @@ const SINGLE_KEYS: &[&str] = &["tool", "vector", "to", "new", "land"];
 
 /// Selectors where one item picked in another place is a new pick (Trim's areas, a sketch's
 /// regions, curves and points).
-const POINT_KEYS: &[&str] = &["remove", "boundary", "island", "ribs", "spars", "profile", "centers"];
+const POINT_KEYS: &[&str] = &[
+    "remove", "boundary", "island", "ribs", "spars", "profile", "centers",
+];
 
 /// Selectors that keep taking component edges / faces: a pick never moves
 /// on to the next selector.

@@ -2949,28 +2949,37 @@ fn plastic_r64() -> PartDocument {
         .unwrap()
     };
     let i = sketch_at(&mut part, 20.0);
-    part.sketches[i].sketch.add_center_point(Point2::new(80.0, 15.0));
+    part.sketches[i]
+        .sketch
+        .add_center_point(Point2::new(80.0, 15.0));
     let op = BossOp::new(part.sketches[i].id.clone());
-    let boss = part.add_body_op(BodyOpFeature::new(BodyOp::Boss(op))).unwrap();
+    let boss = part
+        .add_body_op(BodyOpFeature::new(BodyOp::Boss(op)))
+        .unwrap();
     let i = sketch_at(&mut part, 3.0);
-    part.sketches[i].sketch.add_center_point(Point2::new(80.0, 45.0));
+    part.sketches[i]
+        .sketch
+        .add_center_point(Point2::new(80.0, 45.0));
     let mut op = SnapFitOp::new(part.sketches[i].id.clone());
     op.extend = false;
-    part.add_body_op(BodyOpFeature::new(BodyOp::SnapFit(op))).unwrap();
+    part.add_body_op(BodyOpFeature::new(BodyOp::SnapFit(op)))
+        .unwrap();
     let i = sketch_at(&mut part, 8.0);
     part.sketches[i]
         .sketch
         .add_rectangle_two_point(Point2::new(40.0, 20.0), Point2::new(60.0, 40.0))
         .unwrap();
     let op = RestOp::new(part.sketches[i].id.clone(), 1.0);
-    part.add_body_op(BodyOpFeature::new(BodyOp::Rest(op))).unwrap();
+    part.add_body_op(BodyOpFeature::new(BodyOp::Rest(op)))
+        .unwrap();
     let i = sketch_at(&mut part, -5.0);
     part.sketches[i]
         .sketch
         .add_rectangle_two_point(Point2::new(5.0, 10.0), Point2::new(30.0, 50.0))
         .unwrap();
     let op = GrillOp::new(part.sketches[i].id.clone());
-    part.add_body_op(BodyOpFeature::new(BodyOp::Grill(op))).unwrap();
+    part.add_body_op(BodyOpFeature::new(BodyOp::Grill(op)))
+        .unwrap();
     part.add_body_op(BodyOpFeature::new(BodyOp::RuleFillet(RuleFilletOp {
         rows: vec![RuleRow::features(vec![boss], FilletRule::AgainstPart, 0.5)],
         exclude_faces: Vec::new(),

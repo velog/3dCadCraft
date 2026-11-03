@@ -2,8 +2,8 @@
 //! `cargo run --example plastic_demo -- out.3dcadcraft [built]`. With `built` the features are
 //! already there.
 
-use cadcraft3d::document::Project;
 use cadcraft3d::document::DocumentData;
+use cadcraft3d::document::Project;
 use cadcraft3d::part::blend::edge_ref;
 use cadcraft3d::part::plastic::boss::{BossOp, BossRibs};
 use cadcraft3d::part::plastic::grill::{GrillCurves, GrillOp};
@@ -12,7 +12,7 @@ use cadcraft3d::part::plastic::rule_fillet::{FilletRule, RuleFilletOp, RuleRow};
 use cadcraft3d::part::plastic::snap_fit::SnapFitOp;
 use cadcraft3d::part::work::{LineRef, WorkPlaneDef};
 use cadcraft3d::part::{
-    BodyOp, BodyOpFeature, ExtrudeFeature, OriginPlane, Operation, PartDocument, PlaneRef,
+    BodyOp, BodyOpFeature, ExtrudeFeature, Operation, OriginPlane, PartDocument, PlaneRef,
     ProfileRef, SketchOptions, SketchPlacement, WorkDef, WorkFeature,
 };
 use nalgebra::Point2;
@@ -77,7 +77,9 @@ fn housing() -> R<PartDocument> {
 
 fn main() -> R<()> {
     let args: Vec<String> = std::env::args().collect();
-    let out = args.get(1).ok_or("usage: plastic_demo out.3dcadcraft [built]")?;
+    let out = args
+        .get(1)
+        .ok_or("usage: plastic_demo out.3dcadcraft [built]")?;
     let built = args.get(2).is_some_and(|a| a == "built");
     let mut p = housing()?;
     // The rim's inner edges, before anything else stands on the rim.
@@ -88,9 +90,9 @@ fn main() -> R<()> {
             .filter_map(|e| {
                 let pts = b.sample_edge(e, &Default::default()).ok()?;
                 let top = pts.iter().all(|q| (q.z - 30.0).abs() < 1e-6);
-                let inner = pts.iter().all(|q| {
-                    (1.0..119.0).contains(&q.x) && (1.0..79.0).contains(&q.y)
-                });
+                let inner = pts
+                    .iter()
+                    .all(|q| (1.0..119.0).contains(&q.x) && (1.0..79.0).contains(&q.y));
                 (top && inner).then(|| edge_ref(b, e)).flatten()
             })
             .collect()
@@ -107,12 +109,18 @@ fn main() -> R<()> {
     let grill_id = p.sketches[g].id.clone();
     // Boss: thread posts on the floor, head boss under them.
     let b = at_z(&mut p, 25.0)?;
-    p.sketches[b].sketch.add_center_point(Point2::new(75.0, 20.0));
-    p.sketches[b].sketch.add_center_point(Point2::new(105.0, 20.0));
+    p.sketches[b]
+        .sketch
+        .add_center_point(Point2::new(75.0, 20.0));
+    p.sketches[b]
+        .sketch
+        .add_center_point(Point2::new(105.0, 20.0));
     let boss_id = p.sketches[b].id.clone();
     // Snap fit on the floor.
     let s = at_z(&mut p, 2.0)?;
-    p.sketches[s].sketch.add_center_point(Point2::new(85.0, 60.0));
+    p.sketches[s]
+        .sketch
+        .add_center_point(Point2::new(85.0, 60.0));
     let snap_id = p.sketches[s].id.clone();
     // Rest: a pad on the floor.
     let r = at_z(&mut p, 8.0)?;

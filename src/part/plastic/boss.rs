@@ -565,16 +565,18 @@ fn rib_fillets(op: &BossOp, id: &str, mut out: Vec<ExactSolid>) -> Result<Vec<Ex
     let rib = |s: &str| s.starts_with(&own) && s.contains(":Rib");
     let side = |s: &str| rib(s) && s.contains(":Side:");
     let shoulder = |a: &str, b: &str| {
-        let (top, outer) = (|s: &str| rib(s) && s.ends_with(":Start"), |s: &str| {
-            rib(s) && s.ends_with(":Side:1")
-        });
+        let (top, outer) = (
+            |s: &str| rib(s) && s.ends_with(":Start"),
+            |s: &str| rib(s) && s.ends_with(":Side:1"),
+        );
         (top(a) && outer(b)) || (top(b) && outer(a))
     };
     let blend = |a: &str, b: &str| {
         let on_post = |s: &str| s.starts_with(&own) && !s.contains(":Rib");
         (side(a) && on_post(b)) || (side(b) && on_post(a))
     };
-    let foot = |a: &str, b: &str| (rib(a) && !b.starts_with(&own)) || (rib(b) && !a.starts_with(&own));
+    let foot =
+        |a: &str, b: &str| (rib(a) && !b.starts_with(&own)) || (rib(b) && !a.starts_with(&own));
     let sets: [(Real, &str, &dyn Fn(&str, &str) -> bool); 3] = [
         (r.shoulder_radius, "Shoulder Radius", &shoulder),
         (r.blend_radius, "Blend Radius", &blend),

@@ -161,8 +161,10 @@ fn chains(sk: &Sketch, curves: &[EntityId]) -> Result<Vec<(Vec<Piece>, bool)>, S
     while let Some(first) = left.pop() {
         let mut chain = vec![first];
         loop {
-            let (Some(a), Some(b)) = (chain.first().map(Piece::start), chain.last().map(Piece::end))
-            else {
+            let (Some(a), Some(b)) = (
+                chain.first().map(Piece::start),
+                chain.last().map(Piece::end),
+            ) else {
                 break;
             };
             if (a - b).norm() < tol {
@@ -244,7 +246,8 @@ impl Maker<'_> {
             Levels::Curved(s, faces, reach) => {
                 // A tall prism cut by the slab between the wall's offsets.
                 let tall = self.prism(outer, holes, (-*reach, *reach), prefix)?;
-                let sheet = exact::offset_sheet(s, faces, -top, None, prefix).map_err(Fail::User)?;
+                let sheet =
+                    exact::offset_sheet(s, faces, -top, None, prefix).map_err(Fail::User)?;
                 let slab = exact::thicken_sheet(&sheet, -(bottom - top), false, None, prefix)
                     .map_err(Fail::User)?;
                 exact::boolean(&slab, &tall, ExactOp::Intersect)
@@ -302,12 +305,9 @@ fn boundary_of(op: &GrillOp, sk: &Sketch) -> Result<Vec<Piece>, String> {
     let regions = regions_of(op, sk, &op.sketch);
     let found = match &op.boundary {
         Some(r) => r.resolve(&regions),
-        None => regions.iter().max_by(|a, b| {
-            a.outer
-                .area()
-                .abs()
-                .total_cmp(&b.outer.area().abs())
-        }),
+        None => regions
+            .iter()
+            .max_by(|a, b| a.outer.area().abs().total_cmp(&b.outer.area().abs())),
     };
     let r = found.ok_or("the boundary profile no longer exists")?;
     Ok(common::pieces_of(&r.outer))
@@ -325,7 +325,11 @@ pub fn flow_area(op: &GrillOp, sketches: &[crate::part::PartSketch]) -> Result<R
     };
     let sk = find(&op.sketch)?;
     let outline = boundary_of(op, sk)?;
-    let turn = if common::area(&outline) >= 0.0 { 1.0 } else { -1.0 };
+    let turn = if common::area(&outline) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
     let inside = common::polygon(&common::offset(&outline, true, op.thickness * turn)?);
     // What fills the opening: polygons with holes.
     let mut solid: Vec<(Vec<Point2>, Vec<Vec<Point2>>)> = Vec::new();
@@ -347,9 +351,9 @@ pub fn flow_area(op: &GrillOp, sketches: &[crate::part::PartSketch]) -> Result<R
             ));
         }
     }
-    let (lo, hi) = inside.iter().fold((Real::MAX, Real::MIN), |(a, b), p| {
-        (a.min(p.y), b.max(p.y))
-    });
+    let (lo, hi) = inside
+        .iter()
+        .fold((Real::MAX, Real::MIN), |(a, b), p| (a.min(p.y), b.max(p.y)));
     const LINES: usize = 4000;
     let dy = (hi - lo) / LINES as Real;
     let mut total = 0.0;
@@ -426,7 +430,11 @@ pub(in crate::part) fn grill(
     let plane = &sk.plane;
     let n = plane.normal.into_inner();
     let outline = boundary_of(op, sk).map_err(user)?;
-    let turn = if common::area(&outline) >= 0.0 { 1.0 } else { -1.0 };
+    let turn = if common::area(&outline) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
     let t = op.thickness;
     let inner = common::offset(&outline, true, t * turn).map_err(user)?;
     let trim = common::offset(&outline, true, t / 2.0 * turn).map_err(user)?;
@@ -516,7 +524,13 @@ pub(in crate::part) fn grill(
         &[],
         &format!("{id}:Opening"),
     )?;
-    let out = combine(cur.to_vec(), vec![opening], Operation::Cut, &op.solids, false)?;
+    let out = combine(
+        cur.to_vec(),
+        vec![opening],
+        Operation::Cut,
+        &op.solids,
+        false,
+    )?;
     // The boundary's wall.
     let mut joined = vec![make.make(
         &outline,
@@ -585,8 +599,8 @@ pub(in crate::part) fn grill(
             let prefix = format!("{id}:{tag}{}", k + 1);
             let (o, h) = band(chain, *closed, c.thickness).map_err(user)?;
             let piece = make.make(&o, &h, levels, &prefix)?;
-            let Some(mut cut) = exact::boolean(&piece, &frame, ExactOp::Intersect)
-                .map_err(Fail::Kernel)?
+            let Some(mut cut) =
+                exact::boolean(&piece, &frame, ExactOp::Intersect).map_err(Fail::Kernel)?
             else {
                 continue;
             };

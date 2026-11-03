@@ -992,7 +992,10 @@ fn speed_budgets() {
         let ribs: Vec<_> = (1..16)
             .map(|k| {
                 let x = 20.0 + 10.0 * k as f64;
-                sk.add_line(nalgebra::Point2::new(x, 10.0), nalgebra::Point2::new(x, 90.0))
+                sk.add_line(
+                    nalgebra::Point2::new(x, 10.0),
+                    nalgebra::Point2::new(x, 90.0),
+                )
             })
             .collect();
         let id = grill.sketches[i].id.clone();
@@ -1005,7 +1008,9 @@ fn speed_budgets() {
             top_offset: 0.0,
             bottom_offset: 0.0,
         });
-        grill.add_body_op(BodyOpFeature::new(BodyOp::Grill(op))).unwrap();
+        grill
+            .add_body_op(BodyOpFeature::new(BodyOp::Grill(op)))
+            .unwrap();
         rows.push((
             "Grill: 15 ribs on a plate, regenerate",
             1000.0,
@@ -1023,7 +1028,8 @@ fn speed_budgets() {
                 .add_center_point(nalgebra::Point2::new(x, y));
         }
         let op = BossOp::new(boss.sketches[i].id.clone());
-        boss.add_body_op(BodyOpFeature::new(BodyOp::Boss(op))).unwrap();
+        boss.add_body_op(BodyOpFeature::new(BodyOp::Boss(op)))
+            .unwrap();
         rows.push((
             "Boss: 4 thread bosses on a plate, regenerate",
             300.0,

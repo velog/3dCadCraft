@@ -3940,7 +3940,10 @@ fn sense_by_geometry(
     // A triangle lying on the segment itself says the side for sure; the nearest centre can be
     // across a narrow slot in the face (the foot of a rib).
     let tol = 1e-7 * (1.0 + mid.coords.norm());
-    let on = |t: &[u32; 3], x: &Point3| t.iter().any(|&k| (m.positions[k as usize] - x).norm() < tol);
+    let on = |t: &[u32; 3], x: &Point3| {
+        t.iter()
+            .any(|&k| (m.positions[k as usize] - x).norm() < tol)
+    };
     let touching = m.triangles.iter().any(|t| on(t, &a) && on(t, &b));
     let (_, c, n) = m
         .triangles

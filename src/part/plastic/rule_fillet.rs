@@ -256,7 +256,11 @@ pub(in crate::part) fn rule_fillet(
 ) -> Result<Vec<ExactSolid>, Fail> {
     let mut left_out: Vec<FaceId> = body
         .faces()
-        .filter(|(_, f)| f.name.as_ref().is_some_and(|n| op.exclude_faces.contains(n)))
+        .filter(|(_, f)| {
+            f.name
+                .as_ref()
+                .is_some_and(|n| op.exclude_faces.contains(n))
+        })
         .map(|(f, _)| f)
         .collect();
     if op.remove_merged {

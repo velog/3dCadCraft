@@ -1305,9 +1305,10 @@ pub(super) fn body_op(
                 out.extend(sheets.iter().cloned());
                 out
             }),
-        super::BodyOp::Grill(o) => {
-            with_sheets(super::plastic::grill::grill(o, &f.id, body, sketches, cur), sheets)
-        }
+        super::BodyOp::Grill(o) => with_sheets(
+            super::plastic::grill::grill(o, &f.id, body, sketches, cur),
+            sheets,
+        ),
         super::BodyOp::Boss(o) => with_sheets(
             super::plastic::boss::boss(o, &f.id, body, works, sketches, cur),
             sheets,

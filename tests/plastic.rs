@@ -4,7 +4,9 @@ use std::f64::consts::PI;
 
 use cadcraft3d::kernel::{Point3, Real};
 use cadcraft3d::part::blend::edge_ref;
-use cadcraft3d::part::plastic::boss::{BossHead, BossKind, BossOp, BossRibs, BossThread, ThreadHole};
+use cadcraft3d::part::plastic::boss::{
+    BossHead, BossKind, BossOp, BossRibs, BossThread, ThreadHole,
+};
 use cadcraft3d::part::plastic::grill::{GrillCurves, GrillOp, flow_area, regions_of};
 use cadcraft3d::part::plastic::lip::{LipKind, LipOp};
 use cadcraft3d::part::plastic::rest::{RestExtent, RestOp, RestSide};
@@ -250,9 +252,16 @@ fn snap_loop_and_stop_at_point() {
         // Where the hook's land stands: the farthest material high above the wall.
         let mut far = (0.0, 0.0);
         for e in p.body.visible_edges() {
-            for q in p.body.sample_edge(e, &Default::default()).unwrap_or_default() {
+            for q in p
+                .body
+                .sample_edge(e, &Default::default())
+                .unwrap_or_default()
+            {
                 if q.z > 8.0 && (q.x - 50.0).abs() + (q.y - 30.0).abs() > far.0 {
-                    far = ((q.x - 50.0).abs() + (q.y - 30.0).abs(), (q.x - 50.0).atan2(q.y - 30.0));
+                    far = (
+                        (q.x - 50.0).abs() + (q.y - 30.0).abs(),
+                        (q.x - 50.0).atan2(q.y - 30.0),
+                    );
                 }
             }
         }
@@ -262,7 +271,10 @@ fn snap_loop_and_stop_at_point() {
         close(s.1, seen[0].1, 1e-3, "same volume");
         assert!(s.0.0 > 1.0, "the hook stands out: {:?}", s.0);
     }
-    assert!((seen[0].0.1 - seen[2].0.1).abs() > 1.0, "the hook turned: {seen:?}");
+    assert!(
+        (seen[0].0.1 - seen[2].0.1).abs() > 1.0,
+        "the hook turned: {seen:?}"
+    );
 }
 
 /// A plate with a post made by an Extrude: its id.
@@ -270,7 +282,8 @@ fn post() -> (PartDocument, String) {
     let mut p = wall();
     let i = plane_at(&mut p, 3.0);
     let sk = &mut p.sketches[i].sketch;
-    sk.add_circle(p2(50.0, 30.0), 3.0).unwrap_or_else(|e| panic!("{e}"));
+    sk.add_circle(p2(50.0, 30.0), 3.0)
+        .unwrap_or_else(|e| panic!("{e}"));
     let r: Vec<ProfileRef> = sk
         .regions()
         .iter()
@@ -297,7 +310,12 @@ fn rule_fillet_against_part_and_free_edges() {
             remove_merged: false,
         }),
     );
-    close(volume(&p), base + concave_ring(3.0, 1.0), 0.1, "against part");
+    close(
+        volume(&p),
+        base + concave_ring(3.0, 1.0),
+        0.1,
+        "against part",
+    );
     // Free Edges: the rim on top, a convex round.
     let (mut p, id) = post();
     let row = RuleRow::features(vec![id], FilletRule::FreeEdges, 1.0);
@@ -361,7 +379,8 @@ fn rule_fillet_two_rows_follow_the_model() {
 #[test]
 fn rule_fillet_incident_edges() {
     // The four upright edges of a box, from its bottom face up.
-    let mut p = PartDocument::with_box("Box1", [20.0, 20.0, 10.0]).unwrap_or_else(|e| panic!("{e}"));
+    let mut p =
+        PartDocument::with_box("Box1", [20.0, 20.0, 10.0]).unwrap_or_else(|e| panic!("{e}"));
     let row = RuleRow {
         source: RuleSource::Faces(vec![FaceRef {
             face: "Box1:Bottom".into(),
@@ -387,7 +406,8 @@ fn rule_fillet_incident_edges() {
     let gone = 4.0 * (1.0 - PI / 4.0) * 4.0 * 10.0;
     close(volume(&p), 4000.0 - gone, 0.1, "incident");
     // The axis the other way: no edge rises against it, the part stays.
-    let mut p = PartDocument::with_box("Box1", [20.0, 20.0, 10.0]).unwrap_or_else(|e| panic!("{e}"));
+    let mut p =
+        PartDocument::with_box("Box1", [20.0, 20.0, 10.0]).unwrap_or_else(|e| panic!("{e}"));
     let mut flipped = row;
     if let FilletRule::IncidentEdges { flip, .. } = &mut flipped.rule {
         *flip = true;
@@ -545,7 +565,11 @@ fn grill_sketch(p: &mut PartDocument) -> usize {
     i
 }
 
-fn lines(p: &mut PartDocument, i: usize, l: &[((Real, Real), (Real, Real))]) -> Vec<cadcraft3d::sketch::EntityId> {
+fn lines(
+    p: &mut PartDocument,
+    i: usize,
+    l: &[((Real, Real), (Real, Real))],
+) -> Vec<cadcraft3d::sketch::EntityId> {
     l.iter()
         .map(|(a, b)| p.sketches[i].sketch.add_line(p2(a.0, a.1), p2(b.0, b.1)))
         .collect()
@@ -778,7 +802,12 @@ fn lip_clearance_shoulder_and_draft() {
     op.clearance = 0.5;
     add(&mut p, BodyOp::Lip(op));
     let beyond = 6000.0 - (96.0 * 56.0);
-    close(volume(&p), RING_V + area(1.0) - beyond * 0.5, 0.02, "clearance");
+    close(
+        volume(&p),
+        RING_V + area(1.0) - beyond * 0.5,
+        0.02,
+        "clearance",
+    );
     // Shoulder: the bead stands 1 from the path.
     let (mut p, inner, _) = ring();
     let mut op = LipOp::new(inner, 1.0, 1.0);
@@ -837,9 +866,15 @@ fn boss_rib_rounds() {
         add(&mut p, BodyOp::Boss(op));
         let v = volume(&p);
         if r0 > 0.0 {
-            assert!(v > plain, "{name}: a concave round adds material: {v} vs {plain}");
+            assert!(
+                v > plain,
+                "{name}: a concave round adds material: {v} vs {plain}"
+            );
         } else {
-            assert!(v < plain, "{name}: a convex round takes material: {v} vs {plain}");
+            assert!(
+                v < plain,
+                "{name}: a convex round takes material: {v} vs {plain}"
+            );
         }
     }
     let mut p = wall();
@@ -861,11 +896,17 @@ fn boss_rib_rounds() {
 
 /// A box with a pocket from the top: floor 2 thick, walls 2 thick, 120 x 80 x 30.
 fn tray() -> PartDocument {
-    let mut p = PartDocument::with_box("Box1", [120.0, 80.0, 30.0]).unwrap_or_else(|e| panic!("{e}"));
+    let mut p =
+        PartDocument::with_box("Box1", [120.0, 80.0, 30.0]).unwrap_or_else(|e| panic!("{e}"));
     let j = plane_at(&mut p, 2.0);
     let sk = &mut p.sketches[j].sketch;
-    sk.add_rectangle_two_point(p2(2.0, 2.0), p2(118.0, 78.0)).unwrap_or_else(|e| panic!("{e}"));
-    let r: Vec<ProfileRef> = sk.regions().iter().map(|r| ProfileRef::of(r, r.interior_point())).collect();
+    sk.add_rectangle_two_point(p2(2.0, 2.0), p2(118.0, 78.0))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let r: Vec<ProfileRef> = sk
+        .regions()
+        .iter()
+        .map(|r| ProfileRef::of(r, r.interior_point()))
+        .collect();
     let mut cut = ExtrudeFeature::new(r, 40.0);
     cut.operation = cadcraft3d::part::Operation::Cut;
     p.add_extrude(j, cut).unwrap_or_else(|e| panic!("{e}"));
@@ -899,7 +940,12 @@ fn bosses_with_ribs_in_a_tray() {
             Ok(_) => {
                 let rib = strip_outside(3.0, 1.0, 6.0) * 15.0;
                 let post = PI * (9.0 - 1.5625) * 23.0;
-                close(volume(&p), before + 2.0 * (post + 4.0 * rib), 0.5, "two bosses");
+                close(
+                    volume(&p),
+                    before + 2.0 * (post + 4.0 * rib),
+                    0.5,
+                    "two bosses",
+                );
             }
             Err(e) => {
                 assert!(!must, "{a:?} {b:?}: {e}");

@@ -169,9 +169,17 @@ fn ring(
     prefix: &str,
 ) -> Result<ExactSolid, Fail> {
     let grow = (a1 - a0).abs() * tan;
-    let turn = if common::area(outer) >= 0.0 { 1.0 } else { -1.0 };
+    let turn = if common::area(outer) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
     let out1 = common::offset(outer, true, -grow * turn).map_err(Fail::User)?;
-    let in_turn = if common::area(inner) >= 0.0 { 1.0 } else { -1.0 };
+    let in_turn = if common::area(inner) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
     let in1 = common::offset(inner, true, -grow * in_turn).map_err(Fail::User)?;
     common::prism(
         plane,
@@ -243,7 +251,11 @@ fn tools(
                 true,
                 -(landing - top)
                     * op.clearance_taper.tan()
-                    * if common::area(&inner) >= 0.0 { 1.0 } else { -1.0 },
+                    * if common::area(&inner) >= 0.0 {
+                        1.0
+                    } else {
+                        -1.0
+                    },
             )
             .map_err(Fail::User)?,
         ),
@@ -292,8 +304,8 @@ fn tools(
             joined.push(down);
         } else {
             // Keep what lies above the wall's middle.
-            let (back, _) = exact::split_by_plane(&down, &mid_plane, "Mid", "Mid")
-                .map_err(Fail::Kernel)?;
+            let (back, _) =
+                exact::split_by_plane(&down, &mid_plane, "Mid", "Mid").map_err(Fail::Kernel)?;
             joined.extend(back);
         }
     }

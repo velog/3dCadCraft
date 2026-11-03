@@ -97,8 +97,7 @@ impl LipOp {
             return Err("the shoulder and the clearance cannot be negative".into());
         }
         // The drafts must leave a top on the bead.
-        let top = self.width
-            - self.height * (self.inside_angle.tan() + self.outside_angle.tan());
+        let top = self.width - self.height * (self.inside_angle.tan() + self.outside_angle.tan());
         if top <= 1e-6 {
             return Err("the drafts leave no top on the bead".into());
         }
@@ -116,13 +115,12 @@ impl LipOp {
 }
 
 /// The rim: its plane with the normal pointing out of the material.
-fn rim_plane(
-    op: &LipOp,
-    body: &BRep,
-    works: &WorkGeom,
-) -> Result<Plane, Fail> {
+fn rim_plane(op: &LipOp, body: &BRep, works: &WorkGeom) -> Result<Plane, Fail> {
     let user = |m: &str| Fail::User(m.to_owned());
-    let e = op.path.first().ok_or_else(|| user("select the path edges"))?;
+    let e = op
+        .path
+        .first()
+        .ok_or_else(|| user("select the path edges"))?;
     let pull = match &op.pull {
         Some(l) => Some(
             l.resolve(body, works)
@@ -250,9 +248,22 @@ pub(in crate::part) fn lip(
 ) -> Result<Vec<ExactSolid>, Fail> {
     let user = |m: String| Fail::User(m);
     let plane = rim_plane(op, body, works)?;
-    let (chain, closed) = path_pieces(op, body, &plane)?;
     let rays = Rays::of(body, &op.solids);
-    let (side, rim) = rim_side(&rays, &plane, &chain)?;
+    // A face's sense can be inside-out: the material under the rim decides which way is out.
+    let (plane, chain, closed, side, rim) = {
+        let (chain, closed) = path_pieces(op, body, &plane)?;
+        match rim_side(&rays, &plane, &chain) {
+            Ok((side, rim)) => (plane, chain, closed, side, rim),
+            Err(first) => {
+                let out = -plane.normal.into_inner();
+                let turned = Plane::new(plane.origin, out, plane.x_axis.into_inner())
+                    .map_err(|e| Fail::Kernel(e.to_string()))?;
+                let (chain, closed) = path_pieces(op, body, &turned)?;
+                let (side, rim) = rim_side(&rays, &turned, &chain).map_err(|_| first)?;
+                (turned, chain, closed, side, rim)
+            }
+        }
+    };
     let s = op.shoulder;
     let w = op.width;
     let (ti, to) = (op.inside_angle.tan(), op.outside_angle.tan());
@@ -269,10 +280,7 @@ pub(in crate::part) fn lip(
                 (b, vec![a])
             })
         } else {
-            Ok((
-                common::open_band(&chain, d0 * side, d1 * side)?,
-                Vec::new(),
-            ))
+            Ok((common::open_band(&chain, d0 * side, d1 * side)?, Vec::new()))
         }
     };
     // Between levels z0 and z1 above the rim: the band's two offsets at each level.
