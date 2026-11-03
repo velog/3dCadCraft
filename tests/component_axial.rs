@@ -689,6 +689,7 @@ fn a_chain_that_cannot_close_is_refused() {
             first_cap: Some("End".to_owned()),
             closed: false,
             holes: Vec::new(),
+            tee: None,
         })));
         assert!(r.is_err());
         assert!(part.features.is_empty());

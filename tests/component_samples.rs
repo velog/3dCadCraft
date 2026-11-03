@@ -549,3 +549,35 @@ fn a_shoulder_screw_weighs_what_its_table_says() {
     let want = PI * (16.0 * 13.25 + 25.0 * 30.0 + 64.0 * 7.0) - hex;
     assert!((volume(&p) - want).abs() / want < 0.02, "{}", volume(&p));
 }
+
+/// A tee built directly: the exact volume of two equal tubes meeting square (Steinmetz: their
+/// solid overlap is 16 r^3 / 3 for a whole crossing, half of it where the branch stops at the axis).
+#[test]
+fn a_tee_has_the_volume_of_two_tubes() {
+    for size in ["NPS 1/2", "NPS 4", "NPS 24"] {
+        let s = all()
+            .into_iter()
+            .find(|s| s.family == "ASME B16.9 Tee" && s.size == size)
+            .unwrap();
+        let t = Instant::now();
+        let p = s.part().unwrap();
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        let Kind::PipeTee(d, wall, c) = s.kind else {
+            panic!("not a tee");
+        };
+        let solid =
+            |r: f64| PI * r * r * 2.0 * c + PI * r * r * c - 16.0 * r.powi(3) / 3.0 / 2.0 + 0.0;
+        let want = solid(d / 2.0) - solid(d / 2.0 - wall);
+        println!(
+            "{size}: {ms:.0} ms, volume {:.1} against {want:.1}",
+            volume(&p)
+        );
+        assert!(p.exact && p.feature_health.is_empty(), "{size}");
+        assert!(
+            (volume(&p) - want).abs() / want < 5e-3,
+            "{size}: {} against {want}",
+            volume(&p)
+        );
+        assert!(ms < 500.0, "{size}: {ms:.0} ms");
+    }
+}

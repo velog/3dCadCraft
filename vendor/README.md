@@ -39,7 +39,7 @@ An addition for library fasteners (`docs/spec/6.3-content-center.md` §6.0b); no
 
 | File | Change | Effect |
 |---|---|---|
-| `axial.rs` (new), `lib.rs` export | `axial_stack_drilled`: round holes parallel to the axis between its planar faces (a flange's bolt holes, DN 600 with 20 holes: ~5 s through the Boolean, see `docs/spec/6.3-content-center.md`); `axial_stack`: a stepped body about Z from its meridian's runs (turned chains of lines and arcs, polygon prisms, a cone cut on a prism's end meeting each flat in one exact rational quadratic), the runs' rings joined by planar faces that keep their edges; a new function, nothing else in the crate changes | ISO 4017 M8 x 30: 234 ms → 4.2 ms; chamfered: 1465 ms → 7 ms; orientation read off the lowest planar face (`Body::new_placed`), no mesh |
+| `axial.rs` (new), `lib.rs` export | `pipe_tee`: a straight tee face by face, equal cylinders meeting in exact half ellipses (through the Boolean 25-39 s); `axial_stack_drilled`: round holes parallel to the axis between its planar faces (a flange's bolt holes, DN 600 with 20 holes: ~5 s through the Boolean, see `docs/spec/6.3-content-center.md`); `axial_stack`: a stepped body about Z from its meridian's runs (turned chains of lines and arcs, polygon prisms, a cone cut on a prism's end meeting each flat in one exact rational quadratic), the runs' rings joined by planar faces that keep their edges; a new function, nothing else in the crate changes | ISO 4017 M8 x 30: 234 ms → 4.2 ms; chamfered: 1465 ms → 7 ms; orientation read off the lowest planar face (`Body::new_placed`), no mesh |
 
 A fix (not about speed): a chamfer of a concave straight edge went the wrong way.
 

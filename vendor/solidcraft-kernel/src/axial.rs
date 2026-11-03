@@ -546,3 +546,151 @@ fn oriented(mut faces: Vec<(mt::Face, FaceProv)>) -> Result<Vec<(mt::Face, FaceP
     }
     Ok(faces)
 }
+
+/// The profile numbers of a tee's faces.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TeeNumbers {
+    /// The run's outside.
+    pub run: usize,
+    /// The branch's outside.
+    pub branch: usize,
+    /// The run's bore.
+    pub run_bore: usize,
+    /// The branch's bore.
+    pub branch_bore: usize,
+    /// The run's end on the XY plane.
+    pub low_end: usize,
+    /// The run's other end.
+    pub high_end: usize,
+    /// The branch's end.
+    pub branch_end: usize,
+}
+
+/// One cylinder of a tee (the outside or the bore), its faces and its end rings.
+struct TeeShell {
+    faces: Vec<(mt::Face, FaceProv)>,
+    low: mt::Wire,
+    high: mt::Wire,
+    side: mt::Wire,
+}
+
+/// A cylinder as a surface of revolution of a line parallel to its axis, the parameter's seam on
+/// the side away from the face: `at` a point of the line, a little longer than the faces.
+fn tee_surface(at: Vec3, axis: Vec3, centre: Vec3, reach: f64) -> mt::Surface {
+    // Run against the axis, its normal points away from the axis: the walls below are drawn
+    // counter-clockwise seen from outside.
+    let generator = mt::Curve::Line(mt::Line(p3(at + axis * reach), p3(at - axis * reach)));
+    mt::Surface::RevolutedCurve(mt::Processor::new(mt::RevolutedCurve::by_revolution(generator, p3(centre), v3(axis))))
+}
+
+/// A quarter of a tee's ellipse, one exact rational quadratic.
+fn tee_quarter(a: &mt::Vertex, corner: Vec3, b: &mt::Vertex) -> mt::Edge {
+    let (p, q) = (a.point(), b.point());
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let ctrl = vec![mt::Vector4::new(p.x, p.y, p.z, 1.0), mt::Vector4::new(corner.x * w, corner.y * w, corner.z * w, w), mt::Vector4::new(q.x, q.y, q.z, 1.0)];
+    mt::Edge::new(a, b, mt::Curve::NurbsCurve(mt::NurbsCurve::new(mt::BSplineCurve::new(mt::KnotVec::bezier_knot(2), ctrl))))
+}
+
+fn tee_shell(r: f64, c: f64, run: usize, branch: usize) -> Result<TeeShell> {
+    let v = |x: f64, y: f64, z: f64| builder::vertex(p3(Vec3::new(x, y, z)));
+    let top = 2.0 * c;
+    let (bn, bp) = (v(0.0, -r, 0.0), v(0.0, r, 0.0));
+    let (tn, tp) = (v(0.0, -r, top), v(0.0, r, top));
+    let (mn, mp) = (v(0.0, -r, c), v(0.0, r, c));
+    let (el, eu) = (v(r, 0.0, c - r), v(r, 0.0, c + r));
+    let (xn, xp) = (v(c, -r, c), v(c, r, c));
+    let arc = |a: &mt::Vertex, b: &mt::Vertex, through: Vec3| builder::circle_arc(a, b, p3(through));
+    // The run's end circles, a back half (x < 0) and a front half.
+    let low_back = arc(&bp, &bn, Vec3::new(-r, 0.0, 0.0));
+    let low_front = arc(&bn, &bp, Vec3::new(r, 0.0, 0.0));
+    let high_back = arc(&tp, &tn, Vec3::new(-r, 0.0, top));
+    let high_front = arc(&tn, &tp, Vec3::new(r, 0.0, top));
+    // The run's sides, broken where the ellipses end.
+    let (n_low, n_high) = (builder::line(&bn, &mn), builder::line(&mn, &tn));
+    let (p_low, p_high) = (builder::line(&bp, &mp), builder::line(&mp, &tp));
+    // The two halves of the ellipses in the planes z - c = -x and z - c = x.
+    let lower_a = tee_quarter(&mn, Vec3::new(r, -r, c - r), &el);
+    let lower_b = tee_quarter(&el, Vec3::new(r, r, c - r), &mp);
+    let upper_a = tee_quarter(&mn, Vec3::new(r, -r, c + r), &eu);
+    let upper_b = tee_quarter(&eu, Vec3::new(r, r, c + r), &mp);
+    // The branch's sides and its end circle.
+    let (n_side, p_side) = (builder::line(&mn, &xn), builder::line(&mp, &xp));
+    let side_up = arc(&xn, &xp, Vec3::new(c, 0.0, c + r));
+    let side_down = arc(&xp, &xn, Vec3::new(c, 0.0, c - r));
+    let (z, x) = (Vec3::Z, Vec3::X);
+    let run_centre = Vec3::new(0.0, 0.0, c);
+    let branch_centre = Vec3::new(c / 2.0, 0.0, c);
+    let reach = c * 1.2;
+    let face = |wire: Vec<mt::Edge>, surface: mt::Surface, number: usize| -> Result<(mt::Face, FaceProv)> {
+        let wire: mt::Wire = wire.into();
+        let f = mt::Face::try_new(vec![wire], surface).map_err(|e| fail(&format!("a tee's face: {e}")))?;
+        Ok((f, record::profile(&[number])))
+    };
+    let faces = vec![
+        // Behind the branch: the parameter's seam in front of it.
+        face(
+            vec![low_back.clone(), n_low.clone(), n_high.clone(), high_back.inverse(), p_high.inverse(), p_low.inverse()],
+            tee_surface(Vec3::new(r, 0.0, c), z, run_centre, reach),
+            run,
+        )?,
+        // Below and above the branch: the seam behind.
+        face(
+            vec![low_front.clone(), p_low.clone(), lower_b.inverse(), lower_a.inverse(), n_low.inverse()],
+            tee_surface(Vec3::new(-r, 0.0, c), z, run_centre, reach),
+            run,
+        )?,
+        face(
+            vec![upper_a.clone(), upper_b.clone(), p_high.clone(), high_front.inverse(), n_high.inverse()],
+            tee_surface(Vec3::new(-r, 0.0, c), z, run_centre, reach),
+            run,
+        )?,
+        // The branch above and below its middle: the seam on the other side.
+        face(
+            vec![n_side.clone(), side_up.clone(), p_side.inverse(), upper_b.inverse(), upper_a.inverse()],
+            tee_surface(Vec3::new(c / 2.0, 0.0, c - r), x, branch_centre, reach),
+            branch,
+        )?,
+        face(
+            vec![lower_a.clone(), lower_b.clone(), p_side.clone(), side_down.clone(), n_side.inverse()],
+            tee_surface(Vec3::new(c / 2.0, 0.0, c + r), x, branch_centre, reach),
+            branch,
+        )?,
+    ];
+    Ok(TeeShell {
+        faces,
+        low: vec![low_back, low_front].into(),
+        high: vec![high_front, high_back].into(),
+        side: vec![side_up, side_down].into(),
+    })
+}
+
+/// A planar ring between two wires, the signs by the given plane's two coordinates.
+fn tee_ring(outer: &mt::Wire, inner: &mt::Wire) -> Result<mt::Face> {
+    planar(&[outer.clone(), inner.inverse()])
+}
+
+/// A straight tee of pipe, built face by face: the run along +Z from the XY plane with its middle at
+/// height `c`, the branch from there along +X, each end `c` from the middle. Equal cylinders meet in
+/// two exact half ellipses touching at their ends, the case the general Boolean is slowest at (25 s).
+pub fn pipe_tee(radius: f64, bore: f64, c: f64, numbers: TeeNumbers) -> Result<Body> {
+    if !(bore > 0.0 && bore < radius && radius < c) {
+        return Err(fail("a tee needs a bore inside its radius and ends beyond it"));
+    }
+    guard("tee", || {
+        let outer = tee_shell(radius, c, numbers.run, numbers.branch)?;
+        let inner = tee_shell(bore, c, numbers.run_bore, numbers.branch_bore)?;
+        let mut faces = outer.faces;
+        faces.extend(inner.faces);
+        faces.push((tee_ring(&outer.low, &inner.low)?, record::profile(&[numbers.low_end])));
+        faces.push((tee_ring(&outer.high, &inner.high)?, record::profile(&[numbers.high_end])));
+        faces.push((tee_ring(&outer.side, &inner.side)?, record::profile(&[numbers.branch_end])));
+        let (faces, history): (Vec<mt::Face>, Vec<FaceProv>) = oriented(faces)?.into_iter().unzip();
+        let shell: mt::Shell = faces.into();
+        let solid = Solid::try_new(vec![shell]).map_err(|e| fail(&format!("the shell does not close: {e}")))?;
+        let body = match bottom_faces_out(&solid) {
+            Some(out) => Body::new_placed(solid, !out, None, false)?,
+            None => Body::new(solid)?,
+        };
+        record::attach(body, &[], Some(history), Default::default())
+    })
+}

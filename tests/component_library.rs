@@ -209,7 +209,7 @@ fn the_tables_reach_the_catalog() {
     assert!(
         c.families
             .iter()
-            .all(|f| !f.category.starts_with("Pipe Parts")),
+            .all(|f| !f.category.starts_with("Pipe Parts/Valves")),
         "no builder yet"
     );
     let total: usize = c.families.iter().map(|f| f.members.len()).sum();
@@ -253,7 +253,8 @@ fn families_carry_their_standard_and_inch_sizes_read_as_inches() {
     // A filter leaves only the categories holding that standard.
     let en = c.categories_of(Some("EN"));
     assert!(
-        en.iter().all(|x| x.starts_with("Structural Shapes")),
+        en.iter()
+            .all(|x| x.starts_with("Structural Shapes") || x.starts_with("Pipe Parts")),
         "{en:?}"
     );
     assert!(

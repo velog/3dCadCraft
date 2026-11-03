@@ -11,7 +11,7 @@
 
 use crate::document::iprops::IProperties;
 use crate::kernel::{Point3, Real, Surface};
-use crate::part::axial::{AxialCone, AxialHole, AxialOp, AxialRun, AxialSeg, AxialShape};
+use crate::part::axial::{AxialCone, AxialHole, AxialOp, AxialRun, AxialSeg, AxialShape, AxialTee};
 use crate::part::frame::{Library, Loop, draw_loop, hidden};
 use crate::part::hole::{ThreadFeature, ThreadSpec};
 use crate::part::standards::{ANSI_UNIFIED, ISO_METRIC, Standards};
@@ -876,9 +876,9 @@ fn row_members(
                 get("s")?,
             ))
         }),
-        "t_bolt" => per_length(&|l| {
-            Some(Kind::THead(get("d")?, l, get("n")?, get("m")?, get("k")?))
-        }),
+        "t_bolt" => {
+            per_length(&|l| Some(Kind::THead(get("d")?, l, get("n")?, get("m")?, get("k")?)))
+        }
         "square_bolt" => per_length(&|l| {
             Some(Kind::SquareHead(
                 get("d")?,
@@ -1583,6 +1583,7 @@ fn axial_part(
         first_cap: first_cap.map(str::to_owned),
         closed,
         holes: Vec::new(),
+        tee: None,
     })))?;
     Ok(part)
 }
@@ -1815,7 +1816,14 @@ fn rectangle(x0: Real, x1: Real, y0: Real, y1: Real) -> Loop {
 
 /// The hub with its threaded bore, the two wings through it, joined in one Boolean;
 /// they reach into the hub's wall, not the bore.
-fn wing_nut(d: Real, dk: Real, e: Real, h: Real, g: Real, m: Real) -> Result<PartDocument, PartError> {
+fn wing_nut(
+    d: Real,
+    dk: Real,
+    e: Real,
+    h: Real,
+    g: Real,
+    m: Real,
+) -> Result<PartDocument, PartError> {
     let spec = thread_spec(d, true)?;
     let bore = spec.minor / 2.0;
     let mut part = ring(&[(bore, 0.0), (dk / 2.0, 0.0), (dk / 2.0, m), (bore, m)])?;
@@ -1963,7 +1971,13 @@ fn shoulder(
     t: Real,
 ) -> Result<PartDocument, PartError> {
     let spec = thread_spec(d, false)?;
-    let (r, rs, rk, c, e) = (spec.major / 2.0, ds / 2.0, dk / 2.0, spec.major / 10.0, dk / 25.0);
+    let (r, rs, rk, c, e) = (
+        spec.major / 2.0,
+        ds / 2.0,
+        dk / 2.0,
+        spec.major / 10.0,
+        dk / 25.0,
+    );
     let end = -l - b;
     let mut part = axial_part(
         vec![
@@ -2020,61 +2034,21 @@ fn pipe_elbow(d: Real, t: Real, r: Real, angle: Real) -> Result<PartDocument, Pa
     Ok(part)
 }
 
-/// A straight tee: two solid cylinders joined, then both bores cut in one Boolean.
+/// A straight tee, built directly: through the Boolean it took 25-39 s.
 fn pipe_tee(d: Real, t: Real, c: Real) -> Result<PartDocument, PartError> {
-    let (r, rb) = (d / 2.0, d / 2.0 - t);
     let mut part = blank();
-    let circle = |radius: Real| vec![Loop::Circle(Point2::new(0.0, 0.0), radius, false)];
-    extrude(
-        &mut part,
-        circle(r),
-        Point2::new(r / 2.0, 0.0),
-        0.0,
-        2.0 * c,
-        false,
-        Operation::NewSolid,
-    )?;
-    branch(&mut part, r, c, c, Operation::Join)?;
-    branch(&mut part, rb, c, c * 1.0, Operation::Cut)?;
-    extrude(
-        &mut part,
-        circle(rb),
-        Point2::new(rb / 2.0, 0.0),
-        0.0,
-        2.0 * c,
-        false,
-        Operation::Cut,
-    )?;
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        runs: Vec::new(),
+        first_cap: None,
+        closed: false,
+        holes: Vec::new(),
+        tee: Some(AxialTee {
+            outside: d,
+            wall: t,
+            centre: c,
+        }),
+    })))?;
     Ok(part)
-}
-
-/// A cylinder from the Z axis along +X, at height `z`.
-fn branch(
-    part: &mut PartDocument,
-    radius: Real,
-    z: Real,
-    length: Real,
-    op: Operation,
-) -> Result<(), PartError> {
-    let i = part.create_sketch(
-        SketchPlacement::on_origin_plane(OriginPlane::YZ),
-        &options(),
-    )?;
-    let sk = &mut part.sketches[i].sketch;
-    let c = sk.plane.project(&Point3::new(0.0, 0.0, z));
-    sk.add_circle(c, radius).map_err(|e| bad(&e.to_string()))?;
-    let flip = sk.plane.normal.x < 0.0;
-    let regions = sk.regions();
-    let r = regions
-        .first()
-        .ok_or_else(|| bad("the branch has no section"))?;
-    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(r, c)], length);
-    e.operation = op;
-    if flip {
-        e.direction = ExtentDirection::Flipped;
-    }
-    part.add_extrude(i, e)?;
-    Ok(())
 }
 
 /// A cone of pipe, built directly.
@@ -2151,6 +2125,7 @@ fn pipe_cap(d: Real, t: Real, e: Real) -> Result<PartDocument, PartError> {
         first_cap: None,
         closed: false,
         holes: Vec::new(),
+        tee: None,
     })))?;
     Ok(part)
 }
@@ -2236,6 +2211,7 @@ fn flange(f: Flange, with_holes: bool) -> Result<PartDocument, PartError> {
         first_cap: first_cap.map(str::to_owned),
         closed,
         holes,
+        tee: None,
     })))?;
     Ok(part)
 }

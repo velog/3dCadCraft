@@ -1307,9 +1307,15 @@ pub(super) fn body_op(
             Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
         }
         super::BodyOp::Axial(o) => {
-            let made =
-                exact::axial_stack(&o.runs, o.first_cap.as_deref(), o.closed, &o.holes, &f.id)
-                    .map_err(Kernel)?;
+            let made = match o.tee {
+                Some(t) => {
+                    exact::pipe_tee(t.outside / 2.0, t.outside / 2.0 - t.wall, t.centre, &f.id)
+                }
+                None => {
+                    exact::axial_stack(&o.runs, o.first_cap.as_deref(), o.closed, &o.holes, &f.id)
+                }
+            }
+            .map_err(Kernel)?;
             Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
         }
         super::BodyOp::Prism(o) => {

@@ -2983,6 +2983,7 @@ fn axial_r61() -> PartDocument {
         first_cap: Some("End".to_owned()),
         closed: false,
         holes: Vec::new(),
+        tee: None,
     })))
     .unwrap();
     part

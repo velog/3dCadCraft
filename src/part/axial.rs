@@ -23,6 +23,21 @@ pub struct AxialOp {
     /// Round holes between its planar faces (a flange's bolt holes).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub holes: Vec<AxialHole>,
+    /// A straight tee of pipe instead of the runs: an old build finds no runs and
+    /// reports the feature, it never builds something else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tee: Option<AxialTee>,
+}
+
+/// A straight tee of pipe.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AxialTee {
+    /// Outside diameter.
+    pub outside: f64,
+    /// Wall.
+    pub wall: f64,
+    /// Centre to end.
+    pub centre: f64,
 }
 
 impl AxialOp {
@@ -30,6 +45,14 @@ impl AxialOp {
     /// do not end at one height, a circle between a hexagon's flats and its
     /// corners, a cone past the flats.
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(t) = &self.tee {
+            let r = t.outside / 2.0;
+            return if t.wall > 0.0 && t.wall < r && r < t.centre {
+                Ok(())
+            } else {
+                Err("a tee needs a wall inside its radius and ends beyond it".into())
+            };
+        }
         if self.runs.is_empty() {
             return Err("the part has no shape".into());
         }

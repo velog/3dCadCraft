@@ -368,6 +368,43 @@ pub fn axial_stack(
     })
 }
 
+/// A straight tee of pipe, face by face (`sk::pipe_tee`): the run along +Z from the XY plane, the
+/// branch along +X from height `c`. Faces: `<prefix>:Run`, `Branch`, `RunBore`, `BranchBore`,
+/// `LowEnd`, `HighEnd`, `BranchEnd`.
+pub fn pipe_tee(radius: Real, bore: Real, c: Real, prefix: &str) -> Result<ExactSolid, String> {
+    const ROLES: [&str; 7] = [
+        "Run",
+        "Branch",
+        "RunBore",
+        "BranchBore",
+        "LowEnd",
+        "HighEnd",
+        "BranchEnd",
+    ];
+    let numbers = sk::TeeNumbers {
+        run: 0,
+        branch: 1,
+        run_bore: 2,
+        branch_bore: 3,
+        low_end: 4,
+        high_end: 5,
+        branch_end: 6,
+    };
+    let body = guarded("tee", || sk::pipe_tee(radius, bore, c, numbers))
+        .map_err(|e| format!("this part cannot be built ({e})"))?;
+    let face_names = names_from(&body, &[], &|o| match o {
+        FaceOrigin::Profile { segment } => ROLES.get(*segment).map(|n| format!("{prefix}:{n}")),
+        _ => None,
+    });
+    Ok(ExactSolid {
+        name: Some(prefix.to_owned()),
+        body,
+        face_names,
+        profiles: Vec::new(),
+        sheet: false,
+    })
+}
+
 /// Boolean operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExactOp {
