@@ -93,6 +93,14 @@ impl Detail {
     /// Every level, simplest first.
     pub const ALL: [Detail; 3] = [Detail::Simple, Detail::Standard, Detail::Full];
 
+    /// The level of a name from the settings; anything else is Standard.
+    pub fn from_label(label: &str) -> Detail {
+        Detail::ALL
+            .into_iter()
+            .find(|d| d.label() == label)
+            .unwrap_or_default()
+    }
+
     /// Its name.
     pub fn label(self) -> &'static str {
         match self {
@@ -584,6 +592,18 @@ fn row_members(
         }
         _ => Vec::new(),
     }
+}
+
+/// What a family's table was compared with (`families.csv`; empty: not yet).
+pub fn checked_of(family: &str) -> String {
+    records(FAMILIES)
+        .iter()
+        .skip(1)
+        .find(|f| f.get(3) == Some(&family))
+        // A title may hold a comma: count from the end.
+        .and_then(|f| f.len().checked_sub(2).and_then(|i| f.get(i)))
+        .map(|c| (*c).to_owned())
+        .unwrap_or_default()
 }
 
 /// Every built-in component whose type has a builder.

@@ -802,10 +802,67 @@ pub fn paint_category(painter: &Painter, rect: Rect, category: &str) {
             p.rect(6.0, 1.5, 10.0, 14.5, ink);
             threads(6.0, 10.0, 2.5, 14.0);
         }
-        "Nuts" | "Hex" | "Hex Thin" | "Hex Flanged" | "Prevailing Torque" | "Square" | "Wing"
-        | "Round" | "Coupling" | "Slotted" | "T-Slot" | "Clinch Nuts" | "Cage Nuts" => {
+        "Nuts" | "Hex" => {
             hexagon(8.0, 8.0, 6.3, ink);
             p.circle(8.0, 8.0, 2.8, acc);
+        }
+        // Seen from the side, where these nuts differ.
+        "Hex Thin" => {
+            p.rect(2.5, 6.0, 13.5, 10.0, ink);
+            p.line(&[(6.0, 6.0), (6.0, 10.0)], ink);
+            p.line(&[(10.0, 6.0), (10.0, 10.0)], ink);
+        }
+        "Hex Flanged" => {
+            p.rect(4.0, 3.5, 12.0, 9.5, ink);
+            p.rect(2.0, 9.5, 14.0, 12.5, ink);
+            p.line(&[(8.0, 3.5), (8.0, 9.5)], acc);
+        }
+        "Prevailing Torque" => {
+            p.rect(3.0, 6.0, 13.0, 13.0, ink);
+            p.line(&[(6.3, 6.0), (6.3, 13.0)], ink);
+            p.line(&[(9.7, 6.0), (9.7, 13.0)], ink);
+            p.rect(4.5, 2.5, 11.5, 6.0, acc);
+        }
+        "Coupling" => {
+            p.rect(4.5, 1.5, 11.5, 14.5, ink);
+            p.line(&[(8.0, 1.5), (8.0, 14.5)], ink);
+            threads(4.5, 11.5, 4.0, 12.5);
+        }
+        "Square" => {
+            p.rect(2.5, 2.5, 13.5, 13.5, ink);
+            p.circle(8.0, 8.0, 2.8, acc);
+        }
+        "Wing" => {
+            p.circle(8.0, 8.0, 2.6, acc);
+            p.closed(&[(5.4, 6.5), (1.5, 3.0), (1.5, 11.0), (5.4, 9.5)], ink);
+            p.closed(&[(10.6, 6.5), (14.5, 3.0), (14.5, 11.0), (10.6, 9.5)], ink);
+        }
+        "Round" => {
+            p.circle(8.0, 8.0, 6.3, ink);
+            p.circle(8.0, 8.0, 2.8, acc);
+            p.disc(8.0, 3.6, 0.9, ink);
+            p.disc(8.0, 12.4, 0.9, ink);
+        }
+        "Slotted" => {
+            hexagon(8.0, 8.0, 6.3, ink);
+            p.circle(8.0, 8.0, 2.4, acc);
+            p.line(&[(8.0, 1.5), (8.0, 4.8)], ink);
+            p.line(&[(8.0, 11.2), (8.0, 14.5)], ink);
+            p.line(&[(2.5, 4.8), (5.2, 6.4)], ink);
+            p.line(&[(13.5, 11.2), (10.8, 9.6)], ink);
+        }
+        "T-Slot" => {
+            section(&[(2.0, 9.0), (14.0, 9.0), (14.0, 13.0), (2.0, 13.0)]);
+            p.rect(5.5, 3.0, 10.5, 9.0, ink);
+            p.line(&[(8.0, 3.0), (8.0, 13.0)], acc);
+        }
+        "Clinch Nuts" => {
+            p.rect(4.0, 2.5, 12.0, 8.0, ink);
+            p.rect(5.5, 8.0, 10.5, 13.5, acc);
+        }
+        "Cage Nuts" => {
+            p.rect(2.5, 3.5, 13.5, 12.5, ink);
+            hexagon(8.0, 8.0, 3.4, acc);
         }
         "Cap" => {
             p.rect(3.5, 8.0, 12.5, 13.0, ink);

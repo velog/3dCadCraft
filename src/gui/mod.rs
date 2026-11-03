@@ -656,6 +656,9 @@ struct CadCraftApp {
     /// Registry ids of the recently run commands, newest first
     /// (`commands::remember`; saved in `settings.json` → `options`).
     recent_commands: Vec<String>,
+    /// Place from Library: the Standard filter and the level, kept in the settings.
+    library_standard: Option<String>,
+    library_detail: String,
     /// The command search field (Alt+S, `cmd_search`).
     cmd_search: cmd_search::CmdSearch,
     /// The Extrude command, while its dialog is open.
@@ -1054,6 +1057,8 @@ impl CadCraftApp {
             feature_settings: Default::default(),
             last_command: None,
             recent_commands: Vec::new(),
+            library_standard: None,
+            library_detail: String::new(),
             cmd_search: Default::default(),
             dim_display: Default::default(),
             viewport_rect: egui::Rect::NOTHING,

@@ -29,6 +29,9 @@ pub(super) struct LibraryUi {
     standard: Option<String>,
 
     error: Option<String>,
+    /// Family pictures that have arrived, and the worker drawing the others.
+    thumbnails: HashMap<usize, egui::TextureHandle>,
+    thumbnail_rx: Option<std::sync::mpsc::Receiver<(usize, Vec<u8>)>>,
     /// Preview per member file (a preview is one member's regeneration): its
     /// mesh and cosmetic threads.
     meshes: HashMap<PathBuf, (Arc<PickMesh>, Vec<CosmeticThread>)>,
@@ -56,16 +59,23 @@ impl CadCraftApp {
         }
         let catalog = Catalog::load(&root);
         let error = catalog.warnings.first().cloned();
+        // A remembered filter whose families are gone must not hide everything.
+        let standard = self
+            .library_standard
+            .clone()
+            .filter(|s| catalog.standards().contains(s));
+        let thumbnail_rx = spawn_thumbnails(catalog.clone());
         self.asm.library = Some(LibraryUi {
             catalog,
             category: String::new(),
             family: None,
             member: None,
             search: String::new(),
-            detail: Detail::Standard,
-            standard: None,
+            detail: Detail::from_label(&self.library_detail),
+            standard,
             error,
-
+            thumbnails: HashMap::new(),
+            thumbnail_rx,
             meshes: HashMap::new(),
             shown: None,
             yaw: 0.6,
@@ -113,6 +123,7 @@ impl CadCraftApp {
         let mut cancel = false;
         let mut picked: Option<(usize, usize)> = None;
         let mut redo = false;
+        lib.take_thumbnails(ctx);
         let w = egui::Window::new("Place from Library")
             .open(&mut open)
             .resizable(true)
@@ -138,7 +149,12 @@ impl CadCraftApp {
                             Detail::Standard => "The usual shape with a cosmetic thread.",
                             Detail::Full => "The richest shape: chamfered hexagons, a bearing's rings. Takes longer to build.",
                         };
-                        let on = lib.detail == d;
+                        // The level asked for stays; this size may only have another.
+                        let on = d == if offered.contains(&lib.detail) {
+                            lib.detail
+                        } else {
+                            Detail::Standard
+                        };
                         if ui
                             .add_enabled(offered.contains(&d), egui::RadioButton::new(on, d.label()))
                             .on_hover_text(tip)
@@ -165,7 +181,12 @@ impl CadCraftApp {
                 ui.horizontal(|ui| {
                     ui.label("Search");
                     ui.add(egui::TextEdit::singleline(&mut lib.search).desired_width(260.0));
-                                    if !lib.search.is_empty() && ui.small_button("x").clicked() {
+                // Always there, so the Standard row does not move while typing.
+                if ui
+                    .add_enabled(!lib.search.is_empty(), egui::Button::new("x").small())
+                    .on_hover_text("Clear the search")
+                    .clicked()
+                {
                     lib.search.clear();
                 }
                 ui.add_space(16.0);
@@ -295,11 +316,14 @@ impl CadCraftApp {
                         {
                             ui.label(RichText::new(format!("{} {}", fam.name, e.size)).strong());
                             ui.weak(fam.category.replace('/', " › "));
-                            ui.weak(if fam.file.is_some() {
-                                "Your published family: its member is made once and linked."
+                            if fam.file.is_some() {
+                                ui.weak("Your published family: its member is made once and linked.");
+                            } else if fam.checked.is_empty() {
+                                ui.weak("Nominal values, not yet compared with a source.");
                             } else {
-                                "Sample: the numbers are nominal, check them before production."
-                            });
+                                ui.weak(format!("Compared with {}.", fam.checked));
+                                ui.weak("Check against the standard before production.");
+                            }
                         }
                     });
                 });
@@ -312,6 +336,8 @@ impl CadCraftApp {
         if redo {
             self.library_select(&mut lib);
         }
+        self.library_standard = lib.standard.clone();
+        self.library_detail = lib.detail.label().to_owned();
         if place && let Some(path) = lib.shown.clone() {
             let doc = first_document(self, &path);
             if let Some(doc) = doc {
@@ -341,19 +367,97 @@ fn members_by_family(ui: &mut egui::Ui, lib: &mut LibraryUi, picked: &mut Option
     }
     // The family of a category holding only one is open from the start.
     let only = list.len() == 1 && !lib.category.is_empty();
+    let side = crate::components::catalog::THUMBNAIL as f32 / 2.0;
     for f in list {
         let fam = &lib.catalog.families[f];
-        egui::CollapsingHeader::new(&fam.name)
-            .id_salt(("library_family", f))
-            .open(only.then_some(true))
-            .show(ui, |ui| {
-                for (m, e) in fam.members.iter().enumerate() {
-                    let on = lib.family == Some(f) && lib.member == Some(m);
-                    if ui.selectable_label(on, &e.size).clicked() {
-                        *picked = Some((f, m));
-                    }
+        let id = ui.make_persistent_id(("library_family", f));
+        let ctx = ui.ctx().clone();
+        let mut state =
+            egui::collapsing_header::CollapsingState::load_with_default_open(&ctx, id, only);
+        if only {
+            state.set_open(true);
+        }
+        let mut toggle = false;
+        let header = state.show_header(ui, |ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(side, side), Sense::hover());
+            if let Some(t) = lib.thumbnails.get(&f) {
+                ui.painter().image(
+                    t.id(),
+                    rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+            toggle = ui.selectable_label(false, &fam.name).clicked();
+        });
+        header.body(|ui| {
+            for (m, e) in fam.members.iter().enumerate() {
+                let on = lib.family == Some(f) && lib.member == Some(m);
+                if ui.selectable_label(on, &e.size).clicked() {
+                    *picked = Some((f, m));
                 }
-            });
+            }
+        });
+        if toggle {
+            let mut s =
+                egui::collapsing_header::CollapsingState::load_with_default_open(&ctx, id, only);
+            s.toggle(ui);
+            s.store(&ctx);
+        }
+    }
+}
+
+/// Draws the family pictures one by one off the interface's thread. Dropping
+/// the receiver (the window closes) ends the worker at its next picture.
+fn spawn_thumbnails(catalog: Catalog) -> Option<std::sync::mpsc::Receiver<(usize, Vec<u8>)>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("library-thumbnails".into())
+        .spawn(move || {
+            for f in 0..catalog.families.len() {
+                let picture = crate::diagnostics::crash::guard(|| catalog.thumbnail(f));
+                if let Ok(Ok(rgba)) = picture
+                    && tx.send((f, rgba)).is_err()
+                {
+                    return;
+                }
+            }
+        })
+        .ok()?;
+    Some(rx)
+}
+
+impl LibraryUi {
+    /// Moves the pictures that have arrived into textures, and asks for
+    /// another frame while more are coming.
+    fn take_thumbnails(&mut self, ctx: &egui::Context) {
+        let Some(rx) = &self.thumbnail_rx else {
+            return;
+        };
+        let side = crate::components::catalog::THUMBNAIL as usize;
+        loop {
+            match rx.try_recv() {
+                Ok((f, rgba)) => {
+                    let image = egui::ColorImage::from_rgba_unmultiplied([side, side], &rgba);
+                    self.thumbnails.insert(
+                        f,
+                        ctx.load_texture(
+                            format!("library_thumbnail_{f}"),
+                            image,
+                            egui::TextureOptions::LINEAR,
+                        ),
+                    );
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                    return;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.thumbnail_rx = None;
+                    return;
+                }
+            }
+        }
     }
 }
 
