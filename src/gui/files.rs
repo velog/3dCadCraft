@@ -1472,11 +1472,17 @@ impl CadCraftApp {
     /// The File menu.
     pub(super) fn file_menu(&mut self, ui: &mut egui::Ui) {
         let now = ui.input(|i| i.time);
-        if ui.button("New...         Ctrl+N").clicked() {
+        if ui
+            .add(egui::Button::new("New...").shortcut_text("Ctrl+N"))
+            .clicked()
+        {
             self.open_new_file();
             ui.close();
         }
-        if ui.button("Open...        Ctrl+O").clicked() {
+        if ui
+            .add(egui::Button::new("Open...").shortcut_text("Ctrl+O"))
+            .clicked()
+        {
             self.request(Pending::Open, now);
             ui.close();
         }
@@ -1505,11 +1511,17 @@ impl CadCraftApp {
             ui.close();
         }
         ui.separator();
-        if ui.button("Save           Ctrl+S").clicked() {
+        if ui
+            .add(egui::Button::new("Save").shortcut_text("Ctrl+S"))
+            .clicked()
+        {
             self.save();
             ui.close();
         }
-        if ui.button("Save As...     Ctrl+Shift+S").clicked() {
+        if ui
+            .add(egui::Button::new("Save As...").shortcut_text("Ctrl+Shift+S"))
+            .clicked()
+        {
             self.open_dialog(DialogPurpose::SaveAs);
             ui.close();
         }

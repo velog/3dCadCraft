@@ -2567,7 +2567,10 @@ impl CadCraftApp {
                 ui.separator();
             }
             self.occurrence_menu(ui, &ids);
-            if ui.button("Copy        Ctrl+C").clicked() {
+            if ui
+                .add(egui::Button::new("Copy").shortcut_text("Ctrl+C"))
+                .clicked()
+            {
                 self.copy_occurrences();
                 ui.close();
             }
@@ -2584,7 +2587,11 @@ impl CadCraftApp {
                 ui.close();
             }
         }
-        if !self.asm.clipboard.is_empty() && ui.button("Paste       Ctrl+V").clicked() {
+        if !self.asm.clipboard.is_empty()
+            && ui
+                .add(egui::Button::new("Paste").shortcut_text("Ctrl+V"))
+                .clicked()
+        {
             self.paste_occurrences();
             ui.close();
         }

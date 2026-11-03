@@ -699,7 +699,12 @@ pub fn menu_item(
     on: bool,
 ) -> eframe::egui::Response {
     use eframe::egui;
-    let r = ui.add_enabled(on, egui::Button::new(format!("       {text}")));
+    let (name, key) = split_key(text);
+    let mut button = egui::Button::new(format!("       {name}"));
+    if let Some(key) = key {
+        button = button.shortcut_text(key);
+    }
+    let r = ui.add_enabled(on, button);
     if let Some(icon) = icon {
         let at = egui::Rect::from_center_size(
             egui::pos2(r.rect.left() + 11.0, r.rect.center().y),
@@ -713,6 +718,25 @@ pub fn menu_item(
         paint(ui.painter(), at, icon, &pal);
     }
     r
+}
+
+/// A menu text's name and its key, for `Home View (F6)`: the key goes to the
+/// menu's right-aligned column. Other brackets stay part of the name.
+pub fn split_key(text: &str) -> (&str, Option<&str>) {
+    let is_key = |k: &str| {
+        k.starts_with("Ctrl+")
+            || k.starts_with("Alt+")
+            || k.starts_with("Shift+")
+            || k.starts_with("Esc")
+            || (k.len() <= 3 && k.starts_with('F') && k[1..].parse::<u8>().is_ok())
+    };
+    if let Some(body) = text.strip_suffix(')')
+        && let Some(open) = body.rfind(" (")
+        && is_key(&body[open + 2..])
+    {
+        return (&body[..open], Some(&body[open + 2..]));
+    }
+    (text, None)
 }
 
 /// A sub-menu in line with [`menu_item`]s.
@@ -3465,4 +3489,33 @@ fn operation_badge(p: &Pen, icon: Icon, hot: Color32, acc: Color32) {
 fn plus(p: &Pen, c: Color32) {
     p.line(&[(12.5, 10.5), (12.5, 15.5)], c);
     p.line(&[(10.0, 13.0), (15.0, 13.0)], c);
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::split_key;
+
+    #[test]
+    fn a_menu_key_is_split_off() {
+        assert_eq!(split_key("Home View (F6)"), ("Home View", Some("F6")));
+        assert_eq!(
+            split_key("Visibility (Alt+V)"),
+            ("Visibility", Some("Alt+V"))
+        );
+        assert_eq!(split_key("OK (Ctrl+Enter)"), ("OK", Some("Ctrl+Enter")));
+    }
+
+    #[test]
+    fn other_brackets_stay_in_the_name() {
+        assert_eq!(
+            split_key("Shell (remove these faces)"),
+            ("Shell (remove these faces)", None)
+        );
+        assert_eq!(
+            split_key("Extrude (Press/Pull)"),
+            ("Extrude (Press/Pull)", None)
+        );
+        assert_eq!(split_key("Fit (Family)"), ("Fit (Family)", None));
+        assert_eq!(split_key("Plain"), ("Plain", None));
+    }
 }

@@ -6386,7 +6386,9 @@ impl CadCraftApp {
                 }
                 if self.editing.is_none() && !self.part().hidden_bodies.is_empty() {
                     let n = self.part().hidden_bodies.len();
-                    if ui.button(format!("Show All Bodies ({n} hidden)")).clicked() {
+                    if icons::menu_item(ui, None, &format!("Show All Bodies ({n} hidden)"), true)
+                        .clicked()
+                    {
                         self.show_all_bodies();
                         ui.close();
                     }
