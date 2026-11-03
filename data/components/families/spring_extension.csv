@@ -1,6 +1,6 @@
 # Extension spring, wound with a 5 % gap (touching coils are no solid), without its hooks. Mm. Typed nominal values, not compared with a source yet.
 size,De,d,L0,n
-De 10 d 1,10,1,8.35,7
-De 16 d 1.6,16,1.6,13.36,7
-De 20 d 2,20,2,16.7,7
-De 25 d 2.5,25,2.5,20.875,7
+De 10 d 1,10,1,6.25,5
+De 16 d 1.6,16,1.6,10,5
+De 20 d 2,20,2,12.5,5
+De 25 d 2.5,25,2.5,15.625,5
