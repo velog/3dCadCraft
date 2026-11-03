@@ -112,8 +112,12 @@ impl AsmSub {
 }
 
 /// Selected: blue; under the cursor: green (as faces in a part).
-const SEL: [f32; 3] = [0.25, 0.5, 0.95];
-const HOVER: [f32; 3] = [0.4, 0.82, 0.45];
+fn sel_color() -> [f32; 3] {
+    super::theme::scene_rgb(super::theme::canvas().selected_face)
+}
+fn hover_color() -> [f32; 3] {
+    super::theme::scene_rgb(super::theme::canvas().hover_face)
+}
 
 impl CadCraftApp {
     /// The occurrences of the selected occurrences' components.
@@ -317,9 +321,9 @@ impl CadCraftApp {
         let whole = if let Some(c) = self.frame_tint(o.id) {
             Some(c)
         } else if self.asm.sel.contains(&o.id) {
-            Some(SEL)
+            Some(sel_color())
         } else if self.asm.hover == Some(o.id) {
-            Some(HOVER)
+            Some(hover_color())
         } else {
             None
         };
@@ -339,9 +343,9 @@ impl CadCraftApp {
             whole.or_else(|| {
                 let n = name?;
                 if subs.iter().any(|s| s.covers(o.id, path, n)) {
-                    Some(SEL)
+                    Some(sel_color())
                 } else if hover.is_some_and(|s| s.covers(o.id, path, n)) {
-                    Some(HOVER)
+                    Some(hover_color())
                 } else {
                     None
                 }

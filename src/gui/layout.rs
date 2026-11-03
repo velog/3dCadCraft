@@ -221,6 +221,10 @@ impl UiSettings {
 pub struct AppOptions {
     /// Colors › UI Theme.
     pub ui_theme: super::theme::UiTheme,
+    /// Colors › In-canvas Color Scheme, by name.
+    pub canvas_scheme: String,
+    /// Colors › Background: Gradient (else 1 Color).
+    pub canvas_gradient: bool,
     pub mouse: MousePreset,
     pub invert_wheel: bool,
     /// Default Orbit Type (Free: relative to the screen).
@@ -331,6 +335,8 @@ impl Default for AppOptions {
     fn default() -> Self {
         Self {
             ui_theme: super::theme::UiTheme::Dark,
+            canvas_scheme: super::theme::scheme::DEFAULT_SCHEME.to_owned(),
+            canvas_gradient: true,
             mouse: MousePreset::Inventor,
             invert_wheel: false,
             orbit_type: super::camera::OrbitType::Free,
@@ -448,6 +454,24 @@ pub enum UiCmd {
 /// `T` from `file`, field by field: keys `T` does not know are ignored,
 /// missing or unreadable ones keep their defaults. Returns whether every
 /// known key was read.
+/// `current` with the keys `file` lists: an imported file may be partial, and a
+/// key it gets wrong keeps the value in use (`lenient`, field by field).
+pub fn merged_options(current: &AppOptions, file: &Value) -> AppOptions {
+    let mut merged = serde_json::to_value(current).unwrap_or_default();
+    if let (Some(m), Some(f)) = (merged.as_object_mut(), file.as_object()) {
+        for (k, v) in f {
+            // Only a value of the kind that field holds: a wrong one must not
+            // reset the others to their defaults.
+            let mut trial = m.clone();
+            trial.insert(k.clone(), v.clone());
+            if serde_json::from_value::<AppOptions>(Value::Object(trial)).is_ok() {
+                m.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    serde_json::from_value(merged).unwrap_or_else(|_| current.clone())
+}
+
 pub fn lenient<T: Default + Serialize + DeserializeOwned>(file: &Value) -> (T, bool) {
     let Ok(mut base) = serde_json::to_value(T::default()) else {
         return (T::default(), false);
@@ -747,6 +771,7 @@ impl Saver {
 /// Floating windows that Escape closes when the pointer is over them.
 const ESCAPE_CLOSES: &[&str] = &[
     "options",
+    "color_schemes",
     "parameters",
     "materials",
     "appearances",
@@ -962,6 +987,8 @@ impl CadCraftApp {
             show_labels: self.show_labels,
             thread_texture: self.thread_texture,
             ui_theme: super::theme::current(),
+            canvas_scheme: self.colors.active.clone(),
+            canvas_gradient: self.colors.gradient,
             cursor_value: self.cursor_value_enabled,
             constraint_ring: self.constraint_ring,
             default_projection: self.default_projection,
@@ -1015,6 +1042,8 @@ impl CadCraftApp {
         }
         self.internal_names = o.internal_names;
         super::theme::set_current(o.ui_theme);
+        self.colors.load(&o.canvas_scheme, o.canvas_gradient);
+        self.scene_dirty = true;
         if self.keymap != o.keymap {
             self.keymap = o.keymap;
             self.keymap_tips_dirty = true;
@@ -1126,6 +1155,7 @@ impl CadCraftApp {
     fn close_floating(&mut self, key: &str) {
         match key {
             "options" => self.show_options = false,
+            "color_schemes" => self.colors.editor = false,
             "parameters" => self.show_params = false,
             "offset" => self.offset_edit = None,
             "measure" => self.measure.open = false,
@@ -1371,6 +1401,40 @@ impl CadCraftApp {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
         }
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::{AppOptions, merged_options};
+    use serde_json::json;
+
+    #[test]
+    fn a_partial_options_file_changes_only_what_it_lists() {
+        let current = AppOptions {
+            invert_wheel: true,
+            ..Default::default()
+        };
+        let got = merged_options(&current, &json!({ "ui_theme": "Light" }));
+        assert_eq!(got.ui_theme, super::super::theme::UiTheme::Light);
+        assert!(got.invert_wheel);
+    }
+
+    #[test]
+    fn a_wrong_value_keeps_the_one_in_use() {
+        let current = AppOptions::default();
+        let got = merged_options(
+            &current,
+            &json!({ "ui_theme": "Purple", "invert_wheel": true }),
+        );
+        assert_eq!(got.ui_theme, current.ui_theme);
+        assert!(got.invert_wheel);
+    }
+
+    #[test]
+    fn no_options_in_the_file_change_nothing() {
+        let current = AppOptions::default();
+        assert_eq!(merged_options(&current, &serde_json::Value::Null), current);
     }
 }
 

@@ -528,6 +528,10 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   `danger_button`, `tool_button`; icons through `Palette::enabled()` / `disabled()`. A status text uses `tokens().ok` /
   `warning` / `error`, never a literal: `frame_files_do_not_gain_literal_colours` holds the frame's files to a shrinking count. Text on a drawing sheet uses `theme::sheet_font` (Ubuntu-Light, the font the PDF embeds and
   Format Text measures with), never `FontId::proportional`: that one follows the interface.
+- **The view's colours are `theme::canvas()`** (`gui/theme/scheme.rs`, spec 0.18), the frame's `theme::tokens()`: never draw on the
+  view with a token (a sketch's state in the UI Theme's light green was unreadable on the light view). Scene colours through
+  `theme::scene_rgb`; changing a scheme needs `scene_dirty`. A see-through colour must be valid premultiplied (r, g, b <= a).
+- **A command panel's OK row goes through `theme::panel_footer`**: it stays on the bottom edge while the panel scrolls.
 - **`gui_win.py`'s input is global, even with an explicit HWND**: it focuses the window, then sends keys and clicks to
   whatever is in front. Another session's window that came forward in between gets them (a scripted `r` opened Revolve there).
 - **Drag start:** egui reports a drag only after a few pixels of travel — pick the

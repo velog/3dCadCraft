@@ -519,7 +519,7 @@ impl CadCraftApp {
                     egui::Align2::LEFT_TOP,
                     "Now click the plane it sits on",
                     egui::FontId::proportional(13.0),
-                    Color32::from_rgb(235, 235, 235),
+                    super::theme::canvas().dimension,
                 );
             }
         }
@@ -1437,7 +1437,7 @@ impl CadCraftApp {
             .show(ctx, |ui| {
                 egui::Panel::bottom("change_size_buttons").show(ui, |ui| {
                     if let Some(e) = &c.error {
-                        ui.colored_label(Color32::from_rgb(235, 80, 70), e);
+                        ui.colored_label(super::theme::tokens().error, e);
                     }
                     let offered = c.catalog.levels(c.family, c.member);
                     ui.horizontal(|ui| {

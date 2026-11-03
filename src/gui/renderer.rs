@@ -700,7 +700,12 @@ impl ViewportRenderer {
 
         let mut uniforms = Vec::with_capacity(UNIFORM_SIZE as usize);
         let canvas = super::theme::canvas();
-        let (top, bottom) = (canvas.background_top, canvas.background_bottom);
+        let top = canvas.background_top;
+        let bottom = if canvas.gradient {
+            canvas.background_bottom
+        } else {
+            top
+        };
         let unit = |v: u8| f64::from(v) / 255.0;
         let (cn, cw) = cut.a.unwrap_or((Vector3::zeros(), 0.0));
         let (dn, dw) = cut.b.unwrap_or((Vector3::zeros(), 0.0));

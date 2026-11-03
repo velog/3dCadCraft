@@ -5313,7 +5313,14 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 ui.data_mut(|d| d.insert_temp(tab_id, tab));
                 ui.separator();
                 if tab == "Colors" {
-                    super::theme::colors_tab(ui);
+                    let out = super::theme::colors_tab(ui, &mut self.colors);
+                    self.scene_dirty |= out.scene;
+                    if out.export {
+                        self.open_dialog(super::files::DialogPurpose::ExportOptions);
+                    }
+                    if out.import {
+                        self.open_dialog(super::files::DialogPurpose::ImportOptions);
+                    }
                 }
                 if tab == "General" {
                 ui.label(RichText::new("Navigation").strong());
@@ -5554,6 +5561,26 @@ Adaptive: {ADAPTIVE_SKETCH_TIP}"
                 }
             });
         self.show_options = open;
+        // The Color Scheme editor.
+        let mut editor = self.colors.editor;
+        if editor {
+            let mut scene = false;
+            self.layout
+                .place(
+                    "color_schemes",
+                    ctx.content_rect(),
+                    true,
+                    egui::Window::new("Color Scheme Editor")
+                        .open(&mut editor)
+                        .resizable(true)
+                        .collapsible(false),
+                )
+                .show(ctx, |ui| {
+                    scene = super::theme::scheme_editor(ui, &mut self.colors);
+                });
+            self.scene_dirty |= scene;
+            self.colors.editor = editor;
+        }
     }
 }
 
@@ -6660,7 +6687,7 @@ impl CadCraftApp {
                                                 egui::Label::new(
                                                     RichText::new("@")
                                                         .strong()
-                                                        .color(Color32::from_rgb(230, 120, 20)),
+                                                        .color(super::theme::tokens().warning),
                                                 )
                                                 .sense(egui::Sense::drag()),
                                             )
@@ -6678,7 +6705,7 @@ impl CadCraftApp {
                                             (None, l)
                                         } else {
                                             if is_key(&r.name) {
-                                                ui.label(RichText::new("★").color(Color32::from_rgb(230, 170, 20)));
+                                                ui.label(RichText::new("★").color(super::theme::tokens().warning));
                                             }
                                             cell(ui, format!("n:{}", r.name), &r.name, cols[0], false)
                                         }

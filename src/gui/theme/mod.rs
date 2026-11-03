@@ -13,10 +13,12 @@ use eframe::egui::{
 use std::sync::Arc;
 
 mod colors_tab;
+pub mod scheme;
 mod tokens;
 
-pub use colors_tab::colors_tab;
-pub use tokens::{IconColors, Tokens, UiTheme, canvas, current, set_current, tokens};
+pub use colors_tab::{ColorsUi, colors_tab, export_file, scheme_editor};
+pub use scheme::{canvas, scene_rgb};
+pub use tokens::{IconColors, Tokens, UiTheme, current, set_current, tokens};
 
 /// Family of text drawn on a drawing sheet: the PDF embeds this same font and
 /// Format Text measures with it, so it does not follow the interface's font.
@@ -326,7 +328,7 @@ mod tests {
     /// Literal colours left in the frame's files (spec 0.18 §6, step 2):
     /// the numbers only go down.
     const FRAME_LITERALS: &[(&str, usize)] = &[
-        ("panels.rs", 4),
+        ("panels.rs", 1),
         ("home.rs", 1),
         ("files.rs", 1),
         ("ribbon.rs", 0),

@@ -446,7 +446,7 @@ impl CadCraftApp {
             pts.push(q);
         }
         let screen = |q: Point2| self.camera.project(&sk.plane.point_at(q.x, q.y), rect);
-        let stroke = egui::Stroke::new(1.5, super::overlay::HIGHLIGHT);
+        let stroke = egui::Stroke::new(1.5, super::overlay::highlight_color());
         let ring = |c: Point2, r: f64| -> Vec<egui::Pos2> {
             (0..=64)
                 .filter_map(|k| {
@@ -481,7 +481,7 @@ impl CadCraftApp {
         }
         for q in &d.clicks {
             if let Some(s) = screen(*q) {
-                painter.circle_filled(s, 4.0, super::overlay::HIGHLIGHT);
+                painter.circle_filled(s, 4.0, super::overlay::highlight_color());
             }
         }
     }

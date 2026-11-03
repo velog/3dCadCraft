@@ -547,7 +547,7 @@ impl CadCraftApp {
             dof: None,
             hovered_constraint: None,
             selected_constraints: s.tools.selected_constraints.clone(),
-            reference: overlay::REFERENCE,
+            reference: overlay::reference_color(),
             show_labels: true,
             highlighted: match pick.as_ref().map(|p| p.snap) {
                 Some(Snap::Point(id)) => Some(id),

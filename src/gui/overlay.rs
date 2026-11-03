@@ -15,9 +15,13 @@ use crate::part::{OriginPlane, PartSketch};
 use crate::sketch::{Constraint, Entity, EntityId, Point2, PointId, Sketch, Style, Vector2};
 
 /// Colour of projected (reference) geometry.
-pub const REFERENCE: Color32 = Color32::from_rgb(200, 140, 0);
+pub fn reference_color() -> Color32 {
+    super::theme::canvas().reference
+}
 /// Highlight colour for hover/pre-selection.
-pub const HIGHLIGHT: Color32 = Color32::from_rgb(255, 140, 0);
+pub fn highlight_color() -> Color32 {
+    super::theme::canvas().highlight
+}
 
 /// How to draw one sketch.
 pub struct SketchStyle {
@@ -167,7 +171,7 @@ pub fn draw_sketch(
             continue;
         };
         let color = if hot_entities.contains(&t.line) {
-            HIGHLIGHT
+            highlight_color()
         } else {
             style.color
         };
@@ -188,10 +192,14 @@ pub fn draw_sketch(
         } else {
             style.color
         };
-        let color = if hot { HIGHLIGHT } else { base };
+        let color = if hot { highlight_color() } else { base };
         let width = if hot { 3.0 } else { 2.0 };
         if ps.reference_lines.contains(&id) {
-            let c = if hot { HIGHLIGHT } else { style.reference };
+            let c = if hot {
+                highlight_color()
+            } else {
+                style.reference
+            };
             for w in pts.windows(2) {
                 painter.extend(Shape::dashed_line(
                     &[w[0], w[1]],
@@ -245,7 +253,7 @@ pub fn draw_sketch(
             || hot_points.contains(&id)
             || style.selected_points.contains(&id)
         {
-            painter.circle_filled(s, 6.0, HIGHLIGHT);
+            painter.circle_filled(s, 6.0, highlight_color());
         } else if ps.is_projected(id) {
             painter.rect_filled(
                 Rect::from_center_size(s, [6.0, 6.0].into()),
@@ -290,11 +298,11 @@ pub fn draw_sketch(
                 let color = if style.selected_constraints.contains(&id)
                     || style.hovered_constraint == Some(id)
                 {
-                    HIGHLIGHT
+                    highlight_color()
                 } else if sketch.is_driven(id) {
                     Color32::from_gray(120)
                 } else {
-                    DIMENSION
+                    dimension_color()
                 };
                 draw_dimension(painter, cam, rect, sketch, id, color);
             }
@@ -314,7 +322,7 @@ pub fn draw_sketch(
                 painter.rect_stroke(
                     l.rect,
                     3.0,
-                    Stroke::new(1.0, HIGHLIGHT),
+                    Stroke::new(1.0, highlight_color()),
                     eframe::egui::StrokeKind::Outside,
                 );
             }
@@ -330,7 +338,9 @@ pub fn draw_sketch(
 }
 
 /// Colour of dimension lines and arrows.
-pub const DIMENSION: Color32 = Color32::from_rgb(40, 70, 150);
+pub fn dimension_color() -> Color32 {
+    super::theme::canvas().dimension
+}
 
 /// Sketch units per screen pixel around `at`.
 fn sketch_per_px(cam: &dyn Projector, rect: Rect, sketch: &Sketch, at: Point2) -> Real {
@@ -824,11 +834,16 @@ fn constraint_labels(sketch: &Sketch, c: &Constraint) -> Vec<(Point2, String)> {
 }
 
 /// Fill of the closed regions of the edited sketch.
-// Quiet on a shaded face: it only says "this is closed".
-pub const REGION_FILL: Color32 = Color32::from_rgba_premultiplied(10, 26, 46, 28);
+pub fn region_fill() -> Color32 {
+    super::theme::canvas().region_fill
+}
 /// Fill of regions offered as an Extrude profile, and of the chosen ones.
-pub const PROFILE_FILL: Color32 = Color32::from_rgba_premultiplied(30, 60, 30, 50);
-pub const PROFILE_CHOSEN: Color32 = Color32::from_rgba_premultiplied(30, 110, 30, 120);
+pub fn profile_fill() -> Color32 {
+    super::theme::canvas().profile_fill
+}
+pub fn profile_chosen() -> Color32 {
+    super::theme::canvas().profile_chosen
+}
 
 /// Shades the closed regions (profiles) of a sketch, as Inventor does.
 pub fn draw_regions(
@@ -950,7 +965,7 @@ pub fn draw_sketch_frame(
     });
     let shown = view_range(corners, extent);
     if grid {
-        let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(90, 110, 140, 60));
+        let stroke = Stroke::new(1.0, super::theme::canvas().sketch_grid);
         let lines = grid_lines(shown);
         let (u, v) = shown;
         for t in lines.0 {
@@ -1235,24 +1250,24 @@ pub fn draw_snap(
         {
             painter.extend(eframe::egui::Shape::dotted_line(
                 &[a, s],
-                HIGHLIGHT,
+                highlight_color(),
                 5.0,
                 1.3,
             ));
-            painter.circle_stroke(a, 4.0, Stroke::new(1.5, HIGHLIGHT));
+            painter.circle_stroke(a, 4.0, Stroke::new(1.5, highlight_color()));
         }
     }
     let text = match (pick.snap, pick.infer) {
         (Snap::Point(_), _) => {
-            painter.circle_stroke(s, 6.0, Stroke::new(2.0, HIGHLIGHT));
+            painter.circle_stroke(s, 6.0, Stroke::new(2.0, highlight_color()));
             "coincident"
         }
         (Snap::OnEntity(_), _) => {
-            painter.circle_filled(s, 3.5, HIGHLIGHT);
+            painter.circle_filled(s, 3.5, highlight_color());
             "on curve"
         }
         (Snap::Midpoint(_), _) => {
-            painter.circle_stroke(s, 6.0, Stroke::new(2.0, HIGHLIGHT));
+            painter.circle_stroke(s, 6.0, Stroke::new(2.0, highlight_color()));
             "midpoint"
         }
         (Snap::Tangent(_), _) => {
@@ -1260,14 +1275,14 @@ pub fn draw_snap(
             painter.circle_stroke(
                 s + eframe::egui::vec2(0.0, -5.0),
                 5.0,
-                Stroke::new(1.8, HIGHLIGHT),
+                Stroke::new(1.8, highlight_color()),
             );
             painter.line_segment(
                 [
                     s + eframe::egui::vec2(-8.0, 0.0),
                     s + eframe::egui::vec2(8.0, 0.0),
                 ],
-                Stroke::new(1.8, HIGHLIGHT),
+                Stroke::new(1.8, highlight_color()),
             );
             "tangent"
         }
@@ -1282,7 +1297,7 @@ pub fn draw_snap(
         Align2::LEFT_BOTTOM,
         text,
         FontId::proportional(11.0),
-        HIGHLIGHT,
+        highlight_color(),
     );
 }
 

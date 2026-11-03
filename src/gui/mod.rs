@@ -768,6 +768,8 @@ struct CadCraftApp {
     /// Signature of the geometry `keep_in_view` watches.
     fit_sig: Option<u64>,
     show_options: bool,
+    /// In-canvas Color Schemes (spec 0.18).
+    colors: theme::ColorsUi,
 
     /// Sketch tools of the sketch in edit mode.
     tools: SketchTools,
@@ -1130,6 +1132,7 @@ impl CadCraftApp {
             nav_pivot: None,
             fit_sig: None,
             show_options: false,
+            colors: theme::ColorsUi::default(),
             tools: SketchTools::default(),
             text_draft: None,
             last_text: None,
@@ -4232,6 +4235,20 @@ impl CadCraftApp {
 
     /// Colour encoding the solver state of the edited sketch (Inventor's
     /// meaning of colours).
+    /// The active sketch's state in the view: a colour of the In-canvas scheme.
+    /// `sketch_color` is the same state as text on the frame.
+    fn sketch_view_color(&self) -> Color32 {
+        let c = theme::canvas();
+        match &self.report {
+            Some(Ok(r)) if r.status == SolveStatus::Failed => c.sketch_failed,
+            Some(Ok(r)) if r.redundant > 0 => c.sketch_redundant,
+            Some(Ok(r)) if r.dof == 0 => c.sketch_full,
+            Some(Ok(_)) => c.sketch_open,
+            Some(Err(_)) => c.sketch_failed,
+            None => Color32::from_gray(120),
+        }
+    }
+
     fn sketch_color(&self) -> Color32 {
         match &self.report {
             Some(Ok(r)) if r.status == SolveStatus::Failed => theme::tokens().error,
@@ -5469,7 +5486,7 @@ impl CadCraftApp {
         // Ground grid on XY, 10 mm spacing; a sketch being edited has its own
         // grid, and two with different steps in one view read as noise.
         if self.editing.is_none() {
-            let grid = [0.55, 0.56, 0.6];
+            let grid = theme::scene_rgb(theme::canvas().ground_grid);
             for i in -10..=10 {
                 let t = i as f64 * 10.0;
                 g.add_line(
@@ -5546,12 +5563,18 @@ impl CadCraftApp {
         };
         let (sel, hover) = &self.scene_sel;
         for x in sel {
-            paint(self.item_faces(x), [0.25, 0.5, 0.95]);
+            paint(
+                self.item_faces(x),
+                theme::scene_rgb(theme::canvas().selected_face),
+            );
         }
         if let Some(h) = hover
             && !sel.contains(h)
         {
-            paint(self.item_faces(h), [0.4, 0.82, 0.45]);
+            paint(
+                self.item_faces(h),
+                theme::scene_rgb(theme::canvas().hover_face),
+            );
         }
         self.add_trim_preview(&mut g);
         g
@@ -7450,7 +7473,7 @@ impl CadCraftApp {
             let active = self.editing == Some(i);
             let style = overlay::SketchStyle {
                 dim_display: self.dim_display,
-                fully_color: Color32::from_rgb(20, 120, 40),
+                fully_color: theme::canvas().sketch_full,
                 fully: if active {
                     self.dof
                         .as_ref()
@@ -7475,14 +7498,14 @@ impl CadCraftApp {
                     Vec::new()
                 },
                 color: if active {
-                    self.sketch_color()
+                    self.sketch_view_color()
                 } else if source && !shown {
                     Self::project_source_color()
                 } else {
                     Color32::from_gray(110)
                 },
                 reference: if active {
-                    overlay::REFERENCE
+                    overlay::reference_color()
                 } else {
                     Color32::from_gray(140)
                 },
@@ -7524,7 +7547,7 @@ impl CadCraftApp {
                     rect,
                     &ps.sketch,
                     &regions,
-                    overlay::REGION_FILL,
+                    overlay::region_fill(),
                 );
             }
             if profile_sketch && let Some(d) = &self.extrude {
@@ -7536,9 +7559,9 @@ impl CadCraftApp {
                         .iter()
                         .any(|p| p.resolve(&regions).is_some_and(|x| x == r));
                     let fill = if chosen {
-                        overlay::PROFILE_CHOSEN
+                        overlay::profile_chosen()
                     } else {
-                        overlay::PROFILE_FILL
+                        overlay::profile_fill()
                     };
                     overlay::draw_regions(
                         &painter,
@@ -7865,7 +7888,14 @@ impl CadCraftApp {
             overlay::draw_preview(&painter, &self.camera, rect, &ps.sketch, &preview);
             // The dimension being placed, live (third click puts it here).
             if let Some((sk, id)) = self.tools.dimension_preview(ps, &pick) {
-                overlay::draw_dimension(&painter, &self.camera, rect, &sk, id, overlay::HIGHLIGHT);
+                overlay::draw_dimension(
+                    &painter,
+                    &self.camera,
+                    rect,
+                    &sk,
+                    id,
+                    overlay::highlight_color(),
+                );
                 if let Some(l) =
                     overlay::label_layout(&painter, &self.camera, rect, &sk, self.dim_display)
                         .into_iter()

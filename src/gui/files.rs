@@ -23,6 +23,9 @@ pub(super) enum DialogPurpose {
     Export(ExportFormat),
     /// Help -> Save Diagnostics (a zip, `gui/diag.rs`).
     Diagnostics,
+    /// Application Options › Colors › Export / Import.
+    ExportOptions,
+    ImportOptions,
     /// Parameters → Export CSV / Import CSV.
     ExportParams,
     ImportParams,
@@ -83,6 +86,8 @@ impl DialogPurpose {
             DialogPurpose::SaveFolder => "Save as Folder".into(),
             DialogPurpose::Export(f) => format!("Export {}", f.extension().to_uppercase()),
             DialogPurpose::Diagnostics => "Save Diagnostics".into(),
+            DialogPurpose::ExportOptions => "Export Application Options".into(),
+            DialogPurpose::ImportOptions => "Import Application Options".into(),
             DialogPurpose::ExportParams => "Export Parameters".into(),
             DialogPurpose::ImportParams => "Import Parameters".into(),
             DialogPurpose::ExportBom => "Export Bill of Materials".into(),
@@ -112,6 +117,7 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Step) => &["step", "stp"],
             DialogPurpose::Export(ExportFormat::Glb) => &["glb"],
             DialogPurpose::Diagnostics => &["zip"],
+            DialogPurpose::ExportOptions | DialogPurpose::ImportOptions => &["json"],
             DialogPurpose::ExportParams
             | DialogPurpose::ImportParams
             | DialogPurpose::ExportBom
@@ -134,6 +140,7 @@ impl DialogPurpose {
             DialogPurpose::Export(ExportFormat::Step) => "STEP",
             DialogPurpose::Export(ExportFormat::Glb) => "glTF binary",
             DialogPurpose::Diagnostics => "Zip archive",
+            DialogPurpose::ExportOptions | DialogPurpose::ImportOptions => "Settings (JSON)",
             DialogPurpose::ExportParams
             | DialogPurpose::ImportParams
             | DialogPurpose::ExportBom
@@ -150,6 +157,7 @@ impl DialogPurpose {
             self,
             DialogPurpose::Open
                 | DialogPurpose::ImportParams
+                | DialogPurpose::ImportOptions
                 | DialogPurpose::TableSource
                 | DialogPurpose::LinkFile
                 | DialogPurpose::InsertDocument
@@ -907,11 +915,13 @@ impl CadCraftApp {
                 "3dcadcraft-diagnostics-{}.zip",
                 crate::diagnostics::stamp(std::time::SystemTime::now())
             ),
+            DialogPurpose::ExportOptions => "3dcadcraft-options.json".to_owned(),
             DialogPurpose::ExportParams => format!("{stem}-parameters.csv"),
             DialogPurpose::ExportBom => format!("{stem}-bom.csv"),
             DialogPurpose::ExportDxf => format!("{stem}-flat.dxf"),
             DialogPurpose::ExportPdf => format!("{stem}.pdf"),
             DialogPurpose::ImportParams
+            | DialogPurpose::ImportOptions
             | DialogPurpose::TableSource
             | DialogPurpose::LinkFile
             | DialogPurpose::InsertDocument
@@ -1424,6 +1434,35 @@ impl CadCraftApp {
                         .map(|()| format!("Bill of Materials exported to {}", path.display()))
                         .map_err(|e| format!("Export Bill of Materials: {e}")),
                 );
+            }
+            DialogPurpose::ExportOptions => {
+                let options = serde_json::to_value(self.options_snapshot()).unwrap_or_default();
+                let file = super::theme::export_file(options, self.colors.export_json());
+                let text = serde_json::to_string_pretty(&file).unwrap_or_default();
+                self.file_status = Some(
+                    std::fs::write(&path, text)
+                        .map(|()| format!("Application Options exported to {}", path.display()))
+                        .map_err(|e| format!("Export Application Options: {e}")),
+                );
+            }
+            DialogPurpose::ImportOptions => {
+                let read = std::fs::read_to_string(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|t| {
+                        serde_json::from_str::<serde_json::Value>(&t).map_err(|e| e.to_string())
+                    });
+                self.file_status = Some(match read {
+                    Ok(file) => {
+                        let n = self.colors.import_json(&file["color_schemes"]);
+                        let current = self.options_snapshot();
+                        self.apply_options(super::layout::merged_options(
+                            &current,
+                            &file["options"],
+                        ));
+                        Ok(format!("Application Options imported ({n} colour schemes)"))
+                    }
+                    Err(e) => Err(format!("Import Application Options: {e}")),
+                });
             }
             DialogPurpose::ExportParams => {
                 let text = self.part().parameters_csv();

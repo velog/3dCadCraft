@@ -281,7 +281,7 @@ impl CadCraftApp {
         if let Some(e) = &d.error
             && !d.spec.text.trim().is_empty()
         {
-            ui.label(RichText::new(format!("Warning: {e}")).color(Color32::from_rgb(230, 140, 0)));
+            ui.label(RichText::new(format!("Warning: {e}")).color(super::theme::tokens().warning));
         }
         let ready = !d.glyphs.is_empty() && d.error.is_none();
         ui.horizontal(|ui| {

@@ -300,7 +300,7 @@ impl CadCraftApp {
                         let (rect, resp) =
                             ui.allocate_exact_size(egui::vec2(side, side), Sense::drag());
                         ui.painter()
-                            .rect_filled(rect, 4.0, Color32::from_rgb(36, 40, 46));
+                            .rect_filled(rect, 4.0, super::theme::tokens().field);
                         lib.yaw += resp.drag_delta().x * 0.01;
                         let mesh = lib.shown.as_ref().and_then(|p| lib.meshes.get(p));
                         match mesh {
@@ -319,7 +319,7 @@ impl CadCraftApp {
                                     egui::Align2::CENTER_CENTER,
                                     "Select a size",
                                     egui::FontId::proportional(14.0),
-                                    Color32::GRAY,
+                                    super::theme::tokens().text_weak,
                                 );
                             }
                         }

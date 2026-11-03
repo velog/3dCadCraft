@@ -360,7 +360,7 @@ impl CadCraftApp {
         if !self.project_geometry {
             return;
         }
-        let col = overlay::HIGHLIGHT;
+        let col = overlay::highlight_color();
         let ctrl = painter.ctx().input(|i| i.modifiers.command);
         match self.project_pick(i, p, rect, ctrl) {
             Some(ProjPick::Sketch { sketch, geo }) => {

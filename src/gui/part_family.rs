@@ -3,7 +3,7 @@
 //! Nothing changes until OK (one Undo step); cells are expressions over the
 //! row's columns, so they are text cells rather than value fields.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 
 use super::CadCraftApp;
 use crate::part::expr::Unit;
@@ -99,7 +99,7 @@ impl CadCraftApp {
                         _ => String::new(),
                     };
                     ui.colored_label(
-                        Color32::from_rgb(235, 80, 70),
+                        super::theme::tokens().error,
                         format!("{at}{}", i.message),
                     );
                 }
