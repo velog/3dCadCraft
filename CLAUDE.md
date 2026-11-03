@@ -1410,6 +1410,11 @@ screenshot and measure first (crop + `-scale 300%` to locate small dots).
   (B-splines). Fillet takes them as one chain; Chamfer did them edge by edge and refused the second piece — the vendor
   `chamfer` now tries the whole chain first. An exit over a corner of the part (two faces) is still refused; the kernel's
   `blend` must not retry all orders of such edges (24 orders took 100–200 s on the main thread).
+- **Plastic panels** (`gui/plastic.rs`, `gui/plastic_diagram.rs`): a selector the options do not use goes in
+  `PartDialog::sel_hidden` (hidden, no picks); `draw_planned_picks` draws every planned panel's picks in the selector's colour.
+  The picture's numbers are the panel's rows (`num_mut`), so a new option needs only a `Pic::length` / `chip`. A section's
+  polygons are filled as one mesh: separate antialiased triangles show their seams. Fields saved in a plastic op that change
+  how an old file builds (`join_first`) default to the old way, or `tests/compat` catches the changed face names.
 - **Planned panels with logic** (`Planned::has_logic`): options still without it are drawn disabled through
   `Planned::option_off(label, choice)` (a check box, or one choice of a radio row). A selector of whole bodies (Copy
   Object's Body mode: kinds `Body`/`Surface` without `Face`) takes the body of the face under the ray

@@ -114,6 +114,7 @@ mod pattern_dialog;
 mod pattern_feature;
 mod place;
 mod plastic;
+mod plastic_diagram;
 mod presets;
 mod project;
 mod renderer;
@@ -7286,9 +7287,7 @@ impl CadCraftApp {
                     } else {
                         hover
                     };
-                    let (others, under) =
-                        self.draw_plastic_picks(&painter, rect, pointer, &picked, hover.as_ref());
-                    self.draw_planned_edges(&painter, rect, &others, under.as_ref());
+                    self.draw_planned_picks(&painter, rect, pointer, &picked, hover.as_ref());
                     (picked, hover)
                 }
                 None => (

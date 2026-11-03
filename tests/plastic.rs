@@ -1568,6 +1568,36 @@ fn grill_boundary_ignores_loose_lines() {
     );
 }
 
+/// Lip on a plain box: no guide and no pull asked for, the top is the rim.
+#[test]
+fn lip_on_a_plain_box() {
+    let plain =
+        || PartDocument::with_box("Box1", [100.0, 60.0, 20.0]).unwrap_or_else(|e| panic!("{e}"));
+    let v = 120000.0;
+    let (w, h) = (1.0, 1.5);
+    let ring_area = 100.0 * 60.0 - (100.0 - 2.0 * w) * (60.0 - 2.0 * w);
+    // The whole outline of the top.
+    let mut p = plain();
+    let (_, outer) = rim_edges(&p);
+    assert_eq!(outer.len(), 4, "the top's edges");
+    add(&mut p, BodyOp::Lip(LipOp::new(outer.clone(), h, w)));
+    close(volume(&p), v + ring_area * h, 0.02, "lip round the top");
+    assert!(inside(&p, 0.5, 30.0, 21.0), "the bead stands on the rim");
+    // The same as a groove.
+    let mut p = plain();
+    let mut op = LipOp::new(outer.clone(), h, w);
+    op.kind = LipKind::Groove;
+    add(&mut p, BodyOp::Lip(op));
+    close(volume(&p), v - ring_area * h, 0.02, "groove round the top");
+    // One edge: the top, not its side, though both are planar.
+    let mut p = plain();
+    let one = vec![outer[0].clone()];
+    add(&mut p, BodyOp::Lip(LipOp::new(one, h, w)));
+    let (lo, hi) = p.body.bounding_box().unwrap_or_else(|| panic!("no box"));
+    close(hi.z, 21.5, 1e-6, "on the top");
+    assert!(lo.x >= -1e-6 && hi.x <= 100.0 + 1e-6, "stays on the rim");
+}
+
 #[test]
 fn grill_draft() {
     let t = 2f64.to_radians().tan();

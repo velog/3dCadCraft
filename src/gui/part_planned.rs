@@ -95,6 +95,8 @@ const RULES: &[&str] = &[
     "Against Features",
     "Incident Edges",
 ];
+/// Lip's check box: a click on an edge takes the loop it belongs to.
+pub(super) const WHOLE_LOOP: &str = "Whole Loop";
 /// One rule of Rule Fillet (a tab of its own).
 macro_rules! rule_row {
     ($src:literal, $scope:literal, $axis:literal) => {
@@ -1135,10 +1137,15 @@ impl PartPlanned {
                         Sel(
                             "path",
                             "Path Edges",
-                            "Select the edges along the joint",
+                            "Click an edge of the rim: the whole loop is taken",
                             EDGES,
                         ),
-                        Radio("Orientation", &["Guide Face", "Pull Direction"], 1),
+                        Check(WHOLE_LOOP, true),
+                        Radio(
+                            "Orientation",
+                            &["Automatic", "Guide Face", "Pull Direction"],
+                            0,
+                        ),
                         Sel(
                             "guide",
                             "Guide Face",
@@ -1756,6 +1763,8 @@ pub(super) struct PartDialog {
     pub note: Option<String>,
     /// Rule Fillet: the rules of the feature being edited (their tabs stay on show).
     pub rule_rows: usize,
+    /// The dimension being edited in the panel's picture: tab, label, unit, where, frames to open.
+    pub diagram_edit: Option<(usize, &'static str, &'static str, egui::Rect, u8)>,
     /// Import: the STEP text Browse... read (Edit Feature without it keeps the embedded one).
     pub file_text: Option<std::sync::Arc<str>>,
     /// Insert Frame: the skeleton lines picked (edges and sketch lines), in
@@ -1914,6 +1923,7 @@ impl PartDialog {
             pressed: None,
             note: None,
             rule_rows: 0,
+            diagram_edit: None,
             file_text: None,
             skeletons: Vec::new(),
             clicks: Vec::new(),
@@ -1931,6 +1941,7 @@ impl PartDialog {
         let sels = selector_defs(self.kind)
             .into_iter()
             .enumerate()
+            .filter(|(_, s)| !self.sel_hidden(s.0))
             .map(|(i, (key, label, prompt, accepts))| Selector {
                 key,
                 label,
@@ -2101,6 +2112,52 @@ impl PartDialog {
         }
     }
 
+    /// A selector the options chosen have no use for: it is not shown and takes no pick.
+    pub(super) fn sel_hidden(&self, key: &str) -> bool {
+        let Planned::Part(k) = self.kind else {
+            return false;
+        };
+        match (k, key) {
+            (PartPlanned::Lip, "guide") => self.index(0, "Orientation") != 1,
+            (PartPlanned::Lip, "pull") => self.index(0, "Orientation") != 2,
+            (PartPlanned::Boss | PartPlanned::SnapFit, "direction") => {
+                self.index(0, "Placement") != 1
+            }
+            (PartPlanned::Rest, "to") => self.index(0, "Platform") != 2,
+            (PartPlanned::Rest, "land") => self.index(1, "Landing") != 1,
+            (PartPlanned::RuleFillet, _) => RULE_KEYS.iter().enumerate().any(|(t, keys)| {
+                (key == keys.1 && self.index(t, "Rule") != 3)
+                    || (key == keys.2 && self.index(t, "Rule") != 4)
+            }),
+            _ => false,
+        }
+    }
+
+    /// The selectors of tab `ti` on show.
+    fn keys_on_show(&self, ti: usize) -> Vec<&'static str> {
+        let mut keys = tab_keys(self.kind, ti);
+        keys.retain(|k| !self.sel_hidden(k));
+        keys
+    }
+
+    /// The colour of selector `key`: its dot in the panel and its picks in the view.
+    pub(super) fn sel_color(&self, key: &str) -> egui::Color32 {
+        let c = selector_defs(self.kind)
+            .iter()
+            .position(|s| s.0 == key)
+            .map_or(COLORS[0], |i| COLORS[i % COLORS.len()]);
+        egui::Color32::from_rgb(c[0], c[1], c[2])
+    }
+
+    /// The value of number row `label` of tab `ti`, to edit in place.
+    pub(super) fn num_mut(&mut self, ti: usize, label: &str) -> Option<&mut f64> {
+        let (ri, def) = match self.find_row(ti, label)? {
+            (ri, Num(_, def, _)) => (ri, *def),
+            _ => return None,
+        };
+        Some(self.nums.entry((ti, ri)).or_insert(def))
+    }
+
     /// Rule Fillet's rule tabs appear one by one: the next is there once the last has a source.
     fn tab_hidden(&self, ti: usize) -> bool {
         if self.kind != Planned::Part(PartPlanned::RuleFillet) || ti == 0 || ti >= RULE_TABS {
@@ -2179,7 +2236,7 @@ impl PartDialog {
     /// After a pick in selector `key`: on to the next empty selector.
     fn advance(&mut self, key: &'static str) {
         // The next selector of the tab on show (another tab's is not seen).
-        let keys = tab_keys(self.kind, self.tab);
+        let keys = self.keys_on_show(self.tab);
         if let Some(i) = keys.iter().position(|k| *k == key)
             && let Some(next) = keys.get(i + 1)
             && self.picks.get(next).is_none_or(Vec::is_empty)
@@ -2308,7 +2365,7 @@ impl PartDialog {
                 }
             });
             // A tab's selectors only take picks while it is shown.
-            let keys = tab_keys(self.kind, self.tab);
+            let keys = self.keys_on_show(self.tab);
             if self.active.is_none_or(|a| !keys.contains(&a)) {
                 self.active = keys
                     .iter()
@@ -2318,6 +2375,7 @@ impl PartDialog {
             }
             ui.separator();
         }
+        super::plastic_diagram::show(self, ui);
         let ti = self.tab.min(pages.len().saturating_sub(1));
         let Some(page) = pages.get(ti) else {
             return (false, false);
@@ -2417,6 +2475,9 @@ impl PartDialog {
                 }
             }
             Sel(key, ..) => {
+                if self.sel_hidden(key) {
+                    return;
+                }
                 let Some(i) = flow.selectors.iter().position(|s| s.key == key) else {
                     return;
                 };
@@ -2582,7 +2643,8 @@ impl CadCraftApp {
         };
         let what = self.item_label(&item);
         let at = self.click_point(&item, p, rect).map(|q| [q.x, q.y, q.z]);
-        let chain = self.patch_chain(&item);
+        let mut chain = self.patch_chain(&item);
+        chain.extend(self.lip_loop(&item));
         let Some(d) = self.part_planned.as_mut() else {
             return;
         };
@@ -2593,6 +2655,48 @@ impl CadCraftApp {
         if count(d) > before && !chain.is_empty() {
             self.part_planned_add(chain);
         }
+    }
+
+    /// Lip with Whole Loop: the loop of the rim the edge belongs to. Of the edge's planar faces the
+    /// rim is the one with a hole (the open top of a housing), else the one facing most upwards,
+    /// as the feature itself decides without a guide or a pull.
+    pub(super) fn lip_loop(&self, item: &SelItem) -> Vec<SelItem> {
+        let SelItem::Edge(e) = item else {
+            return Vec::new();
+        };
+        let on = self.part_planned.as_ref().is_some_and(|d| {
+            d.kind == Planned::Part(PartPlanned::Lip)
+                && d.active == Some("path")
+                && d.check(0, WHOLE_LOOP)
+        });
+        if !on {
+            return Vec::new();
+        }
+        let body = &self.part().body;
+        let Some(near) = self.item_point(item) else {
+            return Vec::new();
+        };
+        let rim = self
+            .picker()
+            .faces_of(*e)
+            .iter()
+            .filter_map(|&f| {
+                let face = body.face(f)?;
+                match body.surface(face.surface)? {
+                    crate::kernel::Surface::Plane(p) => {
+                        Some((f, !face.inner.is_empty(), p.normal.z.abs()))
+                    }
+                    _ => None,
+                }
+            })
+            .max_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.total_cmp(&b.2)))
+            .map(|x| x.0);
+        rim.map(|f| psel::loop_edges(body, f, near))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|x| x != e)
+            .map(SelItem::Edge)
+            .collect()
     }
 
     /// Boundary Patch with Automatic Edge Chain: the free edges joined to the picked one, so the

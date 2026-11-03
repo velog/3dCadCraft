@@ -879,7 +879,8 @@ impl CadCraftApp {
         hover: Option<&SelItem>,
     ) {
         let hover = hover.filter(|_| self.select.prehighlight);
-        self.draw_items(painter, rect, &self.sel, hover, false);
+        let blue = Color32::from_rgb(40, 110, 230);
+        self.draw_items(painter, rect, &self.sel, hover, false, blue);
     }
 
     /// The selected edges of a command's panel (`gui/part_planned.rs`) and the item under the
@@ -891,11 +892,12 @@ impl CadCraftApp {
         rect: egui::Rect,
         picked: &[SelItem],
         hover: Option<&SelItem>,
+        color: Color32,
     ) {
-        self.draw_items(painter, rect, picked, hover, true);
+        self.draw_items(painter, rect, picked, hover, true, color);
     }
 
-    /// Edges, vertices and sketches of `sel` (blue) and `hover` (green); `outline`: the
+    /// Edges, vertices and sketches of `sel` (in `color`) and `hover` (green); `outline`: the
     /// visible edges round faces and bodies too.
     fn draw_items(
         &self,
@@ -904,6 +906,7 @@ impl CadCraftApp {
         sel: &[SelItem],
         hover: Option<&SelItem>,
         outline: bool,
+        sel_color: Color32,
     ) {
         let polys = self.edge_polylines();
         // Edges are drawn on top of the view, without their hidden pieces;
@@ -949,7 +952,6 @@ impl CadCraftApp {
                 }
             }
         };
-        let blue = Color32::from_rgb(40, 110, 230);
         let green = Color32::from_rgb(60, 190, 90);
         let draw = |x: &SelItem, color: Color32| match x {
             SelItem::Edge(e) => line(*e, color),
@@ -961,7 +963,7 @@ impl CadCraftApp {
             other => rim(other, color),
         };
         for x in sel {
-            draw(x, blue);
+            draw(x, sel_color);
         }
         if let Some(h) = hover
             && !sel.contains(h)

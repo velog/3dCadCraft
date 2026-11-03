@@ -8,7 +8,7 @@ use eframe::egui;
 
 use super::CadCraftApp;
 use super::part_planned::{PartDialog, PartPlanned};
-use super::part_planned::{RULE_KEYS, RULE_TABS, USE_RULE};
+use super::part_planned::{RULE_KEYS, RULE_TABS, USE_RULE, WHOLE_LOOP};
 use super::select::SelItem;
 use crate::kernel::{Point3, Real};
 use crate::part::placement::PointRef;
@@ -227,22 +227,20 @@ impl CadCraftApp {
         Some(())
     }
 
-    /// The sketch picks of a plastic panel, each as what it means, and the one under the cursor;
-    /// they are taken out of `picked` and `hover`, which draw the whole sketch.
-    pub(super) fn draw_plastic_picks(
+    /// Every pick of a planned panel in its selector's colour; a plastic panel's sketch picks as
+    /// what they mean, not the whole sketch. `hover`: what a click would take, in green.
+    pub(super) fn draw_planned_picks(
         &self,
         painter: &egui::Painter,
         rect: egui::Rect,
         pointer: Option<egui::Pos2>,
         picked: &[SelItem],
         hover: Option<&SelItem>,
-    ) -> (Vec<SelItem>, Option<SelItem>) {
-        let whole = (picked.to_vec(), hover.cloned());
-        let Some(d) = self.part_planned.as_ref().filter(|d| is_plastic(d)) else {
-            return whole;
+    ) {
+        let Some(d) = self.part_planned.as_ref() else {
+            return;
         };
-        let defs = super::part_planned::selector_defs(d.kind);
-        let kinds_of = |key: &str| defs.iter().find(|x| x.0 == key).map(|x| x.3);
+        let plastic = is_plastic(d);
         // A rib or spar never lights the boundary's curves: a click there is dropped.
         let keep_off = self
             .plastic_sketch_pick(d.items_of("boundary"))
@@ -253,34 +251,39 @@ impl CadCraftApp {
                     .map(|at| self.outline_curves(&id, *at))
             })
             .unwrap_or_default();
-        let blue = egui::Color32::from_rgb(40, 110, 230);
         let green = egui::Color32::from_rgb(60, 190, 90);
-        let mut drawn: Vec<usize> = Vec::new();
-        for (key, items) in &d.items {
-            let Some(kinds) = kinds_of(key) else {
+        for def in super::part_planned::selector_defs(d.kind) {
+            let (key, kinds) = (def.0, def.3);
+            if d.sel_hidden(key) {
                 continue;
-            };
-            for (item, at) in items {
-                if let SelItem::Sketch(i) = item
-                    && self
-                        .draw_sketch_pick(
-                            painter,
-                            rect,
-                            (*i, *at),
-                            (kinds, *key == "boundary"),
-                            &keep_off,
-                            blue,
-                        )
-                        .is_some()
-                {
-                    drawn.push(*i);
+            }
+            let color = d.sel_color(key);
+            let mut others = Vec::new();
+            for (item, at) in d.items_of(key) {
+                if !picked.contains(item) {
+                    continue;
+                }
+                let meant = match item {
+                    SelItem::Sketch(i) if plastic => self.draw_sketch_pick(
+                        painter,
+                        rect,
+                        (*i, *at),
+                        (kinds, key == "boundary"),
+                        &keep_off,
+                        color,
+                    ),
+                    _ => None,
+                };
+                if meant.is_none() && !others.contains(item) {
+                    others.push(item.clone());
                 }
             }
+            self.draw_planned_edges(painter, rect, &others, None, color);
         }
-        let mut rest: Vec<SelItem> = picked.to_vec();
-        rest.retain(|x| !matches!(x, SelItem::Sketch(i) if drawn.contains(i)));
         let mut under = hover.cloned();
-        if let (Some(SelItem::Sketch(i)), Some(p), Some(cur)) = (hover, pointer, d.flow().current())
+        if plastic
+            && let (Some(SelItem::Sketch(i)), Some(p), Some(cur)) =
+                (hover, pointer, d.flow().current())
         {
             let at = self
                 .click_point(&SelItem::Sketch(*i), p, rect)
@@ -299,7 +302,12 @@ impl CadCraftApp {
                 under = None;
             }
         }
-        (rest, under)
+        // What the click takes with it lights up with it.
+        if let Some(h) = hover {
+            let chain = self.lip_loop(h);
+            self.draw_planned_edges(painter, rect, &chain, None, green);
+        }
+        self.draw_planned_edges(painter, rect, &[], under.as_ref(), green);
     }
 
     /// The nearest curve to each click, never one of `keep_off`.
@@ -951,16 +959,16 @@ impl CadCraftApp {
             path = o.path.clone();
         }
         let num = |l| d.num(1, l).unwrap_or(0.0);
-        let by_pull = d.index(0, "Orientation") == 1;
-        let guide = if by_pull {
-            None
-        } else {
+        let orientation = d.index(0, "Orientation");
+        let guide = if orientation == 1 {
             self.plastic_faces(d.items_of("guide"))
                 .into_iter()
                 .next()
                 .or_else(|| prev.and_then(|o| o.guide.clone()))
+        } else {
+            None
         };
-        let pull = if by_pull {
+        let pull = if orientation == 2 {
             self.plastic_line(d.items_of("pull"))
                 .or_else(|| prev.and_then(|o| o.pull.clone()))
         } else {
@@ -1238,7 +1246,13 @@ pub(super) fn fill_dialog(d: &mut PartDialog, op: &BodyOp) {
         }
         BodyOp::Lip(o) => {
             d.set_index(0, "Type", usize::from(o.kind == LipKind::Groove));
-            d.set_index(0, "Orientation", usize::from(o.pull.is_some()));
+            let orientation = match (&o.guide, &o.pull) {
+                (Some(_), _) => 1,
+                (_, Some(_)) => 2,
+                _ => 0,
+            };
+            d.set_index(0, "Orientation", orientation);
+            d.set_check(0, WHOLE_LOOP, false);
             d.set_num(1, "Height", o.height);
             d.set_num(1, "Width", o.width);
             d.set_num(1, "Shoulder Width", o.shoulder);

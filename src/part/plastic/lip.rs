@@ -87,9 +87,6 @@ impl LipOp {
         if self.path.is_empty() {
             return Err("select the path edges".into());
         }
-        if self.guide.is_none() && self.pull.is_none() {
-            return Err("select the guide face or the pull direction".into());
-        }
         if self.height <= 0.0 || self.width <= 0.0 {
             return Err("the height and the width must be positive".into());
         }
@@ -130,7 +127,27 @@ fn rim_plane(op: &LipOp, body: &BRep, works: &WorkGeom) -> Result<Plane, Fail> {
         None => None,
     };
     let guide = op.guide.as_ref().map(|g| g.face.as_str());
-    for name in &e.faces {
+    // Neither given: the rim is the plane every edge of the path lies on: the face they share, or
+    // for edges sharing none (one straight edge of two) the planar one facing most upwards.
+    let mut names: Vec<&String> = e.faces.iter().collect();
+    if op.guide.is_none() && op.pull.is_none() {
+        let up = |name: &String| {
+            body.find_face(name)
+                .and_then(|id| body.face(id))
+                .and_then(|f| body.surface(f.surface))
+                .map_or(-2.0, |s| match s {
+                    Surface::Plane(p) => p.normal.z.abs(),
+                    _ => -1.0,
+                })
+        };
+        let shared = |name: &String| op.path.iter().all(|x| x.faces.contains(name));
+        names.sort_by(|a, b| {
+            shared(b)
+                .cmp(&shared(a))
+                .then_with(|| up(b).total_cmp(&up(a)))
+        });
+    }
+    for name in names {
         if guide == Some(name.as_str()) {
             continue;
         }

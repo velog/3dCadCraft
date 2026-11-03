@@ -1185,6 +1185,8 @@ Extents, Grill's Parting Element, rounds of a rib where the kernel refuses them)
 - **Lip / Groove:** a lip/groove between the two halves of a housing;
 - **Rule Fillet:** fillets by a rule, e.g. "all edges between these features".
 
+Grill, Boss, Rest, Snap Fit and Lip show a live section with editable dimensions in their panel.
+
 ## 5.9 Point clouds and meshes — ⬜ · L
 
 - **Import:**
