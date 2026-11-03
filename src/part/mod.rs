@@ -56,6 +56,7 @@ mod option_tests;
 pub mod params;
 pub mod pattern;
 pub mod physical;
+pub mod plastic;
 pub mod placement;
 pub mod primitive;
 pub mod revolve;
@@ -510,6 +511,9 @@ impl Feature {
                 let mut v: Vec<&str> = b.sketch().into_iter().collect();
                 if let BodyOp::Patch(p) = &b.op {
                     v.extend(p.guides.iter().map(String::as_str));
+                }
+                if let BodyOp::Grill(g) = &b.op {
+                    v.extend(g.other_sketches());
                 }
                 v
             }
@@ -2443,6 +2447,21 @@ impl PartDocument {
         // An Emboss consumes its sketch, as an Extrude does.
         if let BodyOp::Emboss(o) = &def.op {
             let used = [o.sketch.clone()];
+            self.add_consuming(Feature::BodyOp(def), &used)?;
+            return Ok(id);
+        }
+        // So do the plastic features that take a sketch.
+        let used: Vec<String> = match &def.op {
+            BodyOp::Grill(g) => std::iter::once(g.sketch.as_str())
+                .chain(g.other_sketches())
+                .map(str::to_owned)
+                .collect(),
+            BodyOp::Rest(o) => vec![o.sketch.clone()],
+            BodyOp::Boss(o) => o.centers.sketch().map(str::to_owned).into_iter().collect(),
+            BodyOp::SnapFit(o) => o.centers.sketch().map(str::to_owned).into_iter().collect(),
+            _ => Vec::new(),
+        };
+        if !used.is_empty() {
             self.add_consuming(Feature::BodyOp(def), &used)?;
             return Ok(id);
         }

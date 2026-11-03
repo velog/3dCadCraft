@@ -145,7 +145,7 @@ fn first_skin(rays: &Rays, p: Point3, d: Vector3) -> Option<Real> {
 }
 
 /// The body's display triangles with their faces (`pick_face` knows only planar faces).
-fn skin(body: &BRep) -> Vec<(FaceId, [Point3; 3])> {
+pub(super) fn skin(body: &BRep) -> Vec<(FaceId, [Point3; 3])> {
     let opts = crate::kernel::TessellationOptions::default();
     let mut out = Vec::new();
     for (sid, s) in body.solids() {
@@ -192,7 +192,7 @@ fn face_under(tris: &[(FaceId, [Point3; 3])], q: Point3, d: Vector3) -> Option<F
 }
 
 /// The solid holding the face at `q` and the kernel face: `(solid, face, a plane square to d)`.
-fn face_at(
+pub(super) fn face_at(
     body: &BRep,
     tris: &[(FaceId, [Point3; 3])],
     cur: &[ExactSolid],

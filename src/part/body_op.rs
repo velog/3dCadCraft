@@ -203,6 +203,18 @@ pub enum BodyOp {
     Axial(super::axial::AxialOp),
     /// Emboss / Engrave of a sketch's profiles (format revision 62).
     Emboss(super::emboss::EmbossOp),
+    /// A vent in a thin wall (plastic parts, format revision 64).
+    Grill(super::plastic::grill::GrillOp),
+    /// A screw boss (plastic parts).
+    Boss(super::plastic::boss::BossOp),
+    /// A landing on a wall (plastic parts).
+    Rest(super::plastic::rest::RestOp),
+    /// A cantilever hook or loop (plastic parts).
+    SnapFit(super::plastic::snap_fit::SnapFitOp),
+    /// Fillets by rules (plastic parts).
+    RuleFillet(super::plastic::rule_fillet::RuleFilletOp),
+    /// A lip or groove along a rim (plastic parts).
+    Lip(super::plastic::lip::LipOp),
 }
 
 /// One step of Move Bodies (Inventor's move types); the steps apply in
@@ -453,6 +465,12 @@ impl BodyOpFeature {
             BodyOp::Freeform(_) => "Freeform",
             BodyOp::Axial(_) => "Axial",
             BodyOp::Emboss(_) => "Emboss",
+            BodyOp::Grill(_) => "Grill",
+            BodyOp::Boss(_) => "Boss",
+            BodyOp::Rest(_) => "Rest",
+            BodyOp::SnapFit(_) => "SnapFit",
+            BodyOp::RuleFillet(_) => "RuleFillet",
+            BodyOp::Lip(_) => "Lip",
         }
     }
 
@@ -462,6 +480,10 @@ impl BodyOpFeature {
             BodyOp::Patch(p) => p.sketch.as_deref(),
             BodyOp::Trim(t) => t.sketch(),
             BodyOp::Emboss(e) => Some(&e.sketch),
+            BodyOp::Grill(o) => Some(&o.sketch),
+            BodyOp::Boss(o) => o.centers.sketch(),
+            BodyOp::Rest(o) => Some(&o.sketch),
+            BodyOp::SnapFit(o) => o.centers.sketch(),
             _ => None,
         }
     }
@@ -485,6 +507,12 @@ impl BodyOpFeature {
             BodyOp::Freeform(o) => o.validate(),
             BodyOp::Axial(o) => o.validate(),
             BodyOp::Emboss(o) => o.validate(),
+            BodyOp::Grill(o) => o.validate(),
+            BodyOp::Boss(o) => o.validate(),
+            BodyOp::Rest(o) => o.validate(),
+            BodyOp::SnapFit(o) => o.validate(),
+            BodyOp::RuleFillet(o) => o.validate(),
+            BodyOp::Lip(o) => o.validate(),
         }
     }
 
@@ -508,7 +536,13 @@ impl BodyOpFeature {
             | BodyOp::Trim(_)
             | BodyOp::Extend(_)
             | BodyOp::ReplaceFace(_)
-            | BodyOp::Emboss(_) => false,
+            | BodyOp::Emboss(_)
+            | BodyOp::Grill(_)
+            | BodyOp::Boss(_)
+            | BodyOp::Rest(_)
+            | BodyOp::SnapFit(_)
+            | BodyOp::RuleFillet(_)
+            | BodyOp::Lip(_) => false,
         }
     }
 
@@ -517,8 +551,22 @@ impl BodyOpFeature {
         match &self.op {
             BodyOp::Thicken(_) => vec![("distance", Unit::Mm)],
             BodyOp::Emboss(_) => vec![("depth", Unit::Mm), ("taper", Unit::Deg)],
+            BodyOp::Grill(_) => vec![
+                ("thickness", Unit::Mm),
+                ("height", Unit::Mm),
+                ("outside_height", Unit::Mm),
+            ],
+            BodyOp::Boss(_) => vec![("offset", Unit::Mm), ("fillet", Unit::Mm)],
+            BodyOp::Rest(_) => vec![("thickness", Unit::Mm)],
+            BodyOp::Lip(_) => vec![
+                ("height", Unit::Mm),
+                ("width", Unit::Mm),
+                ("shoulder", Unit::Mm),
+                ("clearance", Unit::Mm),
+            ],
             BodyOp::Freeform(_) => vec![("length", Unit::Mm), ("width", Unit::Mm)],
             BodyOp::Extend(_) | BodyOp::Ruled(_) => vec![("distance", Unit::Mm)],
+            BodyOp::SnapFit(_) | BodyOp::RuleFillet(_) => Vec::new(),
             BodyOp::DeleteFace(_)
             | BodyOp::Stitch(_)
             | BodyOp::Patch(_)
@@ -544,6 +592,16 @@ impl BodyOpFeature {
             (BodyOp::Thicken(t), "distance") => Some(t.distance),
             (BodyOp::Emboss(o), "depth") => Some(o.depth),
             (BodyOp::Emboss(o), "taper") => Some(o.taper),
+            (BodyOp::Grill(o), "thickness") => Some(o.thickness),
+            (BodyOp::Grill(o), "height") => Some(o.height),
+            (BodyOp::Grill(o), "outside_height") => Some(o.outside_height),
+            (BodyOp::Boss(o), "offset") => Some(o.offset),
+            (BodyOp::Boss(o), "fillet") => Some(o.fillet),
+            (BodyOp::Rest(o), "thickness") => Some(o.thickness),
+            (BodyOp::Lip(o), "height") => Some(o.height),
+            (BodyOp::Lip(o), "width") => Some(o.width),
+            (BodyOp::Lip(o), "shoulder") => Some(o.shoulder),
+            (BodyOp::Lip(o), "clearance") => Some(o.clearance),
             (BodyOp::Extend(o), "distance") => Some(o.distance),
             (BodyOp::Ruled(o), "distance") => Some(o.distance),
             (BodyOp::Freeform(o), "length") => Some(o.length),
@@ -559,6 +617,16 @@ impl BodyOpFeature {
             (BodyOp::Thicken(t), "distance") => t.distance = v,
             (BodyOp::Emboss(o), "depth") => o.depth = v,
             (BodyOp::Emboss(o), "taper") => o.taper = v,
+            (BodyOp::Grill(o), "thickness") => o.thickness = v,
+            (BodyOp::Grill(o), "height") => o.height = v,
+            (BodyOp::Grill(o), "outside_height") => o.outside_height = v,
+            (BodyOp::Boss(o), "offset") => o.offset = v,
+            (BodyOp::Boss(o), "fillet") => o.fillet = v,
+            (BodyOp::Rest(o), "thickness") => o.thickness = v,
+            (BodyOp::Lip(o), "height") => o.height = v,
+            (BodyOp::Lip(o), "width") => o.width = v,
+            (BodyOp::Lip(o), "shoulder") => o.shoulder = v,
+            (BodyOp::Lip(o), "clearance") => o.clearance = v,
             (BodyOp::Extend(o), "distance") => o.distance = v,
             (BodyOp::Ruled(o), "distance") => o.distance = v,
             (BodyOp::Freeform(o), "length") => o.length = v,
@@ -619,6 +687,12 @@ impl BodyOpFeature {
             ),
             BodyOp::CopyObject(o) => o.describe(),
             BodyOp::Emboss(o) => o.describe(),
+            BodyOp::Grill(o) => o.describe(),
+            BodyOp::Boss(o) => o.describe(),
+            BodyOp::Rest(o) => o.describe(),
+            BodyOp::SnapFit(o) => o.describe(),
+            BodyOp::RuleFillet(o) => o.describe(),
+            BodyOp::Lip(o) => o.describe(),
             BodyOp::Import(o) => o.describe(),
             BodyOp::Prism(_) => "Frame member".into(),
             BodyOp::Axial(_) => "Library component".into(),

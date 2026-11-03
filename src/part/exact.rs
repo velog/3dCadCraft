@@ -1039,7 +1039,7 @@ fn apart(tools: &[ExactSolid], places: &[(usize, nalgebra::Matrix4<Real>)]) -> b
 /// smooth"); pieces of one circle (a full circle comes as two halves) are
 /// one closed edge — one point each (72 points for 36 holes made it blend
 /// twice the edges). Edges already taken (by another set) are skipped.
-struct EdgePoints<'a> {
+pub(super) struct EdgePoints<'a> {
     body: &'a BRep,
     solids: Vec<crate::kernel::SolidId>,
     /// The kernel's body of each B-rep solid.
@@ -1049,7 +1049,7 @@ struct EdgePoints<'a> {
 }
 
 impl<'a> EdgePoints<'a> {
-    fn new(body: &'a BRep, cur: &[ExactSolid]) -> Self {
+    pub(super) fn new(body: &'a BRep, cur: &[ExactSolid]) -> Self {
         Self {
             body,
             solids: body.solids().map(|(id, _)| id).collect(),
@@ -1092,7 +1092,7 @@ impl<'a> EdgePoints<'a> {
     }
 
     /// (solid index, point) for each new edge of `refs`.
-    fn points(&mut self, refs: &[EdgeRef]) -> Result<Vec<(usize, Point3)>, String> {
+    pub(super) fn points(&mut self, refs: &[EdgeRef]) -> Result<Vec<(usize, Point3)>, String> {
         let mut out = Vec::new();
         for r in refs {
             let (i, pts) = edge_points(self.body, &self.solids, r)?;
@@ -1263,6 +1263,17 @@ pub(super) fn shell(sh: &super::ShellFeature, cur: &[ExactSolid]) -> Result<Vec<
 /// A body operation (`docs/spec/2.14-thicken-offset.md`). `cur`: the solids,
 /// `sheets`: the surface bodies (only these operations see them). Returns
 /// the solids and the new surface bodies; kernel failures are health.
+/// A body operation's result with the untouched surface bodies put back.
+fn with_sheets(
+    r: Result<Vec<ExactSolid>, Fail>,
+    sheets: &[ExactSolid],
+) -> Result<Vec<ExactSolid>, Fail> {
+    r.map(|mut out| {
+        out.extend(sheets.iter().cloned());
+        out
+    })
+}
+
 pub(super) fn body_op(
     f: &super::BodyOpFeature,
     body: &BRep,
@@ -1294,6 +1305,28 @@ pub(super) fn body_op(
                 out.extend(sheets.iter().cloned());
                 out
             }),
+        super::BodyOp::Grill(o) => {
+            with_sheets(super::plastic::grill::grill(o, &f.id, body, sketches, cur), sheets)
+        }
+        super::BodyOp::Boss(o) => with_sheets(
+            super::plastic::boss::boss(o, &f.id, body, works, sketches, cur),
+            sheets,
+        ),
+        super::BodyOp::Rest(o) => with_sheets(
+            super::plastic::rest::rest(o, &f.id, body, works, sketches, cur),
+            sheets,
+        ),
+        super::BodyOp::SnapFit(o) => with_sheets(
+            super::plastic::snap_fit::snap_fit(o, &f.id, body, works, sketches, cur),
+            sheets,
+        ),
+        super::BodyOp::RuleFillet(o) => with_sheets(
+            super::plastic::rule_fillet::rule_fillet(o, &f.id, body, works, cur),
+            sheets,
+        ),
+        super::BodyOp::Lip(o) => {
+            with_sheets(super::plastic::lip::lip(o, &f.id, body, works, cur), sheets)
+        }
         super::BodyOp::Freeform(o) => {
             let pl = super::placement::plane_of(&o.plane, body, works)
                 .map_err(|e| User(format!("the base plane: {e}")))?;
