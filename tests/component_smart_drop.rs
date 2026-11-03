@@ -129,6 +129,13 @@ fn every_family_that_can_be_dropped_finds_its_own_size() {
             Fit::Over { bore } => shaft(bore),
             Fit::Bearing { bore, .. } => shaft(bore),
             Fit::Butt { diameter } => shaft(diameter),
+            Fit::Slot { foot } => Target {
+                hole: false,
+                diameter: foot,
+                thread: None,
+                depth: 100.0,
+                blind: false,
+            },
             Fit::Manual => continue,
         };
         let fits: Vec<Fit> = all
@@ -525,4 +532,134 @@ fn a_flange_lands_on_its_pipe() {
     let t = shaft(114.3);
     assert!(!goes_in(Fit::Butt { diameter: 114.3 }, &t, true));
     assert!(goes_in(Fit::Over { bore: 116.0 }, &t, true));
+}
+
+/// A T-slot nut goes by the slot's floor: the widest foot that fits, a floor at any angle.
+#[test]
+fn a_t_slot_nut_finds_its_slot() {
+    use cadcraft3d::components::fit::{slot_floor, slot_transform};
+    let all = samples::all();
+    let members: Vec<_> = all.iter().filter(|s| s.family == "DIN 508").collect();
+    let fits: Vec<Fit> = members.iter().map(|s| Fit::of(&s.kind)).collect();
+    let floor = |width: f64| Target {
+        hole: false,
+        diameter: width,
+        thread: None,
+        depth: 100.0,
+        blind: false,
+    };
+    let found = |w: f64| choose(&fits, &floor(w)).map(|i| members[i].size.clone());
+    // DIN 508's foot of 15 fits a floor 15 and a little wider, not a narrower one.
+    assert_eq!(found(15.0).as_deref(), Some("M8 x 10"));
+    assert_eq!(found(16.0).as_deref(), Some("M8 x 10"));
+    assert_eq!(found(5.0), None);
+    let (a, b) = (0.5f64.cos(), 0.5f64.sin());
+    let at = |x: f64, y: f64| Point3::new(7.0 + a * x - b * y, -3.0 + b * x + a * y, 4.0);
+    let points = [
+        at(-40.0, -8.0),
+        at(40.0, -8.0),
+        at(40.0, 8.0),
+        at(-40.0, 8.0),
+    ];
+    let f = slot_floor(&points, Vector3::z()).unwrap();
+    assert!(
+        (f.width - 16.0).abs() < 1e-9 && (f.length - 80.0).abs() < 1e-9,
+        "{f:?}"
+    );
+    assert!(
+        (f.middle - Point3::new(7.0, -3.0, 4.0)).norm() < 1e-9,
+        "{f:?}"
+    );
+    assert!(f.along.dot(&Vector3::new(a, b, 0.0)).abs() > 1.0 - 1e-9);
+    // Nearly square: no slot.
+    let sq = [at(-8.0, -8.0), at(8.0, -8.0), at(8.0, 8.0), at(-8.0, 8.0)];
+    assert!(slot_floor(&sq, Vector3::z()).is_none());
+    // Standing on it, X across the slot.
+    let m = slot_transform(f.middle, Vector3::z(), f.across);
+    assert!((m * Vector3::x() - f.across).norm() < 1e-9);
+    assert!((m * Vector3::z() - Vector3::z()).norm() < 1e-9);
+}
+
+/// A real T slot: the floor gives the width and the long wall facing it.
+#[test]
+fn a_slot_is_found_in_a_part() {
+    use cadcraft3d::components::fit::slot_in;
+    use cadcraft3d::kernel::Surface;
+    use cadcraft3d::part::frame::{Loop, draw_loop};
+    use cadcraft3d::part::{
+        ExtentDirection, ExtrudeFeature, OriginPlane, PartDocument, ProfileRef, SketchOptions,
+        SketchPlacement,
+    };
+    let mut p = PartDocument {
+        exact_only: true,
+        ..Default::default()
+    };
+    let opts = SketchOptions {
+        auto_project_origin: false,
+        auto_reference_edges: false,
+        ..Default::default()
+    };
+    let i = p
+        .create_sketch(SketchPlacement::on_origin_plane(OriginPlane::XZ), &opts)
+        .unwrap();
+    let plane = p.sketches[i].sketch.plane.clone();
+    let outline = [
+        (-40.0, 0.0),
+        (40.0, 0.0),
+        (40.0, 30.0),
+        (5.0, 30.0),
+        (5.0, 20.0),
+        (8.0, 20.0),
+        (8.0, 10.0),
+        (-8.0, 10.0),
+        (-8.0, 20.0),
+        (-5.0, 20.0),
+        (-5.0, 30.0),
+        (-40.0, 30.0),
+    ];
+    let pts = outline
+        .iter()
+        .map(|&(x, z)| (plane.project(&Point3::new(x, 0.0, z)), None))
+        .collect();
+    draw_loop(&mut p.sketches[i].sketch, Loop::Path(pts)).unwrap();
+    let r = p.sketches[i].sketch.regions();
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(&r[0], r[0].interior_point())], 200.0);
+    if plane.normal.y < 0.0 {
+        e.direction = ExtentDirection::Flipped;
+    }
+    p.add_extrude(i, e).unwrap();
+    // The floor: the planar face at z = 10 facing up.
+    let (floor, y) = p
+        .body
+        .faces()
+        .find_map(|(_, f)| {
+            let m = f.mesh.as_ref()?;
+            let flat = m.positions.iter().all(|q| (q.z - 10.0).abs() < 1e-6);
+            let plane = matches!(p.body.surface(f.surface), Some(Surface::Plane(_)));
+            (flat && plane).then(|| (f.name.clone().unwrap(), m.positions[0].y))
+        })
+        .expect("a floor");
+    let hint = Point3::new(0.0, y, 10.0);
+    let (f, wall, on, out) =
+        slot_in(&p, &floor, hint, Vector3::z()).unwrap_or_else(|| panic!("no slot in {floor}"));
+    assert!((f.width - 16.0).abs() < 1e-6, "{f:?}");
+    assert!((f.length - 200.0).abs() < 1e-6, "{f:?}");
+    assert!(f.middle.x.abs() < 1e-6, "{f:?}");
+    // The wall stands at +8 or -8 and faces the middle.
+    assert!((on.x.abs() - 8.0).abs() < 1e-6, "{wall}: {on:?}");
+    assert!(out.x * on.x < 0.0, "{wall}: {out:?} at {on:?}");
+    // The top beside the neck is no slot: its long walls face away from it.
+    let top = p
+        .body
+        .faces()
+        .find_map(|(_, f)| {
+            let m = f.mesh.as_ref()?;
+            let on_top = m
+                .positions
+                .iter()
+                .all(|q| (q.z - 30.0).abs() < 1e-6 && q.x > 0.0);
+            on_top.then(|| f.name.clone().unwrap())
+        })
+        .expect("a top");
+    assert!(slot_in(&p, &top, Point3::new(20.0, 50.0, 30.0), Vector3::z()).is_none());
 }

@@ -76,6 +76,49 @@ fn pipe(od: f64, id: f64, length: f64) -> Fallible<PartDocument> {
     Ok(p)
 }
 
+/// A bar with a T slot along Y: floor 16 wide, neck 10, DIN 650 style.
+fn t_slot_bar() -> Fallible<PartDocument> {
+    use cadcraft3d::part::frame::{Loop, draw_loop};
+    let mut p = PartDocument {
+        exact_only: true,
+        ..Default::default()
+    };
+    let i = p.create_sketch(
+        SketchPlacement::on_origin_plane(OriginPlane::XZ),
+        &options(),
+    )?;
+    let outline: Vec<(f64, f64)> = vec![
+        (-40.0, 0.0),
+        (40.0, 0.0),
+        (40.0, 30.0),
+        (5.0, 30.0),
+        (5.0, 20.0),
+        (8.0, 20.0),
+        (8.0, 10.0),
+        (-8.0, 10.0),
+        (-8.0, 20.0),
+        (-5.0, 20.0),
+        (-5.0, 30.0),
+        (-40.0, 30.0),
+    ];
+    let plane = p.sketches[i].sketch.plane.clone();
+    let points = outline
+        .iter()
+        .map(|&(x, z)| (plane.project(&Point3::new(x, 0.0, z)), None))
+        .collect();
+    draw_loop(&mut p.sketches[i].sketch, Loop::Path(points))?;
+    let r = p.sketches[i].sketch.regions();
+    let region = r.first().ok_or("no section")?;
+    let mut e = ExtrudeFeature::new(vec![ProfileRef::of(region, region.interior_point())], 200.0);
+    e.direction = if plane.normal.y < 0.0 {
+        ExtentDirection::Flipped
+    } else {
+        ExtentDirection::Default
+    };
+    p.add_extrude(i, e)?;
+    Ok(p)
+}
+
 /// The circular edge of `radius` at height `z`, as a connection's reference.
 fn rim(p: &PartDocument, radius: f64, z: f64) -> Fallible<EdgeRef> {
     let found = p.body.edges().find_map(|(id, e)| {
@@ -110,6 +153,15 @@ fn pin_block() -> Fallible<PartDocument> {
         name: "Connection1".into(),
         role: ConnectionRole::Into,
         edge: Some(edge),
+        diameter: 9.0,
+        diameter_column: None,
+    });
+    // Its other end, for a part with several connections.
+    let tip = rim(&p, 4.5, 26.0)?;
+    p.connections.push(Connection {
+        name: "Tip".into(),
+        role: ConnectionRole::Into,
+        edge: Some(tip),
         diameter: 9.0,
         diameter_column: None,
     });
@@ -176,12 +228,19 @@ fn main() -> Fallible<()> {
     let plate = project.add_document("Plate", DocumentData::Part(plate()?));
     let tube = project.add_document("Pipe DN100", DocumentData::Part(pipe(114.3, 107.1, 300.0)?));
     project.add_document("Pin Block", DocumentData::Part(pin_block()?));
+    let bar = project.add_document("T Slot Bar", DocumentData::Part(t_slot_bar()?));
     let mut a = AssemblyDocument::default();
     a.place(DocRef::local(plate), "Plate", Transform3::identity(), true);
     a.place(
         DocRef::local(tube),
         "Pipe",
         Transform3::translation(350.0, 60.0, 0.0),
+        true,
+    );
+    a.place(
+        DocRef::local(bar),
+        "Bar",
+        Transform3::translation(100.0, -150.0, 0.0),
         true,
     );
     project.add_document("Cases", DocumentData::Assembly(a));

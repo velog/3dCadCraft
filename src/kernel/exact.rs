@@ -405,6 +405,33 @@ pub fn pipe_tee(radius: Real, bore: Real, c: Real, prefix: &str) -> Result<Exact
     })
 }
 
+/// A ball (`length` 0) or a roller along Z from `at`, a body of its own named `name`; every face
+/// `<name>:Surface`.
+pub fn rolling_element(
+    at: [Real; 3],
+    radius: Real,
+    length: Real,
+    name: &str,
+) -> Result<ExactSolid, String> {
+    let c = sg::Vec3::new(at[0], at[1], at[2]);
+    let body = guarded("rolling element", || {
+        if length > 0.0 {
+            sk::cylinder(c, sg::Vec3::Z, radius, length)
+        } else {
+            sk::sphere(c, radius)
+        }
+    })
+    .map_err(|e| format!("this part cannot be built ({e})"))?;
+    let face_names = vec![Some(format!("{name}:Surface")); body.face_count()];
+    Ok(ExactSolid {
+        name: Some(name.to_owned()),
+        body,
+        face_names,
+        profiles: Vec::new(),
+        sheet: false,
+    })
+}
+
 /// A bend of pipe, face by face (`sk::pipe_bend`): the end on the XY plane, leaving along +Z and
 /// turning towards +X. Faces: `<prefix>:Outside`, `Bore`, `StartEnd`, `FarEnd`.
 pub fn pipe_bend(

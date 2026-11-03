@@ -2534,7 +2534,7 @@ impl CadCraftApp {
     /// The status-bar prompt of the assembly environment.
     pub(super) fn asm_prompt(&self) -> String {
         match self.asm.tool {
-            Some(AsmTool::SmartDrop) => "Smart Drop: pause on a hole's edge or a shaft, click to place the size shown; click a cylinder, then its plane; Esc ends".into(),
+            Some(AsmTool::SmartDrop) => self.drop_prompt(),
             Some(AsmTool::Place(_)) => "Place: click in the view to place an occurrence (on a component or the XY plane); right-click for OK, Place Grounded at Origin or a 90° turn; Esc ends".into(),
             Some(AsmTool::FreeMove) => "Free Move: drag a component in the view plane (grounded ones too); Esc ends".into(),
             Some(AsmTool::FreeRotate(None)) => "Free Rotate: click the component to turn; Esc ends".into(),

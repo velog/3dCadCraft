@@ -390,3 +390,12 @@ fn a_published_family_goes_by_its_connection() {
     assert_eq!(c.locate(&path), Some((f, 1)));
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// What is typed as one phrase comes before parts that only hold the words somewhere.
+#[test]
+fn a_typed_phrase_comes_first() {
+    let c = Catalog::load(&tmp("phrase"));
+    let (f, m) = c.search("De 20 d 2")[0];
+    assert_eq!(c.families[f].name, "Compression Spring");
+    assert_eq!(c.families[f].members[m].size, "De 20 d 2");
+}

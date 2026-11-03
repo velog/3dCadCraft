@@ -38,10 +38,23 @@ struct Spot {
     radius: Real,
     /// What Smart Drop's choice reads.
     target: Target,
+    /// On a slot's floor: its wall, and where the part stands across it.
+    slot: Option<SlotSpot>,
     /// The Hole feature it belongs to and the part: Follow Pattern's reach.
     hole_feature: Option<String>,
     /// Its place among the part's holes (the first of a feature is the source).
     hole_order: Option<usize>,
+}
+
+/// A slot under the cursor.
+#[derive(Clone, Debug, PartialEq)]
+struct SlotSpot {
+    /// A long wall of the slot, facing the slot.
+    wall: GeomRef,
+    /// The wall's outward normal, in the assembly.
+    across: Vector3,
+    /// From that wall to the middle line.
+    half: Real,
 }
 
 /// One part of what a click places.
@@ -84,6 +97,8 @@ pub(super) struct SmartDrop {
     meshes: std::collections::HashMap<(usize, usize), Option<Arc<PickMesh>>>,
     /// A part placed by its own connection, instead of a family.
     single: Option<Single>,
+    /// Each of its connections, in the order of `fits`: the member is the connection.
+    landings: Vec<Single>,
     /// A published family's members: how each lands.
     owned: std::collections::HashMap<usize, Option<Single>>,
 }
@@ -93,6 +108,8 @@ pub(super) struct SmartDrop {
 struct Single {
     component: DocRef,
     name: String,
+    /// The connection's name.
+    connection: String,
     /// The edge it lands with, in the assembly's reference form below.
     edge: crate::part::blend::EdgeRef,
     /// That edge's circle in part coordinates: centre and outward normal.
@@ -120,6 +137,7 @@ impl CadCraftApp {
             cylinder: None,
             meshes: Default::default(),
             single: None,
+            landings: Vec::new(),
             owned: Default::default(),
         });
         self.asm.tool = Some(AsmTool::SmartDrop);
@@ -130,44 +148,58 @@ impl CadCraftApp {
     /// Place of a part that has a connection on an edge: it lands by it. Any
     /// other part stays with the Place tool already started.
     pub(super) fn smart_drop_start_part(&mut self, r: DocRef) {
-        let Some((conn, center, normal)) = self
+        let name = self.asm.place_name.clone();
+        // Every connection on an edge, each with how it fits: the target picks one.
+        let found: Vec<(Fit, Single)> = self
             .with_part(r, |p| {
-                let c = p.connections.iter().find(|c| c.edge.is_some())?;
-                let edge = c.edge.clone()?;
-                match crate::assembly::relation::resolve_in(
-                    p,
-                    &GeomRef::Edge {
-                        occurrence: 0,
-                        sub: Vec::new(),
-                        edge,
-                    },
-                ) {
-                    Ok(Geom::Circle { c: at, n, .. }) => Some((c.clone(), at, n)),
-                    _ => None,
-                }
+                p.connections
+                    .iter()
+                    .filter_map(|c| {
+                        let edge = c.edge.clone()?;
+                        let Ok(Geom::Circle { c: center, n, .. }) =
+                            crate::assembly::relation::resolve_in(
+                                p,
+                                &GeomRef::Edge {
+                                    occurrence: 0,
+                                    sub: Vec::new(),
+                                    edge: edge.clone(),
+                                },
+                            )
+                        else {
+                            return None;
+                        };
+                        let fit = match c.role {
+                            ConnectionRole::Into => Fit::Into {
+                                d: c.diameter,
+                                length: None,
+                                sink: 0.0,
+                            },
+                            ConnectionRole::Over => Fit::Over { bore: c.diameter },
+                        };
+                        Some((
+                            fit,
+                            Single {
+                                component: r,
+                                name: name.clone(),
+                                connection: c.name.clone(),
+                                edge,
+                                center,
+                                normal: n,
+                            },
+                        ))
+                    })
+                    .collect()
             })
-            .flatten()
-        else {
+            .unwrap_or_default();
+        let Some((_, first)) = found.first().cloned() else {
             return;
         };
-        let Some(edge) = conn.edge.clone() else {
-            return;
-        };
-        let fit = match conn.role {
-            ConnectionRole::Into => Fit::Into {
-                d: conn.diameter,
-                length: None,
-                sink: 0.0,
-            },
-            ConnectionRole::Over => Fit::Over {
-                bore: conn.diameter,
-            },
-        };
+        let (fits, landings): (Vec<Fit>, Vec<Single>) = found.into_iter().unzip();
         self.asm.smart = Some(SmartDrop {
             catalog: Catalog::default(),
             family: 0,
             detail: Detail::Standard,
-            fits: vec![fit],
+            fits,
             chosen: None,
             flip: false,
             follow_pattern: false,
@@ -177,13 +209,8 @@ impl CadCraftApp {
             hover: None,
             cylinder: None,
             meshes: Default::default(),
-            single: Some(Single {
-                component: r,
-                name: self.asm.place_name.clone(),
-                edge,
-                center,
-                normal,
-            }),
+            single: Some(first),
+            landings,
             owned: Default::default(),
         });
         self.asm.tool = Some(AsmTool::SmartDrop);
@@ -272,6 +299,7 @@ impl CadCraftApp {
                     },
                     hole_feature: h.feature,
                     hole_order: h.order,
+                    slot: None,
                 })
             }
             (GeomRef::Face { name, hint, .. }, Geom::Cylinder { p, d, r }) => {
@@ -299,6 +327,52 @@ impl CadCraftApp {
                     },
                     hole_feature: h.feature,
                     hole_order: h.order,
+                    slot: None,
+                })
+            }
+            (GeomRef::Face { name, hint, .. }, Geom::Plane { n, .. }) => {
+                let wants = self
+                    .asm
+                    .smart
+                    .as_ref()
+                    .is_some_and(|s| s.fits.iter().any(|f| matches!(f, Fit::Slot { .. })));
+                if !wants {
+                    return None;
+                }
+                let (floor, wall_name, wall_point, wall_normal) = self
+                    .with_part(component, |p| fit::slot_in(p, name, Point3::from(*hint), n))
+                    .flatten()?;
+                // The cursor's place along the slot, on its middle line.
+                let at = Point3::from(*hint);
+                let centre = floor.middle + floor.along * floor.along.dot(&(at - floor.middle));
+                let wall = GeomRef::Face {
+                    occurrence,
+                    sub: sub.clone(),
+                    name: wall_name,
+                    hint: wall_point.coords.into(),
+                };
+                Some(Spot {
+                    key: g.clone(),
+                    axis: g.clone(),
+                    plane: Some(g.clone()),
+                    from_rim: false,
+                    center: place * centre,
+                    normal: place * n,
+                    radius: floor.width / 2.0,
+                    target: Target {
+                        hole: false,
+                        diameter: floor.width,
+                        thread: None,
+                        depth: floor.length,
+                        blind: false,
+                    },
+                    hole_feature: None,
+                    hole_order: None,
+                    slot: Some(SlotSpot {
+                        wall,
+                        across: place * wall_normal,
+                        half: floor.width / 2.0,
+                    }),
                 })
             }
             _ => None,
@@ -595,7 +669,10 @@ impl CadCraftApp {
             }
             for item in items {
                 if let Some(mesh) = self.drop_item_mesh(item.family, item.member) {
-                    let t = fit::seat_transform(spot.center, spot.normal, item.sink, item.flip);
+                    let t = match &spot.slot {
+                        Some(s) => fit::slot_transform(spot.center, spot.normal, s.across),
+                        None => fit::seat_transform(spot.center, spot.normal, item.sink, item.flip),
+                    };
                     super::place::draw_ghost(painter, &self.camera, painter.clip_rect(), &mesh, &t);
                 }
             }
@@ -615,7 +692,12 @@ impl CadCraftApp {
             .as_ref()
             .and_then(|s| {
                 if let Some(x) = &s.single {
-                    return Some(x.name.clone());
+                    return Some(match s.landings.get(member) {
+                        Some(l) if s.landings.len() > 1 => {
+                            format!("{} by {}", x.name, l.connection)
+                        }
+                        _ => x.name.clone(),
+                    });
                 }
                 let f = s.catalog.families.get(s.family)?;
                 let m = f.members.get(member)?;
@@ -639,13 +721,17 @@ impl CadCraftApp {
     fn drop_transform(&self, spot: &Spot, member: usize) -> Transform3 {
         let smart = self.asm.smart.as_ref();
         let own = smart.and_then(|s| {
-            s.single
-                .as_ref()
+            s.landings
+                .get(member)
+                .or(s.single.as_ref())
                 .or_else(|| s.owned.get(&member).and_then(Option::as_ref))
         });
         if let Some(x) = own {
             let flip = smart.is_some_and(|s| s.flip);
             return fit::landing(x.center, x.normal, spot.center, spot.normal, flip);
+        }
+        if let Some(s) = &spot.slot {
+            return fit::slot_transform(spot.center, spot.normal, s.across);
         }
         let sink = self.drop_fit(member).map_or(0.0, drop_sink);
         fit::seat_transform(
@@ -701,7 +787,16 @@ impl CadCraftApp {
         }
         let Some(spot) = g.as_ref().and_then(|g| self.drop_spot(g)) else {
             self.file_status = Some(Err(
-                "Smart Drop: click a circular edge or a cylindrical face".into(),
+                if self
+                    .asm
+                    .smart
+                    .as_ref()
+                    .is_some_and(|s| s.fits.iter().any(|f| matches!(f, Fit::Slot { .. })))
+                {
+                    "Smart Drop: click the floor of a slot".into()
+                } else {
+                    "Smart Drop: click a circular edge or a cylindrical face".into()
+                },
             ));
             return;
         };
@@ -767,6 +862,20 @@ impl CadCraftApp {
     }
 
     /// A part placed by its connection: one Insert of its edge into the rim.
+    /// The status bar's prompt: a T-slot nut asks for a slot's floor.
+    pub(super) fn drop_prompt(&self) -> String {
+        let slot = self
+            .asm
+            .smart
+            .as_ref()
+            .is_some_and(|s| s.fits.iter().any(|f| matches!(f, Fit::Slot { .. })));
+        if slot {
+            "Smart Drop: pause on a slot's floor, click to place the size shown; Esc ends".into()
+        } else {
+            "Smart Drop: pause on a hole's edge or a shaft, click to place the size shown; click a cylinder, then its plane; Esc ends".into()
+        }
+    }
+
     /// Lock Rotation's reference: the target's axis most square to the hole.
     fn drop_lock_axis(&self, spot: &Spot) -> Option<(OriginItem, Vector3)> {
         if !self.asm.smart.as_ref().is_some_and(|s| s.lock_rotation) {
@@ -777,12 +886,16 @@ impl CadCraftApp {
     }
 
     fn drop_commit_single(&mut self, spot: Spot, x: Single) {
-        let fits = self
+        let member = self
             .asm
             .smart
             .as_ref()
-            .is_some_and(|s| fit::choose(&s.fits, &spot.target).is_some());
-        if !fits {
+            .and_then(|s| s.chosen.or_else(|| fit::choose(&s.fits, &spot.target)));
+        // Of a part's own connections, the one the target takes; a published member has one.
+        let x = member
+            .and_then(|m| self.asm.smart.as_ref()?.landings.get(m).cloned())
+            .unwrap_or(x);
+        if member.is_none() {
             self.file_status = Some(Err(format!(
                 "Place: its connection does not fit {:.2} mm",
                 2.0 * spot.radius
@@ -793,7 +906,7 @@ impl CadCraftApp {
             self.file_status = Some(Err("Place: click a circular edge".into()));
             return;
         }
-        let t = self.drop_transform(&spot, 0);
+        let t = self.drop_transform(&spot, member.unwrap_or(0));
         let (flip, multiple) = self
             .asm
             .smart
@@ -969,7 +1082,10 @@ impl CadCraftApp {
         let res = self.asm_try(label, |a| {
             for (spot, axis_ref) in spots.iter().zip(&reference) {
                 for (item, (r, name)) in items.iter().zip(&links) {
-                    let t = fit::seat_transform(spot.center, spot.normal, item.sink, item.flip);
+                    let t = match &spot.slot {
+                        Some(s) => fit::slot_transform(spot.center, spot.normal, s.across),
+                        None => fit::seat_transform(spot.center, spot.normal, item.sink, item.flip),
+                    };
                     let id = a.place(*r, name, t, false);
                     placed.push(id);
                     let origin = |item: OriginItem| GeomRef::Origin {
@@ -977,11 +1093,22 @@ impl CadCraftApp {
                         sub: Vec::new(),
                         item,
                     };
-                    a.add_constraint(Constraint::new(
-                        ConstraintKind::Mate,
-                        spot.axis.clone(),
-                        origin(OriginItem::ZAxis),
-                    ));
+                    // On a slot's floor it stays free to slide along the slot.
+                    if let Some(s) = &spot.slot {
+                        let mut c = Constraint::new(
+                            ConstraintKind::Flush,
+                            s.wall.clone(),
+                            origin(OriginItem::YzPlane),
+                        );
+                        c.value = s.half;
+                        a.add_constraint(c);
+                    } else {
+                        a.add_constraint(Constraint::new(
+                            ConstraintKind::Mate,
+                            spot.axis.clone(),
+                            origin(OriginItem::ZAxis),
+                        ));
+                    }
                     if let Some(plane) = &spot.plane {
                         let mut c = Constraint::new(
                             if item.flip {
@@ -1149,7 +1276,39 @@ impl CadCraftApp {
             .place("smart_drop", ctx.content_rect(), false, w)
             .show(ctx, |ui| {
                 if let Some(x) = &s.single {
-                    ui.label(format!("{}: lands by its connection", x.name));
+                    if s.landings.len() > 1 {
+                        ui.label(format!("{}: lands by a connection", x.name));
+                        let shown = s
+                            .chosen
+                            .and_then(|m| s.landings.get(m))
+                            .map_or("The one that fits", |l| l.connection.as_str())
+                            .to_owned();
+                        ui.horizontal(|ui| {
+                            ui.label("Connection");
+                            egui::ComboBox::from_id_salt("smart_drop_connection")
+                                .selected_text(shown)
+                                .width(170.0)
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(s.chosen.is_none(), "The one that fits")
+                                        .clicked()
+                                    {
+                                        s.chosen = None;
+                                        s.hover = None;
+                                    }
+                                    let names: Vec<String> =
+                                        s.landings.iter().map(|l| l.connection.clone()).collect();
+                                    for (i, n) in names.iter().enumerate() {
+                                        if ui.selectable_label(s.chosen == Some(i), n).clicked() {
+                                            s.chosen = Some(i);
+                                            s.hover = None;
+                                        }
+                                    }
+                                });
+                        });
+                    } else {
+                        ui.label(format!("{}: lands by its connection", x.name));
+                    }
                 } else if let Some(f) = &family {
                     ui.label(format!("{}: {}", f.name, f.category.replace('/', " › ")));
                     let shown = s
@@ -1571,6 +1730,7 @@ fn own_landing(p: &crate::part::PartDocument, name: &str) -> Option<Single> {
         // The link is made when it is placed.
         component: DocRef::local(crate::document::DocumentId(uuid::Uuid::nil())),
         name: name.to_owned(),
+        connection: c.name.clone(),
         edge,
         center,
         normal: n,

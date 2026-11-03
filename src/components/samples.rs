@@ -13,6 +13,7 @@ use crate::document::iprops::IProperties;
 use crate::kernel::{Point3, Real, Surface};
 use crate::part::axial::{
     AxialBend, AxialCone, AxialHole, AxialOp, AxialRun, AxialSeg, AxialShape, AxialTee,
+    RollingElement,
 };
 use crate::part::frame::{Library, Loop, PrismOp, draw_loop, hidden};
 use crate::part::hole::{ThreadFeature, ThreadSpec};
@@ -23,6 +24,8 @@ use crate::part::{
     PartDocument, PartError, PlaneRef, ProfileRef, RevolveFeature, SketchOptions, SketchPlacement,
 };
 use crate::sketch::Point2;
+
+use super::icon::BearingStyle;
 
 /// What a sample is, with its numbers.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -239,6 +242,10 @@ const SHAPE_LENGTH: Real = 1000.0;
 
 /// The family tables built into the program, by their id in `families.csv`.
 const TABLES: &[(&str, &str)] = &[
+    (
+        "iso_3601_1",
+        include_str!("../../data/components/families/iso_3601_1.csv"),
+    ),
     (
         "din_32501",
         include_str!("../../data/components/families/din_32501.csv"),
@@ -1305,6 +1312,31 @@ impl Sample {
         )
     }
 
+    /// How its rolling elements sit, for a bearing with some.
+    pub fn bearing_style(&self) -> Option<BearingStyle> {
+        matches!(self.kind, Kind::Bearing(..))
+            .then(|| {
+                self.category
+                    .rsplit('/')
+                    .next()
+                    .and_then(BearingStyle::of_type)
+            })
+            .flatten()
+    }
+
+    /// The same member as its picture shows it: long things cut short, or the family's picture is a
+    /// line (a 2 m rod, a 1 m section).
+    pub fn for_picture(&self) -> Sample {
+        let mut s = self.clone();
+        s.kind = match self.kind {
+            Kind::Rod(d, l) => Kind::Rod(d, l.min(8.0 * d)),
+            Kind::Block(a, b, l) => Kind::Block(a, b, l.min(3.0 * a.max(b))),
+            Kind::Shape(f, size, _) => Kind::Shape(f, size, 150.0),
+            k => k,
+        };
+        s
+    }
+
     /// Part number = designation; the BOM and drawings read these.
     pub fn properties(&self) -> IProperties {
         let mut p = match self.kind {
@@ -1392,7 +1424,9 @@ impl Sample {
                 full_hex_bolt(d, l, s, k, Some(part_thread(d, l)))
             }
             (Detail::Full, Kind::HexNut(d, s, m)) => full_hex_nut(d, s, m),
-            (Detail::Full, Kind::Bearing(d, od, b)) => full_bearing(d, od, b),
+            (Detail::Full, Kind::Bearing(d, od, b)) => {
+                full_bearing(d, od, b, self.bearing_style().unwrap_or(BearingStyle::Ball))
+            }
             (_, kind) => standard_part(kind),
         }?;
         part.set_material(Some(self.material()), crate::materials::with_user())
@@ -1409,6 +1443,7 @@ impl Sample {
             super::fit::Fit::Butt { diameter } => part
                 .connections
                 .push(Connection::seat(ConnectionRole::Over, diameter)),
+            super::fit::Fit::Slot { .. } => {}
             super::fit::Fit::Manual => {}
         }
         Ok(part)
@@ -1621,33 +1656,150 @@ fn full_hex_nut(d: Real, s: Real, m: Real) -> Result<PartDocument, PartError> {
 
 /// Two rings with a gap and the row of rolling elements between them, as three
 /// bodies; the row is one ring (separate balls add nothing seen from outside).
-fn full_bearing(d: Real, od: Real, b: Real) -> Result<PartDocument, PartError> {
+fn full_bearing(
+    d: Real,
+    od: Real,
+    b: Real,
+    style: BearingStyle,
+) -> Result<PartDocument, PartError> {
     let (r0, r1) = (d / 2.0, od / 2.0);
-    let wall = (r1 - r0) * 0.28;
-    let c = (r1 - r0) / 40.0;
-    let mut part = blank();
-    let section = |a: Real, e: Real| -> Vec<(Real, Real)> {
-        vec![
-            (a + c, 0.0),
-            (e - c, 0.0),
-            (e, c),
-            (e, b - c),
-            (e - c, b),
-            (a + c, b),
-            (a, b - c),
-            (a, c),
-        ]
-    };
-    revolve(&mut part, &section(r0, r0 + wall), Operation::NewSolid)?;
-    revolve(&mut part, &section(r1 - wall, r1), Operation::NewSolid)?;
+    let t = r1 - r0;
     let mid = (r0 + r1) / 2.0;
-    let radius = ((r1 - r0) / 2.0 - wall) * 0.95;
-    revolve_loop(
-        &mut part,
-        Loop::Circle(Point2::new(mid, b / 2.0), radius.min(b * 0.45), false),
-        Operation::NewSolid,
-    )?;
+    let mut part = blank();
+    let mut rolling = Vec::new();
+    // A row of elements round the pitch circle, as many as fit with a gap; a second row is staggered.
+    let mut row = |z: Real, radius: Real, length: Real, stagger: bool| {
+        let pitch = 2.0 * radius * 1.25;
+        let count = ((std::f64::consts::TAU * mid / pitch).floor() as u32).max(3);
+        let step = std::f64::consts::TAU / Real::from(count);
+        let start = if stagger { step / 2.0 } else { 0.0 };
+        for k in 0..count {
+            let a = start + Real::from(k) * step;
+            rolling.push(RollingElement {
+                at: [mid * a.cos(), mid * a.sin(), z],
+                radius,
+                length,
+            });
+        }
+    };
+    match style {
+        BearingStyle::Ball | BearingStyle::TwoBalls => {
+            let rows = style.rows();
+            let rb = if rows == 2 {
+                (t * 0.21).min(b * 0.2)
+            } else {
+                (t * 0.3).min(b * 0.42)
+            };
+            let wall = (t / 2.0 - 0.75 * rb).max(t * 0.12);
+            let heights = super::icon::row_heights(rows, b);
+            race(&mut part, r0, r0 + wall, 0.0, b, &heights, mid, rb)?;
+            race(&mut part, r1 - wall, r1, 0.0, b, &heights, mid, rb)?;
+            for (k, &z) in heights.iter().enumerate() {
+                row(z, rb, 0.0, k == 1);
+            }
+        }
+        BearingStyle::Roller | BearingStyle::Needle | BearingStyle::Tapered => {
+            let wall = if style == BearingStyle::Needle {
+                t * 0.18
+            } else {
+                t * 0.3
+            };
+            race(&mut part, r0, r0 + wall, 0.0, b, &[], mid, 0.0)?;
+            race(&mut part, r1 - wall, r1, 0.0, b, &[], mid, 0.0)?;
+            let rr = (t / 2.0 - wall) * 0.98;
+            row(b * 0.12, rr, b * 0.76, false);
+        }
+        BearingStyle::TwoBarrels => {
+            let wall = t * 0.22;
+            race(&mut part, r0, r0 + wall, 0.0, b, &[], mid, 0.0)?;
+            race(&mut part, r1 - wall, r1, 0.0, b, &[], mid, 0.0)?;
+            let rr = (t / 2.0 - wall) * 0.98;
+            row(b * 0.06, rr, b * 0.41, false);
+            row(b * 0.53, rr, b * 0.41, true);
+        }
+        BearingStyle::Thrust => {
+            let washer = b * 0.3;
+            race(&mut part, r0, r1, 0.0, washer, &[], mid, 0.0)?;
+            race(&mut part, r0, r1, b - washer, b, &[], mid, 0.0)?;
+            row(b / 2.0, (b / 2.0 - washer).min(t * 0.4) * 0.98, 0.0, false);
+        }
+    }
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        rolling,
+        ..AxialOp::default()
+    })))?;
     Ok(part)
+}
+
+/// A bearing ring from `z0` to `z1`, built directly, a groove for balls of radius `rb` at each height:
+/// in its outside for the inner ring (below the pitch radius), in its bore for the outer.
+#[allow(clippy::too_many_arguments)]
+fn race(
+    part: &mut PartDocument,
+    r_in: Real,
+    r_out: Real,
+    z0: Real,
+    z1: Real,
+    grooves: &[Real],
+    mid: Real,
+    rb: Real,
+) -> Result<(), PartError> {
+    let c = (r_out - r_in) * 0.06;
+    let rg = rb * 1.04;
+    // A surface at radius `at`, its grooves about the pitch circle, from one end to the other.
+    let wall = |at: Real, from: Real, to: Real, inward: bool, role: &str| -> Vec<AxialSeg> {
+        let up = to > from;
+        let mut order: Vec<Real> = grooves.to_vec();
+        if !up {
+            order.reverse();
+        }
+        let mut segs = Vec::new();
+        let gap = (at - mid).abs();
+        for (k, &z) in order.iter().enumerate() {
+            let half = (rg * rg - gap * gap).max(0.0).sqrt();
+            if half <= 0.0 {
+                continue;
+            }
+            let (near, far) = if up {
+                (z - half, z + half)
+            } else {
+                (z + half, z - half)
+            };
+            segs.push(line_to(at, near, role));
+            segs.push(AxialSeg {
+                to: [at, far],
+                arc: Some(([mid, z], up == inward)),
+                role: format!("Groove{}", k + 1),
+            });
+        }
+        segs.push(line_to(at, to, role));
+        segs
+    };
+    // The ring's outside going up, the groove (if the pitch circle is outside this ring) dipping in.
+    let mut outer = vec![line_to(r_out, z0 + c, "BottomChamfer")];
+    let ring_inner = mid >= r_out;
+    outer.extend(if ring_inner {
+        wall(r_out, z0 + c, z1 - c, false, "Outside")
+    } else {
+        vec![line_to(r_out, z1 - c, "Outside")]
+    });
+    outer.push(line_to(r_out - c, z1, "TopChamfer"));
+    let mut inner = vec![line_to(r_in, z1 - c, "TopInner")];
+    inner.extend(if !ring_inner && mid > r_in {
+        wall(r_in, z1 - c, z0 + c, true, "Bore")
+    } else {
+        vec![line_to(r_in, z0 + c, "Bore")]
+    });
+    inner.push(line_to(r_in + c, z0, "BottomInner"));
+    part.add_body_op(BodyOpFeature::new(BodyOp::Axial(AxialOp {
+        runs: vec![
+            chain([r_out - c, z0], outer, Some("Top")),
+            chain([r_in + c, z1], inner, Some("Bottom")),
+        ],
+        closed: true,
+        ..AxialOp::default()
+    })))?;
+    Ok(())
 }
 
 fn bad(msg: &str) -> PartError {
@@ -1810,6 +1962,7 @@ fn axial_part(
         holes: Vec::new(),
         tee: None,
         bend: None,
+        rolling: Vec::new(),
     })))?;
     Ok(part)
 }
@@ -2542,6 +2695,7 @@ fn pipe_tee(d: Real, t: Real, c: Real) -> Result<PartDocument, PartError> {
             centre: c,
         }),
         bend: None,
+        rolling: Vec::new(),
     })))?;
     Ok(part)
 }
@@ -2696,6 +2850,7 @@ fn flange(f: Flange, with_holes: bool) -> Result<PartDocument, PartError> {
         holes,
         tee: None,
         bend: None,
+        rolling: Vec::new(),
     })))?;
     Ok(part)
 }

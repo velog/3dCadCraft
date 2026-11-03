@@ -326,7 +326,7 @@ fn three_levels_of_one_bolt() {
 fn a_full_bearing_has_rings_and_rolling_elements() {
     let s = find("6204");
     let full = s.part_at(Detail::Full).unwrap();
-    assert_eq!(full.body.solids().count(), 3);
+    assert!(full.body.solids().count() > 3, "rings and every ball");
     let standard = s.part_at(Detail::Standard).unwrap();
     assert_eq!(standard.body.solids().count(), 1);
     assert!(volume(&full) < volume(&standard));
@@ -640,4 +640,41 @@ fn a_gear_has_its_teeth() {
         "{} against {want}",
         volume(&p)
     );
+}
+
+/// A bearing's Full level holds every ball as a body, two rows where it has two; its picture is
+/// its section, drawn on a clear background.
+#[test]
+fn a_full_bearing_has_its_balls_and_its_picture_its_section() {
+    use cadcraft3d::components::icon::{BearingStyle, bearing_section};
+    let of = |family: &str, size: &str| {
+        all()
+            .into_iter()
+            .find(|s| s.family == family && s.size == size)
+            .unwrap_or_else(|| panic!("{family} {size}"))
+    };
+    let one = of("Series 62", "6204");
+    assert_eq!(one.bearing_style(), Some(BearingStyle::Ball));
+    let p = one.part_at(Detail::Full).unwrap();
+    assert!(
+        p.exact && p.feature_health.is_empty(),
+        "{:?}",
+        p.feature_health
+    );
+    let bodies = p.body.solids().count();
+    assert!((8..=22).contains(&bodies), "{bodies} bodies");
+
+    let two = of("Series 12", "1204");
+    assert_eq!(two.bearing_style().map(BearingStyle::rows), Some(2));
+    let q = two.part_at(Detail::Full).unwrap();
+    assert!(q.feature_health.is_empty(), "{:?}", q.feature_health);
+    let (_, a) = (one.clone(), bodies - 2);
+    assert!(q.body.solids().count() - 2 > a, "two rows hold more balls");
+
+    let pic = bearing_section(BearingStyle::TwoBalls, 20.0, 47.0, 14.0, 56);
+    assert_eq!(pic.len(), 56 * 56 * 4);
+    let drawn = pic.chunks(4).filter(|c| c[3] > 200).count();
+    assert!(drawn > 300, "{drawn} pixels");
+    // The corner stays clear.
+    assert_eq!(pic[3], 0);
 }

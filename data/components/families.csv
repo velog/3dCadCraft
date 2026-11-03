@@ -161,3 +161,4 @@ tube_cap,Other Parts,Caps,Tube Cap,"Tube end cap",families/tube_cap.csv,6,,Other
 bridge_handle,Other Parts,Handles,Bridge Handle,"Bridge handle",families/bridge_handle.csv,4,,Other
 level_foot,Other Parts,Feet,Levelling Foot,"Levelling foot",families/level_foot.csv,5,,Other
 butt_hinge,Other Parts,Hinges,Butt Hinge,"Butt hinge envelope",families/butt_hinge.csv,5,,Other
+iso_3601_1,Shaft Parts/Sealing,O-Ring,ISO 3601,"O-ring, sections 1.8 to 7",families/iso_3601_1.csv,344,Prepol size list (rows it prints readably),ISO

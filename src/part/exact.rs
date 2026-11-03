@@ -1307,23 +1307,49 @@ pub(super) fn body_op(
             Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
         }
         super::BodyOp::Axial(o) => {
-            let made = match (o.tee, o.bend) {
-                (Some(t), _) => {
-                    exact::pipe_tee(t.outside / 2.0, t.outside / 2.0 - t.wall, t.centre, &f.id)
-                }
-                (None, Some(b)) => exact::pipe_bend(
-                    b.outside / 2.0,
-                    b.outside / 2.0 - b.wall,
-                    b.radius,
-                    b.angle,
-                    &f.id,
-                ),
-                (None, None) => {
-                    exact::axial_stack(&o.runs, o.first_cap.as_deref(), o.closed, &o.holes, &f.id)
-                }
+            let made = if o.runs.is_empty() && o.tee.is_none() && o.bend.is_none() {
+                None
+            } else {
+                Some(
+                    match (o.tee, o.bend) {
+                        (Some(t), _) => exact::pipe_tee(
+                            t.outside / 2.0,
+                            t.outside / 2.0 - t.wall,
+                            t.centre,
+                            &f.id,
+                        ),
+                        (None, Some(b)) => exact::pipe_bend(
+                            b.outside / 2.0,
+                            b.outside / 2.0 - b.wall,
+                            b.radius,
+                            b.angle,
+                            &f.id,
+                        ),
+                        (None, None) => exact::axial_stack(
+                            &o.runs,
+                            o.first_cap.as_deref(),
+                            o.closed,
+                            &o.holes,
+                            &f.id,
+                        ),
+                    }
+                    .map_err(Kernel)?,
+                )
+            };
+            let mut out: Vec<ExactSolid> = cur.iter().chain(sheets).cloned().collect();
+            out.extend(made);
+            for (k, e) in o.rolling.iter().enumerate() {
+                out.push(
+                    exact::rolling_element(
+                        e.at,
+                        e.radius,
+                        e.length,
+                        &format!("{}#{}", f.id, k + 1),
+                    )
+                    .map_err(Kernel)?,
+                );
             }
-            .map_err(Kernel)?;
-            Ok(cur.iter().chain(sheets).cloned().chain([made]).collect())
+            Ok(out)
         }
         super::BodyOp::Prism(o) => {
             let (loops, start, end) = o.sections().map_err(User)?;

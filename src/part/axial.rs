@@ -30,6 +30,26 @@ pub struct AxialOp {
     /// A bend of pipe instead of the runs, likewise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bend: Option<AxialBend>,
+    /// Loose balls and rollers, each a body of its own beside what the runs build (a bearing's
+    /// rolling elements at the Full level).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rolling: Vec<RollingElement>,
+}
+
+/// A ball, or a roller along Z.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RollingElement {
+    /// A ball's centre, or the middle of a roller's lower end.
+    pub at: [f64; 3],
+    /// Its radius.
+    pub radius: f64,
+    /// A roller's length; 0: a ball.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub length: f64,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 /// A bend of pipe.
@@ -78,7 +98,11 @@ impl AxialOp {
             };
         }
         if self.runs.is_empty() {
-            return Err("the part has no shape".into());
+            return if self.rolling.is_empty() {
+                Err("the part has no shape".into())
+            } else {
+                Ok(())
+            };
         }
         let n = self.runs.len();
         for (k, r) in self.runs.iter().enumerate() {

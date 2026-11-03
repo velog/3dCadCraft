@@ -7,6 +7,7 @@
 
 pub mod catalog;
 pub mod fit;
+pub mod icon;
 pub mod samples;
 
 use std::path::{Path, PathBuf};

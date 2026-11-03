@@ -23,6 +23,7 @@ typed, which a source contradicts, is simply corrected.
 | [Fabory](https://www.fabory.com/) product pages | two DIN 179 bushes |
 | [PGB Europe](https://www.pgb-europe.com/) product pages | DIN 6334 M4, M5 |
 | [RoyMech](https://roymech.org/Useful_Tables/Flanges/BSEN1092_16_Dimensions.html), [wermac.org](https://www.wermac.org/din/dim_wn_flg_pn16.html) | EN 1092-1 PN 16 weld neck and plate flanges, bolting |
+| [Prepol ISO 3601 size list](https://www.prepol.com/documents/o-ring-sizes-iso3601) | ISO 3601 O-rings: inside diameters per section; which letter is which section (A 1.8, B 2.65, C 3.55, D 5.3, E 7) follows the codes' ranges and the standard's sections |
 | [wermac.org fittings](https://www.wermac.org/fittings/submenu_fittings.html), [pipes](https://www.wermac.org/pipes/dim_pipes.html) | ASME B16.9 elbows, tees, reducers, caps; STD walls of ASME B36.10 |
 | [projectmaterials](https://blog.projectmaterials.com/flanges/flange-dimensions/en-1092-blind-flange-sizes), [HT Pipe](https://www.htpipe.com/tools/size-chart/en-1092-1-blind-flange-dimensions.html) | EN 1092-1 PN 16 blind flanges |
 
@@ -68,7 +69,9 @@ DIN 315, 444, 478 and ISO 7379 give limits: the tables hold the largest value of
 
 Compared only in part: HK2516 and HK3016 (the name gives bore and width, not the outside diameter), DIN 179 (sizes 6 and 12), SAE (1/4, 1/2) and USS (1/2) washers; ISO 2339, DIN 975 and 976, UNC rods: diameters and pitches, not lengths. ASME B18.2.2 lists no No.10 nut.
 
-**Not compared:** Metric O-Ring, ISO 3547, DIN 3760, DIN 5419, Ring Magnet, ANSI B17.1: no readable public table was found. Typed for trying out their shapes and placement, not compared with anything yet (added 2026-11-03): Threaded Coupling 3000, Clinch Nut, Clinch Stud, Hex Standoff, Cage Nut, Ball Valve, Sprocket B Series, V-Belt Pulley, Compression Spring, Extension Spring, Profile Rail, Profile Carriage, Hose Clamp, Tube Cap, Bridge Handle, Levelling Foot, Butt Hinge. Each table's first line says so.
+**Not compared (2026-11-03, searched again):** the standards' tables for ISO 3547, DIN 3760, DIN 5419 and ANSI B17.1 are sold, not published, and the free pages found show single rows or none; no readable table for ring magnets either. Metric O-Ring stays beside ISO 3601 as common trade sizes.
+
+Not compared: Metric O-Ring, ISO 3547, DIN 3760, DIN 5419, Ring Magnet, ANSI B17.1: no readable public table was found. Typed for trying out their shapes and placement, not compared with anything yet (added 2026-11-03): Threaded Coupling 3000, Clinch Nut, Clinch Stud, Hex Standoff, Cage Nut, Ball Valve, Sprocket B Series, V-Belt Pulley, Compression Spring, Extension Spring, Profile Rail, Profile Carriage, Hose Clamp, Tube Cap, Bridge Handle, Levelling Foot, Butt Hinge. Each table's first line says so.
 
 Bearing boundary dimensions follow ISO 15, so makers agree on them.
 

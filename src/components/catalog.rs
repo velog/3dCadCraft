@@ -231,16 +231,22 @@ impl Catalog {
     /// any case. A family's name matching lists all its members.
     pub fn search(&self, text: &str) -> Vec<(usize, usize)> {
         let words: Vec<String> = text.split_whitespace().map(str::to_lowercase).collect();
-        let mut out = Vec::new();
+        let phrase = words.join(" ");
+        let (mut exact, mut out) = (Vec::new(), Vec::new());
         for (i, f) in self.families.iter().enumerate() {
             for (k, m) in f.members.iter().enumerate() {
                 let hay = format!("{} {} {}", f.category, f.name, m.size).to_lowercase();
-                if words.iter().all(|w| hay.contains(w)) {
+                if hay.contains(&phrase) {
+                    exact.push((i, k));
+                } else if words.iter().all(|w| hay.contains(w)) {
                     out.push((i, k));
                 }
             }
         }
-        out
+        // What was typed as one phrase comes first: `De 20 d 2` is a spring, not every part
+        // whose name holds those letters.
+        exact.append(&mut out);
+        exact
     }
 
     /// The washers and nut of a bolt of family `family` with diameter `d`
@@ -345,7 +351,8 @@ impl Catalog {
         let f = self.families.get(family).ok_or("no such family")?;
         let m = f.members.first().ok_or("the family has no members")?;
         let identity = match (&m.source, &f.file) {
-            (Source::Sample(s), _) => format!("{}|{:?}", s.designation(), s.kind),
+            // `section` in the name: the pictures saved before bearings drew their section.
+            (Source::Sample(s), _) => format!("{}|{:?}|section", s.designation(), s.kind),
             (Source::Row(_), Some(file)) => {
                 let time = std::fs::metadata(file)
                     .and_then(|d| d.modified())
@@ -367,8 +374,23 @@ impl Catalog {
         {
             return Ok(rgba);
         }
+        if let Source::Sample(s) = &m.source
+            && let (Some(style), samples::Kind::Bearing(d, od, b)) = (s.bearing_style(), s.kind)
+        {
+            let rgba = super::icon::bearing_section(style, d, od, b, THUMBNAIL);
+            if let Some(png) = crate::part::thumbnail::encode_png(&rgba, THUMBNAIL, THUMBNAIL) {
+                if let Some(dir) = path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(&path, png);
+            }
+            return Ok(rgba);
+        }
         let part = match (&m.source, &f.file) {
-            (Source::Sample(s), _) => s.part_at(Detail::Standard).map_err(|e| e.to_string())?,
+            (Source::Sample(s), _) => s
+                .for_picture()
+                .part_at(Detail::Standard)
+                .map_err(|e| e.to_string())?,
             (Source::Row(r), Some(file)) => {
                 let project = Project::load(file).map_err(|e| e.to_string())?;
                 let (template, props) = first_part(&project).ok_or("the file holds no part")?;
