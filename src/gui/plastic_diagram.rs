@@ -726,7 +726,7 @@ pub(super) fn show(d: &mut PartDialog, ui: &mut egui::Ui) {
     let painter = ui.painter_at(rect);
     let k = super::theme::tokens();
     // What the command makes: the colour of its preview in the view.
-    let made = super::theme::canvas().command_preview;
+    let made = super::theme::canvas().highlight;
     painter.rect_filled(rect, 3.0, k.field);
     // To scale: the whole section in the room the dimensions leave.
     let all = pic.old.iter().chain(&pic.new).flatten().copied().chain(

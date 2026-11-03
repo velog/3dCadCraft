@@ -7477,7 +7477,8 @@ impl CadCraftApp {
                 None
             };
             if let Some(Ok(edges)) = preview {
-                let stroke = egui::Stroke::new(2.0, theme::canvas().command_preview);
+                // The scheme's highlight: the blue preview colour is the colour of the first selector's picks.
+                let stroke = egui::Stroke::new(2.0, theme::canvas().highlight);
                 for e in edges {
                     let pts: Vec<_> = e
                         .iter()
