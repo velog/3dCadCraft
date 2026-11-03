@@ -1,4 +1,4 @@
-# DIN 179: Drill bush without collar. Nominal values in mm, typed for this library; not yet compared with a source.
+# DIN 179: Drill bush without collar. Nominal values in mm, typed for this library; compared with Fabory listings (6; 12 only).
 size,d,D,lengths
 3,3,7,9;12;16
 4,4,8,9;12;16

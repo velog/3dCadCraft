@@ -6,81 +6,81 @@ iso_4017,Fasteners/Bolts,Hex Head,ISO 4017,"Hexagon head screw, thread to the he
 iso_4014,Fasteners/Bolts,Hex Head,ISO 4014,"Hexagon head bolt, partly threaded",families/iso_4014.csv,13,wermac.org,ISO
 iso_4762,Fasteners/Bolts,Socket Head,ISO 4762,Hexagon socket head cap screw,families/iso_4762.csv,11,fasten.it,ISO
 iso_10642,Fasteners/Bolts,Countersunk,ISO 10642,Hexagon socket countersunk head screw,families/iso_10642.csv,7,fasten.it,ISO
-iso_7380_1,Fasteners/Bolts,Button Head,ISO 7380-1,Hexagon socket button head screw,families/iso_7380_1.csv,7,,ISO
-iso_4026,Fasteners/Set Screws,Flat Point,ISO 4026,"Hexagon socket set screw, flat point",families/iso_4026.csv,7,,ISO
-iso_4027,Fasteners/Set Screws,Cone Point,ISO 4027,"Hexagon socket set screw, cone point",families/iso_4027.csv,7,,ISO
-iso_4029,Fasteners/Set Screws,Cup Point,ISO 4029,"Hexagon socket set screw, cup point",families/iso_4029.csv,7,,ISO
-iso_4028,Fasteners/Set Screws,Dog Point,ISO 4028,"Hexagon socket set screw, dog point",families/iso_4028.csv,7,,ISO
-din_976,Fasteners/Studs,Threaded Rod,DIN 976,Threaded rod,families/din_976.csv,10,,DIN
-iso_4032,Fasteners/Nuts,Hex,ISO 4032,"Hexagon nut, style 1",families/iso_4032.csv,13,fasten.it; Wurth (M6 unresolved),ISO
+iso_7380_1,Fasteners/Bolts,Button Head,ISO 7380-1,Hexagon socket button head screw,families/iso_7380_1.csv,7,fasten.it,ISO
+iso_4026,Fasteners/Set Screws,Flat Point,ISO 4026,"Hexagon socket set screw, flat point",families/iso_4026.csv,7,fasten.it,ISO
+iso_4027,Fasteners/Set Screws,Cone Point,ISO 4027,"Hexagon socket set screw, cone point",families/iso_4027.csv,7,fasten.it,ISO
+iso_4029,Fasteners/Set Screws,Cup Point,ISO 4029,"Hexagon socket set screw, cup point",families/iso_4029.csv,7,fasten.it,ISO
+iso_4028,Fasteners/Set Screws,Dog Point,ISO 4028,"Hexagon socket set screw, dog point",families/iso_4028.csv,7,fasten.it,ISO
+din_976,Fasteners/Studs,Threaded Rod,DIN 976,Threaded rod,families/din_976.csv,10,fasten.it (pitches),DIN
+iso_4032,Fasteners/Nuts,Hex,ISO 4032,"Hexagon nut, style 1",families/iso_4032.csv,15,fasten.it; Wurth (M6 unresolved),ISO
 iso_4035,Fasteners/Nuts,Hex Thin,ISO 4035,Hexagon thin nut,families/iso_4035.csv,10,fasten.it,ISO
 din_985,Fasteners/Nuts,Prevailing Torque,DIN 985,"Hexagon lock nut with a polymer insert, thin",families/din_985.csv,10,fasten.it,DIN
 iso_7089,Fasteners/Washers,Plain,ISO 7089,"Plain washer, normal series",families/iso_7089.csv,13,fasten.it,ISO
-iso_7093,Fasteners/Washers,Large,ISO 7093-1,"Plain washer, large series",families/iso_7093.csv,9,,ISO
+iso_7093,Fasteners/Washers,Large,ISO 7093-1,"Plain washer, large series",families/iso_7093.csv,11,fasten.it; DIN 9021 (both kept),ISO
 din_127,Fasteners/Washers,Spring,DIN 127 B,Spring lock washer,families/din_127.csv,8,fasten.it,DIN
-iso_2338,Fasteners/Pins,Cylindrical,ISO 2338,"Parallel pin, unhardened",families/iso_2338.csv,8,,ISO
-iso_8734,Fasteners/Pins,Cylindrical,ISO 8734,"Parallel pin, hardened",families/iso_8734.csv,8,,ISO
-iso_2339,Fasteners/Pins,Taper,ISO 2339,Taper pin,families/iso_2339.csv,8,,ISO
-din_660,Fasteners/Rivets,Round Head,DIN 660,Round head rivet,families/din_660.csv,5,,DIN
+iso_2338,Fasteners/Pins,Cylindrical,ISO 2338,"Parallel pin, unhardened",families/iso_2338.csv,8,fasten.it,ISO
+iso_8734,Fasteners/Pins,Cylindrical,ISO 8734,"Parallel pin, hardened",families/iso_8734.csv,8,fasten.it,ISO
+iso_2339,Fasteners/Pins,Taper,ISO 2339,Taper pin,families/iso_2339.csv,8,fasten.it (diameters),ISO
+din_660,Fasteners/Rivets,Round Head,DIN 660,Round head rivet,families/din_660.csv,5,fasten.it,DIN
 bearing_60,Shaft Parts/Bearings,Deep Groove Ball,Series 60,"Deep groove ball bearing, extra light",families/bearing_60.csv,11,GMN,ISO
 bearing_62,Shaft Parts/Bearings,Deep Groove Ball,Series 62,"Deep groove ball bearing, light",families/bearing_62.csv,11,GMN,ISO
 bearing_63,Shaft Parts/Bearings,Deep Groove Ball,Series 63,"Deep groove ball bearing, medium",families/bearing_63.csv,9,GMN,ISO
-bearing_miniature,Shaft Parts/Bearings,Deep Groove Ball,Miniature,"Deep groove ball bearing, small bores",families/bearing_miniature.csv,6,,ISO
+bearing_miniature,Shaft Parts/Bearings,Deep Groove Ball,Miniature,"Deep groove ball bearing, small bores",families/bearing_miniature.csv,6,Koyo,ISO
 din_471,Shaft Parts/Retaining Rings,External,DIN 471,Retaining ring for shafts,families/din_471.csv,10,fasten.it,DIN
 din_472,Shaft Parts/Retaining Rings,Internal,DIN 472,Retaining ring for bores,families/din_472.csv,8,fasten.it,DIN
 din_6885_a,Shaft Parts/Keys,Parallel,DIN 6885 A,"Parallel key, round ends",families/din_6885_a.csv,16,fasten.it,DIN
-iso_3601,Shaft Parts/Sealing,O-Ring,ISO 3601,O-ring,families/iso_3601.csv,16,,ISO
+iso_3601,Shaft Parts/Sealing,O-Ring,Metric O-Ring,O-ring: common metric sizes (not the ISO 3601 series),families/iso_3601.csv,16,,Other
 din_933,Fasteners/Bolts,Hex Head,DIN 933,"Hexagon head screw, thread to the head (older across flats)",families/din_933.csv,13,fasten.it; wermac.org; Westfield,DIN
 din_931,Fasteners/Bolts,Hex Head,DIN 931,"Hexagon head bolt, partly threaded (older across flats)",families/din_931.csv,9,wermac.org,DIN
-din_912,Fasteners/Bolts,Socket Head,DIN 912,Hexagon socket head cap screw,families/din_912.csv,9,,DIN
-din_7991,Fasteners/Bolts,Countersunk,DIN 7991,Hexagon socket countersunk head screw,families/din_7991.csv,8,,DIN
-iso_4162,Fasteners/Bolts,Hex Head Flanged,ISO 4162,"Hexagon flange bolt, small series",families/iso_4162.csv,6,,ISO
+din_912,Fasteners/Bolts,Socket Head,DIN 912,Hexagon socket head cap screw,families/din_912.csv,9,fasten.it,DIN
+din_7991,Fasteners/Bolts,Countersunk,DIN 7991,Hexagon socket countersunk head screw,families/din_7991.csv,8,fasten.it,DIN
+iso_4162,Fasteners/Bolts,Hex Head Flanged,ISO 4162,"Hexagon flange bolt, small series",families/iso_4162.csv,6,fasten.it (EN 1662),ISO
 din_934,Fasteners/Nuts,Hex,DIN 934,Hexagon nut (older across flats),families/din_934.csv,12,Westfield; Wurth,DIN
-din_439,Fasteners/Nuts,Hex Thin,DIN 439 B,Hexagon thin nut (older across flats),families/din_439.csv,8,,DIN
-din_6927,Fasteners/Nuts,Prevailing Torque,ISO 7040,Hexagon lock nut with a polymer insert,families/din_6927.csv,8,,ISO
-iso_4161,Fasteners/Nuts,Hex Flanged,ISO 4161,Hexagon flange nut,families/iso_4161.csv,6,,ISO
-din_1587,Fasteners/Nuts,Cap,DIN 1587,Domed cap nut,families/din_1587.csv,7,,DIN
-din_6334,Fasteners/Nuts,Coupling,DIN 6334,Long hexagon coupling nut,families/din_6334.csv,7,,DIN
-din_125,Fasteners/Washers,Plain,DIN 125 A,Plain washer,families/din_125.csv,11,,DIN
-din_9021,Fasteners/Washers,Large,DIN 9021,"Plain washer, large outer diameter",families/din_9021.csv,9,,DIN
-din_7,Fasteners/Pins,Cylindrical,DIN 7,Parallel pin,families/din_7.csv,8,,DIN
-iso_8752,Fasteners/Pins,Spring,ISO 8752,"Slotted spring pin, heavy",families/iso_8752.csv,7,,ISO
-din_916,Fasteners/Set Screws,Cup Point,DIN 916,"Hexagon socket set screw, cup point",families/din_916.csv,7,,DIN
-din_913,Fasteners/Set Screws,Flat Point,DIN 913,"Hexagon socket set screw, flat point",families/din_913.csv,7,,DIN
-din_938,Fasteners/Studs,Threaded Rod,DIN 975,Threaded rod,families/din_938.csv,10,,DIN
-bearing_68,Shaft Parts/Bearings,Deep Groove Ball,Series 68,"Deep groove ball bearing, thin section",families/bearing_68.csv,10,,ISO
-bearing_72,Shaft Parts/Bearings,Angular Contact Ball,Series 72,Angular contact ball bearing,families/bearing_72.csv,10,,ISO
-bearing_12,Shaft Parts/Bearings,Self-Aligning Ball,Series 12,Self-aligning ball bearing,families/bearing_12.csv,10,,ISO
+din_439,Fasteners/Nuts,Hex Thin,DIN 439 B,Hexagon thin nut (older across flats),families/din_439.csv,8,fasten.it,DIN
+din_6927,Fasteners/Nuts,Prevailing Torque,ISO 7040,Hexagon lock nut with a polymer insert,families/din_6927.csv,8,fasten.it,ISO
+iso_4161,Fasteners/Nuts,Hex Flanged,ISO 4161,Hexagon flange nut,families/iso_4161.csv,7,fasten.it (EN 1661; both across flats kept),ISO
+din_1587,Fasteners/Nuts,Cap,DIN 1587,Domed cap nut,families/din_1587.csv,9,fasten.it (both across flats kept),DIN
+din_6334,Fasteners/Nuts,Coupling,DIN 6334,Long hexagon coupling nut,families/din_6334.csv,7,fasten.it; PGB (M4; M5),DIN
+din_125,Fasteners/Washers,Plain,DIN 125 A,Plain washer,families/din_125.csv,11,fasten.it,DIN
+din_9021,Fasteners/Washers,Large,DIN 9021,"Plain washer, large outer diameter",families/din_9021.csv,9,fasten.it,DIN
+din_7,Fasteners/Pins,Cylindrical,DIN 7,Parallel pin,families/din_7.csv,8,fasten.it,DIN
+iso_8752,Fasteners/Pins,Spring,ISO 8752,"Slotted spring pin, heavy",families/iso_8752.csv,7,fasten.it,ISO
+din_916,Fasteners/Set Screws,Cup Point,DIN 916,"Hexagon socket set screw, cup point",families/din_916.csv,7,fasten.it,DIN
+din_913,Fasteners/Set Screws,Flat Point,DIN 913,"Hexagon socket set screw, flat point",families/din_913.csv,7,fasten.it,DIN
+din_938,Fasteners/Studs,Threaded Rod,DIN 975,Threaded rod,families/din_938.csv,10,fasten.it DIN 976 (pitches),DIN
+bearing_68,Shaft Parts/Bearings,Deep Groove Ball,Series 68,"Deep groove ball bearing, thin section",families/bearing_68.csv,10,Koyo,ISO
+bearing_72,Shaft Parts/Bearings,Angular Contact Ball,Series 72,Angular contact ball bearing,families/bearing_72.csv,10,Koyo,ISO
+bearing_12,Shaft Parts/Bearings,Self-Aligning Ball,Series 12,Self-aligning ball bearing,families/bearing_12.csv,10,Koyo,ISO
 bearing_nu2,Shaft Parts/Bearings,Cylindrical Roller,Series NU2,Cylindrical roller bearing,families/bearing_nu2.csv,7,"NSK; NTN listings (NU204, NU208)",ISO
-bearing_222,Shaft Parts/Bearings,Spherical Roller,Series 222,Spherical roller bearing,families/bearing_222.csv,6,,ISO
-bearing_hk,Shaft Parts/Bearings,Needle Roller,Series HK,Drawn cup needle roller bearing,families/bearing_hk.csv,7,,ISO
+bearing_222,Shaft Parts/Bearings,Spherical Roller,Series 222,Spherical roller bearing,families/bearing_222.csv,6,Koyo,ISO
+bearing_hk,Shaft Parts/Bearings,Needle Roller,Series HK,Drawn cup needle roller bearing,families/bearing_hk.csv,7,NTN; INA listings (HK0810; HK1010; HK1210; HK1512; HK2012),ISO
 bearing_302,Shaft Parts/Bearings,Tapered Roller,Series 302,Tapered roller bearing,families/bearing_302.csv,6,"NSK listings (30204, 30205, 30208)",ISO
 bearing_511,Shaft Parts/Bearings,Thrust Ball,Series 511,Thrust ball bearing,families/bearing_511.csv,9,"NSK; SKF listings (51104, 51106)",ISO
 iso_3547,Shaft Parts/Bearings,Plain Bush,ISO 3547,Wrapped plain bush,families/iso_3547.csv,6,,ISO
-din_6888,Shaft Parts/Keys,Woodruff,DIN 6888,Woodruff key,families/din_6888.csv,10,,DIN
+din_6888,Shaft Parts/Keys,Woodruff,DIN 6888,Woodruff key,families/din_6888.csv,10,fasten.it,DIN
 din_471_light,Shaft Parts/Retaining Rings,External,DIN 471 small,"Retaining ring for shafts, small",families/din_471_light.csv,7,fasten.it,DIN
 din_3760,Shaft Parts/Sealing,Radial Shaft Seal,DIN 3760,Radial shaft seal,families/din_3760.csv,10,,DIN
 din_5419,Shaft Parts/Sealing,Felt Ring,DIN 5419,Felt sealing ring,families/din_5419.csv,6,,DIN
-din_705,Shaft Parts/Collars,Set Collar,DIN 705 A,Adjusting ring,families/din_705.csv,11,,DIN
-din_988,Shaft Parts/Shims,Shim,DIN 988,Shim ring,families/din_988.csv,8,,DIN
-din_7349,Shaft Parts/Thrust Washers,Thrust Washer,DIN 7349,Heavy washer for pins and bolts,families/din_7349.csv,6,,DIN
-lm_uu,Machine Elements/Linear Motion,Ball Bushing,LM Series,Linear ball bushing,families/lm_uu.csv,8,,Other
-din_179,Other Parts,Drill Bushings,DIN 179,Drill bush without collar,families/din_179.csv,7,,DIN
+din_705,Shaft Parts/Collars,Set Collar,DIN 705 A,Adjusting ring,families/din_705.csv,11,fasten.it,DIN
+din_988,Shaft Parts/Shims,Shim,DIN 988,Shim ring,families/din_988.csv,15,fasten.it (support rings kept beside shims),DIN
+din_7349,Shaft Parts/Thrust Washers,Thrust Washer,DIN 7349,Heavy washer for pins and bolts,families/din_7349.csv,6,fasten.it,DIN
+lm_uu,Machine Elements/Linear Motion,Ball Bushing,LM Series,Linear ball bushing,families/lm_uu.csv,8,supplier listings (Samick; 3DJake),Other
+din_179,Other Parts,Drill Bushings,DIN 179,Drill bush without collar,families/din_179.csv,7,Fabory listings (6; 12 only),DIN
 magnet_disc,Other Parts,Magnets,Ring Magnet,Ring magnet,families/magnet_disc.csv,6,,Other
 asme_b18_2_1,Fasteners/Bolts,Hex Head,ASME B18.2.1,"Hex cap screw, UNC",families/asme_b18_2_1.csv,8,fasten.it,ANSI
-asme_b18_3,Fasteners/Bolts,Socket Head,ASME B18.3,"Socket head cap screw, UNC",families/asme_b18_3.csv,8,,ANSI
-asme_b18_3_flat,Fasteners/Bolts,Countersunk,ASME B18.3 Flat,"Flat countersunk socket screw, UNC",families/asme_b18_3_flat.csv,6,,ANSI
-asme_b18_3_button,Fasteners/Bolts,Button Head,ASME B18.3 Button,"Button head socket screw, UNC",families/asme_b18_3_button.csv,5,,ANSI
-asme_b18_3_set,Fasteners/Set Screws,Cup Point,ASME B18.3 Set,"Socket set screw, cup point, UNC",families/asme_b18_3_set.csv,5,,ANSI
-astm_a193_rod,Fasteners/Studs,Threaded Rod,UNC Rod,"Threaded rod, UNC",families/astm_a193_rod.csv,9,,ANSI
-asme_b18_2_2,Fasteners/Nuts,Hex,ASME B18.2.2,"Hex nut, UNC",families/asme_b18_2_2.csv,9,,ANSI
-asme_b18_2_2_jam,Fasteners/Nuts,Hex Thin,ASME B18.2.2 Jam,"Hex jam nut, UNC",families/asme_b18_2_2_jam.csv,7,,ANSI
-asme_b18_22_1_sae,Fasteners/Washers,Plain,ASME B18.22.1 SAE,"Plain washer, SAE pattern",families/asme_b18_22_1_sae.csv,9,,ANSI
-asme_b18_22_1_uss,Fasteners/Washers,Large,ASME B18.22.1 USS,"Plain washer, USS pattern",families/asme_b18_22_1_uss.csv,7,,ANSI
-asme_b18_21_1,Fasteners/Washers,Spring,ASME B18.21.1,Helical spring lock washer,families/asme_b18_21_1.csv,8,,ANSI
-asme_b18_8_2,Fasteners/Pins,Cylindrical,ASME B18.8.2,Hardened dowel pin,families/asme_b18_8_2.csv,6,,ANSI
+asme_b18_3,Fasteners/Bolts,Socket Head,ASME B18.3,"Socket head cap screw, UNC",families/asme_b18_3.csv,8,fasten.it,ANSI
+asme_b18_3_flat,Fasteners/Bolts,Countersunk,ASME B18.3 Flat,"Flat countersunk socket screw, UNC",families/asme_b18_3_flat.csv,6,fasten.it,ANSI
+asme_b18_3_button,Fasteners/Bolts,Button Head,ASME B18.3 Button,"Button head socket screw, UNC",families/asme_b18_3_button.csv,5,fasten.it,ANSI
+asme_b18_3_set,Fasteners/Set Screws,Cup Point,ASME B18.3 Set,"Socket set screw, cup point, UNC",families/asme_b18_3_set.csv,5,fasten.it,ANSI
+astm_a193_rod,Fasteners/Studs,Threaded Rod,UNC Rod,"Threaded rod, UNC",families/astm_a193_rod.csv,9,fasten.it (threads per inch),ANSI
+asme_b18_2_2,Fasteners/Nuts,Hex,ASME B18.2.2,"Hex nut, UNC",families/asme_b18_2_2.csv,9,fasten.it (No.10 not listed),ANSI
+asme_b18_2_2_jam,Fasteners/Nuts,Hex Thin,ASME B18.2.2 Jam,"Hex jam nut, UNC",families/asme_b18_2_2_jam.csv,7,fasten.it,ANSI
+asme_b18_22_1_sae,Fasteners/Washers,Plain,ASME B18.22.1 SAE,"Plain washer, SAE pattern",families/asme_b18_22_1_sae.csv,9,supplier charts (1/4; 1/2 only),ANSI
+asme_b18_22_1_uss,Fasteners/Washers,Large,ASME B18.22.1 USS,"Plain washer, USS pattern",families/asme_b18_22_1_uss.csv,7,supplier charts (1/2 only),ANSI
+asme_b18_21_1,Fasteners/Washers,Spring,ASME B18.21.1,Helical spring lock washer,families/asme_b18_21_1.csv,8,fasten.it (1/2 not: the page repeats 5/8),ANSI
+asme_b18_8_2,Fasteners/Pins,Cylindrical,ASME B18.8.2,Hardened dowel pin,families/asme_b18_8_2.csv,6,nominal fractions,ANSI
 ansi_b17_1,Shaft Parts/Keys,Parallel,ANSI B17.1,Square parallel key,families/ansi_b17_1.csv,6,,ANSI
-bearing_r,Shaft Parts/Bearings,Deep Groove Ball,Series R,"Deep groove ball bearing, inch",families/bearing_r.csv,6,,ANSI
+bearing_r,Shaft Parts/Bearings,Deep Groove Ball,Series R,"Deep groove ball bearing, inch",families/bearing_r.csv,9,BDS; USA Roller Chain (both widths kept),ANSI
 ,Structural Shapes,Square and Rectangular Tubes,Square hollow section (EN 10219),Square hollow section (EN 10219),../profiles/profiles.csv,9,see profiles.csv,EN
 ,Structural Shapes,Square and Rectangular Tubes,Rectangular hollow section (EN 10219),Rectangular hollow section (EN 10219),../profiles/profiles.csv,6,see profiles.csv,EN
 ,Structural Shapes,Round Tubes,Circular hollow section (EN 10219),Circular hollow section (EN 10219),../profiles/profiles.csv,8,see profiles.csv,EN

@@ -1,4 +1,4 @@
-# DIN 9021: Plain washer, large outer diameter. Nominal values in mm, typed for this library; not yet compared with a source.
+# DIN 9021: Plain washer, large outer diameter. Nominal values in mm, typed for this library; compared with fasten.it.
 size,d1,d2,h
 3,3.2,9,0.8
 4,4.3,12,1

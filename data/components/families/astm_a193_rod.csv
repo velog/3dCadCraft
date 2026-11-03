@@ -1,4 +1,4 @@
-# UNC Rod: Threaded rod, UNC. Nominal values in mm, typed for this library; not yet compared with a source.
+# UNC Rod: Threaded rod, UNC. Nominal values in mm, typed for this library; compared with fasten.it (threads per inch).
 size,d,P,lengths
 No.10-24,4.826,1.058,304.8;609.6;914.4;1828.8
 1/4-20,6.35,1.27,304.8;609.6;914.4;1828.8

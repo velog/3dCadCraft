@@ -1,10 +1,17 @@
-# DIN 988: Shim ring. Nominal values in mm, typed for this library; not yet compared with a source.
+# DIN 988: Shim ring. Nominal values in mm, typed for this library; compared with fasten.it (support rings kept beside shims).
 size,d1,d2,h
 10 x 16 x 0.5,10,16,0.5
+10 x 16 x 1.2,10,16,1.2
 12 x 18 x 0.5,12,18,0.5
+12 x 18 x 1.2,12,18,1.2
 15 x 21 x 0.5,15,21,0.5
+15 x 21 x 1.5,15,21,1.5
 20 x 28 x 0.5,20,28,0.5
 25 x 35 x 1,25,35,1
+25 x 35 x 2,25,35,2
 30 x 42 x 1,30,42,1
+30 x 42 x 2.5,30,42,2.5
 40 x 50 x 1,40,50,1
+40 x 50 x 2.5,40,50,2.5
 50 x 62 x 1,50,62,1
+50 x 62 x 3,50,62,3

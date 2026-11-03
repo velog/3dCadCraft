@@ -1,4 +1,4 @@
-# DIN 976: Threaded rod. Nominal values in mm, typed for this library; not yet compared with a source.
+# DIN 976: Threaded rod. Nominal values in mm, typed for this library; compared with fasten.it (pitches).
 size,d,P,lengths
 M3,3,0.5,250;500;1000;2000
 M4,4,0.7,250;500;1000;2000
